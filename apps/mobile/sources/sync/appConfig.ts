@@ -11,6 +11,8 @@ export interface AppConfig {
     serverUrl?: string;
     buildCommitSha?: string;
     buildCommitTimestamp?: string;
+    buzzyRelayUrl?: string;
+    buzzyPushGatewayUrl?: string;
 }
 
 /**
@@ -89,6 +91,14 @@ export function loadAppConfig(): AppConfig {
     if (process.env.EXPO_PUBLIC_SERVER_URL && config.serverUrl !== process.env.EXPO_PUBLIC_SERVER_URL) {
         console.log('[loadAppConfig] Override serverUrl from EXPO_PUBLIC_SERVER_URL');
         config.serverUrl = process.env.EXPO_PUBLIC_SERVER_URL;
+    }
+    if (process.env.EXPO_PUBLIC_BUZZY_RELAY_URL && config.buzzyRelayUrl !== process.env.EXPO_PUBLIC_BUZZY_RELAY_URL) {
+        console.log('[loadAppConfig] Override buzzyRelayUrl from EXPO_PUBLIC_BUZZY_RELAY_URL');
+        config.buzzyRelayUrl = process.env.EXPO_PUBLIC_BUZZY_RELAY_URL;
+    }
+    if (process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL && config.buzzyPushGatewayUrl !== process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL) {
+        console.log('[loadAppConfig] Override buzzyPushGatewayUrl from EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL');
+        config.buzzyPushGatewayUrl = process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL;
     }
 
     return config as AppConfig;

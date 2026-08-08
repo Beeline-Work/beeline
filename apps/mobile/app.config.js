@@ -90,11 +90,7 @@ export default {
                 NSAppTransportSecurity: variant === 'production'
                     ? { NSAllowsLocalNetworking: true }
                     : { NSAllowsLocalNetworking: true, NSAllowsArbitraryLoads: true }
-            },
-            associatedDomains: [
-                "applinks:buzzrouter.com",
-                ...(variant === 'production' ? ["applinks:app.happy.engineering"] : []),
-            ],
+            }
         },
         android: {
             adaptiveIcon: {
@@ -199,6 +195,7 @@ export default {
                     recordAudioAndroid: true
                 }
             ],
+            require("./plugins/withoutIosPushCapabilities.js"),
             [
                 "expo-notifications",
                 {

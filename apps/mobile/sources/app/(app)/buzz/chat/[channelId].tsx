@@ -23,6 +23,7 @@ import { BuzzRigTransport } from '@/sync/transport';
 import { encodeNpub, type MergeTarget } from '@buzzy/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
 import { groknight } from '@/buzz/groknight';
+import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
 
 type DisplayMessage = {
   id: string;
@@ -353,9 +354,10 @@ export default function BuzzChat() {
 
     setSending(true);
     setInputText('');
+    const optimisticId = `optimistic-${Date.now()}`;
     addMessages([
       {
-        id: `optimistic-${Date.now()}`,
+        id: optimisticId,
         text,
         isUser: true,
         timestamp: Date.now(),
@@ -364,7 +366,13 @@ export default function BuzzChat() {
     ]);
 
     try {
-      await transport.messageSubmit({ sessionId: decodedId, text });
+      const eventId = await transport.messageSubmitWithEventId({
+        sessionId: decodedId,
+        text,
+      });
+      setMessages((prev) =>
+        reconcileOptimisticMessage(prev, optimisticId, eventId),
+      );
     } catch (err) {
       console.warn('Send failed:', err);
     } finally {

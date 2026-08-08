@@ -22,6 +22,7 @@ import {
   DEFAULT_RELAY_URL,
 } from '@/auth/buzz-identity-storage';
 import { groknight } from '@/buzz/groknight';
+import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
 
 const mono = Platform.select({ web: '"JetBrains Mono", monospace', default: 'monospace' });
 
@@ -55,7 +56,8 @@ export default function BuzzOnboarding() {
     setError(null);
     try {
       await saveRelayUrl(relayUrl.trim() || DEFAULT_RELAY_URL);
-      await generateBuzzIdentity();
+      const identity = await generateBuzzIdentity();
+      await registerBuzzPushNotifications(identity);
       router.replace('/buzz/channels');
     } catch (err) {
       setError(`Could not generate and save a key: ${String(err)}`);
@@ -74,7 +76,8 @@ export default function BuzzOnboarding() {
     setError(null);
     try {
       await saveRelayUrl(relayUrl.trim() || DEFAULT_RELAY_URL);
-      await importBuzzIdentity(trimmed);
+      const identity = await importBuzzIdentity(trimmed);
+      await registerBuzzPushNotifications(identity);
       router.replace('/buzz/channels');
     } catch (err) {
       setError(`Could not import and save this key: ${String(err)}`);

@@ -178,33 +178,7 @@ export default function BuzzChat() {
         setTransport(t);
         setUserPubkey(identity.publicKey);
 
-        // Check if this channel is a subchannel (has parent).
-        const parentId = await t.getParentChannelId(decodedId);
-        if (parentId) {
-          setParentChannelId(parentId);
-        }
-
-        // Check if channel is archived
-        const archived = await t.isChannelArchived(decodedId);
-        if (archived) setIsArchived(true);
-
-        // P2: If in a subchannel, try to get merge target from control messages
-        if (parentId) {
-          const mergeInfo = await t.getSubchannelMergeTarget(decodedId);
-          if (mergeInfo) {
-            setMergeTarget(mergeInfo.target);
-          }
-        }
-
-        // P2: Backfill parent messages to find subchannel links (if this is a parent)
-        try {
-          const subIds = await t.listSubchannels(decodedId);
-          setSubchannelIds(subIds);
-        } catch {
-          // Not a parent channel — that's fine
-        }
-
-        // Backfill existing messages
+        // Render the primary chat history before slower P2 channel enrichment.
         const events = await t.sessionEventsBackfill(decodedId, { limit: 50 });
         if (!cancelled) {
           const msgs: DisplayMessage[] = [];
@@ -273,6 +247,34 @@ export default function BuzzChat() {
 
           if (foundMergeSummary) setMergeSummaryText(foundMergeSummary);
           setMessages(msgs);
+          setLoading(false);
+        }
+
+        // Check if this channel is a subchannel (has parent).
+        // The parent linkage lives on the 9007 create event, not on 39000 metadata.
+        const parentId = await t.getParentChannelId(decodedId);
+        if (parentId) {
+          setParentChannelId(parentId);
+        }
+
+        // Check if channel is archived
+        const archived = await t.isChannelArchived(decodedId);
+        if (archived) setIsArchived(true);
+
+        // P2: If in a subchannel, try to get merge target from control messages
+        if (parentId) {
+          const mergeInfo = await t.getSubchannelMergeTarget(decodedId);
+          if (mergeInfo) {
+            setMergeTarget(mergeInfo.target);
+          }
+        }
+
+        // P2: Discover child channels when this is a parent channel.
+        try {
+          const subIds = await t.listSubchannels(decodedId);
+          setSubchannelIds(subIds);
+        } catch {
+          // Not a parent channel — that's fine.
         }
 
         // Subscribe to live messages
@@ -330,7 +332,7 @@ export default function BuzzChat() {
           addMessages([{
             id: eventId(event, `live-${Math.random()}`),
             text,
-            isUser: pk === userPubkey,
+            isUser: pk === identity.publicKey,
             timestamp: eventTimestamp(event),
             pubkey: pk,
             isAgentActivity: event.type === 'assistant_delta',
@@ -347,7 +349,7 @@ export default function BuzzChat() {
       cancelled = true;
       if (unsubscribe) unsubscribe();
     };
-  }, [decodedId, addMessages, userPubkey]);
+  }, [decodedId, addMessages]);
 
   const handleSend = useCallback(async () => {
     const text = inputText.trim();

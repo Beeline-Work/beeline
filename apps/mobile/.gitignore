@@ -1,2 +1,3 @@
 # Expo prebuild output — generated per-platform; not committed
 /android/
+expo-env.d.ts

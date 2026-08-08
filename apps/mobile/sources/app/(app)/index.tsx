@@ -123,6 +123,18 @@ function NotAuthenticated() {
                     </View>
                 </>
             )}
+            <View style={styles.buzzSection}>
+                <View style={styles.buzzDivider}>
+                    <View style={styles.buzzDividerLine} />
+                    <Text style={styles.buzzDividerText}>Buzz</Text>
+                    <View style={styles.buzzDividerLine} />
+                </View>
+                <RoundButton
+                    title="Join a Buzz channel"
+                    onPress={() => router.push('/buzz/onboarding')}
+                    display="inverted"
+                />
+            </View>
         </View>
     );
 
@@ -183,6 +195,18 @@ function NotAuthenticated() {
                             </View>
                         </>)
                     }
+                    <View style={styles.buzzSection}>
+                        <View style={styles.buzzDivider}>
+                            <View style={styles.buzzDividerLine} />
+                            <Text style={styles.buzzDividerText}>Buzz</Text>
+                            <View style={styles.buzzDividerLine} />
+                        </View>
+                        <RoundButton
+                            title="Join a Buzz channel"
+                            onPress={() => router.push('/buzz/onboarding')}
+                            display="inverted"
+                        />
+                    </View>
                 </View>
             </View>
         </View>
@@ -280,5 +304,27 @@ const styles = StyleSheet.create((theme) => ({
     },
     landscapeButtonContainerSecondary: {
         width: 280,
+    },
+    buzzSection: {
+        marginTop: 24,
+        paddingHorizontal: 24,
+    },
+    buzzDivider: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 16,
+    },
+    buzzDividerLine: {
+        flex: 1,
+        height: 1,
+        backgroundColor: '#333',
+    },
+    buzzDividerText: {
+        marginHorizontal: 12,
+        color: '#666',
+        fontSize: 12,
+        fontWeight: '600',
+        textTransform: 'uppercase',
+        letterSpacing: 1,
     },
 }));

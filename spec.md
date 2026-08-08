@@ -1,201 +1,155 @@
-# MVP: the merge you hold from your phone
+# Buzzy — watch a coding agent work, together
 
-## Thesis
-From your phone you direct an agent to make a code change, and the merge to
-`main` is gated by **your signed approval** — the agent physically cannot merge
-without it, the relay enforces it, and it runs on infrastructure you own. That
-one property is the product; everything else is borrowed.
+A good Buzz mobile client that does the one thing today's Buzz clients can't:
+let several people watch and steer a coding agent as it actually works. That's
+the whole product. Everything below is how it differs from an ordinary Buzz
+mobile client.
 
-## The loop (mobile is the control surface; the agent runs on a machine you own)
-1. A **repo channel** on Buzz, bound to a git repo, you're a member. *(exists)*
-2. On your phone you talk to an **agent that is read-only in the channel** — it
-   reads the repo, plans, discusses, but cannot write. Conversation mode.
-3. You say "make this change." The agent forks a **worktree on its body** (a
-   machine running `buzz-agent`) and opens an **execution view** on your phone.
-   You watch and answer permission prompts. *(Happy session surface, forked)*
-4. The agent finishes, pushes its branch, and **requests a merge to `main`**.
-5. You tap **Approve**. That signs a merge-approval with your key. The relay
-   accepts the merge **only because** it carries your signature. A summary posts
-   to the repo channel; the execution view archives read-only.
+## The shape
+- **Top-level channels (TLCs)** a user provisions. Some wrap a **git repo** —
+  either specified by the user when the channel is created, or created by the
+  agent in the course of its work.
+- In a TLC the agent is **read-only**: it converses, ideates, and plans with the
+  members in normal chat. It cannot touch files here.
+- When the agent is about to **create or change files**, a **subchannel** opens
+  under the TLC — a coding session that looks like a Happy session, except the
+  **same members from the parent channel are all in it**, watching the agent and
+  sending it comments and commands.
+- The subchannel is backed by a **git worktree**. Edit-mode exists only there.
+- The **merge is the parent channel owner's call** (whoever Buzz designates —
+  relay owner or channel owner; we defer to Buzz's permission model). The agent
+  does not merge itself.
+- On merge: the worktree merges into the parent repo, a **summary of the agent's
+  work posts to the parent channel**, and the subchannel is **archived read-only**
+  as the historical record.
+- **The subchannel *is* the PR.** The whole multiuser session — the conversation,
+  the agent's actions, the diffs, the merge — is the pull request.
 
-**Money shot:** the agent merges without your approval → the relay rejects it.
-Not the app — the relay. Provable, un-bypassable by the agent.
+## Why Buzz, not a standalone Happy fork
+Multi-member channels, signed identities, and git hosting are already Buzz. We
+fork **Happy's mobile client** (`slopus/happy`, Expo/RN, MIT) for its polished
+session/permission surface — but Happy is single-user, so the core work is making
+a session belong to a **channel**, not one account, so every member sees and
+drives it. The merge being a human's call, relay-enforced, is Buzz's — we use
+Buzz's primitives, we don't build merge enforcement.
 
-## Gate mechanics — COMPOSED from shipped primitives (D1)
-The gate is NOT new receive-pack code. It composes two shipped, tested pieces:
-- **Branch protection** (`git_perms.rs`, `buzz-protect` on `kind:30617`): `main`
-  is push-restricted. The agent is NOT in `push-allowed`, so it physically
-  cannot push `main` — un-bypassable at the git layer. *(exists)*
-- **Workflow human-approval gate** (`buzz-workflow/executor.rs:459`,
-  `RequestApproval` → `StepResult::Suspended`; kinds 46010/46011/46012): the
-  only identity authorized to land `main` is a workflow whose merge step
-  suspends until a human grants approval. *(exists)*
-- **Approve** on the phone emits the workflow-approval grant (signed, key never
-  leaves the phone) against the suspended step's `approval_token`; the workflow
-  then performs the merge as its authorized identity.
-- Agent acts under **NIP-OA** delegation (scoped, revocable; owner key never on
-  the body).
-- New code = a **merge workflow-action** + the phone **Approve** button. No new
-  security-critical transport code.
-- NOTE corrected from v1: `kind:46011` is `KIND_WORKFLOW_APPROVAL_GRANTED`, a
-  workflow kind — NOT a git-merge kind; and `require-approval` is not parsed or
-  enforced in the git policy today. The receive-pack gate was the wrong,
-  higher-blast-radius place to build.
-- Residual risk: the guarantee depends on branch-protection config being correct
-  (agent absent from `push-allowed`), not enforced-by-construction in transport.
+Buzz's own mobile app isn't viable (no push notifications, agent surface is just
+transcript-in-thread).
 
-## Build vs borrow vs defer
-**Build (load-bearing):** a merge workflow-action (an agent/action performs the
-merge as the workflow's authorized identity); the mobile **Approve** action
-emitting the workflow-approval grant; and the **Happy transport adapter** — a
-`RigTransport` implementation against Buzz's relay + `buzz-agent` (D2).
+## Read-only → edit is a real boundary, not a prompt
+In the TLC the agent's write tools are **disabled**. A request to create or mutate
+files is exactly what opens the subchannel + worktree. The permission boundary is
+the mode boundary.
 
-**Borrow / reuse (ships in Buzz or forkable):** branch protection
-(`push-allowed`/`no-force-push`), the workflow human-approval gate, repo↔channel
-binding, git hosting + npub-signed pushes, `buzz-agent`, the relay APNS gateway.
-Fork **Happy's mobile client** (Expo/RN) for its push + session/permission/
-terminal surface — it has a clean `RigTransport` seam; you swap the transport,
-keep the UI (D2). Buzz mobile is not viable: no push wiring in `mobile/lib`,
-agent surface is transcript-in-thread only.
+## Build order — client-first, on real Buzz from line one
+The spine is already proven (P0 gate ran live: agent can't push the protected
+branch, human approval lands it). So the remaining unknown is the client. Build
+it against **real Buzz** — the local relay-stack + real `buzz-agent` — never a
+fake backend. Real Buzz only speaks channels, keys, and async approval, so it's
+impossible to bake in single-user assumptions; the backend *is* the seam.
 
-**Defer:** differentiated reviewer (owner approves for now), workflows, seats
-beyond owner/driver, multi-agent, applets, desktop, auto-deployed remote agents.
+- **P1 — the forge surface, on real Buzz.** Fork Happy's mobile client. Join a
+  channel **with a key**, converse with a read-only agent in a TLC, open a
+  **subchannel + worktree** when the agent goes to edit files, watch it work, and
+  have **multiple participants** send it commands in that subchannel. Identity +
+  transport + channel-scoped sessions are real from the start because you can't
+  join a channel without them. Discipline to the ~10 methods Buzz backs; stub
+  terminals (no live PTY).
+- **P2 — merge controls + provenance + onboarding.** Surface the (already-proven)
+  merge gate in the UI: the parent-owner **Approve** action, the "sent for
+  approval → merged/rejected" async states, the summary-to-parent + subchannel
+  archive. Attribution/provenance of who (which key) did what. Onboarding flows
+  for humans and agents into a channel.
+- **P3 — beyond coding.** Content, video editing, other modality pipelines. Note:
+  needs a non-git artifact+merge model — "subchannel = PR" assumes git today.
+- **Throughout — push notifications + the failure-mode tests below.**
+
+## Out of scope
+Formal roles/reviewers beyond parent-owner-merges, workflow pipelines,
+multi-agent, applets, desktop, auto-deployed remote agents.
 
 ## Honest risks
-- **Mobile-only still needs a computer** — the agent's body. Someone runs
-  `buzz-agent` on a machine and pairs the phone through the relay (same friction
-  Happy has: "you bring the substrate"). Cannot be designed away.
-- **The gate enforcement is the real engineering** — the receive-pack approval
-  check is new relay code and it is security-critical (a bypass defeats the
-  entire thesis). It must fail closed on every path.
-- **The read-only→execution boundary must be a real tool-permission boundary**,
-  not a prompt: in conversation mode the agent's write tools are disabled; a
-  write request is what forks the worktree.
+- **Still needs a computer** — the agent's body. Someone runs `buzz-agent` and
+  pairs the phone (same "bring your own substrate" as Happy).
+- **Happy's re-plumb is the real work** — single-user session → channel session
+  is a rebuild, not a transport swap.
+- **The merge guarantee rests on Buzz config** — the agent must be excluded from
+  push-rights to the protected branch; add a provisioning check + test.
 
-## Done =
-On a phone: direct an agent, watch it work, approve the merge with a signature,
-see it land — and see an unapproved merge blocked (the agent cannot push `main`).
+---
+
+# Appendix — build reference
 
 ## What already exists in Buzz (reuse, don't rebuild)
 - Git hosting (smart HTTP + NIP-34), npub-signed pushes — `api/git/`.
 - Branch protection: `push-allowed`, `no-force-push` — `git_perms.rs`,
-  `api/git/policy.rs`. (`require-approval` is NOT parsed/enforced — don't rely on it.)
+  `api/git/policy.rs`. **`require-approval` is NOT parsed/enforced — don't rely on it.**
 - Repo↔channel binding — `api/git/binding.rs`.
-- Workflow engine with a **human-approval gate** — `buzz-workflow/executor.rs`
-  (`RequestApproval` / suspend-until-granted; kinds 46010/46011/46012).
+- Workflow engine with a human-approval gate — `buzz-workflow/executor.rs:459`
+  (`RequestApproval` / suspend-until-granted; kinds 46010/46011/46012). This is
+  how "parent owner approves the merge" is implemented without new relay code.
 - Agent harness — `buzz-agent` (ACP) + `buzz-dev-mcp` (shell/str_replace).
 - NIP-OA scoped, revocable agent delegation.
-- Relay APNS push gateway — `buzz-push-gateway` (mobile app just doesn't wire it).
+- Relay APNS push gateway — `buzz-push-gateway` (Happy wires this; Buzz mobile doesn't).
 
-## NOT in scope (deferred, with reason)
-- Receive-pack `require-approval` enforcement — composed from branch-protection +
-  workflow gate instead (D1); lower blast radius.
-- Differentiated reviewer, workflows-with-seats — owner approves for MVP.
-- Multi-agent, applets, desktop, auto-deployed remote agents.
-- Fixing Buzz's mobile app — forking Happy's client instead (D2).
+## The merge, concretely (composed from the above — no new enforcement code)
+- The agent isn't in `push-allowed`, so it physically can't push the protected
+  branch (`git_perms.rs`).
+- The only identity that lands the branch is a workflow whose merge step suspends
+  on `RequestApproval` until it gets a grant signed by a **human** key (the parent
+  owner, per Buzz's roles).
+- **Approve** on the owner's phone emits that signed grant; the workflow merges,
+  posts the summary, and archives the subchannel.
 
-## Failure modes (each new codepath)
-- **Branch-protection misconfig** (agent in `push-allowed`): gate silently
-  bypassed — the whole thesis dies quietly. MUST have a test asserting an
-  unauthorized identity's push to `main` is rejected, and a provisioning check
-  that the agent is never in `push-allowed`. **Critical gap if untested.**
-- **Workflow performs merge before approval lands** (race/bug): unapproved code
-  merges. Test: suspended step does not merge until a valid grant arrives.
-- **Approval replay / wrong-target grant**: a grant for merge A accepted for
-  merge B. Grant must bind to the exact target (branch tip + repo); test it.
-- **Happy transport adapter semantic gaps**: a `@slopus/rig` session/permission
-  concept with no Buzz equivalent → dead UI or silent no-op. Spike the mapping.
+## Gotchas (hard-won — do not re-learn)
+- **`kind:46011` is `KIND_WORKFLOW_APPROVAL_GRANTED`, a workflow kind — NOT a
+  git-merge kind.** `require-approval` is not enforced in the git policy at all, so
+  the merge is *composed* from branch-protection + the workflow gate, not built as
+  new receive-pack code.
+- **An accepted publish is not proof of effect.** A Buzz group-management event
+  whose side effect fails is still stored and still OK-true'd. Assert on state, not
+  the ack.
+- If channel-scoped group-management events come into play: the **`h` tag must be
+  a UUID** (Buzz drops non-UUIDs), and a **role rides in a separate `["role", …]`
+  tag**, not NIP-29's `["p", pk, role]` slot. Both fail silently.
 
-## Happy `RigTransport` adapter — MVP method list (spike result)
-Implement these ~10 against a Buzz backing; stub the rest. Grounded in
-`rigTransport.ts` and `buzz-acp/src/acp.rs`.
+## Happy `RigTransport` adapter — the ~10 MVP methods
+Against `buzz-acp/src/acp.rs` + git API; **every one scoped to channel membership,
+not one account** (that scoping is the shared-session feature).
 
-**Session lifecycle**
-- [ ] `sessionCreate(input)` → `buzz-acp session_new` (acp.rs:662). Opens the agent on the body.
-- [ ] `sessionsRead()` → list active sessions scoped to the repo channel / open worktrees.
-- [ ] `sessionRead(id)` → reconstruct from `sessionEventsBackfill` + current run state.
-- [ ] `sessionArchive(id)` → `session_cancel` + archive the worktree.
+- **Sessions:** `sessionCreate` → `session_new` (acp.rs:662); `sessionsRead` →
+  active sessions scoped to the TLC's membership; `sessionRead` → reconstruct from
+  backfill + run state; `sessionArchive` → `session_cancel` + archive worktree.
+- **Messaging:** `messageSubmit` → `session_prompt` (acp.rs:725); `runAbort` →
+  `session_cancel` (acp.rs:818).
+- **Realtime + permissions:** `sessionEventsSubscribe` → ACP `session/update`
+  (acp.rs:1217), project to assistant deltas + `permission_review`;
+  `sessionEventsBackfill` → replay from channel history; permission respond →
+  answer `session/request_permission` (acp.rs:1223).
+- **Worktrees (the edit-mode trigger = subchannel open):** `worktreeCreate` → git
+  worktree + branch on the body, open a session in it; `worktreeArchive` → remove
+  on merge/close.
+- **Files (diff view):** `changedFileRead` / `workspaceFilesRead` → git diff via
+  `api/git`; `changedFilesRevert` → checkout.
+- **The merge action:** emit the workflow-approval grant against the suspended
+  step's `approval_token` (signed on device); on success, summary posts + archive.
 
-**Messaging**
-- [ ] `messageSubmit(id, text, idempotencyKey)` → `buzz-acp session_prompt` (acp.rs:725).
-- [ ] `runAbort(id)` → `buzz-acp session_cancel` (acp.rs:818).
+**Stub (hide UI):** `terminalCreate/Stop/Connect` (no live PTY on the Buzz side).
+**Defer:** `sessionFork`, `sessionReset`, `rewind`, `compact`, `messageSteer`, slots/applets.
 
-**Realtime + permissions (the "watch it work / answer prompts" surface)**
-- [ ] `sessionEventsSubscribe(id, observer)` → subscribe to ACP `session/update`
-      notifications (acp.rs:1217); project to `RigSessionEvent` (assistant deltas,
-      `permission_review`, `permission_mode_changed`).
-- [ ] `sessionEventsBackfill(id)` → replay stored session events from channel history.
-- [ ] permission respond → answer `session/request_permission` (acp.rs:1223) grant/deny.
-
-**Worktrees (the edit-mode trigger)**
-- [ ] `worktreeCreate(projectId, input)` → create git worktree + branch on the body; open a session in it.
-- [ ] `worktreeArchive(projectId, worktreeId)` → remove worktree (on merge / close).
-
-**Files (diff view)**
-- [ ] `changedFileRead` / `workspaceFilesRead` → git diff via `api/git`; `changedFilesRevert` → checkout.
-
-**Buzz-specific action (the differentiator — not in stock RigTransport)**
-- [ ] **Approve merge** → emit the workflow-approval grant against the suspended
-      merge step's `approval_token` (signed on device). This is the whole product.
-
-**STUB (hide UI, defer):** `terminalCreate` / `terminalStop` / `terminalConnect`
-(no live PTY on the Buzz side — out of MVP scope). **DEFER:** `sessionFork`,
-`sessionReset`, `rewind`, `compact`, `messageSteer`, slots/applets, `projectCompute`.
-
-## Build sequence — prove the gate first, client last
-Ordering principle: the differentiator is the merge gate. Prove it end-to-end
-**headless** before spending a day on any client, so if the D1 composition
-can't hold you find out on day one, not after forking a mobile app. The client
-is the wrapper around a thing that's already proven, so it comes last.
-
-**Phase 0 — Prove the gate (no agent, no client, scripts only). THE money shot.**
-- Repo on Buzz; `main` protected so only the workflow identity is in `push-allowed`.
-- Build the one new piece: a **merge workflow-action** (performs the merge as the
-  workflow identity) whose step suspends on `RequestApproval`.
-- Demo, all via relay scripts (the pattern used all session):
-  1. Push a branch. Attempt to merge `main` as a non-authorized key → **rejected**.
-     ← this IS the review's CRITICAL test; write it first.
-  2. Run the merge workflow → it suspends, awaiting approval.
-  3. Emit the signed approval grant → workflow merges → `main` advances.
-- Exit: an unapproved merge is impossible; an approved one lands. Thesis proven.
-
-**Phase 1 — Agent drives the loop (still headless).**
-- `buzz-agent` in a worktree on a body: make a change, push the branch, trigger
-  the merge workflow. Enforce the read-only→write boundary (writable checkout
-  exists ONLY in the worktree). Agent runs under NIP-OA delegation, not in
-  `push-allowed`.
-- Exit: an agent takes it from "make this change" to a suspended merge gate.
-
-**Phase 2 — Human approves from a device (thin surface).**
-- The signed **Approve** action as the smallest possible surface first (CLI or a
-  one-page web app emitting the grant). A human approves; the merge lands.
-- Exit: full human-in-the-loop loop works before any mobile investment.
-
-**Phase 3 — Fork Happy + the `RigTransport` adapter (the real client).**
-- Implement the ~10 MVP methods above against `buzz-acp` + git API; stub
-  terminals. Session, watch (`session/update`), permission prompts, worktree
-  create, diff, and the Approve action, in Happy's polished surface.
-- Can start scaffolding in PARALLEL with Phase 1–2 (separate codebase: Happy TS
-  vs Buzz Rust) once the buzz-acp surface is pinned.
-- Exit: the Phase 2 loop, now driven from Happy's mobile UI.
-
-**Phase 4 — Make it real.**
-- Wire push to the relay APNS gateway. Failure-mode tests: approval replay /
-  wrong-target grant bound to exact (branch tip + repo); workflow does not merge
-  before the grant; branch-protection provisioning check (agent never in
-  `push-allowed`).
-
-## GSTACK REVIEW REPORT
-
-| Review | Trigger | Why | Runs | Status | Findings |
-|--------|---------|-----|------|--------|----------|
-| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | issues_found | 2 architecture decisions resolved; 1 critical test gap flagged |
-
-- **VERDICT:** ENG reviewed — 2 load-bearing decisions made (D1 gate location →
-  compose shipped primitives; D2 mobile → fork Happy + `RigTransport` adapter).
-  Spec corrected (46011 is a workflow kind, not git; receive-pack gate dropped).
-  One CRITICAL test requirement: prove an unauthorized push to `main` is
-  rejected and the agent is never in `push-allowed` — the gate's whole guarantee
-  rests on it. Ready to implement once that test is in the plan.
-
-NO UNRESOLVED DECISIONS
+## Failure modes → each needs a test
+- **Agent can write in the parent** (read-only boundary broken): assert the
+  agent's write tools are inert in a TLC; only a subchannel worktree is writable.
+- **Agent in push-rights** (misconfig): the agent can push the protected branch.
+  Test an unauthorized push is rejected + a provisioning check the agent is never
+  in `push-allowed`. **Write this first.**
+- **Agent's own key accepted as the merge approval**: test a grant from the
+  agent's key does NOT merge; a human key does.
+- **Merge before the grant lands** (race): the suspended step must not merge until
+  a valid grant arrives.
+- **Approval replay / wrong-target**: the grant must bind to exact (branch tip +
+  repo); a grant for merge A is rejected for merge B.
+- **Two participants, one subchannel** (the multiuser proof): both attached, both
+  receive `session/update`, both can submit a command.
+- **On merge**: the summary actually posts to the parent and the subchannel is
+  actually archived read-only — assert both, not the merge alone.

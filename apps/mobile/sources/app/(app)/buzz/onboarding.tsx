@@ -10,7 +10,6 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  Alert,
   Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -31,20 +30,35 @@ export default function BuzzOnboarding() {
   const [nsecInput, setNsecInput] = useState('');
   const [relayUrl, setRelayUrl] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Load saved relay URL on mount
   useEffect(() => {
-    void getEffectiveRelayUrl().then(setRelayUrl);
+    let cancelled = false;
+    void getEffectiveRelayUrl()
+      .then((url) => {
+        if (!cancelled) setRelayUrl(url);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setRelayUrl(DEFAULT_RELAY_URL);
+          setError(`Unable to read secure storage: ${String(err)}`);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleGenerate = async () => {
     setLoading(true);
+    setError(null);
     try {
       await saveRelayUrl(relayUrl.trim() || DEFAULT_RELAY_URL);
       await generateBuzzIdentity();
       router.replace('/buzz/channels');
     } catch (err) {
-      Alert.alert('Error', String(err));
+      setError(`Could not generate and save a key: ${String(err)}`);
     } finally {
       setLoading(false);
     }
@@ -53,16 +67,17 @@ export default function BuzzOnboarding() {
   const handleImport = async () => {
     const trimmed = nsecInput.trim();
     if (!trimmed.startsWith('nsec1')) {
-      Alert.alert('Invalid key', 'Paste an nsec1… secret key');
+      setError('Paste a valid nsec1… secret key.');
       return;
     }
     setLoading(true);
+    setError(null);
     try {
       await saveRelayUrl(relayUrl.trim() || DEFAULT_RELAY_URL);
       await importBuzzIdentity(trimmed);
       router.replace('/buzz/channels');
     } catch (err) {
-      Alert.alert('Import failed', String(err));
+      setError(`Could not import and save this key: ${String(err)}`);
     } finally {
       setLoading(false);
     }
@@ -74,6 +89,12 @@ export default function BuzzOnboarding() {
       <Text style={styles.subtitle}>
         Join a channel with your Nostr key to watch an agent work.
       </Text>
+
+      {error && (
+        <Text accessibilityRole="alert" style={styles.errorText}>
+          {error}
+        </Text>
+      )}
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>new key</Text>
@@ -225,5 +246,12 @@ const styles = StyleSheet.create({
     color: '#666',
     lineHeight: 16,
     marginTop: 4,
+  },
+  errorText: {
+    color: '#ff453a',
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 20,
+    textAlign: 'center',
   },
 });

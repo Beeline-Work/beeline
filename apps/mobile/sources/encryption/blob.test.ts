@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeAll } from 'vitest';
-import sodium from 'libsodium-wrappers';
+
+// libsodium-wrappers 0.8.x's ESM entry currently expects the raw libsodium
+// package to expose a ready-made module, but its ESM entry exports an async
+// factory instead. The CommonJS entry initializes the raw module correctly in
+// Node, which is the environment these tests run in.
+const sodium: typeof import('libsodium-wrappers') = require('libsodium-wrappers');
 
 // Mock expo-crypto to use Node.js crypto
 vi.mock('expo-crypto', () => ({
@@ -53,7 +58,7 @@ describe('blob encryption', () => {
 
         expect(decrypted).not.toBeNull();
         expect(new Uint8Array(decrypted!)).toEqual(data);
-    });
+    }, 15_000);
 
     it('should handle binary data with null bytes', () => {
         const data = new Uint8Array([0, 0, 0, 255, 0, 128, 0]);

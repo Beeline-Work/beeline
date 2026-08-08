@@ -61,3 +61,9 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - **Merge approval wire**: `buildMergeApproval`/`submitMergeApproval` from `@buzzy/buzz-client` produce kind:9 events with `t=buzz-merge-approval`, `repo`, `branch`, `tip` tags. Gate worker (`apps/gate/src/worker.ts`) verifies the exact binding. No workflow kinds (46010/46011/46012).
 - **Demo script**: `scripts/merge-demo.ts` exercises the full merge flow end-to-end against live relay.
 - **Tradeoff**: the parallel screen path avoids deep refactoring of Happy's sync layer. If extending screens further, consider unifying with Happy's screen hierarchy.
+
+## Android push notifications
+
+- App registration lives in `apps/mobile/sources/push/buzz-push-registration.ts`; runtime defaults/overrides are in `app.config.js` and `sources/buzz/runtime-config.ts`. The public gateway default is `https://push.buzzrouter.com`.
+- Gateway authority and operations: `apps/push-gateway/README.md`. It binds `127.0.0.1:8788` by default, persists registrations under its ignored `.data/`, and requires a service-account path via environment variable; credentials and device tokens must never be logged or committed.
+- Gateway checks: `npm run build -w @buzzy/push-gateway && npm test -w @buzzy/push-gateway`.

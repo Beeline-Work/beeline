@@ -18,6 +18,8 @@ import { router } from 'expo-router';
 import {
   generateBuzzIdentity,
   importBuzzIdentity,
+  getEffectiveRelayUrl,
+  saveRelayUrl,
 } from '@/auth/buzz-identity-storage';
 import { groknight } from '@/buzz/groknight';
 
@@ -26,11 +28,18 @@ const mono = Platform.select({ web: '"JetBrains Mono", monospace', default: 'mon
 export default function BuzzOnboarding() {
   const insets = useSafeAreaInsets();
   const [nsecInput, setNsecInput] = useState('');
+  const [relayUrl, setRelayUrl] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Load saved relay URL on mount
+  useState(() => {
+    getEffectiveRelayUrl().then(setRelayUrl);
+  });
 
   const handleGenerate = async () => {
     setLoading(true);
     try {
+      await saveRelayUrl(relayUrl.trim() || 'https://buzz.trustysquire.ai');
       await generateBuzzIdentity();
       router.replace('/buzz/channels');
     } catch (err) {
@@ -48,6 +57,7 @@ export default function BuzzOnboarding() {
     }
     setLoading(true);
     try {
+      await saveRelayUrl(relayUrl.trim() || 'https://buzz.trustysquire.ai');
       await importBuzzIdentity(trimmed);
       router.replace('/buzz/channels');
     } catch (err) {
@@ -105,6 +115,24 @@ export default function BuzzOnboarding() {
         >
           <Text style={styles.buttonText}>import & continue</Text>
         </TouchableOpacity>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Relay URL</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="https://buzz.trustysquire.ai"
+          placeholderTextColor="#888"
+          value={relayUrl}
+          onChangeText={setRelayUrl}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+        />
+        <Text style={styles.hint}>
+          Address of the Buzz relay your phone connects to. Change this if your
+          relay is elsewhere (e.g. http://10.0.2.2:3010 for emulator → host).
+        </Text>
       </View>
     </View>
   );
@@ -190,5 +218,11 @@ const styles = StyleSheet.create({
     color: groknight.dim,
     fontSize: 11,
     fontFamily: mono,
+  },
+  hint: {
+    fontSize: 12,
+    color: '#666',
+    lineHeight: 16,
+    marginTop: 4,
   },
 });

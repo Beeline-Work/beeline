@@ -39,7 +39,7 @@ import {
   type SessionEvent as BuzzSessionEvent,
 } from '@buzzy/buzz-client';
 
-const DEFAULT_RELAY_URL = 'http://127.0.0.1:3010';
+const DEFAULT_RELAY_URL = 'https://buzz.trustysquire.ai';
 
 /**
  * Map a buzz-client SessionEvent (kind:'message'|'agent-activity'|'other')

@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
-import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
 import { BuzzRigTransport } from '@/sync/transport';
 import { encodeNpub, type MergeTarget } from '@buzzy/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
@@ -173,7 +173,8 @@ export default function BuzzChat() {
           return;
         }
 
-        const t = new BuzzRigTransport(identity);
+        const url = await getEffectiveRelayUrl();
+        const t = new BuzzRigTransport(identity, url);
         setTransport(t);
         setUserPubkey(identity.publicKey);
 

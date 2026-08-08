@@ -45,6 +45,34 @@ npm run web          # expo start --web
 npm start            # expo start (all platforms)
 ```
 
+## Build a sideloadable release APK
+
+### Prerequisites
+
+- Android SDK at `/home/lunchbox/android-sdk` (set `ANDROID_HOME`)
+- Build tools 35+, platform android-35+
+- JDK 17+ (`java -version`)
+
+### One-step build
+
+```sh
+cd apps/mobile
+npm run apk:release
+```
+
+This runs the full chain:
+1. `npx expo prebuild --platform android --clean` — generates native Android project
+2. `cd android && ./gradlew assembleRelease` — builds the signed release APK
+3. Prints the APK path and file size
+
+Output: `android/app/build/outputs/apk/release/app-release.apk`
+
+### Signing
+
+The release keystore is at [`android-signing/release.keystore`](./android-signing/README.md).
+Credentials are committed alongside it because this repo is private. **Rotate the
+keystore before any public distribution.**
+
 ## Expo web (headless-verifiable surface)
 
 ```sh

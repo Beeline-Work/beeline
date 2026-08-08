@@ -19,22 +19,45 @@ import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 export default function Home() {
     const auth = useAuth();
     const [buzzCheckDone, setBuzzCheckDone] = React.useState(false);
+    const [buzzStorageError, setBuzzStorageError] = React.useState<string | null>(null);
 
     React.useEffect(() => {
-        loadBuzzIdentity().then((identity) => {
-            setBuzzCheckDone(true);
-            if (identity) {
-                // Buzz identity found — redirect to the Buzz channel list.
-                // This replaces Happy's auth gate. The Happy screens remain
-                // accessible via /server for troubleshooting.
-                router.replace('/buzz/channels');
-            }
-        });
+        void loadBuzzIdentity()
+            .then((identity) => {
+                setBuzzCheckDone(true);
+                if (identity) {
+                    // Buzz identity found — redirect to the Buzz channel list.
+                    // This replaces Happy's auth gate. The Happy screens remain
+                    // accessible via /server for troubleshooting.
+                    router.replace('/buzz/channels');
+                }
+            })
+            .catch((err: unknown) => {
+                setBuzzStorageError(String(err));
+                setBuzzCheckDone(true);
+            });
     }, []);
 
     // Wait for the async buzz check before rendering.
     if (!buzzCheckDone) {
         return null;
+    }
+
+    if (buzzStorageError) {
+        return (
+            <View style={styles.portraitContainer}>
+                <Text style={styles.title}>Secure storage unavailable</Text>
+                <Text accessibilityRole="alert" style={styles.subtitle}>
+                    Buzzy could not read your saved key: {buzzStorageError}
+                </Text>
+                <View style={styles.buttonContainer}>
+                    <RoundButton
+                        title="Open Buzz setup"
+                        onPress={() => router.push('/buzz/onboarding')}
+                    />
+                </View>
+            </View>
+        );
     }
 
     if (!auth.isAuthenticated) {

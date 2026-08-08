@@ -15,8 +15,13 @@ import {
   identityNpub,
   type Identity,
 } from '@buzzy/buzz-client';
+import * as SecureStore from 'expo-secure-store';
 
-const BUZZ_NSEC_KEY = '@buzzy/identity/nsec';
+// SecureStore on Android requires keys matching [A-Za-z0-9._-]+
+const BUZZ_NSEC_KEY = 'buzzy.identity.nsec';
+const BUZZ_RELAY_URL_KEY = 'buzzy.identity.relayUrl';
+
+export const DEFAULT_RELAY_URL = 'https://buzz.trustysquire.ai';
 
 function isWeb(): boolean {
   return (
@@ -29,18 +34,7 @@ async function storageGet(key: string): Promise<string | null> {
   if (isWeb()) {
     return localStorage.getItem(key);
   }
-  // Dynamic require for expo-secure-store — type declarations unavailable in this config.
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const SecureStore = require('expo-secure-store') as {
-      getItemAsync: (k: string) => Promise<string | null>;
-      setItemAsync: (k: string, v: string) => Promise<void>;
-      deleteItemAsync: (k: string) => Promise<void>;
-    };
-    return SecureStore.getItemAsync(key);
-  } catch {
-    return null;
-  }
+  return SecureStore.getItemAsync(key);
 }
 
 async function storageSet(key: string, value: string): Promise<void> {
@@ -48,17 +42,7 @@ async function storageSet(key: string, value: string): Promise<void> {
     localStorage.setItem(key, value);
     return;
   }
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const SecureStore = require('expo-secure-store') as {
-      getItemAsync: (k: string) => Promise<string | null>;
-      setItemAsync: (k: string, v: string) => Promise<void>;
-      deleteItemAsync: (k: string) => Promise<void>;
-    };
-    await SecureStore.setItemAsync(key, value);
-  } catch {
-    // Ignore — storage may be unavailable
-  }
+  await SecureStore.setItemAsync(key, value);
 }
 
 async function storageRemove(key: string): Promise<void> {
@@ -66,29 +50,14 @@ async function storageRemove(key: string): Promise<void> {
     localStorage.removeItem(key);
     return;
   }
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const SecureStore = require('expo-secure-store') as {
-      getItemAsync: (k: string) => Promise<string | null>;
-      setItemAsync: (k: string, v: string) => Promise<void>;
-      deleteItemAsync: (k: string) => Promise<void>;
-    };
-    await SecureStore.deleteItemAsync(key);
-  } catch {
-    // Ignore
-  }
+  await SecureStore.deleteItemAsync(key);
 }
 
 /** Load the stored Buzz identity (null if never set). */
 export async function loadBuzzIdentity(): Promise<Identity | null> {
-  try {
-    const nsec = await storageGet(BUZZ_NSEC_KEY);
-    if (!nsec) return null;
-    return loadIdentityFromNsec(nsec);
-  } catch (err) {
-    console.warn('Failed to load Buzz identity:', err);
-    return null;
-  }
+  const nsec = await storageGet(BUZZ_NSEC_KEY);
+  if (!nsec) return null;
+  return loadIdentityFromNsec(nsec);
 }
 
 /** Persist an identity for next launch. */
@@ -114,6 +83,30 @@ export async function importBuzzIdentity(nsec: string): Promise<Identity> {
   const identity = loadIdentityFromNsec(nsec, 'buzzy-mobile');
   await saveBuzzIdentity(identity);
   return identity;
+}
+
+/** Load the stored relay URL (null if never set). */
+export async function loadRelayUrl(): Promise<string | null> {
+  return storageGet(BUZZ_RELAY_URL_KEY);
+}
+
+/** Persist a relay URL for next launch. */
+export async function saveRelayUrl(url: string): Promise<void> {
+  await storageSet(BUZZ_RELAY_URL_KEY, url);
+}
+
+/** Forget the stored relay URL (reset to default). */
+export async function clearRelayUrl(): Promise<void> {
+  await storageRemove(BUZZ_RELAY_URL_KEY);
+}
+
+/**
+ * Load the relay URL with a sensible default.
+ * Returns the stored URL, falling back to DEFAULT_RELAY_URL.
+ */
+export async function getEffectiveRelayUrl(): Promise<string> {
+  const stored = await loadRelayUrl();
+  return stored ?? DEFAULT_RELAY_URL;
 }
 
 export { identityNpub };

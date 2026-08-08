@@ -22,6 +22,14 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - buzz-agent ACP wire vs MCP: `initialize` uses `protocolVersion` u32 (not MCP string), `clientCapabilities` (not `capabilities`). `session/new` returns `{sessionId}`. Standard MCP for `buzz-dev-mcp`. See `apps/body/src/acp.ts` for exact wire format.
 - Live suite: `cd apps/body && npm run test:live` (pretest builds all deps). Soft-skips when relay or LLM env (BUZZY_LLM_*) absent.
 
+## Release APK build (@buzzy/mobile)
+
+- `npm run apk:release` in `apps/mobile` builds a signed release APK (expo prebuild → patch signing config → gradle assembleRelease).
+- Release keystore: `apps/mobile/android-signing/release.keystore` (stored pass in sibling README, rotate before public distribution).
+- Configurable relay URL: persisted per-device via `buzz-identity-storage.ts`, default `https://buzz.trustysquire.ai`.
+- Onboarding/channels screens have a relay URL text field (editable).
+- Gradle signing config is injected by `scripts/patch-android-signing.sh` after prebuild because the `android/` directory is gitignored.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.

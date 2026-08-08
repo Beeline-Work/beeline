@@ -3,14 +3,13 @@
  *
  * GrokNight Terminal design.
  */
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  Alert,
   Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,6 +17,9 @@ import { router } from 'expo-router';
 import {
   generateBuzzIdentity,
   importBuzzIdentity,
+  getEffectiveRelayUrl,
+  saveRelayUrl,
+  DEFAULT_RELAY_URL,
 } from '@/auth/buzz-identity-storage';
 import { groknight } from '@/buzz/groknight';
 
@@ -26,15 +28,37 @@ const mono = Platform.select({ web: '"JetBrains Mono", monospace', default: 'mon
 export default function BuzzOnboarding() {
   const insets = useSafeAreaInsets();
   const [nsecInput, setNsecInput] = useState('');
+  const [relayUrl, setRelayUrl] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load saved relay URL on mount
+  useEffect(() => {
+    let cancelled = false;
+    void getEffectiveRelayUrl()
+      .then((url) => {
+        if (!cancelled) setRelayUrl(url);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setRelayUrl(DEFAULT_RELAY_URL);
+          setError(`Unable to read secure storage: ${String(err)}`);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleGenerate = async () => {
     setLoading(true);
+    setError(null);
     try {
+      await saveRelayUrl(relayUrl.trim() || DEFAULT_RELAY_URL);
       await generateBuzzIdentity();
       router.replace('/buzz/channels');
     } catch (err) {
-      Alert.alert('Error', String(err));
+      setError(`Could not generate and save a key: ${String(err)}`);
     } finally {
       setLoading(false);
     }
@@ -43,15 +67,17 @@ export default function BuzzOnboarding() {
   const handleImport = async () => {
     const trimmed = nsecInput.trim();
     if (!trimmed.startsWith('nsec1')) {
-      Alert.alert('Invalid key', 'Paste an nsec1… secret key');
+      setError('Paste a valid nsec1… secret key.');
       return;
     }
     setLoading(true);
+    setError(null);
     try {
+      await saveRelayUrl(relayUrl.trim() || DEFAULT_RELAY_URL);
       await importBuzzIdentity(trimmed);
       router.replace('/buzz/channels');
     } catch (err) {
-      Alert.alert('Import failed', String(err));
+      setError(`Could not import and save this key: ${String(err)}`);
     } finally {
       setLoading(false);
     }
@@ -63,6 +89,12 @@ export default function BuzzOnboarding() {
       <Text style={styles.subtitle}>
         Join a channel with your Nostr key to watch an agent work.
       </Text>
+
+      {error && (
+        <Text accessibilityRole="alert" style={styles.errorText}>
+          {error}
+        </Text>
+      )}
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>new key</Text>
@@ -105,6 +137,24 @@ export default function BuzzOnboarding() {
         >
           <Text style={styles.buttonText}>import & continue</Text>
         </TouchableOpacity>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>relay URL</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="https://buzz.trustysquire.ai"
+          placeholderTextColor={groknight.dim}
+          value={relayUrl}
+          onChangeText={setRelayUrl}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+        />
+        <Text style={styles.hint}>
+          Address of the Buzz relay your phone connects to. Change this if your
+          relay is elsewhere (e.g. http://10.0.2.2:3010 for emulator → host).
+        </Text>
       </View>
     </View>
   );
@@ -189,6 +239,21 @@ const styles = StyleSheet.create({
     marginHorizontal: 12,
     color: groknight.dim,
     fontSize: 11,
+    fontFamily: mono,
+  },
+  hint: {
+    fontSize: 12,
+    color: groknight.muted,
+    lineHeight: 16,
+    marginTop: 4,
+    fontFamily: mono,
+  },
+  errorText: {
+    color: groknight.red,
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 20,
+    textAlign: 'center',
     fontFamily: mono,
   },
 });

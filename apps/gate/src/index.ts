@@ -8,10 +8,12 @@ export { newIdentity } from './identity.js';
 export {
   KIND_PUT_USER,
   KIND_CREATE_GROUP,
+  KIND_EDIT_METADATA,
   KIND_STREAM_MESSAGE,
   KIND_REPO_ANNOUNCEMENT,
   createChannel,
   setMemberRole,
+  archiveChannel,
   announceRepo,
 } from './buzz.js';
 

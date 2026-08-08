@@ -175,10 +175,11 @@ export default function BuzzChat() {
         setTransport(t);
         setUserPubkey(identity.publicKey);
 
-        // Check if this channel is a subchannel (has parent)
-        const detail = await t.sessionRead(decodedId);
-        if (detail?.channelId) {
-          setParentChannelId(detail.channelId);
+        // Check if this channel is a subchannel (has parent).
+        // The parent linkage lives on the 9007 create event, not on 39000 metadata.
+        const parentId = await t.getParentChannelId(decodedId);
+        if (parentId) {
+          setParentChannelId(parentId);
         }
 
         // Check if channel is archived
@@ -186,7 +187,7 @@ export default function BuzzChat() {
         if (archived) setIsArchived(true);
 
         // P2: If in a subchannel, try to get merge target from control messages
-        if (detail?.channelId) {
+        if (parentId) {
           const mergeInfo = await t.getSubchannelMergeTarget(decodedId);
           if (mergeInfo) {
             setMergeTarget(mergeInfo.target);

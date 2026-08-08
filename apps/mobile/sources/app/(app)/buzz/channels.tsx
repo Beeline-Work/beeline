@@ -53,59 +53,66 @@ export default function BuzzChannels() {
 
         const list = await t.sessionsRead();
 
-        // P2: Enrich channels with subchannel info
-        const enriched: ChannelDisplayItem[] = [];
-        const parentItems: ChannelDisplayItem[] = [];
+        // P2: Enrich channels with subchannel info.
+        // Parent linkage lives on the 9007 create event (parent tag), not on
+        // 39000 metadata. Use getParentChannelId to check each channel.
+        const parentIds = new Set<string>();
+        const childMap = new Map<string, ChannelDisplayItem[]>();
+        const allItems: ChannelDisplayItem[] = [];
 
         for (const ch of list) {
-          // Check if this is a subchannel (has parentChannelId)
           try {
-            const detail = await t.sessionRead(ch.id);
-            const isParent = detail?.channelId ? false : true;
-            const archived = detail?.active === false;
-
-            if (detail?.channelId) {
+            const parentId = await (t as BuzzRigTransport).getParentChannelId(ch.id);
+            if (parentId) {
               // This is a subchannel
-              enriched.push({
-                ...ch,
-                isSubchannel: true,
-                parentChannelId: detail.channelId,
-                archived,
-              });
+              const item: ChannelDisplayItem = { ...ch, isSubchannel: true, parentChannelId: parentId };
+              allItems.push(item);
+              const siblings = childMap.get(parentId) ?? [];
+              siblings.push(item);
+              childMap.set(parentId, siblings);
             } else {
-              parentItems.push({ ...ch, archived });
+              // This is a parent TLC
+              allItems.push({ ...ch });
+              parentIds.add(ch.id);
             }
           } catch {
-            parentItems.push({ ...ch });
+            allItems.push({ ...ch });
           }
         }
 
-        // P2: For each parent, find their subchannels
+        // P2: For each parent, find their subchannels via listSubchannels
+        // to discover any subchannels the user isn't a direct member of.
         if ('listSubchannels' in t && typeof (t as BuzzRigTransport).listSubchannels === 'function') {
-          for (const parent of parentItems) {
+          for (const pid of parentIds) {
             try {
-              const subIds = await (t as BuzzRigTransport).listSubchannels(parent.id);
-              parent.subchannelCount = subIds.length;
+              const subIds = await (t as BuzzRigTransport).listSubchannels(pid);
+              const displayItem = allItems.find((item) => item.id === pid);
+              if (displayItem) {
+                displayItem.subchannelCount = subIds.length;
+              }
             } catch {
               // Ignore — not all channels support subchannel listing
             }
           }
         }
 
-        // Combine: parents first, then subchannels grouped under them
-        const grouped: ChannelDisplayItem[] = [...parentItems];
-        // Add subchannels after each parent
-        for (const parent of parentItems) {
-          const children = enriched.filter((ch) => ch.parentChannelId === parent.id);
-          if (children.length > 0) {
-            grouped.push(...children);
+        // Combine: parents first, then subchannels grouped under each parent.
+        const grouped: ChannelDisplayItem[] = [];
+        for (const item of allItems) {
+          if (!item.isSubchannel) {
+            grouped.push(item);
+            const children = item.id ? childMap.get(item.id) : undefined;
+            if (children && children.length > 0) {
+              grouped.push(...children);
+            }
           }
         }
-        // Add orphan subchannels (parent not in list)
-        const orphanSubs = enriched.filter(
-          (ch) => !parentItems.some((p) => p.id === ch.parentChannelId),
-        );
-        grouped.push(...orphanSubs);
+        // Also add any orphan subchannels (parent not in the user's channel list)
+        for (const item of allItems) {
+          if (item.isSubchannel && !grouped.includes(item)) {
+            grouped.push(item);
+          }
+        }
 
         if (!cancelled) {
           setDisplayChannels(grouped);
@@ -136,52 +143,61 @@ export default function BuzzChannels() {
   }, []);
 
   const handleRefresh = useCallback(async () => {
-    if (!transport) return;
+    if (!transport || !buzzTransport) return;
     setLoading(true);
     setError(null);
     try {
       const list = await transport.sessionsRead();
-      const enriched: ChannelDisplayItem[] = [];
-      const parentItems: ChannelDisplayItem[] = [];
+
+      const parentIds = new Set<string>();
+      const childMap = new Map<string, ChannelDisplayItem[]>();
+      const allItems: ChannelDisplayItem[] = [];
 
       for (const ch of list) {
         try {
-          const detail = await transport.sessionRead(ch.id);
-          if (detail?.channelId) {
-            enriched.push({
-              ...ch,
-              isSubchannel: true,
-              parentChannelId: detail.channelId,
-              archived: detail.active === false,
-            });
+          const parentId = await buzzTransport.getParentChannelId(ch.id);
+          if (parentId) {
+            const item: ChannelDisplayItem = { ...ch, isSubchannel: true, parentChannelId: parentId };
+            allItems.push(item);
+            const siblings = childMap.get(parentId) ?? [];
+            siblings.push(item);
+            childMap.set(parentId, siblings);
           } else {
-            parentItems.push({ ...ch, archived: detail?.active === false });
+            allItems.push({ ...ch });
+            parentIds.add(ch.id);
           }
         } catch {
-          parentItems.push({ ...ch });
+          allItems.push({ ...ch });
         }
       }
 
-      if (buzzTransport && 'listSubchannels' in buzzTransport) {
-        for (const parent of parentItems) {
-          try {
-            const subIds = await buzzTransport.listSubchannels(parent.id);
-            parent.subchannelCount = subIds.length;
-          } catch {
-            // ignore
+      for (const pid of parentIds) {
+        try {
+          const subIds = await buzzTransport.listSubchannels(pid);
+          const displayItem = allItems.find((item) => item.id === pid);
+          if (displayItem) {
+            displayItem.subchannelCount = subIds.length;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      const grouped: ChannelDisplayItem[] = [];
+      for (const item of allItems) {
+        if (!item.isSubchannel) {
+          grouped.push(item);
+          const children = item.id ? childMap.get(item.id) : undefined;
+          if (children && children.length > 0) {
+            grouped.push(...children);
           }
         }
       }
-
-      const grouped: ChannelDisplayItem[] = [...parentItems];
-      for (const parent of parentItems) {
-        const children = enriched.filter((ch) => ch.parentChannelId === parent.id);
-        if (children.length > 0) grouped.push(...children);
+      for (const item of allItems) {
+        if (item.isSubchannel && !grouped.includes(item)) {
+          grouped.push(item);
+        }
       }
-      const orphanSubs = enriched.filter(
-        (ch) => !parentItems.some((p) => p.id === ch.parentChannelId),
-      );
-      grouped.push(...orphanSubs);
 
       setDisplayChannels(grouped);
     } catch (err) {

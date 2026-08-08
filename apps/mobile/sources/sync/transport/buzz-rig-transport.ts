@@ -378,6 +378,15 @@ export class BuzzRigTransport implements RigTransport {
   }
 
   /**
+   * Resolve parent channel ID from the 9007 create event.
+   * Returns null if the channel is a top-level TLC (no parent).
+   */
+  async getParentChannelId(channelId: string): Promise<string | null> {
+    const client = await this.getClient();
+    return client.getParentChannelId(channelId);
+  }
+
+  /**
    * Get pubkey short npub for provenance display.
    */
   getPubkey(): string {

@@ -482,13 +482,11 @@ export default function BuzzChat() {
           <Text style={styles.channelName} numberOfLines={1}>
             {decodedId.slice(0, 12)}…
           </Text>
-          <Text style={styles.headerMeta}>
-            <Text style={styles.modelTag}>grok-4.5</Text>
-            {' · '}
-            <Text style={styles.pathTag}>~/buzzy</Text>
-            {' · '}
-            relay ok
-          </Text>
+          {mergeTarget && (
+            <Text style={styles.headerMeta}>
+              <Text style={styles.pathTag}>{mergeTarget.repo}</Text>
+            </Text>
+          )}
         </View>
         {isArchived && (
           <View style={styles.archivedBadge}>
@@ -501,7 +499,7 @@ export default function BuzzChat() {
       {mergeTarget && !isArchived && (
         <View style={styles.approvalBar}>
           <View style={styles.approvalInfo}>
-            <Text style={styles.prChip}>PR #{mergeTarget.branch} · CHECKS GREEN</Text>
+            <Text style={styles.prChip}>{mergeTarget.repo} · {mergeTarget.branch}</Text>
             <Text style={styles.approvalBarText}>
               {mergeTarget.branch} → {mergeTarget.tip.slice(0, 8)}
             </Text>
@@ -642,9 +640,6 @@ const styles = StyleSheet.create({
     color: groknight.muted,
     marginTop: 2,
     fontFamily: mono,
-  },
-  modelTag: {
-    color: groknight.teal,
   },
   pathTag: {
     color: groknight.orange,

@@ -4,8 +4,7 @@
  * P2: Distinguishes subchannels (shown indented under parent), archived status,
  *     and subchannel counts per parent.
  *
- * On mount, loads existing identity from storage, creates a BuzzRigTransport,
- * and calls sessionsRead. Tapping a channel navigates to the chat screen.
+ * GrokNight Terminal design.
  */
 import React, { useEffect, useState, useCallback } from 'react';
 import {
@@ -15,13 +14,14 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
-  Alert,
+  Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { loadBuzzIdentity, clearBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { BuzzRigTransport } from '@/sync/transport';
 import type { SessionSummary, RigTransport } from '@/sync/transport';
+import { groknight } from '@/buzz/groknight';
 
 type ChannelDisplayItem = SessionSummary & {
   isSubchannel?: boolean;
@@ -29,6 +29,8 @@ type ChannelDisplayItem = SessionSummary & {
   subchannelCount?: number;
   archived?: boolean;
 };
+
+const mono = Platform.select({ web: '"JetBrains Mono", monospace', default: 'monospace' });
 
 export default function BuzzChannels() {
   const insets = useSafeAreaInsets();
@@ -54,8 +56,6 @@ export default function BuzzChannels() {
         const list = await t.sessionsRead();
 
         // P2: Enrich channels with subchannel info.
-        // Parent linkage lives on the 9007 create event (parent tag), not on
-        // 39000 metadata. Use getParentChannelId to check each channel.
         const parentIds = new Set<string>();
         const childMap = new Map<string, ChannelDisplayItem[]>();
         const allItems: ChannelDisplayItem[] = [];
@@ -64,14 +64,12 @@ export default function BuzzChannels() {
           try {
             const parentId = await (t as BuzzRigTransport).getParentChannelId(ch.id);
             if (parentId) {
-              // This is a subchannel
               const item: ChannelDisplayItem = { ...ch, isSubchannel: true, parentChannelId: parentId };
               allItems.push(item);
               const siblings = childMap.get(parentId) ?? [];
               siblings.push(item);
               childMap.set(parentId, siblings);
             } else {
-              // This is a parent TLC
               allItems.push({ ...ch });
               parentIds.add(ch.id);
             }
@@ -80,8 +78,6 @@ export default function BuzzChannels() {
           }
         }
 
-        // P2: For each parent, find their subchannels via listSubchannels
-        // to discover any subchannels the user isn't a direct member of.
         if ('listSubchannels' in t && typeof (t as BuzzRigTransport).listSubchannels === 'function') {
           for (const pid of parentIds) {
             try {
@@ -91,7 +87,7 @@ export default function BuzzChannels() {
                 displayItem.subchannelCount = subIds.length;
               }
             } catch {
-              // Ignore — not all channels support subchannel listing
+              // Ignore
             }
           }
         }
@@ -107,7 +103,6 @@ export default function BuzzChannels() {
             }
           }
         }
-        // Also add any orphan subchannels (parent not in the user's channel list)
         for (const item of allItems) {
           if (item.isSubchannel && !grouped.includes(item)) {
             grouped.push(item);
@@ -210,7 +205,7 @@ export default function BuzzChannels() {
   if (loading) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <ActivityIndicator size="large" color="#0a84ff" />
+        <ActivityIndicator size="large" color={groknight.magenta} />
         <Text style={styles.loadingText}>Connecting to relay…</Text>
       </View>
     );
@@ -233,9 +228,9 @@ export default function BuzzChannels() {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>My Channels</Text>
+        <Text style={styles.headerTitle}>channels</Text>
         <TouchableOpacity onPress={handleLogout}>
-          <Text style={styles.logoutText}>Logout</Text>
+          <Text style={styles.logoutText}>logout</Text>
         </TouchableOpacity>
       </View>
 
@@ -263,7 +258,7 @@ export default function BuzzChannels() {
             <View style={styles.channelInfo}>
               <View style={styles.channelTitleRow}>
                 <Text style={styles.channelIcon}>
-                  {item.archived ? '📦' : item.isSubchannel ? '🛠' : '💬'}
+                  {item.archived ? '📦' : item.isSubchannel ? '🛠' : '#'}
                 </Text>
                 <Text
                   style={[
@@ -273,18 +268,18 @@ export default function BuzzChannels() {
                   ]}
                   numberOfLines={1}
                 >
-                  {item.title ?? `Channel ${item.id.slice(0, 8)}`}
+                  {item.title ?? `channel ${item.id.slice(0, 8)}`}
                 </Text>
                 {item.archived && (
                   <Text style={styles.archivedTag}>archived</Text>
                 )}
               </View>
               <Text style={styles.channelId}>
-                {item.isSubchannel ? '  subchannel' : ''} {item.id.slice(0, 8)}…
+                {item.id.slice(0, 12)}…
               </Text>
               {item.subchannelCount !== undefined && item.subchannelCount > 0 && (
                 <Text style={styles.subchannelCount}>
-                  {item.subchannelCount} subchannel{item.subchannelCount !== 1 ? 's' : ''}
+                  {item.subchannelCount} sub{item.subchannelCount !== 1 ? 's' : ''}
                 </Text>
               )}
             </View>
@@ -301,7 +296,7 @@ export default function BuzzChannels() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: groknight.bgTerminal,
   },
   center: {
     alignItems: 'center',
@@ -311,51 +306,61 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#222',
+    borderBottomColor: groknight.border,
+    backgroundColor: groknight.bgBase,
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#fff',
+    fontSize: 16,
+    fontWeight: '800',
+    color: groknight.textPrimary,
+    letterSpacing: 0.5,
   },
   logoutText: {
-    fontSize: 14,
-    color: '#ff453a',
+    fontSize: 12,
+    color: groknight.red,
+    fontFamily: mono,
+    letterSpacing: 0.3,
   },
   loadingText: {
     marginTop: 12,
     fontSize: 14,
-    color: '#888',
+    color: groknight.muted,
+    fontFamily: mono,
   },
   errorText: {
     fontSize: 14,
-    color: '#ff453a',
+    color: groknight.red,
     marginBottom: 16,
     textAlign: 'center',
     paddingHorizontal: 24,
+    fontFamily: mono,
   },
   retryButton: {
-    backgroundColor: '#0a84ff',
+    backgroundColor: groknight.bgHighlight,
     paddingVertical: 10,
     paddingHorizontal: 24,
-    borderRadius: 8,
+    borderRadius: 4,
     marginBottom: 12,
+    borderWidth: 1,
+    borderColor: groknight.border,
   },
   retryButtonText: {
-    color: '#fff',
+    color: groknight.textSecondary,
     fontSize: 14,
     fontWeight: '600',
+    fontFamily: mono,
   },
   logoutButton: {
     paddingVertical: 10,
     paddingHorizontal: 24,
   },
   logoutButtonText: {
-    color: '#ff453a',
+    color: groknight.red,
     fontSize: 14,
+    fontFamily: mono,
   },
   emptyContainer: {
     flex: 1,
@@ -368,26 +373,28 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#fff',
+    color: groknight.textPrimary,
     marginBottom: 8,
+    fontFamily: mono,
   },
   emptySubtitle: {
-    fontSize: 14,
-    color: '#888',
+    fontSize: 13,
+    color: groknight.muted,
     textAlign: 'center',
     lineHeight: 20,
+    fontFamily: mono,
   },
   channelItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
+    borderBottomColor: groknight.border,
   },
   subchannelItem: {
-    paddingLeft: 40,
-    backgroundColor: '#0a0a0f',
+    paddingLeft: 36,
+    backgroundColor: groknight.bgTerminal,
   },
   channelInfo: {
     flex: 1,
@@ -398,45 +405,50 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   channelIcon: {
-    fontSize: 14,
+    fontSize: 13,
     marginRight: 6,
+    color: groknight.muted,
   },
   channelTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+    color: groknight.textPrimary,
     flex: 1,
+    fontFamily: mono,
   },
   subchannelTitle: {
-    fontSize: 14,
-    color: '#8af',
+    fontSize: 13,
+    color: groknight.blue,
   },
   archivedTitle: {
-    color: '#888',
+    color: groknight.muted,
     textDecorationLine: 'line-through',
   },
   archivedTag: {
-    fontSize: 10,
-    color: '#888',
-    backgroundColor: '#333',
-    borderRadius: 4,
-    paddingHorizontal: 6,
+    fontSize: 9,
+    color: groknight.muted,
+    backgroundColor: groknight.bgHighlight,
+    borderRadius: 3,
+    paddingHorizontal: 5,
     paddingVertical: 1,
     marginLeft: 6,
+    fontFamily: mono,
+    letterSpacing: 0.5,
   },
   channelId: {
-    fontSize: 12,
-    color: '#666',
-    fontFamily: 'monospace',
+    fontSize: 11,
+    color: groknight.dim,
+    fontFamily: mono,
   },
   subchannelCount: {
-    fontSize: 11,
-    color: '#0a84ff',
+    fontSize: 10,
+    color: groknight.blue,
     marginTop: 2,
+    fontFamily: mono,
   },
   chevron: {
-    fontSize: 22,
-    color: '#555',
+    fontSize: 18,
+    color: groknight.gutter,
     marginLeft: 8,
   },
 });

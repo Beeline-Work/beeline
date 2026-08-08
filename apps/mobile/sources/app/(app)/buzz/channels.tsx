@@ -11,6 +11,7 @@ import {
   View,
   Text,
   FlatList,
+  TextInput,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
@@ -18,7 +19,13 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { loadBuzzIdentity, clearBuzzIdentity } from '@/auth/buzz-identity-storage';
+import {
+  loadBuzzIdentity,
+  clearBuzzIdentity,
+  getEffectiveRelayUrl,
+  saveRelayUrl,
+  DEFAULT_RELAY_URL,
+} from '@/auth/buzz-identity-storage';
 import { BuzzRigTransport } from '@/sync/transport';
 import type { SessionSummary, RigTransport } from '@/sync/transport';
 import { groknight } from '@/buzz/groknight';
@@ -32,6 +39,61 @@ type ChannelDisplayItem = SessionSummary & {
 
 const mono = Platform.select({ web: '"JetBrains Mono", monospace', default: 'monospace' });
 
+async function loadDisplayChannels(
+  transport: RigTransport,
+  buzzTransport: BuzzRigTransport,
+): Promise<ChannelDisplayItem[]> {
+  const list = await transport.sessionsRead();
+  const parentIds = new Set<string>();
+  const childMap = new Map<string, ChannelDisplayItem[]>();
+  const allItems: ChannelDisplayItem[] = [];
+
+  for (const channel of list) {
+    try {
+      const parentId = await buzzTransport.getParentChannelId(channel.id);
+      if (parentId) {
+        const item: ChannelDisplayItem = {
+          ...channel,
+          isSubchannel: true,
+          parentChannelId: parentId,
+        };
+        allItems.push(item);
+        const siblings = childMap.get(parentId) ?? [];
+        siblings.push(item);
+        childMap.set(parentId, siblings);
+      } else {
+        allItems.push({ ...channel });
+        parentIds.add(channel.id);
+      }
+    } catch {
+      allItems.push({ ...channel });
+    }
+  }
+
+  for (const parentId of parentIds) {
+    try {
+      const subchannelIds = await buzzTransport.listSubchannels(parentId);
+      const displayItem = allItems.find((item) => item.id === parentId);
+      if (displayItem) displayItem.subchannelCount = subchannelIds.length;
+    } catch {
+      // Ignore: not all channels support subchannel listing.
+    }
+  }
+
+  const grouped: ChannelDisplayItem[] = [];
+  for (const item of allItems) {
+    if (!item.isSubchannel) {
+      grouped.push(item);
+      grouped.push(...(childMap.get(item.id) ?? []));
+    }
+  }
+  for (const item of allItems) {
+    if (item.isSubchannel && !grouped.includes(item)) grouped.push(item);
+  }
+
+  return grouped;
+}
+
 export default function BuzzChannels() {
   const insets = useSafeAreaInsets();
   const [transport, setTransport] = useState<RigTransport | null>(null);
@@ -39,6 +101,9 @@ export default function BuzzChannels() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [buzzTransport, setBuzzTransport] = useState<BuzzRigTransport | null>(null);
+  const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_URL);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settingsRelayUrl, setSettingsRelayUrl] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -49,65 +114,13 @@ export default function BuzzChannels() {
           router.replace('/buzz/onboarding');
           return;
         }
-        const t = new BuzzRigTransport(identity);
+        const url = await getEffectiveRelayUrl();
+        setRelayUrl(url);
+        const t = new BuzzRigTransport(identity, url);
         setTransport(t);
         setBuzzTransport(t);
 
-        const list = await t.sessionsRead();
-
-        // P2: Enrich channels with subchannel info.
-        const parentIds = new Set<string>();
-        const childMap = new Map<string, ChannelDisplayItem[]>();
-        const allItems: ChannelDisplayItem[] = [];
-
-        for (const ch of list) {
-          try {
-            const parentId = await (t as BuzzRigTransport).getParentChannelId(ch.id);
-            if (parentId) {
-              const item: ChannelDisplayItem = { ...ch, isSubchannel: true, parentChannelId: parentId };
-              allItems.push(item);
-              const siblings = childMap.get(parentId) ?? [];
-              siblings.push(item);
-              childMap.set(parentId, siblings);
-            } else {
-              allItems.push({ ...ch });
-              parentIds.add(ch.id);
-            }
-          } catch {
-            allItems.push({ ...ch });
-          }
-        }
-
-        if ('listSubchannels' in t && typeof (t as BuzzRigTransport).listSubchannels === 'function') {
-          for (const pid of parentIds) {
-            try {
-              const subIds = await (t as BuzzRigTransport).listSubchannels(pid);
-              const displayItem = allItems.find((item) => item.id === pid);
-              if (displayItem) {
-                displayItem.subchannelCount = subIds.length;
-              }
-            } catch {
-              // Ignore
-            }
-          }
-        }
-
-        // Combine: parents first, then subchannels grouped under each parent.
-        const grouped: ChannelDisplayItem[] = [];
-        for (const item of allItems) {
-          if (!item.isSubchannel) {
-            grouped.push(item);
-            const children = item.id ? childMap.get(item.id) : undefined;
-            if (children && children.length > 0) {
-              grouped.push(...children);
-            }
-          }
-        }
-        for (const item of allItems) {
-          if (item.isSubchannel && !grouped.includes(item)) {
-            grouped.push(item);
-          }
-        }
+        const grouped = await loadDisplayChannels(t, t);
 
         if (!cancelled) {
           setDisplayChannels(grouped);
@@ -142,65 +155,42 @@ export default function BuzzChannels() {
     setLoading(true);
     setError(null);
     try {
-      const list = await transport.sessionsRead();
-
-      const parentIds = new Set<string>();
-      const childMap = new Map<string, ChannelDisplayItem[]>();
-      const allItems: ChannelDisplayItem[] = [];
-
-      for (const ch of list) {
-        try {
-          const parentId = await buzzTransport.getParentChannelId(ch.id);
-          if (parentId) {
-            const item: ChannelDisplayItem = { ...ch, isSubchannel: true, parentChannelId: parentId };
-            allItems.push(item);
-            const siblings = childMap.get(parentId) ?? [];
-            siblings.push(item);
-            childMap.set(parentId, siblings);
-          } else {
-            allItems.push({ ...ch });
-            parentIds.add(ch.id);
-          }
-        } catch {
-          allItems.push({ ...ch });
-        }
-      }
-
-      for (const pid of parentIds) {
-        try {
-          const subIds = await buzzTransport.listSubchannels(pid);
-          const displayItem = allItems.find((item) => item.id === pid);
-          if (displayItem) {
-            displayItem.subchannelCount = subIds.length;
-          }
-        } catch {
-          // ignore
-        }
-      }
-
-      const grouped: ChannelDisplayItem[] = [];
-      for (const item of allItems) {
-        if (!item.isSubchannel) {
-          grouped.push(item);
-          const children = item.id ? childMap.get(item.id) : undefined;
-          if (children && children.length > 0) {
-            grouped.push(...children);
-          }
-        }
-      }
-      for (const item of allItems) {
-        if (item.isSubchannel && !grouped.includes(item)) {
-          grouped.push(item);
-        }
-      }
-
-      setDisplayChannels(grouped);
+      setDisplayChannels(await loadDisplayChannels(transport, buzzTransport));
     } catch (err) {
       setError(String(err));
     } finally {
       setLoading(false);
     }
   }, [transport, buzzTransport]);
+
+  const handleSaveRelayUrl = useCallback(async () => {
+    const url = settingsRelayUrl.trim() || DEFAULT_RELAY_URL;
+    setLoading(true);
+    setError(null);
+    try {
+      const identity = await loadBuzzIdentity();
+      if (!identity) {
+        router.replace('/buzz/onboarding');
+        return;
+      }
+      await saveRelayUrl(url);
+      const nextTransport = new BuzzRigTransport(identity, url);
+      setTransport(nextTransport);
+      setBuzzTransport(nextTransport);
+      setRelayUrl(url);
+      setShowSettings(false);
+      setDisplayChannels(await loadDisplayChannels(nextTransport, nextTransport));
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [settingsRelayUrl]);
+
+  const openSettings = useCallback(() => {
+    setSettingsRelayUrl(relayUrl);
+    setShowSettings(true);
+  }, [relayUrl]);
 
   if (loading) {
     return (
@@ -229,10 +219,45 @@ export default function BuzzChannels() {
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>channels</Text>
-        <TouchableOpacity onPress={handleLogout}>
-          <Text style={styles.logoutText}>logout</Text>
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity onPress={openSettings} style={styles.settingsButton}>
+            <Text style={styles.settingsIcon}>⚙</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleLogout}>
+            <Text style={styles.logoutText}>logout</Text>
+          </TouchableOpacity>
+        </View>
       </View>
+
+      {showSettings && (
+        <View style={styles.settingsPanel}>
+          <Text style={styles.settingsLabel}>Relay URL</Text>
+          <TextInput
+            style={styles.settingsInput}
+            value={settingsRelayUrl}
+            onChangeText={setSettingsRelayUrl}
+            placeholder="https://buzz.trustysquire.ai"
+            placeholderTextColor={groknight.dim}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+          />
+          <View style={styles.settingsActions}>
+            <TouchableOpacity
+              style={styles.settingsSaveButton}
+              onPress={handleSaveRelayUrl}
+            >
+              <Text style={styles.settingsSaveText}>Save</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.settingsCancelButton}
+              onPress={() => setShowSettings(false)}
+            >
+              <Text style={styles.settingsCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
       <FlatList
         data={displayChannels}
@@ -318,11 +343,74 @@ const styles = StyleSheet.create({
     color: groknight.textPrimary,
     letterSpacing: 0.5,
   },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  settingsButton: {
+    padding: 4,
+  },
+  settingsIcon: {
+    fontSize: 18,
+    color: groknight.magenta,
+  },
   logoutText: {
     fontSize: 12,
     color: groknight.red,
     fontFamily: mono,
     letterSpacing: 0.3,
+  },
+  settingsPanel: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.border,
+    backgroundColor: groknight.bgBase,
+  },
+  settingsLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: groknight.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 6,
+  },
+  settingsInput: {
+    borderWidth: 1,
+    borderColor: groknight.border,
+    borderRadius: 4,
+    padding: 10,
+    fontSize: 14,
+    color: groknight.textPrimary,
+    backgroundColor: groknight.bgTerminal,
+    fontFamily: mono,
+  },
+  settingsActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  settingsSaveButton: {
+    backgroundColor: groknight.magenta,
+    borderRadius: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+  },
+  settingsSaveText: {
+    color: groknight.bgTerminal,
+    fontSize: 13,
+    fontWeight: '600',
+    fontFamily: mono,
+  },
+  settingsCancelButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+  },
+  settingsCancelText: {
+    color: groknight.muted,
+    fontSize: 13,
+    fontFamily: mono,
   },
   loadingText: {
     marginTop: 12,

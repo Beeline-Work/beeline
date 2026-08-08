@@ -19,22 +19,45 @@ import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 export default function Home() {
     const auth = useAuth();
     const [buzzCheckDone, setBuzzCheckDone] = React.useState(false);
+    const [buzzStorageError, setBuzzStorageError] = React.useState<string | null>(null);
 
     React.useEffect(() => {
-        loadBuzzIdentity().then((identity) => {
-            setBuzzCheckDone(true);
-            if (identity) {
-                // Buzz identity found — redirect to the Buzz channel list.
-                // This replaces Happy's auth gate. The Happy screens remain
-                // accessible via /server for troubleshooting.
-                router.replace('/buzz/channels');
-            }
-        });
+        void loadBuzzIdentity()
+            .then((identity) => {
+                setBuzzCheckDone(true);
+                if (identity) {
+                    // Buzz identity found — redirect to the Buzz channel list.
+                    // This replaces Happy's auth gate. The Happy screens remain
+                    // accessible via /server for troubleshooting.
+                    router.replace('/buzz/channels');
+                }
+            })
+            .catch((err: unknown) => {
+                setBuzzStorageError(String(err));
+                setBuzzCheckDone(true);
+            });
     }, []);
 
     // Wait for the async buzz check before rendering.
     if (!buzzCheckDone) {
         return null;
+    }
+
+    if (buzzStorageError) {
+        return (
+            <View style={styles.portraitContainer}>
+                <Text style={styles.title}>Secure storage unavailable</Text>
+                <Text accessibilityRole="alert" style={styles.subtitle}>
+                    Buzzy could not read your saved key: {buzzStorageError}
+                </Text>
+                <View style={styles.buttonContainer}>
+                    <RoundButton
+                        title="Open Buzz setup"
+                        onPress={() => router.push('/buzz/onboarding')}
+                    />
+                </View>
+            </View>
+        );
     }
 
     if (!auth.isAuthenticated) {
@@ -123,6 +146,18 @@ function NotAuthenticated() {
                     </View>
                 </>
             )}
+            <View style={styles.buzzSection}>
+                <View style={styles.buzzDivider}>
+                    <View style={styles.buzzDividerLine} />
+                    <Text style={styles.buzzDividerText}>Buzz</Text>
+                    <View style={styles.buzzDividerLine} />
+                </View>
+                <RoundButton
+                    title="Join a Buzz channel"
+                    onPress={() => router.push('/buzz/onboarding')}
+                    display="inverted"
+                />
+            </View>
         </View>
     );
 
@@ -183,6 +218,18 @@ function NotAuthenticated() {
                             </View>
                         </>)
                     }
+                    <View style={styles.buzzSection}>
+                        <View style={styles.buzzDivider}>
+                            <View style={styles.buzzDividerLine} />
+                            <Text style={styles.buzzDividerText}>Buzz</Text>
+                            <View style={styles.buzzDividerLine} />
+                        </View>
+                        <RoundButton
+                            title="Join a Buzz channel"
+                            onPress={() => router.push('/buzz/onboarding')}
+                            display="inverted"
+                        />
+                    </View>
                 </View>
             </View>
         </View>
@@ -280,5 +327,27 @@ const styles = StyleSheet.create((theme) => ({
     },
     landscapeButtonContainerSecondary: {
         width: 280,
+    },
+    buzzSection: {
+        marginTop: 24,
+        paddingHorizontal: 24,
+    },
+    buzzDivider: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 16,
+    },
+    buzzDividerLine: {
+        flex: 1,
+        height: 1,
+        backgroundColor: '#333',
+    },
+    buzzDividerText: {
+        marginHorizontal: 12,
+        color: '#666',
+        fontSize: 12,
+        fontWeight: '600',
+        textTransform: 'uppercase',
+        letterSpacing: 1,
     },
 }));

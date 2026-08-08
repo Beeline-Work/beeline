@@ -87,7 +87,7 @@ function InteractiveMobileGlassSurface({
             onTouchStart={handleTouchStart}
             onTouchEnd={handleTouchEnd}
             onTouchCancel={handleTouchCancel}
-            style={[style, bubbleStyle]}
+            style={[style, bubbleStyle as StyleProp<ViewStyle>]}
             animated
         />
     );

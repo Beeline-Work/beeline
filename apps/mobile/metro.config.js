@@ -26,6 +26,17 @@ config.resolver.blockList = [
 // `r.__H` crashes. Pin to the CJS bundles so everyone shares state.
 const preactCjsPath = require.resolve('preact');
 const preactHooksCjsPath = require.resolve('preact/hooks');
+// libsodium 0.8 ESM uses bare `import.meta.url`, which crashes when Metro
+// serves the web bundle as a classic <script> (not type=module). Pin CJS.
+// Use absolute paths (package "exports" block require.resolve of subpaths).
+const libsodiumCjsPath = path.join(
+  __dirname,
+  'node_modules/libsodium/dist/modules/libsodium.js',
+);
+const libsodiumWrappersCjsPath = path.join(
+  __dirname,
+  'node_modules/libsodium-wrappers/dist/modules/libsodium-wrappers.js',
+);
 const baseResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (moduleName === 'preact') {
@@ -33,6 +44,12 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   }
   if (moduleName === 'preact/hooks') {
     return { filePath: preactHooksCjsPath, type: 'sourceFile' };
+  }
+  if (moduleName === 'libsodium') {
+    return { filePath: libsodiumCjsPath, type: 'sourceFile' };
+  }
+  if (moduleName === 'libsodium-wrappers') {
+    return { filePath: libsodiumWrappersCjsPath, type: 'sourceFile' };
   }
   if (baseResolveRequest) {
     return baseResolveRequest(context, moduleName, platform);

@@ -42,3 +42,10 @@ export {
 } from './provisioning.js';
 
 export { nip98AuthHeader, buildNip98Event, NIP98_KIND } from './nip98.js';
+
+export {
+  buildApproval,
+  verifyApproval,
+  APPROVAL_MARKER,
+  type MergeTarget,
+} from './approval.js';

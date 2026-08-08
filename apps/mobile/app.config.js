@@ -24,6 +24,8 @@ const consoleLoggingDefault = {
     preview: true,
     production: false,
 }[variant];
+const buzzyRelayUrl = process.env.EXPO_PUBLIC_BUZZY_RELAY_URL || 'https://buzz.trustysquire.ai';
+const buzzyPushGatewayUrl = process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL || 'https://push.buzzrouter.com';
 
 function git(args) {
     try {
@@ -233,6 +235,8 @@ export default {
                 consoleLoggingDefault,
                 buildCommitSha: buildMetadata.commitSha,
                 buildCommitTimestamp: buildMetadata.commitTimestamp,
+                buzzyRelayUrl,
+                buzzyPushGatewayUrl,
             }
         },
         owner: "bulkacorp"

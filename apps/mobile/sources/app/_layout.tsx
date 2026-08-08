@@ -302,6 +302,18 @@ export default function RootLayout() {
                 '[PUSH ROUTING] notification.request.content.data:\n' +
                 stringifyNotificationPayload(response.notification.request.content.data)
             );
+            const notificationData = response.notification.request.content.data;
+            const buzzChannelId = typeof notificationData?.channelId === 'string'
+                ? notificationData.channelId
+                : null;
+            if (buzzChannelId) {
+                console.log(`[PUSH ROUTING] Navigating to Buzz channel: ${buzzChannelId}`);
+                router.push({
+                    pathname: '/buzz/chat/[channelId]',
+                    params: { channelId: buzzChannelId },
+                });
+                return;
+            }
             const route = getSessionRouteFromNotificationResponse(response);
             console.log(`[PUSH ROUTING] Computed route: ${route ?? 'null'}`);
             if (!route) {

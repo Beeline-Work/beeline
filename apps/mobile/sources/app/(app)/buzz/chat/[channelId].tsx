@@ -38,6 +38,8 @@ type DisplayMessage = {
   isSubchannelLink?: boolean;
   /** True if this is an archived notification. */
   isArchivedNotice?: boolean;
+  /** True if this is an agent-activity frame from the body. */
+  isAgentActivity?: boolean;
 };
 
 /** Known body pubkeys for provenance display (hardcoded for dev). */

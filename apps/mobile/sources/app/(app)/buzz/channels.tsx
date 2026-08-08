@@ -11,6 +11,7 @@ import {
   View,
   Text,
   FlatList,
+  TextInput,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
@@ -18,7 +19,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { loadBuzzIdentity, clearBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { loadBuzzIdentity, clearBuzzIdentity, getEffectiveRelayUrl, saveRelayUrl } from '@/auth/buzz-identity-storage';
 import { BuzzRigTransport } from '@/sync/transport';
 import type { SessionSummary, RigTransport } from '@/sync/transport';
 import { groknight } from '@/buzz/groknight';
@@ -39,6 +40,9 @@ export default function BuzzChannels() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [buzzTransport, setBuzzTransport] = useState<BuzzRigTransport | null>(null);
+  const [relayUrl, setRelayUrl] = useState('https://buzz.trustysquire.ai');
+  const [showSettings, setShowSettings] = useState(false);
+  const [settingsRelayUrl, setSettingsRelayUrl] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -49,7 +53,9 @@ export default function BuzzChannels() {
           router.replace('/buzz/onboarding');
           return;
         }
-        const t = new BuzzRigTransport(identity);
+        const url = await getEffectiveRelayUrl();
+        setRelayUrl(url);
+        const t = new BuzzRigTransport(identity, url);
         setTransport(t);
         setBuzzTransport(t);
 
@@ -202,6 +208,20 @@ export default function BuzzChannels() {
     }
   }, [transport, buzzTransport]);
 
+  const handleSaveRelayUrl = useCallback(async () => {
+    const url = settingsRelayUrl.trim() || 'https://buzz.trustysquire.ai';
+    await saveRelayUrl(url);
+    setRelayUrl(url);
+    setShowSettings(false);
+    // Reconnect by refreshing
+    handleRefresh();
+  }, [settingsRelayUrl, handleRefresh]);
+
+  const openSettings = useCallback(() => {
+    setSettingsRelayUrl(relayUrl);
+    setShowSettings(true);
+  }, [relayUrl]);
+
   if (loading) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
@@ -229,10 +249,45 @@ export default function BuzzChannels() {
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>channels</Text>
-        <TouchableOpacity onPress={handleLogout}>
-          <Text style={styles.logoutText}>logout</Text>
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity onPress={openSettings} style={styles.settingsButton}>
+            <Text style={styles.settingsIcon}>⚙</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleLogout}>
+            <Text style={styles.logoutText}>logout</Text>
+          </TouchableOpacity>
+        </View>
       </View>
+
+      {showSettings && (
+        <View style={styles.settingsPanel}>
+          <Text style={styles.settingsLabel}>Relay URL</Text>
+          <TextInput
+            style={styles.settingsInput}
+            value={settingsRelayUrl}
+            onChangeText={setSettingsRelayUrl}
+            placeholder="https://buzz.trustysquire.ai"
+            placeholderTextColor={groknight.dim}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+          />
+          <View style={styles.settingsActions}>
+            <TouchableOpacity
+              style={styles.settingsSaveButton}
+              onPress={handleSaveRelayUrl}
+            >
+              <Text style={styles.settingsSaveText}>Save</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.settingsCancelButton}
+              onPress={() => setShowSettings(false)}
+            >
+              <Text style={styles.settingsCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
       <FlatList
         data={displayChannels}
@@ -318,11 +373,74 @@ const styles = StyleSheet.create({
     color: groknight.textPrimary,
     letterSpacing: 0.5,
   },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  settingsButton: {
+    padding: 4,
+  },
+  settingsIcon: {
+    fontSize: 18,
+    color: groknight.magenta,
+  },
   logoutText: {
     fontSize: 12,
     color: groknight.red,
     fontFamily: mono,
     letterSpacing: 0.3,
+  },
+  settingsPanel: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.border,
+    backgroundColor: groknight.bgBase,
+  },
+  settingsLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: groknight.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 6,
+  },
+  settingsInput: {
+    borderWidth: 1,
+    borderColor: groknight.border,
+    borderRadius: 4,
+    padding: 10,
+    fontSize: 14,
+    color: groknight.textPrimary,
+    backgroundColor: groknight.bgTerminal,
+    fontFamily: mono,
+  },
+  settingsActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  settingsSaveButton: {
+    backgroundColor: groknight.magenta,
+    borderRadius: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+  },
+  settingsSaveText: {
+    color: groknight.bgTerminal,
+    fontSize: 13,
+    fontWeight: '600',
+    fontFamily: mono,
+  },
+  settingsCancelButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+  },
+  settingsCancelText: {
+    color: groknight.muted,
+    fontSize: 13,
+    fontFamily: mono,
   },
   loadingText: {
     marginTop: 12,

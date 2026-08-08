@@ -17,6 +17,9 @@ import {
 } from '@buzzy/buzz-client';
 
 const BUZZ_NSEC_KEY = '@buzzy/identity/nsec';
+const BUZZ_RELAY_URL_KEY = '@buzzy/identity/relayUrl';
+
+const DEFAULT_RELAY_URL = 'https://buzz.trustysquire.ai';
 
 function isWeb(): boolean {
   return (
@@ -114,6 +117,35 @@ export async function importBuzzIdentity(nsec: string): Promise<Identity> {
   const identity = loadIdentityFromNsec(nsec, 'buzzy-mobile');
   await saveBuzzIdentity(identity);
   return identity;
+}
+
+/** Load the stored relay URL (null if never set). */
+export async function loadRelayUrl(): Promise<string | null> {
+  try {
+    return await storageGet(BUZZ_RELAY_URL_KEY);
+  } catch (err) {
+    console.warn('Failed to load relay URL:', err);
+    return null;
+  }
+}
+
+/** Persist a relay URL for next launch. */
+export async function saveRelayUrl(url: string): Promise<void> {
+  await storageSet(BUZZ_RELAY_URL_KEY, url);
+}
+
+/** Forget the stored relay URL (reset to default). */
+export async function clearRelayUrl(): Promise<void> {
+  await storageRemove(BUZZ_RELAY_URL_KEY);
+}
+
+/**
+ * Load the relay URL with a sensible default.
+ * Returns the stored URL, falling back to DEFAULT_RELAY_URL.
+ */
+export async function getEffectiveRelayUrl(): Promise<string> {
+  const stored = await loadRelayUrl();
+  return stored ?? DEFAULT_RELAY_URL;
 }
 
 export { identityNpub };

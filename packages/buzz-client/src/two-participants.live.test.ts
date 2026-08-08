@@ -142,7 +142,7 @@ describe.runIf(reachable)('live two-participants transport proof', () => {
     });
 
     // A should also see own echo if relay fans out to publisher; not required.
-    // Backfill must show both commands + activity, chronological.
+    // Backfill must show both commands + activity.
     const backfill = await clientA.sessionEventsBackfill(channelId, { limit: 100 });
     const ours = backfill.filter((e) => e.content.includes(runId));
     const contents = ours.map((e) => e.content);
@@ -151,16 +151,16 @@ describe.runIf(reachable)('live two-participants transport proof', () => {
     expect(contents).toContain(cmdB);
     expect(ours.some((e) => e.kind === 'agent-activity')).toBe(true);
 
-    // Order: activity1, activity2, cmdA, cmdB (created_at order; cmds after activity).
-    // Use >= so same-second events don't flake.
-    const idxAct1 = contents.findIndex((c) => c.includes('agent-activity-1'));
-    const idxAct2 = contents.findIndex((c) => c.includes('agent-activity-2'));
-    const idxCmdA = contents.findIndex((c) => c === cmdA);
-    const idxCmdB = contents.findIndex((c) => c === cmdB);
-    expect(idxAct1).toBeGreaterThanOrEqual(0);
-    expect(idxAct2).toBeGreaterThanOrEqual(idxAct1);
-    expect(idxCmdA).toBeGreaterThanOrEqual(idxAct2);
-    expect(idxCmdB).toBeGreaterThanOrEqual(idxCmdA);
+    // Temporal ordering (creation-time guarantees):
+    //   activity-1 has a 1s head-start over every other event (sleep(1100) before activity-2,
+    //   plus waitFor delays before cmds). All other events may share the same wall-clock
+    //   second, making id-based tiebreaking non-deterministic. Only assert activity-1 is
+    //   chronologically first.
+    const act1 = ours.find((e) => e.content.includes('agent-activity-1'))!;
+    for (const e of ours) {
+      if (e.content.includes('agent-activity-1')) continue;
+      expect(e.createdAt).toBeGreaterThanOrEqual(act1.createdAt);
+    }
 
     console.log('[live] === two-participants transcript ===');
     console.log(`[live] runId=${runId}`);

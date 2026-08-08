@@ -28,7 +28,8 @@ import {
   BASE_URL,
 } from '@buzzy/gate';
 
-const LLM_ENV_FILE = '/home/lunchbox/firstmate2/data/buzzy-body/llm-egress.env';
+// LLM env file driven by env var; no hardcoded home path.
+const LLM_ENV_FILE = process.env.BUZZY_BODY_LLM_FILE ?? undefined;
 
 interface TestContext {
   body: Body | null;

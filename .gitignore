@@ -50,3 +50,10 @@ coverage/
 # Local agent/build scratch (not committed)
 .scratch/
 .scratch-target/
+
+# Expo (apps/mobile isolated install)
+apps/mobile/node_modules/
+apps/mobile/.expo/
+apps/mobile/dist/
+apps/mobile/web-build/
+apps/mobile/.turbo/

@@ -20,7 +20,7 @@ import { tmpdir } from 'node:os';
 import { Body } from './body.js';
 import { loadBodyConfig, hasLlmCredentials } from './config.js';
 import { AcpClient } from './acp.js';
-import { inventoryForMcpServers, hasWriteTools } from './mcp-inventory.js';
+import { inventoryForMcpServers, hasWriteTools, callMcpTool } from './mcp-inventory.js';
 import {
   newIdentity,
   createChannel,
@@ -28,7 +28,8 @@ import {
   BASE_URL,
 } from '@buzzy/gate';
 
-const LLM_ENV_FILE = '/home/lunchbox/firstmate2/data/buzzy-body/llm-egress.env';
+// LLM env file driven by env var; no hardcoded home path.
+const LLM_ENV_FILE = process.env.BUZZY_BODY_LLM_FILE ?? undefined;
 
 interface ReadonlyTestContext {
   body: Body | null;
@@ -193,16 +194,32 @@ describe('TLC read-only boundary', () => {
         60_000,
       );
 
-      const fileExists = existsSync(testFile);
-      if (!fileExists) {
-        // Agent may not have executed the tool (model-dependent).
-        // But the MCP IS mounted — that's the protocol boundary assertion.
-        console.log('[positive-control] file not created (model-dependent)');
+      // If LLM didn't write the file, call the MCP write tool directly
+      // to prove edit-mode write capability deterministically.
+      if (!existsSync(testFile)) {
+        console.log('[positive-control] LLM did not write; calling MCP tool directly');
         console.log('[positive-control] tool calls:', result.toolCalls);
-      } else {
-        console.log('[positive-control] file created successfully');
-        await rm(testFile, { force: true });
+
+        await callMcpTool(
+          {
+            name: 'buzz-dev-mcp',
+            command: config.mcpBinary,
+            args: [],
+            cwd: ctx.testDir,
+          },
+          'str_replace',
+          {
+            file_path: testFile,
+            old_string: '',
+            new_string: 'Hello from deterministic positive control',
+          },
+          15_000,
+        );
       }
+
+      expect(existsSync(testFile)).toBe(true);
+      console.log('[positive-control] file created successfully:', testFile);
+      await rm(testFile, { force: true });
 
       // Cleanup
       await editClient.stop();

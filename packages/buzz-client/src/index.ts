@@ -74,6 +74,7 @@ export {
   listChannelsForPubkey,
   getChannelMetadata,
   listSubchannels,
+  getParentChannelId,
   sendMessage,
   backfillMessages,
   eventIsAgentActivity,

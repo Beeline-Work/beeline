@@ -31,8 +31,11 @@ import {
 } from './rig-transport';
 import {
   createBuzzClient,
+  tagValue,
+  classifySessionEvent,
   type BuzzClient,
   type Identity,
+  type MergeTarget,
   type SessionEvent as BuzzSessionEvent,
 } from '@buzzy/buzz-client';
 
@@ -292,13 +295,118 @@ export class BuzzRigTransport implements RigTransport {
 
   // ── Merge (P2) ─────────────────────────────────────────────────────────
 
-  async mergeAction(
-    _input: MergeActionInput,
+  /**
+   * Read the merge target from the subchannel's control messages.
+   * The body posts a control message with repo/branch/tip tags on subchannel open.
+   */
+  async getSubchannelMergeTarget(subchannelId: string): Promise<{
+    target: MergeTarget;
+    channelId: string;
+  } | null> {
+    const client = await this.getClient();
+    // Backfill messages to find the body's control message with merge target.
+    const events = await client.sessionEventsBackfill(subchannelId, { limit: 20 });
+    for (const ev of events) {
+      if (
+        ev.kind !== 'other' &&
+        ev.kind !== 'message'
+      ) continue;
+      const tTags = (ev.event.tags ?? []).filter((t: string[]) => t[0] === 't');
+      const isControl = tTags.some((t: string[]) => t[1] === 'body-control');
+      if (!isControl) continue;
+      const repo = tagValue(ev.event, 'repo');
+      const branch = tagValue(ev.event, 'branch');
+      const tip = tagValue(ev.event, 'tip');
+      const parent = tagValue(ev.event, 'parent');
+      if (repo && branch && tip) {
+        return {
+          target: { repo, branch, tip },
+          channelId: parent ?? '',
+        };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Publish a merge approval for the given subchannel.
+   * Signs with the transport's identity key and submits to the relay.
+   */
+  async submitMergeApproval(
+    subchannelId: string,
+    target: MergeTarget,
   ): Promise<{ success: boolean; message?: string }> {
-    throw new RigTransportNotImplementedError(
-      'mergeAction',
-      'P2: emit workflow-approval grant (kinds 46010/46011/46012)',
-    );
+    try {
+      const client = await this.getClient();
+      await client.submitMergeApproval(subchannelId, target);
+      return { success: true, message: 'Approval sent for merge' };
+    } catch (err) {
+      return { success: false, message: String(err) };
+    }
+  }
+
+  /**
+   * Check if a channel is archived (from metadata or control messages).
+   */
+  async isChannelArchived(channelId: string): Promise<boolean> {
+    try {
+      const client = await this.getClient();
+      const meta = await client.getChannelMetadata(channelId);
+      if (meta?.archived) return true;
+      // Also check for archive status control messages.
+      const events = await client.sessionEventsBackfill(channelId, { limit: 10 });
+      for (const ev of events) {
+        const tTags = (ev.event.tags ?? []).filter((t: string[]) => t[0] === 't');
+        const isControl = tTags.some((t: string[]) => t[1] === 'body-control');
+        if (isControl) {
+          const status = tagValue(ev.event, 'status');
+          if (status === 'archived') return true;
+        }
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * List subchannels of a parent parentChannelId.
+   */
+  async listSubchannels(parentChannelId: string): Promise<string[]> {
+    const client = await this.getClient();
+    return client.listSubchannels(parentChannelId);
+  }
+
+  /**
+   * Resolve parent channel ID from the 9007 create event.
+   * Returns null if the channel is a top-level TLC (no parent).
+   */
+  async getParentChannelId(channelId: string): Promise<string | null> {
+    const client = await this.getClient();
+    return client.getParentChannelId(channelId);
+  }
+
+  /**
+   * Get pubkey short npub for provenance display.
+   */
+  getPubkey(): string {
+    return this.identity.publicKey;
+  }
+
+  async mergeAction(
+    input: MergeActionInput,
+  ): Promise<{ success: boolean; message?: string }> {
+    // The mergeAction in RigTransport uses approvalToken-style input.
+    // For P2, we read the merge target from the subchannel's control messages.
+    // If input has channelId, try to find merge target there.
+    if (input.channelId) {
+      const mergeInfo = await this.getSubchannelMergeTarget(input.channelId);
+      if (mergeInfo) {
+        return this.submitMergeApproval(input.channelId, mergeInfo.target);
+      }
+      return { success: false, message: 'No merge target found in subchannel messages' };
+    }
+    return { success: false, message: 'channelId required for merge action' };
   }
 
   // ── Terminals: STUB ────────────────────────────────────────────────────

@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, rm, writeFile, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execSync } from 'node:child_process';
 import { AcpClient, type McpServerWire } from './acp.js';
 import { projectActivity, postControlMessage } from './activity.js';
 import {
@@ -281,7 +281,19 @@ export class Body {
 
     this.subchannels.set(subchannelId, info);
 
-    // 7. Post link message to TLC.
+    const repoId = `${boundRepo.ownerHex}/${boundRepo.repo}`;
+    let tipHash = '';
+    try {
+      tipHash = execSync('git rev-parse HEAD', {
+        cwd: worktreePath,
+        encoding: 'utf8',
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1' },
+      }).trim();
+    } catch {
+      // If HEAD can't be resolved (empty repo), leave tip blank.
+    }
+
+    // 7. Post link message to TLC with repo and tip.
     await postControlMessage(
       tlcChannelId,
       this.bodyIdentity,
@@ -291,10 +303,12 @@ export class Body {
         ['session', sessionId],
         ['branch', featureBranch],
         ['mode', 'edit'],
+        ['repo', repoId],
+        ...(tipHash ? [['tip', tipHash]] : []),
       ],
     );
 
-    // 8. Post intro to subchannel.
+    // 8. Post intro to subchannel with merge target metadata.
     await postControlMessage(
       subchannelId,
       this.bodyIdentity,
@@ -303,6 +317,9 @@ export class Body {
         ['session', sessionId],
         ['parent', tlcChannelId],
         ['mode', 'edit'],
+        ['repo', repoId],
+        ['branch', featureBranch],
+        ...(tipHash ? [['tip', tipHash]] : []),
       ],
     );
 

@@ -1,6 +1,9 @@
 /**
  * Buzz Channel List — shows the user's channels (sessionsRead).
  *
+ * P2: Distinguishes subchannels (shown indented under parent), archived status,
+ *     and subchannel counts per parent.
+ *
  * On mount, loads existing identity from storage, creates a BuzzRigTransport,
  * and calls sessionsRead. Tapping a channel navigates to the chat screen.
  */
@@ -20,12 +23,20 @@ import { loadBuzzIdentity, clearBuzzIdentity } from '@/auth/buzz-identity-storag
 import { BuzzRigTransport } from '@/sync/transport';
 import type { SessionSummary, RigTransport } from '@/sync/transport';
 
+type ChannelDisplayItem = SessionSummary & {
+  isSubchannel?: boolean;
+  parentChannelId?: string;
+  subchannelCount?: number;
+  archived?: boolean;
+};
+
 export default function BuzzChannels() {
   const insets = useSafeAreaInsets();
   const [transport, setTransport] = useState<RigTransport | null>(null);
-  const [channels, setChannels] = useState<SessionSummary[]>([]);
+  const [displayChannels, setDisplayChannels] = useState<ChannelDisplayItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [buzzTransport, setBuzzTransport] = useState<BuzzRigTransport | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -38,9 +49,73 @@ export default function BuzzChannels() {
         }
         const t = new BuzzRigTransport(identity);
         setTransport(t);
+        setBuzzTransport(t);
+
         const list = await t.sessionsRead();
+
+        // P2: Enrich channels with subchannel info.
+        // Parent linkage lives on the 9007 create event (parent tag), not on
+        // 39000 metadata. Use getParentChannelId to check each channel.
+        const parentIds = new Set<string>();
+        const childMap = new Map<string, ChannelDisplayItem[]>();
+        const allItems: ChannelDisplayItem[] = [];
+
+        for (const ch of list) {
+          try {
+            const parentId = await (t as BuzzRigTransport).getParentChannelId(ch.id);
+            if (parentId) {
+              // This is a subchannel
+              const item: ChannelDisplayItem = { ...ch, isSubchannel: true, parentChannelId: parentId };
+              allItems.push(item);
+              const siblings = childMap.get(parentId) ?? [];
+              siblings.push(item);
+              childMap.set(parentId, siblings);
+            } else {
+              // This is a parent TLC
+              allItems.push({ ...ch });
+              parentIds.add(ch.id);
+            }
+          } catch {
+            allItems.push({ ...ch });
+          }
+        }
+
+        // P2: For each parent, find their subchannels via listSubchannels
+        // to discover any subchannels the user isn't a direct member of.
+        if ('listSubchannels' in t && typeof (t as BuzzRigTransport).listSubchannels === 'function') {
+          for (const pid of parentIds) {
+            try {
+              const subIds = await (t as BuzzRigTransport).listSubchannels(pid);
+              const displayItem = allItems.find((item) => item.id === pid);
+              if (displayItem) {
+                displayItem.subchannelCount = subIds.length;
+              }
+            } catch {
+              // Ignore — not all channels support subchannel listing
+            }
+          }
+        }
+
+        // Combine: parents first, then subchannels grouped under each parent.
+        const grouped: ChannelDisplayItem[] = [];
+        for (const item of allItems) {
+          if (!item.isSubchannel) {
+            grouped.push(item);
+            const children = item.id ? childMap.get(item.id) : undefined;
+            if (children && children.length > 0) {
+              grouped.push(...children);
+            }
+          }
+        }
+        // Also add any orphan subchannels (parent not in the user's channel list)
+        for (const item of allItems) {
+          if (item.isSubchannel && !grouped.includes(item)) {
+            grouped.push(item);
+          }
+        }
+
         if (!cancelled) {
-          setChannels(list);
+          setDisplayChannels(grouped);
         }
       } catch (err) {
         if (!cancelled) {
@@ -56,7 +131,7 @@ export default function BuzzChannels() {
   }, []);
 
   const handleChannelPress = useCallback(
-    (channel: SessionSummary) => {
+    (channel: ChannelDisplayItem) => {
       router.push(`/buzz/chat/${encodeURIComponent(channel.id)}`);
     },
     [],
@@ -68,18 +143,69 @@ export default function BuzzChannels() {
   }, []);
 
   const handleRefresh = useCallback(async () => {
-    if (!transport) return;
+    if (!transport || !buzzTransport) return;
     setLoading(true);
     setError(null);
     try {
       const list = await transport.sessionsRead();
-      setChannels(list);
+
+      const parentIds = new Set<string>();
+      const childMap = new Map<string, ChannelDisplayItem[]>();
+      const allItems: ChannelDisplayItem[] = [];
+
+      for (const ch of list) {
+        try {
+          const parentId = await buzzTransport.getParentChannelId(ch.id);
+          if (parentId) {
+            const item: ChannelDisplayItem = { ...ch, isSubchannel: true, parentChannelId: parentId };
+            allItems.push(item);
+            const siblings = childMap.get(parentId) ?? [];
+            siblings.push(item);
+            childMap.set(parentId, siblings);
+          } else {
+            allItems.push({ ...ch });
+            parentIds.add(ch.id);
+          }
+        } catch {
+          allItems.push({ ...ch });
+        }
+      }
+
+      for (const pid of parentIds) {
+        try {
+          const subIds = await buzzTransport.listSubchannels(pid);
+          const displayItem = allItems.find((item) => item.id === pid);
+          if (displayItem) {
+            displayItem.subchannelCount = subIds.length;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      const grouped: ChannelDisplayItem[] = [];
+      for (const item of allItems) {
+        if (!item.isSubchannel) {
+          grouped.push(item);
+          const children = item.id ? childMap.get(item.id) : undefined;
+          if (children && children.length > 0) {
+            grouped.push(...children);
+          }
+        }
+      }
+      for (const item of allItems) {
+        if (item.isSubchannel && !grouped.includes(item)) {
+          grouped.push(item);
+        }
+      }
+
+      setDisplayChannels(grouped);
     } catch (err) {
       setError(String(err));
     } finally {
       setLoading(false);
     }
-  }, [transport]);
+  }, [transport, buzzTransport]);
 
   if (loading) {
     return (
@@ -114,9 +240,9 @@ export default function BuzzChannels() {
       </View>
 
       <FlatList
-        data={channels}
-        keyExtractor={(item: SessionSummary) => item.id}
-        contentContainerStyle={channels.length === 0 ? styles.emptyContainer : undefined}
+        data={displayChannels}
+        keyExtractor={(item: ChannelDisplayItem) => item.id}
+        contentContainerStyle={displayChannels.length === 0 ? styles.emptyContainer : undefined}
         ListEmptyComponent={
           <View style={styles.emptyState}>
             <Text style={styles.emptyTitle}>No channels yet</Text>
@@ -126,16 +252,41 @@ export default function BuzzChannels() {
             </Text>
           </View>
         }
-        renderItem={({ item }: { item: SessionSummary }) => (
+        renderItem={({ item }: { item: ChannelDisplayItem }) => (
           <TouchableOpacity
-            style={styles.channelItem}
+            style={[
+              styles.channelItem,
+              item.isSubchannel && styles.subchannelItem,
+            ]}
             onPress={() => handleChannelPress(item)}
           >
             <View style={styles.channelInfo}>
-              <Text style={styles.channelTitle}>
-                {item.title ?? `Channel ${item.id.slice(0, 8)}`}
+              <View style={styles.channelTitleRow}>
+                <Text style={styles.channelIcon}>
+                  {item.archived ? '📦' : item.isSubchannel ? '🛠' : '💬'}
+                </Text>
+                <Text
+                  style={[
+                    styles.channelTitle,
+                    item.isSubchannel && styles.subchannelTitle,
+                    item.archived && styles.archivedTitle,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {item.title ?? `Channel ${item.id.slice(0, 8)}`}
+                </Text>
+                {item.archived && (
+                  <Text style={styles.archivedTag}>archived</Text>
+                )}
+              </View>
+              <Text style={styles.channelId}>
+                {item.isSubchannel ? '  subchannel' : ''} {item.id.slice(0, 8)}…
               </Text>
-              <Text style={styles.channelId}>{item.id.slice(0, 8)}…</Text>
+              {item.subchannelCount !== undefined && item.subchannelCount > 0 && (
+                <Text style={styles.subchannelCount}>
+                  {item.subchannelCount} subchannel{item.subchannelCount !== 1 ? 's' : ''}
+                </Text>
+              )}
             </View>
             <Text style={styles.chevron}>›</Text>
           </TouchableOpacity>
@@ -234,19 +385,54 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#1a1a1a',
   },
+  subchannelItem: {
+    paddingLeft: 40,
+    backgroundColor: '#0a0a0f',
+  },
   channelInfo: {
     flex: 1,
+  },
+  channelTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  channelIcon: {
+    fontSize: 14,
+    marginRight: 6,
   },
   channelTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#fff',
-    marginBottom: 2,
+    flex: 1,
+  },
+  subchannelTitle: {
+    fontSize: 14,
+    color: '#8af',
+  },
+  archivedTitle: {
+    color: '#888',
+    textDecorationLine: 'line-through',
+  },
+  archivedTag: {
+    fontSize: 10,
+    color: '#888',
+    backgroundColor: '#333',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    marginLeft: 6,
   },
   channelId: {
     fontSize: 12,
     color: '#666',
     fontFamily: 'monospace',
+  },
+  subchannelCount: {
+    fontSize: 11,
+    color: '#0a84ff',
+    marginTop: 2,
   },
   chevron: {
     fontSize: 22,

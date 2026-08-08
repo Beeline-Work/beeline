@@ -47,6 +47,10 @@ coverage/
 # Mac
 .DS_Store
 
+# Local agent/build scratch (not committed)
+.scratch/
+.scratch-target/
+
 # Expo (apps/mobile isolated install)
 apps/mobile/node_modules/
 apps/mobile/.expo/

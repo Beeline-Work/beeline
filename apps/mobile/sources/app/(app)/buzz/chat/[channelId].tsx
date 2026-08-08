@@ -1,9 +1,8 @@
 /**
  * Buzz Chat — single channel/session chat screen (P2: subchannels + merge + provenance).
  *
- * P1: backfill + live subscribe + send.
- * P2: subchannel links in parent chat, Approve button in subchannels,
- *     merge-summary rendering, archived read-only mode, pubkey provenance.
+ * GrokNight Terminal design: near-black flat surfaces, role accent bars,
+ * diamond tool bullets, gold approval gates, monospace typography.
  */
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
@@ -21,8 +20,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { BuzzRigTransport } from '@/sync/transport';
-import { identityNpub, encodeNpub, type MergeTarget } from '@buzzy/buzz-client';
+import { encodeNpub, type MergeTarget } from '@buzzy/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
+import { groknight } from '@/buzz/groknight';
 
 type DisplayMessage = {
   id: string;
@@ -44,7 +44,8 @@ type DisplayMessage = {
 
 /** Known body pubkeys for provenance display (hardcoded for dev). */
 const BODY_PUBKEYS = new Set<string>();
-// Populated dynamically as we discover them.
+
+const mono = Platform.select({ web: '"JetBrains Mono", monospace', default: 'monospace' });
 
 /** Short npub display (first 12 chars of npub1...). */
 function shortNpub(pubkeyHex: string): string {
@@ -176,7 +177,6 @@ export default function BuzzChat() {
         setUserPubkey(identity.publicKey);
 
         // Check if this channel is a subchannel (has parent).
-        // The parent linkage lives on the 9007 create event, not on 39000 metadata.
         const parentId = await t.getParentChannelId(decodedId);
         if (parentId) {
           setParentChannelId(parentId);
@@ -435,47 +435,23 @@ export default function BuzzChat() {
         );
       }
 
-      // ── Agent activity (assistant delta) ─────────────────────────
-      if (eventHasTag(
-        // Reconstruct from the display item — this is best-effort
-        // We check by looking for agent-activity markers in our known events
-        { type: 'raw', sessionId: decodedId, payload: { id: item.id } } as SessionEvent,
-        't', 'agent-activity'
-      )) {
-        return (
-          <View style={[styles.messageBubble, styles.agentBubble]}>
-            <Text style={styles.provenanceLabel}>🤖 Agent</Text>
-            <Text style={styles.messageText}>{item.text}</Text>
-            {item.pubkey && (
-              <Text style={styles.provenanceText}>{shortNpub(item.pubkey)}</Text>
-            )}
-          </View>
-        );
-      }
-
       // ── Regular message bubble ───────────────────────────────────
       const isBody = item.pubkey && BODY_PUBKEYS.has(item.pubkey);
       const isOwn = item.isUser;
+      const isAgent = item.isAgentActivity || isBody;
 
       return (
-        <View
-          style={[
-            styles.messageBubble,
-            isOwn ? styles.userBubble : styles.otherBubble,
-          ]}
-        >
-          {!isOwn && item.pubkey && (
-            <Text style={styles.provenanceText}>
-              {isBody ? '🛠 Body' : shortNpub(item.pubkey)}
-            </Text>
-          )}
-          {isOwn && (
-            <Text style={[styles.provenanceText, styles.ownProvenance]}>you</Text>
-          )}
-          <Text style={styles.messageText}>{item.text}</Text>
-          <Text style={styles.messageTime}>
-            {new Date(item.timestamp).toLocaleTimeString()}
+        <View style={[
+          styles.messageBubble,
+          isAgent ? styles.agentBlock : styles.userBlock,
+        ]}>
+          <Text style={[styles.roleLabel, isAgent ? styles.roleAgent : styles.roleUser]}>
+            {isOwn ? 'YOU' : (isAgent ? 'BUZZY' : shortNpub(item.pubkey ?? ''))}
           </Text>
+          <Text style={styles.messageText}>{item.text}</Text>
+          {item.pubkey && !isOwn && !isAgent && (
+            <Text style={styles.provenanceText}>{shortNpub(item.pubkey)}</Text>
+          )}
         </View>
       );
     },
@@ -485,8 +461,8 @@ export default function BuzzChat() {
   if (loading) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <ActivityIndicator size="large" color="#0a84ff" />
-        <Text style={styles.loadingText}>Loading channel…</Text>
+        <ActivityIndicator size="large" color={groknight.magenta} />
+        <Text style={styles.loadingText}>session loading…</Text>
       </View>
     );
   }
@@ -497,16 +473,24 @@ export default function BuzzChat() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
+      {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.backButton}>‹ Back</Text>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <Text style={styles.backText}>‹</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={1}>
-          {decodedId.slice(0, 12)}…
-        </Text>
+        <View style={styles.headerCenter}>
+          <Text style={styles.channelName} numberOfLines={1}>
+            {decodedId.slice(0, 12)}…
+          </Text>
+          {mergeTarget && (
+            <Text style={styles.headerMeta}>
+              <Text style={styles.pathTag}>{mergeTarget.repo}</Text>
+            </Text>
+          )}
+        </View>
         {isArchived && (
           <View style={styles.archivedBadge}>
-            <Text style={styles.archivedBadgeText}>Archived</Text>
+            <Text style={styles.archivedBadgeText}>archived</Text>
           </View>
         )}
       </View>
@@ -514,23 +498,26 @@ export default function BuzzChat() {
       {/* P2: Merge approval bar for subchannels with a merge target */}
       {mergeTarget && !isArchived && (
         <View style={styles.approvalBar}>
-          <Text style={styles.approvalBarText}>
-            Ready to merge: {mergeTarget.branch} → {mergeTarget.tip.slice(0, 8)}
-          </Text>
+          <View style={styles.approvalInfo}>
+            <Text style={styles.prChip}>{mergeTarget.repo} · {mergeTarget.branch}</Text>
+            <Text style={styles.approvalBarText}>
+              {mergeTarget.branch} → {mergeTarget.tip.slice(0, 8)}
+            </Text>
+          </View>
           {approvalState === 'none' && (
             <TouchableOpacity style={styles.approveButton} onPress={handleApprove}>
-              <Text style={styles.approveButtonText}>Approve</Text>
+              <Text style={styles.approveButtonText}>◆ APPROVE MERGE</Text>
             </TouchableOpacity>
           )}
           {approvalState === 'sending' && (
             <View style={styles.approvalPending}>
-              <ActivityIndicator size="small" color="#fff" />
-              <Text style={styles.approvalStateText}>Sending…</Text>
+              <ActivityIndicator size="small" color={groknight.gold} />
+              <Text style={styles.approvalStateText}>sending…</Text>
             </View>
           )}
           {approvalState === 'sent' && (
             <View style={styles.approvalSent}>
-              <Text style={styles.approvalStateText}>✓ Sent for approval</Text>
+              <Text style={styles.approvalSentText}>✓ approval sent</Text>
             </View>
           )}
         </View>
@@ -545,10 +532,10 @@ export default function BuzzChat() {
         renderItem={renderItem}
         ListEmptyComponent={
           <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>No messages yet</Text>
+            <Text style={styles.emptyText}>empty channel</Text>
             {subchannelIds.length > 0 && (
               <View style={styles.subchannelLinks}>
-                <Text style={styles.subchannelLinksTitle}>Subchannels</Text>
+                <Text style={styles.subchannelLinksTitle}>subchannels</Text>
                 {subchannelIds.map((sid) => (
                   <TouchableOpacity
                     key={sid}
@@ -569,31 +556,34 @@ export default function BuzzChat() {
         }
       />
 
-      {/* P2: Archived channels are read-only — disable the input */}
+      {/* P2: Archived channels are read-only */}
       {isArchived ? (
         <View style={[styles.archivedInputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-          <Text style={styles.archivedInputText}>This channel is archived (read-only)</Text>
+          <Text style={styles.archivedInputText}>channel archived (read-only)</Text>
         </View>
       ) : (
         <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-          <TextInput
-            style={styles.input}
-            value={inputText}
-            onChangeText={setInputText}
-            placeholder="Type a message…"
-            placeholderTextColor="#666"
-            multiline
-          />
-          <TouchableOpacity
-            style={[
-              styles.sendButton,
-              (!inputText.trim() || sending) && styles.sendButtonDisabled,
-            ]}
-            onPress={handleSend}
-            disabled={!inputText.trim() || sending}
-          >
-            <Text style={styles.sendButtonText}>Send</Text>
-          </TouchableOpacity>
+          <View style={styles.composer}>
+            <Text style={styles.composerPrefix}>›</Text>
+            <TextInput
+              style={styles.input}
+              value={inputText}
+              onChangeText={setInputText}
+              placeholder="steer the agent…"
+              placeholderTextColor={groknight.dim}
+              multiline
+            />
+            <TouchableOpacity
+              style={[
+                styles.sendButton,
+                (!inputText.trim() || sending) && styles.sendButtonDisabled,
+              ]}
+              onPress={handleSend}
+              disabled={!inputText.trim() || sending}
+            >
+              <Text style={styles.sendButtonText}>⏎</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
     </KeyboardAvoidingView>
@@ -603,251 +593,308 @@ export default function BuzzChat() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: groknight.bgTerminal,
   },
   center: {
     alignItems: 'center',
     justifyContent: 'center',
   },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 13,
+    color: groknight.muted,
+    fontFamily: mono,
+  },
+
+  // ── Header ──────────────────────────────────────────────────────
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#222',
+    borderBottomColor: groknight.border,
+    backgroundColor: groknight.bgBase,
   },
   backButton: {
-    fontSize: 16,
-    color: '#0a84ff',
-    minWidth: 60,
+    marginRight: 8,
+    paddingRight: 4,
   },
-  headerTitle: {
+  backText: {
+    fontSize: 22,
+    color: groknight.muted,
+    fontFamily: mono,
+  },
+  headerCenter: {
     flex: 1,
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
-    textAlign: 'center',
-    fontFamily: 'monospace',
+  },
+  channelName: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: groknight.textPrimary,
+    letterSpacing: 0.3,
+    fontFamily: mono,
+  },
+  headerMeta: {
+    fontSize: 10,
+    color: groknight.muted,
+    marginTop: 2,
+    fontFamily: mono,
+  },
+  pathTag: {
+    color: groknight.orange,
   },
   archivedBadge: {
-    backgroundColor: '#555',
-    borderRadius: 4,
-    paddingHorizontal: 8,
+    backgroundColor: groknight.bgHighlight,
+    borderRadius: 3,
+    paddingHorizontal: 6,
     paddingVertical: 2,
-    minWidth: 60,
-    alignItems: 'flex-end',
   },
   archivedBadgeText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '600',
+    color: groknight.muted,
+    fontSize: 10,
+    fontFamily: mono,
+    letterSpacing: 0.3,
   },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: '#888',
-  },
+
+  // ── Message blocks ──────────────────────────────────────────────
   messageList: {
     flex: 1,
   },
   messageListContent: {
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     paddingVertical: 8,
   },
   messageBubble: {
-    maxWidth: '80%',
-    padding: 10,
-    borderRadius: 12,
-    marginBottom: 8,
+    position: 'relative',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingLeft: 12,
+    marginBottom: 6,
   },
-  userBubble: {
-    backgroundColor: '#0a84ff',
-    alignSelf: 'flex-end',
-    borderBottomRightRadius: 4,
-  },
-  otherBubble: {
-    backgroundColor: '#1c1c1e',
-    alignSelf: 'flex-start',
-    borderBottomLeftRadius: 4,
-  },
-  agentBubble: {
-    backgroundColor: '#1a3a1a',
-    alignSelf: 'flex-start',
-    borderBottomLeftRadius: 4,
+  /** Left accent bar via borderLeft — 2px, color-coded by role */
+  agentBlock: {
     borderLeftWidth: 2,
-    borderLeftColor: '#4caf50',
+    borderLeftColor: groknight.magenta,
+  },
+  userBlock: {
+    borderLeftWidth: 2,
+    borderLeftColor: groknight.textSecondary,
+  },
+  roleLabel: {
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    marginBottom: 3,
+  },
+  roleAgent: {
+    color: groknight.magenta,
+  },
+  roleUser: {
+    color: groknight.muted,
   },
   messageText: {
-    fontSize: 15,
-    color: '#fff',
-    lineHeight: 20,
-  },
-  messageTime: {
-    fontSize: 10,
-    color: 'rgba(255,255,255,0.5)',
-    marginTop: 4,
-    alignSelf: 'flex-end',
+    fontSize: 13,
+    color: groknight.textSecondary,
+    lineHeight: 18,
+    fontFamily: mono,
   },
   provenanceText: {
-    fontSize: 10,
-    color: '#8af',
-    marginBottom: 4,
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
+    fontSize: 9,
+    color: groknight.dim,
+    marginTop: 4,
+    fontFamily: mono,
   },
-  ownProvenance: {
-    color: '#8af',
-    textAlign: 'right',
-  },
-  provenanceLabel: {
-    fontSize: 11,
-    color: '#4caf50',
-    fontWeight: '600',
-    marginBottom: 4,
-  },
+
   // ── Subchannel link ─────────────────────────────────────────────
   subchannelLinkBubble: {
-    backgroundColor: '#1a2a3a',
-    borderRadius: 12,
+    backgroundColor: groknight.bgHighlight,
+    borderRadius: 4,
     padding: 12,
-    marginBottom: 8,
-    borderLeftWidth: 3,
-    borderLeftColor: '#0a84ff',
+    marginBottom: 6,
+    borderLeftWidth: 2,
+    borderLeftColor: groknight.blue,
   },
   subchannelLinkTitle: {
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: '700',
-    color: '#0a84ff',
+    color: groknight.blue,
     marginBottom: 4,
+    fontFamily: mono,
   },
   subchannelLinkText: {
-    fontSize: 13,
-    color: '#aaa',
+    fontSize: 12,
+    color: groknight.muted,
     marginBottom: 8,
-    lineHeight: 18,
+    lineHeight: 16,
+    fontFamily: mono,
   },
   subchannelLinkButton: {
-    backgroundColor: '#0a84ff',
-    borderRadius: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    backgroundColor: groknight.bgHover,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: groknight.border,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
     alignSelf: 'flex-start',
   },
   subchannelLinkButtonText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '600',
+    color: groknight.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+    fontFamily: mono,
+    letterSpacing: 0.3,
   },
+
   // ── Merge summary ───────────────────────────────────────────────
   mergeSummaryBubble: {
-    backgroundColor: '#1a3a1a',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
-    borderLeftWidth: 3,
-    borderLeftColor: '#4caf50',
+    backgroundColor: groknight.bgBase,
+    borderRadius: 4,
+    padding: 10,
+    marginBottom: 6,
+    borderLeftWidth: 2,
+    borderLeftColor: groknight.green,
   },
   mergeSummaryTitle: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '700',
-    color: '#4caf50',
+    color: groknight.green,
     marginBottom: 4,
+    fontFamily: mono,
   },
   mergeSummaryText: {
-    fontSize: 13,
-    color: '#ccc',
-    lineHeight: 18,
+    fontSize: 12,
+    color: groknight.textSecondary,
+    lineHeight: 16,
+    fontFamily: mono,
   },
   mergeSummaryPubkey: {
-    fontSize: 10,
-    color: '#4caf50',
+    fontSize: 9,
+    color: groknight.dim,
     marginTop: 4,
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
+    fontFamily: mono,
   },
+
   // ── Archived notice ─────────────────────────────────────────────
   archivedBubble: {
-    backgroundColor: '#333',
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 8,
+    backgroundColor: groknight.bgHighlight,
+    borderRadius: 4,
+    padding: 8,
+    marginBottom: 6,
     alignSelf: 'center',
     maxWidth: '90%',
   },
   archivedText: {
-    fontSize: 13,
-    color: '#aaa',
+    fontSize: 11,
+    color: groknight.muted,
     textAlign: 'center',
+    fontFamily: mono,
   },
+
   // ── Approval bar ────────────────────────────────────────────────
   approvalBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     paddingVertical: 8,
-    backgroundColor: '#1a2a1a',
+    backgroundColor: groknight.bgBase,
     borderBottomWidth: 1,
-    borderBottomColor: '#333',
+    borderBottomColor: groknight.border,
+    gap: 8,
+  },
+  approvalInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  prChip: {
+    fontSize: 10,
+    fontWeight: '700',
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 3,
+    letterSpacing: 0.3,
+    color: groknight.green,
+    backgroundColor: groknight.greenDarkBg,
+    borderWidth: 1,
+    borderColor: '#9ece6a44',
+    fontFamily: mono,
+    overflow: 'hidden',
   },
   approvalBarText: {
     flex: 1,
-    fontSize: 12,
-    color: '#aaa',
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
+    fontSize: 10,
+    color: groknight.muted,
+    fontFamily: mono,
   },
   approveButton: {
-    backgroundColor: '#30d158',
-    borderRadius: 6,
-    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: groknight.gold,
+    borderRadius: 4,
+    paddingVertical: 10,
     paddingHorizontal: 14,
+    alignItems: 'center',
+    backgroundColor: '#ffdb8d12',
   },
   approveButtonText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '700',
+    color: groknight.gold,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    fontFamily: mono,
   },
   approvalPending: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 6,
+    paddingVertical: 10,
   },
   approvalStateText: {
-    fontSize: 12,
-    color: '#aaa',
-    marginLeft: 6,
+    fontSize: 11,
+    color: groknight.muted,
+    fontFamily: mono,
   },
   approvalSent: {
-    backgroundColor: '#1a3a1a',
-    borderRadius: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: groknight.green,
+    borderRadius: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    backgroundColor: '#9ece6a12',
   },
+  approvalSentText: {
+    color: groknight.green,
+    fontSize: 12,
+    fontWeight: '700',
+    fontFamily: mono,
+  },
+
   // ── Subchannel links (empty state) ──────────────────────────────
   subchannelLinks: {
     marginTop: 24,
     paddingHorizontal: 16,
   },
   subchannelLinksTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#888',
+    fontSize: 11,
+    fontWeight: '700',
+    color: groknight.muted,
     marginBottom: 8,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
+    letterSpacing: 0.8,
+    fontFamily: mono,
   },
   subchannelLinkItem: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
+    borderBottomColor: groknight.border,
   },
   subchannelLinkItemText: {
-    color: '#0a84ff',
-    fontSize: 14,
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
+    color: groknight.blue,
+    fontSize: 12,
+    fontFamily: mono,
   },
-  // ── Input ─────────────────────────────────────────────────────────
+
+  // ── Composer ────────────────────────────────────────────────────
   emptyState: {
     flex: 1,
     alignItems: 'center',
@@ -855,57 +902,66 @@ const styles = StyleSheet.create({
     paddingTop: 60,
   },
   emptyText: {
-    fontSize: 14,
-    color: '#666',
+    fontSize: 13,
+    color: groknight.muted,
+    fontFamily: mono,
   },
   inputBar: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
     paddingHorizontal: 8,
     paddingTop: 8,
     borderTopWidth: 1,
-    borderTopColor: '#222',
-    backgroundColor: '#111',
+    borderTopColor: groknight.border,
+    backgroundColor: groknight.bgTerminal,
+  },
+  composer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: groknight.border,
+    backgroundColor: groknight.bgBase,
+  },
+  composerPrefix: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: groknight.magenta,
+    marginRight: 8,
+    fontFamily: mono,
   },
   input: {
     flex: 1,
-    borderWidth: 1,
-    borderColor: '#333',
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    fontSize: 15,
-    color: '#fff',
-    backgroundColor: '#1a1a1a',
-    maxHeight: 100,
+    fontSize: 12,
+    color: groknight.textSecondary,
+    fontFamily: mono,
+    paddingVertical: 2,
+    maxHeight: 80,
   },
   sendButton: {
-    backgroundColor: '#0a84ff',
-    borderRadius: 20,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    marginLeft: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
   sendButtonDisabled: {
-    opacity: 0.4,
+    opacity: 0.3,
   },
   sendButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
+    color: groknight.gutter,
+    fontSize: 16,
   },
   archivedInputBar: {
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 8,
     borderTopWidth: 1,
-    borderTopColor: '#222',
-    backgroundColor: '#111',
+    borderTopColor: groknight.border,
+    backgroundColor: groknight.bgBase,
     alignItems: 'center',
   },
   archivedInputText: {
-    fontSize: 13,
-    color: '#666',
+    fontSize: 11,
+    color: groknight.muted,
     fontStyle: 'italic',
+    fontFamily: mono,
   },
 });

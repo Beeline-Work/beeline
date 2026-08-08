@@ -89,11 +89,18 @@ export class BuzzRigTransport implements RigTransport {
 
   private async getClient(): Promise<BuzzClient> {
     if (!this.client) {
-      this.client = createBuzzClient({
+      const client = createBuzzClient({
         baseUrl: this.baseUrl,
         identity: this.identity,
       });
-      await this.client.connect();
+      try {
+        await client.connect();
+      } catch {
+        client.disconnect();
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        await client.connect();
+      }
+      this.client = client;
     }
     return this.client;
   }
@@ -119,16 +126,17 @@ export class BuzzRigTransport implements RigTransport {
   ): Promise<SessionSummary[]> {
     const client = await this.getClient();
     const channels = await client.listMyChannels();
-    return channels.map((c) => {
+    return Promise.all(channels.map(async (c) => {
+      const metadata = await client.getChannelMetadata(c.channelId);
       const nameTag = c.event.tags.find((t) => t[0] === 'name');
       return {
         id: c.channelId,
         active: true,
-        title: nameTag?.[1] ?? c.channelId.slice(0, 8),
+        title: metadata?.name ?? nameTag?.[1] ?? c.channelId.slice(0, 8),
         updatedAt: c.event.created_at,
         createdAt: c.event.created_at,
       };
-    });
+    }));
   }
 
   async sessionRead(sessionId: SessionId): Promise<SessionDetail | null> {

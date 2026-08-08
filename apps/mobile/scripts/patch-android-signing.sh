@@ -90,7 +90,7 @@ stub = '''{
       "client_info": {
         "mobilesdk_app_id": "1:0:android:0000000000000000",
         "android_client_info": {
-          "package_name": "app.buzzy.mobile.dev"
+            "package_name": "app.buzzy.mobile"
         }
       },
       "oauth_client": [],
@@ -108,4 +108,17 @@ else:
     os.makedirs(os.path.dirname(gs_json), exist_ok=True)
     open(gs_json, 'w').write(stub)
     print('Created stub google-services.json.')
+
+# Sideload builds must support operator-provided HTTP relays on a LAN.
+manifest = 'android/app/src/main/AndroidManifest.xml'
+if os.path.exists(manifest):
+    manifest_content = open(manifest, 'r').read()
+    if 'android:usesCleartextTraffic=' not in manifest_content:
+        manifest_content = manifest_content.replace(
+            '<application ',
+            '<application android:usesCleartextTraffic="true" ',
+            1,
+        )
+        open(manifest, 'w').write(manifest_content)
+        print('Enabled cleartext traffic for operator-provided LAN relays.')
 EOF

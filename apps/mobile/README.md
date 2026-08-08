@@ -61,9 +61,11 @@ npm run apk:release
 ```
 
 This runs the full chain:
-1. `npx expo prebuild --platform android --clean` — generates native Android project
-2. `cd android && ./gradlew assembleRelease` — builds the signed release APK
-3. Prints the APK path and file size
+
+1. `APP_ENV=production npx expo prebuild --platform android --clean` — generates the production Android project
+2. `scripts/patch-android-signing.sh` — applies release signing and permits operator-provided HTTP LAN relays
+3. `cd android && ./gradlew assembleRelease` — builds the signed release APK
+4. Prints the APK path and file size
 
 Output: `android/app/build/outputs/apk/release/app-release.apk`
 

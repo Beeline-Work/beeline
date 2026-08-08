@@ -16,10 +16,11 @@ import {
   type Identity,
 } from '@buzzy/buzz-client';
 
-const BUZZ_NSEC_KEY = '@buzzy/identity/nsec';
-const BUZZ_RELAY_URL_KEY = '@buzzy/identity/relayUrl';
+// SecureStore on Android requires keys matching [A-Za-z0-9._-]+
+const BUZZ_NSEC_KEY = 'buzzy.identity.nsec';
+const BUZZ_RELAY_URL_KEY = 'buzzy.identity.relayUrl';
 
-const DEFAULT_RELAY_URL = 'https://buzz.trustysquire.ai';
+export const DEFAULT_RELAY_URL = 'https://buzz.trustysquire.ai';
 
 function isWeb(): boolean {
   return (

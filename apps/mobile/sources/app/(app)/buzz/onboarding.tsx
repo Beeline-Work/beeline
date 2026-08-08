@@ -3,7 +3,7 @@
  *
  * GrokNight Terminal design.
  */
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -20,6 +20,7 @@ import {
   importBuzzIdentity,
   getEffectiveRelayUrl,
   saveRelayUrl,
+  DEFAULT_RELAY_URL,
 } from '@/auth/buzz-identity-storage';
 import { groknight } from '@/buzz/groknight';
 
@@ -32,14 +33,14 @@ export default function BuzzOnboarding() {
   const [loading, setLoading] = useState(false);
 
   // Load saved relay URL on mount
-  useState(() => {
-    getEffectiveRelayUrl().then(setRelayUrl);
-  });
+  useEffect(() => {
+    void getEffectiveRelayUrl().then(setRelayUrl);
+  }, []);
 
   const handleGenerate = async () => {
     setLoading(true);
     try {
-      await saveRelayUrl(relayUrl.trim() || 'https://buzz.trustysquire.ai');
+      await saveRelayUrl(relayUrl.trim() || DEFAULT_RELAY_URL);
       await generateBuzzIdentity();
       router.replace('/buzz/channels');
     } catch (err) {
@@ -57,7 +58,7 @@ export default function BuzzOnboarding() {
     }
     setLoading(true);
     try {
-      await saveRelayUrl(relayUrl.trim() || 'https://buzz.trustysquire.ai');
+      await saveRelayUrl(relayUrl.trim() || DEFAULT_RELAY_URL);
       await importBuzzIdentity(trimmed);
       router.replace('/buzz/channels');
     } catch (err) {

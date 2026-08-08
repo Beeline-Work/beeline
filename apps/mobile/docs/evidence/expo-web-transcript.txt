@@ -1,0 +1,20 @@
+=== Expo web evidence ===
+Date: 2026-08-08T03:11:48Z
+URL: http://localhost:8081/
+Title: Buzzy (dev)
+
+=== page body text ===
+result: "\"Happy\\ndisconnected\\n\\nCodex and Claude Code mobile client\\nEnd-to-end encrypted and your account is stored only on your device.\\nLogin with mobile app\\nCreate account\""
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state
+
+=== metro log tail ===
+Starting project at /home/lunchbox/.treehouse/buzzy-6491bb/3/buzzy/apps/mobile
+› Port 8081 is being used by another process
+Input is required, but 'npx expo' is in non-interactive mode.
+Required input:
+> Use port 8082 instead?
+› Skipping dev server
+
+=== bundle ===
+-rw-rw-r-- 1 lunchbox lunchbox 20M Aug  7 23:11 /tmp/expo-bundle4.js

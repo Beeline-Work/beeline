@@ -21,7 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { BuzzRigTransport } from '@/sync/transport';
-import type { SessionEvent, RigTransport } from '@/sync/transport';
+import type { SessionEvent } from '@/sync/transport';
 
 type DisplayMessage = {
   id: string;
@@ -29,6 +29,42 @@ type DisplayMessage = {
   isUser: boolean;
   timestamp: number;
 };
+
+/** Extract a usable timestamp from a SessionEvent (seq only exists on assistant_delta). */
+function eventTimestamp(e: SessionEvent): number {
+  if (e.type === 'assistant_delta' && e.seq) return e.seq;
+  // For raw events, use the `createdAt` from the payload if available, else now.
+  if (e.type === 'raw') {
+    const p = e.payload as Record<string, unknown> | undefined;
+    if (p && typeof p.createdAt === 'number') return p.createdAt;
+  }
+  // Millisecond epoch — used as display ordering key, not as absolute time.
+  return Date.now();
+}
+
+/** Extract text content from a SessionEvent. */
+function eventText(e: SessionEvent): string {
+  if (e.type === 'assistant_delta') return e.text;
+  if (e.type === 'raw') {
+    const p = e.payload as Record<string, unknown> | undefined;
+    if (p && typeof p.content === 'string') return p.content;
+    return String(e.payload ?? '');
+  }
+  return String(e.payload ?? '');
+}
+
+/** Extract a stable id from a SessionEvent. */
+function eventId(e: SessionEvent, fallback: string): string {
+  if (e.type === 'raw') {
+    const p = e.payload as Record<string, unknown> | undefined;
+    if (p && typeof p.id === 'string') return p.id;
+  }
+  if (e.type === 'assistant_delta') {
+    const seq = e.seq;
+    if (seq) return `delta-${seq}`;
+  }
+  return fallback;
+}
 
 export default function BuzzChat() {
   const { channelId } = useLocalSearchParams<{ channelId: string }>();
@@ -42,7 +78,7 @@ export default function BuzzChat() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
 
-  // Helper to prepend new messages (for backfill ordering)
+  // Helper to add new messages, deduplicating by id.
   const addMessages = useCallback((newMsgs: DisplayMessage[]) => {
     setMessages((prev) => {
       const existingIds = new Set(prev.map((m) => m.id));
@@ -71,44 +107,24 @@ export default function BuzzChat() {
         // Backfill existing messages
         const events = await t.sessionEventsBackfill(decodedId, { limit: 50 });
         if (!cancelled) {
-          const msgs = events
-            .filter((e): e is SessionEvent & { text?: string; payload?: { content?: string; pubkey?: string } } =>
-              e.type === 'raw' || e.type === 'assistant_delta'
-            )
-            .map((e) => {
-              const text =
-                e.type === 'assistant_delta'
-                  ? e.text
-                  : typeof e.payload === 'object' && e.payload !== null
-                    ? String((e.payload as Record<string, unknown>).content ?? '')
-                    : String(e.payload ?? '');
-              return {
-                id: e.type === 'raw'
-                  ? String((e.payload as Record<string, unknown>).id ?? Math.random())
-                  : `delta-${e.seq ?? Math.random()}`,
-                text,
-                isUser: false, // We'll check pubkey later for user's own messages
-                timestamp: e.seq ?? Date.now(),
-              } as DisplayMessage;
-            });
+          const msgs: DisplayMessage[] = events.map((e) => ({
+            id: eventId(e, `backfill-${Math.random()}`),
+            text: eventText(e),
+            isUser: false,
+            timestamp: eventTimestamp(e),
+          }));
           setMessages(msgs);
         }
 
         // Subscribe to live messages
         unsubscribe = t.sessionEventsSubscribe(decodedId, (event) => {
           if (cancelled) return;
-          const text =
-            event.type === 'assistant_delta'
-              ? event.text
-              : typeof event.payload === 'object' && event.payload !== null
-                ? String((event.payload as Record<string, unknown>).content ?? '')
-                : String(event.payload ?? '');
           addMessages([
             {
-              id: `live-${event.seq ?? Date.now()}-${Math.random()}`,
-              text,
+              id: eventId(event, `live-${Math.random()}`),
+              text: eventText(event),
               isUser: false,
-              timestamp: event.seq ?? Date.now(),
+              timestamp: eventTimestamp(event),
             },
           ]);
         });
@@ -132,13 +148,14 @@ export default function BuzzChat() {
     setSending(true);
     setInputText('');
     // Optimistic add
-    const optimistic: DisplayMessage = {
-      id: `optimistic-${Date.now()}`,
-      text,
-      isUser: true,
-      timestamp: Date.now(),
-    };
-    addMessages([optimistic]);
+    addMessages([
+      {
+        id: `optimistic-${Date.now()}`,
+        text,
+        isUser: true,
+        timestamp: Date.now(),
+      },
+    ]);
 
     try {
       await transport.messageSubmit({ sessionId: decodedId, text });
@@ -149,7 +166,7 @@ export default function BuzzChat() {
     }
   }, [inputText, transport, decodedId, addMessages]);
 
-  const renderMessage = useCallback(
+  const renderItem = useCallback(
     ({ item }: { item: DisplayMessage }) => (
       <View
         style={[
@@ -159,7 +176,7 @@ export default function BuzzChat() {
       >
         <Text style={styles.messageText}>{item.text}</Text>
         <Text style={styles.messageTime}>
-          {new Date(item.timestamp * 1000).toLocaleTimeString()}
+          {new Date(item.timestamp).toLocaleTimeString()}
         </Text>
       </View>
     ),
@@ -194,10 +211,10 @@ export default function BuzzChat() {
       <FlatList
         ref={flatListRef}
         data={messages}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item: DisplayMessage) => item.id}
         style={styles.messageList}
         contentContainerStyle={styles.messageListContent}
-        renderItem={renderMessage}
+        renderItem={renderItem}
         ListEmptyComponent={
           <View style={styles.emptyState}>
             <Text style={styles.emptyText}>No messages yet</Text>
@@ -216,12 +233,6 @@ export default function BuzzChat() {
           placeholder="Type a message…"
           placeholderTextColor="#666"
           multiline
-          onKeyPress={(e) => {
-            if (Platform.OS === 'web' && e.nativeEvent.key === 'Enter' && !e.nativeEvent.shiftKey) {
-              e.preventDefault();
-              handleSend();
-            }
-          }}
         />
         <TouchableOpacity
           style={[

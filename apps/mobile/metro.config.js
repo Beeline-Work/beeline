@@ -1,23 +1,54 @@
-const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
-const path = require('node:path');
+const { getDefaultConfig } = require("expo/metro-config");
+const path = require("path");
 
-const projectRoot = __dirname;
-const monorepoRoot = path.resolve(projectRoot, '../..');
+const config = getDefaultConfig(__dirname, {
+  // Enable CSS support for web
+  isCSSEnabled: true,
+});
 
-const defaultConfig = getDefaultConfig(projectRoot);
+// Add support for .wasm files (required by Skia for all platforms)
+// Source: https://shopify.github.io/react-native-skia/docs/getting-started/installation/
+config.resolver.assetExts.push('wasm');
 
-/**
- * @type {import('@react-native/metro-config').MetroConfig}
- */
-const config = {
-  watchFolders: [monorepoRoot],
-  resolver: {
-    nodeModulesPaths: [
-      path.resolve(projectRoot, 'node_modules'),
-      path.resolve(monorepoRoot, 'node_modules'),
-    ],
-    disableHierarchicalLookup: true,
-  },
+// Exclude Tauri Rust build artifacts from Metro's file watcher.
+// Cargo writes/deletes transient files in src-tauri/target/debug/deps during
+// `tauri dev`, which crashes Metro's fallback watcher on Windows with ENOENT.
+config.resolver.blockList = [
+  /[/\\]src-tauri[/\\]target[/\\].*/,
+];
+
+// Force every preact / preact/hooks import (ESM or CJS, from any package) to
+// resolve to a SINGLE file. preact's package.json exports field maps "import"
+// to preact.mjs and "require" to preact.js, which makes Metro register two
+// separate module instances depending on the importer's module type. Two
+// instances mean two `options` objects — preact/hooks patches one,
+// @pierre/trees renders against the other, currentComponent stays undefined,
+// `r.__H` crashes. Pin to the CJS bundles so everyone shares state.
+const preactCjsPath = require.resolve('preact');
+const preactHooksCjsPath = require.resolve('preact/hooks');
+const baseResolveRequest = config.resolver.resolveRequest;
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (moduleName === 'preact') {
+    return { filePath: preactCjsPath, type: 'sourceFile' };
+  }
+  if (moduleName === 'preact/hooks') {
+    return { filePath: preactHooksCjsPath, type: 'sourceFile' };
+  }
+  if (baseResolveRequest) {
+    return baseResolveRequest(context, moduleName, platform);
+  }
+  return context.resolveRequest(context, moduleName, platform);
 };
 
-module.exports = mergeConfig(defaultConfig, config);
+// Enable inlineRequires for proper Skia and Reanimated loading
+// Source: https://shopify.github.io/react-native-skia/docs/getting-started/web/
+// Without this, Skia throws "react-native-reanimated is not installed" error
+// This is cross-platform compatible (iOS, Android, web)
+config.transformer.getTransformOptions = async () => ({
+  transform: {
+    experimentalImportSupport: false,
+    inlineRequires: true, // Critical for @shopify/react-native-skia
+  },
+});
+
+module.exports = config;

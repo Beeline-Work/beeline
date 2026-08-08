@@ -37,6 +37,14 @@ const libsodiumWrappersCjsPath = path.join(
   __dirname,
   'node_modules/libsodium-wrappers/dist/modules/libsodium-wrappers.js',
 );
+
+// Resolve paths for @buzzy packages from the monorepo root (mobile app is
+// isolated from root npm workspaces — see AGENTS.md). The transitive deps
+// (@noble/*, nostr-tools) resolve via Metro's node_modules walk-up from
+// the dist files' location through ../.. into the root node_modules.
+const buzzClientPath = path.resolve(__dirname, '../../packages/buzz-client/dist/index.js');
+const buzzNostrPath = path.resolve(__dirname, '../../packages/nostr/dist/index.js');
+
 const baseResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (moduleName === 'preact') {
@@ -50,6 +58,12 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   }
   if (moduleName === 'libsodium-wrappers') {
     return { filePath: libsodiumWrappersCjsPath, type: 'sourceFile' };
+  }
+  if (moduleName === '@buzzy/buzz-client') {
+    return { filePath: buzzClientPath, type: 'sourceFile' };
+  }
+  if (moduleName === '@buzzy/nostr') {
+    return { filePath: buzzNostrPath, type: 'sourceFile' };
   }
   if (baseResolveRequest) {
     return baseResolveRequest(context, moduleName, platform);

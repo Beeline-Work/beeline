@@ -31,8 +31,9 @@ const popupEntering = FadeIn
     .easing(enterEasing)
     .withInitialValues({
         opacity: 0,
+        // FadeIn typings only list opacity; transform is supported at runtime.
         transform: [{ scale: 0.96 }, { translateY: 8 }],
-    })
+    } as { opacity: number })
     .reduceMotion(ReduceMotion.System);
 
 const popupExiting = FadeOut

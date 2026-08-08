@@ -21,3 +21,4 @@ export {
     getRigTransport,
     setRigTransport,
 } from './happy-rig-transport';
+export { BuzzRigTransport } from './buzz-rig-transport';

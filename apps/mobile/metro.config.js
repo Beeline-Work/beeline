@@ -5,6 +5,22 @@ const config = getDefaultConfig(__dirname, {
   isCSSEnabled: true,
 });
 
+// @buzzy/buzz-client and @buzzy/nostr are file: symlinks to ../../packages/*.
+// Metro must (a) follow symlinks, (b) watch the real package dirs, and
+// (c) resolve their transitive deps from root node_modules.
+config.resolver.unstable_enableSymlinks = true;
+config.resolver.unstable_enablePackageExports = true;
+
+config.watchFolders = [
+  path.resolve(__dirname, '../../packages'),
+  path.resolve(__dirname, '../../node_modules'),
+];
+
+config.resolver.nodeModulesPaths = [
+  path.resolve(__dirname, 'node_modules'),
+  path.resolve(__dirname, '../../node_modules'),
+];
+
 config.resolver.assetExts.push('wasm');
 
 config.resolver.blockList = [
@@ -23,10 +39,6 @@ const libsodiumWrappersCjsPath = path.join(
   __dirname,
   'node_modules/libsodium-wrappers/dist/modules/libsodium-wrappers.js',
 );
-
-// @buzzy/buzz-client and @buzzy/nostr are installed as real local copies in
-// node_modules/@buzzy/* so Metro resolves them normally. No watchFolders or
-// resolveRequest aliases needed for these or their transitive deps.
 
 const baseResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {

@@ -1,8 +1,7 @@
 /**
  * Buzz Onboarding — key generation or nsec paste.
  *
- * Dev-grade UI: a text field for pasting nsec1… and a "Generate new key" button.
- * On success, persists the identity and navigates to the channel list.
+ * GrokNight Terminal design.
  */
 import React, { useState } from 'react';
 import {
@@ -20,6 +19,9 @@ import {
   generateBuzzIdentity,
   importBuzzIdentity,
 } from '@/auth/buzz-identity-storage';
+import { groknight } from '@/buzz/groknight';
+
+const mono = Platform.select({ web: '"JetBrains Mono", monospace', default: 'monospace' });
 
 export default function BuzzOnboarding() {
   const insets = useSafeAreaInsets();
@@ -57,20 +59,20 @@ export default function BuzzOnboarding() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      <Text style={styles.title}>Buzzy</Text>
+      <Text style={styles.title}>buzzy</Text>
       <Text style={styles.subtitle}>
         Join a channel with your Nostr key to watch an agent work.
       </Text>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>New key</Text>
+        <Text style={styles.sectionTitle}>new key</Text>
         <TouchableOpacity
           style={styles.button}
           onPress={handleGenerate}
           disabled={loading}
         >
           <Text style={styles.buttonText}>
-            {loading ? 'Generating…' : 'Generate new key'}
+            {loading ? 'generating…' : 'generate new key'}
           </Text>
         </TouchableOpacity>
       </View>
@@ -82,11 +84,11 @@ export default function BuzzOnboarding() {
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Import existing key</Text>
+        <Text style={styles.sectionTitle}>import existing key</Text>
         <TextInput
           style={styles.input}
           placeholder="nsec1…"
-          placeholderTextColor="#888"
+          placeholderTextColor={groknight.dim}
           value={nsecInput}
           onChangeText={setNsecInput}
           autoCapitalize="none"
@@ -101,7 +103,7 @@ export default function BuzzOnboarding() {
           onPress={handleImport}
           disabled={!nsecInput.trim() || loading}
         >
-          <Text style={styles.buttonText}>Import & Continue</Text>
+          <Text style={styles.buttonText}>import & continue</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -113,57 +115,65 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 24,
     justifyContent: 'center',
-    backgroundColor: '#000',
+    backgroundColor: groknight.bgTerminal,
   },
   title: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: '#fff',
+    fontSize: 28,
+    fontWeight: '800',
+    color: groknight.textPrimary,
     textAlign: 'center',
     marginBottom: 8,
+    fontFamily: mono,
+    letterSpacing: 1,
   },
   subtitle: {
-    fontSize: 16,
-    color: '#aaa',
+    fontSize: 13,
+    color: groknight.muted,
     textAlign: 'center',
     marginBottom: 48,
     paddingHorizontal: 16,
+    fontFamily: mono,
+    lineHeight: 18,
   },
   section: {
     marginBottom: 24,
   },
   sectionTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#888',
-    marginBottom: 12,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
+    fontSize: 11,
+    fontWeight: '700',
+    color: groknight.muted,
+    marginBottom: 10,
+    letterSpacing: 0.8,
+    fontFamily: mono,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#333',
-    borderRadius: 8,
+    borderColor: groknight.border,
+    borderRadius: 4,
     padding: 12,
-    fontSize: 14,
-    color: '#fff',
-    backgroundColor: '#111',
-    marginBottom: 12,
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
+    fontSize: 13,
+    color: groknight.textSecondary,
+    backgroundColor: groknight.bgBase,
+    marginBottom: 10,
+    fontFamily: mono,
   },
   button: {
-    backgroundColor: '#0a84ff',
-    paddingVertical: 14,
-    borderRadius: 8,
+    backgroundColor: groknight.bgHighlight,
+    paddingVertical: 12,
+    borderRadius: 4,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: groknight.border,
   },
   buttonDisabled: {
     opacity: 0.4,
   },
   buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+    color: groknight.textSecondary,
+    fontSize: 14,
+    fontWeight: '700',
+    fontFamily: mono,
+    letterSpacing: 0.3,
   },
   divider: {
     flexDirection: 'row',
@@ -173,11 +183,12 @@ const styles = StyleSheet.create({
   dividerLine: {
     flex: 1,
     height: 1,
-    backgroundColor: '#333',
+    backgroundColor: groknight.border,
   },
   dividerText: {
     marginHorizontal: 12,
-    color: '#666',
-    fontSize: 14,
+    color: groknight.dim,
+    fontSize: 11,
+    fontFamily: mono,
   },
 });

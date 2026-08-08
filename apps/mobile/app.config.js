@@ -1,15 +1,16 @@
 const { execFileSync } = require('node:child_process');
 
 const variant = process.env.APP_ENV || 'development';
+// Buzzy fork of Happy (slopus/happy). Minimal rebrand — see README.md.
 const name = {
-    development: "Happy (dev)",
-    preview: "Happy (preview)",
-    production: "Happy"
+    development: "Buzzy (dev)",
+    preview: "Buzzy (preview)",
+    production: "Buzzy"
 }[variant];
 const bundleId = {
-    development: "com.slopus.happy.dev",
-    preview: "com.slopus.happy.preview",
-    production: "com.ex3ndr.happy"
+    development: "app.buzzy.mobile.dev",
+    preview: "app.buzzy.mobile.preview",
+    production: "app.buzzy.mobile"
 }[variant];
 // const stagingElevenLabsAgentId = 'agent_7801k2c0r5hjfraa1kdbytpvs6yt';
 const productionElevenLabsAgentId = 'agent_6701k211syvvegba4kt7m68nxjmw';
@@ -58,12 +59,12 @@ const buildMetadata = loadBuildMetadata();
 export default {
     expo: {
         name,
-        slug: "happy",
+        slug: "buzzy",
         version: "1.7.0",
         runtimeVersion: "21",
         orientation: "default",
         icon: "./sources/assets/images/icon.png",
-        scheme: "happy",
+        scheme: "buzzy",
         userInterfaceStyle: "automatic",
         ios: {
             supportsTablet: true,

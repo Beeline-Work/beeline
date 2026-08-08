@@ -1,97 +1,90 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# Buzzy mobile client
 
-# Getting Started
+Fork of **[Happy](https://github.com/slopus/happy)**'s Expo/React Native app
+(`packages/happy-app`) as Buzzy's client foundation (`spec.md` P1).
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+## Attribution / license
 
-## Step 1: Start Metro
+- Upstream: [slopus/happy](https://github.com/slopus/happy) — **MIT**
+- Upstream commit: `2c8ecacc19f14abd81111a4605ac8c7f6bedb7e1`
+  (`chore(app): August 7 changelog entry with Community Credits convention`)
+- Upstream package: `packages/happy-app` (+ `packages/happy-wire` → `vendor/happy-wire`)
+- Happy's MIT license is preserved in [`LICENSE`](./LICENSE)
+- Also see [`UPSTREAM.md`](./UPSTREAM.md) for vendor provenance
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+Buzzy rebrands the app name/scheme minimally ("Buzzy"); visual polish is
+intentionally deferred.
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+## Monorepo integration (isolated install)
 
-```sh
-# Using npm
-npm start
+**Choice:** `apps/mobile` is **not** part of the root npm workspaces.
 
-# OR using Yarn
-yarn start
-```
+Happy is Expo 55 / RN 0.83 / React 19 with a large native graph. Root workspaces
+hoist `apps/api` + `packages/*` (Node services). Mixing Expo into that graph
+caused peer resolution fights; the simplest reliable setup is an **isolated**
+`apps/mobile` install with its own `package-lock.json` and `.npmrc`
+(`legacy-peer-deps=true`, matching Happy's pnpm-style peer looseness).
 
-## Step 2: Build and run your app
-
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
-
-### Android
-
-```sh
-# Using npm
-npm run android
-
-# OR using Yarn
-yarn android
-```
-
-### iOS
-
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
-
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
+Root `package.json` still wires:
 
 ```sh
-bundle install
+# from repo root
+npm install                          # workspaces only (api, packages/*)
+npm run mobile:install               # apps/mobile isolated install
+npm run typecheck                    # turbo (api/nostr) + mobile tsc
+npm run mobile:web                   # expo start --web
 ```
 
-Then, and every time you update your native dependencies, run:
+Or:
 
 ```sh
-bundle exec pod install
+cd apps/mobile
+npm install
+npm run typecheck
+npm run web          # expo start --web
+npm start            # expo start (all platforms)
 ```
 
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
+## Expo web (headless-verifiable surface)
 
 ```sh
-# Using npm
-npm run ios
-
-# OR using Yarn
-yarn ios
+cd apps/mobile
+npx expo start --web --port 8081
+# open http://localhost:8081
 ```
 
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
+Evidence of a successful boot is recorded in the PR (terminal transcript +
+screenshot when available).
 
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
+## Buzz transport seam
 
-## Step 3: Modify your app
+- Spec methods: repo root `spec.md` Appendix
+- Cut-over map: [`BUZZ-SEAM.md`](./BUZZ-SEAM.md)
+- TypeScript interface: `sources/sync/transport/rig-transport.ts`
+- Happy scaffold adapter: `sources/sync/transport/happy-rig-transport.ts`
+- Product flags: `sources/constants/buzzyFlags.ts`
+  - `hideTerminalUI` — terminals stubbed (no live PTY)
+  - `hideFriendsSocial` — Happy friends UI hidden
 
-Now that you have successfully run the app, let's make changes!
+**Do not wire Buzz networking in this package until the adapter lane.**
 
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
+## What was stripped / flagged
 
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
+| Area | Action |
+|---|---|
+| Terminal connect UI | Flagged off (`BUZZY_FLAGS.hideTerminalUI`) |
+| Friends social routes | Flagged off (`hideFriendsSocial`) |
+| Tauri desktop (`src-tauri`) | Not vendored |
+| Native `android/` / `ios/` prebuilds | Not vendored (Expo prebuild when needed) |
 
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
+Happy account auth remains for the shell to boot; channel-scoped identity is
+the adapter lane.
 
-## Congratulations! :tada:
+## Diffing against upstream
 
-You've successfully run and modified your React Native App. :partying_face:
-
-### Now what?
-
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
-
-# Troubleshooting
-
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+```sh
+git clone https://github.com/slopus/happy /tmp/happy
+cd /tmp/happy && git checkout 2c8ecacc19f14abd81111a4605ac8c7f6bedb7e1
+diff -ru /tmp/happy/packages/happy-app sources  # adjust paths
+# or compare apps/mobile to packages/happy-app at that commit
+```

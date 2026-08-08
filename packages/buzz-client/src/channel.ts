@@ -280,6 +280,33 @@ export async function backfillMessages(
 }
 
 /** True if event carries the agent-activity marker. */
+/**
+ * Resolve a subchannel's parent channel ID from its kind:9007 create event
+ * (which carries a `parent` tag). Returns the parent UUID or null if the
+ * channel has no parent linkage (i.e. it is a top-level TLC).
+ *
+ * The parent linkage lives on the 9007 create event, NOT on kind:39000
+ * metadata. getChannelMetadata will NOT reliably return parentChannelId.
+ */
+export async function getParentChannelId(
+  ctx: ChannelOpsContext,
+  channelId: string,
+): Promise<string | null> {
+  const events = await queryEvents(
+    ctx.http,
+    [{ kinds: [KIND_CREATE_GROUP], '#h': [channelId], limit: 5 }],
+    ctx.identity.publicKey,
+  );
+  for (const ev of events) {
+    const parent = tagValue(ev, TAG_PARENT);
+    if (parent) return parent;
+  }
+  // Fallback: check if metadata has the parent tag.
+  const meta = await getChannelMetadata(ctx, channelId);
+  if (meta?.parentChannelId) return meta.parentChannelId;
+  return null;
+}
+
 export function eventIsAgentActivity(event: NostrEvent): boolean {
   return tagValues(event, 't').includes(TAG_AGENT_ACTIVITY);
 }

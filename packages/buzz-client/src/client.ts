@@ -10,6 +10,7 @@ import {
   createChannel,
   createSubchannel,
   getChannelMetadata,
+  getParentChannelId as getParentChannelIdFn,
   isMember,
   listChannelsForPubkey,
   listMembers,
@@ -141,6 +142,11 @@ export class BuzzClient {
 
   listSubchannels(parentChannelId: string): Promise<string[]> {
     return listSubchannels(this.ctx, parentChannelId);
+  }
+
+  /** Resolve parent channel ID from the 9007 create event. */
+  async getParentChannelId(channelId: string): Promise<string | null> {
+    return getParentChannelIdFn(this.ctx, channelId);
   }
 
   // ── Messaging ───────────────────────────────────────────────────────────

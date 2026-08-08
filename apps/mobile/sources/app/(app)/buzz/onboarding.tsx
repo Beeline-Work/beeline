@@ -140,11 +140,11 @@ export default function BuzzOnboarding() {
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Relay URL</Text>
+        <Text style={styles.sectionTitle}>relay URL</Text>
         <TextInput
           style={styles.input}
           placeholder="https://buzz.trustysquire.ai"
-          placeholderTextColor="#888"
+          placeholderTextColor={groknight.dim}
           value={relayUrl}
           onChangeText={setRelayUrl}
           autoCapitalize="none"
@@ -243,15 +243,17 @@ const styles = StyleSheet.create({
   },
   hint: {
     fontSize: 12,
-    color: '#666',
+    color: groknight.muted,
     lineHeight: 16,
     marginTop: 4,
+    fontFamily: mono,
   },
   errorText: {
-    color: '#ff453a',
+    color: groknight.red,
     fontSize: 14,
     lineHeight: 20,
     marginBottom: 20,
     textAlign: 'center',
+    fontFamily: mono,
   },
 });

@@ -14,9 +14,29 @@ import { trackAccountCreated, trackAccountRestored } from '@/track';
 import { HomeHeaderNotAuth } from "@/components/HomeHeader";
 import { MainView } from "@/components/MainView";
 import { t } from '@/text';
+import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 
 export default function Home() {
     const auth = useAuth();
+    const [buzzCheckDone, setBuzzCheckDone] = React.useState(false);
+
+    React.useEffect(() => {
+        loadBuzzIdentity().then((identity) => {
+            setBuzzCheckDone(true);
+            if (identity) {
+                // Buzz identity found — redirect to the Buzz channel list.
+                // This replaces Happy's auth gate. The Happy screens remain
+                // accessible via /server for troubleshooting.
+                router.replace('/buzz/channels');
+            }
+        });
+    }, []);
+
+    // Wait for the async buzz check before rendering.
+    if (!buzzCheckDone) {
+        return null;
+    }
+
     if (!auth.isAuthenticated) {
         return <NotAuthenticated />;
     }

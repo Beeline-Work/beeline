@@ -158,8 +158,14 @@ export class BuzzRigTransport implements RigTransport {
   // ── Messaging (P1) ─────────────────────────────────────────────────────
 
   async messageSubmit(input: MessageSubmitInput): Promise<void> {
+    await this.messageSubmitWithEventId(input);
+  }
+
+  /** Submit a message and return the signed event id for optimistic UI reconciliation. */
+  async messageSubmitWithEventId(input: MessageSubmitInput): Promise<string> {
     const client = await this.getClient();
-    await client.messageSubmit(input.sessionId, input.text);
+    const event = await client.messageSubmit(input.sessionId, input.text);
+    return event.id;
   }
 
   async runAbort(_sessionId: SessionId): Promise<void> {

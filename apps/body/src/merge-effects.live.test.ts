@@ -26,6 +26,7 @@ import {
   newIdentity,
   createChannel,
   setMemberRole,
+  archiveChannel,
   publishEvent,
   queryEvents,
   git,
@@ -158,10 +159,11 @@ describe.runIf(reachable)('merge effects (test 5)', () => {
     await setMemberRole(bodyIdentity, tlcChannelId, agent.publicKey, 'member');
     log('TLC:', tlcChannelId);
 
-    // Create subchannel (child of TLC).
-    const subchannelId = await createChannel(bodyIdentity, `sub-${RUN_MARKER}`);
+    // Create subchannel (child of TLC) — pass parentChannelId for parent tag linkage.
+    // The body creates the channel and is automatically owner; do NOT demote it
+    // to 'member' or kind:9002 archive will fail (needs owner/admin role).
+    const subchannelId = await createChannel(bodyIdentity, `sub-${RUN_MARKER}`, { parentChannelId: tlcChannelId });
     ctx.subchannelId = subchannelId;
-    await setMemberRole(bodyIdentity, subchannelId, bodyIdentity.publicKey, 'member');
     await setMemberRole(bodyIdentity, subchannelId, agent.publicKey, 'member');
     log('subchannel:', subchannelId);
 
@@ -356,6 +358,37 @@ describe.runIf(reachable)('merge effects (test 5)', () => {
       if (lastEvent) {
         log('last event content:', lastEvent.content.slice(0, 100));
       }
+
+      // (v) Assert kind:39000 metadata shows archived=true after archive.
+      const metadataEvents = await queryEvents(
+        [{ kinds: [39000], '#d': [ctx.subchannelId], limit: 5 }],
+        ctx.body!.identity.publicKey,
+      );
+      log('metadata events found:', metadataEvents.length);
+      let archivedFound = false;
+      for (const evt of metadataEvents) {
+        log('  39000 event tags:', JSON.stringify(evt.tags));
+        const archivedTag = evt.tags.find((t: string[]) => t[0] === 'archived');
+        if (archivedTag && archivedTag[1] === 'true') {
+          archivedFound = true;
+        }
+      }
+      if (metadataEvents.length === 0) {
+        // Fallback: try #h filter (some stacks index 39000 under h instead of d).
+        const altMetadata = await queryEvents(
+          [{ kinds: [39000], '#h': [ctx.subchannelId], limit: 5 }],
+          ctx.body!.identity.publicKey,
+        );
+        log('alt metadata events found (h-indexed):', altMetadata.length);
+        for (const evt of altMetadata) {
+          log('  39000 (h) event tags:', JSON.stringify(evt.tags));
+          const archivedTag = evt.tags.find((t: string[]) => t[0] === 'archived');
+          if (archivedTag && archivedTag[1] === 'true') {
+            archivedFound = true;
+          }
+        }
+      }
+      expect(archivedFound).toBe(true);
     },
     30_000,
   );

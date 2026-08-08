@@ -36,4 +36,8 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - Typecheck: root `npm run typecheck` runs turbo + mobile tsc.
 - Web: `npm run mobile:web` / `cd apps/mobile && npx expo start --web`.
 - Buzz seam docs: `apps/mobile/BUZZ-SEAM.md`; interface: `sources/sync/transport/rig-transport.ts`.
-- Do not wire Buzz networking until the adapter lane; keep Happy backend compiling.
+- **BuzzRigTransport** (`sources/sync/transport/buzz-rig-transport.ts`): P1 implementation against `@buzzy/buzz-client`. Covers: identity, sessionsRead, sessionRead, sessionEventsBackfill, sessionEventsSubscribe, messageSubmit. Everything else stubbed (RigTransportNotImplementedError).
+- **Dependency strategy**: `@buzzy/buzz-client` and `@buzzy/nostr` are resolved via Metro `resolveRequest` aliases to their `dist/` in `../../packages/`. Transitive deps (`@noble/*`, `nostr-tools`) resolve via Metro's node_modules walk-up into the root workspace. See `metro.config.js` for the alias list.
+- **Buzz UI screens** (`sources/app/(app)/buzz/`): parallel minimal path using BuzzRigTransport directly (no Happy sync layer). Onboarding, channel list, and chat screens.
+- Typecheck: the mobile app's `tsc --noEmit` produces hundreds of pre-existing 'cannot find module' errors for `react-native`, `expo-*`, etc. due to module resolution. These are NOT caused by new code. Metro bundles successfully despite these tsc errors.
+- **Tradeoff**: the parallel screen path avoids deep refactoring of Happy's sync layer. The next lane (P2) should decide whether to unify screens or continue the parallel path.

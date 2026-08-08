@@ -61,6 +61,27 @@ export default function RootLayout() {
                     headerTitle: ''
                 }}
             />
+            {/* Buzz identity screens — parallel minimal path using BuzzRigTransport directly */}
+            <Stack.Screen
+                name="buzz/onboarding"
+                options={{
+                    headerShown: true,
+                    headerTitle: 'Buzz Key',
+                    headerBackTitle: 'Back',
+                }}
+            />
+            <Stack.Screen
+                name="buzz/channels"
+                options={{
+                    headerShown: false,
+                }}
+            />
+            <Stack.Screen
+                name="buzz/chat/[channelId]"
+                options={{
+                    headerShown: false,
+                }}
+            />
             <Stack.Screen
                 name="inbox/index"
                 options={{

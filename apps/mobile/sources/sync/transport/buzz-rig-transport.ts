@@ -38,8 +38,7 @@ import {
   type MergeTarget,
   type SessionEvent as BuzzSessionEvent,
 } from '@buzzy/buzz-client';
-
-const DEFAULT_RELAY_URL = 'https://buzz.trustysquire.ai';
+import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 
 /**
  * Map a buzz-client SessionEvent (kind:'message'|'agent-activity'|'other')
@@ -80,7 +79,7 @@ export class BuzzRigTransport implements RigTransport {
   /** Track open subscriptions for cleanup. */
   private subscriptions = new Map<SessionId, () => void>();
 
-  constructor(identity: Identity, baseUrl: string = DEFAULT_RELAY_URL) {
+  constructor(identity: Identity, baseUrl: string = getBuzzRuntimeConfig().relayUrl) {
     this.identity = identity;
     this.baseUrl = baseUrl;
   }

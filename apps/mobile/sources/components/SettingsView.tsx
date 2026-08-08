@@ -29,6 +29,7 @@ import { useProfile } from '@/sync/storage';
 import { getDisplayName, getAvatarUrl, getBio } from '@/sync/profile';
 import { Avatar } from '@/components/Avatar';
 import { t } from '@/text';
+import { BUZZY_FLAGS } from '@/constants/buzzyFlags';
 
 type BuildConfig = {
     buildCommitSha?: unknown;
@@ -242,8 +243,8 @@ export const SettingsView = React.memo(function SettingsView({
                 </View>
             </View>
 
-            {/* Connect Terminal - Only show on native platforms */}
-            {Platform.OS !== 'web' && (
+            {/* Connect Terminal — hidden for Buzzy (no live PTY; BUZZY_FLAGS.hideTerminalUI) */}
+            {!BUZZY_FLAGS.hideTerminalUI && Platform.OS !== 'web' && (
                 <ItemGroup>
                     <Item
                         title={t('settings.scanQrCodeToAuthenticate')}

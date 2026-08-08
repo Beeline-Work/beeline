@@ -2,9 +2,9 @@
  * Body runtime config.
  *
  * LLM credentials are loaded from the process environment (or an optional
- * dotenv-style file). Values are never logged. Live tests source
- * `/home/lunchbox/firstmate2/data/buzzy-body/llm-egress.env` which provides
- * `BUZZY_LLM_*`; we map those onto buzz-agent's `OPENAI_COMPAT_*` names.
+ * dotenv-style file driven by $BUZZY_BODY_LLM_FILE). Values are never logged.
+ * The file provides `BUZZY_LLM_*` vars; we map those onto buzz-agent's
+ * `OPENAI_COMPAT_*` names.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -61,7 +61,6 @@ export function resolveBinaries(env: NodeJS.ProcessEnv = process.env): {
     firstExisting([
       resolve(DEFAULT_SCRATCH, 'buzz-agent'),
       resolve(process.cwd(), '..', '..', '.scratch-target', 'debug', 'buzz-agent'),
-      '/home/lunchbox/.treehouse/buzzy-6491bb/1/buzzy/.scratch-target/debug/buzz-agent',
     ]);
   const mcp =
     env.BUZZ_DEV_MCP_BIN ??
@@ -69,7 +68,6 @@ export function resolveBinaries(env: NodeJS.ProcessEnv = process.env): {
     firstExisting([
       resolve(DEFAULT_SCRATCH, 'buzz-dev-mcp'),
       resolve(process.cwd(), '..', '..', '.scratch-target', 'debug', 'buzz-dev-mcp'),
-      '/home/lunchbox/.treehouse/buzzy-6491bb/1/buzzy/.scratch-target/debug/buzz-dev-mcp',
     ]);
   if (!agent) {
     throw new Error(

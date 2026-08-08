@@ -159,6 +159,105 @@ export async function inventoryForMcpServers(
   return all;
 }
 
+/**
+ * Call an MCP tool directly on a freshly-spawned server and return the result.
+ * Used for deterministic positive-control tests (bypasses the LLM entirely).
+ *
+ * Spawns the MCP, does initialize+notify, calls the tool, returns the result,
+ * and kills the process. Throws on MCP-level error.
+ */
+export async function callMcpTool(
+  spec: McpServerSpec,
+  toolName: string,
+  args: Record<string, unknown>,
+  timeoutMs = 30_000,
+): Promise<unknown> {
+  const child: ChildProcessWithoutNullStreams = spawn(spec.command, spec.args ?? [], {
+    cwd: spec.cwd,
+    env: { ...process.env, ...spec.env },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  let buf = '';
+  const pending = new Map<
+    number,
+    { resolve: (v: JsonRpcMsg) => void; reject: (e: Error) => void }
+  >();
+  let nextId = 1;
+  let settled = false;
+
+  const cleanup = () => {
+    if (settled) return;
+    settled = true;
+    try { child.kill('SIGKILL'); } catch { /* ignore */ }
+  };
+
+  const deadline = setTimeout(() => {
+    for (const [, p] of pending) p.reject(new Error('callMcpTool: timeout'));
+    pending.clear();
+    cleanup();
+  }, timeoutMs);
+
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', (chunk: string) => {
+    buf += chunk;
+    let nl: number;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+      let msg: JsonRpcMsg;
+      try { msg = JSON.parse(line) as JsonRpcMsg; } catch { continue; }
+      // Server requests — empty result.
+      if (msg.method && msg.id !== undefined) {
+        child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }) + '\n');
+        continue;
+      }
+      if (msg.id !== undefined && pending.has(Number(msg.id))) {
+        const p = pending.get(Number(msg.id))!;
+        pending.delete(Number(msg.id));
+        if (msg.error) {
+          p.reject(new Error(`MCP tool error ${msg.error.code}: ${msg.error.message}`));
+        } else {
+          p.resolve(msg);
+        }
+      }
+    }
+  });
+
+  child.on('error', (err) => { for (const [, p] of pending) p.reject(err); pending.clear(); });
+
+  const request = (method: string, params: unknown): Promise<JsonRpcMsg> => {
+    const id = nextId++;
+    const payload = JSON.stringify({ jsonrpc: '2.0', id, method, params });
+    return new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
+      child.stdin.write(payload + '\n');
+    });
+  };
+
+  const notify = (method: string, params: unknown) => {
+    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n');
+  };
+
+  try {
+    await request('initialize', {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: { name: 'buzzy-body', version: '0.0.0' },
+    });
+    notify('notifications/initialized', {});
+    const result = await request('tools/call', {
+      name: toolName,
+      arguments: args,
+    });
+    return result.result;
+  } finally {
+    clearTimeout(deadline);
+    cleanup();
+  }
+}
+
 /** True if any write-class tool name appears in the inventory. */
 export function hasWriteTools(
   toolNames: string[],

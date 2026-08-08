@@ -127,13 +127,14 @@ absent. It **never skips when both are present**.
 
 ### Env for live tests
 
-Create `/home/lunchbox/firstmate2/data/buzzy-body/llm-egress.env` (or set
-`BUZZY_BODY_LLM_FILE`):
+Set `BUZZY_BODY_LLM_FILE` to an env file with the LLM credentials:
 ```
 BUZZY_LLM_BASE_URL=...
 BUZZY_LLM_API_KEY=...
 BUZZY_LLM_MODEL=...
 ```
+or export the `BUZZY_LLM_*` vars (or the `OPENAI_COMPAT_*` vars directly)
+into the process environment.
 
 ## Key design decisions
 

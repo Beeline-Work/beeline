@@ -4,19 +4,24 @@
   "private": true,
   "description": "The merge you hold from your phone. See spec.md.",
   "workspaces": [
-    "apps/*",
+    "apps/api",
+    "apps/body",
+    "apps/gate",
     "packages/*"
   ],
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
     "lint": "turbo run lint",
-    "typecheck": "turbo run typecheck",
+    "typecheck": "turbo run typecheck && npm run typecheck --prefix apps/mobile",
     "test": "turbo run test",
     "stack:up": "docker compose -f relay-stack/compose.yml up -d",
     "stack:down": "docker compose -f relay-stack/compose.yml down -v",
     "smoke": "node --import tsx scripts/smoke.ts",
-    "prove": "node --import tsx scripts/money-shot.ts"
+    "prove": "node --import tsx scripts/money-shot.ts",
+    "mobile:install": "npm install --prefix apps/mobile",
+    "mobile:web": "npm run web --prefix apps/mobile",
+    "mobile:typecheck": "npm run typecheck --prefix apps/mobile"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",

@@ -49,7 +49,7 @@ When updating this file, preserve this bar for all agents and keep entries conci
 
 - `apps/mobile` is a **vendored Happy** Expo app, **isolated** from root npm workspaces.
 - Install: `npm run mobile:install` (or `cd apps/mobile && npm install`).
-- EAS installs this isolated app without a root `node_modules`; keep optional monorepo paths in `metro.config.js` existence-guarded. Regression coverage: `sources/config/metroConfig.test.ts`.
+- EAS installs this isolated app without a root `node_modules`; keep optional monorepo paths in `metro.config.js` existence-guarded, and build file-linked `@buzzy/*` packages through `eas-build-post-install`. Regression coverage: `sources/config/*Config.test.ts`.
 - Typecheck: root `npm run typecheck` runs turbo + mobile tsc.
 - Web: `npm run mobile:web` / `cd apps/mobile && npx expo start --web`.
 - Buzz seam docs: `apps/mobile/BUZZ-SEAM.md`; interface: `sources/sync/transport/rig-transport.ts`.

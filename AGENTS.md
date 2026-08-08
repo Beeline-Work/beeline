@@ -18,3 +18,12 @@ Keep this file for knowledge useful to almost every future agent session in this
 Do not repeat what the codebase already shows; point to the authoritative file or command instead.
 Prefer rewriting or pruning existing entries over appending new ones.
 When updating this file, preserve this bar for all agents and keep entries concise.
+
+## Mobile client (Happy fork)
+
+- `apps/mobile` is a **vendored Happy** Expo app, **isolated** from root npm workspaces.
+- Install: `npm run mobile:install` (or `cd apps/mobile && npm install`).
+- Typecheck: root `npm run typecheck` runs turbo + mobile tsc.
+- Web: `npm run mobile:web` / `cd apps/mobile && npx expo start --web`.
+- Buzz seam docs: `apps/mobile/BUZZ-SEAM.md`; interface: `sources/sync/transport/rig-transport.ts`.
+- Do not wire Buzz networking until the adapter lane; keep Happy backend compiling.

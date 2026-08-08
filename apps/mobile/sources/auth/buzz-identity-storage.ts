@@ -29,9 +29,15 @@ async function storageGet(key: string): Promise<string | null> {
   if (isWeb()) {
     return localStorage.getItem(key);
   }
+  // Dynamic require for expo-secure-store — type declarations unavailable in this config.
   try {
-    const { getItemAsync } = await import('expo-secure-store');
-    return getItemAsync(key);
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const SecureStore = require('expo-secure-store') as {
+      getItemAsync: (k: string) => Promise<string | null>;
+      setItemAsync: (k: string, v: string) => Promise<void>;
+      deleteItemAsync: (k: string) => Promise<void>;
+    };
+    return SecureStore.getItemAsync(key);
   } catch {
     return null;
   }
@@ -43,8 +49,13 @@ async function storageSet(key: string, value: string): Promise<void> {
     return;
   }
   try {
-    const { setItemAsync } = await import('expo-secure-store');
-    await setItemAsync(key, value);
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const SecureStore = require('expo-secure-store') as {
+      getItemAsync: (k: string) => Promise<string | null>;
+      setItemAsync: (k: string, v: string) => Promise<void>;
+      deleteItemAsync: (k: string) => Promise<void>;
+    };
+    await SecureStore.setItemAsync(key, value);
   } catch {
     // Ignore — storage may be unavailable
   }
@@ -56,8 +67,13 @@ async function storageRemove(key: string): Promise<void> {
     return;
   }
   try {
-    const { deleteItemAsync } = await import('expo-secure-store');
-    await deleteItemAsync(key);
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const SecureStore = require('expo-secure-store') as {
+      getItemAsync: (k: string) => Promise<string | null>;
+      setItemAsync: (k: string, v: string) => Promise<void>;
+      deleteItemAsync: (k: string) => Promise<void>;
+    };
+    await SecureStore.deleteItemAsync(key);
   } catch {
     // Ignore
   }

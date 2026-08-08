@@ -115,7 +115,7 @@ export default function BuzzChannels() {
 
       <FlatList
         data={channels}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item: SessionSummary) => item.id}
         contentContainerStyle={channels.length === 0 ? styles.emptyContainer : undefined}
         ListEmptyComponent={
           <View style={styles.emptyState}>
@@ -126,7 +126,7 @@ export default function BuzzChannels() {
             </Text>
           </View>
         }
-        renderItem={({ item }) => (
+        renderItem={({ item }: { item: SessionSummary }) => (
           <TouchableOpacity
             style={styles.channelItem}
             onPress={() => handleChannelPress(item)}

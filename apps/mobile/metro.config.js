@@ -38,12 +38,12 @@ const libsodiumWrappersCjsPath = path.join(
   'node_modules/libsodium-wrappers/dist/modules/libsodium-wrappers.js',
 );
 
-// Resolve paths for @buzzy packages from the monorepo root (mobile app is
-// isolated from root npm workspaces — see AGENTS.md). The transitive deps
-// (@noble/*, nostr-tools) resolve via Metro's node_modules walk-up from
-// the dist files' location through ../.. into the root node_modules.
-const buzzClientPath = path.resolve(__dirname, '../../packages/buzz-client/dist/index.js');
-const buzzNostrPath = path.resolve(__dirname, '../../packages/nostr/dist/index.js');
+// @buzzy/buzz-client and @buzzy/nostr are installed as file: dependencies but
+// their resolved dist lives outside the project root via the symlink.
+// Metro needs both a resolveRequest alias AND watchFolders to see those files.
+const buzzClientDist = path.resolve(__dirname, '../../packages/buzz-client/dist');
+const buzzNostrDist = path.resolve(__dirname, '../../packages/nostr/dist');
+config.watchFolders = (config.watchFolders || []).concat([buzzClientDist, buzzNostrDist]);
 
 const baseResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
@@ -60,10 +60,20 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     return { filePath: libsodiumWrappersCjsPath, type: 'sourceFile' };
   }
   if (moduleName === '@buzzy/buzz-client') {
-    return { filePath: buzzClientPath, type: 'sourceFile' };
+    return { filePath: path.join(buzzClientDist, 'index.js'), type: 'sourceFile' };
   }
   if (moduleName === '@buzzy/nostr') {
-    return { filePath: buzzNostrPath, type: 'sourceFile' };
+    return { filePath: path.join(buzzNostrDist, 'index.js'), type: 'sourceFile' };
+  }
+  // Transitive deps from @buzzy/nostr — @noble and nostr-tools are installed
+  // in mobile's node_modules but the resolveRequest alias short-circuits
+  // the normal node_modules walk from the dist file location. Resolve explicitly.
+  if (moduleName.startsWith('@noble/')) {
+    const sub = moduleName.slice('@noble/'.length);
+    return { filePath: path.join(__dirname, 'node_modules/@noble', sub), type: 'sourceFile' };
+  }
+  if (moduleName === 'nostr-tools') {
+    return { filePath: path.join(__dirname, 'node_modules/nostr-tools/lib/esm/index.js'), type: 'sourceFile' };
   }
   if (baseResolveRequest) {
     return baseResolveRequest(context, moduleName, platform);

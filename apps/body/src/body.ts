@@ -48,6 +48,10 @@ export interface AgentSession {
   parentChannelId?: string;
   /** Unsubscribe from activity projection. */
   unsubscribeActivity?: () => void;
+  /** Last created_at timestamp when polling for member messages (subchannels only). */
+  lastPolledAt?: number;
+  /** Whether this subchannel has been archived. */
+  archived?: boolean;
 }
 
 export interface SubchannelInfo {
@@ -56,6 +60,10 @@ export interface SubchannelInfo {
   featureBranch: string;
   role: Identity;
   session: AgentSession;
+  /** Last created_at timestamp when polling for member messages. */
+  lastPolledAt: number;
+  /** Whether this subchannel has been archived. */
+  archived: boolean;
 }
 
 /**
@@ -80,6 +88,17 @@ export class Body {
 
   get identity(): Identity {
     return this.bodyIdentity;
+  }
+
+  /** Register a session for a channel (used by tests to add externally-created sessions). */
+  registerSession(session: AgentSession): void {
+    this.sessions.set(session.channelId, session);
+  }
+
+  /** Register subchannel info (used by tests to add externally-created subchannel state). */
+  registerSubchannel(info: SubchannelInfo): void {
+    this.subchannels.set(info.subchannelId, info);
+    this.sessions.set(info.subchannelId, info.session);
   }
 
   /** Register (or override) the agent's Nostr identity. */
@@ -234,6 +253,7 @@ export class Body {
     // 6. Project activity to the subchannel.
     const unsub = projectActivity(client, subchannelId, this.bodyIdentity, sessionId);
 
+    const now = Math.floor(Date.now() / 1000);
     const session: AgentSession = {
       channelId: subchannelId,
       sessionId,
@@ -243,6 +263,8 @@ export class Body {
       featureBranch,
       parentChannelId: tlcChannelId,
       unsubscribeActivity: unsub,
+      lastPolledAt: now,
+      archived: false,
     };
 
     this.sessions.set(subchannelId, session);
@@ -253,6 +275,8 @@ export class Body {
       featureBranch,
       role: this.bodyIdentity,
       session,
+      lastPolledAt: now,
+      archived: false,
     };
 
     this.subchannels.set(subchannelId, info);
@@ -286,7 +310,117 @@ export class Body {
   }
 
   /**
+   * Post a merge summary to the parent channel and mark subchannel as archived.
+   * After calling this, polling for member messages stops and the subchannel
+   * is considered read-only.
+   */
+  async postMergeSummary(
+    subchannelId: string,
+    summary: string,
+  ): Promise<void> {
+    const info = this.subchannels.get(subchannelId);
+    if (!info) {
+      throw new Error(`Subchannel ${subchannelId} not found`);
+    }
+    const parentId = info.session.parentChannelId;
+    if (!parentId) {
+      throw new Error(`Subchannel ${subchannelId} has no parent TLC`);
+    }
+
+    // Post summary to parent channel.
+    await postControlMessage(
+      parentId,
+      this.bodyIdentity,
+      `🤖 Merge summary — ${subchannelId}\n\n${summary}`,
+      [
+        ['subchannel', subchannelId],
+        ['t', 'merge-summary'],
+      ],
+    );
+
+    // Mark subchannel as archived.
+    info.archived = true;
+    info.session.archived = true;
+  }
+
+  /**
+   * Poll the subchannel for member messages (kind:9) and forward them as
+   * session prompts to the ACP session. Only processes messages since the
+   * last poll and from members other than the body identity.
+   * Returns the number of new messages processed.
+   */
+  async pollMembers(subchannelId: string): Promise<number> {
+    const info = this.subchannels.get(subchannelId);
+    if (!info) {
+      throw new Error(`Subchannel ${subchannelId} not found`);
+    }
+
+    // Archived subchannels are read-only — no more member message processing.
+    if (info.archived) {
+      return 0;
+    }
+
+    const session = info.session;
+    const since = info.lastPolledAt;
+
+    try {
+      const events = await queryEvents(
+        [
+          {
+            kinds: [9],
+            '#h': [subchannelId],
+            since,
+            limit: 100,
+          },
+        ],
+        this.bodyIdentity.publicKey,
+      );
+
+      let count = 0;
+      let maxCreated = since;
+
+      for (const evt of events) {
+        // Skip events published by the body itself (no self-steering).
+        if (evt.pubkey === this.bodyIdentity.publicKey) continue;
+        // Skip events that are not plain text messages.
+        if (!evt.content || evt.tags.some((t) => t[0] === 't' && t[1] === 'agent-activity')) continue;
+        // Skip control messages.
+        if (evt.tags.some((t) => t[0] === 't' && t[1] === 'body-control')) continue;
+
+        if (evt.created_at > maxCreated) {
+          maxCreated = evt.created_at;
+        }
+
+        // Forward the member's message as a session prompt.
+        const prompt = `[Member ${evt.pubkey.slice(0, 12)}]: ${evt.content}`;
+        try {
+          await session.client.sessionPrompt(
+            session.sessionId,
+            prompt,
+            60_000,
+          );
+          count++;
+        } catch (err) {
+          console.error(`[body] pollMembers: sessionPrompt failed for event ${evt.id}:`, err);
+        }
+      }
+
+      // Advance the poll cursor.
+      if (maxCreated > info.lastPolledAt) {
+        info.lastPolledAt = maxCreated;
+        info.session.lastPolledAt = maxCreated;
+      }
+
+      return count;
+    } catch (err) {
+      console.error('[body] pollMembers: query failed:', err);
+      return 0;
+    }
+  }
+
+  /**
    * Archive a subchannel: cancel session, remove worktree, post archive message.
+   * After archiving, the subchannel is read-only (no more member message processing).
    */
   async archiveSubchannel(subchannelId: string): Promise<void> {
     const info = this.subchannels.get(subchannelId);
@@ -295,6 +429,10 @@ export class Body {
     }
 
     const { session, worktreePath, featureBranch, subchannelId: scId } = info;
+
+    // Mark as archived before cleanup.
+    info.archived = true;
+    info.session.archived = true;
 
     // Cancel the ACP session.
     session.client.sessionCancel(session.sessionId);
@@ -310,7 +448,15 @@ export class Body {
     // Remove worktree.
     await this.removeWorktree(scId, worktreePath, featureBranch);
 
-    // Post archive message.
+    // Post archive message to subchannel.
+    await postControlMessage(
+      subchannelId,
+      this.bodyIdentity,
+      `📦 Subchannel archived — session ended. This channel is now read-only.`,
+      [['status', 'archived']],
+    );
+
+    // Post archive message to parent.
     const parentId = session.parentChannelId;
     if (parentId) {
       await postControlMessage(
@@ -321,7 +467,7 @@ export class Body {
       );
     }
 
-    // Remove from state.
+    // Remove from active state.
     this.sessions.delete(subchannelId);
     this.subchannels.delete(subchannelId);
   }
@@ -470,12 +616,21 @@ export class Body {
 
   /** Dispose all sessions. */
   async dispose(): Promise<void> {
-    for (const [channelId] of this.sessions) {
-      const session = this.sessions.get(channelId)!;
+    for (const [, session] of this.sessions) {
       if (session.unsubscribeActivity) session.unsubscribeActivity();
       await session.client.stop();
     }
     this.sessions.clear();
     this.subchannels.clear();
+  }
+
+  /** Get the sessions map (for testing introspection). */
+  getSessions(): Map<string, AgentSession> {
+    return this.sessions;
+  }
+
+  /** Get the subchannels map (for testing introspection). */
+  getSubchannels(): Map<string, SubchannelInfo> {
+    return this.subchannels;
   }
 }

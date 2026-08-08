@@ -22,6 +22,9 @@ import type { Identity } from './identity.js';
 export const KIND_PUT_USER = 9000;
 export const KIND_CREATE_GROUP = 9007;
 export const KIND_STREAM_MESSAGE = 9;
+
+/** NIP-29: edit group metadata (name, about, archived, visibility, etc.). */
+export const KIND_EDIT_METADATA = 9002;
 export const KIND_REPO_ANNOUNCEMENT = 30617;
 
 function sign(identity: Identity, kind: number, tags: string[][], content = ''): NostrEvent {
@@ -38,14 +41,18 @@ function sign(identity: Identity, kind: number, tags: string[][], content = ''):
 }
 
 /** Create an open channel owned by `owner`. Returns the channel UUID. */
-export async function createChannel(owner: Identity, name: string): Promise<string> {
+export async function createChannel(owner: Identity, name: string, opts?: { parentChannelId?: string }): Promise<string> {
   const channelId = randomUUID();
-  const event = sign(owner, KIND_CREATE_GROUP, [
+  const tags: string[][] = [
     ['h', channelId],
     ['name', name],
     ['channel_type', 'stream'],
     ['visibility', 'open'],
-  ]);
+  ];
+  if (opts?.parentChannelId) {
+    tags.push(['parent', opts.parentChannelId]);
+  }
+  const event = sign(owner, KIND_CREATE_GROUP, tags);
   await publishEvent(event);
   return channelId;
 }
@@ -61,6 +68,22 @@ export async function setMemberRole(
     ['h', channelId],
     ['p', targetPubkey],
     ['role', role],
+  ]);
+  await publishEvent(event);
+}
+
+/**
+ * Archive a channel by publishing a kind:9002 edit-metadata event.
+ * The relay will set `archived=true` in the DB and re-emit kind:39000
+ * with `archived=true` tag so clients see the channel as read-only.
+ *
+ * The caller MUST be an owner/admin of the channel, or the relay will
+ * reject the mutation.
+ */
+export async function archiveChannel(actor: Identity, channelId: string): Promise<void> {
+  const event = sign(actor, KIND_EDIT_METADATA, [
+    ['h', channelId],
+    ['archived', 'true'],
   ]);
   await publishEvent(event);
 }

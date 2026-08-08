@@ -24,6 +24,7 @@ import {
   newIdentity,
   publishEvent,
   queryEvents,
+  archiveChannel,
   checkAgentNotPushAllowed,
   type Identity,
 } from '@buzzy/gate';
@@ -199,7 +200,7 @@ export class Body {
     const agentId = this.agentIdentity ?? this.bodyIdentity;
 
     // 1. Create child channel.
-    const subchannelId = await createChannel(this.bodyIdentity, `sub-${tlcChannelId.slice(0, 8)}`);
+    const subchannelId = await createChannel(this.bodyIdentity, `sub-${tlcChannelId.slice(0, 8)}`, { parentChannelId: tlcChannelId });
 
     // 2. Mirror parent members: query members of TLC, add each as member of subchannel.
     await this.mirrorMembers(tlcChannelId, subchannelId);
@@ -465,15 +466,7 @@ export class Body {
     // Remove worktree.
     await this.removeWorktree(scId, worktreePath, featureBranch);
 
-    // Post archive message to subchannel.
-    await postControlMessage(
-      subchannelId,
-      this.bodyIdentity,
-      `📦 Subchannel archived — session ended. This channel is now read-only.`,
-      [['status', 'archived']],
-    );
-
-    // Post archive message to parent.
+    // Post status messages BEFORE archiving (relay rejects events on archived channels).
     const parentId = session.parentChannelId;
     if (parentId) {
       await postControlMessage(
@@ -483,6 +476,18 @@ export class Body {
         [['subchannel', subchannelId], ['status', 'archived']],
       );
     }
+
+    // Post archive message to subchannel before archival (relay will reject it after).
+    await postControlMessage(
+      subchannelId,
+      this.bodyIdentity,
+      `📦 Subchannel archived — session ended. This channel is now read-only.`,
+      [['status', 'archived']],
+    );
+
+    // Mark subchannel as archived in relay metadata (kind:9002 → 39000 archived=true).
+    // After this call, the relay rejects any further events on this channel.
+    await archiveChannel(this.bodyIdentity, subchannelId);
 
     // Remove from active state.
     this.sessions.delete(subchannelId);
@@ -510,7 +515,9 @@ export class Body {
     return 'member';
   }
 
-  /** Mirror TLC members into the subchannel. */
+  /** Mirror TLC members into the subchannel, excluding the body identity.
+   * The body already owns the subchannel (it created it), so mirroring its
+   * own role would demote it from owner. */
   private async mirrorMembers(
     sourceChannelId: string,
     targetChannelId: string,
@@ -532,6 +539,8 @@ export class Body {
         const pTag = evt.tags.find((t: string[]) => t[0] === 'p');
         if (!pTag?.[1]) continue;
         const pubkey = pTag[1];
+        // Skip the body identity — it's already the channel owner by creation.
+        if (pubkey === this.bodyIdentity.publicKey) continue;
         if (seen.has(pubkey)) continue;
         seen.add(pubkey);
 

@@ -8,6 +8,7 @@ import { isRunningOnMac } from '@/utils/platform';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { MobileGlassBackdrop } from '@/components/MobileGlass';
+import { BUZZY_FLAGS } from '@/constants/buzzyFlags';
 
 export const unstable_settings = {
     initialRouteName: 'index',
@@ -138,18 +139,23 @@ export default function RootLayout() {
                     headerTitle: t('settings.features'),
                 }}
             />
-            <Stack.Screen
-                name="terminal/connect"
-                options={{
-                    headerTitle: t('navigation.connectTerminal'),
-                }}
-            />
-            <Stack.Screen
-                name="terminal/index"
-                options={{
-                    headerTitle: t('navigation.connectTerminal'),
-                }}
-            />
+            {/* Terminal UI: stubbed for Buzzy (no live PTY). See BUZZY_FLAGS.hideTerminalUI */}
+            {!BUZZY_FLAGS.hideTerminalUI && (
+                <Stack.Screen
+                    name="terminal/connect"
+                    options={{
+                        headerTitle: t('navigation.connectTerminal'),
+                    }}
+                />
+            )}
+            {!BUZZY_FLAGS.hideTerminalUI && (
+                <Stack.Screen
+                    name="terminal/index"
+                    options={{
+                        headerTitle: t('navigation.connectTerminal'),
+                    }}
+                />
+            )}
             <Stack.Screen
                 name="restore/index"
                 options={{
@@ -212,32 +218,37 @@ export default function RootLayout() {
                     headerBackTitle: t('common.back'),
                 }}
             />
-            <Stack.Screen
-                name="friends/index"
-                options={({ navigation }) => ({
-                    headerShown: true,
-                    headerTitle: t('navigation.friends'),
-                    headerBackTitle: t('common.back'),
-                    headerRight: () => (
-                        <TouchableOpacity
-                            onPress={() => navigation.navigate('friends/search' as never)}
-                            style={{ paddingHorizontal: 16 }}
-                        >
-                            <Text style={{ color: theme.colors.button.primary.tint, fontSize: 16 }}>
-                                {t('friends.addFriend')}
-                            </Text>
-                        </TouchableOpacity>
-                    ),
-                })}
-            />
-            <Stack.Screen
-                name="friends/search"
-                options={{
-                    headerShown: true,
-                    headerTitle: t('friends.addFriend'),
-                    headerBackTitle: t('common.back'),
-                }}
-            />
+            {/* Happy single-user friends social — not used for Buzz channel membership */}
+            {!BUZZY_FLAGS.hideFriendsSocial && (
+                <Stack.Screen
+                    name="friends/index"
+                    options={({ navigation }) => ({
+                        headerShown: true,
+                        headerTitle: t('navigation.friends'),
+                        headerBackTitle: t('common.back'),
+                        headerRight: () => (
+                            <TouchableOpacity
+                                onPress={() => navigation.navigate('friends/search' as never)}
+                                style={{ paddingHorizontal: 16 }}
+                            >
+                                <Text style={{ color: theme.colors.button.primary.tint, fontSize: 16 }}>
+                                    {t('friends.addFriend')}
+                                </Text>
+                            </TouchableOpacity>
+                        ),
+                    })}
+                />
+            )}
+            {!BUZZY_FLAGS.hideFriendsSocial && (
+                <Stack.Screen
+                    name="friends/search"
+                    options={{
+                        headerShown: true,
+                        headerTitle: t('friends.addFriend'),
+                        headerBackTitle: t('common.back'),
+                    }}
+                />
+            )}
             <Stack.Screen
                 name="user/[id]"
                 options={{

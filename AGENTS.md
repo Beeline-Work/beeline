@@ -29,6 +29,12 @@ Do not repeat what the codebase already shows; point to the authoritative file o
 Prefer rewriting or pruning existing entries over appending new ones.
 When updating this file, preserve this bar for all agents and keep entries concise.
 
+## GrokNight Terminal UI theme
+
+- **Design tokens**: `apps/mobile/sources/buzz/groknight.ts` — single source of truth for all GrokNight palette hexes (bg, text, accent, border colors). Every buzzy screen imports from here; no hardcoded hexes.
+- **Design authority**: Variant A (GrokNight Terminal) from the approved mockup. Near-black flat surfaces, 2px role-colored left accent bars (magenta=agent, #c8c8c8=human), monospace typography, ◆ diamond tool bullets, gold approval gates.
+- **Restyled screens**: `buzz/channels.tsx`, `buzz/chat/[channelId].tsx`, `buzz/onboarding.tsx` — session/channel list, live session transcript with merge controls and composer, and key onboarding.
+
 ## Mobile client (Happy fork)
 
 - `apps/mobile` is a **vendored Happy** Expo app, **isolated** from root npm workspaces.
@@ -39,7 +45,7 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - **BuzzRigTransport** (`sources/sync/transport/buzz-rig-transport.ts`): P1 implementation against `@buzzy/buzz-client`. Covers: identity, sessionsRead, sessionRead, sessionEventsBackfill, sessionEventsSubscribe, messageSubmit. Everything else stubbed (RigTransportNotImplementedError).
 - **Dependency strategy**: `@buzzy/buzz-client` and `@buzzy/nostr` are resolved via Metro `resolveRequest` aliases to their `dist/` in `../../packages/`. Transitive deps (`@noble/*`, `nostr-tools`) resolve via Metro's node_modules walk-up into the root workspace. See `metro.config.js` for the alias list.
 - **Buzz UI screens** (`sources/app/(app)/buzz/`): parallel minimal path using BuzzRigTransport directly (no Happy sync layer). Onboarding, channel list, and chat screens.
-- Typecheck: the mobile app's `tsc --noEmit` produces hundreds of pre-existing 'cannot find module' errors for `react-native`, `expo-*`, etc. due to module resolution. These are NOT caused by new code. Metro bundles successfully despite these tsc errors.
+- Typecheck: `tsc --noEmit` has one pre-existing error in `buzz-rig-transport.ts` (unrelated to UI). Metro bundles successfully.
 - **P2 merge UI** (`apps/mobile/sources/app/(app)/buzz/chat/[channelId].tsx`): approve button in subchannels reads merge target from body-control messages (repo,branch,tip tags), signs P0-gate-shape approval via `submitMergeApproval`, shows async states. Merge-summary messages (t=merge-summary) render with green border. Archived subchannels (status=archived) disable text input. Provenance shows short npub next to each message.
 - **P2 channels list** (`apps/mobile/sources/app/(app)/buzz/channels.tsx`): shows subchannels indented under parent with icon, shows archived state, subchannel count per parent.
 - **Body control message shape**: subchannel-open and intro messages now carry `["repo", ownerHex/repo]`, `["tip", 40-hex]` tags alongside existing `branch`, `subchannel`, `session`, `mode` tags. See `apps/body/src/body.ts` `openSubchannel()`.

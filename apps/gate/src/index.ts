@@ -49,3 +49,9 @@ export {
   APPROVAL_MARKER,
   type MergeTarget,
 } from './approval.js';
+
+export {
+  attemptMerge,
+  type MergeRequest,
+  type MergeOutcome,
+} from './worker.js';

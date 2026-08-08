@@ -222,26 +222,33 @@ export async function getChannelMetadata(
 }
 
 /**
- * Discover child/subchannels of a parent by scanning recent 9007 creates
- * or metadata with a `parent` tag. Best-effort convention until native links.
+ * Discover child/subchannels of a parent by scanning kind:9007 create events
+ * that carry a `parent` tag matching `parentChannelId`.
+ *
+ * Parent linkage lives on the 9007 create event, NOT on kind:39000 metadata
+ * (though some stacks may mirror it there).
+ *
+ * The relay does NOT index multi-character tags (`#parent`), so we query
+ * all recent 9007 events and filter client-side by the `parent` tag value.
  */
 export async function listSubchannels(
   ctx: ChannelOpsContext,
   parentChannelId: string,
-  limit = 50,
+  limit = 500,
 ): Promise<string[]> {
-  // Query stream messages and creates that might carry parent tag — metadata first.
-  const meta = await queryEvents(
+  const events = await queryEvents(
     ctx.http,
-    [{ kinds: [KIND_CHANNEL_METADATA, KIND_CREATE_GROUP], '#parent': [parentChannelId], limit }],
+    [{ kinds: [KIND_CREATE_GROUP], limit }],
     ctx.identity.publicKey,
   );
-  const ids = new Set<string>();
-  for (const ev of meta) {
+  const ids: string[] = [];
+  for (const ev of events) {
+    const parent = tagValue(ev, 'parent');
+    if (parent !== parentChannelId) continue;
     const id = tagValue(ev, 'h') ?? tagValue(ev, 'd');
-    if (id && id !== parentChannelId) ids.add(id);
+    if (id && id !== parentChannelId) ids.push(id);
   }
-  return [...ids];
+  return ids;
 }
 
 /** Build + publish a kind:9 channel message. */

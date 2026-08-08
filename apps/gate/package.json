@@ -6,9 +6,12 @@
   "main": "./dist/worker.js",
   "scripts": {
     "worker": "node --import tsx src/worker.ts",
+    "provisioning": "node --import tsx src/provisioning.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "pretest:live": "npm run build -w @buzzy/nostr",
+    "test:live": "vitest run --config vitest.live.config.ts"
   },
   "dependencies": {
     "@buzzy/nostr": "*"

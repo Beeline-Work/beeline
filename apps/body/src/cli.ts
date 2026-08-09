@@ -37,6 +37,7 @@ Buzzy Body — agent session manager.
 
 Usage:
   body provision <channel-uuid>          Attach read-only agent to a TLC
+  body serve <channel-uuid> <owner> <repo>  Watch human requests and run the full branch loop
   body open <channel-uuid> <owner> <repo>  Open subchannel + edit session
   body archive <subchannel-uuid>         Archive subchannel
   body create-and-provision <name>       Create a new TLC + provision agent
@@ -148,6 +149,27 @@ async function main(): Promise<void> {
         console.log(`[body]   worktree: ${info.worktreePath}`);
         console.log(`[body]   branch: ${info.featureBranch}`);
         console.log(`[body]   session: ${info.session.sessionId}`);
+        break;
+      }
+
+      case 'serve': {
+        const channelId = args[1]!;
+        const ownerHex = args[2]!;
+        const repo = args[3]!;
+        if (!channelId || !ownerHex || !repo) {
+          usage();
+          return;
+        }
+        const controller = new AbortController();
+        const stop = () => controller.abort();
+        process.once('SIGINT', stop);
+        process.once('SIGTERM', stop);
+        console.log(`[body] watching channel requests addressed to agent ${body.agent.publicKey}`);
+        await body.runChannelLoop(
+          channelId,
+          { ownerHex, repo, targetBranch: 'refs/heads/main' },
+          { signal: controller.signal },
+        );
         break;
       }
 

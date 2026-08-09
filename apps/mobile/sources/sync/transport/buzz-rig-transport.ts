@@ -36,41 +36,9 @@ import {
   type BuzzClient,
   type Identity,
   type MergeTarget,
-  type SessionEvent as BuzzSessionEvent,
 } from '@buzzy/buzz-client';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
-
-/**
- * Map a buzz-client SessionEvent (kind:'message'|'agent-activity'|'other')
- * to a RigTransport SessionEvent.
- */
-function toRigEvent(ev: BuzzSessionEvent): SessionEvent {
-  if (ev.kind === 'agent-activity') {
-    return {
-      type: 'assistant_delta',
-      sessionId: ev.channelId,
-      text: ev.content,
-      seq: ev.createdAt,
-    };
-  }
-  if (ev.kind === 'message') {
-    return {
-      type: 'raw',
-      sessionId: ev.channelId,
-      payload: {
-        id: ev.id,
-        content: ev.content,
-        pubkey: ev.pubkey,
-        createdAt: ev.createdAt,
-      },
-    };
-  }
-  return {
-    type: 'raw',
-    sessionId: ev.channelId,
-    payload: ev.event,
-  };
-}
+import { toRigEvent } from './buzz-event-projection';
 
 export class BuzzRigTransport implements RigTransport {
   private client: BuzzClient | null = null;
@@ -172,6 +140,20 @@ export class BuzzRigTransport implements RigTransport {
   async messageSubmitWithEventId(input: MessageSubmitInput): Promise<string> {
     const client = await this.getClient();
     const event = await client.messageSubmit(input.sessionId, input.text);
+    return event.id;
+  }
+
+  /** Human-only UI affordance: ask one named agent to open its own work branch. */
+  async submitAgentRequest(
+    channelId: string,
+    text: string,
+    agentPubkey: string,
+  ): Promise<string> {
+    const client = await this.getClient();
+    const event = await client.messageSubmit(channelId, text, {
+      mentionAgent: agentPubkey,
+      extraTags: [['t', 'buzz-agent-request']],
+    });
     return event.id;
   }
 
@@ -319,7 +301,7 @@ export class BuzzRigTransport implements RigTransport {
     const client = await this.getClient();
     // Backfill messages to find the body's control message with merge target.
     const events = await client.sessionEventsBackfill(subchannelId, { limit: 20 });
-    for (const ev of events) {
+    for (const ev of [...events].reverse()) {
       if (
         ev.kind !== 'other' &&
         ev.kind !== 'message'
@@ -388,6 +370,31 @@ export class BuzzRigTransport implements RigTransport {
   async listSubchannels(parentChannelId: string): Promise<string[]> {
     const client = await this.getClient();
     return client.listSubchannels(parentChannelId);
+  }
+
+  /** Lifecycle projection used by both the channel discussion and channel list. */
+  async listSubchannelLifecycle(parentChannelId: string): Promise<Array<{
+    id: string;
+    openerPubkey: string;
+    archived: boolean;
+  }>> {
+    const client = await this.getClient();
+    const ids = await client.listSubchannels(parentChannelId);
+    return Promise.all(ids.map(async (id) => {
+      const creates = await client.query([{ kinds: [9007], '#h': [id], limit: 5 }]);
+      const create = [...creates].sort((a, b) => a.created_at - b.created_at)[0];
+      return {
+        id,
+        openerPubkey: create?.pubkey ?? '',
+        archived: await this.isChannelArchived(id),
+      };
+    }));
+  }
+
+  async getChannelCreator(channelId: string): Promise<string | null> {
+    const client = await this.getClient();
+    const creates = await client.query([{ kinds: [9007], '#h': [channelId], limit: 5 }]);
+    return [...creates].sort((a, b) => a.created_at - b.created_at)[0]?.pubkey ?? null;
   }
 
   /**

@@ -96,6 +96,7 @@ function eventId(e: SessionEvent, fallback: string): string {
     if (p && typeof p.id === 'string') return p.id;
   }
   if (e.type === 'assistant_delta') {
+    if (e.id) return e.id;
     if (e.seq) return `delta-${e.seq}`;
   }
   return fallback;
@@ -223,6 +224,7 @@ export default function BuzzChat() {
             const pk = eventPubkey(e);
             const text = eventText(e);
             const isAgentActivity = e.type === 'assistant_delta';
+            if (isAgentActivity && !text.trim()) continue;
             const hasBodyControl = eventHasTag(e, 't', 'body-control');
             const hasMergeSummary = eventHasTag(e, 't', 'merge-summary');
             const hasStatusArchived = eventHasTag(e, 'status', 'archived');
@@ -324,6 +326,7 @@ export default function BuzzChat() {
           const pk = eventPubkey(event);
           const text = eventText(event);
           const isAgentActivity = event.type === 'assistant_delta';
+          if (isAgentActivity && !text.trim()) return;
           const hasBodyControl = eventHasTag(event, 't', 'body-control');
           const hasMergeSummary = eventHasTag(event, 't', 'merge-summary');
           const hasStatusArchived = eventHasTag(event, 'status', 'archived');

@@ -27,11 +27,10 @@ import {
   saveActiveCommunityId,
   saveLastViewedChannel,
 } from '@/buzz/community-storage';
-import {
-  dismissKeyBackupNudge,
-  isKeyBackupNudgeDismissed,
-} from '@/buzz/key-backup-nudge';
-import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
+import { dismissKeyBackupNudge, isKeyBackupNudgeDismissed } from '@/buzz/key-backup-nudge';
+import { createCommunityInviteUrl } from '@/buzz/community-invite';
+import { CommunityInviteEntry } from '@/components/buzz/CommunityInviteEntry';
+import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
 import { BuzzRigTransport } from '@/sync/transport';
 import type { SessionSummary } from '@/sync/transport';
 
@@ -170,6 +169,8 @@ export default function BuzzChannels() {
   const [creatingChannel, setCreatingChannel] = useState(false);
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
   const [showBackupNudge, setShowBackupNudge] = useState(false);
+  const [creatingInvite, setCreatingInvite] = useState(false);
+  const [readyInviteUrl, setReadyInviteUrl] = useState<string | undefined>(inviteUrl);
 
   const activeCommunity = useMemo(
     () => communities.find((community) => community.communityId === activeCommunityId) ?? null,
@@ -233,6 +234,7 @@ export default function BuzzChannels() {
   }, [resolveCommunity]);
 
   const handleSelectCommunity = useCallback((communityId: string | null) => {
+    setReadyInviteUrl(undefined);
     router.replace({
       pathname: '/buzz/channels',
       params: { communityId: communityId ?? 'standalone' },
@@ -332,6 +334,20 @@ export default function BuzzChannels() {
     }
   }, [identity]);
 
+  const handleInvitePeople = useCallback(async () => {
+    if (!transport || !activeCommunityId || creatingInvite) return;
+    setCreatingInvite(true);
+    setError(null);
+    try {
+      const client = await transport.ensureClient();
+      setReadyInviteUrl(await createCommunityInviteUrl(client, activeCommunityId));
+    } catch (err) {
+      setError(`Could not create invite: ${String(err)}`);
+    } finally {
+      setCreatingInvite(false);
+    }
+  }, [activeCommunityId, creatingInvite, transport]);
+
   if (loading && !transport) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
@@ -350,8 +366,9 @@ export default function BuzzChannels() {
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <View style={styles.header}>
+          <CommunityDrawerTrigger communityName={activeCommunity?.name} />
           <View style={styles.headerIdentity}>
-            <Text style={styles.eyebrow}>{activeCommunity ? 'community' : 'buzzy home'}</Text>
+            <Text style={styles.eyebrow}>{activeCommunity ? 'community' : 'beeline home'}</Text>
             <Text style={styles.headerTitle} numberOfLines={1}>
               {activeCommunity?.name ?? 'standalone'}
             </Text>
@@ -392,12 +409,20 @@ export default function BuzzChannels() {
           </View>
         </View>
 
+        <CommunityInviteEntry
+          community={activeCommunity}
+          creatingInvite={creatingInvite}
+          onCreateCommunity={() => router.push('/buzz/community' as Href)}
+          onInvitePeople={() => void handleInvitePeople()}
+        />
+
         {showBackupNudge && (
           <View style={styles.backupNudge}>
             <View style={styles.backupNudgeCopy}>
               <Text style={styles.backupNudgeTitle}>Back up your key</Text>
               <Text style={styles.backupNudgeText}>
-                If this device is lost or wiped before you export, your Buzzy identity is lost too.
+                If this device is lost or wiped before you export, your Beeline identity is lost
+                too.
               </Text>
             </View>
             <View style={styles.backupNudgeActions}>
@@ -418,22 +443,24 @@ export default function BuzzChannels() {
           </View>
         )}
 
-        {inviteUrl && (
+        {readyInviteUrl && (
           <View style={styles.invitePanel}>
             <Text style={styles.panelEyebrow}>invite ready</Text>
             <Text style={styles.inviteUrl} numberOfLines={2}>
-              {inviteUrl}
+              {readyInviteUrl}
             </Text>
             <View style={styles.panelActions}>
               <TouchableOpacity
                 style={styles.primarySmallButton}
-                onPress={() => Share.share({ message: inviteUrl })}
+                accessibilityLabel="Share community invite"
+                onPress={() => Share.share({ message: readyInviteUrl })}
               >
                 <Text style={styles.primarySmallButtonText}>share</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.secondarySmallButton}
-                onPress={() => Clipboard.setStringAsync(inviteUrl)}
+                accessibilityLabel="Copy community invite link"
+                onPress={() => Clipboard.setStringAsync(readyInviteUrl)}
               >
                 <Text style={styles.secondarySmallButtonText}>copy link</Text>
               </TouchableOpacity>
@@ -532,7 +559,7 @@ export default function BuzzChannels() {
               <Text style={styles.emptySubtitle}>
                 {activeCommunity
                   ? `Open a first room inside ${activeCommunity.name}.`
-                  : 'Community channels live behind their icons in the rail.'}
+                  : 'Community channels live behind their icons in the space switcher.'}
               </Text>
               {!viewerIsAgent && (
                 <TouchableOpacity
@@ -570,7 +597,7 @@ export default function BuzzChannels() {
                   {item.id.slice(0, 10)}
                   {item.subchannelCount ? ` · ${item.subchannelCount} sub` : ''}
                   {item.isSubchannel ? ` · agent ${shortPubkey(item.openerPubkey)}` : ''}
-                  {item.isSubchannel ? item.archived ? ' · closed' : ' · live' : ''}
+                  {item.isSubchannel ? (item.archived ? ' · closed' : ' · live') : ''}
                 </Text>
               </View>
               <Text style={styles.chevron}>›</Text>
@@ -654,7 +681,12 @@ const styles = StyleSheet.create({
     lineHeight: 15,
   },
   backupNudgeActions: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  nudgeAction: { minHeight: 36, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center' },
+  nudgeAction: {
+    minHeight: 36,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   nudgeActionText: { color: groknight.accent, fontFamily: mono, fontSize: 10, fontWeight: '800' },
   dismissNudge: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   dismissNudgeText: { color: groknight.steel, fontFamily: mono, fontSize: 20, lineHeight: 22 },
@@ -672,7 +704,12 @@ const styles = StyleSheet.create({
   },
   identitySettingsCopy: { flex: 1, minWidth: 0 },
   identitySettingsTitle: { color: groknight.textPrimary, fontSize: 13, fontWeight: '700' },
-  identitySettingsSubtitle: { marginTop: 3, color: groknight.muted, fontFamily: mono, fontSize: 10 },
+  identitySettingsSubtitle: {
+    marginTop: 3,
+    color: groknight.muted,
+    fontFamily: mono,
+    fontSize: 10,
+  },
   identitySettingsChevron: { marginLeft: 8, color: groknight.chrome, fontSize: 22 },
   invitePanel: {
     paddingHorizontal: 14,

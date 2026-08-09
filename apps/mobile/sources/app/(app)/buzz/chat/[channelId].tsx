@@ -540,7 +540,7 @@ export default function BuzzChat() {
           isAgent ? styles.agentBlock : styles.userBlock,
         ]}>
           <Text style={[styles.roleLabel, isAgent ? styles.roleAgent : styles.roleUser]}>
-            {isOwn ? 'YOU' : (isAgent ? 'BUZZY' : shortNpub(item.pubkey ?? ''))}
+            {isOwn ? 'YOU' : (isAgent ? 'BEELINE' : shortNpub(item.pubkey ?? ''))}
           </Text>
           {item.requestAgentPubkey && (
             <Text style={styles.workRequestBadge}>

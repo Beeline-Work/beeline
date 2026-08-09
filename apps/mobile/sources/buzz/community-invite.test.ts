@@ -1,11 +1,24 @@
-import { describe, expect, it } from 'vitest';
-import { buildCommunityInviteUrl, parseCommunityInviteToken } from './community-invite';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  buildCommunityInviteUrl,
+  createCommunityInviteUrl,
+  parseCommunityInviteToken,
+} from './community-invite';
 
 const token = `bzi_${'ab'.repeat(32)}`;
 
 describe('community invite links', () => {
   it('builds the public buzzrouter join URL', () => {
     expect(buildCommunityInviteUrl(token)).toBe(`https://buzzrouter.com/join/${token}`);
+  });
+
+  it('reuses the client invite flow and returns its shareable URL', async () => {
+    const createInvite = vi.fn().mockResolvedValue({ token });
+
+    await expect(createCommunityInviteUrl({ createInvite }, 'community-123')).resolves.toBe(
+      `https://buzzrouter.com/join/${token}`,
+    );
+    expect(createInvite).toHaveBeenCalledWith('community-123');
   });
 
   it('accepts public, custom-scheme, and raw invite values', () => {

@@ -27,6 +27,10 @@ import {
   saveActiveCommunityId,
   saveLastViewedChannel,
 } from '@/buzz/community-storage';
+import {
+  dismissKeyBackupNudge,
+  isKeyBackupNudgeDismissed,
+} from '@/buzz/key-backup-nudge';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { BuzzRigTransport } from '@/sync/transport';
 import type { SessionSummary } from '@/sync/transport';
@@ -165,6 +169,7 @@ export default function BuzzChannels() {
   const [channelName, setChannelName] = useState('');
   const [creatingChannel, setCreatingChannel] = useState(false);
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
+  const [showBackupNudge, setShowBackupNudge] = useState(false);
 
   const activeCommunity = useMemo(
     () => communities.find((community) => community.communityId === activeCommunityId) ?? null,
@@ -195,6 +200,8 @@ export default function BuzzChannels() {
           router.replace('/buzz/onboarding');
           return;
         }
+        const nudgeDismissed = await isKeyBackupNudgeDismissed(currentIdentity.publicKey);
+        if (!cancelled) setShowBackupNudge(!nudgeDismissed);
         const url = await getEffectiveRelayUrl();
         const nextTransport = new BuzzRigTransport(currentIdentity, url);
         const client = await nextTransport.ensureClient();
@@ -315,6 +322,16 @@ export default function BuzzChannels() {
     router.replace('/buzz/onboarding');
   }, []);
 
+  const handleDismissBackupNudge = useCallback(async () => {
+    if (!identity) return;
+    setShowBackupNudge(false);
+    try {
+      await dismissKeyBackupNudge(identity.publicKey);
+    } catch {
+      // Dismissal is best-effort; a storage failure may show the gentle nudge again.
+    }
+  }, [identity]);
+
   if (loading && !transport) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
@@ -363,7 +380,7 @@ export default function BuzzChannels() {
               </TouchableOpacity>
             )}
             <TouchableOpacity
-              accessibilityLabel="Relay settings"
+              accessibilityLabel="Settings"
               onPress={() => {
                 setSettingsRelayUrl(relayUrl);
                 setShowSettings((value) => !value);
@@ -374,6 +391,32 @@ export default function BuzzChannels() {
             </TouchableOpacity>
           </View>
         </View>
+
+        {showBackupNudge && (
+          <View style={styles.backupNudge}>
+            <View style={styles.backupNudgeCopy}>
+              <Text style={styles.backupNudgeTitle}>Back up your key</Text>
+              <Text style={styles.backupNudgeText}>
+                If this device is lost or wiped before you export, your Buzzy identity is lost too.
+              </Text>
+            </View>
+            <View style={styles.backupNudgeActions}>
+              <TouchableOpacity
+                onPress={() => router.push('/buzz/settings/identity' as Href)}
+                style={styles.nudgeAction}
+              >
+                <Text style={styles.nudgeActionText}>back up now</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                accessibilityLabel="Dismiss key backup reminder"
+                onPress={() => void handleDismissBackupNudge()}
+                style={styles.dismissNudge}
+              >
+                <Text style={styles.dismissNudgeText}>×</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
 
         {inviteUrl && (
           <View style={styles.invitePanel}>
@@ -429,6 +472,18 @@ export default function BuzzChannels() {
 
         {showSettings && (
           <View style={styles.actionPanel}>
+            <Text style={styles.panelEyebrow}>settings</Text>
+            <TouchableOpacity
+              accessibilityLabel="Open identity and backup settings"
+              onPress={() => router.push('/buzz/settings/identity' as Href)}
+              style={styles.identitySettingsRow}
+            >
+              <View style={styles.identitySettingsCopy}>
+                <Text style={styles.identitySettingsTitle}>identity &amp; backup</Text>
+                <Text style={styles.identitySettingsSubtitle}>export your secret key</Text>
+              </View>
+              <Text style={styles.identitySettingsChevron}>›</Text>
+            </TouchableOpacity>
             <Text style={styles.panelEyebrow}>relay url</Text>
             <TextInput
               style={styles.input}
@@ -574,6 +629,51 @@ const styles = StyleSheet.create({
     borderBottomColor: groknight.border,
     backgroundColor: groknight.bgBase,
   },
+  backupNudge: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.borderActive,
+    backgroundColor: groknight.bgCode,
+  },
+  backupNudgeCopy: { flex: 1, minWidth: 0 },
+  backupNudgeTitle: {
+    color: groknight.textPrimary,
+    fontFamily: mono,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  backupNudgeText: {
+    marginTop: 3,
+    color: groknight.muted,
+    fontFamily: mono,
+    fontSize: 10,
+    lineHeight: 15,
+  },
+  backupNudgeActions: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  nudgeAction: { minHeight: 36, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center' },
+  nudgeActionText: { color: groknight.accent, fontFamily: mono, fontSize: 10, fontWeight: '800' },
+  dismissNudge: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  dismissNudgeText: { color: groknight.steel, fontFamily: mono, fontSize: 20, lineHeight: 22 },
+  identitySettingsRow: {
+    minHeight: 52,
+    marginBottom: 14,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: groknight.borderActive,
+    borderRadius: 4,
+    backgroundColor: groknight.bgHighlight,
+  },
+  identitySettingsCopy: { flex: 1, minWidth: 0 },
+  identitySettingsTitle: { color: groknight.textPrimary, fontSize: 13, fontWeight: '700' },
+  identitySettingsSubtitle: { marginTop: 3, color: groknight.muted, fontFamily: mono, fontSize: 10 },
+  identitySettingsChevron: { marginLeft: 8, color: groknight.chrome, fontSize: 22 },
   invitePanel: {
     paddingHorizontal: 14,
     paddingVertical: 12,

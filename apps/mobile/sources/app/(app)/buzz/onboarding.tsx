@@ -31,6 +31,7 @@ export default function BuzzOnboarding() {
   const [nsecInput, setNsecInput] = useState('');
   const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_URL);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showKeyGuide, setShowKeyGuide] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -141,6 +142,19 @@ export default function BuzzOnboarding() {
         >
           <Text style={styles.secondaryButtonText}>import & continue</Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityState={{ expanded: showKeyGuide }}
+          onPress={() => setShowKeyGuide((value) => !value)}
+          style={styles.guideToggle}
+        >
+          <Text style={styles.guideToggleText}>where do I find my key?</Text>
+        </TouchableOpacity>
+        {showKeyGuide && (
+          <Text style={styles.guideText}>
+            In your current Nostr app, look for identity, account, or key backup settings. Copy the value beginning with nsec1. Never paste it into a website or send it in a message.
+          </Text>
+        )}
       </View>
 
       <TouchableOpacity
@@ -255,6 +269,23 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontFamily: mono,
     letterSpacing: 0.3,
+  },
+  guideToggle: {
+    alignSelf: 'flex-start',
+    minHeight: 36,
+    paddingVertical: 9,
+  },
+  guideToggleText: {
+    color: groknight.accent,
+    fontSize: 11,
+    fontWeight: '700',
+    fontFamily: mono,
+  },
+  guideText: {
+    color: groknight.muted,
+    fontSize: 11,
+    lineHeight: 17,
+    fontFamily: mono,
   },
   divider: {
     flexDirection: 'row',

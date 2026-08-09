@@ -10,6 +10,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Merge-gate library + worker: `apps/gate/` (see `apps/gate/README.md`).
 - Live suite (real Buzz relay): `cd apps/gate && npm run test:live` after `npm run stack:up` at repo root. Soft-skips only when the relay is unreachable.
 - Provisioning check (agent never in push-allowed): `apps/gate/src/provisioning.ts` (library + CLI via `npm run provisioning -w @buzzy/gate`).
+- Agent-approval invariant: the worker checks the self-signed `#t=buzz-agent` identity registry before roles; `apps/gate/src/agent-identity.live.test.ts` proves an agent configured as admin/trusted reviewer is refused while a human admin on the same tip is accepted.
 - One-shot end-to-end proof remains `npm run prove` (`scripts/money-shot.ts`).
 
 ## Body (@buzzy/body) — agent session manager
@@ -18,6 +19,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - **Read-only boundary = mount boundary**: TLC sessions get `mcpServers: []` (no write tools); edit sessions get `buzz-dev-mcp` for shell/str_replace. Enforced at ACP `session/new`, not via prompt.
 - Body drives `buzz-agent` directly over stdio (NOT `buzz-acp`), because `buzz-acp` auto-approves permissions and doesn't expose `session/update` to the relay.
 - Activity projection: body bridges ACP `session/update` → kind:9 `#t=agent-activity` channel events for multi-user visibility.
+- Body operator and agent keys are always distinct; the agent key signs activity, control messages, and new subchannels. Community-linked provisioning publishes the first-class record defined in `packages/buzz-client/src/agent.ts`.
 - Subchannel = child channel (kind:9007, UUID) + mirrored members + git worktree + edit-mode ACP session.
 - buzz-agent ACP wire vs MCP: `initialize` uses `protocolVersion` u32 (not MCP string), `clientCapabilities` (not `capabilities`). `session/new` returns `{sessionId}`. Standard MCP for `buzz-dev-mcp`. See `apps/body/src/acp.ts` for exact wire format.
 - Live suite: `cd apps/body && npm run test:live` (pretest builds all deps). Soft-skips when relay or LLM env (BUZZY_LLM_*) absent.

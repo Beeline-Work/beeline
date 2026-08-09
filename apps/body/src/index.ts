@@ -1,7 +1,7 @@
 /**
  * Public surface of `@buzzy/body` — agent body service.
  */
-export { Body, type AgentSession, type SubchannelInfo } from './body.js';
+export { Body, createAgentSubchannel, type AgentSession, type SubchannelInfo } from './body.js';
 export {
   AcpClient,
   type McpServerWire,

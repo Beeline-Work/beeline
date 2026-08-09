@@ -24,6 +24,9 @@ export const KIND_AUTH = 22242;
 /** Marker tag value for agent-activity body projection (session/update bus). */
 export const TAG_AGENT_ACTIVITY = 'agent-activity';
 
+/** Marker tag value for a self-signed first-class agent record. */
+export const TAG_AGENT = 'buzz-agent';
+
 /** Marker tag value for merge approval (P0 gate shape — mirrors @buzzy/gate). */
 export const TAG_MERGE_APPROVAL = 'buzz-merge-approval';
 

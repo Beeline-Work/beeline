@@ -11,6 +11,13 @@ export type {
   PublishResult,
   ChannelMember,
   ChannelMetadata,
+  Community,
+  CommunityRole,
+  CommunityMember,
+  CommunityInvite,
+  CommunityInviteRecord,
+  CreateInviteOptions,
+  RedeemInviteResult,
   SessionEvent,
   SessionEventKind,
   SessionEventHandler,
@@ -39,11 +46,14 @@ export {
   KIND_PUT_USER,
   KIND_CREATE_GROUP,
   KIND_CHANNEL_METADATA,
+  KIND_CHANNEL_ADMINS,
   KIND_CHANNEL_MEMBERS,
   KIND_AUTH,
   TAG_AGENT_ACTIVITY,
   TAG_MERGE_APPROVAL,
   TAG_PARENT,
+  TAG_COMMUNITY,
+  TAG_COMMUNITY_INVITE,
 } from './kinds.js';
 
 export {
@@ -75,11 +85,24 @@ export {
   getChannelMetadata,
   listSubchannels,
   getParentChannelId,
+  getChannelCommunityId,
   sendMessage,
   backfillMessages,
   eventIsAgentActivity,
 } from './channel.js';
 export type { ChannelOpsContext } from './channel.js';
+
+export {
+  createCommunity,
+  getCommunity,
+  listCommunities,
+  communityChannels,
+  communityMembers,
+  createInvite,
+  redeemInvite,
+  inviteTokenHash,
+  parseCommunityInvite,
+} from './community.js';
 
 export {
   buildMergeApproval,

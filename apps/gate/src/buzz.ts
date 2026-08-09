@@ -22,6 +22,7 @@ import type { Identity } from './identity.js';
 export const KIND_PUT_USER = 9000;
 export const KIND_CREATE_GROUP = 9007;
 export const KIND_STREAM_MESSAGE = 9;
+export const TAG_COMMUNITY = 'community';
 
 /** NIP-29: edit group metadata (name, about, archived, visibility, etc.). */
 export const KIND_EDIT_METADATA = 9002;
@@ -40,8 +41,11 @@ function sign(identity: Identity, kind: number, tags: string[][], content = ''):
   );
 }
 
-/** Create an open channel owned by `owner`. Returns the channel UUID. */
-export async function createChannel(owner: Identity, name: string, opts?: { parentChannelId?: string }): Promise<string> {
+async function createGroup(
+  owner: Identity,
+  name: string,
+  opts?: { parentChannelId?: string; communityId?: string; communitySelfLink?: boolean },
+): Promise<string> {
   const channelId = randomUUID();
   const tags: string[][] = [
     ['h', channelId],
@@ -52,9 +56,29 @@ export async function createChannel(owner: Identity, name: string, opts?: { pare
   if (opts?.parentChannelId) {
     tags.push(['parent', opts.parentChannelId]);
   }
+  if (opts?.communityId) {
+    tags.push([TAG_COMMUNITY, opts.communityId]);
+  }
+  if (opts?.communitySelfLink) {
+    tags.push([TAG_COMMUNITY, channelId]);
+  }
   const event = sign(owner, KIND_CREATE_GROUP, tags);
   await publishEvent(event);
   return channelId;
+}
+
+/** Create an open channel owned by `owner`. Returns the channel UUID. */
+export function createChannel(
+  owner: Identity,
+  name: string,
+  opts?: { parentChannelId?: string; communityId?: string },
+): Promise<string> {
+  return createGroup(owner, name, opts);
+}
+
+/** Create a self-linked community group; membership still uses kind:9000 → 39002. */
+export function createCommunity(owner: Identity, name: string): Promise<string> {
+  return createGroup(owner, name, { communitySelfLink: true });
 }
 
 /** Set `target`'s role in `channelId`, signed by an authorized actor. */
@@ -63,12 +87,15 @@ export async function setMemberRole(
   channelId: string,
   targetPubkey: string,
   role: 'owner' | 'admin' | 'member',
+  opts?: { extraTags?: string[][] },
 ): Promise<void> {
-  const event = sign(actor, KIND_PUT_USER, [
+  const tags: string[][] = [
     ['h', channelId],
     ['p', targetPubkey],
     ['role', role],
-  ]);
+  ];
+  if (opts?.extraTags) tags.push(...opts.extraTags);
+  const event = sign(actor, KIND_PUT_USER, tags);
   await publishEvent(event);
 }
 

@@ -67,3 +67,9 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - App registration lives in `apps/mobile/sources/push/buzz-push-registration.ts`; runtime defaults/overrides are in `app.config.js` and `sources/buzz/runtime-config.ts`. The public gateway default is `https://push.buzzrouter.com`.
 - Gateway authority and operations: `apps/push-gateway/README.md`. It binds `127.0.0.1:8788` by default, persists registrations under its ignored `.data/`, and requires a service-account path via environment variable; credentials and device tokens must never be logged or committed.
 - Gateway checks: `npm run build -w @buzzy/push-gateway && npm test -w @buzzy/push-gateway`.
+
+## Community model
+
+- SDK authority: `packages/buzz-client/src/community.ts`; gate convention + live proof: `apps/gate/src/community.live.test.ts`.
+- A community reuses NIP-29 group state: kind:9007 stream create with a self-referencing `community=<h UUID>` tag, kind:9000 roles, and 39001/39002 admin/member projections. Contained channels carry `community=<community UUID>`; absent remains a valid standalone channel.
+- Invites are signed community-scoped kind:9 events (`t=buzz-community-invite`, `d=SHA-256(token)`, NIP-40 `expiration`). Redemption validates the marker and self-adds through kind:9000; plaintext tokens are never published.

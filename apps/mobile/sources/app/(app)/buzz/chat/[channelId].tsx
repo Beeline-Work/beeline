@@ -1,8 +1,8 @@
 /**
  * Buzz Chat — single channel/session chat screen (P2: subchannels + merge + provenance).
  *
- * GrokNight Terminal design: near-black flat surfaces, role accent bars,
- * diamond tool bullets, gold approval gates, monospace typography.
+ * GrokNight alien-hull design: near-black flat surfaces, brushed chrome,
+ * and a restrained cyan accent for active/live states and merge approval.
  */
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
@@ -472,7 +472,7 @@ export default function BuzzChat() {
   if (loading) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <ActivityIndicator size="large" color={groknight.magenta} />
+        <ActivityIndicator size="large" color={groknight.accent} />
         <Text style={styles.loadingText}>session loading…</Text>
       </View>
     );
@@ -522,7 +522,7 @@ export default function BuzzChat() {
           )}
           {approvalState === 'sending' && (
             <View style={styles.approvalPending}>
-              <ActivityIndicator size="small" color={groknight.gold} />
+              <ActivityIndicator size="small" color={groknight.accent} />
               <Text style={styles.approvalStateText}>sending…</Text>
             </View>
           )}
@@ -653,7 +653,7 @@ const styles = StyleSheet.create({
     fontFamily: mono,
   },
   pathTag: {
-    color: groknight.orange,
+    color: groknight.chrome,
   },
   archivedBadge: {
     backgroundColor: groknight.bgHighlight,
@@ -686,7 +686,7 @@ const styles = StyleSheet.create({
   /** Left accent bar via borderLeft — 2px, color-coded by role */
   agentBlock: {
     borderLeftWidth: 2,
-    borderLeftColor: groknight.magenta,
+    borderLeftColor: groknight.accent,
   },
   userBlock: {
     borderLeftWidth: 2,
@@ -699,7 +699,7 @@ const styles = StyleSheet.create({
     marginBottom: 3,
   },
   roleAgent: {
-    color: groknight.magenta,
+    color: groknight.accent,
   },
   roleUser: {
     color: groknight.muted,
@@ -724,12 +724,12 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 6,
     borderLeftWidth: 2,
-    borderLeftColor: groknight.blue,
+    borderLeftColor: groknight.chrome,
   },
   subchannelLinkTitle: {
     fontSize: 11,
     fontWeight: '700',
-    color: groknight.blue,
+    color: groknight.chrome,
     marginBottom: 4,
     fontFamily: mono,
   },
@@ -764,12 +764,12 @@ const styles = StyleSheet.create({
     padding: 10,
     marginBottom: 6,
     borderLeftWidth: 2,
-    borderLeftColor: groknight.green,
+    borderLeftColor: groknight.chrome,
   },
   mergeSummaryTitle: {
     fontSize: 12,
     fontWeight: '700',
-    color: groknight.green,
+    color: groknight.chrome,
     marginBottom: 4,
     fontFamily: mono,
   },
@@ -823,10 +823,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     borderRadius: 3,
     letterSpacing: 0.3,
-    color: groknight.green,
-    backgroundColor: groknight.greenDarkBg,
+    color: groknight.chrome,
+    backgroundColor: groknight.bgHighlight,
     borderWidth: 1,
-    borderColor: '#9ece6a44',
+    borderColor: groknight.borderActive,
     fontFamily: mono,
     overflow: 'hidden',
   },
@@ -838,15 +838,15 @@ const styles = StyleSheet.create({
   },
   approveButton: {
     borderWidth: 1,
-    borderColor: groknight.gold,
+    borderColor: groknight.accent,
     borderRadius: 4,
     paddingVertical: 10,
     paddingHorizontal: 14,
     alignItems: 'center',
-    backgroundColor: '#ffdb8d12',
+    backgroundColor: groknight.accent,
   },
   approveButtonText: {
-    color: groknight.gold,
+    color: groknight.bgTerminal,
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.6,
@@ -866,15 +866,15 @@ const styles = StyleSheet.create({
   },
   approvalSent: {
     borderWidth: 1,
-    borderColor: groknight.green,
+    borderColor: groknight.borderActive,
     borderRadius: 4,
     paddingVertical: 10,
     paddingHorizontal: 14,
     alignItems: 'center',
-    backgroundColor: '#9ece6a12',
+    backgroundColor: groknight.bgHighlight,
   },
   approvalSentText: {
-    color: groknight.green,
+    color: groknight.chrome,
     fontSize: 12,
     fontWeight: '700',
     fontFamily: mono,
@@ -900,7 +900,7 @@ const styles = StyleSheet.create({
     borderBottomColor: groknight.border,
   },
   subchannelLinkItemText: {
-    color: groknight.blue,
+    color: groknight.chrome,
     fontSize: 12,
     fontFamily: mono,
   },
@@ -937,7 +937,7 @@ const styles = StyleSheet.create({
   composerPrefix: {
     fontSize: 14,
     fontWeight: '800',
-    color: groknight.magenta,
+    color: groknight.steel,
     marginRight: 8,
     fontFamily: mono,
   },
@@ -957,7 +957,7 @@ const styles = StyleSheet.create({
     opacity: 0.3,
   },
   sendButtonText: {
-    color: groknight.gutter,
+    color: groknight.accent,
     fontSize: 16,
   },
   archivedInputBar: {

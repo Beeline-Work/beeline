@@ -72,8 +72,8 @@ export async function clearBuzzIdentity(): Promise<void> {
 }
 
 /** Generate a fresh keypair and persist it, returning the identity. */
-export async function generateBuzzIdentity(): Promise<Identity> {
-  const identity = createIdentity('buzzy-mobile');
+export async function generateBuzzIdentity(name = 'buzzy-mobile'): Promise<Identity> {
+  const identity = createIdentity(name.trim() || 'buzzy-mobile');
   await saveBuzzIdentity(identity);
   return identity;
 }

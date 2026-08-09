@@ -1,0 +1,346 @@
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { router, useLocalSearchParams, type Href } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { createBuzzClient, type Community, type Identity } from '@buzzy/buzz-client';
+import {
+  generateBuzzIdentity,
+  getEffectiveRelayUrl,
+  loadBuzzIdentity,
+} from '@/auth/buzz-identity-storage';
+import {
+  loadCommunityInvitePreview,
+  parseCommunityInviteToken,
+  type CommunityInvitePreview,
+} from '@/buzz/community-invite';
+import { saveActiveCommunityId } from '@/buzz/community-storage';
+import { groknight } from '@/buzz/groknight';
+import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
+import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
+
+const mono = Platform.select({ web: '"JetBrains Mono", monospace', default: 'monospace' });
+
+export default function CommunityInviteJoin() {
+  const insets = useSafeAreaInsets();
+  const { token: routeToken } = useLocalSearchParams<{ token?: string | string[] }>();
+  const token = parseCommunityInviteToken(routeToken);
+  const [identity, setIdentity] = useState<Identity | null>(null);
+  const [relayUrl, setRelayUrl] = useState<string | null>(null);
+  const [preview, setPreview] = useState<CommunityInvitePreview | null>(null);
+  const [communities, setCommunities] = useState<Community[]>([]);
+  const [displayName, setDisplayName] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [joining, setJoining] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      if (!token) {
+        setError('This invite link is malformed.');
+        setLoading(false);
+        return;
+      }
+      try {
+        const [currentIdentity, url] = await Promise.all([
+          loadBuzzIdentity(),
+          getEffectiveRelayUrl(),
+        ]);
+        const nextPreview = await loadCommunityInvitePreview(
+          url,
+          token,
+          currentIdentity ?? undefined,
+        );
+        let available: Community[] = [];
+        if (currentIdentity) {
+          const client = createBuzzClient({ baseUrl: url, identity: currentIdentity });
+          available = await client.listCommunities();
+        }
+        if (!cancelled) {
+          setIdentity(currentIdentity);
+          setRelayUrl(url);
+          setPreview(nextPreview);
+          setCommunities(available);
+        }
+      } catch (err) {
+        if (!cancelled) setError(String(err));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  const handleJoin = useCallback(async () => {
+    if (!token || !relayUrl || !preview) return;
+    if (!identity && !displayName.trim()) {
+      setError('Choose a name to create your key and join.');
+      return;
+    }
+    setJoining(true);
+    setError(null);
+    try {
+      const joiningIdentity = identity ?? (await generateBuzzIdentity(displayName.trim()));
+      if (!identity) await registerBuzzPushNotifications(joiningIdentity);
+      const client = createBuzzClient({ baseUrl: relayUrl, identity: joiningIdentity });
+      const redemption = await client.redeemInvite(token);
+      const community = await client.getCommunity(redemption.communityId);
+      if (!community) throw new Error('Joined, but community details are not visible yet.');
+      await saveActiveCommunityId(joiningIdentity.publicKey, community.communityId);
+      router.replace({
+        pathname: '/buzz/channels',
+        params: { communityId: community.communityId },
+      });
+    } catch (err) {
+      setError(`Could not join: ${String(err)}`);
+    } finally {
+      setJoining(false);
+    }
+  }, [displayName, identity, preview, relayUrl, token]);
+
+  const selectCommunity = useCallback((communityId: string | null) => {
+    router.replace({
+      pathname: '/buzz/channels',
+      params: { communityId: communityId ?? 'standalone' },
+    });
+  }, []);
+
+  return (
+    <BuzzCommunityShell
+      communities={communities}
+      activeCommunityId={null}
+      onSelect={selectCommunity}
+      onAdd={() => router.push('/buzz/community' as Href)}
+    >
+      <View style={[styles.container, { paddingTop: insets.top }]}>
+        <View style={styles.topbar}>
+          <TouchableOpacity
+            accessibilityLabel="Back"
+            onPress={() => router.back()}
+            style={styles.backButton}
+          >
+            <Text style={styles.backText}>‹</Text>
+          </TouchableOpacity>
+          <Text style={styles.topbarTitle}>secure invite</Text>
+        </View>
+
+        <View style={styles.content}>
+          {loading ? (
+            <View style={styles.loadingBlock}>
+              <ActivityIndicator color={groknight.accent} />
+              <Text style={styles.loadingText}>verifying signed invite…</Text>
+            </View>
+          ) : preview ? (
+            <>
+              <View style={styles.communityMark}>
+                <Text style={styles.communityMarkText}>
+                  {preview.community.name.slice(0, 2).toUpperCase()}
+                </Text>
+              </View>
+              <Text style={styles.eyebrow}>invited to community</Text>
+              <Text style={styles.title}>Join {preview.community.name}?</Text>
+              <Text style={styles.details}>
+                The invite is signed and active. Joining adds this key as a member and opens the
+                community channel list.
+              </Text>
+
+              {!identity && (
+                <View style={styles.identityForm}>
+                  <Text style={styles.identityLabel}>your name</Text>
+                  <TextInput
+                    autoFocus
+                    style={styles.input}
+                    value={displayName}
+                    onChangeText={setDisplayName}
+                    onSubmitEditing={() => void handleJoin()}
+                    editable={!joining}
+                    maxLength={60}
+                    placeholder="Ada"
+                    placeholderTextColor={groknight.dim}
+                  />
+                  <Text style={styles.identityHint}>
+                    A private Nostr key is generated silently on this device.
+                  </Text>
+                </View>
+              )}
+
+              <TouchableOpacity
+                testID="confirm-community-join"
+                style={[
+                  styles.primaryButton,
+                  (joining || (!identity && !displayName.trim())) && styles.disabled,
+                ]}
+                disabled={joining || (!identity && !displayName.trim())}
+                onPress={() => void handleJoin()}
+              >
+                <Text style={styles.primaryButtonText}>
+                  {joining ? 'joining…' : `join ${preview.community.name}`}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => router.replace('/buzz/channels')}
+              >
+                <Text style={styles.cancelText}>not now</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <View style={styles.failureBlock}>
+              <Text style={styles.failureTitle}>Invite unavailable</Text>
+              <Text style={styles.details}>{error ?? 'This invite could not be opened.'}</Text>
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => router.replace('/buzz/channels')}
+              >
+                <Text style={styles.cancelText}>return to buzzy</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {preview && error && (
+            <Text accessibilityRole="alert" style={styles.errorText}>
+              {error}
+            </Text>
+          )}
+        </View>
+      </View>
+    </BuzzCommunityShell>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, minWidth: 0, backgroundColor: groknight.bgTerminal },
+  topbar: {
+    minHeight: 58,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: groknight.bgBase,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.border,
+  },
+  backButton: { width: 34, height: 42, alignItems: 'center', justifyContent: 'center' },
+  backText: { color: groknight.chrome, fontSize: 30, fontWeight: '300' },
+  topbarTitle: {
+    color: groknight.steel,
+    fontFamily: mono,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  content: { flex: 1, paddingHorizontal: 22, paddingTop: 48, alignItems: 'center' },
+  loadingBlock: { alignItems: 'center', paddingTop: 54 },
+  loadingText: { marginTop: 13, color: groknight.muted, fontFamily: mono, fontSize: 11 },
+  communityMark: {
+    width: 68,
+    height: 68,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: groknight.accent,
+    backgroundColor: groknight.bgHighlight,
+  },
+  communityMarkText: { color: groknight.accent, fontFamily: mono, fontSize: 20, fontWeight: '900' },
+  eyebrow: {
+    marginTop: 24,
+    color: groknight.steel,
+    fontFamily: mono,
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
+  },
+  title: {
+    marginTop: 8,
+    color: groknight.textPrimary,
+    fontSize: 24,
+    lineHeight: 30,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  details: {
+    maxWidth: 430,
+    marginTop: 10,
+    color: groknight.muted,
+    fontFamily: mono,
+    fontSize: 11,
+    lineHeight: 18,
+    textAlign: 'center',
+  },
+  identityForm: { alignSelf: 'stretch', marginTop: 28 },
+  identityLabel: {
+    marginBottom: 7,
+    color: groknight.chrome,
+    fontFamily: mono,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  input: {
+    minHeight: 48,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: groknight.borderActive,
+    color: groknight.textPrimary,
+    backgroundColor: groknight.bgBase,
+    fontFamily: mono,
+    fontSize: 14,
+  },
+  identityHint: {
+    marginTop: 7,
+    color: groknight.dim,
+    fontFamily: mono,
+    fontSize: 9,
+    lineHeight: 14,
+  },
+  primaryButton: {
+    alignSelf: 'stretch',
+    minHeight: 48,
+    marginTop: 24,
+    paddingHorizontal: 14,
+    borderRadius: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: groknight.accent,
+  },
+  primaryButtonText: {
+    color: groknight.bgTerminal,
+    fontFamily: mono,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  disabled: { opacity: 0.42 },
+  cancelButton: {
+    marginTop: 10,
+    minHeight: 40,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelText: { color: groknight.steel, fontFamily: mono, fontSize: 11 },
+  errorText: {
+    marginTop: 14,
+    color: groknight.chrome,
+    fontFamily: mono,
+    fontSize: 10,
+    lineHeight: 16,
+    textAlign: 'center',
+  },
+  failureBlock: { alignItems: 'center', paddingTop: 40 },
+  failureTitle: { color: groknight.textPrimary, fontSize: 20, fontWeight: '800' },
+});

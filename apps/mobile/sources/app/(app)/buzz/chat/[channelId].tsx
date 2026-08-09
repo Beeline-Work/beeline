@@ -17,13 +17,15 @@ import {
   Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useLocalSearchParams, router } from 'expo-router';
+import { useLocalSearchParams, router, type Href } from 'expo-router';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
 import { BuzzRigTransport } from '@/sync/transport';
-import { encodeNpub, type MergeTarget } from '@buzzy/buzz-client';
+import { encodeNpub, type Community, type MergeTarget } from '@buzzy/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
 import { groknight } from '@/buzz/groknight';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
+import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
+import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 
 type DisplayMessage = {
   id: string;
@@ -149,6 +151,8 @@ export default function BuzzChat() {
   const [subchannelIds, setSubchannelIds] = useState<string[]>([]);
   const [parentChannelId, setParentChannelId] = useState<string | undefined>(undefined);
   const [mergeSummaryText, setMergeSummaryText] = useState<string | null>(null);
+  const [communities, setCommunities] = useState<Community[]>([]);
+  const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
 
   // Helper to add new messages, deduplicating by id.
   const addMessages = useCallback((newMsgs: DisplayMessage[]) => {
@@ -177,6 +181,20 @@ export default function BuzzChat() {
         const t = new BuzzRigTransport(identity, url);
         setTransport(t);
         setUserPubkey(identity.publicKey);
+
+        const client = await t.ensureClient();
+        const [availableCommunities, channelCommunityId] = await Promise.all([
+          client.listCommunities(),
+          client.getChannelCommunityId(decodedId),
+        ]);
+        if (!cancelled) {
+          setCommunities(availableCommunities);
+          setActiveCommunityId(channelCommunityId);
+        }
+        await Promise.all([
+          saveActiveCommunityId(identity.publicKey, channelCommunityId),
+          saveLastViewedChannel(identity.publicKey, channelCommunityId, decodedId),
+        ]);
 
         // Render the primary chat history before slower P2 channel enrichment.
         const events = await t.sessionEventsBackfill(decodedId, { limit: 50 });
@@ -400,6 +418,13 @@ export default function BuzzChat() {
     router.push(`/buzz/chat/${encodeURIComponent(subId)}`);
   }, []);
 
+  const handleCommunitySelect = useCallback((communityId: string | null) => {
+    router.replace({
+      pathname: '/buzz/channels',
+      params: { communityId: communityId ?? 'standalone' },
+    });
+  }, []);
+
   const renderItem = useCallback(
     ({ item }: { item: DisplayMessage }) => {
       // ── Subchannel link (open-edit control message) ──────────────
@@ -479,11 +504,17 @@ export default function BuzzChat() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={[styles.container, { paddingTop: insets.top }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+    <BuzzCommunityShell
+      communities={communities}
+      activeCommunityId={activeCommunityId}
+      onSelect={handleCommunitySelect}
+      onAdd={() => router.push('/buzz/community' as Href)}
     >
+      <KeyboardAvoidingView
+        style={[styles.container, { paddingTop: insets.top }]}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+      >
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
@@ -597,7 +628,8 @@ export default function BuzzChat() {
           </View>
         </View>
       )}
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </BuzzCommunityShell>
   );
 }
 

@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const secureStore = vi.hoisted(() => ({
-  getItemAsync: vi.fn<(key: string) => Promise<string | null>>(),
-  setItemAsync: vi.fn<(key: string, value: string) => Promise<void>>(),
-  deleteItemAsync: vi.fn<(key: string) => Promise<void>>(),
+  WHEN_UNLOCKED_THIS_DEVICE_ONLY: 123,
+  getItemAsync: vi.fn<(key: string, options?: unknown) => Promise<string | null>>(),
+  setItemAsync: vi.fn<(key: string, value: string, options?: unknown) => Promise<void>>(),
+  deleteItemAsync: vi.fn<(key: string, options?: unknown) => Promise<void>>(),
 }));
 
 const buzzClient = vi.hoisted(() => ({
@@ -18,6 +19,7 @@ vi.mock('@buzzy/buzz-client', () => buzzClient);
 
 import {
   loadBuzzIdentity,
+  loadBuzzIdentityNsecForExport,
   loadRelayUrl,
   saveBuzzIdentity,
   saveRelayUrl,
@@ -59,6 +61,25 @@ describe('Buzz identity storage', () => {
     ];
     expect(keys).toEqual(['buzzy.identity.nsec', 'buzzy.identity.nsec']);
     for (const key of keys) expect(key).toMatch(/^[A-Za-z0-9._-]+$/);
+  });
+
+  it('seals identity secrets as unlocked-device-only keychain items', async () => {
+    const identity = { name: 'reviewer' };
+    secureStore.getItemAsync.mockResolvedValue('nsec1test');
+
+    await saveBuzzIdentity(identity as never);
+    await expect(loadBuzzIdentityNsecForExport()).resolves.toBe('nsec1test');
+
+    const options = { keychainAccessible: 123 };
+    expect(secureStore.setItemAsync).toHaveBeenCalledWith(
+      'buzzy.identity.nsec',
+      'nsec1test',
+      options,
+    );
+    expect(secureStore.getItemAsync).toHaveBeenCalledWith(
+      'buzzy.identity.nsec',
+      options,
+    );
   });
 
   it('propagates native write failures so onboarding can show them', async () => {

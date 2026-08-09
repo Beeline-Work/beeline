@@ -70,6 +70,7 @@
     "production": {
       "ios": {
         "appleTeamId": "89KT3SWYAF",
+        "ascAppId": "6799574618",
         "appName": "Buzzy",
         "bundleIdentifier": "app.buzzy.mobile"
       }

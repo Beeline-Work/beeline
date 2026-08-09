@@ -86,7 +86,7 @@ export class BuzzClient {
     this.identity = config.identity;
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     this.host = config.host ?? hostFromBaseUrl(this.baseUrl);
-    this.http = { baseUrl: this.baseUrl, host: this.host };
+    this.http = { baseUrl: this.baseUrl, host: this.host, identity: this.identity };
     this.ctx = { http: this.http, identity: this.identity };
   }
 

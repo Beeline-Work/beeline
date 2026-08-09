@@ -4,23 +4,39 @@
  * Publish: POST /events  (signed event JSON)
  * Query:   POST /query   (array of NIP-01 filters → event array)
  *
- * Local open stack: X-Pubkey header (BUZZ_REQUIRE_AUTH_TOKEN=false).
- * Production: callers should upgrade to NIP-98 host-bound auth; Host must match.
+ * Local open stack keeps the X-Pubkey fallback (BUZZ_REQUIRE_AUTH_TOKEN=false).
+ * Production uses NIP-98 auth bound to the exact request URL and method.
  */
-import type { NostrEvent } from '@buzzy/nostr';
-import type { PublishResult } from './types.js';
+import { nip98AuthHeader, type NostrEvent } from '@buzzy/nostr';
+import type { Identity, PublishResult } from './types.js';
 
 export interface HttpBridgeOptions {
   baseUrl: string;
   host: string;
+  /** Identity used only to sign short-lived, host-bound NIP-98 request auth. */
+  identity?: Pick<Identity, 'secretKey' | 'publicKey'>;
 }
 
-function bridgeHeaders(host: string, pubkey: string): Record<string, string> {
-  return {
+function bridgeHeaders(
+  opts: HttpBridgeOptions,
+  pubkey: string,
+  url: string,
+  method: string,
+): Record<string, string> {
+  const headers: Record<string, string> = {
     'content-type': 'application/json',
-    host,
+    host: opts.host,
     'x-pubkey': pubkey,
   };
+  if (opts.identity) {
+    headers.authorization = nip98AuthHeader(
+      opts.identity.secretKey,
+      opts.identity.publicKey,
+      url,
+      method,
+    );
+  }
+  return headers;
 }
 
 /** Publish a signed event via the HTTP bridge. Throws on non-2xx. */
@@ -28,9 +44,11 @@ export async function publishEvent(
   opts: HttpBridgeOptions,
   event: NostrEvent,
 ): Promise<PublishResult> {
-  const res = await fetch(`${opts.baseUrl}/events`, {
-    method: 'POST',
-    headers: bridgeHeaders(opts.host, event.pubkey),
+  const url = `${opts.baseUrl}/events`;
+  const method = 'POST';
+  const res = await fetch(url, {
+    method,
+    headers: bridgeHeaders(opts, event.pubkey, url, method),
     body: JSON.stringify(event),
   });
   const text = await res.text();
@@ -56,9 +74,11 @@ export async function queryEvents(
   filters: Record<string, unknown>[],
   queryPubkey: string,
 ): Promise<NostrEvent[]> {
-  const res = await fetch(`${opts.baseUrl}/query`, {
-    method: 'POST',
-    headers: bridgeHeaders(opts.host, queryPubkey),
+  const url = `${opts.baseUrl}/query`;
+  const method = 'POST';
+  const res = await fetch(url, {
+    method,
+    headers: bridgeHeaders(opts, queryPubkey, url, method),
     body: JSON.stringify(filters),
   });
   const text = await res.text();
@@ -73,7 +93,11 @@ export async function queryEvents(
 }
 
 /** Probe relay health (used by live tests to soft-skip when down). */
-export async function relayReachable(baseUrl: string, host: string, timeoutMs = 2500): Promise<boolean> {
+export async function relayReachable(
+  baseUrl: string,
+  host: string,
+  timeoutMs = 2500,
+): Promise<boolean> {
   try {
     const res = await fetch(`${baseUrl}/health`, {
       headers: { host },

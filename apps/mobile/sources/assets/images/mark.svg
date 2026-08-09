@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240">
+  <!-- Beeline mark: single cyan #7dcfff stroke — upward-trending concave growth curve
+       with an upward loop flourish; right end trends up. Transparent background. -->
+  <path d="M 32 182 C 48 181, 58 180, 68 176 C 86 168, 60 143, 80 132 C 92 126, 104 138, 97 153 C 92 163, 77 164, 70 172 C 62 180, 82 185, 98 178 C 144 168, 176 148, 194 112 C 203 92, 208 66, 211 44"
+        fill="none" stroke="#7dcfff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

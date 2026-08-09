@@ -144,24 +144,18 @@ const SectionHeader = React.memo(({ session, displayPath }: { session: SessionRo
 });
 
 // Full-width separator between machine groups: ——— 🖥 name ———
-const MachineSeparator = React.memo(({ machineName, machineId }: { machineName: string; machineId: string }) => {
+const MachineSeparator = React.memo(({ machineName }: { machineName: string }) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const router = useRouter();
-
-    const handlePress = React.useCallback(() => {
-        router.navigate(`/machine/${machineId}` as any);
-    }, [router, machineId]);
-
     return (
-        <Pressable onPress={handlePress} style={styles.machineSeparator} hitSlop={{ top: 8, bottom: 8 }}>
+        <View style={styles.machineSeparator}>
             <View style={styles.machineSeparatorLine} />
             <Ionicons name="desktop-outline" size={11} color={theme.colors.textSecondary} style={{ marginHorizontal: 6 }} />
             <Text style={styles.machineSeparatorText} numberOfLines={1}>
                 {machineName}
             </Text>
             <View style={styles.machineSeparatorLine} />
-        </Pressable>
+        </View>
     );
 });
 
@@ -188,7 +182,6 @@ export function ActiveSessionsGroupCompact({ sessions, selectedSessionId }: Acti
                         {hasMultipleMachines && (
                             <MachineSeparator
                                 machineName={machineGroup.machineName}
-                                machineId={machineGroup.machineId}
                             />
                         )}
                         {sortedProjects.map(([projectPath, projectGroup]) => {

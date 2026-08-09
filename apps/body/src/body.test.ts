@@ -5,8 +5,9 @@
 import { describe, it, expect } from 'vitest';
 import { hasWriteTools, inventoryForMcpServers } from './mcp-inventory.js';
 import { parseEnvFile, hasLlmCredentials } from './config.js';
-import { Body } from './body.js';
+import { AGENT_REQUEST_TAG, Body, isChannelTaskRequest } from './body.js';
 import { newIdentity } from '@buzzy/gate';
+import { signEvent } from '@buzzy/nostr';
 
 describe('mcp-inventory', () => {
   it('hasWriteTools returns false for empty list', () => {
@@ -76,5 +77,37 @@ describe('agent identity boundary', () => {
     const operator = newIdentity('operator');
     const body = new Body(config, operator);
     expect(() => body.setAgentIdentity(operator)).toThrow('must be distinct');
+  });
+});
+
+describe('channel → subchannel request trigger', () => {
+  const human = newIdentity('human');
+  const agent = newIdentity('agent');
+
+  function requestEvent(tags: string[][], author = human) {
+    return signEvent({
+      pubkey: author.publicKey,
+      created_at: 1,
+      kind: 9,
+      tags: [['h', 'parent-channel'], ...tags],
+      content: 'Implement the channel request',
+    }, author.secretKey);
+  }
+
+  it('accepts only an explicit request addressed to the named agent', () => {
+    expect(isChannelTaskRequest(requestEvent([
+      ['p', agent.publicKey],
+      ['t', AGENT_REQUEST_TAG],
+    ]), agent.publicKey)).toBe(true);
+
+    expect(isChannelTaskRequest(requestEvent([['p', agent.publicKey]]), agent.publicKey)).toBe(false);
+    expect(isChannelTaskRequest(requestEvent([['t', AGENT_REQUEST_TAG]]), agent.publicKey)).toBe(false);
+  });
+
+  it('never accepts the agent tasking itself', () => {
+    expect(isChannelTaskRequest(requestEvent([
+      ['p', agent.publicKey],
+      ['t', AGENT_REQUEST_TAG],
+    ], agent), agent.publicKey)).toBe(false);
   });
 });

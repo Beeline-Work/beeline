@@ -86,6 +86,10 @@ BUZZY_LLM_MODEL=deepseek/deepseek-chat-v3.1
 # Provision a read-only agent to a TLC channel
 npm run body -- provision <channel-uuid>
 
+# Keep the body attached: explicit human @agent requests open agent-owned
+# subchannels, steering is forwarded, and merged branches archive automatically
+npm run body -- serve <channel-uuid> <repo-owner-hex> <repo-name>
+
 # Open a subchannel (edit session) under a TLC
 npm run body -- open <tlc-uuid> <repo-owner-hex> <repo-name>
 

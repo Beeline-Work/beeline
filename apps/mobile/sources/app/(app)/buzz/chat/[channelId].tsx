@@ -20,7 +20,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router, type Href } from 'expo-router';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
 import { BuzzRigTransport } from '@/sync/transport';
-import { encodeNpub, type Community, type MergeTarget } from '@buzzy/buzz-client';
+import { encodeNpub, type Agent, type Community, type MergeTarget } from '@buzzy/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
 import { groknight } from '@/buzz/groknight';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
@@ -43,6 +43,14 @@ type DisplayMessage = {
   isArchivedNotice?: boolean;
   /** True if this is an agent-activity frame from the body. */
   isAgentActivity?: boolean;
+  /** Explicit human → agent work request; never a direct subchannel create. */
+  requestAgentPubkey?: string;
+};
+
+type SubchannelDisplay = {
+  id: string;
+  openerPubkey: string;
+  archived: boolean;
 };
 
 /** Known body pubkeys for provenance display (hardcoded for dev). */
@@ -148,11 +156,14 @@ export default function BuzzChat() {
   const [userPubkey, setUserPubkey] = useState<string>('');
   const [mergeTarget, setMergeTarget] = useState<MergeTarget | null>(null);
   const [approvalState, setApprovalState] = useState<'none' | 'sending' | 'sent' | 'merged'>('none');
-  const [subchannelIds, setSubchannelIds] = useState<string[]>([]);
+  const [subchannels, setSubchannels] = useState<SubchannelDisplay[]>([]);
   const [parentChannelId, setParentChannelId] = useState<string | undefined>(undefined);
   const [mergeSummaryText, setMergeSummaryText] = useState<string | null>(null);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
+  const [availableAgents, setAvailableAgents] = useState<Agent[]>([]);
+  const [requestingAgent, setRequestingAgent] = useState<Agent | null>(null);
+  const [viewerIsAgent, setViewerIsAgent] = useState(false);
 
   // Helper to add new messages, deduplicating by id.
   const addMessages = useCallback((newMsgs: DisplayMessage[]) => {
@@ -187,9 +198,15 @@ export default function BuzzChat() {
           client.listCommunities(),
           client.getChannelCommunityId(decodedId),
         ]);
+        const [communityAgents, identityIsAgent] = await Promise.all([
+          channelCommunityId ? client.listAgents(channelCommunityId) : Promise.resolve([]),
+          client.isAgentIdentity(identity.publicKey),
+        ]);
         if (!cancelled) {
           setCommunities(availableCommunities);
           setActiveCommunityId(channelCommunityId);
+          setAvailableAgents(communityAgents);
+          setViewerIsAgent(identityIsAgent);
         }
         await Promise.all([
           saveActiveCommunityId(identity.publicKey, channelCommunityId),
@@ -209,6 +226,9 @@ export default function BuzzChat() {
             const hasBodyControl = eventHasTag(e, 't', 'body-control');
             const hasMergeSummary = eventHasTag(e, 't', 'merge-summary');
             const hasStatusArchived = eventHasTag(e, 'status', 'archived');
+            const requestAgentPubkey = eventHasTag(e, 't', 'buzz-agent-request')
+              ? eventTagValue(e, 'p')
+              : undefined;
 
             if (hasMergeSummary) {
               foundMergeSummary = text;
@@ -236,6 +256,7 @@ export default function BuzzChat() {
                   pubkey: pk,
                   subchannelId: subId,
                   isSubchannelLink: true,
+                  requestAgentPubkey: eventTagValue(e, 'agent') ?? pk,
                 });
                 continue;
               }
@@ -260,6 +281,7 @@ export default function BuzzChat() {
               timestamp: eventTimestamp(e),
               pubkey: pk,
               isAgentActivity: e.type === 'assistant_delta',
+              requestAgentPubkey,
             });
           }
 
@@ -289,8 +311,8 @@ export default function BuzzChat() {
 
         // P2: Discover child channels when this is a parent channel.
         try {
-          const subIds = await t.listSubchannels(decodedId);
-          setSubchannelIds(subIds);
+          const lifecycle = await t.listSubchannelLifecycle(decodedId);
+          setSubchannels(lifecycle);
         } catch {
           // Not a parent channel — that's fine.
         }
@@ -305,6 +327,17 @@ export default function BuzzChat() {
           const hasBodyControl = eventHasTag(event, 't', 'body-control');
           const hasMergeSummary = eventHasTag(event, 't', 'merge-summary');
           const hasStatusArchived = eventHasTag(event, 'status', 'archived');
+          const isMergeReady = eventHasTag(event, 't', 'merge-ready');
+          const requestAgentPubkey = eventHasTag(event, 't', 'buzz-agent-request')
+            ? eventTagValue(event, 'p')
+            : undefined;
+
+          if (isMergeReady) {
+            const repo = eventTagValue(event, 'repo');
+            const branch = eventTagValue(event, 'branch');
+            const tip = eventTagValue(event, 'tip');
+            if (repo && branch && tip) setMergeTarget({ repo, branch, tip });
+          }
 
           if (hasMergeSummary) {
             setMergeSummaryText(text);
@@ -322,6 +355,13 @@ export default function BuzzChat() {
           if (hasBodyControl) {
             const subId = eventTagValue(event, 'subchannel');
             if (subId && !hasStatusArchived) {
+              setSubchannels((current) => current.some((sub) => sub.id === subId)
+                ? current
+                : [...current, {
+                    id: subId,
+                    openerPubkey: eventTagValue(event, 'agent') ?? pk ?? '',
+                    archived: false,
+                  }]);
               addMessages([{
                 id: eventId(event, `sub-live-${Math.random()}`),
                 text,
@@ -330,11 +370,18 @@ export default function BuzzChat() {
                 pubkey: pk,
                 subchannelId: subId,
                 isSubchannelLink: true,
+                requestAgentPubkey: eventTagValue(event, 'agent') ?? pk,
               }]);
               return;
             }
             if (hasStatusArchived) {
-              setIsArchived(true);
+              if (subId) {
+                setSubchannels((current) => current.map((sub) =>
+                  sub.id === subId ? { ...sub, archived: true } : sub));
+              } else {
+                setIsArchived(true);
+                setApprovalState('merged');
+              }
               addMessages([{
                 id: eventId(event, `archive-live-${Math.random()}`),
                 text,
@@ -354,6 +401,7 @@ export default function BuzzChat() {
             timestamp: eventTimestamp(event),
             pubkey: pk,
             isAgentActivity: event.type === 'assistant_delta',
+            requestAgentPubkey,
           }]);
         });
       } catch (err) {
@@ -383,23 +431,24 @@ export default function BuzzChat() {
         isUser: true,
         timestamp: Date.now(),
         pubkey: userPubkey,
+        requestAgentPubkey: requestingAgent?.pubkey,
       },
     ]);
 
     try {
-      const eventId = await transport.messageSubmitWithEventId({
-        sessionId: decodedId,
-        text,
-      });
+      const eventId = requestingAgent && !parentChannelId
+        ? await transport.submitAgentRequest(decodedId, text, requestingAgent.pubkey)
+        : await transport.messageSubmitWithEventId({ sessionId: decodedId, text });
       setMessages((prev) =>
         reconcileOptimisticMessage(prev, optimisticId, eventId),
       );
+      setRequestingAgent(null);
     } catch (err) {
       console.warn('Send failed:', err);
     } finally {
       setSending(false);
     }
-  }, [inputText, transport, decodedId, addMessages, isArchived, userPubkey]);
+  }, [inputText, transport, decodedId, addMessages, isArchived, userPubkey, requestingAgent, parentChannelId]);
 
   const handleApprove = useCallback(async () => {
     if (!transport || !mergeTarget) return;
@@ -431,7 +480,13 @@ export default function BuzzChat() {
       if (item.isSubchannelLink && item.subchannelId) {
         return (
           <View style={styles.subchannelLinkBubble}>
-            <Text style={styles.subchannelLinkTitle}>🛠 Edit Session</Text>
+            <View style={styles.subchannelLinkHeading}>
+              <Text style={styles.subchannelLinkTitle}>↳ AGENT BRANCH</Text>
+              <Text style={styles.liveBadge}>LIVE</Text>
+            </View>
+            {item.requestAgentPubkey && (
+              <Text style={styles.openerBadge}>opened by {shortNpub(item.requestAgentPubkey)}</Text>
+            )}
             <Text style={styles.subchannelLinkText} numberOfLines={2}>
               {item.text}
             </Text>
@@ -440,7 +495,7 @@ export default function BuzzChat() {
               onPress={() => handleSubchannelPress(item.subchannelId!)}
             >
               <Text style={styles.subchannelLinkButtonText}>
-                Open Subchannel
+                WATCH + STEER
               </Text>
             </TouchableOpacity>
           </View>
@@ -484,6 +539,11 @@ export default function BuzzChat() {
           <Text style={[styles.roleLabel, isAgent ? styles.roleAgent : styles.roleUser]}>
             {isOwn ? 'YOU' : (isAgent ? 'BUZZY' : shortNpub(item.pubkey ?? ''))}
           </Text>
+          {item.requestAgentPubkey && (
+            <Text style={styles.workRequestBadge}>
+              ASK {shortNpub(item.requestAgentPubkey)} · AGENT OPENS BRANCH
+            </Text>
+          )}
           <Text style={styles.messageText}>{item.text}</Text>
           {item.pubkey && !isOwn && !isAgent && (
             <Text style={styles.provenanceText}>{shortNpub(item.pubkey)}</Text>
@@ -491,7 +551,7 @@ export default function BuzzChat() {
         </View>
       );
     },
-    [decodedId, handleSubchannelPress],
+    [handleSubchannelPress],
   );
 
   if (loading) {
@@ -541,25 +601,30 @@ export default function BuzzChat() {
       {mergeTarget && !isArchived && (
         <View style={styles.approvalBar}>
           <View style={styles.approvalInfo}>
-            <Text style={styles.prChip}>{mergeTarget.repo} · {mergeTarget.branch}</Text>
+            <Text style={styles.prChip}>HUMAN MERGE GATE</Text>
             <Text style={styles.approvalBarText}>
-              {mergeTarget.branch} → {mergeTarget.tip.slice(0, 8)}
+              {mergeTarget.repo} · {mergeTarget.tip.slice(0, 8)}
             </Text>
           </View>
-          {approvalState === 'none' && (
+          <Text style={styles.humanBoundaryText}>
+            Human admin approval required. Agent identities can never approve.
+          </Text>
+          {viewerIsAgent ? (
+            <View style={styles.approvalSent}>
+              <Text style={styles.approvalSentText}>AGENTS CANNOT APPROVE</Text>
+            </View>
+          ) : approvalState === 'none' ? (
             <TouchableOpacity style={styles.approveButton} onPress={handleApprove}>
               <Text style={styles.approveButtonText}>◆ APPROVE MERGE</Text>
             </TouchableOpacity>
-          )}
-          {approvalState === 'sending' && (
+          ) : approvalState === 'sending' ? (
             <View style={styles.approvalPending}>
               <ActivityIndicator size="small" color={groknight.accent} />
               <Text style={styles.approvalStateText}>sending…</Text>
             </View>
-          )}
-          {approvalState === 'sent' && (
+          ) : (
             <View style={styles.approvalSent}>
-              <Text style={styles.approvalSentText}>✓ approval sent</Text>
+              <Text style={styles.approvalSentText}>✓ APPROVED · WAITING FOR MERGE</Text>
             </View>
           )}
         </View>
@@ -572,25 +637,33 @@ export default function BuzzChat() {
         style={styles.messageList}
         contentContainerStyle={styles.messageListContent}
         renderItem={renderItem}
+        ListHeaderComponent={
+          !parentChannelId && subchannels.length > 0 ? (
+            <View style={styles.lifecyclePanel}>
+              <Text style={styles.lifecycleTitle}>WORK BRANCHES</Text>
+              <Text style={styles.lifecycleHint}>human asks → agent branches → human approves → archive</Text>
+              {subchannels.map((sub) => (
+                <TouchableOpacity
+                  key={sub.id}
+                  style={styles.lifecycleRow}
+                  onPress={() => handleSubchannelPress(sub.id)}
+                >
+                  <Text style={[styles.lifecycleState, sub.archived && styles.lifecycleStateArchived]}>
+                    {sub.archived ? 'CLOSED' : 'LIVE'}
+                  </Text>
+                  <View style={styles.lifecycleInfo}>
+                    <Text style={styles.lifecycleBranch}>↳ {sub.id.slice(0, 12)}…</Text>
+                    <Text style={styles.lifecycleAgent}>agent {shortNpub(sub.openerPubkey)}</Text>
+                  </View>
+                  <Text style={styles.chevron}>›</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : null
+        }
         ListEmptyComponent={
           <View style={styles.emptyState}>
             <Text style={styles.emptyText}>empty channel</Text>
-            {subchannelIds.length > 0 && (
-              <View style={styles.subchannelLinks}>
-                <Text style={styles.subchannelLinksTitle}>subchannels</Text>
-                {subchannelIds.map((sid) => (
-                  <TouchableOpacity
-                    key={sid}
-                    style={styles.subchannelLinkItem}
-                    onPress={() => handleSubchannelPress(sid)}
-                  >
-                    <Text style={styles.subchannelLinkItemText}>
-                      🛠 {sid.slice(0, 12)}…
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
           </View>
         }
         onContentSizeChange={() =>
@@ -605,13 +678,35 @@ export default function BuzzChat() {
         </View>
       ) : (
         <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+          {!parentChannelId && !viewerIsAgent && availableAgents.length > 0 && (
+            <View style={styles.askAgentBar}>
+              <Text style={styles.askAgentLabel}>START WORK</Text>
+              {availableAgents.map((agent) => {
+                const active = requestingAgent?.pubkey === agent.pubkey;
+                return (
+                  <TouchableOpacity
+                    key={agent.agentId}
+                    style={[styles.askAgentChip, active && styles.askAgentChipActive]}
+                    onPress={() => setRequestingAgent(active ? null : agent)}
+                  >
+                    <Text style={[styles.askAgentChipText, active && styles.askAgentChipTextActive]}>
+                      @{agent.displayName}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+              <Text style={styles.askAgentHint}>agent opens the branch</Text>
+            </View>
+          )}
           <View style={styles.composer}>
             <Text style={styles.composerPrefix}>›</Text>
             <TextInput
               style={styles.input}
               value={inputText}
               onChangeText={setInputText}
-              placeholder="steer the agent…"
+              placeholder={requestingAgent
+                ? `ask ${requestingAgent.displayName} to start work…`
+                : parentChannelId ? 'steer the live agent…' : 'continue channel discussion…'}
               placeholderTextColor={groknight.dim}
               multiline
             />
@@ -748,6 +843,19 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontFamily: mono,
   },
+  workRequestBadge: {
+    alignSelf: 'flex-start',
+    color: groknight.accent,
+    borderWidth: 1,
+    borderColor: groknight.borderActive,
+    borderRadius: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginBottom: 5,
+    fontSize: 9,
+    fontWeight: '700',
+    fontFamily: mono,
+  },
 
   // ── Subchannel link ─────────────────────────────────────────────
   subchannelLinkBubble: {
@@ -762,8 +870,30 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: groknight.chrome,
-    marginBottom: 4,
     fontFamily: mono,
+  },
+  subchannelLinkHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  liveBadge: {
+    color: groknight.accent,
+    borderWidth: 1,
+    borderColor: groknight.accent,
+    borderRadius: 3,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    fontFamily: mono,
+    fontWeight: '800',
+    fontSize: 9,
+  },
+  openerBadge: {
+    color: groknight.steel,
+    fontFamily: mono,
+    fontSize: 9,
+    marginBottom: 6,
   },
   subchannelLinkText: {
     fontSize: 12,
@@ -868,6 +998,12 @@ const styles = StyleSheet.create({
     color: groknight.muted,
     fontFamily: mono,
   },
+  humanBoundaryText: {
+    color: groknight.steel,
+    fontFamily: mono,
+    fontSize: 9,
+    lineHeight: 13,
+  },
   approveButton: {
     borderWidth: 1,
     borderColor: groknight.accent,
@@ -912,7 +1048,63 @@ const styles = StyleSheet.create({
     fontFamily: mono,
   },
 
-  // ── Subchannel links (empty state) ──────────────────────────────
+  // ── Parent channel lifecycle ───────────────────────────────────
+  lifecyclePanel: {
+    borderWidth: 1,
+    borderColor: groknight.border,
+    borderRadius: 4,
+    backgroundColor: groknight.bgBase,
+    marginBottom: 10,
+    overflow: 'hidden',
+  },
+  lifecycleTitle: {
+    color: groknight.textSecondary,
+    fontFamily: mono,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    paddingHorizontal: 10,
+    paddingTop: 9,
+  },
+  lifecycleHint: {
+    color: groknight.dim,
+    fontFamily: mono,
+    fontSize: 9,
+    paddingHorizontal: 10,
+    paddingTop: 3,
+    paddingBottom: 7,
+  },
+  lifecycleRow: {
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: groknight.border,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 9,
+  },
+  lifecycleState: {
+    color: groknight.accent,
+    borderWidth: 1,
+    borderColor: groknight.accent,
+    borderRadius: 3,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    fontFamily: mono,
+    fontSize: 8,
+    fontWeight: '800',
+  },
+  lifecycleStateArchived: {
+    color: groknight.muted,
+    borderColor: groknight.borderActive,
+  },
+  lifecycleInfo: { flex: 1, minWidth: 0 },
+  lifecycleBranch: { color: groknight.chrome, fontFamily: mono, fontSize: 11 },
+  lifecycleAgent: { color: groknight.dim, fontFamily: mono, fontSize: 9, marginTop: 2 },
+  chevron: { color: groknight.steel, fontFamily: mono, fontSize: 18 },
+
+  // ── Legacy subchannel links (empty state) ───────────────────────
   subchannelLinks: {
     marginTop: 24,
     paddingHorizontal: 16,
@@ -956,6 +1148,36 @@ const styles = StyleSheet.create({
     borderTopColor: groknight.border,
     backgroundColor: groknight.bgTerminal,
   },
+  askAgentBar: {
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 7,
+  },
+  askAgentLabel: {
+    color: groknight.steel,
+    fontFamily: mono,
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+  },
+  askAgentChip: {
+    borderWidth: 1,
+    borderColor: groknight.borderActive,
+    borderRadius: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    backgroundColor: groknight.bgBase,
+  },
+  askAgentChipActive: {
+    borderColor: groknight.accent,
+    backgroundColor: groknight.bgHighlight,
+  },
+  askAgentChipText: { color: groknight.chrome, fontFamily: mono, fontSize: 10 },
+  askAgentChipTextActive: { color: groknight.accent, fontWeight: '800' },
+  askAgentHint: { color: groknight.dim, fontFamily: mono, fontSize: 9 },
   composer: {
     flexDirection: 'row',
     alignItems: 'center',

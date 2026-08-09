@@ -21,6 +21,8 @@ import { gitRepoUrl } from './config.js';
 import { queryEvents } from './relay.js';
 import { APPROVAL_MARKER, verifyApproval, type MergeTarget } from './approval.js';
 import { KIND_STREAM_MESSAGE } from './buzz.js';
+import { isRegisteredAgentIdentity } from './agent-identity.js';
+import { resolveChannelRole, type ChannelRole } from './provisioning.js';
 
 export interface MergeRequest {
   /** Repo owner + push identity. */
@@ -87,10 +89,64 @@ export async function attemptMerge(req: MergeRequest): Promise<MergeOutcome> {
   const featureTip = git(work, ['rev-parse', `origin/${req.featureBranch}`]).stdout.trim();
   const targetTipBefore = git(work, ['rev-parse', `origin/${req.targetBranch}`]).stdout.trim();
   if (!/^[0-9a-f]{40}$/.test(featureTip)) {
-    return { merged: false, reason: `feature branch ${req.featureBranch} not found`, targetTipBefore };
+    return {
+      merged: false,
+      reason: `feature branch ${req.featureBranch} not found`,
+      targetTipBefore,
+    };
   }
 
   const target: MergeTarget = { repo: `${owner}/${req.repo}`, branch: targetRef, tip: featureTip };
+
+  // Identity is checked before role. An agent stays forbidden even if someone
+  // accidentally grants it admin/owner or configures it as trustedReviewer.
+  let signerIsAgent: boolean;
+  try {
+    signerIsAgent = await isRegisteredAgentIdentity(req.trustedReviewer, req.worker.publicKey);
+  } catch (error) {
+    return {
+      merged: false,
+      reason: `cannot prove approval signer is human; agent identity lookup failed: ${String(error)}`,
+      featureTip,
+      targetTipBefore,
+      targetTipAfter: targetTipBefore,
+    };
+  }
+  if (signerIsAgent) {
+    return {
+      merged: false,
+      reason: `merge approval REFUSED: signer ${req.trustedReviewer} is a registered agent identity; agents can never approve merges`,
+      featureTip,
+      targetTipBefore,
+      targetTipAfter: targetTipBefore,
+    };
+  }
+
+  let reviewerRole: ChannelRole | null;
+  try {
+    reviewerRole = await resolveChannelRole(
+      req.channelId,
+      req.trustedReviewer,
+      req.worker.publicKey,
+    );
+  } catch (error) {
+    return {
+      merged: false,
+      reason: `cannot prove approval signer is a human admin; role lookup failed: ${String(error)}`,
+      featureTip,
+      targetTipBefore,
+      targetTipAfter: targetTipBefore,
+    };
+  }
+  if (reviewerRole !== 'owner' && reviewerRole !== 'admin') {
+    return {
+      merged: false,
+      reason: `merge approval REFUSED: human admin role required (signer role=${reviewerRole ?? 'none'})`,
+      featureTip,
+      targetTipBefore,
+      targetTipAfter: targetTipBefore,
+    };
+  }
 
   const approvals = await fetchApprovals(req);
   const valid = approvals.find((ev) => verifyApproval(ev, req.trustedReviewer, target));
@@ -108,11 +164,21 @@ export async function attemptMerge(req: MergeRequest): Promise<MergeOutcome> {
   git(work, ['checkout', req.targetBranch]);
   const merge = git(work, ['merge', '--ff-only', `origin/${req.featureBranch}`]);
   if (!merge.ok) {
-    return { merged: false, reason: `ff merge failed: ${merge.stderr}`, featureTip, targetTipBefore };
+    return {
+      merged: false,
+      reason: `ff merge failed: ${merge.stderr}`,
+      featureTip,
+      targetTipBefore,
+    };
   }
   const push = gitAuthed(work, req.worker, owner, req.repo, ['push', 'origin', req.targetBranch]);
   if (!push.ok || /\brejected\b|denied|forbidden/i.test(push.stderr)) {
-    return { merged: false, reason: `worker push refused by relay: ${push.stderr}`, featureTip, targetTipBefore };
+    return {
+      merged: false,
+      reason: `worker push refused by relay: ${push.stderr}`,
+      featureTip,
+      targetTipBefore,
+    };
   }
 
   const targetTipAfter = lsRemoteRef(work, req.worker, owner, req.repo, targetRef);

@@ -1,0 +1,182 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { signEvent, type NostrEvent } from '@buzzy/nostr';
+import {
+  createAgent,
+  hasAgentIdentityMarker,
+  isAgentIdentityEvent,
+  listAgents,
+  parseAgent,
+} from './agent.js';
+import { createAgentIdentity, createIdentity } from './identity.js';
+import {
+  KIND_CHANNEL_ADMINS,
+  KIND_CHANNEL_MEMBERS,
+  KIND_CREATE_GROUP,
+  KIND_STREAM_MESSAGE,
+  TAG_AGENT,
+  TAG_COMMUNITY,
+} from './kinds.js';
+import type { ChannelOpsContext } from './channel.js';
+
+const communityId = '11111111-1111-4111-8111-111111111111';
+const owner = createIdentity('owner');
+const agentIdentity = createAgentIdentity('Buzzy Agent');
+const http = { baseUrl: 'http://relay.test', host: 'relay.test' };
+
+function ctx(identity = agentIdentity): ChannelOpsContext {
+  return { http, identity };
+}
+
+function signed(identity: typeof owner, kind: number, tags: string[][], content = ''): NostrEvent {
+  return signEvent(
+    { pubkey: identity.publicKey, created_at: 1_700_000_000, kind, tags, content },
+    identity.secretKey,
+  );
+}
+
+function communityCreate(): NostrEvent {
+  return signed(owner, KIND_CREATE_GROUP, [
+    ['h', communityId],
+    ['name', 'Builders'],
+    ['channel_type', 'stream'],
+    ['visibility', 'open'],
+    [TAG_COMMUNITY, communityId],
+  ]);
+}
+
+function memberState(includeAgent = true): NostrEvent {
+  return signed(owner, KIND_CHANNEL_MEMBERS, [
+    ['d', communityId],
+    ['p', owner.publicKey],
+    ...(includeAgent ? [['p', agentIdentity.publicKey]] : []),
+  ]);
+}
+
+function adminState(): NostrEvent {
+  return signed(owner, KIND_CHANNEL_ADMINS, [
+    ['d', communityId],
+    ['p', owner.publicKey, 'owner'],
+  ]);
+}
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+function filterFrom(init?: RequestInit): Record<string, unknown> {
+  const body = JSON.parse(String(init?.body)) as Record<string, unknown>[];
+  return body[0] ?? {};
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe('agent entity model', () => {
+  it('publishes a self-signed community agent and carries optional metadata', async () => {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          return jsonResponse({ accepted: true });
+        }
+        const kind = (filterFrom(init).kinds as number[])[0];
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([communityCreate()]);
+        if (kind === KIND_CHANNEL_MEMBERS) return jsonResponse([memberState()]);
+        if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([adminState()]);
+        return jsonResponse([]);
+      }),
+    );
+
+    const agent = await createAgent(ctx(), communityId, {
+      agentId: '22222222-2222-4222-8222-222222222222',
+      displayName: 'Patch',
+      soul: 'curious builder',
+      personality: 'direct',
+      avatar: 'https://example.test/patch.png',
+    });
+    const event = published[0]!;
+
+    expect(event.pubkey).toBe(agentIdentity.publicKey);
+    expect(event.tags).toContainEqual(['t', TAG_AGENT]);
+    expect(event.tags).toContainEqual([TAG_COMMUNITY, communityId]);
+    expect(isAgentIdentityEvent(event)).toBe(true);
+    expect(agent).toMatchObject({
+      communityId,
+      displayName: 'Patch',
+      pubkey: agentIdentity.publicKey,
+      soul: 'curious builder',
+      personality: 'direct',
+      avatar: 'https://example.test/patch.png',
+    });
+    expect(parseAgent({ ...event, content: `${event.content}tampered` })).toBeNull();
+  });
+
+  it('keeps the agent security marker latched even when record metadata is malformed', () => {
+    const marker = signed(agentIdentity, KIND_STREAM_MESSAGE, [['t', TAG_AGENT]], '{}');
+    expect(hasAgentIdentityMarker(marker)).toBe(true);
+    expect(isAgentIdentityEvent(marker)).toBe(false);
+    expect(parseAgent(marker)).toBeNull();
+  });
+
+  it('lists only verified agent records and keeps the latest declaration per id', async () => {
+    const baseTags = [
+      ['h', communityId],
+      ['t', TAG_AGENT],
+      ['d', '22222222-2222-4222-8222-222222222222'],
+      ['p', agentIdentity.publicKey],
+      ['name', 'Patch'],
+      [TAG_COMMUNITY, communityId],
+    ];
+    const older = signEvent(
+      {
+        pubkey: agentIdentity.publicKey,
+        created_at: 1_700_000_000,
+        kind: KIND_STREAM_MESSAGE,
+        tags: baseTags,
+        content: JSON.stringify({ displayName: 'Patch' }),
+      },
+      agentIdentity.secretKey,
+    );
+    const newer = signEvent(
+      {
+        pubkey: agentIdentity.publicKey,
+        created_at: 1_700_000_001,
+        kind: KIND_STREAM_MESSAGE,
+        tags: baseTags,
+        content: JSON.stringify({ displayName: 'Patch 2' }),
+      },
+      agentIdentity.secretKey,
+    );
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse([older, newer])),
+    );
+
+    await expect(listAgents(ctx(owner), communityId)).resolves.toMatchObject([
+      { displayName: 'Patch 2', pubkey: agentIdentity.publicKey },
+    ]);
+  });
+
+  it('refuses registration before the agent key is a community member', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const kind = (filterFrom(init).kinds as number[])[0];
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([communityCreate()]);
+        if (kind === KIND_CHANNEL_MEMBERS) return jsonResponse([memberState(false)]);
+        if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([adminState()]);
+        return jsonResponse([]);
+      }),
+    );
+
+    await expect(createAgent(ctx(), communityId)).rejects.toThrow(
+      'agent identity must be a community member',
+    );
+  });
+});

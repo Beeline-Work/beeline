@@ -5,14 +5,16 @@ Buzz relay (see `relay-stack/` at the repo root) — no fake backend.
 
 ## Layout
 
-| Path | Role |
-| --- | --- |
-| `src/approval.ts` | Schnorr-signed merge-approval events + exact-binding verify |
-| `src/worker.ts` | Merge worker: lands a feature branch on `main` only after a valid approval |
-| `src/buzz.ts` | Channel/community create, role set, repo announce (kind 9007 / 9000 / 30617) |
-| `src/provisioning.ts` | **Provisioning check** — agent must never be in push-allowed on the protected branch |
-| `src/push-rights.live.test.ts` | Live security suite (relay-enforced push rejection + provisioning check) |
-| `src/approval.test.ts` | Hermetic unit tests for the approval gate |
+| Path                              | Role                                                                                             |
+| --------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `src/approval.ts`                 | Schnorr-signed merge-approval events + exact-binding verify                                      |
+| `src/worker.ts`                   | Merge worker: lands a feature branch on `main` only after a valid approval                       |
+| `src/agent-identity.ts`           | Identity-level lookup: a self-declared agent key can never approve a merge, regardless of role   |
+| `src/buzz.ts`                     | Channel/community create, role set, repo announce (kind 9007 / 9000 / 30617)                     |
+| `src/provisioning.ts`             | **Provisioning check** — agent must never be in push-allowed on the protected branch             |
+| `src/push-rights.live.test.ts`    | Live security suite (relay-enforced push rejection + provisioning check)                         |
+| `src/agent-identity.live.test.ts` | Money-shot #2: registered agent approval refused; human admin approval for the same tip accepted |
+| `src/approval.test.ts`            | Hermetic unit tests for the approval gate                                                        |
 
 ## Scripts
 
@@ -42,6 +44,9 @@ The two tests the product spec mandates under
 2. The provisioning check passes on a correctly provisioned channel+repo
    (agent = member) and **fails** when the agent is deliberately mis-granted
    admin.
+3. A registered agent key is deliberately configured as channel admin and
+   trusted reviewer; its exact-tip approval is **refused by identity**, then a
+   human admin approval for the same feature tip is accepted.
 
 ```sh
 # 1. Start the relay stack (once) from the monorepo root:
@@ -83,7 +88,7 @@ node --import tsx src/provisioning.ts <ownerHex> <repo> <agentPubkey>
 
 ## Env
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `BUZZY_RELAY_HOST` | `127.0.0.1:3010` | Host header + authority for the local stack |
-| `BUZZY_RELAY_SCHEME` | `http` | `http` for the local stack |
+| Variable             | Default          | Meaning                                     |
+| -------------------- | ---------------- | ------------------------------------------- |
+| `BUZZY_RELAY_HOST`   | `127.0.0.1:3010` | Host header + authority for the local stack |
+| `BUZZY_RELAY_SCHEME` | `http`           | `http` for the local stack                  |

@@ -16,8 +16,18 @@
  */
 import { loadBodyConfig } from './config.js';
 import { Body } from './body.js';
-import { newIdentity } from '@buzzy/gate';
+import { newIdentity, type Identity } from '@buzzy/gate';
 import { createChannel, setMemberRole, queryEvents } from '@buzzy/gate';
+import { decodeNsec, getPublicKey } from '@buzzy/nostr';
+
+function identityFromKey(value: string | undefined, name: string): Identity {
+  if (!value) return newIdentity(name);
+  const secretKey = value.startsWith('nsec1')
+    ? decodeNsec(value)
+    : Uint8Array.from(Buffer.from(value, 'hex'));
+  if (secretKey.length !== 32) throw new Error(`${name} key must be 32-byte hex or nsec`);
+  return { name, secretKey, publicKey: getPublicKey(secretKey) };
+}
 
 function usage(): void {
   console.error(`
@@ -58,22 +68,13 @@ async function main(): Promise<void> {
 
   // Create body identity (operator key or fresh).
   const bodyKey = process.env.BUZZ_BODY_KEY;
-  const bodyIdentity = bodyKey
-    ? newIdentity('buzzy-body')
-    : newIdentity('buzzy-body');
-  // Note: for production, the operator key should be deterministic from env.
-  // Using newIdentity() here generates a fresh key each run for testing.
+  const bodyIdentity = identityFromKey(bodyKey, 'buzzy-body');
+  const agentIdentity = identityFromKey(agentPrivateKey, 'buzzy-agent');
 
-  const body = new Body(config, bodyIdentity);
-
-  // If an agent key was provided, create a separate agent identity.
-  if (agentPrivateKey) {
-    const agentId = newIdentity('buzzy-agent');
-    body.setAgentIdentity(agentId);
-    console.log(`[body] agent pubkey: ${agentId.publicKey}`);
-  }
+  const body = new Body(config, bodyIdentity, agentIdentity);
 
   console.log(`[body] identity pubkey: ${body.identity.publicKey}`);
+  console.log(`[body] agent pubkey: ${body.agent.publicKey}`);
   console.log(`[body] workspace root: ${config.workspaceRoot}`);
   console.log(`[body] agent binary: ${config.agentBinary}`);
   console.log(`[body] mcp binary: ${config.mcpBinary}`);
@@ -83,7 +84,10 @@ async function main(): Promise<void> {
     switch (command) {
       case 'provision': {
         const channelId = args[1]!;
-        if (!channelId) { usage(); return; }
+        if (!channelId) {
+          usage();
+          return;
+        }
         const session = await body.provision(channelId);
         console.log(`[body] provisioned: session=${session.sessionId} mode=${session.mode}`);
         break;
@@ -93,7 +97,10 @@ async function main(): Promise<void> {
         const channelId = args[1]!;
         const ownerHex = args[2]!;
         const repo = args[3]!;
-        if (!channelId || !ownerHex || !repo) { usage(); return; }
+        if (!channelId || !ownerHex || !repo) {
+          usage();
+          return;
+        }
         const info = await body.openSubchannel(channelId, { ownerHex, repo });
         console.log(`[body] subchannel opened: id=${info.subchannelId}`);
         console.log(`[body]   worktree: ${info.worktreePath}`);
@@ -104,7 +111,10 @@ async function main(): Promise<void> {
 
       case 'archive': {
         const subchannelId = args[1]!;
-        if (!subchannelId) { usage(); return; }
+        if (!subchannelId) {
+          usage();
+          return;
+        }
         await body.archiveSubchannel(subchannelId);
         console.log(`[body] archived: subchannel=${subchannelId}`);
         break;
@@ -116,7 +126,7 @@ async function main(): Promise<void> {
         console.log(`[body] created TLC: ${channelId} name=${name}`);
 
         // Add agent as member.
-        await setMemberRole(bodyIdentity, channelId, bodyIdentity.publicKey, 'member');
+        await setMemberRole(bodyIdentity, channelId, agentIdentity.publicKey, 'member');
 
         const session = await body.provision(channelId);
         console.log(`[body] provisioned: session=${session.sessionId}`);

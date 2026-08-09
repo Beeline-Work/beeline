@@ -10,16 +10,54 @@ export interface Identity {
   name?: string;
 }
 
+/** A keypair reserved for an autonomous agent, never a human account. */
+export interface AgentIdentity extends Identity {
+  readonly entityType: 'agent';
+  name: string;
+}
+
+/** Relay-backed, self-signed declaration of an agent inside a community. */
+export interface Agent {
+  agentId: string;
+  communityId: string;
+  displayName: string;
+  pubkey: string;
+  /** Optional Phase-2b inputs. This phase stores them but never generates them. */
+  soul?: string;
+  personality?: string;
+  avatar?: string;
+  createdAt: number;
+  raw: NostrEvent;
+}
+
+export interface CreateAgentOptions {
+  agentId?: string;
+  displayName?: string;
+  /** Optional Phase-2b inputs. Callers supply them; the client never synthesizes them. */
+  soul?: string;
+  personality?: string;
+  avatar?: string;
+}
+
 /** Minimal WebSocket surface — injectable so RN can supply its own impl. */
 export interface WebSocketLike {
   readonly readyState: number;
   send(data: string): void;
   close(code?: number, reason?: string): void;
-  addEventListener(type: 'open' | 'message' | 'error' | 'close', listener: (ev: unknown) => void): void;
-  removeEventListener(type: 'open' | 'message' | 'error' | 'close', listener: (ev: unknown) => void): void;
+  addEventListener(
+    type: 'open' | 'message' | 'error' | 'close',
+    listener: (ev: unknown) => void,
+  ): void;
+  removeEventListener(
+    type: 'open' | 'message' | 'error' | 'close',
+    listener: (ev: unknown) => void,
+  ): void;
 }
 
-export type WebSocketConstructor = new (url: string, protocols?: string | string[]) => WebSocketLike;
+export type WebSocketConstructor = new (
+  url: string,
+  protocols?: string | string[],
+) => WebSocketLike;
 
 /** Result of publishing via the HTTP bridge. */
 export interface PublishResult {

@@ -145,6 +145,41 @@ describe('community model', () => {
       ]),
     );
   });
+
+  it('keeps communities visible when membership projections also contain channel IDs', async () => {
+    const create = communityCreate();
+    const channelCreate = signed(owner, KIND_CREATE_GROUP, [
+      ['h', channelId],
+      ['name', 'general'],
+      [TAG_COMMUNITY, communityId],
+    ]);
+    const channelMembers = signed(owner, KIND_CHANNEL_MEMBERS, [
+      ['d', channelId],
+      ['p', owner.publicKey],
+    ]);
+    const communityMembers = memberState();
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          return jsonResponse([channelMembers, communityMembers]);
+        }
+        if (kind === KIND_CREATE_GROUP) {
+          const ids = filter['#h'] as string[];
+          if (ids[0] === channelId) return jsonResponse([channelCreate]);
+          if (ids[0] === communityId) return jsonResponse([create]);
+        }
+        return jsonResponse([]);
+      }),
+    );
+
+    await expect(listCommunities(ctx(), owner.publicKey)).resolves.toMatchObject([
+      { communityId, name: 'Builders' },
+    ]);
+  });
 });
 
 describe('community invites', () => {

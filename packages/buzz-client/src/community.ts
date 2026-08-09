@@ -180,20 +180,14 @@ export async function listCommunities(
   ];
   if (ids.length === 0) return [];
 
-  const createEvents = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_CREATE_GROUP], '#h': ids, limit: Math.max(limit, ids.length) }],
-    ctx.identity.publicKey,
-  );
-  const wanted = new Set(ids);
-  const byId = new Map<string, Community>();
-  for (const event of createEvents) {
-    const community = toCommunity(event);
-    if (community && wanted.has(community.communityId) && !byId.has(community.communityId)) {
-      byId.set(community.communityId, community);
-    }
-  }
-  return [...byId.values()].sort((a, b) => a.createdAt - b.createdAt);
+  // Query each projected group independently. Some relay HTTP bridges interpret
+  // multiple values in a tag filter as an intersection instead of NIP-01 OR,
+  // which otherwise makes every community disappear once a member also owns a
+  // community-linked channel.
+  const communities = await Promise.all(ids.map((id) => getCommunity(ctx, id)));
+  return communities
+    .filter((community): community is Community => community !== null)
+    .sort((a, b) => a.createdAt - b.createdAt);
 }
 
 /** List channels whose kind:9007 create event points at `communityId`. */

@@ -90,9 +90,10 @@ export default {
                     ? { NSAllowsLocalNetworking: true }
                     : { NSAllowsLocalNetworking: true, NSAllowsArbitraryLoads: true }
             },
-            ...(variant === 'production'
-                ? { associatedDomains: ["applinks:app.happy.engineering"] }
-                : {})
+            associatedDomains: [
+                "applinks:buzzrouter.com",
+                ...(variant === 'production' ? ["applinks:app.happy.engineering"] : []),
+            ],
         },
         android: {
             adaptiveIcon: {
@@ -116,7 +117,20 @@ export default {
             ],
             package: bundleId,
             googleServicesFile: "./google-services.json",
-            intentFilters: variant === 'production' ? [
+            intentFilters: [
+                {
+                    "action": "VIEW",
+                    "autoVerify": true,
+                    "data": [
+                        {
+                            "scheme": "https",
+                            "host": "buzzrouter.com",
+                            "pathPrefix": "/join/"
+                        }
+                    ],
+                    "category": ["BROWSABLE", "DEFAULT"]
+                },
+                ...(variant === 'production' ? [
                 {
                     "action": "VIEW",
                     "autoVerify": true,
@@ -129,7 +143,8 @@ export default {
                     ],
                     "category": ["BROWSABLE", "DEFAULT"]
                 }
-            ] : []
+                ] : [])
+            ]
         },
         web: {
             bundler: "metro",

@@ -23,6 +23,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Subchannel = child channel (kind:9007, UUID) + mirrored members + git worktree + edit-mode ACP session.
 - buzz-agent ACP wire vs MCP: `initialize` uses `protocolVersion` u32 (not MCP string), `clientCapabilities` (not `capabilities`). `session/new` returns `{sessionId}`. Standard MCP for `buzz-dev-mcp`. See `apps/body/src/acp.ts` for exact wire format.
 - Live suite: `cd apps/body && npm run test:live` (pretest builds all deps). Soft-skips when relay or LLM env (BUZZY_LLM_*) absent.
+- Agent pairing and server-held soul generation are exposed by `apps/body/src/cli.ts` as `buzz pair` and `buzz serve-souls`; credential/config details live in `apps/body/README.md`.
 
 ## Release APK build (@buzzy/mobile)
 
@@ -57,6 +58,7 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - **Dependency strategy**: `@buzzy/buzz-client` and `@buzzy/nostr` are resolved via Metro `resolveRequest` aliases to their `dist/` in `../../packages/`. Transitive deps (`@noble/*`, `nostr-tools`) resolve via Metro's node_modules walk-up into the root workspace. See `metro.config.js` for the alias list.
 - **Buzz UI screens** (`sources/app/(app)/buzz/`): parallel minimal path using BuzzRigTransport directly (no Happy sync layer). Onboarding, channel list, and chat screens.
 - **Community shell**: `sources/components/buzz/CommunityRail.tsx` wraps Buzz screens; `buzz/channels.tsx` scopes channels to the selected community, and `join/[token].tsx` owns signed `buzzrouter.com/join/<token>` preview, inline identity creation, and redemption. Selection persistence lives in `sources/buzz/community-storage.ts`.
+- **Agent profiles**: `buzz/agents.tsx` pairs desktop/headless agent identities and joins them with human-signed, community-scoped display overlays from `packages/buzz-client/src/agent.ts`. Soul overlays carry no authority and never participate in gate enforcement.
 - Typecheck: `tsc --noEmit` has one pre-existing error in `buzz-rig-transport.ts` (unrelated to UI). Metro bundles successfully.
 - **P2 merge UI** (`apps/mobile/sources/app/(app)/buzz/chat/[channelId].tsx`): approve button in subchannels reads merge target from body-control messages (repo,branch,tip tags), signs P0-gate-shape approval via `submitMergeApproval`, shows async states. Merge-summary messages (t=merge-summary) render with green border. Archived subchannels (status=archived) disable text input. Provenance shows short npub next to each message.
 - **P2 channels list** (`apps/mobile/sources/app/(app)/buzz/channels.tsx`): shows subchannels indented under parent with icon, shows archived state, subchannel count per parent.

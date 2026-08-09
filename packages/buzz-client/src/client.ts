@@ -5,7 +5,14 @@
  */
 import type { NostrEvent } from '@buzzy/nostr';
 import { buildMergeApproval } from './approval.js';
-import { createAgent, isAgentIdentity, listAgents } from './agent.js';
+import {
+  createAgent,
+  createAgentPairingCode,
+  isAgentIdentity,
+  listAgents,
+  redeemAgentPairingCode,
+  setAgentSoul,
+} from './agent.js';
 import {
   backfillMessages,
   createChannel,
@@ -38,6 +45,9 @@ import { RelayWs, wsUrlFromHttp } from './ws.js';
 import type {
   BuzzClientConfig,
   Agent,
+  AgentPairingCode,
+  AgentSoulInput,
+  AgentSoulProfile,
   CreateAgentOptions,
   ChannelFilterOpts,
   ChannelMember,
@@ -51,6 +61,7 @@ import type {
   MessageSubmitOpts,
   PublishResult,
   RedeemInviteResult,
+  RedeemAgentPairingResult,
   SessionEvent,
   SessionEventHandler,
   Unsubscribe,
@@ -219,6 +230,25 @@ export class BuzzClient {
 
   listAgents(communityId: string): Promise<Agent[]> {
     return listAgents(this.ctx, communityId);
+  }
+
+  createAgentPairingCode(
+    communityId: string,
+    expiresInSeconds?: number,
+  ): Promise<AgentPairingCode> {
+    return createAgentPairingCode(this.ctx, communityId, expiresInSeconds);
+  }
+
+  redeemAgentPairingCode(code: string): Promise<RedeemAgentPairingResult> {
+    return redeemAgentPairingCode(this.ctx, code);
+  }
+
+  setAgentSoul(
+    communityId: string,
+    agentPubkey: string,
+    soul: AgentSoulInput,
+  ): Promise<AgentSoulProfile> {
+    return setAgentSoul(this.ctx, communityId, agentPubkey, soul);
   }
 
   /** Security classification used by gate services; independent of channel role. */

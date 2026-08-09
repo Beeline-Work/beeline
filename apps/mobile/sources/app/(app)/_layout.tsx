@@ -84,6 +84,13 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="buzz/agents"
+                options={{
+                    headerShown: false,
+                    statusBarStyle: 'light',
+                }}
+            />
+            <Stack.Screen
                 name="buzz/chat/[channelId]"
                 options={{
                     headerShown: false,

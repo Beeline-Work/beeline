@@ -329,6 +329,19 @@ export default function BuzzChannels() {
             </Text>
           </View>
           <View style={styles.headerActions}>
+            {activeCommunityId && (
+              <TouchableOpacity
+                accessibilityLabel="Community agents"
+                onPress={() =>
+                  router.push(
+                    `/buzz/agents?communityId=${encodeURIComponent(activeCommunityId)}` as Href,
+                  )
+                }
+                style={styles.iconButton}
+              >
+                <Text style={styles.iconButtonText}>⌬</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               accessibilityLabel="Create channel"
               onPress={() => setShowCreateChannel((value) => !value)}

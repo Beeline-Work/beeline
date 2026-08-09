@@ -26,7 +26,38 @@ export interface Agent {
   soul?: string;
   personality?: string;
   avatar?: string;
+  /** Human-authored display overlay. Never grants rights or changes agent identity. */
+  soulProfile?: AgentSoulProfile;
   createdAt: number;
+  raw: NostrEvent;
+}
+
+export interface AgentPairingCode {
+  code: string;
+  tokenHash: string;
+  communityId: string;
+  expiresAt: number;
+  mintedBy: string;
+  event: NostrEvent;
+}
+
+export interface RedeemAgentPairingResult {
+  communityId: string;
+  agent: Agent;
+  joined: boolean;
+}
+
+export interface AgentSoulInput {
+  name: string;
+  personality: string;
+  avatarSeed: string;
+}
+
+export interface AgentSoulProfile extends AgentSoulInput {
+  communityId: string;
+  agentPubkey: string;
+  authoredBy: string;
+  updatedAt: number;
   raw: NostrEvent;
 }
 

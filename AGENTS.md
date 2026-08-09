@@ -37,10 +37,10 @@ Do not repeat what the codebase already shows; point to the authoritative file o
 Prefer rewriting or pruning existing entries over appending new ones.
 When updating this file, preserve this bar for all agents and keep entries concise.
 
-## GrokNight Terminal UI theme
+## GrokNight alien-hull UI theme
 
 - **Design tokens**: `apps/mobile/sources/buzz/groknight.ts` — single source of truth for all GrokNight palette hexes (bg, text, accent, border colors). Every buzzy screen imports from here; no hardcoded hexes.
-- **Design authority**: Variant A (GrokNight Terminal) from the approved mockup. Near-black flat surfaces, 2px role-colored left accent bars (magenta=agent, #c8c8c8=human), monospace typography, ◆ diamond tool bullets, gold approval gates.
+- **Design authority**: GrokNight alien-hull system. Near-black flat surfaces, brushed chrome/steel neutrals, monospace typography, and one cyan `#7dcfff` accent reserved for primary actions, active/focus/live state, and the merge-approval gate.
 - **Restyled screens**: `buzz/channels.tsx`, `buzz/chat/[channelId].tsx`, `buzz/onboarding.tsx` — session/channel list, live session transcript with merge controls and composer, and key onboarding.
 
 ## Mobile client (Happy fork)

@@ -48,14 +48,18 @@ describe.runIf(reachable)('live scoped subchannel counts', () => {
     await sleep(1000);
 
     // Query subchannels via buzz-client's listSubchannels.
-    const httpOpts = { baseUrl: DEFAULT_BASE_URL, host: DEFAULT_HOST };
+    const httpOpts = { baseUrl: DEFAULT_BASE_URL, host: DEFAULT_HOST, identity: owner };
     const ctx = { http: httpOpts, identity: owner };
 
     const childrenA = await listSubchannels(ctx, parentA);
-    console.log(`[live] childrenA count=${childrenA.length} ids=${childrenA.map(c => c.slice(0, 8))}`);
+    console.log(
+      `[live] childrenA count=${childrenA.length} ids=${childrenA.map((c) => c.slice(0, 8))}`,
+    );
 
     const childrenB = await listSubchannels(ctx, parentB);
-    console.log(`[live] childrenB count=${childrenB.length} ids=${childrenB.map(c => c.slice(0, 8))}`);
+    console.log(
+      `[live] childrenB count=${childrenB.length} ids=${childrenB.map((c) => c.slice(0, 8))}`,
+    );
 
     const childrenSub = await listSubchannels(ctx, subA1);
     console.log(`[live] childrenSub (subA1) count=${childrenSub.length}`);

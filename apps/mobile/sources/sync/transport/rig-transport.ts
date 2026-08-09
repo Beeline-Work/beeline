@@ -39,7 +39,7 @@ export type SessionDetail = SessionSummary & {
 };
 
 export type SessionEvent =
-    | { type: 'assistant_delta'; sessionId: SessionId; text: string; seq?: number }
+    | { type: 'assistant_delta'; sessionId: SessionId; text: string; id?: string; seq?: number }
     | { type: 'permission_review'; sessionId: SessionId; requestId: string; tool?: string; payload?: unknown }
     | { type: 'status'; sessionId: SessionId; status: string; payload?: unknown }
     | { type: 'raw'; sessionId: SessionId; payload: unknown };

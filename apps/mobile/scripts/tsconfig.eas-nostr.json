@@ -1,0 +1,10 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "../node_modules/@buzzy/nostr/dist",
+    "rootDir": "../node_modules/@buzzy/nostr/src",
+    "preserveSymlinks": true
+  },
+  "include": ["../node_modules/@buzzy/nostr/src/**/*"],
+  "exclude": ["../node_modules/@buzzy/nostr/src/**/*.test.ts"]
+}

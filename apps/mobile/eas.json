@@ -44,6 +44,7 @@
     },
     "production": {
       "autoIncrement": true,
+      "distribution": "store",
       "channel": "production",
       "env": {
         "APP_ENV": "production",
@@ -68,9 +69,10 @@
     },
     "production": {
       "ios": {
-        "appleId": "steve@bulkovo.com",
-        "ascAppId": "6748571505",
-        "appleTeamId": "466DQWDR8C"
+        "appleTeamId": "89KT3SWYAF",
+        "ascAppId": "6799574618",
+        "appName": "Buzzy",
+        "bundleIdentifier": "app.buzzy.mobile"
       }
     }
   }

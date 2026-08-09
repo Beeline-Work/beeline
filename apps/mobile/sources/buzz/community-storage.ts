@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const ACTIVE_COMMUNITY_PREFIX = '@buzzy/community/active/';
 const LAST_CHANNEL_PREFIX = '@buzzy/community/last-channel/';
+const PERSONAL_COMMUNITY_PREFIX = '@buzzy/workspace/personal/';
 const STANDALONE_SCOPE = 'standalone';
 
 function activeCommunityKey(pubkey: string): string {
@@ -22,6 +23,14 @@ export async function saveActiveCommunityId(
   communityId: string | null,
 ): Promise<void> {
   await AsyncStorage.setItem(activeCommunityKey(pubkey), communityId ?? STANDALONE_SCOPE);
+}
+
+export async function loadPersonalCommunityId(pubkey: string): Promise<string | null> {
+  return AsyncStorage.getItem(`${PERSONAL_COMMUNITY_PREFIX}${pubkey}`);
+}
+
+export async function savePersonalCommunityId(pubkey: string, communityId: string): Promise<void> {
+  await AsyncStorage.setItem(`${PERSONAL_COMMUNITY_PREFIX}${pubkey}`, communityId);
 }
 
 export async function loadLastViewedChannel(

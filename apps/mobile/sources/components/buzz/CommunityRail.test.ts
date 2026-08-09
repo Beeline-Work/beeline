@@ -84,8 +84,8 @@ function renderShell(onSelect = vi.fn(), onAdd = vi.fn()): ReactTestRenderer {
   return renderer;
 }
 
-describe('community drawer', () => {
-  it('is hidden by default and toggles from the active space avatar', () => {
+describe('Workspace drawer', () => {
+  it('is hidden by default and toggles from the active Workspace avatar', () => {
     const renderer = renderShell();
     expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);
 
@@ -102,7 +102,7 @@ describe('community drawer', () => {
     expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);
   });
 
-  it('closes after selecting or adding a space', () => {
+  it('closes after selecting or adding a Workspace', () => {
     const onSelect = vi.fn();
     const onAdd = vi.fn();
     const renderer = renderShell(onSelect, onAdd);

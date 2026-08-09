@@ -14,7 +14,8 @@ describe('Beeline display branding', () => {
     expect(appConfig).toContain('preview: "Beeline (preview)"');
     expect(appConfig).toContain('production: "Beeline"');
     expect(appConfig).toContain('faceIDPermission: "Allow Beeline to verify');
-    expect(channelsScreen).toContain("'beeline home'");
+    expect(channelsScreen).toContain('{WORKSPACE_LABEL}');
+    expect(channelsScreen).not.toContain("'beeline home'");
     expect(channelsScreen).not.toContain("'buzzy home'");
   });
 

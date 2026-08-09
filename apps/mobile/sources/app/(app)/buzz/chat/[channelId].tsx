@@ -23,6 +23,7 @@ import { BuzzRigTransport } from '@/sync/transport';
 import { encodeNpub, type Agent, type Community, type MergeTarget } from '@buzzy/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
 import { groknight } from '@/buzz/groknight';
+import { CHANGE_LABEL, CHANGES_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
@@ -471,9 +472,10 @@ export default function BuzzChat() {
   }, []);
 
   const handleCommunitySelect = useCallback((communityId: string | null) => {
+    if (!communityId) return;
     router.replace({
       pathname: '/buzz/channels',
-      params: { communityId: communityId ?? 'standalone' },
+      params: { communityId },
     });
   }, []);
 
@@ -484,7 +486,7 @@ export default function BuzzChat() {
         return (
           <View style={styles.subchannelLinkBubble}>
             <View style={styles.subchannelLinkHeading}>
-              <Text style={styles.subchannelLinkTitle}>↳ AGENT BRANCH</Text>
+              <Text style={styles.subchannelLinkTitle}>↳ {CHANGE_LABEL.toUpperCase()}</Text>
               <Text style={styles.liveBadge}>LIVE</Text>
             </View>
             {item.requestAgentPubkey && (
@@ -509,7 +511,7 @@ export default function BuzzChat() {
       if (item.isMergeSummary) {
         return (
           <View style={styles.mergeSummaryBubble}>
-            <Text style={styles.mergeSummaryTitle}>✓ Merged</Text>
+            <Text style={styles.mergeSummaryTitle}>✓ {CHANGE_LABEL} merged</Text>
             <Text style={styles.mergeSummaryText}>{item.text}</Text>
             {item.pubkey && (
               <Text style={styles.mergeSummaryPubkey}>
@@ -544,7 +546,7 @@ export default function BuzzChat() {
           </Text>
           {item.requestAgentPubkey && (
             <Text style={styles.workRequestBadge}>
-              ASK {shortNpub(item.requestAgentPubkey)} · AGENT OPENS BRANCH
+              ASK {shortNpub(item.requestAgentPubkey)} · STARTS {CHANGE_LABEL.toUpperCase()}
             </Text>
           )}
           <Text style={styles.messageText}>{item.text}</Text>
@@ -561,7 +563,7 @@ export default function BuzzChat() {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <ActivityIndicator size="large" color={groknight.accent} />
-        <Text style={styles.loadingText}>session loading…</Text>
+        <Text style={styles.loadingText}>{ROOM_LABEL} loading…</Text>
       </View>
     );
   }
@@ -610,7 +612,7 @@ export default function BuzzChat() {
             </Text>
           </View>
           <Text style={styles.humanBoundaryText}>
-            Human admin approval required. Agent identities can never approve.
+            People with admin rights approve. Agents can never approve.
           </Text>
           {viewerIsAgent ? (
             <View style={styles.approvalSent}>
@@ -618,7 +620,7 @@ export default function BuzzChat() {
             </View>
           ) : approvalState === 'none' ? (
             <TouchableOpacity style={styles.approveButton} onPress={handleApprove}>
-              <Text style={styles.approveButtonText}>◆ APPROVE MERGE</Text>
+              <Text style={styles.approveButtonText}>◆ APPROVE {CHANGE_LABEL.toUpperCase()}</Text>
             </TouchableOpacity>
           ) : approvalState === 'sending' ? (
             <View style={styles.approvalPending}>
@@ -643,8 +645,8 @@ export default function BuzzChat() {
         ListHeaderComponent={
           !parentChannelId && subchannels.length > 0 ? (
             <View style={styles.lifecyclePanel}>
-              <Text style={styles.lifecycleTitle}>WORK BRANCHES</Text>
-              <Text style={styles.lifecycleHint}>human asks → agent branches → human approves → archive</Text>
+              <Text style={styles.lifecycleTitle}>{CHANGES_LABEL.toUpperCase()}</Text>
+              <Text style={styles.lifecycleHint}>People ask → Agent works → People approve → done</Text>
               {subchannels.map((sub) => (
                 <TouchableOpacity
                   key={sub.id}
@@ -666,7 +668,7 @@ export default function BuzzChat() {
         }
         ListEmptyComponent={
           <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>empty channel</Text>
+            <Text style={styles.emptyText}>empty {ROOM_LABEL.toLowerCase()}</Text>
           </View>
         }
         onContentSizeChange={() =>
@@ -677,7 +679,7 @@ export default function BuzzChat() {
       {/* P2: Archived channels are read-only */}
       {isArchived ? (
         <View style={[styles.archivedInputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-          <Text style={styles.archivedInputText}>channel archived (read-only)</Text>
+          <Text style={styles.archivedInputText}>{ROOM_LABEL} archived (read-only)</Text>
         </View>
       ) : (
         <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
@@ -698,7 +700,7 @@ export default function BuzzChat() {
                   </TouchableOpacity>
                 );
               })}
-              <Text style={styles.askAgentHint}>agent opens the branch</Text>
+              <Text style={styles.askAgentHint}>Agent starts {CHANGE_LABEL}</Text>
             </View>
           )}
           <View style={styles.composer}>
@@ -709,7 +711,9 @@ export default function BuzzChat() {
               onChangeText={setInputText}
               placeholder={requestingAgent
                 ? `ask ${requestingAgent.displayName} to start work…`
-                : parentChannelId ? 'steer the live agent…' : 'continue channel discussion…'}
+                : parentChannelId
+                  ? 'steer the live Agent…'
+                  : `continue ${ROOM_LABEL.toLowerCase()} discussion…`}
               placeholderTextColor={groknight.dim}
               multiline
             />

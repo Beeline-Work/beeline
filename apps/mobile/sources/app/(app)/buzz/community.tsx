@@ -15,6 +15,7 @@ import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-sto
 import { createCommunityInviteUrl, parseCommunityInviteToken } from '@/buzz/community-invite';
 import { loadActiveCommunityId, saveActiveCommunityId } from '@/buzz/community-storage';
 import { groknight } from '@/buzz/groknight';
+import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { BuzzRigTransport } from '@/sync/transport';
 
@@ -78,7 +79,7 @@ export default function BuzzCommunityCreateOrJoin() {
         params: { communityId, inviteUrl },
       });
     } catch (err) {
-      setError(`Could not create community: ${String(err)}`);
+      setError(`Could not create ${WORKSPACE_LABEL}: ${String(err)}`);
     } finally {
       setWorking(false);
     }
@@ -94,9 +95,10 @@ export default function BuzzCommunityCreateOrJoin() {
   }, [inviteInput]);
 
   const selectCommunity = useCallback((communityId: string | null) => {
+    if (!communityId) return;
     router.replace({
       pathname: '/buzz/channels',
-      params: { communityId: communityId ?? 'standalone' },
+      params: { communityId },
     });
   }, []);
 
@@ -125,8 +127,8 @@ export default function BuzzCommunityCreateOrJoin() {
             <Text style={styles.backText}>‹</Text>
           </TouchableOpacity>
           <View style={styles.headerCopy}>
-            <Text style={styles.eyebrow}>community dock</Text>
-            <Text style={styles.title}>Create or join</Text>
+            <Text style={styles.eyebrow}>{WORKSPACE_LABEL} switcher</Text>
+            <Text style={styles.title}>Create or join a {WORKSPACE_LABEL}</Text>
           </View>
         </View>
 
@@ -156,7 +158,7 @@ export default function BuzzCommunityCreateOrJoin() {
         <View style={styles.form}>
           {mode === 'create' ? (
             <>
-              <Text style={styles.formTitle}>Name the new community</Text>
+              <Text style={styles.formTitle}>Name the new {WORKSPACE_LABEL}</Text>
               <Text style={styles.formHint}>
                 You become its owner. A private invite link is minted once, ready to share.
               </Text>
@@ -180,7 +182,7 @@ export default function BuzzCommunityCreateOrJoin() {
                 onPress={() => void handleCreate()}
               >
                 <Text style={styles.primaryButtonText}>
-                  {working ? 'building community…' : 'create community'}
+                  {working ? `building ${WORKSPACE_LABEL}…` : `create ${WORKSPACE_LABEL}`}
                 </Text>
               </TouchableOpacity>
             </>
@@ -188,7 +190,7 @@ export default function BuzzCommunityCreateOrJoin() {
             <>
               <Text style={styles.formTitle}>Open an invite</Text>
               <Text style={styles.formHint}>
-                Paste a buzzrouter.com link. You will see the community before joining.
+                Paste a buzzrouter.com link. You will see the {WORKSPACE_LABEL} before joining.
               </Text>
               <TextInput
                 autoFocus

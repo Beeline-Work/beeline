@@ -23,12 +23,12 @@ import {
 } from '@/auth/buzz-identity-storage';
 import { groknight } from '@/buzz/groknight';
 import {
-  loadActiveCommunityId,
-  saveActiveCommunityId,
   saveLastViewedChannel,
 } from '@/buzz/community-storage';
 import { dismissKeyBackupNudge, isKeyBackupNudgeDismissed } from '@/buzz/key-backup-nudge';
 import { createCommunityInviteUrl } from '@/buzz/community-invite';
+import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
+import { CHANGE_LABEL, ROOM_LABEL, ROOMS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { CommunityInviteEntry } from '@/components/buzz/CommunityInviteEntry';
 import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
 import { BuzzRigTransport } from '@/sync/transport';
@@ -61,7 +61,7 @@ async function channelSummary(
   return {
     id: channelId,
     active: !metadata?.archived,
-    title: metadata?.name ?? `channel ${channelId.slice(0, 8)}`,
+    title: metadata?.name ?? `${ROOM_LABEL.toLowerCase()} ${channelId.slice(0, 8)}`,
     updatedAt: metadata?.raw?.created_at,
     createdAt: metadata?.raw?.created_at,
     archived: metadata?.archived,
@@ -94,7 +94,6 @@ async function loadDisplayChannels(
   }
 
   const parentIds = new Set<string>();
-  const childMap = new Map<string, ChannelDisplayItem[]>();
   const allItems: ChannelDisplayItem[] = [];
 
   await Promise.all(
@@ -106,9 +105,6 @@ async function loadDisplayChannels(
         if (parentId) {
           item.isSubchannel = true;
           item.openerPubkey = (await transport.getChannelCreator(channel.id)) ?? undefined;
-          const siblings = childMap.get(parentId) ?? [];
-          siblings.push(item);
-          childMap.set(parentId, siblings);
         } else {
           parentIds.add(channel.id);
         }
@@ -126,22 +122,13 @@ async function loadDisplayChannels(
         const displayItem = allItems.find((item) => item.id === parentId);
         if (displayItem) displayItem.subchannelCount = subchannelIds.length;
       } catch {
-        // A standalone stream need not have subchannels.
+        // A legacy unscoped stream need not have child streams.
       }
     }),
   );
 
-  const grouped: ChannelDisplayItem[] = [];
-  for (const item of allItems) {
-    if (!item.isSubchannel) {
-      grouped.push(item);
-      grouped.push(...(childMap.get(item.id) ?? []));
-    }
-  }
-  for (const item of allItems) {
-    if (item.isSubchannel && !grouped.includes(item)) grouped.push(item);
-  }
-  return grouped;
+  // A change belongs to its Room's live review surface, not Workspace navigation.
+  return allItems.filter((item) => !item.isSubchannel);
 }
 
 export default function BuzzChannels() {
@@ -177,19 +164,6 @@ export default function BuzzChannels() {
     [communities, activeCommunityId],
   );
 
-  const resolveCommunity = useCallback(
-    async (currentIdentity: Identity, available: Community[]): Promise<string | null> => {
-      const requested = requestedCommunity;
-      if (requested === 'standalone') return null;
-      if (requested && available.some((community) => community.communityId === requested)) {
-        return requested;
-      }
-      const stored = await loadActiveCommunityId(currentIdentity.publicKey);
-      return available.some((community) => community.communityId === stored) ? stored : null;
-    },
-    [requestedCommunity],
-  );
-
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -206,13 +180,12 @@ export default function BuzzChannels() {
         const url = await getEffectiveRelayUrl();
         const nextTransport = new BuzzRigTransport(currentIdentity, url);
         const client = await nextTransport.ensureClient();
-        const [available, identityIsAgent] = await Promise.all([
-          client.listCommunities(),
+        const [workspaceContext, identityIsAgent] = await Promise.all([
+          prepareWorkspaceContext(client, currentIdentity.publicKey, requestedCommunity),
           client.isAgentIdentity(currentIdentity.publicKey),
         ]);
-        const active = await resolveCommunity(currentIdentity, available);
+        const { workspaces: available, activeWorkspaceId: active } = workspaceContext;
         const channels = await loadDisplayChannels(nextTransport, active, available);
-        await saveActiveCommunityId(currentIdentity.publicKey, active);
         if (!cancelled) {
           setIdentity(currentIdentity);
           setRelayUrl(url);
@@ -231,13 +204,14 @@ export default function BuzzChannels() {
     return () => {
       cancelled = true;
     };
-  }, [resolveCommunity]);
+  }, [requestedCommunity]);
 
   const handleSelectCommunity = useCallback((communityId: string | null) => {
+    if (!communityId) return;
     setReadyInviteUrl(undefined);
     router.replace({
       pathname: '/buzz/channels',
-      params: { communityId: communityId ?? 'standalone' },
+      params: { communityId },
     });
   }, []);
 
@@ -247,14 +221,11 @@ export default function BuzzChannels() {
     setError(null);
     try {
       const client = await transport.ensureClient();
-      const available = await client.listCommunities();
-      const active = available.some((community) => community.communityId === activeCommunityId)
-        ? activeCommunityId
-        : null;
+      const { workspaces: available, activeWorkspaceId: active } =
+        await prepareWorkspaceContext(client, identity.publicKey, activeCommunityId ?? undefined);
       setCommunities(available);
       setActiveCommunityId(active);
       setDisplayChannels(await loadDisplayChannels(transport, active, available));
-      await saveActiveCommunityId(identity.publicKey, active);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -287,7 +258,7 @@ export default function BuzzChannels() {
       setShowCreateChannel(false);
       setDisplayChannels(await loadDisplayChannels(transport, activeCommunityId, communities));
     } catch (err) {
-      setError(`Could not create channel: ${String(err)}`);
+      setError(`Could not create ${ROOM_LABEL}: ${String(err)}`);
     } finally {
       setCreatingChannel(false);
     }
@@ -302,10 +273,8 @@ export default function BuzzChannels() {
       await saveRelayUrl(url);
       const nextTransport = new BuzzRigTransport(identity, url);
       const client = await nextTransport.ensureClient();
-      const available = await client.listCommunities();
-      const active = available.some((community) => community.communityId === activeCommunityId)
-        ? activeCommunityId
-        : null;
+      const { workspaces: available, activeWorkspaceId: active } =
+        await prepareWorkspaceContext(client, identity.publicKey, activeCommunityId ?? undefined);
       setTransport(nextTransport);
       setCommunities(available);
       setActiveCommunityId(active);
@@ -368,15 +337,15 @@ export default function BuzzChannels() {
         <View style={styles.header}>
           <CommunityDrawerTrigger communityName={activeCommunity?.name} />
           <View style={styles.headerIdentity}>
-            <Text style={styles.eyebrow}>{activeCommunity ? 'community' : 'beeline home'}</Text>
+            <Text style={styles.eyebrow}>{WORKSPACE_LABEL}</Text>
             <Text style={styles.headerTitle} numberOfLines={1}>
-              {activeCommunity?.name ?? 'standalone'}
+              {activeCommunity?.name ?? WORKSPACE_LABEL}
             </Text>
           </View>
           <View style={styles.headerActions}>
             {activeCommunityId && (
               <TouchableOpacity
-                accessibilityLabel="Community agents"
+                accessibilityLabel={`${WORKSPACE_LABEL} Agents`}
                 onPress={() =>
                   router.push(
                     `/buzz/agents?communityId=${encodeURIComponent(activeCommunityId)}` as Href,
@@ -389,7 +358,7 @@ export default function BuzzChannels() {
             )}
             {!viewerIsAgent && (
               <TouchableOpacity
-                accessibilityLabel="Create human discussion channel"
+                accessibilityLabel={`Create ${ROOM_LABEL}`}
                 onPress={() => setShowCreateChannel((value) => !value)}
                 style={styles.iconButton}
               >
@@ -412,8 +381,11 @@ export default function BuzzChannels() {
         <CommunityInviteEntry
           community={activeCommunity}
           creatingInvite={creatingInvite}
-          onCreateCommunity={() => router.push('/buzz/community' as Href)}
           onInvitePeople={() => void handleInvitePeople()}
+          onManageAgents={() =>
+            activeCommunityId &&
+            router.push(`/buzz/agents?communityId=${encodeURIComponent(activeCommunityId)}` as Href)
+          }
         />
 
         {showBackupNudge && (
@@ -452,14 +424,14 @@ export default function BuzzChannels() {
             <View style={styles.panelActions}>
               <TouchableOpacity
                 style={styles.primarySmallButton}
-                accessibilityLabel="Share community invite"
+                accessibilityLabel={`Share ${WORKSPACE_LABEL} invite`}
                 onPress={() => Share.share({ message: readyInviteUrl })}
               >
                 <Text style={styles.primarySmallButtonText}>share</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.secondarySmallButton}
-                accessibilityLabel="Copy community invite link"
+                accessibilityLabel={`Copy ${WORKSPACE_LABEL} invite link`}
                 onPress={() => Clipboard.setStringAsync(readyInviteUrl)}
               >
                 <Text style={styles.secondarySmallButtonText}>copy link</Text>
@@ -471,7 +443,7 @@ export default function BuzzChannels() {
         {showCreateChannel && !viewerIsAgent && (
           <View style={styles.actionPanel}>
             <Text style={styles.panelEyebrow}>
-              new channel · {activeCommunity?.name ?? 'standalone'}
+              new {ROOM_LABEL} · {activeCommunity?.name ?? WORKSPACE_LABEL}
             </Text>
             <View style={styles.inlineForm}>
               <TextInput
@@ -480,7 +452,7 @@ export default function BuzzChannels() {
                 value={channelName}
                 onChangeText={setChannelName}
                 onSubmitEditing={() => void handleCreateChannel()}
-                placeholder="channel name"
+                placeholder={`${ROOM_LABEL.toLowerCase()} name`}
                 placeholderTextColor={groknight.dim}
                 editable={!creatingChannel}
               />
@@ -554,19 +526,19 @@ export default function BuzzChannels() {
             <View style={styles.emptyState}>
               <Text style={styles.emptyGlyph}>⌁</Text>
               <Text style={styles.emptyTitle}>
-                {activeCommunity ? 'No channels here yet' : 'No standalone channels'}
+                No {ROOMS_LABEL.toLowerCase()} here yet
               </Text>
               <Text style={styles.emptySubtitle}>
                 {activeCommunity
-                  ? `Open a first room inside ${activeCommunity.name}.`
-                  : 'Community channels live behind their icons in the space switcher.'}
+                  ? `Create the first ${ROOM_LABEL} inside ${activeCommunity.name}.`
+                  : `${WORKSPACE_LABEL} setup is still finishing.`}
               </Text>
               {!viewerIsAgent && (
                 <TouchableOpacity
                   style={styles.primaryButton}
                   onPress={() => setShowCreateChannel(true)}
                 >
-                  <Text style={styles.primaryButtonText}>create discussion channel</Text>
+                  <Text style={styles.primaryButtonText}>create {ROOM_LABEL.toLowerCase()}</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -589,13 +561,17 @@ export default function BuzzChannels() {
                       item.archived && styles.archivedTitle,
                     ]}
                   >
-                    {item.title ?? `channel ${item.id.slice(0, 8)}`}
+                    {item.title ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`}
                   </Text>
                   {item.archived && <Text style={styles.metaTag}>archived</Text>}
                 </View>
                 <Text style={styles.channelMeta}>
                   {item.id.slice(0, 10)}
-                  {item.subchannelCount ? ` · ${item.subchannelCount} sub` : ''}
+                  {item.subchannelCount
+                    ? ` · ${item.subchannelCount} ${
+                        item.subchannelCount === 1 ? CHANGE_LABEL : 'changes'
+                      }`
+                    : ''}
                   {item.isSubchannel ? ` · agent ${shortPubkey(item.openerPubkey)}` : ''}
                   {item.isSubchannel ? (item.archived ? ' · closed' : ' · live') : ''}
                 </Text>

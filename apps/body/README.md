@@ -62,6 +62,8 @@ by projecting agent activity into the relay channel.
 | `BUZZ_BODY_KEY`           | No       | auto               | Body operator Nostr nsec/hex         |
 | `BUZZ_AGENT_KEY`          | No       | auto               | Agent Nostr nsec/hex                 |
 | `BUZZY_BODY_AUTO_APPROVE` | No       | `1`                | Auto-approve ACP permission requests |
+| `BUZZY_SOUL_HOST`         | No       | `127.0.0.1`        | Soul generator bind host             |
+| `BUZZY_SOUL_PORT`         | No       | `8789`             | Soul generator port                  |
 
 ### LLM credentials
 
@@ -92,7 +94,24 @@ npm run body -- archive <subchannel-uuid>
 
 # Create a new TLC + provision agent (all-in-one)
 npm run body -- create-and-provision "my-project"
+
+# On the machine where the agent identity lives, redeem an in-app pairing code
+BUZZ_AGENT_KEY=nsec1... BUZZY_RELAY_URL=http://127.0.0.1:3010 \
+  npm run body -- pair BUZZ-XXXX-XXXX
+
+# Serve intent → name/personality generation without exposing the LLM grant
+BUZZY_BODY_LLM_FILE=data/buzzy-body/llm-egress.env \
+  npm run body -- serve-souls
 ```
+
+`pair` requires the machine's existing `BUZZ_AGENT_KEY`; identity custody and
+export are intentionally outside this command. The agent self-signs its durable
+identity record. Souls are separate, human-signed display overlays and cannot
+grant permissions or approve merges.
+
+The mobile app calls `POST /v1/souls/generate` with `{ "intent": "..." }`. Set
+`EXPO_PUBLIC_BUZZY_SOUL_URL` to this service's public base URL when building or
+running the app. The LLM key remains only in the body service environment/file.
 
 ### As a library
 

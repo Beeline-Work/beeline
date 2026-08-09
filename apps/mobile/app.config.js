@@ -26,6 +26,7 @@ const consoleLoggingDefault = {
 }[variant];
 const buzzyRelayUrl = process.env.EXPO_PUBLIC_BUZZY_RELAY_URL || 'https://buzz.trustysquire.ai';
 const buzzyPushGatewayUrl = process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL || 'https://push.buzzrouter.com';
+const buzzySoulUrl = process.env.EXPO_PUBLIC_BUZZY_SOUL_URL || 'https://soul.buzzrouter.com';
 
 function git(args) {
     try {
@@ -250,6 +251,7 @@ export default {
                 buildCommitTimestamp: buildMetadata.commitTimestamp,
                 buzzyRelayUrl,
                 buzzyPushGatewayUrl,
+                buzzySoulUrl,
             }
         },
         owner: "lunchboxfortwo"

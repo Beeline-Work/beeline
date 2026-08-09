@@ -14,11 +14,13 @@
  *
  * Env-driven config; see BodyConfig for all env overrides.
  */
-import { loadBodyConfig } from './config.js';
+import { buildAgentEnv, loadBodyConfig, BASE_URL } from './config.js';
 import { Body } from './body.js';
 import { newIdentity, type Identity } from '@buzzy/gate';
 import { createChannel, setMemberRole, queryEvents } from '@buzzy/gate';
 import { decodeNsec, getPublicKey } from '@buzzy/nostr';
+import { createBuzzClient } from '@buzzy/buzz-client';
+import { createSoulServer } from './soul-server.js';
 
 function identityFromKey(value: string | undefined, name: string): Identity {
   if (!value) return newIdentity(name);
@@ -38,6 +40,8 @@ Usage:
   body open <channel-uuid> <owner> <repo>  Open subchannel + edit session
   body archive <subchannel-uuid>         Archive subchannel
   body create-and-provision <name>       Create a new TLC + provision agent
+  buzz pair <BUZZ-XXXX-XXXX>             Pair this machine's agent identity
+  buzz serve-souls                       Run the server-held soul generator
 
 Options:
   --workspace-root <path>   Agent workspace (default: ./body-workspace)
@@ -59,6 +63,44 @@ async function main(): Promise<void> {
   const llmEnvFile = process.env.BUZZY_BODY_LLM_FILE;
   const workspaceRoot = process.env.BUZZY_BODY_WORKSPACE ?? './body-workspace';
   const agentPrivateKey = process.env.BUZZ_AGENT_KEY ?? process.env.BUZZ_PRIVATE_KEY;
+
+  if (command === 'pair') {
+    const code = args[1];
+    if (!code) usage();
+    if (!agentPrivateKey) {
+      throw new Error('BUZZ_AGENT_KEY is required so the paired identity remains on this machine');
+    }
+    const agentIdentity = identityFromKey(agentPrivateKey, 'buzzy-agent');
+    const relayBaseUrl = (process.env.BUZZY_RELAY_URL ?? BASE_URL)
+      .replace(/^ws/, 'http')
+      .replace(/\/$/, '');
+    const client = createBuzzClient({
+      baseUrl: relayBaseUrl,
+      ...(process.env.BUZZY_RELAY_HOST ? { host: process.env.BUZZY_RELAY_HOST } : {}),
+      identity: agentIdentity,
+    });
+    const result = await client.redeemAgentPairingCode(code!);
+    console.log(`[buzz] paired agent ${result.agent.displayName}`);
+    console.log(`[buzz] community: ${result.communityId}`);
+    console.log(`[buzz] agent pubkey: ${result.agent.pubkey}`);
+    return;
+  }
+
+  if (command === 'serve-souls') {
+    const agentEnv = buildAgentEnv(process.env, llmEnvFile);
+    const port = Number(process.env.BUZZY_SOUL_PORT ?? '8789');
+    const host = process.env.BUZZY_SOUL_HOST ?? '127.0.0.1';
+    if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
+      throw new Error('BUZZY_SOUL_PORT must be a valid port');
+    }
+    const server = createSoulServer(agentEnv);
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(port, host, resolve);
+    });
+    console.log(`[buzz] soul generator listening on http://${host}:${port}`);
+    return;
+  }
 
   // Load body config.
   const config = loadBodyConfig({

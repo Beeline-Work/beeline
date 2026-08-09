@@ -13,6 +13,8 @@ method→call table).
 | --- | --- |
 | Identity | `createIdentity`, `loadIdentityFromNsec`, `identityNpub` / `identityNsec` (via `@buzzy/nostr`) |
 | Channel | `createChannel`, `addMember`, `listMembers`, `waitUntilMember`, `listMyChannels`, `getChannelMetadata` |
+| Community | `createCommunity`, `listCommunities`, `communityMembers`, `communityChannels` |
+| Invite | `createInvite`, `redeemInvite` (signed, expiring, repeat-safe join) |
 | Subchannel discovery | `createSubchannel` (child UUID + `parent` tag convention), `listSubchannels` |
 | Messages | `messageSubmit` (kind:9, optional `#p` agent mention) |
 | Live + backfill | `sessionEventsSubscribe` (WS NIP-01 + NIP-42 AUTH), `sessionEventsBackfill` (`POST /query`) |
@@ -34,6 +36,10 @@ Local open stack auth: `X-Pubkey` on HTTP bridge. Production: NIP-98 host-bound
   `waitUntilMember` / `listMembers` (kind:39002) before trusting membership.
 - **`h` tag must be a UUID.** Channel ids are always `crypto.randomUUID()`.
 - **Role is a separate `["role", …]` tag** on kind:9000, not the NIP-29 p-slot.
+- **Community is the same group model.** Its kind:9007 `community` tag points
+  to its own `h` UUID; contained channels point that tag to the community.
+- **Invite plaintext never lands on-relay.** A signed kind:9 marker stores its
+  SHA-256 hash and NIP-40 `expiration`; redemption self-adds through kind:9000.
 - **Never rely on `require-approval` git policy** (not enforced). Merge approval is
   the signed kind:9 marker the gate worker verifies.
 
@@ -117,4 +123,14 @@ const approval = client.buildMergeApproval(channelId, {
   tip: featureTip40Hex,
 });
 await client.publish(approval);
+
+const communityId = await client.createCommunity('Acme');
+await client.waitUntilMember(communityId, me.publicKey);
+const generalId = await client.createChannel('general', { communityId });
+const invite = await client.createInvite(communityId, { expiresInSeconds: 86_400 });
+
+// On a second device/identity:
+await otherClient.redeemInvite(invite.token);
+const restored = await otherClient.listCommunities();
+const channels = await otherClient.communityChannels(communityId);
 ```

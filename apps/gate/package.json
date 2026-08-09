@@ -18,10 +18,11 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "pretest:live": "npm run build -w @buzzy/nostr && npm run build -w @buzzy/gate",
+    "pretest:live": "npm run build -w @buzzy/nostr && npm run build -w @buzzy/buzz-client && npm run build -w @buzzy/gate",
     "test:live": "vitest run --config vitest.live.config.ts"
   },
   "dependencies": {
+    "@buzzy/buzz-client": "*",
     "@buzzy/nostr": "*"
   },
   "devDependencies": {

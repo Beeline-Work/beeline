@@ -1,5 +1,5 @@
 import type { NostrEvent } from '@buzzy/nostr';
-import { TAG_AGENT_ACTIVITY, TAG_PARENT } from './kinds.js';
+import { TAG_AGENT_ACTIVITY, TAG_COMMUNITY, TAG_PARENT } from './kinds.js';
 import type { ChannelMember, ChannelMetadata, SessionEvent, SessionEventKind } from './types.js';
 
 /** First value of tag `name`, if any. */
@@ -74,12 +74,14 @@ export function parseMetadataEvent(event: NostrEvent): ChannelMetadata {
         ? false
         : undefined;
   const parentChannelId = tagValue(event, TAG_PARENT);
+  const communityId = tagValue(event, TAG_COMMUNITY);
   return {
     channelId,
     ...(name !== undefined ? { name } : {}),
     ...(about !== undefined ? { about } : {}),
     ...(archived !== undefined ? { archived } : {}),
     ...(parentChannelId !== undefined ? { parentChannelId } : {}),
+    ...(communityId !== undefined ? { communityId } : {}),
     raw: event,
   };
 }

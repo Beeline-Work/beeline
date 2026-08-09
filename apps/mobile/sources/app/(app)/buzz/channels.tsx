@@ -195,7 +195,7 @@ export default function BuzzChannels() {
   if (loading) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <ActivityIndicator size="large" color={groknight.magenta} />
+        <ActivityIndicator size="large" color={groknight.accent} />
         <Text style={styles.loadingText}>Connecting to relay…</Text>
       </View>
     );
@@ -353,11 +353,11 @@ const styles = StyleSheet.create({
   },
   settingsIcon: {
     fontSize: 18,
-    color: groknight.magenta,
+    color: groknight.chrome,
   },
   logoutText: {
     fontSize: 12,
-    color: groknight.red,
+    color: groknight.steel,
     fontFamily: mono,
     letterSpacing: 0.3,
   },
@@ -392,7 +392,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   settingsSaveButton: {
-    backgroundColor: groknight.magenta,
+    backgroundColor: groknight.accent,
     borderRadius: 4,
     paddingVertical: 8,
     paddingHorizontal: 16,
@@ -420,7 +420,7 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 14,
-    color: groknight.red,
+    color: groknight.chrome,
     marginBottom: 16,
     textAlign: 'center',
     paddingHorizontal: 24,
@@ -446,7 +446,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   logoutButtonText: {
-    color: groknight.red,
+    color: groknight.steel,
     fontSize: 14,
     fontFamily: mono,
   },
@@ -506,7 +506,7 @@ const styles = StyleSheet.create({
   },
   subchannelTitle: {
     fontSize: 13,
-    color: groknight.blue,
+    color: groknight.chrome,
   },
   archivedTitle: {
     color: groknight.muted,
@@ -530,7 +530,7 @@ const styles = StyleSheet.create({
   },
   subchannelCount: {
     fontSize: 10,
-    color: groknight.blue,
+    color: groknight.steel,
     marginTop: 2,
     fontFamily: mono,
   },

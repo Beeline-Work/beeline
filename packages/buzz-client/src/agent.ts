@@ -7,12 +7,30 @@
  */
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { signEvent, verifyEvent, type NostrEvent } from '@buzzy/nostr';
-import { communityMembers, getCommunity } from './community.js';
+import { communityMembers, getCommunity, inviteTokenHash } from './community.js';
 import { publishEvent, queryEvents } from './http.js';
-import { KIND_STREAM_MESSAGE, TAG_AGENT, TAG_COMMUNITY } from './kinds.js';
+import {
+  KIND_AGENT_SOUL,
+  KIND_STREAM_MESSAGE,
+  TAG_AGENT,
+  TAG_AGENT_PAIRING,
+  TAG_AGENT_SOUL,
+  TAG_COMMUNITY,
+} from './kinds.js';
 import { tagValue, tagValues } from './parse.js';
-import type { Agent, CreateAgentOptions } from './types.js';
-import type { ChannelOpsContext } from './channel.js';
+import type {
+  Agent,
+  AgentPairingCode,
+  AgentSoulInput,
+  AgentSoulProfile,
+  CreateAgentOptions,
+  RedeemAgentPairingResult,
+} from './types.js';
+import { setMemberRole, waitUntilMember, type ChannelOpsContext } from './channel.js';
+
+const DEFAULT_PAIRING_TTL_SECONDS = 10 * 60;
+const PAIRING_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+let lastSoulTimestamp = 0;
 
 function now(): number {
   return Math.floor(Date.now() / 1000);
@@ -32,6 +50,30 @@ function newUuid(): string {
 
 function optionalText(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function randomPairingCode(): string {
+  const bytes = new Uint8Array(8);
+  globalThis.crypto.getRandomValues(bytes);
+  let value = '';
+  for (const byte of bytes) value += PAIRING_ALPHABET[byte! % PAIRING_ALPHABET.length];
+  return `BUZZ-${value.slice(0, 4)}-${value.slice(4)}`;
+}
+
+function pairingExpiry(expiresInSeconds: number, createdAt: number): number {
+  if (!Number.isSafeInteger(expiresInSeconds) || expiresInSeconds < 60 || expiresInSeconds > 3600) {
+    throw new Error('pairing lifetime must be between 60 and 3600 seconds');
+  }
+  return createdAt + expiresInSeconds;
+}
+
+function soulKey(communityId: string, agentPubkey: string): string {
+  return `${communityId}:${agentPubkey}`;
+}
+
+function nextSoulTimestamp(): number {
+  lastSoulTimestamp = Math.max(now(), lastSoulTimestamp + 1);
+  return lastSoulTimestamp;
 }
 
 /**
@@ -95,6 +137,15 @@ export async function createAgent(
   communityId: string,
   options: CreateAgentOptions = {},
 ): Promise<Agent> {
+  return createAgentRecord(ctx, communityId, options);
+}
+
+async function createAgentRecord(
+  ctx: ChannelOpsContext,
+  communityId: string,
+  options: CreateAgentOptions = {},
+  pairingHash?: string,
+): Promise<Agent> {
   const community = await getCommunity(ctx, communityId);
   if (!community) throw new Error(`community not found: ${communityId}`);
   const members = await communityMembers(ctx, communityId);
@@ -123,6 +174,7 @@ export async function createAgent(
         ['p', ctx.identity.publicKey],
         ['name', displayName],
         [TAG_COMMUNITY, communityId],
+        ...(pairingHash ? [['pairing', pairingHash]] : []),
       ],
       content,
     },
@@ -132,22 +184,191 @@ export async function createAgent(
   return parseAgent(event)!;
 }
 
-/** List the latest self-signed agent declaration for each agent ID in a community. */
-export async function listAgents(
+/** Mint a short-lived desktop pairing code. Only its hash is published. */
+export async function createAgentPairingCode(
+  ctx: ChannelOpsContext,
+  communityId: string,
+  expiresInSeconds = DEFAULT_PAIRING_TTL_SECONDS,
+): Promise<AgentPairingCode> {
+  const community = await getCommunity(ctx, communityId);
+  if (!community) throw new Error(`community not found: ${communityId}`);
+  const members = await communityMembers(ctx, communityId);
+  if (!members.some((member) => member.pubkey === ctx.identity.publicKey)) {
+    throw new Error('only a community member can pair an agent');
+  }
+  const createdAt = now();
+  const expiresAt = pairingExpiry(expiresInSeconds, createdAt);
+  const code = randomPairingCode();
+  const tokenHash = inviteTokenHash(code);
+  const event = signEvent(
+    {
+      pubkey: ctx.identity.publicKey,
+      created_at: createdAt,
+      kind: KIND_STREAM_MESSAGE,
+      tags: [
+        ['h', communityId],
+        ['t', TAG_AGENT_PAIRING],
+        ['d', tokenHash],
+        [TAG_COMMUNITY, communityId],
+        ['expiration', String(expiresAt)],
+      ],
+      content: '',
+    },
+    ctx.identity.secretKey,
+  );
+  await publishEvent(ctx.http, event);
+  return { code, tokenHash, communityId, expiresAt, mintedBy: event.pubkey, event };
+}
+
+/** Redeem a pairing code under this agent's own key and register its identity. */
+export async function redeemAgentPairingCode(
+  ctx: ChannelOpsContext,
+  rawCode: string,
+): Promise<RedeemAgentPairingResult> {
+  const code = rawCode.trim().toUpperCase();
+  if (!/^BUZZ-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/.test(code)) {
+    throw new Error('invalid agent pairing code');
+  }
+  const tokenHash = inviteTokenHash(code);
+  const events = await queryEvents(
+    ctx.http,
+    [{ kinds: [KIND_STREAM_MESSAGE], '#d': [tokenHash], '#t': [TAG_AGENT_PAIRING], limit: 20 }],
+    ctx.identity.publicKey,
+  );
+  const pairing = events.find((event) => {
+    if (!verifyEvent(event) || event.kind !== KIND_STREAM_MESSAGE) return false;
+    const communityId = tagValue(event, 'h');
+    const expiresAt = Number(tagValue(event, 'expiration'));
+    return Boolean(
+      communityId &&
+      tagValue(event, TAG_COMMUNITY) === communityId &&
+      tagValue(event, 'd') === tokenHash &&
+      tagValues(event, 't').includes(TAG_AGENT_PAIRING) &&
+      Number.isSafeInteger(expiresAt) &&
+      expiresAt > event.created_at,
+    );
+  });
+  if (!pairing) throw new Error('invalid agent pairing code');
+  const communityId = tagValue(pairing, 'h')!;
+  const expiresAt = Number(tagValue(pairing, 'expiration'));
+  const members = await communityMembers(ctx, communityId);
+  if (!members.some((member) => member.pubkey === pairing.pubkey)) {
+    throw new Error('pairing code minter is not a community member');
+  }
+  const alreadyPaired = await queryEvents(
+    ctx.http,
+    [{ kinds: [KIND_STREAM_MESSAGE], '#pairing': [tokenHash], '#t': [TAG_AGENT], limit: 5 }],
+    ctx.identity.publicKey,
+  );
+  const matchingRedemptions = alreadyPaired.filter(
+    (event) => tagValue(event, 'pairing') === tokenHash,
+  );
+  const ours = matchingRedemptions
+    .map(parseAgent)
+    .find((agent) => agent?.pubkey === ctx.identity.publicKey);
+  if (ours) return { communityId, agent: ours, joined: false };
+  if (matchingRedemptions.some((event) => isAgentIdentityEvent(event))) {
+    throw new Error('agent pairing code has already been redeemed');
+  }
+  if (expiresAt <= now()) throw new Error('agent pairing code has expired');
+  const wasMember = members.some((member) => member.pubkey === ctx.identity.publicKey);
+  if (!wasMember) {
+    await setMemberRole(ctx, communityId, ctx.identity.publicKey, 'member', {
+      extraTags: [
+        ['pairing', tokenHash],
+        [TAG_COMMUNITY, communityId],
+      ],
+    });
+    await waitUntilMember(ctx, communityId, ctx.identity.publicKey);
+  }
+  const agent = await createAgentRecord(
+    ctx,
+    communityId,
+    { displayName: ctx.identity.name ?? `Agent ${ctx.identity.publicKey.slice(0, 6)}` },
+    tokenHash,
+  );
+  return { communityId, agent, joined: !wasMember };
+}
+
+/** Parse a verified display-only soul overlay. Authorization is checked by readers. */
+export function parseAgentSoul(event: NostrEvent): AgentSoulProfile | null {
+  if (event.kind !== KIND_AGENT_SOUL || !verifyEvent(event)) return null;
+  if (!tagValues(event, 't').includes(TAG_AGENT_SOUL)) return null;
+  const communityId = tagValue(event, 'h');
+  const agentPubkey = tagValue(event, 'p');
+  if (!communityId || tagValue(event, TAG_COMMUNITY) !== communityId || !agentPubkey) return null;
+  if (tagValue(event, 'd') !== soulKey(communityId, agentPubkey)) return null;
+  try {
+    const content = JSON.parse(event.content) as Record<string, unknown>;
+    const name = optionalText(content.name);
+    const personality = optionalText(content.personality);
+    const avatarSeed = optionalText(content.avatarSeed);
+    if (!name || !personality || !avatarSeed) return null;
+    return {
+      communityId,
+      agentPubkey,
+      authoredBy: event.pubkey,
+      name,
+      personality,
+      avatarSeed,
+      updatedAt: event.created_at,
+      raw: event,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Publish human-authored display metadata; this event carries no authority. */
+export async function setAgentSoul(
+  ctx: ChannelOpsContext,
+  communityId: string,
+  agentPubkey: string,
+  input: AgentSoulInput,
+): Promise<AgentSoulProfile> {
+  const members = await communityMembers(ctx, communityId);
+  if (!members.some((member) => member.pubkey === ctx.identity.publicKey)) {
+    throw new Error('only a community member can edit an agent soul');
+  }
+  if (await isAgentIdentity(ctx, ctx.identity.publicKey)) {
+    throw new Error('agent souls must be authored by a human community member');
+  }
+  const agents = await listAgentIdentities(ctx, communityId);
+  if (!agents.some((agent) => agent.pubkey === agentPubkey)) {
+    throw new Error('agent identity not found in community');
+  }
+  const name = input.name.trim().slice(0, 80);
+  const personality = input.personality.trim().slice(0, 280);
+  const avatarSeed = input.avatarSeed.trim().slice(0, 128);
+  if (!name || !personality || !avatarSeed) throw new Error('agent soul fields must not be empty');
+  const event = signEvent(
+    {
+      pubkey: ctx.identity.publicKey,
+      created_at: nextSoulTimestamp(),
+      kind: KIND_AGENT_SOUL,
+      tags: [
+        ['d', soulKey(communityId, agentPubkey)],
+        ['h', communityId],
+        ['p', agentPubkey],
+        ['t', TAG_AGENT_SOUL],
+        [TAG_COMMUNITY, communityId],
+      ],
+      content: JSON.stringify({ name, personality, avatarSeed }),
+    },
+    ctx.identity.secretKey,
+  );
+  await publishEvent(ctx.http, event);
+  return parseAgentSoul(event)!;
+}
+
+async function listAgentIdentities(
   ctx: ChannelOpsContext,
   communityId: string,
   limit = 200,
 ): Promise<Agent[]> {
   const events = await queryEvents(
     ctx.http,
-    [
-      {
-        kinds: [KIND_STREAM_MESSAGE],
-        '#h': [communityId],
-        '#t': [TAG_AGENT],
-        limit,
-      },
-    ],
+    [{ kinds: [KIND_STREAM_MESSAGE], '#h': [communityId], '#t': [TAG_AGENT], limit }],
     ctx.identity.publicKey,
   );
   const latest = new Map<string, Agent>();
@@ -158,6 +379,67 @@ export async function listAgents(
     if (!prior || prior.createdAt < agent.createdAt) latest.set(agent.agentId, agent);
   }
   return [...latest.values()].sort((a, b) => a.createdAt - b.createdAt);
+}
+
+/** List the latest self-signed agent declaration for each agent ID in a community. */
+export async function listAgents(
+  ctx: ChannelOpsContext,
+  communityId: string,
+  limit = 200,
+): Promise<Agent[]> {
+  const [agents, members] = await Promise.all([
+    listAgentIdentities(ctx, communityId, limit),
+    communityMembers(ctx, communityId),
+  ]);
+  // The HTTP bridge does not index #h on parameterized-replaceable kinds.
+  // `d` is their canonical key, so fetch exactly one overlay key per agent.
+  const soulEvents = (
+    await Promise.all(
+      agents.map((agent) =>
+        queryEvents(
+          ctx.http,
+          [{ kinds: [KIND_AGENT_SOUL], '#d': [soulKey(communityId, agent.pubkey)], limit: 20 }],
+          ctx.identity.publicKey,
+        ),
+      ),
+    )
+  ).flat();
+  const memberPubkeys = new Set(members.map((member) => member.pubkey));
+  const overlayAuthors = [
+    ...new Set(soulEvents.map((event) => event.pubkey).filter((pubkey) => memberPubkeys.has(pubkey))),
+  ];
+  const agentAuthors = new Set(
+    (
+      await Promise.all(
+        overlayAuthors.map(async (pubkey) => ((await isAgentIdentity(ctx, pubkey)) ? pubkey : null)),
+      )
+    ).filter((pubkey): pubkey is string => pubkey !== null),
+  );
+  const profiles = new Map<string, AgentSoulProfile>();
+  for (const event of soulEvents) {
+    const profile = parseAgentSoul(event);
+    if (
+      !profile ||
+      profile.communityId !== communityId ||
+      !memberPubkeys.has(profile.authoredBy) ||
+      agentAuthors.has(profile.authoredBy)
+    ) {
+      continue;
+    }
+    const prior = profiles.get(profile.agentPubkey);
+    if (!prior || prior.updatedAt < profile.updatedAt) profiles.set(profile.agentPubkey, profile);
+  }
+  return agents.map((agent) => {
+    const soulProfile = profiles.get(agent.pubkey);
+    return soulProfile
+      ? {
+          ...agent,
+          displayName: soulProfile.name,
+          personality: soulProfile.personality,
+          soulProfile,
+        }
+      : agent;
+  });
 }
 
 /** True when the pubkey has ever self-signed a valid first-class agent record. */

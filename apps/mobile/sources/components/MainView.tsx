@@ -12,14 +12,13 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useFriendRequests, useSocketStatus, useRealtimeStatus, useSettingMutable } from '@/sync/storage';
+import { useSocketStatus, useRealtimeStatus, useSettingMutable } from '@/sync/storage';
 import { useHasArchivedSessions, useVisibleSessionListViewData } from '@/hooks/useVisibleSessionListViewData';
 import { useIsTablet } from '@/utils/responsive';
 import { useRouter } from 'expo-router';
 import { EmptySessionsTablet } from './EmptySessionsTablet';
 import { SessionsList } from './SessionsList';
 import { TabBar, TabType } from './TabBar';
-import { InboxView } from './InboxView';
 import { HomeDock, MOBILE_HOME_DOCK_CONTENT_INSET } from './HomeDock';
 import { SettingsViewWrapper } from './SettingsViewWrapper';
 import { SessionsListWrapper } from './SessionsListWrapper';
@@ -30,8 +29,6 @@ import { StatusDot } from './StatusDot';
 import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { isUsingCustomServer } from '@/sync/serverConfig';
-import { trackFriendsSearch } from '@/track';
 import { MOBILE_GLASS_HEADER_HEIGHT } from './navigation/headerMetrics';
 import { useNewSessionDraft } from '@/hooks/useNewSessionDraft';
 import { useStartSessionFromDraft } from '@/hooks/useStartSessionFromDraft';
@@ -180,7 +177,6 @@ const styles = StyleSheet.create((theme) => ({
 // Tab header configuration
 const TAB_TITLES = {
     sessions: 'tabs.sessions',
-    inbox: 'tabs.inbox',
     settings: 'tabs.settings',
 } as const;
 
@@ -295,7 +291,6 @@ const HeaderRight = React.memo(({
 }) => {
     const router = useRouter();
     const { theme } = useUnistyles();
-    const isCustomServer = isUsingCustomServer();
 
     if (activeTab === 'sessions') {
         if (Platform.OS !== 'web') {
@@ -377,34 +372,8 @@ const HeaderRight = React.memo(({
         );
     }
 
-    if (activeTab === 'inbox') {
-        return (
-            <Pressable
-                onPress={() => {
-                    trackFriendsSearch();
-                    router.push('/friends/search');
-                }}
-                hitSlop={15}
-                style={styles.headerButton}
-            >
-                <Ionicons name="person-add-outline" size={24} color={theme.colors.header.tint} />
-            </Pressable>
-        );
-    }
-
     if (activeTab === 'settings') {
-        if (!isCustomServer) {
-            return Platform.OS === 'web' ? <View style={styles.headerButton} /> : null;
-        }
-        return (
-            <Pressable
-                onPress={() => router.push('/server')}
-                hitSlop={15}
-                style={styles.headerButton}
-            >
-                <Ionicons name="server-outline" size={24} color={theme.colors.header.tint} />
-            </Pressable>
-        );
+        return Platform.OS === 'web' ? <View style={styles.headerButton} /> : null;
     }
 
     return null;
@@ -419,7 +388,6 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     const [hideArchivedSessions, setHideArchivedSessions] = useSettingMutable('hideInactiveSessions');
     const isTablet = useIsTablet();
     const router = useRouter();
-    const friendRequests = useFriendRequests();
     const realtimeStatus = useRealtimeStatus();
     const safeArea = useSafeAreaInsets();
     const { isStarting: isStartingHomeSession, startSession: startHomeSession } = useStartSessionFromDraft();
@@ -432,7 +400,6 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     const [homePrompt, setHomePrompt] = React.useState('');
     const [headerBackdropVisible, setHeaderBackdropVisible] = React.useState(false);
     const headerBackdropVisibleRef = React.useRef(false);
-    const showHeaderRight = activeTab !== 'settings' || isUsingCustomServer();
     const topContentInset = Platform.OS === 'web'
         ? 0
         : safeArea.top
@@ -490,8 +457,6 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
 
     const renderWebTabContent = () => {
         switch (activeTab) {
-            case 'inbox':
-                return <InboxView />;
             case 'settings':
                 return <SettingsViewWrapper topContentInset={topContentInset} bottomContentInset={bottomContentInset} onScroll={handleContentScroll} />;
             case 'sessions':
@@ -547,7 +512,7 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
                 title={searchActive && Platform.OS !== 'web'
                     ? <HeaderSearch value={searchQuery} onChangeText={setSearchQuery} />
                     : <HeaderTitle activeTab={activeTab} />}
-                headerRight={showHeaderRight ? () => (
+                headerRight={() => (
                     <HeaderRight
                         activeTab={activeTab}
                         searchActive={searchActive}
@@ -556,7 +521,7 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
                         hideArchivedSessions={hideArchivedSessions}
                         onArchiveVisibilityPress={handleArchiveVisibilityPress}
                     />
-                ) : undefined}
+                )}
                 headerLeft={() => <HeaderLogo />}
                 headerLeftGlass={Platform.OS !== 'web'}
                 headerBackdropVisible={headerBackdropVisible}
@@ -592,7 +557,6 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
                 <TabBar
                     activeTab={activeTab}
                     onTabPress={handleTabPress}
-                    inboxBadgeCount={friendRequests.length}
                 />
             ) : (
                 <View pointerEvents="box-none" style={styles.phoneBottomDockOverlay}>

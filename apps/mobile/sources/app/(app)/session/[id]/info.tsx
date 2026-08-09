@@ -373,14 +373,6 @@ function SessionInfoContent({ session }: { session: Session }) {
 
                 {/* Quick Actions */}
                 <ItemGroup title={t('sessionInfo.quickActions')}>
-                    {session.metadata?.machineId && (
-                        <Item
-                            title={t('sessionInfo.viewMachine')}
-                            subtitle={t('sessionInfo.viewMachineSubtitle')}
-                            icon={<Ionicons name="server-outline" size={29} color="#007AFF" />}
-                            onPress={() => router.push(`/machine/${session.metadata?.machineId}`)}
-                        />
-                    )}
                     {canShowResume && (
                         <Item
                             title={t('sessionInfo.resumeSession')}

@@ -1,84 +1,126 @@
-/**
- * Buzz Channel List — shows the user's channels (sessionsRead).
- *
- * P2: Distinguishes subchannels (shown indented under parent), archived status,
- *     and subchannel counts per parent.
- *
- * GrokNight Terminal design.
- */
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
+  ActivityIndicator,
   FlatList,
+  Platform,
+  Share,
+  StyleSheet,
+  Text,
   TextInput,
   TouchableOpacity,
-  StyleSheet,
-  ActivityIndicator,
-  Platform,
+  View,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
+import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import type { Community, Identity } from '@buzzy/buzz-client';
 import {
-  loadBuzzIdentity,
+  DEFAULT_RELAY_URL,
   clearBuzzIdentity,
   getEffectiveRelayUrl,
+  loadBuzzIdentity,
   saveRelayUrl,
-  DEFAULT_RELAY_URL,
 } from '@/auth/buzz-identity-storage';
-import { BuzzRigTransport } from '@/sync/transport';
-import type { SessionSummary, RigTransport } from '@/sync/transport';
 import { groknight } from '@/buzz/groknight';
+import {
+  loadActiveCommunityId,
+  saveActiveCommunityId,
+  saveLastViewedChannel,
+} from '@/buzz/community-storage';
+import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
+import { BuzzRigTransport } from '@/sync/transport';
+import type { SessionSummary } from '@/sync/transport';
 
 type ChannelDisplayItem = SessionSummary & {
+  archived?: boolean;
   isSubchannel?: boolean;
   parentChannelId?: string;
   subchannelCount?: number;
-  archived?: boolean;
 };
 
 const mono = Platform.select({ web: '"JetBrains Mono", monospace', default: 'monospace' });
 
+function firstParam(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+async function channelSummary(
+  transport: BuzzRigTransport,
+  channelId: string,
+): Promise<ChannelDisplayItem> {
+  const client = await transport.ensureClient();
+  const metadata = await client.getChannelMetadata(channelId);
+  return {
+    id: channelId,
+    active: !metadata?.archived,
+    title: metadata?.name ?? `channel ${channelId.slice(0, 8)}`,
+    updatedAt: metadata?.raw?.created_at,
+    createdAt: metadata?.raw?.created_at,
+    archived: metadata?.archived,
+  };
+}
+
 async function loadDisplayChannels(
-  transport: RigTransport,
-  buzzTransport: BuzzRigTransport,
+  transport: BuzzRigTransport,
+  activeCommunityId: string | null,
+  communities: Community[],
 ): Promise<ChannelDisplayItem[]> {
-  const list = await transport.sessionsRead();
+  const client = await transport.ensureClient();
+  let list: ChannelDisplayItem[];
+
+  if (activeCommunityId) {
+    const ids = await client.communityChannels(activeCommunityId);
+    list = await Promise.all(ids.map((id) => channelSummary(transport, id)));
+  } else {
+    const all = await transport.sessionsRead();
+    const communityIds = new Set(communities.map((community) => community.communityId));
+    const memberships = await Promise.all(
+      all.map(async (channel) => ({
+        channel,
+        communityId: await client.getChannelCommunityId(channel.id),
+      })),
+    );
+    list = memberships
+      .filter(({ channel, communityId }) => !communityId && !communityIds.has(channel.id))
+      .map(({ channel }) => ({ ...channel }));
+  }
+
   const parentIds = new Set<string>();
   const childMap = new Map<string, ChannelDisplayItem[]>();
   const allItems: ChannelDisplayItem[] = [];
 
-  for (const channel of list) {
-    try {
-      const parentId = await buzzTransport.getParentChannelId(channel.id);
-      if (parentId) {
-        const item: ChannelDisplayItem = {
-          ...channel,
-          isSubchannel: true,
-          parentChannelId: parentId,
-        };
+  await Promise.all(
+    list.map(async (channel) => {
+      try {
+        const parentId = await transport.getParentChannelId(channel.id);
+        const archived = channel.archived ?? (await transport.isChannelArchived(channel.id));
+        const item = { ...channel, archived, parentChannelId: parentId ?? undefined };
+        if (parentId) {
+          item.isSubchannel = true;
+          const siblings = childMap.get(parentId) ?? [];
+          siblings.push(item);
+          childMap.set(parentId, siblings);
+        } else {
+          parentIds.add(channel.id);
+        }
         allItems.push(item);
-        const siblings = childMap.get(parentId) ?? [];
-        siblings.push(item);
-        childMap.set(parentId, siblings);
-      } else {
-        allItems.push({ ...channel });
-        parentIds.add(channel.id);
+      } catch {
+        allItems.push(channel);
       }
-    } catch {
-      allItems.push({ ...channel });
-    }
-  }
+    }),
+  );
 
-  for (const parentId of parentIds) {
-    try {
-      const subchannelIds = await buzzTransport.listSubchannels(parentId);
-      const displayItem = allItems.find((item) => item.id === parentId);
-      if (displayItem) displayItem.subchannelCount = subchannelIds.length;
-    } catch {
-      // Ignore: not all channels support subchannel listing.
-    }
-  }
+  await Promise.all(
+    [...parentIds].map(async (parentId) => {
+      try {
+        const subchannelIds = await transport.listSubchannels(parentId);
+        const displayItem = allItems.find((item) => item.id === parentId);
+        if (displayItem) displayItem.subchannelCount = subchannelIds.length;
+      } catch {
+        // A standalone stream need not have subchannels.
+      }
+    }),
+  );
 
   const grouped: ChannelDisplayItem[] = [];
   for (const item of allItems) {
@@ -90,45 +132,79 @@ async function loadDisplayChannels(
   for (const item of allItems) {
     if (item.isSubchannel && !grouped.includes(item)) grouped.push(item);
   }
-
   return grouped;
 }
 
 export default function BuzzChannels() {
   const insets = useSafeAreaInsets();
-  const [transport, setTransport] = useState<RigTransport | null>(null);
+  const params = useLocalSearchParams<{
+    communityId?: string | string[];
+    inviteUrl?: string | string[];
+  }>();
+  const requestedCommunity = firstParam(params.communityId);
+  const inviteUrl = firstParam(params.inviteUrl);
+
+  const [identity, setIdentity] = useState<Identity | null>(null);
+  const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
+  const [communities, setCommunities] = useState<Community[]>([]);
+  const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
   const [displayChannels, setDisplayChannels] = useState<ChannelDisplayItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [buzzTransport, setBuzzTransport] = useState<BuzzRigTransport | null>(null);
   const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_URL);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsRelayUrl, setSettingsRelayUrl] = useState('');
+  const [showCreateChannel, setShowCreateChannel] = useState(false);
+  const [channelName, setChannelName] = useState('');
+  const [creatingChannel, setCreatingChannel] = useState(false);
+
+  const activeCommunity = useMemo(
+    () => communities.find((community) => community.communityId === activeCommunityId) ?? null,
+    [communities, activeCommunityId],
+  );
+
+  const resolveCommunity = useCallback(
+    async (currentIdentity: Identity, available: Community[]): Promise<string | null> => {
+      const requested = requestedCommunity;
+      if (requested === 'standalone') return null;
+      if (requested && available.some((community) => community.communityId === requested)) {
+        return requested;
+      }
+      const stored = await loadActiveCommunityId(currentIdentity.publicKey);
+      return available.some((community) => community.communityId === stored) ? stored : null;
+    },
+    [requestedCommunity],
+  );
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    void (async () => {
+      setLoading(true);
+      setError(null);
       try {
-        const identity = await loadBuzzIdentity();
-        if (!identity) {
+        const currentIdentity = await loadBuzzIdentity();
+        if (!currentIdentity) {
           router.replace('/buzz/onboarding');
           return;
         }
         const url = await getEffectiveRelayUrl();
-        setRelayUrl(url);
-        const t = new BuzzRigTransport(identity, url);
-        setTransport(t);
-        setBuzzTransport(t);
-
-        const grouped = await loadDisplayChannels(t, t);
-
+        const nextTransport = new BuzzRigTransport(currentIdentity, url);
+        const client = await nextTransport.ensureClient();
+        const available = await client.listCommunities();
+        const active = await resolveCommunity(currentIdentity, available);
+        const channels = await loadDisplayChannels(nextTransport, active, available);
+        await saveActiveCommunityId(currentIdentity.publicKey, active);
         if (!cancelled) {
-          setDisplayChannels(grouped);
+          setIdentity(currentIdentity);
+          setRelayUrl(url);
+          setTransport(nextTransport);
+          setCommunities(available);
+          setActiveCommunityId(active);
+          setDisplayChannels(channels);
         }
       } catch (err) {
-        if (!cancelled) {
-          setError(String(err));
-        }
+        if (!cancelled) setError(String(err));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -136,407 +212,480 @@ export default function BuzzChannels() {
     return () => {
       cancelled = true;
     };
+  }, [resolveCommunity]);
+
+  const handleSelectCommunity = useCallback((communityId: string | null) => {
+    router.replace({
+      pathname: '/buzz/channels',
+      params: { communityId: communityId ?? 'standalone' },
+    });
   }, []);
 
+  const handleRefresh = useCallback(async () => {
+    if (!transport || !identity) return;
+    setRefreshing(true);
+    setError(null);
+    try {
+      const client = await transport.ensureClient();
+      const available = await client.listCommunities();
+      const active = available.some((community) => community.communityId === activeCommunityId)
+        ? activeCommunityId
+        : null;
+      setCommunities(available);
+      setActiveCommunityId(active);
+      setDisplayChannels(await loadDisplayChannels(transport, active, available));
+      await saveActiveCommunityId(identity.publicKey, active);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setRefreshing(false);
+    }
+  }, [activeCommunityId, identity, transport]);
+
   const handleChannelPress = useCallback(
-    (channel: ChannelDisplayItem) => {
+    async (channel: ChannelDisplayItem) => {
+      if (identity) {
+        await saveLastViewedChannel(identity.publicKey, activeCommunityId, channel.id);
+      }
       router.push(`/buzz/chat/${encodeURIComponent(channel.id)}`);
     },
-    [],
+    [activeCommunityId, identity],
   );
+
+  const handleCreateChannel = useCallback(async () => {
+    const name = channelName.trim();
+    if (!name || !transport) return;
+    setCreatingChannel(true);
+    setError(null);
+    try {
+      const client = await transport.ensureClient();
+      const channelId = await client.createChannel(name, {
+        ...(activeCommunityId ? { communityId: activeCommunityId } : {}),
+      });
+      await client.waitUntilMember(channelId, client.identity.publicKey);
+      setChannelName('');
+      setShowCreateChannel(false);
+      setDisplayChannels(await loadDisplayChannels(transport, activeCommunityId, communities));
+    } catch (err) {
+      setError(`Could not create channel: ${String(err)}`);
+    } finally {
+      setCreatingChannel(false);
+    }
+  }, [activeCommunityId, channelName, communities, transport]);
+
+  const handleSaveRelayUrl = useCallback(async () => {
+    if (!identity) return;
+    const url = settingsRelayUrl.trim() || DEFAULT_RELAY_URL;
+    setLoading(true);
+    setError(null);
+    try {
+      await saveRelayUrl(url);
+      const nextTransport = new BuzzRigTransport(identity, url);
+      const client = await nextTransport.ensureClient();
+      const available = await client.listCommunities();
+      const active = available.some((community) => community.communityId === activeCommunityId)
+        ? activeCommunityId
+        : null;
+      setTransport(nextTransport);
+      setCommunities(available);
+      setActiveCommunityId(active);
+      setRelayUrl(url);
+      setShowSettings(false);
+      setDisplayChannels(await loadDisplayChannels(nextTransport, active, available));
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [activeCommunityId, identity, settingsRelayUrl]);
 
   const handleLogout = useCallback(async () => {
     await clearBuzzIdentity();
     router.replace('/buzz/onboarding');
   }, []);
 
-  const handleRefresh = useCallback(async () => {
-    if (!transport || !buzzTransport) return;
-    setLoading(true);
-    setError(null);
-    try {
-      setDisplayChannels(await loadDisplayChannels(transport, buzzTransport));
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [transport, buzzTransport]);
-
-  const handleSaveRelayUrl = useCallback(async () => {
-    const url = settingsRelayUrl.trim() || DEFAULT_RELAY_URL;
-    setLoading(true);
-    setError(null);
-    try {
-      const identity = await loadBuzzIdentity();
-      if (!identity) {
-        router.replace('/buzz/onboarding');
-        return;
-      }
-      await saveRelayUrl(url);
-      const nextTransport = new BuzzRigTransport(identity, url);
-      setTransport(nextTransport);
-      setBuzzTransport(nextTransport);
-      setRelayUrl(url);
-      setShowSettings(false);
-      setDisplayChannels(await loadDisplayChannels(nextTransport, nextTransport));
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [settingsRelayUrl]);
-
-  const openSettings = useCallback(() => {
-    setSettingsRelayUrl(relayUrl);
-    setShowSettings(true);
-  }, [relayUrl]);
-
-  if (loading) {
+  if (loading && !transport) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <ActivityIndicator size="large" color={groknight.accent} />
-        <Text style={styles.loadingText}>Connecting to relay…</Text>
-      </View>
-    );
-  }
-
-  if (error) {
-    return (
-      <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <Text style={styles.errorText}>Error: {error}</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={handleRefresh}>
-          <Text style={styles.retryButtonText}>Retry</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-          <Text style={styles.logoutButtonText}>Logout</Text>
-        </TouchableOpacity>
+        <Text style={styles.loadingText}>connecting to relay…</Text>
       </View>
     );
   }
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>channels</Text>
-        <View style={styles.headerActions}>
-          <TouchableOpacity onPress={openSettings} style={styles.settingsButton}>
-            <Text style={styles.settingsIcon}>⚙</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={handleLogout}>
-            <Text style={styles.logoutText}>logout</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {showSettings && (
-        <View style={styles.settingsPanel}>
-          <Text style={styles.settingsLabel}>Relay URL</Text>
-          <TextInput
-            style={styles.settingsInput}
-            value={settingsRelayUrl}
-            onChangeText={setSettingsRelayUrl}
-            placeholder="https://buzz.trustysquire.ai"
-            placeholderTextColor={groknight.dim}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-          />
-          <View style={styles.settingsActions}>
-            <TouchableOpacity
-              style={styles.settingsSaveButton}
-              onPress={handleSaveRelayUrl}
-            >
-              <Text style={styles.settingsSaveText}>Save</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.settingsCancelButton}
-              onPress={() => setShowSettings(false)}
-            >
-              <Text style={styles.settingsCancelText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-
-      <FlatList
-        data={displayChannels}
-        keyExtractor={(item: ChannelDisplayItem) => item.id}
-        contentContainerStyle={displayChannels.length === 0 ? styles.emptyContainer : undefined}
-        ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyTitle}>No channels yet</Text>
-            <Text style={styles.emptySubtitle}>
-              Create a channel out-of-band using the buzz-client CLI or script,
-              then pull to refresh.
+    <BuzzCommunityShell
+      communities={communities}
+      activeCommunityId={activeCommunityId}
+      onSelect={handleSelectCommunity}
+      onAdd={() => router.push('/buzz/community' as Href)}
+    >
+      <View style={[styles.container, { paddingTop: insets.top }]}>
+        <View style={styles.header}>
+          <View style={styles.headerIdentity}>
+            <Text style={styles.eyebrow}>{activeCommunity ? 'community' : 'buzzy home'}</Text>
+            <Text style={styles.headerTitle} numberOfLines={1}>
+              {activeCommunity?.name ?? 'standalone'}
             </Text>
           </View>
-        }
-        renderItem={({ item }: { item: ChannelDisplayItem }) => (
-          <TouchableOpacity
-            style={[
-              styles.channelItem,
-              item.isSubchannel && styles.subchannelItem,
-            ]}
-            onPress={() => handleChannelPress(item)}
-          >
-            <View style={styles.channelInfo}>
-              <View style={styles.channelTitleRow}>
-                <Text style={styles.channelIcon}>
-                  {item.archived ? '📦' : item.isSubchannel ? '🛠' : '#'}
-                </Text>
-                <Text
-                  style={[
-                    styles.channelTitle,
-                    item.isSubchannel && styles.subchannelTitle,
-                    item.archived && styles.archivedTitle,
-                  ]}
-                  numberOfLines={1}
-                >
-                  {item.title ?? `channel ${item.id.slice(0, 8)}`}
-                </Text>
-                {item.archived && (
-                  <Text style={styles.archivedTag}>archived</Text>
-                )}
-              </View>
-              <Text style={styles.channelId}>
-                {item.id.slice(0, 12)}…
-              </Text>
-              {item.subchannelCount !== undefined && item.subchannelCount > 0 && (
-                <Text style={styles.subchannelCount}>
-                  {item.subchannelCount} sub{item.subchannelCount !== 1 ? 's' : ''}
-                </Text>
-              )}
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              accessibilityLabel="Create channel"
+              onPress={() => setShowCreateChannel((value) => !value)}
+              style={styles.iconButton}
+            >
+              <Text style={styles.iconButtonText}>＋#</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              accessibilityLabel="Relay settings"
+              onPress={() => {
+                setSettingsRelayUrl(relayUrl);
+                setShowSettings((value) => !value);
+              }}
+              style={styles.iconButton}
+            >
+              <Text style={styles.iconButtonText}>⚙</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {inviteUrl && (
+          <View style={styles.invitePanel}>
+            <Text style={styles.panelEyebrow}>invite ready</Text>
+            <Text style={styles.inviteUrl} numberOfLines={2}>
+              {inviteUrl}
+            </Text>
+            <View style={styles.panelActions}>
+              <TouchableOpacity
+                style={styles.primarySmallButton}
+                onPress={() => Share.share({ message: inviteUrl })}
+              >
+                <Text style={styles.primarySmallButtonText}>share</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.secondarySmallButton}
+                onPress={() => Clipboard.setStringAsync(inviteUrl)}
+              >
+                <Text style={styles.secondarySmallButtonText}>copy link</Text>
+              </TouchableOpacity>
             </View>
-            <Text style={styles.chevron}>›</Text>
-          </TouchableOpacity>
+          </View>
         )}
-        onRefresh={handleRefresh}
-        refreshing={loading}
-      />
-    </View>
+
+        {showCreateChannel && (
+          <View style={styles.actionPanel}>
+            <Text style={styles.panelEyebrow}>
+              new channel · {activeCommunity?.name ?? 'standalone'}
+            </Text>
+            <View style={styles.inlineForm}>
+              <TextInput
+                autoFocus
+                style={styles.input}
+                value={channelName}
+                onChangeText={setChannelName}
+                onSubmitEditing={() => void handleCreateChannel()}
+                placeholder="channel name"
+                placeholderTextColor={groknight.dim}
+                editable={!creatingChannel}
+              />
+              <TouchableOpacity
+                style={[styles.primarySmallButton, !channelName.trim() && styles.disabled]}
+                disabled={!channelName.trim() || creatingChannel}
+                onPress={() => void handleCreateChannel()}
+              >
+                <Text style={styles.primarySmallButtonText}>
+                  {creatingChannel ? 'creating…' : 'create'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {showSettings && (
+          <View style={styles.actionPanel}>
+            <Text style={styles.panelEyebrow}>relay url</Text>
+            <TextInput
+              style={styles.input}
+              value={settingsRelayUrl}
+              onChangeText={setSettingsRelayUrl}
+              placeholder={DEFAULT_RELAY_URL}
+              placeholderTextColor={groknight.dim}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+            />
+            <View style={styles.panelActions}>
+              <TouchableOpacity style={styles.primarySmallButton} onPress={handleSaveRelayUrl}>
+                <Text style={styles.primarySmallButtonText}>save</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.secondarySmallButton} onPress={handleLogout}>
+                <Text style={styles.secondarySmallButtonText}>forget key</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {error && (
+          <View style={styles.errorPanel}>
+            <Text accessibilityRole="alert" style={styles.errorText}>
+              {error}
+            </Text>
+            <TouchableOpacity onPress={() => void handleRefresh()}>
+              <Text style={styles.retryText}>retry</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        <FlatList
+          data={displayChannels}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={
+            displayChannels.length === 0 ? styles.emptyContainer : styles.listContent
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyGlyph}>⌁</Text>
+              <Text style={styles.emptyTitle}>
+                {activeCommunity ? 'No channels here yet' : 'No standalone channels'}
+              </Text>
+              <Text style={styles.emptySubtitle}>
+                {activeCommunity
+                  ? `Open a first room inside ${activeCommunity.name}.`
+                  : 'Community channels live behind their icons in the rail.'}
+              </Text>
+              <TouchableOpacity
+                style={styles.primaryButton}
+                onPress={() => setShowCreateChannel(true)}
+              >
+                <Text style={styles.primaryButtonText}>create channel</Text>
+              </TouchableOpacity>
+            </View>
+          }
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={[styles.channelItem, item.isSubchannel && styles.subchannelItem]}
+              onPress={() => void handleChannelPress(item)}
+            >
+              <Text style={styles.channelIcon}>
+                {item.archived ? '□' : item.isSubchannel ? '↳' : '#'}
+              </Text>
+              <View style={styles.channelInfo}>
+                <View style={styles.channelTitleRow}>
+                  <Text
+                    numberOfLines={1}
+                    style={[
+                      styles.channelTitle,
+                      item.isSubchannel && styles.subchannelTitle,
+                      item.archived && styles.archivedTitle,
+                    ]}
+                  >
+                    {item.title ?? `channel ${item.id.slice(0, 8)}`}
+                  </Text>
+                  {item.archived && <Text style={styles.metaTag}>archived</Text>}
+                </View>
+                <Text style={styles.channelMeta}>
+                  {item.id.slice(0, 10)}
+                  {item.subchannelCount ? ` · ${item.subchannelCount} sub` : ''}
+                </Text>
+              </View>
+              <Text style={styles.chevron}>›</Text>
+            </TouchableOpacity>
+          )}
+          onRefresh={() => void handleRefresh()}
+          refreshing={refreshing}
+        />
+      </View>
+    </BuzzCommunityShell>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: groknight.bgTerminal,
-  },
-  center: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  container: { flex: 1, minWidth: 0, backgroundColor: groknight.bgTerminal },
+  center: { alignItems: 'center', justifyContent: 'center' },
+  loadingText: { marginTop: 12, color: groknight.muted, fontFamily: mono, fontSize: 13 },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    minHeight: 66,
     paddingHorizontal: 14,
-    paddingVertical: 14,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: groknight.bgBase,
     borderBottomWidth: 1,
     borderBottomColor: groknight.border,
-    backgroundColor: groknight.bgBase,
   },
-  headerTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: groknight.textPrimary,
-    letterSpacing: 0.5,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  settingsButton: {
-    padding: 4,
-  },
-  settingsIcon: {
-    fontSize: 18,
-    color: groknight.chrome,
-  },
-  logoutText: {
-    fontSize: 12,
+  headerIdentity: { flex: 1, minWidth: 0 },
+  eyebrow: {
     color: groknight.steel,
     fontFamily: mono,
-    letterSpacing: 0.3,
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
   },
-  settingsPanel: {
-    paddingHorizontal: 16,
+  headerTitle: { marginTop: 3, color: groknight.textPrimary, fontSize: 18, fontWeight: '800' },
+  headerActions: { flexDirection: 'row', gap: 6, marginLeft: 8 },
+  iconButton: {
+    minWidth: 36,
+    height: 36,
+    paddingHorizontal: 7,
+    borderRadius: 5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: groknight.borderActive,
+    backgroundColor: groknight.bgHighlight,
+  },
+  iconButtonText: { color: groknight.chrome, fontSize: 15, fontFamily: mono },
+  actionPanel: {
+    paddingHorizontal: 14,
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: groknight.border,
     backgroundColor: groknight.bgBase,
   },
-  settingsLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: groknight.muted,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginBottom: 6,
+  invitePanel: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.accent,
+    backgroundColor: groknight.bgCode,
   },
-  settingsInput: {
-    borderWidth: 1,
-    borderColor: groknight.border,
+  panelEyebrow: {
+    marginBottom: 7,
+    color: groknight.accent,
+    fontFamily: mono,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  inviteUrl: { color: groknight.textSecondary, fontFamily: mono, fontSize: 11, lineHeight: 16 },
+  inlineForm: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  input: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 40,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
     borderRadius: 4,
-    padding: 10,
-    fontSize: 14,
+    borderWidth: 1,
+    borderColor: groknight.borderActive,
     color: groknight.textPrimary,
     backgroundColor: groknight.bgTerminal,
     fontFamily: mono,
+    fontSize: 13,
   },
-  settingsActions: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 8,
-  },
-  settingsSaveButton: {
+  panelActions: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 9 },
+  primarySmallButton: {
+    minHeight: 36,
+    paddingHorizontal: 14,
+    borderRadius: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: groknight.accent,
-    borderRadius: 4,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
   },
-  settingsSaveText: {
+  primarySmallButtonText: {
     color: groknight.bgTerminal,
-    fontSize: 13,
-    fontWeight: '600',
     fontFamily: mono,
+    fontWeight: '800',
+    fontSize: 12,
   },
-  settingsCancelButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-  },
-  settingsCancelText: {
-    color: groknight.muted,
-    fontSize: 13,
-    fontFamily: mono,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: groknight.muted,
-    fontFamily: mono,
-  },
-  errorText: {
-    fontSize: 14,
-    color: groknight.chrome,
-    marginBottom: 16,
-    textAlign: 'center',
-    paddingHorizontal: 24,
-    fontFamily: mono,
-  },
-  retryButton: {
-    backgroundColor: groknight.bgHighlight,
-    paddingVertical: 10,
-    paddingHorizontal: 24,
-    borderRadius: 4,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: groknight.border,
-  },
-  retryButtonText: {
-    color: groknight.textSecondary,
-    fontSize: 14,
-    fontWeight: '600',
-    fontFamily: mono,
-  },
-  logoutButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 24,
-  },
-  logoutButtonText: {
-    color: groknight.steel,
-    fontSize: 14,
-    fontFamily: mono,
-  },
-  emptyContainer: {
-    flex: 1,
+  secondarySmallButton: {
+    minHeight: 36,
+    paddingHorizontal: 10,
+    alignItems: 'center',
     justifyContent: 'center',
   },
-  emptyState: {
-    alignItems: 'center',
-    paddingHorizontal: 32,
+  secondarySmallButtonText: { color: groknight.chrome, fontFamily: mono, fontSize: 12 },
+  disabled: { opacity: 0.45 },
+  errorPanel: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: groknight.bgHighlight,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.borderActive,
   },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: groknight.textPrimary,
-    marginBottom: 8,
+  errorText: { color: groknight.chrome, fontFamily: mono, fontSize: 11, lineHeight: 16 },
+  retryText: {
+    marginTop: 5,
+    color: groknight.accent,
     fontFamily: mono,
+    fontSize: 11,
+    fontWeight: '700',
   },
-  emptySubtitle: {
-    fontSize: 13,
-    color: groknight.muted,
-    textAlign: 'center',
-    lineHeight: 20,
-    fontFamily: mono,
-  },
+  listContent: { paddingVertical: 4 },
   channelItem: {
+    minHeight: 66,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: groknight.border,
   },
-  subchannelItem: {
-    paddingLeft: 36,
-    backgroundColor: groknight.bgTerminal,
-  },
-  channelInfo: {
-    flex: 1,
-  },
-  channelTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 2,
-  },
+  subchannelItem: { paddingLeft: 25, backgroundColor: groknight.bgBase },
   channelIcon: {
-    fontSize: 13,
-    marginRight: 6,
-    color: groknight.muted,
-  },
-  channelTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: groknight.textPrimary,
-    flex: 1,
+    width: 25,
+    color: groknight.steel,
     fontFamily: mono,
+    fontSize: 15,
+    fontWeight: '700',
   },
-  subchannelTitle: {
-    fontSize: 13,
-    color: groknight.chrome,
-  },
-  archivedTitle: {
-    color: groknight.muted,
-    textDecorationLine: 'line-through',
-  },
-  archivedTag: {
-    fontSize: 9,
-    color: groknight.muted,
+  channelInfo: { flex: 1, minWidth: 0 },
+  channelTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  channelTitle: { flexShrink: 1, color: groknight.textPrimary, fontSize: 14, fontWeight: '700' },
+  subchannelTitle: { color: groknight.textSecondary, fontSize: 13 },
+  archivedTitle: { color: groknight.muted },
+  metaTag: {
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    color: groknight.steel,
     backgroundColor: groknight.bgHighlight,
     borderRadius: 3,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    marginLeft: 6,
     fontFamily: mono,
-    letterSpacing: 0.5,
+    fontSize: 8,
+    textTransform: 'uppercase',
   },
-  channelId: {
-    fontSize: 11,
+  channelMeta: {
+    marginTop: 4,
     color: groknight.dim,
     fontFamily: mono,
+    fontSize: 9,
+    letterSpacing: 0.4,
   },
-  subchannelCount: {
-    fontSize: 10,
-    color: groknight.steel,
-    marginTop: 2,
+  chevron: { marginLeft: 8, color: groknight.gutter, fontSize: 22 },
+  emptyContainer: { flexGrow: 1 },
+  emptyState: { flex: 1, paddingHorizontal: 22, alignItems: 'center', justifyContent: 'center' },
+  emptyGlyph: { color: groknight.gutter, fontSize: 34, fontFamily: mono },
+  emptyTitle: {
+    marginTop: 12,
+    color: groknight.textPrimary,
+    fontSize: 16,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  emptySubtitle: {
+    marginTop: 7,
+    color: groknight.muted,
     fontFamily: mono,
+    fontSize: 11,
+    lineHeight: 17,
+    textAlign: 'center',
   },
-  chevron: {
-    fontSize: 18,
-    color: groknight.gutter,
-    marginLeft: 8,
+  primaryButton: {
+    marginTop: 18,
+    minHeight: 42,
+    paddingHorizontal: 18,
+    borderRadius: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: groknight.accent,
+  },
+  primaryButtonText: {
+    color: groknight.bgTerminal,
+    fontFamily: mono,
+    fontWeight: '800',
+    fontSize: 12,
   },
 });

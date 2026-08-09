@@ -77,7 +77,21 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="buzz/community"
+                options={{
+                    headerShown: false,
+                    statusBarStyle: 'light',
+                }}
+            />
+            <Stack.Screen
                 name="buzz/chat/[channelId]"
+                options={{
+                    headerShown: false,
+                    statusBarStyle: 'light',
+                }}
+            />
+            <Stack.Screen
+                name="join/[token]"
                 options={{
                     headerShown: false,
                     statusBarStyle: 'light',

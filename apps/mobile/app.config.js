@@ -71,6 +71,7 @@ export default {
         ios: {
             supportsTablet: true,
             bundleIdentifier: bundleId,
+            buildNumber: "1",
             config: {
                 usesNonExemptEncryption: false
             },
@@ -89,11 +90,7 @@ export default {
                 NSAppTransportSecurity: variant === 'production'
                     ? { NSAllowsLocalNetworking: true }
                     : { NSAllowsLocalNetworking: true, NSAllowsArbitraryLoads: true }
-            },
-            associatedDomains: [
-                "applinks:buzzrouter.com",
-                ...(variant === 'production' ? ["applinks:app.happy.engineering"] : []),
-            ],
+            }
         },
         android: {
             adaptiveIcon: {
@@ -198,6 +195,7 @@ export default {
                     recordAudioAndroid: true
                 }
             ],
+            require("./plugins/withoutIosPushCapabilities.js"),
             [
                 "expo-notifications",
                 {
@@ -225,21 +223,21 @@ export default {
                 }
             ]
         ],
+        experiments: {
+            typedRoutes: true
+        },
         updates: {
-            url: "https://u.expo.dev/4558dd3d-cd5a-47cd-bad9-e591a241cc06",
+            url: "https://u.expo.dev/58f1e94e-5ce5-475e-9dde-3eaa9e36699c",
             requestHeaders: {
                 "expo-channel-name": "production"
             }
-        },
-        experiments: {
-            typedRoutes: true
         },
         extra: {
             router: {
                 root: "./sources/app"
             },
             eas: {
-                projectId: "4558dd3d-cd5a-47cd-bad9-e591a241cc06"
+                projectId: "58f1e94e-5ce5-475e-9dde-3eaa9e36699c"
             },
             app: {
                 postHogKey: process.env.EXPO_PUBLIC_POSTHOG_API_KEY,
@@ -254,6 +252,6 @@ export default {
                 buzzyPushGatewayUrl,
             }
         },
-        owner: "bulkacorp"
+        owner: "lunchboxfortwo"
     }
 };

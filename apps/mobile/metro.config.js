@@ -1,4 +1,5 @@
 const { getDefaultConfig } = require("expo/metro-config");
+const fs = require("fs");
 const path = require("path");
 
 const config = getDefaultConfig(__dirname, {
@@ -11,15 +12,17 @@ const config = getDefaultConfig(__dirname, {
 config.resolver.unstable_enableSymlinks = true;
 config.resolver.unstable_enablePackageExports = true;
 
+const rootNodeModules = path.resolve(__dirname, '../../node_modules');
+
 config.watchFolders = [
   path.resolve(__dirname, '../../packages'),
-  path.resolve(__dirname, '../../node_modules'),
-];
+  rootNodeModules,
+].filter(fs.existsSync);
 
 config.resolver.nodeModulesPaths = [
   path.resolve(__dirname, 'node_modules'),
-  path.resolve(__dirname, '../../node_modules'),
-];
+  rootNodeModules,
+].filter(fs.existsSync);
 
 config.resolver.assetExts.push('wasm');
 

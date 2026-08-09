@@ -2,10 +2,12 @@ import { loadAppConfig } from '@/sync/appConfig';
 
 const DEFAULT_RELAY_URL = 'https://buzz.trustysquire.ai';
 const DEFAULT_PUSH_GATEWAY_URL = 'https://push.buzzrouter.com';
+const DEFAULT_SOUL_URL = 'https://soul.buzzrouter.com';
 
 export interface BuzzRuntimeConfig {
   relayUrl: string;
   pushGatewayUrl: string;
+  soulUrl: string;
 }
 
 function normalizedUrl(value: string | undefined, fallback: string): string {
@@ -19,5 +21,6 @@ export function getBuzzRuntimeConfig(): BuzzRuntimeConfig {
   return {
     relayUrl: normalizedUrl(config.buzzyRelayUrl, DEFAULT_RELAY_URL),
     pushGatewayUrl: normalizedUrl(config.buzzyPushGatewayUrl, DEFAULT_PUSH_GATEWAY_URL),
+    soulUrl: normalizedUrl(config.buzzySoulUrl, DEFAULT_SOUL_URL),
   };
 }

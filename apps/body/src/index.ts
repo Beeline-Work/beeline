@@ -31,3 +31,5 @@ export {
   ACTIVITY_TAG,
   type ActivityBatch,
 } from './activity.js';
+export { generateSoul, type GeneratedSoul } from './soul.js';
+export { createSoulServer } from './soul-server.js';

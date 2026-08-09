@@ -18,6 +18,9 @@ export const KIND_CHANNEL_ADMINS = 39001;
 /** Channel members list replaceable (`d` = channel UUID). */
 export const KIND_CHANNEL_MEMBERS = 39002;
 
+/** NIP-33 parameterized replaceable application data (agent soul overlays). */
+export const KIND_AGENT_SOUL = 30078;
+
 /** NIP-42 AUTH challenge response. */
 export const KIND_AUTH = 22242;
 
@@ -26,6 +29,12 @@ export const TAG_AGENT_ACTIVITY = 'agent-activity';
 
 /** Marker tag value for a self-signed first-class agent record. */
 export const TAG_AGENT = 'buzz-agent';
+
+/** Marker for a short-lived, single-agent desktop pairing token. */
+export const TAG_AGENT_PAIRING = 'buzz-agent-pairing';
+
+/** Marker for display-only, human-authored agent profile metadata. */
+export const TAG_AGENT_SOUL = 'buzz-agent-soul';
 
 /** Marker tag value for merge approval (P0 gate shape — mirrors @buzzy/gate). */
 export const TAG_MERGE_APPROVAL = 'buzz-merge-approval';

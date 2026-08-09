@@ -1,7 +1,7 @@
 /**
  * Buzz Onboarding — key generation or nsec paste.
  *
- * GrokNight Terminal design.
+ * GrokNight alien-hull design.
  */
 import React, { useEffect, useState } from 'react';
 import {
@@ -29,7 +29,8 @@ const mono = Platform.select({ web: '"JetBrains Mono", monospace', default: 'mon
 export default function BuzzOnboarding() {
   const insets = useSafeAreaInsets();
   const [nsecInput, setNsecInput] = useState('');
-  const [relayUrl, setRelayUrl] = useState('');
+  const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_URL);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -132,33 +133,45 @@ export default function BuzzOnboarding() {
         />
         <TouchableOpacity
           style={[
-            styles.button,
+            styles.secondaryButton,
             (!nsecInput.trim() || loading) && styles.buttonDisabled,
           ]}
           onPress={handleImport}
           disabled={!nsecInput.trim() || loading}
         >
-          <Text style={styles.buttonText}>import & continue</Text>
+          <Text style={styles.secondaryButtonText}>import & continue</Text>
         </TouchableOpacity>
       </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>relay URL</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="https://buzz.trustysquire.ai"
-          placeholderTextColor={groknight.dim}
-          value={relayUrl}
-          onChangeText={setRelayUrl}
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="url"
-        />
-        <Text style={styles.hint}>
-          Address of the Buzz relay your phone connects to. Change this if your
-          relay is elsewhere (e.g. http://10.0.2.2:3010 for emulator → host).
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityState={{ expanded: showAdvanced }}
+        style={styles.advancedToggle}
+        onPress={() => setShowAdvanced((value) => !value)}
+      >
+        <Text style={[styles.advancedText, showAdvanced && styles.advancedTextActive]}>
+          {showAdvanced ? '▾' : '›'} Advanced
         </Text>
-      </View>
+      </TouchableOpacity>
+
+      {showAdvanced && (
+        <View style={styles.advancedPanel}>
+          <Text style={styles.sectionTitle}>relay URL</Text>
+          <TextInput
+            style={styles.input}
+            placeholder={DEFAULT_RELAY_URL}
+            placeholderTextColor={groknight.dim}
+            value={relayUrl}
+            onChangeText={setRelayUrl}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+          />
+          <Text style={styles.hint}>
+            Change this only when connecting to a different Buzz relay.
+          </Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -211,18 +224,33 @@ const styles = StyleSheet.create({
     fontFamily: mono,
   },
   button: {
-    backgroundColor: groknight.bgHighlight,
+    backgroundColor: groknight.accent,
     paddingVertical: 12,
     borderRadius: 4,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: groknight.border,
+    borderColor: groknight.accent,
   },
   buttonDisabled: {
     opacity: 0.4,
   },
   buttonText: {
-    color: groknight.textSecondary,
+    color: groknight.bgTerminal,
+    fontSize: 14,
+    fontWeight: '700',
+    fontFamily: mono,
+    letterSpacing: 0.3,
+  },
+  secondaryButton: {
+    backgroundColor: groknight.bgHighlight,
+    paddingVertical: 12,
+    borderRadius: 4,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: groknight.borderActive,
+  },
+  secondaryButtonText: {
+    color: groknight.chrome,
     fontSize: 14,
     fontWeight: '700',
     fontFamily: mono,
@@ -252,11 +280,34 @@ const styles = StyleSheet.create({
     fontFamily: mono,
   },
   errorText: {
-    color: groknight.red,
+    color: groknight.chrome,
     fontSize: 14,
     lineHeight: 20,
     marginBottom: 20,
     textAlign: 'center',
     fontFamily: mono,
+  },
+  advancedToggle: {
+    alignSelf: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  advancedText: {
+    color: groknight.steel,
+    fontSize: 12,
+    fontWeight: '700',
+    fontFamily: mono,
+    letterSpacing: 0.4,
+  },
+  advancedTextActive: {
+    color: groknight.accent,
+  },
+  advancedPanel: {
+    marginTop: 4,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: groknight.border,
+    borderRadius: 4,
+    backgroundColor: groknight.bgCode,
   },
 });

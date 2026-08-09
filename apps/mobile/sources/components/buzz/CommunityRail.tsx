@@ -1,10 +1,21 @@
-import React from 'react';
-import { Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
+import {
+  Animated,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Community } from '@buzzy/buzz-client';
 import { groknight } from '@/buzz/groknight';
 
 const mono = Platform.select({ web: '"JetBrains Mono", monospace', default: 'monospace' });
+const DRAWER_WIDTH = 72;
+const DRAWER_DURATION_MS = 180;
 
 type CommunityRailProps = {
   communities: Community[];
@@ -13,7 +24,7 @@ type CommunityRailProps = {
   onAdd: () => void;
 };
 
-function communityMark(name: string): string {
+export function communityMark(name: string): string {
   const words = name.trim().split(/\s+/).filter(Boolean);
   if (words.length > 1) {
     return `${words[0]?.[0] ?? ''}${words[1]?.[0] ?? ''}`.toUpperCase();
@@ -95,23 +106,121 @@ export function CommunityRail({
   );
 }
 
+type CommunityDrawerContextValue = {
+  drawerOpen: boolean;
+  openDrawer: () => void;
+};
+
+const CommunityDrawerContext = createContext<CommunityDrawerContextValue | null>(null);
+
+type CommunityDrawerTriggerProps = {
+  communityName?: string;
+};
+
+export function CommunityDrawerTrigger({ communityName }: CommunityDrawerTriggerProps) {
+  const drawer = useContext(CommunityDrawerContext);
+  if (!drawer) {
+    throw new Error('CommunityDrawerTrigger must be rendered inside BuzzCommunityShell.');
+  }
+
+  return (
+    <TouchableOpacity
+      accessibilityLabel="Open space switcher"
+      accessibilityRole="button"
+      accessibilityState={{ expanded: drawer.drawerOpen }}
+      onPress={drawer.openDrawer}
+      style={styles.drawerTrigger}
+      testID="community-drawer-trigger"
+    >
+      <Text style={styles.drawerTriggerMark}>
+        {communityName ? communityMark(communityName) : 'B'}
+      </Text>
+      <Text style={styles.drawerTriggerChevron}>›</Text>
+    </TouchableOpacity>
+  );
+}
+
 type BuzzCommunityShellProps = CommunityRailProps & {
   children: React.ReactNode;
 };
 
-export function BuzzCommunityShell({ children, ...railProps }: BuzzCommunityShellProps) {
+export function BuzzCommunityShell({
+  children,
+  communities,
+  activeCommunityId,
+  onSelect,
+  onAdd,
+}: BuzzCommunityShellProps) {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const drawerX = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
+
+  const openDrawer = useCallback(() => {
+    drawerX.setValue(-DRAWER_WIDTH);
+    setDrawerOpen(true);
+    Animated.timing(drawerX, {
+      toValue: 0,
+      duration: DRAWER_DURATION_MS,
+      useNativeDriver: true,
+    }).start();
+  }, [drawerX]);
+
+  const closeDrawer = useCallback(() => {
+    Animated.timing(drawerX, {
+      toValue: -DRAWER_WIDTH,
+      duration: DRAWER_DURATION_MS,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setDrawerOpen(false);
+    });
+  }, [drawerX]);
+
+  const selectAndClose = useCallback(
+    (communityId: string | null) => {
+      closeDrawer();
+      onSelect(communityId);
+    },
+    [closeDrawer, onSelect],
+  );
+
+  const addAndClose = useCallback(() => {
+    closeDrawer();
+    onAdd();
+  }, [closeDrawer, onAdd]);
+
   return (
-    <View style={styles.shell}>
-      <CommunityRail {...railProps} />
-      <View style={styles.content}>{children}</View>
-    </View>
+    <CommunityDrawerContext.Provider value={{ drawerOpen, openDrawer }}>
+      <View style={styles.shell}>
+        <View style={styles.content}>{children}</View>
+        {drawerOpen && (
+          <View style={styles.drawerOverlay} testID="community-drawer-overlay">
+            <Pressable
+              accessibilityLabel="Close space switcher"
+              accessibilityRole="button"
+              onPress={closeDrawer}
+              style={styles.scrim}
+              testID="community-drawer-scrim"
+            />
+            <Animated.View
+              style={[styles.drawer, { transform: [{ translateX: drawerX }] }]}
+              testID="community-drawer"
+            >
+              <CommunityRail
+                communities={communities}
+                activeCommunityId={activeCommunityId}
+                onSelect={selectAndClose}
+                onAdd={addAndClose}
+              />
+            </Animated.View>
+          </View>
+        )}
+      </View>
+    </CommunityDrawerContext.Provider>
   );
 }
 
 const styles = StyleSheet.create({
   shell: {
     flex: 1,
-    flexDirection: 'row',
     backgroundColor: groknight.bgTerminal,
   },
   content: {
@@ -120,7 +229,8 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgTerminal,
   },
   rail: {
-    width: 66,
+    flex: 1,
+    width: DRAWER_WIDTH,
     alignItems: 'center',
     backgroundColor: groknight.bgBase,
     borderRightWidth: 1,
@@ -134,7 +244,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   railButtonSlot: {
-    width: 66,
+    width: DRAWER_WIDTH,
     height: 56,
     alignItems: 'center',
     justifyContent: 'center',
@@ -178,5 +288,48 @@ const styles = StyleSheet.create({
     height: 1,
     marginVertical: 2,
     backgroundColor: groknight.borderActive,
+  },
+  drawerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 20,
+  },
+  drawer: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    width: DRAWER_WIDTH,
+  },
+  scrim: {
+    ...StyleSheet.absoluteFillObject,
+    left: DRAWER_WIDTH,
+    backgroundColor: groknight.bgTerminal,
+    opacity: 0.78,
+  },
+  drawerTrigger: {
+    width: 44,
+    height: 44,
+    marginRight: 10,
+    borderRadius: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: groknight.borderActive,
+    backgroundColor: groknight.bgHighlight,
+  },
+  drawerTriggerMark: {
+    color: groknight.accent,
+    fontFamily: mono,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  drawerTriggerChevron: {
+    marginLeft: 2,
+    color: groknight.steel,
+    fontFamily: mono,
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

@@ -12,7 +12,7 @@ import { router, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Community, Identity } from '@buzzy/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import { buildCommunityInviteUrl, parseCommunityInviteToken } from '@/buzz/community-invite';
+import { createCommunityInviteUrl, parseCommunityInviteToken } from '@/buzz/community-invite';
 import { loadActiveCommunityId, saveActiveCommunityId } from '@/buzz/community-storage';
 import { groknight } from '@/buzz/groknight';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
@@ -71,8 +71,7 @@ export default function BuzzCommunityCreateOrJoin() {
       const client = await transport.ensureClient();
       const communityId = await client.createCommunity(name);
       await client.waitUntilMember(communityId, identity.publicKey);
-      const invite = await client.createInvite(communityId);
-      const inviteUrl = buildCommunityInviteUrl(invite.token);
+      const inviteUrl = await createCommunityInviteUrl(client, communityId);
       await saveActiveCommunityId(identity.publicKey, communityId);
       router.replace({
         pathname: '/buzz/channels',

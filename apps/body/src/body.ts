@@ -28,6 +28,12 @@ import {
   checkAgentNotPushAllowed,
   type Identity,
 } from '@buzzy/gate';
+import {
+  createAgent,
+  listAgents,
+  waitUntilMember,
+  type ChannelOpsContext,
+} from '@buzzy/buzz-client';
 import { signEvent, type NostrEvent } from '@buzzy/nostr';
 import type { BodyConfig } from './config.js';
 
@@ -59,12 +65,26 @@ export interface SubchannelInfo {
   subchannelId: string;
   worktreePath: string;
   featureBranch: string;
+  /** Identity authorized to administer/archive this subchannel (agent for new opens). */
   role: Identity;
   session: AgentSession;
   /** Last created_at timestamp when polling for member messages. */
   lastPolledAt: number;
   /** Whether this subchannel has been archived. */
   archived: boolean;
+}
+
+/** Create the relay-side child channel under the agent's own signing key. */
+export function createAgentSubchannel(
+  agentIdentity: Identity,
+  parentChannelId: string,
+  name: string,
+  communityId?: string,
+): Promise<string> {
+  return createChannel(agentIdentity, name, {
+    parentChannelId,
+    ...(communityId ? { communityId } : {}),
+  });
 }
 
 /**
@@ -78,17 +98,21 @@ export class Body {
   private sessions = new Map<string, AgentSession>();
   private subchannels = new Map<string, SubchannelInfo>();
   private bodyIdentity: Identity;
-  private agentIdentity: Identity | null = null;
+  private agentIdentity: Identity;
 
-  constructor(config: BodyConfig, bodyIdentity?: Identity) {
+  constructor(config: BodyConfig, bodyIdentity?: Identity, agentIdentity?: Identity) {
     this.config = config;
-    this.bodyIdentity =
-      bodyIdentity ??
-      newIdentity('buzzy-body');
+    this.bodyIdentity = bodyIdentity ?? newIdentity('buzzy-body');
+    this.agentIdentity = agentIdentity ?? newIdentity('buzzy-agent');
+    this.assertDistinctAgentIdentity(this.agentIdentity);
   }
 
   get identity(): Identity {
     return this.bodyIdentity;
+  }
+
+  get agent(): Identity {
+    return this.agentIdentity;
   }
 
   /** Register a session for a channel (used by tests to add externally-created sessions). */
@@ -104,6 +128,7 @@ export class Body {
 
   /** Register (or override) the agent's Nostr identity. */
   setAgentIdentity(id: Identity): void {
+    this.assertDistinctAgentIdentity(id);
     this.agentIdentity = id;
   }
 
@@ -134,9 +159,9 @@ export class Body {
       return existing;
     }
 
-    // Determine agent identity. For testing, use body identity if no agent set.
-    const agentId = this.agentIdentity ?? this.bodyIdentity;
-    const agentRole = await this.ensureAgentInChannel(tlcChannelId, agentId);
+    const agentId = this.agentIdentity;
+    await this.ensureAgentInChannel(tlcChannelId, agentId);
+    await this.ensureAgentEntity(tlcChannelId);
 
     const client = new AcpClient({
       agentBinary: this.config.agentBinary,
@@ -160,7 +185,7 @@ export class Body {
     });
 
     // Project activity to the TLC channel.
-    const unsub = projectActivity(client, tlcChannelId, this.bodyIdentity, sessionId);
+    const unsub = projectActivity(client, tlcChannelId, agentId, sessionId);
 
     const session: AgentSession = {
       channelId: tlcChannelId,
@@ -174,9 +199,12 @@ export class Body {
 
     await postControlMessage(
       tlcChannelId,
-      this.bodyIdentity,
+      agentId,
       `🤖 Agent session started (read-only) — session=${sessionId}`,
-      [['session', sessionId], ['mode', 'readonly']],
+      [
+        ['session', sessionId],
+        ['mode', 'readonly'],
+      ],
     );
 
     return session;
@@ -197,24 +225,23 @@ export class Body {
     boundRepo: { ownerHex: string; repo: string },
     intent?: string,
   ): Promise<SubchannelInfo> {
-    const agentId = this.agentIdentity ?? this.bodyIdentity;
+    const agentId = this.agentIdentity;
+    await this.ensureAgentInChannel(tlcChannelId, agentId);
+    const communityId = await this.channelCommunityId(tlcChannelId);
 
-    // 1. Create child channel.
-    const subchannelId = await createChannel(this.bodyIdentity, `sub-${tlcChannelId.slice(0, 8)}`, { parentChannelId: tlcChannelId });
+    // 1. The agent itself creates/signs the child channel.
+    const subchannelId = await createAgentSubchannel(
+      agentId,
+      tlcChannelId,
+      `sub-${tlcChannelId.slice(0, 8)}`,
+      communityId ?? undefined,
+    );
 
     // 2. Mirror parent members: query members of TLC, add each as member of subchannel.
     await this.mirrorMembers(tlcChannelId, subchannelId);
 
-    // 3. Ensure agent is a member of the subchannel.
-    if (agentId.publicKey !== this.bodyIdentity.publicKey) {
-      await setMemberRole(this.bodyIdentity, subchannelId, agentId.publicKey, 'member');
-    }
-
     // 4. Create git worktree + feature branch.
-    const worktreePath = resolve(
-      this.config.workspaceRoot,
-      `.worktrees/${subchannelId}`,
-    );
+    const worktreePath = resolve(this.config.workspaceRoot, `.worktrees/${subchannelId}`);
     const featureBranch = `feature/${subchannelId.slice(0, 8)}`;
     await this.createWorktree(boundRepo, worktreePath, featureBranch);
 
@@ -252,7 +279,7 @@ export class Body {
     });
 
     // 6. Project activity to the subchannel.
-    const unsub = projectActivity(client, subchannelId, this.bodyIdentity, sessionId);
+    const unsub = projectActivity(client, subchannelId, agentId, sessionId);
 
     const now = Math.floor(Date.now() / 1000);
     const session: AgentSession = {
@@ -274,7 +301,7 @@ export class Body {
       subchannelId,
       worktreePath,
       featureBranch,
-      role: this.bodyIdentity,
+      role: agentId,
       session,
       lastPolledAt: now,
       archived: false,
@@ -297,7 +324,7 @@ export class Body {
     // 7. Post link message to TLC with repo and tip.
     await postControlMessage(
       tlcChannelId,
-      this.bodyIdentity,
+      agentId,
       `🛠 Edit session opened — subchannel=${subchannelId} worktree=${worktreePath} branch=${featureBranch}`,
       [
         ['subchannel', subchannelId],
@@ -312,7 +339,7 @@ export class Body {
     // 8. Post intro to subchannel with merge target metadata.
     await postControlMessage(
       subchannelId,
-      this.bodyIdentity,
+      agentId,
       `🤖 Agent edit session started — members mirrored from parent TLC.\nWorktree: ${worktreePath}\nBranch: ${featureBranch}`,
       [
         ['session', sessionId],
@@ -332,10 +359,7 @@ export class Body {
    * After calling this, polling for member messages stops and the subchannel
    * is considered read-only.
    */
-  async postMergeSummary(
-    subchannelId: string,
-    summary: string,
-  ): Promise<void> {
+  async postMergeSummary(subchannelId: string, summary: string): Promise<void> {
     const info = this.subchannels.get(subchannelId);
     if (!info) {
       throw new Error(`Subchannel ${subchannelId} not found`);
@@ -348,7 +372,7 @@ export class Body {
     // Post summary to parent channel.
     await postControlMessage(
       parentId,
-      this.bodyIdentity,
+      this.agentIdentity,
       `🤖 Merge summary — ${subchannelId}\n\n${summary}`,
       [
         ['subchannel', subchannelId],
@@ -391,17 +415,18 @@ export class Body {
             limit: 100,
           },
         ],
-        this.bodyIdentity.publicKey,
+        this.agentIdentity.publicKey,
       );
 
       let count = 0;
       let maxCreated = since;
 
       for (const evt of events) {
-        // Skip events published by the body itself (no self-steering).
-        if (evt.pubkey === this.bodyIdentity.publicKey) continue;
+        // Skip events published by the agent itself (no self-steering).
+        if (evt.pubkey === this.agentIdentity.publicKey) continue;
         // Skip events that are not plain text messages.
-        if (!evt.content || evt.tags.some((t) => t[0] === 't' && t[1] === 'agent-activity')) continue;
+        if (!evt.content || evt.tags.some((t) => t[0] === 't' && t[1] === 'agent-activity'))
+          continue;
         // Skip control messages.
         if (evt.tags.some((t) => t[0] === 't' && t[1] === 'body-control')) continue;
 
@@ -412,11 +437,7 @@ export class Body {
         // Forward the member's message as a session prompt.
         const prompt = `[Member ${evt.pubkey.slice(0, 12)}]: ${evt.content}`;
         try {
-          await session.client.sessionPrompt(
-            session.sessionId,
-            prompt,
-            60_000,
-          );
+          await session.client.sessionPrompt(session.sessionId, prompt, 60_000);
           count++;
         } catch (err) {
           console.error(`[body] pollMembers: sessionPrompt failed for event ${evt.id}:`, err);
@@ -471,23 +492,28 @@ export class Body {
     if (parentId) {
       await postControlMessage(
         parentId,
-        this.bodyIdentity,
+        this.agentIdentity,
         `📦 Edit session archived — subchannel=${subchannelId}`,
-        [['subchannel', subchannelId], ['status', 'archived']],
+        [
+          ['subchannel', subchannelId],
+          ['status', 'archived'],
+        ],
       );
     }
 
     // Post archive message to subchannel before archival (relay will reject it after).
     await postControlMessage(
       subchannelId,
-      this.bodyIdentity,
+      this.agentIdentity,
       `📦 Subchannel archived — session ended. This channel is now read-only.`,
       [['status', 'archived']],
     );
 
     // Mark subchannel as archived in relay metadata (kind:9002 → 39000 archived=true).
     // After this call, the relay rejects any further events on this channel.
-    await archiveChannel(this.bodyIdentity, subchannelId);
+    // New subchannels are agent-owned. `role` preserves compatibility for
+    // externally registered historical sessions created by another owner.
+    await archiveChannel(info.role, subchannelId);
 
     // Remove from active state.
     this.sessions.delete(subchannelId);
@@ -495,10 +521,7 @@ export class Body {
   }
 
   /** Ensure the agent is a member of the channel, returns current role. */
-  private async ensureAgentInChannel(
-    channelId: string,
-    agent: Identity,
-  ): Promise<string> {
+  private async ensureAgentInChannel(channelId: string, agent: Identity): Promise<string> {
     // Try to get existing role
     try {
       const creates = await queryEvents(
@@ -515,39 +538,89 @@ export class Body {
     return 'member';
   }
 
-  /** Mirror TLC members into the subchannel, excluding the body identity.
-   * The body already owns the subchannel (it created it), so mirroring its
-   * own role would demote it from owner. */
-  private async mirrorMembers(
-    sourceChannelId: string,
-    targetChannelId: string,
-  ): Promise<void> {
-    try {
-      const memberEvents = await queryEvents(
-        [
-          {
-            kinds: [9000],
-            '#h': [sourceChannelId],
-            limit: 100,
-          },
-        ],
-        this.bodyIdentity.publicKey,
-      );
+  private assertDistinctAgentIdentity(agent: Identity): void {
+    if (agent.publicKey === this.bodyIdentity.publicKey) {
+      throw new Error('agent identity must be distinct from the human/operator identity');
+    }
+  }
 
-      const seen = new Set<string>();
-      for (const evt of memberEvents) {
+  private agentClientContext(): ChannelOpsContext {
+    return {
+      http: {
+        baseUrl: this.config.relayBaseUrl,
+        host: this.config.relayHost,
+      },
+      identity: this.agentIdentity,
+    };
+  }
+
+  /** Resolve the parent channel's optional community linkage. */
+  private async channelCommunityId(channelId: string): Promise<string | null> {
+    const creates = await queryEvents(
+      [{ kinds: [9007], '#h': [channelId], limit: 5 }],
+      this.agentIdentity.publicKey,
+    );
+    for (const event of creates) {
+      const community = event.tags.find((tag) => tag[0] === 'community')?.[1];
+      if (community) return community;
+    }
+    return null;
+  }
+
+  /**
+   * Community-linked TLCs get a durable, self-signed agent record. Standalone
+   * channels remain supported for backwards-compatible local/live tests.
+   */
+  private async ensureAgentEntity(tlcChannelId: string): Promise<void> {
+    const communityId = await this.channelCommunityId(tlcChannelId);
+    if (!communityId) return;
+
+    await setMemberRole(this.bodyIdentity, communityId, this.agentIdentity.publicKey, 'member');
+    const ctx = this.agentClientContext();
+    await waitUntilMember(ctx, communityId, this.agentIdentity.publicKey);
+    const existing = await listAgents(ctx, communityId);
+    if (existing.some((agent) => agent.pubkey === this.agentIdentity.publicKey)) return;
+    await createAgent(ctx, communityId, {
+      displayName: this.agentIdentity.name || 'Agent',
+    });
+  }
+
+  /** Mirror TLC membership/roles into the agent-owned subchannel. */
+  private async mirrorMembers(sourceChannelId: string, targetChannelId: string): Promise<void> {
+    try {
+      const [creates, memberEvents] = await Promise.all([
+        queryEvents(
+          [{ kinds: [9007], '#h': [sourceChannelId], limit: 5 }],
+          this.agentIdentity.publicKey,
+        ),
+        queryEvents(
+          [
+            {
+              kinds: [9000],
+              '#h': [sourceChannelId],
+              limit: 100,
+            },
+          ],
+          this.agentIdentity.publicKey,
+        ),
+      ]);
+
+      const roles = new Map<string, 'owner' | 'admin' | 'member'>();
+      const creator = creates.sort((a, b) => a.created_at - b.created_at)[0]?.pubkey;
+      if (creator) roles.set(creator, 'owner');
+      for (const evt of [...memberEvents].sort((a, b) => b.created_at - a.created_at)) {
         const pTag = evt.tags.find((t: string[]) => t[0] === 'p');
         if (!pTag?.[1]) continue;
         const pubkey = pTag[1];
-        // Skip the body identity — it's already the channel owner by creation.
-        if (pubkey === this.bodyIdentity.publicKey) continue;
-        if (seen.has(pubkey)) continue;
-        seen.add(pubkey);
+        if (pubkey === this.agentIdentity.publicKey || roles.has(pubkey)) continue;
 
         const roleTag = evt.tags.find((t: string[]) => t[0] === 'role');
         const role = (roleTag?.[1] as 'owner' | 'admin' | 'member') ?? 'member';
-
-        await setMemberRole(this.bodyIdentity, targetChannelId, pubkey, role);
+        roles.set(pubkey, role);
+      }
+      for (const [pubkey, role] of roles) {
+        if (pubkey === this.agentIdentity.publicKey) continue;
+        await setMemberRole(this.agentIdentity, targetChannelId, pubkey, role);
       }
     } catch (err) {
       console.error('[body] mirrorMembers error:', err);

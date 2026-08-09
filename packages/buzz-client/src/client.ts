@@ -5,6 +5,7 @@
  */
 import type { NostrEvent } from '@buzzy/nostr';
 import { buildMergeApproval } from './approval.js';
+import { createAgent, isAgentIdentity, listAgents } from './agent.js';
 import {
   backfillMessages,
   createChannel,
@@ -36,6 +37,8 @@ import { toSessionEvent } from './parse.js';
 import { RelayWs, wsUrlFromHttp } from './ws.js';
 import type {
   BuzzClientConfig,
+  Agent,
+  CreateAgentOptions,
   ChannelFilterOpts,
   ChannelMember,
   ChannelMetadata,
@@ -207,14 +210,26 @@ export class BuzzClient {
     return redeemInvite(this.ctx, token);
   }
 
+  // ── Agent entity ops ───────────────────────────────────────────────────
+
+  /** Register this client's key as a self-signed agent in a community. */
+  createAgent(communityId: string, options?: CreateAgentOptions): Promise<Agent> {
+    return createAgent(this.ctx, communityId, options);
+  }
+
+  listAgents(communityId: string): Promise<Agent[]> {
+    return listAgents(this.ctx, communityId);
+  }
+
+  /** Security classification used by gate services; independent of channel role. */
+  isAgentIdentity(pubkey = this.identity.publicKey): Promise<boolean> {
+    return isAgentIdentity(this.ctx, pubkey);
+  }
+
   // ── Messaging ───────────────────────────────────────────────────────────
 
   /** Send a kind:9 message (HTTP bridge). */
-  messageSubmit(
-    channelId: string,
-    text: string,
-    opts?: MessageSubmitOpts,
-  ): Promise<NostrEvent> {
+  messageSubmit(channelId: string, text: string, opts?: MessageSubmitOpts): Promise<NostrEvent> {
     return sendMessage(this.ctx, channelId, text, opts);
   }
 
@@ -227,14 +242,9 @@ export class BuzzClient {
   }
 
   /** HTTP backfill of channel stream messages, oldest-first. */
-  sessionEventsBackfill(
-    channelId: string,
-    opts?: ChannelFilterOpts,
-  ): Promise<SessionEvent[]> {
+  sessionEventsBackfill(channelId: string, opts?: ChannelFilterOpts): Promise<SessionEvent[]> {
     return backfillMessages(this.ctx, channelId, opts).then((events) =>
-      events
-        .map(toSessionEvent)
-        .filter((e): e is SessionEvent => e !== null),
+      events.map(toSessionEvent).filter((e): e is SessionEvent => e !== null),
     );
   }
 

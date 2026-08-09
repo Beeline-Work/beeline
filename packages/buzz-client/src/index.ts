@@ -6,6 +6,9 @@
 
 export type {
   Identity,
+  AgentIdentity,
+  Agent,
+  CreateAgentOptions,
   WebSocketLike,
   WebSocketConstructor,
   PublishResult,
@@ -30,8 +33,11 @@ export type {
 
 export {
   createIdentity,
+  createAgentIdentity,
   loadIdentityFromNsec,
+  loadAgentIdentityFromNsec,
   loadIdentityFromSecret,
+  loadAgentIdentityFromSecret,
   identityNpub,
   identityNsec,
   encodeNpub,
@@ -50,6 +56,7 @@ export {
   KIND_CHANNEL_MEMBERS,
   KIND_AUTH,
   TAG_AGENT_ACTIVITY,
+  TAG_AGENT,
   TAG_MERGE_APPROVAL,
   TAG_PARENT,
   TAG_COMMUNITY,
@@ -105,9 +112,14 @@ export {
 } from './community.js';
 
 export {
-  buildMergeApproval,
-  verifyMergeApproval,
-  APPROVAL_MARKER,
-} from './approval.js';
+  createAgent,
+  listAgents,
+  isAgentIdentity,
+  hasAgentIdentityMarker,
+  isAgentIdentityEvent,
+  parseAgent,
+} from './agent.js';
+
+export { buildMergeApproval, verifyMergeApproval, APPROVAL_MARKER } from './approval.js';
 
 export { BuzzClient, createBuzzClient } from './client.js';

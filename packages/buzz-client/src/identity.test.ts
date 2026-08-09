@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   createIdentity,
+  createAgentIdentity,
   identityNpub,
   identityNsec,
   loadIdentityFromNsec,
@@ -21,5 +22,12 @@ describe('identity', () => {
     const b = loadIdentityFromNsec(nsec, 'alice-reloaded');
     expect(b.publicKey).toBe(a.publicKey);
     expect(b.name).toBe('alice-reloaded');
+  });
+
+  it('creates a distinct, explicitly typed agent keypair', () => {
+    const human = createIdentity('human');
+    const agent = createAgentIdentity('worker-agent');
+    expect(agent.entityType).toBe('agent');
+    expect(agent.publicKey).not.toBe(human.publicKey);
   });
 });

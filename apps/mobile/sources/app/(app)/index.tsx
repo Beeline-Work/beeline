@@ -1,15 +1,12 @@
 import { RoundButton } from "@/components/RoundButton";
-import { useAuth } from "@/auth/AuthContext";
 import { Text, View } from "react-native";
 import * as React from 'react';
 import { router } from "expo-router";
 import { StyleSheet } from "react-native-unistyles";
 import { Typography } from "@/constants/Typography";
-import { MainView } from "@/components/MainView";
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 
 export default function Home() {
-    const auth = useAuth();
     const [buzzCheckDone, setBuzzCheckDone] = React.useState(false);
     const [hasBuzzIdentity, setHasBuzzIdentity] = React.useState(false);
     const [buzzStorageError, setBuzzStorageError] = React.useState<string | null>(null);
@@ -31,10 +28,10 @@ export default function Home() {
 
         if (hasBuzzIdentity) {
             router.replace('/buzz/channels');
-        } else if (!auth.isAuthenticated) {
+        } else {
             router.replace('/buzz/onboarding');
         }
-    }, [auth.isAuthenticated, buzzCheckDone, buzzStorageError, hasBuzzIdentity]);
+    }, [buzzCheckDone, buzzStorageError, hasBuzzIdentity]);
 
     // Wait for the async buzz check before rendering.
     if (!buzzCheckDone) {
@@ -58,22 +55,9 @@ export default function Home() {
         );
     }
 
-    if (!auth.isAuthenticated) {
-        // Buzz onboarding is the fresh user's root. The replace keeps back
-        // navigation from revealing Happy's retired account landing.
-        return null;
-    }
-
-    if (hasBuzzIdentity) {
-        return null;
-    }
-    return (
-        <Authenticated />
-    )
-}
-
-function Authenticated() {
-    return <MainView variant="phone" />;
+    // Buzz owns the app root. The replace keeps back navigation from revealing
+    // Happy's retired account landing, including for upgraded authenticated devices.
+    return null;
 }
 
 const styles = StyleSheet.create((theme) => ({

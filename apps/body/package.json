@@ -21,6 +21,7 @@
     "test:live": "vitest run --config vitest.live.config.ts"
   },
   "dependencies": {
+    "@buzzy/buzz-client": "*",
     "@buzzy/gate": "*",
     "@buzzy/nostr": "*"
   },

@@ -9,17 +9,18 @@ method→call table).
 
 ## What it covers
 
-| Surface | API |
-| --- | --- |
-| Identity | `createIdentity`, `loadIdentityFromNsec`, `identityNpub` / `identityNsec` (via `@buzzy/nostr`) |
-| Channel | `createChannel`, `addMember`, `listMembers`, `waitUntilMember`, `listMyChannels`, `getChannelMetadata` |
-| Community | `createCommunity`, `listCommunities`, `communityMembers`, `communityChannels` |
-| Invite | `createInvite`, `redeemInvite` (signed, expiring, repeat-safe join) |
-| Subchannel discovery | `createSubchannel` (child UUID + `parent` tag convention), `listSubchannels` |
-| Messages | `messageSubmit` (kind:9, optional `#p` agent mention) |
-| Live + backfill | `sessionEventsSubscribe` (WS NIP-01 + NIP-42 AUTH), `sessionEventsBackfill` (`POST /query`) |
-| Agent activity bus | body-projected kind:9 with `#t=agent-activity` — classified on subscribe/backfill |
-| Merge Approve | `buildMergeApproval` / `submitMergeApproval` — **P0 gate shape** (same tags as `@buzzy/gate`) |
+| Surface              | API                                                                                                                                                |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity             | `createIdentity`, `loadIdentityFromNsec`, `identityNpub` / `identityNsec` (via `@buzzy/nostr`)                                                     |
+| Agent entity         | `createAgentIdentity`, `createAgent`, `listAgents`, `isAgentIdentity` — self-signed community records with optional soul/personality/avatar fields |
+| Channel              | `createChannel`, `addMember`, `listMembers`, `waitUntilMember`, `listMyChannels`, `getChannelMetadata`                                             |
+| Community            | `createCommunity`, `listCommunities`, `communityMembers`, `communityChannels`                                                                      |
+| Invite               | `createInvite`, `redeemInvite` (signed, expiring, repeat-safe join)                                                                                |
+| Subchannel discovery | `createSubchannel` (child UUID + `parent` tag convention), `listSubchannels`                                                                       |
+| Messages             | `messageSubmit` (kind:9, optional `#p` agent mention)                                                                                              |
+| Live + backfill      | `sessionEventsSubscribe` (WS NIP-01 + NIP-42 AUTH), `sessionEventsBackfill` (`POST /query`)                                                        |
+| Agent activity bus   | body-projected kind:9 with `#t=agent-activity` — classified on subscribe/backfill                                                                  |
+| Merge Approve        | `buildMergeApproval` / `submitMergeApproval` — **P0 gate shape** (same tags as `@buzzy/gate`)                                                      |
 
 ### WebSocket choice
 
@@ -40,6 +41,9 @@ Local open stack auth: `X-Pubkey` on HTTP bridge. Production: NIP-98 host-bound
   to its own `h` UUID; contained channels point that tag to the community.
 - **Invite plaintext never lands on-relay.** A signed kind:9 marker stores its
   SHA-256 hash and NIP-40 `expiration`; redemption self-adds through kind:9000.
+- **Agent is an identity, not a role.** A `#t=buzz-agent` record is self-signed
+  by the agent key and points to its community. Optional soul/personality/avatar
+  values are caller-supplied metadata; this package never generates them.
 - **Never rely on `require-approval` git policy** (not enforced). Merge approval is
   the signed kind:9 marker the gate worker verifies.
 
@@ -68,17 +72,17 @@ reachable they always run for real.
 This package is the **relay transport** half. The Happy `RigTransport` (~10 MVP
 methods in `spec.md`) also needs a **body** (operator machine) that:
 
-| RigTransport | Still on the body / later |
-| --- | --- |
-| `sessionCreate` / `sessionRead` / `sessionsRead` / `sessionArchive` | ACP stdio (`buzz-acp` ↔ `buzz-agent`); map channel↔session body-side |
-| `messageSubmit` → agent turn | kind:9 + `#p` agent (this package) → buzz-acp `session/prompt` |
-| `sessionEventsSubscribe` live tool UI | Body must **project** ACP `session/update` as `#t=agent-activity` channel events (stdio is not multi-user) |
-| `runAbort` | Owner `!cancel` mention or body control → ACP `session/cancel` |
-| Permission respond | Body-mediated; stock buzz-acp auto-approves today |
-| `worktreeCreate` / `worktreeArchive` | Body: git worktree + child channel + edit MCP |
-| `changedFileRead` / `workspaceFilesRead` / revert | No relay file REST — body `git show`/`diff` or client smart-HTTP fetch |
-| Merge Approve | **This package** signs P0 kind:9 grant; worker in `apps/gate` lands the merge |
-| Terminals | Stub / hide UI (no Buzz PTY) |
+| RigTransport                                                        | Still on the body / later                                                                                  |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `sessionCreate` / `sessionRead` / `sessionsRead` / `sessionArchive` | ACP stdio (`buzz-acp` ↔ `buzz-agent`); map channel↔session body-side                                       |
+| `messageSubmit` → agent turn                                        | kind:9 + `#p` agent (this package) → buzz-acp `session/prompt`                                             |
+| `sessionEventsSubscribe` live tool UI                               | Body must **project** ACP `session/update` as `#t=agent-activity` channel events (stdio is not multi-user) |
+| `runAbort`                                                          | Owner `!cancel` mention or body control → ACP `session/cancel`                                             |
+| Permission respond                                                  | Body-mediated; stock buzz-acp auto-approves today                                                          |
+| `worktreeCreate` / `worktreeArchive`                                | Body: git worktree + child channel + edit MCP                                                              |
+| `changedFileRead` / `workspaceFilesRead` / revert                   | No relay file REST — body `git show`/`diff` or client smart-HTTP fetch                                     |
+| Merge Approve                                                       | **This package** signs P0 kind:9 grant; worker in `apps/gate` lands the merge                              |
+| Terminals                                                           | Stub / hide UI (no Buzz PTY)                                                                               |
 
 See scout report §(c) for the full method→call sequence and §(a) for the
 mobile ↔ relay ↔ body diagram.
@@ -92,10 +96,7 @@ mobile ↔ relay ↔ body diagram.
 ## Usage sketch
 
 ```ts
-import {
-  createIdentity,
-  createBuzzClient,
-} from '@buzzy/buzz-client';
+import { createAgentIdentity, createIdentity, createBuzzClient } from '@buzzy/buzz-client';
 
 const me = createIdentity();
 const client = createBuzzClient({
@@ -110,8 +111,11 @@ await client.waitUntilMember(channelId, otherPubkey); // assert effect
 
 await client.connect();
 const stop = await client.sessionEventsSubscribe(channelId, (ev) => {
-  if (ev.kind === 'agent-activity') { /* tool UI */ }
-  else { /* chat */ }
+  if (ev.kind === 'agent-activity') {
+    /* tool UI */
+  } else {
+    /* chat */
+  }
 });
 
 await client.messageSubmit(channelId, 'ship it', { mentionAgent: agentPubkey });
@@ -133,4 +137,12 @@ const invite = await client.createInvite(communityId, { expiresInSeconds: 86_400
 await otherClient.redeemInvite(invite.token);
 const restored = await otherClient.listCommunities();
 const channels = await otherClient.communityChannels(communityId);
+
+// A separate key joins as a member, then self-registers as an agent.
+const agentIdentity = createAgentIdentity('Patch');
+const agentClient = createBuzzClient({ baseUrl: client.baseUrl, identity: agentIdentity });
+await client.addMember(communityId, agentIdentity.publicKey, 'member');
+await agentClient.waitUntilMember(communityId, agentIdentity.publicKey);
+await agentClient.createAgent(communityId, { displayName: 'Patch' });
+const agents = await client.listAgents(communityId);
 ```

@@ -21,19 +21,9 @@ export {
 
 export { publishEvent, queryEvents, type SubmitResult } from './relay.js';
 
-export {
-  HOST,
-  SCHEME,
-  BASE_URL,
-  gitRepoUrl,
-} from './config.js';
+export { HOST, SCHEME, BASE_URL, gitRepoUrl } from './config.js';
 
-export {
-  git,
-  gitAuthed,
-  lsRemoteRef,
-  type GitResult,
-} from './git.js';
+export { git, gitAuthed, lsRemoteRef, type GitResult } from './git.js';
 
 export {
   checkAgentNotPushAllowed,
@@ -48,15 +38,8 @@ export {
 
 export { nip98AuthHeader, buildNip98Event, NIP98_KIND } from './nip98.js';
 
-export {
-  buildApproval,
-  verifyApproval,
-  APPROVAL_MARKER,
-  type MergeTarget,
-} from './approval.js';
+export { isRegisteredAgentIdentity } from './agent-identity.js';
 
-export {
-  attemptMerge,
-  type MergeRequest,
-  type MergeOutcome,
-} from './worker.js';
+export { buildApproval, verifyApproval, APPROVAL_MARKER, type MergeTarget } from './approval.js';
+
+export { attemptMerge, type MergeRequest, type MergeOutcome } from './worker.js';

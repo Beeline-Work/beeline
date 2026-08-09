@@ -65,21 +65,22 @@ export default function RootLayout() {
             <Stack.Screen
                 name="buzz/onboarding"
                 options={{
-                    headerShown: true,
-                    headerTitle: 'Buzz Key',
-                    headerBackTitle: 'Back',
+                    headerShown: false,
+                    statusBarStyle: 'light',
                 }}
             />
             <Stack.Screen
                 name="buzz/channels"
                 options={{
                     headerShown: false,
+                    statusBarStyle: 'light',
                 }}
             />
             <Stack.Screen
                 name="buzz/chat/[channelId]"
                 options={{
                     headerShown: false,
+                    statusBarStyle: 'light',
                 }}
             />
             <Stack.Screen

@@ -20,7 +20,8 @@
     "test:live": "vitest run --config vitest.live.config.ts"
   },
   "dependencies": {
-    "@buzzy/nostr": "*"
+    "@buzzy/nostr": "*",
+    "@noble/hashes": "^2.3.0"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",

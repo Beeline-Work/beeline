@@ -149,6 +149,15 @@ export async function resolveChannelRole(
   return 'member';
 }
 
+/** Communities reuse the exact NIP-29 creator/put-user role resolution. */
+export function resolveCommunityRole(
+  communityId: string,
+  pubkey: string,
+  queryAs: string,
+): Promise<ChannelRole | null> {
+  return resolveChannelRole(communityId, pubkey, queryAs);
+}
+
 function roleMeetsMinimum(role: ChannelRole, min: ChannelRole): boolean {
   return ROLE_RANK[role] >= ROLE_RANK[min];
 }

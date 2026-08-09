@@ -143,7 +143,7 @@ export class RigTransportNotImplementedError extends Error {
 export class RigTransportStubbedError extends Error {
     constructor(public readonly method: string) {
         super(
-            `RigTransport.${method} is stubbed for Buzzy (no live PTY; terminal UI hidden via BUZZY_FLAGS.hideTerminalUI)`,
+            `RigTransport.${method} is stubbed for Beeline (no live PTY; terminal UI hidden via BUZZY_FLAGS.hideTerminalUI)`,
         );
         this.name = 'RigTransportStubbedError';
     }

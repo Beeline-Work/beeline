@@ -3,9 +3,9 @@ const { execFileSync } = require('node:child_process');
 const variant = process.env.APP_ENV || 'development';
 // Buzzy fork of Happy (slopus/happy). Minimal rebrand — see README.md.
 const name = {
-    development: "Buzzy (dev)",
-    preview: "Buzzy (preview)",
-    production: "Buzzy"
+    development: "Beeline (dev)",
+    preview: "Beeline (preview)",
+    production: "Beeline"
 }[variant];
 const bundleId = {
     development: "app.buzzy.mobile.dev",
@@ -165,7 +165,7 @@ export default {
             [
                 "expo-local-authentication",
                 {
-                    faceIDPermission: "Allow Buzzy to verify it is you before showing your secret key."
+                    faceIDPermission: "Allow Beeline to verify it is you before showing your secret key."
                 }
             ],
             "expo-secure-store",

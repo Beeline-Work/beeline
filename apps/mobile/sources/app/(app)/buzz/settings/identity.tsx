@@ -145,7 +145,7 @@ export default function BuzzIdentitySettings() {
     try {
       if (confirmationMethod === 'biometric') {
         const result = await LocalAuthentication.authenticateAsync({
-          promptMessage: 'Export your Buzzy identity key',
+          promptMessage: 'Export your Beeline identity key',
           promptSubtitle: 'Confirm that it is you',
           cancelLabel: 'Cancel',
           fallbackLabel: 'Use device passcode',
@@ -160,7 +160,7 @@ export default function BuzzIdentitySettings() {
       }
       await loadSecret();
     } catch {
-      setError('Buzzy could not unlock the identity key on this device.');
+      setError('Beeline could not unlock the identity key on this device.');
       lockExport();
     } finally {
       setWorking(false);
@@ -174,7 +174,7 @@ export default function BuzzIdentitySettings() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      setError('Buzzy could not copy the key. You can reveal and copy it manually.');
+      setError('Beeline could not copy the key. You can reveal and copy it manually.');
     }
   }, [secret]);
 
@@ -303,7 +303,7 @@ export default function BuzzIdentitySettings() {
         )}
 
         <Text style={styles.footer}>
-          Buzzy never uploads or sends your secret during export. Copy and QR stay on this device.
+          Beeline never uploads or sends your secret during export. Copy and QR stay on this device.
         </Text>
       </ScrollView>
     </View>

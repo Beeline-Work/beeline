@@ -43,7 +43,7 @@ export default function Home() {
             <View style={styles.portraitContainer}>
                 <Text style={styles.title}>Secure storage unavailable</Text>
                 <Text accessibilityRole="alert" style={styles.subtitle}>
-                    Buzzy could not read your saved key: {buzzStorageError}
+                    Beeline could not read your saved key: {buzzStorageError}
                 </Text>
                 <View style={styles.buttonContainer}>
                     <RoundButton

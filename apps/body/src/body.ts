@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, rm, writeFile, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { spawnSync, execSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { AcpClient, type McpServerWire } from './acp.js';
 import { projectActivity, postControlMessage } from './activity.js';
 import {
@@ -26,6 +26,10 @@ import {
   queryEvents,
   archiveChannel,
   checkAgentNotPushAllowed,
+  git,
+  gitAuthed,
+  lsRemoteRef,
+  isRegisteredAgentIdentity,
   type Identity,
 } from '@buzzy/gate';
 import {
@@ -72,6 +76,41 @@ export interface SubchannelInfo {
   lastPolledAt: number;
   /** Whether this subchannel has been archived. */
   archived: boolean;
+  /** Repository this edit session will push to. */
+  boundRepo?: BoundRepo;
+  /** Human request that caused the agent to open this subchannel. */
+  request?: ChannelTaskRequest;
+  /** Exact target advertised to the human merge gate once work is pushed. */
+  mergeTarget?: { repo: string; branch: string; tip: string };
+  /** Latest agent-authored completion summary. */
+  mergeSummary?: string;
+}
+
+export interface BoundRepo {
+  ownerHex: string;
+  repo: string;
+  targetBranch?: string;
+}
+
+export interface ChannelTaskRequest {
+  eventId: string;
+  authorPubkey: string;
+  content: string;
+  createdAt: number;
+}
+
+export const AGENT_REQUEST_TAG = 'buzz-agent-request';
+export const MERGE_READY_TAG = 'merge-ready';
+
+/** The intentionally narrow channel → edit-session trigger. */
+export function isChannelTaskRequest(event: NostrEvent, agentPubkey: string): boolean {
+  return Boolean(
+    event.kind === 9 &&
+      event.content.trim() &&
+      event.pubkey !== agentPubkey &&
+      event.tags.some((tag) => tag[0] === 'p' && tag[1] === agentPubkey) &&
+      event.tags.some((tag) => tag[0] === 't' && tag[1] === AGENT_REQUEST_TAG),
+  );
 }
 
 /** Create the relay-side child channel under the agent's own signing key. */
@@ -99,6 +138,9 @@ export class Body {
   private subchannels = new Map<string, SubchannelInfo>();
   private bodyIdentity: Identity;
   private agentIdentity: Identity;
+  private processedRequestIds = new Set<string>();
+  private requestCursors = new Map<string, number>();
+  private runningAgentTasks = new Map<string, Promise<void>>();
 
   constructor(config: BodyConfig, bodyIdentity?: Identity, agentIdentity?: Identity) {
     this.config = config;
@@ -222,8 +264,9 @@ export class Body {
    */
   async openSubchannel(
     tlcChannelId: string,
-    boundRepo: { ownerHex: string; repo: string },
+    boundRepo: BoundRepo,
     intent?: string,
+    request?: ChannelTaskRequest,
   ): Promise<SubchannelInfo> {
     const agentId = this.agentIdentity;
     await this.ensureAgentInChannel(tlcChannelId, agentId);
@@ -305,34 +348,36 @@ export class Body {
       session,
       lastPolledAt: now,
       archived: false,
+      boundRepo,
+      ...(request ? { request } : {}),
     };
 
     this.subchannels.set(subchannelId, info);
 
     const repoId = `${boundRepo.ownerHex}/${boundRepo.repo}`;
-    let tipHash = '';
-    try {
-      tipHash = execSync('git rev-parse HEAD', {
-        cwd: worktreePath,
-        encoding: 'utf8',
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1' },
-      }).trim();
-    } catch {
-      // If HEAD can't be resolved (empty repo), leave tip blank.
-    }
+    const targetBranch = boundRepo.targetBranch ?? 'refs/heads/main';
+    const requestTags = request
+      ? [
+          ['request', request.eventId],
+          ['requester', request.authorPubkey],
+        ]
+      : [];
 
     // 7. Post link message to TLC with repo and tip.
     await postControlMessage(
       tlcChannelId,
       agentId,
-      `🛠 Edit session opened — subchannel=${subchannelId} worktree=${worktreePath} branch=${featureBranch}`,
+      `Agent opened a work branch for: ${intent?.trim() || 'channel request'}`,
       [
         ['subchannel', subchannelId],
         ['session', sessionId],
-        ['branch', featureBranch],
+        ['agent', agentId.publicKey],
+        ['feature', featureBranch],
+        ['branch', targetBranch],
         ['mode', 'edit'],
+        ['status', 'open'],
         ['repo', repoId],
-        ...(tipHash ? [['tip', tipHash]] : []),
+        ...requestTags,
       ],
     );
 
@@ -346,12 +391,195 @@ export class Body {
         ['parent', tlcChannelId],
         ['mode', 'edit'],
         ['repo', repoId],
-        ['branch', featureBranch],
-        ...(tipHash ? [['tip', tipHash]] : []),
+        ['agent', agentId.publicKey],
+        ['feature', featureBranch],
+        ['branch', targetBranch],
+        ['status', 'live'],
+        ...requestTags,
       ],
     );
 
     return info;
+  }
+
+  /**
+   * Poll a human-created channel for explicit messages addressed to this agent.
+   * Every accepted request opens exactly one agent-owned subchannel. Agent-authored
+   * requests are rejected, preserving the human → agent direction of the loop.
+   */
+  async pollChannelRequests(tlcChannelId: string, boundRepo: BoundRepo): Promise<number> {
+    const since = this.requestCursors.get(tlcChannelId) ?? Math.floor(Date.now() / 1000) - 1;
+    const events = await queryEvents(
+      [{ kinds: [9], '#h': [tlcChannelId], '#p': [this.agentIdentity.publicKey], since, limit: 100 }],
+      this.agentIdentity.publicKey,
+    );
+    let opened = 0;
+    let maxCreatedAt = since;
+
+    for (const event of [...events].sort((a, b) => a.created_at - b.created_at)) {
+      maxCreatedAt = Math.max(maxCreatedAt, event.created_at);
+      if (this.processedRequestIds.has(event.id)) continue;
+      if (!isChannelTaskRequest(event, this.agentIdentity.publicKey)) continue;
+      this.processedRequestIds.add(event.id);
+
+      // Fail closed: a registered agent can never task another body through the
+      // human request affordance, regardless of any channel role it holds.
+      if (await isRegisteredAgentIdentity(event.pubkey, this.agentIdentity.publicKey)) {
+        await postControlMessage(
+          tlcChannelId,
+          this.agentIdentity,
+          'Agent-authored work request refused. Ask a human channel member to start work.',
+          [
+            ['request', event.id],
+            ['status', 'refused'],
+          ],
+        );
+        continue;
+      }
+
+      const request: ChannelTaskRequest = {
+        eventId: event.id,
+        authorPubkey: event.pubkey,
+        content: event.content.trim(),
+        createdAt: event.created_at,
+      };
+      const info = await this.openSubchannel(tlcChannelId, boundRepo, request.content, request);
+      this.startAgentTask(info, request.content);
+      opened++;
+    }
+
+    this.requestCursors.set(tlcChannelId, maxCreatedAt);
+    return opened;
+  }
+
+  /** Start the requested work without blocking discovery/UI updates. */
+  private startAgentTask(info: SubchannelInfo, prompt: string): void {
+    const task = (async () => {
+      try {
+        const result = await info.session.client.sessionPrompt(
+          info.session.sessionId,
+          [
+            'Implement the following human request in this worktree.',
+            'Keep all edits on the current feature branch. Commit the completed work.',
+            '',
+            prompt,
+          ].join('\n'),
+          10 * 60_000,
+        );
+        info.mergeSummary = result.agentText.trim() || `Completed: ${prompt}`;
+        await this.publishMergeReady(info);
+      } catch (error) {
+        await postControlMessage(
+          info.subchannelId,
+          this.agentIdentity,
+          `Agent task stopped before merge-ready: ${String(error)}`,
+          [['status', 'failed']],
+        ).catch(() => undefined);
+      } finally {
+        this.runningAgentTasks.delete(info.subchannelId);
+      }
+    })();
+    this.runningAgentTasks.set(info.subchannelId, task);
+  }
+
+  /** Push the agent's feature tip and publish the exact human-approval target. */
+  private async publishMergeReady(info: SubchannelInfo): Promise<boolean> {
+    const boundRepo = info.boundRepo;
+    if (!boundRepo || info.archived) return false;
+    const tip = git(info.worktreePath, ['rev-parse', 'HEAD']).stdout.trim();
+    if (!/^[0-9a-f]{40}$/.test(tip)) return false;
+
+    const push = gitAuthed(
+      info.worktreePath,
+      this.agentIdentity,
+      boundRepo.ownerHex,
+      boundRepo.repo,
+      ['push', 'origin', `${info.featureBranch}:refs/heads/${info.featureBranch}`],
+    );
+    if (!push.ok) {
+      await postControlMessage(
+        info.subchannelId,
+        this.agentIdentity,
+        `Feature push failed; merge approval is not available. ${push.stderr.trim()}`,
+        [['status', 'failed']],
+      );
+      return false;
+    }
+
+    const target = {
+      repo: `${boundRepo.ownerHex}/${boundRepo.repo}`,
+      branch: boundRepo.targetBranch ?? 'refs/heads/main',
+      tip,
+    };
+    if (info.mergeTarget?.tip === tip) return true;
+    info.mergeTarget = target;
+    await postControlMessage(
+      info.subchannelId,
+      this.agentIdentity,
+      `Work is ready for human merge approval — ${tip.slice(0, 12)}…`,
+      [
+        ['t', MERGE_READY_TAG],
+        ['status', 'ready'],
+        ['repo', target.repo],
+        ['branch', target.branch],
+        ['feature', info.featureBranch],
+        ['tip', target.tip],
+        ['agent', this.agentIdentity.publicKey],
+      ],
+    );
+    return true;
+  }
+
+  /** Archive only after the protected target ref actually reaches the approved tip. */
+  async pollMergeCompletions(): Promise<number> {
+    let merged = 0;
+    for (const info of [...this.subchannels.values()]) {
+      if (info.archived || !info.mergeTarget || !info.boundRepo) continue;
+      const targetTip = lsRemoteRef(
+        info.worktreePath,
+        this.agentIdentity,
+        info.boundRepo.ownerHex,
+        info.boundRepo.repo,
+        info.mergeTarget.branch,
+      );
+      if (targetTip !== info.mergeTarget.tip) continue;
+      await this.postMergeSummary(
+        info.subchannelId,
+        info.mergeSummary ?? `Merged ${info.featureBranch} at ${targetTip.slice(0, 12)}…`,
+      );
+      await this.archiveSubchannel(info.subchannelId);
+      merged++;
+    }
+    return merged;
+  }
+
+  /** One long-running body loop owns request discovery, steering, and merge closure. */
+  async runChannelLoop(
+    tlcChannelId: string,
+    boundRepo: BoundRepo,
+    opts: { pollMs?: number; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    await this.provision(tlcChannelId);
+    const pollMs = opts.pollMs ?? 1_000;
+    while (!opts.signal?.aborted) {
+      await this.pollChannelRequests(tlcChannelId, boundRepo);
+      for (const subchannelId of [...this.subchannels.keys()]) {
+        if (!this.runningAgentTasks.has(subchannelId)) await this.pollMembers(subchannelId);
+      }
+      await this.pollMergeCompletions();
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, pollMs);
+        opts.signal?.addEventListener('abort', () => {
+          clearTimeout(timer);
+          resolve();
+        }, { once: true });
+      });
+    }
+  }
+
+  /** Test/CLI synchronization point; never exposes task credentials or prompt data. */
+  async waitForAgentTasks(): Promise<void> {
+    await Promise.all([...this.runningAgentTasks.values()]);
   }
 
   /**
@@ -437,7 +665,9 @@ export class Body {
         // Forward the member's message as a session prompt.
         const prompt = `[Member ${evt.pubkey.slice(0, 12)}]: ${evt.content}`;
         try {
-          await session.client.sessionPrompt(session.sessionId, prompt, 60_000);
+          const result = await session.client.sessionPrompt(session.sessionId, prompt, 60_000);
+          info.mergeSummary = result.agentText.trim() || info.mergeSummary;
+          await this.publishMergeReady(info);
           count++;
         } catch (err) {
           console.error(`[body] pollMembers: sessionPrompt failed for event ${evt.id}:`, err);
@@ -645,27 +875,39 @@ export class Body {
 
     // Clone repo as bare if not already present.
     if (!existsSync(gitDir)) {
-      const clone = spawnSync('git', ['clone', '--bare', repoUrl, gitDir], {
-        cwd: this.config.workspaceRoot,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1' },
-        encoding: 'utf8',
-      });
-      if (clone.status !== 0 && clone.stderr && !clone.stderr.includes('already exists')) {
+      const clone = gitAuthed(
+        this.config.workspaceRoot,
+        this.agentIdentity,
+        boundRepo.ownerHex,
+        boundRepo.repo,
+        ['clone', '--bare', repoUrl, gitDir],
+      );
+      if (!clone.ok && clone.stderr && !clone.stderr.includes('already exists')) {
         throw new Error(`git clone --bare failed: ${clone.stderr}`);
       }
     }
 
     // Fetch latest.
-    spawnSync('git', ['fetch', 'origin'], {
-      cwd: gitDir,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1' },
-      encoding: 'utf8',
-    });
+    const fetch = gitAuthed(
+      gitDir,
+      this.agentIdentity,
+      boundRepo.ownerHex,
+      boundRepo.repo,
+      ['fetch', 'origin'],
+    );
+    if (!fetch.ok) throw new Error(`git fetch failed: ${fetch.stderr}`);
+
+    // A bare clone stores the default branch at refs/heads/main; an existing
+    // mirror may instead have refs/remotes/origin/main after fetch.
+    const remoteMain = git(gitDir, ['rev-parse', '--verify', 'refs/remotes/origin/main']);
+    const localMain = git(gitDir, ['rev-parse', '--verify', 'refs/heads/main']);
+    const baseRef = remoteMain.ok ? 'refs/remotes/origin/main' : localMain.ok ? 'refs/heads/main' : '';
+    if (!baseRef) throw new Error('bound repo has no main branch');
 
     // Create worktree with new branch.
     const worktreeAdd = spawnSync(
       'git',
-      ['worktree', 'add', '-b', featureBranch, worktreePath, 'origin/main'],
+      ['worktree', 'add', '-b', featureBranch, worktreePath, baseRef],
       {
         cwd: gitDir,
         env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1' },
@@ -676,6 +918,19 @@ export class Body {
     if (worktreeAdd.status !== 0) {
       throw new Error(`git worktree add failed: ${worktreeAdd.stderr}`);
     }
+
+    // The edit agent commits locally; the body authenticates and pushes the
+    // resulting feature tip under the agent identity after the turn completes.
+    spawnSync('git', ['config', 'user.name', this.agentIdentity.name || 'buzzy-agent'], {
+      cwd: worktreePath,
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' },
+      encoding: 'utf8',
+    });
+    spawnSync('git', ['config', 'user.email', 'agent@buzzy.local'], {
+      cwd: worktreePath,
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' },
+      encoding: 'utf8',
+    });
   }
 
   /** Remove a git worktree and clean up. */

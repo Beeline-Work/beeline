@@ -42,7 +42,59 @@ export interface ChannelMetadata {
   about?: string;
   archived?: boolean;
   parentChannelId?: string;
+  communityId?: string;
   raw?: NostrEvent;
+}
+
+export type CommunityRole = 'owner' | 'admin' | 'member';
+
+/** A community is a self-linked NIP-29 group whose membership projects on 39002. */
+export interface Community {
+  communityId: string;
+  name: string;
+  createdBy: string;
+  ownerPubkey: string;
+  createdAt: number;
+  raw: NostrEvent;
+}
+
+export interface CommunityMember {
+  pubkey: string;
+  role: CommunityRole;
+}
+
+export interface CreateInviteOptions {
+  /** Absolute Unix timestamp. Mutually exclusive with expiresInSeconds. */
+  expiresAt?: number;
+  /** Lifetime from mint time. Defaults to seven days. */
+  expiresInSeconds?: number;
+}
+
+/** Returned only to the minter. The plaintext token is never published. */
+export interface CommunityInvite {
+  token: string;
+  tokenHash: string;
+  communityId: string;
+  expiresAt: number;
+  mintedBy: string;
+  event: NostrEvent;
+}
+
+/** Safe projection of an invite event; contains no redeemable plaintext token. */
+export interface CommunityInviteRecord {
+  tokenHash: string;
+  communityId: string;
+  expiresAt: number;
+  mintedBy: string;
+  event: NostrEvent;
+}
+
+export interface RedeemInviteResult {
+  communityId: string;
+  mintedBy: string;
+  expiresAt: number;
+  joined: boolean;
+  alreadyMember: boolean;
 }
 
 /** Session-facing event delivered to RigTransport subscribers. */

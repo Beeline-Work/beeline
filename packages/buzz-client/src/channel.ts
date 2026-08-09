@@ -13,6 +13,7 @@ import {
   KIND_PUT_USER,
   KIND_STREAM_MESSAGE,
   TAG_AGENT_ACTIVITY,
+  TAG_COMMUNITY,
   TAG_PARENT,
 } from './kinds.js';
 import { publishEvent, queryEvents, type HttpBridgeOptions } from './http.js';
@@ -76,7 +77,12 @@ export interface ChannelOpsContext {
 export async function createChannel(
   ctx: ChannelOpsContext,
   name: string,
-  opts?: { channelId?: string; visibility?: string; parentChannelId?: string },
+  opts?: {
+    channelId?: string;
+    visibility?: string;
+    parentChannelId?: string;
+    communityId?: string;
+  },
 ): Promise<string> {
   const channelId = opts?.channelId ?? newChannelUuid();
   const tags: string[][] = [
@@ -87,6 +93,9 @@ export async function createChannel(
   ];
   if (opts?.parentChannelId) {
     tags.push([TAG_PARENT, opts.parentChannelId]);
+  }
+  if (opts?.communityId) {
+    tags.push([TAG_COMMUNITY, opts.communityId]);
   }
   const event = sign(ctx.identity, KIND_CREATE_GROUP, tags);
   await publishEvent(ctx.http, event);
@@ -102,8 +111,9 @@ export async function createSubchannel(
   ctx: ChannelOpsContext,
   parentChannelId: string,
   name: string,
+  opts?: { communityId?: string },
 ): Promise<string> {
-  return createChannel(ctx, name, { parentChannelId });
+  return createChannel(ctx, name, { parentChannelId, ...opts });
 }
 
 /**
@@ -116,12 +126,15 @@ export async function setMemberRole(
   channelId: string,
   targetPubkey: string,
   role: 'owner' | 'admin' | 'member',
+  opts?: { extraTags?: string[][] },
 ): Promise<PublishResult> {
-  const event = sign(ctx.identity, KIND_PUT_USER, [
+  const tags: string[][] = [
     ['h', channelId],
     ['p', targetPubkey],
     ['role', role],
-  ]);
+  ];
+  if (opts?.extraTags) tags.push(...opts.extraTags);
+  const event = sign(ctx.identity, KIND_PUT_USER, tags);
   return publishEvent(ctx.http, event);
 }
 
@@ -312,6 +325,24 @@ export async function getParentChannelId(
   const meta = await getChannelMetadata(ctx, channelId);
   if (meta?.parentChannelId) return meta.parentChannelId;
   return null;
+}
+
+/** Resolve a channel's community UUID from its kind:9007 create event. */
+export async function getChannelCommunityId(
+  ctx: ChannelOpsContext,
+  channelId: string,
+): Promise<string | null> {
+  const events = await queryEvents(
+    ctx.http,
+    [{ kinds: [KIND_CREATE_GROUP], '#h': [channelId], limit: 5 }],
+    ctx.identity.publicKey,
+  );
+  for (const event of events) {
+    const communityId = tagValue(event, TAG_COMMUNITY);
+    if (communityId) return communityId;
+  }
+  const metadata = await getChannelMetadata(ctx, channelId);
+  return metadata?.communityId ?? null;
 }
 
 export function eventIsAgentActivity(event: NostrEvent): boolean {

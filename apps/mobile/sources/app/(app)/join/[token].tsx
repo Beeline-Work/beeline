@@ -23,6 +23,7 @@ import {
 } from '@/buzz/community-invite';
 import { saveActiveCommunityId } from '@/buzz/community-storage';
 import { groknight } from '@/buzz/groknight';
+import { ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
 
@@ -95,7 +96,7 @@ export default function CommunityInviteJoin() {
       const client = createBuzzClient({ baseUrl: relayUrl, identity: joiningIdentity });
       const redemption = await client.redeemInvite(token);
       const community = await client.getCommunity(redemption.communityId);
-      if (!community) throw new Error('Joined, but community details are not visible yet.');
+      if (!community) throw new Error(`Joined, but ${WORKSPACE_LABEL} details are not visible yet.`);
       await saveActiveCommunityId(joiningIdentity.publicKey, community.communityId);
       router.replace({
         pathname: '/buzz/channels',
@@ -109,9 +110,10 @@ export default function CommunityInviteJoin() {
   }, [displayName, identity, preview, relayUrl, token]);
 
   const selectCommunity = useCallback((communityId: string | null) => {
+    if (!communityId) return;
     router.replace({
       pathname: '/buzz/channels',
-      params: { communityId: communityId ?? 'standalone' },
+      params: { communityId },
     });
   }, []);
 
@@ -147,11 +149,11 @@ export default function CommunityInviteJoin() {
                   {preview.community.name.slice(0, 2).toUpperCase()}
                 </Text>
               </View>
-              <Text style={styles.eyebrow}>invited to community</Text>
+              <Text style={styles.eyebrow}>invited to a {WORKSPACE_LABEL}</Text>
               <Text style={styles.title}>Join {preview.community.name}?</Text>
               <Text style={styles.details}>
                 The invite is signed and active. Joining adds this key as a member and opens the
-                community channel list.
+                {WORKSPACE_LABEL} {ROOM_LABEL.toLowerCase()} list.
               </Text>
 
               {!identity && (

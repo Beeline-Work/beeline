@@ -17,6 +17,8 @@ import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-sto
 import { groknight } from '@/buzz/groknight';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { defaultSoul, requestGeneratedSoul } from '@/buzz/soul-generation';
+import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
+import { ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { AgentAvatar } from '@/components/buzz/AgentAvatar';
 import { BuzzRigTransport } from '@/sync/transport';
@@ -29,9 +31,10 @@ function first(value: string | string[] | undefined): string | undefined {
 
 export default function BuzzAgents() {
   const insets = useSafeAreaInsets();
-  const communityId = first(
+  const requestedCommunityId = first(
     useLocalSearchParams<{ communityId?: string | string[] }>().communityId,
   );
+  const [communityId, setCommunityId] = useState<string | null>(requestedCommunityId ?? null);
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
   const [communities, setCommunities] = useState<Community[]>([]);
@@ -83,7 +86,6 @@ export default function BuzzAgents() {
     let interval: ReturnType<typeof setInterval> | undefined;
     void (async () => {
       try {
-        if (!communityId) throw new Error('Choose a community before managing agents.');
         const currentIdentity = await loadBuzzIdentity();
         if (!currentIdentity) {
           router.replace('/buzz/onboarding');
@@ -91,17 +93,20 @@ export default function BuzzAgents() {
         }
         const nextTransport = new BuzzRigTransport(currentIdentity, await getEffectiveRelayUrl());
         const client = await nextTransport.ensureClient();
-        const [available, listed] = await Promise.all([
-          client.listCommunities(),
-          client.listAgents(communityId),
-        ]);
+        const { workspaces: available, activeWorkspaceId } = await prepareWorkspaceContext(
+          client,
+          currentIdentity.publicKey,
+          requestedCommunityId,
+        );
+        const listed = await client.listAgents(activeWorkspaceId);
         if (cancelled) return;
         setIdentity(currentIdentity);
         setTransport(nextTransport);
         setCommunities(available);
+        setCommunityId(activeWorkspaceId);
         setAgents(listed);
         interval = setInterval(() => {
-          void refreshAgents(nextTransport, communityId).catch(() => undefined);
+          void refreshAgents(nextTransport, activeWorkspaceId).catch(() => undefined);
         }, 2000);
       } catch (caught) {
         if (!cancelled) setError(String(caught));
@@ -113,7 +118,7 @@ export default function BuzzAgents() {
       cancelled = true;
       if (interval) clearInterval(interval);
     };
-  }, [communityId, refreshAgents]);
+  }, [refreshAgents, requestedCommunityId]);
 
   const handleAdd = useCallback(async () => {
     if (!transport || !communityId) return;
@@ -200,22 +205,23 @@ export default function BuzzAgents() {
     <BuzzCommunityShell
       communities={communities}
       activeCommunityId={communityId ?? null}
-      onSelect={(id) =>
-        router.replace({ pathname: '/buzz/channels', params: { communityId: id ?? 'standalone' } })
-      }
+      onSelect={(id) => {
+        if (!id) return;
+        router.replace({ pathname: '/buzz/channels', params: { communityId: id } });
+      }}
       onAdd={() => router.push('/buzz/community' as Href)}
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <View style={styles.header}>
           <TouchableOpacity
-            accessibilityLabel="Back to channels"
+            accessibilityLabel={`Back to ${ROOM_LABEL}s`}
             style={styles.backButton}
             onPress={() => router.back()}
           >
             <Text style={styles.backText}>‹</Text>
           </TouchableOpacity>
           <View style={styles.headerCopy}>
-            <Text style={styles.eyebrow}>community crew</Text>
+            <Text style={styles.eyebrow}>{WORKSPACE_LABEL} Agents</Text>
             <Text style={styles.title}>{activeCommunity?.name ?? 'Agents'}</Text>
           </View>
           <TouchableOpacity
@@ -271,8 +277,8 @@ export default function BuzzAgents() {
               <Text style={styles.emptyGlyph}>⌬</Text>
               <Text style={styles.emptyTitle}>No agents paired</Text>
               <Text style={styles.emptyCopy}>
-                Pair a machine once. Its agent becomes available across every channel in this
-                community.
+                Pair a machine once. Its Agent becomes available across every {ROOM_LABEL} in this{' '}
+                {WORKSPACE_LABEL}.
               </Text>
             </View>
           ) : (

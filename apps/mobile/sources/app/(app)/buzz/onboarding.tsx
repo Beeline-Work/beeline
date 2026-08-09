@@ -22,6 +22,7 @@ import {
   DEFAULT_RELAY_URL,
 } from '@/auth/buzz-identity-storage';
 import { groknight } from '@/buzz/groknight';
+import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
 
 const mono = Platform.select({ web: '"JetBrains Mono", monospace', default: 'monospace' });
@@ -92,7 +93,8 @@ export default function BuzzOnboarding() {
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <Text style={styles.title}>buzzy</Text>
       <Text style={styles.subtitle}>
-        Join a channel with your Nostr key to watch an agent work.
+        Steer and review Agents from your phone. Your personal {WORKSPACE_LABEL} is ready
+        automatically.
       </Text>
 
       {error && (

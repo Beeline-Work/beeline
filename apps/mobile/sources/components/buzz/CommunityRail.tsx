@@ -12,6 +12,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Community } from '@buzzy/buzz-client';
 import { groknight } from '@/buzz/groknight';
+import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 
 const mono = Platform.select({ web: '"JetBrains Mono", monospace', default: 'monospace' });
 const DRAWER_WIDTH = 72;
@@ -67,17 +68,9 @@ export function CommunityRail({
   const insets = useSafeAreaInsets();
   return (
     <View
-      accessibilityLabel="Community switcher"
+      accessibilityLabel={`${WORKSPACE_LABEL} switcher`}
       style={[styles.rail, { paddingTop: Math.max(insets.top, 10) }]}
     >
-      <RailButton
-        active={activeCommunityId === null}
-        label="Standalone channels"
-        mark="B"
-        onPress={() => onSelect(null)}
-        testID="community-rail-standalone"
-      />
-      <View style={styles.separator} />
       <ScrollView
         style={styles.communityScroll}
         contentContainerStyle={styles.communityScrollContent}
@@ -96,7 +89,7 @@ export function CommunityRail({
       </ScrollView>
       <RailButton
         active={false}
-        label="Create or join a community"
+        label={`Create or join a ${WORKSPACE_LABEL}`}
         mark="＋"
         onPress={onAdd}
         testID="community-rail-add"
@@ -125,7 +118,7 @@ export function CommunityDrawerTrigger({ communityName }: CommunityDrawerTrigger
 
   return (
     <TouchableOpacity
-      accessibilityLabel="Open space switcher"
+      accessibilityLabel={`Open ${WORKSPACE_LABEL} switcher`}
       accessibilityRole="button"
       accessibilityState={{ expanded: drawer.drawerOpen }}
       onPress={drawer.openDrawer}
@@ -194,7 +187,7 @@ export function BuzzCommunityShell({
         {drawerOpen && (
           <View style={styles.drawerOverlay} testID="community-drawer-overlay">
             <Pressable
-              accessibilityLabel="Close space switcher"
+              accessibilityLabel={`Close ${WORKSPACE_LABEL} switcher`}
               accessibilityRole="button"
               onPress={closeDrawer}
               style={styles.scrim}
@@ -282,12 +275,6 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 4,
     borderBottomRightRadius: 4,
     backgroundColor: groknight.accent,
-  },
-  separator: {
-    width: 30,
-    height: 1,
-    marginVertical: 2,
-    backgroundColor: groknight.borderActive,
   },
   drawerOverlay: {
     ...StyleSheet.absoluteFillObject,

@@ -19,6 +19,10 @@ export type CommunityInvitePreview = {
   invite: CommunityInviteRecord;
 };
 
+type CommunityInviteCreator = {
+  createInvite: (communityId: string) => Promise<{ token: string }>;
+};
+
 function firstValue(value: string | string[] | undefined): string {
   return Array.isArray(value) ? (value[0] ?? '') : (value ?? '');
 }
@@ -51,6 +55,14 @@ export function buildCommunityInviteUrl(token: string): string {
   const parsed = parseCommunityInviteToken(token);
   if (!parsed) throw new Error('invalid invite token');
   return `${COMMUNITY_INVITE_ORIGIN}/join/${encodeURIComponent(parsed)}`;
+}
+
+export async function createCommunityInviteUrl(
+  client: CommunityInviteCreator,
+  communityId: string,
+): Promise<string> {
+  const invite = await client.createInvite(communityId);
+  return buildCommunityInviteUrl(invite.token);
 }
 
 export async function loadCommunityInvitePreview(

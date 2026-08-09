@@ -24,6 +24,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - buzz-agent ACP wire vs MCP: `initialize` uses `protocolVersion` u32 (not MCP string), `clientCapabilities` (not `capabilities`). `session/new` returns `{sessionId}`. Standard MCP for `buzz-dev-mcp`. See `apps/body/src/acp.ts` for exact wire format.
 - Live suite: `cd apps/body && npm run test:live` (pretest builds all deps). Soft-skips when relay or LLM env (BUZZY_LLM_*) absent.
 - Agent pairing and server-held soul generation are exposed by `apps/body/src/cli.ts` as `buzz pair` and `buzz serve-souls`; credential/config details live in `apps/body/README.md`.
+- Channel → branch loop: `buzz serve <channel> <owner> <repo>` watches only human `t=buzz-agent-request` messages addressed to its agent key, opens an agent-signed subchannel, pushes merge-ready tips, and archives only after `main` reaches the approved tip. Live proof: `apps/body/src/channel-branch-loop.live.test.ts`.
 
 ## Release APK build (@buzzy/mobile)
 

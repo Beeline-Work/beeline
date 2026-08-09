@@ -36,7 +36,12 @@ type ChannelDisplayItem = SessionSummary & {
   isSubchannel?: boolean;
   parentChannelId?: string;
   subchannelCount?: number;
+  openerPubkey?: string;
 };
+
+function shortPubkey(pubkey: string | undefined): string {
+  return pubkey ? `${pubkey.slice(0, 8)}…` : 'unknown';
+}
 
 const mono = Platform.select({ web: '"JetBrains Mono", monospace', default: 'monospace' });
 
@@ -97,6 +102,7 @@ async function loadDisplayChannels(
         const item = { ...channel, archived, parentChannelId: parentId ?? undefined };
         if (parentId) {
           item.isSubchannel = true;
+          item.openerPubkey = (await transport.getChannelCreator(channel.id)) ?? undefined;
           const siblings = childMap.get(parentId) ?? [];
           siblings.push(item);
           childMap.set(parentId, siblings);
@@ -158,6 +164,7 @@ export default function BuzzChannels() {
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [channelName, setChannelName] = useState('');
   const [creatingChannel, setCreatingChannel] = useState(false);
+  const [viewerIsAgent, setViewerIsAgent] = useState(false);
 
   const activeCommunity = useMemo(
     () => communities.find((community) => community.communityId === activeCommunityId) ?? null,
@@ -191,7 +198,10 @@ export default function BuzzChannels() {
         const url = await getEffectiveRelayUrl();
         const nextTransport = new BuzzRigTransport(currentIdentity, url);
         const client = await nextTransport.ensureClient();
-        const available = await client.listCommunities();
+        const [available, identityIsAgent] = await Promise.all([
+          client.listCommunities(),
+          client.isAgentIdentity(currentIdentity.publicKey),
+        ]);
         const active = await resolveCommunity(currentIdentity, available);
         const channels = await loadDisplayChannels(nextTransport, active, available);
         await saveActiveCommunityId(currentIdentity.publicKey, active);
@@ -202,6 +212,7 @@ export default function BuzzChannels() {
           setCommunities(available);
           setActiveCommunityId(active);
           setDisplayChannels(channels);
+          setViewerIsAgent(identityIsAgent);
         }
       } catch (err) {
         if (!cancelled) setError(String(err));
@@ -254,7 +265,7 @@ export default function BuzzChannels() {
 
   const handleCreateChannel = useCallback(async () => {
     const name = channelName.trim();
-    if (!name || !transport) return;
+    if (!name || !transport || viewerIsAgent) return;
     setCreatingChannel(true);
     setError(null);
     try {
@@ -271,7 +282,7 @@ export default function BuzzChannels() {
     } finally {
       setCreatingChannel(false);
     }
-  }, [activeCommunityId, channelName, communities, transport]);
+  }, [activeCommunityId, channelName, communities, transport, viewerIsAgent]);
 
   const handleSaveRelayUrl = useCallback(async () => {
     if (!identity) return;
@@ -342,13 +353,15 @@ export default function BuzzChannels() {
                 <Text style={styles.iconButtonText}>⌬</Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity
-              accessibilityLabel="Create channel"
-              onPress={() => setShowCreateChannel((value) => !value)}
-              style={styles.iconButton}
-            >
-              <Text style={styles.iconButtonText}>＋#</Text>
-            </TouchableOpacity>
+            {!viewerIsAgent && (
+              <TouchableOpacity
+                accessibilityLabel="Create human discussion channel"
+                onPress={() => setShowCreateChannel((value) => !value)}
+                style={styles.iconButton}
+              >
+                <Text style={styles.iconButtonText}>＋#</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               accessibilityLabel="Relay settings"
               onPress={() => {
@@ -385,7 +398,7 @@ export default function BuzzChannels() {
           </View>
         )}
 
-        {showCreateChannel && (
+        {showCreateChannel && !viewerIsAgent && (
           <View style={styles.actionPanel}>
             <Text style={styles.panelEyebrow}>
               new channel · {activeCommunity?.name ?? 'standalone'}
@@ -466,12 +479,14 @@ export default function BuzzChannels() {
                   ? `Open a first room inside ${activeCommunity.name}.`
                   : 'Community channels live behind their icons in the rail.'}
               </Text>
-              <TouchableOpacity
-                style={styles.primaryButton}
-                onPress={() => setShowCreateChannel(true)}
-              >
-                <Text style={styles.primaryButtonText}>create channel</Text>
-              </TouchableOpacity>
+              {!viewerIsAgent && (
+                <TouchableOpacity
+                  style={styles.primaryButton}
+                  onPress={() => setShowCreateChannel(true)}
+                >
+                  <Text style={styles.primaryButtonText}>create discussion channel</Text>
+                </TouchableOpacity>
+              )}
             </View>
           }
           renderItem={({ item }) => (
@@ -499,6 +514,8 @@ export default function BuzzChannels() {
                 <Text style={styles.channelMeta}>
                   {item.id.slice(0, 10)}
                   {item.subchannelCount ? ` · ${item.subchannelCount} sub` : ''}
+                  {item.isSubchannel ? ` · agent ${shortPubkey(item.openerPubkey)}` : ''}
+                  {item.isSubchannel ? item.archived ? ' · closed' : ' · live' : ''}
                 </Text>
               </View>
               <Text style={styles.chevron}>›</Text>

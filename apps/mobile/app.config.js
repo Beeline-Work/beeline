@@ -161,6 +161,12 @@ export default {
             "expo-asset",
             "expo-localization",
             "expo-mail-composer",
+            [
+                "expo-local-authentication",
+                {
+                    faceIDPermission: "Allow Buzzy to verify it is you before showing your secret key."
+                }
+            ],
             "expo-secure-store",
             "expo-web-browser",
             "react-native-vision-camera",

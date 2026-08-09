@@ -72,7 +72,10 @@
         "appleTeamId": "89KT3SWYAF",
         "ascAppId": "6799574618",
         "appName": "Buzzy",
-        "bundleIdentifier": "app.buzzy.mobile"
+        "bundleIdentifier": "app.buzzy.mobile",
+        "ascApiKeyPath": "$EXPO_ASC_API_KEY_PATH",
+        "ascApiKeyId": "$EXPO_ASC_KEY_ID",
+        "ascApiKeyIssuerId": "$EXPO_ASC_ISSUER_ID"
       }
     }
   }

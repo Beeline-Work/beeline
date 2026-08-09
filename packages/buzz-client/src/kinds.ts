@@ -12,6 +12,9 @@ export const KIND_CREATE_GROUP = 9007;
 /** Channel metadata replaceable. */
 export const KIND_CHANNEL_METADATA = 39000;
 
+/** Channel admins list replaceable (`d` = channel UUID). */
+export const KIND_CHANNEL_ADMINS = 39001;
+
 /** Channel members list replaceable (`d` = channel UUID). */
 export const KIND_CHANNEL_MEMBERS = 39002;
 
@@ -26,3 +29,9 @@ export const TAG_MERGE_APPROVAL = 'buzz-merge-approval';
 
 /** App-convention parent-channel linkage tag on child (sub)channels. */
 export const TAG_PARENT = 'parent';
+
+/** App-convention community linkage tag on channels and invite events. */
+export const TAG_COMMUNITY = 'community';
+
+/** Marker tag value for a signed, channel-scoped community invite. */
+export const TAG_COMMUNITY_INVITE = 'buzz-community-invite';

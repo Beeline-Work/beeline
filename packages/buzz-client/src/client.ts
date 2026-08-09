@@ -9,6 +9,7 @@ import {
   backfillMessages,
   createChannel,
   createSubchannel,
+  getChannelCommunityId as getChannelCommunityIdFn,
   getChannelMetadata,
   getParentChannelId as getParentChannelIdFn,
   isMember,
@@ -20,6 +21,15 @@ import {
   waitUntilMember,
   type ChannelOpsContext,
 } from './channel.js';
+import {
+  communityChannels,
+  communityMembers,
+  createCommunity,
+  createInvite,
+  getCommunity,
+  listCommunities,
+  redeemInvite,
+} from './community.js';
 import { publishEvent, queryEvents, type HttpBridgeOptions } from './http.js';
 import { KIND_STREAM_MESSAGE } from './kinds.js';
 import { toSessionEvent } from './parse.js';
@@ -29,10 +39,15 @@ import type {
   ChannelFilterOpts,
   ChannelMember,
   ChannelMetadata,
+  Community,
+  CommunityInvite,
+  CommunityMember,
+  CreateInviteOptions,
   Identity,
   MergeTarget,
   MessageSubmitOpts,
   PublishResult,
+  RedeemInviteResult,
   SessionEvent,
   SessionEventHandler,
   Unsubscribe,
@@ -93,13 +108,20 @@ export class BuzzClient {
   // ── Channel ops ─────────────────────────────────────────────────────────
 
   /** Create an open stream channel; returns UUID. */
-  createChannel(name: string, opts?: { parentChannelId?: string }): Promise<string> {
+  createChannel(
+    name: string,
+    opts?: { parentChannelId?: string; communityId?: string },
+  ): Promise<string> {
     return createChannel(this.ctx, name, opts);
   }
 
   /** Child channel under a TLC (parent tag convention). */
-  createSubchannel(parentChannelId: string, name: string): Promise<string> {
-    return createSubchannel(this.ctx, parentChannelId, name);
+  createSubchannel(
+    parentChannelId: string,
+    name: string,
+    opts?: { communityId?: string },
+  ): Promise<string> {
+    return createSubchannel(this.ctx, parentChannelId, name, opts);
   }
 
   /**
@@ -147,6 +169,42 @@ export class BuzzClient {
   /** Resolve parent channel ID from the 9007 create event. */
   async getParentChannelId(channelId: string): Promise<string | null> {
     return getParentChannelIdFn(this.ctx, channelId);
+  }
+
+  /** Resolve optional community linkage from the channel create event. */
+  getChannelCommunityId(channelId: string): Promise<string | null> {
+    return getChannelCommunityIdFn(this.ctx, channelId);
+  }
+
+  // ── Community ops ───────────────────────────────────────────────────────
+
+  createCommunity(name: string): Promise<string> {
+    return createCommunity(this.ctx, name);
+  }
+
+  getCommunity(communityId: string): Promise<Community | null> {
+    return getCommunity(this.ctx, communityId);
+  }
+
+  /** Communities for any pubkey; defaults to this client's restored identity. */
+  listCommunities(pubkey = this.identity.publicKey): Promise<Community[]> {
+    return listCommunities(this.ctx, pubkey);
+  }
+
+  communityChannels(communityId: string): Promise<string[]> {
+    return communityChannels(this.ctx, communityId);
+  }
+
+  communityMembers(communityId: string): Promise<CommunityMember[]> {
+    return communityMembers(this.ctx, communityId);
+  }
+
+  createInvite(communityId: string, options?: CreateInviteOptions): Promise<CommunityInvite> {
+    return createInvite(this.ctx, communityId, options);
+  }
+
+  redeemInvite(token: string): Promise<RedeemInviteResult> {
+    return redeemInvite(this.ctx, token);
   }
 
   // ── Messaging ───────────────────────────────────────────────────────────

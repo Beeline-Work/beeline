@@ -9,7 +9,7 @@ Buzz relay (see `relay-stack/` at the repo root) — no fake backend.
 | --- | --- |
 | `src/approval.ts` | Schnorr-signed merge-approval events + exact-binding verify |
 | `src/worker.ts` | Merge worker: lands a feature branch on `main` only after a valid approval |
-| `src/buzz.ts` | Channel create / role set / repo announce (kind 9007 / 9000 / 30617) |
+| `src/buzz.ts` | Channel/community create, role set, repo announce (kind 9007 / 9000 / 30617) |
 | `src/provisioning.ts` | **Provisioning check** — agent must never be in push-allowed on the protected branch |
 | `src/push-rights.live.test.ts` | Live security suite (relay-enforced push rejection + provisioning check) |
 | `src/approval.test.ts` | Hermetic unit tests for the approval gate |
@@ -54,6 +54,12 @@ cd apps/gate && npm run test:live
 If the relay is unreachable, `test:live` soft-skips with a clear message and
 exits 0. When the relay **is** reachable the suite always runs for real — it
 never auto-skips a green path.
+
+The community live proof uses the same relay conventions: a community is a
+kind:9007 stream group whose `community` tag self-references its `h` UUID, its
+owner/member roles project through kind:39002, and contained channels point to
+that UUID with the same tag. The suite proves invite mint and redemption with
+two independent Nostr identities.
 
 ### Provisioning check (library + CLI)
 

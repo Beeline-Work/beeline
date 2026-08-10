@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Join a Beeline Workspace</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+        background: #07090b;
+        color: #e6edf3;
+      }
+      * { box-sizing: border-box; }
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background:
+          radial-gradient(circle at 50% 0%, rgba(125, 207, 255, 0.12), transparent 42%),
+          #07090b;
+      }
+      main {
+        width: min(100%, 560px);
+        border: 1px solid #28313a;
+        border-radius: 8px;
+        padding: clamp(24px, 7vw, 48px);
+        background: #0a0d0f;
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+      }
+      .mark {
+        width: 52px;
+        height: 52px;
+        display: grid;
+        place-items: center;
+        border: 1px solid #7dcfff;
+        border-radius: 6px;
+        color: #7dcfff;
+        font-size: 22px;
+        font-weight: 900;
+      }
+      .eyebrow {
+        margin: 24px 0 8px;
+        color: #7dcfff;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      h1 {
+        margin: 0;
+        font-family: system-ui, sans-serif;
+        font-size: clamp(28px, 7vw, 42px);
+        line-height: 1.05;
+        letter-spacing: -0.035em;
+      }
+      p { color: #9aa7b3; font-size: 14px; line-height: 1.65; }
+      .actions { display: grid; gap: 10px; margin-top: 28px; }
+      .primary, button {
+        min-height: 48px;
+        display: grid;
+        place-items: center;
+        border: 0;
+        border-radius: 4px;
+        padding: 0 18px;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 900;
+        text-decoration: none;
+        cursor: pointer;
+      }
+      .primary { background: #7dcfff; color: #07090b; }
+      button { border: 1px solid #384550; background: transparent; color: #c2ccd5; }
+      .label { margin: 28px 0 8px; color: #71808d; font-size: 10px; text-transform: uppercase; }
+      code {
+        display: block;
+        max-width: 100%;
+        overflow-wrap: anywhere;
+        border-left: 2px solid #7dcfff;
+        padding: 10px 12px;
+        background: #0e1317;
+        color: #c2ccd5;
+        font-size: 11px;
+        line-height: 1.55;
+      }
+      .status { min-height: 20px; margin: 10px 0 0; color: #7dcfff; font-size: 11px; }
+    </style>
+    <script src="/join/invite.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <div class="mark" aria-hidden="true">B</div>
+      <p class="eyebrow">Secure Workspace invite</p>
+      <h1>You're invited to a Beeline Workspace</h1>
+      <p>
+        Open this invite in Beeline to preview the Workspace and join as a member.
+        The invite remains bound to its signed relay record.
+      </p>
+      <div class="actions">
+        <a class="primary" id="open-app" href="#">Open Beeline</a>
+        <button id="copy-invite" type="button">Copy invite code</button>
+      </div>
+      <p class="label">Invite code</p>
+      <code id="invite-code">Loading…</code>
+      <p class="status" id="status" role="status" aria-live="polite"></p>
+    </main>
+  </body>
+</html>

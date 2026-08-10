@@ -12,7 +12,6 @@ import {
 } from '@beeline/buzz-client';
 import { WORKSPACE_LABEL } from './vocabulary';
 
-export const COMMUNITY_INVITE_ORIGIN = 'https://buzzrouter.com';
 const TOKEN_PATTERN = /^bzi_[0-9a-f]{64}$/;
 
 export type CommunityInvitePreview = {
@@ -36,10 +35,7 @@ export function parseCommunityInviteToken(value: string | string[] | undefined):
   try {
     const url = new URL(input);
     let candidate = '';
-    if (
-      (url.protocol === 'https:' || url.protocol === 'http:') &&
-      url.hostname.toLowerCase() === 'buzzrouter.com'
-    ) {
+    if (url.protocol === 'https:' || url.protocol === 'http:') {
       const match = url.pathname.match(/^\/join\/([^/]+)\/?$/);
       candidate = match?.[1] ?? '';
     } else if (url.protocol === 'buzzy:' && url.hostname === 'join') {
@@ -52,18 +48,23 @@ export function parseCommunityInviteToken(value: string | string[] | undefined):
   }
 }
 
-export function buildCommunityInviteUrl(token: string): string {
+export function buildCommunityInviteUrl(token: string, relayUrl: string): string {
   const parsed = parseCommunityInviteToken(token);
   if (!parsed) throw new Error('invalid invite token');
-  return `${COMMUNITY_INVITE_ORIGIN}/join/${encodeURIComponent(parsed)}`;
+  const relay = new URL(relayUrl);
+  if (relay.protocol !== 'https:' && relay.protocol !== 'http:') {
+    throw new Error('relay URL must use HTTP or HTTPS');
+  }
+  return `${relay.origin}/join/${encodeURIComponent(parsed)}`;
 }
 
 export async function createCommunityInviteUrl(
   client: CommunityInviteCreator,
   communityId: string,
+  relayUrl: string,
 ): Promise<string> {
   const invite = await client.createInvite(communityId);
-  return buildCommunityInviteUrl(invite.token);
+  return buildCommunityInviteUrl(invite.token, relayUrl);
 }
 
 export async function loadCommunityInvitePreview(

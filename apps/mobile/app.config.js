@@ -24,7 +24,7 @@ const consoleLoggingDefault = {
     preview: true,
     production: false,
 }[variant];
-const buzzyRelayUrl = process.env.EXPO_PUBLIC_BUZZY_RELAY_URL || 'https://buzz.trustysquire.ai';
+const buzzyRelayUrl = process.env.EXPO_PUBLIC_BUZZY_RELAY_URL || 'https://relay.buzzrouter.com';
 const buzzyPushGatewayUrl = process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL || 'https://push.buzzrouter.com';
 const buzzySoulUrl = process.env.EXPO_PUBLIC_BUZZY_SOUL_URL || 'https://soul.buzzrouter.com';
 

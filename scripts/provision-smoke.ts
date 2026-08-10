@@ -4,7 +4,7 @@
  */
 import { createBuzzClient, createIdentity, identityNsec, identityNpub } from '@beeline/buzz-client';
 
-const RELAY = process.env.RELAY_URL || 'https://buzz.trustysquire.ai';
+const RELAY = process.env.RELAY_URL || 'https://relay.buzzrouter.com';
 
 async function main() {
   // 1. Create identity and persist to env for later import

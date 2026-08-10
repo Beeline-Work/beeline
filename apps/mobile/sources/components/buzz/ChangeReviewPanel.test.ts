@@ -30,6 +30,17 @@ vi.mock('react-native', async () => {
   };
 });
 
+vi.mock('./MonoHull', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: any) =>
+    ReactModule.createElement(name, props, props.children);
+  return {
+    BrittlePress: host('BrittlePress'),
+    HullSurface: host('HullSurface'),
+    PixelLoader: host('PixelLoader'),
+  };
+});
+
 import { ChangeReviewPanel } from './ChangeReviewPanel';
 
 const originalConsoleError = console.error;

@@ -90,9 +90,11 @@ function toCommunity(event: NostrEvent): Community | null {
   const communityId = tagValue(event, 'h');
   const name = tagValue(event, 'name');
   if (!communityId || !name) return null;
+  const avatar = tagValue(event, 'avatar') ?? tagValue(event, 'picture');
   return {
     communityId,
     name,
+    ...(avatar ? { avatar } : {}),
     createdBy: event.pubkey,
     ownerPubkey: event.pubkey,
     createdAt: event.created_at,

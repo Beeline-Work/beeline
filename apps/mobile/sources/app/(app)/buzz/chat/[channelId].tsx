@@ -23,6 +23,7 @@ import { BuzzRigTransport } from '@/sync/transport';
 import { encodeNpub, type Agent, type Community, type MergeTarget } from '@buzzy/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
 import { groknight } from '@/buzz/groknight';
+import { CHANGE_LABEL, CHANGES_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
@@ -55,8 +56,6 @@ type SubchannelDisplay = {
 
 /** Known body pubkeys for provenance display (hardcoded for dev). */
 const BODY_PUBKEYS = new Set<string>();
-
-const mono = Platform.select({ web: '"JetBrains Mono", monospace', default: 'monospace' });
 
 /** Short npub display (first 12 chars of npub1...). */
 function shortNpub(pubkeyHex: string): string {
@@ -156,7 +155,9 @@ export default function BuzzChat() {
   const [isArchived, setIsArchived] = useState(false);
   const [userPubkey, setUserPubkey] = useState<string>('');
   const [mergeTarget, setMergeTarget] = useState<MergeTarget | null>(null);
-  const [approvalState, setApprovalState] = useState<'none' | 'sending' | 'sent' | 'merged'>('none');
+  const [approvalState, setApprovalState] = useState<'none' | 'sending' | 'sent' | 'merged'>(
+    'none',
+  );
   const [subchannels, setSubchannels] = useState<SubchannelDisplay[]>([]);
   const [parentChannelId, setParentChannelId] = useState<string | undefined>(undefined);
   const [mergeSummaryText, setMergeSummaryText] = useState<string | null>(null);
@@ -344,68 +345,82 @@ export default function BuzzChat() {
 
           if (hasMergeSummary) {
             setMergeSummaryText(text);
-            addMessages([{
-              id: eventId(event, `merge-live-${Math.random()}`),
-              text,
-              isUser: false,
-              timestamp: eventTimestamp(event),
-              pubkey: pk,
-              isMergeSummary: true,
-            }]);
+            addMessages([
+              {
+                id: eventId(event, `merge-live-${Math.random()}`),
+                text,
+                isUser: false,
+                timestamp: eventTimestamp(event),
+                pubkey: pk,
+                isMergeSummary: true,
+              },
+            ]);
             return;
           }
 
           if (hasBodyControl) {
             const subId = eventTagValue(event, 'subchannel');
             if (subId && !hasStatusArchived) {
-              setSubchannels((current) => current.some((sub) => sub.id === subId)
-                ? current
-                : [...current, {
-                    id: subId,
-                    openerPubkey: eventTagValue(event, 'agent') ?? pk ?? '',
-                    archived: false,
-                  }]);
-              addMessages([{
-                id: eventId(event, `sub-live-${Math.random()}`),
-                text,
-                isUser: false,
-                timestamp: eventTimestamp(event),
-                pubkey: pk,
-                subchannelId: subId,
-                isSubchannelLink: true,
-                requestAgentPubkey: eventTagValue(event, 'agent') ?? pk,
-              }]);
+              setSubchannels((current) =>
+                current.some((sub) => sub.id === subId)
+                  ? current
+                  : [
+                      ...current,
+                      {
+                        id: subId,
+                        openerPubkey: eventTagValue(event, 'agent') ?? pk ?? '',
+                        archived: false,
+                      },
+                    ],
+              );
+              addMessages([
+                {
+                  id: eventId(event, `sub-live-${Math.random()}`),
+                  text,
+                  isUser: false,
+                  timestamp: eventTimestamp(event),
+                  pubkey: pk,
+                  subchannelId: subId,
+                  isSubchannelLink: true,
+                  requestAgentPubkey: eventTagValue(event, 'agent') ?? pk,
+                },
+              ]);
               return;
             }
             if (hasStatusArchived) {
               if (subId) {
-                setSubchannels((current) => current.map((sub) =>
-                  sub.id === subId ? { ...sub, archived: true } : sub));
+                setSubchannels((current) =>
+                  current.map((sub) => (sub.id === subId ? { ...sub, archived: true } : sub)),
+                );
               } else {
                 setIsArchived(true);
                 setApprovalState('merged');
               }
-              addMessages([{
-                id: eventId(event, `archive-live-${Math.random()}`),
-                text,
-                isUser: false,
-                timestamp: eventTimestamp(event),
-                pubkey: pk,
-                isArchivedNotice: true,
-              }]);
+              addMessages([
+                {
+                  id: eventId(event, `archive-live-${Math.random()}`),
+                  text,
+                  isUser: false,
+                  timestamp: eventTimestamp(event),
+                  pubkey: pk,
+                  isArchivedNotice: true,
+                },
+              ]);
               return;
             }
           }
 
-          addMessages([{
-            id: eventId(event, `live-${Math.random()}`),
-            text,
-            isUser: pk === identity.publicKey,
-            timestamp: eventTimestamp(event),
-            pubkey: pk,
-            isAgentActivity: event.type === 'assistant_delta',
-            requestAgentPubkey,
-          }]);
+          addMessages([
+            {
+              id: eventId(event, `live-${Math.random()}`),
+              text,
+              isUser: pk === identity.publicKey,
+              timestamp: eventTimestamp(event),
+              pubkey: pk,
+              isAgentActivity: event.type === 'assistant_delta',
+              requestAgentPubkey,
+            },
+          ]);
         });
       } catch (err) {
         console.warn('Failed to init BuzzChat:', err);
@@ -439,19 +454,27 @@ export default function BuzzChat() {
     ]);
 
     try {
-      const eventId = requestingAgent && !parentChannelId
-        ? await transport.submitAgentRequest(decodedId, text, requestingAgent.pubkey)
-        : await transport.messageSubmitWithEventId({ sessionId: decodedId, text });
-      setMessages((prev) =>
-        reconcileOptimisticMessage(prev, optimisticId, eventId),
-      );
+      const eventId =
+        requestingAgent && !parentChannelId
+          ? await transport.submitAgentRequest(decodedId, text, requestingAgent.pubkey)
+          : await transport.messageSubmitWithEventId({ sessionId: decodedId, text });
+      setMessages((prev) => reconcileOptimisticMessage(prev, optimisticId, eventId));
       setRequestingAgent(null);
     } catch (err) {
       console.warn('Send failed:', err);
     } finally {
       setSending(false);
     }
-  }, [inputText, transport, decodedId, addMessages, isArchived, userPubkey, requestingAgent, parentChannelId]);
+  }, [
+    inputText,
+    transport,
+    decodedId,
+    addMessages,
+    isArchived,
+    userPubkey,
+    requestingAgent,
+    parentChannelId,
+  ]);
 
   const handleApprove = useCallback(async () => {
     if (!transport || !mergeTarget) return;
@@ -471,9 +494,10 @@ export default function BuzzChat() {
   }, []);
 
   const handleCommunitySelect = useCallback((communityId: string | null) => {
+    if (!communityId) return;
     router.replace({
       pathname: '/buzz/channels',
-      params: { communityId: communityId ?? 'standalone' },
+      params: { communityId },
     });
   }, []);
 
@@ -484,8 +508,8 @@ export default function BuzzChat() {
         return (
           <View style={styles.subchannelLinkBubble}>
             <View style={styles.subchannelLinkHeading}>
-              <Text style={styles.subchannelLinkTitle}>↳ AGENT BRANCH</Text>
-              <Text style={styles.liveBadge}>LIVE</Text>
+              <Text style={styles.subchannelLinkTitle}>{CHANGE_LABEL}</Text>
+              <Text style={styles.liveBadge}>● Live</Text>
             </View>
             {item.requestAgentPubkey && (
               <Text style={styles.openerBadge}>opened by {shortNpub(item.requestAgentPubkey)}</Text>
@@ -497,9 +521,7 @@ export default function BuzzChat() {
               style={styles.subchannelLinkButton}
               onPress={() => handleSubchannelPress(item.subchannelId!)}
             >
-              <Text style={styles.subchannelLinkButtonText}>
-                WATCH + STEER
-              </Text>
+              <Text style={styles.subchannelLinkButtonText}>Open change</Text>
             </TouchableOpacity>
           </View>
         );
@@ -509,13 +531,9 @@ export default function BuzzChat() {
       if (item.isMergeSummary) {
         return (
           <View style={styles.mergeSummaryBubble}>
-            <Text style={styles.mergeSummaryTitle}>✓ Merged</Text>
+            <Text style={styles.mergeSummaryTitle}>✓ {CHANGE_LABEL} merged</Text>
             <Text style={styles.mergeSummaryText}>{item.text}</Text>
-            {item.pubkey && (
-              <Text style={styles.mergeSummaryPubkey}>
-                {shortNpub(item.pubkey)}
-              </Text>
-            )}
+            {item.pubkey && <Text style={styles.mergeSummaryPubkey}>{shortNpub(item.pubkey)}</Text>}
           </View>
         );
       }
@@ -535,16 +553,13 @@ export default function BuzzChat() {
       const isAgent = item.isAgentActivity || isBody;
 
       return (
-        <View style={[
-          styles.messageBubble,
-          isAgent ? styles.agentBlock : styles.userBlock,
-        ]}>
+        <View style={[styles.messageBubble, isAgent ? styles.agentBlock : styles.userBlock]}>
           <Text style={[styles.roleLabel, isAgent ? styles.roleAgent : styles.roleUser]}>
-            {isOwn ? 'YOU' : (isAgent ? 'BEELINE' : shortNpub(item.pubkey ?? ''))}
+            {isOwn ? 'You' : isAgent ? 'Beeline' : shortNpub(item.pubkey ?? '')}
           </Text>
           {item.requestAgentPubkey && (
             <Text style={styles.workRequestBadge}>
-              ASK {shortNpub(item.requestAgentPubkey)} · AGENT OPENS BRANCH
+              Asking {shortNpub(item.requestAgentPubkey)} to start {CHANGE_LABEL}
             </Text>
           )}
           <Text style={styles.messageText}>{item.text}</Text>
@@ -561,7 +576,7 @@ export default function BuzzChat() {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <ActivityIndicator size="large" color={groknight.accent} />
-        <Text style={styles.loadingText}>session loading…</Text>
+        <Text style={styles.loadingText}>{ROOM_LABEL} loading…</Text>
       </View>
     );
   }
@@ -578,154 +593,161 @@ export default function BuzzChat() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Text style={styles.backText}>‹</Text>
-        </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <Text style={styles.channelName} numberOfLines={1}>
-            {decodedId.slice(0, 12)}…
-          </Text>
-          {mergeTarget && (
-            <Text style={styles.headerMeta}>
-              <Text style={styles.pathTag}>{mergeTarget.repo}</Text>
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+            <Text style={styles.backText}>‹</Text>
+          </TouchableOpacity>
+          <View style={styles.headerCenter}>
+            <Text style={styles.channelName} numberOfLines={1}>
+              {decodedId.slice(0, 12)}…
             </Text>
+            {mergeTarget && (
+              <Text style={styles.headerMeta}>
+                <Text style={styles.pathTag}>{mergeTarget.repo}</Text>
+              </Text>
+            )}
+          </View>
+          {isArchived && (
+            <View style={styles.archivedBadge}>
+              <Text style={styles.archivedBadgeText}>archived</Text>
+            </View>
           )}
         </View>
-        {isArchived && (
-          <View style={styles.archivedBadge}>
-            <Text style={styles.archivedBadgeText}>archived</Text>
+
+        {/* P2: Merge approval bar for subchannels with a merge target */}
+        {mergeTarget && !isArchived && (
+          <View style={styles.approvalBar}>
+            <View style={styles.approvalInfo}>
+              <Text style={styles.prChip}>Review this {CHANGE_LABEL}</Text>
+              <Text style={styles.approvalBarText}>
+                {mergeTarget.repo} · {mergeTarget.tip.slice(0, 8)}
+              </Text>
+            </View>
+            <Text style={styles.humanBoundaryText}>Only People can approve.</Text>
+            {viewerIsAgent ? (
+              <View style={styles.approvalSent}>
+                <Text style={styles.approvalSentText}>Agents cannot approve</Text>
+              </View>
+            ) : approvalState === 'none' ? (
+              <TouchableOpacity style={styles.approveButton} onPress={handleApprove}>
+                <Text style={styles.approveButtonText}>Approve {CHANGE_LABEL}</Text>
+              </TouchableOpacity>
+            ) : approvalState === 'sending' ? (
+              <View style={styles.approvalPending}>
+                <ActivityIndicator size="small" color={groknight.accent} />
+                <Text style={styles.approvalStateText}>sending…</Text>
+              </View>
+            ) : (
+              <View style={styles.approvalSent}>
+                <Text style={styles.approvalSentText}>✓ Approved · waiting for merge</Text>
+              </View>
+            )}
           </View>
         )}
-      </View>
 
-      {/* P2: Merge approval bar for subchannels with a merge target */}
-      {mergeTarget && !isArchived && (
-        <View style={styles.approvalBar}>
-          <View style={styles.approvalInfo}>
-            <Text style={styles.prChip}>HUMAN MERGE GATE</Text>
-            <Text style={styles.approvalBarText}>
-              {mergeTarget.repo} · {mergeTarget.tip.slice(0, 8)}
-            </Text>
-          </View>
-          <Text style={styles.humanBoundaryText}>
-            Human admin approval required. Agent identities can never approve.
-          </Text>
-          {viewerIsAgent ? (
-            <View style={styles.approvalSent}>
-              <Text style={styles.approvalSentText}>AGENTS CANNOT APPROVE</Text>
-            </View>
-          ) : approvalState === 'none' ? (
-            <TouchableOpacity style={styles.approveButton} onPress={handleApprove}>
-              <Text style={styles.approveButtonText}>◆ APPROVE MERGE</Text>
-            </TouchableOpacity>
-          ) : approvalState === 'sending' ? (
-            <View style={styles.approvalPending}>
-              <ActivityIndicator size="small" color={groknight.accent} />
-              <Text style={styles.approvalStateText}>sending…</Text>
-            </View>
-          ) : (
-            <View style={styles.approvalSent}>
-              <Text style={styles.approvalSentText}>✓ APPROVED · WAITING FOR MERGE</Text>
-            </View>
-          )}
-        </View>
-      )}
-
-      <FlatList
-        ref={flatListRef}
-        data={messages}
-        keyExtractor={(item: DisplayMessage) => item.id}
-        style={styles.messageList}
-        contentContainerStyle={styles.messageListContent}
-        renderItem={renderItem}
-        ListHeaderComponent={
-          !parentChannelId && subchannels.length > 0 ? (
-            <View style={styles.lifecyclePanel}>
-              <Text style={styles.lifecycleTitle}>WORK BRANCHES</Text>
-              <Text style={styles.lifecycleHint}>human asks → agent branches → human approves → archive</Text>
-              {subchannels.map((sub) => (
-                <TouchableOpacity
-                  key={sub.id}
-                  style={styles.lifecycleRow}
-                  onPress={() => handleSubchannelPress(sub.id)}
-                >
-                  <Text style={[styles.lifecycleState, sub.archived && styles.lifecycleStateArchived]}>
-                    {sub.archived ? 'CLOSED' : 'LIVE'}
-                  </Text>
-                  <View style={styles.lifecycleInfo}>
-                    <Text style={styles.lifecycleBranch}>↳ {sub.id.slice(0, 12)}…</Text>
-                    <Text style={styles.lifecycleAgent}>agent {shortNpub(sub.openerPubkey)}</Text>
-                  </View>
-                  <Text style={styles.chevron}>›</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          ) : null
-        }
-        ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>empty channel</Text>
-          </View>
-        }
-        onContentSizeChange={() =>
-          flatListRef.current?.scrollToEnd({ animated: false })
-        }
-      />
-
-      {/* P2: Archived channels are read-only */}
-      {isArchived ? (
-        <View style={[styles.archivedInputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-          <Text style={styles.archivedInputText}>channel archived (read-only)</Text>
-        </View>
-      ) : (
-        <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-          {!parentChannelId && !viewerIsAgent && availableAgents.length > 0 && (
-            <View style={styles.askAgentBar}>
-              <Text style={styles.askAgentLabel}>START WORK</Text>
-              {availableAgents.map((agent) => {
-                const active = requestingAgent?.pubkey === agent.pubkey;
-                return (
+        <FlatList
+          ref={flatListRef}
+          data={messages}
+          keyExtractor={(item: DisplayMessage) => item.id}
+          style={styles.messageList}
+          contentContainerStyle={styles.messageListContent}
+          renderItem={renderItem}
+          ListHeaderComponent={
+            !parentChannelId && subchannels.length > 0 ? (
+              <View style={styles.lifecyclePanel}>
+                <Text style={styles.lifecycleTitle}>{CHANGES_LABEL}</Text>
+                <Text style={styles.lifecycleHint}>
+                  People ask → Agent works → People approve → done
+                </Text>
+                {subchannels.map((sub) => (
                   <TouchableOpacity
-                    key={agent.agentId}
-                    style={[styles.askAgentChip, active && styles.askAgentChipActive]}
-                    onPress={() => setRequestingAgent(active ? null : agent)}
+                    key={sub.id}
+                    style={styles.lifecycleRow}
+                    onPress={() => handleSubchannelPress(sub.id)}
                   >
-                    <Text style={[styles.askAgentChipText, active && styles.askAgentChipTextActive]}>
-                      @{agent.displayName}
+                    <Text
+                      style={[styles.lifecycleState, sub.archived && styles.lifecycleStateArchived]}
+                    >
+                      {sub.archived ? 'Closed' : 'Live'}
                     </Text>
+                    <View style={styles.lifecycleInfo}>
+                      <Text style={styles.lifecycleBranch}>↳ {sub.id.slice(0, 12)}…</Text>
+                      <Text style={styles.lifecycleAgent}>agent {shortNpub(sub.openerPubkey)}</Text>
+                    </View>
+                    <Text style={styles.chevron}>›</Text>
                   </TouchableOpacity>
-                );
-              })}
-              <Text style={styles.askAgentHint}>agent opens the branch</Text>
+                ))}
+              </View>
+            ) : null
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyText}>No messages yet</Text>
             </View>
-          )}
-          <View style={styles.composer}>
-            <Text style={styles.composerPrefix}>›</Text>
-            <TextInput
-              style={styles.input}
-              value={inputText}
-              onChangeText={setInputText}
-              placeholder={requestingAgent
-                ? `ask ${requestingAgent.displayName} to start work…`
-                : parentChannelId ? 'steer the live agent…' : 'continue channel discussion…'}
-              placeholderTextColor={groknight.dim}
-              multiline
-            />
-            <TouchableOpacity
-              style={[
-                styles.sendButton,
-                (!inputText.trim() || sending) && styles.sendButtonDisabled,
-              ]}
-              onPress={handleSend}
-              disabled={!inputText.trim() || sending}
-            >
-              <Text style={styles.sendButtonText}>⏎</Text>
-            </TouchableOpacity>
+          }
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
+        />
+
+        {/* P2: Archived channels are read-only */}
+        {isArchived ? (
+          <View style={[styles.archivedInputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+            <Text style={styles.archivedInputText}>{ROOM_LABEL} archived (read-only)</Text>
           </View>
-        </View>
-      )}
+        ) : (
+          <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+            {!parentChannelId && !viewerIsAgent && availableAgents.length > 0 && (
+              <View style={styles.askAgentBar}>
+                <Text style={styles.askAgentLabel}>Ask an Agent</Text>
+                {availableAgents.map((agent) => {
+                  const active = requestingAgent?.pubkey === agent.pubkey;
+                  return (
+                    <TouchableOpacity
+                      key={agent.agentId}
+                      style={[styles.askAgentChip, active && styles.askAgentChipActive]}
+                      onPress={() => setRequestingAgent(active ? null : agent)}
+                    >
+                      <Text
+                        style={[styles.askAgentChipText, active && styles.askAgentChipTextActive]}
+                      >
+                        @{agent.displayName}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+            <View style={styles.composer}>
+              <Text style={styles.composerPrefix}>›</Text>
+              <TextInput
+                style={styles.input}
+                value={inputText}
+                onChangeText={setInputText}
+                placeholder={
+                  requestingAgent
+                    ? `ask ${requestingAgent.displayName} to start work…`
+                    : parentChannelId
+                      ? 'steer the live Agent…'
+                      : `continue ${ROOM_LABEL.toLowerCase()} discussion…`
+                }
+                placeholderTextColor={groknight.dim}
+                multiline
+              />
+              <TouchableOpacity
+                style={[
+                  styles.sendButton,
+                  (!inputText.trim() || sending) && styles.sendButtonDisabled,
+                ]}
+                onPress={handleSend}
+                disabled={!inputText.trim() || sending}
+              >
+                <Text style={[styles.sendButtonText, mergeTarget && styles.sendButtonTextQuiet]}>
+                  ⏎
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
       </KeyboardAvoidingView>
     </BuzzCommunityShell>
   );
@@ -744,7 +766,6 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 13,
     color: groknight.muted,
-    fontFamily: mono,
   },
 
   // ── Header ──────────────────────────────────────────────────────
@@ -764,7 +785,6 @@ const styles = StyleSheet.create({
   backText: {
     fontSize: 22,
     color: groknight.muted,
-    fontFamily: mono,
   },
   headerCenter: {
     flex: 1,
@@ -773,14 +793,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     color: groknight.textPrimary,
-    letterSpacing: 0.3,
-    fontFamily: mono,
   },
   headerMeta: {
     fontSize: 10,
     color: groknight.muted,
     marginTop: 2,
-    fontFamily: mono,
   },
   pathTag: {
     color: groknight.chrome,
@@ -794,8 +811,6 @@ const styles = StyleSheet.create({
   archivedBadgeText: {
     color: groknight.muted,
     fontSize: 10,
-    fontFamily: mono,
-    letterSpacing: 0.3,
   },
 
   // ── Message blocks ──────────────────────────────────────────────
@@ -824,8 +839,7 @@ const styles = StyleSheet.create({
   },
   roleLabel: {
     fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 0.8,
+    fontWeight: '600',
     marginBottom: 3,
   },
   roleAgent: {
@@ -838,42 +852,32 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: groknight.textSecondary,
     lineHeight: 18,
-    fontFamily: mono,
   },
   provenanceText: {
     fontSize: 9,
     color: groknight.dim,
     marginTop: 4,
-    fontFamily: mono,
   },
   workRequestBadge: {
     alignSelf: 'flex-start',
     color: groknight.accent,
-    borderWidth: 1,
-    borderColor: groknight.borderActive,
-    borderRadius: 3,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
     marginBottom: 5,
-    fontSize: 9,
-    fontWeight: '700',
-    fontFamily: mono,
+    fontSize: 10,
+    fontWeight: '600',
   },
 
   // ── Subchannel link ─────────────────────────────────────────────
   subchannelLinkBubble: {
-    backgroundColor: groknight.bgHighlight,
-    borderRadius: 4,
-    padding: 12,
-    marginBottom: 6,
-    borderLeftWidth: 2,
-    borderLeftColor: groknight.chrome,
+    paddingHorizontal: 10,
+    paddingVertical: 14,
+    marginBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.border,
   },
   subchannelLinkTitle: {
     fontSize: 11,
     fontWeight: '700',
     color: groknight.chrome,
-    fontFamily: mono,
   },
   subchannelLinkHeading: {
     flexDirection: 'row',
@@ -883,18 +887,11 @@ const styles = StyleSheet.create({
   },
   liveBadge: {
     color: groknight.accent,
-    borderWidth: 1,
-    borderColor: groknight.accent,
-    borderRadius: 3,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    fontFamily: mono,
-    fontWeight: '800',
-    fontSize: 9,
+    fontWeight: '600',
+    fontSize: 10,
   },
   openerBadge: {
     color: groknight.steel,
-    fontFamily: mono,
     fontSize: 9,
     marginBottom: 6,
   },
@@ -903,52 +900,40 @@ const styles = StyleSheet.create({
     color: groknight.muted,
     marginBottom: 8,
     lineHeight: 16,
-    fontFamily: mono,
   },
   subchannelLinkButton: {
-    backgroundColor: groknight.bgHover,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: groknight.border,
     paddingVertical: 6,
-    paddingHorizontal: 12,
     alignSelf: 'flex-start',
   },
   subchannelLinkButtonText: {
     color: groknight.textSecondary,
     fontSize: 11,
     fontWeight: '700',
-    fontFamily: mono,
-    letterSpacing: 0.3,
   },
 
   // ── Merge summary ───────────────────────────────────────────────
   mergeSummaryBubble: {
-    backgroundColor: groknight.bgBase,
-    borderRadius: 4,
-    padding: 10,
-    marginBottom: 6,
-    borderLeftWidth: 2,
-    borderLeftColor: groknight.chrome,
+    paddingHorizontal: 10,
+    paddingVertical: 12,
+    marginBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.border,
   },
   mergeSummaryTitle: {
     fontSize: 12,
     fontWeight: '700',
     color: groknight.chrome,
     marginBottom: 4,
-    fontFamily: mono,
   },
   mergeSummaryText: {
     fontSize: 12,
     color: groknight.textSecondary,
     lineHeight: 16,
-    fontFamily: mono,
   },
   mergeSummaryPubkey: {
     fontSize: 9,
     color: groknight.dim,
     marginTop: 4,
-    fontFamily: mono,
   },
 
   // ── Archived notice ─────────────────────────────────────────────
@@ -964,14 +949,13 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: groknight.muted,
     textAlign: 'center',
-    fontFamily: mono,
   },
 
   // ── Approval bar ────────────────────────────────────────────────
   approvalBar: {
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    backgroundColor: groknight.bgBase,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: groknight.bgTerminal,
     borderBottomWidth: 1,
     borderBottomColor: groknight.border,
     gap: 8,
@@ -982,30 +966,19 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   prChip: {
-    fontSize: 10,
+    fontSize: 14,
     fontWeight: '700',
-    paddingVertical: 3,
-    paddingHorizontal: 8,
-    borderRadius: 3,
-    letterSpacing: 0.3,
-    color: groknight.chrome,
-    backgroundColor: groknight.bgHighlight,
-    borderWidth: 1,
-    borderColor: groknight.borderActive,
-    fontFamily: mono,
-    overflow: 'hidden',
+    color: groknight.textPrimary,
   },
   approvalBarText: {
     flex: 1,
     fontSize: 10,
     color: groknight.muted,
-    fontFamily: mono,
   },
   humanBoundaryText: {
     color: groknight.steel,
-    fontFamily: mono,
-    fontSize: 9,
-    lineHeight: 13,
+    fontSize: 11,
+    lineHeight: 15,
   },
   approveButton: {
     borderWidth: 1,
@@ -1020,8 +993,6 @@ const styles = StyleSheet.create({
     color: groknight.bgTerminal,
     fontSize: 12,
     fontWeight: '800',
-    letterSpacing: 0.6,
-    fontFamily: mono,
   },
   approvalPending: {
     flexDirection: 'row',
@@ -1033,46 +1004,32 @@ const styles = StyleSheet.create({
   approvalStateText: {
     fontSize: 11,
     color: groknight.muted,
-    fontFamily: mono,
   },
   approvalSent: {
-    borderWidth: 1,
-    borderColor: groknight.borderActive,
-    borderRadius: 4,
     paddingVertical: 10,
-    paddingHorizontal: 14,
     alignItems: 'center',
-    backgroundColor: groknight.bgHighlight,
   },
   approvalSentText: {
     color: groknight.chrome,
     fontSize: 12,
-    fontWeight: '700',
-    fontFamily: mono,
+    fontWeight: '600',
   },
 
   // ── Parent channel lifecycle ───────────────────────────────────
   lifecyclePanel: {
-    borderWidth: 1,
-    borderColor: groknight.border,
-    borderRadius: 4,
-    backgroundColor: groknight.bgBase,
-    marginBottom: 10,
-    overflow: 'hidden',
+    marginBottom: 16,
+    paddingTop: 8,
   },
   lifecycleTitle: {
     color: groknight.textSecondary,
-    fontFamily: mono,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.8,
+    fontSize: 14,
+    fontWeight: '700',
     paddingHorizontal: 10,
     paddingTop: 9,
   },
   lifecycleHint: {
     color: groknight.dim,
-    fontFamily: mono,
-    fontSize: 9,
+    fontSize: 11,
     paddingHorizontal: 10,
     paddingTop: 3,
     paddingBottom: 7,
@@ -1089,23 +1046,16 @@ const styles = StyleSheet.create({
   },
   lifecycleState: {
     color: groknight.accent,
-    borderWidth: 1,
-    borderColor: groknight.accent,
-    borderRadius: 3,
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    fontFamily: mono,
-    fontSize: 8,
-    fontWeight: '800',
+    fontSize: 10,
+    fontWeight: '600',
   },
   lifecycleStateArchived: {
     color: groknight.muted,
-    borderColor: groknight.borderActive,
   },
   lifecycleInfo: { flex: 1, minWidth: 0 },
-  lifecycleBranch: { color: groknight.chrome, fontFamily: mono, fontSize: 11 },
-  lifecycleAgent: { color: groknight.dim, fontFamily: mono, fontSize: 9, marginTop: 2 },
-  chevron: { color: groknight.steel, fontFamily: mono, fontSize: 18 },
+  lifecycleBranch: { color: groknight.chrome, fontSize: 11 },
+  lifecycleAgent: { color: groknight.dim, fontSize: 9, marginTop: 2 },
+  chevron: { color: groknight.steel, fontSize: 18 },
 
   // ── Legacy subchannel links (empty state) ───────────────────────
   subchannelLinks: {
@@ -1117,8 +1067,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: groknight.muted,
     marginBottom: 8,
-    letterSpacing: 0.8,
-    fontFamily: mono,
   },
   subchannelLinkItem: {
     paddingVertical: 8,
@@ -1129,7 +1077,6 @@ const styles = StyleSheet.create({
   subchannelLinkItemText: {
     color: groknight.chrome,
     fontSize: 12,
-    fontFamily: mono,
   },
 
   // ── Composer ────────────────────────────────────────────────────
@@ -1142,7 +1089,6 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 13,
     color: groknight.muted,
-    fontFamily: mono,
   },
   inputBar: {
     paddingHorizontal: 8,
@@ -1161,10 +1107,8 @@ const styles = StyleSheet.create({
   },
   askAgentLabel: {
     color: groknight.steel,
-    fontFamily: mono,
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.6,
+    fontSize: 11,
+    fontWeight: '600',
   },
   askAgentChip: {
     borderWidth: 1,
@@ -1175,12 +1119,11 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgBase,
   },
   askAgentChipActive: {
-    borderColor: groknight.accent,
+    borderColor: groknight.textSecondary,
     backgroundColor: groknight.bgHighlight,
   },
-  askAgentChipText: { color: groknight.chrome, fontFamily: mono, fontSize: 10 },
-  askAgentChipTextActive: { color: groknight.accent, fontWeight: '800' },
-  askAgentHint: { color: groknight.dim, fontFamily: mono, fontSize: 9 },
+  askAgentChipText: { color: groknight.chrome, fontSize: 10 },
+  askAgentChipTextActive: { color: groknight.textPrimary, fontWeight: '700' },
   composer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1196,13 +1139,11 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: groknight.steel,
     marginRight: 8,
-    fontFamily: mono,
   },
   input: {
     flex: 1,
     fontSize: 12,
     color: groknight.textSecondary,
-    fontFamily: mono,
     paddingVertical: 2,
     maxHeight: 80,
   },
@@ -1217,6 +1158,7 @@ const styles = StyleSheet.create({
     color: groknight.accent,
     fontSize: 16,
   },
+  sendButtonTextQuiet: { color: groknight.textSecondary },
   archivedInputBar: {
     paddingHorizontal: 16,
     paddingTop: 12,
@@ -1230,6 +1172,5 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: groknight.muted,
     fontStyle: 'italic',
-    fontFamily: mono,
   },
 });

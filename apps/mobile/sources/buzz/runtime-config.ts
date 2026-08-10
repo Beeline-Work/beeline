@@ -1,6 +1,6 @@
 import { loadAppConfig } from '@/sync/appConfig';
 
-const DEFAULT_RELAY_URL = 'https://buzz.trustysquire.ai';
+const DEFAULT_RELAY_URL = 'https://relay.buzzrouter.com';
 const DEFAULT_PUSH_GATEWAY_URL = 'https://push.buzzrouter.com';
 const DEFAULT_SOUL_URL = 'https://soul.buzzrouter.com';
 

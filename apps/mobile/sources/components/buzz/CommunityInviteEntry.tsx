@@ -3,6 +3,7 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import type { Community } from '@beeline/buzz-client';
 import { groknight } from '@/buzz/groknight';
 import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
+import { Typography } from '@/constants/Typography';
 
 type CommunityInviteEntryProps = {
   community: Community | null;
@@ -66,7 +67,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 5,
   },
-  actionIcon: { color: groknight.steel, fontSize: 13 },
-  actionText: { color: groknight.textSecondary, fontSize: 13, fontWeight: '600' },
+  actionIcon: { ...Typography.default(), color: groknight.steel, fontSize: 13 },
+  actionText: {
+    ...Typography.default('semiBold'),
+    color: groknight.textSecondary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
   disabled: { opacity: 0.45 },
 });

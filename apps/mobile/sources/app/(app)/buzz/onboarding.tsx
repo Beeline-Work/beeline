@@ -16,6 +16,7 @@ import {
 } from '@/auth/buzz-identity-storage';
 import { groknight } from '@/buzz/groknight';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
+import { Typography } from '@/constants/Typography';
 
 export default function BuzzOnboarding() {
   const insets = useSafeAreaInsets();
@@ -178,6 +179,7 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgTerminal,
   },
   title: {
+    ...Typography.default('semiBold'),
     fontSize: 28,
     fontWeight: '800',
     color: groknight.textPrimary,
@@ -185,6 +187,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   subtitle: {
+    ...Typography.default(),
     fontSize: 13,
     color: groknight.muted,
     textAlign: 'center',
@@ -196,12 +199,14 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   sectionTitle: {
+    ...Typography.default('semiBold'),
     fontSize: 11,
     fontWeight: '700',
     color: groknight.muted,
     marginBottom: 10,
   },
   input: {
+    ...Typography.default(),
     borderWidth: 1,
     borderColor: groknight.border,
     borderRadius: 4,
@@ -223,6 +228,7 @@ const styles = StyleSheet.create({
     opacity: 0.4,
   },
   buttonText: {
+    ...Typography.default('semiBold'),
     color: groknight.bgTerminal,
     fontSize: 14,
     fontWeight: '700',
@@ -234,6 +240,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   secondaryButtonText: {
+    ...Typography.default('semiBold'),
     color: groknight.chrome,
     fontSize: 14,
     fontWeight: '600',
@@ -244,11 +251,13 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
   },
   guideToggleText: {
+    ...Typography.default('semiBold'),
     color: groknight.textSecondary,
     fontSize: 11,
     fontWeight: '700',
   },
   guideText: {
+    ...Typography.default(),
     color: groknight.muted,
     fontSize: 11,
     lineHeight: 17,
@@ -264,17 +273,20 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.border,
   },
   dividerText: {
+    ...Typography.default(),
     marginHorizontal: 12,
     color: groknight.dim,
     fontSize: 11,
   },
   hint: {
+    ...Typography.default(),
     fontSize: 12,
     color: groknight.muted,
     lineHeight: 16,
     marginTop: 4,
   },
   errorText: {
+    ...Typography.default(),
     color: groknight.chrome,
     fontSize: 14,
     lineHeight: 20,
@@ -287,6 +299,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   advancedText: {
+    ...Typography.default('semiBold'),
     color: groknight.muted,
     fontSize: 12,
     fontWeight: '700',

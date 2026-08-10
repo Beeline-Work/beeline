@@ -27,6 +27,7 @@ import { CHANGE_LABEL, CHANGES_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
+import { Typography } from '@/constants/Typography';
 
 type DisplayMessage = {
   id: string;
@@ -763,6 +764,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   loadingText: {
+    ...Typography.default(),
     marginTop: 12,
     fontSize: 13,
     color: groknight.muted,
@@ -783,6 +785,7 @@ const styles = StyleSheet.create({
     paddingRight: 4,
   },
   backText: {
+    ...Typography.default(),
     fontSize: 22,
     color: groknight.muted,
   },
@@ -790,16 +793,19 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   channelName: {
+    ...Typography.default('semiBold'),
     fontSize: 13,
     fontWeight: '800',
     color: groknight.textPrimary,
   },
   headerMeta: {
+    ...Typography.default(),
     fontSize: 10,
     color: groknight.muted,
     marginTop: 2,
   },
   pathTag: {
+    ...Typography.mono(),
     color: groknight.chrome,
   },
   archivedBadge: {
@@ -809,6 +815,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   archivedBadgeText: {
+    ...Typography.default(),
     color: groknight.muted,
     fontSize: 10,
   },
@@ -838,6 +845,7 @@ const styles = StyleSheet.create({
     borderLeftColor: groknight.textSecondary,
   },
   roleLabel: {
+    ...Typography.default('semiBold'),
     fontSize: 9,
     fontWeight: '600',
     marginBottom: 3,
@@ -849,16 +857,19 @@ const styles = StyleSheet.create({
     color: groknight.muted,
   },
   messageText: {
+    ...Typography.default(),
     fontSize: 13,
     color: groknight.textSecondary,
     lineHeight: 18,
   },
   provenanceText: {
+    ...Typography.mono(),
     fontSize: 9,
     color: groknight.dim,
     marginTop: 4,
   },
   workRequestBadge: {
+    ...Typography.default('semiBold'),
     alignSelf: 'flex-start',
     color: groknight.accent,
     marginBottom: 5,
@@ -875,6 +886,7 @@ const styles = StyleSheet.create({
     borderBottomColor: groknight.border,
   },
   subchannelLinkTitle: {
+    ...Typography.default('semiBold'),
     fontSize: 11,
     fontWeight: '700',
     color: groknight.chrome,
@@ -886,16 +898,19 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   liveBadge: {
+    ...Typography.default('semiBold'),
     color: groknight.accent,
     fontWeight: '600',
     fontSize: 10,
   },
   openerBadge: {
+    ...Typography.default(),
     color: groknight.steel,
     fontSize: 9,
     marginBottom: 6,
   },
   subchannelLinkText: {
+    ...Typography.default(),
     fontSize: 12,
     color: groknight.muted,
     marginBottom: 8,
@@ -906,6 +921,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   subchannelLinkButtonText: {
+    ...Typography.default('semiBold'),
     color: groknight.textSecondary,
     fontSize: 11,
     fontWeight: '700',
@@ -920,17 +936,20 @@ const styles = StyleSheet.create({
     borderBottomColor: groknight.border,
   },
   mergeSummaryTitle: {
+    ...Typography.default('semiBold'),
     fontSize: 12,
     fontWeight: '700',
     color: groknight.chrome,
     marginBottom: 4,
   },
   mergeSummaryText: {
+    ...Typography.default(),
     fontSize: 12,
     color: groknight.textSecondary,
     lineHeight: 16,
   },
   mergeSummaryPubkey: {
+    ...Typography.mono(),
     fontSize: 9,
     color: groknight.dim,
     marginTop: 4,
@@ -946,6 +965,7 @@ const styles = StyleSheet.create({
     maxWidth: '90%',
   },
   archivedText: {
+    ...Typography.default(),
     fontSize: 11,
     color: groknight.muted,
     textAlign: 'center',
@@ -966,16 +986,19 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   prChip: {
+    ...Typography.default('semiBold'),
     fontSize: 14,
     fontWeight: '700',
     color: groknight.textPrimary,
   },
   approvalBarText: {
+    ...Typography.default(),
     flex: 1,
     fontSize: 10,
     color: groknight.muted,
   },
   humanBoundaryText: {
+    ...Typography.default(),
     color: groknight.steel,
     fontSize: 11,
     lineHeight: 15,
@@ -990,6 +1013,7 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.accent,
   },
   approveButtonText: {
+    ...Typography.default('semiBold'),
     color: groknight.bgTerminal,
     fontSize: 12,
     fontWeight: '800',
@@ -1002,6 +1026,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   approvalStateText: {
+    ...Typography.default(),
     fontSize: 11,
     color: groknight.muted,
   },
@@ -1010,6 +1035,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   approvalSentText: {
+    ...Typography.default('semiBold'),
     color: groknight.chrome,
     fontSize: 12,
     fontWeight: '600',
@@ -1021,6 +1047,7 @@ const styles = StyleSheet.create({
     paddingTop: 8,
   },
   lifecycleTitle: {
+    ...Typography.default('semiBold'),
     color: groknight.textSecondary,
     fontSize: 14,
     fontWeight: '700',
@@ -1028,6 +1055,7 @@ const styles = StyleSheet.create({
     paddingTop: 9,
   },
   lifecycleHint: {
+    ...Typography.default(),
     color: groknight.dim,
     fontSize: 11,
     paddingHorizontal: 10,
@@ -1045,6 +1073,7 @@ const styles = StyleSheet.create({
     gap: 9,
   },
   lifecycleState: {
+    ...Typography.default('semiBold'),
     color: groknight.accent,
     fontSize: 10,
     fontWeight: '600',
@@ -1053,9 +1082,9 @@ const styles = StyleSheet.create({
     color: groknight.muted,
   },
   lifecycleInfo: { flex: 1, minWidth: 0 },
-  lifecycleBranch: { color: groknight.chrome, fontSize: 11 },
-  lifecycleAgent: { color: groknight.dim, fontSize: 9, marginTop: 2 },
-  chevron: { color: groknight.steel, fontSize: 18 },
+  lifecycleBranch: { ...Typography.mono(), color: groknight.chrome, fontSize: 11 },
+  lifecycleAgent: { ...Typography.mono(), color: groknight.dim, fontSize: 9, marginTop: 2 },
+  chevron: { ...Typography.default(), color: groknight.steel, fontSize: 18 },
 
   // ── Legacy subchannel links (empty state) ───────────────────────
   subchannelLinks: {
@@ -1063,6 +1092,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   subchannelLinksTitle: {
+    ...Typography.default('semiBold'),
     fontSize: 11,
     fontWeight: '700',
     color: groknight.muted,
@@ -1075,6 +1105,7 @@ const styles = StyleSheet.create({
     borderBottomColor: groknight.border,
   },
   subchannelLinkItemText: {
+    ...Typography.default(),
     color: groknight.chrome,
     fontSize: 12,
   },
@@ -1087,6 +1118,7 @@ const styles = StyleSheet.create({
     paddingTop: 60,
   },
   emptyText: {
+    ...Typography.default(),
     fontSize: 13,
     color: groknight.muted,
   },
@@ -1106,6 +1138,7 @@ const styles = StyleSheet.create({
     marginBottom: 7,
   },
   askAgentLabel: {
+    ...Typography.default('semiBold'),
     color: groknight.steel,
     fontSize: 11,
     fontWeight: '600',
@@ -1122,7 +1155,7 @@ const styles = StyleSheet.create({
     borderColor: groknight.textSecondary,
     backgroundColor: groknight.bgHighlight,
   },
-  askAgentChipText: { color: groknight.chrome, fontSize: 10 },
+  askAgentChipText: { ...Typography.default(), color: groknight.chrome, fontSize: 10 },
   askAgentChipTextActive: { color: groknight.textPrimary, fontWeight: '700' },
   composer: {
     flexDirection: 'row',
@@ -1135,12 +1168,14 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgBase,
   },
   composerPrefix: {
+    ...Typography.default('semiBold'),
     fontSize: 14,
     fontWeight: '800',
     color: groknight.steel,
     marginRight: 8,
   },
   input: {
+    ...Typography.default(),
     flex: 1,
     fontSize: 12,
     color: groknight.textSecondary,
@@ -1155,6 +1190,7 @@ const styles = StyleSheet.create({
     opacity: 0.3,
   },
   sendButtonText: {
+    ...Typography.default(),
     color: groknight.accent,
     fontSize: 16,
   },
@@ -1169,6 +1205,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   archivedInputText: {
+    ...Typography.default('italic'),
     fontSize: 11,
     color: groknight.muted,
     fontStyle: 'italic',

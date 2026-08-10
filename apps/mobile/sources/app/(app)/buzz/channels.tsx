@@ -30,6 +30,7 @@ import { CommunityInviteEntry } from '@/components/buzz/CommunityInviteEntry';
 import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
 import { BuzzRigTransport } from '@/sync/transport';
 import type { SessionSummary } from '@/sync/transport';
+import { Typography } from '@/constants/Typography';
 
 type ChannelDisplayItem = SessionSummary & {
   archived?: boolean;
@@ -603,7 +604,7 @@ export default function BuzzChannels() {
 const styles = StyleSheet.create({
   container: { flex: 1, minWidth: 0, backgroundColor: groknight.bgTerminal },
   center: { alignItems: 'center', justifyContent: 'center' },
-  loadingText: { marginTop: 12, color: groknight.muted, fontSize: 13 },
+  loadingText: { ...Typography.default(), marginTop: 12, color: groknight.muted, fontSize: 13 },
   header: {
     minHeight: 58,
     paddingHorizontal: 12,
@@ -616,7 +617,12 @@ const styles = StyleSheet.create({
     borderBottomColor: groknight.border,
   },
   headerIdentity: { flex: 1, minWidth: 0 },
-  headerTitle: { color: groknight.textPrimary, fontSize: 17, fontWeight: '700' },
+  headerTitle: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 17,
+    fontWeight: '700',
+  },
   headerActions: { flexDirection: 'row', gap: 2, marginLeft: 8 },
   iconButton: {
     minWidth: 34,
@@ -625,7 +631,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  iconButtonText: { color: groknight.steel, fontSize: 17 },
+  iconButtonText: { ...Typography.default(), color: groknight.steel, fontSize: 17 },
   actionPanel: {
     paddingHorizontal: 16,
     paddingVertical: 16,
@@ -643,11 +649,13 @@ const styles = StyleSheet.create({
   },
   backupNudgeCopy: { flex: 1, minWidth: 0 },
   backupNudgeTitle: {
+    ...Typography.default('semiBold'),
     color: groknight.textPrimary,
     fontSize: 13,
     fontWeight: '700',
   },
   backupNudgeText: {
+    ...Typography.default(),
     marginTop: 3,
     color: groknight.muted,
     fontSize: 11,
@@ -660,9 +668,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  nudgeActionText: { color: groknight.textSecondary, fontSize: 12, fontWeight: '600' },
+  nudgeActionText: {
+    ...Typography.default('semiBold'),
+    color: groknight.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
   dismissNudge: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  dismissNudgeText: { color: groknight.steel, fontSize: 20, lineHeight: 22 },
+  dismissNudgeText: {
+    ...Typography.default(),
+    color: groknight.steel,
+    fontSize: 20,
+    lineHeight: 22,
+  },
   identitySettingsRow: {
     minHeight: 52,
     marginBottom: 16,
@@ -673,13 +691,24 @@ const styles = StyleSheet.create({
     borderBottomColor: groknight.border,
   },
   identitySettingsCopy: { flex: 1, minWidth: 0 },
-  identitySettingsTitle: { color: groknight.textPrimary, fontSize: 13, fontWeight: '700' },
+  identitySettingsTitle: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 13,
+    fontWeight: '700',
+  },
   identitySettingsSubtitle: {
+    ...Typography.default(),
     marginTop: 3,
     color: groknight.muted,
     fontSize: 11,
   },
-  identitySettingsChevron: { marginLeft: 8, color: groknight.chrome, fontSize: 22 },
+  identitySettingsChevron: {
+    ...Typography.default(),
+    marginLeft: 8,
+    color: groknight.chrome,
+    fontSize: 22,
+  },
   invitePanel: {
     paddingHorizontal: 16,
     paddingVertical: 16,
@@ -687,11 +716,24 @@ const styles = StyleSheet.create({
     borderBottomColor: groknight.border,
     backgroundColor: groknight.bgTerminal,
   },
-  panelTitle: { marginBottom: 9, color: groknight.textPrimary, fontSize: 15, fontWeight: '700' },
-  fieldLabel: { marginBottom: 7, color: groknight.textSecondary, fontSize: 12, fontWeight: '600' },
-  inviteUrl: { color: groknight.muted, fontSize: 11, lineHeight: 16 },
+  panelTitle: {
+    ...Typography.default('semiBold'),
+    marginBottom: 9,
+    color: groknight.textPrimary,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  fieldLabel: {
+    ...Typography.default('semiBold'),
+    marginBottom: 7,
+    color: groknight.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  inviteUrl: { ...Typography.default(), color: groknight.muted, fontSize: 11, lineHeight: 16 },
   inlineForm: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   input: {
+    ...Typography.default(),
     flex: 1,
     minWidth: 0,
     minHeight: 40,
@@ -714,6 +756,7 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.accent,
   },
   primarySmallButtonText: {
+    ...Typography.default('semiBold'),
     color: groknight.bgTerminal,
     fontWeight: '700',
     fontSize: 13,
@@ -724,7 +767,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  secondarySmallButtonText: { color: groknight.textSecondary, fontSize: 12, fontWeight: '600' },
+  secondarySmallButtonText: {
+    ...Typography.default('semiBold'),
+    color: groknight.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
   disabled: { opacity: 0.45 },
   errorPanel: {
     paddingHorizontal: 14,
@@ -733,8 +781,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: groknight.borderActive,
   },
-  errorText: { color: groknight.chrome, fontSize: 11, lineHeight: 16 },
+  errorText: { ...Typography.default(), color: groknight.chrome, fontSize: 11, lineHeight: 16 },
   retryText: {
+    ...Typography.default('semiBold'),
     marginTop: 5,
     color: groknight.textSecondary,
     fontSize: 11,
@@ -752,6 +801,7 @@ const styles = StyleSheet.create({
   },
   subchannelItem: { paddingLeft: 25, backgroundColor: groknight.bgBase },
   channelIcon: {
+    ...Typography.default('semiBold'),
     width: 25,
     color: groknight.steel,
     fontSize: 15,
@@ -759,10 +809,17 @@ const styles = StyleSheet.create({
   },
   channelInfo: { flex: 1, minWidth: 0 },
   channelTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  channelTitle: { flexShrink: 1, color: groknight.textPrimary, fontSize: 14, fontWeight: '700' },
-  subchannelTitle: { color: groknight.textSecondary, fontSize: 13 },
+  channelTitle: {
+    ...Typography.default('semiBold'),
+    flexShrink: 1,
+    color: groknight.textPrimary,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  subchannelTitle: { ...Typography.default(), color: groknight.textSecondary, fontSize: 13 },
   archivedTitle: { color: groknight.muted },
   metaTag: {
+    ...Typography.default(),
     paddingHorizontal: 5,
     paddingVertical: 2,
     color: groknight.steel,
@@ -771,14 +828,16 @@ const styles = StyleSheet.create({
     fontSize: 9,
   },
   channelMeta: {
+    ...Typography.default(),
     marginTop: 4,
     color: groknight.dim,
     fontSize: 9,
   },
-  chevron: { marginLeft: 8, color: groknight.gutter, fontSize: 22 },
+  chevron: { ...Typography.default(), marginLeft: 8, color: groknight.gutter, fontSize: 22 },
   emptyContainer: { flexGrow: 1 },
   emptyState: { flex: 1, paddingHorizontal: 22, alignItems: 'center', justifyContent: 'center' },
   emptyGlyph: {
+    ...Typography.default(),
     width: 44,
     height: 44,
     borderWidth: 1,
@@ -790,6 +849,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   emptyTitle: {
+    ...Typography.default('semiBold'),
     marginTop: 12,
     color: groknight.textPrimary,
     fontSize: 16,
@@ -797,6 +857,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   emptySubtitle: {
+    ...Typography.default(),
     marginTop: 7,
     color: groknight.muted,
     fontSize: 12,
@@ -813,6 +874,7 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.accent,
   },
   primaryButtonText: {
+    ...Typography.default('semiBold'),
     color: groknight.bgTerminal,
     fontWeight: '700',
     fontSize: 13,

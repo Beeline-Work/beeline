@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { signEvent } from '@buzzy/nostr';
+import { signEvent } from '@beeline/nostr';
 import { createBuzzClient } from './client.js';
 import { createIdentity } from './identity.js';
 import { DEFAULT_BASE_URL, DEFAULT_HOST, isRelayUp, uniqueMarker } from './live-helpers.js';

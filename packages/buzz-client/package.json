@@ -1,5 +1,5 @@
 {
-  "name": "@buzzy/buzz-client",
+  "name": "@beeline/buzz-client",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -16,11 +16,11 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "pretest:live": "npm run build -w @buzzy/nostr && npm run build -w @buzzy/buzz-client",
+    "pretest:live": "npm run build -w @beeline/nostr && npm run build -w @beeline/buzz-client",
     "test:live": "vitest run --config vitest.live.config.ts"
   },
   "dependencies": {
-    "@buzzy/nostr": "*",
+    "@beeline/nostr": "*",
     "@noble/hashes": "^2.3.0"
   },
   "devDependencies": {

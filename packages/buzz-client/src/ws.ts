@@ -5,7 +5,7 @@
  * Node ≥22 and browsers. React Native injects its own via `WebSocketImpl`.
  * No Node-only `ws` package in the core path.
  */
-import { signEvent, type NostrEvent } from '@buzzy/nostr';
+import { signEvent, type NostrEvent } from '@beeline/nostr';
 import { KIND_AUTH } from './kinds.js';
 import type { Identity, WebSocketConstructor, WebSocketLike } from './types.js';
 

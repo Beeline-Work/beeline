@@ -1,5 +1,5 @@
 {
-  "name": "@buzzy/body",
+  "name": "@beeline/body",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -20,13 +20,13 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "pretest:live": "npm run build -w @buzzy/nostr && npm run build -w @buzzy/gate && npm run build -w @buzzy/body",
+    "pretest:live": "npm run build -w @beeline/nostr && npm run build -w @beeline/gate && npm run build -w @beeline/body",
     "test:live": "vitest run --config vitest.live.config.ts"
   },
   "dependencies": {
-    "@buzzy/buzz-client": "*",
-    "@buzzy/gate": "*",
-    "@buzzy/nostr": "*"
+    "@beeline/buzz-client": "*",
+    "@beeline/gate": "*",
+    "@beeline/nostr": "*"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",

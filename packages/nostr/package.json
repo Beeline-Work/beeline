@@ -1,5 +1,5 @@
 {
-  "name": "@buzzy/nostr",
+  "name": "@beeline/nostr",
   "version": "0.0.0",
   "private": true,
   "type": "module",

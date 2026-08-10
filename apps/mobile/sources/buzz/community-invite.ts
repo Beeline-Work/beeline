@@ -9,7 +9,7 @@ import {
   type Community,
   type CommunityInviteRecord,
   type Identity,
-} from '@buzzy/buzz-client';
+} from '@beeline/buzz-client';
 import { WORKSPACE_LABEL } from './vocabulary';
 
 export const COMMUNITY_INVITE_ORIGIN = 'https://buzzrouter.com';

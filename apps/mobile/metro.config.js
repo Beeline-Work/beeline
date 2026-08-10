@@ -6,7 +6,7 @@ const config = getDefaultConfig(__dirname, {
   isCSSEnabled: true,
 });
 
-// @buzzy/buzz-client and @buzzy/nostr are file: symlinks to ../../packages/*.
+// @beeline/buzz-client and @beeline/nostr are file: symlinks to ../../packages/*.
 // Metro must (a) follow symlinks, (b) watch the real package dirs, and
 // (c) resolve their transitive deps from root node_modules.
 config.resolver.unstable_enableSymlinks = true;

@@ -2,7 +2,7 @@
 /**
  * Provision a Buzz identity + channel + marker message for the emulator smoke test.
  */
-import { createBuzzClient, createIdentity, identityNsec, identityNpub } from '@buzzy/buzz-client';
+import { createBuzzClient, createIdentity, identityNsec, identityNpub } from '@beeline/buzz-client';
 
 const RELAY = process.env.RELAY_URL || 'https://buzz.trustysquire.ai';
 

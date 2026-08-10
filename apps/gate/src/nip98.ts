@@ -16,4 +16,4 @@
  * `git-credential-nostr` helper: that helper emits the git >=2.46 `authtype`/
  * `credential` capability, which the installed git 2.43 silently ignores.
  */
-export { buildNip98Event, nip98AuthHeader, NIP98_KIND } from '@buzzy/nostr';
+export { buildNip98Event, nip98AuthHeader, NIP98_KIND } from '@beeline/nostr';

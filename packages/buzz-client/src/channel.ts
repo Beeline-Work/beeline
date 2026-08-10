@@ -5,7 +5,7 @@
  * (39002 / 39000). **Never treat an accepted publish as proof of effect** —
  * assert membership via query of 39002 (see assertMember / waitUntilMember).
  */
-import { signEvent, type NostrEvent } from '@buzzy/nostr';
+import { signEvent, type NostrEvent } from '@beeline/nostr';
 import {
   KIND_CHANNEL_MEMBERS,
   KIND_CHANNEL_METADATA,

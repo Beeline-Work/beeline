@@ -1,4 +1,4 @@
-import type { NostrEvent } from '@buzzy/nostr';
+import type { NostrEvent } from '@beeline/nostr';
 
 /** A keypair used as a client identity. */
 export interface Identity {

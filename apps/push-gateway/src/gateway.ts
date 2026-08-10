@@ -1,5 +1,5 @@
-import type { BuzzClient } from '@buzzy/buzz-client';
-import type { NostrEvent } from '@buzzy/nostr';
+import type { BuzzClient } from '@beeline/buzz-client';
+import type { NostrEvent } from '@beeline/nostr';
 import type { BatchResponse, Messaging } from 'firebase-admin/messaging';
 import { mapEventToNotification } from './mapping.js';
 import { TokenRegistry } from './registry.js';

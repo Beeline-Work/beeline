@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { createBuzzClient, type Community, type Identity } from '@buzzy/buzz-client';
+import { createBuzzClient, type Community, type Identity } from '@beeline/buzz-client';
 import {
   generateBuzzIdentity,
   getEffectiveRelayUrl,

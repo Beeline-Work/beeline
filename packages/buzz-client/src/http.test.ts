@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { signEvent, verifyEvent, type NostrEvent } from '@buzzy/nostr';
+import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { createIdentity } from './identity.js';
 import { publishEvent, queryEvents, type HttpBridgeOptions } from './http.js';
 

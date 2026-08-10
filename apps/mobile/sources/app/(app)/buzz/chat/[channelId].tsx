@@ -13,9 +13,9 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
-  KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router, type Href } from 'expo-router';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
@@ -32,6 +32,7 @@ import type { SessionEvent } from '@/sync/transport';
 import { groknight } from '@/buzz/groknight';
 import { CHANGE_LABEL, CHANGES_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
+import { countRoomParticipants } from '@/buzz/room-participants';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
@@ -175,6 +176,8 @@ export default function BuzzChat() {
   const [availableAgents, setAvailableAgents] = useState<Agent[]>([]);
   const [requestingAgent, setRequestingAgent] = useState<Agent | null>(null);
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
+  const [roomName, setRoomName] = useState(ROOM_LABEL);
+  const [participantCounts, setParticipantCounts] = useState({ humans: 0, agents: 0 });
 
   // Helper to add new messages, deduplicating by id.
   const addMessages = useCallback((newMsgs: DisplayMessage[]) => {
@@ -205,10 +208,13 @@ export default function BuzzChat() {
         setUserPubkey(identity.publicKey);
 
         const client = await t.ensureClient();
-        const [availableCommunities, channelCommunityId] = await Promise.all([
-          client.listCommunities(),
-          client.getChannelCommunityId(decodedId),
-        ]);
+        const [availableCommunities, channelCommunityId, channelMetadata, roomMembers] =
+          await Promise.all([
+            client.listCommunities(),
+            client.getChannelCommunityId(decodedId),
+            client.getChannelMetadata(decodedId),
+            client.listMembers(decodedId),
+          ]);
         const [communityAgents, identityIsAgent] = await Promise.all([
           channelCommunityId ? client.listAgents(channelCommunityId) : Promise.resolve([]),
           client.isAgentIdentity(identity.publicKey),
@@ -218,6 +224,8 @@ export default function BuzzChat() {
           setActiveCommunityId(channelCommunityId);
           setAvailableAgents(communityAgents);
           setViewerIsAgent(identityIsAgent);
+          setRoomName(channelMetadata?.name?.trim() || ROOM_LABEL);
+          setParticipantCounts(countRoomParticipants(roomMembers, communityAgents));
         }
         await Promise.all([
           saveActiveCommunityId(identity.publicKey, channelCommunityId),
@@ -607,7 +615,7 @@ export default function BuzzChat() {
     >
       <KeyboardAvoidingView
         style={[styles.container, { paddingTop: insets.top }]}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         {/* Header */}
@@ -617,13 +625,18 @@ export default function BuzzChat() {
           </TouchableOpacity>
           <View style={styles.headerCenter}>
             <Text style={styles.channelName} numberOfLines={1}>
-              {decodedId.slice(0, 12)}…
+              {roomName}
             </Text>
-            {mergeTarget && (
-              <Text style={styles.headerMeta}>
-                <Text style={styles.pathTag}>{mergeTarget.repo}</Text>
-              </Text>
-            )}
+            <Text style={styles.headerMeta} numberOfLines={1}>
+              {participantCounts.humans} {participantCounts.humans === 1 ? 'human' : 'humans'} ·{' '}
+              {participantCounts.agents} {participantCounts.agents === 1 ? 'agent' : 'agents'}
+              {mergeTarget && (
+                <>
+                  {' · '}
+                  <Text style={styles.pathTag}>{mergeTarget.repo}</Text>
+                </>
+              )}
+            </Text>
           </View>
           {isArchived && (
             <View style={styles.archivedBadge}>

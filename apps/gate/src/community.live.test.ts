@@ -1,7 +1,8 @@
 /**
  * Live community proof against the real Buzz relay:
  * create community → linked channel → mint invite → redeem as identity B →
- * identity B discovers the community and its channel from relay state.
+ * identity B becomes a direct channel member and publishes a message that the
+ * owner reads from the existing channel.
  */
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createBuzzClient, createIdentity } from '@beeline/buzz-client';
@@ -28,7 +29,7 @@ describe.runIf(reachable)('live community + invite relay flow', () => {
     console.log(`[live-community] relay reachable at ${BASE_URL} — running suite`);
   });
 
-  it('restored identity lists an invited community and its linked channels', async () => {
+  it('invitee joins and steers an existing community channel', async () => {
     const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     const owner = createIdentity('community-owner');
     const joiner = createIdentity('community-joiner');
@@ -62,6 +63,25 @@ describe.runIf(reachable)('live community + invite relay flow', () => {
     const channels = await joinerClient.communityChannels(communityId);
     expect(channels).toContain(channelId);
     expect(await joinerClient.getChannelCommunityId(channelId)).toBe(communityId);
+    await joinerClient.waitUntilMember(channelId, joiner.publicKey);
+
+    const messageText = `steer-existing-room-${runId}`;
+    const publishedMessage = await joinerClient.messageSubmit(channelId, messageText);
+    expect(publishedMessage.pubkey).toBe(joiner.publicKey);
+
+    let visibleMessage = false;
+    const deadline = Date.now() + 20_000;
+    while (!visibleMessage && Date.now() < deadline) {
+      const events = await ownerClient.sessionEventsBackfill(channelId, { limit: 100 });
+      visibleMessage = events.some(
+        (event) =>
+          event.id === publishedMessage.id &&
+          event.pubkey === joiner.publicKey &&
+          event.content === messageText,
+      );
+      if (!visibleMessage) await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    expect(visibleMessage).toBe(true);
 
     const members = await joinerClient.communityMembers(communityId);
     expect(members).toEqual(
@@ -74,7 +94,8 @@ describe.runIf(reachable)('live community + invite relay flow', () => {
     console.log(
       `[live-community] PASS community=${communityId} channel=${channelId} ` +
         `owner=${owner.publicKey.slice(0, 12)} joiner=${joiner.publicKey.slice(0, 12)} ` +
-        `communities=${communities.length} channels=${channels.length} members=${members.length}`,
+        `communities=${communities.length} channels=${channels.length} members=${members.length} ` +
+        `message=${publishedMessage.id.slice(0, 12)}`,
     );
   }, 90_000);
 });

@@ -27,7 +27,7 @@ const NSEC_STORAGE_OPTIONS: SecureStore.SecureStoreOptions = {
   keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
 };
 
-export const DEFAULT_RELAY_URL = 'https://buzz.trustysquire.ai';
+export const DEFAULT_RELAY_URL = 'https://relay.buzzrouter.com';
 
 function isWeb(): boolean {
   return (

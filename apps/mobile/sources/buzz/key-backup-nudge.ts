@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const BACKUP_NUDGE_PREFIX = '@buzzy/identity/backup-nudge-dismissed/';
+const BACKUP_NUDGE_PREFIX = '@beeline/identity/backup-nudge-dismissed/';
 
 function backupNudgeKey(pubkey: string): string {
   return `${BACKUP_NUDGE_PREFIX}${pubkey}`;

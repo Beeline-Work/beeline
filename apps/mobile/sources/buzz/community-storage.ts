@@ -1,8 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const ACTIVE_COMMUNITY_PREFIX = '@buzzy/community/active/';
-const LAST_CHANNEL_PREFIX = '@buzzy/community/last-channel/';
-const PERSONAL_COMMUNITY_PREFIX = '@buzzy/workspace/personal/';
+const ACTIVE_COMMUNITY_PREFIX = '@beeline/community/active/';
+const LAST_CHANNEL_PREFIX = '@beeline/community/last-channel/';
+const PERSONAL_COMMUNITY_PREFIX = '@beeline/workspace/personal/';
 const STANDALONE_SCOPE = 'standalone';
 
 function activeCommunityKey(pubkey: string): string {

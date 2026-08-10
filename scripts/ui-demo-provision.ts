@@ -23,14 +23,14 @@ import {
   publishEvent,
   buildApproval,
   attemptMerge,
-} from '@buzzy/gate';
+} from '@beeline/gate';
 import {
   createIdentity,
   identityNpub,
   identityNsec,
   createSubchannel as buzzCreateSubchannel,
-} from '@buzzy/buzz-client';
-import { signEvent } from '@buzzy/nostr';
+} from '@beeline/buzz-client';
+import { signEvent } from '@beeline/nostr';
 
 const RUN_MARKER = `uidemo-${randomUUID().slice(0, 8)}`;
 

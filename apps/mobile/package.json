@@ -1,5 +1,5 @@
 {
-  "name": "@buzzy/mobile",
+  "name": "@beeline/mobile",
   "main": "index.ts",
   "version": "1.0.0",
   "scripts": {
@@ -46,8 +46,8 @@
     "preset": "jest-expo"
   },
   "dependencies": {
-    "@buzzy/buzz-client": "file:../../packages/buzz-client",
-    "@buzzy/nostr": "file:../../packages/nostr",
+    "@beeline/buzz-client": "file:../../packages/buzz-client",
+    "@beeline/nostr": "file:../../packages/nostr",
     "@codemirror/lang-cpp": "^6.0.3",
     "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-go": "^6.0.1",

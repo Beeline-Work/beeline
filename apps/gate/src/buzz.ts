@@ -15,7 +15,7 @@
  *     The 30617 signer is the repo OWNER and always resolves to MemberRole::Owner.
  */
 import { randomUUID } from 'node:crypto';
-import { signEvent, type NostrEvent } from '@buzzy/nostr';
+import { signEvent, type NostrEvent } from '@beeline/nostr';
 import { publishEvent } from './relay.js';
 import type { Identity } from './identity.js';
 

@@ -14,7 +14,7 @@ import {
   identityNsec,
   identityNpub,
   type Identity,
-} from '@buzzy/buzz-client';
+} from '@beeline/buzz-client';
 import * as SecureStore from 'expo-secure-store';
 
 // SecureStore on Android requires keys matching [A-Za-z0-9._-]+

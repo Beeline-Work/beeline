@@ -3,7 +3,7 @@
  *
  * Speaks only to real Buzz (HTTP bridge + WS + signed events). UI-agnostic.
  */
-import type { NostrEvent } from '@buzzy/nostr';
+import type { NostrEvent } from '@beeline/nostr';
 import { buildMergeApproval } from './approval.js';
 import {
   createAgent,

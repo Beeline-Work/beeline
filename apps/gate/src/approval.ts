@@ -17,7 +17,7 @@
  * tip is a different `tip` tag and fails check (3). Note kind:46011 is a Buzz
  * *workflow* kind, deliberately NOT reused here.
  */
-import { signEvent, verifyEvent, type NostrEvent } from '@buzzy/nostr';
+import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import type { Identity } from './identity.js';
 import { KIND_STREAM_MESSAGE } from './buzz.js';
 

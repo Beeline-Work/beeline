@@ -1,4 +1,4 @@
-import type { NostrEvent } from '@buzzy/nostr';
+import type { NostrEvent } from '@beeline/nostr';
 
 const tagValue = (event: NostrEvent, name: string): string | undefined =>
   event.tags.find((tag) => tag[0] === name)?.[1];

@@ -6,8 +6,8 @@ import { describe, it, expect } from 'vitest';
 import { hasWriteTools, inventoryForMcpServers } from './mcp-inventory.js';
 import { parseEnvFile, hasLlmCredentials } from './config.js';
 import { AGENT_REQUEST_TAG, Body, isChannelTaskRequest } from './body.js';
-import { newIdentity } from '@buzzy/gate';
-import { signEvent } from '@buzzy/nostr';
+import { newIdentity } from '@beeline/gate';
+import { signEvent } from '@beeline/nostr';
 
 describe('mcp-inventory', () => {
   it('hasWriteTools returns false for empty list', () => {

@@ -1,5 +1,5 @@
 /**
- * Public surface of `@buzzy/body` — agent body service.
+ * Public surface of `@beeline/body` — agent body service.
  */
 export {
   Body,

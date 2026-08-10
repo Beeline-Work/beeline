@@ -15,7 +15,7 @@ const buzzClient = vi.hoisted(() => ({
 }));
 
 vi.mock('expo-secure-store', () => secureStore);
-vi.mock('@buzzy/buzz-client', () => buzzClient);
+vi.mock('@beeline/buzz-client', () => buzzClient);
 
 import {
   loadBuzzIdentity,

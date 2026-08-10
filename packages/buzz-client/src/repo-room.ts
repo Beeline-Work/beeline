@@ -1,6 +1,6 @@
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { verifyEvent } from '@beeline/nostr';
+import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 import {
   createChannel,
   isMember,
@@ -9,9 +9,15 @@ import {
   type ChannelOpsContext,
 } from './channel.js';
 import { queryEvents } from './http.js';
-import { KIND_CREATE_GROUP, KIND_PUT_USER, TAG_COMMUNITY } from './kinds.js';
+import {
+  KIND_CHANNEL_ADMINS,
+  KIND_CHANNEL_MEMBERS,
+  KIND_CREATE_GROUP,
+  KIND_PUT_USER,
+  TAG_COMMUNITY,
+} from './kinds.js';
 import { tagValue } from './parse.js';
-import type { RepositoryBinding } from './types.js';
+import type { CommunityRole, RepositoryBinding } from './types.js';
 
 function roomUuid(communityId: string, repositoryKey: string): string {
   const hex = bytesToHex(sha256(utf8ToBytes(`${communityId}:${repositoryKey}`)));
@@ -48,22 +54,90 @@ async function waitUntilRole(
   ctx: ChannelOpsContext,
   channelId: string,
   pubkey: string,
-  role: string,
+  role: CommunityRole,
 ): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < 15_000) {
-    // The 39002 member projection may omit elevated role labels. The signed
-    // kind-9000 history is the authority used by git policy and the merge gate.
-    const events = await queryEvents(
-      ctx.http,
-      [{ kinds: [KIND_PUT_USER], '#h': [channelId], '#p': [pubkey], limit: 20 }],
-      ctx.identity.publicKey,
-    );
-    const latest = events.sort((a, b) => b.created_at - a.created_at)[0];
-    if (latest && (tagValue(latest, 'role') ?? 'member') === role) return;
+    const current = await projectedRoomRole(ctx, channelId, pubkey);
+    if (current === role) return;
     await new Promise((resolveWait) => setTimeout(resolveWait, 300));
   }
+  const lastEvents: NostrEvent[] = await queryEvents(
+    ctx.http,
+    [{ kinds: [KIND_PUT_USER], '#h': [channelId], '#p': [pubkey], limit: 20 }],
+    ctx.identity.publicKey,
+  );
+  console.error(
+    `[repo-room] role wait timeout: ${JSON.stringify({
+      channelId,
+      pubkey,
+      expectedRole: role,
+      events: lastEvents.map((event) => ({
+        id: event.id,
+        pubkey: event.pubkey,
+        created_at: event.created_at,
+        tags: event.tags,
+      })),
+    })}`,
+  );
   throw new Error(`role ${role} not visible for ${pubkey.slice(0, 12)}… in ${channelId}`);
+}
+
+async function queryRoomProjection(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  kind: number,
+): Promise<NostrEvent[]> {
+  const byD = await queryEvents(
+    ctx.http,
+    [{ kinds: [kind], '#d': [channelId], limit: 5 }],
+    ctx.identity.publicKey,
+  );
+  if (byD.length > 0) return byD;
+  return queryEvents(
+    ctx.http,
+    [{ kinds: [kind], '#h': [channelId], limit: 5 }],
+    ctx.identity.publicKey,
+  );
+}
+
+function latestProjection(events: NostrEvent[]): NostrEvent | undefined {
+  return [...events].sort((a, b) => {
+    if (a.created_at !== b.created_at) return b.created_at - a.created_at;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  })[0];
+}
+
+async function projectedRoomRole(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  pubkey: string,
+): Promise<CommunityRole | null> {
+  const admins = latestProjection(await queryRoomProjection(ctx, channelId, KIND_CHANNEL_ADMINS));
+  const adminTag = admins?.tags.find((tag) => tag[0] === 'p' && tag[1] === pubkey);
+  if (adminTag) return adminTag[3] === 'owner' || adminTag[2] === 'owner' ? 'owner' : 'admin';
+
+  const members = latestProjection(await queryRoomProjection(ctx, channelId, KIND_CHANNEL_MEMBERS));
+  return members?.tags.some((tag) => tag[0] === 'p' && tag[1] === pubkey) ? 'member' : null;
+}
+
+async function ensureExistingAdmin(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  pubkey: string,
+): Promise<void> {
+  const current = await projectedRoomRole(ctx, channelId, pubkey);
+  if (current === 'owner' || current === 'admin') return;
+
+  const actorRole = await projectedRoomRole(ctx, channelId, ctx.identity.publicKey);
+  if (actorRole !== 'owner' && actorRole !== 'admin') {
+    throw new Error(
+      `required admin role missing for ${pubkey.slice(0, 12)}… in ${channelId}; ` +
+        `current client is ${actorRole ?? 'not a member'} and cannot grant it`,
+    );
+  }
+  await setMemberRole(ctx, channelId, pubkey, 'admin');
+  await waitUntilRole(ctx, channelId, pubkey, 'admin');
 }
 
 /** Find the single Room whose immutable create event carries this repository key. */
@@ -110,6 +184,9 @@ export async function resolveRepositoryRoom(
 ): Promise<RepositoryRoomResult> {
   const existing = await findRepositoryRoom(agentCtx, communityId, binding.key);
   if (existing) {
+    await ensureExistingAdmin(agentCtx, existing, pairedBy);
+    // Existing Rooms already have their dedicated gate identity. A later agent
+    // joins as a member and reuses that gate instead of provisioning a new one.
     return joinRepositoryRoom(agentCtx, existing);
   }
 
@@ -124,7 +201,10 @@ export async function resolveRepositoryRoom(
     // Two clones may pair concurrently after both observe no Room. The
     // deterministic ID lets the loser converge on the winner without a fork.
     const raced = await findRepositoryRoom(agentCtx, communityId, binding.key);
-    if (raced) return joinRepositoryRoom(agentCtx, raced);
+    if (raced) {
+      await ensureExistingAdmin(agentCtx, raced, pairedBy);
+      return joinRepositoryRoom(agentCtx, raced);
+    }
     throw error;
   }
   await waitUntilMember(agentCtx, channelId, agentCtx.identity.publicKey);

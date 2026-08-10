@@ -150,6 +150,7 @@ describe('live steering loop', () => {
 
     const abort = new AbortController();
     let memberPolls = 0;
+    body.assertRepositorySafety = async () => undefined;
     body.provision = async () => session;
     body.pollChannelRequests = async () => 0;
     body.pollMergeCompletions = async () => 0;

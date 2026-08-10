@@ -20,7 +20,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router, type Href } from 'expo-router';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
 import { BuzzRigTransport } from '@/sync/transport';
-import { encodeNpub, type Agent, type Community, type MergeTarget } from '@beeline/buzz-client';
+import {
+  CHANGE_REVIEW_FILE_TAG,
+  CHANGE_REVIEW_MANIFEST_TAG,
+  encodeNpub,
+  type Agent,
+  type Community,
+  type MergeTarget,
+} from '@beeline/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
 import { groknight } from '@/buzz/groknight';
 import { CHANGE_LABEL, CHANGES_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
@@ -28,6 +35,7 @@ import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
+import { ChangeReviewPanel } from '@/components/buzz/ChangeReviewPanel';
 
 type DisplayMessage = {
   id: string;
@@ -228,6 +236,10 @@ export default function BuzzChat() {
             const isAgentActivity = e.type === 'assistant_delta';
             if (isAgentActivity && !text.trim()) continue;
             const hasBodyControl = eventHasTag(e, 't', 'body-control');
+            const isChangeReviewMetadata =
+              eventHasTag(e, 't', CHANGE_REVIEW_MANIFEST_TAG) ||
+              eventHasTag(e, 't', CHANGE_REVIEW_FILE_TAG);
+            if (isChangeReviewMetadata) continue;
             const hasMergeSummary = eventHasTag(e, 't', 'merge-summary');
             const hasStatusArchived = eventHasTag(e, 'status', 'archived');
             const requestAgentPubkey = eventHasTag(e, 't', 'buzz-agent-request')
@@ -330,6 +342,10 @@ export default function BuzzChat() {
           const isAgentActivity = event.type === 'assistant_delta';
           if (isAgentActivity && !text.trim()) return;
           const hasBodyControl = eventHasTag(event, 't', 'body-control');
+          const isChangeReviewMetadata =
+            eventHasTag(event, 't', CHANGE_REVIEW_MANIFEST_TAG) ||
+            eventHasTag(event, 't', CHANGE_REVIEW_FILE_TAG);
+          if (isChangeReviewMetadata) return;
           const hasMergeSummary = eventHasTag(event, 't', 'merge-summary');
           const hasStatusArchived = eventHasTag(event, 'status', 'archived');
           const isMergeReady = eventHasTag(event, 't', 'merge-ready');
@@ -620,11 +636,18 @@ export default function BuzzChat() {
         {mergeTarget && !isArchived && (
           <View style={styles.approvalBar}>
             <View style={styles.approvalInfo}>
-              <Text style={styles.prChip}>Review this {CHANGE_LABEL}</Text>
+              <Text style={styles.prChip}>Review {CHANGE_LABEL}</Text>
               <Text style={styles.approvalBarText}>
                 {mergeTarget.repo} · {mergeTarget.tip.slice(0, 8)}
               </Text>
             </View>
+            {transport && (
+              <ChangeReviewPanel
+                transport={transport}
+                sessionId={decodedId}
+                tip={mergeTarget.tip}
+              />
+            )}
             <Text style={styles.humanBoundaryText}>Only People can approve.</Text>
             {viewerIsAgent ? (
               <View style={styles.approvalSent}>

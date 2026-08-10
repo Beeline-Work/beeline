@@ -1,6 +1,22 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('@/buzz/runtime-config', () => ({
+  getBuzzRuntimeConfig: () => ({
+    relayUrl: 'https://relay.test',
+    pushGatewayUrl: 'https://push.test',
+    soulUrl: 'https://soul.test',
+  }),
+}));
+
 import type { SessionEvent as BuzzSessionEvent } from '@beeline/buzz-client';
 import { toRigEvent } from './buzz-event-projection';
+import { BuzzRigTransport } from './buzz-rig-transport';
+import {
+  CHANGE_REVIEW_FILE_TAG,
+  CHANGE_REVIEW_EVENT_KIND,
+  CHANGE_REVIEW_MANIFEST_TAG,
+  type Identity,
+} from '@beeline/buzz-client';
 
 describe('Buzz branch-loop event projection', () => {
   it('preserves request and lifecycle tags for the mobile UI', () => {
@@ -62,9 +78,7 @@ describe('Buzz branch-loop event projection', () => {
       sessionId: 'ses_123',
       update: {
         sessionUpdate: 'tool_call_update',
-        content: [
-          { type: 'content', content: { type: 'text', text: 'LOOP_PROOF.md created' } },
-        ],
+        content: [{ type: 'content', content: { type: 'text', text: 'LOOP_PROOF.md created' } }],
       },
       projected: true,
     });
@@ -105,5 +119,199 @@ describe('Buzz branch-loop event projection', () => {
 
     expect(metadata).toMatchObject({ text: '' });
     expect(legacy).toMatchObject({ text: 'agent is thinking' });
+  });
+});
+
+describe('Buzz change review metadata', () => {
+  const base = 'b'.repeat(40);
+  const tip = 'c'.repeat(40);
+  const channel = 'change-channel';
+  const path = 'src/example.ts';
+  const identity = {
+    publicKey: 'a'.repeat(64),
+    secretKey: new Uint8Array(32).fill(1),
+    name: 'reviewer',
+  } as Identity;
+
+  function rawEvent(tags: string[][], content: string, id: string, kind = 9) {
+    return {
+      id,
+      pubkey: 'd'.repeat(64),
+      created_at: 42,
+      kind,
+      tags: [['h', channel], ...tags],
+      content,
+      sig: 'e'.repeat(128),
+    };
+  }
+
+  function transportWith(events: ReturnType<typeof rawEvent>[]) {
+    const query = vi.fn(async (filters: Record<string, unknown>[]) => {
+      const marker = (filters[0]?.['#t'] as string[] | undefined)?.[0];
+      return events.filter((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === marker),
+      );
+    });
+    const client = {
+      sessionEventsBackfill: vi.fn(async () => [
+        {
+          kind: 'message',
+          event: rawEvent(
+            [
+              ['t', 'body-control'],
+              ['t', 'merge-ready'],
+              ['repo', `${identity.publicKey}/demo`],
+              ['branch', 'refs/heads/main'],
+              ['tip', tip],
+            ],
+            'ready',
+            'merge-ready',
+          ),
+        },
+      ]),
+      query,
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+    return { transport, query };
+  }
+
+  it('reads the exact-tip file manifest without downloading file patches', async () => {
+    const manifest = rawEvent(
+      [
+        ['t', CHANGE_REVIEW_MANIFEST_TAG],
+        ['base', base],
+        ['tip', tip],
+        ['chunk', '0'],
+      ],
+      JSON.stringify({
+        version: 1,
+        base,
+        tip,
+        files: [{ path, status: 'modified', linesAdded: 3, linesRemoved: 1 }],
+      }),
+      'manifest',
+      CHANGE_REVIEW_EVENT_KIND,
+    );
+    const patch = rawEvent(
+      [
+        ['t', CHANGE_REVIEW_FILE_TAG],
+        ['f', path],
+        ['tip', tip],
+        ['chunk', '0'],
+        ['chunks', '1'],
+      ],
+      '+not fetched yet',
+      'patch',
+      CHANGE_REVIEW_EVENT_KIND,
+    );
+    const { transport, query } = transportWith([manifest, patch]);
+
+    await expect(transport.workspaceFilesRead(channel)).resolves.toEqual([
+      { path, status: 'modified', linesAdded: 3, linesRemoved: 1 },
+    ]);
+    expect(query).toHaveBeenCalledOnce();
+    expect(query.mock.calls[0]?.[0]?.[0]).toMatchObject({
+      kinds: [CHANGE_REVIEW_EVENT_KIND],
+      authors: ['d'.repeat(64)],
+      '#t': [CHANGE_REVIEW_MANIFEST_TAG],
+      '#r': [tip],
+    });
+  });
+
+  it('fetches and reassembles only the selected file patch', async () => {
+    const first = rawEvent(
+      [
+        ['t', CHANGE_REVIEW_FILE_TAG],
+        ['f', path],
+        ['tip', tip],
+        ['chunk', '0'],
+        ['chunks', '2'],
+      ],
+      'diff --git a/src/example.ts b/src/example.ts\n',
+      'first',
+      CHANGE_REVIEW_EVENT_KIND,
+    );
+    const second = rawEvent(
+      [
+        ['t', CHANGE_REVIEW_FILE_TAG],
+        ['f', path],
+        ['tip', tip],
+        ['chunk', '1'],
+        ['chunks', '2'],
+      ],
+      '-old\n+new\n',
+      'second',
+      CHANGE_REVIEW_EVENT_KIND,
+    );
+    const { transport, query } = transportWith([second, first]);
+
+    await expect(transport.changedFileRead(channel, path)).resolves.toEqual({
+      content: 'diff --git a/src/example.ts b/src/example.ts\n-old\n+new\n',
+    });
+    expect(query.mock.calls[0]?.[0]?.[0]).toMatchObject({
+      kinds: [CHANGE_REVIEW_EVENT_KIND],
+      '#t': [CHANGE_REVIEW_FILE_TAG],
+      '#r': [tip],
+      '#f': [path],
+    });
+  });
+
+  it('deduplicates retried chunks and ignores metadata from another channel member', async () => {
+    const duplicate = rawEvent(
+      [
+        ['t', CHANGE_REVIEW_FILE_TAG],
+        ['f', path],
+        ['tip', tip],
+        ['chunk', '0'],
+        ['chunks', '2'],
+      ],
+      'stale',
+      'duplicate',
+      CHANGE_REVIEW_EVENT_KIND,
+    );
+    duplicate.created_at = 41;
+    const first = rawEvent(
+      [
+        ['t', CHANGE_REVIEW_FILE_TAG],
+        ['f', path],
+        ['tip', tip],
+        ['chunk', '0'],
+        ['chunks', '2'],
+      ],
+      'new-',
+      'first',
+      CHANGE_REVIEW_EVENT_KIND,
+    );
+    const second = rawEvent(
+      [
+        ['t', CHANGE_REVIEW_FILE_TAG],
+        ['f', path],
+        ['tip', tip],
+        ['chunk', '1'],
+        ['chunks', '2'],
+      ],
+      'patch',
+      'second',
+      CHANGE_REVIEW_EVENT_KIND,
+    );
+    const forged = rawEvent(
+      [
+        ['t', CHANGE_REVIEW_FILE_TAG],
+        ['f', path],
+        ['tip', tip],
+        ['chunk', '1'],
+        ['chunks', '2'],
+      ],
+      'forged',
+      'forged',
+      CHANGE_REVIEW_EVENT_KIND,
+    );
+    forged.pubkey = 'f'.repeat(64);
+    const { transport } = transportWith([second, forged, duplicate, first]);
+
+    await expect(transport.changedFileRead(channel, path)).resolves.toEqual({
+      content: 'new-patch',
+    });
   });
 });

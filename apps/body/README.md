@@ -120,9 +120,13 @@ local-only Room that deliberately does not converge across machines. A Room has
 one immutable repository binding; multiple paired agents in it create parallel
 feature branches of that repository.
 
-The paired Workspace-member agent creates the Room, adds the pairing human as a
-member, and immediately projects itself as member rather than admin. The machine
-identities, Room ID, repo root, and daemon state live under
+The paired Workspace-member agent creates the Room, makes the pairing human and
+a dedicated merge-worker identity admins, and immediately projects itself as a
+plain member. The worker discovers every change opened in that Room and lands a
+feature tip only after an exact-tip approval from a human admin; agent-signed
+approvals remain refused. Both pairing and daemon/`serve` startup assert that the
+agent cannot push the protected branch and exit fatally on unsafe policy. The
+machine identities, Room ID, repo root, and daemon state live under
 `<git-common-dir>/beeline/agents/<agent-pubkey>/` with mode `0600`. If
 `BUZZ_AGENT_KEY` is absent, `pair` generates the agent key there. The daemon is
 detached from the invoking terminal, retries transient loop failures, and can be

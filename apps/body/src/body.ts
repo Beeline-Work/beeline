@@ -25,7 +25,8 @@ import {
   publishEvent,
   queryEvents,
   archiveChannel,
-  checkAgentNotPushAllowed,
+  assertAgentNotPushAllowed,
+  DurableMergeGate,
   git,
   gitAuthed,
   lsRemoteRef,
@@ -157,14 +158,21 @@ export class Body {
   private subchannels = new Map<string, SubchannelInfo>();
   private bodyIdentity: Identity;
   private agentIdentity: Identity;
+  private mergeWorkerIdentity?: Identity;
   private processedRequestIds = new Set<string>();
   private requestCursors = new Map<string, number>();
   private runningAgentTasks = new Map<string, Promise<void>>();
 
-  constructor(config: BodyConfig, bodyIdentity?: Identity, agentIdentity?: Identity) {
+  constructor(
+    config: BodyConfig,
+    bodyIdentity?: Identity,
+    agentIdentity?: Identity,
+    mergeWorkerIdentity?: Identity,
+  ) {
     this.config = config;
     this.bodyIdentity = bodyIdentity ?? newIdentity('buzzy-body');
     this.agentIdentity = agentIdentity ?? newIdentity('buzzy-agent');
+    this.mergeWorkerIdentity = mergeWorkerIdentity;
     this.assertDistinctAgentIdentity(this.agentIdentity);
   }
 
@@ -652,6 +660,7 @@ export class Body {
     boundRepo: BoundRepo,
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<void> {
+    await this.assertRepositorySafety(tlcChannelId, boundRepo);
     await this.provision(tlcChannelId, boundRepo);
     const pollMs = opts.pollMs ?? 1_000;
     while (!opts.signal?.aborted) {
@@ -672,15 +681,18 @@ export class Body {
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<void> {
     if (!boundRepo.repositoryKey) throw new Error('paired Room is missing its repository key');
-    if (boundRepo.ownerHex) {
-      const protection = await checkAgentNotPushAllowed({
-        ownerHex: boundRepo.ownerHex,
-        repo: boundRepo.repo,
-        agentPubkey: this.agentIdentity.publicKey,
-        protectedRef: boundRepo.targetBranch ?? 'refs/heads/main',
-      });
-      if (!protection.ok) throw new Error(`unsafe repository provisioning: ${protection.reason}`);
-    }
+    await this.assertRepositorySafety(channelId, boundRepo);
+
+    const mergeGate =
+      this.mergeWorkerIdentity && boundRepo.ownerHex
+        ? new DurableMergeGate({
+            worker: this.mergeWorkerIdentity,
+            ownerHex: boundRepo.ownerHex,
+            repo: boundRepo.repo,
+            channelId,
+            targetBranch: boundRepo.targetBranch ?? 'refs/heads/main',
+          })
+        : undefined;
 
     const pollMs = opts.pollMs ?? 3_000;
     while (
@@ -702,9 +714,37 @@ export class Body {
       for (const subchannelId of [...this.subchannels.keys()]) {
         await this.pollMembers(subchannelId);
       }
+      if (mergeGate) {
+        try {
+          const attempts = await mergeGate.poll();
+          for (const attempt of attempts) {
+            console.log(
+              `[gate] ${attempt.outcome.merged ? 'LANDED' : attempt.outcome.reason} ` +
+                `${attempt.candidate.featureBranch} approval=${attempt.approvalId}`,
+            );
+          }
+        } catch (error) {
+          console.error('[gate] Room merge poll failed; will retry:', error);
+        }
+      }
       await this.pollMergeCompletions();
       await this.waitForPoll(pollMs, opts.signal);
     }
+  }
+
+  /**
+   * Startup hard gate: establish the agent's actual Room membership first,
+   * then fail closed unless that identity is excluded from protected pushes.
+   */
+  async assertRepositorySafety(channelId: string, boundRepo: BoundRepo): Promise<void> {
+    await this.ensureAgentInChannel(channelId, this.agentIdentity);
+    if (!boundRepo.ownerHex) return;
+    await assertAgentNotPushAllowed({
+      ownerHex: boundRepo.ownerHex,
+      repo: boundRepo.repo,
+      agentPubkey: this.agentIdentity.publicKey,
+      protectedRef: boundRepo.targetBranch ?? 'refs/heads/main',
+    });
   }
 
   /** Test/CLI synchronization point; never exposes task credentials or prompt data. */

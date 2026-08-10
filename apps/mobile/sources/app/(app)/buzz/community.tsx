@@ -17,6 +17,7 @@ import { groknight } from '@/buzz/groknight';
 import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { BuzzRigTransport } from '@/sync/transport';
+import { Typography } from '@/constants/Typography';
 
 export default function BuzzCommunityCreateOrJoin() {
   const insets = useSafeAreaInsets();
@@ -239,9 +240,14 @@ const styles = StyleSheet.create({
     borderBottomColor: groknight.border,
   },
   backButton: { width: 34, height: 42, alignItems: 'center', justifyContent: 'center' },
-  backText: { color: groknight.chrome, fontSize: 30, fontWeight: '300' },
+  backText: { ...Typography.default(), color: groknight.chrome, fontSize: 30, fontWeight: '300' },
   headerCopy: { flex: 1, minWidth: 0, paddingLeft: 4 },
-  title: { color: groknight.textPrimary, fontSize: 17, fontWeight: '700' },
+  title: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 17,
+    fontWeight: '700',
+  },
   modeSwitch: {
     marginHorizontal: 16,
     marginTop: 22,
@@ -259,11 +265,22 @@ const styles = StyleSheet.create({
     borderBottomWidth: 2,
     borderBottomColor: groknight.textSecondary,
   },
-  modeText: { color: groknight.muted, fontSize: 13, fontWeight: '600' },
+  modeText: {
+    ...Typography.default('semiBold'),
+    color: groknight.muted,
+    fontSize: 13,
+    fontWeight: '600',
+  },
   modeTextActive: { color: groknight.textPrimary },
   form: { paddingHorizontal: 18, paddingTop: 32 },
-  formTitle: { color: groknight.textPrimary, fontSize: 20, fontWeight: '800' },
+  formTitle: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 20,
+    fontWeight: '800',
+  },
   formHint: {
+    ...Typography.default(),
     marginTop: 8,
     maxWidth: 460,
     color: groknight.muted,
@@ -271,6 +288,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   input: {
+    ...Typography.default(),
     minHeight: 48,
     marginTop: 22,
     paddingHorizontal: 12,
@@ -282,7 +300,7 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgBase,
     fontSize: 14,
   },
-  inviteInput: { fontSize: 11 },
+  inviteInput: { ...Typography.mono(), fontSize: 11 },
   primaryButton: {
     minHeight: 46,
     marginTop: 12,
@@ -292,12 +310,14 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.accent,
   },
   primaryButtonText: {
+    ...Typography.default('semiBold'),
     color: groknight.bgTerminal,
     fontSize: 13,
     fontWeight: '700',
   },
   disabled: { opacity: 0.42 },
   errorText: {
+    ...Typography.default(),
     marginTop: 14,
     color: groknight.chrome,
     fontSize: 11,

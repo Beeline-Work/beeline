@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -22,8 +21,7 @@ import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { AgentAvatar } from '@/components/buzz/AgentAvatar';
 import { BuzzRigTransport } from '@/sync/transport';
-
-const mono = Platform.select({ web: '"JetBrains Mono", monospace', default: 'monospace' });
+import { Typography } from '@/constants/Typography';
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -404,17 +402,27 @@ const styles = StyleSheet.create({
     borderBottomColor: groknight.border,
   },
   backButton: { width: 34, height: 42, alignItems: 'center', justifyContent: 'center' },
-  backText: { color: groknight.chrome, fontSize: 30, fontWeight: '300' },
+  backText: { ...Typography.default(), color: groknight.chrome, fontSize: 30, fontWeight: '300' },
   headerCopy: { flex: 1, minWidth: 0, paddingLeft: 4 },
-  title: { color: groknight.textPrimary, fontSize: 17, fontWeight: '700' },
-  headerMeta: { marginTop: 2, color: groknight.muted, fontSize: 11 },
+  title: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  headerMeta: { ...Typography.default(), marginTop: 2, color: groknight.muted, fontSize: 11 },
   addButton: {
     width: 38,
     height: 38,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  addButtonText: { color: groknight.steel, fontSize: 21, fontWeight: '500' },
+  addButtonText: {
+    ...Typography.default(),
+    color: groknight.steel,
+    fontSize: 21,
+    fontWeight: '500',
+  },
   scrollContent: { paddingHorizontal: 18, paddingTop: 20, paddingBottom: 56 },
   pairPanel: {
     paddingBottom: 24,
@@ -422,7 +430,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: groknight.border,
   },
-  pairNote: { color: groknight.muted, fontSize: 13, lineHeight: 18 },
+  pairNote: { ...Typography.default(), color: groknight.muted, fontSize: 13, lineHeight: 18 },
   commandRow: {
     marginTop: 14,
     minWidth: 0,
@@ -438,11 +446,12 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     color: groknight.textPrimary,
-    fontFamily: mono,
+    ...Typography.mono('semiBold'),
     fontSize: 13,
     fontWeight: '700',
   },
   copyText: {
+    ...Typography.default('semiBold'),
     marginLeft: 10,
     color: groknight.textSecondary,
     fontSize: 12,
@@ -450,8 +459,9 @@ const styles = StyleSheet.create({
   },
   waitingRow: { marginTop: 10, flexDirection: 'row', alignItems: 'center', gap: 7 },
   waitingDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: groknight.accent },
-  expiry: { color: groknight.muted, fontSize: 11 },
+  expiry: { ...Typography.default(), color: groknight.muted, fontSize: 11 },
   error: {
+    ...Typography.default(),
     padding: 10,
     color: groknight.textPrimary,
     borderWidth: 1,
@@ -461,12 +471,13 @@ const styles = StyleSheet.create({
   },
   sectionHeader: { marginBottom: 8, flexDirection: 'row', alignItems: 'center' },
   sectionTitle: {
+    ...Typography.default('semiBold'),
     flex: 1,
     color: groknight.textPrimary,
     fontSize: 14,
     fontWeight: '700',
   },
-  count: { color: groknight.muted, fontSize: 12 },
+  count: { ...Typography.default(), color: groknight.muted, fontSize: 12 },
   empty: {
     alignItems: 'center',
     paddingTop: 46,
@@ -474,6 +485,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 22,
   },
   emptyGlyph: {
+    ...Typography.default(),
     width: 44,
     height: 44,
     borderWidth: 1,
@@ -484,8 +496,15 @@ const styles = StyleSheet.create({
     lineHeight: 42,
     textAlign: 'center',
   },
-  emptyTitle: { marginTop: 10, color: groknight.textPrimary, fontSize: 16, fontWeight: '800' },
+  emptyTitle: {
+    ...Typography.default('semiBold'),
+    marginTop: 10,
+    color: groknight.textPrimary,
+    fontSize: 16,
+    fontWeight: '800',
+  },
   emptyCopy: {
+    ...Typography.default(),
     marginTop: 7,
     color: groknight.steel,
     fontSize: 12,
@@ -503,10 +522,21 @@ const styles = StyleSheet.create({
   },
   agentRowActive: { backgroundColor: groknight.bgBase },
   agentCopy: { flex: 1, minWidth: 0 },
-  agentName: { color: groknight.textPrimary, fontSize: 15, fontWeight: '800' },
-  personality: { marginTop: 3, color: groknight.textSecondary, fontSize: 11, lineHeight: 16 },
-  pubkey: { marginTop: 4, color: groknight.steel, fontSize: 9 },
-  chevron: { color: groknight.chrome, fontSize: 24 },
+  agentName: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  personality: {
+    ...Typography.default(),
+    marginTop: 3,
+    color: groknight.textSecondary,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  pubkey: { ...Typography.mono(), marginTop: 4, color: groknight.steel, fontSize: 9 },
+  chevron: { ...Typography.default(), color: groknight.chrome, fontSize: 24 },
   editor: {
     marginTop: 24,
     paddingTop: 20,
@@ -515,9 +545,21 @@ const styles = StyleSheet.create({
   },
   editorTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
   editorTitleCopy: { flex: 1, minWidth: 0 },
-  editorTitle: { color: groknight.textPrimary, fontSize: 16, fontWeight: '700' },
-  editorHint: { marginTop: 4, color: groknight.steel, fontSize: 10, lineHeight: 14 },
+  editorTitle: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  editorHint: {
+    ...Typography.default(),
+    marginTop: 4,
+    color: groknight.steel,
+    fontSize: 10,
+    lineHeight: 14,
+  },
   label: {
+    ...Typography.default('semiBold'),
     marginTop: 10,
     marginBottom: 6,
     color: groknight.textSecondary,
@@ -525,6 +567,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   input: {
+    ...Typography.default(),
     minHeight: 42,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -545,6 +588,7 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.accent,
   },
   primaryButtonText: {
+    ...Typography.default('semiBold'),
     color: groknight.bgTerminal,
     fontSize: 13,
     fontWeight: '700',
@@ -558,6 +602,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   secondaryButtonText: {
+    ...Typography.default('semiBold'),
     color: groknight.textSecondary,
     fontSize: 12,
     fontWeight: '600',

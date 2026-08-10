@@ -13,6 +13,7 @@ import type { Community } from '@beeline/buzz-client';
 import { groknight } from '@/buzz/groknight';
 import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { WorkspaceAvatar } from '@/components/buzz/WorkspaceAvatar';
+import { Typography } from '@/constants/Typography';
 
 const DRAWER_WIDTH = 72;
 const DRAWER_DURATION_MS = 180;
@@ -256,6 +257,7 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgHighlight,
   },
   addRailButtonText: {
+    ...Typography.default(),
     color: groknight.chrome,
     fontSize: 20,
     fontWeight: '500',
@@ -295,6 +297,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   drawerTriggerChevron: {
+    ...Typography.default('semiBold'),
     marginLeft: 2,
     color: groknight.steel,
     fontSize: 13,

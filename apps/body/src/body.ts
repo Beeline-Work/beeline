@@ -34,6 +34,7 @@ import {
 } from '@beeline/gate';
 import {
   createAgent,
+  isMember,
   listAgents,
   waitUntilMember,
   type ChannelOpsContext,
@@ -87,9 +88,15 @@ export interface SubchannelInfo {
 }
 
 export interface BoundRepo {
-  ownerHex: string;
+  /** Relay repository owner, when origin is a Buzz smart-HTTP remote. */
+  ownerHex?: string;
   repo: string;
   targetBranch?: string;
+  /** Paired checkout used as the source repository for all Room worktrees. */
+  localPath?: string;
+  remoteName?: string;
+  repositoryKey?: string;
+  localOnly?: boolean;
 }
 
 export interface ChannelTaskRequest {
@@ -106,10 +113,10 @@ export const MERGE_READY_TAG = 'merge-ready';
 export function isChannelTaskRequest(event: NostrEvent, agentPubkey: string): boolean {
   return Boolean(
     event.kind === 9 &&
-      event.content.trim() &&
-      event.pubkey !== agentPubkey &&
-      event.tags.some((tag) => tag[0] === 'p' && tag[1] === agentPubkey) &&
-      event.tags.some((tag) => tag[0] === 't' && tag[1] === AGENT_REQUEST_TAG),
+    event.content.trim() &&
+    event.pubkey !== agentPubkey &&
+    event.tags.some((tag) => tag[0] === 'p' && tag[1] === agentPubkey) &&
+    event.tags.some((tag) => tag[0] === 't' && tag[1] === AGENT_REQUEST_TAG),
   );
 }
 
@@ -191,7 +198,7 @@ export class Body {
    * 2. Start an ACP session with NO write MCP (empty mcpServers).
    * 3. Project activity into the TLC channel.
    */
-  async provision(tlcChannelId: string): Promise<AgentSession> {
+  async provision(tlcChannelId: string, boundRepo?: BoundRepo): Promise<AgentSession> {
     const existing = this.sessions.get(tlcChannelId);
     if (existing) {
       if (existing.mode === 'readonly') return existing;
@@ -215,7 +222,7 @@ export class Body {
 
     // Read-only session: NO mcpServers — the boundary IS the MCP mount.
     const { sessionId } = await client.sessionNew({
-      cwd: this.config.workspaceRoot,
+      cwd: boundRepo?.localPath ?? this.config.workspaceRoot,
       mcpServers: [],
       systemPrompt: [
         'You are a helpful coding assistant in a read-only conversation channel.',
@@ -354,7 +361,7 @@ export class Body {
 
     this.subchannels.set(subchannelId, info);
 
-    const repoId = `${boundRepo.ownerHex}/${boundRepo.repo}`;
+    const repoId = this.repoId(boundRepo);
     const targetBranch = boundRepo.targetBranch ?? 'refs/heads/main';
     const requestTags = request
       ? [
@@ -408,9 +415,17 @@ export class Body {
    * requests are rejected, preserving the human → agent direction of the loop.
    */
   async pollChannelRequests(tlcChannelId: string, boundRepo: BoundRepo): Promise<number> {
-    const since = this.requestCursors.get(tlcChannelId) ?? Math.floor(Date.now() / 1000) - 1;
+    const since = this.requestCursors.get(tlcChannelId) ?? 0;
     const events = await queryEvents(
-      [{ kinds: [9], '#h': [tlcChannelId], '#p': [this.agentIdentity.publicKey], since, limit: 100 }],
+      [
+        {
+          kinds: [9],
+          '#h': [tlcChannelId],
+          '#p': [this.agentIdentity.publicKey],
+          since,
+          limit: 100,
+        },
+      ],
       this.agentIdentity.publicKey,
     );
     let opened = 0;
@@ -420,6 +435,10 @@ export class Body {
       maxCreatedAt = Math.max(maxCreatedAt, event.created_at);
       if (this.processedRequestIds.has(event.id)) continue;
       if (!isChannelTaskRequest(event, this.agentIdentity.publicKey)) continue;
+      if (await this.requestAlreadyOpened(tlcChannelId, event.id)) {
+        this.processedRequestIds.add(event.id);
+        continue;
+      }
       this.processedRequestIds.add(event.id);
 
       // Fail closed: a registered agent can never task another body through the
@@ -489,13 +508,19 @@ export class Body {
     const tip = git(info.worktreePath, ['rev-parse', 'HEAD']).stdout.trim();
     if (!/^[0-9a-f]{40}$/.test(tip)) return false;
 
-    const push = gitAuthed(
-      info.worktreePath,
-      this.agentIdentity,
-      boundRepo.ownerHex,
-      boundRepo.repo,
-      ['push', 'origin', `${info.featureBranch}:refs/heads/${info.featureBranch}`],
-    );
+    const push = boundRepo.ownerHex
+      ? gitAuthed(info.worktreePath, this.agentIdentity, boundRepo.ownerHex, boundRepo.repo, [
+          'push',
+          boundRepo.remoteName ?? 'origin',
+          `${info.featureBranch}:refs/heads/${info.featureBranch}`,
+        ])
+      : boundRepo.remoteName
+        ? git(info.worktreePath, [
+            'push',
+            boundRepo.remoteName,
+            `${info.featureBranch}:refs/heads/${info.featureBranch}`,
+          ])
+        : { ok: true, status: 0, stdout: '', stderr: '' };
     if (!push.ok) {
       await postControlMessage(
         info.subchannelId,
@@ -507,7 +532,7 @@ export class Body {
     }
 
     const target = {
-      repo: `${boundRepo.ownerHex}/${boundRepo.repo}`,
+      repo: this.repoId(boundRepo),
       branch: boundRepo.targetBranch ?? 'refs/heads/main',
       tip,
     };
@@ -535,13 +560,21 @@ export class Body {
     let merged = 0;
     for (const info of [...this.subchannels.values()]) {
       if (info.archived || !info.mergeTarget || !info.boundRepo) continue;
-      const targetTip = lsRemoteRef(
-        info.worktreePath,
-        this.agentIdentity,
-        info.boundRepo.ownerHex,
-        info.boundRepo.repo,
-        info.mergeTarget.branch,
-      );
+      const targetTip = info.boundRepo.ownerHex
+        ? lsRemoteRef(
+            info.worktreePath,
+            this.agentIdentity,
+            info.boundRepo.ownerHex,
+            info.boundRepo.repo,
+            info.mergeTarget.branch,
+          )
+        : info.boundRepo.localPath
+          ? git(info.boundRepo.localPath, [
+              'rev-parse',
+              '--verify',
+              info.mergeTarget.branch,
+            ]).stdout.trim()
+          : undefined;
       if (targetTip !== info.mergeTarget.tip) continue;
       await this.postMergeSummary(
         info.subchannelId,
@@ -559,7 +592,7 @@ export class Body {
     boundRepo: BoundRepo,
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<void> {
-    await this.provision(tlcChannelId);
+    await this.provision(tlcChannelId, boundRepo);
     const pollMs = opts.pollMs ?? 1_000;
     while (!opts.signal?.aborted) {
       await this.pollChannelRequests(tlcChannelId, boundRepo);
@@ -567,13 +600,50 @@ export class Body {
         if (!this.runningAgentTasks.has(subchannelId)) await this.pollMembers(subchannelId);
       }
       await this.pollMergeCompletions();
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, pollMs);
-        opts.signal?.addEventListener('abort', () => {
-          clearTimeout(timer);
-          resolve();
-        }, { once: true });
+      await this.waitForPoll(pollMs, opts.signal);
+    }
+  }
+
+  /** Durable paired-agent loop for the repository's single Workspace Room. */
+  async runRepositoryRoomLoop(
+    communityId: string,
+    channelId: string,
+    boundRepo: BoundRepo,
+    opts: { pollMs?: number; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    if (!boundRepo.repositoryKey) throw new Error('paired Room is missing its repository key');
+    if (boundRepo.ownerHex) {
+      const protection = await checkAgentNotPushAllowed({
+        ownerHex: boundRepo.ownerHex,
+        repo: boundRepo.repo,
+        agentPubkey: this.agentIdentity.publicKey,
+        protectedRef: boundRepo.targetBranch ?? 'refs/heads/main',
       });
+      if (!protection.ok) throw new Error(`unsafe repository provisioning: ${protection.reason}`);
+    }
+
+    const pollMs = opts.pollMs ?? 3_000;
+    while (
+      !opts.signal?.aborted &&
+      !(await isMember(this.agentClientContext(), channelId, this.agentIdentity.publicKey))
+    ) {
+      await setMemberRole(this.agentIdentity, channelId, this.agentIdentity.publicKey, 'member');
+      await this.waitForPoll(pollMs, opts.signal);
+    }
+    if (opts.signal?.aborted) return;
+    await this.provision(channelId, boundRepo);
+
+    while (!opts.signal?.aborted) {
+      try {
+        await this.pollChannelRequests(channelId, boundRepo);
+      } catch (error) {
+        console.error('[body] repository Room request poll failed:', error);
+      }
+      for (const subchannelId of [...this.subchannels.keys()]) {
+        if (!this.runningAgentTasks.has(subchannelId)) await this.pollMembers(subchannelId);
+      }
+      await this.pollMergeCompletions();
+      await this.waitForPoll(pollMs, opts.signal);
     }
   }
 
@@ -715,7 +785,7 @@ export class Body {
     await session.client.stop();
 
     // Remove worktree.
-    await this.removeWorktree(scId, worktreePath, featureBranch);
+    await this.removeWorktree(scId, worktreePath, featureBranch, info.boundRepo);
 
     // Post status messages BEFORE archiving (relay rejects events on archived channels).
     const parentId = session.parentChannelId;
@@ -752,6 +822,7 @@ export class Body {
 
   /** Ensure the agent is a member of the channel, returns current role. */
   private async ensureAgentInChannel(channelId: string, agent: Identity): Promise<string> {
+    if (await isMember(this.agentClientContext(), channelId, agent.publicKey)) return 'member';
     // Try to get existing role
     try {
       const creates = await queryEvents(
@@ -805,11 +876,11 @@ export class Body {
     const communityId = await this.channelCommunityId(tlcChannelId);
     if (!communityId) return;
 
-    await setMemberRole(this.bodyIdentity, communityId, this.agentIdentity.publicKey, 'member');
     const ctx = this.agentClientContext();
-    await waitUntilMember(ctx, communityId, this.agentIdentity.publicKey);
     const existing = await listAgents(ctx, communityId);
     if (existing.some((agent) => agent.pubkey === this.agentIdentity.publicKey)) return;
+    await setMemberRole(this.bodyIdentity, communityId, this.agentIdentity.publicKey, 'member');
+    await waitUntilMember(ctx, communityId, this.agentIdentity.publicKey);
     await createAgent(ctx, communityId, {
       displayName: this.agentIdentity.name || 'Agent',
     });
@@ -863,12 +934,49 @@ export class Body {
    * Fetches from relay, creates a feature branch, and adds the worktree.
    */
   private async createWorktree(
-    boundRepo: { ownerHex: string; repo: string },
+    boundRepo: BoundRepo,
     worktreePath: string,
     featureBranch: string,
   ): Promise<void> {
     // Ensure workspace root exists.
     await mkdir(this.config.workspaceRoot, { recursive: true });
+
+    if (boundRepo.localPath) {
+      await mkdir(resolve(worktreePath, '..'), { recursive: true });
+      if (boundRepo.remoteName) {
+        const fetch = boundRepo.ownerHex
+          ? gitAuthed(boundRepo.localPath, this.agentIdentity, boundRepo.ownerHex, boundRepo.repo, [
+              'fetch',
+              boundRepo.remoteName,
+            ])
+          : git(boundRepo.localPath, ['fetch', boundRepo.remoteName]);
+        if (!fetch.ok) throw new Error(`git fetch failed: ${fetch.stderr}`);
+      }
+      const target = (boundRepo.targetBranch ?? 'refs/heads/main').replace(/^refs\/heads\//, '');
+      const remoteRef = boundRepo.remoteName
+        ? `refs/remotes/${boundRepo.remoteName}/${target}`
+        : '';
+      const remoteBase = remoteRef
+        ? git(boundRepo.localPath, ['rev-parse', '--verify', remoteRef])
+        : { ok: false };
+      const localRef = `refs/heads/${target}`;
+      const localBase = git(boundRepo.localPath, ['rev-parse', '--verify', localRef]);
+      const baseRef = remoteBase.ok ? remoteRef : localBase.ok ? localRef : 'HEAD';
+      const worktreeAdd = git(boundRepo.localPath, [
+        'worktree',
+        'add',
+        '-b',
+        featureBranch,
+        worktreePath,
+        baseRef,
+      ]);
+      if (!worktreeAdd.ok) throw new Error(`git worktree add failed: ${worktreeAdd.stderr}`);
+      git(worktreePath, ['config', 'user.name', this.agentIdentity.name || 'buzzy-agent']);
+      git(worktreePath, ['config', 'user.email', 'agent@buzzy.local']);
+      return;
+    }
+
+    if (!boundRepo.ownerHex) throw new Error('relay repo binding is missing its owner');
 
     const gitDir = resolve(this.config.workspaceRoot, `.git-${boundRepo.repo}`);
     const repoUrl = `${this.config.relayBaseUrl}/git/${boundRepo.ownerHex}/${boundRepo.repo}`;
@@ -888,20 +996,21 @@ export class Body {
     }
 
     // Fetch latest.
-    const fetch = gitAuthed(
-      gitDir,
-      this.agentIdentity,
-      boundRepo.ownerHex,
-      boundRepo.repo,
-      ['fetch', 'origin'],
-    );
+    const fetch = gitAuthed(gitDir, this.agentIdentity, boundRepo.ownerHex, boundRepo.repo, [
+      'fetch',
+      'origin',
+    ]);
     if (!fetch.ok) throw new Error(`git fetch failed: ${fetch.stderr}`);
 
     // A bare clone stores the default branch at refs/heads/main; an existing
     // mirror may instead have refs/remotes/origin/main after fetch.
     const remoteMain = git(gitDir, ['rev-parse', '--verify', 'refs/remotes/origin/main']);
     const localMain = git(gitDir, ['rev-parse', '--verify', 'refs/heads/main']);
-    const baseRef = remoteMain.ok ? 'refs/remotes/origin/main' : localMain.ok ? 'refs/heads/main' : '';
+    const baseRef = remoteMain.ok
+      ? 'refs/remotes/origin/main'
+      : localMain.ok
+        ? 'refs/heads/main'
+        : '';
     if (!baseRef) throw new Error('bound repo has no main branch');
 
     // Create worktree with new branch.
@@ -938,6 +1047,7 @@ export class Body {
     subchannelId: string,
     worktreePath: string,
     _featureBranch: string,
+    boundRepo?: BoundRepo,
   ): Promise<void> {
     const gitDir = worktreePath.includes('.worktrees')
       ? resolve(this.config.workspaceRoot, `.git-${subchannelId.slice(0, 12)}`)
@@ -946,7 +1056,7 @@ export class Body {
     // Try to prune worktree.
     if (existsSync(worktreePath)) {
       spawnSync('git', ['worktree', 'remove', '--force', worktreePath], {
-        cwd: this.config.workspaceRoot,
+        cwd: boundRepo?.localPath ?? this.config.workspaceRoot,
         env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
         encoding: 'utf8',
       });
@@ -966,6 +1076,44 @@ export class Body {
         /* ignore */
       }
     }
+  }
+
+  private repoId(boundRepo: BoundRepo): string {
+    return boundRepo.ownerHex
+      ? `${boundRepo.ownerHex}/${boundRepo.repo}`
+      : `${boundRepo.localOnly ? 'local' : 'remote'}/${boundRepo.repositoryKey ?? boundRepo.repo}`;
+  }
+
+  private async requestAlreadyOpened(channelId: string, requestId: string): Promise<boolean> {
+    const events = await queryEvents(
+      [
+        {
+          kinds: [9],
+          '#h': [channelId],
+          '#request': [requestId],
+          authors: [this.agentIdentity.publicKey],
+          limit: 5,
+        },
+      ],
+      this.agentIdentity.publicKey,
+    );
+    return events.some((event) =>
+      event.tags.some((tag) => tag[0] === 'request' && tag[1] === requestId),
+    );
+  }
+
+  private async waitForPoll(pollMs: number, signal?: AbortSignal): Promise<void> {
+    await new Promise<void>((resolveWait) => {
+      const timer = setTimeout(resolveWait, pollMs);
+      signal?.addEventListener(
+        'abort',
+        () => {
+          clearTimeout(timer);
+          resolveWait();
+        },
+        { once: true },
+      );
+    });
   }
 
   /** Dispose all sessions. */

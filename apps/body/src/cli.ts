@@ -14,22 +14,23 @@
  *
  * Env-driven config; see BodyConfig for all env overrides.
  */
+import { dirname, resolve } from 'node:path';
+import { unlink } from 'node:fs/promises';
 import { buildAgentEnv, loadBodyConfig, BASE_URL } from './config.js';
-import { Body } from './body.js';
-import { newIdentity, type Identity } from '@beeline/gate';
-import { createChannel, setMemberRole, queryEvents } from '@beeline/gate';
-import { decodeNsec, getPublicKey } from '@beeline/nostr';
+import { Body, type BoundRepo } from './body.js';
+import { checkAgentNotPushAllowed, createChannel, setMemberRole } from '@beeline/gate';
 import { createBuzzClient } from '@beeline/buzz-client';
 import { createSoulServer } from './soul-server.js';
-
-function identityFromKey(value: string | undefined, name: string): Identity {
-  if (!value) return newIdentity(name);
-  const secretKey = value.startsWith('nsec1')
-    ? decodeNsec(value)
-    : Uint8Array.from(Buffer.from(value, 'hex'));
-  if (secretKey.length !== 32) throw new Error(`${name} key must be 32-byte hex or nsec`);
-  return { name, secretKey, publicKey: getPublicKey(secretKey) };
-}
+import {
+  findRuntimeConfigPaths,
+  identityFromKey,
+  launchRuntimeDaemon,
+  pairRepositoryAgent,
+  readRuntimeRecord,
+  runtimeDaemonPid,
+  runtimeIdentity,
+  type AgentRuntimeRecord,
+} from './runtime.js';
 
 function usage(): void {
   console.error(`
@@ -37,11 +38,12 @@ Buzzy Body — agent session manager.
 
 Usage:
   body provision <channel-uuid>          Attach read-only agent to a TLC
-  body serve <channel-uuid> <owner> <repo>  Watch human requests and run the full branch loop
+  body serve <channel-uuid> <owner> <repo>  Internal: serve one explicitly-wired Room
   body open <channel-uuid> <owner> <repo>  Open subchannel + edit session
   body archive <subchannel-uuid>         Archive subchannel
   body create-and-provision <name>       Create a new TLC + provision agent
-  buzz pair <BUZZ-XXXX-XXXX>             Pair this machine's agent identity
+  buzz pair <BUZZ-XXXX-XXXX>             Pair this repo and start its durable Room agent
+  buzz start [agent-pubkey]              Restart a paired repo's durable agent
   buzz serve-souls                       Run the server-held soul generator
 
 Options:
@@ -52,6 +54,76 @@ Options:
 All other config via env vars (see config.ts).
 `);
   process.exit(1);
+}
+
+function boundRepoFromRuntime(runtime: AgentRuntimeRecord): BoundRepo {
+  return {
+    repo: runtime.repo.relayRepo?.repo ?? runtime.repo.repository.name,
+    ...(runtime.repo.relayRepo ? { ownerHex: runtime.repo.relayRepo.ownerHex } : {}),
+    targetBranch: `refs/heads/${runtime.repo.targetBranch}`,
+    localPath: runtime.repo.root,
+    ...(runtime.repo.remoteName ? { remoteName: runtime.repo.remoteName } : {}),
+    repositoryKey: runtime.repo.repository.key,
+    localOnly: runtime.repo.repository.localOnly,
+  };
+}
+
+async function waitToRestart(signal: AbortSignal): Promise<void> {
+  await new Promise<void>((resolveWait) => {
+    const timer = setTimeout(resolveWait, 2_000);
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        resolveWait();
+      },
+      { once: true },
+    );
+  });
+}
+
+async function runStoredDaemon(configPath: string): Promise<void> {
+  const runtime = await readRuntimeRecord(configPath);
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    BUZZ_AGENT_BIN: runtime.agentBinary,
+    BUZZ_DEV_MCP_BIN: runtime.mcpBinary,
+    BUZZY_RELAY_URL: runtime.relayBaseUrl,
+    ...(runtime.relayHost ? { BUZZY_RELAY_HOST: runtime.relayHost } : {}),
+  };
+  const config = loadBodyConfig({
+    workspaceRoot: resolve(dirname(configPath), 'workspace'),
+    llmEnvFile: runtime.llmEnvFile,
+    env,
+  });
+  const controller = new AbortController();
+  const stop = () => controller.abort();
+  process.once('SIGINT', stop);
+  process.once('SIGTERM', stop);
+  console.log(`[buzz] serving Room ${runtime.channelId} from ${runtime.repo.root}`);
+
+  try {
+    while (!controller.signal.aborted) {
+      const body = new Body(config, runtimeIdentity(runtime.body), runtimeIdentity(runtime.agent));
+      try {
+        await body.runRepositoryRoomLoop(
+          runtime.communityId,
+          runtime.channelId,
+          boundRepoFromRuntime(runtime),
+          { signal: controller.signal },
+        );
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.error('[buzz] Room loop stopped; retrying:', error);
+          await waitToRestart(controller.signal);
+        }
+      } finally {
+        await body.dispose();
+      }
+    }
+  } finally {
+    await unlink(resolve(dirname(configPath), 'daemon.pid')).catch(() => undefined);
+  }
 }
 
 async function main(): Promise<void> {
@@ -65,13 +137,39 @@ async function main(): Promise<void> {
   const workspaceRoot = process.env.BUZZY_BODY_WORKSPACE ?? './body-workspace';
   const agentPrivateKey = process.env.BUZZ_AGENT_KEY ?? process.env.BUZZ_PRIVATE_KEY;
 
+  if (command === 'daemon') {
+    const configFlag = args.indexOf('--config');
+    const configPath = configFlag >= 0 ? args[configFlag + 1] : undefined;
+    if (!configPath) throw new Error('daemon requires --config <runtime.json>');
+    await runStoredDaemon(resolve(configPath));
+    return;
+  }
+
+  if (command === 'start') {
+    const requestedPubkey = args[1];
+    const configs = await findRuntimeConfigPaths(process.cwd());
+    const matching = requestedPubkey
+      ? configs.filter((path) => dirname(path).endsWith(requestedPubkey))
+      : configs;
+    if (matching.length === 0) throw new Error('no paired agent runtime found in this repository');
+    if (matching.length > 1) {
+      throw new Error('multiple paired agents found; pass the agent pubkey shown by `buzz pair`');
+    }
+    const existingPid = await runtimeDaemonPid(matching[0]!);
+    if (existingPid) {
+      console.log(`[buzz] agent daemon is already running (pid ${existingPid})`);
+      return;
+    }
+    const pid = await launchRuntimeDaemon(matching[0]!);
+    console.log(`[buzz] agent daemon started (pid ${pid})`);
+    return;
+  }
+
   if (command === 'pair') {
     const code = args[1];
     if (!code) usage();
-    if (!agentPrivateKey) {
-      throw new Error('BUZZ_AGENT_KEY is required so the paired identity remains on this machine');
-    }
     const agentIdentity = identityFromKey(agentPrivateKey, 'buzzy-agent');
+    const bodyIdentity = identityFromKey(process.env.BUZZ_BODY_KEY, 'buzzy-body');
     const relayBaseUrl = (process.env.BUZZY_RELAY_URL ?? BASE_URL)
       .replace(/^ws/, 'http')
       .replace(/\/$/, '');
@@ -80,10 +178,46 @@ async function main(): Promise<void> {
       ...(process.env.BUZZY_RELAY_HOST ? { host: process.env.BUZZY_RELAY_HOST } : {}),
       identity: agentIdentity,
     });
-    const result = await client.redeemAgentPairingCode(code!);
-    console.log(`[buzz] paired agent ${result.agent.displayName}`);
-    console.log(`[buzz] community: ${result.communityId}`);
-    console.log(`[buzz] agent pubkey: ${result.agent.pubkey}`);
+    // Fail before consuming the one-shot code if the local agent runtime is absent.
+    const localConfig = loadBodyConfig({ workspaceRoot: process.cwd(), llmEnvFile });
+    const result = await pairRepositoryAgent(
+      {
+        code: code!,
+        cwd: process.cwd(),
+        relayBaseUrl,
+        ...(process.env.BUZZY_RELAY_HOST ? { relayHost: process.env.BUZZY_RELAY_HOST } : {}),
+        ...(llmEnvFile ? { llmEnvFile } : {}),
+        agentIdentity,
+        bodyIdentity,
+        agentBinary: localConfig.agentBinary,
+        mcpBinary: localConfig.mcpBinary,
+      },
+      {
+        redeem: (pairingCode) => client.redeemAgentPairingCode(pairingCode),
+        resolveRoom: (pairing, repository) =>
+          client.resolveRepositoryRoom(pairing.communityId, repository, pairing.pairedBy),
+        validate: async (_pairing, _room, repo) => {
+          if (!repo.relayRepo) return;
+          const protection = await checkAgentNotPushAllowed({
+            ownerHex: repo.relayRepo.ownerHex,
+            repo: repo.relayRepo.repo,
+            agentPubkey: agentIdentity.publicKey,
+            protectedRef: `refs/heads/${repo.targetBranch}`,
+          });
+          if (!protection.ok) {
+            throw new Error(`unsafe repository provisioning: ${protection.reason}`);
+          }
+        },
+      },
+    );
+    console.log(`[buzz] paired agent ${result.pairing.agent.displayName}`);
+    console.log(`[buzz] workspace: ${result.pairing.communityId}`);
+    console.log(
+      `[buzz] room: ${result.room.channelId} (${result.room.created ? 'created' : 'joined'})`,
+    );
+    console.log(`[buzz] repo: ${result.runtime.repo.root}`);
+    console.log(`[buzz] agent pubkey: ${result.pairing.agent.pubkey}`);
+    console.log(`[buzz] daemon started (pid ${result.pid})`);
     return;
   }
 

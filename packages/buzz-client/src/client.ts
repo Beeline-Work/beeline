@@ -18,6 +18,7 @@ import {
   createChannel,
   createSubchannel,
   getChannelCommunityId as getChannelCommunityIdFn,
+  getChannelRepositoryBinding,
   getChannelMetadata,
   getParentChannelId as getParentChannelIdFn,
   isMember,
@@ -41,6 +42,7 @@ import {
 import { publishEvent, queryEvents, type HttpBridgeOptions } from './http.js';
 import { KIND_STREAM_MESSAGE } from './kinds.js';
 import { toSessionEvent } from './parse.js';
+import { resolveRepositoryRoom, type RepositoryRoomResult } from './repo-room.js';
 import { RelayWs, wsUrlFromHttp } from './ws.js';
 import type {
   BuzzClientConfig,
@@ -62,6 +64,7 @@ import type {
   PublishResult,
   RedeemInviteResult,
   RedeemAgentPairingResult,
+  RepositoryBinding,
   SessionEvent,
   SessionEventHandler,
   Unsubscribe,
@@ -124,7 +127,7 @@ export class BuzzClient {
   /** Create an open stream channel; returns UUID. */
   createChannel(
     name: string,
-    opts?: { parentChannelId?: string; communityId?: string },
+    opts?: { parentChannelId?: string; communityId?: string; repository?: RepositoryBinding },
   ): Promise<string> {
     return createChannel(this.ctx, name, opts);
   }
@@ -190,6 +193,10 @@ export class BuzzClient {
     return getChannelCommunityIdFn(this.ctx, channelId);
   }
 
+  getChannelRepositoryBinding(channelId: string): Promise<RepositoryBinding | null> {
+    return getChannelRepositoryBinding(this.ctx, channelId);
+  }
+
   // ── Community ops ───────────────────────────────────────────────────────
 
   createCommunity(name: string): Promise<string> {
@@ -241,6 +248,14 @@ export class BuzzClient {
 
   redeemAgentPairingCode(code: string): Promise<RedeemAgentPairingResult> {
     return redeemAgentPairingCode(this.ctx, code);
+  }
+
+  resolveRepositoryRoom(
+    communityId: string,
+    repository: RepositoryBinding,
+    pairedBy: string,
+  ): Promise<RepositoryRoomResult> {
+    return resolveRepositoryRoom(this.ctx, communityId, repository, pairedBy);
   }
 
   setAgentSoul(

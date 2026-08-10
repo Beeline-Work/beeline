@@ -6,8 +6,8 @@
  * The file provides `BUZZY_LLM_*` vars; we map those onto buzz-agent's
  * `OPENAI_COMPAT_*` names.
  */
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
+import { delimiter, resolve } from 'node:path';
 import { HOST, SCHEME, BASE_URL } from '@beeline/gate';
 
 export type SessionMode = 'readonly' | 'edit';
@@ -47,6 +47,20 @@ function firstExisting(paths: string[]): string | undefined {
   return undefined;
 }
 
+function executableOnPath(name: string, env: NodeJS.ProcessEnv): string | undefined {
+  for (const directory of (env.PATH ?? '').split(delimiter)) {
+    if (!directory) continue;
+    const candidate = resolve(directory, name);
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // Continue through PATH.
+    }
+  }
+  return undefined;
+}
+
 /**
  * Resolve binary paths. Prefers env overrides, then worktree scratch build,
  * then PATH-style defaults.
@@ -61,6 +75,7 @@ export function resolveBinaries(env: NodeJS.ProcessEnv = process.env): {
     firstExisting([
       resolve(DEFAULT_SCRATCH, 'buzz-agent'),
       resolve(process.cwd(), '..', '..', '.scratch-target', 'debug', 'buzz-agent'),
+      executableOnPath('buzz-agent', env) ?? '',
     ]);
   const mcp =
     env.BUZZ_DEV_MCP_BIN ??
@@ -68,6 +83,7 @@ export function resolveBinaries(env: NodeJS.ProcessEnv = process.env): {
     firstExisting([
       resolve(DEFAULT_SCRATCH, 'buzz-dev-mcp'),
       resolve(process.cwd(), '..', '..', '.scratch-target', 'debug', 'buzz-dev-mcp'),
+      executableOnPath('buzz-dev-mcp', env) ?? '',
     ]);
   if (!agent) {
     throw new Error(
@@ -97,10 +113,7 @@ export function parseEnvFile(path: string): Record<string, string> {
     if (eq <= 0) continue;
     const key = line.slice(0, eq).trim();
     let val = line.slice(eq + 1).trim();
-    if (
-      (val.startsWith('"') && val.endsWith('"')) ||
-      (val.startsWith("'") && val.endsWith("'"))
-    ) {
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
       val = val.slice(1, -1);
     }
     out[key] = val;
@@ -125,12 +138,10 @@ export function buildAgentEnv(
   Object.assign(merged, fileVars);
 
   // Prefer explicit OPENAI_COMPAT_*; else map BUZZY_LLM_*.
-  const apiKey =
-    merged.OPENAI_COMPAT_API_KEY ?? merged.BUZZY_LLM_API_KEY ?? merged.OPENAI_API_KEY;
+  const apiKey = merged.OPENAI_COMPAT_API_KEY ?? merged.BUZZY_LLM_API_KEY ?? merged.OPENAI_API_KEY;
   const baseUrl =
     merged.OPENAI_COMPAT_BASE_URL ?? merged.BUZZY_LLM_BASE_URL ?? 'https://api.openai.com/v1';
-  const model =
-    merged.OPENAI_COMPAT_MODEL ?? merged.BUZZY_LLM_MODEL ?? merged.OPENAI_MODEL;
+  const model = merged.OPENAI_COMPAT_MODEL ?? merged.BUZZY_LLM_MODEL ?? merged.OPENAI_MODEL;
 
   const agentEnv: Record<string, string> = {
     // Pass through non-secret path/locale vars the child may need.
@@ -147,8 +158,7 @@ export function buildAgentEnv(
     agentEnv.OPENAI_COMPAT_MODEL = model;
     // Non-openai.com hosts need Chat Completions, not Responses API.
     agentEnv.OPENAI_COMPAT_API =
-      merged.OPENAI_COMPAT_API ??
-      (baseUrl.includes('api.openai.com') ? 'responses' : 'chat');
+      merged.OPENAI_COMPAT_API ?? (baseUrl.includes('api.openai.com') ? 'responses' : 'chat');
   }
 
   // Optional passthroughs if already set correctly.
@@ -177,7 +187,7 @@ export function hasLlmCredentials(agentEnv: Record<string, string>): boolean {
   }
   return Boolean(
     (agentEnv.OPENAI_COMPAT_API_KEY && agentEnv.OPENAI_COMPAT_MODEL) ||
-      (agentEnv.ANTHROPIC_API_KEY && agentEnv.ANTHROPIC_MODEL),
+    (agentEnv.ANTHROPIC_API_KEY && agentEnv.ANTHROPIC_MODEL),
   );
 }
 
@@ -195,9 +205,7 @@ export function loadBodyConfig(opts: {
     ? env.BUZZY_RELAY_URL.replace(/^ws/, 'http').replace(/\/$/, '')
     : BASE_URL;
   const ws =
-    env.BUZZ_RELAY_URL ??
-    env.BUZZY_RELAY_WS ??
-    `${scheme === 'https' ? 'wss' : 'ws'}://${host}`;
+    env.BUZZ_RELAY_URL ?? env.BUZZY_RELAY_WS ?? `${scheme === 'https' ? 'wss' : 'ws'}://${host}`;
 
   return {
     agentBinary,

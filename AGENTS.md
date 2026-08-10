@@ -23,8 +23,9 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Subchannel = child channel (kind:9007, UUID) + mirrored members + git worktree + edit-mode ACP session.
 - buzz-agent ACP wire vs MCP: `initialize` uses `protocolVersion` u32 (not MCP string), `clientCapabilities` (not `capabilities`). `session/new` returns `{sessionId}`. Standard MCP for `buzz-dev-mcp`. See `apps/body/src/acp.ts` for exact wire format.
 - Live suite: `cd apps/body && npm run test:live` (pretest builds all deps). Soft-skips when relay or LLM env (BUZZY_LLM_*) absent.
-- Agent pairing and server-held soul generation are exposed by `apps/body/src/cli.ts` as `buzz pair` and `buzz serve-souls`; credential/config details live in `apps/body/README.md`.
-- Channel → branch loop: `buzz serve <channel> <owner> <repo>` watches only human `t=buzz-agent-request` messages addressed to its agent key, opens an agent-signed subchannel, pushes merge-ready tips, and archives only after `main` reaches the approved tip. Live proof: `apps/body/src/channel-branch-loop.live.test.ts`.
+- Supported runtime path: run `buzz pair <code>` inside the target git repo. `apps/body/src/runtime.ts` normalizes `origin`, resolves/creates that repo's single Workspace Room, persists machine-only state under the git common dir, and launches the durable Room daemon; `buzz start` relaunches it. No `origin` creates a deliberately non-convergent local-only Room.
+- A paired Workspace-member agent creates its deterministic repo Room, adds the pairing human as a member, and immediately projects itself as member (never admin). Later Workspace agents directly join the same origin-bound Room as members; their clones use parallel feature branches. Live proof: `apps/body/src/pair-runtime.live.test.ts`.
+- Internal compatibility path: `buzz serve <channel> <owner> <repo>` runs the older explicitly-wired single-Room loop. The supported paired daemon watches only human `t=buzz-agent-request` messages addressed to its agent key, opens agent-signed subchannels, and never pushes the protected branch.
 
 ## Release APK build (@beeline/mobile)
 

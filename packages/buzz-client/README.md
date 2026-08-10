@@ -1,4 +1,4 @@
-# `@buzzy/buzz-client`
+# `@beeline/buzz-client`
 
 Channel-scoped **client transport** for real Buzz. The mobile app’s `RigTransport`
 adapter sits on this package. UI-agnostic — no React, no mock relay.
@@ -11,7 +11,7 @@ method→call table).
 
 | Surface              | API                                                                                                                                                |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Identity             | `createIdentity`, `loadIdentityFromNsec`, `identityNpub` / `identityNsec` (via `@buzzy/nostr`)                                                     |
+| Identity             | `createIdentity`, `loadIdentityFromNsec`, `identityNpub` / `identityNsec` (via `@beeline/nostr`)                                                     |
 | Agent entity         | `createAgentIdentity`, `createAgent`, `listAgents`, `isAgentIdentity` — self-signed community records with optional soul/personality/avatar fields |
 | Channel              | `createChannel`, `addMember`, `listMembers`, `waitUntilMember`, `listMyChannels`, `getChannelMetadata`                                             |
 | Community            | `createCommunity`, `listCommunities`, `communityMembers`, `communityChannels`                                                                      |
@@ -20,7 +20,7 @@ method→call table).
 | Messages             | `messageSubmit` (kind:9, optional `#p` agent mention)                                                                                              |
 | Live + backfill      | `sessionEventsSubscribe` (WS NIP-01 + NIP-42 AUTH), `sessionEventsBackfill` (`POST /query`)                                                        |
 | Agent activity bus   | body-projected kind:9 with `#t=agent-activity` — classified on subscribe/backfill                                                                  |
-| Merge Approve        | `buildMergeApproval` / `submitMergeApproval` — **P0 gate shape** (same tags as `@buzzy/gate`)                                                      |
+| Merge Approve        | `buildMergeApproval` / `submitMergeApproval` — **P0 gate shape** (same tags as `@beeline/gate`)                                                      |
 
 ### WebSocket choice
 
@@ -53,7 +53,7 @@ Local open stack auth: `X-Pubkey` on HTTP bridge. Production: NIP-98 host-bound
 # From packages/buzz-client (or via turbo filters):
 npm test              # hermetic unit tests (no relay)
 npm run test:live     # live suite against real relay
-                      # pretest:live builds @buzzy/nostr + this package
+                      # pretest:live builds @beeline/nostr + this package
 npm run typecheck
 npm run build
 ```
@@ -96,7 +96,7 @@ mobile ↔ relay ↔ body diagram.
 ## Usage sketch
 
 ```ts
-import { createAgentIdentity, createIdentity, createBuzzClient } from '@buzzy/buzz-client';
+import { createAgentIdentity, createIdentity, createBuzzClient } from '@beeline/buzz-client';
 
 const me = createIdentity();
 const client = createBuzzClient({

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SessionEvent as BuzzSessionEvent } from '@buzzy/buzz-client';
+import type { SessionEvent as BuzzSessionEvent } from '@beeline/buzz-client';
 import { toRigEvent } from './buzz-event-projection';
 
 describe('Buzz branch-loop event projection', () => {

@@ -33,8 +33,8 @@ import {
   queryEvents,
   BASE_URL,
   type Identity,
-} from '@buzzy/gate';
-import { signEvent, type NostrEvent } from '@buzzy/nostr';
+} from '@beeline/gate';
+import { signEvent, type NostrEvent } from '@beeline/nostr';
 
 const LLM_ENV_FILE = process.env.BUZZY_BODY_LLM_FILE ?? undefined;
 const RUN_MARKER = `steer-${randomUUID().slice(0, 8)}`;

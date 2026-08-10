@@ -1,4 +1,4 @@
-import type { BuzzClient, Community } from '@buzzy/buzz-client';
+import type { BuzzClient, Community } from '@beeline/buzz-client';
 
 import {
   loadActiveCommunityId,

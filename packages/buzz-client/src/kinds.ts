@@ -36,7 +36,7 @@ export const TAG_AGENT_PAIRING = 'buzz-agent-pairing';
 /** Marker for display-only, human-authored agent profile metadata. */
 export const TAG_AGENT_SOUL = 'buzz-agent-soul';
 
-/** Marker tag value for merge approval (P0 gate shape — mirrors @buzzy/gate). */
+/** Marker tag value for merge approval (P0 gate shape — mirrors @beeline/gate). */
 export const TAG_MERGE_APPROVAL = 'buzz-merge-approval';
 
 /** App-convention parent-channel linkage tag on child (sub)channels. */

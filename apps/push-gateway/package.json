@@ -1,5 +1,5 @@
 {
-  "name": "@buzzy/push-gateway",
+  "name": "@beeline/push-gateway",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -12,8 +12,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@buzzy/buzz-client": "*",
-    "@buzzy/nostr": "*",
+    "@beeline/buzz-client": "*",
+    "@beeline/nostr": "*",
     "firebase-admin": "^13.4.0"
   },
   "devDependencies": {

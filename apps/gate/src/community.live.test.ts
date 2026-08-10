@@ -4,7 +4,7 @@
  * identity B discovers the community and its channel from relay state.
  */
 import { beforeAll, describe, expect, it } from 'vitest';
-import { createBuzzClient, createIdentity } from '@buzzy/buzz-client';
+import { createBuzzClient, createIdentity } from '@beeline/buzz-client';
 import { BASE_URL, HOST } from './config.js';
 
 const RELAY_PROBE_MS = 2500;

@@ -28,7 +28,7 @@ async function main() {
   // Store the nsec in localStorage to simulate onboarding,
   // then reload to trigger the redirect to /buzz/channels
   await page.evaluate((nsec) => {
-    localStorage.setItem('@buzzy/identity/nsec', nsec);
+    localStorage.setItem('@beeline/identity/nsec', nsec);
   }, NSEC);
   console.log('Stored nsec in localStorage');
 

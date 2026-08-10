@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { signEvent, type NostrEvent } from '@buzzy/nostr';
+import { signEvent, type NostrEvent } from '@beeline/nostr';
 import { createIdentity } from './identity.js';
 import {
   classifySessionEvent,

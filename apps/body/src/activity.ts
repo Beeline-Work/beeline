@@ -8,9 +8,9 @@
  * agent activity.
  */
 import type { AcpClient, SessionUpdate } from './acp.js';
-import type { Identity } from '@buzzy/gate';
-import { publishEvent } from '@buzzy/gate';
-import { signEvent, type NostrEvent } from '@buzzy/nostr';
+import type { Identity } from '@beeline/gate';
+import { publishEvent } from '@beeline/gate';
+import { signEvent, type NostrEvent } from '@beeline/nostr';
 
 export const ACTIVITY_TAG = 'agent-activity';
 

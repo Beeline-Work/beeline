@@ -8,7 +8,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { HOST, SCHEME, BASE_URL } from '@buzzy/gate';
+import { HOST, SCHEME, BASE_URL } from '@beeline/gate';
 
 export type SessionMode = 'readonly' | 'edit';
 
@@ -24,7 +24,7 @@ export interface BodyConfig {
   agentEnv: Record<string, string>;
   /** Base directory for TLC workspaces and git worktrees. */
   workspaceRoot: string;
-  /** Relay HTTP base (defaults to @buzzy/gate config). */
+  /** Relay HTTP base (defaults to @beeline/gate config). */
   relayBaseUrl: string;
   relayHost: string;
   relayScheme: string;

@@ -33,8 +33,8 @@ import {
   publishEvent,
   BASE_URL,
   type Identity,
-} from '@buzzy/gate';
-import { signEvent, type NostrEvent } from '@buzzy/nostr';
+} from '@beeline/gate';
+import { signEvent, type NostrEvent } from '@beeline/nostr';
 
 // LLM env file driven by env var; no hardcoded home path.
 const LLM_ENV_FILE = process.env.BUZZY_BODY_LLM_FILE ?? undefined;

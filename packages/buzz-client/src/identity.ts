@@ -1,6 +1,6 @@
 /**
  * Identity helpers — create/load nsec, npub encode.
- * Crypto is entirely @buzzy/nostr (BIP-340 + NIP-19).
+ * Crypto is entirely @beeline/nostr (BIP-340 + NIP-19).
  */
 import {
   generateKeypair,
@@ -9,7 +9,7 @@ import {
   encodeNsec,
   decodeNsec,
   decodeNpub,
-} from '@buzzy/nostr';
+} from '@beeline/nostr';
 import type { AgentIdentity, Identity } from './types.js';
 
 /** Create a fresh identity (new random nsec). */

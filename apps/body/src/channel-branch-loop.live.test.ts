@@ -20,8 +20,8 @@ import {
   newIdentity,
   queryEvents,
   setMemberRole,
-} from '@buzzy/gate';
-import { createBuzzClient } from '@buzzy/buzz-client';
+} from '@beeline/gate';
+import { createBuzzClient } from '@beeline/buzz-client';
 
 const marker = `branch-loop-${randomUUID().slice(0, 8)}`;
 const human = newIdentity(`${marker}-human`);

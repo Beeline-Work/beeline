@@ -6,7 +6,7 @@
  * merge gate can query: role mistakes never turn that key into a human approver.
  */
 import { bytesToHex } from '@noble/hashes/utils.js';
-import { signEvent, verifyEvent, type NostrEvent } from '@buzzy/nostr';
+import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { communityMembers, getCommunity, inviteTokenHash } from './community.js';
 import { publishEvent, queryEvents } from './http.js';
 import {

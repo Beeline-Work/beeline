@@ -17,6 +17,7 @@ import * as QRCode from 'qrcode';
 import Svg, { Path, Rect } from 'react-native-svg';
 import { loadBuzzIdentityNsecForExport } from '@/auth/buzz-identity-storage';
 import { groknight } from '@/buzz/groknight';
+import { Typography } from '@/constants/Typography';
 
 const TYPED_CONFIRMATION = 'EXPORT';
 
@@ -325,18 +326,36 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  backButtonText: { color: groknight.chrome, fontSize: 31, lineHeight: 34 },
+  backButtonText: {
+    ...Typography.default(),
+    color: groknight.chrome,
+    fontSize: 31,
+    lineHeight: 34,
+  },
   headerCopy: { flex: 1, minWidth: 0 },
-  title: { color: groknight.textPrimary, fontSize: 17, fontWeight: '700' },
+  title: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 17,
+    fontWeight: '700',
+  },
   content: { paddingHorizontal: 20, paddingTop: 28, paddingBottom: 36 },
   intro: { maxWidth: 560 },
   sectionLabel: {
+    ...Typography.default('semiBold'),
     color: groknight.textSecondary,
     fontSize: 13,
     fontWeight: '700',
   },
-  heading: { marginTop: 7, color: groknight.textPrimary, fontSize: 24, fontWeight: '800' },
+  heading: {
+    ...Typography.default('semiBold'),
+    marginTop: 7,
+    color: groknight.textPrimary,
+    fontSize: 24,
+    fontWeight: '800',
+  },
   body: {
+    ...Typography.default(),
     marginTop: 9,
     color: groknight.textSecondary,
     fontSize: 12,
@@ -350,6 +369,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   warningGlyph: {
+    ...Typography.default('semiBold'),
     width: 22,
     height: 22,
     borderWidth: 1,
@@ -361,6 +381,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   warningText: {
+    ...Typography.default(),
     flex: 1,
     minWidth: 0,
     color: groknight.chrome,
@@ -369,12 +390,14 @@ const styles = StyleSheet.create({
   },
   confirmSection: { marginTop: 28 },
   confirmHint: {
+    ...Typography.default(),
     marginTop: 9,
     color: groknight.muted,
     fontSize: 11,
     lineHeight: 17,
   },
   confirmInput: {
+    ...Typography.default(),
     minHeight: 44,
     marginTop: 12,
     paddingHorizontal: 12,
@@ -396,6 +419,7 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.accent,
   },
   primaryButtonText: {
+    ...Typography.default('semiBold'),
     color: groknight.bgTerminal,
     fontSize: 13,
     fontWeight: '800',
@@ -409,6 +433,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   unlockedLabel: {
+    ...Typography.default('semiBold'),
     color: groknight.muted,
     fontSize: 9,
     fontWeight: '600',
@@ -424,6 +449,7 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgBase,
   },
   secretText: {
+    ...Typography.mono(),
     color: groknight.textPrimary,
     fontSize: 12,
     lineHeight: 19,
@@ -435,7 +461,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  secondaryButtonText: { color: groknight.chrome, fontSize: 12, fontWeight: '600' },
+  secondaryButtonText: {
+    ...Typography.default('semiBold'),
+    color: groknight.chrome,
+    fontSize: 12,
+    fontWeight: '600',
+  },
   primarySmallButton: {
     minHeight: 38,
     paddingHorizontal: 13,
@@ -445,6 +476,7 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.accent,
   },
   primarySmallButtonText: {
+    ...Typography.default('semiBold'),
     color: groknight.bgTerminal,
     fontSize: 12,
     fontWeight: '800',
@@ -459,6 +491,7 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.textPrimary,
   },
   qrHint: {
+    ...Typography.default(),
     maxWidth: 320,
     marginTop: 12,
     color: groknight.muted,
@@ -467,14 +500,21 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   lockButton: { marginTop: 22, alignSelf: 'center', paddingHorizontal: 14, paddingVertical: 10 },
-  lockButtonText: { color: groknight.steel, fontSize: 11, fontWeight: '600' },
+  lockButtonText: {
+    ...Typography.default('semiBold'),
+    color: groknight.steel,
+    fontSize: 11,
+    fontWeight: '600',
+  },
   errorText: {
+    ...Typography.default(),
     marginTop: 16,
     color: groknight.chrome,
     fontSize: 11,
     lineHeight: 17,
   },
   footer: {
+    ...Typography.default(),
     marginTop: 28,
     color: groknight.dim,
     fontSize: 10,

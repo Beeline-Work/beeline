@@ -13,7 +13,7 @@ import {
   createBuzzClient,
   identityNsec,
   identityNpub,
-} from '@buzzy/buzz-client';
+} from '@beeline/buzz-client';
 
 const RELAY_URL = 'http://127.0.0.1:3010';
 

@@ -1,13 +1,13 @@
 /**
- * Merge approval builder — same event shape as `@buzzy/gate` `buildApproval`.
+ * Merge approval builder — same event shape as `@beeline/gate` `buildApproval`.
  *
  * kind:9 stream message with:
  *   ["t", "buzz-merge-approval"], ["repo", …], ["branch", …], ["tip", …]
  *
- * Crypto is @buzzy/nostr signEvent (BIP-340). Do not invent a second format;
+ * Crypto is @beeline/nostr signEvent (BIP-340). Do not invent a second format;
  * the gate worker verifies this exact tag binding.
  */
-import { signEvent, verifyEvent, type NostrEvent } from '@buzzy/nostr';
+import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { KIND_STREAM_MESSAGE, TAG_MERGE_APPROVAL } from './kinds.js';
 import { tagValue } from './parse.js';
 import type { Identity, MergeTarget } from './types.js';

@@ -1,10 +1,10 @@
 {
   "extends": "../../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "../node_modules/@buzzy/nostr/dist",
-    "rootDir": "../node_modules/@buzzy/nostr/src",
+    "outDir": "../node_modules/@beeline/nostr/dist",
+    "rootDir": "../node_modules/@beeline/nostr/src",
     "preserveSymlinks": true
   },
-  "include": ["../node_modules/@buzzy/nostr/src/**/*"],
-  "exclude": ["../node_modules/@buzzy/nostr/src/**/*.test.ts"]
+  "include": ["../node_modules/@beeline/nostr/src/**/*"],
+  "exclude": ["../node_modules/@beeline/nostr/src/**/*.test.ts"]
 }

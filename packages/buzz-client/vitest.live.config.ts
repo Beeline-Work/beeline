@@ -2,7 +2,7 @@ import { defineConfig } from 'vitest/config';
 
 /**
  * Live suite against the real Buzz relay (`npm run stack:up` first).
- * Self-sufficient: pretest:live builds @buzzy/nostr + this package.
+ * Self-sufficient: pretest:live builds @beeline/nostr + this package.
  */
 export default defineConfig({
   test: {

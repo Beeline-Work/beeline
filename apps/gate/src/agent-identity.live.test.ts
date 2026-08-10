@@ -7,7 +7,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { createAgentIdentity, createBuzzClient } from '@buzzy/buzz-client';
+import { createAgentIdentity, createBuzzClient } from '@beeline/buzz-client';
 import { buildApproval } from './approval.js';
 import { announceRepo, createChannel, createCommunity, setMemberRole } from './buzz.js';
 import { BASE_URL, HOST, gitRepoUrl } from './config.js';

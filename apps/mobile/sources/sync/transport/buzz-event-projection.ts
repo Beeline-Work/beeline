@@ -1,5 +1,5 @@
 import type { SessionEvent } from './rig-transport';
-import type { SessionEvent as BuzzSessionEvent } from '@buzzy/buzz-client';
+import type { SessionEvent as BuzzSessionEvent } from '@beeline/buzz-client';
 
 type UnknownRecord = Record<string, unknown>;
 

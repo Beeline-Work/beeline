@@ -30,8 +30,8 @@ describe('community navigation storage', () => {
     await saveActiveCommunityId('pubkey-b', 'community-b');
 
     expect(asyncStorage.setItem.mock.calls).toEqual([
-      ['@buzzy/community/active/pubkey-a', 'standalone'],
-      ['@buzzy/community/active/pubkey-b', 'community-b'],
+      ['@beeline/community/active/pubkey-a', 'standalone'],
+      ['@beeline/community/active/pubkey-b', 'community-b'],
     ]);
 
     asyncStorage.getItem.mockResolvedValueOnce('standalone');
@@ -45,8 +45,8 @@ describe('community navigation storage', () => {
     await saveLastViewedChannel('pubkey-a', null, 'channel-home');
 
     expect(asyncStorage.setItem.mock.calls).toEqual([
-      ['@buzzy/community/last-channel/pubkey-a/community-a', 'channel-a'],
-      ['@buzzy/community/last-channel/pubkey-a/standalone', 'channel-home'],
+      ['@beeline/community/last-channel/pubkey-a/community-a', 'channel-a'],
+      ['@beeline/community/last-channel/pubkey-a/standalone', 'channel-home'],
     ]);
 
     asyncStorage.getItem.mockResolvedValue('channel-a');
@@ -56,7 +56,7 @@ describe('community navigation storage', () => {
   it('remembers the personal Workspace separately from active navigation', async () => {
     await savePersonalCommunityId('pubkey-a', 'personal-a');
     expect(asyncStorage.setItem).toHaveBeenCalledWith(
-      '@buzzy/workspace/personal/pubkey-a',
+      '@beeline/workspace/personal/pubkey-a',
       'personal-a',
     );
 

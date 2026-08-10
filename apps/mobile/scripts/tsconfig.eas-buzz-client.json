@@ -2,13 +2,13 @@
   "extends": "../../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ES2022", "DOM"],
-    "outDir": "../node_modules/@buzzy/buzz-client/dist",
-    "rootDir": "../node_modules/@buzzy/buzz-client/src",
+    "outDir": "../node_modules/@beeline/buzz-client/dist",
+    "rootDir": "../node_modules/@beeline/buzz-client/src",
     "preserveSymlinks": true
   },
-  "include": ["../node_modules/@buzzy/buzz-client/src/**/*"],
+  "include": ["../node_modules/@beeline/buzz-client/src/**/*"],
   "exclude": [
-    "../node_modules/@buzzy/buzz-client/src/**/*.test.ts",
-    "../node_modules/@buzzy/buzz-client/src/**/*.live.test.ts"
+    "../node_modules/@beeline/buzz-client/src/**/*.test.ts",
+    "../node_modules/@beeline/buzz-client/src/**/*.live.test.ts"
   ]
 }

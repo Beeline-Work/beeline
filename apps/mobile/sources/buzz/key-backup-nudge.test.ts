@@ -24,14 +24,14 @@ describe('key backup nudge', () => {
   it('is visible until dismissed for the current identity', async () => {
     await expect(isKeyBackupNudgeDismissed('pubkey-a')).resolves.toBe(false);
     expect(asyncStorage.getItem).toHaveBeenCalledWith(
-      '@buzzy/identity/backup-nudge-dismissed/pubkey-a',
+      '@beeline/identity/backup-nudge-dismissed/pubkey-a',
     );
   });
 
   it('stores dismissal independently per identity', async () => {
     await dismissKeyBackupNudge('pubkey-a');
     expect(asyncStorage.setItem).toHaveBeenCalledWith(
-      '@buzzy/identity/backup-nudge-dismissed/pubkey-a',
+      '@beeline/identity/backup-nudge-dismissed/pubkey-a',
       'true',
     );
   });

@@ -1,7 +1,7 @@
 /**
  * BuzzRigTransport — real-Buzz implementation of RigTransport.
  *
- * Speaks only to the Buzz relay via @buzzy/buzz-client. No Happy server calls.
+ * Speaks only to the Buzz relay via @beeline/buzz-client. No Happy server calls.
  *
  * **P1 coverage:** identity, sessionsRead, sessionRead, sessionEventsBackfill,
  * sessionEventsSubscribe, messageSubmit. Everything else is a loud stub
@@ -36,7 +36,7 @@ import {
   type BuzzClient,
   type Identity,
   type MergeTarget,
-} from '@buzzy/buzz-client';
+} from '@beeline/buzz-client';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { toRigEvent } from './buzz-event-projection';
 

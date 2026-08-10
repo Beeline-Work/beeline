@@ -1,6 +1,6 @@
 /** Live relay proof that Body's subchannel seam signs as the agent, not operator. */
 import { beforeAll, describe, expect, it } from 'vitest';
-import { verifyEvent } from '@buzzy/nostr';
+import { verifyEvent } from '@beeline/nostr';
 import {
   BASE_URL,
   HOST,
@@ -8,7 +8,7 @@ import {
   newIdentity,
   queryEvents,
   setMemberRole,
-} from '@buzzy/gate';
+} from '@beeline/gate';
 import { createAgentSubchannel } from './body.js';
 
 async function relayReachable(): Promise<boolean> {

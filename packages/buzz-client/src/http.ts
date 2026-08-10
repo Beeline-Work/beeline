@@ -7,7 +7,7 @@
  * Local open stack keeps the X-Pubkey fallback (BUZZ_REQUIRE_AUTH_TOKEN=false).
  * Production uses NIP-98 auth bound to the exact request URL and method.
  */
-import { nip98AuthHeader, type NostrEvent } from '@buzzy/nostr';
+import { nip98AuthHeader, type NostrEvent } from '@beeline/nostr';
 import type { Identity, PublishResult } from './types.js';
 
 export interface HttpBridgeOptions {

@@ -1,5 +1,5 @@
 /**
- * @buzzy/buzz-client — channel-scoped Buzz transport for the mobile RigTransport adapter.
+ * @beeline/buzz-client — channel-scoped Buzz transport for the mobile RigTransport adapter.
  *
  * Speaks only to real Buzz (WS + HTTP bridge). No UI, no mock relay.
  */

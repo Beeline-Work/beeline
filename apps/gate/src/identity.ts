@@ -7,7 +7,7 @@
  *   - agent    — a channel Member. Can push feature branches; the relay's
  *                branch protection physically blocks it from pushing `main`.
  */
-import { generateKeypair, type Keypair } from '@buzzy/nostr';
+import { generateKeypair, type Keypair } from '@beeline/nostr';
 
 export interface Identity extends Keypair {
   name: string;

@@ -1,4 +1,4 @@
-# @buzzy/body — the Buzzy agent body
+# @beeline/body — the Buzzy agent body
 
 The operator-run service that gives the coding agent its computer, enforces the
 **read-only → edit tool boundary**, and makes the session **multi-user-visible**
@@ -120,8 +120,8 @@ running the app. The LLM key remains only in the body service environment/file.
 ### As a library
 
 ```typescript
-import { Body, loadBodyConfig } from '@buzzy/body';
-import { newIdentity } from '@buzzy/gate';
+import { Body, loadBodyConfig } from '@beeline/body';
+import { newIdentity } from '@beeline/gate';
 
 const config = loadBodyConfig({ workspaceRoot: '/tmp/workspace' });
 const body = new Body(config, newIdentity('operator'), newIdentity('coding-agent'));

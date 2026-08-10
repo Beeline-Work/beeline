@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Image, StyleSheet, View } from 'react-native';
 import Svg, { Polygon } from 'react-native-svg';
-import type { Community } from '@buzzy/buzz-client';
+import type { Community } from '@beeline/buzz-client';
 import { groknight } from '@/buzz/groknight';
 import { workspaceAvatarGeometry } from '@/buzz/workspace-avatar';
 

@@ -48,6 +48,11 @@ export interface PromptResult {
   toolCalls: ToolCallEntry[];
 }
 
+export interface SteerResult {
+  runId: string;
+  messageId: string;
+}
+
 interface Pending {
   resolve: (v: unknown) => void;
   reject: (e: Error) => void;
@@ -59,6 +64,7 @@ export class AcpClient extends EventEmitter {
   private buf = '';
   private nextId = 1;
   private pending = new Map<number, Pending>();
+  private activeRunIds = new Map<string, string>();
   private alive = false;
   private agentEnv: Record<string, string>;
   private agentBinary: string;
@@ -98,6 +104,7 @@ export class AcpClient extends EventEmitter {
         p.reject(new Error(`buzz-agent exited code=${code} signal=${signal}`));
       }
       this.pending.clear();
+      this.activeRunIds.clear();
       this.emit('exit', { code, signal });
     });
 
@@ -139,6 +146,7 @@ export class AcpClient extends EventEmitter {
     }
     this.child = null;
     this.alive = false;
+    this.activeRunIds.clear();
   }
 
   get isAlive(): boolean {
@@ -172,8 +180,11 @@ export class AcpClient extends EventEmitter {
     timeoutMs = 120_000,
   ): Promise<PromptResult> {
     const updates: SessionUpdate[] = [];
+    let promptRunId: string | undefined;
     const onUpdate = (u: SessionUpdate) => {
-      if (u.sessionId === sessionId) updates.push(u);
+      if (u.sessionId !== sessionId) return;
+      updates.push(u);
+      promptRunId ??= this.activeRunIdFromUpdate(u.update);
     };
     this.on('session/update', onUpdate);
 
@@ -220,8 +231,42 @@ export class AcpClient extends EventEmitter {
         toolCalls,
       };
     } finally {
+      if (promptRunId && this.activeRunIds.get(sessionId) === promptRunId) {
+        this.activeRunIds.delete(sessionId);
+      }
       this.off('session/update', onUpdate);
     }
+  }
+
+  /**
+   * Inject follow-up input into the prompt currently running for this session.
+   * buzz-agent advertises the target run through ACP session metadata; binding
+   * the request to that id prevents a late message from steering a newer turn.
+   */
+  async sessionSteer(
+    sessionId: string,
+    text: string,
+    timeoutMs = 60_000,
+  ): Promise<SteerResult> {
+    const expectedRunId = await this.waitForActiveRun(sessionId, Math.min(timeoutMs, 5_000));
+    const raw = (await this.request(
+      '_goose/unstable/session/steer',
+      {
+        sessionId,
+        prompt: [{ type: 'text', text }],
+        expectedRunId,
+      },
+      timeoutMs,
+    )) as { runId?: string; messageId?: string };
+    if (!raw.runId || !raw.messageId) {
+      throw new Error('ACP session steer response missing runId or messageId');
+    }
+    return { runId: raw.runId, messageId: raw.messageId };
+  }
+
+  /** Active ACP run for a session, if the agent has advertised one. */
+  activeRunId(sessionId: string): string | undefined {
+    return this.activeRunIds.get(sessionId);
   }
 
   sessionCancel(sessionId: string): void {
@@ -291,10 +336,44 @@ export class AcpClient extends EventEmitter {
           sessionId: params.sessionId,
           update: params.update,
         };
+        const activeRunId = this.activeRunIdFromUpdate(params.update);
+        if (activeRunId) this.activeRunIds.set(params.sessionId, activeRunId);
         this.emit('session/update', u);
       }
       return;
     }
+  }
+
+  private activeRunIdFromUpdate(update: Record<string, unknown>): string | undefined {
+    const meta = update._meta as Record<string, unknown> | undefined;
+    const goose = meta?.goose as Record<string, unknown> | undefined;
+    return typeof goose?.activeRunId === 'string' && goose.activeRunId
+      ? goose.activeRunId
+      : undefined;
+  }
+
+  private waitForActiveRun(sessionId: string, timeoutMs: number): Promise<string> {
+    const current = this.activeRunIds.get(sessionId);
+    if (current) return Promise.resolve(current);
+
+    return new Promise((resolve, reject) => {
+      const onUpdate = (update: SessionUpdate) => {
+        if (update.sessionId !== sessionId) return;
+        const runId = this.activeRunIdFromUpdate(update.update);
+        if (!runId) return;
+        cleanup();
+        resolve(runId);
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error(`ACP session ${sessionId} has no active run to steer`));
+      }, timeoutMs);
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.off('session/update', onUpdate);
+      };
+      this.on('session/update', onUpdate);
+    });
   }
 
   private async handlePermission(id: unknown, params: unknown): Promise<void> {

@@ -41,5 +41,12 @@ export {
   ACTIVITY_TAG,
   type ActivityBatch,
 } from './activity.js';
+export {
+  resolveReviewBaseTip,
+  listChangeReviewFiles,
+  readChangeReviewPatch,
+  chunkChangeReviewPatch,
+  postChangeReviewMetadata,
+} from './change-review.js';
 export { generateSoul, type GeneratedSoul } from './soul.js';
 export { createSoulServer } from './soul-server.js';

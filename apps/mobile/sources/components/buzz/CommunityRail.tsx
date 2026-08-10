@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Community } from '@buzzy/buzz-client';
 import { groknight } from '@/buzz/groknight';
 import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
+import { WorkspaceAvatar } from '@/components/buzz/WorkspaceAvatar';
 
 const DRAWER_WIDTH = 72;
 const DRAWER_DURATION_MS = 180;
@@ -23,23 +24,16 @@ type CommunityRailProps = {
   onAdd: () => void;
 };
 
-export function communityMark(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  if (words.length > 1) {
-    return `${words[0]?.[0] ?? ''}${words[1]?.[0] ?? ''}`.toUpperCase();
-  }
-  return (words[0] ?? '?').slice(0, 2).toUpperCase();
-}
-
 type RailButtonProps = {
   active: boolean;
   label: string;
-  mark: string;
+  children: React.ReactNode;
+  add?: boolean;
   onPress: () => void;
   testID?: string;
 };
 
-function RailButton({ active, label, mark, onPress, testID }: RailButtonProps) {
+function RailButton({ active, label, children, add = false, onPress, testID }: RailButtonProps) {
   return (
     <View style={styles.railButtonSlot}>
       {active && <View style={styles.activePill} />}
@@ -49,9 +43,9 @@ function RailButton({ active, label, mark, onPress, testID }: RailButtonProps) {
         accessibilityState={{ selected: active }}
         testID={testID}
         onPress={onPress}
-        style={[styles.railButton, active && styles.railButtonActive]}
+        style={[styles.railButton, add && styles.addRailButton]}
       >
-        <Text style={[styles.railMark, active && styles.railMarkActive]}>{mark}</Text>
+        {children}
       </TouchableOpacity>
     </View>
   );
@@ -74,24 +68,35 @@ export function CommunityRail({
         contentContainerStyle={styles.communityScrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {communities.map((community) => (
-          <RailButton
-            key={community.communityId}
-            active={activeCommunityId === community.communityId}
-            label={community.name}
-            mark={communityMark(community.name)}
-            onPress={() => onSelect(community.communityId)}
-            testID={`community-rail-${community.communityId}`}
-          />
-        ))}
+        {communities.map((community) => {
+          const active = activeCommunityId === community.communityId;
+          return (
+            <RailButton
+              key={community.communityId}
+              active={active}
+              label={community.name}
+              onPress={() => onSelect(community.communityId)}
+              testID={`community-rail-${community.communityId}`}
+            >
+              <WorkspaceAvatar
+                active={active}
+                community={community}
+                size={42}
+                testID={`workspace-avatar-${community.communityId}`}
+              />
+            </RailButton>
+          );
+        })}
       </ScrollView>
       <RailButton
         active={false}
+        add
         label={`Create or join a ${WORKSPACE_LABEL}`}
-        mark="＋"
         onPress={onAdd}
         testID="community-rail-add"
-      />
+      >
+        <Text style={styles.addRailButtonText}>＋</Text>
+      </RailButton>
       <View style={{ height: Math.max(insets.bottom, 8) }} />
     </View>
   );
@@ -105,10 +110,10 @@ type CommunityDrawerContextValue = {
 const CommunityDrawerContext = createContext<CommunityDrawerContextValue | null>(null);
 
 type CommunityDrawerTriggerProps = {
-  communityName?: string;
+  community?: Community | null;
 };
 
-export function CommunityDrawerTrigger({ communityName }: CommunityDrawerTriggerProps) {
+export function CommunityDrawerTrigger({ community }: CommunityDrawerTriggerProps) {
   const drawer = useContext(CommunityDrawerContext);
   if (!drawer) {
     throw new Error('CommunityDrawerTrigger must be rendered inside BuzzCommunityShell.');
@@ -123,9 +128,7 @@ export function CommunityDrawerTrigger({ communityName }: CommunityDrawerTrigger
       style={styles.drawerTrigger}
       testID="community-drawer-trigger"
     >
-      <Text style={styles.drawerTriggerMark}>
-        {communityName ? communityMark(communityName) : 'B'}
-      </Text>
+      <WorkspaceAvatar community={community} size={38} testID="workspace-avatar-header" />
       <Text style={styles.drawerTriggerChevron}>›</Text>
     </TouchableOpacity>
   );
@@ -243,25 +246,19 @@ const styles = StyleSheet.create({
   railButton: {
     width: 42,
     height: 42,
-    borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  addRailButton: {
+    borderRadius: 13,
     borderWidth: 1,
     borderColor: groknight.borderActive,
     backgroundColor: groknight.bgHighlight,
   },
-  railButtonActive: {
-    borderWidth: 2,
-    borderColor: groknight.accent,
-    backgroundColor: groknight.bgHover,
-  },
-  railMark: {
+  addRailButtonText: {
     color: groknight.chrome,
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  railMarkActive: {
-    color: groknight.accent,
+    fontSize: 20,
+    fontWeight: '500',
   },
   activePill: {
     position: 'absolute',
@@ -290,21 +287,12 @@ const styles = StyleSheet.create({
     opacity: 0.78,
   },
   drawerTrigger: {
-    width: 44,
+    width: 52,
     height: 44,
     marginRight: 10,
-    borderRadius: 13,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: groknight.borderActive,
-    backgroundColor: groknight.bgHighlight,
-  },
-  drawerTriggerMark: {
-    color: groknight.accent,
-    fontSize: 12,
-    fontWeight: '800',
   },
   drawerTriggerChevron: {
     marginLeft: 2,

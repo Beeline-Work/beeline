@@ -336,7 +336,7 @@ export default function BuzzChannels() {
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <View style={styles.header}>
-          <CommunityDrawerTrigger communityName={activeCommunity?.name} />
+          <CommunityDrawerTrigger community={activeCommunity} />
           <View style={styles.headerIdentity}>
             <Text style={styles.headerTitle} numberOfLines={1}>
               {activeCommunity?.name ?? WORKSPACE_LABEL}

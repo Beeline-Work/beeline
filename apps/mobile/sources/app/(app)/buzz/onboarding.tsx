@@ -1,19 +1,10 @@
-/**
- * Buzz Onboarding — key generation or nsec paste.
- *
- * GrokNight alien-hull design.
- */
-import React, { useEffect, useState } from 'react';
+/** Beeline onboarding — sign up with a new key or sign in with an existing nsec. */
+import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import {
-  generateBuzzIdentity,
-  importBuzzIdentity,
-  getEffectiveRelayUrl,
-  saveRelayUrl,
-  DEFAULT_RELAY_URL,
-} from '@/auth/buzz-identity-storage';
+import Svg, { Path } from 'react-native-svg';
+import { generateBuzzIdentity, importBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { groknight } from '@/buzz/groknight';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
 import { Typography } from '@/constants/Typography';
@@ -21,35 +12,14 @@ import { Typography } from '@/constants/Typography';
 export default function BuzzOnboarding() {
   const insets = useSafeAreaInsets();
   const [nsecInput, setNsecInput] = useState('');
-  const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_URL);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [showKeyGuide, setShowKeyGuide] = useState(false);
+  const [showSignIn, setShowSignIn] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Load saved relay URL on mount
-  useEffect(() => {
-    let cancelled = false;
-    void getEffectiveRelayUrl()
-      .then((url) => {
-        if (!cancelled) setRelayUrl(url);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setRelayUrl(DEFAULT_RELAY_URL);
-          setError(`Unable to read secure storage: ${String(err)}`);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const handleGenerate = async () => {
     setLoading(true);
     setError(null);
     try {
-      await saveRelayUrl(relayUrl.trim() || DEFAULT_RELAY_URL);
       const identity = await generateBuzzIdentity();
       await registerBuzzPushNotifications(identity);
       router.replace('/buzz/channels');
@@ -69,7 +39,6 @@ export default function BuzzOnboarding() {
     setLoading(true);
     setError(null);
     try {
-      await saveRelayUrl(relayUrl.trim() || DEFAULT_RELAY_URL);
       const identity = await importBuzzIdentity(trimmed);
       await registerBuzzPushNotifications(identity);
       router.replace('/buzz/channels');
@@ -82,8 +51,25 @@ export default function BuzzOnboarding() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      <Text style={styles.title}>buzzy</Text>
-      <Text style={styles.subtitle}>Steer and review Agents from your phone.</Text>
+      <Svg
+        accessible
+        accessibilityLabel="Beeline logo"
+        width={112}
+        height={112}
+        viewBox="0 0 240 240"
+        style={styles.logo}
+      >
+        <Path
+          d="M 32 182 C 48 181, 58 180, 68 176 C 86 168, 60 143, 80 132 C 92 126, 104 138, 97 153 C 92 163, 77 164, 70 172 C 62 180, 82 185, 98 178 C 144 168, 176 148, 194 112 C 203 92, 208 66, 211 44"
+          fill="none"
+          stroke={groknight.accent}
+          strokeWidth={8}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </Svg>
+      <Text style={styles.title}>beeline</Text>
+      <Text style={styles.subtitle}>workspace for all intelligence</Text>
 
       {error && (
         <Text accessibilityRole="alert" style={styles.errorText}>
@@ -91,21 +77,7 @@ export default function BuzzOnboarding() {
         </Text>
       )}
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>New key</Text>
-        <TouchableOpacity style={styles.button} onPress={handleGenerate} disabled={loading}>
-          <Text style={styles.buttonText}>{loading ? 'Generating…' : 'Generate new key'}</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.divider}>
-        <View style={styles.dividerLine} />
-        <Text style={styles.dividerText}>or</Text>
-        <View style={styles.dividerLine} />
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Import existing key</Text>
+      {showSignIn && (
         <TextInput
           style={styles.input}
           placeholder="nsec1…"
@@ -115,58 +87,34 @@ export default function BuzzOnboarding() {
           autoCapitalize="none"
           autoCorrect={false}
           secureTextEntry={Platform.OS !== 'web'}
+          editable={!loading}
+          onSubmitEditing={() => void handleImport()}
         />
-        <TouchableOpacity
-          style={[styles.secondaryButton, (!nsecInput.trim() || loading) && styles.buttonDisabled]}
-          onPress={handleImport}
-          disabled={!nsecInput.trim() || loading}
-        >
-          <Text style={styles.secondaryButtonText}>Import and continue</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          accessibilityRole="button"
-          accessibilityState={{ expanded: showKeyGuide }}
-          onPress={() => setShowKeyGuide((value) => !value)}
-          style={styles.guideToggle}
-        >
-          <Text style={styles.guideToggleText}>Where do I find my key?</Text>
-        </TouchableOpacity>
-        {showKeyGuide && (
-          <Text style={styles.guideText}>
-            Copy the nsec1… value from your Nostr app&apos;s identity or backup settings.
-          </Text>
-        )}
-      </View>
-
-      <TouchableOpacity
-        accessibilityRole="button"
-        accessibilityState={{ expanded: showAdvanced }}
-        style={styles.advancedToggle}
-        onPress={() => setShowAdvanced((value) => !value)}
-      >
-        <Text style={[styles.advancedText, showAdvanced && styles.advancedTextActive]}>
-          {showAdvanced ? '▾' : '›'} Advanced
-        </Text>
-      </TouchableOpacity>
-
-      {showAdvanced && (
-        <View style={styles.advancedPanel}>
-          <Text style={styles.sectionTitle}>Relay URL</Text>
-          <TextInput
-            style={styles.input}
-            placeholder={DEFAULT_RELAY_URL}
-            placeholderTextColor={groknight.dim}
-            value={relayUrl}
-            onChangeText={setRelayUrl}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-          />
-          <Text style={styles.hint}>
-            Change this only when connecting to a different Buzz relay.
-          </Text>
-        </View>
       )}
+
+      <View style={styles.actions}>
+        <TouchableOpacity
+          style={[styles.secondaryButton, loading && styles.buttonDisabled]}
+          onPress={() => {
+            if (!showSignIn) {
+              setShowSignIn(true);
+              setError(null);
+              return;
+            }
+            void handleImport();
+          }}
+          disabled={loading}
+        >
+          <Text style={styles.secondaryButtonText}>Sign in</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.button, loading && styles.buttonDisabled]}
+          onPress={() => void handleGenerate()}
+          disabled={loading}
+        >
+          <Text style={styles.buttonText}>Sign up</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -177,6 +125,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     justifyContent: 'center',
     backgroundColor: groknight.bgTerminal,
+  },
+  logo: {
+    alignSelf: 'center',
+    marginBottom: 4,
   },
   title: {
     ...Typography.default('semiBold'),
@@ -191,19 +143,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: groknight.muted,
     textAlign: 'center',
-    marginBottom: 48,
+    marginBottom: 40,
     paddingHorizontal: 16,
     lineHeight: 18,
-  },
-  section: {
-    marginBottom: 24,
-  },
-  sectionTitle: {
-    ...Typography.default('semiBold'),
-    fontSize: 11,
-    fontWeight: '700',
-    color: groknight.muted,
-    marginBottom: 10,
   },
   input: {
     ...Typography.default(),
@@ -214,7 +156,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: groknight.textSecondary,
     backgroundColor: groknight.bgBase,
-    marginBottom: 10,
+    marginBottom: 12,
+  },
+  actions: {
+    gap: 10,
   },
   button: {
     backgroundColor: groknight.accent,
@@ -238,52 +183,14 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 4,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: groknight.borderActive,
   },
   secondaryButtonText: {
     ...Typography.default('semiBold'),
     color: groknight.chrome,
     fontSize: 14,
     fontWeight: '600',
-  },
-  guideToggle: {
-    alignSelf: 'flex-start',
-    minHeight: 36,
-    paddingVertical: 9,
-  },
-  guideToggleText: {
-    ...Typography.default('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  guideText: {
-    ...Typography.default(),
-    color: groknight.muted,
-    fontSize: 11,
-    lineHeight: 17,
-  },
-  divider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 16,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: groknight.border,
-  },
-  dividerText: {
-    ...Typography.default(),
-    marginHorizontal: 12,
-    color: groknight.dim,
-    fontSize: 11,
-  },
-  hint: {
-    ...Typography.default(),
-    fontSize: 12,
-    color: groknight.muted,
-    lineHeight: 16,
-    marginTop: 4,
   },
   errorText: {
     ...Typography.default(),
@@ -292,23 +199,5 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginBottom: 20,
     textAlign: 'center',
-  },
-  advancedToggle: {
-    alignSelf: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  advancedText: {
-    ...Typography.default('semiBold'),
-    color: groknight.muted,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  advancedTextActive: {
-    color: groknight.textSecondary,
-  },
-  advancedPanel: {
-    marginTop: 4,
-    paddingTop: 14,
   },
 });

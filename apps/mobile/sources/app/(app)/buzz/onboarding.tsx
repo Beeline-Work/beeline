@@ -1,6 +1,6 @@
 /** Beeline onboarding: sign up with a new key or sign in with an existing nsec. */
 import React, { useState } from 'react';
-import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Platform, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { generateBuzzIdentity, importBuzzIdentity } from '@/auth/buzz-identity-storage';
@@ -57,7 +57,7 @@ export default function BuzzOnboarding() {
       <View style={styles.brandSurface}>
         <BeelineMark shimmer />
         <Text style={styles.title}>beeline</Text>
-        <Text style={styles.subtitle}>A secure workspace for people and their agents.</Text>
+        <Text style={styles.subtitle}>workspace for all intelligence</Text>
       </View>
 
       {error && (
@@ -94,7 +94,7 @@ export default function BuzzOnboarding() {
 
       <View style={styles.actions}>
         <MonoButton
-          label={showSignIn ? 'Import and continue' : 'Sign in with a key'}
+          label="Sign in"
           loading={loadingAction === 'import'}
           variant="secondary"
           onPress={() => {
@@ -108,20 +108,13 @@ export default function BuzzOnboarding() {
           disabled={loading}
         />
         <MonoButton
-          label={loadingAction === 'generate' ? 'Generating key' : 'Create a new key'}
+          label="Sign up"
           loading={loadingAction === 'generate'}
           onPress={() => void handleGenerate()}
           disabled={loading}
         />
       </View>
 
-      <TouchableOpacity
-        accessibilityRole="button"
-        accessibilityLabel="Learn how Beeline keys work"
-        style={styles.guideTarget}
-      >
-        <Text style={styles.guideText}>◇ HOW KEYS WORK</Text>
-      </TouchableOpacity>
     </View>
   );
 }
@@ -202,13 +195,5 @@ const styles = StyleSheet.create({
     color: groknight.textSecondary,
     fontSize: 14,
     lineHeight: 20,
-  },
-  guideTarget: { minHeight: 44, alignItems: 'center', justifyContent: 'center', marginTop: 12 },
-  guideText: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textMuted,
-    fontSize: 11,
-    lineHeight: 15,
-    letterSpacing: 0.8,
   },
 });

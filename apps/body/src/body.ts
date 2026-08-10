@@ -35,12 +35,22 @@ import {
 import {
   createAgent,
   isMember,
+  CHANGE_REVIEW_FILE_TAG,
+  CHANGE_REVIEW_MANIFEST_TAG,
+  CHANGE_REVIEW_VERSION,
   listAgents,
   waitUntilMember,
   type ChannelOpsContext,
 } from '@beeline/buzz-client';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import type { BodyConfig } from './config.js';
+import {
+  chunkChangeReviewPatch,
+  listChangeReviewFiles,
+  postChangeReviewMetadata,
+  readChangeReviewPatch,
+  resolveReviewBaseTip,
+} from './change-review.js';
 
 /** Tracks a single agent session. */
 export interface AgentSession {
@@ -539,6 +549,54 @@ export class Body {
       tip,
     };
     if (info.mergeTarget?.tip === tip) return true;
+
+    // Publish review data before advertising merge readiness. The manifest is
+    // small and eager; patches are separate, bounded events fetched per file.
+    const base = resolveReviewBaseTip(info.worktreePath, target.branch);
+    const files = listChangeReviewFiles(info.worktreePath, base, tip);
+    for (const [fileIndex, file] of files.entries()) {
+      const patch = readChangeReviewPatch(info.worktreePath, base, tip, file);
+      const chunks = chunkChangeReviewPatch(patch);
+      for (const [index, content] of chunks.entries()) {
+        await postChangeReviewMetadata(
+          info.subchannelId,
+          this.agentIdentity,
+          `${info.subchannelId}:${tip}:file:${fileIndex}:${index}`,
+          content,
+          [
+            ['t', CHANGE_REVIEW_FILE_TAG],
+            ['f', file.path],
+            ['r', tip],
+            ['base', base],
+            ['tip', tip],
+            ['chunk', String(index)],
+            ['chunks', String(chunks.length)],
+            ...(file.isBinary ? [['binary', 'true']] : []),
+          ],
+        );
+      }
+    }
+    for (let index = 0; index < Math.max(1, Math.ceil(files.length / 100)); index++) {
+      await postChangeReviewMetadata(
+        info.subchannelId,
+        this.agentIdentity,
+        `${info.subchannelId}:${tip}:manifest:${index}`,
+        JSON.stringify({
+          version: CHANGE_REVIEW_VERSION,
+          base,
+          tip,
+          files: files.slice(index * 100, (index + 1) * 100),
+        }),
+        [
+          ['t', CHANGE_REVIEW_MANIFEST_TAG],
+          ['r', tip],
+          ['base', base],
+          ['tip', tip],
+          ['chunk', String(index)],
+        ],
+      );
+    }
+
     info.mergeTarget = target;
     await postControlMessage(
       info.subchannelId,

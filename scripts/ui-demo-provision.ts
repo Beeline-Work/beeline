@@ -26,15 +26,28 @@ import {
 } from '@beeline/gate';
 import {
   createIdentity,
+  CHANGE_REVIEW_FILE_TAG,
+  CHANGE_REVIEW_MANIFEST_TAG,
+  CHANGE_REVIEW_VERSION,
   identityNpub,
   identityNsec,
+  loadIdentityFromNsec,
   createSubchannel as buzzCreateSubchannel,
 } from '@beeline/buzz-client';
+import {
+  chunkChangeReviewPatch,
+  listChangeReviewFiles,
+  postChangeReviewMetadata,
+  readChangeReviewPatch,
+  resolveReviewBaseTip,
+} from '@beeline/body';
 import { signEvent } from '@beeline/nostr';
 
 const RUN_MARKER = `uidemo-${randomUUID().slice(0, 8)}`;
 
-function log(...args: unknown[]) { console.log(`[ui-demo]`, ...args); }
+function log(...args: unknown[]) {
+  console.log(`[ui-demo]`, ...args);
+}
 function commit(dir: string, file: string, content: string, msg: string) {
   writeFileSync(join(dir, file), content);
   const add = git(dir, ['add', '-A']);
@@ -44,12 +57,20 @@ function commit(dir: string, file: string, content: string, msg: string) {
 }
 
 async function main() {
-  const res = await fetch(`${BASE_URL}/health`, { headers: { host: HOST }, signal: AbortSignal.timeout(3000) });
-  if (!res.ok) { log('Relay unreachable'); process.exit(1); }
+  const res = await fetch(`${BASE_URL}/health`, {
+    headers: { host: HOST },
+    signal: AbortSignal.timeout(3000),
+  });
+  if (!res.ok) {
+    log('Relay unreachable');
+    process.exit(1);
+  }
 
   // ── Identities ────────────────────────────────────────────────────
-  const owner = createIdentity('ui-demo-owner');   // push identity
-  const reviewer = createIdentity('ui-demo-reviewer'); // review identity for UI
+  const owner = createIdentity('ui-demo-owner'); // push identity
+  const reviewer = process.env.BUZZY_UI_REVIEWER_NSEC
+    ? loadIdentityFromNsec(process.env.BUZZY_UI_REVIEWER_NSEC, 'ui-demo-reviewer')
+    : createIdentity('ui-demo-reviewer'); // review identity for UI
   const agent = newIdentity('ui-demo-agent');
   log('Owner npub:', identityNpub(owner));
   log('Reviewer npub:', identityNpub(reviewer));
@@ -84,10 +105,10 @@ async function main() {
   const repoUrl = gitRepoUrl(owner.publicKey, repo);
   const seedDir = mkdtempSync(join(tmpdir(), 'buzzy-ui-seed-'));
   git(seedDir, ['init', '-q', '-b', 'main']);
-  commit(seedDir, 'README.md', `# ${repo}\n`, 'init');
+  commit(seedDir, 'README.md', `# ${repo}\n\nReview status: draft\n`, 'init');
   const seedPush = gitAuthed(seedDir, owner, owner.publicKey, repo, ['push', repoUrl, 'main']);
   if (!seedPush.ok) throw new Error('seed push failed: ' + seedPush.stderr);
-  await new Promise(r => setTimeout(r, 1000));
+  await new Promise((r) => setTimeout(r, 1000));
 
   const featureBranch = `feature/${RUN_MARKER}`;
   const agentDir = mkdtempSync(join(tmpdir(), 'buzzy-ui-agent-'));
@@ -95,49 +116,115 @@ async function main() {
   if (!agentClone.ok) throw new Error('clone failed');
   const work = join(agentDir, 'work');
   git(work, ['checkout', '-q', '-b', featureBranch]);
+  writeFileSync(join(work, 'README.md'), `# ${repo}\n\nReview status: ready\n`);
   commit(work, 'FEATURE.md', `# Feature ${RUN_MARKER}\n`, `feat: ${RUN_MARKER}`);
   const featureTip = git(work, ['rev-parse', 'HEAD']).stdout.trim();
-  const pushFeature = gitAuthed(work, agent, owner.publicKey, repo, ['push', 'origin', featureBranch]);
+  const pushFeature = gitAuthed(work, agent, owner.publicKey, repo, [
+    'push',
+    'origin',
+    featureBranch,
+  ]);
   if (!pushFeature.ok) throw new Error('push failed: ' + pushFeature.stderr);
   log('Feature tip:', featureTip);
 
-  // ── 4. Post subchannel control messages with merge target ─────────
+  // ── 4. Post exact-tip review metadata + merge target ──────────────
   const repoId = `${owner.publicKey}/${repo}`;
+  const targetBranch = 'refs/heads/main';
+  const baseTip = resolveReviewBaseTip(work, targetBranch);
+  const files = listChangeReviewFiles(work, baseTip, featureTip);
 
-  // To subchannel (intro message with merge target - what getSubchannelMergeTarget reads)
-  const subIntro = signEvent({
-    pubkey: owner.publicKey,
-    created_at: Math.floor(Date.now() / 1000),
-    kind: 9,
-    tags: [
-      ['h', subchannelId], ['t', 'body-control'],
-      ['session', `ses_${RUN_MARKER}`],
-      ['parent', parentChannelId], ['mode', 'edit'],
-      ['repo', repoId], ['branch', featureBranch], ['tip', featureTip],
+  for (const [fileIndex, file] of files.entries()) {
+    const chunks = chunkChangeReviewPatch(readChangeReviewPatch(work, baseTip, featureTip, file));
+    for (const [index, content] of chunks.entries()) {
+      await postChangeReviewMetadata(
+        subchannelId,
+        owner,
+        `${subchannelId}:${featureTip}:file:${fileIndex}:${index}`,
+        content,
+        [
+          ['t', CHANGE_REVIEW_FILE_TAG],
+          ['f', file.path],
+          ['r', featureTip],
+          ['base', baseTip],
+          ['tip', featureTip],
+          ['chunk', String(index)],
+          ['chunks', String(chunks.length)],
+          ...(file.isBinary ? [['binary', 'true']] : []),
+        ],
+      );
+    }
+  }
+
+  await postChangeReviewMetadata(
+    subchannelId,
+    owner,
+    `${subchannelId}:${featureTip}:manifest:0`,
+    JSON.stringify({
+      version: CHANGE_REVIEW_VERSION,
+      base: baseTip,
+      tip: featureTip,
+      files,
+    }),
+    [
+      ['t', CHANGE_REVIEW_MANIFEST_TAG],
+      ['r', featureTip],
+      ['base', baseTip],
+      ['tip', featureTip],
+      ['chunk', '0'],
     ],
-    content: `🤖 Edit session started — branch=${featureBranch} tip=${featureTip.slice(0, 12)}…`,
-  }, owner.secretKey);
+  );
+
+  // Merge-ready is published last so the review payload is complete first.
+  const subIntro = signEvent(
+    {
+      pubkey: owner.publicKey,
+      created_at: Math.floor(Date.now() / 1000),
+      kind: 9,
+      tags: [
+        ['h', subchannelId],
+        ['t', 'body-control'],
+        ['session', `ses_${RUN_MARKER}`],
+        ['parent', parentChannelId],
+        ['mode', 'edit'],
+        ['status', 'ready'],
+        ['t', 'merge-ready'],
+        ['repo', repoId],
+        ['branch', targetBranch],
+        ['feature', featureBranch],
+        ['tip', featureTip],
+      ],
+      content: `Work is ready for human merge approval — ${featureTip.slice(0, 12)}…`,
+    },
+    owner.secretKey,
+  );
   await publishEvent(subIntro);
-  log('Subchannel intro with merge target posted');
+  log(`Review metadata posted for ${files.length} changed files`);
 
   // To parent (subchannel link - for UI to render as navigable)
-  const parentLink = signEvent({
-    pubkey: owner.publicKey,
-    created_at: Math.floor(Date.now() / 1000),
-    kind: 9,
-    tags: [
-      ['h', parentChannelId], ['t', 'body-control'],
-      ['subchannel', subchannelId], ['session', `ses_${RUN_MARKER}`],
-      ['branch', featureBranch], ['mode', 'edit'],
-      ['repo', repoId], ['tip', featureTip],
-    ],
-    content: `🛠 Edit session opened — subchannel=${subchannelId} branch=${featureBranch}`,
-  }, owner.secretKey);
+  const parentLink = signEvent(
+    {
+      pubkey: owner.publicKey,
+      created_at: Math.floor(Date.now() / 1000),
+      kind: 9,
+      tags: [
+        ['h', parentChannelId],
+        ['t', 'body-control'],
+        ['subchannel', subchannelId],
+        ['session', `ses_${RUN_MARKER}`],
+        ['branch', featureBranch],
+        ['mode', 'edit'],
+        ['repo', repoId],
+        ['tip', featureTip],
+      ],
+      content: `🛠 Edit session opened — subchannel=${subchannelId} branch=${featureBranch}`,
+    },
+    owner.secretKey,
+  );
   await publishEvent(parentLink);
   log('Parent link message posted');
 
   // Wait for propagation
-  await new Promise(r => setTimeout(r, 2000));
+  await new Promise((r) => setTimeout(r, 2000));
 
   // ── 5. Output for the UI demo ─────────────────────────────────────
   console.log(`\n=== UI DEMO SETUP COMPLETE ===`);
@@ -150,4 +237,7 @@ async function main() {
   console.log(`RUN_MARKER=${RUN_MARKER}`);
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

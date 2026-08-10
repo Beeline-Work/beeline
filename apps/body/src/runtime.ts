@@ -218,7 +218,7 @@ export async function readRuntimeRecord(path: string): Promise<AgentRuntimeRecor
 
 export async function findRuntimeConfigPaths(cwd: string): Promise<string[]> {
   const root = git(cwd, ['rev-parse', '--show-toplevel']);
-  if (!root) throw new Error('buzz start must be run inside a paired git repository');
+  if (!root) throw new Error('beeline start must be run inside a paired git repository');
   const common = git(root, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
   const gitCommonDir = common
     ? resolve(root, common)

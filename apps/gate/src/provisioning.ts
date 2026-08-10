@@ -24,7 +24,7 @@ import {
   KIND_PUT_USER,
   KIND_REPO_ANNOUNCEMENT,
 } from './buzz.js';
-import type { NostrEvent } from '@buzzy/nostr';
+import type { NostrEvent } from '@beeline/nostr';
 
 export type ChannelRole = 'owner' | 'admin' | 'member' | 'guest' | 'bot';
 

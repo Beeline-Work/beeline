@@ -1,4 +1,4 @@
-# `@buzzy/gate`
+# `@beeline/gate`
 
 Phase-0 merge-gate library and the signed-approval worker. Talks to a real
 Buzz relay (see `relay-stack/` at the repo root) — no fake backend.
@@ -22,7 +22,7 @@ Buzz relay (see `relay-stack/` at the repo root) — no fake backend.
 # From apps/gate (or via turbo filters):
 npm test              # hermetic unit tests only (no relay required)
 npm run test:live     # live security suite against the real relay
-                      # (pretest:live builds @buzzy/nostr so a fresh clone works)
+                      # (pretest:live builds @beeline/nostr so a fresh clone works)
 npm run typecheck
 npm run worker -- <config.json>
 ```

@@ -1,7 +1,7 @@
 import { applicationDefault, getApps, initializeApp } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
-import { createBuzzClient, createIdentity } from '@buzzy/buzz-client';
-import type { NostrEvent } from '@buzzy/nostr';
+import { createBuzzClient, createIdentity } from '@beeline/buzz-client';
+import type { NostrEvent } from '@beeline/nostr';
 import { PushGateway } from './gateway.js';
 import { TokenRegistry } from './registry.js';
 import { createRegistrationServer } from './server.js';

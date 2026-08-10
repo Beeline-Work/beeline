@@ -16,10 +16,10 @@
  */
 import { buildAgentEnv, loadBodyConfig, BASE_URL } from './config.js';
 import { Body } from './body.js';
-import { newIdentity, type Identity } from '@buzzy/gate';
-import { createChannel, setMemberRole, queryEvents } from '@buzzy/gate';
-import { decodeNsec, getPublicKey } from '@buzzy/nostr';
-import { createBuzzClient } from '@buzzy/buzz-client';
+import { newIdentity, type Identity } from '@beeline/gate';
+import { createChannel, setMemberRole, queryEvents } from '@beeline/gate';
+import { decodeNsec, getPublicKey } from '@beeline/nostr';
+import { createBuzzClient } from '@beeline/buzz-client';
 import { createSoulServer } from './soul-server.js';
 
 function identityFromKey(value: string | undefined, name: string): Identity {

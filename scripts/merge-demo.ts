@@ -47,9 +47,9 @@ import {
   HOST,
   KIND_STREAM_MESSAGE,
   type Identity,
-} from '@buzzy/gate';
-import { signEvent, type NostrEvent } from '@buzzy/nostr';
-import { encodeNpub } from '@buzzy/buzz-client';
+} from '@beeline/gate';
+import { signEvent, type NostrEvent } from '@beeline/nostr';
+import { encodeNpub } from '@beeline/buzz-client';
 
 const RUN_MARKER = `demo-${randomUUID().slice(0, 8)}`;
 let ASSERT_FAILURES = 0;

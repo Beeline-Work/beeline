@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { signEvent, type NostrEvent } from '@buzzy/nostr';
+import { signEvent, type NostrEvent } from '@beeline/nostr';
 import { createChannel, type ChannelOpsContext } from './channel.js';
 import {
   communityMembers,

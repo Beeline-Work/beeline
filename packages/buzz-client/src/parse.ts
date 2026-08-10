@@ -1,4 +1,4 @@
-import type { NostrEvent } from '@buzzy/nostr';
+import type { NostrEvent } from '@beeline/nostr';
 import { TAG_AGENT_ACTIVITY, TAG_COMMUNITY, TAG_PARENT } from './kinds.js';
 import type { ChannelMember, ChannelMetadata, SessionEvent, SessionEventKind } from './types.js';
 

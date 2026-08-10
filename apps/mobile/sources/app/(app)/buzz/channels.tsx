@@ -12,7 +12,7 @@ import {
 import * as Clipboard from 'expo-clipboard';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { Community, Identity } from '@buzzy/buzz-client';
+import type { Community, Identity } from '@beeline/buzz-client';
 import {
   DEFAULT_RELAY_URL,
   clearBuzzIdentity,

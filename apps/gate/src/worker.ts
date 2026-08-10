@@ -14,7 +14,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { NostrEvent } from '@buzzy/nostr';
+import type { NostrEvent } from '@beeline/nostr';
 import type { Identity } from './identity.js';
 import { git, gitAuthed, lsRemoteRef } from './git.js';
 import { gitRepoUrl } from './config.js';
@@ -222,7 +222,7 @@ async function main(): Promise<void> {
     process.exit(2);
   }
   const { readFileSync } = await import('node:fs');
-  const { getPublicKey } = await import('@buzzy/nostr');
+  const { getPublicKey } = await import('@beeline/nostr');
   const cfg = JSON.parse(readFileSync(cfgPath, 'utf8')) as WorkerServiceConfig;
   const secretKey = hexToBytes(cfg.workerSecretKeyHex);
   const req: MergeRequest = {

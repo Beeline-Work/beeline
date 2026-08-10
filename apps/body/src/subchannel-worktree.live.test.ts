@@ -26,7 +26,7 @@ import {
   createChannel,
   setMemberRole,
   BASE_URL,
-} from '@buzzy/gate';
+} from '@beeline/gate';
 
 // LLM env file driven by env var; no hardcoded home path.
 const LLM_ENV_FILE = process.env.BUZZY_BODY_LLM_FILE ?? undefined;

@@ -31,14 +31,14 @@ import {
   lsRemoteRef,
   isRegisteredAgentIdentity,
   type Identity,
-} from '@buzzy/gate';
+} from '@beeline/gate';
 import {
   createAgent,
   listAgents,
   waitUntilMember,
   type ChannelOpsContext,
-} from '@buzzy/buzz-client';
-import { signEvent, type NostrEvent } from '@buzzy/nostr';
+} from '@beeline/buzz-client';
+import { signEvent, type NostrEvent } from '@beeline/nostr';
 import type { BodyConfig } from './config.js';
 
 /** Tracks a single agent session. */

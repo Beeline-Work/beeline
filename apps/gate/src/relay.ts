@@ -11,7 +11,7 @@
  * event's own `pubkey`.
  */
 import { BASE_URL, HOST } from './config.js';
-import type { NostrEvent } from '@buzzy/nostr';
+import type { NostrEvent } from '@beeline/nostr';
 
 export interface SubmitResult {
   status: number;

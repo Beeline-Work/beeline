@@ -1,4 +1,4 @@
-# @buzzy/push-gateway
+# @beeline/push-gateway
 
 Android-only FCM gateway for Buzzy. It accepts an FCM device registration,
 subscribes to kind-9 channel events on the Buzz relay, resolves current channel
@@ -13,7 +13,7 @@ are limited to channels that identity can already access.
 
 ```sh
 BUZZY_PUSH_SA_FILE=/absolute/path/to/fcm-service-account.json \
-  npm run dev -w @buzzy/push-gateway
+  npm run dev -w @beeline/push-gateway
 ```
 
 The service account file stays outside the repository. Do not log or commit it.
@@ -22,7 +22,7 @@ The service account file stays outside the repository. Do not log or commit it.
 | --- | --- | --- |
 | `BUZZY_PUSH_SA_FILE` | — | Firebase service-account path; used when `GOOGLE_APPLICATION_CREDENTIALS` is unset |
 | `GOOGLE_APPLICATION_CREDENTIALS` | — | Standard Google credential path |
-| `BUZZY_RELAY_URL` | `http://127.0.0.1:3010` | Buzz relay HTTP origin; WS is derived by `@buzzy/buzz-client` |
+| `BUZZY_RELAY_URL` | `http://127.0.0.1:3010` | Buzz relay HTTP origin; WS is derived by `@beeline/buzz-client` |
 | `BUZZY_PUSH_HOST` | `127.0.0.1` | Registration HTTP bind host |
 | `PORT` | `8788` | Registration HTTP port (the public tunnel targets this port) |
 | `BUZZY_PUSH_REGISTRY_FILE` | `.data/registrations.json` | Local token registry path |

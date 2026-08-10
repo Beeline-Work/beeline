@@ -36,8 +36,8 @@ import {
   BASE_URL,
   HOST,
   type Identity,
-} from '@buzzy/gate';
-import { signEvent, type NostrEvent } from '@buzzy/nostr';
+} from '@beeline/gate';
+import { signEvent, type NostrEvent } from '@beeline/nostr';
 
 const RUN_MARKER = `mergefx-${randomUUID().slice(0, 8)}`;
 

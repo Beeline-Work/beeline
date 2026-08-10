@@ -11,7 +11,7 @@
  */
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { signEvent, verifyEvent, type NostrEvent } from '@buzzy/nostr';
+import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { publishEvent, queryEvents } from './http.js';
 import {
   KIND_CHANNEL_ADMINS,

@@ -1,5 +1,5 @@
 /** Gate-side lookup for the durable, self-signed agent identity marker. */
-import { KIND_STREAM_MESSAGE, TAG_AGENT, hasAgentIdentityMarker } from '@buzzy/buzz-client';
+import { KIND_STREAM_MESSAGE, TAG_AGENT, hasAgentIdentityMarker } from '@beeline/buzz-client';
 import { queryEvents } from './relay.js';
 
 /**

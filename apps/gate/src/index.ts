@@ -1,5 +1,5 @@
 /**
- * Public surface of `@buzzy/gate` for sibling packages (e.g. `@buzzy/body`).
+ * Public surface of `@beeline/gate` for sibling packages (e.g. `@beeline/body`).
  * Prefer these re-exports over deep relative imports.
  */
 export type { Identity } from './identity.js';

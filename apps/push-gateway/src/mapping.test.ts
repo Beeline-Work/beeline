@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { NostrEvent } from '@buzzy/nostr';
+import type { NostrEvent } from '@beeline/nostr';
 import { mapEventToNotification } from './mapping.js';
 
 function event(tags: string[][], content = 'plaintext that must not escape'): NostrEvent {

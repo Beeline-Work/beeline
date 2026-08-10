@@ -1,4 +1,4 @@
-import type { Identity } from '@buzzy/buzz-client';
+import type { Identity } from '@beeline/buzz-client';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';

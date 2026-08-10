@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Community, Identity } from '@beeline/buzz-client';
 import {
@@ -22,7 +23,6 @@ import {
 } from '@/auth/buzz-identity-storage';
 import { groknight } from '@/buzz/groknight';
 import { saveLastViewedChannel } from '@/buzz/community-storage';
-import { dismissKeyBackupNudge, isKeyBackupNudgeDismissed } from '@/buzz/key-backup-nudge';
 import { createCommunityInviteUrl } from '@/buzz/community-invite';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
 import { CHANGE_LABEL, ROOM_LABEL, ROOMS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
@@ -151,7 +151,6 @@ export default function BuzzChannels() {
   const [channelName, setChannelName] = useState('');
   const [creatingChannel, setCreatingChannel] = useState(false);
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
-  const [showBackupNudge, setShowBackupNudge] = useState(false);
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [readyInviteUrl, setReadyInviteUrl] = useState<string | undefined>(inviteUrl);
 
@@ -171,8 +170,6 @@ export default function BuzzChannels() {
           router.replace('/buzz/onboarding');
           return;
         }
-        const nudgeDismissed = await isKeyBackupNudgeDismissed(currentIdentity.publicKey);
-        if (!cancelled) setShowBackupNudge(!nudgeDismissed);
         const url = await getEffectiveRelayUrl();
         const nextTransport = new BuzzRigTransport(currentIdentity, url);
         const client = await nextTransport.ensureClient();
@@ -231,6 +228,15 @@ export default function BuzzChannels() {
       setRefreshing(false);
     }
   }, [activeCommunityId, identity, transport]);
+
+  // A newly-created Workspace is already relay-backed, but device Back can reveal
+  // an older mounted home screen. Refresh on focus so its switcher is never stale.
+  useFocusEffect(
+    useCallback(() => {
+      if (!transport || !identity) return;
+      void handleRefresh();
+    }, [handleRefresh, identity, transport]),
+  );
 
   const handleChannelPress = useCallback(
     async (channel: ChannelDisplayItem) => {
@@ -294,16 +300,6 @@ export default function BuzzChannels() {
     await clearBuzzIdentity();
     router.replace('/buzz/onboarding');
   }, []);
-
-  const handleDismissBackupNudge = useCallback(async () => {
-    if (!identity) return;
-    setShowBackupNudge(false);
-    try {
-      await dismissKeyBackupNudge(identity.publicKey);
-    } catch {
-      // Dismissal is best-effort; a storage failure may show the gentle nudge again.
-    }
-  }, [identity]);
 
   const handleInvitePeople = useCallback(async () => {
     if (!transport || !activeCommunityId || creatingInvite) return;
@@ -379,32 +375,6 @@ export default function BuzzChannels() {
           </View>
         </View>
 
-        {showBackupNudge && (
-          <View style={styles.backupNudge}>
-            <View style={styles.backupNudgeCopy}>
-              <Text style={styles.backupNudgeTitle}>Back up your key</Text>
-              <Text style={styles.backupNudgeText}>
-                Save a copy so you can recover your identity.
-              </Text>
-            </View>
-            <View style={styles.backupNudgeActions}>
-              <TouchableOpacity
-                onPress={() => router.push('/buzz/settings/identity' as Href)}
-                style={styles.nudgeAction}
-              >
-                <Text style={styles.nudgeActionText}>Back up</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                accessibilityLabel="Dismiss key backup reminder"
-                onPress={() => void handleDismissBackupNudge()}
-                style={styles.dismissNudge}
-              >
-                <Text style={styles.dismissNudgeText}>×</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
         {readyInviteUrl && (
           <View style={styles.invitePanel}>
             <Text style={styles.panelTitle}>Invite link ready</Text>
@@ -468,7 +438,7 @@ export default function BuzzChannels() {
               style={styles.identitySettingsRow}
             >
               <View style={styles.identitySettingsCopy}>
-                <Text style={styles.identitySettingsTitle}>Identity and backup</Text>
+                <Text style={styles.identitySettingsTitle}>Back up your key</Text>
                 <Text style={styles.identitySettingsSubtitle}>Export your secret key</Text>
               </View>
               <Text style={styles.identitySettingsChevron}>›</Text>
@@ -638,48 +608,6 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: groknight.border,
     backgroundColor: groknight.bgTerminal,
-  },
-  backupNudge: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: groknight.bgTerminal,
-  },
-  backupNudgeCopy: { flex: 1, minWidth: 0 },
-  backupNudgeTitle: {
-    ...Typography.default('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  backupNudgeText: {
-    ...Typography.default(),
-    marginTop: 3,
-    color: groknight.muted,
-    fontSize: 11,
-    lineHeight: 16,
-  },
-  backupNudgeActions: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  nudgeAction: {
-    minHeight: 36,
-    paddingHorizontal: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  nudgeActionText: {
-    ...Typography.default('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  dismissNudge: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  dismissNudgeText: {
-    ...Typography.default(),
-    color: groknight.steel,
-    fontSize: 20,
-    lineHeight: 22,
   },
   identitySettingsRow: {
     minHeight: 52,

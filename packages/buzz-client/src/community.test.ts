@@ -49,6 +49,7 @@ function communityCreate(): NostrEvent {
   return signed(owner, KIND_CREATE_GROUP, [
     ['h', communityId],
     ['name', 'Builders'],
+    ['avatar', 'https://example.test/builders.png'],
     ['channel_type', 'stream'],
     ['visibility', 'open'],
     [TAG_COMMUNITY, communityId],
@@ -132,6 +133,7 @@ describe('community model', () => {
       {
         communityId,
         name: 'Builders',
+        avatar: 'https://example.test/builders.png',
         createdBy: owner.publicKey,
         ownerPubkey: owner.publicKey,
       },

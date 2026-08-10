@@ -1,3 +1,5 @@
+import { WORKSPACE_LABEL } from './vocabulary';
+
 export interface GeneratedSoulCopy {
   name: string;
   personality: string;
@@ -29,6 +31,6 @@ export async function requestGeneratedSoul(
 export function defaultSoul(pubkey: string): GeneratedSoulCopy {
   return {
     name: `Agent ${pubkey.slice(0, 6).toUpperCase()}`,
-    personality: 'Steady, practical, and ready to help this community.',
+    personality: `Steady, practical, and ready to help this ${WORKSPACE_LABEL}.`,
   };
 }

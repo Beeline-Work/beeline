@@ -11,8 +11,10 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
 
 import {
   loadActiveCommunityId,
+  loadPersonalCommunityId,
   loadLastViewedChannel,
   saveActiveCommunityId,
+  savePersonalCommunityId,
   saveLastViewedChannel,
 } from './community-storage';
 
@@ -49,5 +51,16 @@ describe('community navigation storage', () => {
 
     asyncStorage.getItem.mockResolvedValue('channel-a');
     await expect(loadLastViewedChannel('pubkey-a', 'community-a')).resolves.toBe('channel-a');
+  });
+
+  it('remembers the personal Workspace separately from active navigation', async () => {
+    await savePersonalCommunityId('pubkey-a', 'personal-a');
+    expect(asyncStorage.setItem).toHaveBeenCalledWith(
+      '@buzzy/workspace/personal/pubkey-a',
+      'personal-a',
+    );
+
+    asyncStorage.getItem.mockResolvedValueOnce('personal-a');
+    await expect(loadPersonalCommunityId('pubkey-a')).resolves.toBe('personal-a');
   });
 });

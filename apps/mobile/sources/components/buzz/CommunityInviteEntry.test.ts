@@ -42,37 +42,22 @@ function render(element: React.ReactElement): ReactTestRenderer {
 }
 
 describe('community invite entry', () => {
-  it('exposes the invite action for an active community', () => {
+  it('exposes People invites and Agent linking from an active Workspace', () => {
     const onInvitePeople = vi.fn();
+    const onManageAgents = vi.fn();
     const renderer = render(
       React.createElement(CommunityInviteEntry, {
         community: { communityId: 'community-1', name: 'Night Shift' } as any,
         creatingInvite: false,
-        onCreateCommunity: vi.fn(),
         onInvitePeople,
+        onManageAgents,
       }),
     );
 
     expect(renderer.root.findByProps({ testID: 'community-invite-entry' })).toBeDefined();
     act(() => renderer.root.findByProps({ testID: 'invite-people-action' }).props.onPress());
     expect(onInvitePeople).toHaveBeenCalledOnce();
-  });
-
-  it('routes standalone users to community creation instead of presenting a dead end', () => {
-    const onCreateCommunity = vi.fn();
-    const renderer = render(
-      React.createElement(CommunityInviteEntry, {
-        community: null,
-        creatingInvite: false,
-        onCreateCommunity,
-        onInvitePeople: vi.fn(),
-      }),
-    );
-
-    expect(renderer.root.findByProps({ testID: 'standalone-invite-entry' })).toBeDefined();
-    act(() =>
-      renderer.root.findByProps({ testID: 'create-community-to-invite-action' }).props.onPress(),
-    );
-    expect(onCreateCommunity).toHaveBeenCalledOnce();
+    act(() => renderer.root.findByProps({ testID: 'manage-agents-action' }).props.onPress());
+    expect(onManageAgents).toHaveBeenCalledOnce();
   });
 });

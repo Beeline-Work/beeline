@@ -60,7 +60,7 @@ by projecting agent activity into the relay channel.
 | `BUZZY_BODY_WORKSPACE`    | No       | `./body-workspace` | Agent workspace root                 |
 | `BUZZY_BODY_LLM_FILE`     | No       | —                  | Path to LLM credentials env file     |
 | `BUZZ_BODY_KEY`           | No       | auto               | Body operator Nostr nsec/hex         |
-| `BUZZ_AGENT_KEY`          | No       | auto               | Agent Nostr nsec/hex                 |
+| `BUZZ_AGENT_KEY`          | No       | generated at pair  | Existing agent Nostr nsec/hex        |
 | `BUZZY_BODY_AUTO_APPROVE` | No       | `1`                | Auto-approve ACP permission requests |
 | `BUZZY_SOUL_HOST`         | No       | `127.0.0.1`        | Soul generator bind host             |
 | `BUZZY_SOUL_PORT`         | No       | `8789`             | Soul generator port                  |
@@ -83,6 +83,15 @@ BUZZY_LLM_MODEL=deepseek/deepseek-chat-v3.1
 ### CLI
 
 ```bash
+# Supported user path: run once from the repository the agent will work in.
+# The command redeems the Workspace code, resolves or creates the repo's Room,
+# stores machine-only keys under .git, and launches the durable daemon.
+BUZZY_BODY_LLM_FILE=/path/to/local-model.env \
+  npm run body -- pair BUZZ-XXXX-XXXX
+
+# Restart a previously-paired agent after a machine/process restart.
+npm run body -- start
+
 # Provision a read-only agent to a TLC channel
 npm run body -- provision <channel-uuid>
 
@@ -99,19 +108,32 @@ npm run body -- archive <subchannel-uuid>
 # Create a new TLC + provision agent (all-in-one)
 npm run body -- create-and-provision "my-project"
 
-# On the machine where the agent identity lives, redeem an in-app pairing code
-BUZZ_AGENT_KEY=nsec1... BUZZY_RELAY_URL=http://127.0.0.1:3010 \
-  npm run body -- pair BUZZ-XXXX-XXXX
-
 # Serve intent → name/personality generation without exposing the LLM grant
 BUZZY_BODY_LLM_FILE=data/buzzy-body/llm-egress.env \
   npm run body -- serve-souls
 ```
 
-`pair` requires the machine's existing `BUZZ_AGENT_KEY`; identity custody and
-export are intentionally outside this command. The agent self-signs its durable
-identity record. Souls are separate, human-signed display overlays and cannot
-grant permissions or approve merges.
+`pair` uses `origin` as the repository identity. HTTPS and SSH clone forms are
+normalized and credential material is discarded, so clones of the same remote
+in one Workspace converge on one Room. With no `origin`, pairing creates a
+local-only Room that deliberately does not converge across machines. A Room has
+one immutable repository binding; multiple paired agents in it create parallel
+feature branches of that repository.
+
+The paired Workspace-member agent creates the Room, adds the pairing human as a
+member, and immediately projects itself as member rather than admin. The machine
+identities, Room ID, repo root, and daemon state live under
+`<git-common-dir>/beeline/agents/<agent-pubkey>/` with mode `0600`. If
+`BUZZ_AGENT_KEY` is absent, `pair` generates the agent key there. The daemon is
+detached from the invoking terminal, retries transient loop failures, and can be
+relaunched with `buzz start`. A restart rediscovers the Room and safely dedupes
+handled requests; recovery of an already-running ACP edit turn is deferred.
+
+The coding model always comes from the operator's local environment or
+`BUZZY_BODY_LLM_FILE`; pairing neither requests nor stores a Beeline LLM key.
+Souls are separate, human-signed display overlays and cannot grant permissions
+or approve merges. The remaining explicit `serve`/`open` commands are internal
+diagnostic compatibility surfaces, not part of the user pairing workflow.
 
 The mobile app calls `POST /v1/souls/generate` with `{ "intent": "..." }`. Set
 `EXPO_PUBLIC_BUZZY_SOUL_URL` to this service's public base URL when building or

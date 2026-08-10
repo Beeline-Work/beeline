@@ -31,6 +31,7 @@ import type {
   Identity,
   MessageSubmitOpts,
   PublishResult,
+  RepositoryBinding,
 } from './types.js';
 
 function now(): number {
@@ -50,12 +51,7 @@ function newChannelUuid(): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
-function sign(
-  identity: Identity,
-  kind: number,
-  tags: string[][],
-  content = '',
-): NostrEvent {
+function sign(identity: Identity, kind: number, tags: string[][], content = ''): NostrEvent {
   return signEvent(
     {
       pubkey: identity.publicKey,
@@ -82,6 +78,7 @@ export async function createChannel(
     visibility?: string;
     parentChannelId?: string;
     communityId?: string;
+    repository?: RepositoryBinding;
   },
 ): Promise<string> {
   const channelId = opts?.channelId ?? newChannelUuid();
@@ -96,6 +93,12 @@ export async function createChannel(
   }
   if (opts?.communityId) {
     tags.push([TAG_COMMUNITY, opts.communityId]);
+  }
+  if (opts?.repository) {
+    tags.push(['repo-key', opts.repository.key]);
+    tags.push(['repo-name', opts.repository.name]);
+    tags.push(['repo-scope', opts.repository.localOnly ? 'local' : 'remote']);
+    if (opts.repository.remote) tags.push(['repo-remote', opts.repository.remote]);
   }
   const event = sign(ctx.identity, KIND_CREATE_GROUP, tags);
   await publishEvent(ctx.http, event);
@@ -343,6 +346,33 @@ export async function getChannelCommunityId(
   }
   const metadata = await getChannelMetadata(ctx, channelId);
   return metadata?.communityId ?? null;
+}
+
+/** Resolve the immutable repository binding carried by a Room's create event. */
+export async function getChannelRepositoryBinding(
+  ctx: ChannelOpsContext,
+  channelId: string,
+): Promise<RepositoryBinding | null> {
+  const events = await queryEvents(
+    ctx.http,
+    [{ kinds: [KIND_CREATE_GROUP], '#h': [channelId], limit: 20 }],
+    ctx.identity.publicKey,
+  );
+  for (const event of events.sort((a, b) => a.created_at - b.created_at)) {
+    const key = tagValue(event, 'repo-key');
+    const name = tagValue(event, 'repo-name');
+    const scope = tagValue(event, 'repo-scope');
+    if (!key || !name || (scope !== 'local' && scope !== 'remote')) continue;
+    const remote = tagValue(event, 'repo-remote');
+    if (scope === 'remote' && !remote) continue;
+    return {
+      key,
+      name,
+      localOnly: scope === 'local',
+      ...(remote ? { remote } : {}),
+    };
+  }
+  return null;
 }
 
 export function eventIsAgentActivity(event: NostrEvent): boolean {

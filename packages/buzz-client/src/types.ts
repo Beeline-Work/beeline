@@ -43,8 +43,22 @@ export interface AgentPairingCode {
 
 export interface RedeemAgentPairingResult {
   communityId: string;
+  /** Human Workspace member who minted the pairing code. */
+  pairedBy: string;
   agent: Agent;
   joined: boolean;
+}
+
+/** Stable Room-level repository identity. Secrets from remote URLs are never retained. */
+export interface RepositoryBinding {
+  /** SHA-256 identity used to converge clones of the same origin into one Room. */
+  key: string;
+  /** Human-facing repository name used for a newly-created Room. */
+  name: string;
+  /** Credential-free canonical origin, absent for a local-only repository. */
+  remote?: string;
+  /** Local-only bindings deliberately do not converge across machines. */
+  localOnly: boolean;
 }
 
 export interface AgentSoulInput {

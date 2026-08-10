@@ -7,7 +7,7 @@ LLM environment. No Beeline model key or hosted model service was used.
 
 - Workspace: `8c14d3aa-e395-44cc-9a7c-e4fee84117b7` (`Agent Runtime Proof`)
 - Repo Room: `4906f45d-955d-48d4-81a2-c25a49747843`
-- Pair command: `buzz pair <one-time-code>` from a disposable git checkout
+- Pair command: `beeline pair <one-time-code>` from a disposable git checkout
 - Durable daemon PID at launch: `2364554`
 - Human request: create and commit `UI-LIVE-PROOF.txt`
 - Feature branch: `feature/11794f12`

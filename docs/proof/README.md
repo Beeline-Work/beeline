@@ -4,7 +4,7 @@ Captured on an Android API 36 emulator against the local relay at
 `http://127.0.0.1:3010` with `adb reverse tcp:3010 tcp:3010` and the local soul
 service with `adb reverse tcp:8789 tcp:8789`.
 
-The mobile app created a short pairing command, and the built `buzz pair` CLI
+The mobile app created a short pairing command, and the built `beeline pair` CLI
 redeemed it using a separately generated agent identity. The agent appeared in
 the community list under pubkey
 `502ea950d8de74ca62ba159d869ba3be013fa274ae622d4c488e5e89b58a6a2b`.

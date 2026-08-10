@@ -269,20 +269,34 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
     );
     const agentClient = createBuzzClient({ baseUrl: BASE_URL, identity: agentIdentity });
     await agentClient.submitMergeApproval(subchannel!, mergeTarget);
-    await waitUntil(async () => {
-      const log = existsSync(daemonLog) ? await readFile(daemonLog, 'utf8') : '';
-      return log.includes('agents can never approve merges');
-    }, 30_000);
+    try {
+      await waitUntil(async () => {
+        const log = existsSync(daemonLog) ? await readFile(daemonLog, 'utf8') : '';
+        return log.includes('agents can never approve merges');
+      }, 30_000);
+    } catch (error) {
+      const log = existsSync(daemonLog)
+        ? await readFile(daemonLog, 'utf8')
+        : '(missing daemon log)';
+      throw new Error(`${String(error)}\n--- daemon.log ---\n${log}`);
+    }
     expect(lsRemoteRef(checkout, human, human.publicKey, repo, 'refs/heads/main')).toBe(
       mainBeforeApproval,
     );
     console.log('[live-pair-runtime] agent-approval=REFUSED');
 
     await humanClient.submitMergeApproval(subchannel!, mergeTarget);
-    await waitUntil(
-      async () => lsRemoteRef(checkout, human, human.publicKey, repo, 'refs/heads/main') === tip,
-      60_000,
-    );
+    try {
+      await waitUntil(
+        async () => lsRemoteRef(checkout, human, human.publicKey, repo, 'refs/heads/main') === tip,
+        60_000,
+      );
+    } catch (error) {
+      const log = existsSync(daemonLog)
+        ? await readFile(daemonLog, 'utf8')
+        : '(missing daemon log)';
+      throw new Error(`${String(error)}\n--- daemon.log ---\n${log}`);
+    }
     await waitUntil(
       async () => (await humanClient.getChannelMetadata(subchannel!))?.archived === true,
     );

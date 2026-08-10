@@ -61,7 +61,7 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgTerminal,
   },
   action: {
-    minHeight: 34,
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -72,7 +72,6 @@ const styles = StyleSheet.create({
     ...Typography.default('semiBold'),
     color: groknight.textSecondary,
     fontSize: 13,
-    fontWeight: '600',
   },
-  disabled: { opacity: 0.45 },
+  disabled: { backgroundColor: groknight.bgBase },
 });

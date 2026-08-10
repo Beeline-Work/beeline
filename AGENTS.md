@@ -43,10 +43,10 @@ Do not repeat what the codebase already shows; point to the authoritative file o
 Prefer rewriting or pruning existing entries over appending new ones.
 When updating this file, preserve this bar for all agents and keep entries concise.
 
-## GrokNight alien-hull UI theme
+## Grok Mono Hull UI theme
 
-- **Design tokens**: `apps/mobile/sources/buzz/groknight.ts` — single source of truth for all GrokNight palette hexes (bg, text, accent, border colors). Every buzzy screen imports from here; no hardcoded hexes.
-- **Design authority**: GrokNight alien-hull system. Near-black flat surfaces, brushed chrome/steel neutrals, monospace typography, and one cyan `#7dcfff` accent reserved for primary actions, active/focus/live state, and the merge-approval gate.
+- **Design tokens**: `apps/mobile/sources/buzz/groknight.ts` — fully grayscale semantic roles for surfaces, text, action, focus, selection, and signals. `apps/mobile/sources/buzz/brand.json` is the one-line swappable mark color; regenerate platform art with `apps/mobile/scripts/generate-monochrome-assets.sh`.
+- **Design authority**: Grok Mono Hull. No chromatic state or brand color survives in Buzz. State is redundant through text, glyph, contrast, geometry, faint deterministic texture, reduced-motion-aware mechanical signals, and haptics. Shared primitives live in `apps/mobile/sources/components/buzz/MonoHull.tsx`.
 - **Restyled screens**: `buzz/channels.tsx`, `buzz/chat/[channelId].tsx`, `buzz/onboarding.tsx` — session/channel list, live session transcript with merge controls and composer, and key onboarding.
 
 ## Mobile client (Happy fork)

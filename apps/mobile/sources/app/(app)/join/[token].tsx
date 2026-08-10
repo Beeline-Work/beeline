@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
   StyleSheet,
   Text,
   TextInput,
@@ -25,6 +24,8 @@ import { groknight } from '@/buzz/groknight';
 import { ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
+import { Typography } from '@/constants/Typography';
+import { PixelLoader } from '@/components/buzz/MonoHull';
 
 export default function CommunityInviteJoin() {
   const insets = useSafeAreaInsets();
@@ -137,7 +138,7 @@ export default function CommunityInviteJoin() {
         <View style={styles.content}>
           {loading ? (
             <View style={styles.loadingBlock}>
-              <ActivityIndicator color={groknight.accent} />
+              <PixelLoader compact />
               <Text style={styles.loadingText}>verifying signed invite…</Text>
             </View>
           ) : preview ? (
@@ -228,9 +229,10 @@ const styles = StyleSheet.create({
   backButton: { width: 34, height: 42, alignItems: 'center', justifyContent: 'center' },
   backText: { color: groknight.chrome, fontSize: 30, fontWeight: '300' },
   topbarTitle: {
+    ...Typography.default('semiBold'),
     color: groknight.textPrimary,
-    fontSize: 17,
-    fontWeight: '700',
+    fontSize: 20,
+    lineHeight: 24,
   },
   content: { flex: 1, paddingHorizontal: 22, paddingTop: 48, alignItems: 'center' },
   loadingBlock: { alignItems: 'center', paddingTop: 54 },
@@ -242,10 +244,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: groknight.accent,
+    borderColor: groknight.selectedBorder,
     backgroundColor: groknight.bgHighlight,
   },
-  communityMarkText: { color: groknight.accent, fontSize: 20, fontWeight: '800' },
+  communityMarkText: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 20,
+  },
   title: {
     marginTop: 24,
     color: groknight.textPrimary,
@@ -294,12 +300,11 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: groknight.accent,
+    backgroundColor: groknight.actionFill,
   },
   primaryButtonText: {
-    color: groknight.bgTerminal,
+    color: groknight.textInverted,
     fontSize: 13,
-    fontWeight: '700',
   },
   disabled: { opacity: 0.42 },
   cancelButton: {
@@ -318,5 +323,9 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   failureBlock: { alignItems: 'center', paddingTop: 40 },
-  failureTitle: { color: groknight.textPrimary, fontSize: 20, fontWeight: '800' },
+  failureTitle: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 20,
+  },
 });

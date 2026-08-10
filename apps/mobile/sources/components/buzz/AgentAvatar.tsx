@@ -17,14 +17,14 @@ export function AgentAvatar({ pubkey, size = 52 }: { pubkey: string; size?: numb
         height="98"
         rx="18"
         fill={groknight.bgHighlight}
-        stroke={groknight.borderActive}
+        stroke={groknight.border}
         strokeWidth="2"
       />
       <G rotation={geometry.rotation} origin="50, 50">
         <Polygon
           points={points}
           fill={groknight.bgCode}
-          stroke={groknight.accent}
+          stroke={groknight.chrome}
           strokeWidth="4"
         />
         {geometry.bars.map((x, index) => (
@@ -34,7 +34,7 @@ export function AgentAvatar({ pubkey, size = 52 }: { pubkey: string; size?: numb
             y1="32"
             x2={100 - x}
             y2="68"
-            stroke={index === 1 ? groknight.accent : groknight.chrome}
+            stroke={index === 1 ? groknight.signalBright : groknight.steel}
             strokeWidth="4"
             strokeLinecap="square"
           />

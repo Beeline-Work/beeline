@@ -14,14 +14,27 @@ const sources = [
 
 const monoStyles = new Set([
   'command',
+  'channelMeta',
+  'errorLabel',
+  'expiry',
+  'guideText',
+  'input',
   'inviteInput',
+  'inviteUrl',
   'lifecycleAgent',
   'lifecycleBranch',
   'mergeSummaryPubkey',
+  'loadingText',
   'pathTag',
   'provenanceText',
   'pubkey',
+  'roleLabel',
+  'sectionLabel',
   'secretText',
+  'workRequestBadge',
+  'archivedBadgeText',
+  'archivedText',
+  'lifecycleState',
 ]);
 
 function styleDefinition(source: string, name: string): string {
@@ -48,7 +61,7 @@ describe('Buzz typography', () => {
         expect(primaryStyle, `${relativePath} has text without a named primary style`).toBeTruthy();
         const definition = styleDefinition(source, primaryStyle!);
         expect(definition, `${relativePath} styles.${primaryStyle} has no app font`).toMatch(
-          /Typography\.(?:default|mono)\(/,
+          /Typography\.(?:default|mono|logo)\(/,
         );
       }
 

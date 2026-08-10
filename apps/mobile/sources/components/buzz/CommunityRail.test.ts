@@ -43,6 +43,34 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
 
+vi.mock('expo-haptics', () => ({ selectionAsync: vi.fn() }));
+
+vi.mock('react-native-reanimated', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: any) =>
+    ReactModule.createElement(name, props, props.children);
+  return {
+    default: { View: host('AnimatedView') },
+    Easing: { bezier: vi.fn(), out: (value: unknown) => value, poly: vi.fn() },
+    ReduceMotion: { System: 'system' },
+    runOnJS: (fn: (...args: any[]) => unknown) => fn,
+    useAnimatedStyle: (factory: () => unknown) => factory(),
+    useReducedMotion: () => false,
+    useSharedValue: (value: unknown) => ({ value }),
+    withTiming: (value: unknown, _config: unknown, callback?: (finished: boolean) => void) => {
+      callback?.(true);
+      return value;
+    },
+  };
+});
+
+vi.mock('./MonoHull', async () => {
+  const ReactModule = await import('react');
+  return {
+    HullSurface: (props: any) => ReactModule.createElement('HullSurface', props, props.children),
+  };
+});
+
 vi.mock('./WorkspaceAvatar', async () => {
   const ReactModule = await import('react');
   return {

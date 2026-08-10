@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   FlatList,
   StyleSheet,
   Text,
@@ -10,6 +9,7 @@ import {
 import type { ChangedFile } from '@/sync/transport';
 import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
+import { BrittlePress, HullSurface, PixelLoader } from '@/components/buzz/MonoHull';
 
 export interface ChangeReviewReader {
   workspaceFilesRead(sessionId: string): Promise<ChangedFile[]>;
@@ -115,17 +115,17 @@ export function ChangeReviewPanel({ transport, sessionId, tip }: ChangeReviewPan
 
   if (loadingFiles) {
     return (
-      <View style={styles.loading} testID="change-review-loading">
-        <ActivityIndicator size="small" color={groknight.accent} />
-        <Text style={styles.mutedText}>Loading changed files…</Text>
-      </View>
+      <HullSurface strength="raised" style={styles.loading} testID="change-review-loading">
+        <PixelLoader compact />
+        <Text style={styles.mutedText}>LOADING CHANGED FILES</Text>
+      </HullSurface>
     );
   }
 
   if (filesError) {
     return (
-      <View style={styles.errorState} testID="change-review-error">
-        <Text style={styles.errorTitle}>Changed files could not be loaded</Text>
+      <HullSurface strength="raised" style={styles.errorState} testID="change-review-error">
+        <Text style={styles.errorTitle}>! ERROR · CHANGED FILES UNAVAILABLE</Text>
         <Text style={styles.mutedText} numberOfLines={2}>
           {filesError}
         </Text>
@@ -136,13 +136,13 @@ export function ChangeReviewPanel({ transport, sessionId, tip }: ChangeReviewPan
         >
           <Text style={styles.retryText}>Retry</Text>
         </TouchableOpacity>
-      </View>
+      </HullSurface>
     );
   }
 
   if (selected) {
     return (
-      <View style={styles.panel} testID="change-review-diff">
+      <HullSurface strength="code" style={styles.panel} testID="change-review-diff">
         <View style={styles.diffToolbar}>
           <TouchableOpacity
             onPress={() => {
@@ -164,12 +164,12 @@ export function ChangeReviewPanel({ transport, sessionId, tip }: ChangeReviewPan
         </View>
         {loadingPatch ? (
           <View style={styles.diffLoading}>
-            <ActivityIndicator size="small" color={groknight.accent} />
-            <Text style={styles.mutedText}>Loading diff…</Text>
+            <PixelLoader compact />
+            <Text style={styles.mutedText}>LOADING DIFF</Text>
           </View>
         ) : patchError ? (
           <View style={styles.diffLoading}>
-            <Text style={styles.errorTitle}>Diff unavailable</Text>
+            <Text style={styles.errorTitle}>! ERROR · DIFF UNAVAILABLE</Text>
             <Text style={styles.mutedText} numberOfLines={2}>
               {patchError}
             </Text>
@@ -198,12 +198,12 @@ export function ChangeReviewPanel({ transport, sessionId, tip }: ChangeReviewPan
             )}
           />
         )}
-      </View>
+      </HullSurface>
     );
   }
 
   return (
-    <View style={styles.panel} testID="change-review-files">
+    <HullSurface strength="code" style={styles.panel} testID="change-review-files">
       <View style={styles.summaryRow}>
         <Text style={styles.summaryTitle}>
           {files.length} changed {files.length === 1 ? 'file' : 'files'}
@@ -221,8 +221,8 @@ export function ChangeReviewPanel({ transport, sessionId, tip }: ChangeReviewPan
           style={styles.fileList}
           initialNumToRender={12}
           renderItem={({ item }) => (
-            <TouchableOpacity
-              style={styles.fileRow}
+            <BrittlePress
+              contentStyle={styles.fileRow}
               onPress={() => void openFile(item)}
               testID={`change-review-file-${item.path}`}
               accessibilityLabel={`Review diff for ${item.path}`}
@@ -246,11 +246,11 @@ export function ChangeReviewPanel({ transport, sessionId, tip }: ChangeReviewPan
                 </Text>
               )}
               <Text style={styles.chevron}>›</Text>
-            </TouchableOpacity>
+            </BrittlePress>
           )}
         />
       )}
-    </View>
+    </HullSurface>
   );
 }
 
@@ -260,7 +260,7 @@ const styles = StyleSheet.create({
     borderColor: groknight.border,
     borderRadius: 5,
     overflow: 'hidden',
-    backgroundColor: groknight.bgCode,
+    backgroundColor: groknight.bgRaised,
   },
   loading: {
     minHeight: 72,
@@ -274,7 +274,7 @@ const styles = StyleSheet.create({
   },
   errorState: {
     borderWidth: 1,
-    borderColor: groknight.borderActive,
+    borderColor: groknight.borderStrong,
     borderRadius: 5,
     padding: 12,
     gap: 5,
@@ -283,20 +283,19 @@ const styles = StyleSheet.create({
     ...Typography.default('semiBold'),
     color: groknight.textPrimary,
     fontSize: 11,
-    fontWeight: '700',
+    lineHeight: 15,
   },
   mutedText: {
     ...Typography.default(),
-    color: groknight.muted,
-    fontSize: 10,
-    lineHeight: 14,
+    color: groknight.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
   },
-  retryButton: { alignSelf: 'flex-start', paddingVertical: 5, paddingRight: 12 },
+  retryButton: { minHeight: 44, alignSelf: 'flex-start', justifyContent: 'center', paddingRight: 12 },
   retryText: {
     ...Typography.default('semiBold'),
-    color: groknight.accent,
+    color: groknight.textPrimary,
     fontSize: 11,
-    fontWeight: '700',
   },
   summaryRow: {
     minHeight: 38,
@@ -311,16 +310,15 @@ const styles = StyleSheet.create({
     ...Typography.default('semiBold'),
     color: groknight.textPrimary,
     fontSize: 11,
-    fontWeight: '700',
   },
   summaryStats: {
     ...Typography.mono(),
     color: groknight.textSecondary,
-    fontSize: 10,
+    fontSize: 11,
   },
   fileList: { maxHeight: 190 },
   fileRow: {
-    minHeight: 46,
+    minHeight: 48,
     paddingHorizontal: 9,
     flexDirection: 'row',
     alignItems: 'center',
@@ -331,27 +329,26 @@ const styles = StyleSheet.create({
   statusBadge: {
     ...Typography.mono(),
     width: 18,
-    color: groknight.accent,
-    fontSize: 10,
-    fontWeight: '700',
+    color: groknight.textPrimary,
+    fontSize: 11,
     textAlign: 'center',
   },
   pathColumn: { flex: 1, minWidth: 0 },
   filePath: {
     ...Typography.mono(),
     color: groknight.textSecondary,
-    fontSize: 10,
+    fontSize: 11,
   },
   previousPath: {
     ...Typography.mono(),
-    color: groknight.dim,
-    fontSize: 8,
+    color: groknight.textMuted,
+    fontSize: 11,
     marginTop: 2,
   },
   fileStats: {
     ...Typography.mono(),
-    color: groknight.muted,
-    fontSize: 9,
+    color: groknight.textMuted,
+    fontSize: 11,
   },
   chevron: {
     ...Typography.default(),
@@ -360,12 +357,12 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     ...Typography.default(),
-    color: groknight.muted,
-    fontSize: 10,
+    color: groknight.textMuted,
+    fontSize: 11,
     padding: 12,
   },
   diffToolbar: {
-    minHeight: 42,
+    minHeight: 44,
     paddingHorizontal: 9,
     flexDirection: 'row',
     alignItems: 'center',
@@ -373,29 +370,28 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: groknight.border,
   },
-  filesButton: { paddingVertical: 6, paddingRight: 2 },
+  filesButton: { minHeight: 44, justifyContent: 'center', paddingRight: 8 },
   filesButtonText: {
     ...Typography.default('semiBold'),
-    color: groknight.accent,
-    fontSize: 10,
-    fontWeight: '700',
+    color: groknight.textSecondary,
+    fontSize: 11,
   },
   selectedPath: {
     ...Typography.mono(),
     color: groknight.textPrimary,
-    fontSize: 10,
+    fontSize: 11,
     flex: 1,
   },
   diffList: { height: 300, backgroundColor: groknight.bgTerminal },
   diffLine: {
     ...Typography.mono(),
     paddingHorizontal: 9,
-    fontSize: 10,
-    lineHeight: 16,
+    fontSize: 11,
+    lineHeight: 17,
   },
   diffHeaderLine: { color: groknight.chrome, backgroundColor: groknight.bgHighlight },
   diffAddedLine: { color: groknight.textPrimary, backgroundColor: groknight.selection },
-  diffRemovedLine: { color: groknight.muted, backgroundColor: groknight.bgCode },
+  diffRemovedLine: { color: groknight.textMuted, backgroundColor: groknight.bgRaised },
   diffContextLine: { color: groknight.textSecondary, backgroundColor: groknight.bgTerminal },
   diffLoading: {
     height: 180,
@@ -408,6 +404,5 @@ const styles = StyleSheet.create({
     ...Typography.default('semiBold'),
     color: groknight.textPrimary,
     fontSize: 12,
-    fontWeight: '700',
   },
 });

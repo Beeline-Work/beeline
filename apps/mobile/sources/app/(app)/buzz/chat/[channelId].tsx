@@ -1,8 +1,7 @@
 /**
  * Buzz Chat — single channel/session chat screen (P2: subchannels + merge + provenance).
  *
- * GrokNight alien-hull design: near-black flat surfaces, brushed chrome,
- * and a restrained cyan accent for active/live states and merge approval.
+ * Grok Mono Hull design: neutral metal surfaces with redundant state encoding.
  */
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
@@ -12,9 +11,9 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  ActivityIndicator,
   Platform,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router, type Href } from 'expo-router';
@@ -37,6 +36,13 @@ import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-s
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
 import { ChangeReviewPanel } from '@/components/buzz/ChangeReviewPanel';
+import {
+  HullSurface,
+  HullWaveSignal,
+  MonoButton,
+  NewMessageMaterialize,
+  PixelLoader,
+} from '@/components/buzz/MonoHull';
 
 type DisplayMessage = {
   id: string;
@@ -56,6 +62,8 @@ type DisplayMessage = {
   isAgentActivity?: boolean;
   /** Explicit human → agent work request; never a direct subchannel create. */
   requestAgentPubkey?: string;
+  /** True only for subscription/optimistic inserts, never initial backfill. */
+  isNew?: boolean;
 };
 
 type SubchannelDisplay = {
@@ -178,12 +186,15 @@ export default function BuzzChat() {
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
   const [roomName, setRoomName] = useState(ROOM_LABEL);
   const [participantCounts, setParticipantCounts] = useState({ humans: 0, agents: 0 });
+  const [composerFocused, setComposerFocused] = useState(false);
 
   // Helper to add new messages, deduplicating by id.
   const addMessages = useCallback((newMsgs: DisplayMessage[]) => {
     setMessages((prev) => {
       const existingIds = new Set(prev.map((m) => m.id));
-      const unique = newMsgs.filter((m) => !existingIds.has(m.id));
+      const unique = newMsgs
+        .filter((m) => !existingIds.has(m.id))
+        .map((message) => ({ ...message, isNew: true }));
       return [...prev, ...unique].sort((a, b) => a.timestamp - b.timestamp);
     });
   }, []);
@@ -508,6 +519,7 @@ export default function BuzzChat() {
       const result = await transport.submitMergeApproval(decodedId, mergeTarget);
       if (result.success) {
         setApprovalState('sent');
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
     } catch (err) {
       console.warn('Approval failed:', err);
@@ -534,7 +546,7 @@ export default function BuzzChat() {
           <View style={styles.subchannelLinkBubble}>
             <View style={styles.subchannelLinkHeading}>
               <Text style={styles.subchannelLinkTitle}>{CHANGE_LABEL}</Text>
-              <Text style={styles.liveBadge}>● Live</Text>
+              <HullWaveSignal compact label="LIVE" />
             </View>
             {item.requestAgentPubkey && (
               <Text style={styles.openerBadge}>opened by {shortNpub(item.requestAgentPubkey)}</Text>
@@ -567,7 +579,7 @@ export default function BuzzChat() {
       if (item.isArchivedNotice) {
         return (
           <View style={styles.archivedBubble}>
-            <Text style={styles.archivedText}>📦 {item.text}</Text>
+            <Text style={styles.archivedText}>□ ARCHIVED · {item.text}</Text>
           </View>
         );
       }
@@ -578,20 +590,22 @@ export default function BuzzChat() {
       const isAgent = item.isAgentActivity || isBody;
 
       return (
-        <View style={[styles.messageBubble, isAgent ? styles.agentBlock : styles.userBlock]}>
-          <Text style={[styles.roleLabel, isAgent ? styles.roleAgent : styles.roleUser]}>
-            {isOwn ? 'You' : isAgent ? 'Beeline' : shortNpub(item.pubkey ?? '')}
-          </Text>
-          {item.requestAgentPubkey && (
-            <Text style={styles.workRequestBadge}>
-              Asking {shortNpub(item.requestAgentPubkey)} to start {CHANGE_LABEL}
+        <NewMessageMaterialize enabled={Boolean(item.isNew)}>
+          <View style={[styles.messageBubble, isAgent ? styles.agentBlock : styles.userBlock]}>
+            <Text style={[styles.roleLabel, isAgent ? styles.roleAgent : styles.roleUser]}>
+              {isOwn ? '◇ YOU' : isAgent ? '◆ BEELINE' : `◇ ${shortNpub(item.pubkey ?? '')}`}
             </Text>
-          )}
-          <Text style={styles.messageText}>{item.text}</Text>
-          {item.pubkey && !isOwn && !isAgent && (
-            <Text style={styles.provenanceText}>{shortNpub(item.pubkey)}</Text>
-          )}
-        </View>
+            {item.requestAgentPubkey && (
+              <Text style={styles.workRequestBadge}>
+                REQUEST ◆ {shortNpub(item.requestAgentPubkey)} · START {CHANGE_LABEL.toUpperCase()}
+              </Text>
+            )}
+            <Text style={styles.messageText}>{item.text}</Text>
+            {item.pubkey && !isOwn && !isAgent && (
+              <Text style={styles.provenanceText}>{shortNpub(item.pubkey)}</Text>
+            )}
+          </View>
+        </NewMessageMaterialize>
       );
     },
     [handleSubchannelPress],
@@ -600,8 +614,8 @@ export default function BuzzChat() {
   if (loading) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <ActivityIndicator size="large" color={groknight.accent} />
-        <Text style={styles.loadingText}>{ROOM_LABEL} loading…</Text>
+        <PixelLoader />
+        <Text style={styles.loadingText}>LOADING {ROOM_LABEL.toUpperCase()}</Text>
       </View>
     );
   }
@@ -619,7 +633,7 @@ export default function BuzzChat() {
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         {/* Header */}
-        <View style={styles.header}>
+        <HullSurface strength="quiet" style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
             <Text style={styles.backText}>‹</Text>
           </TouchableOpacity>
@@ -640,14 +654,14 @@ export default function BuzzChat() {
           </View>
           {isArchived && (
             <View style={styles.archivedBadge}>
-              <Text style={styles.archivedBadgeText}>archived</Text>
+              <Text style={styles.archivedBadgeText}>□ ARCHIVED</Text>
             </View>
           )}
-        </View>
+        </HullSurface>
 
         {/* P2: Merge approval bar for subchannels with a merge target */}
         {mergeTarget && !isArchived && (
-          <View style={styles.approvalBar}>
+          <HullSurface strength="raised" style={styles.approvalBar}>
             <View style={styles.approvalInfo}>
               <Text style={styles.prChip}>Review {CHANGE_LABEL}</Text>
               <Text style={styles.approvalBarText}>
@@ -664,23 +678,21 @@ export default function BuzzChat() {
             <Text style={styles.humanBoundaryText}>Only People can approve.</Text>
             {viewerIsAgent ? (
               <View style={styles.approvalSent}>
-                <Text style={styles.approvalSentText}>Agents cannot approve</Text>
+                <Text style={styles.approvalSentText}>⊘ AGENTS CANNOT APPROVE</Text>
               </View>
             ) : approvalState === 'none' ? (
-              <TouchableOpacity style={styles.approveButton} onPress={handleApprove}>
-                <Text style={styles.approveButtonText}>Approve {CHANGE_LABEL}</Text>
-              </TouchableOpacity>
+              <MonoButton label={`Approve ${CHANGE_LABEL}`} onPress={handleApprove} />
             ) : approvalState === 'sending' ? (
               <View style={styles.approvalPending}>
-                <ActivityIndicator size="small" color={groknight.accent} />
-                <Text style={styles.approvalStateText}>sending…</Text>
+                <PixelLoader compact />
+                <Text style={styles.approvalStateText}>SENDING APPROVAL</Text>
               </View>
             ) : (
               <View style={styles.approvalSent}>
-                <Text style={styles.approvalSentText}>✓ Approved · waiting for merge</Text>
+                <Text style={styles.approvalSentText}>✓ APPROVED · WAITING FOR MERGE</Text>
               </View>
             )}
-          </View>
+          </HullSurface>
         )}
 
         <FlatList
@@ -703,11 +715,13 @@ export default function BuzzChat() {
                     style={styles.lifecycleRow}
                     onPress={() => handleSubchannelPress(sub.id)}
                   >
-                    <Text
-                      style={[styles.lifecycleState, sub.archived && styles.lifecycleStateArchived]}
-                    >
-                      {sub.archived ? 'Closed' : 'Live'}
-                    </Text>
+                    {sub.archived ? (
+                      <Text style={[styles.lifecycleState, styles.lifecycleStateArchived]}>
+                        ◇ CLOSED
+                      </Text>
+                    ) : (
+                      <HullWaveSignal compact label="LIVE" />
+                    )}
                     <View style={styles.lifecycleInfo}>
                       <Text style={styles.lifecycleBranch}>↳ {sub.id.slice(0, 12)}…</Text>
                       <Text style={styles.lifecycleAgent}>agent {shortNpub(sub.openerPubkey)}</Text>
@@ -754,12 +768,14 @@ export default function BuzzChat() {
                 })}
               </View>
             )}
-            <View style={styles.composer}>
+            <View style={[styles.composer, composerFocused && styles.composerFocused]}>
               <Text style={styles.composerPrefix}>›</Text>
               <TextInput
                 style={styles.input}
                 value={inputText}
                 onChangeText={setInputText}
+                onFocus={() => setComposerFocused(true)}
+                onBlur={() => setComposerFocused(false)}
                 placeholder={
                   requestingAgent
                     ? `ask ${requestingAgent.displayName} to start work…`
@@ -800,10 +816,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   loadingText: {
-    ...Typography.default(),
+    ...Typography.mono('semiBold'),
     marginTop: 12,
-    fontSize: 13,
-    color: groknight.muted,
+    fontSize: 11,
+    lineHeight: 15,
+    letterSpacing: 0.8,
+    color: groknight.textMuted,
   },
 
   // ── Header ──────────────────────────────────────────────────────
@@ -817,8 +835,11 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgBase,
   },
   backButton: {
+    width: 44,
+    height: 44,
     marginRight: 8,
-    paddingRight: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   backText: {
     ...Typography.default(),
@@ -830,14 +851,15 @@ const styles = StyleSheet.create({
   },
   channelName: {
     ...Typography.default('semiBold'),
-    fontSize: 13,
-    fontWeight: '800',
+    fontSize: 20,
+    lineHeight: 24,
     color: groknight.textPrimary,
   },
   headerMeta: {
     ...Typography.default(),
-    fontSize: 10,
-    color: groknight.muted,
+    fontSize: 11,
+    lineHeight: 15,
+    color: groknight.textMuted,
     marginTop: 2,
   },
   pathTag: {
@@ -851,9 +873,10 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   archivedBadgeText: {
-    ...Typography.default(),
-    color: groknight.muted,
-    fontSize: 10,
+    ...Typography.mono('semiBold'),
+    color: groknight.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
   },
 
   // ── Message blocks ──────────────────────────────────────────────
@@ -868,29 +891,28 @@ const styles = StyleSheet.create({
     position: 'relative',
     paddingVertical: 6,
     paddingHorizontal: 10,
-    paddingLeft: 12,
     marginBottom: 6,
   },
-  /** Left accent bar via borderLeft — 2px, color-coded by role */
   agentBlock: {
-    borderLeftWidth: 2,
-    borderLeftColor: groknight.accent,
+    backgroundColor: groknight.bgRaised,
+    borderWidth: 1,
+    borderColor: groknight.borderQuiet,
   },
   userBlock: {
-    borderLeftWidth: 2,
-    borderLeftColor: groknight.textSecondary,
+    backgroundColor: groknight.bgVoid,
   },
   roleLabel: {
     ...Typography.default('semiBold'),
-    fontSize: 9,
-    fontWeight: '600',
+    ...Typography.mono('semiBold'),
+    fontSize: 11,
+    lineHeight: 15,
     marginBottom: 3,
   },
   roleAgent: {
-    color: groknight.accent,
+    color: groknight.textPrimary,
   },
   roleUser: {
-    color: groknight.muted,
+    color: groknight.textMuted,
   },
   messageText: {
     ...Typography.default(),
@@ -900,17 +922,22 @@ const styles = StyleSheet.create({
   },
   provenanceText: {
     ...Typography.mono(),
-    fontSize: 9,
-    color: groknight.dim,
+    fontSize: 11,
+    lineHeight: 15,
+    color: groknight.textMuted,
     marginTop: 4,
   },
   workRequestBadge: {
-    ...Typography.default('semiBold'),
+    ...Typography.mono('semiBold'),
     alignSelf: 'flex-start',
-    color: groknight.accent,
+    color: groknight.textSecondary,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    paddingHorizontal: 7,
+    paddingVertical: 4,
     marginBottom: 5,
-    fontSize: 10,
-    fontWeight: '600',
+    fontSize: 11,
+    lineHeight: 15,
   },
 
   // ── Subchannel link ─────────────────────────────────────────────
@@ -924,7 +951,6 @@ const styles = StyleSheet.create({
   subchannelLinkTitle: {
     ...Typography.default('semiBold'),
     fontSize: 11,
-    fontWeight: '700',
     color: groknight.chrome,
   },
   subchannelLinkHeading: {
@@ -933,16 +959,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 4,
   },
-  liveBadge: {
-    ...Typography.default('semiBold'),
-    color: groknight.accent,
-    fontWeight: '600',
-    fontSize: 10,
-  },
   openerBadge: {
     ...Typography.default(),
     color: groknight.steel,
-    fontSize: 9,
+    fontSize: 11,
     marginBottom: 6,
   },
   subchannelLinkText: {
@@ -960,7 +980,6 @@ const styles = StyleSheet.create({
     ...Typography.default('semiBold'),
     color: groknight.textSecondary,
     fontSize: 11,
-    fontWeight: '700',
   },
 
   // ── Merge summary ───────────────────────────────────────────────
@@ -974,7 +993,6 @@ const styles = StyleSheet.create({
   mergeSummaryTitle: {
     ...Typography.default('semiBold'),
     fontSize: 12,
-    fontWeight: '700',
     color: groknight.chrome,
     marginBottom: 4,
   },
@@ -986,8 +1004,9 @@ const styles = StyleSheet.create({
   },
   mergeSummaryPubkey: {
     ...Typography.mono(),
-    fontSize: 9,
-    color: groknight.dim,
+    fontSize: 11,
+    lineHeight: 15,
+    color: groknight.textMuted,
     marginTop: 4,
   },
 
@@ -1001,9 +1020,10 @@ const styles = StyleSheet.create({
     maxWidth: '90%',
   },
   archivedText: {
-    ...Typography.default(),
+    ...Typography.mono('semiBold'),
     fontSize: 11,
-    color: groknight.muted,
+    lineHeight: 15,
+    color: groknight.textPrimary,
     textAlign: 'center',
   },
 
@@ -1011,9 +1031,9 @@ const styles = StyleSheet.create({
   approvalBar: {
     paddingHorizontal: 16,
     paddingVertical: 14,
-    backgroundColor: groknight.bgTerminal,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
+    backgroundColor: groknight.bgRaised,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
     gap: 8,
   },
   approvalInfo: {
@@ -1024,35 +1044,20 @@ const styles = StyleSheet.create({
   prChip: {
     ...Typography.default('semiBold'),
     fontSize: 14,
-    fontWeight: '700',
     color: groknight.textPrimary,
   },
   approvalBarText: {
     ...Typography.default(),
     flex: 1,
-    fontSize: 10,
-    color: groknight.muted,
+    fontSize: 11,
+    lineHeight: 16,
+    color: groknight.textMuted,
   },
   humanBoundaryText: {
     ...Typography.default(),
-    color: groknight.steel,
-    fontSize: 11,
-    lineHeight: 15,
-  },
-  approveButton: {
-    borderWidth: 1,
-    borderColor: groknight.accent,
-    borderRadius: 4,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    alignItems: 'center',
-    backgroundColor: groknight.accent,
-  },
-  approveButtonText: {
-    ...Typography.default('semiBold'),
-    color: groknight.bgTerminal,
-    fontSize: 12,
-    fontWeight: '800',
+    color: groknight.textPrimary,
+    fontSize: 14,
+    lineHeight: 20,
   },
   approvalPending: {
     flexDirection: 'row',
@@ -1064,7 +1069,7 @@ const styles = StyleSheet.create({
   approvalStateText: {
     ...Typography.default(),
     fontSize: 11,
-    color: groknight.muted,
+    color: groknight.textMuted,
   },
   approvalSent: {
     paddingVertical: 10,
@@ -1086,13 +1091,12 @@ const styles = StyleSheet.create({
     ...Typography.default('semiBold'),
     color: groknight.textSecondary,
     fontSize: 14,
-    fontWeight: '700',
     paddingHorizontal: 10,
     paddingTop: 9,
   },
   lifecycleHint: {
     ...Typography.default(),
-    color: groknight.dim,
+    color: groknight.textMuted,
     fontSize: 11,
     paddingHorizontal: 10,
     paddingTop: 3,
@@ -1109,17 +1113,23 @@ const styles = StyleSheet.create({
     gap: 9,
   },
   lifecycleState: {
-    ...Typography.default('semiBold'),
-    color: groknight.accent,
-    fontSize: 10,
-    fontWeight: '600',
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 11,
+    lineHeight: 15,
   },
   lifecycleStateArchived: {
     color: groknight.muted,
   },
   lifecycleInfo: { flex: 1, minWidth: 0 },
   lifecycleBranch: { ...Typography.mono(), color: groknight.chrome, fontSize: 11 },
-  lifecycleAgent: { ...Typography.mono(), color: groknight.dim, fontSize: 9, marginTop: 2 },
+  lifecycleAgent: {
+    ...Typography.mono(),
+    color: groknight.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
+    marginTop: 2,
+  },
   chevron: { ...Typography.default(), color: groknight.steel, fontSize: 18 },
 
   // ── Legacy subchannel links (empty state) ───────────────────────
@@ -1130,7 +1140,6 @@ const styles = StyleSheet.create({
   subchannelLinksTitle: {
     ...Typography.default('semiBold'),
     fontSize: 11,
-    fontWeight: '700',
     color: groknight.muted,
     marginBottom: 8,
   },
@@ -1177,11 +1186,12 @@ const styles = StyleSheet.create({
     ...Typography.default('semiBold'),
     color: groknight.steel,
     fontSize: 11,
-    fontWeight: '600',
   },
   askAgentChip: {
     borderWidth: 1,
-    borderColor: groknight.borderActive,
+    minHeight: 44,
+    justifyContent: 'center',
+    borderColor: groknight.border,
     borderRadius: 3,
     paddingHorizontal: 7,
     paddingVertical: 4,
@@ -1191,8 +1201,8 @@ const styles = StyleSheet.create({
     borderColor: groknight.textSecondary,
     backgroundColor: groknight.bgHighlight,
   },
-  askAgentChipText: { ...Typography.default(), color: groknight.chrome, fontSize: 10 },
-  askAgentChipTextActive: { color: groknight.textPrimary, fontWeight: '700' },
+  askAgentChipText: { ...Typography.default(), color: groknight.chrome, fontSize: 11 },
+  askAgentChipTextActive: { ...Typography.default('semiBold'), color: groknight.textPrimary },
   composer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1203,34 +1213,37 @@ const styles = StyleSheet.create({
     borderColor: groknight.border,
     backgroundColor: groknight.bgBase,
   },
+  composerFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 9 },
   composerPrefix: {
     ...Typography.default('semiBold'),
     fontSize: 14,
-    fontWeight: '800',
     color: groknight.steel,
     marginRight: 8,
   },
   input: {
     ...Typography.default(),
     flex: 1,
-    fontSize: 12,
+    fontSize: 14,
+    lineHeight: 20,
     color: groknight.textSecondary,
     paddingVertical: 2,
     maxHeight: 80,
   },
   sendButton: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   sendButtonDisabled: {
-    opacity: 0.3,
+    backgroundColor: groknight.bgBase,
   },
   sendButtonText: {
     ...Typography.default(),
-    color: groknight.accent,
+    color: groknight.textPrimary,
     fontSize: 16,
   },
-  sendButtonTextQuiet: { color: groknight.textSecondary },
+  sendButtonTextQuiet: { color: groknight.textDisabled },
   archivedInputBar: {
     paddingHorizontal: 16,
     paddingTop: 12,

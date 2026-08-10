@@ -44,7 +44,7 @@ export function WorkspaceAvatar({
     height: size,
     borderRadius: Math.round(size * 0.29),
     borderWidth: active ? 2 : 1,
-    borderColor: active ? groknight.accent : groknight.borderActive,
+    borderColor: active ? groknight.selectedBorder : groknight.border,
   };
 
   useEffect(() => {
@@ -68,7 +68,7 @@ export function WorkspaceAvatar({
         <Svg width="100%" height="100%" viewBox="0 0 100 100">
           {HEX_CENTERS.map(([centerX, centerY], index) => {
             if ((geometry.filledMask & (1 << index)) === 0) return null;
-            const accent = index === geometry.accentIndex;
+            const heavy = index === geometry.heavyIndex;
             const chrome = (geometry.chromeMask & (1 << index)) !== 0;
             return (
               <Polygon
@@ -76,9 +76,9 @@ export function WorkspaceAvatar({
                 origin="50, 50"
                 points={hexPoints(centerX, centerY)}
                 rotation={geometry.rotation}
-                fill={accent ? groknight.bgHover : groknight.bgCode}
-                stroke={accent ? groknight.accent : chrome ? groknight.chrome : groknight.steel}
-                strokeWidth={accent ? 4 : 2.5}
+                fill={heavy ? groknight.bgHover : groknight.bgRaised}
+                stroke={heavy ? groknight.signalBright : chrome ? groknight.chrome : groknight.steel}
+                strokeWidth={heavy ? 4 : 2.5}
               />
             );
           })}

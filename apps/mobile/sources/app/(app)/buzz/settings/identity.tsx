@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
+import * as Haptics from 'expo-haptics';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,6 +19,7 @@ import Svg, { Path, Rect } from 'react-native-svg';
 import { loadBuzzIdentityNsecForExport } from '@/auth/buzz-identity-storage';
 import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
+import { HullSurface, MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
 
 const TYPED_CONFIRMATION = 'EXPORT';
 
@@ -74,6 +76,7 @@ export default function BuzzIdentitySettings() {
   const [showQr, setShowQr] = useState(false);
   const [copied, setCopied] = useState(false);
   const [working, setWorking] = useState(false);
+  const [inputFocused, setInputFocused] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const lockExport = useCallback(() => {
@@ -159,6 +162,7 @@ export default function BuzzIdentitySettings() {
         }
       }
       await loadSecret();
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch {
       setError('Beeline could not unlock the identity key on this device.');
       lockExport();
@@ -172,7 +176,8 @@ export default function BuzzIdentitySettings() {
     try {
       await Clipboard.setStringAsync(secret);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setTimeout(() => setCopied(false), 1200);
     } catch {
       setError('Beeline could not copy the key. You can reveal and copy it manually.');
     }
@@ -184,7 +189,7 @@ export default function BuzzIdentitySettings() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-      <View style={styles.header}>
+      <HullSurface strength="quiet" style={styles.header}>
         <TouchableOpacity
           accessibilityLabel="Back"
           onPress={() => router.back()}
@@ -195,7 +200,7 @@ export default function BuzzIdentitySettings() {
         <View style={styles.headerCopy}>
           <Text style={styles.title}>Identity</Text>
         </View>
-      </View>
+      </HullSurface>
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.intro}>
@@ -206,7 +211,7 @@ export default function BuzzIdentitySettings() {
         <View style={styles.warning}>
           <Text style={styles.warningGlyph}>!</Text>
           <Text style={styles.warningText}>
-            Anyone with this key controls your identity—export it only to a trusted app.
+            Anyone with this key controls your identity. Export it only to a trusted app.
           </Text>
         </View>
 
@@ -224,33 +229,31 @@ export default function BuzzIdentitySettings() {
                   autoCorrect={false}
                   editable={!working}
                   onChangeText={setTypedConfirmation}
+                  onFocus={() => setInputFocused(true)}
+                  onBlur={() => setInputFocused(false)}
                   onSubmitEditing={() => void handleConfirm()}
                   placeholder={TYPED_CONFIRMATION}
                   placeholderTextColor={groknight.dim}
-                  style={styles.confirmInput}
+                  style={[styles.confirmInput, inputFocused && styles.confirmInputFocused]}
                   value={typedConfirmation}
                 />
               </>
             )}
-            <TouchableOpacity
-              accessibilityRole="button"
+            <MonoButton
+              label={
+                confirmationMethod === 'checking'
+                  ? 'Checking device security'
+                  : working
+                    ? 'Confirming'
+                    : confirmationMethod === 'biometric'
+                      ? `Confirm with ${biometricLabel}`
+                      : 'Confirm export'
+              }
+              loading={working || confirmationMethod === 'checking'}
               disabled={confirmationMethod === 'checking' || working}
               onPress={() => void handleConfirm()}
-              style={[
-                styles.primaryButton,
-                (confirmationMethod === 'checking' || working) && styles.disabled,
-              ]}
-            >
-              <Text style={styles.primaryButtonText}>
-                {confirmationMethod === 'checking'
-                  ? 'checking device security…'
-                  : working
-                    ? 'confirming…'
-                    : confirmationMethod === 'biometric'
-                      ? `confirm with ${biometricLabel}`
-                      : 'confirm export'}
-              </Text>
-            </TouchableOpacity>
+              style={styles.primaryButton}
+            />
           </View>
         ) : (
           <View style={styles.exportSection}>
@@ -258,11 +261,11 @@ export default function BuzzIdentitySettings() {
               <Text style={styles.sectionLabel}>Nostr secret key</Text>
               <Text style={styles.unlockedLabel}>Unlocked</Text>
             </View>
-            <View style={styles.secretBox}>
+            <HullSurface strength="code" style={styles.secretBox}>
               <Text selectable={revealed} style={styles.secretText}>
                 {revealed ? secret : maskedSecret}
               </Text>
-            </View>
+            </HullSurface>
             <View style={styles.actions}>
               <TouchableOpacity
                 accessibilityLabel={revealed ? 'Hide secret key' : 'Reveal secret key'}
@@ -272,22 +275,22 @@ export default function BuzzIdentitySettings() {
                 <Text style={styles.secondaryButtonText}>{revealed ? 'Hide' : 'Reveal'}</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={() => void handleCopy()} style={styles.secondaryButton}>
-                <Text style={styles.secondaryButtonText}>{copied ? 'Copied' : 'Copy'}</Text>
+                <Text style={styles.secondaryButtonText}>{copied ? '✓ COPIED' : 'Copy'}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 accessibilityState={{ expanded: showQr }}
                 onPress={() => setShowQr((value) => !value)}
-                style={styles.primarySmallButton}
+                style={styles.secondaryButton}
               >
-                <Text style={styles.primarySmallButtonText}>{showQr ? 'Hide QR' : 'Show QR'}</Text>
+                <Text style={styles.secondaryButtonText}>{showQr ? 'Hide QR' : 'Show QR'}</Text>
               </TouchableOpacity>
             </View>
 
             {showQr && (
-              <View style={styles.qrSection}>
+              <PixelGateReveal style={styles.qrSection}>
                 <QrCode value={secret} />
                 <Text style={styles.qrHint}>Scan only with a Nostr signer you trust.</Text>
-              </View>
+              </PixelGateReveal>
             )}
 
             <TouchableOpacity onPress={lockExport} style={styles.lockButton}>
@@ -297,9 +300,10 @@ export default function BuzzIdentitySettings() {
         )}
 
         {error && (
-          <Text accessibilityRole="alert" style={styles.errorText}>
-            {error}
-          </Text>
+          <View accessibilityRole="alert" style={styles.errorPanel}>
+            <Text style={styles.errorLabel}>! ERROR</Text>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
         )}
 
         <Text style={styles.footer}>Copy and QR stay on this device.</Text>
@@ -320,8 +324,8 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgBase,
   },
   backButton: {
-    width: 40,
-    height: 40,
+    width: 44,
+    height: 44,
     marginRight: 6,
     alignItems: 'center',
     justifyContent: 'center',
@@ -336,37 +340,40 @@ const styles = StyleSheet.create({
   title: {
     ...Typography.default('semiBold'),
     color: groknight.textPrimary,
-    fontSize: 17,
-    fontWeight: '700',
+    fontSize: 20,
+    lineHeight: 24,
   },
   content: { paddingHorizontal: 20, paddingTop: 28, paddingBottom: 36 },
   intro: { maxWidth: 560 },
   sectionLabel: {
-    ...Typography.default('semiBold'),
+    ...Typography.mono('semiBold'),
     color: groknight.textSecondary,
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: 11,
+    lineHeight: 15,
+    letterSpacing: 0.8,
   },
   heading: {
     ...Typography.default('semiBold'),
     marginTop: 7,
     color: groknight.textPrimary,
     fontSize: 24,
-    fontWeight: '800',
   },
   body: {
     ...Typography.default(),
     marginTop: 9,
     color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 19,
+    fontSize: 14,
+    lineHeight: 20,
   },
   warning: {
     marginTop: 24,
-    paddingVertical: 10,
+    padding: 12,
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 12,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgHighlight,
   },
   warningGlyph: {
     ...Typography.default('semiBold'),
@@ -374,9 +381,7 @@ const styles = StyleSheet.create({
     height: 22,
     borderWidth: 1,
     borderColor: groknight.chrome,
-    borderRadius: 11,
     color: groknight.chrome,
-    fontWeight: '800',
     lineHeight: 20,
     textAlign: 'center',
   },
@@ -385,16 +390,16 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     color: groknight.chrome,
-    fontSize: 12,
-    lineHeight: 18,
+    fontSize: 14,
+    lineHeight: 20,
   },
   confirmSection: { marginTop: 28 },
   confirmHint: {
     ...Typography.default(),
     marginTop: 9,
-    color: groknight.muted,
-    fontSize: 11,
-    lineHeight: 17,
+    color: groknight.textSecondary,
+    fontSize: 14,
+    lineHeight: 20,
   },
   confirmInput: {
     ...Typography.default(),
@@ -402,29 +407,17 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingHorizontal: 12,
     borderWidth: 1,
-    borderColor: groknight.borderActive,
+    borderColor: groknight.border,
     borderRadius: 4,
     color: groknight.textPrimary,
     backgroundColor: groknight.bgBase,
     fontSize: 14,
     letterSpacing: 1.2,
   },
+  confirmInputFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 11 },
   primaryButton: {
-    minHeight: 46,
     marginTop: 14,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 4,
-    backgroundColor: groknight.accent,
   },
-  primaryButtonText: {
-    ...Typography.default('semiBold'),
-    color: groknight.bgTerminal,
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  disabled: { opacity: 0.45 },
   exportSection: { marginTop: 28 },
   exportHeadingRow: {
     flexDirection: 'row',
@@ -434,9 +427,9 @@ const styles = StyleSheet.create({
   },
   unlockedLabel: {
     ...Typography.default('semiBold'),
-    color: groknight.muted,
-    fontSize: 9,
-    fontWeight: '600',
+    color: groknight.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
   },
   secretBox: {
     minHeight: 74,
@@ -444,7 +437,7 @@ const styles = StyleSheet.create({
     padding: 13,
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: groknight.borderActive,
+    borderColor: groknight.borderStrong,
     borderRadius: 4,
     backgroundColor: groknight.bgBase,
   },
@@ -456,7 +449,7 @@ const styles = StyleSheet.create({
   },
   actions: { marginTop: 10, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
   secondaryButton: {
-    minHeight: 38,
+    minHeight: 44,
     paddingHorizontal: 13,
     alignItems: 'center',
     justifyContent: 'center',
@@ -465,21 +458,6 @@ const styles = StyleSheet.create({
     ...Typography.default('semiBold'),
     color: groknight.chrome,
     fontSize: 12,
-    fontWeight: '600',
-  },
-  primarySmallButton: {
-    minHeight: 38,
-    paddingHorizontal: 13,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 4,
-    backgroundColor: groknight.accent,
-  },
-  primarySmallButtonText: {
-    ...Typography.default('semiBold'),
-    color: groknight.bgTerminal,
-    fontSize: 12,
-    fontWeight: '800',
   },
   qrSection: { marginTop: 22, alignItems: 'center' },
   qrFrame: {
@@ -495,30 +473,49 @@ const styles = StyleSheet.create({
     maxWidth: 320,
     marginTop: 12,
     color: groknight.muted,
-    fontSize: 10,
-    lineHeight: 15,
+    fontSize: 12,
+    lineHeight: 17,
     textAlign: 'center',
   },
-  lockButton: { marginTop: 22, alignSelf: 'center', paddingHorizontal: 14, paddingVertical: 10 },
+  lockButton: {
+    minHeight: 44,
+    marginTop: 22,
+    alignSelf: 'center',
+    paddingHorizontal: 14,
+    justifyContent: 'center',
+  },
   lockButtonText: {
     ...Typography.default('semiBold'),
     color: groknight.steel,
     fontSize: 11,
-    fontWeight: '600',
+  },
+  errorPanel: {
+    marginTop: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgHighlight,
+  },
+  errorLabel: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 11,
+    lineHeight: 15,
+    letterSpacing: 0.8,
   },
   errorText: {
     ...Typography.default(),
-    marginTop: 16,
-    color: groknight.chrome,
-    fontSize: 11,
-    lineHeight: 17,
+    marginTop: 4,
+    color: groknight.textSecondary,
+    fontSize: 14,
+    lineHeight: 20,
   },
   footer: {
     ...Typography.default(),
     marginTop: 28,
-    color: groknight.dim,
-    fontSize: 10,
-    lineHeight: 16,
+    color: groknight.textMuted,
+    fontSize: 12,
+    lineHeight: 17,
     textAlign: 'center',
   },
 });

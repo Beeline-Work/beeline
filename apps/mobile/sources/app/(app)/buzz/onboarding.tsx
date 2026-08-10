@@ -1,11 +1,12 @@
-/** Beeline onboarding — sign up with a new key or sign in with an existing nsec. */
+/** Beeline onboarding: sign up with a new key or sign in with an existing nsec. */
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import Svg, { Path } from 'react-native-svg';
 import { generateBuzzIdentity, importBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { groknight } from '@/buzz/groknight';
+import { BeelineMark } from '@/components/buzz/BeelineMark';
+import { MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
 import { Typography } from '@/constants/Typography';
 
@@ -13,11 +14,13 @@ export default function BuzzOnboarding() {
   const insets = useSafeAreaInsets();
   const [nsecInput, setNsecInput] = useState('');
   const [showSignIn, setShowSignIn] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loadingAction, setLoadingAction] = useState<'generate' | 'import' | null>(null);
+  const [inputFocused, setInputFocused] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const loading = loadingAction !== null;
 
   const handleGenerate = async () => {
-    setLoading(true);
+    setLoadingAction('generate');
     setError(null);
     try {
       const identity = await generateBuzzIdentity();
@@ -26,7 +29,7 @@ export default function BuzzOnboarding() {
     } catch (err) {
       setError(`Could not generate and save a key: ${String(err)}`);
     } finally {
-      setLoading(false);
+      setLoadingAction(null);
     }
   };
 
@@ -36,7 +39,7 @@ export default function BuzzOnboarding() {
       setError('Paste a valid nsec1… secret key.');
       return;
     }
-    setLoading(true);
+    setLoadingAction('import');
     setError(null);
     try {
       const identity = await importBuzzIdentity(trimmed);
@@ -45,56 +48,55 @@ export default function BuzzOnboarding() {
     } catch (err) {
       setError(`Could not import and save this key: ${String(err)}`);
     } finally {
-      setLoading(false);
+      setLoadingAction(null);
     }
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      <Svg
-        accessible
-        accessibilityLabel="Beeline logo"
-        width={112}
-        height={112}
-        viewBox="0 0 240 240"
-        style={styles.logo}
-      >
-        <Path
-          d="M 32 182 C 48 181, 58 180, 68 176 C 86 168, 60 143, 80 132 C 92 126, 104 138, 97 153 C 92 163, 77 164, 70 172 C 62 180, 82 185, 98 178 C 144 168, 176 148, 194 112 C 203 92, 208 66, 211 44"
-          fill="none"
-          stroke={groknight.accent}
-          strokeWidth={8}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </Svg>
-      <Text style={styles.title}>beeline</Text>
-      <Text style={styles.subtitle}>workspace for all intelligence</Text>
+    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+      <View style={styles.brandSurface}>
+        <BeelineMark shimmer />
+        <Text style={styles.title}>beeline</Text>
+        <Text style={styles.subtitle}>A secure workspace for people and their agents.</Text>
+      </View>
 
       {error && (
-        <Text accessibilityRole="alert" style={styles.errorText}>
-          {error}
-        </Text>
+        <View accessibilityRole="alert" style={styles.errorPanel}>
+          <Text style={styles.errorLabel}>! ERROR</Text>
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
       )}
 
       {showSignIn && (
-        <TextInput
-          style={styles.input}
-          placeholder="nsec1…"
-          placeholderTextColor={groknight.dim}
-          value={nsecInput}
-          onChangeText={setNsecInput}
-          autoCapitalize="none"
-          autoCorrect={false}
-          secureTextEntry={Platform.OS !== 'web'}
-          editable={!loading}
-          onSubmitEditing={() => void handleImport()}
-        />
+        <PixelGateReveal style={styles.importPanel}>
+          <Text style={styles.sectionLabel}>SECRET KEY</Text>
+          <Text style={styles.keyGuide}>
+            Your nsec stays on this device. Beeline never publishes it.
+          </Text>
+          <TextInput
+            nativeID="buzz-secret-key"
+            accessibilityLabel="Secret key"
+            style={[styles.input, inputFocused && styles.inputFocused, error && styles.inputError]}
+            placeholder="nsec1…"
+            placeholderTextColor={groknight.textDisabled}
+            value={nsecInput}
+            onChangeText={setNsecInput}
+            onFocus={() => setInputFocused(true)}
+            onBlur={() => setInputFocused(false)}
+            autoCapitalize="none"
+            autoCorrect={false}
+            secureTextEntry={Platform.OS !== 'web'}
+            editable={!loading}
+            onSubmitEditing={() => void handleImport()}
+          />
+        </PixelGateReveal>
       )}
 
       <View style={styles.actions}>
-        <TouchableOpacity
-          style={[styles.secondaryButton, loading && styles.buttonDisabled]}
+        <MonoButton
+          label={showSignIn ? 'Import and continue' : 'Sign in with a key'}
+          loading={loadingAction === 'import'}
+          variant="secondary"
           onPress={() => {
             if (!showSignIn) {
               setShowSignIn(true);
@@ -104,17 +106,22 @@ export default function BuzzOnboarding() {
             void handleImport();
           }}
           disabled={loading}
-        >
-          <Text style={styles.secondaryButtonText}>Sign in</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.button, loading && styles.buttonDisabled]}
+        />
+        <MonoButton
+          label={loadingAction === 'generate' ? 'Generating key' : 'Create a new key'}
+          loading={loadingAction === 'generate'}
           onPress={() => void handleGenerate()}
           disabled={loading}
-        >
-          <Text style={styles.buttonText}>Sign up</Text>
-        </TouchableOpacity>
+        />
       </View>
+
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel="Learn how Beeline keys work"
+        style={styles.guideTarget}
+      >
+        <Text style={styles.guideText}>◇ HOW KEYS WORK</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -124,80 +131,84 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 24,
     justifyContent: 'center',
-    backgroundColor: groknight.bgTerminal,
+    backgroundColor: groknight.bgVoid,
   },
-  logo: {
-    alignSelf: 'center',
-    marginBottom: 4,
-  },
+  brandSurface: { alignItems: 'center', marginBottom: 28 },
   title: {
-    ...Typography.default('semiBold'),
+    ...Typography.logo(),
     fontSize: 28,
-    fontWeight: '800',
+    lineHeight: 32,
     color: groknight.textPrimary,
     textAlign: 'center',
+    marginTop: 2,
     marginBottom: 8,
   },
   subtitle: {
     ...Typography.default(),
-    fontSize: 13,
-    color: groknight.muted,
+    maxWidth: 320,
+    fontSize: 14,
+    lineHeight: 20,
+    color: groknight.textSecondary,
     textAlign: 'center',
-    marginBottom: 40,
-    paddingHorizontal: 16,
-    lineHeight: 18,
+  },
+  importPanel: { marginBottom: 16 },
+  sectionLabel: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
+    letterSpacing: 0.8,
+    marginBottom: 4,
+  },
+  keyGuide: {
+    ...Typography.default(),
+    color: groknight.textSecondary,
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 10,
   },
   input: {
-    ...Typography.default(),
+    ...Typography.mono(),
+    minHeight: 48,
     borderWidth: 1,
     borderColor: groknight.border,
-    borderRadius: 4,
-    padding: 12,
+    borderRadius: 3,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     fontSize: 13,
-    color: groknight.textSecondary,
+    color: groknight.textPrimary,
     backgroundColor: groknight.bgBase,
-    marginBottom: 12,
   },
-  actions: {
-    gap: 10,
-  },
-  button: {
-    backgroundColor: groknight.accent,
-    paddingVertical: 12,
-    borderRadius: 4,
-    alignItems: 'center',
+  inputFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 11 },
+  inputError: { borderColor: groknight.borderStrong },
+  actions: { gap: 10 },
+  errorPanel: {
     borderWidth: 1,
-    borderColor: groknight.accent,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgHighlight,
+    padding: 12,
+    marginBottom: 16,
   },
-  buttonDisabled: {
-    opacity: 0.4,
-  },
-  buttonText: {
-    ...Typography.default('semiBold'),
-    color: groknight.bgTerminal,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  secondaryButton: {
-    backgroundColor: 'transparent',
-    paddingVertical: 12,
-    borderRadius: 4,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: groknight.borderActive,
-  },
-  secondaryButtonText: {
-    ...Typography.default('semiBold'),
-    color: groknight.chrome,
-    fontSize: 14,
-    fontWeight: '600',
+  errorLabel: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 11,
+    lineHeight: 15,
+    letterSpacing: 0.8,
+    marginBottom: 4,
   },
   errorText: {
     ...Typography.default(),
-    color: groknight.chrome,
+    color: groknight.textSecondary,
     fontSize: 14,
     lineHeight: 20,
-    marginBottom: 20,
-    textAlign: 'center',
+  },
+  guideTarget: { minHeight: 44, alignItems: 'center', justifyContent: 'center', marginTop: 12 },
+  guideText: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
+    letterSpacing: 0.8,
   },
 });

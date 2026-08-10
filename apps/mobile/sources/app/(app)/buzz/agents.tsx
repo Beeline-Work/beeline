@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   ScrollView,
   StyleSheet,
   Text,
@@ -22,6 +21,7 @@ import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { AgentAvatar } from '@/components/buzz/AgentAvatar';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
+import { HullSurface, HullWaveSignal, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -191,7 +191,7 @@ export default function BuzzAgents() {
   if (loading) {
     return (
       <View style={[styles.loading, { paddingTop: insets.top }]}>
-        <ActivityIndicator color={groknight.accent} />
+        <PixelLoader />
       </View>
     );
   }
@@ -207,7 +207,7 @@ export default function BuzzAgents() {
       onAdd={() => router.push('/buzz/community' as Href)}
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
-        <View style={styles.header}>
+        <HullSurface strength="quiet" style={styles.header}>
           <TouchableOpacity
             accessibilityLabel={`Back to ${ROOM_LABEL}s`}
             style={styles.backButton}
@@ -227,7 +227,7 @@ export default function BuzzAgents() {
           >
             <Text style={styles.addButtonText}>＋</Text>
           </TouchableOpacity>
-        </View>
+        </HullSurface>
 
         <ScrollView
           contentContainerStyle={styles.scrollContent}
@@ -247,9 +247,9 @@ export default function BuzzAgents() {
                 <Text style={styles.copyText}>Copy</Text>
               </TouchableOpacity>
               <View style={styles.waitingRow}>
-                <View style={styles.waitingDot} />
+                <HullWaveSignal compact label="WAITING" />
                 <Text style={styles.expiry}>
-                  Waiting for agent · expires{' '}
+                  Expires{' '}
                   {pairExpiresAt ? new Date(pairExpiresAt * 1000).toLocaleTimeString() : 'soon'}
                 </Text>
               </View>
@@ -257,9 +257,10 @@ export default function BuzzAgents() {
           )}
 
           {error && (
-            <Text accessibilityRole="alert" style={styles.error}>
-              {error}
-            </Text>
+            <View accessibilityRole="alert" style={styles.errorPanel}>
+              <Text style={styles.errorLabel}>! ERROR</Text>
+              <Text style={styles.error}>{error}</Text>
+            </View>
           )}
 
           {agents.length > 0 && (
@@ -276,15 +277,13 @@ export default function BuzzAgents() {
                 Connect once, then use the Agent in every {ROOM_LABEL}.
               </Text>
               {!pairCommand && (
-                <TouchableOpacity
-                  style={[styles.primaryButton, working && styles.disabled]}
+                <MonoButton
+                  label={working ? 'Connecting Agent' : 'Connect an Agent'}
+                  loading={working}
+                  style={styles.primaryButton}
                   disabled={working}
                   onPress={() => void handleAdd()}
-                >
-                  <Text style={styles.primaryButtonText}>
-                    {working ? 'Connecting…' : 'Connect an Agent'}
-                  </Text>
-                </TouchableOpacity>
+                />
               )}
             </View>
           ) : (
@@ -357,17 +356,12 @@ export default function BuzzAgents() {
                 maxLength={280}
               />
               <View style={styles.editorActions}>
-                <TouchableOpacity
-                  style={[
-                    styles.primaryButton,
-                    (!name.trim() || !personality.trim() || working) && styles.disabled,
-                    styles.flexButton,
-                  ]}
+                <MonoButton
+                  label="Save changes"
+                  style={[styles.primaryButton, styles.flexButton]}
                   disabled={!name.trim() || !personality.trim() || working}
                   onPress={() => void saveSoul()}
-                >
-                  <Text style={styles.primaryButtonText}>Save changes</Text>
-                </TouchableOpacity>
+                />
                 <TouchableOpacity
                   style={[styles.secondaryButton, styles.flexButton]}
                   disabled={working}
@@ -401,19 +395,19 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: groknight.border,
   },
-  backButton: { width: 34, height: 42, alignItems: 'center', justifyContent: 'center' },
+  backButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   backText: { ...Typography.default(), color: groknight.chrome, fontSize: 30, fontWeight: '300' },
   headerCopy: { flex: 1, minWidth: 0, paddingLeft: 4 },
   title: {
     ...Typography.default('semiBold'),
     color: groknight.textPrimary,
-    fontSize: 17,
-    fontWeight: '700',
+    fontSize: 20,
+    lineHeight: 24,
   },
   headerMeta: { ...Typography.default(), marginTop: 2, color: groknight.muted, fontSize: 11 },
   addButton: {
-    width: 38,
-    height: 38,
+    width: 44,
+    height: 44,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -440,7 +434,7 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     backgroundColor: groknight.bgBase,
     borderWidth: 1,
-    borderColor: groknight.borderActive,
+    borderColor: groknight.borderStrong,
   },
   command: {
     flex: 1,
@@ -448,7 +442,6 @@ const styles = StyleSheet.create({
     color: groknight.textPrimary,
     ...Typography.mono('semiBold'),
     fontSize: 13,
-    fontWeight: '700',
   },
   copyText: {
     ...Typography.default('semiBold'),
@@ -458,16 +451,26 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   waitingRow: { marginTop: 10, flexDirection: 'row', alignItems: 'center', gap: 7 },
-  waitingDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: groknight.accent },
-  expiry: { ...Typography.default(), color: groknight.muted, fontSize: 11 },
+  expiry: { ...Typography.mono(), color: groknight.textMuted, fontSize: 11, lineHeight: 15 },
+  errorPanel: {
+    padding: 10,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgHighlight,
+  },
+  errorLabel: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 11,
+    lineHeight: 15,
+    letterSpacing: 0.8,
+  },
   error: {
     ...Typography.default(),
-    padding: 10,
-    color: groknight.textPrimary,
-    borderWidth: 1,
-    borderColor: groknight.borderActive,
-    backgroundColor: groknight.bgHighlight,
-    fontSize: 12,
+    marginTop: 4,
+    color: groknight.textSecondary,
+    fontSize: 14,
+    lineHeight: 20,
   },
   sectionHeader: { marginBottom: 8, flexDirection: 'row', alignItems: 'center' },
   sectionTitle: {
@@ -475,7 +478,6 @@ const styles = StyleSheet.create({
     flex: 1,
     color: groknight.textPrimary,
     fontSize: 14,
-    fontWeight: '700',
   },
   count: { ...Typography.default(), color: groknight.muted, fontSize: 12 },
   empty: {
@@ -489,7 +491,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderWidth: 1,
-    borderColor: groknight.borderActive,
+    borderColor: groknight.borderStrong,
     borderRadius: 12,
     color: groknight.steel,
     fontSize: 26,
@@ -501,7 +503,6 @@ const styles = StyleSheet.create({
     marginTop: 10,
     color: groknight.textPrimary,
     fontSize: 16,
-    fontWeight: '800',
   },
   emptyCopy: {
     ...Typography.default(),
@@ -526,7 +527,6 @@ const styles = StyleSheet.create({
     ...Typography.default('semiBold'),
     color: groknight.textPrimary,
     fontSize: 15,
-    fontWeight: '800',
   },
   personality: {
     ...Typography.default(),
@@ -535,7 +535,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 16,
   },
-  pubkey: { ...Typography.mono(), marginTop: 4, color: groknight.steel, fontSize: 9 },
+  pubkey: { ...Typography.mono(), marginTop: 4, color: groknight.textMuted, fontSize: 11 },
   chevron: { ...Typography.default(), color: groknight.chrome, fontSize: 24 },
   editor: {
     marginTop: 24,
@@ -549,14 +549,13 @@ const styles = StyleSheet.create({
     ...Typography.default('semiBold'),
     color: groknight.textPrimary,
     fontSize: 16,
-    fontWeight: '700',
   },
   editorHint: {
     ...Typography.default(),
     marginTop: 4,
     color: groknight.steel,
-    fontSize: 10,
-    lineHeight: 14,
+    fontSize: 12,
+    lineHeight: 17,
   },
   label: {
     ...Typography.default('semiBold'),
@@ -568,34 +567,23 @@ const styles = StyleSheet.create({
   },
   input: {
     ...Typography.default(),
-    minHeight: 42,
+    minHeight: 44,
     paddingHorizontal: 12,
     paddingVertical: 10,
     color: groknight.textPrimary,
     fontSize: 13,
     borderWidth: 1,
-    borderColor: groknight.borderActive,
+    borderColor: groknight.border,
     backgroundColor: groknight.bgTerminal,
   },
   intentInput: { minHeight: 72, textAlignVertical: 'top' },
   personalityInput: { minHeight: 68, textAlignVertical: 'top' },
   primaryButton: {
     marginTop: 10,
-    minHeight: 42,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 12,
-    backgroundColor: groknight.accent,
-  },
-  primaryButtonText: {
-    ...Typography.default('semiBold'),
-    color: groknight.bgTerminal,
-    fontSize: 13,
-    fontWeight: '700',
   },
   secondaryButton: {
     marginTop: 10,
-    minHeight: 42,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 12,
@@ -609,5 +597,5 @@ const styles = StyleSheet.create({
   },
   editorActions: { flexDirection: 'row', gap: 8 },
   flexButton: { flex: 1, minWidth: 0 },
-  disabled: { opacity: 0.42 },
+  disabled: { backgroundColor: groknight.bgBase },
 });

@@ -30,7 +30,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 - `npm run apk:release` in `apps/mobile` builds a signed release APK (expo prebuild → patch signing config → gradle assembleRelease).
 - Release keystore: `apps/mobile/android-signing/release.keystore` (stored pass in sibling README, rotate before public distribution).
-- Configurable relay URL: persisted per-device via `buzz-identity-storage.ts`, default `https://buzz.trustysquire.ai`.
+- Configurable relay URL: persisted per-device via `buzz-identity-storage.ts`, default `https://relay.buzzrouter.com`.
 - Onboarding/channels screens have a relay URL text field (editable).
 - Gradle signing config is injected by `scripts/patch-android-signing.sh` after prebuild because the `android/` directory is gitignored.
 

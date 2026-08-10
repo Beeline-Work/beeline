@@ -6,7 +6,8 @@
  *
  * Tag formats verified against buzz-relay `handlers/side_effects.rs` and
  * `core/git_perms.rs`:
- *   - kind:9007 — creator becomes channel owner; `h` = channel UUID.
+ *   - kind:9007 — creator starts as channel owner; a later self-targeted
+ *     kind:9000 may explicitly project it as a plain member.
  *   - kind:9000 — `h` = channel UUID, `p` = target pubkey, `role` = role tag
  *     ("owner"/"admin"/"member"). On an OPEN channel any authenticated member
  *     may add members.

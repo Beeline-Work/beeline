@@ -254,8 +254,9 @@ export class BuzzClient {
     communityId: string,
     repository: RepositoryBinding,
     pairedBy: string,
+    mergeWorkerPubkey?: string,
   ): Promise<RepositoryRoomResult> {
-    return resolveRepositoryRoom(this.ctx, communityId, repository, pairedBy);
+    return resolveRepositoryRoom(this.ctx, communityId, repository, pairedBy, mergeWorkerPubkey);
   }
 
   setAgentSoul(

@@ -33,6 +33,8 @@ export interface AgentRuntimeRecord {
   pairedBy: string;
   agent: StoredIdentity;
   body: StoredIdentity;
+  /** Dedicated Room-admin identity used only by the approval-gated merge worker. */
+  mergeWorker?: StoredIdentity;
   repo: LocalRepositoryBinding;
   relayBaseUrl: string;
   relayHost?: string;
@@ -286,12 +288,14 @@ export async function pairRepositoryAgent(
     mcpBinary: string;
     agentIdentity: Identity;
     bodyIdentity: Identity;
+    mergeWorkerIdentity: Identity;
   },
   deps: {
     redeem(code: string): Promise<RedeemAgentPairingResult>;
     resolveRoom(
       pairing: RedeemAgentPairingResult,
       repository: RepositoryBinding,
+      mergeWorkerPubkey: string,
     ): Promise<RepositoryRoomResult>;
     validate?(
       pairing: RedeemAgentPairingResult,
@@ -304,7 +308,11 @@ export async function pairRepositoryAgent(
   // Resolve the repository before consuming the one-shot pairing code.
   const repo = inspectLocalRepository(input.cwd);
   const pairing = await deps.redeem(input.code);
-  const room = await deps.resolveRoom(pairing, repo.repository);
+  const room = await deps.resolveRoom(
+    pairing,
+    repo.repository,
+    input.mergeWorkerIdentity.publicKey,
+  );
   await deps.validate?.(pairing, room, repo);
   const runtime: AgentRuntimeRecord = {
     version: 1,
@@ -313,6 +321,9 @@ export async function pairRepositoryAgent(
     pairedBy: pairing.pairedBy,
     agent: storeIdentity(input.agentIdentity, 'buzzy-agent'),
     body: storeIdentity(input.bodyIdentity, 'buzzy-body'),
+    ...(room.mergeWorkerProvisioned
+      ? { mergeWorker: storeIdentity(input.mergeWorkerIdentity, 'buzzy-merge-worker') }
+      : {}),
     repo,
     relayBaseUrl: input.relayBaseUrl,
     ...(input.relayHost ? { relayHost: input.relayHost } : {}),

@@ -42,4 +42,13 @@ export { isRegisteredAgentIdentity } from './agent-identity.js';
 
 export { buildApproval, verifyApproval, APPROVAL_MARKER, type MergeTarget } from './approval.js';
 
-export { attemptMerge, type MergeRequest, type MergeOutcome } from './worker.js';
+export {
+  attemptMerge,
+  DurableMergeGate,
+  roomMergeCandidates,
+  type MergeRequest,
+  type MergeOutcome,
+  type RoomMergeServiceConfig,
+  type RoomMergeCandidate,
+  type RoomMergeAttempt,
+} from './worker.js';

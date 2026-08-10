@@ -62,6 +62,7 @@ describe('pair → run unification', () => {
     const root = await repository('https://example.com/team/project.git');
     const agent = newIdentity('agent');
     const body = newIdentity('body');
+    const mergeWorker = newIdentity('merge-worker');
     let launchedPath = '';
     const result = await pairRepositoryAgent(
       {
@@ -72,6 +73,7 @@ describe('pair → run unification', () => {
         mcpBinary: '/usr/bin/mcp',
         agentIdentity: agent,
         bodyIdentity: body,
+        mergeWorkerIdentity: mergeWorker,
       },
       {
         redeem: async (code) => {
@@ -90,12 +92,14 @@ describe('pair → run unification', () => {
             },
           };
         },
-        resolveRoom: async (_pairing, binding) => {
+        resolveRoom: async (_pairing, binding, mergeWorkerPubkey) => {
           expect(binding.name).toBe('project');
+          expect(mergeWorkerPubkey).toBe(mergeWorker.publicKey);
           return {
             channelId: '22222222-2222-4222-8222-222222222222',
             created: true,
             joined: true,
+            mergeWorkerProvisioned: true,
           };
         },
         launch: async (path) => {
@@ -112,6 +116,7 @@ describe('pair → run unification', () => {
     const stored = await readRuntimeRecord(result.configPath);
     expect(stored.agent.publicKey).toBe(agent.publicKey);
     expect(stored.body.publicKey).toBe(body.publicKey);
+    expect(stored.mergeWorker?.publicKey).toBe(mergeWorker.publicKey);
     expect(stored.agentBinary).toBe('/usr/bin/agent');
     expect(await readFile(result.configPath, 'utf8')).not.toContain('token@');
   });

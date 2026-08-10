@@ -14,7 +14,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { NostrEvent } from '@beeline/nostr';
+import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 import type { Identity } from './identity.js';
 import { git, gitAuthed, lsRemoteRef } from './git.js';
 import { gitRepoUrl } from './config.js';
@@ -25,11 +25,13 @@ import { isRegisteredAgentIdentity } from './agent-identity.js';
 import { resolveChannelRole, type ChannelRole } from './provisioning.js';
 
 export interface MergeRequest {
-  /** Repo owner + push identity. */
+  /** Dedicated push-capable merge worker identity. */
   worker: Identity;
+  /** Repo owner hex. Defaults to worker.publicKey for the original owner-worker mode. */
+  ownerHex?: string;
   /** Hex pubkey whose approvals the worker will honor (and no other). */
   trustedReviewer: string;
-  /** Repo id (`{repo}` in the URL). Owner is `worker.publicKey`. */
+  /** Repo id (`{repo}` in the URL). */
   repo: string;
   /** Channel the repo is bound to (where approvals are posted). */
   channelId: string;
@@ -52,7 +54,7 @@ export interface MergeOutcome {
 
 /** Clone the repo fresh as the worker and return the checkout path. */
 function cloneFresh(req: MergeRequest): string {
-  const owner = req.worker.publicKey;
+  const owner = req.ownerHex ?? req.worker.publicKey;
   const dir = mkdtempSync(join(tmpdir(), 'buzzy-worker-'));
   const url = gitRepoUrl(owner, req.repo);
   const res = gitAuthed(dir, req.worker, owner, req.repo, ['clone', url, 'work']);
@@ -82,7 +84,7 @@ async function fetchApprovals(req: MergeRequest): Promise<NostrEvent[]> {
  * a valid reviewer-signed approval binds to the feature tip; otherwise refuses.
  */
 export async function attemptMerge(req: MergeRequest): Promise<MergeOutcome> {
-  const owner = req.worker.publicKey;
+  const owner = req.ownerHex ?? req.worker.publicKey;
   const targetRef = `refs/heads/${req.targetBranch}`;
   const work = cloneFresh(req);
 
@@ -191,14 +193,170 @@ export async function attemptMerge(req: MergeRequest): Promise<MergeOutcome> {
   };
 }
 
-/** Config for standalone-service mode (secret key as hex, JSON-safe). */
-interface WorkerServiceConfig {
-  workerSecretKeyHex: string;
-  trustedReviewer: string;
+/** One durable gate serves every agent-opened change in a repository Room. */
+export interface RoomMergeServiceConfig {
+  worker: Identity;
+  ownerHex: string;
   repo: string;
   channelId: string;
   targetBranch: string;
+}
+
+export interface RoomMergeCandidate {
+  subchannelId: string;
   featureBranch: string;
+  agentPubkey: string;
+}
+
+export interface RoomMergeAttempt {
+  candidate: RoomMergeCandidate;
+  approvalId: string;
+  reviewer: string;
+  outcome: MergeOutcome;
+}
+
+function tagValue(event: NostrEvent, name: string): string | undefined {
+  return event.tags.find((tag) => tag[0] === name)?.[1];
+}
+
+function fullTargetRef(branch: string): string {
+  return branch.startsWith('refs/heads/') ? branch : `refs/heads/${branch}`;
+}
+
+function shortTargetBranch(branch: string): string {
+  return branch.replace(/^refs\/heads\//, '');
+}
+
+/** Pure parser for the signed body-control records that define Room changes. */
+export function roomMergeCandidates(
+  events: NostrEvent[],
+  config: Pick<RoomMergeServiceConfig, 'ownerHex' | 'repo' | 'targetBranch'>,
+): RoomMergeCandidate[] {
+  const repoId = `${config.ownerHex}/${config.repo}`;
+  const targetRef = fullTargetRef(config.targetBranch);
+  const candidates = new Map<string, RoomMergeCandidate>();
+  for (const event of events) {
+    const subchannelId = tagValue(event, 'subchannel');
+    const featureBranch = tagValue(event, 'feature');
+    const agentPubkey = tagValue(event, 'agent');
+    if (
+      !verifyEvent(event) ||
+      tagValue(event, 'status') !== 'open' ||
+      tagValue(event, 'repo') !== repoId ||
+      tagValue(event, 'branch') !== targetRef ||
+      !subchannelId ||
+      !featureBranch ||
+      !agentPubkey ||
+      event.pubkey !== agentPubkey
+    ) {
+      continue;
+    }
+    candidates.set(subchannelId, { subchannelId, featureBranch, agentPubkey });
+  }
+  return [...candidates.values()];
+}
+
+/**
+ * Durable dynamic gate. It discovers every agent-authored change from the Room,
+ * then delegates each exact-tip approval to the unchanged `attemptMerge`
+ * enforcement path. No reviewer or feature branch is configured ahead of time.
+ */
+export class DurableMergeGate {
+  private readonly terminalApprovalIds = new Set<string>();
+
+  constructor(private readonly config: RoomMergeServiceConfig) {}
+
+  async poll(): Promise<RoomMergeAttempt[]> {
+    const roomEvents = await queryEvents(
+      [
+        {
+          kinds: [KIND_STREAM_MESSAGE],
+          '#h': [this.config.channelId],
+          '#t': ['body-control'],
+          limit: 500,
+        },
+      ],
+      this.config.worker.publicKey,
+    );
+    const candidates = roomMergeCandidates(roomEvents, this.config);
+    const attempts: RoomMergeAttempt[] = [];
+    const targetRef = fullTargetRef(this.config.targetBranch);
+    const targetRepo = `${this.config.ownerHex}/${this.config.repo}`;
+
+    for (const candidate of candidates) {
+      // Only irreversible, self-signed agent identities may announce changes.
+      if (!(await isRegisteredAgentIdentity(candidate.agentPubkey, this.config.worker.publicKey))) {
+        continue;
+      }
+      const featureRef = `refs/heads/${candidate.featureBranch}`;
+      const featureTip = lsRemoteRef(
+        tmpdir(),
+        this.config.worker,
+        this.config.ownerHex,
+        this.config.repo,
+        featureRef,
+      );
+      if (!featureTip) continue;
+      const targetTip = lsRemoteRef(
+        tmpdir(),
+        this.config.worker,
+        this.config.ownerHex,
+        this.config.repo,
+        targetRef,
+      );
+      if (targetTip === featureTip) continue;
+
+      const approvals = await queryEvents(
+        [
+          {
+            kinds: [KIND_STREAM_MESSAGE],
+            '#h': [candidate.subchannelId],
+            '#t': [APPROVAL_MARKER],
+            limit: 100,
+          },
+        ],
+        this.config.worker.publicKey,
+      );
+      const exactTarget: MergeTarget = { repo: targetRepo, branch: targetRef, tip: featureTip };
+      for (const approval of approvals) {
+        if (
+          this.terminalApprovalIds.has(approval.id) ||
+          !verifyApproval(approval, approval.pubkey, exactTarget)
+        ) {
+          continue;
+        }
+        const outcome = await attemptMerge({
+          worker: this.config.worker,
+          ownerHex: this.config.ownerHex,
+          trustedReviewer: approval.pubkey,
+          repo: this.config.repo,
+          channelId: candidate.subchannelId,
+          targetBranch: shortTargetBranch(this.config.targetBranch),
+          featureBranch: candidate.featureBranch,
+        });
+        attempts.push({
+          candidate,
+          approvalId: approval.id,
+          reviewer: approval.pubkey,
+          outcome,
+        });
+        if (outcome.merged || outcome.reason.includes('REFUSED')) {
+          this.terminalApprovalIds.add(approval.id);
+        }
+        if (outcome.merged) break;
+      }
+    }
+    return attempts;
+  }
+}
+
+/** Config for standalone-service mode (secret key as hex, JSON-safe). */
+interface WorkerServiceConfig {
+  workerSecretKeyHex: string;
+  ownerHex?: string;
+  repo: string;
+  channelId: string;
+  targetBranch: string;
   pollMs?: number;
 }
 
@@ -210,7 +368,7 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 /**
- * Standalone-service mode: poll for approvals and land any that validate.
+ * Standalone-service mode: discover all Room changes and land approved tips.
  * `npm run worker -- <config-json-path>`. The money-shot proof drives
  * `attemptMerge` directly for deterministic assertions; this is the long-lived
  * shape the product would ship.
@@ -225,18 +383,17 @@ async function main(): Promise<void> {
   const { getPublicKey } = await import('@beeline/nostr');
   const cfg = JSON.parse(readFileSync(cfgPath, 'utf8')) as WorkerServiceConfig;
   const secretKey = hexToBytes(cfg.workerSecretKeyHex);
-  const req: MergeRequest = {
-    worker: { name: 'worker', secretKey, publicKey: getPublicKey(secretKey) },
-    trustedReviewer: cfg.trustedReviewer,
+  const worker = { name: 'worker', secretKey, publicKey: getPublicKey(secretKey) };
+  const gate = new DurableMergeGate({
+    worker,
+    ownerHex: cfg.ownerHex ?? worker.publicKey,
     repo: cfg.repo,
     channelId: cfg.channelId,
     targetBranch: cfg.targetBranch,
-    featureBranch: cfg.featureBranch,
-  };
+  });
   for (;;) {
-    const outcome = await attemptMerge(req);
-    console.log(JSON.stringify(outcome));
-    if (outcome.merged) break;
+    const attempts = await gate.poll();
+    for (const attempt of attempts) console.log(JSON.stringify(attempt));
     await new Promise((r) => setTimeout(r, cfg.pollMs ?? 3000));
   }
 }

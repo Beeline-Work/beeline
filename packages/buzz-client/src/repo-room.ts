@@ -4,13 +4,12 @@ import { verifyEvent } from '@beeline/nostr';
 import {
   createChannel,
   isMember,
-  listMembers,
   setMemberRole,
   waitUntilMember,
   type ChannelOpsContext,
 } from './channel.js';
 import { queryEvents } from './http.js';
-import { KIND_CREATE_GROUP, TAG_COMMUNITY } from './kinds.js';
+import { KIND_CREATE_GROUP, KIND_PUT_USER, TAG_COMMUNITY } from './kinds.js';
 import { tagValue } from './parse.js';
 import type { RepositoryBinding } from './types.js';
 
@@ -28,6 +27,8 @@ export interface RepositoryRoomResult {
   channelId: string;
   created: boolean;
   joined: boolean;
+  /** True only when this pairing created and elevated the dedicated merge worker. */
+  mergeWorkerProvisioned: boolean;
 }
 
 async function joinRepositoryRoom(
@@ -40,7 +41,7 @@ async function joinRepositoryRoom(
     await setMemberRole(agentCtx, channelId, agentCtx.identity.publicKey, 'member');
     await waitUntilRole(agentCtx, channelId, agentCtx.identity.publicKey, 'member');
   }
-  return { channelId, created: false, joined: true };
+  return { channelId, created: false, joined: true, mergeWorkerProvisioned: false };
 }
 
 async function waitUntilRole(
@@ -51,13 +52,15 @@ async function waitUntilRole(
 ): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < 15_000) {
-    const member = (await listMembers(ctx, channelId)).find((item) => item.pubkey === pubkey);
-    // Buzz's kind:39002 projection represents an ordinary member as a bare
-    // `p` tag. Elevated roles may be included, but "member" is intentionally
-    // the absence of an elevated role in that projection.
-    if (member && (member.role === role || (role === 'member' && member.role === undefined))) {
-      return;
-    }
+    // The 39002 member projection may omit elevated role labels. The signed
+    // kind-9000 history is the authority used by git policy and the merge gate.
+    const events = await queryEvents(
+      ctx.http,
+      [{ kinds: [KIND_PUT_USER], '#h': [channelId], '#p': [pubkey], limit: 20 }],
+      ctx.identity.publicKey,
+    );
+    const latest = events.sort((a, b) => b.created_at - a.created_at)[0];
+    if (latest && (tagValue(latest, 'role') ?? 'member') === role) return;
     await new Promise((resolveWait) => setTimeout(resolveWait, 300));
   }
   throw new Error(`role ${role} not visible for ${pubkey.slice(0, 12)}… in ${channelId}`);
@@ -94,14 +97,16 @@ export async function findRepositoryRoom(
 }
 
 /**
- * Resolve the origin-backed Room or create it under the agent's key. Both the
- * creator and pairing-code minter are projected as plain Room members.
+ * Resolve the origin-backed Room or create it under the agent's key. The
+ * pairing-code minter becomes the initial human admin; the creator is projected
+ * down to plain member after provisioning the dedicated merge worker.
  */
 export async function resolveRepositoryRoom(
   agentCtx: ChannelOpsContext,
   communityId: string,
   binding: RepositoryBinding,
   pairedBy: string,
+  mergeWorkerPubkey?: string,
 ): Promise<RepositoryRoomResult> {
   const existing = await findRepositoryRoom(agentCtx, communityId, binding.key);
   if (existing) {
@@ -124,10 +129,22 @@ export async function resolveRepositoryRoom(
   }
   await waitUntilMember(agentCtx, channelId, agentCtx.identity.publicKey);
   if (pairedBy !== agentCtx.identity.publicKey) {
-    await setMemberRole(agentCtx, channelId, pairedBy, 'member');
-    await waitUntilRole(agentCtx, channelId, pairedBy, 'member');
+    await setMemberRole(agentCtx, channelId, pairedBy, 'admin');
+    await waitUntilRole(agentCtx, channelId, pairedBy, 'admin');
+  }
+  // The creating agent still owns the deterministic Room at this point. Give a
+  // distinct, machine-held gate key the only non-owner push-capable role before
+  // irreversibly projecting the autonomous agent down to plain member.
+  if (mergeWorkerPubkey && mergeWorkerPubkey !== agentCtx.identity.publicKey) {
+    await setMemberRole(agentCtx, channelId, mergeWorkerPubkey, 'admin');
+    await waitUntilRole(agentCtx, channelId, mergeWorkerPubkey, 'admin');
   }
   await setMemberRole(agentCtx, channelId, agentCtx.identity.publicKey, 'member');
   await waitUntilRole(agentCtx, channelId, agentCtx.identity.publicKey, 'member');
-  return { channelId, created: true, joined: true };
+  return {
+    channelId,
+    created: true,
+    joined: true,
+    mergeWorkerProvisioned: Boolean(mergeWorkerPubkey),
+  };
 }

@@ -79,4 +79,5 @@ When updating this file, preserve this bar for all agents and keep entries conci
 
 - SDK authority: `packages/buzz-client/src/community.ts`; gate convention + live proof: `apps/gate/src/community.live.test.ts`.
 - A community reuses NIP-29 group state: kind:9007 stream create with a self-referencing `community=<h UUID>` tag, kind:9000 roles, and 39001/39002 admin/member projections. Contained channels carry `community=<community UUID>`; absent remains a valid standalone channel.
+- Workspace membership is asserted as direct membership in every contained Room: invite redemption repairs existing Rooms, and new community-linked Rooms mirror current Workspace members before returning.
 - Invites are signed community-scoped kind:9 events (`t=buzz-community-invite`, `d=SHA-256(token)`, NIP-40 `expiration`). Redemption validates the marker and self-adds through kind:9000; plaintext tokens are never published.

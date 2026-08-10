@@ -142,4 +142,15 @@ export {
 
 export { buildMergeApproval, verifyMergeApproval, APPROVAL_MARKER } from './approval.js';
 
+export {
+  CHANGE_REVIEW_EVENT_KIND,
+  CHANGE_REVIEW_MANIFEST_TAG,
+  CHANGE_REVIEW_FILE_TAG,
+  CHANGE_REVIEW_VERSION,
+  parseChangeReviewManifest,
+  type ChangeReviewFile,
+  type ChangeReviewManifest,
+  type ChangeReviewStatus,
+} from './change-review.js';
+
 export { BuzzClient, createBuzzClient } from './client.js';

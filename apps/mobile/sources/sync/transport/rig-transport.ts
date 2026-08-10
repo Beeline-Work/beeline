@@ -64,9 +64,11 @@ export type WorktreeCreateInput = {
 
 export type ChangedFile = {
     path: string;
+    previousPath?: string;
     status?: string;
     linesAdded?: number;
     linesRemoved?: number;
+    isBinary?: boolean;
 };
 
 export type MergeActionInput = {

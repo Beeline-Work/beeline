@@ -15,8 +15,10 @@ import {
   gitAuthed,
   gitRepoUrl,
   HOST,
+  lsRemoteRef,
   newIdentity,
   queryEvents,
+  resolveChannelRole,
 } from '@beeline/gate';
 import { createBuzzClient, repositoryRoomId } from '@beeline/buzz-client';
 import { buildAgentEnv, hasLlmCredentials, resolveBinaries } from './config.js';
@@ -134,7 +136,15 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
     daemonPid = Number((await readFile(resolve(configs[0]!, '..', 'daemon.pid'), 'utf8')).trim());
     expect(runtime.repo.root).toBe(checkout);
     expect(runtime.channelId).toBe(roomId);
+    expect(runtime.mergeWorker?.publicKey).toMatch(/^[0-9a-f]{64}$/);
     await announceRepo(human, repo, roomId);
+    await waitUntil(
+      async () =>
+        (await resolveChannelRole(roomId, human.publicKey, human.publicKey)) === 'admin' &&
+        (await resolveChannelRole(roomId, runtime.mergeWorker!.publicKey, human.publicKey)) ===
+          'admin',
+      30_000,
+    );
 
     const secondAgent = newIdentity('pair-runtime-second-agent');
     const secondClient = createBuzzClient({ baseUrl: BASE_URL, identity: secondAgent });
@@ -244,6 +254,41 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
     ]);
     expect(remoteFeature.ok).toBe(true);
     expect(remoteFeature.stdout).toContain(tip);
+
+    const mergeTarget = {
+      repo: `${human.publicKey}/${repo}`,
+      branch: 'refs/heads/main',
+      tip,
+    };
+    const mainBeforeApproval = lsRemoteRef(
+      checkout,
+      human,
+      human.publicKey,
+      repo,
+      'refs/heads/main',
+    );
+    const agentClient = createBuzzClient({ baseUrl: BASE_URL, identity: agentIdentity });
+    await agentClient.submitMergeApproval(subchannel!, mergeTarget);
+    await waitUntil(async () => {
+      const log = existsSync(daemonLog) ? await readFile(daemonLog, 'utf8') : '';
+      return log.includes('agents can never approve merges');
+    }, 30_000);
+    expect(lsRemoteRef(checkout, human, human.publicKey, repo, 'refs/heads/main')).toBe(
+      mainBeforeApproval,
+    );
+    console.log('[live-pair-runtime] agent-approval=REFUSED');
+
+    await humanClient.submitMergeApproval(subchannel!, mergeTarget);
+    await waitUntil(
+      async () => lsRemoteRef(checkout, human, human.publicKey, repo, 'refs/heads/main') === tip,
+      60_000,
+    );
+    await waitUntil(
+      async () => (await humanClient.getChannelMetadata(subchannel!))?.archived === true,
+    );
+    expect(lsRemoteRef(checkout, human, human.publicKey, repo, 'refs/heads/main')).toBe(tip);
+    console.log('[live-pair-runtime] human-admin-approval=AUTO-LANDED');
+    agentClient.disconnect();
     expect(existsSync(resolve(runtime.repo.gitCommonDir, 'beeline', 'agents'))).toBe(true);
     console.log(
       `[live-pair-runtime] PASS workspace=${communityId} room=${roomId} repo=${checkout} feature=${feature} tip=${tip}`,

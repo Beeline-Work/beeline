@@ -85,6 +85,8 @@ export interface SubchannelInfo {
   mergeTarget?: { repo: string; branch: string; tip: string };
   /** Latest agent-authored completion summary. */
   mergeSummary?: string;
+  /** Successfully forwarded member events, preventing same-second relay replays. */
+  processedMemberEventIds?: Set<string>;
 }
 
 export interface BoundRepo {
@@ -597,7 +599,7 @@ export class Body {
     while (!opts.signal?.aborted) {
       await this.pollChannelRequests(tlcChannelId, boundRepo);
       for (const subchannelId of [...this.subchannels.keys()]) {
-        if (!this.runningAgentTasks.has(subchannelId)) await this.pollMembers(subchannelId);
+        await this.pollMembers(subchannelId);
       }
       await this.pollMergeCompletions();
       await this.waitForPoll(pollMs, opts.signal);
@@ -640,7 +642,7 @@ export class Body {
         console.error('[body] repository Room request poll failed:', error);
       }
       for (const subchannelId of [...this.subchannels.keys()]) {
-        if (!this.runningAgentTasks.has(subchannelId)) await this.pollMembers(subchannelId);
+        await this.pollMembers(subchannelId);
       }
       await this.pollMergeCompletions();
       await this.waitForPoll(pollMs, opts.signal);
@@ -718,8 +720,17 @@ export class Body {
 
       let count = 0;
       let maxCreated = since;
+      let retryFrom: number | undefined;
 
-      for (const evt of events) {
+      const processed = info.processedMemberEventIds ?? new Set<string>();
+      info.processedMemberEventIds = processed;
+      const orderedEvents = [...events].sort(
+        (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
+      );
+
+      for (const evt of orderedEvents) {
+        maxCreated = Math.max(maxCreated, evt.created_at);
+        if (processed.has(evt.id)) continue;
         // Skip events published by the agent itself (no self-steering).
         if (evt.pubkey === this.agentIdentity.publicKey) continue;
         // Skip events that are not plain text messages.
@@ -728,26 +739,40 @@ export class Body {
         // Skip control messages.
         if (evt.tags.some((t) => t[0] === 't' && t[1] === 'body-control')) continue;
 
-        if (evt.created_at > maxCreated) {
-          maxCreated = evt.created_at;
-        }
-
-        // Forward the member's message as a session prompt.
+        // Forward the member's message into the active run when possible. If
+        // the original task ended between polling and delivery, wait for its
+        // cleanup and preserve this message as the next ordered prompt.
         const prompt = `[Member ${evt.pubkey.slice(0, 12)}]: ${evt.content}`;
         try {
-          const result = await session.client.sessionPrompt(session.sessionId, prompt, 60_000);
-          info.mergeSummary = result.agentText.trim() || info.mergeSummary;
-          await this.publishMergeReady(info);
+          const runningTask = this.runningAgentTasks.get(subchannelId);
+          if (runningTask || session.client.activeRunId(session.sessionId)) {
+            try {
+              await session.client.sessionSteer(session.sessionId, prompt, 60_000);
+            } catch (error) {
+              if (!runningTask) throw error;
+              await runningTask;
+              const result = await session.client.sessionPrompt(session.sessionId, prompt, 60_000);
+              info.mergeSummary = result.agentText.trim() || info.mergeSummary;
+              await this.publishMergeReady(info);
+            }
+          } else {
+            const result = await session.client.sessionPrompt(session.sessionId, prompt, 60_000);
+            info.mergeSummary = result.agentText.trim() || info.mergeSummary;
+            await this.publishMergeReady(info);
+          }
+          processed.add(evt.id);
           count++;
         } catch (err) {
-          console.error(`[body] pollMembers: sessionPrompt failed for event ${evt.id}:`, err);
+          retryFrom = Math.min(retryFrom ?? evt.created_at, evt.created_at);
+          console.error(`[body] pollMembers: forwarding failed for event ${evt.id}:`, err);
         }
       }
 
       // Advance the poll cursor.
-      if (maxCreated > info.lastPolledAt) {
-        info.lastPolledAt = maxCreated;
-        info.session.lastPolledAt = maxCreated;
+      const nextCursor = retryFrom ?? maxCreated;
+      if (nextCursor > info.lastPolledAt) {
+        info.lastPolledAt = nextCursor;
+        info.session.lastPolledAt = nextCursor;
       }
 
       return count;

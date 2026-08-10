@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { hasWriteTools, inventoryForMcpServers } from './mcp-inventory.js';
 import { parseEnvFile, hasLlmCredentials } from './config.js';
 import { AGENT_REQUEST_TAG, Body, isChannelTaskRequest } from './body.js';
+import { AcpClient } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import { signEvent } from '@beeline/nostr';
 
@@ -109,5 +110,61 @@ describe('channel → subchannel request trigger', () => {
       ['p', agent.publicKey],
       ['t', AGENT_REQUEST_TAG],
     ], agent), agent.publicKey)).toBe(false);
+  });
+});
+
+describe('live steering loop', () => {
+  it('polls member messages while the original agent task is still running', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-body-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    const session = {
+      channelId: 'subchannel',
+      sessionId: 'session',
+      client,
+      mode: 'edit' as const,
+      parentChannelId: 'room',
+      archived: false,
+    };
+    body.registerSubchannel({
+      subchannelId: 'subchannel',
+      worktreePath: '/tmp/worktree',
+      featureBranch: 'feature/steer',
+      role: body.agent,
+      session,
+      lastPolledAt: 0,
+      archived: false,
+    });
+
+    const runningTasks = Reflect.get(body, 'runningAgentTasks') as Map<string, Promise<void>>;
+    runningTasks.set('subchannel', new Promise(() => undefined));
+
+    const abort = new AbortController();
+    let memberPolls = 0;
+    body.provision = async () => session;
+    body.pollChannelRequests = async () => 0;
+    body.pollMergeCompletions = async () => 0;
+    body.pollMembers = async () => {
+      memberPolls++;
+      abort.abort();
+      return 1;
+    };
+
+    await body.runChannelLoop(
+      'room',
+      { repo: 'repo', localPath: '/tmp/repo' },
+      { pollMs: 1, signal: abort.signal },
+    );
+
+    expect(memberPolls).toBe(1);
   });
 });

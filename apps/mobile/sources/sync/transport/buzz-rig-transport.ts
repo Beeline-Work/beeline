@@ -33,6 +33,10 @@ import {
   createBuzzClient,
   tagValue,
   classifySessionEvent,
+  CHANGE_REVIEW_EVENT_KIND,
+  CHANGE_REVIEW_FILE_TAG,
+  CHANGE_REVIEW_MANIFEST_TAG,
+  parseChangeReviewManifest,
   type BuzzClient,
   type Identity,
   type MergeTarget,
@@ -260,22 +264,99 @@ export class BuzzRigTransport implements RigTransport {
   // ── Files (P2) ─────────────────────────────────────────────────────────
 
   async changedFileRead(
-    _sessionId: SessionId,
-    _path: string,
+    sessionId: SessionId,
+    path: string,
   ): Promise<{ content: string; isBinary?: boolean } | null> {
-    throw new RigTransportNotImplementedError(
-      'changedFileRead',
-      'P2: body git show/diff or client git fetch + local read',
+    const client = await this.getClient();
+    const mergeInfo = await this.getSubchannelMergeTarget(sessionId);
+    if (!mergeInfo) return null;
+    const events = await client.query([
+      {
+        kinds: [CHANGE_REVIEW_EVENT_KIND],
+        authors: [mergeInfo.authorPubkey],
+        '#t': [CHANGE_REVIEW_FILE_TAG],
+        '#r': [mergeInfo.target.tip],
+        '#f': [path],
+        limit: 500,
+      },
+      {
+        // Compatibility for changes published before review payloads moved
+        // out of kind-9 chat history.
+        kinds: [9],
+        '#h': [sessionId],
+        '#t': [CHANGE_REVIEW_FILE_TAG],
+        '#f': [path],
+        limit: 500,
+      },
+    ]);
+    const matching = events.filter((event) =>
+      event.pubkey === mergeInfo.authorPubkey &&
+      tagValue(event, 'h') === sessionId &&
+      tagValue(event, 'tip') === mergeInfo.target.tip &&
+      tagValue(event, 'f') === path,
     );
+    if (matching.length === 0) return null;
+    const uniqueChunks = new Map<number, (typeof matching)[number]>();
+    for (const event of [...matching].sort(
+      (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
+    )) {
+      uniqueChunks.set(Number(tagValue(event, 'chunk') ?? 0), event);
+    }
+    const chunks = [...uniqueChunks.values()].sort(
+      (a, b) => Number(tagValue(a, 'chunk') ?? 0) - Number(tagValue(b, 'chunk') ?? 0),
+    );
+    const expected = Number(tagValue(chunks[0]!, 'chunks') ?? chunks.length);
+    const complete =
+      Number.isInteger(expected) &&
+      expected > 0 &&
+      chunks.length === expected &&
+      chunks.every((event, index) => Number(tagValue(event, 'chunk') ?? -1) === index);
+    if (!complete) {
+      throw new Error(`Incomplete diff for ${path}: received ${chunks.length} of ${expected} chunks`);
+    }
+    return {
+      content: chunks.map((event) => event.content).join(''),
+      ...(chunks.some((event) => tagValue(event, 'binary') === 'true')
+        ? { isBinary: true }
+        : {}),
+    };
   }
 
   async workspaceFilesRead(
-    _sessionId: SessionId,
+    sessionId: SessionId,
   ): Promise<ChangedFile[]> {
-    throw new RigTransportNotImplementedError(
-      'workspaceFilesRead',
-      'P2: body walk worktree or client git ls-files',
-    );
+    const client = await this.getClient();
+    const mergeInfo = await this.getSubchannelMergeTarget(sessionId);
+    if (!mergeInfo) return [];
+    const events = await client.query([
+      {
+        kinds: [CHANGE_REVIEW_EVENT_KIND],
+        authors: [mergeInfo.authorPubkey],
+        '#t': [CHANGE_REVIEW_MANIFEST_TAG],
+        '#r': [mergeInfo.target.tip],
+        limit: 500,
+      },
+      {
+        kinds: [9],
+        '#h': [sessionId],
+        '#t': [CHANGE_REVIEW_MANIFEST_TAG],
+        limit: 500,
+      },
+    ]);
+    const manifests = events
+      .filter((event) =>
+        event.pubkey === mergeInfo.authorPubkey &&
+        tagValue(event, 'h') === sessionId &&
+        tagValue(event, 'tip') === mergeInfo.target.tip,
+      )
+      .sort((a, b) => Number(tagValue(a, 'chunk') ?? 0) - Number(tagValue(b, 'chunk') ?? 0))
+      .map((event) => parseChangeReviewManifest(event.content))
+      .filter((manifest) => manifest !== null);
+    if (manifests.length === 0) {
+      throw new Error('Changed-file metadata is unavailable for this change');
+    }
+    const files = manifests.flatMap((manifest) => manifest.files);
+    return [...new Map(files.map((file) => [file.path, file])).values()];
   }
 
   async changedFilesRevert(
@@ -297,6 +378,7 @@ export class BuzzRigTransport implements RigTransport {
   async getSubchannelMergeTarget(subchannelId: string): Promise<{
     target: MergeTarget;
     channelId: string;
+    authorPubkey: string;
   } | null> {
     const client = await this.getClient();
     // Backfill messages to find the body's control message with merge target.
@@ -317,6 +399,7 @@ export class BuzzRigTransport implements RigTransport {
         return {
           target: { repo, branch, tip },
           channelId: parent ?? '',
+          authorPubkey: ev.event.pubkey,
         };
       }
     }

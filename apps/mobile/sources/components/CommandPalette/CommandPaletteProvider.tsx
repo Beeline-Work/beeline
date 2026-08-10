@@ -75,26 +75,6 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
                     router.push('/settings');
                 }
             },
-            {
-                id: 'account',
-                title: 'Account',
-                subtitle: 'Manage your account',
-                icon: 'person-circle-outline',
-                category: 'Navigation',
-                action: () => {
-                    router.push('/settings/account');
-                }
-            },
-            {
-                id: 'connect',
-                title: 'Connect Device',
-                subtitle: 'Connect a new device via web',
-                icon: 'link-outline',
-                category: 'Navigation',
-                action: () => {
-                    router.push('/terminal/connect');
-                }
-            },
         ];
 
         // Add session-specific commands
@@ -127,20 +107,6 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
                 await logout();
             }
         });
-
-        // Dev commands (if in development)
-        if (__DEV__) {
-            cmds.push({
-                id: 'dev-menu',
-                title: 'Developer Menu',
-                subtitle: 'Access developer tools',
-                icon: 'code-slash-outline',
-                category: 'Developer',
-                action: () => {
-                    router.push('/dev');
-                }
-            });
-        }
 
         return cmds;
     }, [browserSafeShortcuts, router, logout, sessions, navigateToSession, preferredModifier]);

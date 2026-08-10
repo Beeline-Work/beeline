@@ -102,6 +102,21 @@ export async function createChannel(
   }
   const event = sign(ctx.identity, KIND_CREATE_GROUP, tags);
   await publishEvent(ctx.http, event);
+  if (opts?.communityId) {
+    // A community tag makes the channel discoverable, but NIP-29 authorization
+    // still comes from the channel's direct member projection. Wait for the
+    // creator's implicit ownership first, then mirror every other current
+    // community member as a normal channel member.
+    await waitUntilMember(ctx, channelId, ctx.identity.publicKey);
+    const communityMembers = await listMembers(ctx, opts.communityId);
+    for (const member of communityMembers) {
+      if (member.pubkey === ctx.identity.publicKey) continue;
+      await setMemberRole(ctx, channelId, member.pubkey, 'member', {
+        extraTags: [[TAG_COMMUNITY, opts.communityId]],
+      });
+      await waitUntilMember(ctx, channelId, member.pubkey);
+    }
+  }
   return channelId;
 }
 

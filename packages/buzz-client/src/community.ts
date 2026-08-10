@@ -22,7 +22,7 @@ import {
   TAG_COMMUNITY_INVITE,
 } from './kinds.js';
 import { parseMembersEvent, tagValue, tagValues } from './parse.js';
-import { setMemberRole, waitUntilMember, type ChannelOpsContext } from './channel.js';
+import { isMember, setMemberRole, waitUntilMember, type ChannelOpsContext } from './channel.js';
 import type {
   Community,
   CommunityInvite,
@@ -213,6 +213,21 @@ export async function communityChannels(
   return [...ids];
 }
 
+async function assertCommunityMemberInChannels(
+  ctx: ChannelOpsContext,
+  communityId: string,
+  pubkey: string,
+): Promise<void> {
+  const channelIds = await communityChannels(ctx, communityId);
+  for (const channelId of channelIds) {
+    if (await isMember(ctx, channelId, pubkey)) continue;
+    await setMemberRole(ctx, channelId, pubkey, 'member', {
+      extraTags: [[TAG_COMMUNITY, communityId]],
+    });
+    await waitUntilMember(ctx, channelId, pubkey);
+  }
+}
+
 /** Read community membership and overlay owner/admin roles from kind:39001. */
 export async function communityMembers(
   ctx: ChannelOpsContext,
@@ -346,6 +361,9 @@ export async function redeemInvite(
     throw new Error('invite minter is not a community member');
   }
   if (members.some((member) => member.pubkey === ctx.identity.publicKey)) {
+    // Repeated redemption also repairs Rooms created before membership
+    // propagation existed, or any prior partial mirror failure.
+    await assertCommunityMemberInChannels(ctx, invite.communityId, ctx.identity.publicKey);
     return {
       communityId: invite.communityId,
       mintedBy: invite.mintedBy,
@@ -363,6 +381,7 @@ export async function redeemInvite(
     ],
   });
   await waitUntilMember(ctx, invite.communityId, ctx.identity.publicKey);
+  await assertCommunityMemberInChannels(ctx, invite.communityId, ctx.identity.publicKey);
   return {
     communityId: invite.communityId,
     mintedBy: invite.mintedBy,

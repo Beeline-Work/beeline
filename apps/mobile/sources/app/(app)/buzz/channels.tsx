@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   FlatList,
   Share,
   StyleSheet,
@@ -31,6 +30,12 @@ import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/Co
 import { BuzzRigTransport } from '@/sync/transport';
 import type { SessionSummary } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
+import {
+  BrittlePress,
+  HullSurface,
+  PixelGateReveal,
+  PixelLoader,
+} from '@/components/buzz/MonoHull';
 
 type ChannelDisplayItem = SessionSummary & {
   archived?: boolean;
@@ -153,6 +158,7 @@ export default function BuzzChannels() {
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [readyInviteUrl, setReadyInviteUrl] = useState<string | undefined>(inviteUrl);
+  const [confirmForget, setConfirmForget] = useState(false);
 
   const activeCommunity = useMemo(
     () => communities.find((community) => community.communityId === activeCommunityId) ?? null,
@@ -297,9 +303,13 @@ export default function BuzzChannels() {
   }, [activeCommunityId, identity, settingsRelayUrl]);
 
   const handleLogout = useCallback(async () => {
+    if (!confirmForget) {
+      setConfirmForget(true);
+      return;
+    }
     await clearBuzzIdentity();
     router.replace('/buzz/onboarding');
-  }, []);
+  }, [confirmForget]);
 
   const handleInvitePeople = useCallback(async () => {
     if (!transport || !activeCommunityId || creatingInvite) return;
@@ -318,8 +328,8 @@ export default function BuzzChannels() {
   if (loading && !transport) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <ActivityIndicator size="large" color={groknight.accent} />
-        <Text style={styles.loadingText}>connecting to relay…</Text>
+        <PixelLoader />
+        <Text style={styles.loadingText}>CONNECTING TO RELAY</Text>
       </View>
     );
   }
@@ -332,7 +342,7 @@ export default function BuzzChannels() {
       onAdd={() => router.push('/buzz/community' as Href)}
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
-        <View style={styles.header}>
+        <HullSurface strength="quiet" style={styles.header}>
           <CommunityDrawerTrigger community={activeCommunity} />
           <View style={styles.headerIdentity}>
             <Text style={styles.headerTitle} numberOfLines={1}>
@@ -373,10 +383,10 @@ export default function BuzzChannels() {
               <Text style={styles.iconButtonText}>⚙</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </HullSurface>
 
         {readyInviteUrl && (
-          <View style={styles.invitePanel}>
+          <PixelGateReveal style={styles.invitePanel}>
             <Text style={styles.panelTitle}>Invite link ready</Text>
             <Text style={styles.inviteUrl} numberOfLines={2}>
               {readyInviteUrl}
@@ -397,11 +407,11 @@ export default function BuzzChannels() {
                 <Text style={styles.secondarySmallButtonText}>Copy link</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </PixelGateReveal>
         )}
 
         {showCreateChannel && !viewerIsAgent && (
-          <View style={styles.actionPanel}>
+          <PixelGateReveal style={styles.actionPanel}>
             <Text style={styles.panelTitle}>
               New {ROOM_LABEL} in {activeCommunity?.name ?? WORKSPACE_LABEL}
             </Text>
@@ -426,11 +436,11 @@ export default function BuzzChannels() {
                 </Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </PixelGateReveal>
         )}
 
         {showSettings && (
-          <View style={styles.actionPanel}>
+          <PixelGateReveal style={styles.actionPanel}>
             <Text style={styles.panelTitle}>Settings</Text>
             <TouchableOpacity
               accessibilityLabel="Open identity and backup settings"
@@ -458,15 +468,31 @@ export default function BuzzChannels() {
               <TouchableOpacity style={styles.primarySmallButton} onPress={handleSaveRelayUrl}>
                 <Text style={styles.primarySmallButtonText}>Save</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.secondarySmallButton} onPress={handleLogout}>
-                <Text style={styles.secondarySmallButtonText}>Forget key</Text>
+              <TouchableOpacity style={styles.destructiveSmallButton} onPress={handleLogout}>
+                <Text style={styles.secondarySmallButtonText}>
+                  {confirmForget ? '! Confirm forget key' : '⌫ Forget key'}
+                </Text>
               </TouchableOpacity>
+              {confirmForget && (
+                <TouchableOpacity
+                  style={styles.secondarySmallButton}
+                  onPress={() => setConfirmForget(false)}
+                >
+                  <Text style={styles.secondarySmallButtonText}>Cancel</Text>
+                </TouchableOpacity>
+              )}
             </View>
-          </View>
+            {confirmForget && (
+              <Text accessibilityRole="alert" style={styles.forgetWarning}>
+                ! This removes the key from this device. Continue only if you have a backup.
+              </Text>
+            )}
+          </PixelGateReveal>
         )}
 
         {error && (
-          <View style={styles.errorPanel}>
+          <View accessibilityRole="alert" style={styles.errorPanel}>
+            <Text style={styles.errorLabel}>! ERROR</Text>
             <Text accessibilityRole="alert" style={styles.errorText}>
               {error}
             </Text>
@@ -528,8 +554,8 @@ export default function BuzzChannels() {
             </View>
           }
           renderItem={({ item }) => (
-            <TouchableOpacity
-              style={[styles.channelItem, item.isSubchannel && styles.subchannelItem]}
+            <BrittlePress
+              contentStyle={[styles.channelItem, item.isSubchannel && styles.subchannelItem]}
               onPress={() => void handleChannelPress(item)}
             >
               <Text style={styles.channelIcon}>
@@ -552,8 +578,8 @@ export default function BuzzChannels() {
                 <Text style={styles.channelMeta}>
                   {item.id.slice(0, 10)}
                   {item.subchannelCount
-                    ? ` · ${item.subchannelCount} ${
-                        item.subchannelCount === 1 ? CHANGE_LABEL : 'changes'
+                    ? `  ◆ ${item.subchannelCount} ${
+                        item.subchannelCount === 1 ? CHANGE_LABEL.toUpperCase() : 'CHANGES'
                       }`
                     : ''}
                   {item.isSubchannel ? ` · agent ${shortPubkey(item.openerPubkey)}` : ''}
@@ -561,7 +587,7 @@ export default function BuzzChannels() {
                 </Text>
               </View>
               <Text style={styles.chevron}>›</Text>
-            </TouchableOpacity>
+            </BrittlePress>
           )}
           onRefresh={() => void handleRefresh()}
           refreshing={refreshing}
@@ -574,7 +600,14 @@ export default function BuzzChannels() {
 const styles = StyleSheet.create({
   container: { flex: 1, minWidth: 0, backgroundColor: groknight.bgTerminal },
   center: { alignItems: 'center', justifyContent: 'center' },
-  loadingText: { ...Typography.default(), marginTop: 12, color: groknight.muted, fontSize: 13 },
+  loadingText: {
+    ...Typography.mono('semiBold'),
+    marginTop: 12,
+    color: groknight.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
+    letterSpacing: 0.8,
+  },
   header: {
     minHeight: 58,
     paddingHorizontal: 12,
@@ -590,13 +623,13 @@ const styles = StyleSheet.create({
   headerTitle: {
     ...Typography.default('semiBold'),
     color: groknight.textPrimary,
-    fontSize: 17,
-    fontWeight: '700',
+    fontSize: 20,
+    lineHeight: 24,
   },
   headerActions: { flexDirection: 'row', gap: 2, marginLeft: 8 },
   iconButton: {
-    minWidth: 34,
-    height: 34,
+    minWidth: 44,
+    height: 44,
     paddingHorizontal: 6,
     alignItems: 'center',
     justifyContent: 'center',
@@ -623,7 +656,6 @@ const styles = StyleSheet.create({
     ...Typography.default('semiBold'),
     color: groknight.textPrimary,
     fontSize: 13,
-    fontWeight: '700',
   },
   identitySettingsSubtitle: {
     ...Typography.default(),
@@ -649,7 +681,6 @@ const styles = StyleSheet.create({
     marginBottom: 9,
     color: groknight.textPrimary,
     fontSize: 15,
-    fontWeight: '700',
   },
   fieldLabel: {
     ...Typography.default('semiBold'),
@@ -658,42 +689,57 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  inviteUrl: { ...Typography.default(), color: groknight.muted, fontSize: 11, lineHeight: 16 },
+  inviteUrl: { ...Typography.mono(), color: groknight.textMuted, fontSize: 11, lineHeight: 16 },
   inlineForm: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   input: {
     ...Typography.default(),
     flex: 1,
     minWidth: 0,
-    minHeight: 40,
+    minHeight: 44,
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 4,
     borderWidth: 1,
-    borderColor: groknight.borderActive,
+    borderColor: groknight.border,
     color: groknight.textPrimary,
     backgroundColor: groknight.bgBase,
     fontSize: 13,
   },
   panelActions: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 9 },
   primarySmallButton: {
-    minHeight: 36,
+    minHeight: 44,
     paddingHorizontal: 14,
     borderRadius: 4,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: groknight.accent,
+    backgroundColor: groknight.actionFill,
   },
   primarySmallButtonText: {
     ...Typography.default('semiBold'),
-    color: groknight.bgTerminal,
-    fontWeight: '700',
+    color: groknight.textInverted,
     fontSize: 13,
   },
   secondarySmallButton: {
-    minHeight: 36,
+    minHeight: 44,
     paddingHorizontal: 10,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  destructiveSmallButton: {
+    minHeight: 44,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: groknight.borderStrong,
+  },
+  forgetWarning: {
+    ...Typography.default(),
+    marginTop: 10,
+    color: groknight.textSecondary,
+    fontSize: 14,
+    lineHeight: 20,
   },
   secondarySmallButtonText: {
     ...Typography.default('semiBold'),
@@ -701,13 +747,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  disabled: { opacity: 0.45 },
+  disabled: { backgroundColor: groknight.bgBase, borderWidth: 1, borderColor: groknight.border },
   errorPanel: {
     paddingHorizontal: 14,
     paddingVertical: 10,
     backgroundColor: groknight.bgHighlight,
     borderBottomWidth: 1,
-    borderBottomColor: groknight.borderActive,
+    borderBottomColor: groknight.borderStrong,
+  },
+  errorLabel: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 11,
+    lineHeight: 15,
+    letterSpacing: 0.8,
   },
   errorText: { ...Typography.default(), color: groknight.chrome, fontSize: 11, lineHeight: 16 },
   retryText: {
@@ -715,7 +768,6 @@ const styles = StyleSheet.create({
     marginTop: 5,
     color: groknight.textSecondary,
     fontSize: 11,
-    fontWeight: '700',
   },
   listContent: { paddingVertical: 4 },
   channelItem: {
@@ -733,7 +785,6 @@ const styles = StyleSheet.create({
     width: 25,
     color: groknight.steel,
     fontSize: 15,
-    fontWeight: '700',
   },
   channelInfo: { flex: 1, minWidth: 0 },
   channelTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
@@ -742,7 +793,6 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     color: groknight.textPrimary,
     fontSize: 14,
-    fontWeight: '700',
   },
   subchannelTitle: { ...Typography.default(), color: groknight.textSecondary, fontSize: 13 },
   archivedTitle: { color: groknight.muted },
@@ -753,13 +803,15 @@ const styles = StyleSheet.create({
     color: groknight.steel,
     backgroundColor: groknight.bgHighlight,
     borderRadius: 3,
-    fontSize: 9,
+    fontSize: 11,
+    lineHeight: 15,
   },
   channelMeta: {
-    ...Typography.default(),
+    ...Typography.mono(),
     marginTop: 4,
-    color: groknight.dim,
-    fontSize: 9,
+    color: groknight.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
   },
   chevron: { ...Typography.default(), marginLeft: 8, color: groknight.gutter, fontSize: 22 },
   emptyContainer: { flexGrow: 1 },
@@ -769,7 +821,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderWidth: 1,
-    borderColor: groknight.borderActive,
+    borderColor: groknight.borderStrong,
     borderRadius: 12,
     color: groknight.steel,
     fontSize: 26,
@@ -781,7 +833,6 @@ const styles = StyleSheet.create({
     marginTop: 12,
     color: groknight.textPrimary,
     fontSize: 16,
-    fontWeight: '800',
     textAlign: 'center',
   },
   emptySubtitle: {
@@ -794,17 +845,16 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     marginTop: 18,
-    minHeight: 42,
+    minHeight: 46,
     paddingHorizontal: 18,
     borderRadius: 4,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: groknight.accent,
+    backgroundColor: groknight.actionFill,
   },
   primaryButtonText: {
     ...Typography.default('semiBold'),
-    color: groknight.bgTerminal,
-    fontWeight: '700',
+    color: groknight.textInverted,
     fontSize: 13,
   },
 });

@@ -1,6 +1,5 @@
-import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useState } from 'react';
 import {
-  Animated,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -8,11 +7,22 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
+import Animated, {
+  Easing,
+  ReduceMotion,
+  runOnJS,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Community } from '@beeline/buzz-client';
 import { groknight } from '@/buzz/groknight';
 import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { WorkspaceAvatar } from '@/components/buzz/WorkspaceAvatar';
+import { HullSurface } from '@/components/buzz/MonoHull';
 import { Typography } from '@/constants/Typography';
 
 const DRAWER_WIDTH = 72;
@@ -37,7 +47,7 @@ type RailButtonProps = {
 function RailButton({ active, label, children, add = false, onPress, testID }: RailButtonProps) {
   return (
     <View style={styles.railButtonSlot}>
-      {active && <View style={styles.activePill} />}
+      {active && <View style={styles.activeNotch} />}
       <TouchableOpacity
         accessibilityRole="button"
         accessibilityLabel={label}
@@ -60,7 +70,8 @@ export function CommunityRail({
 }: CommunityRailProps) {
   const insets = useSafeAreaInsets();
   return (
-    <View
+    <HullSurface
+      strength="quiet"
       accessibilityLabel={`${WORKSPACE_LABEL} switcher`}
       style={[styles.rail, { paddingTop: Math.max(insets.top, 10) }]}
     >
@@ -99,7 +110,7 @@ export function CommunityRail({
         <Text style={styles.addRailButtonText}>＋</Text>
       </RailButton>
       <View style={{ height: Math.max(insets.bottom, 8) }} />
-    </View>
+    </HullSurface>
   );
 }
 
@@ -147,31 +158,47 @@ export function BuzzCommunityShell({
   onAdd,
 }: BuzzCommunityShellProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const drawerX = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
+  const drawerX = useSharedValue(-DRAWER_WIDTH);
+  const scrimOpacity = useSharedValue(0);
+  const reducedMotion = useReducedMotion();
 
   const openDrawer = useCallback(() => {
-    drawerX.setValue(-DRAWER_WIDTH);
+    drawerX.value = -DRAWER_WIDTH;
+    scrimOpacity.value = 0;
     setDrawerOpen(true);
-    Animated.timing(drawerX, {
-      toValue: 0,
+    drawerX.value = withTiming(0, {
       duration: DRAWER_DURATION_MS,
-      useNativeDriver: true,
-    }).start();
-  }, [drawerX]);
+      easing: Easing.bezier(0.22, 1, 0.36, 1),
+      reduceMotion: ReduceMotion.System,
+    });
+    scrimOpacity.value = withTiming(0.78, {
+      duration: 120,
+      reduceMotion: ReduceMotion.System,
+    });
+  }, [drawerX, scrimOpacity]);
 
   const closeDrawer = useCallback(() => {
-    Animated.timing(drawerX, {
-      toValue: -DRAWER_WIDTH,
-      duration: DRAWER_DURATION_MS,
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) setDrawerOpen(false);
+    scrimOpacity.value = withTiming(0, {
+      duration: 90,
+      reduceMotion: ReduceMotion.System,
     });
-  }, [drawerX]);
+    drawerX.value = withTiming(
+      -DRAWER_WIDTH,
+      {
+        duration: reducedMotion ? 0 : 135,
+        easing: Easing.out(Easing.poly(5)),
+        reduceMotion: ReduceMotion.System,
+      },
+      (finished) => {
+        if (finished) runOnJS(setDrawerOpen)(false);
+      },
+    );
+  }, [drawerX, reducedMotion, scrimOpacity]);
 
   const selectAndClose = useCallback(
     (communityId: string | null) => {
       closeDrawer();
+      void Haptics.selectionAsync();
       onSelect(communityId);
     },
     [closeDrawer, onSelect],
@@ -182,21 +209,28 @@ export function BuzzCommunityShell({
     onAdd();
   }, [closeDrawer, onAdd]);
 
+  const drawerStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: drawerX.value }],
+  }));
+  const scrimStyle = useAnimatedStyle(() => ({ opacity: scrimOpacity.value }));
+
   return (
     <CommunityDrawerContext.Provider value={{ drawerOpen, openDrawer }}>
       <View style={styles.shell}>
         <View style={styles.content}>{children}</View>
         {drawerOpen && (
           <View style={styles.drawerOverlay} testID="community-drawer-overlay">
-            <Pressable
-              accessibilityLabel={`Close ${WORKSPACE_LABEL} switcher`}
-              accessibilityRole="button"
-              onPress={closeDrawer}
-              style={styles.scrim}
-              testID="community-drawer-scrim"
-            />
+            <Animated.View style={[styles.scrim, scrimStyle]}>
+              <Pressable
+                accessibilityLabel={`Close ${WORKSPACE_LABEL} switcher`}
+                accessibilityRole="button"
+                onPress={closeDrawer}
+                style={StyleSheet.absoluteFill}
+                testID="community-drawer-scrim"
+              />
+            </Animated.View>
             <Animated.View
-              style={[styles.drawer, { transform: [{ translateX: drawerX }] }]}
+              style={[styles.drawer, drawerStyle]}
               testID="community-drawer"
             >
               <CommunityRail
@@ -240,13 +274,13 @@ const styles = StyleSheet.create({
   },
   railButtonSlot: {
     width: DRAWER_WIDTH,
-    height: 56,
+    height: 60,
     alignItems: 'center',
     justifyContent: 'center',
   },
   railButton: {
-    width: 42,
-    height: 42,
+    width: 48,
+    height: 48,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -255,6 +289,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: groknight.borderActive,
     backgroundColor: groknight.bgHighlight,
+    borderStyle: 'dashed',
   },
   addRailButtonText: {
     ...Typography.default(),
@@ -262,14 +297,15 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '500',
   },
-  activePill: {
+  activeNotch: {
     position: 'absolute',
-    left: 0,
-    width: 4,
-    height: 24,
-    borderTopRightRadius: 4,
-    borderBottomRightRadius: 4,
-    backgroundColor: groknight.accent,
+    left: 8,
+    top: 6,
+    width: 10,
+    height: 10,
+    borderLeftWidth: 2,
+    borderTopWidth: 2,
+    borderColor: groknight.selectedBorder,
   },
   drawerOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -286,7 +322,6 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     left: DRAWER_WIDTH,
     backgroundColor: groknight.bgTerminal,
-    opacity: 0.78,
   },
   drawerTrigger: {
     width: 52,
@@ -301,6 +336,5 @@ const styles = StyleSheet.create({
     marginLeft: 2,
     color: groknight.steel,
     fontSize: 13,
-    fontWeight: '700',
   },
 });

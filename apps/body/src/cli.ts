@@ -18,7 +18,12 @@ import { dirname, resolve } from 'node:path';
 import { unlink } from 'node:fs/promises';
 import { buildAgentEnv, loadBodyConfig, BASE_URL } from './config.js';
 import { Body, type BoundRepo } from './body.js';
-import { checkAgentNotPushAllowed, createChannel, setMemberRole } from '@beeline/gate';
+import {
+  assertAgentNotPushAllowed,
+  createChannel,
+  newIdentity,
+  setMemberRole,
+} from '@beeline/gate';
 import { createBuzzClient } from '@beeline/buzz-client';
 import { createSoulServer } from './soul-server.js';
 import {
@@ -68,6 +73,16 @@ function boundRepoFromRuntime(runtime: AgentRuntimeRecord): BoundRepo {
   };
 }
 
+async function assertRuntimeSafe(runtime: AgentRuntimeRecord): Promise<void> {
+  if (!runtime.repo.relayRepo) return;
+  await assertAgentNotPushAllowed({
+    ownerHex: runtime.repo.relayRepo.ownerHex,
+    repo: runtime.repo.relayRepo.repo,
+    agentPubkey: runtime.agent.publicKey,
+    protectedRef: `refs/heads/${runtime.repo.targetBranch}`,
+  });
+}
+
 async function waitToRestart(signal: AbortSignal): Promise<void> {
   await new Promise<void>((resolveWait) => {
     const timer = setTimeout(resolveWait, 2_000);
@@ -84,6 +99,9 @@ async function waitToRestart(signal: AbortSignal): Promise<void> {
 
 async function runStoredDaemon(configPath: string): Promise<void> {
   const runtime = await readRuntimeRecord(configPath);
+  // This assertion deliberately sits outside the retry loop: unsafe branch
+  // policy is a fatal startup error, not a transient Room-loop failure.
+  await assertRuntimeSafe(runtime);
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     BUZZ_AGENT_BIN: runtime.agentBinary,
@@ -104,7 +122,12 @@ async function runStoredDaemon(configPath: string): Promise<void> {
 
   try {
     while (!controller.signal.aborted) {
-      const body = new Body(config, runtimeIdentity(runtime.body), runtimeIdentity(runtime.agent));
+      const body = new Body(
+        config,
+        runtimeIdentity(runtime.body),
+        runtimeIdentity(runtime.agent),
+        runtime.mergeWorker ? runtimeIdentity(runtime.mergeWorker) : undefined,
+      );
       try {
         await body.runRepositoryRoomLoop(
           runtime.communityId,
@@ -155,6 +178,8 @@ async function main(): Promise<void> {
     if (matching.length > 1) {
       throw new Error('multiple paired agents found; pass the agent pubkey shown by `buzz pair`');
     }
+    const runtime = await readRuntimeRecord(matching[0]!);
+    await assertRuntimeSafe(runtime);
     const existingPid = await runtimeDaemonPid(matching[0]!);
     if (existingPid) {
       console.log(`[buzz] agent daemon is already running (pid ${existingPid})`);
@@ -170,6 +195,7 @@ async function main(): Promise<void> {
     if (!code) usage();
     const agentIdentity = identityFromKey(agentPrivateKey, 'buzzy-agent');
     const bodyIdentity = identityFromKey(process.env.BUZZ_BODY_KEY, 'buzzy-body');
+    const mergeWorkerIdentity = newIdentity('buzzy-merge-worker');
     const relayBaseUrl = (process.env.BUZZY_RELAY_URL ?? BASE_URL)
       .replace(/^ws/, 'http')
       .replace(/\/$/, '');
@@ -189,24 +215,27 @@ async function main(): Promise<void> {
         ...(llmEnvFile ? { llmEnvFile } : {}),
         agentIdentity,
         bodyIdentity,
+        mergeWorkerIdentity,
         agentBinary: localConfig.agentBinary,
         mcpBinary: localConfig.mcpBinary,
       },
       {
         redeem: (pairingCode) => client.redeemAgentPairingCode(pairingCode),
-        resolveRoom: (pairing, repository) =>
-          client.resolveRepositoryRoom(pairing.communityId, repository, pairing.pairedBy),
+        resolveRoom: (pairing, repository, mergeWorkerPubkey) =>
+          client.resolveRepositoryRoom(
+            pairing.communityId,
+            repository,
+            pairing.pairedBy,
+            mergeWorkerPubkey,
+          ),
         validate: async (_pairing, _room, repo) => {
           if (!repo.relayRepo) return;
-          const protection = await checkAgentNotPushAllowed({
+          await assertAgentNotPushAllowed({
             ownerHex: repo.relayRepo.ownerHex,
             repo: repo.relayRepo.repo,
             agentPubkey: agentIdentity.publicKey,
             protectedRef: `refs/heads/${repo.targetBranch}`,
           });
-          if (!protection.ok) {
-            throw new Error(`unsafe repository provisioning: ${protection.reason}`);
-          }
         },
       },
     );

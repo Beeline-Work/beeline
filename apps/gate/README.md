@@ -8,7 +8,7 @@ Buzz relay (see `relay-stack/` at the repo root) — no fake backend.
 | Path                              | Role                                                                                             |
 | --------------------------------- | ------------------------------------------------------------------------------------------------ |
 | `src/approval.ts`                 | Schnorr-signed merge-approval events + exact-binding verify                                      |
-| `src/worker.ts`                   | Merge worker: lands a feature branch on `main` only after a valid approval                       |
+| `src/worker.ts`                   | Durable Room gate: discovers feature branches and lands only exact-tip human-admin approvals     |
 | `src/agent-identity.ts`           | Identity-level lookup: a self-declared agent key can never approve a merge, regardless of role   |
 | `src/buzz.ts`                     | Channel/community create, role set, repo announce (kind 9007 / 9000 / 30617)                     |
 | `src/provisioning.ts`             | **Provisioning check** — agent must never be in push-allowed on the protected branch             |
@@ -26,6 +26,22 @@ npm run test:live     # live security suite against the real relay
 npm run typecheck
 npm run worker -- <config.json>
 ```
+
+The worker config is repository/Room-scoped, never change-scoped:
+
+```json
+{
+  "workerSecretKeyHex": "...",
+  "ownerHex": "...",
+  "repo": "project",
+  "channelId": "room-uuid",
+  "targetBranch": "main"
+}
+```
+
+It runs until stopped, discovers agent-authored `body-control` change records,
+and delegates every approval to the same exact-tip, human-admin, agent-refusal
+enforcement used by `attemptMerge`.
 
 From the **repo root**, the one-shot end-to-end proof is still:
 

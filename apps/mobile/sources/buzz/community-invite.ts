@@ -10,6 +10,7 @@ import {
   type CommunityInviteRecord,
   type Identity,
 } from '@buzzy/buzz-client';
+import { WORKSPACE_LABEL } from './vocabulary';
 
 export const COMMUNITY_INVITE_ORIGIN = 'https://buzzrouter.com';
 const TOKEN_PATTERN = /^bzi_[0-9a-f]{64}$/;
@@ -102,7 +103,7 @@ export async function loadCommunityInvitePreview(
     client.getCommunity(invite.communityId),
     client.communityMembers(invite.communityId),
   ]);
-  if (!community) throw new Error('community not found');
+  if (!community) throw new Error(`${WORKSPACE_LABEL} not found`);
   if (!members.some((member) => member.pubkey === invite.mintedBy)) {
     throw new Error('invite is no longer valid');
   }

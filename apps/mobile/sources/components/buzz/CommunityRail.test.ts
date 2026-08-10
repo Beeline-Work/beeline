@@ -43,6 +43,13 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
 
+vi.mock('./WorkspaceAvatar', async () => {
+  const ReactModule = await import('react');
+  return {
+    WorkspaceAvatar: (props: any) => ReactModule.createElement('WorkspaceAvatar', props),
+  };
+});
+
 import { BuzzCommunityShell, CommunityDrawerTrigger } from './CommunityRail';
 
 const originalConsoleError = console.error;
@@ -61,39 +68,45 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 function renderShell(onSelect = vi.fn(), onAdd = vi.fn()): ReactTestRenderer {
+  const community = {
+    communityId: 'community-1',
+    name: 'Night Shift',
+    avatar: 'https://example.test/night-shift.png',
+  } as any;
   let renderer!: ReactTestRenderer;
   act(() => {
     renderer = create(
       React.createElement(
         BuzzCommunityShell,
         {
-          communities: [
-            {
-              communityId: 'community-1',
-              name: 'Night Shift',
-            } as any,
-          ],
+          communities: [community],
           activeCommunityId: 'community-1',
           onSelect,
           onAdd,
         },
-        React.createElement(CommunityDrawerTrigger, { communityName: 'Night Shift' }),
+        React.createElement(CommunityDrawerTrigger, { community }),
       ),
     );
   });
   return renderer;
 }
 
-describe('community drawer', () => {
-  it('is hidden by default and toggles from the active space avatar', () => {
+describe('Workspace drawer', () => {
+  it('is hidden by default and toggles from the active Workspace avatar', () => {
     const renderer = renderShell();
     expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);
+    expect(
+      renderer.root.findByProps({ testID: 'workspace-avatar-header' }).props.community,
+    ).toMatchObject({ communityId: 'community-1', avatar: 'https://example.test/night-shift.png' });
 
     const trigger = renderer.root.findByProps({ testID: 'community-drawer-trigger' });
     expect(trigger.props.accessibilityState).toEqual({ expanded: false });
     act(() => trigger.props.onPress());
 
     expect(renderer.root.findByProps({ testID: 'community-drawer-overlay' })).toBeDefined();
+    expect(
+      renderer.root.findByProps({ testID: 'workspace-avatar-community-1' }).props.community,
+    ).toMatchObject({ communityId: 'community-1', avatar: 'https://example.test/night-shift.png' });
     expect(
       renderer.root.findByProps({ testID: 'community-drawer-trigger' }).props.accessibilityState,
     ).toEqual({ expanded: true });
@@ -102,7 +115,7 @@ describe('community drawer', () => {
     expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);
   });
 
-  it('closes after selecting or adding a space', () => {
+  it('closes after selecting or adding a Workspace', () => {
     const onSelect = vi.fn();
     const onAdd = vi.fn();
     const renderer = renderShell(onSelect, onAdd);

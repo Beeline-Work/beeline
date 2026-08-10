@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Platform,
   StyleSheet,
   Text,
   TextInput,
@@ -23,10 +22,9 @@ import {
 } from '@/buzz/community-invite';
 import { saveActiveCommunityId } from '@/buzz/community-storage';
 import { groknight } from '@/buzz/groknight';
+import { ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
-
-const mono = Platform.select({ web: '"JetBrains Mono", monospace', default: 'monospace' });
 
 export default function CommunityInviteJoin() {
   const insets = useSafeAreaInsets();
@@ -95,7 +93,8 @@ export default function CommunityInviteJoin() {
       const client = createBuzzClient({ baseUrl: relayUrl, identity: joiningIdentity });
       const redemption = await client.redeemInvite(token);
       const community = await client.getCommunity(redemption.communityId);
-      if (!community) throw new Error('Joined, but community details are not visible yet.');
+      if (!community)
+        throw new Error(`Joined, but ${WORKSPACE_LABEL} details are not visible yet.`);
       await saveActiveCommunityId(joiningIdentity.publicKey, community.communityId);
       router.replace({
         pathname: '/buzz/channels',
@@ -109,9 +108,10 @@ export default function CommunityInviteJoin() {
   }, [displayName, identity, preview, relayUrl, token]);
 
   const selectCommunity = useCallback((communityId: string | null) => {
+    if (!communityId) return;
     router.replace({
       pathname: '/buzz/channels',
-      params: { communityId: communityId ?? 'standalone' },
+      params: { communityId },
     });
   }, []);
 
@@ -131,7 +131,7 @@ export default function CommunityInviteJoin() {
           >
             <Text style={styles.backText}>‹</Text>
           </TouchableOpacity>
-          <Text style={styles.topbarTitle}>secure invite</Text>
+          <Text style={styles.topbarTitle}>Invite</Text>
         </View>
 
         <View style={styles.content}>
@@ -147,16 +147,12 @@ export default function CommunityInviteJoin() {
                   {preview.community.name.slice(0, 2).toUpperCase()}
                 </Text>
               </View>
-              <Text style={styles.eyebrow}>invited to community</Text>
               <Text style={styles.title}>Join {preview.community.name}?</Text>
-              <Text style={styles.details}>
-                The invite is signed and active. Joining adds this key as a member and opens the
-                community channel list.
-              </Text>
+              <Text style={styles.details}>Open its {ROOM_LABEL}s and work with its Agents.</Text>
 
               {!identity && (
                 <View style={styles.identityForm}>
-                  <Text style={styles.identityLabel}>your name</Text>
+                  <Text style={styles.identityLabel}>Your name</Text>
                   <TextInput
                     autoFocus
                     style={styles.input}
@@ -169,7 +165,7 @@ export default function CommunityInviteJoin() {
                     placeholderTextColor={groknight.dim}
                   />
                   <Text style={styles.identityHint}>
-                    A private Nostr key is generated silently on this device.
+                    Your private identity key stays on this device.
                   </Text>
                 </View>
               )}
@@ -184,14 +180,14 @@ export default function CommunityInviteJoin() {
                 onPress={() => void handleJoin()}
               >
                 <Text style={styles.primaryButtonText}>
-                  {joining ? 'joining…' : `join ${preview.community.name}`}
+                  {joining ? 'Joining…' : `Join ${preview.community.name}`}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.cancelButton}
                 onPress={() => router.replace('/buzz/channels')}
               >
-                <Text style={styles.cancelText}>not now</Text>
+                <Text style={styles.cancelText}>Not now</Text>
               </TouchableOpacity>
             </>
           ) : (
@@ -202,7 +198,7 @@ export default function CommunityInviteJoin() {
                 style={styles.cancelButton}
                 onPress={() => router.replace('/buzz/channels')}
               >
-                <Text style={styles.cancelText}>return to buzzy</Text>
+                <Text style={styles.cancelText}>Return to buzzy</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -232,16 +228,13 @@ const styles = StyleSheet.create({
   backButton: { width: 34, height: 42, alignItems: 'center', justifyContent: 'center' },
   backText: { color: groknight.chrome, fontSize: 30, fontWeight: '300' },
   topbarTitle: {
-    color: groknight.steel,
-    fontFamily: mono,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
+    color: groknight.textPrimary,
+    fontSize: 17,
+    fontWeight: '700',
   },
   content: { flex: 1, paddingHorizontal: 22, paddingTop: 48, alignItems: 'center' },
   loadingBlock: { alignItems: 'center', paddingTop: 54 },
-  loadingText: { marginTop: 13, color: groknight.muted, fontFamily: mono, fontSize: 11 },
+  loadingText: { marginTop: 13, color: groknight.muted, fontSize: 11 },
   communityMark: {
     width: 68,
     height: 68,
@@ -252,18 +245,9 @@ const styles = StyleSheet.create({
     borderColor: groknight.accent,
     backgroundColor: groknight.bgHighlight,
   },
-  communityMarkText: { color: groknight.accent, fontFamily: mono, fontSize: 20, fontWeight: '900' },
-  eyebrow: {
-    marginTop: 24,
-    color: groknight.steel,
-    fontFamily: mono,
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 1.4,
-    textTransform: 'uppercase',
-  },
+  communityMarkText: { color: groknight.accent, fontSize: 20, fontWeight: '800' },
   title: {
-    marginTop: 8,
+    marginTop: 24,
     color: groknight.textPrimary,
     fontSize: 24,
     lineHeight: 30,
@@ -274,20 +258,16 @@ const styles = StyleSheet.create({
     maxWidth: 430,
     marginTop: 10,
     color: groknight.muted,
-    fontFamily: mono,
-    fontSize: 11,
+    fontSize: 12,
     lineHeight: 18,
     textAlign: 'center',
   },
   identityForm: { alignSelf: 'stretch', marginTop: 28 },
   identityLabel: {
     marginBottom: 7,
-    color: groknight.chrome,
-    fontFamily: mono,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
+    color: groknight.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
   },
   input: {
     minHeight: 48,
@@ -298,14 +278,12 @@ const styles = StyleSheet.create({
     borderColor: groknight.borderActive,
     color: groknight.textPrimary,
     backgroundColor: groknight.bgBase,
-    fontFamily: mono,
     fontSize: 14,
   },
   identityHint: {
     marginTop: 7,
     color: groknight.dim,
-    fontFamily: mono,
-    fontSize: 9,
+    fontSize: 10,
     lineHeight: 14,
   },
   primaryButton: {
@@ -320,9 +298,8 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: {
     color: groknight.bgTerminal,
-    fontFamily: mono,
-    fontSize: 12,
-    fontWeight: '900',
+    fontSize: 13,
+    fontWeight: '700',
   },
   disabled: { opacity: 0.42 },
   cancelButton: {
@@ -332,11 +309,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  cancelText: { color: groknight.steel, fontFamily: mono, fontSize: 11 },
+  cancelText: { color: groknight.steel, fontSize: 12 },
   errorText: {
     marginTop: 14,
     color: groknight.chrome,
-    fontFamily: mono,
     fontSize: 10,
     lineHeight: 16,
     textAlign: 'center',

@@ -4,14 +4,7 @@
  * GrokNight alien-hull design.
  */
 import React, { useEffect, useState } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  Platform,
-} from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import {
@@ -23,8 +16,6 @@ import {
 } from '@/auth/buzz-identity-storage';
 import { groknight } from '@/buzz/groknight';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
-
-const mono = Platform.select({ web: '"JetBrains Mono", monospace', default: 'monospace' });
 
 export default function BuzzOnboarding() {
   const insets = useSafeAreaInsets();
@@ -91,9 +82,7 @@ export default function BuzzOnboarding() {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <Text style={styles.title}>buzzy</Text>
-      <Text style={styles.subtitle}>
-        Join a channel with your Nostr key to watch an agent work.
-      </Text>
+      <Text style={styles.subtitle}>Steer and review Agents from your phone.</Text>
 
       {error && (
         <Text accessibilityRole="alert" style={styles.errorText}>
@@ -102,15 +91,9 @@ export default function BuzzOnboarding() {
       )}
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>new key</Text>
-        <TouchableOpacity
-          style={styles.button}
-          onPress={handleGenerate}
-          disabled={loading}
-        >
-          <Text style={styles.buttonText}>
-            {loading ? 'generating…' : 'generate new key'}
-          </Text>
+        <Text style={styles.sectionTitle}>New key</Text>
+        <TouchableOpacity style={styles.button} onPress={handleGenerate} disabled={loading}>
+          <Text style={styles.buttonText}>{loading ? 'Generating…' : 'Generate new key'}</Text>
         </TouchableOpacity>
       </View>
 
@@ -121,7 +104,7 @@ export default function BuzzOnboarding() {
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>import existing key</Text>
+        <Text style={styles.sectionTitle}>Import existing key</Text>
         <TextInput
           style={styles.input}
           placeholder="nsec1…"
@@ -133,14 +116,11 @@ export default function BuzzOnboarding() {
           secureTextEntry={Platform.OS !== 'web'}
         />
         <TouchableOpacity
-          style={[
-            styles.secondaryButton,
-            (!nsecInput.trim() || loading) && styles.buttonDisabled,
-          ]}
+          style={[styles.secondaryButton, (!nsecInput.trim() || loading) && styles.buttonDisabled]}
           onPress={handleImport}
           disabled={!nsecInput.trim() || loading}
         >
-          <Text style={styles.secondaryButtonText}>import & continue</Text>
+          <Text style={styles.secondaryButtonText}>Import and continue</Text>
         </TouchableOpacity>
         <TouchableOpacity
           accessibilityRole="button"
@@ -148,11 +128,11 @@ export default function BuzzOnboarding() {
           onPress={() => setShowKeyGuide((value) => !value)}
           style={styles.guideToggle}
         >
-          <Text style={styles.guideToggleText}>where do I find my key?</Text>
+          <Text style={styles.guideToggleText}>Where do I find my key?</Text>
         </TouchableOpacity>
         {showKeyGuide && (
           <Text style={styles.guideText}>
-            In your current Nostr app, look for identity, account, or key backup settings. Copy the value beginning with nsec1. Never paste it into a website or send it in a message.
+            Copy the nsec1… value from your Nostr app&apos;s identity or backup settings.
           </Text>
         )}
       </View>
@@ -170,7 +150,7 @@ export default function BuzzOnboarding() {
 
       {showAdvanced && (
         <View style={styles.advancedPanel}>
-          <Text style={styles.sectionTitle}>relay URL</Text>
+          <Text style={styles.sectionTitle}>Relay URL</Text>
           <TextInput
             style={styles.input}
             placeholder={DEFAULT_RELAY_URL}
@@ -203,8 +183,6 @@ const styles = StyleSheet.create({
     color: groknight.textPrimary,
     textAlign: 'center',
     marginBottom: 8,
-    fontFamily: mono,
-    letterSpacing: 1,
   },
   subtitle: {
     fontSize: 13,
@@ -212,7 +190,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 48,
     paddingHorizontal: 16,
-    fontFamily: mono,
     lineHeight: 18,
   },
   section: {
@@ -223,8 +200,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: groknight.muted,
     marginBottom: 10,
-    letterSpacing: 0.8,
-    fontFamily: mono,
   },
   input: {
     borderWidth: 1,
@@ -235,7 +210,6 @@ const styles = StyleSheet.create({
     color: groknight.textSecondary,
     backgroundColor: groknight.bgBase,
     marginBottom: 10,
-    fontFamily: mono,
   },
   button: {
     backgroundColor: groknight.accent,
@@ -252,23 +226,17 @@ const styles = StyleSheet.create({
     color: groknight.bgTerminal,
     fontSize: 14,
     fontWeight: '700',
-    fontFamily: mono,
-    letterSpacing: 0.3,
   },
   secondaryButton: {
-    backgroundColor: groknight.bgHighlight,
+    backgroundColor: 'transparent',
     paddingVertical: 12,
     borderRadius: 4,
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: groknight.borderActive,
   },
   secondaryButtonText: {
     color: groknight.chrome,
     fontSize: 14,
-    fontWeight: '700',
-    fontFamily: mono,
-    letterSpacing: 0.3,
+    fontWeight: '600',
   },
   guideToggle: {
     alignSelf: 'flex-start',
@@ -276,16 +244,14 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
   },
   guideToggleText: {
-    color: groknight.accent,
+    color: groknight.textSecondary,
     fontSize: 11,
     fontWeight: '700',
-    fontFamily: mono,
   },
   guideText: {
     color: groknight.muted,
     fontSize: 11,
     lineHeight: 17,
-    fontFamily: mono,
   },
   divider: {
     flexDirection: 'row',
@@ -301,14 +267,12 @@ const styles = StyleSheet.create({
     marginHorizontal: 12,
     color: groknight.dim,
     fontSize: 11,
-    fontFamily: mono,
   },
   hint: {
     fontSize: 12,
     color: groknight.muted,
     lineHeight: 16,
     marginTop: 4,
-    fontFamily: mono,
   },
   errorText: {
     color: groknight.chrome,
@@ -316,7 +280,6 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginBottom: 20,
     textAlign: 'center',
-    fontFamily: mono,
   },
   advancedToggle: {
     alignSelf: 'center',
@@ -324,21 +287,15 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   advancedText: {
-    color: groknight.steel,
+    color: groknight.muted,
     fontSize: 12,
     fontWeight: '700',
-    fontFamily: mono,
-    letterSpacing: 0.4,
   },
   advancedTextActive: {
-    color: groknight.accent,
+    color: groknight.textSecondary,
   },
   advancedPanel: {
     marginTop: 4,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: groknight.border,
-    borderRadius: 4,
-    backgroundColor: groknight.bgCode,
+    paddingTop: 14,
   },
 });

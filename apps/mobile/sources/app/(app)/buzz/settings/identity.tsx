@@ -18,7 +18,6 @@ import Svg, { Path, Rect } from 'react-native-svg';
 import { loadBuzzIdentityNsecForExport } from '@/auth/buzz-identity-storage';
 import { groknight } from '@/buzz/groknight';
 
-const mono = Platform.select({ web: '"JetBrains Mono", monospace', default: 'monospace' });
 const TYPED_CONFIRMATION = 'EXPORT';
 
 type ConfirmationMethod = 'checking' | 'biometric' | 'typed';
@@ -178,43 +177,45 @@ export default function BuzzIdentitySettings() {
     }
   }, [secret]);
 
-  const maskedSecret = secret ? `${secret.slice(0, 5)}${'•'.repeat(Math.max(8, secret.length - 5))}` : '';
+  const maskedSecret = secret
+    ? `${secret.slice(0, 5)}${'•'.repeat(Math.max(8, secret.length - 5))}`
+    : '';
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}> 
+    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <View style={styles.header}>
-        <TouchableOpacity accessibilityLabel="Back" onPress={() => router.back()} style={styles.backButton}>
+        <TouchableOpacity
+          accessibilityLabel="Back"
+          onPress={() => router.back()}
+          style={styles.backButton}
+        >
           <Text style={styles.backButtonText}>‹</Text>
         </TouchableOpacity>
         <View style={styles.headerCopy}>
-          <Text style={styles.eyebrow}>settings</Text>
-          <Text style={styles.title}>identity</Text>
+          <Text style={styles.title}>Identity</Text>
         </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.intro}>
-          <Text style={styles.sectionLabel}>always available</Text>
           <Text style={styles.heading}>Export your key</Text>
-          <Text style={styles.body}>
-            Your key is sealed in this device&apos;s secure storage. Export a copy before this device is lost or wiped.
-          </Text>
+          <Text style={styles.body}>Save a copy so you can recover your Beeline identity.</Text>
         </View>
 
         <View style={styles.warning}>
           <Text style={styles.warningGlyph}>!</Text>
           <Text style={styles.warningText}>
-            Your secret key controls your identity everywhere. Anyone who has it is you. Only export to move to another app.
+            Anyone with this key controls your identity—export it only to a trusted app.
           </Text>
         </View>
 
         {!secret ? (
           <View style={styles.confirmSection}>
-            <Text style={styles.sectionLabel}>confirm it&apos;s you</Text>
+            <Text style={styles.sectionLabel}>Confirm it&apos;s you</Text>
             {confirmationMethod === 'typed' && (
               <>
                 <Text style={styles.confirmHint}>
-                  This device has no enrolled biometrics. Type {TYPED_CONFIRMATION} to confirm this export.
+                  Type {TYPED_CONFIRMATION} to unlock the key on this device.
                 </Text>
                 <TextInput
                   accessibilityLabel={`Type ${TYPED_CONFIRMATION} to confirm`}
@@ -253,8 +254,8 @@ export default function BuzzIdentitySettings() {
         ) : (
           <View style={styles.exportSection}>
             <View style={styles.exportHeadingRow}>
-              <Text style={styles.sectionLabel}>nostr secret key</Text>
-              <Text style={styles.unlockedLabel}>unlocked</Text>
+              <Text style={styles.sectionLabel}>Nostr secret key</Text>
+              <Text style={styles.unlockedLabel}>Unlocked</Text>
             </View>
             <View style={styles.secretBox}>
               <Text selectable={revealed} style={styles.secretText}>
@@ -267,31 +268,29 @@ export default function BuzzIdentitySettings() {
                 onPress={() => setRevealed((value) => !value)}
                 style={styles.secondaryButton}
               >
-                <Text style={styles.secondaryButtonText}>{revealed ? 'hide' : 'reveal'}</Text>
+                <Text style={styles.secondaryButtonText}>{revealed ? 'Hide' : 'Reveal'}</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={() => void handleCopy()} style={styles.secondaryButton}>
-                <Text style={styles.secondaryButtonText}>{copied ? 'copied' : 'copy'}</Text>
+                <Text style={styles.secondaryButtonText}>{copied ? 'Copied' : 'Copy'}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 accessibilityState={{ expanded: showQr }}
                 onPress={() => setShowQr((value) => !value)}
                 style={styles.primarySmallButton}
               >
-                <Text style={styles.primarySmallButtonText}>{showQr ? 'hide QR' : 'show QR'}</Text>
+                <Text style={styles.primarySmallButtonText}>{showQr ? 'Hide QR' : 'Show QR'}</Text>
               </TouchableOpacity>
             </View>
 
             {showQr && (
               <View style={styles.qrSection}>
                 <QrCode value={secret} />
-                <Text style={styles.qrHint}>
-                  Scan only with a Nostr signer you trust. The QR contains the full secret key.
-                </Text>
+                <Text style={styles.qrHint}>Scan only with a Nostr signer you trust.</Text>
               </View>
             )}
 
             <TouchableOpacity onPress={lockExport} style={styles.lockButton}>
-              <Text style={styles.lockButtonText}>lock this screen</Text>
+              <Text style={styles.lockButtonText}>Lock this screen</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -302,9 +301,7 @@ export default function BuzzIdentitySettings() {
           </Text>
         )}
 
-        <Text style={styles.footer}>
-          Beeline never uploads or sends your secret during export. Copy and QR stay on this device.
-        </Text>
+        <Text style={styles.footer}>Copy and QR stay on this device.</Text>
       </ScrollView>
     </View>
   );
@@ -330,43 +327,27 @@ const styles = StyleSheet.create({
   },
   backButtonText: { color: groknight.chrome, fontSize: 31, lineHeight: 34 },
   headerCopy: { flex: 1, minWidth: 0 },
-  eyebrow: {
-    color: groknight.steel,
-    fontFamily: mono,
-    fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 1.4,
-    textTransform: 'uppercase',
-  },
-  title: { marginTop: 2, color: groknight.textPrimary, fontSize: 18, fontWeight: '800' },
+  title: { color: groknight.textPrimary, fontSize: 17, fontWeight: '700' },
   content: { paddingHorizontal: 20, paddingTop: 28, paddingBottom: 36 },
   intro: { maxWidth: 560 },
   sectionLabel: {
-    color: groknight.accent,
-    fontFamily: mono,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
+    color: groknight.textSecondary,
+    fontSize: 13,
+    fontWeight: '700',
   },
   heading: { marginTop: 7, color: groknight.textPrimary, fontSize: 24, fontWeight: '800' },
   body: {
     marginTop: 9,
     color: groknight.textSecondary,
-    fontFamily: mono,
     fontSize: 12,
     lineHeight: 19,
   },
   warning: {
     marginTop: 24,
-    padding: 14,
+    paddingVertical: 10,
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 12,
-    borderWidth: 1,
-    borderColor: groknight.borderActive,
-    borderRadius: 4,
-    backgroundColor: groknight.bgCode,
   },
   warningGlyph: {
     width: 22,
@@ -375,7 +356,6 @@ const styles = StyleSheet.create({
     borderColor: groknight.chrome,
     borderRadius: 11,
     color: groknight.chrome,
-    fontFamily: mono,
     fontWeight: '800',
     lineHeight: 20,
     textAlign: 'center',
@@ -384,7 +364,6 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     color: groknight.chrome,
-    fontFamily: mono,
     fontSize: 12,
     lineHeight: 18,
   },
@@ -392,7 +371,6 @@ const styles = StyleSheet.create({
   confirmHint: {
     marginTop: 9,
     color: groknight.muted,
-    fontFamily: mono,
     fontSize: 11,
     lineHeight: 17,
   },
@@ -405,7 +383,6 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     color: groknight.textPrimary,
     backgroundColor: groknight.bgBase,
-    fontFamily: mono,
     fontSize: 14,
     letterSpacing: 1.2,
   },
@@ -420,7 +397,6 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: {
     color: groknight.bgTerminal,
-    fontFamily: mono,
     fontSize: 13,
     fontWeight: '800',
   },
@@ -433,12 +409,9 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   unlockedLabel: {
-    color: groknight.accent,
-    fontFamily: mono,
+    color: groknight.muted,
     fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
+    fontWeight: '600',
   },
   secretBox: {
     minHeight: 74,
@@ -452,7 +425,6 @@ const styles = StyleSheet.create({
   },
   secretText: {
     color: groknight.textPrimary,
-    fontFamily: mono,
     fontSize: 12,
     lineHeight: 19,
   },
@@ -462,12 +434,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 13,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: groknight.borderActive,
-    borderRadius: 4,
-    backgroundColor: groknight.bgHighlight,
   },
-  secondaryButtonText: { color: groknight.chrome, fontFamily: mono, fontSize: 12, fontWeight: '700' },
+  secondaryButtonText: { color: groknight.chrome, fontSize: 12, fontWeight: '600' },
   primarySmallButton: {
     minHeight: 38,
     paddingHorizontal: 13,
@@ -478,7 +446,6 @@ const styles = StyleSheet.create({
   },
   primarySmallButtonText: {
     color: groknight.bgTerminal,
-    fontFamily: mono,
     fontSize: 12,
     fontWeight: '800',
   },
@@ -495,24 +462,21 @@ const styles = StyleSheet.create({
     maxWidth: 320,
     marginTop: 12,
     color: groknight.muted,
-    fontFamily: mono,
     fontSize: 10,
     lineHeight: 15,
     textAlign: 'center',
   },
   lockButton: { marginTop: 22, alignSelf: 'center', paddingHorizontal: 14, paddingVertical: 10 },
-  lockButtonText: { color: groknight.steel, fontFamily: mono, fontSize: 11, fontWeight: '700' },
+  lockButtonText: { color: groknight.steel, fontSize: 11, fontWeight: '600' },
   errorText: {
     marginTop: 16,
     color: groknight.chrome,
-    fontFamily: mono,
     fontSize: 11,
     lineHeight: 17,
   },
   footer: {
     marginTop: 28,
     color: groknight.dim,
-    fontFamily: mono,
     fontSize: 10,
     lineHeight: 16,
     textAlign: 'center',

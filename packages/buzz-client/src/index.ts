@@ -11,6 +11,7 @@ export type {
   CreateAgentOptions,
   AgentPairingCode,
   RedeemAgentPairingResult,
+  RepositoryBinding,
   AgentSoulInput,
   AgentSoulProfile,
   WebSocketLike,
@@ -100,11 +101,19 @@ export {
   listSubchannels,
   getParentChannelId,
   getChannelCommunityId,
+  getChannelRepositoryBinding,
   sendMessage,
   backfillMessages,
   eventIsAgentActivity,
 } from './channel.js';
 export type { ChannelOpsContext } from './channel.js';
+
+export {
+  repositoryRoomId,
+  findRepositoryRoom,
+  resolveRepositoryRoom,
+  type RepositoryRoomResult,
+} from './repo-room.js';
 
 export {
   createCommunity,

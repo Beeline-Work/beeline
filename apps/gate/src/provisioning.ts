@@ -19,11 +19,7 @@
  * CLI:      `node --import tsx src/provisioning.ts <ownerHex> <repo> <agentPubkey>`
  */
 import { queryEvents } from './relay.js';
-import {
-  KIND_CREATE_GROUP,
-  KIND_PUT_USER,
-  KIND_REPO_ANNOUNCEMENT,
-} from './buzz.js';
+import { KIND_CREATE_GROUP, KIND_PUT_USER, KIND_REPO_ANNOUNCEMENT } from './buzz.js';
 import type { NostrEvent } from '@beeline/nostr';
 
 export type ChannelRole = 'owner' | 'admin' | 'member' | 'guest' | 'bot';
@@ -90,10 +86,7 @@ function parsePushMinRole(rules: string[]): ChannelRole | null {
   return null;
 }
 
-function parseProtection(
-  event: NostrEvent,
-  protectedRef: string,
-): ProtectionRule | null {
+function parseProtection(event: NostrEvent, protectedRef: string): ProtectionRule | null {
   for (const tag of event.tags) {
     if (tag[0] !== 'buzz-protect' || !tag[1]) continue;
     const pattern = tag[1];
@@ -120,33 +113,32 @@ function tagValue(event: NostrEvent, name: string): string | undefined {
 }
 
 /**
- * Resolve the agent's current channel role from relay state (kind:9007 creator
- * → owner; latest kind:9000 role tag → assigned role). Returns null if the
- * agent is not a known member of the channel.
+ * Resolve current channel role from relay state. The latest explicit kind:9000
+ * role overrides kind:9007 creator status, allowing a Workspace-member agent
+ * to create a Room and immediately remain a plain member.
  */
 export async function resolveChannelRole(
   channelId: string,
   pubkey: string,
   queryAs: string,
 ): Promise<ChannelRole | null> {
-  const creates = await queryEvents(
-    [{ kinds: [KIND_CREATE_GROUP], '#h': [channelId], authors: [pubkey], limit: 5 }],
-    queryAs,
-  );
-  if (creates.length > 0) return 'owner';
-
   const puts = await queryEvents(
     [{ kinds: [KIND_PUT_USER], '#h': [channelId], '#p': [pubkey], limit: 50 }],
     queryAs,
   );
-  if (puts.length === 0) return null;
+  if (puts.length > 0) {
+    puts.sort((a, b) => b.created_at - a.created_at);
+    const latest = puts[0]!;
+    const role = tagValue(latest, 'role');
+    if (role && isRole(role)) return role;
+    return 'member';
+  }
 
-  puts.sort((a, b) => b.created_at - a.created_at);
-  const latest = puts[0]!;
-  const role = tagValue(latest, 'role');
-  if (role && isRole(role)) return role;
-  // kind:9000 without a role tag still admits the user as a plain member.
-  return 'member';
+  const creates = await queryEvents(
+    [{ kinds: [KIND_CREATE_GROUP], '#h': [channelId], authors: [pubkey], limit: 5 }],
+    queryAs,
+  );
+  return creates.length > 0 ? 'owner' : null;
 }
 
 /** Communities reuse the exact NIP-29 creator/put-user role resolution. */
@@ -229,8 +221,7 @@ export async function checkAgentNotPushAllowed(
   // No protection rule on the protected ref: default git ACL still lets any
   // channel Member push (see relay policy). A member agent therefore CAN push.
   if (!protection || !protection.pushMinRole) {
-    const canPush =
-      agentRole !== null && roleMeetsMinimum(agentRole, 'member');
+    const canPush = agentRole !== null && roleMeetsMinimum(agentRole, 'member');
     return {
       ok: !canPush,
       reason: canPush
@@ -245,8 +236,7 @@ export async function checkAgentNotPushAllowed(
   }
 
   const min = protection.pushMinRole;
-  const canPush =
-    agentRole !== null && roleMeetsMinimum(agentRole, min);
+  const canPush = agentRole !== null && roleMeetsMinimum(agentRole, min);
 
   if (canPush) {
     return {
@@ -308,9 +298,7 @@ async function main(): Promise<void> {
     console.log(`PASS  ${result.reason}`);
     if (result.channelId) console.log(`  channel   ${result.channelId}`);
     if (result.protection) {
-      console.log(
-        `  protect   ${result.protection.pattern} ${result.protection.rules.join(' ')}`,
-      );
+      console.log(`  protect   ${result.protection.pattern} ${result.protection.rules.join(' ')}`);
     }
     console.log(`  agentRole ${result.agentRole ?? 'none'}`);
     process.exit(0);

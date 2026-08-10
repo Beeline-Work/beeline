@@ -266,7 +266,7 @@ export async function redeemAgentPairingCode(
   const ours = matchingRedemptions
     .map(parseAgent)
     .find((agent) => agent?.pubkey === ctx.identity.publicKey);
-  if (ours) return { communityId, agent: ours, joined: false };
+  if (ours) return { communityId, pairedBy: pairing.pubkey, agent: ours, joined: false };
   if (matchingRedemptions.some((event) => isAgentIdentityEvent(event))) {
     throw new Error('agent pairing code has already been redeemed');
   }
@@ -287,7 +287,7 @@ export async function redeemAgentPairingCode(
     { displayName: ctx.identity.name ?? `Agent ${ctx.identity.publicKey.slice(0, 6)}` },
     tokenHash,
   );
-  return { communityId, agent, joined: !wasMember };
+  return { communityId, pairedBy: pairing.pubkey, agent, joined: !wasMember };
 }
 
 /** Parse a verified display-only soul overlay. Authorization is checked by readers. */
@@ -406,12 +406,16 @@ export async function listAgents(
   ).flat();
   const memberPubkeys = new Set(members.map((member) => member.pubkey));
   const overlayAuthors = [
-    ...new Set(soulEvents.map((event) => event.pubkey).filter((pubkey) => memberPubkeys.has(pubkey))),
+    ...new Set(
+      soulEvents.map((event) => event.pubkey).filter((pubkey) => memberPubkeys.has(pubkey)),
+    ),
   ];
   const agentAuthors = new Set(
     (
       await Promise.all(
-        overlayAuthors.map(async (pubkey) => ((await isAgentIdentity(ctx, pubkey)) ? pubkey : null)),
+        overlayAuthors.map(async (pubkey) =>
+          (await isAgentIdentity(ctx, pubkey)) ? pubkey : null,
+        ),
       )
     ).filter((pubkey): pubkey is string => pubkey !== null),
   );

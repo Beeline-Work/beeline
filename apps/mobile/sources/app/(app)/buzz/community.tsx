@@ -23,6 +23,7 @@ export default function BuzzCommunityCreateOrJoin() {
   const insets = useSafeAreaInsets();
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
+  const [relayUrl, setRelayUrl] = useState<string | null>(null);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
   const [mode, setMode] = useState<'create' | 'join'>('create');
@@ -48,6 +49,7 @@ export default function BuzzCommunityCreateOrJoin() {
         if (cancelled) return;
         setIdentity(currentIdentity);
         setTransport(nextTransport);
+        setRelayUrl(relayUrl);
         setCommunities(available);
         setActiveCommunityId(
           available.some((community) => community.communityId === stored) ? stored : null,
@@ -63,14 +65,14 @@ export default function BuzzCommunityCreateOrJoin() {
 
   const handleCreate = useCallback(async () => {
     const name = communityName.trim();
-    if (!name || !transport || !identity) return;
+    if (!name || !transport || !identity || !relayUrl) return;
     setWorking(true);
     setError(null);
     try {
       const client = await transport.ensureClient();
       const communityId = await client.createCommunity(name);
       await client.waitUntilMember(communityId, identity.publicKey);
-      const inviteUrl = await createCommunityInviteUrl(client, communityId);
+      const inviteUrl = await createCommunityInviteUrl(client, communityId, relayUrl);
       await saveActiveCommunityId(identity.publicKey, communityId);
       router.replace({
         pathname: '/buzz/channels',
@@ -81,12 +83,12 @@ export default function BuzzCommunityCreateOrJoin() {
     } finally {
       setWorking(false);
     }
-  }, [communityName, identity, transport]);
+  }, [communityName, identity, relayUrl, transport]);
 
   const handleJoin = useCallback(() => {
     const token = parseCommunityInviteToken(inviteInput);
     if (!token) {
-      setError('Paste a valid buzzrouter.com/join invite link.');
+      setError('Paste a valid Workspace invite link.');
       return;
     }
     router.push(`/join/${encodeURIComponent(token)}` as Href);
@@ -198,7 +200,7 @@ export default function BuzzCommunityCreateOrJoin() {
                 autoCapitalize="none"
                 autoCorrect={false}
                 keyboardType="url"
-                placeholder="https://buzzrouter.com/join/…"
+                placeholder="https://relay.buzzrouter.com/join/…"
                 placeholderTextColor={groknight.dim}
               />
               <TouchableOpacity

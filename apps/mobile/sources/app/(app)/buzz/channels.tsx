@@ -311,13 +311,13 @@ export default function BuzzChannels() {
     setError(null);
     try {
       const client = await transport.ensureClient();
-      setReadyInviteUrl(await createCommunityInviteUrl(client, activeCommunityId));
+      setReadyInviteUrl(await createCommunityInviteUrl(client, activeCommunityId, relayUrl));
     } catch (err) {
       setError(`Could not create invite: ${String(err)}`);
     } finally {
       setCreatingInvite(false);
     }
-  }, [activeCommunityId, creatingInvite, transport]);
+  }, [activeCommunityId, creatingInvite, relayUrl, transport]);
 
   if (loading && !transport) {
     return (

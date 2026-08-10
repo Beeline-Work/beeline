@@ -90,11 +90,32 @@ afterEach(() => {
 describe('community model', () => {
   it('creates a self-linked NIP-29 community and an optionally-linked channel', async () => {
     const published: NostrEvent[] = [];
+    let channelCreated = false;
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
-        return jsonResponse({ accepted: true });
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          const event = JSON.parse(String(init?.body)) as NostrEvent;
+          published.push(event);
+          if (event.kind === KIND_CREATE_GROUP && tagValue(event, 'h') === channelId) {
+            channelCreated = true;
+          }
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        if ((filter.kinds as number[])[0] === KIND_CHANNEL_MEMBERS) {
+          const requestedId = (filter['#d'] as string[] | undefined)?.[0];
+          if (requestedId === channelId && channelCreated) {
+            return jsonResponse([
+              signed(owner, KIND_CHANNEL_MEMBERS, [
+                ['d', channelId],
+                ['p', owner.publicKey],
+              ]),
+            ]);
+          }
+          if (requestedId === communityId) return jsonResponse([memberState()]);
+        }
+        return jsonResponse([]);
       }),
     );
 
@@ -110,6 +131,48 @@ describe('community model', () => {
     expect(published[1]?.kind).toBe(KIND_CREATE_GROUP);
     expect(tagValue(published[1]!, TAG_COMMUNITY)).toBe(communityId);
     expect(tagValue(published[1]!, 'channel_type')).toBe('stream');
+  });
+
+  it('mirrors current community members into a newly linked channel', async () => {
+    const published: NostrEvent[] = [];
+    const channelMemberPubkeys = new Set([owner.publicKey]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          const event = JSON.parse(String(init?.body)) as NostrEvent;
+          published.push(event);
+          if (event.kind === KIND_PUT_USER && tagValue(event, 'h') === channelId) {
+            channelMemberPubkeys.add(tagValue(event, 'p')!);
+          }
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        if ((filter.kinds as number[])[0] !== KIND_CHANNEL_MEMBERS) return jsonResponse([]);
+        const requestedId = (filter['#d'] as string[] | undefined)?.[0];
+        if (requestedId === communityId) return jsonResponse([memberState(true)]);
+        if (requestedId === channelId) {
+          return jsonResponse([
+            signed(owner, KIND_CHANNEL_MEMBERS, [
+              ['d', channelId],
+              ...[...channelMemberPubkeys].map((pubkey) => ['p', pubkey]),
+            ]),
+          ]);
+        }
+        return jsonResponse([]);
+      }),
+    );
+
+    await expect(createChannel(ctx(), 'general', { channelId, communityId })).resolves.toBe(
+      channelId,
+    );
+
+    const memberMutations = published.filter((event) => event.kind === KIND_PUT_USER);
+    expect(memberMutations).toHaveLength(1);
+    expect(tagValue(memberMutations[0]!, 'p')).toBe(invitee.publicKey);
+    expect(tagValue(memberMutations[0]!, 'role')).toBe('member');
+    expect(tagValue(memberMutations[0]!, TAG_COMMUNITY)).toBe(communityId);
+    expect(channelMemberPubkeys).toEqual(new Set([owner.publicKey, invitee.publicKey]));
   });
 
   it('lists communities by member pubkey and preserves owner/member roles', async () => {
@@ -308,6 +371,95 @@ describe('community invites', () => {
       alreadyMember: true,
     });
     expect(published).toHaveLength(1);
+  });
+
+  it('asserts invite membership into existing community channels and repairs repeats', async () => {
+    const token = 'bzi_' + 'bc'.repeat(32);
+    const tokenHash = inviteTokenHash(token);
+    const createdAt = Math.floor(Date.now() / 1000) - 10;
+    const invite = signed(
+      owner,
+      KIND_STREAM_MESSAGE,
+      [
+        ['h', communityId],
+        ['t', TAG_COMMUNITY_INVITE],
+        ['d', tokenHash],
+        [TAG_COMMUNITY, communityId],
+        ['expiration', String(createdAt + 3600)],
+        ['role', 'member'],
+      ],
+      createdAt,
+    );
+    const channelCreate = signed(owner, KIND_CREATE_GROUP, [
+      ['h', channelId],
+      ['name', 'general'],
+      ['channel_type', 'stream'],
+      ['visibility', 'open'],
+      [TAG_COMMUNITY, communityId],
+    ]);
+    let communityJoined = false;
+    let channelJoined = false;
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          const event = JSON.parse(String(init?.body)) as NostrEvent;
+          published.push(event);
+          if (event.kind === KIND_PUT_USER && tagValue(event, 'p') === invitee.publicKey) {
+            if (tagValue(event, 'h') === communityId) communityJoined = true;
+            if (tagValue(event, 'h') === channelId) channelJoined = true;
+          }
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        if (kind === KIND_STREAM_MESSAGE) return jsonResponse([invite]);
+        if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([adminState()]);
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          const requestedId = (filter['#d'] as string[] | undefined)?.[0];
+          if (requestedId === communityId) return jsonResponse([memberState(communityJoined)]);
+          if (requestedId === channelId) {
+            return jsonResponse([
+              signed(owner, KIND_CHANNEL_MEMBERS, [
+                ['d', channelId],
+                ['p', owner.publicKey],
+                ...(channelJoined ? [['p', invitee.publicKey]] : []),
+              ]),
+            ]);
+          }
+        }
+        if (kind === KIND_CREATE_GROUP) {
+          const requestedId = (filter['#h'] as string[] | undefined)?.[0];
+          if (requestedId === communityId) return jsonResponse([communityCreate()]);
+          if (requestedId === channelId) return jsonResponse([channelCreate]);
+          return jsonResponse([communityCreate(), channelCreate]);
+        }
+        return jsonResponse([]);
+      }),
+    );
+
+    await expect(redeemInvite(ctx(invitee), token)).resolves.toMatchObject({
+      communityId,
+      joined: true,
+      alreadyMember: false,
+    });
+    expect(published.filter((event) => event.kind === KIND_PUT_USER)).toHaveLength(2);
+    const channelMutation = published.find(
+      (event) => event.kind === KIND_PUT_USER && tagValue(event, 'h') === channelId,
+    );
+    expect(channelMutation).toBeDefined();
+    expect(tagValue(channelMutation!, 'p')).toBe(invitee.publicKey);
+    expect(tagValue(channelMutation!, 'role')).toBe('member');
+    expect(tagValue(channelMutation!, TAG_COMMUNITY)).toBe(communityId);
+
+    channelJoined = false;
+    await expect(redeemInvite(ctx(invitee), token)).resolves.toMatchObject({
+      joined: false,
+      alreadyMember: true,
+    });
+    expect(published.filter((event) => event.kind === KIND_PUT_USER)).toHaveLength(3);
+    expect(channelJoined).toBe(true);
   });
 
   it('rejects an expired invite for a new member', async () => {

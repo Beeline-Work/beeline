@@ -1,7 +1,6 @@
 import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
 import {
   Animated,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -14,7 +13,6 @@ import type { Community } from '@buzzy/buzz-client';
 import { groknight } from '@/buzz/groknight';
 import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 
-const mono = Platform.select({ web: '"JetBrains Mono", monospace', default: 'monospace' });
 const DRAWER_WIDTH = 72;
 const DRAWER_DURATION_MS = 180;
 
@@ -261,8 +259,6 @@ const styles = StyleSheet.create({
     color: groknight.chrome,
     fontSize: 13,
     fontWeight: '800',
-    fontFamily: mono,
-    letterSpacing: 0.2,
   },
   railMarkActive: {
     color: groknight.accent,
@@ -307,15 +303,12 @@ const styles = StyleSheet.create({
   },
   drawerTriggerMark: {
     color: groknight.accent,
-    fontFamily: mono,
     fontSize: 12,
     fontWeight: '800',
-    letterSpacing: 0.2,
   },
   drawerTriggerChevron: {
     marginLeft: 2,
     color: groknight.steel,
-    fontFamily: mono,
     fontSize: 13,
     fontWeight: '700',
   },

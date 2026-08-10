@@ -73,6 +73,9 @@ export default {
             supportsTablet: true,
             bundleIdentifier: bundleId,
             buildNumber: "1",
+            ...(variant === 'production'
+                ? { associatedDomains: ["applinks:relay.buzzrouter.com"] }
+                : {}),
             config: {
                 usesNonExemptEncryption: false
             },
@@ -123,7 +126,7 @@ export default {
                     "data": [
                         {
                             "scheme": "https",
-                            "host": "buzzrouter.com",
+                            "host": "relay.buzzrouter.com",
                             "pathPrefix": "/join/"
                         }
                     ],

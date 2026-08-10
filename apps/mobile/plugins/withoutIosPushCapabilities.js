@@ -5,12 +5,11 @@ const {
 
 /**
  * Keep expo-notifications' Android setup while iOS push is not implemented.
- * Re-add these capabilities when the iOS client gains push or universal links.
+ * Associated Domains are managed independently for universal invite links.
  */
 const withoutIosPushCapabilities = (config) => {
     config = withEntitlementsPlist(config, (entitlementsConfig) => {
         delete entitlementsConfig.modResults['aps-environment'];
-        delete entitlementsConfig.modResults['com.apple.developer.associated-domains'];
         return entitlementsConfig;
     });
 

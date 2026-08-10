@@ -1,7 +1,7 @@
 export interface WorkspaceAvatarGeometry {
   rotation: number;
   filledMask: number;
-  accentIndex: number;
+  heavyIndex: number;
   chromeMask: number;
 }
 
@@ -18,12 +18,12 @@ function hash32(value: string): number {
 /** Stable seven-cell honeycomb geometry derived only from the Workspace id. */
 export function workspaceAvatarGeometry(workspaceId: string): WorkspaceAvatarGeometry {
   const hash = hash32(workspaceId);
-  const accentIndex = (hash >>> 18) % 7;
-  const filledMask = ((hash >>> 3) & 0x7f) | 1 | (1 << accentIndex);
+  const heavyIndex = (hash >>> 18) % 7;
+  const filledMask = ((hash >>> 3) & 0x7f) | 1 | (1 << heavyIndex);
   return {
     rotation: ((hash >>> 28) % 6) * 60,
     filledMask,
-    accentIndex,
+    heavyIndex,
     chromeMask: ((hash >>> 10) & 0x7f) | 1,
   };
 }

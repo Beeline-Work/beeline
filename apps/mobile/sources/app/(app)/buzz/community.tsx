@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
   StyleSheet,
   Text,
   TextInput,
@@ -18,6 +17,7 @@ import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
+import { HullSurface, MonoButton, PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
 
 export default function BuzzCommunityCreateOrJoin() {
   const insets = useSafeAreaInsets();
@@ -105,7 +105,7 @@ export default function BuzzCommunityCreateOrJoin() {
   if (!identity && !error) {
     return (
       <View style={[styles.loading, { paddingTop: insets.top }]}>
-        <ActivityIndicator color={groknight.accent} />
+        <PixelLoader />
       </View>
     );
   }
@@ -118,7 +118,7 @@ export default function BuzzCommunityCreateOrJoin() {
       onAdd={() => undefined}
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
-        <View style={styles.header}>
+        <HullSurface strength="quiet" style={styles.header}>
           <TouchableOpacity
             accessibilityLabel="Back"
             onPress={() => router.back()}
@@ -129,7 +129,7 @@ export default function BuzzCommunityCreateOrJoin() {
           <View style={styles.headerCopy}>
             <Text style={styles.title}>{WORKSPACE_LABEL}s</Text>
           </View>
-        </View>
+        </HullSurface>
 
         <View style={styles.modeSwitch}>
           <TouchableOpacity
@@ -154,7 +154,7 @@ export default function BuzzCommunityCreateOrJoin() {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.form}>
+        <PixelGateReveal style={styles.form}>
           {mode === 'create' ? (
             <>
               <Text style={styles.formTitle}>Name the new {WORKSPACE_LABEL}</Text>
@@ -172,18 +172,13 @@ export default function BuzzCommunityCreateOrJoin() {
                 placeholder="Night shift"
                 placeholderTextColor={groknight.dim}
               />
-              <TouchableOpacity
-                style={[
-                  styles.primaryButton,
-                  (!communityName.trim() || working) && styles.disabled,
-                ]}
+              <MonoButton
+                label={working ? `Creating ${WORKSPACE_LABEL}` : `Create ${WORKSPACE_LABEL}`}
+                loading={working}
+                style={styles.primaryButton}
                 disabled={!communityName.trim() || working}
                 onPress={() => void handleCreate()}
-              >
-                <Text style={styles.primaryButtonText}>
-                  {working ? `Creating ${WORKSPACE_LABEL}…` : `Create ${WORKSPACE_LABEL}`}
-                </Text>
-              </TouchableOpacity>
+              />
             </>
           ) : (
             <>
@@ -203,22 +198,22 @@ export default function BuzzCommunityCreateOrJoin() {
                 placeholder="https://relay.buzzrouter.com/join/…"
                 placeholderTextColor={groknight.dim}
               />
-              <TouchableOpacity
-                style={[styles.primaryButton, !inviteInput.trim() && styles.disabled]}
+              <MonoButton
+                label="Preview invite"
+                style={styles.primaryButton}
                 disabled={!inviteInput.trim()}
                 onPress={handleJoin}
-              >
-                <Text style={styles.primaryButtonText}>Preview invite</Text>
-              </TouchableOpacity>
+              />
             </>
           )}
 
           {error && (
-            <Text accessibilityRole="alert" style={styles.errorText}>
-              {error}
-            </Text>
+            <View accessibilityRole="alert" style={styles.errorPanel}>
+              <Text style={styles.errorLabel}>! ERROR</Text>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
           )}
-        </View>
+        </PixelGateReveal>
       </View>
     </BuzzCommunityShell>
   );
@@ -241,14 +236,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: groknight.border,
   },
-  backButton: { width: 34, height: 42, alignItems: 'center', justifyContent: 'center' },
+  backButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   backText: { ...Typography.default(), color: groknight.chrome, fontSize: 30, fontWeight: '300' },
   headerCopy: { flex: 1, minWidth: 0, paddingLeft: 4 },
   title: {
     ...Typography.default('semiBold'),
     color: groknight.textPrimary,
-    fontSize: 17,
-    fontWeight: '700',
+    fontSize: 20,
+    lineHeight: 24,
   },
   modeSwitch: {
     marginHorizontal: 16,
@@ -259,7 +254,7 @@ const styles = StyleSheet.create({
   },
   modeButton: {
     flex: 1,
-    minHeight: 38,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -279,15 +274,14 @@ const styles = StyleSheet.create({
     ...Typography.default('semiBold'),
     color: groknight.textPrimary,
     fontSize: 20,
-    fontWeight: '800',
   },
   formHint: {
     ...Typography.default(),
     marginTop: 8,
     maxWidth: 460,
-    color: groknight.muted,
-    fontSize: 12,
-    lineHeight: 18,
+    color: groknight.textSecondary,
+    fontSize: 14,
+    lineHeight: 20,
   },
   input: {
     ...Typography.default(),
@@ -297,32 +291,34 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 4,
     borderWidth: 1,
-    borderColor: groknight.borderActive,
+    borderColor: groknight.border,
     color: groknight.textPrimary,
     backgroundColor: groknight.bgBase,
     fontSize: 14,
   },
   inviteInput: { ...Typography.mono(), fontSize: 11 },
   primaryButton: {
-    minHeight: 46,
     marginTop: 12,
-    borderRadius: 4,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: groknight.accent,
   },
-  primaryButtonText: {
-    ...Typography.default('semiBold'),
-    color: groknight.bgTerminal,
-    fontSize: 13,
-    fontWeight: '700',
+  errorPanel: {
+    marginTop: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgHighlight,
   },
-  disabled: { opacity: 0.42 },
+  errorLabel: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 11,
+    lineHeight: 15,
+    letterSpacing: 0.8,
+  },
   errorText: {
     ...Typography.default(),
-    marginTop: 14,
-    color: groknight.chrome,
-    fontSize: 11,
-    lineHeight: 17,
+    marginTop: 4,
+    color: groknight.textSecondary,
+    fontSize: 14,
+    lineHeight: 20,
   },
 });

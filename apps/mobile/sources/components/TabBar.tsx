@@ -18,16 +18,14 @@ import { runOnJS } from 'react-native-worklets';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
 import { layout } from '@/components/layout';
-import { useInboxHasContent } from '@/hooks/useInboxHasContent';
 import { MobileGlassSurface } from './MobileGlass';
 import { hapticsLight } from './haptics';
 
-export type TabType = 'inbox' | 'sessions' | 'settings';
+export type TabType = 'sessions' | 'settings';
 
 interface TabBarProps {
     activeTab: TabType;
     onTabPress: (tab: TabType) => void;
-    inboxBadgeCount?: number;
 }
 
 type TabDefinition = {
@@ -344,21 +342,14 @@ const NativeTabItem = React.memo(function NativeTabItem({
     );
 });
 
-export const TabBar = React.memo(({ activeTab, onTabPress, inboxBadgeCount = 0 }: TabBarProps) => {
+export const TabBar = React.memo(({ activeTab, onTabPress }: TabBarProps) => {
     const { theme } = useUnistyles();
     const insets = useSafeAreaInsets();
-    const inboxHasContent = useInboxHasContent();
-
     const nativeTabs: TabDefinition[] = React.useMemo(() => [
         { key: 'sessions', icon: require('@/assets/images/brutalist/Brutalism-15.png'), iconName: 'code-slash-outline', activeIconName: 'code-slash', label: t('tabs.sessions') },
         { key: 'settings', icon: require('@/assets/images/brutalist/Brutalism-9.png'), iconName: 'settings-outline', activeIconName: 'settings', label: t('tabs.settings') },
     ], []);
-    const webTabs: TabDefinition[] = React.useMemo(() => [
-        { key: 'inbox', icon: require('@/assets/images/brutalist/Brutalism-27.png'), iconName: 'mail-outline', activeIconName: 'mail', label: t('tabs.inbox') },
-        { key: 'sessions', icon: require('@/assets/images/brutalist/Brutalism-15.png'), iconName: 'code-slash-outline', activeIconName: 'code-slash', label: t('tabs.sessions') },
-        { key: 'settings', icon: require('@/assets/images/brutalist/Brutalism-9.png'), iconName: 'settings-outline', activeIconName: 'settings', label: t('tabs.settings') },
-    ], []);
-    const tabs = Platform.OS === 'web' ? webTabs : nativeTabs;
+    const tabs = nativeTabs;
 
     const activeIndex = Math.max(0, tabs.findIndex((tab) => tab.key === activeTab));
     const barWidth = useSharedValue(0);
@@ -536,16 +527,6 @@ export const TabBar = React.memo(({ activeTab, onTabPress, inboxBadgeCount = 0 }
                                         style={{ width: 24, height: 24 }}
                                         tintColor={isActive ? theme.colors.text : theme.colors.textSecondary}
                                     />
-                                    {tab.key === 'inbox' && inboxBadgeCount > 0 && (
-                                        <View style={styles.webBadge}>
-                                            <Text style={styles.badgeText}>
-                                                {inboxBadgeCount > 99 ? '99+' : inboxBadgeCount}
-                                            </Text>
-                                        </View>
-                                    )}
-                                    {tab.key === 'inbox' && inboxHasContent && inboxBadgeCount === 0 && (
-                                        <View style={styles.webIndicatorDot} />
-                                    )}
                                 </View>
                                 <Text style={[styles.webLabel, isActive ? styles.labelActive : styles.labelInactive]}>
                                     {tab.label}

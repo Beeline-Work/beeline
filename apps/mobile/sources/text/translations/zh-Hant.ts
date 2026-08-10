@@ -19,17 +19,10 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
 export const zhHant: TranslationStructure = {
     tabs: {
         // Tab navigation labels
-        inbox: '收件匣',
         sessions: '終端',
         settings: '設定',
     },
 
-    inbox: {
-        // Inbox screen
-        emptyTitle: '收件匣是空的',
-        emptyDescription: '與好友建立連結，開始共享工作階段',
-        updates: '更新',
-    },
 
     common: {
         // Simple string constants
@@ -95,32 +88,17 @@ export const zhHant: TranslationStructure = {
     },
 
     connect: {
-        restoreAccount: '恢復帳戶',
-        enterSecretKey: '請輸入金鑰',
-        invalidSecretKey: '無效的金鑰，請檢查後重試。',
         enterUrlManually: '手動輸入 URL',
     },
 
     settings: {
         title: '設定',
-        connectedAccounts: '已連結帳戶',
-        connectAccount: '連結帳戶',
         github: 'GitHub',
-        machines: '裝置',
-        showOfflineMachines: ({ count }: { count: number }) => `顯示 ${count} 台離線裝置`,
-        hideOfflineMachines: '隱藏離線裝置',
         features: '功能',
-        social: '社交',
-        account: '帳戶',
-        accountSubtitle: '管理您的帳戶詳情',
         appearance: '外觀',
         appearanceSubtitle: '自訂應用程式外觀',
-        voiceAssistant: '語音助理',
-        voiceAssistantSubtitle: '設定語音互動偏好',
         featuresTitle: '功能',
         featuresSubtitle: '啟用或停用應用程式功能',
-        developer: '開發者',
-        developerTools: '開發者工具',
         about: '關於',
         aboutFooter: 'Happy Coder 是一個 Codex 和 Claude Code 行動用戶端。它採用端對端加密，您的帳戶僅儲存在本機裝置上。與 Anthropic 無關聯。',
         whatsNew: '更新日誌',
@@ -129,20 +107,6 @@ export const zhHant: TranslationStructure = {
         privacyPolicy: '隱私權政策',
         termsOfService: '服務條款',
         eula: '終端使用者授權協議',
-        supportUs: '支援我們',
-        supportUsSubtitlePro: '感謝您的支援！',
-        supportUsSubtitle: '支援專案開發',
-        scanQrCodeToAuthenticate: '掃描 QR Code 進行驗證',
-        githubConnected: ({ login }: { login: string }) => `已連結為 @${login}`,
-        connectGithubAccount: '連結您的 GitHub 帳戶',
-        claudeAuthSuccess: '成功連結到 Claude',
-        exchangingTokens: '正在交換權杖...',
-        usage: '使用情況',
-        usageSubtitle: '查看 API 使用情況和費用',
-        // Dynamic settings messages
-        accountConnected: ({ service }: { service: string }) => `已連結 ${service} 帳戶`,
-        machineStatus: ({ name, status }: { name: string; status: 'online' | 'offline' }) =>
-            `${name} ${status === 'online' ? '線上' : '離線'}`,
         featureToggled: ({ feature, enabled }: { feature: string; enabled: boolean }) =>
             `${feature} 已${enabled ? '啟用' : '停用'}`,
     },
@@ -283,16 +247,6 @@ export const zhHant: TranslationStructure = {
             `${seconds} 秒後重試`,
         errorWithCode: ({ message, code }: { message: string; code: number | string }) =>
             `${message} (錯誤 ${code})`,
-        disconnectServiceFailed: ({ service }: { service: string }) =>
-            `中斷連線 ${service} 失敗`,
-        connectServiceFailed: ({ service }: { service: string }) =>
-            `連結 ${service} 失敗。請重試。`,
-        failedToLoadFriends: '載入好友清單失敗',
-        failedToAcceptRequest: '接受好友請求失敗',
-        failedToRejectRequest: '拒絕好友請求失敗',
-        failedToRemoveFriend: '刪除好友失敗',
-        searchFailed: '搜尋失敗。請重試。',
-        failedToSendRequest: '傳送好友請求失敗',
     },
 
     newSession: {
@@ -303,12 +257,8 @@ export const zhHant: TranslationStructure = {
 
     sessionHistory: {
         // Used by session history screen
-        title: '工作階段歷史',
         empty: '未找到工作階段',
-        today: '今天',
-        yesterday: '昨天',
         daysAgo: ({ count }: { count: number }) => `${count} 天前`,
-        viewAll: '查看所有工作階段',
     },
 
     session: {
@@ -341,23 +291,6 @@ export const zhHant: TranslationStructure = {
         placeholder: '輸入命令或搜尋...',
     },
 
-    server: {
-        // Used by Server Configuration screen (app/(app)/server.tsx)
-        serverConfiguration: '伺服器設定',
-        enterServerUrl: '請輸入伺服器 URL',
-        notValidHappyServer: '不是有效的 Happy 伺服器',
-        changeServer: '更改伺服器',
-        continueWithServer: '繼續使用此伺服器？',
-        resetToDefault: '重設為預設',
-        resetServerDefault: '重設伺服器為預設值？',
-        validating: '驗證中...',
-        validatingServer: '正在驗證伺服器...',
-        serverReturnedError: '伺服器返回錯誤',
-        failedToConnectToServer: '連線伺服器失敗',
-        currentlyUsingCustomServer: '目前使用自訂伺服器',
-        customServerUrlLabel: '自訂伺服器 URL',
-        advancedFeatureFooter: "這是一個進階功能。只有在您知道自己在做什麼時才更改伺服器。更改伺服器後您需要重新登入。"
-    },
 
     sessionInfo: {
         // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
@@ -384,8 +317,6 @@ export const zhHant: TranslationStructure = {
         lastUpdated: '最後更新',
         sequence: '序列',
         quickActions: '快速操作',
-        viewMachine: '查看裝置',
-        viewMachineSubtitle: '查看裝置詳情和工作階段',
         resumeSession: 'Resume Session',
         resumeSessionSubtitle: 'Resume this session on the same machine',
         resumeSessionSameMachineOnly: 'This session can only be resumed on the same machine it started on.',
@@ -691,72 +622,7 @@ export const zhHant: TranslationStructure = {
         close: '關閉側邊聊天',
     },
 
-    settingsVoice: {
-        // Voice settings screen
-        languageTitle: '語言',
-        languageDescription: '選擇您希望語音助理互動使用的語言。此設定將在您的所有裝置間同步。',
-        preferredLanguage: '偏好語言',
-        preferredLanguageSubtitle: '語音助理回應使用的語言',
-        language: {
-            searchPlaceholder: '搜尋語言...',
-            title: '語言',
-            footer: ({ count }: { count: number }) => `${count} 種可用語言`,
-            autoDetect: '自動偵測',
-        },
-        // Bring your own agent
-        byoTitle: '使用自己的代理',
-        byoDescription: '使用您自己的 ElevenLabs 代理取代 Happy 預設代理。無需訂閱 — 直接使用您自己的 ElevenLabs 帳戶連線。您的代理必須定義兩個用戶端工具：messageClaudeCode（向編碼代理傳送文字）和 processPermissionRequest（允許或拒絕工具使用）。透過 {{initialConversationContext}} 動態變數接收工作階段上下文。',
-        customAgentId: 'ElevenLabs Agent ID',
-        customAgentIdNotSet: '未設定',
-        customAgentIdDescription: '輸入您的 ElevenLabs Agent ID。留空則使用 Happy 預設代理。',
-        customAgentIdPlaceholder: 'e.g. abc123def456',
-        bypassToken: '直接連線',
-        bypassTokenSubtitle: '跳過 Happy 伺服器，直接連線到 ElevenLabs',
-        promptGuideTitle: '代理提示詞指南',
-        promptGuideDescription: '您的 ElevenLabs 代理需要：\n\n• 工具：messageClaudeCode — 參數：message (string)。向活躍的編碼工作階段傳送訊息。\n• 工具：processPermissionRequest — 參數：decision ("allow" 或 "deny")。核准或拒絕待處理的工具權限。\n• 動態變數：{{initialConversationContext}} — 啟動時接收工作階段歷史和上下文。\n\n代理充當使用者和編碼代理之間的語音橋梁。它應該簡潔，僅在被呼叫時回應，並在編碼代理完成工作時進行報告。',
-        usageTitle: '使用量（過去 30 天）',
-        usageFooter: '過去 30 天使用的語音時間。免費方案: 20 分鐘。訂閱用戶: 5 小時。每月最多 100 次對話。',
-        usageLabel: '語音時間',
-        conversationsLabel: '對話',
-        usageUsed: ({ used, limit }: { used: string; limit: string }) => `已使用 ${used}，共 ${limit}`,
-        supportTitle: '升級語音',
-        supportSubtitle: '獲取更多語音時間並支持開發',
-    },
 
-    settingsAccount: {
-        // Account settings screen
-        accountInformation: '帳戶資訊',
-        status: '狀態',
-        statusActive: '活躍',
-        statusNotAuthenticated: '未驗證',
-        anonymousId: '匿名 ID',
-        publicId: '公共 ID',
-        notAvailable: '不可用',
-        linkNewDevice: '連結新裝置',
-        linkNewDeviceSubtitle: '掃描 QR Code 來連結裝置',
-        profile: '個人資料',
-        name: '姓名',
-        github: 'GitHub',
-        tapToDisconnect: '點擊中斷連線',
-        server: '伺服器',
-        backup: '備份',
-        backupDescription: '您的金鑰是恢復帳戶的唯一方法。請將其保存在安全的地方，比如密碼管理器中。',
-        secretKey: '金鑰',
-        tapToReveal: '點擊顯示',
-        tapToHide: '點擊隱藏',
-        secretKeyLabel: '金鑰（點擊複製）',
-        secretKeyCopied: '金鑰已複製到剪貼簿。請將其保存在安全的地方！',
-        secretKeyCopyFailed: '複製金鑰失敗',
-        privacy: '隱私',
-        privacyDescription: '透過分享匿名使用資料來幫助改進應用程式。不會收集個人資訊。',
-        analytics: '分析',
-        analyticsDisabled: '不分享資料',
-        analyticsEnabled: '分享匿名使用資料',
-        dangerZone: '危險區域',
-        logout: '登出',
-        logoutSubtitle: '登出並清除本機資料',
-        logoutConfirm: '您確定要登出嗎？請確保您已備份金鑰！',
-    },
 
     settingsLanguage: {
         // Language settings screen
@@ -770,11 +636,6 @@ export const zhHant: TranslationStructure = {
         restartNow: '立即重新啟動',
     },
 
-    connectButton: {
-        authenticate: '驗證終端',
-        authenticateWithUrlPaste: '透過 URL 貼上驗證終端',
-        pasteAuthUrl: '貼上來自您終端的驗證 URL',
-    },
 
     updateBanner: {
         updateAvailable: '有可用更新',
@@ -792,29 +653,6 @@ export const zhHant: TranslationStructure = {
         noEntriesAvailable: '沒有可用的更新日誌條目。',
     },
 
-    terminal: {
-        // Used by terminal connection screens
-        webBrowserRequired: '需要 Web 瀏覽器',
-        webBrowserRequiredDescription: '出於安全原因，終端連線連結只能在 Web 瀏覽器中開啟。請使用 QR Code 掃描器或在電腦上開啟此連結。',
-        processingConnection: '正在處理連線...',
-        invalidConnectionLink: '無效的連線連結',
-        invalidConnectionLinkDescription: '連線連結缺失或無效。請檢查 URL 並重試。',
-        connectTerminal: '連線終端',
-        terminalRequestDescription: '有終端正在請求連線到您的 Happy Coder 帳戶。這將允許終端安全地傳送和接收訊息。',
-        connectionDetails: '連線詳情',
-        publicKey: '公鑰',
-        encryption: '加密',
-        endToEndEncrypted: '端對端加密',
-        acceptConnection: '接受連線',
-        connecting: '連線中...',
-        reject: '拒絕',
-        security: '安全',
-        securityFooter: '此連線連結在您的瀏覽器中安全處理，從未傳送到任何伺服器。您的私人資料將保持安全，只有您能解密訊息。',
-        securityFooterDevice: '此連線在您的裝置上安全處理，從未傳送到任何伺服器。您的私人資料將保持安全，只有您能解密訊息。',
-        clientSideProcessing: '用戶端處理',
-        linkProcessedLocally: '連結在瀏覽器中本機處理',
-        linkProcessedOnDevice: '連結在裝置上本機處理',
-    },
 
     modals: {
         // Used across connect flows and settings
@@ -823,16 +661,6 @@ export const zhHant: TranslationStructure = {
         deviceLinkedSuccessfully: '裝置連結成功',
         terminalConnectedSuccessfully: '終端連線成功',
         invalidAuthUrl: '無效的驗證 URL',
-        developerMode: '開發者模式',
-        developerModeEnabled: '開發者模式已啟用',
-        developerModeDisabled: '開發者模式已停用',
-        disconnectGithub: '中斷 GitHub 連線',
-        disconnectGithubConfirm: '您確定要中斷 GitHub 帳戶連線嗎？',
-        disconnectService: ({ service }: { service: string }) =>
-            `中斷 ${service} 連線`,
-        disconnectServiceConfirm: ({ service }: { service: string }) =>
-            `您確定要中斷 ${service} 與您帳戶的連線嗎？`,
-        disconnect: '中斷連線',
         failedToConnectTerminal: '連線終端失敗',
         cameraPermissionsRequiredToConnectTerminal: '連線終端需要相機權限',
         failedToLinkDevice: '連結裝置失敗',
@@ -841,11 +669,7 @@ export const zhHant: TranslationStructure = {
 
     navigation: {
         // Navigation titles and screen headers
-        connectTerminal: '連線終端',
-        linkNewDevice: '連結新裝置',
-        restoreWithSecretKey: '透過金鑰恢復',
         whatsNew: "更新日誌",
-        friends: '好友',
     },
 
     welcome: {
@@ -874,37 +698,6 @@ export const zhHant: TranslationStructure = {
         launchNewSessionInDirectory: '在目錄中啟動新工作階段',
         offlineUnableToSpawn: '裝置離線時無法啟動',
         offlineHelp: '• 確保您的電腦在線上\n• 執行 `happy daemon status` 進行診斷\n• 您是否在執行最新的 CLI 版本？請使用 `npm install -g happy@latest` 升級',
-        daemon: '守護程序',
-        status: '狀態',
-        stopDaemon: '停止守護程序',
-        lastKnownPid: '最後已知 PID',
-        lastKnownHttpPort: '最後已知 HTTP 連接埠',
-        startedAt: '啟動時間',
-        cliVersion: 'CLI 版本',
-        daemonStateVersion: '守護程序狀態版本',
-        activeSessions: ({ count }: { count: number }) => `活躍工作階段 (${count})`,
-        machineGroup: '裝置',
-        host: '主機',
-        machineId: '裝置 ID',
-        username: '使用者名稱',
-        homeDirectory: '主目錄',
-        platform: '平台',
-        architecture: '架構',
-        lastSeen: '最後活躍',
-        never: '從未',
-        metadataVersion: '中繼資料版本',
-        cliAvailability: 'CLI 可用性',
-        cliInstalled: '已安裝',
-        cliNotFound: '未找到',
-        lastDetected: '最近偵測',
-        untitledSession: '無標題工作階段',
-        back: '返回',
-        dangerZone: '危險區域',
-        delete: '刪除裝置',
-        deleteFooter: '從您的帳戶中移除此裝置。工作階段歷史將保留,但您將無法在此裝置上啟動新的工作階段。',
-        deleteConfirmTitle: '刪除此裝置?',
-        deleteConfirmMessage: '裝置將從您的帳戶中移除。工作階段歷史將保留,但在您重新連接守護程序之前,您將無法啟動新的工作階段。',
-        deleteFailed: '刪除裝置失敗。',
     },
 
     message: {
@@ -951,97 +744,8 @@ export const zhHant: TranslationStructure = {
         mermaidRenderFailed: '渲染 mermaid 圖表失敗',
     },
 
-    artifacts: {
-        title: '工件',
-        countSingular: '1 個工件',
-        countPlural: ({ count }: { count: number }) => `${count} 個工件`,
-        empty: '暫無工件',
-        emptyDescription: '建立您的第一個工件來儲存和組織內容',
-        new: '新建工件',
-        edit: '編輯工件',
-        delete: '刪除',
-        updateError: '更新工件失敗。請重試。',
-        notFound: '未找到工件',
-        discardChanges: '放棄更改？',
-        discardChangesDescription: '您有未儲存的更改。確定要放棄它們嗎？',
-        deleteConfirm: '刪除工件？',
-        deleteConfirmDescription: '此工件將被永久刪除。',
-        titlePlaceholder: '工件標題',
-        bodyPlaceholder: '在此輸入內容...',
-        save: '儲存',
-        saving: '儲存中...',
-        loading: '載入中...',
-        error: '載入工件失敗',
-        titleLabel: '標題',
-        bodyLabel: '內容',
-        emptyFieldsError: '请输入標題或內容',
-        createError: '建立工件失敗。請重試。',
-    },
 
-    friends: {
-        // Friends feature
-        title: '好友',
-        manageFriends: '管理您的好友和連結',
-        searchTitle: '尋找好友',
-        pendingRequests: '好友請求',
-        myFriends: '我的好友',
-        noFriendsYet: '您還沒有好友',
-        findFriends: '尋找好友',
-        remove: '刪除',
-        pendingRequest: '待處理',
-        sentOn: ({ date }: { date: string }) => `傳送於 ${date}`,
-        accept: '接受',
-        reject: '拒絕',
-        addFriend: '新增好友',
-        alreadyFriends: '已是好友',
-        requestPending: '請求待處理',
-        searchInstructions: '輸入使用者名稱搜尋好友',
-        searchPlaceholder: '輸入使用者名稱...',
-        searching: '搜尋中...',
-        userNotFound: '未找到使用者',
-        noUserFound: '未找到該使用者名稱的使用者',
-        checkUsername: '請檢查使用者名稱後重試',
-        howToFind: '如何尋找好友',
-        findInstructions: '透過使用者名稱搜尋好友。您和您的好友都需要連結 GitHub 才能傳送好友請求。',
-        requestSent: '好友請求已傳送！',
-        requestAccepted: '好友請求已接受！',
-        requestRejected: '好友請求已拒絕',
-        friendRemoved: '好友已刪除',
-        confirmRemove: '刪除好友',
-        confirmRemoveMessage: '確定要刪除這位好友嗎？',
-        cannotAddYourself: '您不能向自己傳送好友請求',
-        bothMustHaveGithub: '雙方都必須連結 GitHub 才能成為好友',
-        status: {
-            none: '未連結',
-            requested: '請求已傳送',
-            pending: '請求待處理',
-            friend: '好友',
-            rejected: '已拒絕',
-        },
-        acceptRequest: '接受請求',
-        removeFriend: '移除好友',
-        removeFriendConfirm: ({ name }: { name: string }) => `確定要將 ${name} 從好友清單中移除嗎？`,
-        requestSentDescription: ({ name }: { name: string }) => `您的好友請求已傳送給 ${name}`,
-        requestFriendship: '請求加為好友',
-        cancelRequest: '取消好友請求',
-        cancelRequestConfirm: ({ name }: { name: string }) => `取消傳送給 ${name} 的好友請求？`,
-        denyRequest: '拒絕請求',
-        nowFriendsWith: ({ name }: { name: string }) => `您現在與 ${name} 是好友了`,
-    },
 
-    usage: {
-        // Usage panel strings
-        today: '今天',
-        last7Days: '過去 7 天',
-        last30Days: '過去 30 天',
-        totalTokens: '總權杖數',
-        totalCost: '總費用',
-        tokens: '權杖',
-        cost: '費用',
-        usageOverTime: '使用趨勢',
-        byModel: '按模型',
-        noData: '暫無使用資料',
-    },
 
     imageUpload: {
         permissionTitle: '存取照片圖庫',
@@ -1058,11 +762,4 @@ export const zhHant: TranslationStructure = {
         notSupportedMessage: '此代理不支援圖片附件。圖片未傳送。',
     },
 
-    feed: {
-        // Feed notifications for friend requests and acceptances
-        friendRequestFrom: ({ name }: { name: string }) => `${name} 向您傳送了好友請求`,
-        friendRequestGeneric: '新的好友請求',
-        friendAccepted: ({ name }: { name: string }) => `您現在與 ${name} 成為了好友`,
-        friendAcceptedGeneric: '好友請求已接受',
-    },
 } as const;

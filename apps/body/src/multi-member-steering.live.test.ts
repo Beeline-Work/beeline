@@ -3,8 +3,8 @@
  *
  * Two participants steering one live session:
  *   - TLC + subchannel via Body with real buzz-agent + real LLM.
- *   - TWO member identities BOTH submit steering messages that the body bridges
- *     into the SAME session (session_prompt).
+ *   - Member 1 redirects an in-flight prompt through ACP live steering.
+ *   - Member 2 follows up on the same session after that turn completes.
  *   - Asserts:
  *     (a) Both prompts reached the session (ACP-level or effect-level evidence).
  *     (b) BOTH members' subscriptions receive the same agent-activity events.
@@ -15,7 +15,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdirSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -225,6 +225,94 @@ describe('multi-member steering', () => {
     expect(ctx.sessionId).toBeTruthy();
     expect(ctx.sessionId.startsWith('ses_')).toBe(true);
   });
+
+  it(
+    '(G10) incorporates a Room steer before the active run completes',
+    async () => {
+      if (ctx.skipped || !ctx.member1) return;
+
+      const session = ctx.body!.getSession(ctx.subchannelId)!;
+      const originalFile = resolve(session.worktreePath!, `ORIGINAL-${RUN_MARKER}.txt`);
+      const redirectedFile = resolve(session.worktreePath!, `REDIRECTED-${RUN_MARKER}.txt`);
+      const redirectedContent = `live redirect ${RUN_MARKER}`;
+      let originalSettled = false;
+      let resolveToolStarted!: () => void;
+      const toolStarted = new Promise<void>((resolveStarted) => {
+        resolveToolStarted = resolveStarted;
+      });
+      const onUpdate = (update: { sessionId: string; update: Record<string, unknown> }) => {
+        if (
+          update.sessionId === ctx.sessionId &&
+          update.update.sessionUpdate === 'tool_call' &&
+          update.update.status === 'pending'
+        ) {
+          resolveToolStarted();
+        }
+      };
+      session.client.on('session/update', onUpdate);
+
+      const originalPrompt = session.client
+        .sessionPrompt(
+          ctx.sessionId,
+          [
+            'Start this task now. Your first action must be one shell tool call containing only: sleep 12',
+            'Do not combine that sleep with another command or edit any file in the same tool call.',
+            'After the sleep returns, reconsider the newest user instruction before doing file work.',
+            `If there is no newer instruction, create ${originalFile} containing "original ${RUN_MARKER}".`,
+          ].join('\n'),
+          120_000,
+        )
+        .finally(() => {
+          originalSettled = true;
+        });
+
+      try {
+        await Promise.race([
+          toolStarted,
+          sleep(45_000).then(() => {
+            throw new Error('agent did not start the initial sleep tool call');
+          }),
+        ]);
+        expect(originalSettled).toBe(false);
+        const activeRunId = session.client.activeRunId(ctx.sessionId);
+        expect(activeRunId).toMatch(/^run_/);
+        log('initial run active:', activeRunId);
+
+        const steerEvent = signEvent(
+          {
+            pubkey: ctx.member1.publicKey,
+            created_at: Math.floor(Date.now() / 1000),
+            kind: 9,
+            tags: [['h', ctx.subchannelId]],
+            content: [
+              'Redirect the task that is running right now.',
+              `Do NOT create ${originalFile}.`,
+              `Create ${redirectedFile} containing exactly "${redirectedContent}" instead.`,
+            ].join(' '),
+          },
+          ctx.member1.secretKey,
+        );
+        await publishEvent(steerEvent);
+        log('mid-run steer posted:', steerEvent.id);
+        await sleep(2_000);
+
+        const count = await ctx.body!.pollMembers(ctx.subchannelId);
+        log('mid-run pollMembers:', count, 'original settled:', originalSettled);
+        expect(count).toBeGreaterThanOrEqual(1);
+        expect(originalSettled).toBe(false);
+
+        const result = await originalPrompt;
+        log('active run completed after steer:', result.stopReason);
+        const actualRedirectedContent = await readFile(redirectedFile, 'utf8');
+        log('redirected output:', JSON.stringify(actualRedirectedContent));
+        expect(actualRedirectedContent.trimEnd()).toBe(redirectedContent);
+        await expect(readFile(originalFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      } finally {
+        session.client.off('session/update', onUpdate);
+      }
+    },
+    150_000,
+  );
 
   it(
     '(a) member1 steering message reaches the session (pollMembers bridges it)',

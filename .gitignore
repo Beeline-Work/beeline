@@ -50,6 +50,7 @@ coverage/
 # Local agent/build scratch (not committed)
 .scratch/
 .scratch-target/
+.beeline-tools/
 
 # Expo (apps/mobile isolated install)
 apps/mobile/node_modules/

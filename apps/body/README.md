@@ -82,15 +82,28 @@ BUZZY_LLM_MODEL=deepseek/deepseek-chat-v3.1
 
 ### CLI
 
+From a Beeline source checkout, install the CLI and its upstream agent runtimes
+on your current npm-global PATH with one command (requires Node.js 20+, Git,
+Rust 1.88+, and Cargo):
+
+```bash
+npm run install:beeline
+```
+
+The installer reuses `buzz-agent` and `buzz-dev-mcp` already on PATH. You can
+also point it at existing builds with `BUZZ_AGENT_BIN` and `BUZZ_DEV_MCP_BIN`.
+When neither is available, it builds the pinned official `block/buzz` source
+and installs both binaries beside the globally linked `beeline` command.
+
 ```bash
 # Supported user path: run once from the repository the agent will work in.
 # The command redeems the Workspace code, resolves or creates the repo's Room,
 # stores machine-only keys under .git, and launches the durable daemon.
 BUZZY_BODY_LLM_FILE=/path/to/local-model.env \
-  npm run body -- pair BUZZ-XXXX-XXXX
+  beeline pair BUZZ-XXXX-XXXX
 
 # Restart a previously-paired agent after a machine/process restart.
-npm run body -- start
+beeline start
 
 # Provision a read-only agent to a TLC channel
 npm run body -- provision <channel-uuid>
@@ -130,7 +143,7 @@ machine identities, Room ID, repo root, and daemon state live under
 `<git-common-dir>/beeline/agents/<agent-pubkey>/` with mode `0600`. If
 `BUZZ_AGENT_KEY` is absent, `pair` generates the agent key there. The daemon is
 detached from the invoking terminal, retries transient loop failures, and can be
-relaunched with `buzz start`. A restart rediscovers the Room and safely dedupes
+relaunched with `beeline start`. A restart rediscovers the Room and safely dedupes
 handled requests; recovery of an already-running ACP edit turn is deferred.
 
 The coding model always comes from the operator's local environment or

@@ -124,7 +124,7 @@ export default function BuzzAgents() {
       pairingPending.current = true;
       const client = await transport.ensureClient();
       const pairing = await client.createAgentPairingCode(communityId);
-      setPairCommand(`buzz pair ${pairing.code}`);
+      setPairCommand(`beeline pair ${pairing.code}`);
       setPairExpiresAt(pairing.expiresAt);
     } catch (caught) {
       pairingPending.current = false;

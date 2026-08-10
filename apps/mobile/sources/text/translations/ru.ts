@@ -28,17 +28,10 @@ function plural({ count, one, few, many }: { count: number; one: string; few: st
 export const ru: TranslationStructure = {
     tabs: {
         // Tab navigation labels
-        inbox: 'Входящие',
         sessions: 'Терминалы',
         settings: 'Настройки',
     },
 
-    inbox: {
-        // Inbox screen
-        emptyTitle: 'Входящие пусты',
-        emptyDescription: 'Подключитесь к друзьям, чтобы начать делиться сессиями',
-        updates: 'Обновления',
-    },
 
     common: {
         // Simple string constants
@@ -74,39 +67,17 @@ export const ru: TranslationStructure = {
     },
 
     connect: {
-        restoreAccount: 'Восстановить аккаунт',
-        enterSecretKey: 'Пожалуйста, введите секретный ключ',
-        invalidSecretKey: 'Неверный секретный ключ. Проверьте и попробуйте снова.',
         enterUrlManually: 'Ввести URL вручную',
     },
 
     settings: {
         title: 'Настройки',
-        connectedAccounts: 'Подключенные аккаунты',
-        connectAccount: 'Подключить аккаунт',
         github: 'GitHub',
-        machines: 'Машины',
-        showOfflineMachines: ({ count }: { count: number }) => {
-            const lastTwo = count % 100;
-            const lastOne = count % 10;
-            if (lastTwo >= 11 && lastTwo <= 14) return `Показать ${count} оффлайн-машин`;
-            if (lastOne === 1) return `Показать ${count} оффлайн-машину`;
-            if (lastOne >= 2 && lastOne <= 4) return `Показать ${count} оффлайн-машины`;
-            return `Показать ${count} оффлайн-машин`;
-        },
-        hideOfflineMachines: 'Скрыть оффлайн-машины',
         features: 'Функции',
-        social: 'Социальное',
-        account: 'Аккаунт',
-        accountSubtitle: 'Управление учётной записью',
         appearance: 'Внешний вид',
         appearanceSubtitle: 'Настройка внешнего вида приложения',
-        voiceAssistant: 'Голосовой ассистент',
-        voiceAssistantSubtitle: 'Настройка предпочтений голосового взаимодействия',
         featuresTitle: 'Возможности',
         featuresSubtitle: 'Включить или отключить функции приложения',
-        developer: 'Разработчик',
-        developerTools: 'Инструменты разработчика',
         about: 'О программе',
         aboutFooter: 'Happy Coder — мобильное приложение для работы с Codex и Claude Code. Использует сквозное шифрование, все данные аккаунта хранятся только на вашем устройстве. Не связано с Anthropic.',
         whatsNew: 'Что нового',
@@ -115,20 +86,6 @@ export const ru: TranslationStructure = {
         privacyPolicy: 'Политика конфиденциальности',
         termsOfService: 'Условия использования',
         eula: 'EULA',
-        supportUs: 'Поддержите нас',
-        supportUsSubtitlePro: 'Спасибо за вашу поддержку!',
-        supportUsSubtitle: 'Поддержать разработку проекта',
-        scanQrCodeToAuthenticate: 'Отсканируйте QR-код для авторизации',
-        githubConnected: ({ login }: { login: string }) => `Подключен как @${login}`,
-        connectGithubAccount: 'Подключить аккаунт GitHub',
-        claudeAuthSuccess: 'Успешно подключено к Claude',
-        exchangingTokens: 'Обмен токенов...',
-        usage: 'Использование',
-        usageSubtitle: 'Просмотр использования API и затрат',
-        // Dynamic settings messages
-        accountConnected: ({ service }: { service: string }) => `Аккаунт ${service} подключен`,
-        machineStatus: ({ name, status }: { name: string; status: 'online' | 'offline' }) =>
-            `${name} ${status === 'online' ? 'online' : 'offline'}`,
         featureToggled: ({ feature, enabled }: { feature: string; enabled: boolean }) =>
             `${feature} ${enabled ? 'включена' : 'отключена'}`,
     },
@@ -269,16 +226,6 @@ export const ru: TranslationStructure = {
             `Повторить через ${seconds} ${plural({ count: seconds, one: 'секунду', few: 'секунды', many: 'секунд' })}`,
         errorWithCode: ({ message, code }: { message: string; code: number | string }) =>
             `${message} (Ошибка ${code})`,
-        disconnectServiceFailed: ({ service }: { service: string }) => 
-            `Не удалось отключить ${service}`,
-        connectServiceFailed: ({ service }: { service: string }) =>
-            `Не удалось подключить ${service}. Пожалуйста, попробуйте снова.`,
-        failedToLoadFriends: 'Не удалось загрузить список друзей',
-        failedToAcceptRequest: 'Не удалось принять запрос в друзья',
-        failedToRejectRequest: 'Не удалось отклонить запрос в друзья',
-        failedToRemoveFriend: 'Не удалось удалить друга',
-        searchFailed: 'Поиск не удался. Пожалуйста, попробуйте снова.',
-        failedToSendRequest: 'Не удалось отправить запрос в друзья',
     },
 
     newSession: {
@@ -289,31 +236,10 @@ export const ru: TranslationStructure = {
 
     sessionHistory: {
         // Used by session history screen
-        title: 'История сессий',
         empty: 'Сессии не найдены',
-        today: 'Сегодня',
-        yesterday: 'Вчера',
         daysAgo: ({ count }: { count: number }) => `${count} ${plural({ count, one: 'день', few: 'дня', many: 'дней' })} назад`,
-        viewAll: 'Посмотреть все сессии',
     },
 
-    server: {
-        // Used by Server Configuration screen (app/(app)/server.tsx)
-        serverConfiguration: 'Настройка сервера',
-        enterServerUrl: 'Пожалуйста, введите URL сервера',
-        notValidHappyServer: 'Это не валидный сервер Happy',
-        changeServer: 'Изменить сервер',
-        continueWithServer: 'Продолжить с этим сервером?',
-        resetToDefault: 'Сбросить по умолчанию',
-        resetServerDefault: 'Сбросить сервер по умолчанию?',
-        validating: 'Проверка...',
-        validatingServer: 'Проверка сервера...',
-        serverReturnedError: 'Сервер вернул ошибку',
-        failedToConnectToServer: 'Не удалось подключиться к серверу',
-        currentlyUsingCustomServer: 'Сейчас используется пользовательский сервер',
-        customServerUrlLabel: 'URL пользовательского сервера',
-        advancedFeatureFooter: 'Это расширенная функция. Изменяйте сервер только если знаете, что делаете. Вам нужно будет выйти и войти снова после изменения серверов.'
-    },
 
     sessionInfo: {
         // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
@@ -340,8 +266,6 @@ export const ru: TranslationStructure = {
         lastUpdated: 'Последнее обновление',
         sequence: 'Последовательность',
         quickActions: 'Быстрые действия',
-        viewMachine: 'Посмотреть машину',
-        viewMachineSubtitle: 'Посмотреть детали машины и сессии',
         resumeSession: 'Resume Session',
         resumeSessionSubtitle: 'Resume this session on the same machine',
         resumeSessionSameMachineOnly: 'This session can only be resumed on the same machine it started on.',
@@ -707,78 +631,8 @@ export const ru: TranslationStructure = {
         close: 'Закрыть боковой чат',
     },
 
-    settingsVoice: {
-        // Voice settings screen
-        languageTitle: 'Язык',
-        languageDescription: 'Выберите предпочтительный язык для взаимодействия с голосовым помощником. Эта настройка синхронизируется на всех ваших устройствах.',
-        preferredLanguage: 'Предпочтительный язык',
-        preferredLanguageSubtitle: 'Язык, используемый для ответов голосового помощника',
-        language: {
-            searchPlaceholder: 'Поиск языков...',
-            title: 'Языки',
-            footer: ({ count }: { count: number }) => `Доступно ${count} ${plural({ count, one: 'язык', few: 'языка', many: 'языков' })}`,
-            autoDetect: 'Автоопределение',
-        },
-        // Bring your own agent
-        byoTitle: 'Используйте своего агента',
-        byoDescription: 'Используйте собственного агента ElevenLabs вместо стандартного Happy. Подписка не требуется — подключайтесь напрямую через свой аккаунт ElevenLabs. Ваш агент должен определить два клиентских инструмента: messageClaudeCode (отправляет текст агенту кодирования) и processPermissionRequest (разрешает или запрещает использование инструментов). Контекст сессии передаётся через динамическую переменную {{initialConversationContext}}.',
-        customAgentId: 'ElevenLabs Agent ID',
-        customAgentIdNotSet: 'Не настроено',
-        customAgentIdDescription: 'Введите ваш ElevenLabs Agent ID. Оставьте пустым, чтобы использовать стандартный Happy.',
-        customAgentIdPlaceholder: 'e.g. abc123def456',
-        bypassToken: 'Прямое подключение',
-        bypassTokenSubtitle: 'Пропустить сервер Happy, подключиться напрямую к ElevenLabs',
-        promptGuideTitle: 'Руководство по промптам агента',
-        promptGuideDescription: 'Вашему агенту ElevenLabs необходимы:\n\n• Инструмент: messageClaudeCode — параметр: message (string). Отправляет сообщение в активную сессию кодирования.\n• Инструмент: processPermissionRequest — параметр: decision ("allow" или "deny"). Одобряет или отклоняет ожидающее разрешение на использование инструмента.\n• Динамическая переменная: {{initialConversationContext}} — получает историю и контекст сессии при запуске.\n\nАгент выступает голосовым мостом между пользователем и агентами кодирования. Он должен быть кратким, отвечать только при обращении и сообщать, когда агент кодирования завершает работу.',
-        usageTitle: 'Использование (последние 30 дней)',
-        usageFooter: 'Время голосового общения за последние 30 дней. Бесплатный тариф: 20 мин. С подпиской: 5 часов. Макс. 100 разговоров в месяц.',
-        usageLabel: 'Голосовое время',
-        conversationsLabel: 'Разговоры',
-        usageUsed: ({ used, limit }: { used: string; limit: string }) => `${used} использовано из ${limit}`,
-        supportTitle: 'Улучшить голос',
-        supportSubtitle: 'Больше голосового времени и поддержка разработки',
-    },
 
-    settingsAccount: {
-        // Account settings screen
-        accountInformation: 'Информация об аккаунте',
-        status: 'Статус',
-        statusActive: 'Активный',
-        statusNotAuthenticated: 'Не авторизован',
-        anonymousId: 'Анонимный ID',
-        publicId: 'Публичный ID',
-        notAvailable: 'Недоступно',
-        linkNewDevice: 'Привязать новое устройство',
-        linkNewDeviceSubtitle: 'Отсканируйте QR-код для привязки устройства',
-        profile: 'Профиль',
-        name: 'Имя',
-        github: 'GitHub',
-        tapToDisconnect: 'Нажмите для отключения',
-        server: 'Сервер',
-        backup: 'Резервная копия',
-        backupDescription: 'Ваш секретный ключ - единственный способ восстановить ваш аккаунт. Сохраните его в безопасном месте, например в менеджере паролей.',
-        secretKey: 'Секретный ключ',
-        tapToReveal: 'Нажмите для показа',
-        tapToHide: 'Нажмите для скрытия',
-        secretKeyLabel: 'СЕКРЕТНЫЙ КЛЮЧ (НАЖМИТЕ ДЛЯ КОПИРОВАНИЯ)',
-        secretKeyCopied: 'Секретный ключ скопирован в буфер обмена. Сохраните его в безопасном месте!',
-        secretKeyCopyFailed: 'Не удалось скопировать секретный ключ',
-        privacy: 'Конфиденциальность',
-        privacyDescription: 'Помогите улучшить приложение, поделившись анонимными данными об использовании. Никакая личная информация не собирается.',
-        analytics: 'Аналитика',
-        analyticsDisabled: 'Данные не передаются',
-        analyticsEnabled: 'Анонимные данные об использовании передаются',
-        dangerZone: 'Опасная зона',
-        logout: 'Выйти',
-        logoutSubtitle: 'Выйти из аккаунта и очистить локальные данные',
-        logoutConfirm: 'Вы уверены, что хотите выйти? Убедитесь, что вы сохранили резервную копию секретного ключа!',
-    },
 
-    connectButton: {
-        authenticate: 'Авторизация терминала',
-        authenticateWithUrlPaste: 'Авторизация терминала через URL',
-        pasteAuthUrl: 'Вставьте авторизационный URL из терминала',
-    },
 
     updateBanner: {
         updateAvailable: 'Доступно обновление',
@@ -796,29 +650,6 @@ export const ru: TranslationStructure = {
         noEntriesAvailable: 'Записи журнала изменений недоступны.',
     },
 
-    terminal: {
-        // Used by terminal connection screens
-        webBrowserRequired: 'Требуется веб-браузер',
-        webBrowserRequiredDescription: 'Ссылки подключения терминала можно открывать только в веб-браузере по соображениям безопасности. Используйте сканер QR-кодов или откройте эту ссылку на компьютере.',
-        processingConnection: 'Обработка подключения...',
-        invalidConnectionLink: 'Неверная ссылка подключения',
-        invalidConnectionLinkDescription: 'Ссылка подключения отсутствует или неверна. Проверьте URL и попробуйте снова.',
-        connectTerminal: 'Подключить терминал',
-        terminalRequestDescription: 'Терминал запрашивает подключение к вашему аккаунту Happy Coder. Это позволит терминалу безопасно отправлять и получать сообщения.',
-        connectionDetails: 'Детали подключения',
-        publicKey: 'Публичный ключ',
-        encryption: 'Шифрование',
-        endToEndEncrypted: 'Сквозное шифрование',
-        acceptConnection: 'Принять подключение',
-        connecting: 'Подключение...',
-        reject: 'Отклонить',
-        security: 'Безопасность',
-        securityFooter: 'Эта ссылка подключения была безопасно обработана в вашем браузере и никогда не отправлялась на сервер. Ваши личные данные останутся в безопасности, и только вы можете расшифровать сообщения.',
-        securityFooterDevice: 'Это подключение было безопасно обработано на вашем устройстве и никогда не отправлялось на сервер. Ваши личные данные останутся в безопасности, и только вы можете расшифровать сообщения.',
-        clientSideProcessing: 'Обработка на стороне клиента',
-        linkProcessedLocally: 'Ссылка обработана локально в браузере',
-        linkProcessedOnDevice: 'Ссылка обработана локально на устройстве',
-    },
 
     modals: {
         // Used across connect flows and settings
@@ -827,16 +658,6 @@ export const ru: TranslationStructure = {
         deviceLinkedSuccessfully: 'Устройство успешно связано',
         terminalConnectedSuccessfully: 'Терминал успешно подключен',
         invalidAuthUrl: 'Неверный URL авторизации',
-        developerMode: 'Режим разработчика',
-        developerModeEnabled: 'Режим разработчика включен',
-        developerModeDisabled: 'Режим разработчика отключен',
-        disconnectGithub: 'Отключить GitHub',
-        disconnectGithubConfirm: 'Вы уверены, что хотите отключить аккаунт GitHub?',
-        disconnectService: ({ service }: { service: string }) => 
-            `Отключить ${service}`,
-        disconnectServiceConfirm: ({ service }: { service: string }) => 
-            `Вы уверены, что хотите отключить ${service} от вашего аккаунта?`,
-        disconnect: 'Отключить',
         failedToConnectTerminal: 'Не удалось подключить терминал',
         cameraPermissionsRequiredToConnectTerminal: 'Для подключения терминала требуется доступ к камере',
         failedToLinkDevice: 'Не удалось связать устройство',
@@ -845,11 +666,7 @@ export const ru: TranslationStructure = {
 
     navigation: {
         // Navigation titles and screen headers
-        connectTerminal: 'Подключить терминал',
-        linkNewDevice: 'Связать новое устройство',
-        restoreWithSecretKey: 'Восстановить секретным ключом',
         whatsNew: 'Что нового',
-        friends: 'Друзья',
     },
 
     welcome: {
@@ -878,37 +695,6 @@ export const ru: TranslationStructure = {
         offlineUnableToSpawn: 'Запуск отключен: машина offline',
         offlineHelp: '• Убедитесь, что компьютер online\n• Выполните `happy daemon status` для диагностики\n• Используете последнюю версию CLI? Обновите командой `npm install -g happy@latest`',
         launchNewSessionInDirectory: 'Запустить новую сессию в папке',
-        daemon: 'Daemon',
-        status: 'Статус',
-        stopDaemon: 'Остановить daemon',
-        lastKnownPid: 'Последний известный PID',
-        lastKnownHttpPort: 'Последний известный HTTP порт',
-        startedAt: 'Запущен в',
-        cliVersion: 'Версия CLI',
-        daemonStateVersion: 'Версия состояния daemon',
-        activeSessions: ({ count }: { count: number }) => `Активные сессии (${count})`,
-        machineGroup: 'Машина',
-        host: 'Хост',
-        machineId: 'ID машины',
-        username: 'Имя пользователя',
-        homeDirectory: 'Домашний каталог',
-        platform: 'Платформа',
-        architecture: 'Архитектура',
-        lastSeen: 'Последняя активность',
-        never: 'Никогда',
-        metadataVersion: 'Версия метаданных',
-        cliAvailability: 'Доступность CLI',
-        cliInstalled: 'Установлен',
-        cliNotFound: 'Не найден',
-        lastDetected: 'Последнее обнаружение',
-        untitledSession: 'Безымянная сессия',
-        back: 'Назад',
-        dangerZone: 'Опасная зона',
-        delete: 'Удалить машину',
-        deleteFooter: 'Удаляет машину из вашего аккаунта. История сессий сохраняется, но вы больше не сможете запускать новые сессии на ней.',
-        deleteConfirmTitle: 'Удалить эту машину?',
-        deleteConfirmMessage: 'Машина будет удалена из вашего аккаунта. История сессий сохраняется, но вы больше не сможете запускать новые сессии, пока не подключите демон заново.',
-        deleteFailed: 'Не удалось удалить машину.',
     },
 
     message: {
@@ -967,110 +753,8 @@ export const ru: TranslationStructure = {
         mermaidRenderFailed: 'Не удалось отобразить диаграмму mermaid',
     },
 
-    artifacts: {
-        // Artifacts feature
-        title: 'Артефакты',
-        countSingular: '1 артефакт',
-        countPlural: ({ count }: { count: number }) => {
-            const n = Math.abs(count);
-            const n10 = n % 10;
-            const n100 = n % 100;
-            
-            if (n10 === 1 && n100 !== 11) {
-                return `${count} артефакт`;
-            }
-            if (n10 >= 2 && n10 <= 4 && (n100 < 10 || n100 >= 20)) {
-                return `${count} артефакта`;
-            }
-            return `${count} артефактов`;
-        },
-        empty: 'Артефактов пока нет',
-        emptyDescription: 'Создайте первый артефакт, чтобы начать',
-        new: 'Новый артефакт',
-        edit: 'Редактировать артефакт',
-        delete: 'Удалить',
-        updateError: 'Не удалось обновить артефакт. Пожалуйста, попробуйте еще раз.',
-        notFound: 'Артефакт не найден',
-        discardChanges: 'Отменить изменения?',
-        discardChangesDescription: 'У вас есть несохраненные изменения. Вы уверены, что хотите их отменить?',
-        deleteConfirm: 'Удалить артефакт?',
-        deleteConfirmDescription: 'Это действие нельзя отменить',
-        titleLabel: 'ЗАГОЛОВОК',
-        titlePlaceholder: 'Введите заголовок для вашего артефакта',
-        bodyLabel: 'СОДЕРЖИМОЕ',
-        bodyPlaceholder: 'Напишите ваш контент здесь...',
-        emptyFieldsError: 'Пожалуйста, введите заголовок или содержимое',
-        createError: 'Не удалось создать артефакт. Пожалуйста, попробуйте снова.',
-        save: 'Сохранить',
-        saving: 'Сохранение...',
-        loading: 'Загрузка артефактов...',
-        error: 'Не удалось загрузить артефакт',
-    },
 
-    friends: {
-        // Friends feature
-        title: 'Друзья',
-        manageFriends: 'Управляйте своими друзьями и связями',
-        searchTitle: 'Найти друзей',
-        pendingRequests: 'Запросы в друзья',
-        myFriends: 'Мои друзья',
-        noFriendsYet: 'У вас пока нет друзей',
-        findFriends: 'Найти друзей',
-        remove: 'Удалить',
-        pendingRequest: 'Ожидается',
-        sentOn: ({ date }: { date: string }) => `Отправлено ${date}`,
-        accept: 'Принять',
-        reject: 'Отклонить',
-        addFriend: 'Добавить в друзья',
-        alreadyFriends: 'Уже в друзьях',
-        requestPending: 'Запрос отправлен',
-        searchInstructions: 'Введите имя пользователя для поиска друзей',
-        searchPlaceholder: 'Введите имя пользователя...',
-        searching: 'Поиск...',
-        userNotFound: 'Пользователь не найден',
-        noUserFound: 'Пользователь с таким именем не найден',
-        checkUsername: 'Пожалуйста, проверьте имя пользователя и попробуйте снова',
-        howToFind: 'Как найти друзей',
-        findInstructions: 'Ищите друзей по имени пользователя. И вы, и ваш друг должны подключить GitHub для отправки запросов в друзья.',
-        requestSent: 'Запрос в друзья отправлен!',
-        requestAccepted: 'Запрос в друзья принят!',
-        requestRejected: 'Запрос в друзья отклонён',
-        friendRemoved: 'Друг удалён',
-        confirmRemove: 'Удалить из друзей',
-        confirmRemoveMessage: 'Вы уверены, что хотите удалить этого друга?',
-        cannotAddYourself: 'Вы не можете отправить запрос в друзья самому себе',
-        bothMustHaveGithub: 'Оба пользователя должны подключить GitHub, чтобы стать друзьями',
-        status: {
-            none: 'Не подключен',
-            requested: 'Запрос отправлен',
-            pending: 'Запрос ожидается',
-            friend: 'Друзья',
-            rejected: 'Отклонено',
-        },
-        acceptRequest: 'Принять запрос',
-        removeFriend: 'Удалить из друзей',
-        removeFriendConfirm: ({ name }: { name: string }) => `Вы уверены, что хотите удалить ${name} из друзей?`,
-        requestSentDescription: ({ name }: { name: string }) => `Ваш запрос в друзья отправлен пользователю ${name}`,
-        requestFriendship: 'Отправить запрос в друзья',
-        cancelRequest: 'Отменить запрос в друзья',
-        cancelRequestConfirm: ({ name }: { name: string }) => `Отменить ваш запрос в друзья к ${name}?`,
-        denyRequest: 'Отклонить запрос',
-        nowFriendsWith: ({ name }: { name: string }) => `Теперь вы друзья с ${name}`,
-    },
 
-    usage: {
-        // Usage panel strings
-        today: 'Сегодня',
-        last7Days: 'Последние 7 дней',
-        last30Days: 'Последние 30 дней',
-        totalTokens: 'Всего токенов',
-        totalCost: 'Общая стоимость',
-        tokens: 'Токены',
-        cost: 'Стоимость',
-        usageOverTime: 'Использование во времени',
-        byModel: 'По модели',
-        noData: 'Данные об использовании недоступны',
-    },
 
     imageUpload: {
         permissionTitle: 'Доступ к библиотеке фото',
@@ -1087,13 +771,6 @@ export const ru: TranslationStructure = {
         notSupportedMessage: 'Этот агент не поддерживает вложения изображений. Изображения не были отправлены.',
     },
 
-    feed: {
-        // Feed notifications for friend requests and acceptances
-        friendRequestFrom: ({ name }: { name: string }) => `${name} отправил вам запрос в друзья`,
-        friendRequestGeneric: 'Новый запрос в друзья',
-        friendAccepted: ({ name }: { name: string }) => `Вы теперь друзья с ${name}`,
-        friendAcceptedGeneric: 'Запрос в друзья принят',
-    },
 
 } as const;
 

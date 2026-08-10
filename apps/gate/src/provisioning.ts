@@ -22,6 +22,9 @@ import { queryEvents } from './relay.js';
 import { KIND_CREATE_GROUP, KIND_PUT_USER, KIND_REPO_ANNOUNCEMENT } from './buzz.js';
 import type { NostrEvent } from '@beeline/nostr';
 
+const KIND_CHANNEL_ADMINS = 39001;
+const KIND_CHANNEL_MEMBERS = 39002;
+
 export type ChannelRole = 'owner' | 'admin' | 'member' | 'guest' | 'bot';
 
 export interface ProvisioningCheckInput {
@@ -112,23 +115,63 @@ function tagValue(event: NostrEvent, name: string): string | undefined {
   return event.tags.find((t) => t[0] === name)?.[1];
 }
 
+async function queryGroupProjection(
+  kind: number,
+  channelId: string,
+  queryAs: string,
+): Promise<NostrEvent[]> {
+  const byD = await queryEvents([{ kinds: [kind], '#d': [channelId], limit: 5 }], queryAs);
+  if (byD.length > 0) return byD;
+  return queryEvents([{ kinds: [kind], '#h': [channelId], limit: 5 }], queryAs);
+}
+
+function latestProjection(events: NostrEvent[]): NostrEvent | undefined {
+  return [...events].sort((a, b) => {
+    if (a.created_at !== b.created_at) return b.created_at - a.created_at;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  })[0];
+}
+
+function projectedTagRole(tag: string[], fallback: ChannelRole): ChannelRole {
+  const value = tag[3] || tag[2];
+  return value && isRole(value) ? value : fallback;
+}
+
 /**
- * Resolve current channel role from relay state. The latest explicit kind:9000
- * role overrides kind:9007 creator status, allowing a Workspace-member agent
- * to create a Room and immediately remain a plain member.
+ * Resolve current channel role from relay projections. Role mutations have
+ * second-resolution timestamps, so kind:9000 history cannot order a rapid
+ * member → admin transition reliably. The 39001/39002 projections are the
+ * relay's current applied state and preserve creator demotion as well.
  */
 export async function resolveChannelRole(
   channelId: string,
   pubkey: string,
   queryAs: string,
 ): Promise<ChannelRole | null> {
+  const adminEvents = await queryGroupProjection(KIND_CHANNEL_ADMINS, channelId, queryAs);
+  const admins = latestProjection(adminEvents);
+  const adminTag = admins?.tags.find((tag) => tag[0] === 'p' && tag[1] === pubkey);
+  if (adminTag) return projectedTagRole(adminTag, 'admin');
+
+  const memberEvents = await queryGroupProjection(KIND_CHANNEL_MEMBERS, channelId, queryAs);
+  const members = latestProjection(memberEvents);
+  const memberTag = members?.tags.find((tag) => tag[0] === 'p' && tag[1] === pubkey);
+  if (memberTag) return projectedTagRole(memberTag, 'member');
+  if (adminEvents.length > 0 || memberEvents.length > 0) return null;
+
+  // Compatibility fallback for relays that do not expose NIP-29 projections.
   const puts = await queryEvents(
     [{ kinds: [KIND_PUT_USER], '#h': [channelId], '#p': [pubkey], limit: 50 }],
     queryAs,
   );
   if (puts.length > 0) {
-    puts.sort((a, b) => b.created_at - a.created_at);
-    const latest = puts[0]!;
+    const latestTimestamp = Math.max(...puts.map((event) => event.created_at));
+    const latestPuts = puts.filter((event) => event.created_at === latestTimestamp);
+    const latestRoles = new Set(latestPuts.map((event) => tagValue(event, 'role') ?? 'member'));
+    // Same-second conflicting roles have no canonical order. Fail closed
+    // instead of accidentally granting the more privileged interpretation.
+    if (latestRoles.size !== 1) return null;
+    const latest = latestPuts[0]!;
     const role = tagValue(latest, 'role');
     if (role && isRole(role)) return role;
     return 'member';

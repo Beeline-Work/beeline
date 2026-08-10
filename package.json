@@ -20,6 +20,7 @@
     "stack:down": "docker compose -f relay-stack/compose.yml down -v",
     "smoke": "node --import tsx scripts/smoke.ts",
     "prove": "node --import tsx scripts/money-shot.ts",
+    "install:beeline": "bash scripts/install-beeline.sh",
     "mobile:install": "npm install --prefix apps/mobile",
     "mobile:web": "npm run web --prefix apps/mobile",
     "mobile:typecheck": "npm run typecheck --prefix apps/mobile"

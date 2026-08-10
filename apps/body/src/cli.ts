@@ -42,14 +42,14 @@ function usage(): void {
 Buzzy Body — agent session manager.
 
 Usage:
-  body provision <channel-uuid>          Attach read-only agent to a TLC
-  body serve <channel-uuid> <owner> <repo>  Internal: serve one explicitly-wired Room
-  body open <channel-uuid> <owner> <repo>  Open subchannel + edit session
-  body archive <subchannel-uuid>         Archive subchannel
-  body create-and-provision <name>       Create a new TLC + provision agent
-  buzz pair <BUZZ-XXXX-XXXX>             Pair this repo and start its durable Room agent
-  buzz start [agent-pubkey]              Restart a paired repo's durable agent
-  buzz serve-souls                       Run the server-held soul generator
+  beeline provision <channel-uuid>          Attach read-only agent to a TLC
+  beeline serve <channel-uuid> <owner> <repo>  Internal: serve one explicitly-wired Room
+  beeline open <channel-uuid> <owner> <repo>  Open subchannel + edit session
+  beeline archive <subchannel-uuid>         Archive subchannel
+  beeline create-and-provision <name>       Create a new TLC + provision agent
+  beeline pair <BUZZ-XXXX-XXXX>             Pair this repo and start its durable Room agent
+  beeline start [agent-pubkey]              Restart a paired repo's durable agent
+  beeline serve-souls                       Run the server-held soul generator
 
 Options:
   --workspace-root <path>   Agent workspace (default: ./body-workspace)
@@ -176,7 +176,9 @@ async function main(): Promise<void> {
       : configs;
     if (matching.length === 0) throw new Error('no paired agent runtime found in this repository');
     if (matching.length > 1) {
-      throw new Error('multiple paired agents found; pass the agent pubkey shown by `buzz pair`');
+      throw new Error(
+        'multiple paired agents found; pass the agent pubkey shown by `beeline pair`',
+      );
     }
     const runtime = await readRuntimeRecord(matching[0]!);
     await assertRuntimeSafe(runtime);

@@ -1,0 +1,428 @@
+import { nip98AuthHeader, signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
+import type { Identity } from './types.js';
+
+export const OIDC_BIND_PROTOCOL = 1 as const;
+export const OIDC_BIND_KIND = 24_250 as const;
+export const OIDC_BIND_MARKER = 'beeline-oidc-bind-v1' as const;
+
+const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
+const HEX_KEY_RE = /^[0-9a-f]{64}$/;
+
+export interface OidcBindChallenge {
+  protocol: typeof OIDC_BIND_PROTOCOL;
+  kind: typeof OIDC_BIND_KIND;
+  marker: typeof OIDC_BIND_MARKER;
+  ticket: string;
+  challenge: string;
+  provider: string;
+  audience: string;
+  subject: string;
+  community: string;
+  issued_at: number;
+  expires_at: number;
+}
+
+export interface OidcBindStart {
+  authorizationUrl: string;
+  redirectUri: string;
+  state: string;
+}
+
+export interface OidcBindResult {
+  linked: true;
+  idempotent: boolean;
+  pubkey: string;
+}
+
+export interface OidcIdentityLink {
+  community: string;
+  provider: string;
+  audience: string;
+  subject: string;
+  pubkey: string;
+  created_at: string;
+}
+
+export class OidcBindError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly status?: number,
+  ) {
+    super(message);
+    this.name = 'OidcBindError';
+  }
+
+  get retryable(): boolean {
+    return this.status === undefined || this.status >= 500;
+  }
+}
+
+function endpoint(baseUrl: string, path: string): URL {
+  const base = new URL(baseUrl);
+  if (base.protocol !== 'https:' && base.protocol !== 'http:') {
+    throw new OidcBindError('invalid_configuration', 'auth base URL must use HTTP or HTTPS');
+  }
+  if (base.username || base.password || base.search || base.hash) {
+    throw new OidcBindError('invalid_configuration', 'auth base URL must be an origin');
+  }
+  return new URL(path, `${base.origin}/`);
+}
+
+function exactParam(params: URLSearchParams, name: string): string {
+  const values = params.getAll(name);
+  if (values.length !== 1 || !values[0]) {
+    throw new OidcBindError('invalid_callback', `OIDC callback has missing or duplicate ${name}`);
+  }
+  return values[0];
+}
+
+function integerParam(params: URLSearchParams, name: string): number {
+  const raw = exactParam(params, name);
+  if (!/^\d{1,12}$/.test(raw)) {
+    throw new OidcBindError('invalid_callback', `OIDC callback has invalid ${name}`);
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) {
+    throw new OidcBindError('invalid_callback', `OIDC callback has invalid ${name}`);
+  }
+  return value;
+}
+
+function normalizedIssuer(value: string): string {
+  const issuer = new URL(value);
+  if (
+    issuer.protocol !== 'https:' &&
+    !(
+      issuer.protocol === 'http:' &&
+      ['localhost', '127.0.0.1', '10.0.2.2'].includes(issuer.hostname)
+    )
+  ) {
+    throw new OidcBindError('invalid_callback', 'OIDC provider must use HTTPS');
+  }
+  if (issuer.username || issuer.password || issuer.search || issuer.hash) {
+    throw new OidcBindError('invalid_callback', 'OIDC provider URL is malformed');
+  }
+  issuer.hostname = issuer.hostname.toLowerCase();
+  if (
+    (issuer.protocol === 'https:' && issuer.port === '443') ||
+    (issuer.protocol === 'http:' && issuer.port === '80')
+  ) {
+    issuer.port = '';
+  }
+  return issuer.toString().replace(/\/$/, '');
+}
+
+function assertChallenge(value: OidcBindChallenge): void {
+  if (value.protocol !== OIDC_BIND_PROTOCOL || value.kind !== OIDC_BIND_KIND) {
+    throw new OidcBindError('unsupported_protocol', 'OIDC bind protocol is not supported');
+  }
+  if (value.marker !== OIDC_BIND_MARKER) {
+    throw new OidcBindError('invalid_callback', 'OIDC bind marker is invalid');
+  }
+  if (!TOKEN_RE.test(value.ticket) || !TOKEN_RE.test(value.challenge)) {
+    throw new OidcBindError('invalid_callback', 'OIDC bind ticket or challenge is invalid');
+  }
+  if (
+    !value.audience ||
+    !value.subject ||
+    !value.community ||
+    value.audience.length > 512 ||
+    value.subject.length > 512 ||
+    value.community.length > 512
+  ) {
+    throw new OidcBindError('invalid_callback', 'OIDC bind identity fields are invalid');
+  }
+  if (normalizedIssuer(value.provider) !== value.provider) {
+    throw new OidcBindError('invalid_callback', 'OIDC provider is not normalized');
+  }
+  if (
+    !Number.isSafeInteger(value.issued_at) ||
+    !Number.isSafeInteger(value.expires_at) ||
+    value.expires_at <= value.issued_at ||
+    value.expires_at - value.issued_at > 5 * 60
+  ) {
+    throw new OidcBindError('invalid_callback', 'OIDC bind time window is invalid');
+  }
+}
+
+/** Build the server-owned OAuth start URL. PKCE and nonce stay server-side. */
+export function startOidcBind(
+  baseUrl: string,
+  input: { redirectUri: string; state: string },
+): OidcBindStart {
+  if (!TOKEN_RE.test(input.state)) {
+    throw new OidcBindError('invalid_state', 'OIDC app state must be 32 random bytes');
+  }
+  const base = endpoint(baseUrl, '/');
+  const redirect = new URL(input.redirectUri);
+  const isAssociatedLink =
+    redirect.protocol === 'https:' &&
+    redirect.origin === base.origin &&
+    redirect.pathname === '/auth/oidc/mobile-callback' &&
+    !redirect.search &&
+    !redirect.hash;
+  const isLoopback = ['localhost', '127.0.0.1', '10.0.2.2'].includes(base.hostname);
+  const isEmulatorScheme = isLoopback && redirect.protocol === 'buzzy:';
+  if (
+    (!isAssociatedLink && !isEmulatorScheme) ||
+    redirect.username ||
+    redirect.password ||
+    (isEmulatorScheme && (redirect.search || redirect.hash))
+  ) {
+    throw new OidcBindError(
+      'invalid_redirect',
+      'OIDC completion must use the relay associated link (custom schemes are emulator-only)',
+    );
+  }
+  const url = endpoint(baseUrl, '/auth/oidc/start');
+  url.searchParams.set('app_redirect', redirect.toString());
+  url.searchParams.set('app_state', input.state);
+  return { authorizationUrl: url.toString(), redirectUri: redirect.toString(), state: input.state };
+}
+
+/** Parse and strictly validate the native completion URL before any key signs it. */
+export function parseOidcBindCallback(
+  callbackUrl: string,
+  expectedState: string,
+): OidcBindChallenge {
+  const url = new URL(callbackUrl);
+  const state = exactParam(url.searchParams, 'state');
+  if (state !== expectedState)
+    throw new OidcBindError('state_mismatch', 'OIDC callback state mismatch');
+  const errors = url.searchParams.getAll('error');
+  if (errors.length > 1)
+    throw new OidcBindError('invalid_callback', 'OIDC callback has duplicate error');
+  if (errors[0]) {
+    const message = url.searchParams.getAll('message');
+    if (message.length > 1)
+      throw new OidcBindError('invalid_callback', 'OIDC callback has duplicate message');
+    throw new OidcBindError(errors[0], message[0] || 'Google authorization did not complete');
+  }
+  const allowed = new Set([
+    'state',
+    'protocol',
+    'kind',
+    'marker',
+    'ticket',
+    'challenge',
+    'provider',
+    'audience',
+    'subject',
+    'community',
+    'issued_at',
+    'expires_at',
+  ]);
+  for (const key of url.searchParams.keys()) {
+    if (!allowed.has(key))
+      throw new OidcBindError('invalid_callback', `unexpected OIDC callback field: ${key}`);
+  }
+  const challenge: OidcBindChallenge = {
+    protocol: integerParam(url.searchParams, 'protocol') as 1,
+    kind: integerParam(url.searchParams, 'kind') as 24_250,
+    marker: exactParam(url.searchParams, 'marker') as typeof OIDC_BIND_MARKER,
+    ticket: exactParam(url.searchParams, 'ticket'),
+    challenge: exactParam(url.searchParams, 'challenge'),
+    provider: exactParam(url.searchParams, 'provider'),
+    audience: exactParam(url.searchParams, 'audience'),
+    subject: exactParam(url.searchParams, 'subject'),
+    community: exactParam(url.searchParams, 'community'),
+    issued_at: integerParam(url.searchParams, 'issued_at'),
+    expires_at: integerParam(url.searchParams, 'expires_at'),
+  };
+  assertChallenge(challenge);
+  return challenge;
+}
+
+/** Sign every authoritative field supplied by the one-use bind challenge. */
+export function buildOidcBindEvent(
+  challenge: OidcBindChallenge,
+  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
+  createdAt = Math.floor(Date.now() / 1_000),
+): NostrEvent {
+  assertChallenge(challenge);
+  if (!HEX_KEY_RE.test(identity.publicKey) || !Number.isSafeInteger(createdAt)) {
+    throw new OidcBindError('invalid_identity', 'OIDC bind signer is invalid');
+  }
+  return signEvent(
+    {
+      pubkey: identity.publicKey,
+      created_at: createdAt,
+      kind: OIDC_BIND_KIND,
+      tags: [
+        ['t', OIDC_BIND_MARKER],
+        ['protocol', String(challenge.protocol)],
+        ['ticket', challenge.ticket],
+        ['challenge', challenge.challenge],
+        ['provider', challenge.provider],
+        ['audience', challenge.audience],
+        ['subject', challenge.subject],
+        ['community', challenge.community],
+        ['issued_at', String(challenge.issued_at)],
+        ['expires_at', String(challenge.expires_at)],
+      ],
+      content: '',
+    },
+    identity.secretKey,
+  );
+}
+
+function assertBindEvent(challenge: OidcBindChallenge, event: NostrEvent): void {
+  const expected: ReadonlyArray<readonly [string, string]> = [
+    ['t', OIDC_BIND_MARKER],
+    ['protocol', String(challenge.protocol)],
+    ['ticket', challenge.ticket],
+    ['challenge', challenge.challenge],
+    ['provider', challenge.provider],
+    ['audience', challenge.audience],
+    ['subject', challenge.subject],
+    ['community', challenge.community],
+    ['issued_at', String(challenge.issued_at)],
+    ['expires_at', String(challenge.expires_at)],
+  ];
+  if (
+    event.kind !== OIDC_BIND_KIND ||
+    event.content !== '' ||
+    event.tags.length !== expected.length
+  ) {
+    throw new OidcBindError('invalid_bind_event', 'bind event shape is invalid');
+  }
+  for (const [name, value] of expected) {
+    const matches = event.tags.filter((tag) => tag[0] === name);
+    if (matches.length !== 1 || matches[0]!.length !== 2 || matches[0]![1] !== value) {
+      throw new OidcBindError(
+        'invalid_bind_event',
+        `bind event has missing, duplicate, or mismatched ${name}`,
+      );
+    }
+  }
+  if (
+    event.created_at < challenge.issued_at - 60 ||
+    event.created_at > challenge.expires_at ||
+    !verifyEvent(event)
+  ) {
+    throw new OidcBindError('invalid_bind_event', 'bind event signature or timestamp is invalid');
+  }
+}
+
+async function responseBody(response: Response): Promise<Record<string, unknown>> {
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    body = null;
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new OidcBindError(
+      'invalid_response',
+      'auth service returned an invalid response',
+      response.status,
+    );
+  }
+  return body as Record<string, unknown>;
+}
+
+function serviceError(body: Record<string, unknown>, status: number): OidcBindError {
+  const code = typeof body.error === 'string' ? body.error : 'auth_service_error';
+  const message =
+    typeof body.message === 'string' ? body.message : `auth service returned HTTP ${status}`;
+  return new OidcBindError(code, message, status);
+}
+
+/** Submit the signed challenge. The Nostr secret never enters the request body. */
+export async function finishOidcBind(
+  baseUrl: string,
+  challenge: OidcBindChallenge,
+  event: NostrEvent,
+): Promise<OidcBindResult> {
+  assertChallenge(challenge);
+  assertBindEvent(challenge, event);
+  let response: Response;
+  try {
+    response = await fetch(endpoint(baseUrl, '/auth/oidc/bind'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ticket: challenge.ticket, event }),
+    });
+  } catch (error) {
+    throw new OidcBindError(
+      'offline',
+      error instanceof Error ? error.message : 'auth service unavailable',
+    );
+  }
+  const body = await responseBody(response);
+  if (!response.ok) throw serviceError(body, response.status);
+  if (
+    body.linked !== true ||
+    typeof body.idempotent !== 'boolean' ||
+    typeof body.pubkey !== 'string' ||
+    !HEX_KEY_RE.test(body.pubkey) ||
+    body.pubkey !== event.pubkey
+  ) {
+    throw new OidcBindError(
+      'invalid_response',
+      'auth service returned an invalid bind result',
+      response.status,
+    );
+  }
+  return body as unknown as OidcBindResult;
+}
+
+/** Authenticated, tenant-scoped link lookup for a key already held on this device. */
+export async function lookupRecovery(
+  baseUrl: string,
+  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
+): Promise<OidcIdentityLink[]> {
+  if (!HEX_KEY_RE.test(identity.publicKey))
+    throw new OidcBindError('invalid_identity', 'invalid public key');
+  const url = endpoint(baseUrl, `/auth/oidc/links/${identity.publicKey}`).toString();
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'GET'),
+      },
+    });
+  } catch (error) {
+    throw new OidcBindError(
+      'offline',
+      error instanceof Error ? error.message : 'auth service unavailable',
+    );
+  }
+  const body = await responseBody(response);
+  if (!response.ok) throw serviceError(body, response.status);
+  if (!Array.isArray(body.links)) {
+    throw new OidcBindError(
+      'invalid_response',
+      'auth service returned invalid recovery links',
+      response.status,
+    );
+  }
+  return body.links.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new OidcBindError(
+        'invalid_response',
+        'auth service returned invalid recovery link',
+        response.status,
+      );
+    }
+    const link = entry as Record<string, unknown>;
+    if (
+      typeof link.community !== 'string' ||
+      typeof link.provider !== 'string' ||
+      typeof link.audience !== 'string' ||
+      typeof link.subject !== 'string' ||
+      typeof link.pubkey !== 'string' ||
+      !HEX_KEY_RE.test(link.pubkey) ||
+      typeof link.created_at !== 'string' ||
+      !Number.isFinite(Date.parse(link.created_at))
+    ) {
+      throw new OidcBindError(
+        'invalid_response',
+        'auth service returned invalid recovery link',
+        response.status,
+      );
+    }
+    return link as unknown as OidcIdentityLink;
+  });
+}

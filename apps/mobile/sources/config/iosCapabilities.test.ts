@@ -1,19 +1,16 @@
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
 describe('production iOS capabilities', () => {
   it('declares the relay invite domain without enabling push', () => {
     const projectRoot = new URL('../..', import.meta.url).pathname;
-    const output = execFileSync(
-      'npx',
-      ['expo', 'config', '--type', 'introspect', '--json'],
-      {
-        cwd: projectRoot,
-        encoding: 'utf8',
-        env: { ...process.env, APP_ENV: 'production' },
-      },
-    );
+    const output = execFileSync('npx', ['expo', 'config', '--type', 'introspect', '--json'], {
+      cwd: projectRoot,
+      encoding: 'utf8',
+      env: { ...process.env, APP_ENV: 'production' },
+    });
     const config = JSON.parse(output) as {
       ios?: { associatedDomains?: string[] };
       android?: {
@@ -34,10 +31,17 @@ describe('production iOS capabilities', () => {
       };
     };
     const nativeIos = config._internal?.modResults?.ios;
+    const relayAssociation = JSON.parse(
+      readFileSync(
+        new URL(
+          '../../../../relay-stack/web/.well-known/apple-app-site-association',
+          import.meta.url,
+        ),
+        'utf8',
+      ),
+    ) as { applinks?: { details?: Array<{ paths?: string[] }> } };
 
-    expect(config.ios?.associatedDomains).toEqual([
-      'applinks:relay.buzzrouter.com',
-    ]);
+    expect(config.ios?.associatedDomains).toEqual(['applinks:relay.buzzrouter.com']);
     expect(config.android?.package).toBe('app.buzzy.mobile');
     expect(config.android?.intentFilters).toContainEqual(
       expect.objectContaining({
@@ -49,6 +53,11 @@ describe('production iOS capabilities', () => {
             host: 'relay.buzzrouter.com',
             pathPrefix: '/join/',
           },
+          {
+            scheme: 'https',
+            host: 'relay.buzzrouter.com',
+            pathPrefix: '/auth/oidc/mobile-callback',
+          },
         ],
       }),
     );
@@ -56,8 +65,9 @@ describe('production iOS capabilities', () => {
     expect(nativeIos?.entitlements?.['com.apple.developer.associated-domains']).toEqual([
       'applinks:relay.buzzrouter.com',
     ]);
-    expect(nativeIos?.infoPlist?.UIBackgroundModes).not.toContain(
-      'remote-notification',
+    expect(nativeIos?.infoPlist?.UIBackgroundModes).not.toContain('remote-notification');
+    expect(relayAssociation.applinks?.details?.[0]?.paths).toEqual(
+      expect.arrayContaining(['/join/*', '/auth/oidc/mobile-callback']),
     );
   }, 15_000);
 });

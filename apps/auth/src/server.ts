@@ -29,6 +29,10 @@ export interface AuthServerOptions {
   flowTtlMs?: number;
   ticketTtlMs?: number;
   logger?: boolean;
+  /** Exact native completion URLs; never accept an arbitrary OAuth open redirect. */
+  nativeRedirectUris?: string[];
+  /** Local device emulators only. Production browser-session cookies stay Secure. */
+  secureCookies?: boolean;
 }
 
 class ProtocolError extends Error {
@@ -54,14 +58,14 @@ function requiredQueryString(value: unknown, name: string): string {
   return value;
 }
 
-function flowCookie(request: FastifyRequest): string {
+function flowCookie(request: FastifyRequest, cookieName = FLOW_COOKIE): string {
   const matches = (request.headers.cookie ?? '')
     .split(';')
     .map((part) => part.trim())
-    .filter((part) => part.startsWith(`${FLOW_COOKIE}=`));
+    .filter((part) => part.startsWith(`${cookieName}=`));
   if (matches.length !== 1)
     throw new ProtocolError(400, 'invalid_oidc_flow', 'OIDC browser session is missing');
-  const value = matches[0]!.slice(FLOW_COOKIE.length + 1);
+  const value = matches[0]!.slice(cookieName.length + 1);
   if (!/^[A-Za-z0-9_-]{43}$/.test(value)) {
     throw new ProtocolError(400, 'invalid_oidc_flow', 'OIDC browser session is invalid');
   }
@@ -79,6 +83,9 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
   const now = options.now ?? (() => new Date());
   const flowTtlMs = options.flowTtlMs ?? DEFAULT_FLOW_TTL_MS;
   const ticketTtlMs = options.ticketTtlMs ?? DEFAULT_TICKET_TTL_MS;
+  const nativeRedirectUris = new Set(options.nativeRedirectUris ?? []);
+  const cookieSecurity = options.secureCookies === false ? '' : ' Secure;';
+  const flowCookieName = options.secureCookies === false ? 'beeline_oidc_flow' : FLOW_COOKIE;
   if (flowTtlMs < 30_000 || flowTtlMs > 10 * 60_000)
     throw new Error('flow TTL is outside safe bounds');
   if (ticketTtlMs < 30_000 || ticketTtlMs > 5 * 60_000)
@@ -118,6 +125,18 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     return tenant;
   };
 
+  const nativeCompletion = (
+    flow: { appRedirectUri: string | null; appState: string | null },
+    values: Record<string, string | number>,
+  ): URL | null => {
+    if (!flow.appRedirectUri || !flow.appState) return null;
+    const target = new URL(flow.appRedirectUri);
+    target.searchParams.set('state', flow.appState);
+    for (const [name, value] of Object.entries(values))
+      target.searchParams.set(name, String(value));
+    return target;
+  };
+
   const app = Fastify({ logger: options.logger ?? false, bodyLimit: 64 * 1024 });
 
   app.setErrorHandler((error, _request, reply) => {
@@ -136,6 +155,36 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
 
   app.get('/auth/oidc/start', async (request, reply) => {
     const tenant = tenantFor(request);
+    const query = request.query as Record<string, unknown>;
+    const appRedirect = query.app_redirect;
+    const appState = query.app_state;
+    if ((appRedirect === undefined) !== (appState === undefined)) {
+      throw new ProtocolError(
+        400,
+        'invalid_request',
+        'app redirect and state must be supplied together',
+      );
+    }
+    let appRedirectUri: string | null = null;
+    let boundAppState: string | null = null;
+    if (appRedirect !== undefined && appState !== undefined) {
+      const associatedRedirect = `${tenant.origin}/auth/oidc/mobile-callback`;
+      if (
+        typeof appRedirect !== 'string' ||
+        (appRedirect !== associatedRedirect && !nativeRedirectUris.has(appRedirect))
+      ) {
+        throw new ProtocolError(
+          400,
+          'invalid_request',
+          'native completion redirect is not allowed',
+        );
+      }
+      if (typeof appState !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(appState)) {
+        throw new ProtocolError(400, 'invalid_request', 'native completion state is invalid');
+      }
+      appRedirectUri = appRedirect;
+      boundAppState = appState;
+    }
     const issuedAt = now();
     const state = randomToken();
     const nonce = randomToken();
@@ -151,13 +200,15 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       pkceVerifier: verifier,
       browserSessionHash: sha256(browserSession),
       redirectUri,
+      appRedirectUri,
+      appState: boundAppState,
       createdAt: issuedAt,
       expiresAt: new Date(issuedAt.getTime() + flowTtlMs),
     });
     noStore(reply);
     reply.header(
       'set-cookie',
-      `${FLOW_COOKIE}=${browserSession}; Path=/; Max-Age=${Math.floor(flowTtlMs / 1_000)}; Secure; HttpOnly; SameSite=Lax`,
+      `${flowCookieName}=${browserSession}; Path=/; Max-Age=${Math.floor(flowTtlMs / 1_000)};${cookieSecurity} HttpOnly; SameSite=Lax`,
     );
     return reply.redirect(
       options.oidc.authorizationUrl({ state, nonce, codeChallenge, redirectUri }),
@@ -169,7 +220,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     const tenant = tenantFor(request);
     const query = request.query as Record<string, unknown>;
     const state = requiredQueryString(query.state, 'state');
-    const browserSession = flowCookie(request);
+    const browserSession = flowCookie(request, flowCookieName);
     const flow = await options.store.consumeFlow(sha256(state), sha256(browserSession), now());
     if (!flow)
       throw new ProtocolError(
@@ -179,7 +230,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       );
     reply.header(
       'set-cookie',
-      `${FLOW_COOKIE}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax`,
+      `${flowCookieName}=; Path=/; Max-Age=0;${cookieSecurity} HttpOnly; SameSite=Lax`,
     );
     if (
       flow.community !== tenant.community ||
@@ -190,6 +241,11 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       throw new ProtocolError(400, 'invalid_oidc_flow', 'OIDC flow tenant or provider mismatch');
     }
     if (typeof query.error === 'string') {
+      const completion = nativeCompletion(flow, {
+        error: 'oidc_denied',
+        message: 'Google authorization was canceled or denied',
+      });
+      if (completion) return reply.redirect(completion.toString(), 302);
       throw new ProtocolError(401, 'oidc_denied', 'OIDC provider denied the authorization request');
     }
     const code = requiredQueryString(query.code, 'code');
@@ -199,6 +255,11 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       const idToken = await options.oidc.exchangeCode(code, flow.pkceVerifier, flow.redirectUri);
       identity = await options.oidc.verifyIdToken(idToken, flow.nonce);
     } catch {
+      const completion = nativeCompletion(flow, {
+        error: 'invalid_oidc_proof',
+        message: 'Google authorization expired or could not be verified',
+      });
+      if (completion) return reply.redirect(completion.toString(), 302);
       throw new ProtocolError(
         401,
         'invalid_oidc_proof',
@@ -223,7 +284,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       boundPubkey: null,
     });
     noStore(reply);
-    return reply.send({
+    const bindChallenge = {
       protocol: 1,
       kind: OIDC_BIND_KIND,
       marker: OIDC_BIND_MARKER,
@@ -235,7 +296,10 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       community: tenant.community,
       issued_at: Math.floor(issuedAt.getTime() / 1_000),
       expires_at: Math.floor(expiresAt.getTime() / 1_000),
-    });
+    } as const;
+    const completion = nativeCompletion(flow, bindChallenge);
+    if (completion) return reply.redirect(completion.toString(), 302);
+    return reply.send(bindChallenge);
   });
 
   app.post('/auth/oidc/bind', async (request, reply) => {
@@ -253,7 +317,6 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     if (!ticket || ticket.community !== tenant.community) {
       throw new ProtocolError(404, 'unknown_ticket', 'bind ticket not found');
     }
-    if (ticket.consumedAt) throw new ProtocolError(409, 'ticket_used', 'bind ticket already used');
     if (ticket.expiresAt.getTime() < now().getTime()) {
       throw new ProtocolError(410, 'ticket_expired', 'bind ticket expired');
     }
@@ -261,6 +324,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     const verification = verifyBindEvent(
       body.event,
       {
+        protocol: 1,
         ticket: ticketValue,
         challenge: ticket.challenge,
         issuer: ticket.issuer,
@@ -273,8 +337,17 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       now(),
     );
     if (!verification.ok) {
+      if (ticket.consumedAt)
+        throw new ProtocolError(409, 'ticket_used', 'bind ticket already used');
       await options.store.recordFailedTicketAttempt(ticketHash, now());
       throw new ProtocolError(400, 'invalid_bind_event', verification.reason);
+    }
+    if (ticket.consumedAt) {
+      if (ticket.boundPubkey !== verification.event.pubkey) {
+        throw new ProtocolError(409, 'ticket_used', 'bind ticket already used');
+      }
+      noStore(reply);
+      return reply.send({ linked: true, idempotent: true, pubkey: verification.event.pubkey });
     }
 
     const result = await options.store.consumeTicketAndLink(
@@ -284,8 +357,14 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     );
     if (result.status === 'missing')
       throw new ProtocolError(404, 'unknown_ticket', 'bind ticket not found');
-    if (result.status === 'used')
+    if (result.status === 'used') {
+      const raced = await options.store.findTicket(ticketHash);
+      if (raced?.boundPubkey === verification.event.pubkey) {
+        noStore(reply);
+        return reply.send({ linked: true, idempotent: true, pubkey: verification.event.pubkey });
+      }
       throw new ProtocolError(409, 'ticket_used', 'bind ticket already used');
+    }
     if (result.status === 'expired')
       throw new ProtocolError(410, 'ticket_expired', 'bind ticket expired');
     if (result.status === 'conflict') {

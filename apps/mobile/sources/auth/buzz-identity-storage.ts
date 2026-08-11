@@ -30,10 +30,7 @@ const NSEC_STORAGE_OPTIONS: SecureStore.SecureStoreOptions = {
 export const DEFAULT_RELAY_URL = 'https://relay.buzzrouter.com';
 
 function isWeb(): boolean {
-  return (
-    typeof window !== 'undefined' &&
-    typeof window.document !== 'undefined'
-  );
+  return typeof window !== 'undefined' && typeof window.document !== 'undefined';
 }
 
 async function storageGet(key: string): Promise<string | null> {
@@ -108,10 +105,13 @@ export async function clearBuzzIdentity(): Promise<void> {
   await secretRemove();
 }
 
-/** Generate a fresh keypair and persist it, returning the identity. */
-export async function generateBuzzIdentity(name = 'buzzy-mobile'): Promise<Identity> {
+/** Generate a fresh device key. Google onboarding defers persistence until bind succeeds. */
+export async function generateBuzzIdentity(
+  name = 'buzzy-mobile',
+  options: { persist?: boolean } = {},
+): Promise<Identity> {
   const identity = createIdentity(name.trim() || 'buzzy-mobile');
-  await saveBuzzIdentity(identity);
+  if (options.persist !== false) await saveBuzzIdentity(identity);
   return identity;
 }
 

@@ -64,7 +64,7 @@ async function createGroup(
     tags.push([TAG_COMMUNITY, channelId]);
   }
   const event = sign(owner, KIND_CREATE_GROUP, tags);
-  await publishEvent(event);
+  await publishEvent(event, owner);
   return channelId;
 }
 
@@ -97,7 +97,7 @@ export async function setMemberRole(
   ];
   if (opts?.extraTags) tags.push(...opts.extraTags);
   const event = sign(actor, KIND_PUT_USER, tags);
-  await publishEvent(event);
+  await publishEvent(event, actor);
 }
 
 /**
@@ -113,7 +113,7 @@ export async function archiveChannel(actor: Identity, channelId: string): Promis
     ['h', channelId],
     ['archived', 'true'],
   ]);
-  await publishEvent(event);
+  await publishEvent(event, actor);
 }
 
 /**
@@ -133,5 +133,5 @@ export async function announceRepo(
     ['buzz-channel', channelId],
     ['buzz-protect', 'refs/heads/main', 'push:admin', 'no-force-push'],
   ]);
-  await publishEvent(event);
+  await publishEvent(event, owner);
 }

@@ -17,7 +17,7 @@ const communityId = '11111111-1111-4111-8111-111111111111';
 const person = createIdentity('person');
 const outsider = createIdentity('outsider');
 const http = { baseUrl: 'http://relay.test', host: 'relay.test' };
-const ctx: ChannelOpsContext = { http, identity: person };
+const ctx: ChannelOpsContext = { http: { ...http, identity: person }, identity: person };
 
 function signed(identity: typeof person, kind: number, tags: string[][], content = ''): NostrEvent {
   return signEvent(

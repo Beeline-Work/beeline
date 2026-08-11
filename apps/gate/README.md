@@ -85,12 +85,13 @@ two independent Nostr identities.
 ### Provisioning check (library + CLI)
 
 ```ts
-import { checkAgentNotPushAllowed, assertAgentNotPushAllowed } from './provisioning.js';
+import { checkAgentNotPushAllowed, createRelayClient } from '@beeline/gate';
 
 const result = await checkAgentNotPushAllowed({
   ownerHex,
   repo,
   agentPubkey,
+  relay: createRelayClient(agentIdentity),
 });
 // result.ok === true  → agent cannot push the protected branch
 // result.ok === false → MISCONFIG; do not trust this channel+repo
@@ -99,7 +100,7 @@ const result = await checkAgentNotPushAllowed({
 CLI (exit 0 pass / 1 fail):
 
 ```sh
-node --import tsx src/provisioning.ts <ownerHex> <repo> <agentPubkey>
+BUZZY_QUERY_NSEC=nsec1... node --import tsx src/provisioning.ts <ownerHex> <repo> <agentPubkey>
 ```
 
 ## Env
@@ -108,3 +109,4 @@ node --import tsx src/provisioning.ts <ownerHex> <repo> <agentPubkey>
 | -------------------- | ---------------------- | ------------------------------------------------------------- |
 | `BUZZY_RELAY_HOST`   | `relay.buzzrouter.com` | Relay Host header + authority; live tests pin the local stack |
 | `BUZZY_RELAY_SCHEME` | `https`                | Relay HTTP scheme; live tests pin `http`                      |
+| `BUZZY_QUERY_NSEC`   | —                      | Signing key for provisioning CLI NIP-98 relay reads           |

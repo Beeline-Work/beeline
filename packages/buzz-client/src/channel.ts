@@ -19,7 +19,7 @@ import {
   TAG_COMMUNITY,
   TAG_PARENT,
 } from './kinds.js';
-import { publishEvent, queryEvents, type HttpBridgeOptions } from './http.js';
+import { publishEvent, queryEvents, type AuthenticatedHttpBridgeOptions } from './http.js';
 import {
   parseMembersEvent,
   parseMetadataEvent,
@@ -82,7 +82,7 @@ async function isRegisteredAgentKey(ctx: ChannelOpsContext, pubkey: string): Pro
 }
 
 export interface ChannelOpsContext {
-  http: HttpBridgeOptions;
+  http: AuthenticatedHttpBridgeOptions;
   identity: Identity;
 }
 

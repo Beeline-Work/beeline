@@ -27,7 +27,7 @@ const agentIdentity = createAgentIdentity('Buzzy Agent');
 const http = { baseUrl: 'http://relay.test', host: 'relay.test' };
 
 function ctx(identity = agentIdentity): ChannelOpsContext {
-  return { http, identity };
+  return { http: { ...http, identity }, identity };
 }
 
 function signed(identity: typeof owner, kind: number, tags: string[][], content = ''): NostrEvent {

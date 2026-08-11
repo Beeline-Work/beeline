@@ -17,6 +17,11 @@ export interface HttpBridgeOptions {
   identity?: Pick<Identity, 'secretKey' | 'publicKey'>;
 }
 
+/** HTTP bridge options whose signing identity cannot be omitted accidentally. */
+export interface AuthenticatedHttpBridgeOptions extends HttpBridgeOptions {
+  identity: Pick<Identity, 'secretKey' | 'publicKey'>;
+}
+
 function bridgeHeaders(
   opts: HttpBridgeOptions,
   pubkey: string,

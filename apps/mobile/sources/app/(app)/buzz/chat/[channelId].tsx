@@ -3,7 +3,7 @@
  *
  * Grok Mono Hull design: neutral metal surfaces with redundant state encoding.
  */
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -32,10 +32,12 @@ import { groknight } from '@/buzz/groknight';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
 import { countRoomParticipants } from '@/buzz/room-participants';
+import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
 import { ChangeReviewPanel } from '@/components/buzz/ChangeReviewPanel';
+import { AgentAvatar } from '@/components/buzz/AgentAvatar';
 import {
   HullSurface,
   MonoButton,
@@ -110,6 +112,7 @@ function eventId(e: SessionEvent, fallback: string): string {
 
 /** Extract pubkey from a SessionEvent. */
 function eventPubkey(e: SessionEvent): string | undefined {
+  if (e.type === 'assistant_delta') return e.pubkey;
   if (e.type === 'raw') {
     const p = e.payload as Record<string, unknown> | undefined;
     if (p && typeof p.pubkey === 'string') return p.pubkey;
@@ -153,9 +156,11 @@ function eventHasTag(e: SessionEvent, tagName: string, tagValue?: string): boole
  * mobile projections that retained content but dropped the raw Nostr tags.
  */
 function isCornerControlMessage(e: SessionEvent, text: string): boolean {
-  return eventHasTag(e, 't', 'body-control')
-    || Boolean(eventTagValue(e, 'subchannel'))
-    || /^Agent opened(?: #| a work branch for:)/.test(text);
+  return (
+    eventHasTag(e, 't', 'body-control') ||
+    Boolean(eventTagValue(e, 'subchannel')) ||
+    /^Agent opened(?: #| a work branch for:)/.test(text)
+  );
 }
 
 export default function BuzzChat() {
@@ -181,11 +186,16 @@ export default function BuzzChat() {
   const [availableAgents, setAvailableAgents] = useState<Agent[]>([]);
   const [roomAgentPubkeys, setRoomAgentPubkeys] = useState<Set<string>>(new Set());
   const [invitingAgentPubkey, setInvitingAgentPubkey] = useState<string | null>(null);
+  const [participantAgents, setParticipantAgents] = useState<Agent[]>([]);
   const [requestingAgent, setRequestingAgent] = useState<Agent | null>(null);
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
   const [roomName, setRoomName] = useState(ROOM_LABEL);
   const [participantCounts, setParticipantCounts] = useState({ humans: 0, agents: 0 });
   const [composerFocused, setComposerFocused] = useState(false);
+  const agentByPubkey = useMemo(
+    () => new Map(availableAgents.map((agent) => [agent.pubkey, agent])),
+    [availableAgents],
+  );
 
   // Helper to add new messages, deduplicating by id.
   const addMessages = useCallback((newMsgs: DisplayMessage[]) => {
@@ -218,13 +228,21 @@ export default function BuzzChat() {
         setUserPubkey(identity.publicKey);
 
         const client = await t.ensureClient();
-        const [availableCommunities, channelCommunityId, channelMetadata, roomMembers] =
+        const [availableCommunities, directCommunityId, channelMetadata, roomMembers, parentId] =
           await Promise.all([
             client.listCommunities(),
             client.getChannelCommunityId(decodedId),
             client.getChannelMetadata(decodedId),
             client.listMembers(decodedId),
+            t.getParentChannelId(decodedId),
           ]);
+        // Corners inherit their Workspace from the parent Room. Their create event
+        // predates the redundant community tag, so resolve through the parent when
+        // needed before loading cosmetic agent overlays.
+        const channelCommunityId =
+          directCommunityId ??
+          (parentId ? await client.getChannelCommunityId(parentId) : null) ??
+          null;
         const [communityAgents, identityIsAgent] = await Promise.all([
           channelCommunityId ? client.listAgents(channelCommunityId) : Promise.resolve([]),
           client.isAgentIdentity(identity.publicKey),
@@ -233,16 +251,14 @@ export default function BuzzChat() {
           setCommunities(availableCommunities);
           setActiveCommunityId(channelCommunityId);
           setAvailableAgents(communityAgents);
-          setRoomAgentPubkeys(
-            new Set(
-              roomMembers
-                .map((member) => member.pubkey)
-                .filter((pubkey) => communityAgents.some((agent) => agent.pubkey === pubkey)),
-            ),
-          );
+          const roomPubkeys = new Set(roomMembers.map((member) => member.pubkey));
+          const roomAgents = communityAgents.filter((agent) => roomPubkeys.has(agent.pubkey));
+          setRoomAgentPubkeys(new Set(roomAgents.map((agent) => agent.pubkey)));
+          setParticipantAgents(roomAgents);
           setViewerIsAgent(identityIsAgent);
           setRoomName(channelMetadata?.name?.trim() || ROOM_LABEL);
           setParticipantCounts(countRoomParticipants(roomMembers, communityAgents));
+          if (parentId) setParentChannelId(parentId);
         }
         await Promise.all([
           saveActiveCommunityId(identity.publicKey, channelCommunityId),
@@ -320,11 +336,6 @@ export default function BuzzChat() {
 
         // Check if this channel is a subchannel (has parent).
         // The parent linkage lives on the 9007 create event, not on 39000 metadata.
-        const parentId = await t.getParentChannelId(decodedId);
-        if (parentId) {
-          setParentChannelId(parentId);
-        }
-
         // Check if channel is archived
         const archived = await t.isChannelArchived(decodedId);
         if (archived) setIsArchived(true);
@@ -476,6 +487,12 @@ export default function BuzzChat() {
       try {
         await transport.inviteAgentToChannel(decodedId, agent.pubkey, activeCommunityId);
         setRoomAgentPubkeys((current) => new Set([...current, agent.pubkey]));
+        setParticipantAgents((current) =>
+          current.some((participant) => participant.pubkey === agent.pubkey)
+            ? current
+            : [...current, agent],
+        );
+        setParticipantCounts((current) => ({ ...current, agents: current.agents + 1 }));
         setRequestingAgent(agent);
       } catch (err) {
         console.warn('Agent invite failed:', err);
@@ -527,11 +544,19 @@ export default function BuzzChat() {
 
       // ── Merge summary ────────────────────────────────────────────
       if (item.isMergeSummary) {
+        const mergeAgent = item.pubkey ? agentByPubkey.get(item.pubkey) : undefined;
+        const mergeDisplay = mergeAgent
+          ? resolveAgentDisplayIdentity(item.pubkey!, mergeAgent)
+          : null;
         return (
           <View style={styles.mergeSummaryBubble}>
             <Text style={styles.mergeSummaryTitle}>✓ {CORNER_LABEL} merged</Text>
             <Text style={styles.mergeSummaryText}>{item.text}</Text>
-            {item.pubkey && <Text style={styles.mergeSummaryPubkey}>{shortNpub(item.pubkey)}</Text>}
+            {item.pubkey && (
+              <Text style={styles.mergeSummaryPubkey}>
+                {mergeDisplay?.name ?? shortNpub(item.pubkey)}
+              </Text>
+            )}
           </View>
         );
       }
@@ -548,17 +573,38 @@ export default function BuzzChat() {
       // ── Regular message bubble ───────────────────────────────────
       const isBody = item.pubkey && BODY_PUBKEYS.has(item.pubkey);
       const isOwn = item.isUser;
-      const isAgent = item.isAgentActivity || isBody;
+      const knownAgent = item.pubkey ? agentByPubkey.get(item.pubkey) : undefined;
+      const isAgent = item.isAgentActivity || isBody || Boolean(knownAgent);
+      const display = isAgent
+        ? resolveAgentDisplayIdentity(item.pubkey ?? 'unknown-agent', knownAgent)
+        : null;
+      const requestedAgent = item.requestAgentPubkey
+        ? agentByPubkey.get(item.requestAgentPubkey)
+        : undefined;
+      const requestedDisplay = item.requestAgentPubkey
+        ? resolveAgentDisplayIdentity(item.requestAgentPubkey, requestedAgent)
+        : null;
 
       return (
         <NewMessageMaterialize enabled={Boolean(item.isNew)}>
           <View style={[styles.messageBubble, isAgent ? styles.agentBlock : styles.userBlock]}>
-            <Text style={[styles.roleLabel, isAgent ? styles.roleAgent : styles.roleUser]}>
-              {isOwn ? '◇ YOU' : isAgent ? '◆ BEELINE' : `◇ ${shortNpub(item.pubkey ?? '')}`}
-            </Text>
+            <View style={styles.authorRow}>
+              {display && !isOwn && (
+                <AgentAvatar
+                  pubkey={item.pubkey ?? 'unknown-agent'}
+                  avatarSeed={display.avatarSeed}
+                  avatarUrl={display.avatarUrl}
+                  name={display.name}
+                  size={24}
+                />
+              )}
+              <Text style={[styles.roleLabel, isAgent ? styles.roleAgent : styles.roleUser]}>
+                {isOwn ? '◇ YOU' : display ? display.name : `◇ ${shortNpub(item.pubkey ?? '')}`}
+              </Text>
+            </View>
             {item.requestAgentPubkey && (
               <Text style={styles.workRequestBadge}>
-                REQUEST ◆ {shortNpub(item.requestAgentPubkey)} · START A CORNER
+                REQUEST ◆ {requestedDisplay?.name} · START A CORNER
               </Text>
             )}
             <Text style={styles.messageText}>{item.text}</Text>
@@ -569,7 +615,7 @@ export default function BuzzChat() {
         </NewMessageMaterialize>
       );
     },
-    [],
+    [agentByPubkey],
   );
 
   if (loading) {
@@ -619,6 +665,40 @@ export default function BuzzChat() {
             </View>
           )}
         </HullSurface>
+
+        {(participantAgents.length > 0 || participantCounts.humans > 0) && (
+          <View style={styles.participantBar} accessibilityLabel="Room participants">
+            <Text style={styles.participantLabel}>IN THIS {ROOM_LABEL.toUpperCase()}</Text>
+            <View style={styles.participantList}>
+              {participantCounts.humans > 0 && (
+                <View style={styles.peopleChip}>
+                  <Text style={styles.peopleGlyph}>◇</Text>
+                  <Text style={styles.peopleText}>
+                    {participantCounts.humans}{' '}
+                    {participantCounts.humans === 1 ? 'PERSON' : 'PEOPLE'}
+                  </Text>
+                </View>
+              )}
+              {participantAgents.map((agent) => {
+                const display = resolveAgentDisplayIdentity(agent.pubkey, agent);
+                return (
+                  <View key={agent.pubkey} style={styles.participantAgent}>
+                    <AgentAvatar
+                      pubkey={agent.pubkey}
+                      avatarSeed={display.avatarSeed}
+                      avatarUrl={display.avatarUrl}
+                      name={display.name}
+                      size={28}
+                    />
+                    <Text style={styles.participantAgentName} numberOfLines={1}>
+                      {display.name}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        )}
 
         {/* The one human gate: collapsing a corner into the protected line. */}
         {mergeTarget && !isArchived && (
@@ -690,6 +770,7 @@ export default function BuzzChat() {
                   const active = requestingAgent?.pubkey === agent.pubkey;
                   const invited = roomAgentPubkeys.has(agent.pubkey);
                   const inviting = invitingAgentPubkey === agent.pubkey;
+                  const display = resolveAgentDisplayIdentity(agent.pubkey, agent);
                   return (
                     <TouchableOpacity
                       key={agent.agentId}
@@ -697,10 +778,17 @@ export default function BuzzChat() {
                       disabled={Boolean(invitingAgentPubkey)}
                       onPress={() => void handleAgentChip(agent)}
                     >
+                      <AgentAvatar
+                        pubkey={agent.pubkey}
+                        avatarSeed={display.avatarSeed}
+                        avatarUrl={display.avatarUrl}
+                        name={display.name}
+                        size={22}
+                      />
                       <Text
                         style={[styles.askAgentChipText, active && styles.askAgentChipTextActive]}
                       >
-                        {inviting ? 'INVITING…' : invited ? `@${agent.displayName}` : `＋ ${agent.displayName}`}
+                        {inviting ? 'INVITING…' : invited ? `@${display.name}` : `＋ ${display.name}`}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -726,7 +814,7 @@ export default function BuzzChat() {
                 onBlur={() => setComposerFocused(false)}
                 placeholder={
                   requestingAgent
-                    ? `ask ${requestingAgent.displayName} to start work…`
+                    ? `ask ${resolveAgentDisplayIdentity(requestingAgent.pubkey, requestingAgent).name} to start work…`
                     : parentChannelId
                       ? 'steer the live Agent…'
                       : `continue ${ROOM_LABEL.toLowerCase()} discussion…`
@@ -826,6 +914,57 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 15,
   },
+  participantBar: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.border,
+    backgroundColor: groknight.bgBase,
+  },
+  participantLabel: {
+    ...Typography.default('semiBold'),
+    marginBottom: 6,
+    color: groknight.textMuted,
+    fontSize: 9,
+    lineHeight: 12,
+    letterSpacing: 0.7,
+  },
+  participantList: {
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 7,
+  },
+  peopleChip: {
+    minHeight: 28,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 7,
+    borderWidth: 1,
+    borderColor: groknight.borderQuiet,
+  },
+  peopleGlyph: { ...Typography.default('semiBold'), color: groknight.steel, fontSize: 11 },
+  peopleText: {
+    ...Typography.default('semiBold'),
+    color: groknight.textMuted,
+    fontSize: 9,
+    lineHeight: 12,
+  },
+  participantAgent: {
+    minWidth: 0,
+    maxWidth: 180,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  participantAgentName: {
+    ...Typography.default('semiBold'),
+    flexShrink: 1,
+    color: groknight.textSecondary,
+    fontSize: 11,
+  },
 
   // ── Message blocks ──────────────────────────────────────────────
   messageList: {
@@ -849,12 +988,19 @@ const styles = StyleSheet.create({
   userBlock: {
     backgroundColor: groknight.bgVoid,
   },
+  authorRow: {
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    marginBottom: 4,
+  },
   roleLabel: {
     ...Typography.default('semiBold'),
     ...Typography.mono('semiBold'),
     fontSize: 11,
     lineHeight: 15,
-    marginBottom: 3,
+    flexShrink: 1,
   },
   roleAgent: {
     color: groknight.textPrimary,
@@ -1023,6 +1169,9 @@ const styles = StyleSheet.create({
   askAgentChip: {
     borderWidth: 1,
     minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     justifyContent: 'center',
     borderColor: groknight.border,
     borderRadius: 3,

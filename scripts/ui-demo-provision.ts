@@ -25,6 +25,7 @@ import {
 } from '@beeline/gate';
 import {
   createIdentity,
+  createAgent,
   createChannel as buzzCreateChannel,
   createCommunity,
   CHANGE_REVIEW_FILE_TAG,
@@ -34,6 +35,9 @@ import {
   identityNsec,
   loadIdentityFromNsec,
   createSubchannel as buzzCreateSubchannel,
+  sendMessage,
+  setAgentSoul,
+  waitUntilMember,
 } from '@beeline/buzz-client';
 import {
   chunkChangeReviewPatch,
@@ -77,6 +81,10 @@ async function main() {
     http: { baseUrl: BASE_URL, host: HOST },
     identity: owner,
   };
+  const agentContext = {
+    http: { baseUrl: BASE_URL, host: HOST },
+    identity: agent,
+  };
   log('Owner npub:', identityNpub(owner));
   log('Reviewer npub:', identityNpub(reviewer));
   log('Reviewer nsec:', identityNsec(reviewer));
@@ -85,6 +93,14 @@ async function main() {
   const repo = `ui-demo-${RUN_MARKER}`;
   const communityId = await createCommunity(channelContext, 'Corners UX Review');
   await setMemberRole(owner, communityId, reviewer.publicKey, 'member');
+  await setMemberRole(owner, communityId, agent.publicKey, 'member');
+  await waitUntilMember(agentContext, communityId, agent.publicKey);
+  await createAgent(agentContext, communityId, { displayName: 'Demo Agent' });
+  await setAgentSoul(channelContext, communityId, agent.publicKey, {
+    name: 'Chrome Warden',
+    personality: 'Keeps the suite green and cuts dead code without ceremony.',
+    avatarSeed: 'chrome-warden-soul',
+  });
   const parentChannelId = await buzzCreateChannel(channelContext, repo, {
     communityId,
     repository: { key: repo, name: repo, localOnly: false },
@@ -100,7 +116,7 @@ async function main() {
   // ── 2. Create subchannel with parent tag (like body does) ─────────
   // The key fix: createSubchannel sets parent tag on the 9007 create event
   const subchannelId = await buzzCreateSubchannel(
-    { http: { baseUrl: BASE_URL, host: HOST }, identity: owner },
+    agentContext,
     parentChannelId,
     'review-corner-navigation',
   );
@@ -111,6 +127,18 @@ async function main() {
   await setMemberRole(owner, subchannelId, reviewer.publicKey, 'admin');
   await setMemberRole(owner, subchannelId, agent.publicKey, 'member');
   log('Subchannel members mirrored');
+  await sendMessage(
+    agentContext,
+    parentChannelId,
+    'I mapped the brittle paths and started a focused corner for the fix.',
+    { agentActivity: true },
+  );
+  await sendMessage(
+    agentContext,
+    subchannelId,
+    'The implementation is ready for review. Tests cover the fallback and overlay paths.',
+    { agentActivity: true },
+  );
 
   // ── 3. Seed repo + push feature branch ────────────────────────────
   const repoUrl = gitRepoUrl(owner.publicKey, repo);
@@ -243,11 +271,7 @@ async function main() {
     { name: 'archived-copy-spike', status: 'archived' },
   ];
   for (const fixture of extraCorners) {
-    const id = await buzzCreateSubchannel(
-      { http: { baseUrl: BASE_URL, host: HOST }, identity: owner },
-      parentChannelId,
-      fixture.name,
-    );
+    const id = await buzzCreateSubchannel(agentContext, parentChannelId, fixture.name);
     await setMemberRole(owner, id, owner.publicKey, 'owner');
     await setMemberRole(owner, id, reviewer.publicKey, 'admin');
     await setMemberRole(owner, id, agent.publicKey, 'member');

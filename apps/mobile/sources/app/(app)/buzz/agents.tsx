@@ -41,6 +41,7 @@ export default function BuzzAgents() {
   const [intent, setIntent] = useState('');
   const [name, setName] = useState('');
   const [personality, setPersonality] = useState('');
+  const [confirmingRemoval, setConfirmingRemoval] = useState(false);
   const pairingBaseline = useRef<Set<string>>(new Set());
   const pairingPending = useRef(false);
 
@@ -136,6 +137,7 @@ export default function BuzzAgents() {
     setName(agent.soulProfile?.name ?? fallback.name);
     setPersonality(agent.soulProfile?.personality ?? fallback.personality);
     setIntent(agent.soulProfile?.intent ?? '');
+    setConfirmingRemoval(false);
     setError(null);
   }, []);
 
@@ -170,6 +172,26 @@ export default function BuzzAgents() {
     setName(fallback.name);
     setPersonality(fallback.personality);
   }, [selected]);
+
+  const removeSelectedAgent = useCallback(async () => {
+    if (!transport || !communityId || !selected) return;
+    setWorking(true);
+    setError(null);
+    try {
+      const client = await transport.ensureClient();
+      await client.removeAgent(communityId, selected.pubkey);
+      setSelectedPubkey(null);
+      setIntent('');
+      setName('');
+      setPersonality('');
+      setConfirmingRemoval(false);
+      await refreshAgents(transport, communityId);
+    } catch (caught) {
+      setError(`Could not remove Agent: ${String(caught)}`);
+    } finally {
+      setWorking(false);
+    }
+  }, [communityId, refreshAgents, selected, transport]);
 
   if (loading) {
     return (
@@ -375,6 +397,45 @@ export default function BuzzAgents() {
                   <Text style={styles.secondaryButtonText}>Suggest locally</Text>
                 </TouchableOpacity>
               </View>
+              <TouchableOpacity
+                accessibilityLabel="Remove this Agent"
+                accessibilityHint="Stops the Agent and ends its work on the host machine"
+                style={styles.removeButton}
+                disabled={working}
+                onPress={() => setConfirmingRemoval(true)}
+              >
+                <Text style={styles.removeButtonLabel}>Remove Agent</Text>
+                <Text style={styles.removeButtonHint}>Stops host sessions and disconnects</Text>
+              </TouchableOpacity>
+              {confirmingRemoval && (
+                <View accessibilityRole="alert" style={styles.removeConfirm}>
+                  <Text style={styles.removeConfirmFlag}>STOP AGENT</Text>
+                  <Text style={styles.removeConfirmTitle}>
+                    Remove {resolveAgentDisplayIdentity(selected.pubkey, selected).name}?
+                  </Text>
+                  <Text style={styles.removeConfirmCopy}>
+                    This stops the Agent, ends its work and running sessions on the host, and
+                    disconnects it from every Room in this Workspace.
+                  </Text>
+                  <View style={styles.removeConfirmActions}>
+                    <TouchableOpacity
+                      accessibilityLabel="Cancel Agent removal"
+                      style={[styles.secondaryButton, styles.flexButton]}
+                      disabled={working}
+                      onPress={() => setConfirmingRemoval(false)}
+                    >
+                      <Text style={styles.secondaryButtonText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <MonoButton
+                      label={working ? 'Stopping Agent' : 'Stop & Remove'}
+                      loading={working}
+                      style={[styles.primaryButton, styles.flexButton]}
+                      disabled={working}
+                      onPress={() => void removeSelectedAgent()}
+                    />
+                  </View>
+                </View>
+              )}
             </View>
           )}
         </ScrollView>
@@ -608,5 +669,56 @@ const styles = StyleSheet.create({
   },
   editorActions: { flexDirection: 'row', gap: 8 },
   flexButton: { flex: 1, minWidth: 0 },
+  removeButton: {
+    marginTop: 22,
+    minHeight: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgBase,
+  },
+  removeButtonLabel: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 12,
+    letterSpacing: 0.3,
+  },
+  removeButtonHint: {
+    ...Typography.default(),
+    marginTop: 3,
+    color: groknight.textMuted,
+    fontSize: 9,
+    letterSpacing: 0.4,
+  },
+  removeConfirm: {
+    marginTop: 8,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: groknight.textPrimary,
+    backgroundColor: groknight.bgHighlight,
+  },
+  removeConfirmFlag: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 9,
+    letterSpacing: 1.4,
+  },
+  removeConfirmTitle: {
+    ...Typography.default('semiBold'),
+    marginTop: 7,
+    color: groknight.textPrimary,
+    fontSize: 16,
+  },
+  removeConfirmCopy: {
+    ...Typography.default(),
+    marginTop: 6,
+    color: groknight.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  removeConfirmActions: { flexDirection: 'row', gap: 8, marginTop: 8 },
   disabled: { backgroundColor: groknight.bgBase },
 });

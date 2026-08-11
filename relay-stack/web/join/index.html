@@ -8,104 +8,167 @@
     <style>
       :root {
         color-scheme: dark;
-        font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-        background: #07090b;
-        color: #e6edf3;
+        font-family:
+          'IBM Plex Sans',
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          sans-serif;
+        background: #090909;
+        color: #e8e8e8;
       }
-      * { box-sizing: border-box; }
+
+      * {
+        box-sizing: border-box;
+      }
+
       body {
         min-height: 100vh;
         margin: 0;
         display: grid;
         place-items: center;
-        padding: 24px;
+        padding: clamp(18px, 5vw, 40px);
         background:
-          radial-gradient(circle at 50% 0%, rgba(125, 207, 255, 0.12), transparent 42%),
-          #07090b;
+          linear-gradient(rgba(232, 232, 232, 0.025) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(232, 232, 232, 0.025) 1px, transparent 1px), #090909;
+        background-size: 32px 32px;
       }
+
       main {
+        position: relative;
         width: min(100%, 560px);
-        border: 1px solid #28313a;
-        border-radius: 8px;
-        padding: clamp(24px, 7vw, 48px);
-        background: #0a0d0f;
-        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+        overflow: hidden;
+        border: 1px solid #444444;
+        border-radius: 4px;
+        padding: clamp(26px, 7vw, 48px);
+        background: #111111;
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
       }
+
+      main::before,
+      main::after {
+        position: absolute;
+        top: 12px;
+        width: 4px;
+        height: 4px;
+        border-radius: 50%;
+        background: #606060;
+        content: '';
+      }
+
+      main::before {
+        left: 12px;
+      }
+      main::after {
+        right: 12px;
+      }
+
       .mark {
-        width: 52px;
-        height: 52px;
+        width: 56px;
+        height: 56px;
         display: grid;
         place-items: center;
-        border: 1px solid #7dcfff;
-        border-radius: 6px;
-        color: #7dcfff;
-        font-size: 22px;
-        font-weight: 900;
+        border: 1px solid #606060;
+        border-radius: 4px;
+        background: #1d1d1d;
+        color: #d8d8d8;
+        font-family: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
+        font-size: 21px;
+        font-weight: 700;
+        letter-spacing: -0.08em;
       }
+
       .eyebrow {
-        margin: 24px 0 8px;
-        color: #7dcfff;
-        font-size: 11px;
-        font-weight: 800;
-        letter-spacing: 0.14em;
+        margin: 26px 0 10px;
+        color: #929292;
+        font-family: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.15em;
         text-transform: uppercase;
       }
+
       h1 {
+        max-width: 13ch;
         margin: 0;
-        font-family: system-ui, sans-serif;
-        font-size: clamp(28px, 7vw, 42px);
+        font-size: clamp(30px, 7vw, 44px);
+        font-weight: 700;
         line-height: 1.05;
         letter-spacing: -0.035em;
+        text-wrap: balance;
       }
-      p { color: #9aa7b3; font-size: 14px; line-height: 1.65; }
-      .actions { display: grid; gap: 10px; margin-top: 28px; }
-      .primary, button {
-        min-height: 48px;
+
+      .details {
+        max-width: 46ch;
+        margin: 18px 0 0;
+        color: #929292;
+        font-size: 14px;
+        line-height: 1.65;
+      }
+
+      .primary {
+        min-height: 50px;
+        margin-top: 30px;
         display: grid;
         place-items: center;
-        border: 0;
+        border: 1px solid #dddddd;
         border-radius: 4px;
         padding: 0 18px;
-        font: inherit;
+        background: #dddddd;
+        color: #111111;
         font-size: 13px;
-        font-weight: 900;
+        font-weight: 700;
+        text-align: center;
         text-decoration: none;
-        cursor: pointer;
+        transition:
+          background-color 160ms cubic-bezier(0.22, 1, 0.36, 1),
+          color 160ms cubic-bezier(0.22, 1, 0.36, 1),
+          transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
       }
-      .primary { background: #7dcfff; color: #07090b; }
-      button { border: 1px solid #384550; background: transparent; color: #c2ccd5; }
-      .label { margin: 28px 0 8px; color: #71808d; font-size: 10px; text-transform: uppercase; }
-      code {
-        display: block;
-        max-width: 100%;
-        overflow-wrap: anywhere;
-        border-left: 2px solid #7dcfff;
-        padding: 10px 12px;
-        background: #0e1317;
-        color: #c2ccd5;
-        font-size: 11px;
-        line-height: 1.55;
+
+      .primary:hover {
+        background: #e8e8e8;
+        transform: translateY(-1px);
       }
-      .status { min-height: 20px; margin: 10px 0 0; color: #7dcfff; font-size: 11px; }
+
+      .primary:active {
+        background: #c6c6c6;
+        transform: translateY(0);
+      }
+
+      .primary:focus-visible {
+        outline: 2px solid #b8b8b8;
+        outline-offset: 3px;
+      }
+
+      .status {
+        min-height: 18px;
+        margin: 12px 0 0;
+        color: #787878;
+        font-family: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
+        font-size: 10px;
+        line-height: 1.6;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .primary {
+          transition: none;
+        }
+      }
     </style>
     <script src="/join/invite.js" defer></script>
   </head>
   <body>
     <main>
       <div class="mark" aria-hidden="true">B</div>
-      <p class="eyebrow">Secure Workspace invite</p>
-      <h1>You're invited to a Beeline Workspace</h1>
-      <p>
-        Open this invite in Beeline to preview the Workspace and join as a member.
-        The invite remains bound to its signed relay record.
+      <p class="eyebrow">Signed Workspace invite</p>
+      <h1 id="invite-heading">You're invited to a Workspace</h1>
+      <p class="details">
+        Open this invite in Beeline to preview the Workspace and join as a member. The invite
+        remains bound to its signed relay record.
       </p>
-      <div class="actions">
-        <a class="primary" id="open-app" href="#">Open Beeline</a>
-        <button id="copy-invite" type="button">Copy invite code</button>
-      </div>
-      <p class="label">Invite code</p>
-      <code id="invite-code">Loading…</code>
-      <p class="status" id="status" role="status" aria-live="polite"></p>
+      <a class="primary" id="join-workspace" href="#">Join Workspace</a>
+      <p class="status" id="status" role="status" aria-live="polite">Resolving signed invite…</p>
     </main>
   </body>
 </html>

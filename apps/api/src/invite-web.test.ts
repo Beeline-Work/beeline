@@ -17,7 +17,7 @@ describe('relay invite web front', () => {
         details: [
           {
             appID: '89KT3SWYAF.app.buzzy.mobile',
-            paths: ['/join/*'],
+            paths: ['/join/*', '/auth/oidc/mobile-callback'],
           },
         ],
       },

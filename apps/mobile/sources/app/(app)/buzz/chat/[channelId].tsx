@@ -30,13 +30,13 @@ import {
   type Community,
   type CommunityMember,
   type MergeTarget,
+  type PersonProfile,
 } from '@beeline/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
 import { groknight } from '@/buzz/groknight';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
 import {
-  formatRoomParticipantList,
   formatRoomParticipantTotal,
   mentionedAgentPubkey,
   sectionRoomRoster,
@@ -47,6 +47,7 @@ import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
 import { ChangeReviewPanel } from '@/components/buzz/ChangeReviewPanel';
 import { AgentAvatar } from '@/components/buzz/AgentAvatar';
+import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import {
   HullSurface,
   MonoButton,
@@ -201,6 +202,7 @@ export default function BuzzChat() {
   const [availablePeople, setAvailablePeople] = useState<CommunityMember[]>([]);
   const [roomMemberPubkeys, setRoomMemberPubkeys] = useState<Set<string>>(new Set());
   const [addingMemberPubkey, setAddingMemberPubkey] = useState<string | null>(null);
+  const [personProfiles, setPersonProfiles] = useState<PersonProfile[]>([]);
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
   const [roomName, setRoomName] = useState(ROOM_LABEL);
   const [participantPickerVisible, setParticipantPickerVisible] = useState(false);
@@ -209,6 +211,10 @@ export default function BuzzChat() {
   const agentByPubkey = useMemo(
     () => new Map(availableAgents.map((agent) => [agent.pubkey, agent])),
     [availableAgents],
+  );
+  const personProfileByPubkey = useMemo(
+    () => new Map(personProfiles.map((profile) => [profile.pubkey, profile])),
+    [personProfiles],
   );
   const memberOptions = useMemo<RoomMemberOption[]>(() => {
     const options = new Map<string, RoomMemberOption>();
@@ -300,13 +306,21 @@ export default function BuzzChat() {
           channelCommunityId ? client.communityMembers(channelCommunityId) : Promise.resolve([]),
           client.isAgentIdentity(identity.publicKey),
         ]);
+        const agentPubkeys = new Set(communityAgents.map((agent) => agent.pubkey));
+        const humanMembers = communityMembers.filter((member) => !agentPubkeys.has(member.pubkey));
+        const humanProfiles = channelCommunityId
+          ? await client.listPersonProfiles(
+              channelCommunityId,
+              humanMembers.map((member) => member.pubkey),
+            )
+          : [];
         if (!cancelled) {
           setCommunities(availableCommunities);
           setActiveCommunityId(channelCommunityId);
           setAvailableAgents(communityAgents);
           const roomPubkeys = new Set(roomMembers.map((member) => member.pubkey));
-          const agentPubkeys = new Set(communityAgents.map((agent) => agent.pubkey));
-          setAvailablePeople(communityMembers.filter((member) => !agentPubkeys.has(member.pubkey)));
+          setAvailablePeople(humanMembers);
+          setPersonProfiles(humanProfiles);
           setRoomMemberPubkeys(roomPubkeys);
           setViewerIsAgent(identityIsAgent);
           setRoomName(channelMetadata?.name?.trim() || ROOM_LABEL);
@@ -631,7 +645,7 @@ export default function BuzzChat() {
         <NewMessageMaterialize enabled={Boolean(item.isNew)}>
           <View style={[styles.messageBubble, isAgent ? styles.agentBlock : styles.userBlock]}>
             <View style={styles.authorRow}>
-              {display && !isOwn && (
+              {display ? (
                 <AgentAvatar
                   pubkey={item.pubkey ?? 'unknown-agent'}
                   avatarSeed={display.avatarSeed}
@@ -639,7 +653,14 @@ export default function BuzzChat() {
                   name={display.name}
                   size={24}
                 />
-              )}
+              ) : item.pubkey ? (
+                <PersonAvatar
+                  pubkey={item.pubkey}
+                  avatarUrl={personProfileByPubkey.get(item.pubkey)?.avatar}
+                  name={isOwn ? 'You' : shortNpub(item.pubkey)}
+                  size={24}
+                />
+              ) : null}
               <Text style={[styles.roleLabel, isAgent ? styles.roleAgent : styles.roleUser]}>
                 {isOwn ? '◇ YOU' : display ? display.name : `◇ ${shortNpub(item.pubkey ?? '')}`}
               </Text>
@@ -652,7 +673,7 @@ export default function BuzzChat() {
         </NewMessageMaterialize>
       );
     },
-    [agentByPubkey],
+    [agentByPubkey, personProfileByPubkey],
   );
 
   if (loading) {
@@ -671,6 +692,8 @@ export default function BuzzChat() {
       onSelect={handleCommunitySelect}
       onAdd={() => router.push('/buzz/community' as Href)}
       onSettings={() => router.push('/buzz/settings' as Href)}
+      viewerPubkey={userPubkey || undefined}
+      viewerAvatarUrl={personProfileByPubkey.get(userPubkey)?.avatar}
     >
       <KeyboardAvoidingView
         style={[styles.container, { paddingTop: insets.top }]}
@@ -714,9 +737,36 @@ export default function BuzzChat() {
         {roomParticipants.length > 0 && (
           <View style={styles.participantBar} accessibilityLabel="Room participants">
             <Text style={styles.participantLabel}>IN THIS {ROOM_LABEL.toUpperCase()}</Text>
-            <Text style={styles.participantNames} numberOfLines={2}>
-              {formatRoomParticipantList(roomParticipants.map((participant) => participant.label))}
-            </Text>
+            <View style={styles.participantList}>
+              {roomParticipants.map((participant) => {
+                const display = participant.agent
+                  ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
+                  : undefined;
+                return (
+                  <View key={participant.pubkey} style={styles.participantIdentity}>
+                    {display ? (
+                      <AgentAvatar
+                        pubkey={participant.pubkey}
+                        avatarSeed={display.avatarSeed}
+                        avatarUrl={display.avatarUrl}
+                        name={display.name}
+                        size={28}
+                      />
+                    ) : (
+                      <PersonAvatar
+                        pubkey={participant.pubkey}
+                        avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
+                        name={participant.label}
+                        size={28}
+                      />
+                    )}
+                    <Text style={styles.participantName} numberOfLines={1}>
+                      {participant.label}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
           </View>
         )}
 
@@ -903,7 +953,12 @@ export default function BuzzChat() {
                                 size={28}
                               />
                             ) : (
-                              <Text style={styles.memberPickerGlyph}>◇</Text>
+                              <PersonAvatar
+                                pubkey={option.pubkey}
+                                avatarUrl={personProfileByPubkey.get(option.pubkey)?.avatar}
+                                name={option.label}
+                                size={28}
+                              />
                             )}
                             <View style={styles.memberPickerCopy}>
                               <Text numberOfLines={1} style={styles.memberPickerName}>
@@ -1047,11 +1102,19 @@ const styles = StyleSheet.create({
     lineHeight: 12,
     letterSpacing: 0.7,
   },
-  participantNames: {
-    ...Typography.default(),
+  participantList: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  participantIdentity: {
+    minWidth: 0,
+    maxWidth: 180,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  participantName: {
+    ...Typography.default('semiBold'),
+    flexShrink: 1,
     color: groknight.textSecondary,
     fontSize: 11,
-    lineHeight: 16,
   },
 
   // ── Room membership picker ─────────────────────────────────────
@@ -1122,13 +1185,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-  },
-  memberPickerGlyph: {
-    ...Typography.default('semiBold'),
-    width: 28,
-    color: groknight.steel,
-    fontSize: 16,
-    textAlign: 'center',
   },
   memberPickerCopy: { flex: 1, minWidth: 0 },
   memberPickerName: {

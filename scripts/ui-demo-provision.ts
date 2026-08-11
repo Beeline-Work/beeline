@@ -95,12 +95,12 @@ async function main() {
   await setMemberRole(owner, communityId, reviewer.publicKey, 'member');
   await setMemberRole(owner, communityId, agent.publicKey, 'member');
   await waitUntilMember(agentContext, communityId, agent.publicKey);
-  await createAgent(agentContext, communityId, { displayName: 'Demo Agent' });
+  await createAgent(agentContext, communityId, { displayName: 'Ada' });
   await setAgentSoul(channelContext, communityId, agent.publicKey, {
-    name: 'Chrome Warden',
+    name: 'Ada',
     personality: 'Keeps the suite green and cuts dead code without ceremony.',
     intent: 'Keep the test suite green and refactor mercilessly.',
-    avatarSeed: 'chrome-warden-soul',
+    avatarSeed: 'ada-soul',
   });
   const parentChannelId = await buzzCreateChannel(channelContext, repo, {
     communityId,

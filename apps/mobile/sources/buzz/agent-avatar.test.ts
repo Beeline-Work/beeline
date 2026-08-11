@@ -6,6 +6,7 @@ describe('deterministic agent avatar', () => {
     const first = agentAvatarGeometry('ab'.repeat(32));
     expect(agentAvatarGeometry('ab'.repeat(32))).toEqual(first);
     expect(agentAvatarGeometry('cd'.repeat(32))).not.toEqual(first);
-    expect(first.rotation % 45).toBe(0);
+    expect(first.sensorOffset).toBeGreaterThanOrEqual(17);
+    expect(first.aperture).toBeGreaterThanOrEqual(5);
   });
 });

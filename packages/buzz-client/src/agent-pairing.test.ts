@@ -185,10 +185,11 @@ describe('agent pairing and soul overlays', () => {
     );
 
     const profile = await setAgentSoul(ctx(), communityId, agentIdentity.publicKey, {
-      name: 'Chrome Warden',
+      name: 'Ada',
       personality: 'Keeps the suite green and refactors mercilessly.',
       intent: 'Keep the test suite green and refactor mercilessly.',
       avatarSeed: agentIdentity.publicKey,
+      avatar: 'https://relay.test/media/ada.jpg',
     });
     expect(profile.raw.pubkey).toBe(owner.publicKey);
     expect(profile.raw.kind).toBe(KIND_AGENT_SOUL);
@@ -242,7 +243,8 @@ describe('agent pairing and soul overlays', () => {
     await expect(listAgents(ctx(), communityId)).resolves.toMatchObject([
       {
         pubkey: agentIdentity.publicKey,
-        displayName: 'Chrome Warden',
+        displayName: 'Ada',
+        avatar: 'https://relay.test/media/ada.jpg',
         personality: 'Keeps the suite green and refactors mercilessly.',
         soulProfile: {
           authoredBy: owner.publicKey,

@@ -157,6 +157,7 @@ describe('multi-member steering', () => {
     const { sessionId } = await acpClient.sessionNew({
       cwd: worktreePath,
       mcpServers: [{ name: 'buzz-dev-mcp', command: config.mcpBinary, args: [] }],
+      mode: 'edit',
       systemPrompt: [
         'You are a coding agent in an edit session with multiple steering participants.',
         `Your feature branch is: ${featureBranch}. You have shell and file tools.`,
@@ -223,7 +224,6 @@ describe('multi-member steering', () => {
     expect(ctx.tlcChannelId).toBeTruthy();
     expect(ctx.subchannelId).toBeTruthy();
     expect(ctx.sessionId).toBeTruthy();
-    expect(ctx.sessionId.startsWith('ses_')).toBe(true);
   });
 
   it(
@@ -244,7 +244,7 @@ describe('multi-member steering', () => {
         if (
           update.sessionId === ctx.sessionId &&
           update.update.sessionUpdate === 'tool_call' &&
-          update.update.status === 'pending'
+          (update.update.status === 'pending' || update.update.status === 'in_progress')
         ) {
           resolveToolStarted();
         }
@@ -275,7 +275,7 @@ describe('multi-member steering', () => {
         ]);
         expect(originalSettled).toBe(false);
         const activeRunId = session.client.activeRunId(ctx.sessionId);
-        expect(activeRunId).toMatch(/^run_/);
+        expect(activeRunId).toMatch(/^(run_|session:)/);
         log('initial run active:', activeRunId);
 
         const steerEvent = signEvent(

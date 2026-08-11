@@ -10,6 +10,7 @@ import type {
   RepositoryBinding,
   RepositoryRoomResult,
 } from '@beeline/buzz-client';
+import { AGENT_KINDS, type AgentCommand, type AgentKind } from './agent-command.js';
 
 export interface LocalRepositoryBinding {
   root: string;
@@ -39,6 +40,10 @@ export interface AgentRuntimeRecord {
   relayBaseUrl: string;
   relayHost?: string;
   llmEnvFile?: string;
+  agentKind?: AgentKind;
+  agentCommand?: string;
+  agentArgs?: string[];
+  /** Legacy field retained so pre-picker runtimes and integrations keep working. */
   agentBinary: string;
   mcpBinary: string;
   createdAt: string;
@@ -76,6 +81,20 @@ export interface PairRuntimeResult {
   runtime: AgentRuntimeRecord;
   configPath: string;
   pid: number;
+}
+
+export function runtimeAgentCommand(
+  runtime: Pick<AgentRuntimeRecord, 'agentKind' | 'agentCommand' | 'agentArgs' | 'agentBinary'>,
+): AgentCommand {
+  const command = runtime.agentCommand ?? runtime.agentBinary;
+  const inferredKind: AgentKind = command.endsWith('/buzz-agent') || command === 'buzz-agent'
+    ? 'reference'
+    : 'custom';
+  return {
+    kind: runtime.agentKind ?? inferredKind,
+    command,
+    args: [...(runtime.agentArgs ?? [])],
+  };
 }
 
 function git(cwd: string, args: string[]): string | null {
@@ -267,7 +286,12 @@ export async function readRuntimeRecord(path: string): Promise<AgentRuntimeRecor
     !parsed.communityId ||
     !parsed.supervisorRoot ||
     !Array.isArray(parsed.rooms) ||
-    parsed.rooms.some((room) => !room.channelId || !room.repo?.root)
+    parsed.rooms.some((room) => !room.channelId || !room.repo?.root) ||
+    (parsed.agentKind !== undefined && !AGENT_KINDS.includes(parsed.agentKind)) ||
+    (parsed.agentCommand !== undefined && !parsed.agentCommand) ||
+    (parsed.agentArgs !== undefined &&
+      (!Array.isArray(parsed.agentArgs) ||
+        parsed.agentArgs.some((argument) => typeof argument !== 'string')))
   ) {
     throw new Error(`invalid agent runtime config: ${path}`);
   }
@@ -362,6 +386,9 @@ export async function pairRepositoryAgent(
     relayHost?: string;
     llmEnvFile?: string;
     agentBinary: string;
+    agentKind?: AgentKind;
+    agentCommand?: string;
+    agentArgs?: string[];
     mcpBinary: string;
     agentIdentity: Identity;
     bodyIdentity: Identity;
@@ -412,7 +439,10 @@ export async function pairRepositoryAgent(
     relayBaseUrl: input.relayBaseUrl,
     ...(input.relayHost ? { relayHost: input.relayHost } : {}),
     ...(input.llmEnvFile ? { llmEnvFile: input.llmEnvFile } : {}),
-    agentBinary: input.agentBinary,
+    agentKind: input.agentKind ?? 'reference',
+    agentCommand: input.agentCommand ?? input.agentBinary,
+    agentArgs: [...(input.agentArgs ?? [])],
+    agentBinary: input.agentCommand ?? input.agentBinary,
     mcpBinary: input.mcpBinary,
     createdAt: new Date().toISOString(),
   };

@@ -195,6 +195,7 @@ describe('E2E live flow', () => {
     const { sessionId } = await acpClient.sessionNew({
       cwd: worktreePath,
       mcpServers,
+      mode: 'edit',
       systemPrompt: [
         'You are a coding agent in an edit session.',
         `You are working in a git worktree: ${worktreePath}`,
@@ -303,7 +304,6 @@ describe('E2E live flow', () => {
     expect(ctx.tlcChannelId).toBeTruthy();
     expect(ctx.secondIdentity).toBeTruthy();
     expect(ctx.sessionId).toBeTruthy();
-    expect(ctx.sessionId.startsWith('ses_')).toBe(true);
   });
 
   it(

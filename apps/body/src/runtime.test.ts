@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -11,6 +11,7 @@ import {
   pairRepositoryAgent,
   readRuntimeRecord,
   removeAgentRuntime,
+  runtimeAgentCommand,
 } from './runtime.js';
 
 const cleanup: string[] = [];
@@ -72,6 +73,9 @@ describe('pair → run unification', () => {
         cwd: root,
         relayBaseUrl: 'http://relay.test',
         agentBinary: '/usr/bin/agent',
+        agentKind: 'codex',
+        agentCommand: '/usr/bin/codex-acp',
+        agentArgs: ['--profile', 'operator'],
         mcpBinary: '/usr/bin/mcp',
         agentIdentity: agent,
         bodyIdentity: body,
@@ -121,8 +125,28 @@ describe('pair → run unification', () => {
     expect(stored.agent.publicKey).toBe(agent.publicKey);
     expect(stored.body.publicKey).toBe(body.publicKey);
     expect(stored.rooms[0]!.mergeWorker?.publicKey).toBe(mergeWorker.publicKey);
-    expect(stored.agentBinary).toBe('/usr/bin/agent');
+    expect(stored.agentBinary).toBe('/usr/bin/codex-acp');
+    expect(runtimeAgentCommand(stored)).toEqual({
+      kind: 'codex',
+      command: '/usr/bin/codex-acp',
+      args: ['--profile', 'operator'],
+    });
     expect(await readFile(result.configPath, 'utf8')).not.toContain('token@');
+
+    const prePicker = JSON.parse(await readFile(result.configPath, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    delete prePicker.agentKind;
+    delete prePicker.agentCommand;
+    delete prePicker.agentArgs;
+    prePicker.agentBinary = '/usr/bin/agent';
+    await writeFile(result.configPath, `${JSON.stringify(prePicker)}\n`);
+    expect(runtimeAgentCommand(await readRuntimeRecord(result.configPath))).toEqual({
+      kind: 'custom',
+      command: '/usr/bin/agent',
+      args: [],
+    });
   });
 
   it('removes only the exact paired-agent runtime directory', async () => {

@@ -166,6 +166,7 @@ describe('TLC read-only boundary', () => {
 
       const { sessionId } = await editClient.sessionNew({
         cwd: ctx.testDir,
+        mode: 'edit',
         mcpServers: [
           {
             name: 'buzz-dev-mcp',

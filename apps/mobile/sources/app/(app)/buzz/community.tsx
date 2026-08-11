@@ -1,11 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { router, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Community, Identity } from '@beeline/buzz-client';
@@ -31,6 +25,7 @@ export default function BuzzCommunityCreateOrJoin() {
   const [inviteInput, setInviteInput] = useState('');
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [viewerAvatarUrl, setViewerAvatarUrl] = useState<string | undefined>();
 
   useEffect(() => {
     let cancelled = false;
@@ -46,6 +41,12 @@ export default function BuzzCommunityCreateOrJoin() {
         const client = await nextTransport.ensureClient();
         const available = await client.listCommunities();
         const stored = await loadActiveCommunityId(currentIdentity.publicKey);
+        const selectedCommunityId = available.some((community) => community.communityId === stored)
+          ? stored
+          : available[0]?.communityId;
+        const profile = selectedCommunityId
+          ? await client.getPersonProfile(selectedCommunityId, currentIdentity.publicKey)
+          : null;
         if (cancelled) return;
         setIdentity(currentIdentity);
         setTransport(nextTransport);
@@ -54,6 +55,7 @@ export default function BuzzCommunityCreateOrJoin() {
         setActiveCommunityId(
           available.some((community) => community.communityId === stored) ? stored : null,
         );
+        setViewerAvatarUrl(profile?.avatar);
       } catch (err) {
         if (!cancelled) setError(String(err));
       }
@@ -117,6 +119,8 @@ export default function BuzzCommunityCreateOrJoin() {
       onSelect={selectCommunity}
       onAdd={() => undefined}
       onSettings={() => router.push('/buzz/settings' as Href)}
+      viewerPubkey={identity?.publicKey}
+      viewerAvatarUrl={viewerAvatarUrl}
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <HullSurface strength="quiet" style={styles.header}>

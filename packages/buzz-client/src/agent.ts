@@ -18,6 +18,7 @@ import {
   TAG_COMMUNITY,
 } from './kinds.js';
 import { tagValue, tagValues } from './parse.js';
+import { fallbackAgentName, isSingleWordAgentName, resolveAgentName } from './display-name.js';
 import type {
   Agent,
   AgentPairingCode,
@@ -58,6 +59,11 @@ function newUuid(): string {
 
 function optionalText(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function optionalHttpUrl(value: unknown): string | undefined {
+  const text = optionalText(value);
+  return text && text.length <= 2048 && /^https?:\/\//i.test(text) ? text : undefined;
 }
 
 function randomPairingCode(): string {
@@ -130,7 +136,7 @@ export function parseAgent(event: NostrEvent): Agent | null {
     ...(optionalText(content.personality)
       ? { personality: optionalText(content.personality) }
       : {}),
-    ...(optionalText(content.avatar) ? { avatar: optionalText(content.avatar) } : {}),
+    ...(optionalHttpUrl(content.avatar) ? { avatar: optionalHttpUrl(content.avatar) } : {}),
     createdAt: event.created_at,
     raw: event,
   };
@@ -162,8 +168,10 @@ async function createAgentRecord(
   }
 
   const agentId = options.agentId ?? newUuid();
-  const displayName = (options.displayName ?? ctx.identity.name ?? 'Agent').trim();
-  if (!displayName) throw new Error('agent display name must not be empty');
+  const displayName = resolveAgentName(
+    options.displayName ?? ctx.identity.name,
+    ctx.identity.publicKey,
+  );
   const content = JSON.stringify({
     displayName,
     ...(options.soul ? { soul: options.soul } : {}),
@@ -292,7 +300,7 @@ export async function redeemAgentPairingCode(
   const agent = await createAgentRecord(
     ctx,
     communityId,
-    { displayName: ctx.identity.name ?? `Agent ${ctx.identity.publicKey.slice(0, 6)}` },
+    { displayName: fallbackAgentName(ctx.identity.publicKey) },
     tokenHash,
   );
   return { communityId, pairedBy: pairing.pubkey, agent, joined: !wasMember };
@@ -312,6 +320,7 @@ export function parseAgentSoul(event: NostrEvent): AgentSoulProfile | null {
     const personality = optionalText(content.personality);
     const intent = optionalText(content.intent);
     const avatarSeed = optionalText(content.avatarSeed);
+    const avatar = optionalHttpUrl(content.avatar);
     if (!name || !personality || !avatarSeed) return null;
     return {
       communityId,
@@ -321,6 +330,7 @@ export function parseAgentSoul(event: NostrEvent): AgentSoulProfile | null {
       personality,
       ...(intent ? { intent } : {}),
       avatarSeed,
+      ...(avatar ? { avatar } : {}),
       updatedAt: event.created_at,
       raw: event,
     };
@@ -347,12 +357,19 @@ export async function setAgentSoul(
   if (!agents.some((agent) => agent.pubkey === agentPubkey)) {
     throw new Error('agent identity not found in community');
   }
-  const name = input.name.trim().slice(0, 80);
+  const name = input.name.trim().slice(0, 32);
   const personality = input.personality.trim().slice(0, 280);
   const intent = input.intent.trim().slice(0, 500);
   const avatarSeed = input.avatarSeed.trim().slice(0, 128);
   if (!name || !personality || !intent || !avatarSeed) {
     throw new Error('agent soul fields must not be empty');
+  }
+  if (!isSingleWordAgentName(name)) {
+    throw new Error('agent soul name must be one word');
+  }
+  const avatar = input.avatar?.trim().slice(0, 2048);
+  if (avatar && !/^https?:\/\//i.test(avatar)) {
+    throw new Error('agent soul avatar must be an http(s) URL');
   }
   const event = signEvent(
     {
@@ -366,7 +383,13 @@ export async function setAgentSoul(
         ['t', TAG_AGENT_SOUL],
         [TAG_COMMUNITY, communityId],
       ],
-      content: JSON.stringify({ name, personality, intent, avatarSeed }),
+      content: JSON.stringify({
+        name,
+        personality,
+        intent,
+        avatarSeed,
+        ...(avatar ? { avatar } : {}),
+      }),
     },
     ctx.identity.secretKey,
   );
@@ -455,6 +478,7 @@ export async function listAgents(
             ...agent,
             displayName: soulProfile.name,
             personality: soulProfile.personality,
+            avatar: soulProfile.avatar ?? agent.avatar,
             soulProfile,
           }
         : agent;

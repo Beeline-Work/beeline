@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { Agent, Community } from '@beeline/buzz-client';
+import type { Agent, Community, PersonProfile } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { cornerStatusPresentation, sortCorners, type CornerSummary } from '@/buzz/corners';
 import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
@@ -10,6 +10,7 @@ import { groknight } from '@/buzz/groknight';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { AgentAvatar } from '@/components/buzz/AgentAvatar';
+import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { HullSurface, PixelLoader } from '@/components/buzz/MonoHull';
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
@@ -23,9 +24,12 @@ export default function BuzzCorners() {
   const [communities, setCommunities] = useState<Community[]>([]);
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [personProfiles, setPersonProfiles] = useState<PersonProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [viewerPubkey, setViewerPubkey] = useState<string | undefined>();
+  const [viewerAvatarUrl, setViewerAvatarUrl] = useState<string | undefined>();
   const transportRef = useRef<BuzzRigTransport | null>(null);
 
   const loadCorners = useCallback(
@@ -47,6 +51,18 @@ export default function BuzzCorners() {
         setCommunities(nextCommunities);
         setActiveCommunityId(communityId);
         setAgents(communityId ? await client.listAgents(communityId) : []);
+        setPersonProfiles(
+          communityId
+            ? await client.listPersonProfiles(
+                communityId,
+                nextCorners.map((corner) => corner.openerPubkey),
+              )
+            : [],
+        );
+        setViewerPubkey(client.identity.publicKey);
+        setViewerAvatarUrl(
+          communityId ? (await client.getPersonProfile(communityId))?.avatar : undefined,
+        );
       } catch (loadError) {
         setError(String(loadError));
       }
@@ -103,6 +119,8 @@ export default function BuzzCorners() {
       onSelect={handleCommunitySelect}
       onAdd={() => router.push('/buzz/community' as Href)}
       onSettings={() => router.push('/buzz/settings' as Href)}
+      viewerPubkey={viewerPubkey}
+      viewerAvatarUrl={viewerAvatarUrl}
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <HullSurface strength="quiet" style={styles.header}>
@@ -139,6 +157,9 @@ export default function BuzzCorners() {
           renderItem={({ item }) => {
             const status = cornerStatusPresentation(item.status);
             const agent = agents.find((candidate) => candidate.pubkey === item.openerPubkey);
+            const personProfile = personProfiles.find(
+              (candidate) => candidate.pubkey === item.openerPubkey,
+            );
             const display = resolveAgentDisplayIdentity(item.openerPubkey, agent);
             return (
               <TouchableOpacity
@@ -146,19 +167,28 @@ export default function BuzzCorners() {
                 style={styles.cornerRow}
                 onPress={() => router.push(`/buzz/chat/${encodeURIComponent(item.id)}`)}
               >
-                <AgentAvatar
-                  pubkey={item.openerPubkey}
-                  avatarSeed={display.avatarSeed}
-                  avatarUrl={display.avatarUrl}
-                  name={display.name}
-                  size={34}
-                />
+                {agent ? (
+                  <AgentAvatar
+                    pubkey={item.openerPubkey}
+                    avatarSeed={display.avatarSeed}
+                    avatarUrl={display.avatarUrl}
+                    name={display.name}
+                    size={34}
+                  />
+                ) : (
+                  <PersonAvatar
+                    pubkey={item.openerPubkey}
+                    avatarUrl={personProfile?.avatar}
+                    name="Corner opener"
+                    size={34}
+                  />
+                )}
                 <View style={styles.cornerCopy}>
                   <Text style={styles.cornerName} numberOfLines={1}>
                     {item.name}
                   </Text>
                   <Text style={styles.agent} numberOfLines={1}>
-                    Opened by {display.name}
+                    Opened by {agent ? display.name : `${item.openerPubkey.slice(0, 8)}…`}
                   </Text>
                 </View>
                 <View style={styles.statusBlock}>

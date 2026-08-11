@@ -67,6 +67,8 @@ export interface AgentSoulInput {
   /** Human-authored purpose supplied to the agent as session-scoped instructions. */
   intent: string;
   avatarSeed: string;
+  /** Optional relay-media URL. Cosmetic only and human-authored. */
+  avatar?: string;
 }
 
 export interface AgentSoulProfile extends Omit<AgentSoulInput, 'intent'> {
@@ -77,6 +79,32 @@ export interface AgentSoulProfile extends Omit<AgentSoulInput, 'intent'> {
   authoredBy: string;
   updatedAt: number;
   raw: NostrEvent;
+}
+
+/** Workspace-scoped, self-authored cosmetic metadata for a human identity. */
+export interface PersonProfile {
+  communityId: string;
+  pubkey: string;
+  avatar?: string;
+  updatedAt: number;
+  raw: NostrEvent;
+}
+
+export interface PersonProfileInput {
+  /** Empty or absent removes the custom image and restores the deterministic mark. */
+  avatar?: string;
+}
+
+/** Relay media upload response (Blossom blob descriptor). */
+export interface MediaBlob {
+  url: string;
+  sha256: string;
+  size: number;
+  type?: string;
+  uploaded?: number;
+  dim?: string;
+  blurhash?: string;
+  thumb?: string;
 }
 
 export interface CreateAgentOptions {

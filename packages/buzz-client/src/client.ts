@@ -46,6 +46,8 @@ import {
 } from './community.js';
 import { publishEvent, queryEvents, type HttpBridgeOptions } from './http.js';
 import { KIND_STREAM_MESSAGE } from './kinds.js';
+import { getPersonProfile, listPersonProfiles, setPersonProfile } from './person-profile.js';
+import { uploadMedia } from './media.js';
 import { toSessionEvent } from './parse.js';
 import {
   resolveRepositoryRoom,
@@ -70,6 +72,9 @@ import type {
   Identity,
   MergeTarget,
   MessageSubmitOpts,
+  MediaBlob,
+  PersonProfile,
+  PersonProfileInput,
   PublishResult,
   RedeemInviteResult,
   RedeemAgentPairingResult,
@@ -88,7 +93,7 @@ export class BuzzClient {
   readonly identity: Identity;
   readonly baseUrl: string;
   readonly host: string;
-  private readonly http: HttpBridgeOptions;
+  private readonly http: HttpBridgeOptions & { identity: Identity };
   private readonly ctx: ChannelOpsContext;
   private readonly config: BuzzClientConfig;
   private ws: RelayWs | null = null;
@@ -258,6 +263,27 @@ export class BuzzClient {
 
   redeemInvite(token: string): Promise<RedeemInviteResult> {
     return redeemInvite(this.ctx, token);
+  }
+
+  // ── Cosmetic identity ops ─────────────────────────────────────────────
+
+  getPersonProfile(
+    communityId: string,
+    pubkey = this.identity.publicKey,
+  ): Promise<PersonProfile | null> {
+    return getPersonProfile(this.ctx, communityId, pubkey);
+  }
+
+  listPersonProfiles(communityId: string, pubkeys: string[]): Promise<PersonProfile[]> {
+    return listPersonProfiles(this.ctx, communityId, pubkeys);
+  }
+
+  setPersonProfile(communityId: string, input: PersonProfileInput): Promise<PersonProfile> {
+    return setPersonProfile(this.ctx, communityId, input);
+  }
+
+  uploadMedia(bytes: Uint8Array, mimeType: string): Promise<MediaBlob> {
+    return uploadMedia(this.http, bytes, mimeType);
   }
 
   // ── Agent entity ops ───────────────────────────────────────────────────

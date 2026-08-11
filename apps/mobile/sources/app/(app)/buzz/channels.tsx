@@ -145,6 +145,7 @@ export default function BuzzChannels() {
   const [channelName, setChannelName] = useState('');
   const [creatingChannel, setCreatingChannel] = useState(false);
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
+  const [viewerAvatarUrl, setViewerAvatarUrl] = useState<string | undefined>();
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [readyInviteUrl, setReadyInviteUrl] = useState<string | undefined>(inviteUrl);
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
@@ -177,6 +178,9 @@ export default function BuzzChannels() {
           activeWorkspaceId: active,
           personalWorkspaceId: personal,
         } = workspaceContext;
+        const viewerProfile = active
+          ? await client.getPersonProfile(active, currentIdentity.publicKey)
+          : null;
         const channels = await loadDisplayChannels(nextTransport, active, available);
         if (!cancelled) {
           setIdentity(currentIdentity);
@@ -187,6 +191,7 @@ export default function BuzzChannels() {
           setPersonalWorkspaceId(personal);
           setDisplayChannels(channels);
           setViewerIsAgent(identityIsAgent);
+          setViewerAvatarUrl(viewerProfile?.avatar);
         }
       } catch (err) {
         if (!cancelled) setError(String(err));
@@ -224,6 +229,9 @@ export default function BuzzChannels() {
       setActiveCommunityId(active);
       setPersonalWorkspaceId(personal);
       setDisplayChannels(await loadDisplayChannels(transport, active, available));
+      setViewerAvatarUrl(
+        active ? (await client.getPersonProfile(active, identity.publicKey))?.avatar : undefined,
+      );
     } catch (err) {
       setError(String(err));
     } finally {
@@ -308,6 +316,8 @@ export default function BuzzChannels() {
       onSelect={handleSelectCommunity}
       onAdd={() => router.push('/buzz/community' as Href)}
       onSettings={() => router.push('/buzz/settings' as Href)}
+      viewerPubkey={identity?.publicKey}
+      viewerAvatarUrl={viewerAvatarUrl}
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <HullSurface strength="quiet" style={styles.header}>

@@ -8,7 +8,8 @@ describe('agent display identity', () => {
     const first = resolveAgentDisplayIdentity(pubkey);
 
     expect(first).toEqual(resolveAgentDisplayIdentity(pubkey));
-    expect(first.name).toMatch(/^[A-Z][a-z]+ [A-Z][a-z]+$/);
+    expect(first.name).toMatch(/^[A-Z][a-z]+$/);
+    expect(first.handle).toBe(first.name.toLowerCase());
     expect(first.name.toLowerCase()).not.toContain(pubkey.slice(0, 6));
     expect(first.avatarSeed).toBe(pubkey);
   });
@@ -22,21 +23,43 @@ describe('agent display identity', () => {
         communityId: 'workspace',
         agentPubkey: pubkey,
         authoredBy: 'human-public-key',
-        name: 'Chrome Warden',
+        name: 'Ada',
         personality: 'Keeps the suite green.',
         avatarSeed: 'chrome-warden-soul',
+        avatar: 'https://example.test/ada-soul.png',
         updatedAt: 1,
         raw: {} as never,
       },
     });
 
     expect(display).toMatchObject({
-      name: 'Chrome Warden',
+      name: 'Ada',
+      handle: 'ada',
       personality: 'Keeps the suite green.',
       avatarSeed: 'chrome-warden-soul',
-      avatarUrl: 'https://example.test/agent.png',
+      avatarUrl: 'https://example.test/ada-soul.png',
       hasSoul: true,
     });
+  });
+
+  it('does not expose a legacy compound overlay as an agent handle', () => {
+    const pubkey = 'legacy-agent';
+    const display = resolveAgentDisplayIdentity(pubkey, {
+      pubkey,
+      soulProfile: {
+        communityId: 'workspace',
+        agentPubkey: pubkey,
+        authoredBy: 'human',
+        name: 'Chrome Warden',
+        personality: 'Legacy copy.',
+        avatarSeed: pubkey,
+        updatedAt: 1,
+        raw: {} as never,
+      },
+    });
+    expect(display.name).toMatch(/^[A-Z][a-z]+$/);
+    expect(display.handle).not.toContain('chrome');
+    expect(display.hasSoul).toBe(false);
   });
 
   it('produces different names across representative keys', () => {

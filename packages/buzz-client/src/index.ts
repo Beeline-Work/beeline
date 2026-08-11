@@ -14,6 +14,9 @@ export type {
   RepositoryBinding,
   AgentSoulInput,
   AgentSoulProfile,
+  PersonProfile,
+  PersonProfileInput,
+  MediaBlob,
   WebSocketLike,
   WebSocketConstructor,
   PublishResult,
@@ -68,11 +71,13 @@ export {
   KIND_CHANNEL_ADMINS,
   KIND_CHANNEL_MEMBERS,
   KIND_AGENT_SOUL,
+  KIND_PERSON_PROFILE,
   KIND_AUTH,
   TAG_AGENT_ACTIVITY,
   TAG_AGENT,
   TAG_AGENT_PAIRING,
   TAG_AGENT_SOUL,
+  TAG_PERSON_PROFILE,
   TAG_MERGE_APPROVAL,
   TAG_PARENT,
   TAG_COMMUNITY,
@@ -172,6 +177,22 @@ export {
   isAgentIdentityEvent,
   parseAgent,
 } from './agent.js';
+
+export {
+  fallbackAgentName,
+  isSingleWordAgentName,
+  resolveAgentName,
+  agentHandle,
+} from './display-name.js';
+
+export {
+  parsePersonProfile,
+  getPersonProfile,
+  listPersonProfiles,
+  setPersonProfile,
+} from './person-profile.js';
+
+export { buildMediaUploadAuthorization, uploadMedia } from './media.js';
 
 export { buildMergeApproval, verifyMergeApproval, APPROVAL_MARKER } from './approval.js';
 

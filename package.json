@@ -14,6 +14,7 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
+    "build:invite-web": "esbuild relay-stack/web/join/invite-source.js --bundle --format=iife --minify --platform=browser --target=es2022 --alias:@beeline/buzz-client=./packages/buzz-client/src/index.ts --alias:@beeline/nostr=./packages/nostr/src/index.ts --outfile=relay-stack/web/join/invite.js",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck && npm run typecheck --prefix apps/mobile",
     "test": "turbo run test",

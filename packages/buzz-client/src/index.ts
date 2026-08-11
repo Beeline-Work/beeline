@@ -112,6 +112,8 @@ export {
   repositoryRoomId,
   findRepositoryRoom,
   resolveRepositoryRoom,
+  resolveRepositoryRoomForHuman,
+  ensureRepositoryRoomAdmin,
   type RepositoryRoomResult,
 } from './repo-room.js';
 
@@ -128,6 +130,7 @@ export {
 } from './community.js';
 
 export {
+  attachAgentToChannel,
   createAgent,
   createAgentPairingCode,
   redeemAgentPairingCode,

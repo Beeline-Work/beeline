@@ -120,7 +120,7 @@ async function provisionFresh(opts: {
 
 const reachable = await relayReachable();
 
-describe.runIf(reachable)('live push-rights security suite', () => {
+(reachable ? describe : describe.skip)('live push-rights security suite', () => {
   beforeAll(() => {
     console.log(`[live] relay reachable at ${BASE_URL} — running suite`);
   });
@@ -252,18 +252,4 @@ describe.runIf(reachable)('live push-rights security suite', () => {
     expect(result.agentRole).toBe('admin');
     expect(result.reason).toMatch(/push-allowed|meets push:admin|role=admin/i);
   }, 60_000);
-});
-
-// When the relay is down, still register a suite so the file is "run", but
-// skip with a loud message rather than silently green-without-meaning.
-describe.runIf(!reachable)('live push-rights security suite (relay unreachable)', () => {
-  it('SKIPPED — relay not reachable; start with `npm run stack:up` from repo root', () => {
-    console.warn(
-      `\n[live] SKIPPED: relay at ${BASE_URL} is unreachable.\n` +
-        `       Start it with: npm run stack:up   (repo root)\n` +
-        `       Then re-run:   npm run test:live  (apps/gate)\n`,
-    );
-    // Deliberate soft-pass: unreachable is an environment issue, not a product regression.
-    expect(true).toBe(true);
-  });
 });

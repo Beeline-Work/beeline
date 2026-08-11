@@ -32,6 +32,7 @@ import { AGENT_REQUEST_TAG } from './body.js';
 
 const human = newIdentity('pair-runtime-human');
 let checkout = '';
+let secondCheckout = '';
 let protectedPushCheckout = '';
 let daemonPid: number | undefined;
 let daemonLog = '';
@@ -84,6 +85,7 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
       }
     }
     if (checkout) await rm(checkout, { recursive: true, force: true });
+    if (secondCheckout) await rm(secondCheckout, { recursive: true, force: true });
     if (protectedPushCheckout) {
       await rm(protectedPushCheckout, { recursive: true, force: true });
     }
@@ -132,16 +134,17 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
     const configs = await findRuntimeConfigPaths(checkout);
     expect(configs).toHaveLength(1);
     const runtime = await readRuntimeRecord(configs[0]!);
+    const runtimeRoom = runtime.rooms.find((room) => room.channelId === roomId)!;
     daemonLog = resolve(dirname(configs[0]!), 'daemon.log');
     daemonPid = Number((await readFile(resolve(configs[0]!, '..', 'daemon.pid'), 'utf8')).trim());
-    expect(runtime.repo.root).toBe(checkout);
-    expect(runtime.channelId).toBe(roomId);
-    expect(runtime.mergeWorker?.publicKey).toMatch(/^[0-9a-f]{64}$/);
+    expect(runtimeRoom.repo.root).toBe(checkout);
+    expect(runtimeRoom.channelId).toBe(roomId);
+    expect(runtimeRoom.mergeWorker?.publicKey).toMatch(/^[0-9a-f]{64}$/);
     await announceRepo(human, repo, roomId);
     await waitUntil(
       async () =>
         (await resolveChannelRole(roomId, human.publicKey, human.publicKey)) === 'admin' &&
-        (await resolveChannelRole(roomId, runtime.mergeWorker!.publicKey, human.publicKey)) ===
+        (await resolveChannelRole(roomId, runtimeRoom.mergeWorker!.publicKey, human.publicKey)) ===
           'admin',
       30_000,
     );
@@ -196,14 +199,79 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
     expect(protectedPush.ok, protectedPush.stderr).toBe(false);
     console.log('[live-pair-runtime] protected-push=REFUSED');
 
-    await humanClient.messageSubmit(
-      roomId,
-      `Create PAIR-RUNTIME-PROOF.txt containing ${marker}, then commit it.`,
-      {
-        mentionAgent: runtime.agent.publicKey,
-        extraTags: [['t', AGENT_REQUEST_TAG]],
-      },
+    // Create a second repository Room after the one and only pairing. Workspace
+    // agent membership must not ambiently mirror into it; the in-app helper is
+    // the sole attachment write the running supervisor discovers.
+    const secondRepo = `${marker}-second`;
+    secondCheckout = await mkdtemp(resolve(tmpdir(), 'beeline-second-room-'));
+    git(secondCheckout, ['init', '-q', '-b', 'main']);
+    await writeFile(resolve(secondCheckout, 'README.md'), `# ${secondRepo}\n`);
+    git(secondCheckout, ['add', '-A']);
+    git(secondCheckout, ['commit', '-m', 'seed second paired repo']);
+    git(secondCheckout, ['remote', 'add', 'origin', gitRepoUrl(human.publicKey, secondRepo)]);
+    const secondBinding = inspectLocalRepository(secondCheckout).repository;
+    const secondRoomId = repositoryRoomId(communityId, secondBinding);
+    const secondStagingRoom = await createChannel(human, `${secondRepo}-staging`, {
+      communityId,
+    });
+    await announceRepo(human, secondRepo, secondStagingRoom);
+    await waitUntil(
+      async () =>
+        gitAuthed(tmpdir(), human, human.publicKey, secondRepo, [
+          'ls-remote',
+          gitRepoUrl(human.publicKey, secondRepo),
+        ]).ok,
     );
+    const secondSeed = gitAuthed(secondCheckout, human, human.publicKey, secondRepo, [
+      'push',
+      'origin',
+      'main',
+    ]);
+    expect(secondSeed.ok, secondSeed.stderr).toBe(true);
+
+    const humanRoom = await humanClient.resolveRepositoryRoomForHuman(
+      communityId,
+      secondBinding,
+    );
+    expect(humanRoom.channelId).toBe(secondRoomId);
+    expect(await humanClient.isMember(secondRoomId, human.publicKey)).toBe(true);
+    // Move smart-HTTP authority from the seed staging channel to the final
+    // authoritative Room before the invited member attempts a feature push.
+    await announceRepo(human, secondRepo, secondRoomId);
+    expect(await humanClient.isMember(secondRoomId, runtime.agent.publicKey)).toBe(false);
+
+    const invitation = await humanClient.attachAgentToChannel(
+      secondRoomId,
+      runtime.agent.publicKey,
+      communityId,
+    );
+    expect(invitation.joined).toBe(true);
+    await waitUntil(async () => {
+      const stored = await readRuntimeRecord(configs[0]!);
+      return stored.rooms.some((candidate) => candidate.channelId === secondRoomId);
+    }, 60_000);
+    console.log(
+      `[live-pair-runtime] one-link-two-rooms=ATTACHED agent=${runtime.agent.publicKey} rooms=${roomId},${secondRoomId}`,
+    );
+
+    await Promise.all([
+      humanClient.messageSubmit(
+        roomId,
+        `Create PAIR-RUNTIME-PROOF.txt containing ${marker}. Before committing, run sleep 12 so a human can steer this active turn.`,
+        {
+          mentionAgent: runtime.agent.publicKey,
+          extraTags: [['t', AGENT_REQUEST_TAG]],
+        },
+      ),
+      humanClient.messageSubmit(
+        secondRoomId,
+        `Create SECOND-ROOM-PROOF.txt containing ${marker}, then commit it.`,
+        {
+          mentionAgent: runtime.agent.publicKey,
+          extraTags: [['t', AGENT_REQUEST_TAG]],
+        },
+      ),
+    ]);
 
     const roomEvents = async () =>
       queryEvents(
@@ -228,6 +296,33 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
     const feature = opened?.tags.find((tag) => tag[0] === 'feature')?.[1] ?? '';
     const subchannel = opened?.tags.find((tag) => tag[0] === 'subchannel')?.[1];
     expect(subchannel).toBeTruthy();
+    const secondRoomEvents = async () =>
+      queryEvents(
+        [{ kinds: [9], '#h': [secondRoomId], authors: [runtime.agent.publicKey], limit: 100 }],
+        human.publicKey,
+      );
+    let secondOpened: Awaited<ReturnType<typeof secondRoomEvents>>[number] | undefined;
+    await waitUntil(async () => {
+      secondOpened = (await secondRoomEvents()).find((event) =>
+        event.tags.some((tag) => tag[0] === 'feature'),
+      );
+      return Boolean(secondOpened);
+    }, 60_000);
+    const secondFeature = secondOpened?.tags.find((tag) => tag[0] === 'feature')?.[1] ?? '';
+    const secondSubchannel = secondOpened?.tags.find((tag) => tag[0] === 'subchannel')?.[1];
+    const firstSessionPin = opened?.tags.find((tag) => tag[0] === 'session')?.[1];
+    const secondSessionPin = secondOpened?.tags.find((tag) => tag[0] === 'session')?.[1];
+    expect(secondSubchannel).toBeTruthy();
+    expect(firstSessionPin).toBeTruthy();
+    expect(secondSessionPin).toBeTruthy();
+    expect(firstSessionPin).not.toBe(secondSessionPin);
+    await humanClient.messageSubmit(
+      subchannel!,
+      `Concurrent steer: also create STEERED.txt containing ${marker}.`,
+    );
+    console.log(
+      `[live-pair-runtime] isolated-session-pins=${firstSessionPin},${secondSessionPin} steer=DELIVERED`,
+    );
     let tip = '';
     try {
       await waitUntil(async () => {
@@ -254,6 +349,59 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
     ]);
     expect(remoteFeature.ok).toBe(true);
     expect(remoteFeature.stdout).toContain(tip);
+    const fetchFirst = gitAuthed(checkout, human, human.publicKey, repo, [
+      'fetch',
+      'origin',
+      `refs/heads/${feature}`,
+    ]);
+    expect(fetchFirst.ok, fetchFirst.stderr).toBe(true);
+    expect(git(checkout, ['show', `${tip}:STEERED.txt`]).stdout).toContain(marker);
+
+    let secondTip = '';
+    try {
+      await waitUntil(async () => {
+        const ready = (
+          await queryEvents(
+            [
+              {
+                kinds: [9],
+                '#h': [secondSubchannel!],
+                authors: [runtime.agent.publicKey],
+                limit: 100,
+              },
+            ],
+            human.publicKey,
+          )
+        ).find((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'));
+        secondTip = ready?.tags.find((tag) => tag[0] === 'tip')?.[1] ?? '';
+        return Boolean(secondTip);
+      }, 120_000);
+    } catch (error) {
+      const [log, events] = await Promise.all([
+        existsSync(daemonLog) ? readFile(daemonLog, 'utf8') : Promise.resolve('(missing daemon log)'),
+        queryEvents(
+          [{ kinds: [9], '#h': [secondSubchannel!], limit: 200 }],
+          human.publicKey,
+        ),
+      ]);
+      throw new Error(
+        `${String(error)}\n--- second Room events ---\n${events
+          .map((event) => `${event.pubkey.slice(0, 12)} ${event.content}`)
+          .join('\n')}\n--- daemon.log ---\n${log}`,
+      );
+    }
+    const remoteSecondFeature = gitAuthed(
+      secondCheckout,
+      human,
+      human.publicKey,
+      secondRepo,
+      ['ls-remote', 'origin', `refs/heads/${secondFeature}`],
+    );
+    expect(remoteSecondFeature.ok, remoteSecondFeature.stderr).toBe(true);
+    expect(remoteSecondFeature.stdout).toContain(secondTip);
+    console.log(
+      `[live-pair-runtime] concurrent-rooms=SERVED firstTip=${tip} secondTip=${secondTip}`,
+    );
 
     const mergeTarget = {
       repo: `${human.publicKey}/${repo}`,
@@ -303,12 +451,12 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
     expect(lsRemoteRef(checkout, human, human.publicKey, repo, 'refs/heads/main')).toBe(tip);
     console.log('[live-pair-runtime] human-admin-approval=AUTO-LANDED');
     agentClient.disconnect();
-    expect(existsSync(resolve(runtime.repo.gitCommonDir, 'beeline', 'agents'))).toBe(true);
+    expect(existsSync(resolve(runtime.supervisorRoot, 'beeline', 'agents'))).toBe(true);
     console.log(
       `[live-pair-runtime] PASS workspace=${communityId} room=${roomId} repo=${checkout} feature=${feature} tip=${tip}`,
     );
     humanClient.disconnect();
-  }, 240_000);
+  }, 360_000);
 });
 
 if (!live) {

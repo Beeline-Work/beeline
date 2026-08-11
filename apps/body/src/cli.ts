@@ -17,7 +17,8 @@
 import { dirname, resolve } from 'node:path';
 import { unlink } from 'node:fs/promises';
 import { buildAgentEnv, loadBodyConfig, BASE_URL } from './config.js';
-import { Body, type BoundRepo } from './body.js';
+import { Body } from './body.js';
+import { WorkspaceSupervisor } from './supervisor.js';
 import {
   assertAgentNotPushAllowed,
   createChannel,
@@ -33,7 +34,6 @@ import {
   pairRepositoryAgent,
   readRuntimeRecord,
   runtimeDaemonPid,
-  runtimeIdentity,
   type AgentRuntimeRecord,
 } from './runtime.js';
 
@@ -61,26 +61,16 @@ All other config via env vars (see config.ts).
   process.exit(1);
 }
 
-function boundRepoFromRuntime(runtime: AgentRuntimeRecord): BoundRepo {
-  return {
-    repo: runtime.repo.relayRepo?.repo ?? runtime.repo.repository.name,
-    ...(runtime.repo.relayRepo ? { ownerHex: runtime.repo.relayRepo.ownerHex } : {}),
-    targetBranch: `refs/heads/${runtime.repo.targetBranch}`,
-    localPath: runtime.repo.root,
-    ...(runtime.repo.remoteName ? { remoteName: runtime.repo.remoteName } : {}),
-    repositoryKey: runtime.repo.repository.key,
-    localOnly: runtime.repo.repository.localOnly,
-  };
-}
-
 async function assertRuntimeSafe(runtime: AgentRuntimeRecord): Promise<void> {
-  if (!runtime.repo.relayRepo) return;
-  await assertAgentNotPushAllowed({
-    ownerHex: runtime.repo.relayRepo.ownerHex,
-    repo: runtime.repo.relayRepo.repo,
-    agentPubkey: runtime.agent.publicKey,
-    protectedRef: `refs/heads/${runtime.repo.targetBranch}`,
-  });
+  for (const room of runtime.rooms) {
+    if (!room.repo.relayRepo) continue;
+    await assertAgentNotPushAllowed({
+      ownerHex: room.repo.relayRepo.ownerHex,
+      repo: room.repo.relayRepo.repo,
+      agentPubkey: runtime.agent.publicKey,
+      protectedRef: `refs/heads/${room.repo.targetBranch}`,
+    });
+  }
 }
 
 async function waitToRestart(signal: AbortSignal): Promise<void> {
@@ -118,30 +108,20 @@ async function runStoredDaemon(configPath: string): Promise<void> {
   const stop = () => controller.abort();
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
-  console.log(`[buzz] serving Room ${runtime.channelId} from ${runtime.repo.root}`);
+  console.log(
+    `[buzz] Workspace supervisor ${runtime.communityId} starting with ${runtime.rooms.length} Room binding(s)`,
+  );
 
   try {
     while (!controller.signal.aborted) {
-      const body = new Body(
-        config,
-        runtimeIdentity(runtime.body),
-        runtimeIdentity(runtime.agent),
-        runtime.mergeWorker ? runtimeIdentity(runtime.mergeWorker) : undefined,
-      );
+      const supervisor = new WorkspaceSupervisor(runtime, configPath, config);
       try {
-        await body.runRepositoryRoomLoop(
-          runtime.communityId,
-          runtime.channelId,
-          boundRepoFromRuntime(runtime),
-          { signal: controller.signal },
-        );
+        await supervisor.run({ signal: controller.signal });
       } catch (error) {
         if (!controller.signal.aborted) {
-          console.error('[buzz] Room loop stopped; retrying:', error);
+          console.error('[buzz] Workspace supervisor stopped; retrying:', error);
           await waitToRestart(controller.signal);
         }
-      } finally {
-        await body.dispose();
       }
     }
   } finally {
@@ -246,7 +226,7 @@ async function main(): Promise<void> {
     console.log(
       `[buzz] room: ${result.room.channelId} (${result.room.created ? 'created' : 'joined'})`,
     );
-    console.log(`[buzz] repo: ${result.runtime.repo.root}`);
+    console.log(`[buzz] repo: ${result.runtime.rooms[0]!.repo.root}`);
     console.log(`[buzz] agent pubkey: ${result.pairing.agent.pubkey}`);
     console.log(`[buzz] daemon started (pid ${result.pid})`);
     return;

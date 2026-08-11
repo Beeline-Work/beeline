@@ -68,6 +68,32 @@ impossible to bake in single-user assumptions; the backend *is* the seam.
 Formal roles/reviewers beyond parent-owner-merges, workflow pipelines,
 multi-agent, applets, desktop, auto-deployed remote agents.
 
+## Google-first identity binding security invariants
+
+Google/OIDC is an onboarding and account-discovery proof around a Nostr key;
+it is not a second authorization system. The binding service may learn only a
+public key and signed events. It never receives, stores, derives, or remotely
+controls the user's Nostr secret.
+
+- OIDC never authorizes relay HTTP or WebSocket access, membership, roles, or
+  merges. Relay HTTP remains NIP-98, relay WebSockets remain connection-bound
+  NIP-42, and mutations and approvals remain signed Nostr events.
+- An identity link is keyed by `(community, normalized issuer,
+  client/audience, sub)`. Community is resolved from the request Host by
+  trusted tenant configuration, never supplied by a request body. Email is
+  non-authoritative metadata and is never an identity key.
+- A normal bind is create-once and idempotent only for the same public key. An
+  existing identity mapping cannot move to another public key without a
+  separately specified, explicit recovery ceremony.
+- The merge gate checks the self-signed registered-agent identity registry
+  before checking Room roles and fails closed if that lookup fails. Binding an
+  OIDC identity to an agent key does not make it human and cannot make it
+  merge-eligible.
+- A merge-capable human key is held on that person's device. Managed,
+  custodial, or remotely controllable keys are ineligible as trusted reviewers;
+  introducing one requires a separate non-custodial approval credential and a
+  new security review.
+
 ## Honest risks
 - **Still needs a computer** — the agent's body. Someone runs `buzz-agent` and
   pairs the phone (same "bring your own substrate" as Happy).

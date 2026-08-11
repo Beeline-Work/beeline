@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { signEvent } from '@beeline/nostr';
 import { newIdentity } from './identity.js';
-import { roomMergeCandidates } from './worker.js';
+import { authorizeReviewer, roomMergeCandidates } from './worker.js';
 
 describe('durable Room merge discovery', () => {
   it('accepts only signed agent-authored openings for the configured repo and target', () => {
@@ -55,5 +55,87 @@ describe('durable Room merge discovery', () => {
         config,
       ),
     ).toHaveLength(1);
+  });
+});
+
+describe('trusted reviewer security invariants', () => {
+  const input = {
+    pubkey: 'a'.repeat(64),
+    queryPubkey: 'b'.repeat(64),
+    channelId: '11111111-1111-4111-8111-111111111111',
+    custody: 'device' as const,
+  };
+
+  it('checks the registered-agent identity first and refuses an OIDC-bound agent before role', async () => {
+    const calls: string[] = [];
+    const result = await authorizeReviewer(input, {
+      isRegisteredAgent: async () => {
+        calls.push('agent');
+        return true;
+      },
+      resolveRole: async () => {
+        calls.push('role');
+        return 'admin';
+      },
+    });
+    expect(result.authorized).toBe(false);
+    expect(result.reason).toMatch(/registered agent identity/);
+    expect(calls).toEqual(['agent']);
+  });
+
+  it('fails closed on agent-registry outage without consulting roles', async () => {
+    const calls: string[] = [];
+    const result = await authorizeReviewer(input, {
+      isRegisteredAgent: async () => {
+        calls.push('agent');
+        throw new Error('registry unavailable');
+      },
+      resolveRole: async () => {
+        calls.push('role');
+        return 'owner';
+      },
+    });
+    expect(result.authorized).toBe(false);
+    expect(result.reason).toMatch(/cannot prove approval signer is human/);
+    expect(calls).toEqual(['agent']);
+  });
+
+  it.each(['managed', 'remote'] as const)(
+    'refuses %s human reviewer keys before role lookup',
+    async (custody) => {
+      const calls: string[] = [];
+      const result = await authorizeReviewer(
+        { ...input, custody },
+        {
+          isRegisteredAgent: async () => {
+            calls.push('agent');
+            return false;
+          },
+          resolveRole: async () => {
+            calls.push('role');
+            return 'admin';
+          },
+        },
+      );
+      expect(result.authorized).toBe(false);
+      expect(result.reason).toMatch(/custody must be device-held/);
+      expect(calls).toEqual(['agent']);
+    },
+  );
+
+  it('accepts only a device-held non-agent with a current admin role', async () => {
+    const calls: string[] = [];
+    const result = await authorizeReviewer(input, {
+      isRegisteredAgent: async () => {
+        calls.push('agent');
+        return false;
+      },
+      resolveRole: async () => {
+        calls.push('role');
+        return 'admin';
+      },
+    });
+    expect(result).toEqual({ authorized: true, reason: 'authorized device-held human admin' });
+    expect(calls).toEqual(['agent', 'role']);
   });
 });

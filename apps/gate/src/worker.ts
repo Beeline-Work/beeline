@@ -31,6 +31,12 @@ export interface MergeRequest {
   ownerHex?: string;
   /** Hex pubkey whose approvals the worker will honor (and no other). */
   trustedReviewer: string;
+  /**
+   * Authority provenance for the reviewer key. Existing Beeline reviewer keys
+   * are device-held; any future managed/remote signer must identify itself and
+   * is refused before role lookup.
+   */
+  trustedReviewerCustody: ReviewerKeyCustody;
   /** Repo id (`{repo}` in the URL). */
   repo: string;
   /** Channel the repo is bound to (where approvals are posted). */
@@ -50,6 +56,74 @@ export interface MergeOutcome {
   targetTipBefore?: string;
   /** `main` after the attempt (unchanged on refusal). */
   targetTipAfter?: string;
+}
+
+export type ReviewerKeyCustody = 'device' | 'managed' | 'remote';
+
+export interface ReviewerAuthorityDependencies {
+  isRegisteredAgent(pubkey: string, queryPubkey: string): Promise<boolean>;
+  resolveRole(channelId: string, pubkey: string, queryPubkey: string): Promise<ChannelRole | null>;
+}
+
+export interface ReviewerAuthorityResult {
+  authorized: boolean;
+  reason: string;
+}
+
+/**
+ * Enforce reviewer identity in security order: registered-agent lookup first
+ * and fail-closed, then device custody, then the mutable Room role projection.
+ */
+export async function authorizeReviewer(
+  input: {
+    pubkey: string;
+    queryPubkey: string;
+    channelId: string;
+    custody: ReviewerKeyCustody;
+  },
+  dependencies: ReviewerAuthorityDependencies = {
+    isRegisteredAgent: isRegisteredAgentIdentity,
+    resolveRole: resolveChannelRole,
+  },
+): Promise<ReviewerAuthorityResult> {
+  let signerIsAgent: boolean;
+  try {
+    signerIsAgent = await dependencies.isRegisteredAgent(input.pubkey, input.queryPubkey);
+  } catch (error) {
+    return {
+      authorized: false,
+      reason: `cannot prove approval signer is human; agent identity lookup failed: ${String(error)}`,
+    };
+  }
+  if (signerIsAgent) {
+    return {
+      authorized: false,
+      reason: `merge approval REFUSED: signer ${input.pubkey} is a registered agent identity; agents can never approve merges`,
+    };
+  }
+  if (input.custody !== 'device') {
+    return {
+      authorized: false,
+      reason: `merge approval REFUSED: trusted reviewer key custody must be device-held (custody=${input.custody})`,
+    };
+  }
+
+  let reviewerRole: ChannelRole | null;
+  try {
+    reviewerRole = await dependencies.resolveRole(input.channelId, input.pubkey, input.queryPubkey);
+  } catch (error) {
+    return {
+      authorized: false,
+      reason: `cannot prove approval signer is a human admin; role lookup failed: ${String(error)}`,
+    };
+  }
+  if (reviewerRole !== 'owner' && reviewerRole !== 'admin') {
+    return {
+      authorized: false,
+      reason: `merge approval REFUSED: human admin role required (signer role=${reviewerRole ?? 'none'})`,
+    };
+  }
+  return { authorized: true, reason: 'authorized device-held human admin' };
 }
 
 /** Clone the repo fresh as the worker and return the checkout path. */
@@ -100,50 +174,16 @@ export async function attemptMerge(req: MergeRequest): Promise<MergeOutcome> {
 
   const target: MergeTarget = { repo: `${owner}/${req.repo}`, branch: targetRef, tip: featureTip };
 
-  // Identity is checked before role. An agent stays forbidden even if someone
-  // accidentally grants it admin/owner or configures it as trustedReviewer.
-  let signerIsAgent: boolean;
-  try {
-    signerIsAgent = await isRegisteredAgentIdentity(req.trustedReviewer, req.worker.publicKey);
-  } catch (error) {
+  const reviewerAuthority = await authorizeReviewer({
+    pubkey: req.trustedReviewer,
+    queryPubkey: req.worker.publicKey,
+    channelId: req.channelId,
+    custody: req.trustedReviewerCustody,
+  });
+  if (!reviewerAuthority.authorized) {
     return {
       merged: false,
-      reason: `cannot prove approval signer is human; agent identity lookup failed: ${String(error)}`,
-      featureTip,
-      targetTipBefore,
-      targetTipAfter: targetTipBefore,
-    };
-  }
-  if (signerIsAgent) {
-    return {
-      merged: false,
-      reason: `merge approval REFUSED: signer ${req.trustedReviewer} is a registered agent identity; agents can never approve merges`,
-      featureTip,
-      targetTipBefore,
-      targetTipAfter: targetTipBefore,
-    };
-  }
-
-  let reviewerRole: ChannelRole | null;
-  try {
-    reviewerRole = await resolveChannelRole(
-      req.channelId,
-      req.trustedReviewer,
-      req.worker.publicKey,
-    );
-  } catch (error) {
-    return {
-      merged: false,
-      reason: `cannot prove approval signer is a human admin; role lookup failed: ${String(error)}`,
-      featureTip,
-      targetTipBefore,
-      targetTipAfter: targetTipBefore,
-    };
-  }
-  if (reviewerRole !== 'owner' && reviewerRole !== 'admin') {
-    return {
-      merged: false,
-      reason: `merge approval REFUSED: human admin role required (signer role=${reviewerRole ?? 'none'})`,
+      reason: reviewerAuthority.reason,
       featureTip,
       targetTipBefore,
       targetTipAfter: targetTipBefore,
@@ -329,6 +369,7 @@ export class DurableMergeGate {
           worker: this.config.worker,
           ownerHex: this.config.ownerHex,
           trustedReviewer: approval.pubkey,
+          trustedReviewerCustody: 'device',
           repo: this.config.repo,
           channelId: candidate.subchannelId,
           targetBranch: shortTargetBranch(this.config.targetBranch),

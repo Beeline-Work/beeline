@@ -3,11 +3,17 @@ import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 
 import * as Clipboard from 'expo-clipboard';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { Agent, Community, Identity } from '@beeline/buzz-client';
+import {
+  isSingleWordAgentName,
+  type Agent,
+  type Community,
+  type Identity,
+} from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { groknight } from '@/buzz/groknight';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
+import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
@@ -41,7 +47,9 @@ export default function BuzzAgents() {
   const [intent, setIntent] = useState('');
   const [name, setName] = useState('');
   const [personality, setPersonality] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState<string | undefined>();
   const [confirmingRemoval, setConfirmingRemoval] = useState(false);
+  const [viewerAvatarUrl, setViewerAvatarUrl] = useState<string | undefined>();
   const pairingBaseline = useRef<Set<string>>(new Set());
   const pairingPending = useRef(false);
 
@@ -69,6 +77,7 @@ export default function BuzzAgents() {
         setName(arrival.soulProfile?.name ?? fallback.name);
         setPersonality(arrival.soulProfile?.personality ?? fallback.personality);
         setIntent(arrival.soulProfile?.intent ?? '');
+        setAvatarUrl(arrival.soulProfile?.avatar ?? arrival.avatar);
       }
     }
   }, []);
@@ -91,12 +100,17 @@ export default function BuzzAgents() {
           requestedCommunityId,
         );
         const listed = await client.listAgents(activeWorkspaceId);
+        const viewerProfile = await client.getPersonProfile(
+          activeWorkspaceId,
+          currentIdentity.publicKey,
+        );
         if (cancelled) return;
         setIdentity(currentIdentity);
         setTransport(nextTransport);
         setCommunities(available);
         setCommunityId(activeWorkspaceId);
         setAgents(listed);
+        setViewerAvatarUrl(viewerProfile?.avatar);
         interval = setInterval(() => {
           void refreshAgents(nextTransport, activeWorkspaceId).catch(() => undefined);
         }, 2000);
@@ -137,6 +151,7 @@ export default function BuzzAgents() {
     setName(agent.soulProfile?.name ?? fallback.name);
     setPersonality(agent.soulProfile?.personality ?? fallback.personality);
     setIntent(agent.soulProfile?.intent ?? '');
+    setAvatarUrl(agent.soulProfile?.avatar ?? agent.avatar);
     setConfirmingRemoval(false);
     setError(null);
   }, []);
@@ -153,6 +168,7 @@ export default function BuzzAgents() {
           personality: nextPersonality,
           intent,
           avatarSeed: selected.pubkey,
+          ...(avatarUrl ? { avatar: avatarUrl } : {}),
         });
         setName(nextName);
         setPersonality(nextPersonality);
@@ -163,8 +179,22 @@ export default function BuzzAgents() {
         setWorking(false);
       }
     },
-    [communityId, intent, name, personality, refreshAgents, selected, transport],
+    [avatarUrl, communityId, intent, name, personality, refreshAgents, selected, transport],
   );
+
+  const changeAvatar = useCallback(async () => {
+    if (!transport) return;
+    setWorking(true);
+    setError(null);
+    try {
+      const nextAvatar = await pickAndUploadAvatar(await transport.ensureClient());
+      if (nextAvatar) setAvatarUrl(nextAvatar);
+    } catch (caught) {
+      setError(`Could not set Agent picture: ${String(caught)}`);
+    } finally {
+      setWorking(false);
+    }
+  }, [transport]);
 
   const handleUseDefault = useCallback(() => {
     if (!selected) return;
@@ -184,6 +214,7 @@ export default function BuzzAgents() {
       setIntent('');
       setName('');
       setPersonality('');
+      setAvatarUrl(undefined);
       setConfirmingRemoval(false);
       await refreshAgents(transport, communityId);
     } catch (caught) {
@@ -211,6 +242,8 @@ export default function BuzzAgents() {
       }}
       onAdd={() => router.push('/buzz/community' as Href)}
       onSettings={() => router.push('/buzz/settings' as Href)}
+      viewerPubkey={identity?.publicKey}
+      viewerAvatarUrl={viewerAvatarUrl}
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <HullSurface strength="quiet" style={styles.header}>
@@ -327,6 +360,7 @@ export default function BuzzAgents() {
                     <Text style={styles.agentName} numberOfLines={1}>
                       {display.name}
                     </Text>
+                    <Text style={styles.agentHandle}>@{display.handle}</Text>
                     <Text style={styles.personality} numberOfLines={2}>
                       {display.personality}
                     </Text>
@@ -343,7 +377,7 @@ export default function BuzzAgents() {
                 <AgentAvatar
                   pubkey={selected.pubkey}
                   avatarSeed={resolveAgentDisplayIdentity(selected.pubkey, selected).avatarSeed}
-                  avatarUrl={resolveAgentDisplayIdentity(selected.pubkey, selected).avatarUrl}
+                  avatarUrl={avatarUrl}
                   name={resolveAgentDisplayIdentity(selected.pubkey, selected).name}
                   size={42}
                 />
@@ -355,6 +389,26 @@ export default function BuzzAgents() {
                     These instructions shape how the Agent works. They never grant permissions.
                   </Text>
                 </View>
+              </View>
+              <View style={styles.avatarActions}>
+                <TouchableOpacity
+                  style={styles.secondaryButton}
+                  disabled={working}
+                  onPress={() => void changeAvatar()}
+                >
+                  <Text style={styles.secondaryButtonText}>
+                    {avatarUrl ? 'Change picture' : 'Set picture'}
+                  </Text>
+                </TouchableOpacity>
+                {avatarUrl && (
+                  <TouchableOpacity
+                    style={styles.avatarReset}
+                    disabled={working}
+                    onPress={() => setAvatarUrl(undefined)}
+                  >
+                    <Text style={styles.avatarResetText}>Use generated mark</Text>
+                  </TouchableOpacity>
+                )}
               </View>
               <Text style={styles.label}>Intent</Text>
               <TextInput
@@ -372,8 +426,13 @@ export default function BuzzAgents() {
                 value={name}
                 onChangeText={setName}
                 placeholderTextColor={groknight.dim}
-                maxLength={80}
+                maxLength={32}
+                autoCapitalize="words"
               />
+              <Text style={styles.fieldHint}>
+                One spoken word. Mention as @
+                {name.toLowerCase().replace(/[^a-z0-9]/g, '') || 'name'}.
+              </Text>
               <Text style={styles.label}>Personality</Text>
               <TextInput
                 style={[styles.input, styles.personalityInput]}
@@ -387,7 +446,9 @@ export default function BuzzAgents() {
                 <MonoButton
                   label="Save"
                   style={[styles.primaryButton, styles.flexButton]}
-                  disabled={!intent.trim() || !name.trim() || !personality.trim() || working}
+                  disabled={
+                    !intent.trim() || !isSingleWordAgentName(name) || !personality.trim() || working
+                  }
                   onPress={() => void saveSoul()}
                 />
                 <TouchableOpacity
@@ -602,6 +663,7 @@ const styles = StyleSheet.create({
     color: groknight.textPrimary,
     fontSize: 15,
   },
+  agentHandle: { ...Typography.mono(), marginTop: 2, color: groknight.textMuted, fontSize: 10 },
   personality: {
     ...Typography.default(),
     marginTop: 3,
@@ -618,6 +680,20 @@ const styles = StyleSheet.create({
   },
   editorTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
   editorTitleCopy: { flex: 1, minWidth: 0 },
+  avatarActions: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 18 },
+  avatarReset: { minHeight: 44, justifyContent: 'center' },
+  avatarResetText: {
+    ...Typography.default('semiBold'),
+    color: groknight.textSecondary,
+    fontSize: 12,
+  },
+  fieldHint: {
+    ...Typography.mono(),
+    marginTop: 6,
+    color: groknight.textMuted,
+    fontSize: 10,
+    lineHeight: 15,
+  },
   editorTitle: {
     ...Typography.default('semiBold'),
     color: groknight.textPrimary,

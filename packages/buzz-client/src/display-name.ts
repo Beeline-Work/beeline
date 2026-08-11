@@ -1,0 +1,107 @@
+/** Stable spoken names for agent identities. Presentation only; never authority. */
+const FIRST_NAMES = [
+  'Ada',
+  'Alden',
+  'Alice',
+  'Alma',
+  'Amos',
+  'Ansel',
+  'Arlo',
+  'Aster',
+  'Bea',
+  'Bram',
+  'Cato',
+  'Celia',
+  'Charles',
+  'Clara',
+  'Cleo',
+  'Cora',
+  'Dara',
+  'Della',
+  'Eli',
+  'Elio',
+  'Elsa',
+  'Emil',
+  'Esme',
+  'Ezra',
+  'Felix',
+  'Flora',
+  'Freya',
+  'Galen',
+  'Gemma',
+  'Greta',
+  'Hana',
+  'Hazel',
+  'Hugo',
+  'Ida',
+  'Inez',
+  'Iris',
+  'Ivan',
+  'Jasper',
+  'Juno',
+  'Kai',
+  'Kit',
+  'Lena',
+  'Leo',
+  'Lina',
+  'Luca',
+  'Mara',
+  'Milo',
+  'Mira',
+  'Nico',
+  'Nina',
+  'Noa',
+  'Nora',
+  'Oren',
+  'Orla',
+  'Otis',
+  'Pia',
+  'Quinn',
+  'Remy',
+  'Rhea',
+  'Romy',
+  'Sage',
+  'Silas',
+  'Tess',
+  'Theo',
+  'Una',
+  'Vera',
+  'Willa',
+  'Xanthe',
+  'Yara',
+  'Zane',
+  'Zara',
+  'Zora',
+] as const;
+
+function stableHash(value: string): number {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+export function fallbackAgentName(pubkey: string): string {
+  return FIRST_NAMES[stableHash(pubkey.toLowerCase()) % FIRST_NAMES.length]!;
+}
+
+export function isSingleWordAgentName(value: string): boolean {
+  return /^\p{L}[\p{L}\p{M}'’]*$/u.test(value.trim());
+}
+
+/** Preserve a valid authored first name; legacy compound names fall back deterministically. */
+export function resolveAgentName(value: string | undefined, pubkey: string): string {
+  const authored = value?.trim();
+  return authored && isSingleWordAgentName(authored) ? authored : fallbackAgentName(pubkey);
+}
+
+export function agentHandle(name: string, pubkey: string): string {
+  const handle = name
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+  return handle || fallbackAgentName(pubkey).toLowerCase();
+}

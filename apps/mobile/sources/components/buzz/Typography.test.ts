@@ -25,6 +25,8 @@ const monoStyles = new Set([
   'inviteInput',
   'inviteUrl',
   'agent',
+  'agentHandle',
+  'fieldHint',
   'lifecycleAgent',
   'lifecycleBranch',
   'liveMarker',

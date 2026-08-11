@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Community } from '@beeline/buzz-client';
 import { groknight } from '@/buzz/groknight';
 import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
+import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { WorkspaceAvatar } from '@/components/buzz/WorkspaceAvatar';
 import { HullSurface } from '@/components/buzz/MonoHull';
 import { Typography } from '@/constants/Typography';
@@ -27,6 +28,8 @@ type CommunityRailProps = {
   onSelect: (communityId: string | null) => void;
   onAdd: () => void;
   onSettings: () => void;
+  viewerPubkey?: string;
+  viewerAvatarUrl?: string;
 };
 
 type RailButtonProps = {
@@ -62,6 +65,8 @@ export function CommunityRail({
   onSelect,
   onAdd,
   onSettings,
+  viewerPubkey,
+  viewerAvatarUrl,
 }: CommunityRailProps) {
   const insets = useSafeAreaInsets();
   return (
@@ -110,7 +115,11 @@ export function CommunityRail({
         onPress={onSettings}
         testID="community-rail-settings"
       >
-        <Text style={styles.settingsRailButtonText}>⚙</Text>
+        {viewerPubkey ? (
+          <PersonAvatar pubkey={viewerPubkey} avatarUrl={viewerAvatarUrl} name="You" size={38} />
+        ) : (
+          <Text style={styles.settingsRailButtonText}>⚙</Text>
+        )}
       </RailButton>
       <View style={{ height: Math.max(insets.bottom, 8) }} />
     </HullSurface>
@@ -160,6 +169,8 @@ export function BuzzCommunityShell({
   onSelect,
   onAdd,
   onSettings,
+  viewerPubkey,
+  viewerAvatarUrl,
 }: BuzzCommunityShellProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const drawerX = useSharedValue(-DRAWER_WIDTH);
@@ -245,6 +256,8 @@ export function BuzzCommunityShell({
                 onSelect={selectAndClose}
                 onAdd={addAndClose}
                 onSettings={settingsAndClose}
+                viewerPubkey={viewerPubkey}
+                viewerAvatarUrl={viewerAvatarUrl}
               />
             </Animated.View>
           </View>

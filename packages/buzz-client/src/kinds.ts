@@ -24,6 +24,9 @@ export const KIND_CHANNEL_MEMBERS = 39002;
 /** NIP-33 parameterized replaceable application data (agent soul overlays). */
 export const KIND_AGENT_SOUL = 30078;
 
+/** NIP-33 parameterized replaceable application data (human cosmetic profiles). */
+export const KIND_PERSON_PROFILE = 30078;
+
 /** NIP-42 AUTH challenge response. */
 export const KIND_AUTH = 22242;
 
@@ -38,6 +41,9 @@ export const TAG_AGENT_PAIRING = 'buzz-agent-pairing';
 
 /** Marker for display-only, human-authored agent profile metadata. */
 export const TAG_AGENT_SOUL = 'buzz-agent-soul';
+
+/** Marker for self-authored, display-only human profile metadata. */
+export const TAG_PERSON_PROFILE = 'buzz-person-profile';
 
 /** Marker tag value for merge approval (P0 gate shape — mirrors @beeline/gate). */
 export const TAG_MERGE_APPROVAL = 'buzz-merge-approval';

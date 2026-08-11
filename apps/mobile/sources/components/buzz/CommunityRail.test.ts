@@ -78,6 +78,13 @@ vi.mock('./WorkspaceAvatar', async () => {
   };
 });
 
+vi.mock('./PersonAvatar', async () => {
+  const ReactModule = await import('react');
+  return {
+    PersonAvatar: (props: any) => ReactModule.createElement('PersonAvatar', props),
+  };
+});
+
 import { BuzzCommunityShell, CommunityDrawerTrigger } from './CommunityRail';
 
 const originalConsoleError = console.error;
@@ -95,7 +102,12 @@ beforeAll(() => {
 
 afterAll(() => vi.restoreAllMocks());
 
-function renderShell(onSelect = vi.fn(), onAdd = vi.fn(), onSettings = vi.fn()): ReactTestRenderer {
+function renderShell(
+  onSelect = vi.fn(),
+  onAdd = vi.fn(),
+  onSettings = vi.fn(),
+  viewer?: { pubkey: string; avatarUrl?: string },
+): ReactTestRenderer {
   const community = {
     communityId: 'community-1',
     name: 'Night Shift',
@@ -112,6 +124,8 @@ function renderShell(onSelect = vi.fn(), onAdd = vi.fn(), onSettings = vi.fn()):
           onSelect,
           onAdd,
           onSettings,
+          viewerPubkey: viewer?.pubkey,
+          viewerAvatarUrl: viewer?.avatarUrl,
         },
         React.createElement(CommunityDrawerTrigger, { community }),
       ),
@@ -171,5 +185,19 @@ describe('Workspace drawer', () => {
 
     expect(onSettings).toHaveBeenCalledOnce();
     expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);
+  });
+
+  it('uses the person avatar as the global Settings identity affordance', () => {
+    const renderer = renderShell(vi.fn(), vi.fn(), vi.fn(), {
+      pubkey: 'person-pubkey',
+      avatarUrl: 'https://example.test/person.png',
+    });
+
+    act(() => renderer.root.findByProps({ testID: 'community-drawer-trigger' }).props.onPress());
+    expect(renderer.root.findByType('PersonAvatar').props).toMatchObject({
+      pubkey: 'person-pubkey',
+      avatarUrl: 'https://example.test/person.png',
+      name: 'You',
+    });
   });
 });

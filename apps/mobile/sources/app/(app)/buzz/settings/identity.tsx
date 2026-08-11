@@ -12,14 +12,22 @@ import {
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as LocalAuthentication from 'expo-local-authentication';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as QRCode from 'qrcode';
 import Svg, { Path, Rect } from 'react-native-svg';
-import { loadBuzzIdentityNsecForExport } from '@/auth/buzz-identity-storage';
+import type { BuzzClient } from '@beeline/buzz-client';
+import {
+  getEffectiveRelayUrl,
+  loadBuzzIdentity,
+  loadBuzzIdentityNsecForExport,
+} from '@/auth/buzz-identity-storage';
 import { groknight } from '@/buzz/groknight';
+import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { Typography } from '@/constants/Typography';
 import { HullSurface, MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
+import { PersonAvatar } from '@/components/buzz/PersonAvatar';
+import { BuzzRigTransport } from '@/sync/transport';
 
 const TYPED_CONFIRMATION = 'EXPORT';
 
@@ -68,6 +76,10 @@ function QrCode({ value }: { value: string }) {
 
 export default function BuzzIdentitySettings() {
   const insets = useSafeAreaInsets();
+  const params = useLocalSearchParams<{ communityId?: string | string[] }>();
+  const requestedCommunityId = Array.isArray(params.communityId)
+    ? params.communityId[0]
+    : params.communityId;
   const [confirmationMethod, setConfirmationMethod] = useState<ConfirmationMethod>('checking');
   const [biometricLabel, setBiometricLabel] = useState('biometrics');
   const [typedConfirmation, setTypedConfirmation] = useState('');
@@ -78,6 +90,73 @@ export default function BuzzIdentitySettings() {
   const [working, setWorking] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [profileClient, setProfileClient] = useState<BuzzClient | null>(null);
+  const [profileCommunityId, setProfileCommunityId] = useState<string | null>(null);
+  const [profilePubkey, setProfilePubkey] = useState<string | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | undefined>();
+  const [avatarWorking, setAvatarWorking] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const identity = await loadBuzzIdentity();
+        if (!identity) return;
+        const transport = new BuzzRigTransport(identity, await getEffectiveRelayUrl());
+        const client = await transport.ensureClient();
+        const communities = await client.listCommunities(identity.publicKey);
+        const communityId =
+          requestedCommunityId &&
+          communities.some((item) => item.communityId === requestedCommunityId)
+            ? requestedCommunityId
+            : communities[0]?.communityId;
+        const profile = communityId
+          ? await client.getPersonProfile(communityId, identity.publicKey)
+          : null;
+        if (!cancelled) {
+          setProfileClient(client);
+          setProfileCommunityId(communityId ?? null);
+          setProfilePubkey(identity.publicKey);
+          setAvatarUrl(profile?.avatar);
+        }
+      } catch (caught) {
+        if (!cancelled) setError(`Could not load your profile: ${String(caught)}`);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [requestedCommunityId]);
+
+  const changeAvatar = useCallback(async () => {
+    if (!profileClient || !profileCommunityId) return;
+    setAvatarWorking(true);
+    setError(null);
+    try {
+      const next = await pickAndUploadAvatar(profileClient);
+      if (!next) return;
+      await profileClient.setPersonProfile(profileCommunityId, { avatar: next });
+      setAvatarUrl(next);
+    } catch (caught) {
+      setError(`Could not set your picture: ${String(caught)}`);
+    } finally {
+      setAvatarWorking(false);
+    }
+  }, [profileClient, profileCommunityId]);
+
+  const resetAvatar = useCallback(async () => {
+    if (!profileClient || !profileCommunityId) return;
+    setAvatarWorking(true);
+    setError(null);
+    try {
+      await profileClient.setPersonProfile(profileCommunityId, {});
+      setAvatarUrl(undefined);
+    } catch (caught) {
+      setError(`Could not restore your generated mark: ${String(caught)}`);
+    } finally {
+      setAvatarWorking(false);
+    }
+  }, [profileClient, profileCommunityId]);
 
   const lockExport = useCallback(() => {
     setSecret(null);
@@ -203,6 +282,37 @@ export default function BuzzIdentitySettings() {
       </HullSurface>
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        {profilePubkey && profileCommunityId && (
+          <View style={styles.avatarSection}>
+            <PersonAvatar pubkey={profilePubkey} avatarUrl={avatarUrl} name="You" size={76} />
+            <View style={styles.avatarCopy}>
+              <Text style={styles.heading}>Your picture</Text>
+              <Text style={styles.body}>
+                Cosmetic only. Your generated person mark returns if the image is removed.
+              </Text>
+              <View style={styles.actions}>
+                <TouchableOpacity
+                  style={styles.secondaryButton}
+                  disabled={avatarWorking}
+                  onPress={() => void changeAvatar()}
+                >
+                  <Text style={styles.secondaryButtonText}>
+                    {avatarWorking ? 'Working…' : avatarUrl ? 'Change picture' : 'Set picture'}
+                  </Text>
+                </TouchableOpacity>
+                {avatarUrl && (
+                  <TouchableOpacity
+                    style={styles.secondaryButton}
+                    disabled={avatarWorking}
+                    onPress={() => void resetAvatar()}
+                  >
+                    <Text style={styles.secondaryButtonText}>Use generated mark</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          </View>
+        )}
         <View style={styles.intro}>
           <Text style={styles.heading}>Export your key</Text>
           <Text style={styles.body}>Save a copy so you can recover your Beeline identity.</Text>
@@ -344,6 +454,16 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   content: { paddingHorizontal: 20, paddingTop: 28, paddingBottom: 36 },
+  avatarSection: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 16,
+    paddingBottom: 24,
+    marginBottom: 28,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.border,
+  },
+  avatarCopy: { flex: 1, minWidth: 0 },
   intro: { maxWidth: 560 },
   sectionLabel: {
     ...Typography.mono('semiBold'),

@@ -1,12 +1,5 @@
 import React, { createContext, useCallback, useContext, useState } from 'react';
-import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import Animated, {
   Easing,
@@ -33,6 +26,7 @@ type CommunityRailProps = {
   activeCommunityId: string | null;
   onSelect: (communityId: string | null) => void;
   onAdd: () => void;
+  onSettings: () => void;
 };
 
 type RailButtonProps = {
@@ -67,6 +61,7 @@ export function CommunityRail({
   activeCommunityId,
   onSelect,
   onAdd,
+  onSettings,
 }: CommunityRailProps) {
   const insets = useSafeAreaInsets();
   return (
@@ -108,6 +103,14 @@ export function CommunityRail({
         testID="community-rail-add"
       >
         <Text style={styles.addRailButtonText}>＋</Text>
+      </RailButton>
+      <RailButton
+        active={false}
+        label="Settings"
+        onPress={onSettings}
+        testID="community-rail-settings"
+      >
+        <Text style={styles.settingsRailButtonText}>⚙</Text>
       </RailButton>
       <View style={{ height: Math.max(insets.bottom, 8) }} />
     </HullSurface>
@@ -156,6 +159,7 @@ export function BuzzCommunityShell({
   activeCommunityId,
   onSelect,
   onAdd,
+  onSettings,
 }: BuzzCommunityShellProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const drawerX = useSharedValue(-DRAWER_WIDTH);
@@ -209,6 +213,11 @@ export function BuzzCommunityShell({
     onAdd();
   }, [closeDrawer, onAdd]);
 
+  const settingsAndClose = useCallback(() => {
+    closeDrawer();
+    onSettings();
+  }, [closeDrawer, onSettings]);
+
   const drawerStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: drawerX.value }],
   }));
@@ -229,15 +238,13 @@ export function BuzzCommunityShell({
                 testID="community-drawer-scrim"
               />
             </Animated.View>
-            <Animated.View
-              style={[styles.drawer, drawerStyle]}
-              testID="community-drawer"
-            >
+            <Animated.View style={[styles.drawer, drawerStyle]} testID="community-drawer">
               <CommunityRail
                 communities={communities}
                 activeCommunityId={activeCommunityId}
                 onSelect={selectAndClose}
                 onAdd={addAndClose}
+                onSettings={settingsAndClose}
               />
             </Animated.View>
           </View>
@@ -296,6 +303,11 @@ const styles = StyleSheet.create({
     color: groknight.chrome,
     fontSize: 20,
     fontWeight: '500',
+  },
+  settingsRailButtonText: {
+    ...Typography.default(),
+    color: groknight.steel,
+    fontSize: 18,
   },
   activeNotch: {
     position: 'absolute',

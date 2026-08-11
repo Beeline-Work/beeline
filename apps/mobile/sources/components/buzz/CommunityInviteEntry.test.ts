@@ -60,4 +60,19 @@ describe('community invite entry', () => {
     act(() => renderer.root.findByProps({ testID: 'manage-agents-action' }).props.onPress());
     expect(onManageAgents).toHaveBeenCalledOnce();
   });
+
+  it('keeps Agent linking but hides People invites in a Personal Workspace', () => {
+    const renderer = render(
+      React.createElement(CommunityInviteEntry, {
+        community: { communityId: 'personal-1', name: 'Personal' } as any,
+        creatingInvite: false,
+        allowPeopleInvites: false,
+        onInvitePeople: vi.fn(),
+        onManageAgents: vi.fn(),
+      }),
+    );
+
+    expect(renderer.root.findAllByProps({ testID: 'invite-people-action' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'manage-agents-action' })).toBeDefined();
+  });
 });

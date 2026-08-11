@@ -149,6 +149,33 @@ describe('Buzz branch-loop event projection', () => {
   });
 });
 
+describe('Room-scoped Workspace membership', () => {
+  it('routes existing people through the member-only SDK attachment', async () => {
+    const identity = {
+      publicKey: 'a'.repeat(64),
+      secretKey: new Uint8Array(32).fill(1),
+      name: 'operator',
+    } as Identity;
+    const client = {
+      attachCommunityMemberToChannel: vi.fn(async () => ({
+        joined: true,
+        membershipSince: 42,
+      })),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(
+      transport.inviteWorkspaceMemberToChannel('room-1', 'person-1', 'workspace-1'),
+    ).resolves.toBe(true);
+    expect(client.attachCommunityMemberToChannel).toHaveBeenCalledWith(
+      'room-1',
+      'person-1',
+      'workspace-1',
+    );
+  });
+});
+
 describe('Buzz change review metadata', () => {
   const base = 'b'.repeat(40);
   const tip = 'c'.repeat(40);

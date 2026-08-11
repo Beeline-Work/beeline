@@ -22,7 +22,13 @@ import {
   TAG_COMMUNITY_INVITE,
 } from './kinds.js';
 import { parseMembersEvent, tagValue, tagValues } from './parse.js';
-import { isMember, setMemberRole, waitUntilMember, type ChannelOpsContext } from './channel.js';
+import {
+  getChannelCommunityId,
+  isMember,
+  setMemberRole,
+  waitUntilMember,
+  type ChannelOpsContext,
+} from './channel.js';
 import type {
   Community,
   CommunityInvite,
@@ -255,6 +261,36 @@ export async function communityMembers(
   }
   roles.set(community.ownerPubkey, 'owner');
   return [...roles.entries()].map(([pubkey, role]) => ({ pubkey, role }));
+}
+
+/** Place one existing Workspace member into one Room, always with member authority. */
+export async function attachCommunityMemberToChannel(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  memberPubkey: string,
+  communityId: string,
+): Promise<{ joined: boolean; membershipSince: number }> {
+  const roomCommunityId = await getChannelCommunityId(ctx, channelId);
+  if (roomCommunityId !== communityId) {
+    throw new Error('member placement requires a Room in this Workspace');
+  }
+  const members = await communityMembers(ctx, communityId);
+  if (!members.some((member) => member.pubkey === memberPubkey)) {
+    throw new Error('person is not a member of this Workspace');
+  }
+  if (await isMember(ctx, channelId, memberPubkey)) {
+    return { joined: false, membershipSince: now() };
+  }
+
+  const membershipSince = now();
+  await setMemberRole(ctx, channelId, memberPubkey, 'member', {
+    extraTags: [
+      [TAG_COMMUNITY, communityId],
+      ['member-invite', memberPubkey],
+    ],
+  });
+  await waitUntilMember(ctx, channelId, memberPubkey);
+  return { joined: true, membershipSince };
 }
 
 function inviteExpiry(options: CreateInviteOptions | undefined, createdAt: number): number {

@@ -173,6 +173,21 @@ export class BuzzRigTransport implements RigTransport {
     return result.joined;
   }
 
+  /** Add one existing Workspace person to this Room as a normal member. */
+  async inviteWorkspaceMemberToChannel(
+    channelId: string,
+    memberPubkey: string,
+    communityId: string,
+  ): Promise<boolean> {
+    const client = await this.getClient();
+    const result = await client.attachCommunityMemberToChannel(
+      channelId,
+      memberPubkey,
+      communityId,
+    );
+    return result.joined;
+  }
+
   async runAbort(sessionId: SessionId): Promise<void> {
     const client = await this.getClient();
     await client.messageSubmit(sessionId, 'Cancel the active Agent turn.', {

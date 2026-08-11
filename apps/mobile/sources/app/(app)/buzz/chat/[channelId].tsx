@@ -31,7 +31,7 @@ import type { SessionEvent } from '@/sync/transport';
 import { groknight } from '@/buzz/groknight';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
-import { countRoomParticipants } from '@/buzz/room-participants';
+import { countRoomParticipants, formatRoomParticipantCounts } from '@/buzz/room-participants';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
@@ -649,14 +649,7 @@ export default function BuzzChat() {
               {roomName}
             </Text>
             <Text style={styles.headerMeta} numberOfLines={1}>
-              {participantCounts.humans} {participantCounts.humans === 1 ? 'human' : 'humans'} ·{' '}
-              {participantCounts.agents} {participantCounts.agents === 1 ? 'agent' : 'agents'}
-              {mergeTarget && (
-                <>
-                  {' · '}
-                  <Text style={styles.pathTag}>{mergeTarget.repo}</Text>
-                </>
-              )}
+              {formatRoomParticipantCounts(participantCounts)}
             </Text>
           </View>
           {isArchived && (
@@ -897,10 +890,6 @@ const styles = StyleSheet.create({
     lineHeight: 15,
     color: groknight.textMuted,
     marginTop: 2,
-  },
-  pathTag: {
-    ...Typography.mono(),
-    color: groknight.chrome,
   },
   archivedBadge: {
     backgroundColor: groknight.bgHighlight,

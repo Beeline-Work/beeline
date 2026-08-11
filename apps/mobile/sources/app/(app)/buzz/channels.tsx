@@ -1,16 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  FlatList,
-  Modal,
-  Pressable,
-  Share,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
-import * as Clipboard from 'expo-clipboard';
+import { FlatList, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -158,7 +147,6 @@ export default function BuzzChannels() {
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [readyInviteUrl, setReadyInviteUrl] = useState<string | undefined>(inviteUrl);
-  const [inviteModalVisible, setInviteModalVisible] = useState(Boolean(inviteUrl));
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
 
   const activeCommunity = useMemo(
@@ -214,7 +202,6 @@ export default function BuzzChannels() {
   const handleSelectCommunity = useCallback((communityId: string | null) => {
     if (!communityId) return;
     setReadyInviteUrl(undefined);
-    setInviteModalVisible(false);
     setExpandedRoomId(null);
     router.replace({
       pathname: '/buzz/channels',
@@ -289,16 +276,21 @@ export default function BuzzChannels() {
     setCreatingInvite(true);
     setError(null);
     try {
-      const client = await transport.ensureClient();
-      const url = await createCommunityInviteUrl(client, activeCommunityId, relayUrl);
+      const url =
+        readyInviteUrl ??
+        (await createCommunityInviteUrl(
+          await transport.ensureClient(),
+          activeCommunityId,
+          relayUrl,
+        ));
       setReadyInviteUrl(url);
-      setInviteModalVisible(true);
+      await Share.share({ message: url });
     } catch (err) {
       setError(`Could not create invite: ${String(err)}`);
     } finally {
       setCreatingInvite(false);
     }
-  }, [activeCommunityId, creatingInvite, relayUrl, transport]);
+  }, [activeCommunityId, creatingInvite, readyInviteUrl, relayUrl, transport]);
 
   if (loading && !transport) {
     return (
@@ -405,12 +397,6 @@ export default function BuzzChannels() {
                 creatingInvite={creatingInvite}
                 allowPeopleInvites={activeCommunityId !== personalWorkspaceId}
                 onInvitePeople={() => void handleInvitePeople()}
-                onManageAgents={() =>
-                  activeCommunityId &&
-                  router.push(
-                    `/buzz/agents?communityId=${encodeURIComponent(activeCommunityId)}` as Href,
-                  )
-                }
               />
             ) : null
           }
@@ -436,12 +422,6 @@ export default function BuzzChannels() {
                 creatingInvite={creatingInvite}
                 allowPeopleInvites={activeCommunityId !== personalWorkspaceId}
                 onInvitePeople={() => void handleInvitePeople()}
-                onManageAgents={() =>
-                  activeCommunityId &&
-                  router.push(
-                    `/buzz/agents?communityId=${encodeURIComponent(activeCommunityId)}` as Href,
-                  )
-                }
               />
             </View>
           }
@@ -544,61 +524,6 @@ export default function BuzzChannels() {
           onRefresh={() => void handleRefresh()}
           refreshing={refreshing}
         />
-
-        <Modal
-          animationType="fade"
-          onRequestClose={() => setInviteModalVisible(false)}
-          transparent
-          visible={inviteModalVisible && Boolean(readyInviteUrl)}
-        >
-          <View style={styles.modalRoot}>
-            <Pressable
-              accessibilityLabel="Close invite"
-              onPress={() => setInviteModalVisible(false)}
-              style={StyleSheet.absoluteFill}
-            />
-            <HullSurface strength="raised" style={styles.inviteModal}>
-              <View style={styles.modalHeadingRow}>
-                <View style={styles.modalHeadingCopy}>
-                  <Text style={styles.panelTitle}>Invite people</Text>
-                  <Text style={styles.modalSubtitle}>
-                    Add someone to {activeCommunity?.name ?? WORKSPACE_LABEL}.
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  accessibilityLabel="Close invite"
-                  onPress={() => setInviteModalVisible(false)}
-                  style={styles.modalClose}
-                >
-                  <Text style={styles.modalCloseText}>×</Text>
-                </TouchableOpacity>
-              </View>
-              <View style={styles.inviteUrlFrame}>
-                <Text selectable style={styles.inviteUrl}>
-                  {readyInviteUrl}
-                </Text>
-              </View>
-              <View style={styles.modalActions}>
-                <TouchableOpacity
-                  accessibilityLabel={`Copy ${WORKSPACE_LABEL} invite link`}
-                  onPress={() => readyInviteUrl && Clipboard.setStringAsync(readyInviteUrl)}
-                  style={styles.primarySmallButton}
-                  testID="copy-workspace-invite"
-                >
-                  <Text style={styles.primarySmallButtonText}>Copy</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  accessibilityLabel={`Share ${WORKSPACE_LABEL} invite`}
-                  onPress={() => readyInviteUrl && Share.share({ message: readyInviteUrl })}
-                  style={styles.secondaryModalButton}
-                  testID="share-workspace-invite"
-                >
-                  <Text style={styles.secondarySmallButtonText}>Share</Text>
-                </TouchableOpacity>
-              </View>
-            </HullSurface>
-          </View>
-        </Modal>
       </View>
     </BuzzCommunityShell>
   );
@@ -655,7 +580,6 @@ const styles = StyleSheet.create({
     color: groknight.textPrimary,
     fontSize: 15,
   },
-  inviteUrl: { ...Typography.mono(), color: groknight.textMuted, fontSize: 11, lineHeight: 16 },
   inlineForm: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   input: {
     ...Typography.default(),
@@ -684,18 +608,6 @@ const styles = StyleSheet.create({
     ...Typography.default('semiBold'),
     color: groknight.textInverted,
     fontSize: 13,
-  },
-  secondarySmallButton: {
-    minHeight: 44,
-    paddingHorizontal: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  secondarySmallButtonText: {
-    ...Typography.default('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 12,
-    fontWeight: '600',
   },
   disabled: { backgroundColor: groknight.bgBase, borderWidth: 1, borderColor: groknight.border },
   errorPanel: {
@@ -843,55 +755,6 @@ const styles = StyleSheet.create({
     ...Typography.default('semiBold'),
     color: groknight.steel,
     fontSize: 12,
-  },
-  modalRoot: {
-    flex: 1,
-    paddingHorizontal: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(5, 5, 6, 0.82)',
-  },
-  inviteModal: {
-    width: '100%',
-    maxWidth: 440,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgRaised,
-  },
-  modalHeadingRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  modalHeadingCopy: { flex: 1, minWidth: 0 },
-  modalSubtitle: {
-    ...Typography.default(),
-    marginTop: -4,
-    color: groknight.textMuted,
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  modalClose: {
-    width: 44,
-    height: 44,
-    marginTop: -10,
-    marginRight: -10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modalCloseText: { ...Typography.default(), color: groknight.steel, fontSize: 24 },
-  inviteUrlFrame: {
-    marginTop: 16,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: groknight.border,
-    backgroundColor: groknight.bgTerminal,
-  },
-  modalActions: { marginTop: 14, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  secondaryModalButton: {
-    minHeight: 44,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
   },
   emptyContainer: { flexGrow: 1 },
   emptyState: { flex: 1, paddingHorizontal: 22, alignItems: 'center', justifyContent: 'center' },

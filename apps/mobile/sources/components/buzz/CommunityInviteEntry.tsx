@@ -10,7 +10,6 @@ type CommunityInviteEntryProps = {
   creatingInvite: boolean;
   allowPeopleInvites?: boolean;
   onInvitePeople: () => void;
-  onManageAgents: () => void;
 };
 
 export function CommunityInviteEntry({
@@ -18,37 +17,22 @@ export function CommunityInviteEntry({
   creatingInvite,
   allowPeopleInvites = true,
   onInvitePeople,
-  onManageAgents,
 }: CommunityInviteEntryProps) {
-  if (!community) return null;
+  if (!community || !allowPeopleInvites) return null;
 
   return (
     <View style={styles.communityEntry} testID="community-invite-entry">
       <TouchableOpacity
-        accessibilityLabel={`Connect an Agent to ${community.name}`}
+        accessibilityLabel={`Invite people to ${community.name}`}
         accessibilityRole="button"
-        onPress={onManageAgents}
-        style={styles.action}
-        testID="manage-agents-action"
+        disabled={creatingInvite}
+        onPress={onInvitePeople}
+        style={[styles.action, creatingInvite && styles.disabled]}
+        testID="invite-people-action"
       >
-        <Text style={styles.actionIcon}>⌬</Text>
-        <Text style={styles.actionText}>Connect an Agent</Text>
+        <Text style={styles.actionIcon}>＋</Text>
+        <Text style={styles.actionText}>{creatingInvite ? 'Opening share…' : 'Invite people'}</Text>
       </TouchableOpacity>
-      {allowPeopleInvites && (
-        <TouchableOpacity
-          accessibilityLabel={`Invite people to ${community.name}`}
-          accessibilityRole="button"
-          disabled={creatingInvite}
-          onPress={onInvitePeople}
-          style={[styles.action, creatingInvite && styles.disabled]}
-          testID="invite-people-action"
-        >
-          <Text style={styles.actionIcon}>＋</Text>
-          <Text style={styles.actionText}>
-            {creatingInvite ? 'Creating invite…' : 'Invite people'}
-          </Text>
-        </TouchableOpacity>
-      )}
     </View>
   );
 }
@@ -61,7 +45,6 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 18,
     backgroundColor: groknight.bgTerminal,
   },
   action: {

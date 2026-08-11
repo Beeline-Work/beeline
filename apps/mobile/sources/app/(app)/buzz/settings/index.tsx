@@ -53,15 +53,13 @@ export default function BuzzSettings() {
         </TouchableOpacity>
 
         <TouchableOpacity
-          accessibilityLabel={confirmForget ? 'Confirm forget key' : 'Forget key on this device'}
+          accessibilityLabel={confirmForget ? 'Confirm sign out' : 'Sign out on this device'}
           onPress={() => void handleForget()}
           style={[styles.settingsRow, styles.destructiveRow]}
-          testID="forget-key-setting"
+          testID="sign-out-setting"
         >
           <View style={styles.rowCopy}>
-            <Text style={styles.rowTitle}>
-              {confirmForget ? '! Confirm forget key' : 'Forget key'}
-            </Text>
+            <Text style={styles.rowTitle}>{confirmForget ? '! Confirm sign out' : 'Sign out'}</Text>
             <Text style={styles.rowSubtitle}>Remove this identity from this device</Text>
           </View>
           <Text style={styles.forgetGlyph}>⌫</Text>
@@ -71,7 +69,8 @@ export default function BuzzSettings() {
           <View accessibilityRole="alert">
             <PixelGateReveal style={styles.confirmPanel}>
               <Text style={styles.confirmText}>
-                This cannot be undone on this device. Continue only if your key is backed up.
+                This removes the local identity from this device. Continue only if your key is
+                backed up.
               </Text>
               <TouchableOpacity onPress={() => setConfirmForget(false)} style={styles.cancelButton}>
                 <Text style={styles.cancelText}>Cancel</Text>

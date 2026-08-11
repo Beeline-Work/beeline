@@ -35,7 +35,11 @@ import type { SessionEvent } from '@/sync/transport';
 import { groknight } from '@/buzz/groknight';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
-import { countRoomParticipants, formatRoomParticipantCounts } from '@/buzz/room-participants';
+import {
+  formatRoomParticipantList,
+  formatRoomParticipantTotal,
+  mentionedAgentPubkey,
+} from '@/buzz/room-participants';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
@@ -61,10 +65,15 @@ type DisplayMessage = {
   isArchivedNotice?: boolean;
   /** True if this is an agent-activity frame from the body. */
   isAgentActivity?: boolean;
-  /** Explicit human → agent work request; never a direct subchannel create. */
-  requestAgentPubkey?: string;
   /** True only for subscription/optimistic inserts, never initial backfill. */
   isNew?: boolean;
+};
+
+type RoomMemberOption = {
+  pubkey: string;
+  label: string;
+  kind: 'person' | 'agent';
+  agent?: Agent;
 };
 
 /** Known body pubkeys for provenance display (hardcoded for dev). */
@@ -190,20 +199,59 @@ export default function BuzzChat() {
   const [availableAgents, setAvailableAgents] = useState<Agent[]>([]);
   const [availablePeople, setAvailablePeople] = useState<CommunityMember[]>([]);
   const [roomMemberPubkeys, setRoomMemberPubkeys] = useState<Set<string>>(new Set());
-  const [roomAgentPubkeys, setRoomAgentPubkeys] = useState<Set<string>>(new Set());
-  const [invitingAgentPubkey, setInvitingAgentPubkey] = useState<string | null>(null);
-  const [invitingPersonPubkey, setInvitingPersonPubkey] = useState<string | null>(null);
-  const [participantAgents, setParticipantAgents] = useState<Agent[]>([]);
-  const [requestingAgent, setRequestingAgent] = useState<Agent | null>(null);
+  const [addingMemberPubkey, setAddingMemberPubkey] = useState<string | null>(null);
+  const [memberQuery, setMemberQuery] = useState('');
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
   const [roomName, setRoomName] = useState(ROOM_LABEL);
-  const [participantCounts, setParticipantCounts] = useState({ humans: 0, agents: 0 });
   const [participantPickerVisible, setParticipantPickerVisible] = useState(false);
   const [membershipError, setMembershipError] = useState<string | null>(null);
   const [composerFocused, setComposerFocused] = useState(false);
   const agentByPubkey = useMemo(
     () => new Map(availableAgents.map((agent) => [agent.pubkey, agent])),
     [availableAgents],
+  );
+  const memberOptions = useMemo<RoomMemberOption[]>(() => {
+    const options = new Map<string, RoomMemberOption>();
+    for (const person of availablePeople) {
+      options.set(person.pubkey, {
+        pubkey: person.pubkey,
+        label: person.pubkey === userPubkey ? 'You' : shortNpub(person.pubkey),
+        kind: 'person',
+      });
+    }
+    for (const agent of availableAgents) {
+      options.set(agent.pubkey, {
+        pubkey: agent.pubkey,
+        label: resolveAgentDisplayIdentity(agent.pubkey, agent).name,
+        kind: 'agent',
+        agent,
+      });
+    }
+    return [...options.values()].sort((a, b) => {
+      if (a.pubkey === userPubkey) return -1;
+      if (b.pubkey === userPubkey) return 1;
+      return a.label.localeCompare(b.label);
+    });
+  }, [availableAgents, availablePeople, userPubkey]);
+  const roomParticipants = useMemo(
+    () => memberOptions.filter((option) => roomMemberPubkeys.has(option.pubkey)),
+    [memberOptions, roomMemberPubkeys],
+  );
+  const filteredMemberOptions = useMemo(() => {
+    const query = memberQuery.trim().replace(/^@/, '').toLocaleLowerCase();
+    if (!query) return memberOptions;
+    return memberOptions.filter(
+      (option) =>
+        option.label.toLocaleLowerCase().includes(query) ||
+        option.pubkey.toLocaleLowerCase().includes(query),
+    );
+  }, [memberOptions, memberQuery]);
+  const mentionableAgents = useMemo(
+    () =>
+      roomParticipants
+        .filter((participant) => participant.kind === 'agent')
+        .map((participant) => ({ pubkey: participant.pubkey, name: participant.label })),
+    [roomParticipants],
   );
 
   // Helper to add new messages, deduplicating by id.
@@ -263,14 +311,10 @@ export default function BuzzChat() {
           setAvailableAgents(communityAgents);
           const roomPubkeys = new Set(roomMembers.map((member) => member.pubkey));
           const agentPubkeys = new Set(communityAgents.map((agent) => agent.pubkey));
-          const roomAgents = communityAgents.filter((agent) => roomPubkeys.has(agent.pubkey));
           setAvailablePeople(communityMembers.filter((member) => !agentPubkeys.has(member.pubkey)));
           setRoomMemberPubkeys(roomPubkeys);
-          setRoomAgentPubkeys(new Set(roomAgents.map((agent) => agent.pubkey)));
-          setParticipantAgents(roomAgents);
           setViewerIsAgent(identityIsAgent);
           setRoomName(channelMetadata?.name?.trim() || ROOM_LABEL);
-          setParticipantCounts(countRoomParticipants(roomMembers, communityAgents));
           if (parentId) setParentChannelId(parentId);
         }
         await Promise.all([
@@ -297,9 +341,6 @@ export default function BuzzChat() {
             if (isChangeReviewMetadata) continue;
             const hasMergeSummary = eventHasTag(e, 't', 'merge-summary');
             const hasStatusArchived = eventHasTag(e, 'status', 'archived');
-            const requestAgentPubkey = eventHasTag(e, 't', 'buzz-agent-request')
-              ? eventTagValue(e, 'p')
-              : undefined;
 
             if (hasMergeSummary) {
               msgs.push({
@@ -339,7 +380,6 @@ export default function BuzzChat() {
               timestamp: eventTimestamp(e),
               pubkey: pk,
               isAgentActivity: e.type === 'assistant_delta',
-              requestAgentPubkey,
             });
           }
 
@@ -377,9 +417,6 @@ export default function BuzzChat() {
           const hasMergeSummary = eventHasTag(event, 't', 'merge-summary');
           const hasStatusArchived = eventHasTag(event, 'status', 'archived');
           const isMergeReady = eventHasTag(event, 't', 'merge-ready');
-          const requestAgentPubkey = eventHasTag(event, 't', 'buzz-agent-request')
-            ? eventTagValue(event, 'p')
-            : undefined;
 
           if (isMergeReady) {
             const repo = eventTagValue(event, 'repo');
@@ -431,7 +468,6 @@ export default function BuzzChat() {
               timestamp: eventTimestamp(event),
               pubkey: pk,
               isAgentActivity: event.type === 'assistant_delta',
-              requestAgentPubkey,
             },
           ]);
         });
@@ -462,17 +498,17 @@ export default function BuzzChat() {
         isUser: true,
         timestamp: Date.now(),
         pubkey: userPubkey,
-        requestAgentPubkey: requestingAgent?.pubkey,
       },
     ]);
 
     try {
-      const eventId =
-        requestingAgent && !parentChannelId
-          ? await transport.submitAgentRequest(decodedId, text, requestingAgent.pubkey)
-          : await transport.messageSubmitWithEventId({ sessionId: decodedId, text });
+      const mentionedAgent = parentChannelId
+        ? undefined
+        : mentionedAgentPubkey(text, mentionableAgents);
+      const eventId = mentionedAgent
+        ? await transport.messageSubmitMentioningAgent(decodedId, text, mentionedAgent)
+        : await transport.messageSubmitWithEventId({ sessionId: decodedId, text });
       setMessages((prev) => reconcileOptimisticMessage(prev, optimisticId, eventId));
-      setRequestingAgent(null);
     } catch (err) {
       console.warn('Send failed:', err);
     } finally {
@@ -485,72 +521,41 @@ export default function BuzzChat() {
     addMessages,
     isArchived,
     userPubkey,
-    requestingAgent,
     parentChannelId,
+    mentionableAgents,
   ]);
 
-  const handleAddAgentToRoom = useCallback(
-    async (agent: Agent) => {
-      if (!transport || !activeCommunityId || roomAgentPubkeys.has(agent.pubkey)) return false;
-      setInvitingAgentPubkey(agent.pubkey);
-      setMembershipError(null);
-      try {
-        await transport.inviteAgentToChannel(decodedId, agent.pubkey, activeCommunityId);
-        setRoomAgentPubkeys((current) => new Set([...current, agent.pubkey]));
-        setRoomMemberPubkeys((current) => new Set([...current, agent.pubkey]));
-        setParticipantAgents((current) =>
-          current.some((participant) => participant.pubkey === agent.pubkey)
-            ? current
-            : [...current, agent],
-        );
-        setParticipantCounts((current) => ({ ...current, agents: current.agents + 1 }));
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        return true;
-      } catch (err) {
-        setMembershipError(`Could not add Agent: ${String(err)}`);
-        return false;
-      } finally {
-        setInvitingAgentPubkey(null);
-      }
-    },
-    [activeCommunityId, decodedId, roomAgentPubkeys, transport],
-  );
-
-  const handleAgentChip = useCallback(
-    async (agent: Agent) => {
-      if (roomAgentPubkeys.has(agent.pubkey)) {
-        setRequestingAgent((current) => (current?.pubkey === agent.pubkey ? null : agent));
-        return;
-      }
-      if (await handleAddAgentToRoom(agent)) setRequestingAgent(agent);
-    },
-    [handleAddAgentToRoom, roomAgentPubkeys],
-  );
-
-  const handleAddPersonToRoom = useCallback(
-    async (person: CommunityMember) => {
+  const handleAddRoomMember = useCallback(
+    async (option: RoomMemberOption) => {
       if (
         !transport ||
         !activeCommunityId ||
-        roomMemberPubkeys.has(person.pubkey) ||
-        invitingPersonPubkey
-      ) {
+        roomMemberPubkeys.has(option.pubkey) ||
+        addingMemberPubkey
+      )
         return;
-      }
-      setInvitingPersonPubkey(person.pubkey);
+      setAddingMemberPubkey(option.pubkey);
       setMembershipError(null);
       try {
-        await transport.inviteWorkspaceMemberToChannel(decodedId, person.pubkey, activeCommunityId);
-        setRoomMemberPubkeys((current) => new Set([...current, person.pubkey]));
-        setParticipantCounts((current) => ({ ...current, humans: current.humans + 1 }));
+        if (option.kind === 'agent') {
+          await transport.inviteAgentToChannel(decodedId, option.pubkey, activeCommunityId);
+        } else {
+          await transport.inviteWorkspaceMemberToChannel(
+            decodedId,
+            option.pubkey,
+            activeCommunityId,
+          );
+        }
+        setRoomMemberPubkeys((current) => new Set([...current, option.pubkey]));
+        setMemberQuery('');
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
-        setMembershipError(`Could not add person: ${String(err)}`);
+        setMembershipError(`Could not add @${option.label}: ${String(err)}`);
       } finally {
-        setInvitingPersonPubkey(null);
+        setAddingMemberPubkey(null);
       }
     },
-    [activeCommunityId, decodedId, invitingPersonPubkey, roomMemberPubkeys, transport],
+    [activeCommunityId, addingMemberPubkey, decodedId, roomMemberPubkeys, transport],
   );
 
   const handleCancel = useCallback(async () => {
@@ -628,13 +633,6 @@ export default function BuzzChat() {
       const display = isAgent
         ? resolveAgentDisplayIdentity(item.pubkey ?? 'unknown-agent', knownAgent)
         : null;
-      const requestedAgent = item.requestAgentPubkey
-        ? agentByPubkey.get(item.requestAgentPubkey)
-        : undefined;
-      const requestedDisplay = item.requestAgentPubkey
-        ? resolveAgentDisplayIdentity(item.requestAgentPubkey, requestedAgent)
-        : null;
-
       return (
         <NewMessageMaterialize enabled={Boolean(item.isNew)}>
           <View style={[styles.messageBubble, isAgent ? styles.agentBlock : styles.userBlock]}>
@@ -652,11 +650,6 @@ export default function BuzzChat() {
                 {isOwn ? '◇ YOU' : display ? display.name : `◇ ${shortNpub(item.pubkey ?? '')}`}
               </Text>
             </View>
-            {item.requestAgentPubkey && (
-              <Text style={styles.workRequestBadge}>
-                REQUEST ◆ {requestedDisplay?.name} · START A CORNER
-              </Text>
-            )}
             <Text style={styles.messageText}>{item.text}</Text>
             {item.pubkey && !isOwn && !isAgent && (
               <Text style={styles.provenanceText}>{shortNpub(item.pubkey)}</Text>
@@ -700,7 +693,7 @@ export default function BuzzChat() {
               {roomName}
             </Text>
             <Text style={styles.headerMeta} numberOfLines={1}>
-              {formatRoomParticipantCounts(participantCounts)}
+              {formatRoomParticipantTotal(roomParticipants.length)}
             </Text>
           </View>
           {!parentChannelId && !viewerIsAgent && !isArchived && (
@@ -708,6 +701,7 @@ export default function BuzzChat() {
               accessibilityLabel={`Add people or Agents to this ${ROOM_LABEL}`}
               onPress={() => {
                 setMembershipError(null);
+                setMemberQuery('@');
                 setParticipantPickerVisible(true);
               }}
               style={styles.addMembersButton}
@@ -724,37 +718,12 @@ export default function BuzzChat() {
           )}
         </HullSurface>
 
-        {(participantAgents.length > 0 || participantCounts.humans > 0) && (
+        {roomParticipants.length > 0 && (
           <View style={styles.participantBar} accessibilityLabel="Room participants">
             <Text style={styles.participantLabel}>IN THIS {ROOM_LABEL.toUpperCase()}</Text>
-            <View style={styles.participantList}>
-              {participantCounts.humans > 0 && (
-                <View style={styles.peopleChip}>
-                  <Text style={styles.peopleGlyph}>◇</Text>
-                  <Text style={styles.peopleText}>
-                    {participantCounts.humans}{' '}
-                    {participantCounts.humans === 1 ? 'PERSON' : 'PEOPLE'}
-                  </Text>
-                </View>
-              )}
-              {participantAgents.map((agent) => {
-                const display = resolveAgentDisplayIdentity(agent.pubkey, agent);
-                return (
-                  <View key={agent.pubkey} style={styles.participantAgent}>
-                    <AgentAvatar
-                      pubkey={agent.pubkey}
-                      avatarSeed={display.avatarSeed}
-                      avatarUrl={display.avatarUrl}
-                      name={display.name}
-                      size={28}
-                    />
-                    <Text style={styles.participantAgentName} numberOfLines={1}>
-                      {display.name}
-                    </Text>
-                  </View>
-                );
-              })}
-            </View>
+            <Text style={styles.participantNames} numberOfLines={2}>
+              {formatRoomParticipantList(roomParticipants.map((participant) => participant.label))}
+            </Text>
           </View>
         )}
 
@@ -821,42 +790,6 @@ export default function BuzzChat() {
           </View>
         ) : (
           <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-            {!parentChannelId && !viewerIsAgent && availableAgents.length > 0 && (
-              <View style={styles.askAgentBar}>
-                <Text style={styles.askAgentLabel}>Ask an Agent</Text>
-                {availableAgents.map((agent) => {
-                  const active = requestingAgent?.pubkey === agent.pubkey;
-                  const invited = roomAgentPubkeys.has(agent.pubkey);
-                  const inviting = invitingAgentPubkey === agent.pubkey;
-                  const display = resolveAgentDisplayIdentity(agent.pubkey, agent);
-                  return (
-                    <TouchableOpacity
-                      key={agent.agentId}
-                      style={[styles.askAgentChip, active && styles.askAgentChipActive]}
-                      disabled={Boolean(invitingAgentPubkey)}
-                      onPress={() => void handleAgentChip(agent)}
-                    >
-                      <AgentAvatar
-                        pubkey={agent.pubkey}
-                        avatarSeed={display.avatarSeed}
-                        avatarUrl={display.avatarUrl}
-                        name={display.name}
-                        size={22}
-                      />
-                      <Text
-                        style={[styles.askAgentChipText, active && styles.askAgentChipTextActive]}
-                      >
-                        {inviting
-                          ? 'INVITING…'
-                          : invited
-                            ? `@${display.name}`
-                            : `＋ ${display.name}`}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            )}
             {parentChannelId && !viewerIsAgent && (
               <TouchableOpacity
                 accessibilityLabel="Cancel active Agent turn"
@@ -875,10 +808,10 @@ export default function BuzzChat() {
                 onFocus={() => setComposerFocused(true)}
                 onBlur={() => setComposerFocused(false)}
                 placeholder={
-                  requestingAgent
-                    ? `ask ${resolveAgentDisplayIdentity(requestingAgent.pubkey, requestingAgent).name} to start work…`
-                    : parentChannelId
-                      ? 'steer the live Agent…'
+                  parentChannelId
+                    ? 'steer the live Agent…'
+                    : mentionableAgents.length > 1 || roomParticipants.length > 2
+                      ? 'message the room; @name targets an Agent…'
                       : `continue ${ROOM_LABEL.toLowerCase()} discussion…`
                 }
                 placeholderTextColor={groknight.dim}
@@ -918,7 +851,7 @@ export default function BuzzChat() {
               <View style={styles.memberModalHeadingCopy}>
                 <Text style={styles.memberModalTitle}>Add to this {ROOM_LABEL}</Text>
                 <Text style={styles.memberModalSubtitle}>
-                  Existing Workspace people and linked Agents join as members only.
+                  Find any Workspace person or linked Agent with @. They join as members only.
                 </Text>
               </View>
               <TouchableOpacity
@@ -930,74 +863,69 @@ export default function BuzzChat() {
               </TouchableOpacity>
             </View>
 
+            <View style={styles.memberSearch}>
+              <TextInput
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoFocus
+                onChangeText={setMemberQuery}
+                placeholder="@name or npub"
+                placeholderTextColor={groknight.dim}
+                style={styles.memberSearchInput}
+                testID="room-member-search"
+                value={memberQuery}
+              />
+            </View>
+
             <ScrollView
               contentContainerStyle={styles.memberPickerContent}
               showsVerticalScrollIndicator={false}
             >
-              <Text style={styles.memberSectionLabel}>WORKSPACE PEOPLE</Text>
-              {availablePeople.map((person) => {
-                const inRoom = roomMemberPubkeys.has(person.pubkey);
-                const inviting = invitingPersonPubkey === person.pubkey;
+              {filteredMemberOptions.map((option) => {
+                const inRoom = roomMemberPubkeys.has(option.pubkey);
+                const adding = addingMemberPubkey === option.pubkey;
+                const display = option.agent
+                  ? resolveAgentDisplayIdentity(option.pubkey, option.agent)
+                  : undefined;
                 return (
                   <TouchableOpacity
-                    accessibilityLabel={`${inRoom ? 'Already in Room' : 'Add person'} ${shortNpub(person.pubkey)}`}
-                    disabled={inRoom || Boolean(invitingPersonPubkey)}
-                    key={person.pubkey}
-                    onPress={() => void handleAddPersonToRoom(person)}
+                    accessibilityLabel={`${inRoom ? 'Already in Room' : 'Add'} ${option.label}`}
+                    disabled={inRoom || Boolean(addingMemberPubkey)}
+                    key={option.pubkey}
+                    onPress={() => void handleAddRoomMember(option)}
                     style={[styles.memberPickerRow, inRoom && styles.memberPickerRowPlaced]}
-                    testID={`add-room-person-${person.pubkey}`}
+                    testID={`add-room-member-${option.pubkey}`}
                   >
                     <View style={styles.memberPickerIdentity}>
-                      <Text style={styles.memberPickerGlyph}>◇</Text>
-                      <View style={styles.memberPickerCopy}>
-                        <Text style={styles.memberPickerName}>Person</Text>
-                        <Text style={styles.memberPickerNpub}>{shortNpub(person.pubkey)}</Text>
-                      </View>
-                    </View>
-                    <Text style={styles.memberPickerAction}>
-                      {inviting ? 'ADDING…' : inRoom ? 'IN ROOM' : '＋ ADD PERSON'}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-
-              <Text style={[styles.memberSectionLabel, styles.agentSectionLabel]}>
-                LINKED AGENTS
-              </Text>
-              {availableAgents.map((agent) => {
-                const inRoom = roomAgentPubkeys.has(agent.pubkey);
-                const inviting = invitingAgentPubkey === agent.pubkey;
-                const display = resolveAgentDisplayIdentity(agent.pubkey, agent);
-                return (
-                  <TouchableOpacity
-                    accessibilityLabel={`${inRoom ? 'Already in Room' : 'Add Agent'} ${display.name}`}
-                    disabled={inRoom || Boolean(invitingAgentPubkey)}
-                    key={agent.agentId}
-                    onPress={() => void handleAddAgentToRoom(agent)}
-                    style={[styles.memberPickerRow, inRoom && styles.memberPickerRowPlaced]}
-                    testID={`add-room-agent-${agent.pubkey}`}
-                  >
-                    <View style={styles.memberPickerIdentity}>
-                      <AgentAvatar
-                        pubkey={agent.pubkey}
-                        avatarSeed={display.avatarSeed}
-                        avatarUrl={display.avatarUrl}
-                        name={display.name}
-                        size={28}
-                      />
+                      {display ? (
+                        <AgentAvatar
+                          pubkey={option.pubkey}
+                          avatarSeed={display.avatarSeed}
+                          avatarUrl={display.avatarUrl}
+                          name={display.name}
+                          size={28}
+                        />
+                      ) : (
+                        <Text style={styles.memberPickerGlyph}>◇</Text>
+                      )}
                       <View style={styles.memberPickerCopy}>
                         <Text numberOfLines={1} style={styles.memberPickerName}>
-                          {display.name}
+                          @{option.label}
                         </Text>
-                        <Text style={styles.memberPickerNpub}>LINKED AGENT</Text>
+                        <Text style={styles.memberPickerNpub}>
+                          {option.kind === 'agent' ? 'LINKED AGENT' : 'WORKSPACE PERSON'}
+                        </Text>
                       </View>
                     </View>
                     <Text style={styles.memberPickerAction}>
-                      {inviting ? 'ADDING…' : inRoom ? 'IN ROOM' : '＋ ADD AGENT'}
+                      {adding ? 'ADDING…' : inRoom ? 'IN ROOM' : '＋ ADD'}
                     </Text>
                   </TouchableOpacity>
                 );
               })}
+              {filteredMemberOptions.length === 0 && (
+                <Text style={styles.memberPickerEmpty}>No matching Workspace ID</Text>
+              )}
             </ScrollView>
 
             {membershipError && (
@@ -1119,41 +1047,11 @@ const styles = StyleSheet.create({
     lineHeight: 12,
     letterSpacing: 0.7,
   },
-  participantList: {
-    minWidth: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 7,
-  },
-  peopleChip: {
-    minHeight: 28,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 7,
-    borderWidth: 1,
-    borderColor: groknight.borderQuiet,
-  },
-  peopleGlyph: { ...Typography.default('semiBold'), color: groknight.steel, fontSize: 11 },
-  peopleText: {
-    ...Typography.default('semiBold'),
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 12,
-  },
-  participantAgent: {
-    minWidth: 0,
-    maxWidth: 180,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-  },
-  participantAgentName: {
-    ...Typography.default('semiBold'),
-    flexShrink: 1,
+  participantNames: {
+    ...Typography.default(),
     color: groknight.textSecondary,
     fontSize: 11,
+    lineHeight: 16,
   },
 
   // ── Room membership picker ─────────────────────────────────────
@@ -1197,15 +1095,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   memberModalCloseText: { ...Typography.default(), color: groknight.steel, fontSize: 24 },
-  memberPickerContent: { paddingTop: 18, paddingBottom: 4 },
-  memberSectionLabel: {
-    ...Typography.mono('semiBold'),
-    marginBottom: 6,
-    color: groknight.textMuted,
-    fontSize: 9,
-    letterSpacing: 0.7,
+  memberSearch: {
+    minHeight: 48,
+    marginTop: 16,
+    paddingHorizontal: 12,
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgBase,
   },
-  agentSectionLabel: { marginTop: 18 },
+  memberSearchInput: {
+    ...Typography.default(),
+    color: groknight.textPrimary,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  memberPickerContent: { paddingTop: 8, paddingBottom: 4 },
   memberPickerRow: {
     minHeight: 58,
     paddingHorizontal: 10,
@@ -1248,6 +1153,13 @@ const styles = StyleSheet.create({
     color: groknight.chrome,
     fontSize: 9,
     letterSpacing: 0.3,
+  },
+  memberPickerEmpty: {
+    ...Typography.default(),
+    paddingVertical: 24,
+    color: groknight.textMuted,
+    fontSize: 12,
+    textAlign: 'center',
   },
   membershipError: {
     marginTop: 10,
@@ -1317,18 +1229,6 @@ const styles = StyleSheet.create({
     lineHeight: 15,
     color: groknight.textMuted,
     marginTop: 4,
-  },
-  workRequestBadge: {
-    ...Typography.mono('semiBold'),
-    alignSelf: 'flex-start',
-    color: groknight.textSecondary,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    paddingHorizontal: 7,
-    paddingVertical: 4,
-    marginBottom: 5,
-    fontSize: 11,
-    lineHeight: 15,
   },
 
   // ── Merge summary ───────────────────────────────────────────────
@@ -1450,38 +1350,6 @@ const styles = StyleSheet.create({
     borderTopColor: groknight.border,
     backgroundColor: groknight.bgTerminal,
   },
-  askAgentBar: {
-    minWidth: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 7,
-  },
-  askAgentLabel: {
-    ...Typography.default('semiBold'),
-    color: groknight.steel,
-    fontSize: 11,
-  },
-  askAgentChip: {
-    borderWidth: 1,
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    justifyContent: 'center',
-    borderColor: groknight.border,
-    borderRadius: 3,
-    paddingHorizontal: 7,
-    paddingVertical: 4,
-    backgroundColor: groknight.bgBase,
-  },
-  askAgentChipActive: {
-    borderColor: groknight.textSecondary,
-    backgroundColor: groknight.bgHighlight,
-  },
-  askAgentChipText: { ...Typography.default(), color: groknight.chrome, fontSize: 11 },
-  askAgentChipTextActive: { ...Typography.default('semiBold'), color: groknight.textPrimary },
   cancelTurnButton: {
     minHeight: 36,
     marginBottom: 7,

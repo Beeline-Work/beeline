@@ -42,37 +42,33 @@ function render(element: React.ReactElement): ReactTestRenderer {
 }
 
 describe('community invite entry', () => {
-  it('exposes People invites and Agent linking from an active Workspace', () => {
+  it('exposes the native-share invite action from an active Workspace', () => {
     const onInvitePeople = vi.fn();
-    const onManageAgents = vi.fn();
     const renderer = render(
       React.createElement(CommunityInviteEntry, {
         community: { communityId: 'community-1', name: 'Night Shift' } as any,
         creatingInvite: false,
         onInvitePeople,
-        onManageAgents,
       }),
     );
 
     expect(renderer.root.findByProps({ testID: 'community-invite-entry' })).toBeDefined();
     act(() => renderer.root.findByProps({ testID: 'invite-people-action' }).props.onPress());
     expect(onInvitePeople).toHaveBeenCalledOnce();
-    act(() => renderer.root.findByProps({ testID: 'manage-agents-action' }).props.onPress());
-    expect(onManageAgents).toHaveBeenCalledOnce();
+    expect(renderer.root.findAllByProps({ testID: 'manage-agents-action' })).toHaveLength(0);
   });
 
-  it('keeps Agent linking but hides People invites in a Personal Workspace', () => {
+  it('renders no body action in a Personal Workspace', () => {
     const renderer = render(
       React.createElement(CommunityInviteEntry, {
         community: { communityId: 'personal-1', name: 'Personal' } as any,
         creatingInvite: false,
         allowPeopleInvites: false,
         onInvitePeople: vi.fn(),
-        onManageAgents: vi.fn(),
       }),
     );
 
     expect(renderer.root.findAllByProps({ testID: 'invite-people-action' })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'manage-agents-action' })).toBeDefined();
+    expect(renderer.root.findAllByProps({ testID: 'community-invite-entry' })).toHaveLength(0);
   });
 });

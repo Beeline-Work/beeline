@@ -25,10 +25,7 @@ import type {
   SessionSummary,
   WorktreeCreateInput,
 } from './rig-transport';
-import {
-  RigTransportNotImplementedError,
-  RigTransportStubbedError,
-} from './rig-transport';
+import { RigTransportNotImplementedError, RigTransportStubbedError } from './rig-transport';
 import {
   createBuzzClient,
   tagValue,
@@ -84,31 +81,29 @@ export class BuzzRigTransport implements RigTransport {
 
   // ── Sessions (P1: channels as sessions) ────────────────────────────────
 
-  async sessionCreate(
-    _input: WorktreeCreateInput & { prompt?: string },
-  ): Promise<SessionDetail> {
+  async sessionCreate(_input: WorktreeCreateInput & { prompt?: string }): Promise<SessionDetail> {
     throw new RigTransportNotImplementedError(
       'sessionCreate',
       'P2: requires body with ACP session/new + worktree create + subchannel',
     );
   }
 
-  async sessionsRead(
-    _scope?: { channelId?: ChannelId },
-  ): Promise<SessionSummary[]> {
+  async sessionsRead(_scope?: { channelId?: ChannelId }): Promise<SessionSummary[]> {
     const client = await this.getClient();
     const channels = await client.listMyChannels();
-    return Promise.all(channels.map(async (c) => {
-      const metadata = await client.getChannelMetadata(c.channelId);
-      const nameTag = c.event.tags.find((t) => t[0] === 'name');
-      return {
-        id: c.channelId,
-        active: true,
-        title: metadata?.name ?? nameTag?.[1] ?? c.channelId.slice(0, 8),
-        updatedAt: c.event.created_at,
-        createdAt: c.event.created_at,
-      };
-    }));
+    return Promise.all(
+      channels.map(async (c) => {
+        const metadata = await client.getChannelMetadata(c.channelId);
+        const nameTag = c.event.tags.find((t) => t[0] === 'name');
+        return {
+          id: c.channelId,
+          active: true,
+          title: metadata?.name ?? nameTag?.[1] ?? c.channelId.slice(0, 8),
+          updatedAt: c.event.created_at,
+          createdAt: c.event.created_at,
+        };
+      }),
+    );
   }
 
   async sessionRead(sessionId: SessionId): Promise<SessionDetail | null> {
@@ -126,9 +121,7 @@ export class BuzzRigTransport implements RigTransport {
     };
   }
 
-  async sessionArchive(
-    _sessionId: SessionId,
-  ): Promise<{ success: boolean; message?: string }> {
+  async sessionArchive(_sessionId: SessionId): Promise<{ success: boolean; message?: string }> {
     throw new RigTransportNotImplementedError(
       'sessionArchive',
       'P2: needs channel.archive or metadata set archived+closed',
@@ -148,8 +141,8 @@ export class BuzzRigTransport implements RigTransport {
     return event.id;
   }
 
-  /** Human-only UI affordance: ask one named agent to open its own work branch. */
-  async submitAgentRequest(
+  /** Send an ordinary Room message addressed to one @-mentioned agent. */
+  async messageSubmitMentioningAgent(
     channelId: string,
     text: string,
     agentPubkey: string,
@@ -157,7 +150,6 @@ export class BuzzRigTransport implements RigTransport {
     const client = await this.getClient();
     const event = await client.messageSubmit(channelId, text, {
       mentionAgent: agentPubkey,
-      extraTags: [['t', 'buzz-agent-request']],
     });
     return event.id;
   }
@@ -197,10 +189,7 @@ export class BuzzRigTransport implements RigTransport {
 
   // ── Realtime + permissions (P1: subscribe + backfill) ──────────────────
 
-  sessionEventsSubscribe(
-    sessionId: SessionId,
-    handler: (event: SessionEvent) => void,
-  ): () => void {
+  sessionEventsSubscribe(sessionId: SessionId, handler: (event: SessionEvent) => void): () => void {
     let unsub: (() => void) | undefined;
     let cancelled = false;
 
@@ -221,10 +210,7 @@ export class BuzzRigTransport implements RigTransport {
           });
       })
       .catch((err) => {
-        console.warn(
-          `BuzzRigTransport: sessionEventsSubscribe(${sessionId}) failed:`,
-          err,
-        );
+        console.warn(`BuzzRigTransport: sessionEventsSubscribe(${sessionId}) failed:`, err);
       });
 
     const unsubscribe = () => {
@@ -278,10 +264,7 @@ export class BuzzRigTransport implements RigTransport {
     );
   }
 
-  async worktreeArchive(
-    _worktreeId: string,
-    _opts?: { sessionId?: SessionId },
-  ): Promise<void> {
+  async worktreeArchive(_worktreeId: string, _opts?: { sessionId?: SessionId }): Promise<void> {
     throw new RigTransportNotImplementedError(
       'worktreeArchive',
       'P2: body remove worktree, archive child channel',
@@ -316,11 +299,12 @@ export class BuzzRigTransport implements RigTransport {
         limit: 500,
       },
     ]);
-    const matching = events.filter((event) =>
-      event.pubkey === mergeInfo.authorPubkey &&
-      tagValue(event, 'h') === sessionId &&
-      tagValue(event, 'tip') === mergeInfo.target.tip &&
-      tagValue(event, 'f') === path,
+    const matching = events.filter(
+      (event) =>
+        event.pubkey === mergeInfo.authorPubkey &&
+        tagValue(event, 'h') === sessionId &&
+        tagValue(event, 'tip') === mergeInfo.target.tip &&
+        tagValue(event, 'f') === path,
     );
     if (matching.length === 0) return null;
     const uniqueChunks = new Map<number, (typeof matching)[number]>();
@@ -339,19 +323,17 @@ export class BuzzRigTransport implements RigTransport {
       chunks.length === expected &&
       chunks.every((event, index) => Number(tagValue(event, 'chunk') ?? -1) === index);
     if (!complete) {
-      throw new Error(`Incomplete diff for ${path}: received ${chunks.length} of ${expected} chunks`);
+      throw new Error(
+        `Incomplete diff for ${path}: received ${chunks.length} of ${expected} chunks`,
+      );
     }
     return {
       content: chunks.map((event) => event.content).join(''),
-      ...(chunks.some((event) => tagValue(event, 'binary') === 'true')
-        ? { isBinary: true }
-        : {}),
+      ...(chunks.some((event) => tagValue(event, 'binary') === 'true') ? { isBinary: true } : {}),
     };
   }
 
-  async workspaceFilesRead(
-    sessionId: SessionId,
-  ): Promise<ChangedFile[]> {
+  async workspaceFilesRead(sessionId: SessionId): Promise<ChangedFile[]> {
     const client = await this.getClient();
     const mergeInfo = await this.getSubchannelMergeTarget(sessionId);
     if (!mergeInfo) return [];
@@ -371,10 +353,11 @@ export class BuzzRigTransport implements RigTransport {
       },
     ]);
     const manifests = events
-      .filter((event) =>
-        event.pubkey === mergeInfo.authorPubkey &&
-        tagValue(event, 'h') === sessionId &&
-        tagValue(event, 'tip') === mergeInfo.target.tip,
+      .filter(
+        (event) =>
+          event.pubkey === mergeInfo.authorPubkey &&
+          tagValue(event, 'h') === sessionId &&
+          tagValue(event, 'tip') === mergeInfo.target.tip,
       )
       .sort((a, b) => Number(tagValue(a, 'chunk') ?? 0) - Number(tagValue(b, 'chunk') ?? 0))
       .map((event) => parseChangeReviewManifest(event.content))
@@ -386,10 +369,7 @@ export class BuzzRigTransport implements RigTransport {
     return [...new Map(files.map((file) => [file.path, file])).values()];
   }
 
-  async changedFilesRevert(
-    _sessionId: SessionId,
-    _paths: string[],
-  ): Promise<void> {
+  async changedFilesRevert(_sessionId: SessionId, _paths: string[]): Promise<void> {
     throw new RigTransportNotImplementedError(
       'changedFilesRevert',
       'P2: body git checkout in worktree',
@@ -411,10 +391,7 @@ export class BuzzRigTransport implements RigTransport {
     // Backfill messages to find the body's control message with merge target.
     const events = await client.sessionEventsBackfill(subchannelId, { limit: 20 });
     for (const ev of [...events].reverse()) {
-      if (
-        ev.kind !== 'other' &&
-        ev.kind !== 'message'
-      ) continue;
+      if (ev.kind !== 'other' && ev.kind !== 'message') continue;
       const tTags = (ev.event.tags ?? []).filter((t: string[]) => t[0] === 't');
       const isControl = tTags.some((t: string[]) => t[1] === 'body-control');
       if (!isControl) continue;
@@ -496,36 +473,38 @@ export class BuzzRigTransport implements RigTransport {
         .filter((id): id is string => Boolean(id)),
     );
 
-    return Promise.all(ids.map(async (id) => {
-      const [creates, metadata, events] = await Promise.all([
-        client.query([{ kinds: [9007], '#h': [id], limit: 5 }]),
-        client.getChannelMetadata(id),
-        client.sessionEventsBackfill(id, { limit: 50 }),
-      ]);
-      const create = [...creates].sort((a, b) => a.created_at - b.created_at)[0];
-      const statuses = events
-        .map((event) => tagValue(event.event, 'status'))
-        .filter((status): status is string => Boolean(status));
-      const archived = Boolean(metadata?.archived) || statuses.includes('archived');
-      const reviewReady =
-        statuses.includes('ready') ||
-        events.some((event) =>
-          event.event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
-        );
-      return {
-        id,
-        name: cornerName(create ? tagValue(create, 'name') : undefined, id),
-        openerPubkey: create?.pubkey ?? '',
-        status: mergedIds.has(id)
-          ? 'merged'
-          : archived
-            ? 'archived'
-            : reviewReady
-              ? 'open'
-              : 'live',
-        createdAt: create?.created_at,
-      };
-    }));
+    return Promise.all(
+      ids.map(async (id) => {
+        const [creates, metadata, events] = await Promise.all([
+          client.query([{ kinds: [9007], '#h': [id], limit: 5 }]),
+          client.getChannelMetadata(id),
+          client.sessionEventsBackfill(id, { limit: 50 }),
+        ]);
+        const create = [...creates].sort((a, b) => a.created_at - b.created_at)[0];
+        const statuses = events
+          .map((event) => tagValue(event.event, 'status'))
+          .filter((status): status is string => Boolean(status));
+        const archived = Boolean(metadata?.archived) || statuses.includes('archived');
+        const reviewReady =
+          statuses.includes('ready') ||
+          events.some((event) =>
+            event.event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+          );
+        return {
+          id,
+          name: cornerName(create ? tagValue(create, 'name') : undefined, id),
+          openerPubkey: create?.pubkey ?? '',
+          status: mergedIds.has(id)
+            ? 'merged'
+            : archived
+              ? 'archived'
+              : reviewReady
+                ? 'open'
+                : 'live',
+          createdAt: create?.created_at,
+        };
+      }),
+    );
   }
 
   async getChannelCreator(channelId: string): Promise<string | null> {
@@ -550,9 +529,7 @@ export class BuzzRigTransport implements RigTransport {
     return this.identity.publicKey;
   }
 
-  async mergeAction(
-    input: MergeActionInput,
-  ): Promise<{ success: boolean; message?: string }> {
+  async mergeAction(input: MergeActionInput): Promise<{ success: boolean; message?: string }> {
     // The mergeAction in RigTransport uses approvalToken-style input.
     // For P2, we read the merge target from the subchannel's control messages.
     // If input has channelId, try to find merge target there.

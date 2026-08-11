@@ -57,7 +57,7 @@ function render(): ReactTestRenderer {
 }
 
 describe('Buzz global Settings', () => {
-  it('contains key backup and forget actions without relay switching', async () => {
+  it('contains key backup and sign-out actions without relay switching', async () => {
     const renderer = render();
     const text = renderer.root
       .findAllByType('Text' as any)
@@ -65,18 +65,19 @@ describe('Buzz global Settings', () => {
       .join(' ');
 
     expect(text).toContain('Back up your key');
-    expect(text).toContain('Forget key');
+    expect(text).toContain('Sign out');
+    expect(text).not.toContain('Forget key');
     expect(text).not.toContain('Relay URL');
 
     act(() => renderer.root.findByProps({ testID: 'backup-key-setting' }).props.onPress());
     expect(navigation.push).toHaveBeenCalledWith('/buzz/settings/identity');
 
     await act(async () => {
-      await renderer.root.findByProps({ testID: 'forget-key-setting' }).props.onPress();
+      await renderer.root.findByProps({ testID: 'sign-out-setting' }).props.onPress();
     });
     expect(identityStorage.clearBuzzIdentity).not.toHaveBeenCalled();
     await act(async () => {
-      await renderer.root.findByProps({ testID: 'forget-key-setting' }).props.onPress();
+      await renderer.root.findByProps({ testID: 'sign-out-setting' }).props.onPress();
     });
     expect(identityStorage.clearBuzzIdentity).toHaveBeenCalledOnce();
     expect(navigation.replace).toHaveBeenCalledWith('/buzz/onboarding');

@@ -45,6 +45,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - The service owns Authorization Code + PKCE + nonce and a PostgreSQL-backed, hashed, one-use signed binding ceremony. It never accepts a free-standing ID token or grants relay, Room, role, or merge authority.
 - Hermetic provider, adversarial protocol, JWKS rotation/stale-cache, and durable restart coverage: `npm test -w @beeline/auth`.
 - Merge review custody is explicit in `apps/gate/src/worker.ts`: agent identity remains the first fail-closed check, and managed/remote reviewer keys are refused before role lookup.
+- Native Google-first onboarding uses the strict bind client in `packages/buzz-client/src/oidc-bind.ts` and `apps/mobile/sources/app/(app)/buzz/onboarding.tsx`; reproduce the device flow with `npm run dev:emulator -w @beeline/auth` (see `apps/auth/README.md`). Web remains on the legacy advanced-key path until browser key storage is hardened.
 
 ## Maintaining this file
 

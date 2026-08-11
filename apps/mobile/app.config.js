@@ -127,6 +127,11 @@ export default {
                             "scheme": "https",
                             "host": "relay.buzzrouter.com",
                             "pathPrefix": "/join/"
+                        },
+                        {
+                            "scheme": "https",
+                            "host": "relay.buzzrouter.com",
+                            "pathPrefix": "/auth/oidc/mobile-callback"
                         }
                     ],
                     "category": ["BROWSABLE", "DEFAULT"]

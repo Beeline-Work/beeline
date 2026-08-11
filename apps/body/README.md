@@ -49,32 +49,27 @@ by projecting agent activity into the relay channel.
    cd <repo-root> && docker compose -f relay-stack/compose.yml up -d
    ```
 
-2. **Built Rust binaries** — `buzz-agent` and `buzz-dev-mcp`.
-
-   ```bash
-   # From the block-buzz checkout (or use prebuilt at .scratch-target/)
-   cargo build -p buzz-agent -p buzz-dev-mcp --target-dir .scratch-target
-   ```
+2. **Beeline CLI and agent runtimes** — installed together by the hosted installer below.
 
 3. **LLM egress credentials** — set via env or file (see below).
 
 ## Configuration (env vars)
 
-| Variable                  | Required | Default            | Description                          |
-| ------------------------- | -------- | ------------------ | ------------------------------------ |
-| `BUZZ_AGENT_BIN`          | No       | auto-detect        | Path to `buzz-agent` binary          |
-| `BUZZ_DEV_MCP_BIN`        | No       | auto-detect        | Path to `buzz-dev-mcp` binary        |
-| `BUZZY_RELAY_HOST`        | No       | `127.0.0.1:3010`   | Relay HTTP/WS host                   |
-| `BUZZY_RELAY_SCHEME`      | No       | `http`             | Relay scheme                         |
-| `BUZZY_BODY_WORKSPACE`    | No       | `./body-workspace` | Agent workspace root                 |
-| `BUZZY_BODY_LLM_FILE`     | No       | —                  | Path to LLM credentials env file     |
-| `BUZZY_BODY_MAX_SESSIONS` | No       | `4`                | Maximum live ACP processes           |
-| `BUZZY_BODY_SESSION_IDLE_MS` | No    | `300000`           | Idle time before process suspension  |
-| `BUZZ_BODY_KEY`           | No       | auto               | Body operator Nostr nsec/hex         |
-| `BUZZ_AGENT_KEY`          | No       | generated at pair  | Existing agent Nostr nsec/hex        |
-| `BUZZY_BODY_AUTO_APPROVE` | No       | `1`                | Auto-approve ACP permission requests |
-| `BUZZY_SOUL_HOST`         | No       | `127.0.0.1`        | Soul generator bind host             |
-| `BUZZY_SOUL_PORT`         | No       | `8789`             | Soul generator port                  |
+| Variable                     | Required | Default            | Description                          |
+| ---------------------------- | -------- | ------------------ | ------------------------------------ |
+| `BUZZ_AGENT_BIN`             | No       | auto-detect        | Path to `buzz-agent` binary          |
+| `BUZZ_DEV_MCP_BIN`           | No       | auto-detect        | Path to `buzz-dev-mcp` binary        |
+| `BUZZY_RELAY_HOST`           | No       | `127.0.0.1:3010`   | Relay HTTP/WS host                   |
+| `BUZZY_RELAY_SCHEME`         | No       | `http`             | Relay scheme                         |
+| `BUZZY_BODY_WORKSPACE`       | No       | `./body-workspace` | Agent workspace root                 |
+| `BUZZY_BODY_LLM_FILE`        | No       | —                  | Path to LLM credentials env file     |
+| `BUZZY_BODY_MAX_SESSIONS`    | No       | `4`                | Maximum live ACP processes           |
+| `BUZZY_BODY_SESSION_IDLE_MS` | No       | `300000`           | Idle time before process suspension  |
+| `BUZZ_BODY_KEY`              | No       | auto               | Body operator Nostr nsec/hex         |
+| `BUZZ_AGENT_KEY`             | No       | generated at pair  | Existing agent Nostr nsec/hex        |
+| `BUZZY_BODY_AUTO_APPROVE`    | No       | `1`                | Auto-approve ACP permission requests |
+| `BUZZY_SOUL_HOST`            | No       | `127.0.0.1`        | Soul generator bind host             |
+| `BUZZY_SOUL_PORT`            | No       | `8789`             | Soul generator port                  |
 
 ### LLM credentials
 
@@ -93,18 +88,17 @@ BUZZY_LLM_MODEL=deepseek/deepseek-chat-v3.1
 
 ### CLI
 
-From a Beeline source checkout, install the CLI and its upstream agent runtimes
-on your current npm-global PATH with one command (requires Node.js 20+, Git,
-Rust 1.88+, and Cargo):
+Install the CLI and its agent runtimes without cloning this repository (requires
+Node.js 20.11 or newer):
 
 ```bash
-npm run install:beeline
+curl -fsSL https://relay.buzzrouter.com/install | sh
 ```
 
-The installer reuses `buzz-agent` and `buzz-dev-mcp` already on PATH. You can
-also point it at existing builds with `BUZZ_AGENT_BIN` and `BUZZ_DEV_MCP_BIN`.
-When neither is available, it builds the pinned official `block/buzz` source
-and installs both binaries beside the globally linked `beeline` command.
+The installer selects the platform bundle, verifies its checksum, and installs
+`beeline`, `buzz-agent`, and `buzz-dev-mcp` under `~/.local`. It is safe to run
+again and does not modify any existing `buzz` command. Ensure `~/.local/bin` is
+on `PATH`; the installer prints the exact export when it is not.
 
 ```bash
 # Supported user path: run once from the repository the agent will work in.

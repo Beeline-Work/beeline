@@ -16,8 +16,6 @@ const sources = [
 const monoStyles = new Set([
   'command',
   'channelMeta',
-  'cornerStatus',
-  'cornerTree',
   'count',
   'errorLabel',
   'expiry',
@@ -28,6 +26,7 @@ const monoStyles = new Set([
   'agent',
   'lifecycleAgent',
   'lifecycleBranch',
+  'liveMarker',
   'mergeSummaryPubkey',
   'modelTitle',
   'loadingText',

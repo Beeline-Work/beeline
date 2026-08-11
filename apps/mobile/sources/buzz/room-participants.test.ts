@@ -4,9 +4,23 @@ import {
   formatRoomParticipantList,
   formatRoomParticipantTotal,
   mentionedAgentPubkey,
+  sectionRoomRoster,
 } from './room-participants';
 
 describe('Room participant presentation', () => {
+  it('sections the Workspace roster with current Room members first', () => {
+    const roster = [
+      { pubkey: 'you', name: 'You' },
+      { pubkey: 'agent', name: 'Brisk Pilot' },
+      { pubkey: 'person', name: 'npub1person' },
+    ];
+
+    expect(sectionRoomRoster(roster, new Set(['agent', 'you']))).toEqual({
+      inRoom: [roster[0], roster[1]],
+      addable: [roster[2]],
+    });
+  });
+
   it('shows up to five names without splitting people and agents', () => {
     expect(formatRoomParticipantList(['A', 'B', 'C', 'D', 'E'])).toBe('A, B, C, D, E');
   });

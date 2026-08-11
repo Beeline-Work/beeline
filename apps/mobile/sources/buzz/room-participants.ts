@@ -1,4 +1,18 @@
 type MentionableAgent = { pubkey: string; name: string };
+type RoomRosterMember = { pubkey: string };
+
+/** Keep one Workspace roster, ordered as current Room members followed by addable members. */
+export function sectionRoomRoster<T extends RoomRosterMember>(
+  roster: T[],
+  roomMemberPubkeys: ReadonlySet<string>,
+): { inRoom: T[]; addable: T[] } {
+  const inRoom: T[] = [];
+  const addable: T[] = [];
+  for (const member of roster) {
+    (roomMemberPubkeys.has(member.pubkey) ? inRoom : addable).push(member);
+  }
+  return { inRoom, addable };
+}
 
 /** Slack-style participant copy: five names at most, with overflow folded into the fifth slot. */
 export function formatRoomParticipantList(names: string[]): string {

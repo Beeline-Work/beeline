@@ -5,6 +5,7 @@
   "description": "The merge you hold from your phone. See spec.md.",
   "workspaces": [
     "apps/api",
+    "apps/auth",
     "apps/body",
     "apps/gate",
     "apps/push-gateway",

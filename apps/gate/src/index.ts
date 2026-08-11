@@ -45,10 +45,14 @@ export { buildApproval, verifyApproval, APPROVAL_MARKER, type MergeTarget } from
 
 export {
   attemptMerge,
+  authorizeReviewer,
   DurableMergeGate,
   roomMergeCandidates,
   type MergeRequest,
   type MergeOutcome,
+  type ReviewerKeyCustody,
+  type ReviewerAuthorityDependencies,
+  type ReviewerAuthorityResult,
   type RoomMergeServiceConfig,
   type RoomMergeCandidate,
   type RoomMergeAttempt,

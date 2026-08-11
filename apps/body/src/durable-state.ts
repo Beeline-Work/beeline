@@ -1,0 +1,145 @@
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
+import type { NostrEvent } from '@beeline/nostr';
+
+export interface EventCursor {
+  createdAt: number;
+  eventId: string;
+}
+
+interface InboxItem {
+  event: NostrEvent;
+  state: 'pending' | 'delivered';
+  attempts: number;
+  lastError?: string;
+}
+
+export interface ConversationEntry {
+  role: 'user' | 'agent' | 'control';
+  text: string;
+  eventId?: string;
+  at: string;
+}
+
+interface DurableBodyData {
+  version: 1;
+  inboxes: Record<string, { cursor: EventCursor; items: Record<string, InboxItem> }>;
+  conversations: Record<string, ConversationEntry[]>;
+}
+
+function emptyData(): DurableBodyData {
+  return { version: 1, inboxes: {}, conversations: {} };
+}
+
+function compareEvents(a: NostrEvent, b: NostrEvent): number {
+  return a.created_at - b.created_at || a.id.localeCompare(b.id);
+}
+
+/** Atomic JSON state for relay inboxes and ACP context rehydration. */
+export class DurableBodyState {
+  private readonly path: string;
+  private data: DurableBodyData = emptyData();
+  private loaded = false;
+  private saveTail: Promise<void> = Promise.resolve();
+
+  constructor(path: string) {
+    this.path = path;
+  }
+
+  async load(): Promise<void> {
+    if (this.loaded) return;
+    try {
+      const parsed = JSON.parse(await readFile(this.path, 'utf8')) as DurableBodyData;
+      if (parsed.version !== 1 || !parsed.inboxes || !parsed.conversations) {
+        throw new Error(`unsupported durable body state at ${this.path}`);
+      }
+      this.data = parsed;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    this.loaded = true;
+  }
+
+  async enqueue(channelId: string, events: NostrEvent[]): Promise<number> {
+    await this.load();
+    const inbox = this.inbox(channelId);
+    let added = 0;
+    for (const event of events) {
+      if (inbox.items[event.id]) continue;
+      inbox.items[event.id] = { event, state: 'pending', attempts: 0 };
+      added++;
+    }
+    if (added) await this.save();
+    return added;
+  }
+
+  async pending(channelId: string): Promise<NostrEvent[]> {
+    await this.load();
+    return Object.values(this.inbox(channelId).items)
+      .filter((item) => item.state === 'pending')
+      .map((item) => item.event)
+      .sort(compareEvents);
+  }
+
+  async delivered(channelId: string, eventId: string): Promise<void> {
+    await this.load();
+    const inbox = this.inbox(channelId);
+    const item = inbox.items[eventId];
+    if (!item) return;
+    item.state = 'delivered';
+    delete item.lastError;
+    const cursor = { createdAt: item.event.created_at, eventId: item.event.id };
+    if (
+      cursor.createdAt > inbox.cursor.createdAt ||
+      (cursor.createdAt === inbox.cursor.createdAt && cursor.eventId > inbox.cursor.eventId)
+    ) {
+      inbox.cursor = cursor;
+    }
+    await this.save();
+  }
+
+  async failed(channelId: string, eventId: string, error: unknown): Promise<void> {
+    await this.load();
+    const item = this.inbox(channelId).items[eventId];
+    if (!item) return;
+    item.attempts++;
+    item.lastError = String(error).slice(0, 1_000);
+    await this.save();
+  }
+
+  async cursor(channelId: string): Promise<EventCursor> {
+    await this.load();
+    return { ...this.inbox(channelId).cursor };
+  }
+
+  async appendConversation(channelId: string, entry: ConversationEntry): Promise<void> {
+    await this.load();
+    const entries = this.data.conversations[channelId] ?? [];
+    if (entry.eventId && entries.some((existing) => existing.eventId === entry.eventId)) return;
+    entries.push(entry);
+    this.data.conversations[channelId] = entries.slice(-200);
+    await this.save();
+  }
+
+  async conversation(channelId: string): Promise<ConversationEntry[]> {
+    await this.load();
+    return [...(this.data.conversations[channelId] ?? [])];
+  }
+
+  private inbox(channelId: string): DurableBodyData['inboxes'][string] {
+    return (this.data.inboxes[channelId] ??= {
+      cursor: { createdAt: 0, eventId: '' },
+      items: {},
+    });
+  }
+
+  private save(): Promise<void> {
+    this.saveTail = this.saveTail.then(async () => {
+      await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
+      const temporary = resolve(dirname(this.path), `body-state-${process.pid}.tmp`);
+      await writeFile(temporary, `${JSON.stringify(this.data, null, 2)}\n`, { mode: 0o600 });
+      await rename(temporary, this.path);
+    });
+    return this.saveTail;
+  }
+}

@@ -6,6 +6,7 @@
 import type { NostrEvent } from '@beeline/nostr';
 import { buildMergeApproval } from './approval.js';
 import {
+  attachAgentToChannel,
   createAgent,
   createAgentPairingCode,
   isAgentIdentity,
@@ -42,7 +43,11 @@ import {
 import { publishEvent, queryEvents, type HttpBridgeOptions } from './http.js';
 import { KIND_STREAM_MESSAGE } from './kinds.js';
 import { toSessionEvent } from './parse.js';
-import { resolveRepositoryRoom, type RepositoryRoomResult } from './repo-room.js';
+import {
+  resolveRepositoryRoom,
+  resolveRepositoryRoomForHuman,
+  type RepositoryRoomResult,
+} from './repo-room.js';
 import { RelayWs, wsUrlFromHttp } from './ws.js';
 import type {
   BuzzClientConfig,
@@ -239,6 +244,15 @@ export class BuzzClient {
     return listAgents(this.ctx, communityId);
   }
 
+  /** Lightweight in-app invite for one already-linked agent and one Room. */
+  attachAgentToChannel(
+    channelId: string,
+    agentPubkey: string,
+    communityId?: string,
+  ): Promise<{ joined: boolean; membershipSince: number }> {
+    return attachAgentToChannel(this.ctx, channelId, agentPubkey, communityId);
+  }
+
   createAgentPairingCode(
     communityId: string,
     expiresInSeconds?: number,
@@ -257,6 +271,13 @@ export class BuzzClient {
     mergeWorkerPubkey?: string,
   ): Promise<RepositoryRoomResult> {
     return resolveRepositoryRoom(this.ctx, communityId, repository, pairedBy, mergeWorkerPubkey);
+  }
+
+  resolveRepositoryRoomForHuman(
+    communityId: string,
+    repository: RepositoryBinding,
+  ): Promise<RepositoryRoomResult> {
+    return resolveRepositoryRoomForHuman(this.ctx, communityId, repository);
   }
 
   setAgentSoul(

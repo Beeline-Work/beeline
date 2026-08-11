@@ -179,6 +179,8 @@ export default function BuzzChat() {
   const [communities, setCommunities] = useState<Community[]>([]);
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
   const [availableAgents, setAvailableAgents] = useState<Agent[]>([]);
+  const [roomAgentPubkeys, setRoomAgentPubkeys] = useState<Set<string>>(new Set());
+  const [invitingAgentPubkey, setInvitingAgentPubkey] = useState<string | null>(null);
   const [requestingAgent, setRequestingAgent] = useState<Agent | null>(null);
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
   const [roomName, setRoomName] = useState(ROOM_LABEL);
@@ -231,6 +233,13 @@ export default function BuzzChat() {
           setCommunities(availableCommunities);
           setActiveCommunityId(channelCommunityId);
           setAvailableAgents(communityAgents);
+          setRoomAgentPubkeys(
+            new Set(
+              roomMembers
+                .map((member) => member.pubkey)
+                .filter((pubkey) => communityAgents.some((agent) => agent.pubkey === pubkey)),
+            ),
+          );
           setViewerIsAgent(identityIsAgent);
           setRoomName(channelMetadata?.name?.trim() || ROOM_LABEL);
           setParticipantCounts(countRoomParticipants(roomMembers, communityAgents));
@@ -456,6 +465,37 @@ export default function BuzzChat() {
     parentChannelId,
   ]);
 
+  const handleAgentChip = useCallback(
+    async (agent: Agent) => {
+      if (!transport || !activeCommunityId) return;
+      if (roomAgentPubkeys.has(agent.pubkey)) {
+        setRequestingAgent((current) => (current?.pubkey === agent.pubkey ? null : agent));
+        return;
+      }
+      setInvitingAgentPubkey(agent.pubkey);
+      try {
+        await transport.inviteAgentToChannel(decodedId, agent.pubkey, activeCommunityId);
+        setRoomAgentPubkeys((current) => new Set([...current, agent.pubkey]));
+        setRequestingAgent(agent);
+      } catch (err) {
+        console.warn('Agent invite failed:', err);
+      } finally {
+        setInvitingAgentPubkey(null);
+      }
+    },
+    [activeCommunityId, decodedId, roomAgentPubkeys, transport],
+  );
+
+  const handleCancel = useCallback(async () => {
+    if (!transport) return;
+    try {
+      await transport.runAbort(decodedId);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    } catch (err) {
+      console.warn('Cancel failed:', err);
+    }
+  }, [decodedId, transport]);
+
   const handleApprove = useCallback(async () => {
     if (!transport || !mergeTarget) return;
     setApprovalState('sending');
@@ -648,21 +688,33 @@ export default function BuzzChat() {
                 <Text style={styles.askAgentLabel}>Ask an Agent</Text>
                 {availableAgents.map((agent) => {
                   const active = requestingAgent?.pubkey === agent.pubkey;
+                  const invited = roomAgentPubkeys.has(agent.pubkey);
+                  const inviting = invitingAgentPubkey === agent.pubkey;
                   return (
                     <TouchableOpacity
                       key={agent.agentId}
                       style={[styles.askAgentChip, active && styles.askAgentChipActive]}
-                      onPress={() => setRequestingAgent(active ? null : agent)}
+                      disabled={Boolean(invitingAgentPubkey)}
+                      onPress={() => void handleAgentChip(agent)}
                     >
                       <Text
                         style={[styles.askAgentChipText, active && styles.askAgentChipTextActive]}
                       >
-                        @{agent.displayName}
+                        {inviting ? 'INVITING…' : invited ? `@${agent.displayName}` : `＋ ${agent.displayName}`}
                       </Text>
                     </TouchableOpacity>
                   );
                 })}
               </View>
+            )}
+            {parentChannelId && !viewerIsAgent && (
+              <TouchableOpacity
+                accessibilityLabel="Cancel active Agent turn"
+                style={styles.cancelTurnButton}
+                onPress={() => void handleCancel()}
+              >
+                <Text style={styles.cancelTurnText}>■ CANCEL TURN</Text>
+              </TouchableOpacity>
             )}
             <View style={[styles.composer, composerFocused && styles.composerFocused]}>
               <Text style={styles.composerPrefix}>›</Text>
@@ -984,6 +1036,21 @@ const styles = StyleSheet.create({
   },
   askAgentChipText: { ...Typography.default(), color: groknight.chrome, fontSize: 11 },
   askAgentChipTextActive: { ...Typography.default('semiBold'), color: groknight.textPrimary },
+  cancelTurnButton: {
+    minHeight: 36,
+    marginBottom: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgBase,
+  },
+  cancelTurnText: {
+    ...Typography.default('semiBold'),
+    color: groknight.textSecondary,
+    fontSize: 10,
+    letterSpacing: 0.5,
+  },
   composer: {
     flexDirection: 'row',
     alignItems: 'center',

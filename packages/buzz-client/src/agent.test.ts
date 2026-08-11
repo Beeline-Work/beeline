@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import {
+  attachAgentToChannel,
   createAgent,
   hasAgentIdentityMarker,
   isAgentIdentityEvent,
@@ -178,5 +179,68 @@ describe('agent entity model', () => {
     await expect(createAgent(ctx(), communityId)).rejects.toThrow(
       'agent identity must be a community member',
     );
+  });
+
+  it('invites one already-linked agent to one Room without minting another identity', async () => {
+    const roomId = '33333333-3333-4333-8333-333333333333';
+    const agentRecord = signed(
+      agentIdentity,
+      KIND_STREAM_MESSAGE,
+      [
+        ['h', communityId],
+        ['t', TAG_AGENT],
+        ['d', '22222222-2222-4222-8222-222222222222'],
+        ['p', agentIdentity.publicKey],
+        ['name', 'Patch'],
+        [TAG_COMMUNITY, communityId],
+      ],
+      JSON.stringify({ displayName: 'Patch' }),
+    );
+    const roomCreate = signed(owner, KIND_CREATE_GROUP, [
+      ['h', roomId],
+      ['name', 'Repo'],
+      [TAG_COMMUNITY, communityId],
+      ['repo-key', 'a'.repeat(64)],
+      ['repo-name', 'repo'],
+      ['repo-scope', 'remote'],
+      ['repo-remote', 'git://example.test/team/repo'],
+    ]);
+    let joined = false;
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          joined = true;
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([roomCreate]);
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          return jsonResponse([
+            signed(owner, KIND_CHANNEL_MEMBERS, [
+              ['d', roomId],
+              ['p', owner.publicKey],
+              ...(joined ? [['p', agentIdentity.publicKey]] : []),
+            ]),
+          ]);
+        }
+        if (kind === KIND_STREAM_MESSAGE) {
+          const authors = filter.authors as string[] | undefined;
+          return jsonResponse(authors?.includes(owner.publicKey) ? [] : [agentRecord]);
+        }
+        return jsonResponse([]);
+      }),
+    );
+
+    await expect(
+      attachAgentToChannel(ctx(owner), roomId, agentIdentity.publicKey, communityId),
+    ).resolves.toMatchObject({ joined: true });
+    expect(published).toHaveLength(1);
+    expect(published[0]!.tags).toContainEqual(['p', agentIdentity.publicKey]);
+    expect(published[0]!.tags).toContainEqual(['role', 'member']);
+    expect(published[0]!.pubkey).toBe(owner.publicKey);
   });
 });

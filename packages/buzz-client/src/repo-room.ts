@@ -121,13 +121,15 @@ async function projectedRoomRole(
   return members?.tags.some((tag) => tag[0] === 'p' && tag[1] === pubkey) ? 'member' : null;
 }
 
-async function ensureExistingAdmin(
+/** Establish and await the human authority required for Room membership writes. */
+export async function ensureRepositoryRoomAdmin(
   ctx: ChannelOpsContext,
   channelId: string,
   pubkey: string,
+  forceMutation = false,
 ): Promise<void> {
   const current = await projectedRoomRole(ctx, channelId, pubkey);
-  if (current === 'owner' || current === 'admin') return;
+  if (!forceMutation && (current === 'owner' || current === 'admin')) return;
 
   const actorRole = await projectedRoomRole(ctx, channelId, ctx.identity.publicKey);
   if (actorRole !== 'owner' && actorRole !== 'admin') {
@@ -184,7 +186,7 @@ export async function resolveRepositoryRoom(
 ): Promise<RepositoryRoomResult> {
   const existing = await findRepositoryRoom(agentCtx, communityId, binding.key);
   if (existing) {
-    await ensureExistingAdmin(agentCtx, existing, pairedBy);
+    await ensureRepositoryRoomAdmin(agentCtx, existing, pairedBy);
     // Existing Rooms already have their dedicated gate identity. A later agent
     // joins as a member and reuses that gate instead of provisioning a new one.
     return joinRepositoryRoom(agentCtx, existing);
@@ -202,15 +204,14 @@ export async function resolveRepositoryRoom(
     // deterministic ID lets the loser converge on the winner without a fork.
     const raced = await findRepositoryRoom(agentCtx, communityId, binding.key);
     if (raced) {
-      await ensureExistingAdmin(agentCtx, raced, pairedBy);
+      await ensureRepositoryRoomAdmin(agentCtx, raced, pairedBy);
       return joinRepositoryRoom(agentCtx, raced);
     }
     throw error;
   }
   await waitUntilMember(agentCtx, channelId, agentCtx.identity.publicKey);
   if (pairedBy !== agentCtx.identity.publicKey) {
-    await setMemberRole(agentCtx, channelId, pairedBy, 'admin');
-    await waitUntilRole(agentCtx, channelId, pairedBy, 'admin');
+    await ensureRepositoryRoomAdmin(agentCtx, channelId, pairedBy, true);
   }
   // The creating agent still owns the deterministic Room at this point. Give a
   // distinct, machine-held gate key the only non-owner push-capable role before
@@ -227,4 +228,37 @@ export async function resolveRepositoryRoom(
     joined: true,
     mergeWorkerProvisioned: Boolean(mergeWorkerPubkey),
   };
+}
+
+/**
+ * Resolve/create a repository Room from the human UI and make the creator's
+ * admin projection authoritative before any per-Room agent invite is allowed.
+ */
+export async function resolveRepositoryRoomForHuman(
+  humanCtx: ChannelOpsContext,
+  communityId: string,
+  binding: RepositoryBinding,
+): Promise<RepositoryRoomResult> {
+  const existing = await findRepositoryRoom(humanCtx, communityId, binding.key);
+  if (existing) {
+    await ensureRepositoryRoomAdmin(humanCtx, existing, humanCtx.identity.publicKey);
+    return { channelId: existing, created: false, joined: true, mergeWorkerProvisioned: false };
+  }
+
+  const channelId = repositoryRoomId(communityId, binding);
+  try {
+    await createChannel(humanCtx, binding.name, {
+      channelId,
+      communityId,
+      repository: binding,
+    });
+  } catch (error) {
+    const raced = await findRepositoryRoom(humanCtx, communityId, binding.key);
+    if (!raced) throw error;
+    await ensureRepositoryRoomAdmin(humanCtx, raced, humanCtx.identity.publicKey);
+    return { channelId: raced, created: false, joined: true, mergeWorkerProvisioned: false };
+  }
+  await waitUntilMember(humanCtx, channelId, humanCtx.identity.publicKey);
+  await ensureRepositoryRoomAdmin(humanCtx, channelId, humanCtx.identity.publicKey, true);
+  return { channelId, created: true, joined: true, mergeWorkerProvisioned: false };
 }

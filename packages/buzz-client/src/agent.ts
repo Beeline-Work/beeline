@@ -308,6 +308,7 @@ export function parseAgentSoul(event: NostrEvent): AgentSoulProfile | null {
     const content = JSON.parse(event.content) as Record<string, unknown>;
     const name = optionalText(content.name);
     const personality = optionalText(content.personality);
+    const intent = optionalText(content.intent);
     const avatarSeed = optionalText(content.avatarSeed);
     if (!name || !personality || !avatarSeed) return null;
     return {
@@ -316,6 +317,7 @@ export function parseAgentSoul(event: NostrEvent): AgentSoulProfile | null {
       authoredBy: event.pubkey,
       name,
       personality,
+      ...(intent ? { intent } : {}),
       avatarSeed,
       updatedAt: event.created_at,
       raw: event,
@@ -345,8 +347,11 @@ export async function setAgentSoul(
   }
   const name = input.name.trim().slice(0, 80);
   const personality = input.personality.trim().slice(0, 280);
+  const intent = input.intent.trim().slice(0, 500);
   const avatarSeed = input.avatarSeed.trim().slice(0, 128);
-  if (!name || !personality || !avatarSeed) throw new Error('agent soul fields must not be empty');
+  if (!name || !personality || !intent || !avatarSeed) {
+    throw new Error('agent soul fields must not be empty');
+  }
   const event = signEvent(
     {
       pubkey: ctx.identity.publicKey,
@@ -359,7 +364,7 @@ export async function setAgentSoul(
         ['t', TAG_AGENT_SOUL],
         [TAG_COMMUNITY, communityId],
       ],
-      content: JSON.stringify({ name, personality, avatarSeed }),
+      content: JSON.stringify({ name, personality, intent, avatarSeed }),
     },
     ctx.identity.secretKey,
   );

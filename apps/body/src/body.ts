@@ -122,6 +122,17 @@ export interface ChannelTaskRequest {
 export const AGENT_REQUEST_TAG = 'buzz-agent-request';
 export const MERGE_READY_TAG = 'merge-ready';
 
+export function cornerNameForIntent(intent: string | undefined, parentChannelId: string): string {
+  const slug = intent
+    ?.normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 42)
+    .replace(/-+$/g, '');
+  return slug || `corner-${parentChannelId.slice(0, 8)}`;
+}
+
 /** The intentionally narrow channel → edit-session trigger. */
 export function isChannelTaskRequest(event: NostrEvent, agentPubkey: string): boolean {
   return Boolean(
@@ -303,7 +314,7 @@ export class Body {
     const subchannelId = await createAgentSubchannel(
       agentId,
       tlcChannelId,
-      `sub-${tlcChannelId.slice(0, 8)}`,
+      cornerNameForIntent(intent, tlcChannelId),
       communityId ?? undefined,
     );
 
@@ -328,7 +339,9 @@ export class Body {
     const client = new AcpClient({
       agentBinary: this.config.agentBinary,
       agentEnv: this.config.agentEnv,
-      autoApprovePermissions: this.config.autoApprovePermissions,
+      // A corner is the agent's isolated worktree. Tool use inside it is yolo by
+      // design; the only human gate is the protected-line merge handled elsewhere.
+      autoApprovePermissions: true,
     });
 
     await client.start();

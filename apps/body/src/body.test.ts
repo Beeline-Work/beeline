@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { hasWriteTools, inventoryForMcpServers } from './mcp-inventory.js';
 import { parseEnvFile, hasLlmCredentials } from './config.js';
-import { AGENT_REQUEST_TAG, Body, isChannelTaskRequest } from './body.js';
+import { AGENT_REQUEST_TAG, Body, cornerNameForIntent, isChannelTaskRequest } from './body.js';
 import { AcpClient } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import { signEvent } from '@beeline/nostr';
@@ -110,6 +110,18 @@ describe('channel → subchannel request trigger', () => {
       ['p', agent.publicKey],
       ['t', AGENT_REQUEST_TAG],
     ], agent), agent.publicKey)).toBe(false);
+  });
+});
+
+describe('corner display names', () => {
+  it('turns the human request into a compact Slack-style corner name', () => {
+    expect(cornerNameForIntent('Fix OAuth callback + retry state', 'room-id')).toBe(
+      'fix-oauth-callback-retry-state',
+    );
+  });
+
+  it('uses a corner fallback without exposing the subchannel noun', () => {
+    expect(cornerNameForIntent('  ', '12345678-abcd')).toBe('corner-12345678');
   });
 });
 

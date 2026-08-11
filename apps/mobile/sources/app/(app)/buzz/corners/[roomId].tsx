@@ -102,6 +102,7 @@ export default function BuzzCorners() {
       activeCommunityId={activeCommunityId}
       onSelect={handleCommunitySelect}
       onAdd={() => router.push('/buzz/community' as Href)}
+      onSettings={() => router.push('/buzz/settings' as Href)}
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <HullSurface strength="quiet" style={styles.header}>

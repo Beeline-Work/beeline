@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
+  Modal,
+  Pressable,
   Share,
   StyleSheet,
   Text,
@@ -15,19 +17,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Community, Identity } from '@beeline/buzz-client';
 import {
   DEFAULT_RELAY_URL,
-  clearBuzzIdentity,
   getEffectiveRelayUrl,
   loadBuzzIdentity,
-  saveRelayUrl,
 } from '@/auth/buzz-identity-storage';
 import { groknight } from '@/buzz/groknight';
 import { saveLastViewedChannel } from '@/buzz/community-storage';
 import { createCommunityInviteUrl } from '@/buzz/community-invite';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
-import {
-  sortCorners,
-  type CornerSummary,
-} from '@/buzz/corners';
+import { latestRoomMessage } from '@/buzz/room-list-summary';
+import { cornerStatusPresentation, sortCorners, type CornerSummary } from '@/buzz/corners';
 import {
   CHANGES_LABEL,
   CORNER_LABEL,
@@ -51,6 +49,8 @@ type ChannelDisplayItem = SessionSummary & {
   archived?: boolean;
   parentChannelId?: string;
   corners?: CornerSummary[];
+  latestMessage?: string;
+  participantCount?: number;
 };
 
 function firstParam(value: string | string[] | undefined): string | undefined {
@@ -116,15 +116,21 @@ async function loadDisplayChannels(
   const rooms = allItems.filter((item) => !item.parentChannelId);
   await Promise.all(
     rooms.map(async (room) => {
-      try {
-        room.corners = sortCorners(await transport.listSubchannelLifecycle(room.id));
-      } catch {
-        room.corners = [];
-      }
+      const [corners, events, members] = await Promise.allSettled([
+        transport.listSubchannelLifecycle(room.id),
+        transport.sessionEventsBackfill(room.id, { limit: 30 }),
+        client.listMembers(room.id),
+      ]);
+      room.corners = corners.status === 'fulfilled' ? sortCorners(corners.value) : [];
+      room.latestMessage =
+        events.status === 'fulfilled' ? (latestRoomMessage(events.value) ?? undefined) : undefined;
+      room.participantCount = members.status === 'fulfilled' ? members.value.length : 0;
     }),
   );
 
-  return rooms.sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0));
+  return rooms.sort(
+    (a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0),
+  );
 }
 
 export default function BuzzChannels() {
@@ -140,20 +146,20 @@ export default function BuzzChannels() {
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
+  const [personalWorkspaceId, setPersonalWorkspaceId] = useState<string | null>(null);
   const [displayChannels, setDisplayChannels] = useState<ChannelDisplayItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_URL);
-  const [showSettings, setShowSettings] = useState(false);
-  const [settingsRelayUrl, setSettingsRelayUrl] = useState('');
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [channelName, setChannelName] = useState('');
   const [creatingChannel, setCreatingChannel] = useState(false);
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [readyInviteUrl, setReadyInviteUrl] = useState<string | undefined>(inviteUrl);
-  const [confirmForget, setConfirmForget] = useState(false);
+  const [inviteModalVisible, setInviteModalVisible] = useState(Boolean(inviteUrl));
+  const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
 
   const activeCommunity = useMemo(
     () => communities.find((community) => community.communityId === activeCommunityId) ?? null,
@@ -178,7 +184,11 @@ export default function BuzzChannels() {
           prepareWorkspaceContext(client, currentIdentity.publicKey, requestedCommunity),
           client.isAgentIdentity(currentIdentity.publicKey),
         ]);
-        const { workspaces: available, activeWorkspaceId: active } = workspaceContext;
+        const {
+          workspaces: available,
+          activeWorkspaceId: active,
+          personalWorkspaceId: personal,
+        } = workspaceContext;
         const channels = await loadDisplayChannels(nextTransport, active, available);
         if (!cancelled) {
           setIdentity(currentIdentity);
@@ -186,6 +196,7 @@ export default function BuzzChannels() {
           setTransport(nextTransport);
           setCommunities(available);
           setActiveCommunityId(active);
+          setPersonalWorkspaceId(personal);
           setDisplayChannels(channels);
           setViewerIsAgent(identityIsAgent);
         }
@@ -203,6 +214,8 @@ export default function BuzzChannels() {
   const handleSelectCommunity = useCallback((communityId: string | null) => {
     if (!communityId) return;
     setReadyInviteUrl(undefined);
+    setInviteModalVisible(false);
+    setExpandedRoomId(null);
     router.replace({
       pathname: '/buzz/channels',
       params: { communityId },
@@ -215,13 +228,14 @@ export default function BuzzChannels() {
     setError(null);
     try {
       const client = await transport.ensureClient();
-      const { workspaces: available, activeWorkspaceId: active } = await prepareWorkspaceContext(
-        client,
-        identity.publicKey,
-        activeCommunityId ?? undefined,
-      );
+      const {
+        workspaces: available,
+        activeWorkspaceId: active,
+        personalWorkspaceId: personal,
+      } = await prepareWorkspaceContext(client, identity.publicKey, activeCommunityId ?? undefined);
       setCommunities(available);
       setActiveCommunityId(active);
+      setPersonalWorkspaceId(personal);
       setDisplayChannels(await loadDisplayChannels(transport, active, available));
     } catch (err) {
       setError(String(err));
@@ -244,7 +258,7 @@ export default function BuzzChannels() {
       if (identity) {
         await saveLastViewedChannel(identity.publicKey, activeCommunityId, channel.id);
       }
-      router.push(`/buzz/corners/${encodeURIComponent(channel.id)}` as Href);
+      router.push(`/buzz/chat/${encodeURIComponent(channel.id)}` as Href);
     },
     [activeCommunityId, identity],
   );
@@ -270,49 +284,15 @@ export default function BuzzChannels() {
     }
   }, [activeCommunityId, channelName, communities, transport, viewerIsAgent]);
 
-  const handleSaveRelayUrl = useCallback(async () => {
-    if (!identity) return;
-    const url = settingsRelayUrl.trim() || DEFAULT_RELAY_URL;
-    setLoading(true);
-    setError(null);
-    try {
-      await saveRelayUrl(url);
-      const nextTransport = new BuzzRigTransport(identity, url);
-      const client = await nextTransport.ensureClient();
-      const { workspaces: available, activeWorkspaceId: active } = await prepareWorkspaceContext(
-        client,
-        identity.publicKey,
-        activeCommunityId ?? undefined,
-      );
-      setTransport(nextTransport);
-      setCommunities(available);
-      setActiveCommunityId(active);
-      setRelayUrl(url);
-      setShowSettings(false);
-      setDisplayChannels(await loadDisplayChannels(nextTransport, active, available));
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [activeCommunityId, identity, settingsRelayUrl]);
-
-  const handleLogout = useCallback(async () => {
-    if (!confirmForget) {
-      setConfirmForget(true);
-      return;
-    }
-    await clearBuzzIdentity();
-    router.replace('/buzz/onboarding');
-  }, [confirmForget]);
-
   const handleInvitePeople = useCallback(async () => {
     if (!transport || !activeCommunityId || creatingInvite) return;
     setCreatingInvite(true);
     setError(null);
     try {
       const client = await transport.ensureClient();
-      setReadyInviteUrl(await createCommunityInviteUrl(client, activeCommunityId, relayUrl));
+      const url = await createCommunityInviteUrl(client, activeCommunityId, relayUrl);
+      setReadyInviteUrl(url);
+      setInviteModalVisible(true);
     } catch (err) {
       setError(`Could not create invite: ${String(err)}`);
     } finally {
@@ -335,6 +315,7 @@ export default function BuzzChannels() {
       activeCommunityId={activeCommunityId}
       onSelect={handleSelectCommunity}
       onAdd={() => router.push('/buzz/community' as Href)}
+      onSettings={() => router.push('/buzz/settings' as Href)}
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <HullSurface strength="quiet" style={styles.header}>
@@ -367,43 +348,8 @@ export default function BuzzChannels() {
                 <Text style={styles.iconButtonText}>＋</Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity
-              accessibilityLabel="Settings"
-              onPress={() => {
-                setSettingsRelayUrl(relayUrl);
-                setShowSettings((value) => !value);
-              }}
-              style={styles.iconButton}
-            >
-              <Text style={styles.iconButtonText}>⚙</Text>
-            </TouchableOpacity>
           </View>
         </HullSurface>
-
-        {readyInviteUrl && (
-          <PixelGateReveal style={styles.invitePanel}>
-            <Text style={styles.panelTitle}>Invite link ready</Text>
-            <Text style={styles.inviteUrl} numberOfLines={2}>
-              {readyInviteUrl}
-            </Text>
-            <View style={styles.panelActions}>
-              <TouchableOpacity
-                style={styles.secondarySmallButton}
-                accessibilityLabel={`Share ${WORKSPACE_LABEL} invite`}
-                onPress={() => Share.share({ message: readyInviteUrl })}
-              >
-                <Text style={styles.secondarySmallButtonText}>Share</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.secondarySmallButton}
-                accessibilityLabel={`Copy ${WORKSPACE_LABEL} invite link`}
-                onPress={() => Clipboard.setStringAsync(readyInviteUrl)}
-              >
-                <Text style={styles.secondarySmallButtonText}>Copy link</Text>
-              </TouchableOpacity>
-            </View>
-          </PixelGateReveal>
-        )}
 
         {showCreateChannel && !viewerIsAgent && (
           <PixelGateReveal style={styles.actionPanel}>
@@ -434,57 +380,6 @@ export default function BuzzChannels() {
           </PixelGateReveal>
         )}
 
-        {showSettings && (
-          <PixelGateReveal style={styles.actionPanel}>
-            <Text style={styles.panelTitle}>Settings</Text>
-            <TouchableOpacity
-              accessibilityLabel="Open identity and backup settings"
-              onPress={() => router.push('/buzz/settings/identity' as Href)}
-              style={styles.identitySettingsRow}
-            >
-              <View style={styles.identitySettingsCopy}>
-                <Text style={styles.identitySettingsTitle}>Back up your key</Text>
-                <Text style={styles.identitySettingsSubtitle}>Export your secret key</Text>
-              </View>
-              <Text style={styles.identitySettingsChevron}>›</Text>
-            </TouchableOpacity>
-            <Text style={styles.fieldLabel}>Relay URL</Text>
-            <TextInput
-              style={styles.input}
-              value={settingsRelayUrl}
-              onChangeText={setSettingsRelayUrl}
-              placeholder={DEFAULT_RELAY_URL}
-              placeholderTextColor={groknight.dim}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="url"
-            />
-            <View style={styles.panelActions}>
-              <TouchableOpacity style={styles.primarySmallButton} onPress={handleSaveRelayUrl}>
-                <Text style={styles.primarySmallButtonText}>Save</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.destructiveSmallButton} onPress={handleLogout}>
-                <Text style={styles.secondarySmallButtonText}>
-                  {confirmForget ? '! Confirm forget key' : '⌫ Forget key'}
-                </Text>
-              </TouchableOpacity>
-              {confirmForget && (
-                <TouchableOpacity
-                  style={styles.secondarySmallButton}
-                  onPress={() => setConfirmForget(false)}
-                >
-                  <Text style={styles.secondarySmallButtonText}>Cancel</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-            {confirmForget && (
-              <Text accessibilityRole="alert" style={styles.forgetWarning}>
-                ! This removes the key from this device. Continue only if you have a backup.
-              </Text>
-            )}
-          </PixelGateReveal>
-        )}
-
         {error && (
           <View accessibilityRole="alert" style={styles.errorPanel}>
             <Text style={styles.errorLabel}>! ERROR</Text>
@@ -508,6 +403,7 @@ export default function BuzzChannels() {
               <CommunityInviteEntry
                 community={activeCommunity}
                 creatingInvite={creatingInvite}
+                allowPeopleInvites={activeCommunityId !== personalWorkspaceId}
                 onInvitePeople={() => void handleInvitePeople()}
                 onManageAgents={() =>
                   activeCommunityId &&
@@ -527,7 +423,7 @@ export default function BuzzChannels() {
                   ? `Start a focused place for steering and review.`
                   : `${WORKSPACE_LABEL} setup is still finishing.`}
               </Text>
-              {!viewerIsAgent && !showCreateChannel && !showSettings && (
+              {!viewerIsAgent && !showCreateChannel && (
                 <TouchableOpacity
                   style={styles.primaryButton}
                   onPress={() => setShowCreateChannel(true)}
@@ -538,6 +434,7 @@ export default function BuzzChannels() {
               <CommunityInviteEntry
                 community={activeCommunity}
                 creatingInvite={creatingInvite}
+                allowPeopleInvites={activeCommunityId !== personalWorkspaceId}
                 onInvitePeople={() => void handleInvitePeople()}
                 onManageAgents={() =>
                   activeCommunityId &&
@@ -552,39 +449,156 @@ export default function BuzzChannels() {
             const corners = item.corners ?? [];
             const hasLiveCorner = corners.some((corner) => corner.status === 'live');
             const title = item.title ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`;
+            const expanded = expandedRoomId === item.id;
             return (
-              <BrittlePress
-                accessibilityLabel={`Open ${title} corner list, ${corners.length} ${
-                  corners.length === 1 ? CORNER_LABEL : CHANGES_LABEL
-                }${hasLiveCorner ? ', live corner present' : ''}`}
-                contentStyle={styles.channelItem}
-                onPress={() => void handleRoomPress(item)}
-              >
-                <Text style={styles.channelIcon}>{item.archived ? '□' : '#'}</Text>
-                <View style={styles.channelInfo}>
-                  <View style={styles.channelTitleRow}>
-                    <Text
-                      numberOfLines={1}
-                      style={[styles.channelTitle, item.archived && styles.archivedTitle]}
-                    >
-                      {title}
+              <View style={[styles.roomCell, expanded && styles.roomCellExpanded]}>
+                <View style={styles.roomRow}>
+                  <BrittlePress
+                    accessibilityHint={`Long press to reveal ${CORNER_LABEL.toLowerCase()}s`}
+                    accessibilityLabel={`Open ${title} chat`}
+                    contentStyle={styles.channelItem}
+                    delayLongPress={350}
+                    onLongPress={() =>
+                      setExpandedRoomId((current) => (current === item.id ? null : item.id))
+                    }
+                    onPress={() => void handleRoomPress(item)}
+                    style={styles.roomPrimary}
+                  >
+                    <Text style={styles.channelIcon}>{item.archived ? '□' : '#'}</Text>
+                    <View style={styles.channelInfo}>
+                      <View style={styles.channelTitleRow}>
+                        <Text
+                          numberOfLines={1}
+                          style={[styles.channelTitle, item.archived && styles.archivedTitle]}
+                        >
+                          {title}
+                        </Text>
+                        {item.archived && <Text style={styles.metaTag}>archived</Text>}
+                      </View>
+                      <View style={styles.roomMetaRow}>
+                        <Text numberOfLines={1} style={styles.latestMessage}>
+                          {item.latestMessage ?? 'No messages yet'}
+                        </Text>
+                        <Text style={styles.participantCount}>◇ {item.participantCount ?? 0}</Text>
+                      </View>
+                    </View>
+                  </BrittlePress>
+                  <TouchableOpacity
+                    accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${corners.length} ${
+                      corners.length === 1 ? CORNER_LABEL : CHANGES_LABEL
+                    } in ${title}${hasLiveCorner ? ', live corner present' : ''}`}
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded }}
+                    onPress={() =>
+                      setExpandedRoomId((current) => (current === item.id ? null : item.id))
+                    }
+                    style={styles.cornerPeekButton}
+                    testID={`room-corners-toggle-${item.id}`}
+                  >
+                    <Text style={[styles.cornerPeekCount, hasLiveCorner && styles.liveMarker]}>
+                      {hasLiveCorner ? '◆' : '◇'} {corners.length}
                     </Text>
-                    {item.archived && <Text style={styles.metaTag}>archived</Text>}
-                  </View>
-                  <View style={styles.roomMetaRow}>
-                    <Text style={styles.channelMeta}>
-                      {corners.length} {corners.length === 1 ? CORNER_LABEL : CHANGES_LABEL}
-                    </Text>
-                    {hasLiveCorner && <Text style={styles.liveMarker}>◆ LIVE</Text>}
-                  </View>
+                    <Text style={styles.cornerPeekChevron}>{expanded ? '⌃' : '⌄'}</Text>
+                  </TouchableOpacity>
                 </View>
-                <Text style={styles.chevron}>›</Text>
-              </BrittlePress>
+                {expanded && (
+                  <PixelGateReveal style={styles.cornerDropdown}>
+                    {corners.length === 0 ? (
+                      <Text style={styles.noCorners}>No corners in this room</Text>
+                    ) : (
+                      corners.map((corner) => {
+                        const status = cornerStatusPresentation(corner.status);
+                        return (
+                          <TouchableOpacity
+                            accessibilityLabel={`Open #${corner.name}, ${status.label}`}
+                            key={corner.id}
+                            onPress={() =>
+                              router.push(`/buzz/chat/${encodeURIComponent(corner.id)}` as Href)
+                            }
+                            style={styles.cornerRow}
+                          >
+                            <Text numberOfLines={1} style={styles.cornerName}>
+                              └ #{corner.name}
+                            </Text>
+                            <Text style={styles.cornerStatus}>
+                              {status.glyph} {status.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })
+                    )}
+                    <TouchableOpacity
+                      accessibilityLabel={`Browse all corners in ${title}`}
+                      onPress={() =>
+                        router.push(`/buzz/corners/${encodeURIComponent(item.id)}` as Href)
+                      }
+                      style={styles.allCornersRow}
+                    >
+                      <Text style={styles.allCornersText}>All corners ›</Text>
+                    </TouchableOpacity>
+                  </PixelGateReveal>
+                )}
+              </View>
             );
           }}
           onRefresh={() => void handleRefresh()}
           refreshing={refreshing}
         />
+
+        <Modal
+          animationType="fade"
+          onRequestClose={() => setInviteModalVisible(false)}
+          transparent
+          visible={inviteModalVisible && Boolean(readyInviteUrl)}
+        >
+          <View style={styles.modalRoot}>
+            <Pressable
+              accessibilityLabel="Close invite"
+              onPress={() => setInviteModalVisible(false)}
+              style={StyleSheet.absoluteFill}
+            />
+            <HullSurface strength="raised" style={styles.inviteModal}>
+              <View style={styles.modalHeadingRow}>
+                <View style={styles.modalHeadingCopy}>
+                  <Text style={styles.panelTitle}>Invite people</Text>
+                  <Text style={styles.modalSubtitle}>
+                    Add someone to {activeCommunity?.name ?? WORKSPACE_LABEL}.
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  accessibilityLabel="Close invite"
+                  onPress={() => setInviteModalVisible(false)}
+                  style={styles.modalClose}
+                >
+                  <Text style={styles.modalCloseText}>×</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.inviteUrlFrame}>
+                <Text selectable style={styles.inviteUrl}>
+                  {readyInviteUrl}
+                </Text>
+              </View>
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  accessibilityLabel={`Copy ${WORKSPACE_LABEL} invite link`}
+                  onPress={() => readyInviteUrl && Clipboard.setStringAsync(readyInviteUrl)}
+                  style={styles.primarySmallButton}
+                  testID="copy-workspace-invite"
+                >
+                  <Text style={styles.primarySmallButtonText}>Copy</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  accessibilityLabel={`Share ${WORKSPACE_LABEL} invite`}
+                  onPress={() => readyInviteUrl && Share.share({ message: readyInviteUrl })}
+                  style={styles.secondaryModalButton}
+                  testID="share-workspace-invite"
+                >
+                  <Text style={styles.secondarySmallButtonText}>Share</Text>
+                </TouchableOpacity>
+              </View>
+            </HullSurface>
+          </View>
+        </Modal>
       </View>
     </BuzzCommunityShell>
   );
@@ -635,52 +649,11 @@ const styles = StyleSheet.create({
     borderBottomColor: groknight.border,
     backgroundColor: groknight.bgTerminal,
   },
-  identitySettingsRow: {
-    minHeight: 52,
-    marginBottom: 16,
-    paddingVertical: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-  },
-  identitySettingsCopy: { flex: 1, minWidth: 0 },
-  identitySettingsTitle: {
-    ...Typography.default('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 13,
-  },
-  identitySettingsSubtitle: {
-    ...Typography.default(),
-    marginTop: 3,
-    color: groknight.muted,
-    fontSize: 11,
-  },
-  identitySettingsChevron: {
-    ...Typography.default(),
-    marginLeft: 8,
-    color: groknight.chrome,
-    fontSize: 22,
-  },
-  invitePanel: {
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-    backgroundColor: groknight.bgTerminal,
-  },
   panelTitle: {
     ...Typography.default('semiBold'),
     marginBottom: 9,
     color: groknight.textPrimary,
     fontSize: 15,
-  },
-  fieldLabel: {
-    ...Typography.default('semiBold'),
-    marginBottom: 7,
-    color: groknight.textSecondary,
-    fontSize: 12,
-    fontWeight: '600',
   },
   inviteUrl: { ...Typography.mono(), color: groknight.textMuted, fontSize: 11, lineHeight: 16 },
   inlineForm: { flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -718,22 +691,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  destructiveSmallButton: {
-    minHeight: 44,
-    paddingHorizontal: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: groknight.borderStrong,
-  },
-  forgetWarning: {
-    ...Typography.default(),
-    marginTop: 10,
-    color: groknight.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
-  },
   secondarySmallButtonText: {
     ...Typography.default('semiBold'),
     color: groknight.textSecondary,
@@ -763,14 +720,20 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   listContent: { paddingVertical: 4 },
+  roomCell: {
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.border,
+    backgroundColor: groknight.bgTerminal,
+  },
+  roomCellExpanded: { backgroundColor: groknight.bgBase },
+  roomRow: { minWidth: 0, flexDirection: 'row', alignItems: 'stretch' },
+  roomPrimary: { flex: 1, minWidth: 0 },
   channelItem: {
-    minHeight: 64,
+    minHeight: 68,
     paddingHorizontal: 16,
     paddingVertical: 12,
     flexDirection: 'row',
     alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
   },
   channelIcon: {
     ...Typography.default('semiBold'),
@@ -797,26 +760,139 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 15,
   },
-  channelMeta: {
-    ...Typography.mono(),
-    color: groknight.textMuted,
-    fontSize: 11,
-    lineHeight: 15,
-  },
   roomMetaRow: {
     marginTop: 4,
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
+  },
+  latestMessage: {
+    ...Typography.default(),
+    flex: 1,
+    minWidth: 0,
+    color: groknight.textMuted,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  participantCount: {
+    ...Typography.mono('semiBold'),
+    color: groknight.steel,
+    fontSize: 10,
+    lineHeight: 14,
   },
   liveMarker: {
-    ...Typography.mono('semiBold'),
-    marginLeft: 8,
     color: groknight.signalMid,
-    fontSize: 9,
-    lineHeight: 13,
-    letterSpacing: 0.5,
   },
-  chevron: { ...Typography.default(), marginLeft: 8, color: groknight.gutter, fontSize: 22 },
+  cornerPeekButton: {
+    width: 58,
+    minHeight: 68,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderLeftWidth: 1,
+    borderLeftColor: groknight.border,
+  },
+  cornerPeekCount: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textMuted,
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  cornerPeekChevron: {
+    ...Typography.default('semiBold'),
+    marginTop: 1,
+    color: groknight.steel,
+    fontSize: 15,
+    lineHeight: 18,
+  },
+  cornerDropdown: {
+    paddingLeft: 40,
+    paddingRight: 12,
+    paddingBottom: 7,
+    borderTopWidth: 1,
+    borderTopColor: groknight.border,
+    backgroundColor: groknight.bgBase,
+  },
+  cornerRow: {
+    minHeight: 42,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  cornerName: {
+    ...Typography.default('semiBold'),
+    flex: 1,
+    minWidth: 0,
+    color: groknight.textSecondary,
+    fontSize: 12,
+  },
+  cornerStatus: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textMuted,
+    fontSize: 9,
+    letterSpacing: 0.4,
+  },
+  noCorners: {
+    ...Typography.default(),
+    minHeight: 42,
+    paddingTop: 13,
+    color: groknight.textMuted,
+    fontSize: 12,
+  },
+  allCornersRow: { minHeight: 42, alignItems: 'flex-start', justifyContent: 'center' },
+  allCornersText: {
+    ...Typography.default('semiBold'),
+    color: groknight.steel,
+    fontSize: 12,
+  },
+  modalRoot: {
+    flex: 1,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(5, 5, 6, 0.82)',
+  },
+  inviteModal: {
+    width: '100%',
+    maxWidth: 440,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgRaised,
+  },
+  modalHeadingRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  modalHeadingCopy: { flex: 1, minWidth: 0 },
+  modalSubtitle: {
+    ...Typography.default(),
+    marginTop: -4,
+    color: groknight.textMuted,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  modalClose: {
+    width: 44,
+    height: 44,
+    marginTop: -10,
+    marginRight: -10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCloseText: { ...Typography.default(), color: groknight.steel, fontSize: 24 },
+  inviteUrlFrame: {
+    marginTop: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: groknight.border,
+    backgroundColor: groknight.bgTerminal,
+  },
+  modalActions: { marginTop: 14, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  secondaryModalButton: {
+    minHeight: 44,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+  },
   emptyContainer: { flexGrow: 1 },
   emptyState: { flex: 1, paddingHorizontal: 22, alignItems: 'center', justifyContent: 'center' },
   emptyGlyph: {

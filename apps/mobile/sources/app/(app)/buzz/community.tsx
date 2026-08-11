@@ -116,6 +116,7 @@ export default function BuzzCommunityCreateOrJoin() {
       activeCommunityId={activeCommunityId}
       onSelect={selectCommunity}
       onAdd={() => undefined}
+      onSettings={() => router.push('/buzz/settings' as Href)}
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <HullSurface strength="quiet" style={styles.header}>

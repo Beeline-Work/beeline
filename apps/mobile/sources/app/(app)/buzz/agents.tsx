@@ -188,6 +188,7 @@ export default function BuzzAgents() {
         router.replace({ pathname: '/buzz/channels', params: { communityId: id } });
       }}
       onAdd={() => router.push('/buzz/community' as Href)}
+      onSettings={() => router.push('/buzz/settings' as Href)}
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <HullSurface strength="quiet" style={styles.header}>

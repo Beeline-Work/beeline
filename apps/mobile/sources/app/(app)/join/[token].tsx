@@ -126,6 +126,7 @@ export default function CommunityInviteJoin() {
       activeCommunityId={null}
       onSelect={selectCommunity}
       onAdd={() => router.push('/buzz/community' as Href)}
+      onSettings={() => router.push('/buzz/settings' as Href)}
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <View style={styles.topbar}>

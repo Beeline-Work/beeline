@@ -32,6 +32,7 @@ import {
   type ChannelOpsContext,
 } from './channel.js';
 import {
+  attachCommunityMemberToChannel,
   communityChannels,
   communityMembers,
   createCommunity,
@@ -223,6 +224,15 @@ export class BuzzClient {
 
   communityMembers(communityId: string): Promise<CommunityMember[]> {
     return communityMembers(this.ctx, communityId);
+  }
+
+  /** Place one existing Workspace member into one Room without elevating their role. */
+  attachCommunityMemberToChannel(
+    channelId: string,
+    memberPubkey: string,
+    communityId: string,
+  ): Promise<{ joined: boolean; membershipSince: number }> {
+    return attachCommunityMemberToChannel(this.ctx, channelId, memberPubkey, communityId);
   }
 
   createInvite(communityId: string, options?: CreateInviteOptions): Promise<CommunityInvite> {

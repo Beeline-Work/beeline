@@ -8,6 +8,9 @@ import {
   View,
   Text,
   FlatList,
+  Modal,
+  Pressable,
+  ScrollView,
   TextInput,
   TouchableOpacity,
   StyleSheet,
@@ -25,6 +28,7 @@ import {
   encodeNpub,
   type Agent,
   type Community,
+  type CommunityMember,
   type MergeTarget,
 } from '@beeline/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
@@ -184,13 +188,18 @@ export default function BuzzChat() {
   const [communities, setCommunities] = useState<Community[]>([]);
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
   const [availableAgents, setAvailableAgents] = useState<Agent[]>([]);
+  const [availablePeople, setAvailablePeople] = useState<CommunityMember[]>([]);
+  const [roomMemberPubkeys, setRoomMemberPubkeys] = useState<Set<string>>(new Set());
   const [roomAgentPubkeys, setRoomAgentPubkeys] = useState<Set<string>>(new Set());
   const [invitingAgentPubkey, setInvitingAgentPubkey] = useState<string | null>(null);
+  const [invitingPersonPubkey, setInvitingPersonPubkey] = useState<string | null>(null);
   const [participantAgents, setParticipantAgents] = useState<Agent[]>([]);
   const [requestingAgent, setRequestingAgent] = useState<Agent | null>(null);
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
   const [roomName, setRoomName] = useState(ROOM_LABEL);
   const [participantCounts, setParticipantCounts] = useState({ humans: 0, agents: 0 });
+  const [participantPickerVisible, setParticipantPickerVisible] = useState(false);
+  const [membershipError, setMembershipError] = useState<string | null>(null);
   const [composerFocused, setComposerFocused] = useState(false);
   const agentByPubkey = useMemo(
     () => new Map(availableAgents.map((agent) => [agent.pubkey, agent])),
@@ -243,8 +252,9 @@ export default function BuzzChat() {
           directCommunityId ??
           (parentId ? await client.getChannelCommunityId(parentId) : null) ??
           null;
-        const [communityAgents, identityIsAgent] = await Promise.all([
+        const [communityAgents, communityMembers, identityIsAgent] = await Promise.all([
           channelCommunityId ? client.listAgents(channelCommunityId) : Promise.resolve([]),
+          channelCommunityId ? client.communityMembers(channelCommunityId) : Promise.resolve([]),
           client.isAgentIdentity(identity.publicKey),
         ]);
         if (!cancelled) {
@@ -252,7 +262,10 @@ export default function BuzzChat() {
           setActiveCommunityId(channelCommunityId);
           setAvailableAgents(communityAgents);
           const roomPubkeys = new Set(roomMembers.map((member) => member.pubkey));
+          const agentPubkeys = new Set(communityAgents.map((agent) => agent.pubkey));
           const roomAgents = communityAgents.filter((agent) => roomPubkeys.has(agent.pubkey));
+          setAvailablePeople(communityMembers.filter((member) => !agentPubkeys.has(member.pubkey)));
+          setRoomMemberPubkeys(roomPubkeys);
           setRoomAgentPubkeys(new Set(roomAgents.map((agent) => agent.pubkey)));
           setParticipantAgents(roomAgents);
           setViewerIsAgent(identityIsAgent);
@@ -476,31 +489,68 @@ export default function BuzzChat() {
     parentChannelId,
   ]);
 
-  const handleAgentChip = useCallback(
+  const handleAddAgentToRoom = useCallback(
     async (agent: Agent) => {
-      if (!transport || !activeCommunityId) return;
-      if (roomAgentPubkeys.has(agent.pubkey)) {
-        setRequestingAgent((current) => (current?.pubkey === agent.pubkey ? null : agent));
-        return;
-      }
+      if (!transport || !activeCommunityId || roomAgentPubkeys.has(agent.pubkey)) return false;
       setInvitingAgentPubkey(agent.pubkey);
+      setMembershipError(null);
       try {
         await transport.inviteAgentToChannel(decodedId, agent.pubkey, activeCommunityId);
         setRoomAgentPubkeys((current) => new Set([...current, agent.pubkey]));
+        setRoomMemberPubkeys((current) => new Set([...current, agent.pubkey]));
         setParticipantAgents((current) =>
           current.some((participant) => participant.pubkey === agent.pubkey)
             ? current
             : [...current, agent],
         );
         setParticipantCounts((current) => ({ ...current, agents: current.agents + 1 }));
-        setRequestingAgent(agent);
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        return true;
       } catch (err) {
-        console.warn('Agent invite failed:', err);
+        setMembershipError(`Could not add Agent: ${String(err)}`);
+        return false;
       } finally {
         setInvitingAgentPubkey(null);
       }
     },
     [activeCommunityId, decodedId, roomAgentPubkeys, transport],
+  );
+
+  const handleAgentChip = useCallback(
+    async (agent: Agent) => {
+      if (roomAgentPubkeys.has(agent.pubkey)) {
+        setRequestingAgent((current) => (current?.pubkey === agent.pubkey ? null : agent));
+        return;
+      }
+      if (await handleAddAgentToRoom(agent)) setRequestingAgent(agent);
+    },
+    [handleAddAgentToRoom, roomAgentPubkeys],
+  );
+
+  const handleAddPersonToRoom = useCallback(
+    async (person: CommunityMember) => {
+      if (
+        !transport ||
+        !activeCommunityId ||
+        roomMemberPubkeys.has(person.pubkey) ||
+        invitingPersonPubkey
+      ) {
+        return;
+      }
+      setInvitingPersonPubkey(person.pubkey);
+      setMembershipError(null);
+      try {
+        await transport.inviteWorkspaceMemberToChannel(decodedId, person.pubkey, activeCommunityId);
+        setRoomMemberPubkeys((current) => new Set([...current, person.pubkey]));
+        setParticipantCounts((current) => ({ ...current, humans: current.humans + 1 }));
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch (err) {
+        setMembershipError(`Could not add person: ${String(err)}`);
+      } finally {
+        setInvitingPersonPubkey(null);
+      }
+    },
+    [activeCommunityId, decodedId, invitingPersonPubkey, roomMemberPubkeys, transport],
   );
 
   const handleCancel = useCallback(async () => {
@@ -633,6 +683,7 @@ export default function BuzzChat() {
       activeCommunityId={activeCommunityId}
       onSelect={handleCommunitySelect}
       onAdd={() => router.push('/buzz/community' as Href)}
+      onSettings={() => router.push('/buzz/settings' as Href)}
     >
       <KeyboardAvoidingView
         style={[styles.container, { paddingTop: insets.top }]}
@@ -652,6 +703,20 @@ export default function BuzzChat() {
               {formatRoomParticipantCounts(participantCounts)}
             </Text>
           </View>
+          {!parentChannelId && !viewerIsAgent && !isArchived && (
+            <TouchableOpacity
+              accessibilityLabel={`Add people or Agents to this ${ROOM_LABEL}`}
+              onPress={() => {
+                setMembershipError(null);
+                setParticipantPickerVisible(true);
+              }}
+              style={styles.addMembersButton}
+              testID="room-member-picker"
+            >
+              <Text style={styles.addMembersGlyph}>＋</Text>
+              <Text style={styles.addMembersText}>MEMBERS</Text>
+            </TouchableOpacity>
+          )}
           {isArchived && (
             <View style={styles.archivedBadge}>
               <Text style={styles.archivedBadgeText}>□ ARCHIVED</Text>
@@ -781,7 +846,11 @@ export default function BuzzChat() {
                       <Text
                         style={[styles.askAgentChipText, active && styles.askAgentChipTextActive]}
                       >
-                        {inviting ? 'INVITING…' : invited ? `@${display.name}` : `＋ ${display.name}`}
+                        {inviting
+                          ? 'INVITING…'
+                          : invited
+                            ? `@${display.name}`
+                            : `＋ ${display.name}`}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -831,6 +900,114 @@ export default function BuzzChat() {
           </View>
         )}
       </KeyboardAvoidingView>
+
+      <Modal
+        animationType="fade"
+        onRequestClose={() => setParticipantPickerVisible(false)}
+        transparent
+        visible={participantPickerVisible}
+      >
+        <View style={styles.memberModalRoot}>
+          <Pressable
+            accessibilityLabel="Close Room member picker"
+            onPress={() => setParticipantPickerVisible(false)}
+            style={StyleSheet.absoluteFill}
+          />
+          <HullSurface strength="raised" style={styles.memberModal}>
+            <View style={styles.memberModalHeading}>
+              <View style={styles.memberModalHeadingCopy}>
+                <Text style={styles.memberModalTitle}>Add to this {ROOM_LABEL}</Text>
+                <Text style={styles.memberModalSubtitle}>
+                  Existing Workspace people and linked Agents join as members only.
+                </Text>
+              </View>
+              <TouchableOpacity
+                accessibilityLabel="Close Room member picker"
+                onPress={() => setParticipantPickerVisible(false)}
+                style={styles.memberModalClose}
+              >
+                <Text style={styles.memberModalCloseText}>×</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              contentContainerStyle={styles.memberPickerContent}
+              showsVerticalScrollIndicator={false}
+            >
+              <Text style={styles.memberSectionLabel}>WORKSPACE PEOPLE</Text>
+              {availablePeople.map((person) => {
+                const inRoom = roomMemberPubkeys.has(person.pubkey);
+                const inviting = invitingPersonPubkey === person.pubkey;
+                return (
+                  <TouchableOpacity
+                    accessibilityLabel={`${inRoom ? 'Already in Room' : 'Add person'} ${shortNpub(person.pubkey)}`}
+                    disabled={inRoom || Boolean(invitingPersonPubkey)}
+                    key={person.pubkey}
+                    onPress={() => void handleAddPersonToRoom(person)}
+                    style={[styles.memberPickerRow, inRoom && styles.memberPickerRowPlaced]}
+                    testID={`add-room-person-${person.pubkey}`}
+                  >
+                    <View style={styles.memberPickerIdentity}>
+                      <Text style={styles.memberPickerGlyph}>◇</Text>
+                      <View style={styles.memberPickerCopy}>
+                        <Text style={styles.memberPickerName}>Person</Text>
+                        <Text style={styles.memberPickerNpub}>{shortNpub(person.pubkey)}</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.memberPickerAction}>
+                      {inviting ? 'ADDING…' : inRoom ? 'IN ROOM' : '＋ ADD PERSON'}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+
+              <Text style={[styles.memberSectionLabel, styles.agentSectionLabel]}>
+                LINKED AGENTS
+              </Text>
+              {availableAgents.map((agent) => {
+                const inRoom = roomAgentPubkeys.has(agent.pubkey);
+                const inviting = invitingAgentPubkey === agent.pubkey;
+                const display = resolveAgentDisplayIdentity(agent.pubkey, agent);
+                return (
+                  <TouchableOpacity
+                    accessibilityLabel={`${inRoom ? 'Already in Room' : 'Add Agent'} ${display.name}`}
+                    disabled={inRoom || Boolean(invitingAgentPubkey)}
+                    key={agent.agentId}
+                    onPress={() => void handleAddAgentToRoom(agent)}
+                    style={[styles.memberPickerRow, inRoom && styles.memberPickerRowPlaced]}
+                    testID={`add-room-agent-${agent.pubkey}`}
+                  >
+                    <View style={styles.memberPickerIdentity}>
+                      <AgentAvatar
+                        pubkey={agent.pubkey}
+                        avatarSeed={display.avatarSeed}
+                        avatarUrl={display.avatarUrl}
+                        name={display.name}
+                        size={28}
+                      />
+                      <View style={styles.memberPickerCopy}>
+                        <Text numberOfLines={1} style={styles.memberPickerName}>
+                          {display.name}
+                        </Text>
+                        <Text style={styles.memberPickerNpub}>LINKED AGENT</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.memberPickerAction}>
+                      {inviting ? 'ADDING…' : inRoom ? 'IN ROOM' : '＋ ADD AGENT'}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            {membershipError && (
+              <View accessibilityRole="alert" style={styles.membershipError}>
+                <Text style={styles.membershipErrorText}>! {membershipError}</Text>
+              </View>
+            )}
+          </HullSurface>
+        </View>
+      </Modal>
     </BuzzCommunityShell>
   );
 }
@@ -890,6 +1067,30 @@ const styles = StyleSheet.create({
     lineHeight: 15,
     color: groknight.textMuted,
     marginTop: 2,
+  },
+  addMembersButton: {
+    minWidth: 62,
+    minHeight: 44,
+    marginLeft: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgHighlight,
+  },
+  addMembersGlyph: {
+    ...Typography.default('semiBold'),
+    color: groknight.chrome,
+    fontSize: 15,
+    lineHeight: 16,
+  },
+  addMembersText: {
+    ...Typography.mono('semiBold'),
+    marginTop: 1,
+    color: groknight.textMuted,
+    fontSize: 8,
+    lineHeight: 10,
+    letterSpacing: 0.4,
   },
   archivedBadge: {
     backgroundColor: groknight.bgHighlight,
@@ -953,6 +1154,113 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     color: groknight.textSecondary,
     fontSize: 11,
+  },
+
+  // ── Room membership picker ─────────────────────────────────────
+  memberModalRoot: {
+    flex: 1,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(5, 5, 6, 0.84)',
+  },
+  memberModal: {
+    width: '100%',
+    maxWidth: 460,
+    maxHeight: '78%',
+    padding: 16,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgRaised,
+  },
+  memberModalHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  memberModalHeadingCopy: { flex: 1, minWidth: 0 },
+  memberModalTitle: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 17,
+    lineHeight: 22,
+  },
+  memberModalSubtitle: {
+    ...Typography.default(),
+    marginTop: 4,
+    color: groknight.textMuted,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  memberModalClose: {
+    width: 44,
+    height: 44,
+    marginTop: -10,
+    marginRight: -10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  memberModalCloseText: { ...Typography.default(), color: groknight.steel, fontSize: 24 },
+  memberPickerContent: { paddingTop: 18, paddingBottom: 4 },
+  memberSectionLabel: {
+    ...Typography.mono('semiBold'),
+    marginBottom: 6,
+    color: groknight.textMuted,
+    fontSize: 9,
+    letterSpacing: 0.7,
+  },
+  agentSectionLabel: { marginTop: 18 },
+  memberPickerRow: {
+    minHeight: 58,
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderTopWidth: 1,
+    borderColor: groknight.border,
+    backgroundColor: groknight.bgBase,
+  },
+  memberPickerRowPlaced: { opacity: 0.58 },
+  memberPickerIdentity: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  memberPickerGlyph: {
+    ...Typography.default('semiBold'),
+    width: 28,
+    color: groknight.steel,
+    fontSize: 16,
+    textAlign: 'center',
+  },
+  memberPickerCopy: { flex: 1, minWidth: 0 },
+  memberPickerName: {
+    ...Typography.default('semiBold'),
+    color: groknight.textSecondary,
+    fontSize: 12,
+  },
+  memberPickerNpub: {
+    ...Typography.mono(),
+    marginTop: 2,
+    color: groknight.textMuted,
+    fontSize: 9,
+  },
+  memberPickerAction: {
+    ...Typography.mono('semiBold'),
+    color: groknight.chrome,
+    fontSize: 9,
+    letterSpacing: 0.3,
+  },
+  membershipError: {
+    marginTop: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgHighlight,
+  },
+  membershipErrorText: {
+    ...Typography.default('semiBold'),
+    color: groknight.textSecondary,
+    fontSize: 11,
+    lineHeight: 16,
   },
 
   // ── Message blocks ──────────────────────────────────────────────

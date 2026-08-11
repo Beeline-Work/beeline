@@ -8,6 +8,7 @@ import { Typography } from '@/constants/Typography';
 type CommunityInviteEntryProps = {
   community: Community | null;
   creatingInvite: boolean;
+  allowPeopleInvites?: boolean;
   onInvitePeople: () => void;
   onManageAgents: () => void;
 };
@@ -15,6 +16,7 @@ type CommunityInviteEntryProps = {
 export function CommunityInviteEntry({
   community,
   creatingInvite,
+  allowPeopleInvites = true,
   onInvitePeople,
   onManageAgents,
 }: CommunityInviteEntryProps) {
@@ -32,19 +34,21 @@ export function CommunityInviteEntry({
         <Text style={styles.actionIcon}>⌬</Text>
         <Text style={styles.actionText}>Connect an Agent</Text>
       </TouchableOpacity>
-      <TouchableOpacity
-        accessibilityLabel={`Invite people to ${community.name}`}
-        accessibilityRole="button"
-        disabled={creatingInvite}
-        onPress={onInvitePeople}
-        style={[styles.action, creatingInvite && styles.disabled]}
-        testID="invite-people-action"
-      >
-        <Text style={styles.actionIcon}>＋</Text>
-        <Text style={styles.actionText}>
-          {creatingInvite ? 'Creating invite…' : 'Invite people'}
-        </Text>
-      </TouchableOpacity>
+      {allowPeopleInvites && (
+        <TouchableOpacity
+          accessibilityLabel={`Invite people to ${community.name}`}
+          accessibilityRole="button"
+          disabled={creatingInvite}
+          onPress={onInvitePeople}
+          style={[styles.action, creatingInvite && styles.disabled]}
+          testID="invite-people-action"
+        >
+          <Text style={styles.actionIcon}>＋</Text>
+          <Text style={styles.actionText}>
+            {creatingInvite ? 'Creating invite…' : 'Invite people'}
+          </Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }

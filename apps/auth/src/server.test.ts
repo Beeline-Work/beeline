@@ -225,12 +225,15 @@ function bindEvent(challenge: BindChallenge, identity: Keypair) {
       kind: OIDC_BIND_KIND,
       tags: [
         ['t', OIDC_BIND_MARKER],
+        ['protocol', String(challenge.protocol)],
         ['ticket', challenge.ticket],
         ['challenge', challenge.challenge],
         ['provider', challenge.provider],
         ['audience', challenge.audience],
         ['subject', challenge.subject],
         ['community', challenge.community],
+        ['issued_at', String(challenge.issued_at)],
+        ['expires_at', String(challenge.expires_at)],
       ],
       content: '',
     },
@@ -264,6 +267,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
         allowInsecure: true,
       }),
       tenants: [alphaTenant, betaTenant],
+      nativeRedirectUris: ['buzzy://buzz/oidc-callback'],
     });
   });
 
@@ -280,6 +284,8 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       headers: { host: tenant.host },
     });
     expect(start.statusCode).toBe(302);
+    expect(String(start.headers['set-cookie'])).toContain('__Host-beeline_oidc_flow=');
+    expect(String(start.headers['set-cookie'])).toContain('Secure');
     const cookie = startCookie(start.headers['set-cookie']);
     const authorization = await fetch(start.headers.location!, { redirect: 'manual' });
     expect(authorization.status).toBe(302);
@@ -313,8 +319,12 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     expect(result.statusCode).toBe(201);
     expect(result.json()).toEqual({ linked: true, idempotent: false, pubkey: identity.publicKey });
     const replayedBind = await bind(challenge, identity);
-    expect(replayedBind.statusCode).toBe(409);
-    expect(replayedBind.json().error).toBe('ticket_used');
+    expect(replayedBind.statusCode).toBe(200);
+    expect(replayedBind.json()).toEqual({
+      linked: true,
+      idempotent: true,
+      pubkey: identity.publicKey,
+    });
     expect(provider.tokenRequests).toBe(1);
 
     const unauthenticated = await app.inject({
@@ -350,6 +360,42 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     });
     expect(replay.statusCode).toBe(401);
     expect(replay.json().error).toBe('replayed_auth');
+  });
+
+  it('returns a native bind challenge only through an allowlisted state-bound app callback', async () => {
+    const appState = 's'.repeat(43);
+    const associatedRedirect = `${alphaTenant.origin}/auth/oidc/mobile-callback`;
+    const start = await app.inject({
+      method: 'GET',
+      url: `/auth/oidc/start?app_redirect=${encodeURIComponent(associatedRedirect)}&app_state=${appState}`,
+      headers: { host: alphaTenant.host },
+    });
+    expect(start.statusCode).toBe(302);
+    const cookie = startCookie(start.headers['set-cookie']);
+    const authorization = await fetch(start.headers.location!, { redirect: 'manual' });
+    const callback = new URL(authorization.headers.get('location')!);
+    const result = await app.inject({
+      method: 'GET',
+      url: `${callback.pathname}${callback.search}`,
+      headers: { host: alphaTenant.host, cookie },
+    });
+    expect(result.statusCode).toBe(302);
+    const completion = new URL(result.headers.location!);
+    expect(`${completion.origin}${completion.pathname}`).toBe(associatedRedirect);
+    expect(completion.searchParams.get('state')).toBe(appState);
+    expect(completion.searchParams.get('ticket')).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(completion.searchParams.has('code')).toBe(false);
+    expect(completion.searchParams.has('id_token')).toBe(false);
+  });
+
+  it('refuses arbitrary native completion redirects', async () => {
+    const result = await app.inject({
+      method: 'GET',
+      url: `/auth/oidc/start?app_redirect=${encodeURIComponent('https://attacker.example/callback')}&app_state=${'s'.repeat(43)}`,
+      headers: { host: alphaTenant.host },
+    });
+    expect(result.statusCode).toBe(400);
+    expect(result.json().error).toBe('invalid_request');
   });
 
   it('cannot replay the OAuth proof to mint another bind ticket and exposes no bearer-token verify endpoint', async () => {

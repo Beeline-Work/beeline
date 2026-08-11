@@ -23,6 +23,7 @@ import {
   loadRelayUrl,
   saveBuzzIdentity,
   saveRelayUrl,
+  generateBuzzIdentity,
 } from './buzz-identity-storage';
 
 describe('Buzz identity storage', () => {
@@ -76,19 +77,24 @@ describe('Buzz identity storage', () => {
       'nsec1test',
       options,
     );
-    expect(secureStore.getItemAsync).toHaveBeenCalledWith(
-      'buzzy.identity.nsec',
-      options,
-    );
+    expect(secureStore.getItemAsync).toHaveBeenCalledWith('buzzy.identity.nsec', options);
   });
 
   it('propagates native write failures so onboarding can show them', async () => {
-    secureStore.setItemAsync.mockRejectedValue(
-      new Error('SecureStore is unavailable'),
-    );
+    secureStore.setItemAsync.mockRejectedValue(new Error('SecureStore is unavailable'));
 
     await expect(saveRelayUrl('http://relay.example')).rejects.toThrow(
       'SecureStore is unavailable',
     );
+  });
+
+  it('can hold a generated key only in memory until an OIDC bind succeeds', async () => {
+    const identity = { name: 'pending' };
+    buzzClient.createIdentity.mockReturnValue(identity);
+
+    await expect(generateBuzzIdentity('pending', { persist: false })).resolves.toBe(identity);
+
+    expect(buzzClient.createIdentity).toHaveBeenCalledWith('pending');
+    expect(secureStore.setItemAsync).not.toHaveBeenCalled();
   });
 });

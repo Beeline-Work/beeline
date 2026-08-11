@@ -2,29 +2,17 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { encodeNpub, type Community } from '@beeline/buzz-client';
+import type { Agent, Community } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import {
-  cornerStatusPresentation,
-  sortCorners,
-  type CornerSummary,
-} from '@/buzz/corners';
+import { cornerStatusPresentation, sortCorners, type CornerSummary } from '@/buzz/corners';
 import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { groknight } from '@/buzz/groknight';
+import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
+import { AgentAvatar } from '@/components/buzz/AgentAvatar';
 import { HullSurface, PixelLoader } from '@/components/buzz/MonoHull';
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
-
-function shortNpub(pubkey: string): string {
-  if (!pubkey) return 'unknown agent';
-  try {
-    const npub = encodeNpub(pubkey);
-    return `${npub.slice(0, 8)}…`;
-  } catch {
-    return `${pubkey.slice(0, 8)}…`;
-  }
-}
 
 export default function BuzzCorners() {
   const { roomId } = useLocalSearchParams<{ roomId: string }>();
@@ -34,32 +22,37 @@ export default function BuzzCorners() {
   const [roomName, setRoomName] = useState(ROOM_LABEL);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
+  const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const transportRef = useRef<BuzzRigTransport | null>(null);
 
-  const loadCorners = useCallback(async (currentTransport?: BuzzRigTransport) => {
-    if (!decodedId) return;
-    const t = currentTransport ?? transportRef.current;
-    if (!t) return;
-    setError(null);
-    try {
-      const client = await t.ensureClient();
-      const [nextCorners, metadata, nextCommunities, communityId] = await Promise.all([
-        t.listSubchannelLifecycle(decodedId),
-        client.getChannelMetadata(decodedId),
-        client.listCommunities(),
-        client.getChannelCommunityId(decodedId),
-      ]);
-      setCorners(sortCorners(nextCorners));
-      setRoomName(metadata?.name?.trim() || ROOM_LABEL);
-      setCommunities(nextCommunities);
-      setActiveCommunityId(communityId);
-    } catch (loadError) {
-      setError(String(loadError));
-    }
-  }, [decodedId]);
+  const loadCorners = useCallback(
+    async (currentTransport?: BuzzRigTransport) => {
+      if (!decodedId) return;
+      const t = currentTransport ?? transportRef.current;
+      if (!t) return;
+      setError(null);
+      try {
+        const client = await t.ensureClient();
+        const [nextCorners, metadata, nextCommunities, communityId] = await Promise.all([
+          t.listSubchannelLifecycle(decodedId),
+          client.getChannelMetadata(decodedId),
+          client.listCommunities(),
+          client.getChannelCommunityId(decodedId),
+        ]);
+        setCorners(sortCorners(nextCorners));
+        setRoomName(metadata?.name?.trim() || ROOM_LABEL);
+        setCommunities(nextCommunities);
+        setActiveCommunityId(communityId);
+        setAgents(communityId ? await client.listAgents(communityId) : []);
+      } catch (loadError) {
+        setError(String(loadError));
+      }
+    },
+    [decodedId],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -144,16 +137,28 @@ export default function BuzzCorners() {
           onRefresh={() => void handleRefresh()}
           renderItem={({ item }) => {
             const status = cornerStatusPresentation(item.status);
+            const agent = agents.find((candidate) => candidate.pubkey === item.openerPubkey);
+            const display = resolveAgentDisplayIdentity(item.openerPubkey, agent);
             return (
               <TouchableOpacity
                 accessibilityLabel={`Open corner ${item.name}, ${status.label.toLowerCase()}`}
                 style={styles.cornerRow}
                 onPress={() => router.push(`/buzz/chat/${encodeURIComponent(item.id)}`)}
               >
-                <Text style={styles.hash}>#</Text>
+                <AgentAvatar
+                  pubkey={item.openerPubkey}
+                  avatarSeed={display.avatarSeed}
+                  avatarUrl={display.avatarUrl}
+                  name={display.name}
+                  size={34}
+                />
                 <View style={styles.cornerCopy}>
-                  <Text style={styles.cornerName} numberOfLines={1}>{item.name}</Text>
-                  <Text style={styles.agent}>agent {shortNpub(item.openerPubkey)}</Text>
+                  <Text style={styles.cornerName} numberOfLines={1}>
+                    {item.name}
+                  </Text>
+                  <Text style={styles.agent} numberOfLines={1}>
+                    Opened by {display.name}
+                  </Text>
                 </View>
                 <View style={styles.statusBlock}>
                   <Text style={styles.statusGlyph}>{status.glyph}</Text>
@@ -257,20 +262,14 @@ const styles = StyleSheet.create({
     borderBottomColor: groknight.border,
     backgroundColor: groknight.bgBase,
   },
-  hash: {
-    ...Typography.default('semiBold'),
-    width: 25,
-    color: groknight.steel,
-    fontSize: 15,
-  },
-  cornerCopy: { flex: 1, minWidth: 0 },
+  cornerCopy: { flex: 1, minWidth: 0, marginLeft: 10 },
   cornerName: {
     ...Typography.default('semiBold'),
     color: groknight.textPrimary,
     fontSize: 14,
   },
   agent: {
-    ...Typography.mono(),
+    ...Typography.default(),
     marginTop: 4,
     color: groknight.textMuted,
     fontSize: 10,

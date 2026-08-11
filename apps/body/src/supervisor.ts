@@ -79,13 +79,15 @@ export class WorkspaceSupervisor {
     return [...this.running.keys()].sort();
   }
 
-  async run(opts: { pollMs?: number; signal?: AbortSignal } = {}): Promise<void> {
+  async run(
+    opts: { pollMs?: number; signal?: AbortSignal } = {},
+  ): Promise<'aborted' | 'agent-removed'> {
     const pollMs = opts.pollMs ?? 5_000;
     try {
       while (!opts.signal?.aborted) {
         let waitMs = pollMs;
         try {
-          await this.reconcile();
+          if (!(await this.reconcile())) return 'agent-removed';
         } catch (error) {
           // Membership discovery is a control-plane poll. A transient relay
           // error must not tear down every active Room (and therefore restart
@@ -106,19 +108,29 @@ export class WorkspaceSupervisor {
           );
         });
       }
+      return 'aborted';
     } finally {
       await this.stopAll();
       await this.scheduler.dispose();
     }
   }
 
-  async reconcile(): Promise<void> {
+  async reconcile(): Promise<boolean> {
     const client = createBuzzClient({
       baseUrl: this.runtime.relayBaseUrl,
       ...(this.runtime.relayHost ? { host: this.runtime.relayHost } : {}),
       identity: this.agent,
     });
     try {
+      // Workspace membership is the paired runtime's durable lease. A
+      // successful projection read showing removal is authoritative; transient
+      // relay failures still throw and retain the last known running set.
+      if (!(await client.isMember(this.runtime.communityId, this.agent.publicKey))) {
+        console.log(
+          `[supervisor] agent removed from Workspace ${this.runtime.communityId}; draining runtime`,
+        );
+        return false;
+      }
       const memberships = await client.listMyChannels();
       const desired = new Map<string, number>();
       for (const membership of memberships) {
@@ -155,6 +167,7 @@ export class WorkspaceSupervisor {
         }
         this.startRoom(room);
       }
+      return true;
     } finally {
       client.disconnect();
     }
@@ -211,7 +224,8 @@ export class WorkspaceSupervisor {
             root,
           ])
         : git(repositories, ['clone', cloneUrl(binding), root]);
-      if (!result.ok) throw new Error(`could not clone invited Room ${channelId}: ${result.stderr}`);
+      if (!result.ok)
+        throw new Error(`could not clone invited Room ${channelId}: ${result.stderr}`);
     }
     const local = inspectLocalRepository(root);
     if (local.repository.key !== binding.key) {

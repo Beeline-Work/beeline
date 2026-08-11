@@ -9,6 +9,7 @@
 import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
 import { delimiter, resolve } from 'node:path';
 import { HOST, SCHEME, BASE_URL } from '@beeline/gate';
+import { DEFAULT_RELAY_HOST, DEFAULT_RELAY_SCHEME } from '@beeline/buzz-client';
 
 export type SessionMode = 'readonly' | 'edit';
 
@@ -199,11 +200,11 @@ export function loadBodyConfig(opts: {
   const env = opts.env ?? process.env;
   const { agentBinary, mcpBinary } = resolveBinaries(env);
   const agentEnv = buildAgentEnv(env, opts.llmEnvFile);
-  const host = env.BUZZY_RELAY_HOST ?? HOST;
-  const scheme = env.BUZZY_RELAY_SCHEME ?? SCHEME;
+  const host = env.BUZZY_RELAY_HOST ?? DEFAULT_RELAY_HOST;
+  const scheme = env.BUZZY_RELAY_SCHEME ?? DEFAULT_RELAY_SCHEME;
   const base = env.BUZZY_RELAY_URL
     ? env.BUZZY_RELAY_URL.replace(/^ws/, 'http').replace(/\/$/, '')
-    : BASE_URL;
+    : `${scheme}://${host}`;
   const ws =
     env.BUZZ_RELAY_URL ?? env.BUZZY_RELAY_WS ?? `${scheme === 'https' ? 'wss' : 'ws'}://${host}`;
 

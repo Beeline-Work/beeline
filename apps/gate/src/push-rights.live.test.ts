@@ -10,7 +10,7 @@
  *      admin.
  *
  * Requires the real Buzz relay stack (`npm run stack:up` from repo root;
- * default http://127.0.0.1:3010). Run with `npm run test:live` from apps/gate.
+ * local harness at http://127.0.0.1:3010). Run with `npm run test:live` from apps/gate.
  * If the relay is unreachable the suite exits 0 with a clear skip message;
  * it NEVER auto-skips when the relay is reachable.
  *

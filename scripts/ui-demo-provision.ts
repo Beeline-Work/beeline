@@ -99,6 +99,7 @@ async function main() {
   await setAgentSoul(channelContext, communityId, agent.publicKey, {
     name: 'Chrome Warden',
     personality: 'Keeps the suite green and cuts dead code without ceremony.',
+    intent: 'Keep the test suite green and refactor mercilessly.',
     avatarSeed: 'chrome-warden-soul',
   });
   const parentChannelId = await buzzCreateChannel(channelContext, repo, {

@@ -64,10 +64,14 @@ export interface RepositoryBinding {
 export interface AgentSoulInput {
   name: string;
   personality: string;
+  /** Human-authored purpose supplied to the agent as session-scoped instructions. */
+  intent: string;
   avatarSeed: string;
 }
 
-export interface AgentSoulProfile extends AgentSoulInput {
+export interface AgentSoulProfile extends Omit<AgentSoulInput, 'intent'> {
+  /** Absent only on legacy display-only overlays created before persona instructions. */
+  intent?: string;
   communityId: string;
   agentPubkey: string;
   authoredBy: string;

@@ -52,5 +52,7 @@ export {
   chunkChangeReviewPatch,
   postChangeReviewMetadata,
 } from './change-review.js';
-export { generateSoul, type GeneratedSoul } from './soul.js';
-export { createSoulServer } from './soul-server.js';
+export {
+  appendPersonaSessionInstructions,
+  personaSessionInstructions,
+} from './persona-instructions.js';

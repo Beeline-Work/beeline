@@ -49,6 +49,7 @@ import { signEvent, type NostrEvent } from '@beeline/nostr';
 import type { BodyConfig } from './config.js';
 import { DurableBodyState } from './durable-state.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
+import { appendPersonaSessionInstructions } from './persona-instructions.js';
 import {
   chunkChangeReviewPatch,
   listChangeReviewFiles,
@@ -293,6 +294,7 @@ export class Body {
     parentChannelId?: string;
     worktreePath?: string;
     featureBranch?: string;
+    communityId?: string;
   }): Promise<AgentSession> {
     let client = new AcpClient({
       agentBinary: this.config.agentBinary,
@@ -318,6 +320,11 @@ export class Body {
           autoApprovePermissions: input.autoApprovePermissions,
         });
         session.client = client;
+        const profile = input.communityId
+          ? (await listAgents(this.agentClientContext(), input.communityId)).find(
+              (agent) => agent.pubkey === this.agentIdentity.publicKey,
+            )?.soulProfile
+          : undefined;
         await client.start();
         const transcript = await this.durableState.conversation(input.channelId);
         const restored = transcript.length
@@ -331,7 +338,7 @@ export class Body {
         const created = await client.sessionNew({
           cwd: input.cwd,
           mcpServers: input.mcpServers,
-          systemPrompt: `${input.systemPrompt}${restored}`,
+          systemPrompt: `${appendPersonaSessionInstructions(input.systemPrompt, profile)}${restored}`,
         });
         session.sessionId = created.sessionId;
         session.unsubscribeActivity?.();
@@ -369,6 +376,7 @@ export class Body {
       identity: this.agentIdentity,
     });
     try {
+      const communityId = await this.channelCommunityId(parentChannelId);
       const ids = await client.listSubchannels(parentChannelId);
       const parentEvents = await queryEvents(
         [{ kinds: [9], '#h': [parentChannelId], limit: 5_000 }],
@@ -407,9 +415,7 @@ export class Body {
           channelId: subchannelId,
           mode: 'edit',
           cwd: worktreePath,
-          mcpServers: [
-            { name: 'buzz-dev-mcp', command: this.config.mcpBinary, args: [], env: [] },
-          ],
+          mcpServers: [{ name: 'buzz-dev-mcp', command: this.config.mcpBinary, args: [], env: [] }],
           systemPrompt: [
             'You are a coding agent resuming one durable corner after a supervisor restart.',
             `You are working in a git worktree: ${worktreePath}`,
@@ -420,6 +426,7 @@ export class Body {
           parentChannelId,
           worktreePath,
           featureBranch,
+          ...(communityId ? { communityId } : {}),
         });
         const cursor = await this.durableState.cursor(subchannelId);
         const requestId = control ? tagValue(control, 'request') : undefined;
@@ -487,6 +494,7 @@ export class Body {
     const agentId = this.agentIdentity;
     await this.ensureAgentInChannel(tlcChannelId, agentId);
     await this.ensureAgentEntity(tlcChannelId);
+    const communityId = await this.channelCommunityId(tlcChannelId);
 
     // Read-only session: NO mcpServers — the boundary IS the MCP mount.
     const session = await this.createManagedSession({
@@ -502,6 +510,7 @@ export class Body {
         'When the user asks you to write code, explain that you need an edit session.',
       ].join('\n'),
       autoApprovePermissions: this.config.autoApprovePermissions,
+      ...(communityId ? { communityId } : {}),
     });
 
     this.sessions.set(tlcChannelId, session);
@@ -586,6 +595,7 @@ export class Body {
       parentChannelId: tlcChannelId,
       worktreePath,
       featureBranch,
+      ...(communityId ? { communityId } : {}),
     });
 
     const now = Math.floor(Date.now() / 1000);
@@ -1086,8 +1096,7 @@ export class Body {
           continue;
         }
         // Skip events that are not plain text messages.
-        if (!evt.content || evt.tags.some((t) => t[0] === 't' && t[1] === 'agent-activity'))
-        {
+        if (!evt.content || evt.tags.some((t) => t[0] === 't' && t[1] === 'agent-activity')) {
           await this.durableState.delivered(subchannelId, evt.id);
           continue;
         }

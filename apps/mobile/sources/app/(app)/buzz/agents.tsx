@@ -1,12 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -14,6 +7,7 @@ import type { Agent, Community, Identity } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { groknight } from '@/buzz/groknight';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { defaultSoul, requestGeneratedSoul } from '@/buzz/soul-generation';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
@@ -287,31 +281,48 @@ export default function BuzzAgents() {
               )}
             </View>
           ) : (
-            agents.map((agent) => (
-              <TouchableOpacity
-                key={agent.agentId}
-                style={[styles.agentRow, selectedPubkey === agent.pubkey && styles.agentRowActive]}
-                onPress={() => chooseAgent(agent)}
-              >
-                <AgentAvatar pubkey={agent.pubkey} />
-                <View style={styles.agentCopy}>
-                  <Text style={styles.agentName} numberOfLines={1}>
-                    {agent.displayName}
-                  </Text>
-                  <Text style={styles.personality} numberOfLines={1}>
-                    {agent.personality ?? 'Ready for a soul.'}
-                  </Text>
-                  <Text style={styles.pubkey}>{agent.pubkey.slice(0, 12)}…</Text>
-                </View>
-                <Text style={styles.chevron}>›</Text>
-              </TouchableOpacity>
-            ))
+            agents.map((agent) => {
+              const display = resolveAgentDisplayIdentity(agent.pubkey, agent);
+              return (
+                <TouchableOpacity
+                  key={agent.agentId}
+                  accessibilityLabel={`${display.name}, ${display.personality}`}
+                  style={[
+                    styles.agentRow,
+                    selectedPubkey === agent.pubkey && styles.agentRowActive,
+                  ]}
+                  onPress={() => chooseAgent(agent)}
+                >
+                  <AgentAvatar
+                    pubkey={agent.pubkey}
+                    avatarSeed={display.avatarSeed}
+                    avatarUrl={display.avatarUrl}
+                    name={display.name}
+                  />
+                  <View style={styles.agentCopy}>
+                    <Text style={styles.agentName} numberOfLines={1}>
+                      {display.name}
+                    </Text>
+                    <Text style={styles.personality} numberOfLines={2}>
+                      {display.personality}
+                    </Text>
+                  </View>
+                  <Text style={styles.chevron}>›</Text>
+                </TouchableOpacity>
+              );
+            })
           )}
 
           {selected && (
             <View style={styles.editor}>
               <View style={styles.editorTitleRow}>
-                <AgentAvatar pubkey={selected.pubkey} size={42} />
+                <AgentAvatar
+                  pubkey={selected.pubkey}
+                  avatarSeed={resolveAgentDisplayIdentity(selected.pubkey, selected).avatarSeed}
+                  avatarUrl={resolveAgentDisplayIdentity(selected.pubkey, selected).avatarUrl}
+                  name={resolveAgentDisplayIdentity(selected.pubkey, selected).name}
+                  size={42}
+                />
                 <View style={styles.editorTitleCopy}>
                   <Text style={styles.editorTitle}>
                     {selected.soulProfile ? 'Edit Agent' : 'Give this Agent a face'}
@@ -535,7 +546,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 16,
   },
-  pubkey: { ...Typography.mono(), marginTop: 4, color: groknight.textMuted, fontSize: 11 },
   chevron: { ...Typography.default(), color: groknight.chrome, fontSize: 24 },
   editor: {
     marginTop: 24,

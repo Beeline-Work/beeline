@@ -81,6 +81,7 @@ export function toRigEvent(ev: BuzzSessionEvent): SessionEvent {
       id: ev.id,
       text: agentActivityText(ev.content),
       seq: ev.createdAt,
+      pubkey: ev.pubkey,
     };
   }
   if (ev.kind === 'message') {

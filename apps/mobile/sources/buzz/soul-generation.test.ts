@@ -3,14 +3,15 @@ import { defaultSoul, requestGeneratedSoul } from './soul-generation';
 
 describe('mobile soul generation wiring', () => {
   it('sends only the intent to the server-held generation endpoint', async () => {
-    const request = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          name: 'Chrome Warden',
-          personality: 'Keeps the suite green and cuts dead code without ceremony.',
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      ),
+    const request = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            name: 'Chrome Warden',
+            personality: 'Keeps the suite green and cuts dead code without ceremony.',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
     );
 
     await expect(
@@ -35,6 +36,7 @@ describe('mobile soul generation wiring', () => {
 
   it('uses a stable fast-path default derived from the agent pubkey', () => {
     expect(defaultSoul('abcdef0123456789')).toEqual(defaultSoul('abcdef0123456789'));
-    expect(defaultSoul('abcdef0123456789').name).toBe('Agent ABCDEF');
+    expect(defaultSoul('abcdef0123456789').name).toMatch(/^[A-Z][a-z]+ [A-Z][a-z]+$/);
+    expect(defaultSoul('abcdef0123456789').name).not.toContain('ABCDEF');
   });
 });

@@ -70,6 +70,7 @@ describe('Buzz branch-loop event projection', () => {
       type: 'assistant_delta',
       id: 'activity-one',
       text: 'The work is complete.',
+      pubkey: 'a'.repeat(64),
     });
   });
 

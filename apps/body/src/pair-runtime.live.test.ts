@@ -9,6 +9,7 @@ import {
   announceRepo,
   BASE_URL,
   checkAgentNotPushAllowed,
+  createRelayClient,
   createChannel,
   createCommunity,
   git,
@@ -172,6 +173,7 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
         repo,
         agentPubkey: agentIdentity.publicKey,
         protectedRef: 'refs/heads/main',
+        relay: createRelayClient(agentIdentity),
       });
       return protection.ok && protection.agentRole === 'member';
     }, 30_000);
@@ -276,7 +278,7 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
     const roomEvents = async () =>
       queryEvents(
         [{ kinds: [9], '#h': [roomId], authors: [runtime.agent.publicKey], limit: 100 }],
-        human.publicKey,
+        human,
       );
     let opened: Awaited<ReturnType<typeof roomEvents>>[number] | undefined;
     try {
@@ -299,7 +301,7 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
     const secondRoomEvents = async () =>
       queryEvents(
         [{ kinds: [9], '#h': [secondRoomId], authors: [runtime.agent.publicKey], limit: 100 }],
-        human.publicKey,
+        human,
       );
     let secondOpened: Awaited<ReturnType<typeof secondRoomEvents>>[number] | undefined;
     await waitUntil(async () => {
@@ -329,7 +331,7 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
         const ready = (
           await queryEvents(
             [{ kinds: [9], '#h': [subchannel!], authors: [runtime.agent.publicKey], limit: 100 }],
-            human.publicKey,
+            human,
           )
         ).find((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'));
         tip = ready?.tags.find((tag) => tag[0] === 'tip')?.[1] ?? '';
@@ -370,7 +372,7 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
                 limit: 100,
               },
             ],
-            human.publicKey,
+            human,
           )
         ).find((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'));
         secondTip = ready?.tags.find((tag) => tag[0] === 'tip')?.[1] ?? '';
@@ -381,7 +383,7 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
         existsSync(daemonLog) ? readFile(daemonLog, 'utf8') : Promise.resolve('(missing daemon log)'),
         queryEvents(
           [{ kinds: [9], '#h': [secondSubchannel!], limit: 200 }],
-          human.publicKey,
+          human,
         ),
       ]);
       throw new Error(

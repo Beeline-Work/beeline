@@ -2,13 +2,15 @@
  * Hermetic unit tests for body modules.
  * These tests do NOT require a relay or LLM endpoint.
  */
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { hasWriteTools, inventoryForMcpServers } from './mcp-inventory.js';
 import { parseEnvFile, hasLlmCredentials } from './config.js';
 import { AGENT_REQUEST_TAG, Body, cornerNameForIntent, isChannelTaskRequest } from './body.js';
 import { AcpClient } from './acp.js';
 import { newIdentity } from '@beeline/gate';
-import { signEvent } from '@beeline/nostr';
+import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe('mcp-inventory', () => {
   it('hasWriteTools returns false for empty list', () => {
@@ -78,6 +80,53 @@ describe('agent identity boundary', () => {
     const operator = newIdentity('operator');
     const body = new Body(config, operator);
     expect(() => body.setAgentIdentity(operator)).toThrow('must be distinct');
+  });
+
+  it('NIP-98-authenticates repository safety reads as the agent', async () => {
+    const operator = newIdentity('operator');
+    const agent = newIdentity('agent');
+    const roomId = '11111111-1111-4111-8111-111111111111';
+    const authEvents: NostrEvent[] = [];
+    const projection = (kind: number, members: string[]): NostrEvent =>
+      signEvent(
+        {
+          pubkey: operator.publicKey,
+          created_at: 1_700_000_000,
+          kind,
+          tags: [['d', roomId], ...members.map((pubkey) => ['p', pubkey])],
+          content: '',
+        },
+        operator.secretKey,
+      );
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const authorization = new Headers(init?.headers).get('authorization');
+        if (!authorization?.startsWith('Nostr ')) {
+          return new Response(JSON.stringify({ error: 'missing Nostr auth' }), { status: 401 });
+        }
+        const authEvent = JSON.parse(
+          Buffer.from(authorization.slice('Nostr '.length), 'base64').toString('utf8'),
+        ) as NostrEvent;
+        authEvents.push(authEvent);
+        expect(verifyEvent(authEvent)).toBe(true);
+        expect(authEvent.pubkey).toBe(agent.publicKey);
+        expect(authEvent.tags).toContainEqual(['u', String(input)]);
+        expect(authEvent.tags).toContainEqual(['method', 'POST']);
+
+        const filter = (JSON.parse(String(init?.body)) as Record<string, unknown>[])[0]!;
+        const kind = (filter.kinds as number[])[0];
+        const events = kind === 39002 ? [projection(39002, [agent.publicKey])] : [];
+        return new Response(JSON.stringify(events), { status: 200 });
+      }),
+    );
+
+    const body = new Body(config, operator, agent);
+    await expect(
+      body.assertRepositorySafety(roomId, { repo: 'local-repo', localOnly: true }),
+    ).resolves.toBeUndefined();
+    expect(authEvents.length).toBeGreaterThanOrEqual(2);
   });
 });
 

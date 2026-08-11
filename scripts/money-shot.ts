@@ -142,7 +142,7 @@ async function main(): Promise<void> {
     branch: 'refs/heads/main',
     tip: baseMain!, // approves landing the OLD tip, not the feature tip
   });
-  await publishEvent(wrongApproval);
+  await publishEvent(wrongApproval, reviewer);
   await sleep(500);
   const wrongOutcome = await attemptMerge(mergeReq);
   assert(!wrongOutcome.merged, 'D. worker refuses a wrong-target approval', wrongOutcome.reason);
@@ -158,7 +158,7 @@ async function main(): Promise<void> {
     branch: 'refs/heads/main',
     tip: featureTip,
   });
-  await publishEvent(goodApproval);
+  await publishEvent(goodApproval, reviewer);
   await sleep(500);
   const goodOutcome = await attemptMerge(mergeReq);
   assert(goodOutcome.merged, 'E. worker merges on a valid approval', goodOutcome.reason);

@@ -21,6 +21,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Body drives `buzz-agent` directly over stdio (NOT `buzz-acp`), because `buzz-acp` auto-approves permissions and doesn't expose `session/update` to the relay.
 - Activity projection: body bridges ordered ACP `session/update` batches → kind:9 `#t=agent-activity` channel events for multi-user visibility without exhausting per-key relay quotas.
 - Body operator and agent keys are always distinct; the agent key signs activity, control messages, and new subchannels. Community-linked provisioning publishes the first-class record defined in `packages/buzz-client/src/agent.ts`.
+- Daemon HTTP relay access is authenticated by construction: `apps/gate/src/relay.ts` binds NIP-98 to an identity, `Body` reuses one agent-bound reader for Room reads, and `ChannelOpsContext` requires authenticated HTTP options. The auth-required two-party proof is `apps/body/src/daemon-relay-auth.live.test.ts`.
 - Subchannel = child channel (kind:9007, UUID) + mirrored members + git worktree + edit-mode ACP session.
 - buzz-agent ACP wire vs MCP: `initialize` uses `protocolVersion` u32 (not MCP string), `clientCapabilities` (not `capabilities`). `session/new` returns `{sessionId}`. Standard MCP for `buzz-dev-mcp`. See `apps/body/src/acp.ts` for exact wire format.
 - Live suite: `cd apps/body && npm run test:live` (pretest builds all deps). Soft-skips when relay or LLM env (BUZZY_LLM_*) absent.

@@ -61,7 +61,7 @@ describe('durable Room merge discovery', () => {
 describe('trusted reviewer security invariants', () => {
   const input = {
     pubkey: 'a'.repeat(64),
-    queryPubkey: 'b'.repeat(64),
+    relay: { queryEvents: async () => [] },
     channelId: '11111111-1111-4111-8111-111111111111',
     custody: 'device' as const,
   };

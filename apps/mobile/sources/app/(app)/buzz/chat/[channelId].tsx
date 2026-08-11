@@ -39,6 +39,7 @@ import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
 import {
   formatRoomParticipantTotal,
   mentionedAgentPubkey,
+  roomParticipantPubkeys,
   sectionRoomRoster,
 } from '@/buzz/room-participants';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
@@ -239,9 +240,18 @@ export default function BuzzChat() {
       return a.label.localeCompare(b.label);
     });
   }, [availableAgents, availablePeople, userPubkey]);
+  const participantPubkeys = useMemo(
+    () =>
+      roomParticipantPubkeys(
+        roomMemberPubkeys,
+        activeCommunityId ? availablePeople : undefined,
+        activeCommunityId ? availableAgents : undefined,
+      ),
+    [activeCommunityId, availableAgents, availablePeople, roomMemberPubkeys],
+  );
   const roomParticipants = useMemo(
-    () => memberOptions.filter((option) => roomMemberPubkeys.has(option.pubkey)),
-    [memberOptions, roomMemberPubkeys],
+    () => memberOptions.filter((option) => participantPubkeys.has(option.pubkey)),
+    [memberOptions, participantPubkeys],
   );
   const roomRosterSections = useMemo(
     () => sectionRoomRoster(memberOptions, roomMemberPubkeys),
@@ -710,7 +720,7 @@ export default function BuzzChat() {
               {roomName}
             </Text>
             <Text style={styles.headerMeta} numberOfLines={1}>
-              {formatRoomParticipantTotal(roomParticipants.length)}
+              {formatRoomParticipantTotal(participantPubkeys.size)}
             </Text>
           </View>
           {!parentChannelId && !viewerIsAgent && !isArchived && (

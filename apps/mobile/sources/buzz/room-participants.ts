@@ -1,6 +1,25 @@
 type MentionableAgent = { pubkey: string; name: string };
 type RoomRosterMember = { pubkey: string };
 
+/**
+ * Resolve person-facing Room participants from direct Room membership.
+ * Workspace Rooms exclude infrastructure-only keys that have Room authority
+ * but are neither a Workspace person nor a registered Agent.
+ */
+export function roomParticipantPubkeys(
+  roomMemberPubkeys: ReadonlySet<string>,
+  workspacePeople?: readonly RoomRosterMember[],
+  workspaceAgents?: readonly RoomRosterMember[],
+): Set<string> {
+  if (!workspacePeople && !workspaceAgents) return new Set(roomMemberPubkeys);
+
+  const visiblePubkeys = new Set([
+    ...(workspacePeople ?? []).map((member) => member.pubkey),
+    ...(workspaceAgents ?? []).map((agent) => agent.pubkey),
+  ]);
+  return new Set([...roomMemberPubkeys].filter((pubkey) => visiblePubkeys.has(pubkey)));
+}
+
 /** Keep one Workspace roster, ordered as current Room members followed by addable members. */
 export function sectionRoomRoster<T extends RoomRosterMember>(
   roster: T[],

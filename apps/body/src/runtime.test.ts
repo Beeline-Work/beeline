@@ -111,12 +111,14 @@ describe('pair → run unification', () => {
 
     expect(result.pid).toBe(4242);
     expect(launchedPath).toBe(result.configPath);
-    expect(result.runtime.repo.root).toBe(root);
-    expect(result.runtime.repo.repository.localOnly).toBe(false);
+    expect(result.runtime.version).toBe(2);
+    expect(result.runtime.rooms).toHaveLength(1);
+    expect(result.runtime.rooms[0]!.repo.root).toBe(root);
+    expect(result.runtime.rooms[0]!.repo.repository.localOnly).toBe(false);
     const stored = await readRuntimeRecord(result.configPath);
     expect(stored.agent.publicKey).toBe(agent.publicKey);
     expect(stored.body.publicKey).toBe(body.publicKey);
-    expect(stored.mergeWorker?.publicKey).toBe(mergeWorker.publicKey);
+    expect(stored.rooms[0]!.mergeWorker?.publicKey).toBe(mergeWorker.publicKey);
     expect(stored.agentBinary).toBe('/usr/bin/agent');
     expect(await readFile(result.configPath, 'utf8')).not.toContain('token@');
   });

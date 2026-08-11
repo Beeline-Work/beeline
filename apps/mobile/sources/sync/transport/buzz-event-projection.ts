@@ -46,6 +46,13 @@ export function agentActivityText(content: string): string {
   const update = asRecord(envelope.update);
   if (!update) return readTextContent(envelope.content) ?? '';
 
+  if (update.sessionUpdate === 'activity_batch' && Array.isArray(update.updates)) {
+    return update.updates
+      .map((item) => agentActivityText(JSON.stringify({ update: item })))
+      .filter(Boolean)
+      .join('\n');
+  }
+
   const text = readTextContent(update.content)
     ?? readTextContent(update.message)
     ?? readTextContent(update.output);

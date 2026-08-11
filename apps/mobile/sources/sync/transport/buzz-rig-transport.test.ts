@@ -73,6 +73,33 @@ describe('Buzz branch-loop event projection', () => {
     });
   });
 
+  it('projects an ordered activity batch without exposing its wire envelope', () => {
+    const projected = toRigEvent({
+      kind: 'agent-activity',
+      event: {} as BuzzSessionEvent['event'],
+      channelId: 'channel',
+      content: JSON.stringify({
+        sessionId: 'ses_123',
+        update: {
+          sessionUpdate: 'activity_batch',
+          updates: [
+            { sessionUpdate: 'agent_message_chunk', content: { text: 'First' } },
+            { sessionUpdate: 'tool_call_update', title: 'Edit file', status: 'completed' },
+          ],
+        },
+        projected: true,
+      }),
+      pubkey: 'a'.repeat(64),
+      createdAt: 42,
+      id: 'activity-batch',
+    });
+
+    expect(projected).toMatchObject({
+      type: 'assistant_delta',
+      text: 'First\nEdit file · completed',
+    });
+  });
+
   it('extracts nested ACP tool output and keeps same-second events uniquely keyed', () => {
     const content = JSON.stringify({
       sessionId: 'ses_123',

@@ -26,7 +26,13 @@ import type {
   CreateAgentOptions,
   RedeemAgentPairingResult,
 } from './types.js';
-import { setMemberRole, waitUntilMember, type ChannelOpsContext } from './channel.js';
+import {
+  getChannelCommunityId,
+  isMember,
+  setMemberRole,
+  waitUntilMember,
+  type ChannelOpsContext,
+} from './channel.js';
 
 const DEFAULT_PAIRING_TTL_SECONDS = 10 * 60;
 const PAIRING_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -444,6 +450,39 @@ export async function listAgents(
         }
       : agent;
   });
+}
+
+/** Attach an already-linked Workspace agent identity to one repository Room. */
+export async function attachAgentToChannel(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  agentPubkey: string,
+  knownCommunityId?: string,
+): Promise<{ joined: boolean; membershipSince: number }> {
+  // The invite UI and Workspace supervisor already know their Workspace.
+  // Relay create-event discovery is a compatibility fallback, not a required
+  // read-after-write dependency for the membership mutation.
+  const communityId = knownCommunityId ?? (await getChannelCommunityId(ctx, channelId));
+  if (!communityId) throw new Error('agent invites require a Workspace-linked Room');
+  if (await isAgentIdentity(ctx, ctx.identity.publicKey)) {
+    throw new Error('agents cannot invite other agents to Rooms');
+  }
+  const agents = await listAgentIdentities(ctx, communityId);
+  if (!agents.some((agent) => agent.pubkey === agentPubkey)) {
+    throw new Error('agent is not linked to this Workspace');
+  }
+  if (await isMember(ctx, channelId, agentPubkey)) {
+    return { joined: false, membershipSince: now() };
+  }
+  const membershipSince = now();
+  await setMemberRole(ctx, channelId, agentPubkey, 'member', {
+    extraTags: [
+      [TAG_COMMUNITY, communityId],
+      ['agent-invite', agentPubkey],
+    ],
+  });
+  await waitUntilMember(ctx, channelId, agentPubkey);
+  return { joined: true, membershipSince };
 }
 
 /** True when the pubkey has ever self-signed a valid first-class agent record. */

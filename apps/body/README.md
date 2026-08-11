@@ -7,17 +7,15 @@ by projecting agent activity into the relay channel.
 ## Architecture
 
 ```
-┌────────────────────── Body machine ─────────────────────┐
-│                                                          │
-│  body.ts ──stdlib ACP──► buzz-agent (LLM)                │
-│       │                      │                            │
-│       │                 MCP stdio (edit mode ONLY)        │
-│       │                      ▼                            │
-│       │               buzz-dev-mcp (shell/str_replace)    │
-│       │                      │                            │
-│       └── projects session/update as kind:9 ──► relay    │
-│                                                          │
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────── Body machine ────────────────────────┐
+│ Workspace supervisor (one paired agent identity)             │
+│   ├── Room A Body ──► isolated Room/corner ACP processes     │
+│   ├── Room B Body ──► isolated Room/corner ACP processes     │
+│   └── bounded scheduler + durable per-channel inbox          │
+│                │                                             │
+│                ├── edit mode MCP ──► buzz-dev-mcp            │
+│                └── batched session/update ──► relay          │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 - **TLC (read-only):** ACP session with **no MCP mounted** (`mcpServers: []`).
@@ -25,9 +23,20 @@ by projecting agent activity into the relay channel.
 - **Subchannel (edit):** ACP session with `buzz-dev-mcp` mounted, `cwd` set to
   a git worktree on a feature branch. Agent has full write access **only within
   the worktree**.
-- **Activity projection:** ACP `session/update` notifications are bridged into
-  the relay as kind:9 events with `#t=agent-activity`, so **all channel members
-  see the agent work live**.
+- **Workspace supervisor:** one `beeline pair` creates one durable agent
+  identity. Humans explicitly invite that existing identity to repository Rooms;
+  the supervisor discovers current role projections and starts or drains an
+  isolated `Body` for each Room.
+- **Session isolation and scheduling:** every Room and corner has a stable
+  `(agent, channel)` logical session and its own ACP process/history. A shared
+  scheduler caps live processes, serializes turns per channel, and idles LRU
+  processes without sharing conversation context.
+- **Durable delivery:** accepted input, composite cursors, delivery attempts,
+  and conversation replay are persisted per channel. Same-corner input steers
+  the active run; cancel is an explicit ordered control event.
+- **Activity projection:** ACP `session/update` notifications are bridged in
+  ordered batches as kind:9 events with `#t=agent-activity`, so **all channel
+  members see the agent work live** without exhausting per-key relay quotas.
 - **Identity boundary:** the operator and agent always have distinct Nostr
   keypairs. The agent signs session activity, control messages, and kind:9007
   subchannel creation. Community-linked TLCs also get a self-signed agent record.
@@ -59,6 +68,8 @@ by projecting agent activity into the relay channel.
 | `BUZZY_RELAY_SCHEME`      | No       | `http`             | Relay scheme                         |
 | `BUZZY_BODY_WORKSPACE`    | No       | `./body-workspace` | Agent workspace root                 |
 | `BUZZY_BODY_LLM_FILE`     | No       | —                  | Path to LLM credentials env file     |
+| `BUZZY_BODY_MAX_SESSIONS` | No       | `4`                | Maximum live ACP processes           |
+| `BUZZY_BODY_SESSION_IDLE_MS` | No    | `300000`           | Idle time before process suspension  |
 | `BUZZ_BODY_KEY`           | No       | auto               | Body operator Nostr nsec/hex         |
 | `BUZZ_AGENT_KEY`          | No       | generated at pair  | Existing agent Nostr nsec/hex        |
 | `BUZZY_BODY_AUTO_APPROVE` | No       | `1`                | Auto-approve ACP permission requests |
@@ -133,18 +144,25 @@ local-only Room that deliberately does not converge across machines. A Room has
 one immutable repository binding; multiple paired agents in it create parallel
 feature branches of that repository.
 
+Pairing is Workspace-scoped, not Room-scoped. To serve another repository Room,
+open that Room in the mobile app and tap `＋ Agent`; the human-signed membership
+write attaches the already-linked identity using the active Workspace ID. No
+second CLI pairing occurs. Removing that membership stops new intake, drains
+accepted turns, and releases that Room's processes.
+
 The paired Workspace-member agent creates the Room, makes the pairing human and
 a dedicated merge-worker identity admins, and immediately projects itself as a
 plain member. The worker discovers every change opened in that Room and lands a
 feature tip only after an exact-tip approval from a human admin; agent-signed
 approvals remain refused. Both pairing and daemon/`serve` startup assert that the
 agent cannot push the protected branch and exit fatally on unsafe policy. The
-machine identities, Room ID, repo root, and daemon state live under
+machine identities, known Room bindings, repo roots, and supervisor state live under
 `<git-common-dir>/beeline/agents/<agent-pubkey>/` with mode `0600`. If
 `BUZZ_AGENT_KEY` is absent, `pair` generates the agent key there. The daemon is
 detached from the invoking terminal, retries transient loop failures, and can be
-relaunched with `beeline start`. A restart rediscovers the Room and safely dedupes
-handled requests; recovery of an already-running ACP edit turn is deferred.
+relaunched with `beeline start`. A restart rediscovers Rooms, restores corner
+worktrees and durable inboxes, replays isolated conversation history into fresh
+ACP processes, and resumes undelivered input without duplicating handled events.
 
 The coding model always comes from the operator's local environment or
 `BUZZY_BODY_LLM_FILE`; pairing neither requests nor stores a Beeline LLM key.

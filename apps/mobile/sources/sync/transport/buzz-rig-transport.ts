@@ -162,11 +162,22 @@ export class BuzzRigTransport implements RigTransport {
     return event.id;
   }
 
-  async runAbort(_sessionId: SessionId): Promise<void> {
-    throw new RigTransportNotImplementedError(
-      'runAbort',
-      'P2: owner !cancel mention or body control → ACP session/cancel',
-    );
+  /** Invite one already-linked Workspace agent to this Room; no pairing/restart. */
+  async inviteAgentToChannel(
+    channelId: string,
+    agentPubkey: string,
+    communityId: string,
+  ): Promise<boolean> {
+    const client = await this.getClient();
+    const result = await client.attachAgentToChannel(channelId, agentPubkey, communityId);
+    return result.joined;
+  }
+
+  async runAbort(sessionId: SessionId): Promise<void> {
+    const client = await this.getClient();
+    await client.messageSubmit(sessionId, 'Cancel the active Agent turn.', {
+      extraTags: [['t', 'buzz-agent-cancel']],
+    });
   }
 
   // ── Realtime + permissions (P1: subscribe + backfill) ──────────────────

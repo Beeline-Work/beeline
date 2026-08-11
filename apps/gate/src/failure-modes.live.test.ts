@@ -147,7 +147,7 @@ async function pushFeatureBranch(
 
 const reachable = await relayReachable();
 
-describe.runIf(reachable)('live failure-mode suite (tests 1-3)', () => {
+(reachable ? describe : describe.skip)('live failure-mode suite (tests 1-3)', () => {
   beforeAll(() => {
     console.log(`[live-failure] relay reachable at ${BASE_URL} — running suite`);
   });
@@ -470,15 +470,4 @@ describe.runIf(reachable)('live failure-mode suite (tests 1-3)', () => {
     },
     120_000,
   );
-});
-
-describe.runIf(!reachable)('live failure-mode suite (relay unreachable)', () => {
-  it('SKIPPED — relay not reachable; start with `npm run stack:up` from repo root', () => {
-    console.warn(
-      `\n[live-failure] SKIPPED: relay at ${BASE_URL} is unreachable.\n` +
-        `       Start it with: npm run stack:up   (repo root)\n` +
-        `       Then re-run:   npm run test:live  (apps/gate)\n`,
-    );
-    expect(true).toBe(true);
-  });
 });

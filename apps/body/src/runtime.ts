@@ -27,13 +27,39 @@ interface StoredIdentity {
 }
 
 export interface AgentRuntimeRecord {
+  version: 2;
+  communityId: string;
+  pairedBy: string;
+  agent: StoredIdentity;
+  body: StoredIdentity;
+  /** Repository Rooms currently known to this Workspace supervisor. */
+  rooms: RoomRuntimeRecord[];
+  /** Git common dir that owns the one machine-local supervisor record. */
+  supervisorRoot: string;
+  relayBaseUrl: string;
+  relayHost?: string;
+  llmEnvFile?: string;
+  agentBinary: string;
+  mcpBinary: string;
+  createdAt: string;
+}
+
+export interface RoomRuntimeRecord {
+  channelId: string;
+  repo: LocalRepositoryBinding;
+  /** Dedicated Room-admin identity used only by this Room's approval gate. */
+  mergeWorker?: StoredIdentity;
+  membershipSince: number;
+  discoveredAt: string;
+}
+
+interface LegacyAgentRuntimeRecord {
   version: 1;
   communityId: string;
   channelId: string;
   pairedBy: string;
   agent: StoredIdentity;
   body: StoredIdentity;
-  /** Dedicated Room-admin identity used only by the approval-gated merge worker. */
   mergeWorker?: StoredIdentity;
   repo: LocalRepositoryBinding;
   relayBaseUrl: string;
@@ -196,7 +222,7 @@ export function runtimeDirectory(repo: LocalRepositoryBinding, agentPubkey: stri
 }
 
 export async function writeRuntimeRecord(record: AgentRuntimeRecord): Promise<string> {
-  const directory = runtimeDirectory(record.repo, record.agent.publicKey);
+  const directory = resolve(record.supervisorRoot, 'beeline', 'agents', record.agent.publicKey);
   const path = resolve(directory, 'runtime.json');
   const temporary = resolve(directory, `runtime-${process.pid}.tmp`);
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -207,8 +233,43 @@ export async function writeRuntimeRecord(record: AgentRuntimeRecord): Promise<st
 }
 
 export async function readRuntimeRecord(path: string): Promise<AgentRuntimeRecord> {
-  const parsed = JSON.parse(await readFile(path, 'utf8')) as AgentRuntimeRecord;
-  if (parsed.version !== 1 || !parsed.channelId || !parsed.repo?.root) {
+  const parsed = JSON.parse(await readFile(path, 'utf8')) as
+    | AgentRuntimeRecord
+    | LegacyAgentRuntimeRecord;
+  if (parsed.version === 1) {
+    runtimeIdentity(parsed.agent);
+    runtimeIdentity(parsed.body);
+    return {
+      version: 2,
+      communityId: parsed.communityId,
+      pairedBy: parsed.pairedBy,
+      agent: parsed.agent,
+      body: parsed.body,
+      rooms: [
+        {
+          channelId: parsed.channelId,
+          repo: parsed.repo,
+          ...(parsed.mergeWorker ? { mergeWorker: parsed.mergeWorker } : {}),
+          membershipSince: Math.floor(new Date(parsed.createdAt).getTime() / 1000) || 0,
+          discoveredAt: parsed.createdAt,
+        },
+      ],
+      supervisorRoot: parsed.repo.gitCommonDir,
+      relayBaseUrl: parsed.relayBaseUrl,
+      ...(parsed.relayHost ? { relayHost: parsed.relayHost } : {}),
+      ...(parsed.llmEnvFile ? { llmEnvFile: parsed.llmEnvFile } : {}),
+      agentBinary: parsed.agentBinary,
+      mcpBinary: parsed.mcpBinary,
+      createdAt: parsed.createdAt,
+    };
+  }
+  if (
+    parsed.version !== 2 ||
+    !parsed.communityId ||
+    !parsed.supervisorRoot ||
+    !Array.isArray(parsed.rooms) ||
+    parsed.rooms.some((room) => !room.channelId || !room.repo?.root)
+  ) {
     throw new Error(`invalid agent runtime config: ${path}`);
   }
   runtimeIdentity(parsed.agent);
@@ -315,16 +376,23 @@ export async function pairRepositoryAgent(
   );
   await deps.validate?.(pairing, room, repo);
   const runtime: AgentRuntimeRecord = {
-    version: 1,
+    version: 2,
     communityId: pairing.communityId,
-    channelId: room.channelId,
     pairedBy: pairing.pairedBy,
     agent: storeIdentity(input.agentIdentity, 'buzzy-agent'),
     body: storeIdentity(input.bodyIdentity, 'buzzy-body'),
-    ...(room.mergeWorkerProvisioned
-      ? { mergeWorker: storeIdentity(input.mergeWorkerIdentity, 'buzzy-merge-worker') }
-      : {}),
-    repo,
+    rooms: [
+      {
+        channelId: room.channelId,
+        repo,
+        ...(room.mergeWorkerProvisioned
+          ? { mergeWorker: storeIdentity(input.mergeWorkerIdentity, 'buzzy-merge-worker') }
+          : {}),
+        membershipSince: Math.floor(Date.now() / 1000),
+        discoveredAt: new Date().toISOString(),
+      },
+    ],
+    supervisorRoot: repo.gitCommonDir,
     relayBaseUrl: input.relayBaseUrl,
     ...(input.relayHost ? { relayHost: input.relayHost } : {}),
     ...(input.llmEnvFile ? { llmEnvFile: input.llmEnvFile } : {}),

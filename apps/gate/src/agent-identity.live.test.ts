@@ -53,7 +53,7 @@ async function waitRepoCloneable(
 
 const reachable = await relayReachable();
 
-describe.runIf(reachable)('live registered-agent merge refusal', () => {
+(reachable ? describe : describe.skip)('live registered-agent merge refusal', () => {
   beforeAll(() => {
     console.log(`[agent-identity] relay reachable at ${BASE_URL} — running money-shot #2`);
   });
@@ -139,15 +139,4 @@ describe.runIf(reachable)('live registered-agent merge refusal', () => {
     expect(accepted.targetTipAfter).toBe(featureTip);
     console.log(`[agent-identity] human-approval ACCEPTED — branch=${branch} tip=${featureTip}`);
   }, 120_000);
-});
-
-describe.runIf(!reachable)('live registered-agent merge refusal (relay unreachable)', () => {
-  it('SKIPPED — relay not reachable; start with `npm run stack:up` from repo root', () => {
-    console.warn(
-      `\n[agent-identity] SKIPPED: relay at ${BASE_URL} is unreachable.\n` +
-        '                 Start it with: npm run stack:up   (repo root)\n' +
-        '                 Then re-run:   npm run test:live  (apps/gate)\n',
-    );
-    expect(true).toBe(true);
-  });
 });

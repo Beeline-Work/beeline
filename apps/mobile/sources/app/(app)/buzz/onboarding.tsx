@@ -222,7 +222,7 @@ export default function BuzzOnboarding() {
       <View style={styles.brandSurface}>
         <BeelineMark shimmer />
         <Text style={styles.title}>beeline</Text>
-        <Text style={styles.subtitle}>Google finds your account. This device holds the key.</Text>
+        <Text style={styles.subtitle}>workspace for all intelligence</Text>
       </View>
 
       {notice && (

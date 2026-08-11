@@ -9,6 +9,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Product authority: `spec.md` (esp. **Failure modes → Agent in push-rights**).
 - Merge-gate library + worker: `apps/gate/` (see `apps/gate/README.md`).
 - Live suite (real Buzz relay): `cd apps/gate && npm run test:live` after `npm run stack:up` at repo root. Soft-skips only when the relay is unreachable.
+- Shipped relay defaults live in `packages/buzz-client/src/relay-config.ts` and point to `relay.buzzrouter.com`; Gate and Body consume them. Live Vitest configs explicitly pin the local relay stack.
 - Provisioning check (agent never in push-allowed): `apps/gate/src/provisioning.ts` (library + CLI via `npm run provisioning -w @beeline/gate`).
 - Agent-approval invariant: the worker checks the self-signed `#t=buzz-agent` identity registry before roles; `apps/gate/src/agent-identity.live.test.ts` proves an agent configured as admin/trusted reviewer is refused while a human admin on the same tip is accepted.
 - One-shot end-to-end proof remains `npm run prove` (`scripts/money-shot.ts`).

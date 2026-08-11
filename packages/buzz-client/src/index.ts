@@ -37,6 +37,13 @@ export type {
 } from './types.js';
 
 export {
+  DEFAULT_RELAY_HOST,
+  DEFAULT_RELAY_SCHEME,
+  DEFAULT_RELAY_BASE_URL,
+  DEFAULT_RELAY_WS_URL,
+} from './relay-config.js';
+
+export {
   createIdentity,
   createAgentIdentity,
   loadIdentityFromNsec,

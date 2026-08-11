@@ -104,7 +104,7 @@ node --import tsx src/provisioning.ts <ownerHex> <repo> <agentPubkey>
 
 ## Env
 
-| Variable             | Default          | Meaning                                     |
-| -------------------- | ---------------- | ------------------------------------------- |
-| `BUZZY_RELAY_HOST`   | `127.0.0.1:3010` | Host header + authority for the local stack |
-| `BUZZY_RELAY_SCHEME` | `http`           | `http` for the local stack                  |
+| Variable             | Default                | Meaning                                                       |
+| -------------------- | ---------------------- | ------------------------------------------------------------- |
+| `BUZZY_RELAY_HOST`   | `relay.buzzrouter.com` | Relay Host header + authority; live tests pin the local stack |
+| `BUZZY_RELAY_SCHEME` | `https`                | Relay HTTP scheme; live tests pin `http`                      |

@@ -18,7 +18,7 @@
  * Library:  `checkAgentNotPushAllowed` / `assertAgentNotPushAllowed`
  * CLI:      `node --import tsx src/provisioning.ts <ownerHex> <repo> <agentPubkey>`
  */
-import { queryEvents } from './relay.js';
+import { createRelayClient, type RelayReader } from './relay.js';
 import { KIND_CREATE_GROUP, KIND_PUT_USER, KIND_REPO_ANNOUNCEMENT } from './buzz.js';
 import type { NostrEvent } from '@beeline/nostr';
 
@@ -36,11 +36,8 @@ export interface ProvisioningCheckInput {
   agentPubkey: string;
   /** Full ref to protect, default `refs/heads/main`. */
   protectedRef?: string;
-  /**
-   * Pubkey used as `X-Pubkey` when querying the bridge. Defaults to `ownerHex`
-   * (the open-stack bridge accepts any known-looking key for reads).
-   */
-  queryAs?: string;
+  /** Authenticated relay reader. The daemon binds this to its agent identity. */
+  relay: RelayReader;
 }
 
 export interface ProtectionRule {
@@ -118,11 +115,11 @@ function tagValue(event: NostrEvent, name: string): string | undefined {
 async function queryGroupProjection(
   kind: number,
   channelId: string,
-  queryAs: string,
+  relay: RelayReader,
 ): Promise<NostrEvent[]> {
-  const byD = await queryEvents([{ kinds: [kind], '#d': [channelId], limit: 5 }], queryAs);
+  const byD = await relay.queryEvents([{ kinds: [kind], '#d': [channelId], limit: 5 }]);
   if (byD.length > 0) return byD;
-  return queryEvents([{ kinds: [kind], '#h': [channelId], limit: 5 }], queryAs);
+  return relay.queryEvents([{ kinds: [kind], '#h': [channelId], limit: 5 }]);
 }
 
 function latestProjection(events: NostrEvent[]): NostrEvent | undefined {
@@ -146,23 +143,22 @@ function projectedTagRole(tag: string[], fallback: ChannelRole): ChannelRole {
 export async function resolveChannelRole(
   channelId: string,
   pubkey: string,
-  queryAs: string,
+  relay: RelayReader,
 ): Promise<ChannelRole | null> {
-  const adminEvents = await queryGroupProjection(KIND_CHANNEL_ADMINS, channelId, queryAs);
+  const adminEvents = await queryGroupProjection(KIND_CHANNEL_ADMINS, channelId, relay);
   const admins = latestProjection(adminEvents);
   const adminTag = admins?.tags.find((tag) => tag[0] === 'p' && tag[1] === pubkey);
   if (adminTag) return projectedTagRole(adminTag, 'admin');
 
-  const memberEvents = await queryGroupProjection(KIND_CHANNEL_MEMBERS, channelId, queryAs);
+  const memberEvents = await queryGroupProjection(KIND_CHANNEL_MEMBERS, channelId, relay);
   const members = latestProjection(memberEvents);
   const memberTag = members?.tags.find((tag) => tag[0] === 'p' && tag[1] === pubkey);
   if (memberTag) return projectedTagRole(memberTag, 'member');
   if (adminEvents.length > 0 || memberEvents.length > 0) return null;
 
   // Compatibility fallback for relays that do not expose NIP-29 projections.
-  const puts = await queryEvents(
+  const puts = await relay.queryEvents(
     [{ kinds: [KIND_PUT_USER], '#h': [channelId], '#p': [pubkey], limit: 50 }],
-    queryAs,
   );
   if (puts.length > 0) {
     const latestTimestamp = Math.max(...puts.map((event) => event.created_at));
@@ -177,9 +173,8 @@ export async function resolveChannelRole(
     return 'member';
   }
 
-  const creates = await queryEvents(
+  const creates = await relay.queryEvents(
     [{ kinds: [KIND_CREATE_GROUP], '#h': [channelId], authors: [pubkey], limit: 5 }],
-    queryAs,
   );
   return creates.length > 0 ? 'owner' : null;
 }
@@ -188,9 +183,9 @@ export async function resolveChannelRole(
 export function resolveCommunityRole(
   communityId: string,
   pubkey: string,
-  queryAs: string,
+  relay: RelayReader,
 ): Promise<ChannelRole | null> {
-  return resolveChannelRole(communityId, pubkey, queryAs);
+  return resolveChannelRole(communityId, pubkey, relay);
 }
 
 function roleMeetsMinimum(role: ChannelRole, min: ChannelRole): boolean {
@@ -208,7 +203,6 @@ export async function checkAgentNotPushAllowed(
   input: ProvisioningCheckInput,
 ): Promise<ProvisioningCheckResult> {
   const protectedRef = input.protectedRef ?? DEFAULT_PROTECTED_REF;
-  const queryAs = input.queryAs ?? input.ownerHex;
   const agent = input.agentPubkey.toLowerCase();
   const owner = input.ownerHex.toLowerCase();
 
@@ -222,7 +216,7 @@ export async function checkAgentNotPushAllowed(
     };
   }
 
-  const announcements = await queryEvents(
+  const announcements = await input.relay.queryEvents(
     [
       {
         kinds: [KIND_REPO_ANNOUNCEMENT],
@@ -231,7 +225,6 @@ export async function checkAgentNotPushAllowed(
         limit: 5,
       },
     ],
-    queryAs,
   );
   if (announcements.length === 0) {
     return {
@@ -259,7 +252,7 @@ export async function checkAgentNotPushAllowed(
   }
 
   const protection = parseProtection(announcement, protectedRef);
-  const agentRole = await resolveChannelRole(channelId, input.agentPubkey, queryAs);
+  const agentRole = await resolveChannelRole(channelId, input.agentPubkey, input.relay);
 
   // No protection rule on the protected ref: default git ACL still lets any
   // channel Member push (see relay policy). A member agent therefore CAN push.
@@ -331,10 +324,18 @@ async function main(): Promise<void> {
     );
     process.exit(2);
   }
+  const queryNsec = process.env.BUZZY_QUERY_NSEC;
+  if (!queryNsec) {
+    console.error('BUZZY_QUERY_NSEC is required for NIP-98-authenticated relay reads');
+    process.exit(2);
+  }
+  const { decodeNsec, getPublicKey } = await import('@beeline/nostr');
+  const secretKey = decodeNsec(queryNsec);
   const result = await checkAgentNotPushAllowed({
     ownerHex,
     repo,
     agentPubkey,
+    relay: createRelayClient({ secretKey, publicKey: getPublicKey(secretKey) }),
     ...(protectedRef ? { protectedRef } : {}),
   });
   if (result.ok) {

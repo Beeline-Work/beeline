@@ -22,8 +22,7 @@ import {
   createChannel,
   setMemberRole,
   newIdentity,
-  publishEvent,
-  queryEvents,
+  createRelayClient,
   archiveChannel,
   assertAgentNotPushAllowed,
   DurableMergeGate,
@@ -32,6 +31,7 @@ import {
   lsRemoteRef,
   isRegisteredAgentIdentity,
   type Identity,
+  type RelayClient,
 } from '@beeline/gate';
 import {
   createBuzzClient,
@@ -93,22 +93,20 @@ export interface AgentSession {
  */
 export async function queryEventBacklog(
   filter: Record<string, unknown>,
-  queryPubkey: string,
   options: {
     pageSize?: number;
-    query?: typeof queryEvents;
-  } = {},
+    query: RelayClient['queryEvents'];
+  },
 ): Promise<NostrEvent[]> {
   const pageSize = options.pageSize ?? 5_000;
-  const query = options.query ?? queryEvents;
+  const query = options.query;
   const found = new Map<string, NostrEvent>();
   let until = typeof filter.until === 'number' ? filter.until : undefined;
 
   while (true) {
-    const page = await query(
-      [{ ...filter, ...(until === undefined ? {} : { until }), limit: pageSize }],
-      queryPubkey,
-    );
+    const page = await query([
+      { ...filter, ...(until === undefined ? {} : { until }), limit: pageSize },
+    ]);
     for (const event of page) found.set(event.id, event);
     if (page.length < pageSize) break;
     const oldest = Math.min(...page.map((event) => event.created_at));
@@ -234,6 +232,8 @@ export class Body {
   private scheduler: SessionScheduler;
   private ownsScheduler: boolean;
   private durableState: DurableBodyState;
+  private agentRelay: RelayClient;
+  private mergeWorkerRelay?: RelayClient;
 
   constructor(
     config: BodyConfig,
@@ -246,6 +246,11 @@ export class Body {
     this.bodyIdentity = bodyIdentity ?? newIdentity('buzzy-body');
     this.agentIdentity = agentIdentity ?? newIdentity('buzzy-agent');
     this.mergeWorkerIdentity = mergeWorkerIdentity;
+    const relayConfig = { baseUrl: config.relayBaseUrl, host: config.relayHost };
+    this.agentRelay = createRelayClient(this.agentIdentity, relayConfig);
+    this.mergeWorkerRelay = mergeWorkerIdentity
+      ? createRelayClient(mergeWorkerIdentity, relayConfig)
+      : undefined;
     this.scheduler =
       services.scheduler ??
       new SessionScheduler({
@@ -282,6 +287,10 @@ export class Body {
   setAgentIdentity(id: Identity): void {
     this.assertDistinctAgentIdentity(id);
     this.agentIdentity = id;
+    this.agentRelay = createRelayClient(id, {
+      baseUrl: this.config.relayBaseUrl,
+      host: this.config.relayHost,
+    });
   }
 
   /** Lookup a session by channel ID. */
@@ -388,14 +397,13 @@ export class Body {
     try {
       const communityId = await this.channelCommunityId(parentChannelId);
       const ids = await client.listSubchannels(parentChannelId);
-      const parentEvents = await queryEvents(
-        [{ kinds: [9], '#h': [parentChannelId], limit: 5_000 }],
-        this.agentIdentity.publicKey,
-      );
+      const parentEvents = await this.agentRelay.queryEvents([
+        { kinds: [9], '#h': [parentChannelId], limit: 5_000 },
+      ]);
       for (const subchannelId of ids) {
         if (this.subchannels.has(subchannelId)) continue;
         if ((await client.getChannelMetadata(subchannelId))?.archived) continue;
-        const events = await queryEvents(
+        const events = await this.agentRelay.queryEvents(
           [
             {
               kinds: [9],
@@ -404,7 +412,6 @@ export class Body {
               limit: 5_000,
             },
           ],
-          this.agentIdentity.publicKey,
         );
         const control = [...events]
           .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
@@ -703,7 +710,7 @@ export class Body {
         '#h': [tlcChannelId],
         since,
       },
-      this.agentIdentity.publicKey,
+      { query: this.agentRelay.queryEvents },
     );
     await this.durableState.enqueue(tlcChannelId, events);
     let opened = 0;
@@ -728,7 +735,7 @@ export class Body {
       try {
         // Fail closed: a registered agent can never task another body through the
         // human request affordance, regardless of any channel role it holds.
-        if (await isRegisteredAgentIdentity(event.pubkey, this.agentIdentity.publicKey)) {
+        if (await isRegisteredAgentIdentity(event.pubkey, this.agentRelay)) {
           await postControlMessage(
             tlcChannelId,
             this.agentIdentity,
@@ -976,6 +983,7 @@ export class Body {
             repo: boundRepo.repo,
             channelId,
             targetBranch: boundRepo.targetBranch ?? 'refs/heads/main',
+            ...(this.mergeWorkerRelay ? { relay: this.mergeWorkerRelay } : {}),
           })
         : undefined;
 
@@ -1027,6 +1035,7 @@ export class Body {
       repo: boundRepo.repo,
       agentPubkey: this.agentIdentity.publicKey,
       protectedRef: boundRepo.targetBranch ?? 'refs/heads/main',
+      relay: this.agentRelay,
     });
   }
 
@@ -1094,7 +1103,7 @@ export class Body {
           '#h': [subchannelId],
           since,
         },
-        this.agentIdentity.publicKey,
+        { query: this.agentRelay.queryEvents },
       );
 
       let count = 0;
@@ -1272,10 +1281,9 @@ export class Body {
     if (await isMember(this.agentClientContext(), channelId, agent.publicKey)) return 'member';
     // Try to get existing role
     try {
-      const creates = await queryEvents(
-        [{ kinds: [9007], '#h': [channelId], authors: [agent.publicKey], limit: 5 }],
-        this.bodyIdentity.publicKey,
-      );
+      const creates = await this.agentRelay.queryEvents([
+        { kinds: [9007], '#h': [channelId], authors: [agent.publicKey], limit: 5 },
+      ]);
       if (creates.length > 0) return 'owner';
     } catch {
       // Query may fail, continue to add member.
@@ -1297,6 +1305,7 @@ export class Body {
       http: {
         baseUrl: this.config.relayBaseUrl,
         host: this.config.relayHost,
+        identity: this.agentIdentity,
       },
       identity: this.agentIdentity,
     };
@@ -1304,10 +1313,9 @@ export class Body {
 
   /** Resolve the parent channel's optional community linkage. */
   private async channelCommunityId(channelId: string): Promise<string | null> {
-    const creates = await queryEvents(
-      [{ kinds: [9007], '#h': [channelId], limit: 5 }],
-      this.agentIdentity.publicKey,
-    );
+    const creates = await this.agentRelay.queryEvents([
+      { kinds: [9007], '#h': [channelId], limit: 5 },
+    ]);
     for (const event of creates) {
       const community = event.tags.find((tag) => tag[0] === 'community')?.[1];
       if (community) return community;
@@ -1337,11 +1345,8 @@ export class Body {
   private async mirrorMembers(sourceChannelId: string, targetChannelId: string): Promise<void> {
     try {
       const [creates, memberEvents] = await Promise.all([
-        queryEvents(
-          [{ kinds: [9007], '#h': [sourceChannelId], limit: 5 }],
-          this.agentIdentity.publicKey,
-        ),
-        queryEvents(
+        this.agentRelay.queryEvents([{ kinds: [9007], '#h': [sourceChannelId], limit: 5 }]),
+        this.agentRelay.queryEvents(
           [
             {
               kinds: [9000],
@@ -1349,7 +1354,6 @@ export class Body {
               limit: 100,
             },
           ],
-          this.agentIdentity.publicKey,
         ),
       ]);
 
@@ -1532,7 +1536,7 @@ export class Body {
   }
 
   private async requestAlreadyOpened(channelId: string, requestId: string): Promise<boolean> {
-    const events = await queryEvents(
+    const events = await this.agentRelay.queryEvents(
       [
         {
           kinds: [9],
@@ -1542,7 +1546,6 @@ export class Body {
           limit: 5,
         },
       ],
-      this.agentIdentity.publicKey,
     );
     return events.some((event) =>
       event.tags.some((tag) => tag[0] === 'request' && tag[1] === requestId),

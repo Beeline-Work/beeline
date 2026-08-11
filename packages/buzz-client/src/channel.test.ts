@@ -5,7 +5,7 @@ import { createIdentity } from './identity.js';
 import { KIND_CHANNEL_ADMINS, KIND_CHANNEL_MEMBERS } from './kinds.js';
 
 const identity = createIdentity('channel-list-test');
-const http = { baseUrl: 'http://relay.test', host: 'relay.test' };
+const http = { baseUrl: 'http://relay.test', host: 'relay.test', identity };
 const ctx: ChannelOpsContext = { http, identity };
 
 function projection(kind: number, channelId: string): NostrEvent {

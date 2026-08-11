@@ -97,7 +97,7 @@ export {
 } from './parse.js';
 
 export { publishEvent, queryEvents, relayReachable } from './http.js';
-export type { HttpBridgeOptions } from './http.js';
+export type { AuthenticatedHttpBridgeOptions, HttpBridgeOptions } from './http.js';
 
 export {
   OIDC_BIND_PROTOCOL,

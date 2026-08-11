@@ -38,6 +38,13 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Onboarding/channels screens have a relay URL text field (editable).
 - Gradle signing config is injected by `scripts/patch-android-signing.sh` after prebuild because the `android/` directory is gitignored.
 
+## OIDC identity binding service (@beeline/auth)
+
+- Authority and deployment shape: `apps/auth/README.md`; product invariants: `spec.md` → **Google-first identity binding security invariants**.
+- The service owns Authorization Code + PKCE + nonce and a PostgreSQL-backed, hashed, one-use signed binding ceremony. It never accepts a free-standing ID token or grants relay, Room, role, or merge authority.
+- Hermetic provider, adversarial protocol, JWKS rotation/stale-cache, and durable restart coverage: `npm test -w @beeline/auth`.
+- Merge review custody is explicit in `apps/gate/src/worker.ts`: agent identity remains the first fail-closed check, and managed/remote reviewer keys are refused before role lookup.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.

@@ -119,6 +119,7 @@ async function main(): Promise<void> {
   const mergeReq = {
     worker,
     trustedReviewer: reviewer.publicKey,
+    trustedReviewerCustody: 'device',
     repo,
     channelId,
     targetBranch: 'main',

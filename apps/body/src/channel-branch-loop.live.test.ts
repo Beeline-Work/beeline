@@ -138,6 +138,7 @@ describe.runIf(relayUp)('live channel → subchannel branch loop', () => {
     const outcome = await attemptMerge({
       worker: human,
       trustedReviewer: human.publicKey,
+      trustedReviewerCustody: 'device',
       repo,
       channelId: subchannelId,
       targetBranch: 'main',

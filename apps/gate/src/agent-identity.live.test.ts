@@ -116,6 +116,7 @@ const reachable = await relayReachable();
     const refused = await attemptMerge({
       worker,
       trustedReviewer: agent.publicKey,
+      trustedReviewerCustody: 'device',
       repo,
       channelId,
       targetBranch: 'main',
@@ -130,6 +131,7 @@ const reachable = await relayReachable();
     const accepted = await attemptMerge({
       worker,
       trustedReviewer: human.publicKey,
+      trustedReviewerCustody: 'device',
       repo,
       channelId,
       targetBranch: 'main',

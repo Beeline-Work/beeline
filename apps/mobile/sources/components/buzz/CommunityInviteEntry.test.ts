@@ -58,12 +58,32 @@ describe('community invite entry', () => {
     expect(renderer.root.findAllByProps({ testID: 'manage-agents-action' })).toHaveLength(0);
   });
 
+  it('shows both activation actions on a no-Rooms Workspace', () => {
+    const onInvitePeople = vi.fn();
+    const onManageAgents = vi.fn();
+    const renderer = render(
+      React.createElement(CommunityInviteEntry, {
+        community: { communityId: 'community-1', name: 'Night Shift' } as any,
+        creatingInvite: false,
+        showManageAgents: true,
+        onInvitePeople,
+        onManageAgents,
+      }),
+    );
+
+    act(() => renderer.root.findByProps({ testID: 'manage-agents-action' }).props.onPress());
+    act(() => renderer.root.findByProps({ testID: 'invite-people-action' }).props.onPress());
+    expect(onManageAgents).toHaveBeenCalledOnce();
+    expect(onInvitePeople).toHaveBeenCalledOnce();
+  });
+
   it('renders no body action in a Personal Workspace', () => {
     const renderer = render(
       React.createElement(CommunityInviteEntry, {
         community: { communityId: 'personal-1', name: 'Personal' } as any,
         creatingInvite: false,
         allowPeopleInvites: false,
+        showManageAgents: false,
         onInvitePeople: vi.fn(),
       }),
     );

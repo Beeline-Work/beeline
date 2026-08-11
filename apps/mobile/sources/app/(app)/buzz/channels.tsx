@@ -421,7 +421,14 @@ export default function BuzzChannels() {
                 community={activeCommunity}
                 creatingInvite={creatingInvite}
                 allowPeopleInvites={activeCommunityId !== personalWorkspaceId}
+                showManageAgents
                 onInvitePeople={() => void handleInvitePeople()}
+                onManageAgents={() =>
+                  activeCommunityId &&
+                  router.push(
+                    `/buzz/agents?communityId=${encodeURIComponent(activeCommunityId)}` as Href,
+                  )
+                }
               />
             </View>
           }

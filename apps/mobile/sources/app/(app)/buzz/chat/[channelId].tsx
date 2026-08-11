@@ -39,6 +39,7 @@ import {
   formatRoomParticipantList,
   formatRoomParticipantTotal,
   mentionedAgentPubkey,
+  sectionRoomRoster,
 } from '@/buzz/room-participants';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
@@ -200,7 +201,6 @@ export default function BuzzChat() {
   const [availablePeople, setAvailablePeople] = useState<CommunityMember[]>([]);
   const [roomMemberPubkeys, setRoomMemberPubkeys] = useState<Set<string>>(new Set());
   const [addingMemberPubkey, setAddingMemberPubkey] = useState<string | null>(null);
-  const [memberQuery, setMemberQuery] = useState('');
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
   const [roomName, setRoomName] = useState(ROOM_LABEL);
   const [participantPickerVisible, setParticipantPickerVisible] = useState(false);
@@ -237,15 +237,10 @@ export default function BuzzChat() {
     () => memberOptions.filter((option) => roomMemberPubkeys.has(option.pubkey)),
     [memberOptions, roomMemberPubkeys],
   );
-  const filteredMemberOptions = useMemo(() => {
-    const query = memberQuery.trim().replace(/^@/, '').toLocaleLowerCase();
-    if (!query) return memberOptions;
-    return memberOptions.filter(
-      (option) =>
-        option.label.toLocaleLowerCase().includes(query) ||
-        option.pubkey.toLocaleLowerCase().includes(query),
-    );
-  }, [memberOptions, memberQuery]);
+  const roomRosterSections = useMemo(
+    () => sectionRoomRoster(memberOptions, roomMemberPubkeys),
+    [memberOptions, roomMemberPubkeys],
+  );
   const mentionableAgents = useMemo(
     () =>
       roomParticipants
@@ -547,7 +542,6 @@ export default function BuzzChat() {
           );
         }
         setRoomMemberPubkeys((current) => new Set([...current, option.pubkey]));
-        setMemberQuery('');
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
         setMembershipError(`Could not add @${option.label}: ${String(err)}`);
@@ -701,7 +695,6 @@ export default function BuzzChat() {
               accessibilityLabel={`Add people or Agents to this ${ROOM_LABEL}`}
               onPress={() => {
                 setMembershipError(null);
-                setMemberQuery('@');
                 setParticipantPickerVisible(true);
               }}
               style={styles.addMembersButton}
@@ -851,7 +844,7 @@ export default function BuzzChat() {
               <View style={styles.memberModalHeadingCopy}>
                 <Text style={styles.memberModalTitle}>Add to this {ROOM_LABEL}</Text>
                 <Text style={styles.memberModalSubtitle}>
-                  Find any Workspace person or linked Agent with @. They join as members only.
+                  Workspace roster. Current members stay at the top; add others below. Members only.
                 </Text>
               </View>
               <TouchableOpacity
@@ -863,68 +856,75 @@ export default function BuzzChat() {
               </TouchableOpacity>
             </View>
 
-            <View style={styles.memberSearch}>
-              <TextInput
-                autoCapitalize="none"
-                autoCorrect={false}
-                autoFocus
-                onChangeText={setMemberQuery}
-                placeholder="@name or npub"
-                placeholderTextColor={groknight.dim}
-                style={styles.memberSearchInput}
-                testID="room-member-search"
-                value={memberQuery}
-              />
-            </View>
-
             <ScrollView
               contentContainerStyle={styles.memberPickerContent}
               showsVerticalScrollIndicator={false}
             >
-              {filteredMemberOptions.map((option) => {
-                const inRoom = roomMemberPubkeys.has(option.pubkey);
-                const adding = addingMemberPubkey === option.pubkey;
-                const display = option.agent
-                  ? resolveAgentDisplayIdentity(option.pubkey, option.agent)
-                  : undefined;
-                return (
-                  <TouchableOpacity
-                    accessibilityLabel={`${inRoom ? 'Already in Room' : 'Add'} ${option.label}`}
-                    disabled={inRoom || Boolean(addingMemberPubkey)}
-                    key={option.pubkey}
-                    onPress={() => void handleAddRoomMember(option)}
-                    style={[styles.memberPickerRow, inRoom && styles.memberPickerRowPlaced]}
-                    testID={`add-room-member-${option.pubkey}`}
-                  >
-                    <View style={styles.memberPickerIdentity}>
-                      {display ? (
-                        <AgentAvatar
-                          pubkey={option.pubkey}
-                          avatarSeed={display.avatarSeed}
-                          avatarUrl={display.avatarUrl}
-                          name={display.name}
-                          size={28}
-                        />
-                      ) : (
-                        <Text style={styles.memberPickerGlyph}>◇</Text>
-                      )}
-                      <View style={styles.memberPickerCopy}>
-                        <Text numberOfLines={1} style={styles.memberPickerName}>
-                          @{option.label}
-                        </Text>
-                        <Text style={styles.memberPickerNpub}>
-                          {option.kind === 'agent' ? 'LINKED AGENT' : 'WORKSPACE PERSON'}
-                        </Text>
-                      </View>
-                    </View>
-                    <Text style={styles.memberPickerAction}>
-                      {adding ? 'ADDING…' : inRoom ? 'IN ROOM' : '＋ ADD'}
+              {[
+                { key: 'in-room', label: 'IN THIS ROOM', options: roomRosterSections.inRoom },
+                {
+                  key: 'addable',
+                  label: 'ADD FROM WORKSPACE',
+                  options: roomRosterSections.addable,
+                },
+              ].map((section, sectionIndex) =>
+                section.options.length > 0 ? (
+                  <View key={section.key}>
+                    <Text
+                      style={[
+                        styles.memberSectionLabel,
+                        sectionIndex > 0 && styles.memberSectionLabelSpaced,
+                      ]}
+                    >
+                      {section.label}
                     </Text>
-                  </TouchableOpacity>
-                );
-              })}
-              {filteredMemberOptions.length === 0 && (
-                <Text style={styles.memberPickerEmpty}>No matching Workspace ID</Text>
+                    {section.options.map((option) => {
+                      const inRoom = section.key === 'in-room';
+                      const adding = addingMemberPubkey === option.pubkey;
+                      const display = option.agent
+                        ? resolveAgentDisplayIdentity(option.pubkey, option.agent)
+                        : undefined;
+                      return (
+                        <TouchableOpacity
+                          accessibilityLabel={`${inRoom ? 'Already in Room' : 'Add'} ${option.label}`}
+                          disabled={inRoom || Boolean(addingMemberPubkey)}
+                          key={option.pubkey}
+                          onPress={() => void handleAddRoomMember(option)}
+                          style={[styles.memberPickerRow, inRoom && styles.memberPickerRowPlaced]}
+                          testID={`add-room-member-${option.pubkey}`}
+                        >
+                          <View style={styles.memberPickerIdentity}>
+                            {display ? (
+                              <AgentAvatar
+                                pubkey={option.pubkey}
+                                avatarSeed={display.avatarSeed}
+                                avatarUrl={display.avatarUrl}
+                                name={display.name}
+                                size={28}
+                              />
+                            ) : (
+                              <Text style={styles.memberPickerGlyph}>◇</Text>
+                            )}
+                            <View style={styles.memberPickerCopy}>
+                              <Text numberOfLines={1} style={styles.memberPickerName}>
+                                @{option.label}
+                              </Text>
+                              <Text style={styles.memberPickerNpub}>
+                                {option.kind === 'agent' ? 'LINKED AGENT' : 'WORKSPACE PERSON'}
+                              </Text>
+                            </View>
+                          </View>
+                          <Text style={styles.memberPickerAction}>
+                            {adding ? 'ADDING…' : inRoom ? 'IN ROOM' : '＋ ADD'}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                ) : null,
+              )}
+              {memberOptions.length === 0 && (
+                <Text style={styles.memberPickerEmpty}>Workspace roster is empty</Text>
               )}
             </ScrollView>
 
@@ -1095,22 +1095,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   memberModalCloseText: { ...Typography.default(), color: groknight.steel, fontSize: 24 },
-  memberSearch: {
-    minHeight: 48,
-    marginTop: 16,
-    paddingHorizontal: 12,
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgBase,
+  memberPickerContent: { paddingTop: 18, paddingBottom: 4 },
+  memberSectionLabel: {
+    ...Typography.mono('semiBold'),
+    marginBottom: 7,
+    color: groknight.textMuted,
+    fontSize: 9,
+    lineHeight: 12,
+    letterSpacing: 0.7,
   },
-  memberSearchInput: {
-    ...Typography.default(),
-    color: groknight.textPrimary,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  memberPickerContent: { paddingTop: 8, paddingBottom: 4 },
+  memberSectionLabelSpaced: { marginTop: 18 },
   memberPickerRow: {
     minHeight: 58,
     paddingHorizontal: 10,

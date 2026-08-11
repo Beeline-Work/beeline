@@ -81,7 +81,84 @@ lines.on('line', (line) => {
   return binary;
 }
 
+async function fakeArgumentAgent(): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-args-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'fake-argument-agent.mjs');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+
+if (JSON.stringify(process.argv.slice(2)) !== JSON.stringify(['acp', '--profile', 'operator'])) {
+  process.exit(64);
+}
+const lines = createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+let promptId;
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({
+      jsonrpc: '2.0',
+      id: message.id,
+      result: { protocolVersion: 1, _meta: { steering: { supported: true } } },
+    });
+  } else if (message.method === 'session/new') {
+    send({
+      jsonrpc: '2.0',
+      id: message.id,
+      result: {
+        sessionId: 'portable-session-id',
+        modes: {
+          currentModeId: 'agent',
+          availableModes: [{ id: 'read-only' }, { id: 'agent' }],
+        },
+      },
+    });
+  } else if (message.method === 'session/set_mode') {
+    if (message.params.sessionId !== 'portable-session-id' || message.params.modeId !== 'read-only') {
+      process.exit(65);
+    }
+    send({ jsonrpc: '2.0', id: message.id, result: {} });
+  } else if (message.method === 'session/prompt') {
+    promptId = message.id;
+  } else if (message.method === '_session/steering') {
+    if (!promptId || message.params.sessionId !== 'portable-session-id') process.exit(66);
+    send({ jsonrpc: '2.0', id: message.id, result: { outcome: 'injected' } });
+    send({ jsonrpc: '2.0', id: promptId, result: { stopReason: 'end_turn' } });
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
 describe('AcpClient live steering', () => {
+  it('spawns an ACP command with its configured arguments', async () => {
+    const client = new AcpClient({
+      agentCommand: await fakeArgumentAgent(),
+      agentArgs: ['acp', '--profile', 'operator'],
+      agentEnv: {},
+    });
+
+    await client.start();
+    const session = await client.sessionNew({ cwd: process.cwd(), mode: 'readonly' });
+    expect(session.sessionId).toBe('portable-session-id');
+    const prompt = client.sessionPrompt(session.sessionId, 'first');
+    await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+    expect(client.activeRunId(session.sessionId)).toBe(`session:${session.sessionId}`);
+    await expect(client.sessionSteer(session.sessionId, 'follow-up')).resolves.toMatchObject({
+      messageId: 'injected',
+    });
+    await prompt;
+    expect(client.isAlive).toBe(true);
+    await client.stop();
+  });
+
   it('injects ordered follow-ups into the active prompt run', async () => {
     const client = new AcpClient({ agentBinary: await fakeSteerAgent(), agentEnv: {} });
     await client.start();

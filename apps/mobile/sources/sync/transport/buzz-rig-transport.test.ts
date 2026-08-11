@@ -150,6 +150,30 @@ describe('Buzz branch-loop event projection', () => {
 });
 
 describe('Room-scoped Workspace membership', () => {
+  it('sends @-mentioned Room messages with an address and no private request marker', async () => {
+    const identity = {
+      publicKey: 'a'.repeat(64),
+      secretKey: new Uint8Array(32).fill(1),
+      name: 'operator',
+    } as Identity;
+    const client = {
+      messageSubmit: vi.fn(async () => ({ id: 'event-1' })),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(
+      transport.messageSubmitMentioningAgent(
+        'room-1',
+        '@Brisk Pilot fix the build',
+        'agent-pubkey',
+      ),
+    ).resolves.toBe('event-1');
+    expect(client.messageSubmit).toHaveBeenCalledWith('room-1', '@Brisk Pilot fix the build', {
+      mentionAgent: 'agent-pubkey',
+    });
+  });
+
   it('routes existing people through the member-only SDK attachment', async () => {
     const identity = {
       publicKey: 'a'.repeat(64),
@@ -404,22 +428,38 @@ describe('Buzz corner lifecycle projection', () => {
       listSubchannels: vi.fn(async () => ids),
       query: vi.fn(async (filters: Array<Record<string, unknown>>) => {
         const id = (filters[0]?.['#h'] as string[])[0]!;
-        return [{
-          id: `create-${id}`,
-          pubkey: `${id[0]}`.repeat(64),
-          created_at: ids.indexOf(id) + 1,
-          kind: 9007,
-          tags: [['h', id], ['name', id === 'live' ? 'sub-legacy' : `${id}-corner`]],
-          content: '',
-          sig: 'e'.repeat(128),
-        }];
+        return [
+          {
+            id: `create-${id}`,
+            pubkey: `${id[0]}`.repeat(64),
+            created_at: ids.indexOf(id) + 1,
+            kind: 9007,
+            tags: [
+              ['h', id],
+              ['name', id === 'live' ? 'sub-legacy' : `${id}-corner`],
+            ],
+            content: '',
+            sig: 'e'.repeat(128),
+          },
+        ];
       }),
       getChannelMetadata: vi.fn(async (id: string) => ({ archived: id === 'archived' })),
       sessionEventsBackfill: vi.fn(async (id: string) => {
         if (id === 'room') {
-          return [event('room', [['t', 'merge-summary'], ['subchannel', 'merged']])];
+          return [
+            event('room', [
+              ['t', 'merge-summary'],
+              ['subchannel', 'merged'],
+            ]),
+          ];
         }
-        if (id === 'open') return [event(id, [['t', 'merge-ready'], ['status', 'ready']])];
+        if (id === 'open')
+          return [
+            event(id, [
+              ['t', 'merge-ready'],
+              ['status', 'ready'],
+            ]),
+          ];
         if (id === 'archived') return [event(id, [['status', 'archived']])];
         return [event(id, [['status', 'live']])];
       }),

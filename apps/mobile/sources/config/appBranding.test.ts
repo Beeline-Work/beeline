@@ -8,6 +8,10 @@ describe('Beeline display branding', () => {
     new URL('../app/(app)/buzz/channels.tsx', import.meta.url),
     'utf8',
   );
+  const inviteScreen = readFileSync(
+    new URL('../app/(app)/join/[token].tsx', import.meta.url),
+    'utf8',
+  );
 
   it('uses Beeline for launcher names and the Face ID permission', () => {
     expect(appConfig).toContain('development: "Beeline (dev)"');
@@ -17,6 +21,8 @@ describe('Beeline display branding', () => {
     expect(channelsScreen).toContain('{WORKSPACE_LABEL}');
     expect(channelsScreen).not.toContain("'beeline home'");
     expect(channelsScreen).not.toContain("'buzzy home'");
+    expect(inviteScreen).toContain('Return to Beeline');
+    expect(inviteScreen).not.toMatch(/Return to buzzy/i);
   });
 
   it('preserves install identifiers and the submit-only app name', () => {

@@ -7,6 +7,7 @@ import {
   View,
 } from 'react-native';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
+import { useURL } from 'expo-linking';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createBuzzClient, type Community, type Identity } from '@beeline/buzz-client';
 import {
@@ -17,6 +18,7 @@ import {
 import {
   loadCommunityInvitePreview,
   parseCommunityInviteToken,
+  resolveCommunityInviteRelayUrl,
   type CommunityInvitePreview,
 } from '@/buzz/community-invite';
 import { saveActiveCommunityId } from '@/buzz/community-storage';
@@ -30,6 +32,7 @@ import { PixelLoader } from '@/components/buzz/MonoHull';
 export default function CommunityInviteJoin() {
   const insets = useSafeAreaInsets();
   const { token: routeToken } = useLocalSearchParams<{ token?: string | string[] }>();
+  const incomingUrl = useURL();
   const token = parseCommunityInviteToken(routeToken);
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [relayUrl, setRelayUrl] = useState<string | null>(null);
@@ -49,10 +52,11 @@ export default function CommunityInviteJoin() {
         return;
       }
       try {
-        const [currentIdentity, url] = await Promise.all([
+        const [currentIdentity, configuredRelayUrl] = await Promise.all([
           loadBuzzIdentity(),
           getEffectiveRelayUrl(),
         ]);
+        const url = resolveCommunityInviteRelayUrl(incomingUrl, token, configuredRelayUrl);
         const nextPreview = await loadCommunityInvitePreview(
           url,
           token,
@@ -78,7 +82,7 @@ export default function CommunityInviteJoin() {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [incomingUrl, token]);
 
   const handleJoin = useCallback(async () => {
     if (!token || !relayUrl || !preview) return;
@@ -199,7 +203,7 @@ export default function CommunityInviteJoin() {
                 style={styles.cancelButton}
                 onPress={() => router.replace('/buzz/channels')}
               >
-                <Text style={styles.cancelText}>Return to buzzy</Text>
+                <Text style={styles.cancelText}>Return to Beeline</Text>
               </TouchableOpacity>
             </View>
           )}

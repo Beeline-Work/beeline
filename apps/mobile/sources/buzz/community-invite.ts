@@ -58,6 +58,23 @@ export function buildCommunityInviteUrl(token: string, relayUrl: string): string
   return `${relay.origin}/join/${encodeURIComponent(parsed)}`;
 }
 
+export function resolveCommunityInviteRelayUrl(
+  inviteUrl: string | null | undefined,
+  token: string,
+  fallbackRelayUrl: string,
+): string {
+  if (!inviteUrl || parseCommunityInviteToken(inviteUrl) !== parseCommunityInviteToken(token)) {
+    return fallbackRelayUrl;
+  }
+  try {
+    const url = new URL(inviteUrl);
+    if (url.protocol === 'https:' || url.protocol === 'http:') return url.origin;
+  } catch {
+    // Raw tokens and malformed URLs use the configured relay.
+  }
+  return fallbackRelayUrl;
+}
+
 export async function createCommunityInviteUrl(
   client: CommunityInviteCreator,
   communityId: string,
@@ -80,7 +97,7 @@ export async function loadCommunityInvitePreview(
   const host = new URL(normalizedBaseUrl).host;
   const tokenHash = inviteTokenHash(parsedToken);
   const events = await queryEvents(
-    { baseUrl: normalizedBaseUrl, host },
+    { baseUrl: normalizedBaseUrl, host, identity: reader },
     [
       {
         kinds: [KIND_STREAM_MESSAGE],

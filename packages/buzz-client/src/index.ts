@@ -93,6 +93,24 @@ export {
 export { publishEvent, queryEvents, relayReachable } from './http.js';
 export type { HttpBridgeOptions } from './http.js';
 
+export {
+  OIDC_BIND_PROTOCOL,
+  OIDC_BIND_KIND,
+  OIDC_BIND_MARKER,
+  OidcBindError,
+  startOidcBind,
+  parseOidcBindCallback,
+  buildOidcBindEvent,
+  finishOidcBind,
+  lookupRecovery,
+} from './oidc-bind.js';
+export type {
+  OidcBindChallenge,
+  OidcBindStart,
+  OidcBindResult,
+  OidcIdentityLink,
+} from './oidc-bind.js';
+
 export { RelayWs, wsUrlFromHttp } from './ws.js';
 export type { Filter, RelayWsOptions } from './ws.js';
 

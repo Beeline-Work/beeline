@@ -7,12 +7,14 @@ import {
   isAgentIdentityEvent,
   listAgents,
   parseAgent,
+  removeAgent,
 } from './agent.js';
 import { createAgentIdentity, createIdentity } from './identity.js';
 import {
   KIND_CHANNEL_ADMINS,
   KIND_CHANNEL_MEMBERS,
   KIND_CREATE_GROUP,
+  KIND_REMOVE_USER,
   KIND_STREAM_MESSAGE,
   TAG_AGENT,
   TAG_COMMUNITY,
@@ -156,12 +158,114 @@ describe('agent entity model', () => {
     );
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => jsonResponse([older, newer])),
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const kind = (filterFrom(init).kinds as number[])[0];
+        if (kind === KIND_STREAM_MESSAGE) return jsonResponse([older, newer]);
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([communityCreate()]);
+        if (kind === KIND_CHANNEL_MEMBERS) return jsonResponse([memberState()]);
+        if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([adminState()]);
+        return jsonResponse([]);
+      }),
     );
 
     await expect(listAgents(ctx(owner), communityId)).resolves.toMatchObject([
       { displayName: 'Patch 2', pubkey: agentIdentity.publicKey },
     ]);
+  });
+
+  it('hides a durable agent declaration after Workspace membership is removed', async () => {
+    const record = signed(
+      agentIdentity,
+      KIND_STREAM_MESSAGE,
+      [
+        ['h', communityId],
+        ['t', TAG_AGENT],
+        ['d', '22222222-2222-4222-8222-222222222222'],
+        ['p', agentIdentity.publicKey],
+        ['name', 'Patch'],
+        [TAG_COMMUNITY, communityId],
+      ],
+      JSON.stringify({ displayName: 'Patch' }),
+    );
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const kind = (filterFrom(init).kinds as number[])[0];
+        if (kind === KIND_STREAM_MESSAGE) return jsonResponse([record]);
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([communityCreate()]);
+        if (kind === KIND_CHANNEL_MEMBERS) return jsonResponse([memberState(false)]);
+        if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([adminState()]);
+        return jsonResponse([]);
+      }),
+    );
+
+    await expect(listAgents(ctx(owner), communityId)).resolves.toEqual([]);
+  });
+
+  it('removes an agent from every Room before removing its Workspace lease', async () => {
+    const roomId = '33333333-3333-4333-8333-333333333333';
+    const record = signed(
+      agentIdentity,
+      KIND_STREAM_MESSAGE,
+      [
+        ['h', communityId],
+        ['t', TAG_AGENT],
+        ['d', '22222222-2222-4222-8222-222222222222'],
+        ['p', agentIdentity.publicKey],
+        ['name', 'Patch'],
+        [TAG_COMMUNITY, communityId],
+      ],
+      JSON.stringify({ displayName: 'Patch' }),
+    );
+    const roomCreate = signed(owner, KIND_CREATE_GROUP, [
+      ['h', roomId],
+      ['name', 'Repo'],
+      [TAG_COMMUNITY, communityId],
+    ]);
+    const removed = new Set<string>();
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          const event = JSON.parse(String(init?.body)) as NostrEvent;
+          published.push(event);
+          removed.add(event.tags.find((tag) => tag[0] === 'h')?.[1] ?? '');
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        if (kind === KIND_STREAM_MESSAGE) {
+          return jsonResponse((filter.authors as string[] | undefined) ? [] : [record]);
+        }
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([communityCreate(), roomCreate]);
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          const id = String(
+            (filter['#d'] as string[] | undefined)?.[0] ??
+              (filter['#h'] as string[] | undefined)?.[0] ??
+              '',
+          );
+          return jsonResponse([
+            signed(owner, KIND_CHANNEL_MEMBERS, [
+              ['d', id],
+              ['p', owner.publicKey],
+              ...(!removed.has(id) ? [['p', agentIdentity.publicKey]] : []),
+            ]),
+          ]);
+        }
+        if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([]);
+        return jsonResponse([]);
+      }),
+    );
+
+    await removeAgent(ctx(owner), communityId, agentIdentity.publicKey);
+
+    expect(published.map((event) => event.kind)).toEqual([KIND_REMOVE_USER, KIND_REMOVE_USER]);
+    expect(published.map((event) => event.tags.find((tag) => tag[0] === 'h')?.[1])).toEqual([
+      roomId,
+      communityId,
+    ]);
+    expect(published.every((event) => event.pubkey === owner.publicKey)).toBe(true);
   });
 
   it('refuses registration before the agent key is a community member', async () => {

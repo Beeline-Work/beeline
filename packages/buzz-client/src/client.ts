@@ -11,6 +11,7 @@ import {
   createAgentPairingCode,
   isAgentIdentity,
   listAgents,
+  removeAgent,
   redeemAgentPairingCode,
   setAgentSoul,
 } from './agent.js';
@@ -25,10 +26,12 @@ import {
   isMember,
   listChannelsForPubkey,
   listMembers,
+  removeMember,
   listSubchannels,
   sendMessage,
   setMemberRole,
   waitUntilMember,
+  waitUntilNotMember,
   type ChannelOpsContext,
 } from './channel.js';
 import {
@@ -158,6 +161,11 @@ export class BuzzClient {
     return setMemberRole(this.ctx, channelId, targetPubkey, role);
   }
 
+  /** Remove a member (kind:9001). Publish ok is followed by projection checks by callers. */
+  removeMember(channelId: string, targetPubkey: string): Promise<PublishResult> {
+    return removeMember(this.ctx, channelId, targetPubkey);
+  }
+
   listMembers(channelId: string): Promise<ChannelMember[]> {
     return listMembers(this.ctx, channelId);
   }
@@ -173,6 +181,15 @@ export class BuzzClient {
     opts?: { timeoutMs?: number; intervalMs?: number },
   ): Promise<void> {
     return waitUntilMember(this.ctx, channelId, pubkey, opts);
+  }
+
+  /** Assert 39001/39002 no longer list the member. */
+  waitUntilNotMember(
+    channelId: string,
+    pubkey: string,
+    opts?: { timeoutMs?: number; intervalMs?: number },
+  ): Promise<void> {
+    return waitUntilNotMember(this.ctx, channelId, pubkey, opts);
   }
 
   /** Channels where this identity is listed on 39002. */
@@ -242,6 +259,11 @@ export class BuzzClient {
 
   listAgents(communityId: string): Promise<Agent[]> {
     return listAgents(this.ctx, communityId);
+  }
+
+  /** Unlink one agent from all Workspace channels and stop its paired host runtime. */
+  removeAgent(communityId: string, agentPubkey: string): Promise<void> {
+    return removeAgent(this.ctx, communityId, agentPubkey);
   }
 
   /** Lightweight in-app invite for one already-linked agent and one Room. */

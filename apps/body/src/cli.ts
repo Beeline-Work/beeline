@@ -32,6 +32,7 @@ import {
   launchRuntimeDaemon,
   pairRepositoryAgent,
   readRuntimeRecord,
+  removeAgentRuntime,
   runtimeDaemonPid,
   type AgentRuntimeRecord,
 } from './runtime.js';
@@ -114,12 +115,16 @@ async function runStoredDaemon(configPath: string): Promise<void> {
     while (!controller.signal.aborted) {
       const supervisor = new WorkspaceSupervisor(runtime, configPath, config);
       try {
-        await supervisor.run({ signal: controller.signal });
-      } catch (error) {
-        if (!controller.signal.aborted) {
-          console.error('[buzz] Workspace supervisor stopped; retrying:', error);
-          await waitToRestart(controller.signal);
+        const result = await supervisor.run({ signal: controller.signal });
+        if (result === 'agent-removed') {
+          controller.abort();
+          await removeAgentRuntime(configPath, runtime.agent.publicKey);
+          console.log(`[buzz] agent ${runtime.agent.publicKey} removed; runtime deleted`);
         }
+      } catch (error) {
+        if (controller.signal.aborted) throw error;
+        console.error('[buzz] Workspace supervisor stopped; retrying:', error);
+        await waitToRestart(controller.signal);
       }
     }
   } finally {

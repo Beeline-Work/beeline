@@ -1,7 +1,7 @@
 /**
  * Channel control-plane ops over the HTTP bridge.
  *
- * Create (9007), put-user (9000), messages (9), membership/metadata read
+ * Create (9007), put/remove-user (9000/9001), messages (9), membership/metadata read
  * (39002 / 39000). **Never treat an accepted publish as proof of effect** —
  * assert membership via query of 39002 (see assertMember / waitUntilMember).
  */
@@ -12,6 +12,7 @@ import {
   KIND_CHANNEL_METADATA,
   KIND_CREATE_GROUP,
   KIND_PUT_USER,
+  KIND_REMOVE_USER,
   KIND_STREAM_MESSAGE,
   TAG_AGENT_ACTIVITY,
   TAG_AGENT,
@@ -176,6 +177,25 @@ export async function setMemberRole(
   return publishEvent(ctx.http, event);
 }
 
+/**
+ * Remove `targetPubkey` from a channel (kind:9001).
+ * Publish ack is NOT proof — call waitUntilNotMember after this mutation.
+ */
+export async function removeMember(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  targetPubkey: string,
+  opts?: { extraTags?: string[][] },
+): Promise<PublishResult> {
+  const tags: string[][] = [
+    ['h', channelId],
+    ['p', targetPubkey],
+  ];
+  if (opts?.extraTags) tags.push(...opts.extraTags);
+  const event = sign(ctx.identity, KIND_REMOVE_USER, tags);
+  return publishEvent(ctx.http, event);
+}
+
 async function latestRoleProjection(
   ctx: ChannelOpsContext,
   channelId: string,
@@ -193,9 +213,7 @@ async function latestRoleProjection(
       ctx.identity.publicKey,
     );
   }
-  return [...events].sort(
-    (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
-  )[0];
+  return [...events].sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))[0];
 }
 
 /** Query current 39001/39002 projections; owners/admins are also members. */
@@ -248,6 +266,25 @@ export async function waitUntilMember(
   }
   throw new Error(
     `membership not visible for ${pubkey.slice(0, 12)}… in ${channelId} after ${timeoutMs}ms (assert on 39002, not publish ack)`,
+  );
+}
+
+/** Poll until the current 39001/39002 projections no longer list a member. */
+export async function waitUntilNotMember(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  pubkey: string,
+  opts?: { timeoutMs?: number; intervalMs?: number },
+): Promise<void> {
+  const timeoutMs = opts?.timeoutMs ?? 15_000;
+  const intervalMs = opts?.intervalMs ?? 300;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (!(await isMember(ctx, channelId, pubkey))) return;
+    await new Promise((resolveWait) => setTimeout(resolveWait, intervalMs));
+  }
+  throw new Error(
+    `membership still visible for ${pubkey.slice(0, 12)}… in ${channelId} after ${timeoutMs}ms (assert on 39001/39002, not publish ack)`,
   );
 }
 

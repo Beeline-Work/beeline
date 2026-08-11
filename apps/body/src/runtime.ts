@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { closeSync, openSync } from 'node:fs';
-import { chmod, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { decodeNsec, getPublicKey } from '@beeline/nostr';
@@ -234,8 +234,7 @@ export async function writeRuntimeRecord(record: AgentRuntimeRecord): Promise<st
 
 export async function readRuntimeRecord(path: string): Promise<AgentRuntimeRecord> {
   const parsed = JSON.parse(await readFile(path, 'utf8')) as
-    | AgentRuntimeRecord
-    | LegacyAgentRuntimeRecord;
+    AgentRuntimeRecord | LegacyAgentRuntimeRecord;
   if (parsed.version === 1) {
     runtimeIdentity(parsed.agent);
     runtimeIdentity(parsed.body);
@@ -275,6 +274,23 @@ export async function readRuntimeRecord(path: string): Promise<AgentRuntimeRecor
   runtimeIdentity(parsed.agent);
   runtimeIdentity(parsed.body);
   return parsed;
+}
+
+/** Remove the exact machine-local runtime owned by one paired agent. */
+export async function removeAgentRuntime(
+  configPath: string,
+  expectedAgentPubkey: string,
+): Promise<void> {
+  const resolvedConfig = resolve(configPath);
+  const directory = dirname(resolvedConfig);
+  if (
+    basename(resolvedConfig) !== 'runtime.json' ||
+    basename(directory) !== expectedAgentPubkey ||
+    basename(dirname(directory)) !== 'agents'
+  ) {
+    throw new Error(`refusing to remove unexpected agent runtime path: ${resolvedConfig}`);
+  }
+  await rm(directory, { recursive: true, force: true });
 }
 
 export async function findRuntimeConfigPaths(cwd: string): Promise<string[]> {

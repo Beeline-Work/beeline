@@ -113,6 +113,7 @@ describe('subchannel worktree boundary', () => {
 
       const { sessionId } = await editClient.sessionNew({
         cwd: wtDir,
+        mode: 'edit',
         mcpServers: [
           {
             name: 'buzz-dev-mcp',
@@ -135,7 +136,6 @@ describe('subchannel worktree boundary', () => {
 
       // Verify session was created.
       expect(sessionId).toBeTruthy();
-      expect(sessionId.startsWith('ses_')).toBe(true);
 
       // The session cwd is set to the worktree. The buzz-dev-mcp MCP will
       // execute shell commands from this cwd.

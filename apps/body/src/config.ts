@@ -6,10 +6,16 @@
  * The file provides `BUZZY_LLM_*` vars; we map those onto buzz-agent's
  * `OPENAI_COMPAT_*` names.
  */
-import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
-import { delimiter, resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { HOST, SCHEME, BASE_URL } from '@beeline/gate';
 import { DEFAULT_RELAY_HOST, DEFAULT_RELAY_SCHEME } from '@beeline/buzz-client';
+import {
+  executableOnPath,
+  resolveAgentCommand,
+  type AgentCommand,
+  type AgentKind,
+} from './agent-command.js';
 
 export type SessionMode = 'readonly' | 'edit';
 
@@ -17,11 +23,15 @@ export type SessionMode = 'readonly' | 'edit';
 export const WRITE_TOOL_NAMES = ['shell', 'str_replace', 'write', 'Write', 'Bash'] as const;
 
 export interface BodyConfig {
-  /** Absolute path to the buzz-agent binary. */
+  /** Backward-compatible alias of agentCommand. */
   agentBinary: string;
+  /** Selected ACP implementation and its exact spawn argv. */
+  agentKind?: AgentKind;
+  agentCommand?: string;
+  agentArgs?: string[];
   /** Absolute path to the buzz-dev-mcp binary (edit mode only). */
   mcpBinary: string;
-  /** Env vars injected into the buzz-agent process (provider + keys). */
+  /** Env vars inherited by the selected ACP agent process. */
   agentEnv: Record<string, string>;
   /** Base directory for TLC workspaces and git worktrees. */
   workspaceRoot: string;
@@ -39,25 +49,9 @@ export interface BodyConfig {
   autoApprovePermissions: boolean;
 }
 
-const DEFAULT_SCRATCH = resolve(process.cwd(), '.scratch-target', 'debug');
-
 function firstExisting(paths: string[]): string | undefined {
   for (const p of paths) {
     if (p && existsSync(p)) return p;
-  }
-  return undefined;
-}
-
-function executableOnPath(name: string, env: NodeJS.ProcessEnv): string | undefined {
-  for (const directory of (env.PATH ?? '').split(delimiter)) {
-    if (!directory) continue;
-    const candidate = resolve(directory, name);
-    try {
-      accessSync(candidate, constants.X_OK);
-      return candidate;
-    } catch {
-      // Continue through PATH.
-    }
   }
   return undefined;
 }
@@ -70,33 +64,26 @@ export function resolveBinaries(env: NodeJS.ProcessEnv = process.env): {
   agentBinary: string;
   mcpBinary: string;
 } {
-  const agent =
-    env.BUZZ_AGENT_BIN ??
-    env.BUZZ_ACP_AGENT_COMMAND ??
-    firstExisting([
-      resolve(DEFAULT_SCRATCH, 'buzz-agent'),
-      resolve(process.cwd(), '..', '..', '.scratch-target', 'debug', 'buzz-agent'),
-      executableOnPath('buzz-agent', env) ?? '',
-    ]);
+  const agent = resolveAgentCommand({ kind: 'reference', env }).command;
+  const mcp = resolveMcpBinary(env);
+  return { agentBinary: agent, mcpBinary: mcp };
+}
+
+export function resolveMcpBinary(env: NodeJS.ProcessEnv = process.env): string {
   const mcp =
     env.BUZZ_DEV_MCP_BIN ??
     env.BUZZ_ACP_MCP_COMMAND ??
     firstExisting([
-      resolve(DEFAULT_SCRATCH, 'buzz-dev-mcp'),
+      resolve(process.cwd(), '.scratch-target', 'debug', 'buzz-dev-mcp'),
       resolve(process.cwd(), '..', '..', '.scratch-target', 'debug', 'buzz-dev-mcp'),
       executableOnPath('buzz-dev-mcp', env) ?? '',
     ]);
-  if (!agent) {
-    throw new Error(
-      'buzz-agent binary not found. Build with: cargo build -p buzz-agent -p buzz-dev-mcp --target-dir .scratch-target (from block-buzz), or set BUZZ_AGENT_BIN',
-    );
-  }
   if (!mcp) {
     throw new Error(
       'buzz-dev-mcp binary not found. Build with cargo or set BUZZ_DEV_MCP_BIN / BUZZ_ACP_MCP_COMMAND',
     );
   }
-  return { agentBinary: agent, mcpBinary: mcp };
+  return mcp;
 }
 
 /**
@@ -196,9 +183,11 @@ export function loadBodyConfig(opts: {
   workspaceRoot: string;
   llmEnvFile?: string;
   env?: NodeJS.ProcessEnv;
+  agent?: AgentCommand;
 }): BodyConfig {
   const env = opts.env ?? process.env;
-  const { agentBinary, mcpBinary } = resolveBinaries(env);
+  const agent = opts.agent ?? resolveAgentCommand({ kind: 'reference', env });
+  const mcpBinary = resolveMcpBinary(env);
   const agentEnv = buildAgentEnv(env, opts.llmEnvFile);
   const host = env.BUZZY_RELAY_HOST ?? DEFAULT_RELAY_HOST;
   const scheme = env.BUZZY_RELAY_SCHEME ?? DEFAULT_RELAY_SCHEME;
@@ -209,7 +198,10 @@ export function loadBodyConfig(opts: {
     env.BUZZ_RELAY_URL ?? env.BUZZY_RELAY_WS ?? `${scheme === 'https' ? 'wss' : 'ws'}://${host}`;
 
   return {
-    agentBinary,
+    agentBinary: agent.command,
+    agentKind: agent.kind,
+    agentCommand: agent.command,
+    agentArgs: [...agent.args],
     mcpBinary,
     agentEnv,
     workspaceRoot: resolve(opts.workspaceRoot),

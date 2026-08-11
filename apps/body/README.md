@@ -57,7 +57,7 @@ by projecting agent activity into the relay channel.
 
 | Variable                     | Required | Default            | Description                          |
 | ---------------------------- | -------- | ------------------ | ------------------------------------ |
-| `BUZZ_AGENT_BIN`             | No       | auto-detect        | Path to `buzz-agent` binary          |
+| `BUZZ_AGENT_BIN`             | No       | auto-detect        | Reference `buzz-agent` override      |
 | `BUZZ_DEV_MCP_BIN`           | No       | auto-detect        | Path to `buzz-dev-mcp` binary        |
 | `BUZZY_RELAY_HOST`           | No       | `relay.buzzrouter.com` | Relay HTTP/WS host                   |
 | `BUZZY_RELAY_SCHEME`         | No       | `https`            | Relay scheme                         |
@@ -104,6 +104,27 @@ on `PATH`; the installer prints the exact export when it is not.
 # stores machine-only keys under .git, and launches the durable daemon.
 BUZZY_BODY_LLM_FILE=/path/to/local-model.env \
   beeline pair BUZZ-XXXX-XXXX
+
+# Use the operator's own funded Codex configuration through the official ACP
+# adapter. Install once with:
+#   npm install -g @openai/codex @agentclientprotocol/codex-acp
+beeline pair BUZZ-XXXX-XXXX --agent codex
+
+# Claude Code requires its ACP adapter:
+#   npm install -g @agentclientprotocol/claude-agent-acp
+beeline pair BUZZ-XXXX-XXXX --agent claude
+
+# Goose exposes ACP natively as `goose acp`.
+beeline pair BUZZ-XXXX-XXXX --agent goose
+
+# Pi uses the registry-listed pi-acp adapter:
+#   npm install -g @mariozechner/pi-coding-agent pi-acp
+beeline pair BUZZ-XXXX-XXXX --agent pi
+
+# Any ACP-over-stdio server can be selected explicitly. The command is parsed
+# into argv and spawned directly; no shell expansion is performed.
+beeline pair BUZZ-XXXX-XXXX --agent custom \
+  --agent-command 'my-agent serve --acp'
 
 # Restart a previously-paired agent after a machine/process restart.
 beeline start

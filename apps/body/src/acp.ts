@@ -1,5 +1,5 @@
 /**
- * Minimal ACP client over stdio for buzz-agent.
+ * Minimal ACP client over stdio for an ACP coding agent.
  *
  * Wire protocol (buzz-agent ACP, NOT MCP):
  *   - initialize: protocolVersion is u32 (1), uses clientCapabilities
@@ -10,8 +10,8 @@
  *
  * Rationale (see PR): stock buzz-acp auto-approves permissions, mounts at most
  * one MCP via env, and does not project session/update onto the relay. The body
- * therefore drives buzz-agent directly so mode = MCP mount is a hard boundary
- * and multi-user activity projection is possible.
+ * therefore drives the selected ACP server directly so session modes/MCP mounts
+ * stay enforceable and multi-user activity projection remains possible.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
@@ -65,25 +65,34 @@ export class AcpClient extends EventEmitter {
   private nextId = 1;
   private pending = new Map<number, Pending>();
   private activeRunIds = new Map<string, string>();
+  private activePromptSessions = new Set<string>();
+  private supportsStandardSteering = false;
   private alive = false;
   private agentEnv: Record<string, string>;
-  private agentBinary: string;
+  private agentCommand: string;
+  private agentArgs: string[];
   private autoApprove: boolean;
 
   constructor(opts: {
-    agentBinary: string;
+    /** Legacy bare-binary option. Prefer agentCommand + agentArgs. */
+    agentBinary?: string;
+    agentCommand?: string;
+    agentArgs?: string[];
     agentEnv: Record<string, string>;
     autoApprovePermissions?: boolean;
   }) {
     super();
-    this.agentBinary = opts.agentBinary;
+    const command = opts.agentCommand ?? opts.agentBinary;
+    if (!command) throw new Error('ACP agent command is required');
+    this.agentCommand = command;
+    this.agentArgs = [...(opts.agentArgs ?? [])];
     this.agentEnv = opts.agentEnv;
     this.autoApprove = opts.autoApprovePermissions ?? true;
   }
 
   async start(): Promise<void> {
     if (this.alive) return;
-    this.child = spawn(this.agentBinary, [], {
+    this.child = spawn(this.agentCommand, this.agentArgs, {
       env: { ...process.env, ...this.agentEnv },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -101,10 +110,13 @@ export class AcpClient extends EventEmitter {
       this.alive = false;
       for (const [, p] of this.pending) {
         this.clearTimer(p);
-        p.reject(new Error(`buzz-agent exited code=${code} signal=${signal}`));
+        p.reject(
+          new Error(`ACP agent ${this.agentCommand} exited code=${code} signal=${signal}`),
+        );
       }
       this.pending.clear();
       this.activeRunIds.clear();
+      this.activePromptSessions.clear();
       this.emit('exit', { code, signal });
     });
 
@@ -113,10 +125,13 @@ export class AcpClient extends EventEmitter {
     });
 
     // ACP handshake: initialize, then send initialized notification.
-    const initResult = await this.request('initialize', {
+    const initResult = (await this.request('initialize', {
       protocolVersion: 1,
       clientCapabilities: {},
-    });
+    })) as Record<string, unknown>;
+    const initMeta = initResult._meta as Record<string, unknown> | undefined;
+    const steering = initMeta?.steering as Record<string, unknown> | undefined;
+    this.supportsStandardSteering = steering?.supported === true;
     this.emit('initialized', initResult);
     this.notify('notifications/initialized', {});
   }
@@ -147,6 +162,7 @@ export class AcpClient extends EventEmitter {
     this.child = null;
     this.alive = false;
     this.activeRunIds.clear();
+    this.activePromptSessions.clear();
   }
 
   get isAlive(): boolean {
@@ -157,6 +173,8 @@ export class AcpClient extends EventEmitter {
     cwd: string;
     mcpServers?: McpServerWire[];
     systemPrompt?: string;
+    /** Ask agents with ACP modes to enforce the Body session boundary. */
+    mode?: 'readonly' | 'edit';
   }): Promise<{ sessionId: string; raw: unknown }> {
     const params: Record<string, unknown> = {
       cwd: opts.cwd,
@@ -171,7 +189,28 @@ export class AcpClient extends EventEmitter {
     const raw = (await this.request('session/new', params)) as Record<string, unknown>;
     const sessionId = raw.sessionId as string | undefined;
     if (!sessionId) throw new Error('session/new missing sessionId');
+    await this.applySessionMode(sessionId, raw, opts.mode);
     return { sessionId, raw };
+  }
+
+  private async applySessionMode(
+    sessionId: string,
+    raw: Record<string, unknown>,
+    mode: 'readonly' | 'edit' | undefined,
+  ): Promise<void> {
+    if (!mode) return;
+    const modes = raw.modes as
+      | {
+          availableModes?: Array<{ id?: string }>;
+          currentModeId?: string;
+        }
+      | undefined;
+    const candidates = mode === 'readonly' ? ['read-only', 'readonly'] : ['agent', 'edit', 'code'];
+    const target = modes?.availableModes?.find(
+      (candidate) => candidate.id && candidates.includes(candidate.id),
+    )?.id;
+    if (!target || modes?.currentModeId === target) return;
+    await this.request('session/set_mode', { sessionId, modeId: target });
   }
 
   async sessionPrompt(
@@ -187,6 +226,7 @@ export class AcpClient extends EventEmitter {
       promptRunId ??= this.activeRunIdFromUpdate(u.update);
     };
     this.on('session/update', onUpdate);
+    this.activePromptSessions.add(sessionId);
 
     try {
       const result = (await this.request(
@@ -231,6 +271,7 @@ export class AcpClient extends EventEmitter {
         toolCalls,
       };
     } finally {
+      this.activePromptSessions.delete(sessionId);
       if (promptRunId && this.activeRunIds.get(sessionId) === promptRunId) {
         this.activeRunIds.delete(sessionId);
       }
@@ -248,6 +289,23 @@ export class AcpClient extends EventEmitter {
     text: string,
     timeoutMs = 60_000,
   ): Promise<SteerResult> {
+    if (this.supportsStandardSteering) {
+      const raw = (await this.request(
+        '_session/steering',
+        {
+          sessionId,
+          prompt: [{ type: 'text', text }],
+        },
+        timeoutMs,
+      )) as { outcome?: string };
+      if (!raw.outcome || raw.outcome === 'failed') {
+        throw new Error('ACP session steering failed');
+      }
+      return {
+        runId: this.activeRunId(sessionId) ?? `session:${sessionId}`,
+        messageId: raw.outcome,
+      };
+    }
     const expectedRunId = await this.waitForActiveRun(sessionId, Math.min(timeoutMs, 5_000));
     const raw = (await this.request(
       '_goose/unstable/session/steer',
@@ -266,7 +324,10 @@ export class AcpClient extends EventEmitter {
 
   /** Active ACP run for a session, if the agent has advertised one. */
   activeRunId(sessionId: string): string | undefined {
-    return this.activeRunIds.get(sessionId);
+    return (
+      this.activeRunIds.get(sessionId) ??
+      (this.activePromptSessions.has(sessionId) ? `session:${sessionId}` : undefined)
+    );
   }
 
   sessionCancel(sessionId: string): void {

@@ -29,7 +29,7 @@ import {
 } from '@beeline/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
 import { groknight } from '@/buzz/groknight';
-import { CHANGE_LABEL, CHANGES_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
+import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
 import { countRoomParticipants } from '@/buzz/room-participants';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
@@ -38,7 +38,6 @@ import { Typography } from '@/constants/Typography';
 import { ChangeReviewPanel } from '@/components/buzz/ChangeReviewPanel';
 import {
   HullSurface,
-  HullWaveSignal,
   MonoButton,
   NewMessageMaterialize,
   PixelLoader,
@@ -50,12 +49,8 @@ type DisplayMessage = {
   isUser: boolean;
   timestamp: number;
   pubkey?: string;
-  /** Subchannel ID if this is a subchannel-link control message. */
-  subchannelId?: string;
   /** True if this is a merge-summary control message from the body. */
   isMergeSummary?: boolean;
-  /** True if this is a body control message with subchannel link. */
-  isSubchannelLink?: boolean;
   /** True if this is an archived notification. */
   isArchivedNotice?: boolean;
   /** True if this is an agent-activity frame from the body. */
@@ -64,12 +59,6 @@ type DisplayMessage = {
   requestAgentPubkey?: string;
   /** True only for subscription/optimistic inserts, never initial backfill. */
   isNew?: boolean;
-};
-
-type SubchannelDisplay = {
-  id: string;
-  openerPubkey: string;
-  archived: boolean;
 };
 
 /** Known body pubkeys for provenance display (hardcoded for dev). */
@@ -159,6 +148,16 @@ function eventHasTag(e: SessionEvent, tagName: string, tagValue?: string): boole
   return false;
 }
 
+/**
+ * Body parent-link records are not conversation. The text fallback covers old
+ * mobile projections that retained content but dropped the raw Nostr tags.
+ */
+function isCornerControlMessage(e: SessionEvent, text: string): boolean {
+  return eventHasTag(e, 't', 'body-control')
+    || Boolean(eventTagValue(e, 'subchannel'))
+    || /^Agent opened(?: #| a work branch for:)/.test(text);
+}
+
 export default function BuzzChat() {
   const { channelId } = useLocalSearchParams<{ channelId: string }>();
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
@@ -176,9 +175,7 @@ export default function BuzzChat() {
   const [approvalState, setApprovalState] = useState<'none' | 'sending' | 'sent' | 'merged'>(
     'none',
   );
-  const [subchannels, setSubchannels] = useState<SubchannelDisplay[]>([]);
   const [parentChannelId, setParentChannelId] = useState<string | undefined>(undefined);
-  const [mergeSummaryText, setMergeSummaryText] = useState<string | null>(null);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
   const [availableAgents, setAvailableAgents] = useState<Agent[]>([]);
@@ -247,14 +244,15 @@ export default function BuzzChat() {
         const events = await t.sessionEventsBackfill(decodedId, { limit: 50 });
         if (!cancelled) {
           const msgs: DisplayMessage[] = [];
-          let foundMergeSummary: string | null = null;
-
           for (const e of events) {
             const pk = eventPubkey(e);
             const text = eventText(e);
             const isAgentActivity = e.type === 'assistant_delta';
             if (isAgentActivity && !text.trim()) continue;
-            const hasBodyControl = eventHasTag(e, 't', 'body-control');
+            // Parent-link control records are identified redundantly. Some relay
+            // projections preserve the subchannel binding but omit duplicate `t`
+            // markers, so the binding itself must never fall through as chat copy.
+            const hasBodyControl = isCornerControlMessage(e, text);
             const isChangeReviewMetadata =
               eventHasTag(e, 't', CHANGE_REVIEW_MANIFEST_TAG) ||
               eventHasTag(e, 't', CHANGE_REVIEW_FILE_TAG);
@@ -266,7 +264,6 @@ export default function BuzzChat() {
               : undefined;
 
             if (hasMergeSummary) {
-              foundMergeSummary = text;
               msgs.push({
                 id: eventId(e, `merge-${Math.random()}`),
                 text,
@@ -278,24 +275,11 @@ export default function BuzzChat() {
               continue;
             }
 
-            // P2: Parse body-control messages for subchannel links
+            // Control records drive navigation and lifecycle state. They are never
+            // conversation copy and must not leak raw IDs, branches, or worktree paths.
             if (hasBodyControl) {
-              const subId = eventTagValue(e, 'subchannel');
-              if (subId && !hasStatusArchived) {
-                // This is a subchannel-open link
-                msgs.push({
-                  id: eventId(e, `sub-${Math.random()}`),
-                  text,
-                  isUser: false,
-                  timestamp: eventTimestamp(e),
-                  pubkey: pk,
-                  subchannelId: subId,
-                  isSubchannelLink: true,
-                  requestAgentPubkey: eventTagValue(e, 'agent') ?? pk,
-                });
-                continue;
-              }
-              if (hasStatusArchived) {
+              const controlledSubchannelId = eventTagValue(e, 'subchannel');
+              if (hasStatusArchived && !controlledSubchannelId) {
                 msgs.push({
                   id: eventId(e, `archive-${Math.random()}`),
                   text,
@@ -306,6 +290,7 @@ export default function BuzzChat() {
                 });
                 continue;
               }
+              continue;
             }
 
             // Regular message
@@ -320,7 +305,6 @@ export default function BuzzChat() {
             });
           }
 
-          if (foundMergeSummary) setMergeSummaryText(foundMergeSummary);
           setMessages(msgs);
           setLoading(false);
         }
@@ -344,14 +328,6 @@ export default function BuzzChat() {
           }
         }
 
-        // P2: Discover child channels when this is a parent channel.
-        try {
-          const lifecycle = await t.listSubchannelLifecycle(decodedId);
-          setSubchannels(lifecycle);
-        } catch {
-          // Not a parent channel — that's fine.
-        }
-
         // Subscribe to live messages
         unsubscribe = t.sessionEventsSubscribe(decodedId, (event) => {
           if (cancelled) return;
@@ -360,7 +336,7 @@ export default function BuzzChat() {
           const text = eventText(event);
           const isAgentActivity = event.type === 'assistant_delta';
           if (isAgentActivity && !text.trim()) return;
-          const hasBodyControl = eventHasTag(event, 't', 'body-control');
+          const hasBodyControl = isCornerControlMessage(event, text);
           const isChangeReviewMetadata =
             eventHasTag(event, 't', CHANGE_REVIEW_MANIFEST_TAG) ||
             eventHasTag(event, 't', CHANGE_REVIEW_FILE_TAG);
@@ -380,7 +356,6 @@ export default function BuzzChat() {
           }
 
           if (hasMergeSummary) {
-            setMergeSummaryText(text);
             addMessages([
               {
                 id: eventId(event, `merge-live-${Math.random()}`),
@@ -396,39 +371,8 @@ export default function BuzzChat() {
 
           if (hasBodyControl) {
             const subId = eventTagValue(event, 'subchannel');
-            if (subId && !hasStatusArchived) {
-              setSubchannels((current) =>
-                current.some((sub) => sub.id === subId)
-                  ? current
-                  : [
-                      ...current,
-                      {
-                        id: subId,
-                        openerPubkey: eventTagValue(event, 'agent') ?? pk ?? '',
-                        archived: false,
-                      },
-                    ],
-              );
-              addMessages([
-                {
-                  id: eventId(event, `sub-live-${Math.random()}`),
-                  text,
-                  isUser: false,
-                  timestamp: eventTimestamp(event),
-                  pubkey: pk,
-                  subchannelId: subId,
-                  isSubchannelLink: true,
-                  requestAgentPubkey: eventTagValue(event, 'agent') ?? pk,
-                },
-              ]);
-              return;
-            }
             if (hasStatusArchived) {
-              if (subId) {
-                setSubchannels((current) =>
-                  current.map((sub) => (sub.id === subId ? { ...sub, archived: true } : sub)),
-                );
-              } else {
+              if (!subId) {
                 setIsArchived(true);
                 setApprovalState('merged');
               }
@@ -526,10 +470,6 @@ export default function BuzzChat() {
     }
   }, [transport, mergeTarget, decodedId]);
 
-  const handleSubchannelPress = useCallback((subId: string) => {
-    router.push(`/buzz/chat/${encodeURIComponent(subId)}`);
-  }, []);
-
   const handleCommunitySelect = useCallback((communityId: string | null) => {
     if (!communityId) return;
     router.replace({
@@ -540,35 +480,16 @@ export default function BuzzChat() {
 
   const renderItem = useCallback(
     ({ item }: { item: DisplayMessage }) => {
-      // ── Subchannel link (open-edit control message) ──────────────
-      if (item.isSubchannelLink && item.subchannelId) {
-        return (
-          <View style={styles.subchannelLinkBubble}>
-            <View style={styles.subchannelLinkHeading}>
-              <Text style={styles.subchannelLinkTitle}>{CHANGE_LABEL}</Text>
-              <HullWaveSignal compact label="LIVE" />
-            </View>
-            {item.requestAgentPubkey && (
-              <Text style={styles.openerBadge}>opened by {shortNpub(item.requestAgentPubkey)}</Text>
-            )}
-            <Text style={styles.subchannelLinkText} numberOfLines={2}>
-              {item.text}
-            </Text>
-            <TouchableOpacity
-              style={styles.subchannelLinkButton}
-              onPress={() => handleSubchannelPress(item.subchannelId!)}
-            >
-              <Text style={styles.subchannelLinkButtonText}>Open change</Text>
-            </TouchableOpacity>
-          </View>
-        );
-      }
+      // Legacy projections may already have materialized a parent-link record as
+      // a plain message before its Nostr tags reach this screen. Keep the room
+      // transcript clean at the final person-facing boundary as well.
+      if (/^Agent opened(?: #| a work branch for:)/.test(item.text)) return null;
 
       // ── Merge summary ────────────────────────────────────────────
       if (item.isMergeSummary) {
         return (
           <View style={styles.mergeSummaryBubble}>
-            <Text style={styles.mergeSummaryTitle}>✓ {CHANGE_LABEL} merged</Text>
+            <Text style={styles.mergeSummaryTitle}>✓ {CORNER_LABEL} merged</Text>
             <Text style={styles.mergeSummaryText}>{item.text}</Text>
             {item.pubkey && <Text style={styles.mergeSummaryPubkey}>{shortNpub(item.pubkey)}</Text>}
           </View>
@@ -579,7 +500,7 @@ export default function BuzzChat() {
       if (item.isArchivedNotice) {
         return (
           <View style={styles.archivedBubble}>
-            <Text style={styles.archivedText}>□ ARCHIVED · {item.text}</Text>
+            <Text style={styles.archivedText}>□ CORNER ARCHIVED · READ-ONLY</Text>
           </View>
         );
       }
@@ -597,7 +518,7 @@ export default function BuzzChat() {
             </Text>
             {item.requestAgentPubkey && (
               <Text style={styles.workRequestBadge}>
-                REQUEST ◆ {shortNpub(item.requestAgentPubkey)} · START {CHANGE_LABEL.toUpperCase()}
+                REQUEST ◆ {shortNpub(item.requestAgentPubkey)} · START A CORNER
               </Text>
             )}
             <Text style={styles.messageText}>{item.text}</Text>
@@ -608,7 +529,7 @@ export default function BuzzChat() {
         </NewMessageMaterialize>
       );
     },
-    [handleSubchannelPress],
+    [],
   );
 
   if (loading) {
@@ -659,11 +580,11 @@ export default function BuzzChat() {
           )}
         </HullSurface>
 
-        {/* P2: Merge approval bar for subchannels with a merge target */}
+        {/* The one human gate: collapsing a corner into the protected line. */}
         {mergeTarget && !isArchived && (
           <HullSurface strength="raised" style={styles.approvalBar}>
             <View style={styles.approvalInfo}>
-              <Text style={styles.prChip}>Review {CHANGE_LABEL}</Text>
+              <Text style={styles.prChip}>Review this {CORNER_LABEL}</Text>
               <Text style={styles.approvalBarText}>
                 {mergeTarget.repo} · {mergeTarget.tip.slice(0, 8)}
               </Text>
@@ -675,13 +596,16 @@ export default function BuzzChat() {
                 tip={mergeTarget.tip}
               />
             )}
-            <Text style={styles.humanBoundaryText}>Only People can approve.</Text>
+            <Text style={styles.humanBoundaryText}>
+              The Agent works freely inside this {CORNER_LABEL}. A person approves only the final
+              collapse into the protected line.
+            </Text>
             {viewerIsAgent ? (
               <View style={styles.approvalSent}>
-                <Text style={styles.approvalSentText}>⊘ AGENTS CANNOT APPROVE</Text>
+                <Text style={styles.approvalSentText}>⊘ AGENTS CANNOT APPROVE OR COLLAPSE</Text>
               </View>
             ) : approvalState === 'none' ? (
-              <MonoButton label={`Approve ${CHANGE_LABEL}`} onPress={handleApprove} />
+              <MonoButton label="Approve corner collapse" onPress={handleApprove} />
             ) : approvalState === 'sending' ? (
               <View style={styles.approvalPending}>
                 <PixelLoader compact />
@@ -689,7 +613,7 @@ export default function BuzzChat() {
               </View>
             ) : (
               <View style={styles.approvalSent}>
-                <Text style={styles.approvalSentText}>✓ APPROVED · WAITING FOR MERGE</Text>
+                <Text style={styles.approvalSentText}>✓ APPROVED · WAITING FOR COLLAPSE</Text>
               </View>
             )}
           </HullSurface>
@@ -702,36 +626,6 @@ export default function BuzzChat() {
           style={styles.messageList}
           contentContainerStyle={styles.messageListContent}
           renderItem={renderItem}
-          ListHeaderComponent={
-            !parentChannelId && subchannels.length > 0 ? (
-              <View style={styles.lifecyclePanel}>
-                <Text style={styles.lifecycleTitle}>{CHANGES_LABEL}</Text>
-                <Text style={styles.lifecycleHint}>
-                  People ask → Agent works → People approve → done
-                </Text>
-                {subchannels.map((sub) => (
-                  <TouchableOpacity
-                    key={sub.id}
-                    style={styles.lifecycleRow}
-                    onPress={() => handleSubchannelPress(sub.id)}
-                  >
-                    {sub.archived ? (
-                      <Text style={[styles.lifecycleState, styles.lifecycleStateArchived]}>
-                        ◇ CLOSED
-                      </Text>
-                    ) : (
-                      <HullWaveSignal compact label="LIVE" />
-                    )}
-                    <View style={styles.lifecycleInfo}>
-                      <Text style={styles.lifecycleBranch}>↳ {sub.id.slice(0, 12)}…</Text>
-                      <Text style={styles.lifecycleAgent}>agent {shortNpub(sub.openerPubkey)}</Text>
-                    </View>
-                    <Text style={styles.chevron}>›</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            ) : null
-          }
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <Text style={styles.emptyText}>No messages yet</Text>
@@ -743,7 +637,9 @@ export default function BuzzChat() {
         {/* P2: Archived channels are read-only */}
         {isArchived ? (
           <View style={[styles.archivedInputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-            <Text style={styles.archivedInputText}>{ROOM_LABEL} archived (read-only)</Text>
+            <Text style={styles.archivedInputText}>
+              {parentChannelId ? 'Corner' : ROOM_LABEL} archived (read-only)
+            </Text>
           </View>
         ) : (
           <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
@@ -940,48 +836,6 @@ const styles = StyleSheet.create({
     lineHeight: 15,
   },
 
-  // ── Subchannel link ─────────────────────────────────────────────
-  subchannelLinkBubble: {
-    paddingHorizontal: 10,
-    paddingVertical: 14,
-    marginBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-  },
-  subchannelLinkTitle: {
-    ...Typography.default('semiBold'),
-    fontSize: 11,
-    color: groknight.chrome,
-  },
-  subchannelLinkHeading: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  openerBadge: {
-    ...Typography.default(),
-    color: groknight.steel,
-    fontSize: 11,
-    marginBottom: 6,
-  },
-  subchannelLinkText: {
-    ...Typography.default(),
-    fontSize: 12,
-    color: groknight.muted,
-    marginBottom: 8,
-    lineHeight: 16,
-  },
-  subchannelLinkButton: {
-    paddingVertical: 6,
-    alignSelf: 'flex-start',
-  },
-  subchannelLinkButtonText: {
-    ...Typography.default('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 11,
-  },
-
   // ── Merge summary ───────────────────────────────────────────────
   mergeSummaryBubble: {
     paddingHorizontal: 10,
@@ -1080,79 +934,6 @@ const styles = StyleSheet.create({
     color: groknight.chrome,
     fontSize: 12,
     fontWeight: '600',
-  },
-
-  // ── Parent channel lifecycle ───────────────────────────────────
-  lifecyclePanel: {
-    marginBottom: 16,
-    paddingTop: 8,
-  },
-  lifecycleTitle: {
-    ...Typography.default('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 14,
-    paddingHorizontal: 10,
-    paddingTop: 9,
-  },
-  lifecycleHint: {
-    ...Typography.default(),
-    color: groknight.textMuted,
-    fontSize: 11,
-    paddingHorizontal: 10,
-    paddingTop: 3,
-    paddingBottom: 7,
-  },
-  lifecycleRow: {
-    minWidth: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderTopWidth: 1,
-    borderTopColor: groknight.border,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    gap: 9,
-  },
-  lifecycleState: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 11,
-    lineHeight: 15,
-  },
-  lifecycleStateArchived: {
-    color: groknight.muted,
-  },
-  lifecycleInfo: { flex: 1, minWidth: 0 },
-  lifecycleBranch: { ...Typography.mono(), color: groknight.chrome, fontSize: 11 },
-  lifecycleAgent: {
-    ...Typography.mono(),
-    color: groknight.textMuted,
-    fontSize: 11,
-    lineHeight: 15,
-    marginTop: 2,
-  },
-  chevron: { ...Typography.default(), color: groknight.steel, fontSize: 18 },
-
-  // ── Legacy subchannel links (empty state) ───────────────────────
-  subchannelLinks: {
-    marginTop: 24,
-    paddingHorizontal: 16,
-  },
-  subchannelLinksTitle: {
-    ...Typography.default('semiBold'),
-    fontSize: 11,
-    color: groknight.muted,
-    marginBottom: 8,
-  },
-  subchannelLinkItem: {
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-  },
-  subchannelLinkItemText: {
-    ...Typography.default(),
-    color: groknight.chrome,
-    fontSize: 12,
   },
 
   // ── Composer ────────────────────────────────────────────────────

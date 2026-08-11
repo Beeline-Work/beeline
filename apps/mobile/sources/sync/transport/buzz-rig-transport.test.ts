@@ -315,3 +315,69 @@ describe('Buzz change review metadata', () => {
     });
   });
 });
+
+describe('Buzz corner lifecycle projection', () => {
+  const identity = {
+    publicKey: 'a'.repeat(64),
+    secretKey: new Uint8Array(32).fill(1),
+    name: 'reviewer',
+  } as Identity;
+
+  function event(channel: string, tags: string[][], content = '') {
+    const raw = {
+      id: `${channel}-${tags.flat().join('-')}`,
+      pubkey: 'd'.repeat(64),
+      created_at: 42,
+      kind: 9,
+      tags: [['h', channel], ...tags],
+      content,
+      sig: 'e'.repeat(128),
+    };
+    return {
+      kind: 'message' as const,
+      event: raw,
+      channelId: channel,
+      content,
+      pubkey: raw.pubkey,
+      createdAt: raw.created_at,
+      id: raw.id,
+    };
+  }
+
+  it('distinguishes live, review-open, merged, and archived corners', async () => {
+    const ids = ['live', 'open', 'merged', 'archived'];
+    const client = {
+      listSubchannels: vi.fn(async () => ids),
+      query: vi.fn(async (filters: Array<Record<string, unknown>>) => {
+        const id = (filters[0]?.['#h'] as string[])[0]!;
+        return [{
+          id: `create-${id}`,
+          pubkey: `${id[0]}`.repeat(64),
+          created_at: ids.indexOf(id) + 1,
+          kind: 9007,
+          tags: [['h', id], ['name', id === 'live' ? 'sub-legacy' : `${id}-corner`]],
+          content: '',
+          sig: 'e'.repeat(128),
+        }];
+      }),
+      getChannelMetadata: vi.fn(async (id: string) => ({ archived: id === 'archived' })),
+      sessionEventsBackfill: vi.fn(async (id: string) => {
+        if (id === 'room') {
+          return [event('room', [['t', 'merge-summary'], ['subchannel', 'merged']])];
+        }
+        if (id === 'open') return [event(id, [['t', 'merge-ready'], ['status', 'ready']])];
+        if (id === 'archived') return [event(id, [['status', 'archived']])];
+        return [event(id, [['status', 'live']])];
+      }),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(transport.listSubchannelLifecycle('room')).resolves.toMatchObject([
+      { id: 'live', name: 'corner-live', status: 'live' },
+      { id: 'open', name: 'open-corner', status: 'open' },
+      { id: 'merged', name: 'merged-corner', status: 'merged' },
+      { id: 'archived', name: 'archived-corner', status: 'archived' },
+    ]);
+  });
+});

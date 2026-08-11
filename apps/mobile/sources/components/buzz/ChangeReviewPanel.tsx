@@ -117,7 +117,7 @@ export function ChangeReviewPanel({ transport, sessionId, tip }: ChangeReviewPan
     return (
       <HullSurface strength="raised" style={styles.loading} testID="change-review-loading">
         <PixelLoader compact />
-        <Text style={styles.mutedText}>LOADING CHANGED FILES</Text>
+        <Text style={styles.mutedText}>LOADING FILE DIFFS</Text>
       </HullSurface>
     );
   }
@@ -125,7 +125,7 @@ export function ChangeReviewPanel({ transport, sessionId, tip }: ChangeReviewPan
   if (filesError) {
     return (
       <HullSurface strength="raised" style={styles.errorState} testID="change-review-error">
-        <Text style={styles.errorTitle}>! ERROR · CHANGED FILES UNAVAILABLE</Text>
+        <Text style={styles.errorTitle}>! ERROR · FILE DIFFS UNAVAILABLE</Text>
         <Text style={styles.mutedText} numberOfLines={2}>
           {filesError}
         </Text>
@@ -176,7 +176,7 @@ export function ChangeReviewPanel({ transport, sessionId, tip }: ChangeReviewPan
           </View>
         ) : isBinary ? (
           <View style={styles.diffLoading}>
-            <Text style={styles.binaryTitle}>Binary file changed</Text>
+            <Text style={styles.binaryTitle}>Binary file updated</Text>
             <Text style={styles.mutedText}>A text diff is not available.</Text>
           </View>
         ) : (
@@ -206,14 +206,14 @@ export function ChangeReviewPanel({ transport, sessionId, tip }: ChangeReviewPan
     <HullSurface strength="code" style={styles.panel} testID="change-review-files">
       <View style={styles.summaryRow}>
         <Text style={styles.summaryTitle}>
-          {files.length} changed {files.length === 1 ? 'file' : 'files'}
+          {files.length} {files.length === 1 ? 'file' : 'files'}
         </Text>
         <Text style={styles.summaryStats}>
           +{totalAdded} −{totalRemoved}
         </Text>
       </View>
       {files.length === 0 ? (
-        <Text style={styles.emptyText}>This change has no file differences.</Text>
+        <Text style={styles.emptyText}>This corner has no file differences.</Text>
       ) : (
         <FlatList
           data={files}

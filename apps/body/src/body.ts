@@ -181,15 +181,25 @@ export function cornerNameForIntent(intent: string | undefined, parentChannelId:
   return slug || `corner-${parentChannelId.slice(0, 8)}`;
 }
 
-/** The intentionally narrow channel → edit-session trigger. */
-export function isChannelTaskRequest(event: NostrEvent, agentPubkey: string): boolean {
-  return Boolean(
-    event.kind === 9 &&
-    event.content.trim() &&
-    event.pubkey !== agentPubkey &&
-    event.tags.some((tag) => tag[0] === 'p' && tag[1] === agentPubkey) &&
-    event.tags.some((tag) => tag[0] === 't' && tag[1] === AGENT_REQUEST_TAG),
-  );
+/**
+ * Conversation-native Room → edit-session trigger.
+ *
+ * A direct @ mention always addresses this agent. In a two-party Room the
+ * sole human can speak naturally because there is nobody else to address.
+ * Machine-held merge workers are removed before `roomParticipants` reaches
+ * this helper, so they never make a human/agent conversation look multi-party.
+ */
+export function isChannelTaskRequest(
+  event: NostrEvent,
+  agentPubkey: string,
+  roomParticipants: readonly string[] = [],
+): boolean {
+  if (event.kind !== 9 || !event.content.trim() || event.pubkey === agentPubkey) return false;
+  if (event.tags.some((tag) => tag[0] === 'p' && tag[1] === agentPubkey)) return true;
+
+  const participants = new Set(roomParticipants);
+  participants.delete(agentPubkey);
+  return participants.size === 1 && participants.has(event.pubkey);
 }
 
 /** Create the relay-side child channel under the agent's own signing key. */
@@ -667,18 +677,30 @@ export class Body {
   }
 
   /**
-   * Poll a human-created channel for explicit messages addressed to this agent.
+   * Poll a human-created Room for messages this agent should answer.
    * Every accepted request opens exactly one agent-owned subchannel. Agent-authored
    * requests are rejected, preserving the human → agent direction of the loop.
    */
   async pollChannelRequests(tlcChannelId: string, boundRepo: BoundRepo): Promise<number> {
     const durableCursor = await this.durableState.cursor(tlcChannelId);
     const since = Math.max(this.requestCursors.get(tlcChannelId) ?? 0, durableCursor.createdAt);
+    const client = createBuzzClient({
+      baseUrl: this.config.relayBaseUrl,
+      ...(this.config.relayHost ? { host: this.config.relayHost } : {}),
+      identity: this.agentIdentity,
+    });
+    let roomParticipants: string[];
+    try {
+      roomParticipants = (await client.listMembers(tlcChannelId))
+        .map((member) => member.pubkey)
+        .filter((pubkey) => pubkey !== this.mergeWorkerIdentity?.publicKey);
+    } finally {
+      client.disconnect();
+    }
     const events = await queryEventBacklog(
       {
         kinds: [9],
         '#h': [tlcChannelId],
-        '#p': [this.agentIdentity.publicKey],
         since,
       },
       this.agentIdentity.publicKey,
@@ -693,7 +715,7 @@ export class Body {
         await this.durableState.delivered(tlcChannelId, event.id);
         continue;
       }
-      if (!isChannelTaskRequest(event, this.agentIdentity.publicKey)) {
+      if (!isChannelTaskRequest(event, this.agentIdentity.publicKey, roomParticipants)) {
         await this.durableState.delivered(tlcChannelId, event.id);
         continue;
       }

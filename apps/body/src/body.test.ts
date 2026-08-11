@@ -81,35 +81,55 @@ describe('agent identity boundary', () => {
   });
 });
 
-describe('channel → subchannel request trigger', () => {
+describe('Room conversation → subchannel request trigger', () => {
   const human = newIdentity('human');
   const agent = newIdentity('agent');
 
   function requestEvent(tags: string[][], author = human) {
-    return signEvent({
-      pubkey: author.publicKey,
-      created_at: 1,
-      kind: 9,
-      tags: [['h', 'parent-channel'], ...tags],
-      content: 'Implement the channel request',
-    }, author.secretKey);
+    return signEvent(
+      {
+        pubkey: author.publicKey,
+        created_at: 1,
+        kind: 9,
+        tags: [['h', 'parent-channel'], ...tags],
+        content: 'Implement the channel request',
+      },
+      author.secretKey,
+    );
   }
 
-  it('accepts only an explicit request addressed to the named agent', () => {
-    expect(isChannelTaskRequest(requestEvent([
-      ['p', agent.publicKey],
-      ['t', AGENT_REQUEST_TAG],
-    ]), agent.publicKey)).toBe(true);
+  it('accepts an @-addressed request without a private UI-only marker', () => {
+    expect(isChannelTaskRequest(requestEvent([['p', agent.publicKey]]), agent.publicKey)).toBe(
+      true,
+    );
 
-    expect(isChannelTaskRequest(requestEvent([['p', agent.publicKey]]), agent.publicKey)).toBe(false);
-    expect(isChannelTaskRequest(requestEvent([['t', AGENT_REQUEST_TAG]]), agent.publicKey)).toBe(false);
+    expect(isChannelTaskRequest(requestEvent([['t', AGENT_REQUEST_TAG]]), agent.publicKey)).toBe(
+      false,
+    );
+  });
+
+  it('answers every human message when the agent is the sole other party', () => {
+    expect(
+      isChannelTaskRequest(requestEvent([]), agent.publicKey, [human.publicKey, agent.publicKey]),
+    ).toBe(true);
+  });
+
+  it('requires @-addressing when multiple people or agents share the Room', () => {
+    const colleague = newIdentity('colleague');
+    const participants = [human.publicKey, colleague.publicKey, agent.publicKey];
+    expect(isChannelTaskRequest(requestEvent([]), agent.publicKey, participants)).toBe(false);
+    expect(
+      isChannelTaskRequest(requestEvent([['p', agent.publicKey]]), agent.publicKey, participants),
+    ).toBe(true);
   });
 
   it('never accepts the agent tasking itself', () => {
-    expect(isChannelTaskRequest(requestEvent([
-      ['p', agent.publicKey],
-      ['t', AGENT_REQUEST_TAG],
-    ], agent), agent.publicKey)).toBe(false);
+    expect(
+      isChannelTaskRequest(requestEvent([['p', agent.publicKey]], agent), agent.publicKey, [
+        human.publicKey,
+        agent.publicKey,
+      ]),
+    ).toBe(false);
   });
 });
 

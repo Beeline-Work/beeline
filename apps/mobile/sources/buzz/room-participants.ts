@@ -1,22 +1,42 @@
-type RoomMember = { pubkey: string };
-type RoomAgent = { pubkey: string };
+type MentionableAgent = { pubkey: string; name: string };
+type RoomRosterMember = { pubkey: string };
 
-export type RoomParticipantCounts = {
-  humans: number;
-  agents: number;
-};
-
-/** Split direct Room membership into people and registered Workspace agents. */
-export function countRoomParticipants(
-  members: RoomMember[],
-  workspaceAgents: RoomAgent[],
-): RoomParticipantCounts {
-  const agentPubkeys = new Set(workspaceAgents.map((agent) => agent.pubkey));
-  const agents = members.filter((member) => agentPubkeys.has(member.pubkey)).length;
-  return { humans: Math.max(0, members.length - agents), agents };
+/** Keep one Workspace roster, ordered as current Room members followed by addable members. */
+export function sectionRoomRoster<T extends RoomRosterMember>(
+  roster: T[],
+  roomMemberPubkeys: ReadonlySet<string>,
+): { inRoom: T[]; addable: T[] } {
+  const inRoom: T[] = [];
+  const addable: T[] = [];
+  for (const member of roster) {
+    (roomMemberPubkeys.has(member.pubkey) ? inRoom : addable).push(member);
+  }
+  return { inRoom, addable };
 }
 
-/** Person-facing Room header summary. Technical repository IDs belong in review details. */
-export function formatRoomParticipantCounts({ humans, agents }: RoomParticipantCounts): string {
-  return `${humans} ${humans === 1 ? 'human' : 'humans'} · ${agents} ${agents === 1 ? 'agent' : 'agents'}`;
+/** Slack-style participant copy: five names at most, with overflow folded into the fifth slot. */
+export function formatRoomParticipantList(names: string[]): string {
+  if (names.length <= 5) return names.join(', ');
+  return `${names.slice(0, 4).join(', ')} and ${names.length - 4} others`;
+}
+
+/** Compact header count; the unified participant bar carries the actual names. */
+export function formatRoomParticipantTotal(total: number): string {
+  return `${total} ${total === 1 ? 'participant' : 'participants'}`;
+}
+
+/** Resolve the first visible @Agent name into the member pubkey written to the Nostr p-tag. */
+export function mentionedAgentPubkey(text: string, agents: MentionableAgent[]): string | undefined {
+  const normalized = text.normalize('NFKC').toLocaleLowerCase();
+  const candidates = [...agents].sort((a, b) => b.name.length - a.name.length);
+  for (const agent of candidates) {
+    const mention = `@${agent.name.normalize('NFKC').toLocaleLowerCase()}`;
+    let offset = normalized.indexOf(mention);
+    while (offset >= 0) {
+      const trailing = normalized[offset + mention.length];
+      if (trailing === undefined || /[\s,.:;!?)}\]]/.test(trailing)) return agent.pubkey;
+      offset = normalized.indexOf(mention, offset + mention.length);
+    }
+  }
+  return undefined;
 }

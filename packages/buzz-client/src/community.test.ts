@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import { createChannel, type ChannelOpsContext } from './channel.js';
 import {
+  attachCommunityMemberToChannel,
   communityMembers,
   createCommunity,
   createInvite,
@@ -88,6 +89,58 @@ afterEach(() => {
 });
 
 describe('community model', () => {
+  it('places an existing Workspace person in a Room as a member and asserts projection', async () => {
+    const published: NostrEvent[] = [];
+    let joined = false;
+    const channelCreate = signed(owner, KIND_CREATE_GROUP, [
+      ['h', channelId],
+      ['name', 'general'],
+      [TAG_COMMUNITY, communityId],
+    ]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          const event = JSON.parse(String(init?.body)) as NostrEvent;
+          published.push(event);
+          if (event.kind === KIND_PUT_USER && tagValue(event, 'h') === channelId) joined = true;
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        const requestedId = ((filter['#h'] ?? filter['#d']) as string[] | undefined)?.[0];
+        if (kind === KIND_CREATE_GROUP) {
+          if (requestedId === channelId) return jsonResponse([channelCreate]);
+          if (requestedId === communityId) return jsonResponse([communityCreate()]);
+        }
+        if (kind === KIND_CHANNEL_ADMINS) {
+          return requestedId === communityId ? jsonResponse([adminState()]) : jsonResponse([]);
+        }
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          if (requestedId === communityId) return jsonResponse([memberState(true)]);
+          if (requestedId === channelId) {
+            return jsonResponse([
+              signed(owner, KIND_CHANNEL_MEMBERS, [
+                ['d', channelId],
+                ['p', owner.publicKey],
+                ...(joined ? [['p', invitee.publicKey]] : []),
+              ]),
+            ]);
+          }
+        }
+        return jsonResponse([]);
+      }),
+    );
+
+    await expect(
+      attachCommunityMemberToChannel(ctx(), channelId, invitee.publicKey, communityId),
+    ).resolves.toMatchObject({ joined: true });
+    expect(published).toHaveLength(1);
+    expect(tagValue(published[0]!, 'p')).toBe(invitee.publicKey);
+    expect(tagValue(published[0]!, 'role')).toBe('member');
+    expect(tagValue(published[0]!, TAG_COMMUNITY)).toBe(communityId);
+  });
+
   it('creates a self-linked NIP-29 community and an optionally-linked channel', async () => {
     const published: NostrEvent[] = [];
     let channelCreated = false;

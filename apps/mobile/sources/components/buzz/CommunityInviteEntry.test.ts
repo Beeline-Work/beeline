@@ -42,22 +42,53 @@ function render(element: React.ReactElement): ReactTestRenderer {
 }
 
 describe('community invite entry', () => {
-  it('exposes People invites and Agent linking from an active Workspace', () => {
+  it('exposes the native-share invite action from an active Workspace', () => {
     const onInvitePeople = vi.fn();
-    const onManageAgents = vi.fn();
     const renderer = render(
       React.createElement(CommunityInviteEntry, {
         community: { communityId: 'community-1', name: 'Night Shift' } as any,
         creatingInvite: false,
         onInvitePeople,
-        onManageAgents,
       }),
     );
 
     expect(renderer.root.findByProps({ testID: 'community-invite-entry' })).toBeDefined();
     act(() => renderer.root.findByProps({ testID: 'invite-people-action' }).props.onPress());
     expect(onInvitePeople).toHaveBeenCalledOnce();
+    expect(renderer.root.findAllByProps({ testID: 'manage-agents-action' })).toHaveLength(0);
+  });
+
+  it('shows both activation actions on a no-Rooms Workspace', () => {
+    const onInvitePeople = vi.fn();
+    const onManageAgents = vi.fn();
+    const renderer = render(
+      React.createElement(CommunityInviteEntry, {
+        community: { communityId: 'community-1', name: 'Night Shift' } as any,
+        creatingInvite: false,
+        showManageAgents: true,
+        onInvitePeople,
+        onManageAgents,
+      }),
+    );
+
     act(() => renderer.root.findByProps({ testID: 'manage-agents-action' }).props.onPress());
+    act(() => renderer.root.findByProps({ testID: 'invite-people-action' }).props.onPress());
     expect(onManageAgents).toHaveBeenCalledOnce();
+    expect(onInvitePeople).toHaveBeenCalledOnce();
+  });
+
+  it('renders no body action in a Personal Workspace', () => {
+    const renderer = render(
+      React.createElement(CommunityInviteEntry, {
+        community: { communityId: 'personal-1', name: 'Personal' } as any,
+        creatingInvite: false,
+        allowPeopleInvites: false,
+        showManageAgents: false,
+        onInvitePeople: vi.fn(),
+      }),
+    );
+
+    expect(renderer.root.findAllByProps({ testID: 'invite-people-action' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'community-invite-entry' })).toHaveLength(0);
   });
 });

@@ -24,7 +24,7 @@ async function relayReachable(): Promise<boolean> {
 
 const reachable = await relayReachable();
 
-describe.runIf(reachable)('live community + invite relay flow', () => {
+(reachable ? describe : describe.skip)('live community + invite relay flow', () => {
   beforeAll(() => {
     console.log(`[live-community] relay reachable at ${BASE_URL} — running suite`);
   });
@@ -98,15 +98,4 @@ describe.runIf(reachable)('live community + invite relay flow', () => {
         `message=${publishedMessage.id.slice(0, 12)}`,
     );
   }, 90_000);
-});
-
-describe.runIf(!reachable)('live community + invite relay flow (relay unreachable)', () => {
-  it('SKIPPED — relay not reachable; start with `npm run stack:up` from repo root', () => {
-    console.warn(
-      `\n[live-community] SKIPPED: relay at ${BASE_URL} is unreachable.\n` +
-        `                 Start it with: npm run stack:up   (repo root)\n` +
-        `                 Then re-run:   npm run test:live  (apps/gate)\n`,
-    );
-    expect(true).toBe(true);
-  });
 });

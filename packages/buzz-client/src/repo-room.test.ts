@@ -148,6 +148,11 @@ describe('repository Room identity', () => {
       mergeWorkerProvisioned: true,
     });
 
+    const create = published.find(
+      (event) => event.kind === KIND_CREATE_GROUP && tagValue(event, 'h') === channelId,
+    );
+    expect(create?.tags).toContainEqual([TAG_COMMUNITY, communityId]);
+
     const humanMutations = published.filter(
       (event) => event.kind === KIND_PUT_USER && tagValue(event, 'p') === human.publicKey,
     );

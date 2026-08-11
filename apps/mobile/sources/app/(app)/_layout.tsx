@@ -104,6 +104,13 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="buzz/corners/[roomId]"
+                options={{
+                    headerShown: false,
+                    statusBarStyle: 'light',
+                }}
+            />
+            <Stack.Screen
                 name="join/[token]"
                 options={{
                     headerShown: false,

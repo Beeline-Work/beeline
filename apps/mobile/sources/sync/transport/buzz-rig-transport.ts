@@ -42,6 +42,7 @@ import {
   type MergeTarget,
 } from '@beeline/buzz-client';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { cornerName, type CornerSummary } from '@/buzz/corners';
 import { toRigEvent } from './buzz-event-projection';
 
 export class BuzzRigTransport implements RigTransport {
@@ -353,7 +354,7 @@ export class BuzzRigTransport implements RigTransport {
       .map((event) => parseChangeReviewManifest(event.content))
       .filter((manifest) => manifest !== null);
     if (manifests.length === 0) {
-      throw new Error('Changed-file metadata is unavailable for this change');
+      throw new Error('File-diff metadata is unavailable for this corner');
     }
     const files = manifests.flatMap((manifest) => manifest.files);
     return [...new Map(files.map((file) => [file.path, file])).values()];
@@ -455,21 +456,48 @@ export class BuzzRigTransport implements RigTransport {
     return client.listSubchannels(parentChannelId);
   }
 
-  /** Lifecycle projection used by both the channel discussion and channel list. */
-  async listSubchannelLifecycle(parentChannelId: string): Promise<Array<{
-    id: string;
-    openerPubkey: string;
-    archived: boolean;
-  }>> {
+  /** Person-facing corner projection used by navigation and the full browse view. */
+  async listSubchannelLifecycle(parentChannelId: string): Promise<CornerSummary[]> {
     const client = await this.getClient();
     const ids = await client.listSubchannels(parentChannelId);
+    const parentEvents = await client.sessionEventsBackfill(parentChannelId, { limit: 500 });
+    const mergedIds = new Set(
+      parentEvents
+        .filter((event) =>
+          event.event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-summary'),
+        )
+        .map((event) => tagValue(event.event, 'subchannel'))
+        .filter((id): id is string => Boolean(id)),
+    );
+
     return Promise.all(ids.map(async (id) => {
-      const creates = await client.query([{ kinds: [9007], '#h': [id], limit: 5 }]);
+      const [creates, metadata, events] = await Promise.all([
+        client.query([{ kinds: [9007], '#h': [id], limit: 5 }]),
+        client.getChannelMetadata(id),
+        client.sessionEventsBackfill(id, { limit: 50 }),
+      ]);
       const create = [...creates].sort((a, b) => a.created_at - b.created_at)[0];
+      const statuses = events
+        .map((event) => tagValue(event.event, 'status'))
+        .filter((status): status is string => Boolean(status));
+      const archived = Boolean(metadata?.archived) || statuses.includes('archived');
+      const reviewReady =
+        statuses.includes('ready') ||
+        events.some((event) =>
+          event.event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+        );
       return {
         id,
+        name: cornerName(create ? tagValue(create, 'name') : undefined, id),
         openerPubkey: create?.pubkey ?? '',
-        archived: await this.isChannelArchived(id),
+        status: mergedIds.has(id)
+          ? 'merged'
+          : archived
+            ? 'archived'
+            : reviewReady
+              ? 'open'
+              : 'live',
+        createdAt: create?.created_at,
       };
     }));
   }

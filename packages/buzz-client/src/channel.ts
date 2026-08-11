@@ -7,6 +7,7 @@
  */
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import {
+  KIND_CHANNEL_ADMINS,
   KIND_CHANNEL_MEMBERS,
   KIND_CHANNEL_METADATA,
   KIND_CREATE_GROUP,
@@ -219,13 +220,17 @@ export async function listChannelsForPubkey(
 ): Promise<{ channelId: string; event: NostrEvent }[]> {
   const events = await queryEvents(
     ctx.http,
-    [{ kinds: [KIND_CHANNEL_MEMBERS], '#p': [pubkey], limit }],
+    [{ kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS], '#p': [pubkey], limit }],
     ctx.identity.publicKey,
   );
   const out: { channelId: string; event: NostrEvent }[] = [];
+  const seen = new Set<string>();
   for (const ev of events) {
     const channelId = tagValue(ev, 'd') ?? tagValue(ev, 'h');
-    if (channelId) out.push({ channelId, event: ev });
+    if (channelId && !seen.has(channelId)) {
+      seen.add(channelId);
+      out.push({ channelId, event: ev });
+    }
   }
   return out;
 }

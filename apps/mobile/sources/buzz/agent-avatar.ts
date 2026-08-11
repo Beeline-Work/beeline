@@ -5,11 +5,11 @@ export interface AgentAvatarGeometry {
   bars: [number, number, number];
 }
 
-/** Stable geometry derived only from the cryptographic agent pubkey. */
-export function agentAvatarGeometry(pubkey: string): AgentAvatarGeometry {
+/** Stable geometry derived from display-only soul seed or cryptographic pubkey. */
+export function agentAvatarGeometry(seed: string): AgentAvatarGeometry {
   let hash = 2166136261;
-  for (let index = 0; index < pubkey.length; index += 1) {
-    hash ^= pubkey.charCodeAt(index);
+  for (let index = 0; index < seed.length; index += 1) {
+    hash ^= seed.charCodeAt(index);
     hash = Math.imul(hash, 16777619) >>> 0;
   }
   const byte = (shift: number) => (hash >>> shift) & 0xff;

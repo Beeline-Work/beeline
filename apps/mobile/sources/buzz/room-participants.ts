@@ -15,3 +15,8 @@ export function countRoomParticipants(
   const agents = members.filter((member) => agentPubkeys.has(member.pubkey)).length;
   return { humans: Math.max(0, members.length - agents), agents };
 }
+
+/** Person-facing Room header summary. Technical repository IDs belong in review details. */
+export function formatRoomParticipantCounts({ humans, agents }: RoomParticipantCounts): string {
+  return `${humans} ${humans === 1 ? 'human' : 'humans'} · ${agents} ${agents === 1 ? 'agent' : 'agents'}`;
+}

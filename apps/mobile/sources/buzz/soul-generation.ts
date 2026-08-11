@@ -1,4 +1,5 @@
 import { WORKSPACE_LABEL } from './vocabulary';
+import { fallbackAgentName } from './agent-display';
 
 export interface GeneratedSoulCopy {
   name: string;
@@ -30,7 +31,7 @@ export async function requestGeneratedSoul(
 
 export function defaultSoul(pubkey: string): GeneratedSoulCopy {
   return {
-    name: `Agent ${pubkey.slice(0, 6).toUpperCase()}`,
+    name: fallbackAgentName(pubkey),
     personality: `Steady, practical, and ready to help this ${WORKSPACE_LABEL}.`,
   };
 }

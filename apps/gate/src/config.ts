@@ -1,19 +1,25 @@
-/**
- * Connection config for the Phase-0 merge-gate proof.
- *
- * The relay is the isolated stack in `relay-stack/` (Buzz `ghcr.io/block/buzz:main`).
- * `HOST` is the authority the relay resolved its deployment community under
- * (see the "Deployment community ensured" startup log). Every request must
- * carry this exact Host header, and every NIP-98 `u` tag must use it verbatim,
- * or the relay's host-binding / `u`-match fails closed before it checks the key.
- */
-export const HOST = process.env.BUZZY_RELAY_HOST ?? '127.0.0.1:3010';
+import { DEFAULT_RELAY_HOST, DEFAULT_RELAY_SCHEME } from '@beeline/buzz-client';
 
-/** HTTP scheme. The relay derives NIP-98 `u`-scheme from its `ws://` relay_url => http. */
-export const SCHEME = process.env.BUZZY_RELAY_SCHEME ?? 'http';
+export interface RelayConfig {
+  host: string;
+  scheme: string;
+  baseUrl: string;
+}
+
+/** Resolve the relay authority while retaining explicit local/custom overrides. */
+export function resolveRelayConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
+  const host = env.BUZZY_RELAY_HOST ?? DEFAULT_RELAY_HOST;
+  const scheme = env.BUZZY_RELAY_SCHEME ?? DEFAULT_RELAY_SCHEME;
+  return { host, scheme, baseUrl: `${scheme}://${host}` };
+}
+
+const relay = resolveRelayConfig();
+
+export const HOST = relay.host;
+export const SCHEME = relay.scheme;
 
 /** Base URL for the relay HTTP bridge (`/events`, `/query`) and git transport. */
-export const BASE_URL = `${SCHEME}://${HOST}`;
+export const BASE_URL = relay.baseUrl;
 
 /** Repo-root git URL for `{owner}/{repo}` (no service suffix). */
 export function gitRepoUrl(ownerHex: string, repo: string): string {

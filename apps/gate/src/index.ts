@@ -21,7 +21,8 @@ export {
 
 export { publishEvent, queryEvents, type SubmitResult } from './relay.js';
 
-export { HOST, SCHEME, BASE_URL, gitRepoUrl } from './config.js';
+export { HOST, SCHEME, BASE_URL, resolveRelayConfig, gitRepoUrl } from './config.js';
+export type { RelayConfig } from './config.js';
 
 export { git, gitAuthed, lsRemoteRef, type GitResult } from './git.js';
 

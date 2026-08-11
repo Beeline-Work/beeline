@@ -59,8 +59,8 @@ by projecting agent activity into the relay channel.
 | ---------------------------- | -------- | ------------------ | ------------------------------------ |
 | `BUZZ_AGENT_BIN`             | No       | auto-detect        | Path to `buzz-agent` binary          |
 | `BUZZ_DEV_MCP_BIN`           | No       | auto-detect        | Path to `buzz-dev-mcp` binary        |
-| `BUZZY_RELAY_HOST`           | No       | `127.0.0.1:3010`   | Relay HTTP/WS host                   |
-| `BUZZY_RELAY_SCHEME`         | No       | `http`             | Relay scheme                         |
+| `BUZZY_RELAY_HOST`           | No       | `relay.buzzrouter.com` | Relay HTTP/WS host                   |
+| `BUZZY_RELAY_SCHEME`         | No       | `https`            | Relay scheme                         |
 | `BUZZY_BODY_WORKSPACE`       | No       | `./body-workspace` | Agent workspace root                 |
 | `BUZZY_BODY_LLM_FILE`        | No       | —                  | Path to LLM credentials env file     |
 | `BUZZY_BODY_MAX_SESSIONS`    | No       | `4`                | Maximum live ACP processes           |

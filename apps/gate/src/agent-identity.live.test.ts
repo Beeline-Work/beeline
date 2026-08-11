@@ -111,7 +111,7 @@ const reachable = await relayReachable();
       branch: 'refs/heads/main',
       tip: featureTip,
     };
-    await publishEvent(buildApproval(agent, channelId, target));
+    await publishEvent(buildApproval(agent, channelId, target), agent);
 
     const refused = await attemptMerge({
       worker,
@@ -127,7 +127,7 @@ const reachable = await relayReachable();
     expect(lsRemoteRef(seedDir, worker, owner, repo, 'refs/heads/main')).toBe(mainBefore);
     console.log(`[agent-identity] agent-approval REFUSED — ${refused.reason}`);
 
-    await publishEvent(buildApproval(human, channelId, target));
+    await publishEvent(buildApproval(human, channelId, target), human);
     const accepted = await attemptMerge({
       worker,
       trustedReviewer: human.publicKey,

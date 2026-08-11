@@ -230,7 +230,7 @@ describe('E2E live flow', () => {
       },
       bodyIdentity.secretKey,
     );
-    await publishEvent(linkEvent);
+    await publishEvent(linkEvent, bodyIdentity);
     e2eLog('control message posted to TLC');
 
     // 10. Prompt the agent to create a file and commit it.
@@ -274,7 +274,7 @@ describe('E2E live flow', () => {
     try {
       const queried = await queryEvents(
         [{ kinds: [9], '#t': ['agent-activity'], limit: 200 }],
-        bodyIdentity.publicKey,
+        bodyIdentity,
       );
       e2eLog('agent-activity events found:', queried.length);
       for (const evt of queried) {
@@ -368,7 +368,7 @@ describe('E2E live flow', () => {
             limit: 100,
           },
         ],
-        bodyPubkey,
+        ctx.body!.identity,
       );
 
       e2eLog('member events for subchannel:', memberEvents.length);
@@ -394,7 +394,7 @@ describe('E2E live flow', () => {
             limit: 1,
           },
         ],
-        bodyPubkey,
+        ctx.body!.identity,
       );
 
       e2eLog('subchannel channel events:', channelEvents.length);

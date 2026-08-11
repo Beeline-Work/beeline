@@ -26,6 +26,7 @@ import { createChannel, setMemberRole, announceRepo } from './buzz.js';
 import { git, gitAuthed, lsRemoteRef } from './git.js';
 import { gitRepoUrl, BASE_URL, HOST } from './config.js';
 import { checkAgentNotPushAllowed } from './provisioning.js';
+import { createRelayClient } from './relay.js';
 
 const RELAY_PROBE_MS = 2500;
 
@@ -228,6 +229,7 @@ const reachable = await relayReachable();
       ownerHex: p.owner,
       repo: p.repo,
       agentPubkey: p.agent.publicKey,
+      relay: createRelayClient(p.agent),
     });
     expect(result.ok, result.reason).toBe(true);
     expect(result.agentCanPushProtected).toBe(false);
@@ -244,6 +246,7 @@ const reachable = await relayReachable();
       ownerHex: p.owner,
       repo: p.repo,
       agentPubkey: p.agent.publicKey,
+      relay: createRelayClient(p.agent),
     });
     expect(result.ok, `expected FAIL on misprovisioned admin agent, got: ${result.reason}`).toBe(
       false,

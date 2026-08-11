@@ -21,6 +21,7 @@ import { Body } from './body.js';
 import { WorkspaceSupervisor } from './supervisor.js';
 import {
   assertAgentNotPushAllowed,
+  createRelayClient,
   createChannel,
   newIdentity,
   setMemberRole,
@@ -34,6 +35,7 @@ import {
   readRuntimeRecord,
   removeAgentRuntime,
   runtimeDaemonPid,
+  runtimeIdentity,
   type AgentRuntimeRecord,
 } from './runtime.js';
 
@@ -61,6 +63,11 @@ All other config via env vars (see config.ts).
 }
 
 async function assertRuntimeSafe(runtime: AgentRuntimeRecord): Promise<void> {
+  const agent = runtimeIdentity(runtime.agent);
+  const relay = createRelayClient(agent, {
+    baseUrl: runtime.relayBaseUrl,
+    host: new URL(runtime.relayBaseUrl).host,
+  });
   for (const room of runtime.rooms) {
     if (!room.repo.relayRepo) continue;
     await assertAgentNotPushAllowed({
@@ -68,6 +75,7 @@ async function assertRuntimeSafe(runtime: AgentRuntimeRecord): Promise<void> {
       repo: room.repo.relayRepo.repo,
       agentPubkey: runtime.agent.publicKey,
       protectedRef: `refs/heads/${room.repo.targetBranch}`,
+      relay,
     });
   }
 }
@@ -220,6 +228,10 @@ async function main(): Promise<void> {
             repo: repo.relayRepo.repo,
             agentPubkey: agentIdentity.publicKey,
             protectedRef: `refs/heads/${repo.targetBranch}`,
+            relay: createRelayClient(agentIdentity, {
+              baseUrl: relayBaseUrl,
+              host: new URL(relayBaseUrl).host,
+            }),
           });
         },
       },

@@ -292,7 +292,7 @@ describe('multi-member steering', () => {
           },
           ctx.member1.secretKey,
         );
-        await publishEvent(steerEvent);
+        await publishEvent(steerEvent, ctx.member1!);
         log('mid-run steer posted:', steerEvent.id);
         await sleep(2_000);
 
@@ -332,7 +332,7 @@ describe('multi-member steering', () => {
         },
         ctx.member1.secretKey,
       );
-      await publishEvent(event1);
+      await publishEvent(event1, ctx.member1!);
       log('member1 posted:', event1.id);
       await sleep(2000);
 
@@ -349,7 +349,7 @@ describe('multi-member steering', () => {
       // Query subchannel for agent-activity events.
       const activityEvents = await queryEvents(
         [{ kinds: [9], '#t': ['agent-activity'], '#h': [ctx.subchannelId], limit: 100 }],
-        ctx.body!.identity.publicKey,
+        ctx.body!.identity,
       );
       log('activity events total:', activityEvents.length);
       expect(activityEvents.length).toBeGreaterThan(0);
@@ -357,7 +357,7 @@ describe('multi-member steering', () => {
       // Check that member1's marker is referenced in activity or subchannel events.
       const allSubchannelEvents = await queryEvents(
         [{ kinds: [9], '#h': [ctx.subchannelId], limit: 200 }],
-        ctx.body!.identity.publicKey,
+        ctx.body!.identity,
       );
       const member1Events = allSubchannelEvents.filter((e) => e.pubkey === ctx.member1!.publicKey);
       expect(member1Events.length).toBeGreaterThanOrEqual(1);
@@ -385,7 +385,7 @@ describe('multi-member steering', () => {
         },
         ctx.member2.secretKey,
       );
-      await publishEvent(event2);
+      await publishEvent(event2, ctx.member2!);
       log('member2 posted:', event2.id);
       await sleep(2000);
 
@@ -398,11 +398,11 @@ describe('multi-member steering', () => {
       // Query agent-activity events as both members.
       const eventsAsMember1 = await queryEvents(
         [{ kinds: [9], '#t': ['agent-activity'], '#h': [ctx.subchannelId], limit: 100 }],
-        ctx.member1!.publicKey,
+        ctx.member1!,
       );
       const eventsAsMember2 = await queryEvents(
         [{ kinds: [9], '#t': ['agent-activity'], '#h': [ctx.subchannelId], limit: 100 }],
-        ctx.member2!.publicKey,
+        ctx.member2!,
       );
 
       log('activity events (m1 view):', eventsAsMember1.length);
@@ -422,7 +422,7 @@ describe('multi-member steering', () => {
       // (c) Member2's marker should appear in the subchannel history.
       const allSubchannelEvents = await queryEvents(
         [{ kinds: [9], '#h': [ctx.subchannelId], limit: 200 }],
-        ctx.body!.identity.publicKey,
+        ctx.body!.identity,
       );
       const member2Events = allSubchannelEvents.filter((e) => e.pubkey === ctx.member2!.publicKey);
       expect(member2Events.length).toBeGreaterThanOrEqual(1);

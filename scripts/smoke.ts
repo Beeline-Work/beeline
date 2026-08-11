@@ -48,12 +48,12 @@ async function main() {
   // Post an approval as reviewer, read it back, verify binding.
   const target = { repo: `${worker.publicKey}/demo`, branch: 'refs/heads/main', tip: 'a'.repeat(40) };
   const approval = buildApproval(reviewer, channelId, target);
-  const pub = await publishEvent(approval);
+  const pub = await publishEvent(approval, reviewer);
   console.log('approval published, accepted =', pub.accepted);
 
   const back = await queryEvents(
     [{ kinds: [KIND_STREAM_MESSAGE], authors: [reviewer.publicKey], '#h': [channelId], '#t': [APPROVAL_MARKER] }],
-    worker.publicKey,
+    worker,
   );
   console.log('approvals read back:', back.length);
   const ok = back.some((ev) => verifyApproval(ev, reviewer.publicKey, target));

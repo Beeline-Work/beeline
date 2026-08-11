@@ -41,6 +41,7 @@ import {
   CHANGE_REVIEW_MANIFEST_TAG,
   CHANGE_REVIEW_VERSION,
   listAgents,
+  listMembers,
   tagValue,
   waitUntilMember,
   type ChannelOpsContext,
@@ -316,7 +317,8 @@ export class Body {
     communityId?: string;
   }): Promise<AgentSession> {
     let client = new AcpClient({
-      agentBinary: this.config.agentBinary,
+      agentCommand: this.config.agentCommand ?? this.config.agentBinary,
+      agentArgs: this.config.agentArgs,
       agentEnv: this.config.agentEnv,
       autoApprovePermissions: input.autoApprovePermissions,
     });
@@ -334,7 +336,8 @@ export class Body {
       activate: async () => {
         if (client.isAlive && session.sessionId) return session.sessionId;
         client = new AcpClient({
-          agentBinary: this.config.agentBinary,
+          agentCommand: this.config.agentCommand ?? this.config.agentBinary,
+          agentArgs: this.config.agentArgs,
           agentEnv: this.config.agentEnv,
           autoApprovePermissions: input.autoApprovePermissions,
         });
@@ -358,6 +361,7 @@ export class Body {
           cwd: input.cwd,
           mcpServers: input.mcpServers,
           systemPrompt: `${appendPersonaSessionInstructions(input.systemPrompt, profile)}${restored}`,
+          mode: input.mode,
         });
         session.sessionId = created.sessionId;
         session.unsubscribeActivity?.();
@@ -526,7 +530,9 @@ export class Body {
         'You do not have shell access or file edit tools.',
         'When the user asks you to write code, explain that you need an edit session.',
       ].join('\n'),
-      autoApprovePermissions: this.config.autoApprovePermissions,
+      // Read-only mode must reject native-agent permission escalation as well
+      // as omitting write MCP servers. Edit corners remain auto-approved below.
+      autoApprovePermissions: false,
       ...(communityId ? { communityId } : {}),
     });
 
@@ -1344,35 +1350,15 @@ export class Body {
   /** Mirror TLC membership/roles into the agent-owned subchannel. */
   private async mirrorMembers(sourceChannelId: string, targetChannelId: string): Promise<void> {
     try {
-      const [creates, memberEvents] = await Promise.all([
-        this.agentRelay.queryEvents([{ kinds: [9007], '#h': [sourceChannelId], limit: 5 }]),
-        this.agentRelay.queryEvents(
-          [
-            {
-              kinds: [9000],
-              '#h': [sourceChannelId],
-              limit: 100,
-            },
-          ],
-        ),
-      ]);
-
-      const roles = new Map<string, 'owner' | 'admin' | 'member'>();
-      const creator = creates.sort((a, b) => a.created_at - b.created_at)[0]?.pubkey;
-      if (creator) roles.set(creator, 'owner');
-      for (const evt of [...memberEvents].sort((a, b) => b.created_at - a.created_at)) {
-        const pTag = evt.tags.find((t: string[]) => t[0] === 'p');
-        if (!pTag?.[1]) continue;
-        const pubkey = pTag[1];
-        if (pubkey === this.agentIdentity.publicKey || roles.has(pubkey)) continue;
-
-        const roleTag = evt.tags.find((t: string[]) => t[0] === 'role');
-        const role = (roleTag?.[1] as 'owner' | 'admin' | 'member') ?? 'member';
-        roles.set(pubkey, role);
-      }
-      for (const [pubkey, role] of roles) {
-        if (pubkey === this.agentIdentity.publicKey) continue;
-        await setMemberRole(this.agentIdentity, targetChannelId, pubkey, role);
+      // Current 39001/39002 projections are authoritative. Replaying kind:9000
+      // history cannot order same-second member → admin transitions and could
+      // silently demote the human reviewer inside the corner.
+      const members = await listMembers(this.agentClientContext(), sourceChannelId);
+      for (const member of members) {
+        if (member.pubkey === this.agentIdentity.publicKey) continue;
+        const role =
+          member.role === 'owner' || member.role === 'admin' ? member.role : 'member';
+        await setMemberRole(this.agentIdentity, targetChannelId, member.pubkey, role);
       }
     } catch (err) {
       console.error('[body] mirrorMembers error:', err);

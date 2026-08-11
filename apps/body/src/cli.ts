@@ -17,6 +17,11 @@
 import { dirname, resolve } from 'node:path';
 import { unlink } from 'node:fs/promises';
 import { loadBodyConfig, BASE_URL } from './config.js';
+import {
+  formatAgentCommand,
+  resolveAgentCommand,
+  type AgentKind,
+} from './agent-command.js';
 import { Body } from './body.js';
 import { WorkspaceSupervisor } from './supervisor.js';
 import {
@@ -35,6 +40,7 @@ import {
   readRuntimeRecord,
   removeAgentRuntime,
   runtimeDaemonPid,
+  runtimeAgentCommand,
   runtimeIdentity,
   type AgentRuntimeRecord,
 } from './runtime.js';
@@ -49,7 +55,7 @@ Usage:
   beeline open <channel-uuid> <owner> <repo>  Open subchannel + edit session
   beeline archive <subchannel-uuid>         Archive subchannel
   beeline create-and-provision <name>       Create a new TLC + provision agent
-  beeline pair <BUZZ-XXXX-XXXX>             Pair this repo and start its durable Room agent
+  beeline pair <BUZZ-XXXX-XXXX> [options]   Pair this repo and start its durable Room agent
   beeline start [agent-pubkey]              Restart a paired repo's durable agent
 
 Options:
@@ -60,6 +66,48 @@ Options:
 All other config via env vars (see config.ts).
 `);
   process.exit(1);
+}
+
+function pairUsage(): void {
+  console.log(`
+Pair this repository and start its durable Room agent.
+
+Usage:
+  beeline pair <BUZZ-XXXX-XXXX> [--agent <codex|claude|goose|pi|reference|custom>]
+               [--agent-command '<command> [args...]']
+
+Agent choices:
+  reference  Bundled buzz-agent (default; preserves existing behavior)
+  codex      Operator's Codex through the codex-acp adapter
+  claude     Operator's Claude Code through a Claude ACP adapter
+  goose      Operator's Goose through its native 'goose acp' server
+  pi         Operator's Pi through the pi-acp adapter
+  custom     Explicit ACP command supplied with --agent-command
+
+Examples:
+  beeline pair BUZZ-XXXX-XXXX --agent codex
+  beeline pair BUZZ-XXXX-XXXX --agent claude
+  beeline pair BUZZ-XXXX-XXXX --agent goose
+  beeline pair BUZZ-XXXX-XXXX --agent pi
+  beeline pair BUZZ-XXXX-XXXX --agent custom --agent-command 'my-agent serve --acp'
+`);
+}
+
+function parsePairOptions(args: string[]): { kind: AgentKind; customCommand?: string } {
+  let kind: AgentKind = 'reference';
+  let customCommand: string | undefined;
+  for (let index = 2; index < args.length; index += 1) {
+    const flag = args[index];
+    if (flag !== '--agent' && flag !== '--agent-command') {
+      throw new Error(`unknown beeline pair option: ${flag}`);
+    }
+    const value = args[index + 1];
+    if (!value) throw new Error(`${flag} requires a value`);
+    if (flag === '--agent') kind = value as AgentKind;
+    else customCommand = value;
+    index += 1;
+  }
+  return { kind, ...(customCommand !== undefined ? { customCommand } : {}) };
 }
 
 async function assertRuntimeSafe(runtime: AgentRuntimeRecord): Promise<void> {
@@ -96,12 +144,13 @@ async function waitToRestart(signal: AbortSignal): Promise<void> {
 
 async function runStoredDaemon(configPath: string): Promise<void> {
   const runtime = await readRuntimeRecord(configPath);
+  const agent = runtimeAgentCommand(runtime);
   // This assertion deliberately sits outside the retry loop: unsafe branch
   // policy is a fatal startup error, not a transient Room-loop failure.
   await assertRuntimeSafe(runtime);
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    BUZZ_AGENT_BIN: runtime.agentBinary,
+    BUZZ_AGENT_BIN: agent.command,
     BUZZ_DEV_MCP_BIN: runtime.mcpBinary,
     BUZZY_RELAY_URL: runtime.relayBaseUrl,
     ...(runtime.relayHost ? { BUZZY_RELAY_HOST: runtime.relayHost } : {}),
@@ -110,6 +159,7 @@ async function runStoredDaemon(configPath: string): Promise<void> {
     workspaceRoot: resolve(dirname(configPath), 'workspace'),
     llmEnvFile: runtime.llmEnvFile,
     env,
+    agent,
   });
   const controller = new AbortController();
   const stop = () => controller.abort();
@@ -118,6 +168,7 @@ async function runStoredDaemon(configPath: string): Promise<void> {
   console.log(
     `[buzz] Workspace supervisor ${runtime.communityId} starting with ${runtime.rooms.length} Room binding(s)`,
   );
+  console.log(`[body] agent binary: ${formatAgentCommand(agent)}`);
 
   try {
     while (!controller.signal.aborted) {
@@ -172,20 +223,34 @@ async function main(): Promise<void> {
       );
     }
     const runtime = await readRuntimeRecord(matching[0]!);
+    const selectedAgent = runtimeAgentCommand(runtime);
     await assertRuntimeSafe(runtime);
     const existingPid = await runtimeDaemonPid(matching[0]!);
     if (existingPid) {
+      console.log(`[body] agent binary: ${formatAgentCommand(selectedAgent)}`);
       console.log(`[buzz] agent daemon is already running (pid ${existingPid})`);
       return;
     }
     const pid = await launchRuntimeDaemon(matching[0]!);
+    console.log(`[body] agent binary: ${formatAgentCommand(selectedAgent)}`);
     console.log(`[buzz] agent daemon started (pid ${pid})`);
     return;
   }
 
   if (command === 'pair') {
+    if (args.length === 2 && (args[1] === '--help' || args[1] === '-h')) {
+      pairUsage();
+      return;
+    }
     const code = args[1];
     if (!code) usage();
+    const pairOptions = parsePairOptions(args);
+    const selectedAgent = resolveAgentCommand({
+      kind: pairOptions.kind,
+      customCommand: pairOptions.customCommand,
+      env: process.env,
+      cwd: process.cwd(),
+    });
     const agentIdentity = identityFromKey(agentPrivateKey, 'buzzy-agent');
     const bodyIdentity = identityFromKey(process.env.BUZZ_BODY_KEY, 'buzzy-body');
     const mergeWorkerIdentity = newIdentity('buzzy-merge-worker');
@@ -198,7 +263,12 @@ async function main(): Promise<void> {
       identity: agentIdentity,
     });
     // Fail before consuming the one-shot code if the local agent runtime is absent.
-    const localConfig = loadBodyConfig({ workspaceRoot: process.cwd(), llmEnvFile });
+    const localConfig = loadBodyConfig({
+      workspaceRoot: process.cwd(),
+      llmEnvFile,
+      agent: selectedAgent,
+    });
+    console.log(`[body] agent binary: ${formatAgentCommand(selectedAgent)}`);
     const result = await pairRepositoryAgent(
       {
         code: code!,
@@ -210,6 +280,9 @@ async function main(): Promise<void> {
         bodyIdentity,
         mergeWorkerIdentity,
         agentBinary: localConfig.agentBinary,
+        agentKind: selectedAgent.kind,
+        agentCommand: selectedAgent.command,
+        agentArgs: selectedAgent.args,
         mcpBinary: localConfig.mcpBinary,
       },
       {
@@ -263,7 +336,13 @@ async function main(): Promise<void> {
   console.log(`[body] identity pubkey: ${body.identity.publicKey}`);
   console.log(`[body] agent pubkey: ${body.agent.publicKey}`);
   console.log(`[body] workspace root: ${config.workspaceRoot}`);
-  console.log(`[body] agent binary: ${config.agentBinary}`);
+  console.log(
+    `[body] agent binary: ${formatAgentCommand({
+      kind: config.agentKind ?? 'reference',
+      command: config.agentCommand ?? config.agentBinary,
+      args: config.agentArgs ?? [],
+    })}`,
+  );
   console.log(`[body] mcp binary: ${config.mcpBinary}`);
   console.log(`[body] relay: ${config.relayWsUrl}`);
 

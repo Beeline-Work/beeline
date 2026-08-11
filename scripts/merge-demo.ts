@@ -229,6 +229,7 @@ async function main(): Promise<void> {
   const mergeOutcome = await attemptMerge({
     worker: owner,
     trustedReviewer: reviewer.publicKey,
+    trustedReviewerCustody: 'device',
     repo,
     channelId,
     targetBranch: 'main',
@@ -342,6 +343,7 @@ async function main(): Promise<void> {
   const negOutcome = await attemptMerge({
     worker: owner,
     trustedReviewer: reviewer.publicKey,
+    trustedReviewerCustody: 'device',
     repo,
     channelId,
     targetBranch: 'main',

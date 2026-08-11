@@ -2,19 +2,26 @@ import { RoundButton } from "@/components/RoundButton";
 import { Text, View } from "react-native";
 import * as React from 'react';
 import { router } from "expo-router";
+import * as Linking from 'expo-linking';
 import { StyleSheet } from "react-native-unistyles";
 import { Typography } from "@/constants/Typography";
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { parseCommunityInviteToken } from '@/buzz/community-invite';
 
 export default function Home() {
     const [buzzCheckDone, setBuzzCheckDone] = React.useState(false);
     const [hasBuzzIdentity, setHasBuzzIdentity] = React.useState(false);
+    const [initialInviteToken, setInitialInviteToken] = React.useState<string | null>(null);
     const [buzzStorageError, setBuzzStorageError] = React.useState<string | null>(null);
 
     React.useEffect(() => {
-        void loadBuzzIdentity()
-            .then((identity) => {
+        void Promise.all([
+            loadBuzzIdentity(),
+            Linking.getInitialURL().catch(() => null),
+        ])
+            .then(([identity, initialUrl]) => {
                 setHasBuzzIdentity(identity !== null);
+                setInitialInviteToken(parseCommunityInviteToken(initialUrl ?? undefined));
                 setBuzzCheckDone(true);
             })
             .catch((err: unknown) => {
@@ -26,12 +33,17 @@ export default function Home() {
     React.useEffect(() => {
         if (!buzzCheckDone || buzzStorageError) return;
 
-        if (hasBuzzIdentity) {
+        if (initialInviteToken) {
+            router.replace({
+                pathname: '/join/[token]',
+                params: { token: initialInviteToken },
+            });
+        } else if (hasBuzzIdentity) {
             router.replace('/buzz/channels');
         } else {
             router.replace('/buzz/onboarding');
         }
-    }, [buzzCheckDone, buzzStorageError, hasBuzzIdentity]);
+    }, [buzzCheckDone, buzzStorageError, hasBuzzIdentity, initialInviteToken]);
 
     // Wait for the async buzz check before rendering.
     if (!buzzCheckDone) {

@@ -40,6 +40,7 @@ export function normalizeHost(value: string): string {
 }
 
 export interface BindExpectation {
+  protocol: number;
   ticket: string;
   challenge: string;
   issuer: string;
@@ -100,12 +101,15 @@ export function verifyBindEvent(
 
   const tags: ReadonlyArray<readonly [string, string]> = [
     ['t', OIDC_BIND_MARKER],
+    ['protocol', String(expected.protocol)],
     ['ticket', expected.ticket],
     ['challenge', expected.challenge],
     ['provider', expected.issuer],
     ['audience', expected.audience],
     ['subject', expected.subject],
     ['community', expected.community],
+    ['issued_at', String(Math.floor(expected.issuedAt.getTime() / 1_000))],
+    ['expires_at', String(Math.floor(expected.expiresAt.getTime() / 1_000))],
   ];
   const allowedTags = new Set(tags.map(([name]) => name));
   if (event.tags.length !== tags.length || event.tags.some((tag) => !allowedTags.has(tag[0]!))) {

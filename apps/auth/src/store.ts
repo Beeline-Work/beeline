@@ -58,10 +58,14 @@ const MIGRATIONS = [
     pkce_verifier TEXT NOT NULL,
     browser_session_hash CHAR(64) NOT NULL,
     redirect_uri TEXT NOT NULL,
+    app_redirect_uri TEXT,
+    app_state TEXT,
     created_at TIMESTAMPTZ NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
     consumed_at TIMESTAMPTZ
   )`,
+  `ALTER TABLE beeline_oidc_flows ADD COLUMN IF NOT EXISTS app_redirect_uri TEXT`,
+  `ALTER TABLE beeline_oidc_flows ADD COLUMN IF NOT EXISTS app_state TEXT`,
   `CREATE TABLE IF NOT EXISTS beeline_bind_tickets (
     ticket_hash CHAR(64) PRIMARY KEY,
     challenge TEXT NOT NULL,
@@ -110,6 +114,8 @@ interface FlowRow extends QueryResultRow {
   pkce_verifier: string;
   browser_session_hash: string;
   redirect_uri: string;
+  app_redirect_uri: string | null;
+  app_state: string | null;
   created_at: unknown;
   expires_at: unknown;
 }
@@ -122,6 +128,8 @@ export interface OidcFlow {
   pkceVerifier: string;
   browserSessionHash: string;
   redirectUri: string;
+  appRedirectUri: string | null;
+  appState: string | null;
   createdAt: Date;
   expiresAt: Date;
 }
@@ -175,6 +183,8 @@ function flowFromRow(row: FlowRow): OidcFlow {
     pkceVerifier: row.pkce_verifier,
     browserSessionHash: row.browser_session_hash,
     redirectUri: row.redirect_uri,
+    appRedirectUri: row.app_redirect_uri,
+    appState: row.app_state,
     createdAt: asDate(row.created_at),
     expiresAt: asDate(row.expires_at),
   };
@@ -208,8 +218,8 @@ export class AuthStore {
     ]);
     await this.database.query(
       `INSERT INTO beeline_oidc_flows
-        (state_hash, community, issuer, audience, nonce, pkce_verifier, browser_session_hash, redirect_uri, created_at, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        (state_hash, community, issuer, audience, nonce, pkce_verifier, browser_session_hash, redirect_uri, app_redirect_uri, app_state, created_at, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [
         stateHash,
         flow.community,
@@ -219,6 +229,8 @@ export class AuthStore {
         flow.pkceVerifier,
         flow.browserSessionHash,
         flow.redirectUri,
+        flow.appRedirectUri,
+        flow.appState,
         flow.createdAt,
         flow.expiresAt,
       ],
@@ -234,7 +246,7 @@ export class AuthStore {
       `UPDATE beeline_oidc_flows
        SET consumed_at = $3
        WHERE state_hash = $1 AND browser_session_hash = $2 AND consumed_at IS NULL AND expires_at >= $3
-       RETURNING community, issuer, audience, nonce, pkce_verifier, browser_session_hash, redirect_uri, created_at, expires_at`,
+       RETURNING community, issuer, audience, nonce, pkce_verifier, browser_session_hash, redirect_uri, app_redirect_uri, app_state, created_at, expires_at`,
       [stateHash, browserSessionHash, now],
     );
     return result.rows[0] ? flowFromRow(result.rows[0]) : null;

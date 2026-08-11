@@ -9,15 +9,19 @@ participate in merge decisions, or accept a Nostr secret key.
 
 1. `GET /auth/oidc/start` resolves the tenant from the request `Host`, stores a
    hashed one-use OAuth state bound to an HttpOnly browser-session cookie, with
-   a nonce and PKCE verifier, and redirects to the configured provider.
+   a nonce and PKCE verifier, and redirects to the configured provider. Native
+   clients bind the tenant's verified HTTPS app link and random `app_state` to
+   the flow; OAuth codes and tokens never enter that app redirect. Custom
+   schemes are allowlisted only by the loopback device-emulator fixture.
 2. `GET /auth/oidc/callback` atomically consumes the flow, exchanges the code
    server-side, validates the pinned issuer/audience/RS256 token and nonce, and
    returns one short-lived bind ticket and the exact fields the device key must
    sign. The database stores only the SHA-256 ticket hash.
 3. `POST /auth/oidc/bind` accepts `{ "ticket": "...", "event": { ... } }`.
-   The signed kind `24250` event must contain exactly one each of `t`, `ticket`,
-   `challenge`, `provider`, `audience`, `subject`, and `community`, all matching
-   the ticket, and be inside its timestamp window. Ticket consumption and the
+   The signed kind `24250` event must contain exactly one each of `t`,
+   `protocol`, `ticket`, `challenge`, `provider`, `audience`, `subject`,
+   `community`, `issued_at`, and `expires_at`, all matching the ticket, and be
+   inside its timestamp window. Ticket consumption and the
    create-only identity link happen in one PostgreSQL transaction. Five invalid
    signed-event attempts durably burn the ticket.
 4. `GET /auth/oidc/links/:pubkey` requires a fresh, exact-URL/method NIP-98
@@ -50,3 +54,13 @@ Required configuration:
 
 HTTP OIDC endpoints are accepted only for local emulators when
 `BUZZY_AUTH_ALLOW_INSECURE_OIDC=true` and `NODE_ENV` is not `production`.
+
+## Local device emulator
+
+`npm run dev:emulator -w @beeline/auth` runs the same auto-approving OIDC shape
+used by the hermetic suite plus an in-memory auth service. It listens on
+`127.0.0.1:8790` (provider) and `127.0.0.1:8789` (auth). For Android, reverse
+both ports with `adb reverse`, and build Metro with
+`EXPO_PUBLIC_BUZZY_RELAY_URL=http://127.0.0.1:8789`. This mode deliberately
+uses a non-`__Host-` browser cookie because the loopback fixture is HTTP; the
+production default remains `Secure` and `__Host-` prefixed.

@@ -8,6 +8,7 @@ const sources = [
   '../../app/(app)/buzz/corners/[roomId].tsx',
   '../../app/(app)/buzz/community.tsx',
   '../../app/(app)/buzz/onboarding.tsx',
+  '../../app/(app)/buzz/settings/index.tsx',
   '../../app/(app)/buzz/settings/identity.tsx',
   './CommunityInviteEntry.tsx',
   './CommunityRail.tsx',
@@ -41,6 +42,14 @@ const monoStyles = new Set([
   'archivedBadgeText',
   'archivedText',
   'lifecycleState',
+  'addMembersText',
+  'headerMeta',
+  'memberPickerAction',
+  'memberPickerNpub',
+  'memberSectionLabel',
+  'participantCount',
+  'cornerPeekCount',
+  'cornerStatus',
 ]);
 
 function styleDefinition(source: string, name: string): string {

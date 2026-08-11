@@ -94,6 +94,13 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="buzz/settings/index"
+                options={{
+                    headerShown: false,
+                    statusBarStyle: 'light',
+                }}
+            />
+            <Stack.Screen
                 name="buzz/settings/identity"
                 options={{
                     headerShown: false,

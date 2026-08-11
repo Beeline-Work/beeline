@@ -14,6 +14,7 @@ import { saveLastViewedChannel } from '@/buzz/community-storage';
 import { createCommunityInviteUrl } from '@/buzz/community-invite';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
 import { latestRoomMessage } from '@/buzz/room-list-summary';
+import { roomParticipantPubkeys } from '@/buzz/room-participants';
 import { cornerStatusPresentation, sortCorners, type CornerSummary } from '@/buzz/corners';
 import {
   CHANGES_LABEL,
@@ -103,6 +104,12 @@ async function loadDisplayChannels(
   );
 
   const rooms = allItems.filter((item) => !item.parentChannelId);
+  const [workspacePeople, workspaceAgents] = activeCommunityId
+    ? await Promise.all([
+        client.communityMembers(activeCommunityId),
+        client.listAgents(activeCommunityId),
+      ])
+    : [undefined, undefined];
   await Promise.all(
     rooms.map(async (room) => {
       const [corners, events, members] = await Promise.allSettled([
@@ -113,7 +120,14 @@ async function loadDisplayChannels(
       room.corners = corners.status === 'fulfilled' ? sortCorners(corners.value) : [];
       room.latestMessage =
         events.status === 'fulfilled' ? (latestRoomMessage(events.value) ?? undefined) : undefined;
-      room.participantCount = members.status === 'fulfilled' ? members.value.length : 0;
+      room.participantCount =
+        members.status === 'fulfilled'
+          ? roomParticipantPubkeys(
+              new Set(members.value.map((member) => member.pubkey)),
+              workspacePeople,
+              workspaceAgents,
+            ).size
+          : 0;
     }),
   );
 
@@ -444,19 +458,25 @@ export default function BuzzChannels() {
           }
           renderItem={({ item }) => {
             const corners = item.corners ?? [];
+            const canExpand = corners.length > 0;
             const hasLiveCorner = corners.some((corner) => corner.status === 'live');
             const title = item.title ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`;
-            const expanded = expandedRoomId === item.id;
+            const expanded = canExpand && expandedRoomId === item.id;
             return (
               <View style={[styles.roomCell, expanded && styles.roomCellExpanded]}>
                 <View style={styles.roomRow}>
                   <BrittlePress
-                    accessibilityHint={`Long press to reveal ${CORNER_LABEL.toLowerCase()}s`}
+                    accessibilityHint={
+                      canExpand ? `Long press to reveal ${CORNER_LABEL.toLowerCase()}s` : undefined
+                    }
                     accessibilityLabel={`Open ${title} chat`}
                     contentStyle={styles.channelItem}
                     delayLongPress={350}
-                    onLongPress={() =>
-                      setExpandedRoomId((current) => (current === item.id ? null : item.id))
+                    onLongPress={
+                      canExpand
+                        ? () =>
+                            setExpandedRoomId((current) => (current === item.id ? null : item.id))
+                        : undefined
                     }
                     onPress={() => void handleRoomPress(item)}
                     style={styles.roomPrimary}
@@ -480,59 +500,48 @@ export default function BuzzChannels() {
                       </View>
                     </View>
                   </BrittlePress>
-                  <TouchableOpacity
-                    accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${corners.length} ${
-                      corners.length === 1 ? CORNER_LABEL : CHANGES_LABEL
-                    } in ${title}${hasLiveCorner ? ', live corner present' : ''}`}
-                    accessibilityRole="button"
-                    accessibilityState={{ expanded }}
-                    onPress={() =>
-                      setExpandedRoomId((current) => (current === item.id ? null : item.id))
-                    }
-                    style={styles.cornerPeekButton}
-                    testID={`room-corners-toggle-${item.id}`}
-                  >
-                    <Text style={[styles.cornerPeekCount, hasLiveCorner && styles.liveMarker]}>
-                      {hasLiveCorner ? '◆' : '◇'} {corners.length}
-                    </Text>
-                    <Text style={styles.cornerPeekChevron}>{expanded ? '⌃' : '⌄'}</Text>
-                  </TouchableOpacity>
+                  {canExpand && (
+                    <TouchableOpacity
+                      accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${corners.length} ${
+                        corners.length === 1 ? CORNER_LABEL : CHANGES_LABEL
+                      } in ${title}${hasLiveCorner ? ', live corner present' : ''}`}
+                      accessibilityRole="button"
+                      accessibilityState={{ expanded }}
+                      onPress={() =>
+                        setExpandedRoomId((current) => (current === item.id ? null : item.id))
+                      }
+                      style={styles.cornerPeekButton}
+                      testID={`room-corners-toggle-${item.id}`}
+                    >
+                      <Text style={[styles.cornerPeekCount, hasLiveCorner && styles.liveMarker]}>
+                        {hasLiveCorner ? '◆' : '◇'} {corners.length}
+                      </Text>
+                      <Text style={styles.cornerPeekChevron}>{expanded ? '⌃' : '⌄'}</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
                 {expanded && (
                   <PixelGateReveal style={styles.cornerDropdown}>
-                    {corners.length === 0 ? (
-                      <Text style={styles.noCorners}>No corners in this room</Text>
-                    ) : (
-                      corners.map((corner) => {
-                        const status = cornerStatusPresentation(corner.status);
-                        return (
-                          <TouchableOpacity
-                            accessibilityLabel={`Open #${corner.name}, ${status.label}`}
-                            key={corner.id}
-                            onPress={() =>
-                              router.push(`/buzz/chat/${encodeURIComponent(corner.id)}` as Href)
-                            }
-                            style={styles.cornerRow}
-                          >
-                            <Text numberOfLines={1} style={styles.cornerName}>
-                              └ #{corner.name}
-                            </Text>
-                            <Text style={styles.cornerStatus}>
-                              {status.glyph} {status.label}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })
-                    )}
-                    <TouchableOpacity
-                      accessibilityLabel={`Browse all corners in ${title}`}
-                      onPress={() =>
-                        router.push(`/buzz/corners/${encodeURIComponent(item.id)}` as Href)
-                      }
-                      style={styles.allCornersRow}
-                    >
-                      <Text style={styles.allCornersText}>All corners ›</Text>
-                    </TouchableOpacity>
+                    {corners.map((corner) => {
+                      const status = cornerStatusPresentation(corner.status);
+                      return (
+                        <TouchableOpacity
+                          accessibilityLabel={`Open #${corner.name}, ${status.label}`}
+                          key={corner.id}
+                          onPress={() =>
+                            router.push(`/buzz/chat/${encodeURIComponent(corner.id)}` as Href)
+                          }
+                          style={styles.cornerRow}
+                        >
+                          <Text numberOfLines={1} style={styles.cornerName}>
+                            └ #{corner.name}
+                          </Text>
+                          <Text style={styles.cornerStatus}>
+                            {status.glyph} {status.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </PixelGateReveal>
                 )}
               </View>
@@ -759,19 +768,6 @@ const styles = StyleSheet.create({
     color: groknight.textMuted,
     fontSize: 9,
     letterSpacing: 0.4,
-  },
-  noCorners: {
-    ...Typography.default(),
-    minHeight: 42,
-    paddingTop: 13,
-    color: groknight.textMuted,
-    fontSize: 12,
-  },
-  allCornersRow: { minHeight: 42, alignItems: 'flex-start', justifyContent: 'center' },
-  allCornersText: {
-    ...Typography.default('semiBold'),
-    color: groknight.steel,
-    fontSize: 12,
   },
   emptyContainer: { flexGrow: 1 },
   emptyState: { flex: 1, paddingHorizontal: 22, alignItems: 'center', justifyContent: 'center' },

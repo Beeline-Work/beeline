@@ -5,11 +5,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 
 const auth = vi.hoisted(() => ({ isAuthenticated: false }));
 const buzzIdentityStorage = vi.hoisted(() => ({ loadBuzzIdentity: vi.fn() }));
+const linking = vi.hoisted(() => ({ getInitialURL: vi.fn() }));
 const navigation = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
 
 vi.mock('@/auth/AuthContext', () => ({ useAuth: () => auth }));
 vi.mock('@/auth/buzz-identity-storage', () => buzzIdentityStorage);
 vi.mock('expo-router', () => ({ router: navigation }));
+vi.mock('expo-linking', () => linking);
 
 vi.mock('react-native', async () => {
     const ReactModule = await import('react');
@@ -51,6 +53,7 @@ beforeEach(() => {
     vi.clearAllMocks();
     auth.isAuthenticated = false;
     buzzIdentityStorage.loadBuzzIdentity.mockResolvedValue(null);
+    linking.getInitialURL.mockResolvedValue(null);
 });
 
 async function renderHome() {
@@ -83,6 +86,20 @@ describe('Buzz root launch routing', () => {
         await renderHome();
 
         expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+    });
+
+    it('preserves a cold-start invite link instead of replacing it with the app root', async () => {
+        const token = `bzi_${'ab'.repeat(32)}`;
+        linking.getInitialURL.mockResolvedValue(`https://relay.buzzrouter.com/join/${token}`);
+        buzzIdentityStorage.loadBuzzIdentity.mockResolvedValue({ publicKey: 'buzz-user' });
+
+        await renderHome();
+
+        expect(navigation.replace).toHaveBeenCalledWith({
+            pathname: '/join/[token]',
+            params: { token },
+        });
+        expect(navigation.replace).not.toHaveBeenCalledWith('/buzz/channels');
     });
 
     it('renders the storage error instead of routing', async () => {

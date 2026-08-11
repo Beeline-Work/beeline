@@ -25,8 +25,6 @@ import { saveLastViewedChannel } from '@/buzz/community-storage';
 import { createCommunityInviteUrl } from '@/buzz/community-invite';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
 import {
-  cornerNavigationPreview,
-  cornerStatusPresentation,
   sortCorners,
   type CornerSummary,
 } from '@/buzz/corners';
@@ -241,23 +239,15 @@ export default function BuzzChannels() {
     }, [handleRefresh, identity, transport]),
   );
 
-  const handleChannelPress = useCallback(
+  const handleRoomPress = useCallback(
     async (channel: ChannelDisplayItem) => {
       if (identity) {
         await saveLastViewedChannel(identity.publicKey, activeCommunityId, channel.id);
       }
-      router.push(`/buzz/chat/${encodeURIComponent(channel.id)}`);
+      router.push(`/buzz/corners/${encodeURIComponent(channel.id)}` as Href);
     },
     [activeCommunityId, identity],
   );
-
-  const handleBrowseCorners = useCallback((room: ChannelDisplayItem) => {
-    router.push(`/buzz/corners/${encodeURIComponent(room.id)}` as Href);
-  }, []);
-
-  const handleCornerPress = useCallback((cornerId: string) => {
-    router.push(`/buzz/chat/${encodeURIComponent(cornerId)}`);
-  }, []);
 
   const handleCreateChannel = useCallback(async () => {
     const name = channelName.trim();
@@ -560,66 +550,36 @@ export default function BuzzChannels() {
           }
           renderItem={({ item }) => {
             const corners = item.corners ?? [];
-            const preview = cornerNavigationPreview(corners);
+            const hasLiveCorner = corners.some((corner) => corner.status === 'live');
+            const title = item.title ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`;
             return (
-              <View style={styles.roomGroup}>
-                <BrittlePress
-                  contentStyle={styles.channelItem}
-                  onPress={() => void handleChannelPress(item)}
-                >
-                  <Text style={styles.channelIcon}>{item.archived ? '□' : '#'}</Text>
-                  <View style={styles.channelInfo}>
-                    <View style={styles.channelTitleRow}>
-                      <Text
-                        numberOfLines={1}
-                        style={[styles.channelTitle, item.archived && styles.archivedTitle]}
-                      >
-                        {item.title ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`}
-                      </Text>
-                      {item.archived && <Text style={styles.metaTag}>archived</Text>}
-                    </View>
-                    <Text style={styles.channelMeta}>
-                      {corners.length === 0
-                        ? `No ${CHANGES_LABEL}`
-                        : `${corners.length} ${corners.length === 1 ? CORNER_LABEL : CHANGES_LABEL}`}
-                    </Text>
-                  </View>
-                  <Text style={styles.chevron}>›</Text>
-                </BrittlePress>
-
-                {preview.map((corner) => {
-                  const status = cornerStatusPresentation(corner.status);
-                  return (
-                    <TouchableOpacity
-                      key={corner.id}
-                      accessibilityLabel={`Open corner ${corner.name}, ${status.label.toLowerCase()}`}
-                      style={styles.cornerItem}
-                      onPress={() => handleCornerPress(corner.id)}
+              <BrittlePress
+                accessibilityLabel={`Open ${title} corner list, ${corners.length} ${
+                  corners.length === 1 ? CORNER_LABEL : CHANGES_LABEL
+                }${hasLiveCorner ? ', live corner present' : ''}`}
+                contentStyle={styles.channelItem}
+                onPress={() => void handleRoomPress(item)}
+              >
+                <Text style={styles.channelIcon}>{item.archived ? '□' : '#'}</Text>
+                <View style={styles.channelInfo}>
+                  <View style={styles.channelTitleRow}>
+                    <Text
+                      numberOfLines={1}
+                      style={[styles.channelTitle, item.archived && styles.archivedTitle]}
                     >
-                      <Text style={styles.cornerTree}>└</Text>
-                      <Text style={styles.cornerHash}>#</Text>
-                      <Text style={styles.cornerName} numberOfLines={1}>
-                        {corner.name}
-                      </Text>
-                      <Text style={styles.cornerStatus}>{status.glyph} {status.label}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-
-                {corners.length > 0 && (
-                  <TouchableOpacity
-                    accessibilityLabel={`Browse all ${corners.length} ${CHANGES_LABEL}`}
-                    style={styles.browseCornersRow}
-                    onPress={() => handleBrowseCorners(item)}
-                  >
-                    <Text style={styles.cornerTree}>└</Text>
-                    <Text style={styles.browseCornersText}>
-                      Browse all {corners.length} {corners.length === 1 ? CORNER_LABEL : CHANGES_LABEL}
+                      {title}
                     </Text>
-                    <Text style={styles.browseCornersChevron}>›</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
+                    {item.archived && <Text style={styles.metaTag}>archived</Text>}
+                  </View>
+                  <View style={styles.roomMetaRow}>
+                    <Text style={styles.channelMeta}>
+                      {corners.length} {corners.length === 1 ? CORNER_LABEL : CHANGES_LABEL}
+                    </Text>
+                    {hasLiveCorner && <Text style={styles.liveMarker}>◆ LIVE</Text>}
+                  </View>
+                </View>
+                <Text style={styles.chevron}>›</Text>
+              </BrittlePress>
             );
           }}
           onRefresh={() => void handleRefresh()}
@@ -803,10 +763,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   listContent: { paddingVertical: 4 },
-  roomGroup: {
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-  },
   channelItem: {
     minHeight: 64,
     paddingHorizontal: 16,
@@ -814,7 +770,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: groknight.borderQuiet,
+    borderBottomColor: groknight.border,
   },
   channelIcon: {
     ...Typography.default('semiBold'),
@@ -843,66 +799,22 @@ const styles = StyleSheet.create({
   },
   channelMeta: {
     ...Typography.mono(),
-    marginTop: 4,
     color: groknight.textMuted,
     fontSize: 11,
     lineHeight: 15,
   },
-  cornerItem: {
-    minWidth: 0,
-    minHeight: 44,
-    paddingLeft: 30,
-    paddingRight: 16,
+  roomMetaRow: {
+    marginTop: 4,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: groknight.bgBase,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.borderQuiet,
   },
-  cornerTree: {
-    ...Typography.mono(),
-    width: 22,
-    color: groknight.gutter,
-    fontSize: 12,
-  },
-  cornerHash: {
-    ...Typography.default('semiBold'),
-    marginRight: 4,
-    color: groknight.steel,
-    fontSize: 13,
-  },
-  cornerName: {
-    ...Typography.default(),
-    flex: 1,
-    minWidth: 0,
-    color: groknight.textSecondary,
-    fontSize: 13,
-  },
-  cornerStatus: {
+  liveMarker: {
     ...Typography.mono('semiBold'),
     marginLeft: 8,
-    color: groknight.textMuted,
-    fontSize: 10,
-    lineHeight: 14,
-  },
-  browseCornersRow: {
-    minHeight: 40,
-    paddingLeft: 30,
-    paddingRight: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: groknight.bgTerminal,
-  },
-  browseCornersText: {
-    ...Typography.default('semiBold'),
-    flex: 1,
-    color: groknight.textMuted,
-    fontSize: 11,
-  },
-  browseCornersChevron: {
-    ...Typography.default(),
-    color: groknight.gutter,
-    fontSize: 18,
+    color: groknight.signalMid,
+    fontSize: 9,
+    lineHeight: 13,
+    letterSpacing: 0.5,
   },
   chevron: { ...Typography.default(), marginLeft: 8, color: groknight.gutter, fontSize: 22 },
   emptyContainer: { flexGrow: 1 },

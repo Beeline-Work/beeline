@@ -8,8 +8,6 @@ export type CornerSummary = {
   createdAt?: number;
 };
 
-export const CORNER_NAV_PREVIEW_LIMIT = 3;
-
 const STATUS_ORDER: Record<CornerStatus, number> = {
   live: 0,
   open: 1,
@@ -45,8 +43,4 @@ export function sortCorners(corners: CornerSummary[]): CornerSummary[] {
     if (statusDelta !== 0) return statusDelta;
     return (b.createdAt ?? 0) - (a.createdAt ?? 0) || a.name.localeCompare(b.name);
   });
-}
-
-export function cornerNavigationPreview(corners: CornerSummary[]): CornerSummary[] {
-  return sortCorners(corners).slice(0, CORNER_NAV_PREVIEW_LIMIT);
 }

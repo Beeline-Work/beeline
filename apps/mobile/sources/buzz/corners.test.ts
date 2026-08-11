@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   cornerName,
-  cornerNavigationPreview,
   cornerStatusPresentation,
   sortCorners,
   type CornerSummary,
@@ -15,17 +14,12 @@ describe('corner navigation model', () => {
     { id: 'live-old', name: 'older', openerPubkey: 'a', status: 'live', createdAt: 1 },
   ];
 
-  it('keeps active corners first and limits the nested room preview', () => {
+  it('keeps active corners first in the room-scoped corner list', () => {
     expect(sortCorners(corners).map((corner) => corner.id)).toEqual([
       'live-new',
       'live-old',
       'open',
       'archived',
-    ]);
-    expect(cornerNavigationPreview(corners).map((corner) => corner.id)).toEqual([
-      'live-new',
-      'live-old',
-      'open',
     ]);
   });
 

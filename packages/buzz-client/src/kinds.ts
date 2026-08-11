@@ -6,6 +6,9 @@ export const KIND_STREAM_MESSAGE = 9;
 /** NIP-29: put user (membership + role). */
 export const KIND_PUT_USER = 9000;
 
+/** NIP-29: remove user from a group. */
+export const KIND_REMOVE_USER = 9001;
+
 /** NIP-29: create group/channel. */
 export const KIND_CREATE_GROUP = 9007;
 

@@ -357,7 +357,7 @@ export default function BuzzAgents() {
               />
               <View style={styles.editorActions}>
                 <MonoButton
-                  label="Save changes"
+                  label="Save"
                   style={[styles.primaryButton, styles.flexButton]}
                   disabled={!name.trim() || !personality.trim() || working}
                   onPress={() => void saveSoul()}

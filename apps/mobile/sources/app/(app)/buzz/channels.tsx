@@ -24,7 +24,19 @@ import { groknight } from '@/buzz/groknight';
 import { saveLastViewedChannel } from '@/buzz/community-storage';
 import { createCommunityInviteUrl } from '@/buzz/community-invite';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
-import { CHANGE_LABEL, ROOM_LABEL, ROOMS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
+import {
+  cornerNavigationPreview,
+  cornerStatusPresentation,
+  sortCorners,
+  type CornerSummary,
+} from '@/buzz/corners';
+import {
+  CHANGES_LABEL,
+  CORNER_LABEL,
+  ROOM_LABEL,
+  ROOMS_LABEL,
+  WORKSPACE_LABEL,
+} from '@/buzz/vocabulary';
 import { CommunityInviteEntry } from '@/components/buzz/CommunityInviteEntry';
 import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
 import { BuzzRigTransport } from '@/sync/transport';
@@ -39,15 +51,9 @@ import {
 
 type ChannelDisplayItem = SessionSummary & {
   archived?: boolean;
-  isSubchannel?: boolean;
   parentChannelId?: string;
-  subchannelCount?: number;
-  openerPubkey?: string;
+  corners?: CornerSummary[];
 };
-
-function shortPubkey(pubkey: string | undefined): string {
-  return pubkey ? `${pubkey.slice(0, 8)}…` : 'unknown';
-}
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -94,7 +100,6 @@ async function loadDisplayChannels(
       .map(({ channel }) => ({ ...channel }));
   }
 
-  const parentIds = new Set<string>();
   const allItems: ChannelDisplayItem[] = [];
 
   await Promise.all(
@@ -103,12 +108,6 @@ async function loadDisplayChannels(
         const parentId = await transport.getParentChannelId(channel.id);
         const archived = channel.archived ?? (await transport.isChannelArchived(channel.id));
         const item = { ...channel, archived, parentChannelId: parentId ?? undefined };
-        if (parentId) {
-          item.isSubchannel = true;
-          item.openerPubkey = (await transport.getChannelCreator(channel.id)) ?? undefined;
-        } else {
-          parentIds.add(channel.id);
-        }
         allItems.push(item);
       } catch {
         allItems.push(channel);
@@ -116,20 +115,18 @@ async function loadDisplayChannels(
     }),
   );
 
+  const rooms = allItems.filter((item) => !item.parentChannelId);
   await Promise.all(
-    [...parentIds].map(async (parentId) => {
+    rooms.map(async (room) => {
       try {
-        const subchannelIds = await transport.listSubchannels(parentId);
-        const displayItem = allItems.find((item) => item.id === parentId);
-        if (displayItem) displayItem.subchannelCount = subchannelIds.length;
+        room.corners = sortCorners(await transport.listSubchannelLifecycle(room.id));
       } catch {
-        // A legacy unscoped stream need not have child streams.
+        room.corners = [];
       }
     }),
   );
 
-  // A change belongs to its Room's live review surface, not Workspace navigation.
-  return allItems.filter((item) => !item.isSubchannel);
+  return rooms.sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0));
 }
 
 export default function BuzzChannels() {
@@ -253,6 +250,14 @@ export default function BuzzChannels() {
     },
     [activeCommunityId, identity],
   );
+
+  const handleBrowseCorners = useCallback((room: ChannelDisplayItem) => {
+    router.push(`/buzz/corners/${encodeURIComponent(room.id)}` as Href);
+  }, []);
+
+  const handleCornerPress = useCallback((cornerId: string) => {
+    router.push(`/buzz/chat/${encodeURIComponent(cornerId)}`);
+  }, []);
 
   const handleCreateChannel = useCallback(async () => {
     const name = channelName.trim();
@@ -553,42 +558,70 @@ export default function BuzzChannels() {
               />
             </View>
           }
-          renderItem={({ item }) => (
-            <BrittlePress
-              contentStyle={[styles.channelItem, item.isSubchannel && styles.subchannelItem]}
-              onPress={() => void handleChannelPress(item)}
-            >
-              <Text style={styles.channelIcon}>
-                {item.archived ? '□' : item.isSubchannel ? '↳' : '#'}
-              </Text>
-              <View style={styles.channelInfo}>
-                <View style={styles.channelTitleRow}>
-                  <Text
-                    numberOfLines={1}
-                    style={[
-                      styles.channelTitle,
-                      item.isSubchannel && styles.subchannelTitle,
-                      item.archived && styles.archivedTitle,
-                    ]}
+          renderItem={({ item }) => {
+            const corners = item.corners ?? [];
+            const preview = cornerNavigationPreview(corners);
+            return (
+              <View style={styles.roomGroup}>
+                <BrittlePress
+                  contentStyle={styles.channelItem}
+                  onPress={() => void handleChannelPress(item)}
+                >
+                  <Text style={styles.channelIcon}>{item.archived ? '□' : '#'}</Text>
+                  <View style={styles.channelInfo}>
+                    <View style={styles.channelTitleRow}>
+                      <Text
+                        numberOfLines={1}
+                        style={[styles.channelTitle, item.archived && styles.archivedTitle]}
+                      >
+                        {item.title ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`}
+                      </Text>
+                      {item.archived && <Text style={styles.metaTag}>archived</Text>}
+                    </View>
+                    <Text style={styles.channelMeta}>
+                      {corners.length === 0
+                        ? `No ${CHANGES_LABEL}`
+                        : `${corners.length} ${corners.length === 1 ? CORNER_LABEL : CHANGES_LABEL}`}
+                    </Text>
+                  </View>
+                  <Text style={styles.chevron}>›</Text>
+                </BrittlePress>
+
+                {preview.map((corner) => {
+                  const status = cornerStatusPresentation(corner.status);
+                  return (
+                    <TouchableOpacity
+                      key={corner.id}
+                      accessibilityLabel={`Open corner ${corner.name}, ${status.label.toLowerCase()}`}
+                      style={styles.cornerItem}
+                      onPress={() => handleCornerPress(corner.id)}
+                    >
+                      <Text style={styles.cornerTree}>└</Text>
+                      <Text style={styles.cornerHash}>#</Text>
+                      <Text style={styles.cornerName} numberOfLines={1}>
+                        {corner.name}
+                      </Text>
+                      <Text style={styles.cornerStatus}>{status.glyph} {status.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+
+                {corners.length > 0 && (
+                  <TouchableOpacity
+                    accessibilityLabel={`Browse all ${corners.length} ${CHANGES_LABEL}`}
+                    style={styles.browseCornersRow}
+                    onPress={() => handleBrowseCorners(item)}
                   >
-                    {item.title ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`}
-                  </Text>
-                  {item.archived && <Text style={styles.metaTag}>archived</Text>}
-                </View>
-                <Text style={styles.channelMeta}>
-                  {item.id.slice(0, 10)}
-                  {item.subchannelCount
-                    ? `  ◆ ${item.subchannelCount} ${
-                        item.subchannelCount === 1 ? CHANGE_LABEL.toUpperCase() : 'CHANGES'
-                      }`
-                    : ''}
-                  {item.isSubchannel ? ` · agent ${shortPubkey(item.openerPubkey)}` : ''}
-                  {item.isSubchannel ? (item.archived ? ' · closed' : ' · live') : ''}
-                </Text>
+                    <Text style={styles.cornerTree}>└</Text>
+                    <Text style={styles.browseCornersText}>
+                      Browse all {corners.length} {corners.length === 1 ? CORNER_LABEL : CHANGES_LABEL}
+                    </Text>
+                    <Text style={styles.browseCornersChevron}>›</Text>
+                  </TouchableOpacity>
+                )}
               </View>
-              <Text style={styles.chevron}>›</Text>
-            </BrittlePress>
-          )}
+            );
+          }}
           onRefresh={() => void handleRefresh()}
           refreshing={refreshing}
         />
@@ -770,6 +803,10 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   listContent: { paddingVertical: 4 },
+  roomGroup: {
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.border,
+  },
   channelItem: {
     minHeight: 64,
     paddingHorizontal: 16,
@@ -777,9 +814,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
+    borderBottomColor: groknight.borderQuiet,
   },
-  subchannelItem: { paddingLeft: 25, backgroundColor: groknight.bgBase },
   channelIcon: {
     ...Typography.default('semiBold'),
     width: 25,
@@ -794,7 +830,6 @@ const styles = StyleSheet.create({
     color: groknight.textPrimary,
     fontSize: 14,
   },
-  subchannelTitle: { ...Typography.default(), color: groknight.textSecondary, fontSize: 13 },
   archivedTitle: { color: groknight.muted },
   metaTag: {
     ...Typography.default(),
@@ -812,6 +847,62 @@ const styles = StyleSheet.create({
     color: groknight.textMuted,
     fontSize: 11,
     lineHeight: 15,
+  },
+  cornerItem: {
+    minWidth: 0,
+    minHeight: 44,
+    paddingLeft: 30,
+    paddingRight: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: groknight.bgBase,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.borderQuiet,
+  },
+  cornerTree: {
+    ...Typography.mono(),
+    width: 22,
+    color: groknight.gutter,
+    fontSize: 12,
+  },
+  cornerHash: {
+    ...Typography.default('semiBold'),
+    marginRight: 4,
+    color: groknight.steel,
+    fontSize: 13,
+  },
+  cornerName: {
+    ...Typography.default(),
+    flex: 1,
+    minWidth: 0,
+    color: groknight.textSecondary,
+    fontSize: 13,
+  },
+  cornerStatus: {
+    ...Typography.mono('semiBold'),
+    marginLeft: 8,
+    color: groknight.textMuted,
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  browseCornersRow: {
+    minHeight: 40,
+    paddingLeft: 30,
+    paddingRight: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: groknight.bgTerminal,
+  },
+  browseCornersText: {
+    ...Typography.default('semiBold'),
+    flex: 1,
+    color: groknight.textMuted,
+    fontSize: 11,
+  },
+  browseCornersChevron: {
+    ...Typography.default(),
+    color: groknight.gutter,
+    fontSize: 18,
   },
   chevron: { ...Typography.default(), marginLeft: 8, color: groknight.gutter, fontSize: 22 },
   emptyContainer: { flexGrow: 1 },

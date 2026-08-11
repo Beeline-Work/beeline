@@ -11,7 +11,6 @@ import { join } from 'node:path';
 
 import {
   newIdentity,
-  createChannel,
   setMemberRole,
   announceRepo,
   git,
@@ -26,6 +25,8 @@ import {
 } from '@beeline/gate';
 import {
   createIdentity,
+  createChannel as buzzCreateChannel,
+  createCommunity,
   CHANGE_REVIEW_FILE_TAG,
   CHANGE_REVIEW_MANIFEST_TAG,
   CHANGE_REVIEW_VERSION,
@@ -72,13 +73,23 @@ async function main() {
     ? loadIdentityFromNsec(process.env.BUZZY_UI_REVIEWER_NSEC, 'ui-demo-reviewer')
     : createIdentity('ui-demo-reviewer'); // review identity for UI
   const agent = newIdentity('ui-demo-agent');
+  const channelContext = {
+    http: { baseUrl: BASE_URL, host: HOST },
+    identity: owner,
+  };
   log('Owner npub:', identityNpub(owner));
   log('Reviewer npub:', identityNpub(reviewer));
   log('Reviewer nsec:', identityNsec(reviewer));
 
-  // ── 1. Create parent TLC channel ──────────────────────────────────
+  // ── 1. Create a Workspace-linked parent Room ──────────────────────
   const repo = `ui-demo-${RUN_MARKER}`;
-  const parentChannelId = await createChannel(owner, repo);
+  const communityId = await createCommunity(channelContext, 'Corners UX Review');
+  await setMemberRole(owner, communityId, reviewer.publicKey, 'member');
+  const parentChannelId = await buzzCreateChannel(channelContext, repo, {
+    communityId,
+    repository: { key: repo, name: repo, localOnly: false },
+  });
+  log('Workspace:', communityId);
   log('Parent channel:', parentChannelId);
 
   await setMemberRole(owner, parentChannelId, owner.publicKey, 'owner');
@@ -91,7 +102,7 @@ async function main() {
   const subchannelId = await buzzCreateSubchannel(
     { http: { baseUrl: BASE_URL, host: HOST }, identity: owner },
     parentChannelId,
-    `sub-${RUN_MARKER}`,
+    'review-corner-navigation',
   );
   log('Subchannel:', subchannelId);
 
@@ -198,7 +209,7 @@ async function main() {
     owner.secretKey,
   );
   await publishEvent(subIntro);
-  log(`Review metadata posted for ${files.length} changed files`);
+  log(`Review metadata posted for ${files.length} file diffs`);
 
   // To parent (subchannel link - for UI to render as navigable)
   const parentLink = signEvent(
@@ -213,15 +224,71 @@ async function main() {
         ['session', `ses_${RUN_MARKER}`],
         ['branch', featureBranch],
         ['mode', 'edit'],
+        ['status', 'open'],
         ['repo', repoId],
         ['tip', featureTip],
       ],
-      content: `🛠 Edit session opened — subchannel=${subchannelId} branch=${featureBranch}`,
+      content: 'Agent opened #review-corner-navigation',
     },
     owner.secretKey,
   );
   await publishEvent(parentLink);
   log('Parent link message posted');
+
+  // Extra lifecycle fixtures keep the nested navigation compact while making
+  // every monochrome corner status visible in the browse-all review surface.
+  const extraCorners: Array<{ name: string; status: 'live' | 'merged' | 'archived' }> = [
+    { name: 'live-agent-iteration', status: 'live' },
+    { name: 'merged-gate-proof', status: 'merged' },
+    { name: 'archived-copy-spike', status: 'archived' },
+  ];
+  for (const fixture of extraCorners) {
+    const id = await buzzCreateSubchannel(
+      { http: { baseUrl: BASE_URL, host: HOST }, identity: owner },
+      parentChannelId,
+      fixture.name,
+    );
+    await setMemberRole(owner, id, owner.publicKey, 'owner');
+    await setMemberRole(owner, id, reviewer.publicKey, 'admin');
+    await setMemberRole(owner, id, agent.publicKey, 'member');
+
+    const childStatus = signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: Math.floor(Date.now() / 1000),
+        kind: 9,
+        tags: [
+          ['h', id],
+          ['t', 'body-control'],
+          ['parent', parentChannelId],
+          ['status', fixture.status === 'merged' ? 'archived' : fixture.status],
+        ],
+        content: `Corner #${fixture.name} is ${fixture.status}`,
+      },
+      owner.secretKey,
+    );
+    await publishEvent(childStatus);
+
+    if (fixture.status === 'merged') {
+      const mergeSummary = signEvent(
+        {
+          pubkey: owner.publicKey,
+          created_at: Math.floor(Date.now() / 1000),
+          kind: 9,
+          tags: [
+            ['h', parentChannelId],
+            ['t', 'body-control'],
+            ['t', 'merge-summary'],
+            ['subchannel', id],
+          ],
+          content: `Corner #${fixture.name} merged after human approval`,
+        },
+        owner.secretKey,
+      );
+      await publishEvent(mergeSummary);
+    }
+    log(`Corner fixture: #${fixture.name} ${fixture.status}`);
+  }
 
   // Wait for propagation
   await new Promise((r) => setTimeout(r, 2000));
@@ -229,6 +296,7 @@ async function main() {
   // ── 5. Output for the UI demo ─────────────────────────────────────
   console.log(`\n=== UI DEMO SETUP COMPLETE ===`);
   console.log(`REVIEWER_NSEC=${identityNsec(reviewer)}`);
+  console.log(`COMMUNITY_ID=${communityId}`);
   console.log(`PARENT_ID=${parentChannelId}`);
   console.log(`SUBCHANNEL_ID=${subchannelId}`);
   console.log(`REPO=${repoId}`);

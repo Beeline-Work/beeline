@@ -177,6 +177,7 @@ const reachable = await relayReachable();
       const outcome = await attemptMerge({
         worker: p.worker,
         trustedReviewer: p.reviewer.publicKey,
+        trustedReviewerCustody: 'device',
         repo: p.repo,
         channelId: p.channelId,
         targetBranch: 'main',
@@ -216,6 +217,7 @@ const reachable = await relayReachable();
       const outcome = await attemptMerge({
         worker: p.worker,
         trustedReviewer: p.reviewer.publicKey,
+        trustedReviewerCustody: 'device',
         repo: p.repo,
         channelId: p.channelId,
         targetBranch: 'main',
@@ -247,6 +249,7 @@ const reachable = await relayReachable();
       const outcome = await attemptMerge({
         worker: p.worker,
         trustedReviewer: p.reviewer.publicKey,
+        trustedReviewerCustody: 'device',
         repo: p.repo,
         channelId: p.channelId,
         targetBranch: 'main',
@@ -281,6 +284,7 @@ const reachable = await relayReachable();
       const initial = await attemptMerge({
         worker: p.worker,
         trustedReviewer: p.reviewer.publicKey,
+        trustedReviewerCustody: 'device',
         repo: p.repo,
         channelId: p.channelId,
         targetBranch: 'main',
@@ -299,6 +303,7 @@ const reachable = await relayReachable();
       const afterApproval = await attemptMerge({
         worker: p.worker,
         trustedReviewer: p.reviewer.publicKey,
+        trustedReviewerCustody: 'device',
         repo: p.repo,
         channelId: p.channelId,
         targetBranch: 'main',
@@ -339,6 +344,7 @@ const reachable = await relayReachable();
       const outcome = await attemptMerge({
         worker: p.worker,
         trustedReviewer: p.reviewer.publicKey,
+        trustedReviewerCustody: 'device',
         repo: p.repo,
         channelId: p.channelId,
         targetBranch: 'main',
@@ -389,6 +395,7 @@ const reachable = await relayReachable();
       const outcome = await attemptMerge({
         worker: p.worker,
         trustedReviewer: p.reviewer.publicKey,
+        trustedReviewerCustody: 'device',
         repo: p.repo,
         channelId: p.channelId,
         targetBranch: 'main',
@@ -431,6 +438,7 @@ const reachable = await relayReachable();
       const merge1 = await attemptMerge({
         worker: p.worker,
         trustedReviewer: p.reviewer.publicKey,
+        trustedReviewerCustody: 'device',
         repo: p.repo,
         channelId: p.channelId,
         targetBranch: 'main',
@@ -455,6 +463,7 @@ const reachable = await relayReachable();
       const replayOutcome = await attemptMerge({
         worker: p.worker,
         trustedReviewer: p.reviewer.publicKey,
+        trustedReviewerCustody: 'device',
         repo: p.repo,
         channelId: p.channelId,
         targetBranch: 'main',

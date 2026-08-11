@@ -4,7 +4,6 @@ vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({
     relayUrl: 'https://relay.test',
     pushGatewayUrl: 'https://push.test',
-    soulUrl: 'https://soul.test',
   }),
 }));
 

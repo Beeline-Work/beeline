@@ -13,7 +13,6 @@ export interface AppConfig {
     buildCommitTimestamp?: string;
     buzzyRelayUrl?: string;
     buzzyPushGatewayUrl?: string;
-    buzzySoulUrl?: string;
 }
 
 /**
@@ -101,10 +100,5 @@ export function loadAppConfig(): AppConfig {
         console.log('[loadAppConfig] Override buzzyPushGatewayUrl from EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL');
         config.buzzyPushGatewayUrl = process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL;
     }
-    if (process.env.EXPO_PUBLIC_BUZZY_SOUL_URL && config.buzzySoulUrl !== process.env.EXPO_PUBLIC_BUZZY_SOUL_URL) {
-        console.log('[loadAppConfig] Override buzzySoulUrl from EXPO_PUBLIC_BUZZY_SOUL_URL');
-        config.buzzySoulUrl = process.env.EXPO_PUBLIC_BUZZY_SOUL_URL;
-    }
-
     return config as AppConfig;
 }

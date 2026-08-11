@@ -68,8 +68,6 @@ by projecting agent activity into the relay channel.
 | `BUZZ_BODY_KEY`              | No       | auto               | Body operator Nostr nsec/hex         |
 | `BUZZ_AGENT_KEY`             | No       | generated at pair  | Existing agent Nostr nsec/hex        |
 | `BUZZY_BODY_AUTO_APPROVE`    | No       | `1`                | Auto-approve ACP permission requests |
-| `BUZZY_SOUL_HOST`            | No       | `127.0.0.1`        | Soul generator bind host             |
-| `BUZZY_SOUL_PORT`            | No       | `8789`             | Soul generator port                  |
 
 ### LLM credentials
 
@@ -126,9 +124,6 @@ npm run body -- archive <subchannel-uuid>
 # Create a new TLC + provision agent (all-in-one)
 npm run body -- create-and-provision "my-project"
 
-# Serve intent → name/personality generation without exposing the LLM grant
-BUZZY_BODY_LLM_FILE=data/buzzy-body/llm-egress.env \
-  npm run body -- serve-souls
 ```
 
 `pair` uses `origin` as the repository identity. HTTPS and SSH clone forms are
@@ -160,13 +155,11 @@ ACP processes, and resumes undelivered input without duplicating handled events.
 
 The coding model always comes from the operator's local environment or
 `BUZZY_BODY_LLM_FILE`; pairing neither requests nor stores a Beeline LLM key.
-Souls are separate, human-signed display overlays and cannot grant permissions
-or approve merges. The remaining explicit `serve`/`open` commands are internal
-diagnostic compatibility surfaces, not part of the user pairing workflow.
-
-The mobile app calls `POST /v1/souls/generate` with `{ "intent": "..." }`. Set
-`EXPO_PUBLIC_BUZZY_SOUL_URL` to this service's public base URL when building or
-running the app. The LLM key remains only in the body service environment/file.
+Souls are separate, human-signed persona overlays. Their name, personality, and
+intent are passed directly into ACP session instructions; they are never written
+into a repository and cannot grant permissions or approve merges. The remaining
+explicit `serve`/`open` commands are internal diagnostic compatibility surfaces,
+not part of the user pairing workflow.
 
 ### As a library
 

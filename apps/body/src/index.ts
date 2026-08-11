@@ -6,12 +6,16 @@ export {
   createAgentSubchannel,
   isChannelTaskRequest,
   AGENT_REQUEST_TAG,
+  AGENT_CANCEL_TAG,
   MERGE_READY_TAG,
   type AgentSession,
   type SubchannelInfo,
   type BoundRepo,
   type ChannelTaskRequest,
 } from './body.js';
+export { WorkspaceSupervisor, boundRepoFromRoom } from './supervisor.js';
+export { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
+export { DurableBodyState, type EventCursor, type ConversationEntry } from './durable-state.js';
 export {
   AcpClient,
   type McpServerWire,

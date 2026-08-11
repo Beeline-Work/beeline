@@ -34,17 +34,21 @@ import {
   type Identity,
 } from '@beeline/gate';
 import {
+  createBuzzClient,
   createAgent,
   isMember,
   CHANGE_REVIEW_FILE_TAG,
   CHANGE_REVIEW_MANIFEST_TAG,
   CHANGE_REVIEW_VERSION,
   listAgents,
+  tagValue,
   waitUntilMember,
   type ChannelOpsContext,
 } from '@beeline/buzz-client';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import type { BodyConfig } from './config.js';
+import { DurableBodyState } from './durable-state.js';
+import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import {
   chunkChangeReviewPatch,
   listChangeReviewFiles,
@@ -75,6 +79,48 @@ export interface AgentSession {
   lastPolledAt?: number;
   /** Whether this subchannel has been archived. */
   archived?: boolean;
+  /** Stable channel-scoped pin; physical ACP ids may rotate only after idle suspension. */
+  logicalSessionId?: string;
+  /** Internal lifecycle used by the bounded Workspace scheduler. */
+  lifecycle?: SessionLifecycle;
+}
+
+/**
+ * Exhaust a newest-first relay result window without advancing past omitted
+ * older events. `until` walks backward; the durable inbox later restores
+ * chronological processing and a composite `(created_at,id)` delivery cursor.
+ */
+export async function queryEventBacklog(
+  filter: Record<string, unknown>,
+  queryPubkey: string,
+  options: {
+    pageSize?: number;
+    query?: typeof queryEvents;
+  } = {},
+): Promise<NostrEvent[]> {
+  const pageSize = options.pageSize ?? 5_000;
+  const query = options.query ?? queryEvents;
+  const found = new Map<string, NostrEvent>();
+  let until = typeof filter.until === 'number' ? filter.until : undefined;
+
+  while (true) {
+    const page = await query(
+      [{ ...filter, ...(until === undefined ? {} : { until }), limit: pageSize }],
+      queryPubkey,
+    );
+    for (const event of page) found.set(event.id, event);
+    if (page.length < pageSize) break;
+    const oldest = Math.min(...page.map((event) => event.created_at));
+    const nextUntil = oldest - 1;
+    if (until !== undefined && nextUntil >= until) break;
+    until = nextUntil;
+    const since = typeof filter.since === 'number' ? filter.since : undefined;
+    if (since !== undefined && until < since) break;
+  }
+
+  return [...found.values()].sort(
+    (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
+  );
 }
 
 export interface SubchannelInfo {
@@ -121,6 +167,7 @@ export interface ChannelTaskRequest {
 
 export const AGENT_REQUEST_TAG = 'buzz-agent-request';
 export const MERGE_READY_TAG = 'merge-ready';
+export const AGENT_CANCEL_TAG = 'buzz-agent-cancel';
 
 export function cornerNameForIntent(intent: string | undefined, parentChannelId: string): string {
   const slug = intent
@@ -173,17 +220,31 @@ export class Body {
   private processedRequestIds = new Set<string>();
   private requestCursors = new Map<string, number>();
   private runningAgentTasks = new Map<string, Promise<void>>();
+  private scheduler: SessionScheduler;
+  private ownsScheduler: boolean;
+  private durableState: DurableBodyState;
 
   constructor(
     config: BodyConfig,
     bodyIdentity?: Identity,
     agentIdentity?: Identity,
     mergeWorkerIdentity?: Identity,
+    services: { scheduler?: SessionScheduler; statePath?: string } = {},
   ) {
     this.config = config;
     this.bodyIdentity = bodyIdentity ?? newIdentity('buzzy-body');
     this.agentIdentity = agentIdentity ?? newIdentity('buzzy-agent');
     this.mergeWorkerIdentity = mergeWorkerIdentity;
+    this.scheduler =
+      services.scheduler ??
+      new SessionScheduler({
+        maxLiveSessions: Number(process.env.BUZZY_BODY_MAX_SESSIONS ?? '4'),
+        idleMs: Number(process.env.BUZZY_BODY_SESSION_IDLE_MS ?? String(5 * 60_000)),
+      });
+    this.ownsScheduler = !services.scheduler;
+    this.durableState = new DurableBodyState(
+      services.statePath ?? resolve(config.workspaceRoot, '.beeline-body-state.json'),
+    );
     this.assertDistinctAgentIdentity(this.agentIdentity);
   }
 
@@ -222,6 +283,190 @@ export class Body {
     return Array.from(this.sessions.values());
   }
 
+  private async createManagedSession(input: {
+    channelId: string;
+    mode: 'readonly' | 'edit';
+    cwd: string;
+    mcpServers: McpServerWire[];
+    systemPrompt: string;
+    autoApprovePermissions: boolean;
+    parentChannelId?: string;
+    worktreePath?: string;
+    featureBranch?: string;
+  }): Promise<AgentSession> {
+    let client = new AcpClient({
+      agentBinary: this.config.agentBinary,
+      agentEnv: this.config.agentEnv,
+      autoApprovePermissions: input.autoApprovePermissions,
+    });
+    const session: AgentSession = {
+      channelId: input.channelId,
+      sessionId: '',
+      logicalSessionId: `${this.agentIdentity.publicKey}:${input.channelId}`,
+      client,
+      mode: input.mode,
+      ...(input.parentChannelId ? { parentChannelId: input.parentChannelId } : {}),
+      ...(input.worktreePath ? { worktreePath: input.worktreePath } : {}),
+      ...(input.featureBranch ? { featureBranch: input.featureBranch } : {}),
+    };
+    const lifecycle: SessionLifecycle = {
+      activate: async () => {
+        if (client.isAlive && session.sessionId) return session.sessionId;
+        client = new AcpClient({
+          agentBinary: this.config.agentBinary,
+          agentEnv: this.config.agentEnv,
+          autoApprovePermissions: input.autoApprovePermissions,
+        });
+        session.client = client;
+        await client.start();
+        const transcript = await this.durableState.conversation(input.channelId);
+        const restored = transcript.length
+          ? [
+              '',
+              'This logical channel session was suspended while idle. Restore its single',
+              'continuous conversation from this ordered transcript; do not treat it as a new task:',
+              ...transcript.map((entry) => `[${entry.role}] ${entry.text}`),
+            ].join('\n')
+          : '';
+        const created = await client.sessionNew({
+          cwd: input.cwd,
+          mcpServers: input.mcpServers,
+          systemPrompt: `${input.systemPrompt}${restored}`,
+        });
+        session.sessionId = created.sessionId;
+        session.unsubscribeActivity?.();
+        session.unsubscribeActivity = projectActivity(
+          client,
+          input.channelId,
+          this.agentIdentity,
+          created.sessionId,
+        );
+        return created.sessionId;
+      },
+      suspend: async () => {
+        session.unsubscribeActivity?.();
+        session.unsubscribeActivity = undefined;
+        if (client.isAlive) await client.stop();
+      },
+    };
+    session.lifecycle = lifecycle;
+    // Provisioning itself consumes capacity: this evicts the least-recently-used
+    // quiet process before another ACP child is spawned.
+    await this.scheduler.run(input.channelId, lifecycle, async () => undefined);
+    return session;
+  }
+
+  private runOnSession<T>(session: AgentSession, task: () => Promise<T>): Promise<T> {
+    if (!session.lifecycle) return task();
+    return this.scheduler.run(session.channelId, session.lifecycle, task);
+  }
+
+  /** Rebuild durable corner actors after a daemon restart. */
+  private async restoreSubchannels(parentChannelId: string, boundRepo: BoundRepo): Promise<void> {
+    const client = createBuzzClient({
+      baseUrl: this.config.relayBaseUrl,
+      host: this.config.relayHost,
+      identity: this.agentIdentity,
+    });
+    try {
+      const ids = await client.listSubchannels(parentChannelId);
+      const parentEvents = await queryEvents(
+        [{ kinds: [9], '#h': [parentChannelId], limit: 5_000 }],
+        this.agentIdentity.publicKey,
+      );
+      for (const subchannelId of ids) {
+        if (this.subchannels.has(subchannelId)) continue;
+        if ((await client.getChannelMetadata(subchannelId))?.archived) continue;
+        const events = await queryEvents(
+          [
+            {
+              kinds: [9],
+              '#h': [subchannelId],
+              authors: [this.agentIdentity.publicKey],
+              limit: 5_000,
+            },
+          ],
+          this.agentIdentity.publicKey,
+        );
+        const control = [...events]
+          .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
+          .find((event) => tagValue(event, 'feature') && tagValue(event, 'parent'));
+        const featureBranch = control ? tagValue(control, 'feature') : undefined;
+        if (!featureBranch) continue;
+        const worktreePath = resolve(this.config.workspaceRoot, `.worktrees/${subchannelId}`);
+        if (!existsSync(worktreePath)) {
+          await postControlMessage(
+            subchannelId,
+            this.agentIdentity,
+            'Agent restart could not restore this corner worktree; no input was discarded.',
+            [['status', 'failed']],
+          ).catch(() => undefined);
+          continue;
+        }
+        const session = await this.createManagedSession({
+          channelId: subchannelId,
+          mode: 'edit',
+          cwd: worktreePath,
+          mcpServers: [
+            { name: 'buzz-dev-mcp', command: this.config.mcpBinary, args: [], env: [] },
+          ],
+          systemPrompt: [
+            'You are a coding agent resuming one durable corner after a supervisor restart.',
+            `You are working in a git worktree: ${worktreePath}`,
+            `Your feature branch is: ${featureBranch}`,
+            'Continue the restored transcript on this branch. Never start a second context.',
+          ].join('\n'),
+          autoApprovePermissions: true,
+          parentChannelId,
+          worktreePath,
+          featureBranch,
+        });
+        const cursor = await this.durableState.cursor(subchannelId);
+        const requestId = control ? tagValue(control, 'request') : undefined;
+        const requestEvent = requestId
+          ? parentEvents.find((event) => event.id === requestId)
+          : undefined;
+        const request = requestEvent
+          ? {
+              eventId: requestEvent.id,
+              authorPubkey: requestEvent.pubkey,
+              content: requestEvent.content.trim(),
+              createdAt: requestEvent.created_at,
+            }
+          : undefined;
+        const ready = [...events]
+          .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))
+          .find((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === MERGE_READY_TAG));
+        const tip = ready ? tagValue(ready, 'tip') : undefined;
+        const info: SubchannelInfo = {
+          subchannelId,
+          worktreePath,
+          featureBranch,
+          role: this.agentIdentity,
+          session,
+          lastPolledAt: cursor.createdAt,
+          archived: false,
+          boundRepo,
+          ...(request ? { request } : {}),
+          ...(tip
+            ? {
+                mergeTarget: {
+                  repo: tagValue(ready!, 'repo') ?? this.repoId(boundRepo),
+                  branch: tagValue(ready!, 'branch') ?? boundRepo.targetBranch ?? 'refs/heads/main',
+                  tip,
+                },
+              }
+            : {}),
+        };
+        session.lastPolledAt = cursor.createdAt;
+        this.registerSubchannel(info);
+        if (request && !tip) this.startAgentTask(info, request.content);
+      }
+    } finally {
+      client.disconnect();
+    }
+  }
+
   /**
    * Provision a read-only agent session for a TLC channel.
    *
@@ -243,16 +488,10 @@ export class Body {
     await this.ensureAgentInChannel(tlcChannelId, agentId);
     await this.ensureAgentEntity(tlcChannelId);
 
-    const client = new AcpClient({
-      agentBinary: this.config.agentBinary,
-      agentEnv: this.config.agentEnv,
-      autoApprovePermissions: this.config.autoApprovePermissions,
-    });
-
-    await client.start();
-
     // Read-only session: NO mcpServers — the boundary IS the MCP mount.
-    const { sessionId } = await client.sessionNew({
+    const session = await this.createManagedSession({
+      channelId: tlcChannelId,
+      mode: 'readonly',
       cwd: boundRepo?.localPath ?? this.config.workspaceRoot,
       mcpServers: [],
       systemPrompt: [
@@ -262,27 +501,17 @@ export class Body {
         'You do not have shell access or file edit tools.',
         'When the user asks you to write code, explain that you need an edit session.',
       ].join('\n'),
+      autoApprovePermissions: this.config.autoApprovePermissions,
     });
-
-    // Project activity to the TLC channel.
-    const unsub = projectActivity(client, tlcChannelId, agentId, sessionId);
-
-    const session: AgentSession = {
-      channelId: tlcChannelId,
-      sessionId,
-      client,
-      mode: 'readonly',
-      unsubscribeActivity: unsub,
-    };
 
     this.sessions.set(tlcChannelId, session);
 
     await postControlMessage(
       tlcChannelId,
       agentId,
-      `🤖 Agent session started (read-only) — session=${sessionId}`,
+      `🤖 Agent session started (read-only) — session=${session.logicalSessionId}`,
       [
-        ['session', sessionId],
+        ['session', session.logicalSessionId!],
         ['mode', 'readonly'],
       ],
     );
@@ -336,17 +565,9 @@ export class Body {
       },
     ];
 
-    const client = new AcpClient({
-      agentBinary: this.config.agentBinary,
-      agentEnv: this.config.agentEnv,
-      // A corner is the agent's isolated worktree. Tool use inside it is yolo by
-      // design; the only human gate is the protected-line merge handled elsewhere.
-      autoApprovePermissions: true,
-    });
-
-    await client.start();
-
-    const { sessionId } = await client.sessionNew({
+    const session = await this.createManagedSession({
+      channelId: subchannelId,
+      mode: 'edit',
       cwd: worktreePath,
       mcpServers,
       systemPrompt: [
@@ -359,24 +580,17 @@ export class Body {
         `Repo: ${boundRepo.ownerHex}/${boundRepo.repo}`,
         ...(intent ? [`User intent: ${intent}`] : []),
       ].join('\n'),
-    });
-
-    // 6. Project activity to the subchannel.
-    const unsub = projectActivity(client, subchannelId, agentId, sessionId);
-
-    const now = Math.floor(Date.now() / 1000);
-    const session: AgentSession = {
-      channelId: subchannelId,
-      sessionId,
-      client,
-      mode: 'edit',
+      // A corner is the agent's isolated worktree. Tool use inside it is yolo by
+      // design; the only human gate is the protected-line merge handled elsewhere.
+      autoApprovePermissions: true,
+      parentChannelId: tlcChannelId,
       worktreePath,
       featureBranch,
-      parentChannelId: tlcChannelId,
-      unsubscribeActivity: unsub,
-      lastPolledAt: now,
-      archived: false,
-    };
+    });
+
+    const now = Math.floor(Date.now() / 1000);
+    session.lastPolledAt = now;
+    session.archived = false;
 
     this.sessions.set(subchannelId, session);
 
@@ -410,7 +624,7 @@ export class Body {
       `Agent opened a work branch for: ${intent?.trim() || 'channel request'}`,
       [
         ['subchannel', subchannelId],
-        ['session', sessionId],
+        ['session', session.logicalSessionId!],
         ['agent', agentId.publicKey],
         ['feature', featureBranch],
         ['branch', targetBranch],
@@ -427,7 +641,7 @@ export class Body {
       agentId,
       `🤖 Agent edit session started — members mirrored from parent TLC.\nWorktree: ${worktreePath}\nBranch: ${featureBranch}`,
       [
-        ['session', sessionId],
+        ['session', session.logicalSessionId!],
         ['parent', tlcChannelId],
         ['mode', 'edit'],
         ['repo', repoId],
@@ -448,56 +662,70 @@ export class Body {
    * requests are rejected, preserving the human → agent direction of the loop.
    */
   async pollChannelRequests(tlcChannelId: string, boundRepo: BoundRepo): Promise<number> {
-    const since = this.requestCursors.get(tlcChannelId) ?? 0;
-    const events = await queryEvents(
-      [
-        {
-          kinds: [9],
-          '#h': [tlcChannelId],
-          '#p': [this.agentIdentity.publicKey],
-          since,
-          limit: 100,
-        },
-      ],
+    const durableCursor = await this.durableState.cursor(tlcChannelId);
+    const since = Math.max(this.requestCursors.get(tlcChannelId) ?? 0, durableCursor.createdAt);
+    const events = await queryEventBacklog(
+      {
+        kinds: [9],
+        '#h': [tlcChannelId],
+        '#p': [this.agentIdentity.publicKey],
+        since,
+      },
       this.agentIdentity.publicKey,
     );
+    await this.durableState.enqueue(tlcChannelId, events);
     let opened = 0;
     let maxCreatedAt = since;
 
-    for (const event of [...events].sort((a, b) => a.created_at - b.created_at)) {
+    for (const event of await this.durableState.pending(tlcChannelId)) {
       maxCreatedAt = Math.max(maxCreatedAt, event.created_at);
-      if (this.processedRequestIds.has(event.id)) continue;
-      if (!isChannelTaskRequest(event, this.agentIdentity.publicKey)) continue;
+      if (this.processedRequestIds.has(event.id)) {
+        await this.durableState.delivered(tlcChannelId, event.id);
+        continue;
+      }
+      if (!isChannelTaskRequest(event, this.agentIdentity.publicKey)) {
+        await this.durableState.delivered(tlcChannelId, event.id);
+        continue;
+      }
       if (await this.requestAlreadyOpened(tlcChannelId, event.id)) {
         this.processedRequestIds.add(event.id);
-        continue;
-      }
-      this.processedRequestIds.add(event.id);
-
-      // Fail closed: a registered agent can never task another body through the
-      // human request affordance, regardless of any channel role it holds.
-      if (await isRegisteredAgentIdentity(event.pubkey, this.agentIdentity.publicKey)) {
-        await postControlMessage(
-          tlcChannelId,
-          this.agentIdentity,
-          'Agent-authored work request refused. Ask a human channel member to start work.',
-          [
-            ['request', event.id],
-            ['status', 'refused'],
-          ],
-        );
+        await this.durableState.delivered(tlcChannelId, event.id);
         continue;
       }
 
-      const request: ChannelTaskRequest = {
-        eventId: event.id,
-        authorPubkey: event.pubkey,
-        content: event.content.trim(),
-        createdAt: event.created_at,
-      };
-      const info = await this.openSubchannel(tlcChannelId, boundRepo, request.content, request);
-      this.startAgentTask(info, request.content);
-      opened++;
+      try {
+        // Fail closed: a registered agent can never task another body through the
+        // human request affordance, regardless of any channel role it holds.
+        if (await isRegisteredAgentIdentity(event.pubkey, this.agentIdentity.publicKey)) {
+          await postControlMessage(
+            tlcChannelId,
+            this.agentIdentity,
+            'Agent-authored work request refused. Ask a human channel member to start work.',
+            [
+              ['request', event.id],
+              ['status', 'refused'],
+            ],
+          );
+          this.processedRequestIds.add(event.id);
+          await this.durableState.delivered(tlcChannelId, event.id);
+          continue;
+        }
+
+        const request: ChannelTaskRequest = {
+          eventId: event.id,
+          authorPubkey: event.pubkey,
+          content: event.content.trim(),
+          createdAt: event.created_at,
+        };
+        const info = await this.openSubchannel(tlcChannelId, boundRepo, request.content, request);
+        this.startAgentTask(info, request.content);
+        this.processedRequestIds.add(event.id);
+        await this.durableState.delivered(tlcChannelId, event.id);
+        opened++;
+      } catch (error) {
+        await this.durableState.failed(tlcChannelId, event.id, error);
+        throw error;
+      }
     }
 
     this.requestCursors.set(tlcChannelId, maxCreatedAt);
@@ -506,8 +734,14 @@ export class Body {
 
   /** Start the requested work without blocking discovery/UI updates. */
   private startAgentTask(info: SubchannelInfo, prompt: string): void {
-    const task = (async () => {
+    const task = this.runOnSession(info.session, async () => {
       try {
+        await this.durableState.appendConversation(info.subchannelId, {
+          role: 'user',
+          text: prompt,
+          eventId: info.request?.eventId,
+          at: new Date().toISOString(),
+        });
         const result = await info.session.client.sessionPrompt(
           info.session.sessionId,
           [
@@ -519,6 +753,11 @@ export class Body {
           10 * 60_000,
         );
         info.mergeSummary = result.agentText.trim() || `Completed: ${prompt}`;
+        await this.durableState.appendConversation(info.subchannelId, {
+          role: 'agent',
+          text: info.mergeSummary,
+          at: new Date().toISOString(),
+        });
         await this.publishMergeReady(info);
       } catch (error) {
         await postControlMessage(
@@ -530,7 +769,7 @@ export class Body {
       } finally {
         this.runningAgentTasks.delete(info.subchannelId);
       }
-    })();
+    });
     this.runningAgentTasks.set(info.subchannelId, task);
   }
 
@@ -675,12 +914,13 @@ export class Body {
   ): Promise<void> {
     await this.assertRepositorySafety(tlcChannelId, boundRepo);
     await this.provision(tlcChannelId, boundRepo);
+    if (boundRepo.repositoryKey) await this.restoreSubchannels(tlcChannelId, boundRepo);
     const pollMs = opts.pollMs ?? 1_000;
     while (!opts.signal?.aborted) {
       await this.pollChannelRequests(tlcChannelId, boundRepo);
-      for (const subchannelId of [...this.subchannels.keys()]) {
-        await this.pollMembers(subchannelId);
-      }
+      await Promise.all(
+        [...this.subchannels.keys()].map((subchannelId) => this.pollMembers(subchannelId)),
+      );
       await this.pollMergeCompletions();
       await this.waitForPoll(pollMs, opts.signal);
     }
@@ -708,25 +948,21 @@ export class Body {
         : undefined;
 
     const pollMs = opts.pollMs ?? 3_000;
-    while (
-      !opts.signal?.aborted &&
-      !(await isMember(this.agentClientContext(), channelId, this.agentIdentity.publicKey))
-    ) {
-      await setMemberRole(this.agentIdentity, channelId, this.agentIdentity.publicKey, 'member');
-      await this.waitForPoll(pollMs, opts.signal);
-    }
-    if (opts.signal?.aborted) return;
     await this.provision(channelId, boundRepo);
+    await this.restoreSubchannels(channelId, boundRepo);
 
     while (!opts.signal?.aborted) {
+      // The Workspace supervisor owns current-role discovery. It aborts this
+      // loop when the Room disappears from the agent's member/admin projection,
+      // then waits for accepted turns to drain before disposing the Body.
       try {
         await this.pollChannelRequests(channelId, boundRepo);
       } catch (error) {
         console.error('[body] repository Room request poll failed:', error);
       }
-      for (const subchannelId of [...this.subchannels.keys()]) {
-        await this.pollMembers(subchannelId);
-      }
+      await Promise.all(
+        [...this.subchannels.keys()].map((subchannelId) => this.pollMembers(subchannelId)),
+      );
       if (mergeGate) {
         try {
           const attempts = await mergeGate.poll();
@@ -750,7 +986,9 @@ export class Body {
    * then fail closed unless that identity is excluded from protected pushes.
    */
   async assertRepositorySafety(channelId: string, boundRepo: BoundRepo): Promise<void> {
-    await this.ensureAgentInChannel(channelId, this.agentIdentity);
+    if (!(await isMember(this.agentClientContext(), channelId, this.agentIdentity.publicKey))) {
+      throw new Error(`agent is not an invited member of repository Room ${channelId}`);
+    }
     if (!boundRepo.ownerHex) return;
     await assertAgentNotPushAllowed({
       ownerHex: boundRepo.ownerHex,
@@ -814,18 +1052,16 @@ export class Body {
     }
 
     const session = info.session;
-    const since = info.lastPolledAt;
+    const durableCursor = await this.durableState.cursor(subchannelId);
+    const since = Math.max(info.lastPolledAt, durableCursor.createdAt);
 
     try {
-      const events = await queryEvents(
-        [
-          {
-            kinds: [9],
-            '#h': [subchannelId],
-            since,
-            limit: 100,
-          },
-        ],
+      const events = await queryEventBacklog(
+        {
+          kinds: [9],
+          '#h': [subchannelId],
+          since,
+        },
         this.agentIdentity.publicKey,
       );
 
@@ -833,22 +1069,47 @@ export class Body {
       let maxCreated = since;
       let retryFrom: number | undefined;
 
+      await this.durableState.enqueue(subchannelId, events);
       const processed = info.processedMemberEventIds ?? new Set<string>();
       info.processedMemberEventIds = processed;
-      const orderedEvents = [...events].sort(
-        (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
-      );
+      const orderedEvents = await this.durableState.pending(subchannelId);
 
       for (const evt of orderedEvents) {
         maxCreated = Math.max(maxCreated, evt.created_at);
-        if (processed.has(evt.id)) continue;
+        if (processed.has(evt.id)) {
+          await this.durableState.delivered(subchannelId, evt.id);
+          continue;
+        }
         // Skip events published by the agent itself (no self-steering).
-        if (evt.pubkey === this.agentIdentity.publicKey) continue;
+        if (evt.pubkey === this.agentIdentity.publicKey) {
+          await this.durableState.delivered(subchannelId, evt.id);
+          continue;
+        }
         // Skip events that are not plain text messages.
         if (!evt.content || evt.tags.some((t) => t[0] === 't' && t[1] === 'agent-activity'))
+        {
+          await this.durableState.delivered(subchannelId, evt.id);
           continue;
+        }
         // Skip control messages.
-        if (evt.tags.some((t) => t[0] === 't' && t[1] === 'body-control')) continue;
+        if (evt.tags.some((t) => t[0] === 't' && t[1] === 'body-control')) {
+          await this.durableState.delivered(subchannelId, evt.id);
+          continue;
+        }
+
+        if (evt.tags.some((t) => t[0] === 't' && t[1] === AGENT_CANCEL_TAG)) {
+          session.client.sessionCancel(session.sessionId);
+          processed.add(evt.id);
+          await this.durableState.appendConversation(subchannelId, {
+            role: 'control',
+            text: 'Human cancelled the active turn.',
+            eventId: evt.id,
+            at: new Date().toISOString(),
+          });
+          await this.durableState.delivered(subchannelId, evt.id);
+          count++;
+          continue;
+        }
 
         // Forward the member's message into the active run when possible. If
         // the original task ended between polling and delivery, wait for its
@@ -862,19 +1123,38 @@ export class Body {
             } catch (error) {
               if (!runningTask) throw error;
               await runningTask;
-              const result = await session.client.sessionPrompt(session.sessionId, prompt, 60_000);
+              const result = await this.runOnSession(session, () =>
+                session.client.sessionPrompt(session.sessionId, prompt, 60_000),
+              );
               info.mergeSummary = result.agentText.trim() || info.mergeSummary;
               await this.publishMergeReady(info);
             }
           } else {
-            const result = await session.client.sessionPrompt(session.sessionId, prompt, 60_000);
+            const result = await this.runOnSession(session, () =>
+              session.client.sessionPrompt(session.sessionId, prompt, 60_000),
+            );
             info.mergeSummary = result.agentText.trim() || info.mergeSummary;
             await this.publishMergeReady(info);
           }
+          await this.durableState.appendConversation(subchannelId, {
+            role: 'user',
+            text: prompt,
+            eventId: evt.id,
+            at: new Date().toISOString(),
+          });
+          if (info.mergeSummary) {
+            await this.durableState.appendConversation(subchannelId, {
+              role: 'agent',
+              text: info.mergeSummary,
+              at: new Date().toISOString(),
+            });
+          }
           processed.add(evt.id);
+          await this.durableState.delivered(subchannelId, evt.id);
           count++;
         } catch (err) {
           retryFrom = Math.min(retryFrom ?? evt.created_at, evt.created_at);
+          await this.durableState.failed(subchannelId, evt.id, err);
           console.error(`[body] pollMembers: forwarding failed for event ${evt.id}:`, err);
         }
       }
@@ -1254,10 +1534,13 @@ export class Body {
 
   /** Dispose all sessions. */
   async dispose(): Promise<void> {
+    await this.waitForAgentTasks();
     for (const [, session] of this.sessions) {
       if (session.unsubscribeActivity) session.unsubscribeActivity();
-      await session.client.stop();
+      if (this.ownsScheduler) continue;
+      await this.scheduler.suspend(session.channelId);
     }
+    if (this.ownsScheduler) await this.scheduler.dispose();
     this.sessions.clear();
     this.subchannels.clear();
   }

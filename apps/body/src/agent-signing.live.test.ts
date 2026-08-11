@@ -25,7 +25,7 @@ async function relayReachable(): Promise<boolean> {
 
 const reachable = await relayReachable();
 
-describe.runIf(reachable)('live agent-signed subchannel creation', () => {
+(reachable ? describe : describe.skip)('live agent-signed subchannel creation', () => {
   beforeAll(() => {
     console.log(`[agent-signing] relay reachable at ${BASE_URL} — checking kind:9007 signer`);
   });
@@ -58,11 +58,4 @@ describe.runIf(reachable)('live agent-signed subchannel creation', () => {
       `[agent-signing] PASS subchannel=${subchannel} signer=agent:${agent.publicKey.slice(0, 12)}`,
     );
   }, 30_000);
-});
-
-describe.runIf(!reachable)('live agent-signed subchannel creation (relay unreachable)', () => {
-  it('SKIPPED — relay not reachable; start with `npm run stack:up`', () => {
-    console.warn(`[agent-signing] SKIPPED: relay at ${BASE_URL} is unreachable`);
-    expect(true).toBe(true);
-  });
 });

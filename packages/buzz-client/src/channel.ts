@@ -5,7 +5,7 @@
  * (39002 / 39000). **Never treat an accepted publish as proof of effect** —
  * assert membership via query of 39002 (see assertMember / waitUntilMember).
  */
-import { signEvent, type NostrEvent } from '@beeline/nostr';
+import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import {
   KIND_CHANNEL_ADMINS,
   KIND_CHANNEL_MEMBERS,
@@ -14,6 +14,7 @@ import {
   KIND_PUT_USER,
   KIND_STREAM_MESSAGE,
   TAG_AGENT_ACTIVITY,
+  TAG_AGENT,
   TAG_COMMUNITY,
   TAG_PARENT,
 } from './kinds.js';
@@ -65,6 +66,20 @@ function sign(identity: Identity, kind: number, tags: string[][], content = ''):
   );
 }
 
+async function isRegisteredAgentKey(ctx: ChannelOpsContext, pubkey: string): Promise<boolean> {
+  const events = await queryEvents(
+    ctx.http,
+    [{ kinds: [KIND_STREAM_MESSAGE], authors: [pubkey], '#t': [TAG_AGENT], limit: 20 }],
+    ctx.identity.publicKey,
+  );
+  return events.some(
+    (event) =>
+      event.pubkey === pubkey &&
+      verifyEvent(event) &&
+      event.tags.some((tag) => tag[0] === 't' && tag[1] === TAG_AGENT),
+  );
+}
+
 export interface ChannelOpsContext {
   http: HttpBridgeOptions;
   identity: Identity;
@@ -112,6 +127,10 @@ export async function createChannel(
     const communityMembers = await listMembers(ctx, opts.communityId);
     for (const member of communityMembers) {
       if (member.pubkey === ctx.identity.publicKey) continue;
+      // Workspace membership links an agent identity once, but does not grant
+      // ambient presence in every current/future Room. People are mirrored;
+      // registered agents require attachAgentToChannel for each Room.
+      if (await isRegisteredAgentKey(ctx, member.pubkey)) continue;
       await setMemberRole(ctx, channelId, member.pubkey, 'member', {
         extraTags: [[TAG_COMMUNITY, opts.communityId]],
       });
@@ -157,30 +176,50 @@ export async function setMemberRole(
   return publishEvent(ctx.http, event);
 }
 
-/** Query kind:39002 for channel members. Empty if not yet materialized. */
+async function latestRoleProjection(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  kind: number,
+): Promise<NostrEvent | undefined> {
+  let events = await queryEvents(
+    ctx.http,
+    [{ kinds: [kind], '#d': [channelId], limit: 5 }],
+    ctx.identity.publicKey,
+  );
+  if (events.length === 0) {
+    events = await queryEvents(
+      ctx.http,
+      [{ kinds: [kind], '#h': [channelId], limit: 5 }],
+      ctx.identity.publicKey,
+    );
+  }
+  return [...events].sort(
+    (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+  )[0];
+}
+
+/** Query current 39001/39002 projections; owners/admins are also members. */
 export async function listMembers(
   ctx: ChannelOpsContext,
   channelId: string,
 ): Promise<ChannelMember[]> {
-  const events = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_CHANNEL_MEMBERS], '#d': [channelId], limit: 5 }],
-    ctx.identity.publicKey,
-  );
-  if (events.length === 0) {
-    // Some stacks index 39002 under `h` instead of/in addition to `d`.
-    const alt = await queryEvents(
-      ctx.http,
-      [{ kinds: [KIND_CHANNEL_MEMBERS], '#h': [channelId], limit: 5 }],
-      ctx.identity.publicKey,
-    );
-    if (alt.length === 0) return [];
-    return parseMembersEvent(alt[0]!);
+  const [memberProjection, adminProjection] = await Promise.all([
+    latestRoleProjection(ctx, channelId, KIND_CHANNEL_MEMBERS),
+    latestRoleProjection(ctx, channelId, KIND_CHANNEL_ADMINS),
+  ]);
+  const current = new Map<string, ChannelMember>();
+  for (const member of memberProjection ? parseMembersEvent(memberProjection) : []) {
+    current.set(member.pubkey, member);
   }
-  return parseMembersEvent(events[0]!);
+  for (const tag of adminProjection?.tags ?? []) {
+    if (tag[0] !== 'p' || !tag[1]) continue;
+    const role = tag[3] === 'owner' || tag[2] === 'owner' ? 'owner' : 'admin';
+    current.set(tag[1], { pubkey: tag[1], role });
+  }
+  return [...current.values()];
 }
 
-/** True if pubkey appears in the channel's 39002 members list. */
+/** True if pubkey appears in current member, owner, or admin projections. */
 export async function isMember(
   ctx: ChannelOpsContext,
   channelId: string,

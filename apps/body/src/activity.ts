@@ -31,29 +31,44 @@ export function projectActivity(
   channelOwner: Identity,
   sessionId: string,
 ): () => void {
-  // Simple batching: emit on each update for low latency.
-  // A production body should debounce at ~200ms for bursty tool calls.
+  let pending: SessionUpdate[] = [];
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const flush = () => {
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+    const events = pending;
+    pending = [];
+    if (events.length) void emitActivityEvent(channelId, channelOwner, { sessionId, channelId, events });
+  };
   const onUpdate = (u: SessionUpdate) => {
     if (u.sessionId !== sessionId) return;
-    void emitActivityEvent(channelId, channelOwner, u);
+    pending.push(u);
+    // One paired identity can serve several Rooms. A five-second batch keeps
+    // shared live visibility while staying below per-pubkey relay quotas under
+    // concurrent tool-call bursts.
+    timer ??= setTimeout(flush, 5_000);
   };
 
   client.on('session/update', onUpdate);
   return () => {
     client.off('session/update', onUpdate);
+    flush();
   };
 }
 
-/** Emit a single session/update as a kind:9 channel event. */
+/** Emit an ordered batch of session updates as one kind:9 channel event. */
 async function emitActivityEvent(
   channelId: string,
   owner: Identity,
-  update: SessionUpdate,
+  batch: ActivityBatch,
 ): Promise<void> {
   try {
     const content = JSON.stringify({
-      sessionId: update.sessionId,
-      update: update.update,
+      sessionId: batch.sessionId,
+      update: {
+        sessionUpdate: 'activity_batch',
+        updates: batch.events.map((event) => event.update),
+      },
       projected: true,
     });
 
@@ -65,7 +80,7 @@ async function emitActivityEvent(
         tags: [
           ['h', channelId],
           ['t', ACTIVITY_TAG],
-          ['session', update.sessionId],
+          ['session', batch.sessionId],
         ],
         content,
       },

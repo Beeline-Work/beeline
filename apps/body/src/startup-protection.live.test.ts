@@ -50,6 +50,7 @@ describe.runIf(relayUp)('live startup branch protection', () => {
         },
         human.secretKey,
       ),
+      human,
     );
     const config: BodyConfig = {
       agentBinary: '/bin/false',

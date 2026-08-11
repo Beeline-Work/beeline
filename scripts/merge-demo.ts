@@ -209,7 +209,7 @@ async function main(): Promise<void> {
     ],
     content: `🤖 Edit session started — branch=${featureBranch} tip=${featureTip.slice(0, 12)}…`,
   }, owner.secretKey);
-  await publishEvent(subControl);
+  await publishEvent(subControl, owner);
   log('Control message posted with merge target tags');
 
   // ── 4. POSITIVE: owner approval → worker merges → main moves ─────
@@ -221,7 +221,7 @@ async function main(): Promise<void> {
   assert('owner approval verification passes', ownerVerify);
 
   // Publish it (as submitMergeApproval does)
-  await publishEvent(ownerApproval);
+  await publishEvent(ownerApproval, reviewer);
   log('Owner approval published to relay');
   await sleep(1000);
 
@@ -265,7 +265,7 @@ async function main(): Promise<void> {
     ],
     content: `✅ Merged ${featureBranch} → main (${featureTip.slice(0, 12)}…)`,
   }, owner.secretKey);
-  await publishEvent(summaryEvent);
+  await publishEvent(summaryEvent, owner);
   log('Merge-summary posted');
 
   // Archive status to subchannel
@@ -280,7 +280,7 @@ async function main(): Promise<void> {
     ],
     content: '📦 Subchannel archived — read-only',
   }, owner.secretKey);
-  await publishEvent(archiveEvent);
+  await publishEvent(archiveEvent, owner);
   log('Archive status posted');
 
   // ── 6. Verify UI states in relay data ────────────────────────────
@@ -289,7 +289,7 @@ async function main(): Promise<void> {
   // Check merge-summary exists
   const parentMsgs = await queryEvents(
     [{ kinds: [9], '#h': [channelId], limit: 30 }],
-    owner.publicKey,
+    owner,
   );
   const summaryFound = parentMsgs.find((evt: NostrEvent) =>
     evt.tags.some((t: string[]) => t[0] === 't' && t[1] === 'merge-summary'),
@@ -335,7 +335,7 @@ async function main(): Promise<void> {
     'non-owner signed but worker checks reviewer.publicKey');
 
   // Publish anyway
-  await publishEvent(nonOwnerApproval);
+  await publishEvent(nonOwnerApproval, nonOwner);
   log('Non-owner approval published to relay');
   await sleep(1000);
 

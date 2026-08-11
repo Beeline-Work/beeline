@@ -18,7 +18,7 @@ import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 import type { Identity } from './identity.js';
 import { git, gitAuthed, lsRemoteRef } from './git.js';
 import { gitRepoUrl } from './config.js';
-import { queryEvents } from './relay.js';
+import { createRelayClient, type RelayReader } from './relay.js';
 import { APPROVAL_MARKER, verifyApproval, type MergeTarget } from './approval.js';
 import { KIND_STREAM_MESSAGE } from './buzz.js';
 import { isRegisteredAgentIdentity } from './agent-identity.js';
@@ -45,6 +45,8 @@ export interface MergeRequest {
   targetBranch: string;
   /** Short feature branch name the agent already pushed. */
   featureBranch: string;
+  /** Authenticated relay reader; defaults to one bound to `worker`. */
+  relay?: RelayReader;
 }
 
 export interface MergeOutcome {
@@ -61,8 +63,8 @@ export interface MergeOutcome {
 export type ReviewerKeyCustody = 'device' | 'managed' | 'remote';
 
 export interface ReviewerAuthorityDependencies {
-  isRegisteredAgent(pubkey: string, queryPubkey: string): Promise<boolean>;
-  resolveRole(channelId: string, pubkey: string, queryPubkey: string): Promise<ChannelRole | null>;
+  isRegisteredAgent(pubkey: string, relay: RelayReader): Promise<boolean>;
+  resolveRole(channelId: string, pubkey: string, relay: RelayReader): Promise<ChannelRole | null>;
 }
 
 export interface ReviewerAuthorityResult {
@@ -77,7 +79,7 @@ export interface ReviewerAuthorityResult {
 export async function authorizeReviewer(
   input: {
     pubkey: string;
-    queryPubkey: string;
+    relay: RelayReader;
     channelId: string;
     custody: ReviewerKeyCustody;
   },
@@ -88,7 +90,7 @@ export async function authorizeReviewer(
 ): Promise<ReviewerAuthorityResult> {
   let signerIsAgent: boolean;
   try {
-    signerIsAgent = await dependencies.isRegisteredAgent(input.pubkey, input.queryPubkey);
+    signerIsAgent = await dependencies.isRegisteredAgent(input.pubkey, input.relay);
   } catch (error) {
     return {
       authorized: false,
@@ -110,7 +112,7 @@ export async function authorizeReviewer(
 
   let reviewerRole: ChannelRole | null;
   try {
-    reviewerRole = await dependencies.resolveRole(input.channelId, input.pubkey, input.queryPubkey);
+    reviewerRole = await dependencies.resolveRole(input.channelId, input.pubkey, input.relay);
   } catch (error) {
     return {
       authorized: false,
@@ -140,7 +142,8 @@ function cloneFresh(req: MergeRequest): string {
 
 /** Fetch the approvals the reviewer posted for this repo/channel. */
 async function fetchApprovals(req: MergeRequest): Promise<NostrEvent[]> {
-  return queryEvents(
+  const relay = req.relay ?? createRelayClient(req.worker);
+  return relay.queryEvents(
     [
       {
         kinds: [KIND_STREAM_MESSAGE],
@@ -149,7 +152,6 @@ async function fetchApprovals(req: MergeRequest): Promise<NostrEvent[]> {
         '#t': [APPROVAL_MARKER],
       },
     ],
-    req.worker.publicKey,
   );
 }
 
@@ -173,10 +175,11 @@ export async function attemptMerge(req: MergeRequest): Promise<MergeOutcome> {
   }
 
   const target: MergeTarget = { repo: `${owner}/${req.repo}`, branch: targetRef, tip: featureTip };
+  const relay = req.relay ?? createRelayClient(req.worker);
 
   const reviewerAuthority = await authorizeReviewer({
     pubkey: req.trustedReviewer,
-    queryPubkey: req.worker.publicKey,
+    relay,
     channelId: req.channelId,
     custody: req.trustedReviewerCustody,
   });
@@ -240,6 +243,8 @@ export interface RoomMergeServiceConfig {
   repo: string;
   channelId: string;
   targetBranch: string;
+  /** Optional explicit relay binding for custom/local daemon configurations. */
+  relay?: RelayReader;
 }
 
 export interface RoomMergeCandidate {
@@ -303,11 +308,14 @@ export function roomMergeCandidates(
  */
 export class DurableMergeGate {
   private readonly terminalApprovalIds = new Set<string>();
+  private readonly relay: RelayReader;
 
-  constructor(private readonly config: RoomMergeServiceConfig) {}
+  constructor(private readonly config: RoomMergeServiceConfig) {
+    this.relay = config.relay ?? createRelayClient(config.worker);
+  }
 
   async poll(): Promise<RoomMergeAttempt[]> {
-    const roomEvents = await queryEvents(
+    const roomEvents = await this.relay.queryEvents(
       [
         {
           kinds: [KIND_STREAM_MESSAGE],
@@ -316,7 +324,6 @@ export class DurableMergeGate {
           limit: 500,
         },
       ],
-      this.config.worker.publicKey,
     );
     const candidates = roomMergeCandidates(roomEvents, this.config);
     const attempts: RoomMergeAttempt[] = [];
@@ -325,7 +332,7 @@ export class DurableMergeGate {
 
     for (const candidate of candidates) {
       // Only irreversible, self-signed agent identities may announce changes.
-      if (!(await isRegisteredAgentIdentity(candidate.agentPubkey, this.config.worker.publicKey))) {
+      if (!(await isRegisteredAgentIdentity(candidate.agentPubkey, this.relay))) {
         continue;
       }
       const featureRef = `refs/heads/${candidate.featureBranch}`;
@@ -346,7 +353,7 @@ export class DurableMergeGate {
       );
       if (targetTip === featureTip) continue;
 
-      const approvals = await queryEvents(
+      const approvals = await this.relay.queryEvents(
         [
           {
             kinds: [KIND_STREAM_MESSAGE],
@@ -355,7 +362,6 @@ export class DurableMergeGate {
             limit: 100,
           },
         ],
-        this.config.worker.publicKey,
       );
       const exactTarget: MergeTarget = { repo: targetRepo, branch: targetRef, tip: featureTip };
       for (const approval of approvals) {
@@ -374,6 +380,7 @@ export class DurableMergeGate {
           channelId: candidate.subchannelId,
           targetBranch: shortTargetBranch(this.config.targetBranch),
           featureBranch: candidate.featureBranch,
+          relay: this.relay,
         });
         attempts.push({
           candidate,

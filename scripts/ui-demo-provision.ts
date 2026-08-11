@@ -237,7 +237,7 @@ async function main() {
     },
     owner.secretKey,
   );
-  await publishEvent(subIntro);
+  await publishEvent(subIntro, owner);
   log(`Review metadata posted for ${files.length} file diffs`);
 
   // To parent (subchannel link - for UI to render as navigable)
@@ -261,7 +261,7 @@ async function main() {
     },
     owner.secretKey,
   );
-  await publishEvent(parentLink);
+  await publishEvent(parentLink, owner);
   log('Parent link message posted');
 
   // Extra lifecycle fixtures keep the nested navigation compact while making
@@ -292,7 +292,7 @@ async function main() {
       },
       owner.secretKey,
     );
-    await publishEvent(childStatus);
+    await publishEvent(childStatus, owner);
 
     if (fixture.status === 'merged') {
       const mergeSummary = signEvent(
@@ -310,7 +310,7 @@ async function main() {
         },
         owner.secretKey,
       );
-      await publishEvent(mergeSummary);
+      await publishEvent(mergeSummary, owner);
     }
     log(`Corner fixture: #${fixture.name} ${fixture.status}`);
   }

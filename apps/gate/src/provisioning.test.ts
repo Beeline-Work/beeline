@@ -3,6 +3,7 @@ import { signEvent, type NostrEvent } from '@beeline/nostr';
 import { newIdentity } from './identity.js';
 import { KIND_PUT_USER } from './buzz.js';
 import { resolveChannelRole } from './provisioning.js';
+import { createRelayClient } from './relay.js';
 
 const KIND_CHANNEL_ADMINS = 39001;
 const KIND_CHANNEL_MEMBERS = 39002;
@@ -74,7 +75,7 @@ describe('resolveChannelRole', () => {
       }),
     );
 
-    await expect(resolveChannelRole(channelId, member.publicKey, owner.publicKey)).resolves.toBe(
+    await expect(resolveChannelRole(channelId, member.publicKey, createRelayClient(owner))).resolves.toBe(
       'admin',
     );
   });
@@ -100,7 +101,7 @@ describe('resolveChannelRole', () => {
       }),
     );
 
-    await expect(resolveChannelRole(channelId, member.publicKey, owner.publicKey)).resolves.toBe(
+    await expect(resolveChannelRole(channelId, member.publicKey, createRelayClient(owner))).resolves.toBe(
       null,
     );
   });

@@ -87,7 +87,7 @@ async function emitActivityEvent(
       owner.secretKey,
     );
 
-    await publishEvent(event);
+    await publishEvent(event, owner);
   } catch (err) {
     // Log but don't crash the body — activity projection is best-effort.
     console.error('[body] activity projection error:', err);
@@ -119,5 +119,5 @@ export async function postControlMessage(
     owner.secretKey,
   );
 
-  await publishEvent(event);
+  await publishEvent(event, owner);
 }

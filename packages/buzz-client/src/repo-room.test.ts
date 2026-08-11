@@ -26,7 +26,7 @@ const mergeWorker = createIdentity('merge-worker');
 const http = { baseUrl: 'http://relay.test', host: 'relay.test' };
 
 function ctx(): ChannelOpsContext {
-  return { http, identity: agent };
+  return { http: { ...http, identity: agent }, identity: agent };
 }
 
 function signed(identity: typeof agent, kind: number, tags: string[][]): NostrEvent {

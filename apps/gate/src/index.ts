@@ -19,7 +19,15 @@ export {
   announceRepo,
 } from './buzz.js';
 
-export { publishEvent, queryEvents, type SubmitResult } from './relay.js';
+export {
+  createRelayClient,
+  publishEvent,
+  queryEvents,
+  type RelayClient,
+  type RelayReader,
+  type RelayHttpConfig,
+  type SubmitResult,
+} from './relay.js';
 
 export { HOST, SCHEME, BASE_URL, resolveRelayConfig, gitRepoUrl } from './config.js';
 export type { RelayConfig } from './config.js';

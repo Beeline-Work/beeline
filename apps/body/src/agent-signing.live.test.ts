@@ -43,7 +43,7 @@ const reachable = await relayReachable();
     );
     const events = await queryEvents(
       [{ kinds: [9007], '#h': [subchannel], limit: 5 }],
-      operator.publicKey,
+      operator,
     );
     const created = events.find((event) =>
       event.tags.some((tag) => tag[0] === 'h' && tag[1] === subchannel),

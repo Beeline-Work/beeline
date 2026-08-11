@@ -30,7 +30,6 @@ describe('queryEventBacklog', () => {
 
     const result = await queryEventBacklog(
       { kinds: [9], '#h': ['room'], since: 1 },
-      'a'.repeat(64),
       { pageSize: 100, query },
     );
 

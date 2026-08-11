@@ -171,7 +171,7 @@ const reachable = await relayReachable();
 
       // Build approval signed by the AGENT key, not the reviewer.
       const agentApproval = buildApproval(p.agent, p.channelId, target);
-      await publishEvent(agentApproval);
+      await publishEvent(agentApproval, p.agent);
       await sleep(500);
 
       const outcome = await attemptMerge({
@@ -211,7 +211,7 @@ const reachable = await relayReachable();
 
       // Valid approval signed by the TRUSTED reviewer.
       const validApproval = buildApproval(p.reviewer, p.channelId, target);
-      await publishEvent(validApproval);
+      await publishEvent(validApproval, p.reviewer);
       await sleep(500);
 
       const outcome = await attemptMerge({
@@ -297,7 +297,7 @@ const reachable = await relayReachable();
 
       // Now publish the valid approval.
       const validApproval = buildApproval(p.reviewer, p.channelId, target);
-      await publishEvent(validApproval);
+      await publishEvent(validApproval, p.reviewer);
       await sleep(500);
 
       const afterApproval = await attemptMerge({
@@ -338,7 +338,7 @@ const reachable = await relayReachable();
       };
 
       const wrongApproval = buildApproval(p.reviewer, p.channelId, wrongTarget);
-      await publishEvent(wrongApproval);
+      await publishEvent(wrongApproval, p.reviewer);
       await sleep(500);
 
       const outcome = await attemptMerge({
@@ -377,7 +377,7 @@ const reachable = await relayReachable();
         tip: firstTip,
       };
       const approval = buildApproval(p.reviewer, p.channelId, target);
-      await publishEvent(approval);
+      await publishEvent(approval, p.reviewer);
 
       // Now push a second commit to the feature branch (changes tip).
       const agentRoot = mkdtempSync(join(tmpdir(), 'buzzy-agent-3b-'));
@@ -432,7 +432,7 @@ const reachable = await relayReachable();
         tip: tip1,
       };
       const approval1 = buildApproval(p.reviewer, p.channelId, target1);
-      await publishEvent(approval1);
+      await publishEvent(approval1, p.reviewer);
       await sleep(500);
 
       const merge1 = await attemptMerge({

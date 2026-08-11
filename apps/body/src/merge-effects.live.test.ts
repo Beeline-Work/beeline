@@ -127,7 +127,7 @@ describe.runIf(reachable)('merge effects (test 5)', () => {
       },
       worker.secretKey,
     );
-    await publishEvent(kind30617Event);
+    await publishEvent(kind30617Event, worker);
 
     // Wait for repo to be cloneable.
     let ready = false;
@@ -177,13 +177,13 @@ describe.runIf(reachable)('merge effects (test 5)', () => {
     const body = new Body({ ...config, workspaceRoot: testDir }, bodyIdentity);
     ctx.body = body;
 
-    // Set up ACP session for the subchannel.
+    // Merge effects do not exercise an LLM turn. Keep an inert ACP client so
+    // archive cleanup follows the real session shape without requiring model credentials.
     const acpClient = new AcpClient({
       agentBinary: config.agentBinary,
       agentEnv: config.agentEnv,
       autoApprovePermissions: true,
     });
-    await acpClient.start();
 
     // Create worktree from the seed repo.
     const worktreePath = resolve(testDir, 'worktree');
@@ -199,11 +199,7 @@ describe.runIf(reachable)('merge effects (test 5)', () => {
     spawnSync('git', ['config', 'user.name', 'MergeFX Agent'], { cwd: worktreePath, encoding: 'utf8' });
     log('worktree:', worktreePath);
 
-    const { sessionId } = await acpClient.sessionNew({
-      cwd: worktreePath,
-      mcpServers: [{ name: 'buzz-dev-mcp', command: config.mcpBinary, args: [] }],
-      systemPrompt: `You are a coding agent. Worktree: ${worktreePath}. Branch: ${featureBranch}.`,
-    });
+    const sessionId = `merge-effects-${RUN_MARKER}`;
 
     const unsub = projectActivity(acpClient, subchannelId, bodyIdentity, sessionId);
     body.registerSubchannel({
@@ -268,7 +264,7 @@ describe.runIf(reachable)('merge effects (test 5)', () => {
             limit: 50,
           },
         ],
-        ctx.body!.identity.publicKey,
+        ctx.body!.identity,
       );
 
       log('summary events in parent:', summaryEvents.length);
@@ -309,7 +305,7 @@ describe.runIf(reachable)('merge effects (test 5)', () => {
             limit: 50,
           },
         ],
-        ctx.body!.identity.publicKey,
+        ctx.body!.identity,
       );
 
       log('body-control messages in subchannel:', archiveMessages.length);
@@ -349,7 +345,7 @@ describe.runIf(reachable)('merge effects (test 5)', () => {
       // new agent-activity events after archive (by checking the most recent event).
       const subchannelEvents = await queryEvents(
         [{ kinds: [9], '#h': [ctx.subchannelId], limit: 50 }],
-        ctx.body!.identity.publicKey,
+        ctx.body!.identity,
       );
       log('post-archive events in subchannel:', subchannelEvents.length);
 
@@ -362,7 +358,7 @@ describe.runIf(reachable)('merge effects (test 5)', () => {
       // (v) Assert kind:39000 metadata shows archived=true after archive.
       const metadataEvents = await queryEvents(
         [{ kinds: [39000], '#d': [ctx.subchannelId], limit: 5 }],
-        ctx.body!.identity.publicKey,
+        ctx.body!.identity,
       );
       log('metadata events found:', metadataEvents.length);
       let archivedFound = false;
@@ -377,7 +373,7 @@ describe.runIf(reachable)('merge effects (test 5)', () => {
         // Fallback: try #h filter (some stacks index 39000 under h instead of d).
         const altMetadata = await queryEvents(
           [{ kinds: [39000], '#h': [ctx.subchannelId], limit: 5 }],
-          ctx.body!.identity.publicKey,
+          ctx.body!.identity,
         );
         log('alt metadata events found (h-indexed):', altMetadata.length);
         for (const evt of altMetadata) {

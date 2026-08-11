@@ -118,7 +118,7 @@ describe.runIf(relayUp)('live channel → subchannel branch loop', () => {
 
     const creates = await queryEvents(
       [{ kinds: [9007], '#h': [subchannelId], limit: 5 }],
-      human.publicKey,
+      human,
     );
     expect(creates.some((event) => event.pubkey === agent.publicKey)).toBe(true);
 

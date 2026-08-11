@@ -17,6 +17,8 @@ import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
 import { HullSurface, HullWaveSignal, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
 
+const INSTALL_COMMAND = 'curl -fsSL https://relay.buzzrouter.com/install | sh';
+
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
@@ -230,6 +232,18 @@ export default function BuzzAgents() {
           {pairCommand && (
             <View style={styles.pairPanel}>
               <Text style={styles.pairNote}>Run this where your agent lives.</Text>
+              <Text style={styles.stepLabel}>Install beeline (one-time):</Text>
+              <TouchableOpacity
+                accessibilityLabel="Copy install command"
+                style={styles.commandRow}
+                onPress={() => Clipboard.setStringAsync(INSTALL_COMMAND)}
+              >
+                <Text selectable style={styles.command}>
+                  {INSTALL_COMMAND}
+                </Text>
+                <Text style={styles.copyText}>Copy</Text>
+              </TouchableOpacity>
+              <Text style={styles.stepLabel}>Then pair this Agent:</Text>
               <TouchableOpacity
                 accessibilityLabel="Copy pairing command"
                 style={styles.commandRow}
@@ -436,8 +450,15 @@ const styles = StyleSheet.create({
     borderBottomColor: groknight.border,
   },
   pairNote: { ...Typography.default(), color: groknight.muted, fontSize: 13, lineHeight: 18 },
-  commandRow: {
+  stepLabel: {
+    ...Typography.default('semiBold'),
     marginTop: 14,
+    color: groknight.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  commandRow: {
+    marginTop: 6,
     minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',

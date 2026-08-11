@@ -6,9 +6,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Agent, Community, Identity } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { groknight } from '@/buzz/groknight';
-import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
-import { defaultSoul, requestGeneratedSoul } from '@/buzz/soul-generation';
+import { defaultAgentPersona } from '@/buzz/agent-persona';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
@@ -65,9 +64,10 @@ export default function BuzzAgents() {
         setPairCommand(null);
         setPairExpiresAt(null);
         setSelectedPubkey(arrival.pubkey);
-        const fallback = defaultSoul(arrival.pubkey);
+        const fallback = defaultAgentPersona(arrival.pubkey);
         setName(arrival.soulProfile?.name ?? fallback.name);
         setPersonality(arrival.soulProfile?.personality ?? fallback.personality);
+        setIntent(arrival.soulProfile?.intent ?? '');
       }
     }
   }, []);
@@ -132,10 +132,10 @@ export default function BuzzAgents() {
 
   const chooseAgent = useCallback((agent: Agent) => {
     setSelectedPubkey(agent.pubkey);
-    const fallback = defaultSoul(agent.pubkey);
+    const fallback = defaultAgentPersona(agent.pubkey);
     setName(agent.soulProfile?.name ?? fallback.name);
     setPersonality(agent.soulProfile?.personality ?? fallback.personality);
-    setIntent('');
+    setIntent(agent.soulProfile?.intent ?? '');
     setError(null);
   }, []);
 
@@ -149,6 +149,7 @@ export default function BuzzAgents() {
         await client.setAgentSoul(communityId, selected.pubkey, {
           name: nextName,
           personality: nextPersonality,
+          intent,
           avatarSeed: selected.pubkey,
         });
         setName(nextName);
@@ -160,29 +161,15 @@ export default function BuzzAgents() {
         setWorking(false);
       }
     },
-    [communityId, name, personality, refreshAgents, selected, transport],
+    [communityId, intent, name, personality, refreshAgents, selected, transport],
   );
 
-  const handleGenerate = useCallback(async () => {
-    if (!intent.trim()) return;
-    setWorking(true);
-    setError(null);
-    try {
-      const generated = await requestGeneratedSoul(getBuzzRuntimeConfig().soulUrl, intent);
-      setName(generated.name);
-      setPersonality(generated.personality);
-      await saveSoul(generated.name, generated.personality);
-    } catch (caught) {
-      setError(`Could not generate soul: ${String(caught)}`);
-      setWorking(false);
-    }
-  }, [intent, saveSoul]);
-
-  const handleSkip = useCallback(async () => {
+  const handleUseDefault = useCallback(() => {
     if (!selected) return;
-    const fallback = defaultSoul(selected.pubkey);
-    await saveSoul(fallback.name, fallback.personality);
-  }, [saveSoul, selected]);
+    const fallback = defaultAgentPersona(selected.pubkey);
+    setName(fallback.name);
+    setPersonality(fallback.personality);
+  }, [selected]);
 
   if (loading) {
     return (
@@ -341,7 +328,9 @@ export default function BuzzAgents() {
                   <Text style={styles.editorTitle}>
                     {selected.soulProfile ? 'Edit Agent' : 'Give this Agent a face'}
                   </Text>
-                  <Text style={styles.editorHint}>Appearance never grants permissions.</Text>
+                  <Text style={styles.editorHint}>
+                    These instructions shape how the Agent works. They never grant permissions.
+                  </Text>
                 </View>
               </View>
               <Text style={styles.label}>Intent</Text>
@@ -354,15 +343,6 @@ export default function BuzzAgents() {
                 multiline
                 maxLength={500}
               />
-              <TouchableOpacity
-                style={[styles.secondaryButton, (!intent.trim() || working) && styles.disabled]}
-                disabled={!intent.trim() || working}
-                onPress={() => void handleGenerate()}
-              >
-                <Text style={styles.secondaryButtonText}>
-                  {working ? 'Generating…' : selected.soulProfile ? 'Regenerate' : 'Generate'}
-                </Text>
-              </TouchableOpacity>
               <Text style={styles.label}>Name</Text>
               <TextInput
                 style={styles.input}
@@ -384,15 +364,15 @@ export default function BuzzAgents() {
                 <MonoButton
                   label="Save"
                   style={[styles.primaryButton, styles.flexButton]}
-                  disabled={!name.trim() || !personality.trim() || working}
+                  disabled={!intent.trim() || !name.trim() || !personality.trim() || working}
                   onPress={() => void saveSoul()}
                 />
                 <TouchableOpacity
                   style={[styles.secondaryButton, styles.flexButton]}
                   disabled={working}
-                  onPress={() => void handleSkip()}
+                  onPress={handleUseDefault}
                 >
-                  <Text style={styles.secondaryButtonText}>Use default</Text>
+                  <Text style={styles.secondaryButtonText}>Suggest locally</Text>
                 </TouchableOpacity>
               </View>
             </View>

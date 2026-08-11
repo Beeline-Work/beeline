@@ -16,7 +16,7 @@
  */
 import { dirname, resolve } from 'node:path';
 import { unlink } from 'node:fs/promises';
-import { buildAgentEnv, loadBodyConfig, BASE_URL } from './config.js';
+import { loadBodyConfig, BASE_URL } from './config.js';
 import { Body } from './body.js';
 import { WorkspaceSupervisor } from './supervisor.js';
 import {
@@ -26,7 +26,6 @@ import {
   setMemberRole,
 } from '@beeline/gate';
 import { createBuzzClient } from '@beeline/buzz-client';
-import { createSoulServer } from './soul-server.js';
 import {
   findRuntimeConfigPaths,
   identityFromKey,
@@ -49,7 +48,6 @@ Usage:
   beeline create-and-provision <name>       Create a new TLC + provision agent
   beeline pair <BUZZ-XXXX-XXXX>             Pair this repo and start its durable Room agent
   beeline start [agent-pubkey]              Restart a paired repo's durable agent
-  beeline serve-souls                       Run the server-held soul generator
 
 Options:
   --workspace-root <path>   Agent workspace (default: ./body-workspace)
@@ -229,22 +227,6 @@ async function main(): Promise<void> {
     console.log(`[buzz] repo: ${result.runtime.rooms[0]!.repo.root}`);
     console.log(`[buzz] agent pubkey: ${result.pairing.agent.pubkey}`);
     console.log(`[buzz] daemon started (pid ${result.pid})`);
-    return;
-  }
-
-  if (command === 'serve-souls') {
-    const agentEnv = buildAgentEnv(process.env, llmEnvFile);
-    const port = Number(process.env.BUZZY_SOUL_PORT ?? '8789');
-    const host = process.env.BUZZY_SOUL_HOST ?? '127.0.0.1';
-    if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
-      throw new Error('BUZZY_SOUL_PORT must be a valid port');
-    }
-    const server = createSoulServer(agentEnv);
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(port, host, resolve);
-    });
-    console.log(`[buzz] soul generator listening on http://${host}:${port}`);
     return;
   }
 

@@ -1,79 +1,35 @@
-import type { Agent } from '@beeline/buzz-client';
+import { agentHandle, fallbackAgentName, resolveAgentName, type Agent } from '@beeline/buzz-client';
 
-const QUALITIES = [
-  'Quiet',
-  'Steady',
-  'Silver',
-  'Patient',
-  'Keen',
-  'Brisk',
-  'True',
-  'Still',
-  'Swift',
-  'Clear',
-  'Deep',
-  'Bright',
-] as const;
-
-const ROLES = [
-  'Warden',
-  'Scout',
-  'Weaver',
-  'Keeper',
-  'Mason',
-  'Pilot',
-  'Smith',
-  'Ranger',
-  'Tinker',
-  'Navigator',
-  'Builder',
-  'Sentry',
-] as const;
+export { fallbackAgentName };
 
 export type AgentDisplayIdentity = {
   name: string;
+  handle: string;
   personality: string;
   avatarSeed: string;
   avatarUrl?: string;
   hasSoul: boolean;
 };
 
-/** FNV-1a is sufficient for stable presentation and carries no authority. */
-function hash32(value: string): number {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619) >>> 0;
-  }
-  return hash;
-}
-
-/** Stable, friendly fallback with no raw-key fragments or acronym treatment. */
-export function fallbackAgentName(pubkey: string): string {
-  const hash = hash32(pubkey || 'unknown-agent');
-  const quality = QUALITIES[hash % QUALITIES.length];
-  const role = ROLES[(hash >>> 8) % ROLES.length];
-  return `${quality} ${role}`;
-}
-
 /**
- * Resolve display-only identity. Human-authored overlays win; absent overlays
- * fall back to pubkey-derived copy and monochrome geometry. Nothing returned
- * here participates in role, approval, merge, or gate decisions.
+ * Resolve authority-free presentation. A valid human-authored first name wins;
+ * legacy compound overlays safely fall back to the stable pubkey-derived name.
  */
 export function resolveAgentDisplayIdentity(
   pubkey: string,
   agent?: Pick<Agent, 'pubkey' | 'avatar' | 'soulProfile'> | null,
 ): AgentDisplayIdentity {
   const overlay = agent?.soulProfile;
-  const overlayName = overlay?.name.trim();
+  const name = resolveAgentName(overlay?.name, pubkey);
   const overlayPersonality = overlay?.personality.trim();
-  const avatarUrl = agent?.avatar?.trim();
+  // Once a human soul exists, its absent avatar explicitly selects the generated mark.
+  const avatarUrl = overlay ? overlay.avatar?.trim() : agent?.avatar?.trim();
   return {
-    name: overlayName || fallbackAgentName(pubkey),
+    name,
+    handle: agentHandle(name, pubkey),
     personality: overlayPersonality || 'Steady, practical, and ready to help.',
     avatarSeed: overlay?.avatarSeed.trim() || pubkey || 'unknown-agent',
     ...(avatarUrl ? { avatarUrl } : {}),
-    hasSoul: Boolean(overlayName),
+    hasSoul: Boolean(overlay && resolveAgentName(overlay.name, pubkey) === overlay.name.trim()),
   };
 }

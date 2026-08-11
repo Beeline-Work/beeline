@@ -64,7 +64,7 @@ describe('Buzz global Settings', () => {
       .flatMap((node) => node.props.children)
       .join(' ');
 
-    expect(text).toContain('Back up your key');
+    expect(text).toContain('Identity & backup');
     expect(text).toContain('Sign out');
     expect(text).not.toContain('Forget key');
     expect(text).not.toContain('Relay URL');

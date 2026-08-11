@@ -7,7 +7,7 @@
  */
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
-import { communityMembers, getCommunity, inviteTokenHash } from './community.js';
+import { communityChannels, communityMembers, getCommunity, inviteTokenHash } from './community.js';
 import { publishEvent, queryEvents } from './http.js';
 import {
   KIND_AGENT_SOUL,
@@ -29,8 +29,10 @@ import type {
 import {
   getChannelCommunityId,
   isMember,
+  removeMember,
   setMemberRole,
   waitUntilMember,
+  waitUntilNotMember,
   type ChannelOpsContext,
 } from './channel.js';
 
@@ -444,17 +446,54 @@ export async function listAgents(
     const prior = profiles.get(profile.agentPubkey);
     if (!prior || prior.updatedAt < profile.updatedAt) profiles.set(profile.agentPubkey, profile);
   }
-  return agents.map((agent) => {
-    const soulProfile = profiles.get(agent.pubkey);
-    return soulProfile
-      ? {
-          ...agent,
-          displayName: soulProfile.name,
-          personality: soulProfile.personality,
-          soulProfile,
-        }
-      : agent;
+  return agents
+    .filter((agent) => memberPubkeys.has(agent.pubkey))
+    .map((agent) => {
+      const soulProfile = profiles.get(agent.pubkey);
+      return soulProfile
+        ? {
+            ...agent,
+            displayName: soulProfile.name,
+            personality: soulProfile.personality,
+            soulProfile,
+          }
+        : agent;
+    });
+}
+
+/**
+ * Unlink an agent from every Workspace channel and finally from the Workspace.
+ *
+ * The Workspace mutation is intentionally last. Its disappearance is the
+ * paired host's teardown signal, so a partial Room-removal failure remains
+ * visible and retryable instead of claiming that the agent was deleted.
+ */
+export async function removeAgent(
+  ctx: ChannelOpsContext,
+  communityId: string,
+  agentPubkey: string,
+): Promise<void> {
+  if (await isAgentIdentity(ctx, ctx.identity.publicKey)) {
+    throw new Error('agents cannot remove agents');
+  }
+  const agents = await listAgentIdentities(ctx, communityId);
+  if (!agents.some((agent) => agent.pubkey === agentPubkey)) {
+    throw new Error('agent is not linked to this Workspace');
+  }
+
+  for (const channelId of await communityChannels(ctx, communityId)) {
+    if (!(await isMember(ctx, channelId, agentPubkey))) continue;
+    await removeMember(ctx, channelId, agentPubkey, {
+      extraTags: [[TAG_COMMUNITY, communityId]],
+    });
+    await waitUntilNotMember(ctx, channelId, agentPubkey);
+  }
+
+  if (!(await isMember(ctx, communityId, agentPubkey))) return;
+  await removeMember(ctx, communityId, agentPubkey, {
+    extraTags: [[TAG_COMMUNITY, communityId]],
   });
+  await waitUntilNotMember(ctx, communityId, agentPubkey);
 }
 
 /** Attach an already-linked Workspace agent identity to one repository Room. */

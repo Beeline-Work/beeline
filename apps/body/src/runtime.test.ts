@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -9,6 +10,7 @@ import {
   inspectLocalRepository,
   pairRepositoryAgent,
   readRuntimeRecord,
+  removeAgentRuntime,
 } from './runtime.js';
 
 const cleanup: string[] = [];
@@ -121,5 +123,53 @@ describe('pair → run unification', () => {
     expect(stored.rooms[0]!.mergeWorker?.publicKey).toBe(mergeWorker.publicKey);
     expect(stored.agentBinary).toBe('/usr/bin/agent');
     expect(await readFile(result.configPath, 'utf8')).not.toContain('token@');
+  });
+
+  it('removes only the exact paired-agent runtime directory', async () => {
+    const root = await repository('https://example.com/team/project.git');
+    const agent = newIdentity('agent');
+    const body = newIdentity('body');
+    const mergeWorker = newIdentity('merge-worker');
+    const result = await pairRepositoryAgent(
+      {
+        code: 'BUZZ-ABCD-EFGH',
+        cwd: root,
+        relayBaseUrl: 'http://relay.test',
+        agentBinary: '/usr/bin/agent',
+        mcpBinary: '/usr/bin/mcp',
+        agentIdentity: agent,
+        bodyIdentity: body,
+        mergeWorkerIdentity: mergeWorker,
+      },
+      {
+        redeem: async () => ({
+          communityId: '11111111-1111-4111-8111-111111111111',
+          pairedBy: 'a'.repeat(64),
+          joined: true,
+          agent: {
+            agentId: 'agent-id',
+            communityId: '11111111-1111-4111-8111-111111111111',
+            displayName: 'Agent',
+            pubkey: agent.publicKey,
+            createdAt: 1,
+            raw: {} as never,
+          },
+        }),
+        resolveRoom: async () => ({
+          channelId: '22222222-2222-4222-8222-222222222222',
+          created: true,
+          joined: true,
+          mergeWorkerProvisioned: true,
+        }),
+        launch: async () => 4242,
+      },
+    );
+
+    await removeAgentRuntime(result.configPath, agent.publicKey);
+    expect(existsSync(result.configPath)).toBe(false);
+    expect(existsSync(root)).toBe(true);
+    await expect(
+      removeAgentRuntime(resolve(root, 'runtime.json'), agent.publicKey),
+    ).rejects.toThrow('refusing to remove unexpected agent runtime path');
   });
 });

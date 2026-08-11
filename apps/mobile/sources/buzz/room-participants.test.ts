@@ -1,22 +1,48 @@
 import { describe, expect, it } from 'vitest';
 
-import { countRoomParticipants, formatRoomParticipantCounts } from './room-participants';
+import {
+  formatRoomParticipantList,
+  formatRoomParticipantTotal,
+  mentionedAgentPubkey,
+  sectionRoomRoster,
+} from './room-participants';
 
-describe('Room participant counts', () => {
-  it('counts only agents who are direct members of the Room', () => {
-    expect(
-      countRoomParticipants(
-        [{ pubkey: 'human-a' }, { pubkey: 'human-b' }, { pubkey: 'agent-a' }],
-        [{ pubkey: 'agent-a' }, { pubkey: 'agent-from-another-room' }],
-      ),
-    ).toEqual({ humans: 2, agents: 1 });
+describe('Room participant presentation', () => {
+  it('sections the Workspace roster with current Room members first', () => {
+    const roster = [
+      { pubkey: 'you', name: 'You' },
+      { pubkey: 'agent', name: 'Brisk Pilot' },
+      { pubkey: 'person', name: 'npub1person' },
+    ];
+
+    expect(sectionRoomRoster(roster, new Set(['agent', 'you']))).toEqual({
+      inRoom: [roster[0], roster[1]],
+      addable: [roster[2]],
+    });
   });
 
-  it('treats standalone Room members as humans when no agents are registered', () => {
-    expect(countRoomParticipants([{ pubkey: 'human-a' }], [])).toEqual({ humans: 1, agents: 0 });
+  it('shows up to five names without splitting people and agents', () => {
+    expect(formatRoomParticipantList(['A', 'B', 'C', 'D', 'E'])).toBe('A, B, C, D, E');
   });
 
-  it('formats a clean person-facing summary without technical identifiers', () => {
-    expect(formatRoomParticipantCounts({ humans: 0, agents: 1 })).toBe('0 humans · 1 agent');
+  it('folds larger Rooms into four names plus one overflow phrase', () => {
+    expect(formatRoomParticipantList(['A', 'B', 'C', 'D', 'E', 'F', 'G'])).toBe(
+      'A, B, C, D and 3 others',
+    );
+  });
+
+  it('formats the compact header total', () => {
+    expect(formatRoomParticipantTotal(1)).toBe('1 participant');
+    expect(formatRoomParticipantTotal(8)).toBe('8 participants');
+  });
+
+  it('maps a visible @Agent name to its pubkey without partial-name matches', () => {
+    const agents = [
+      { pubkey: 'agent-a', name: 'Brisk Pilot' },
+      { pubkey: 'agent-b', name: 'Brisk' },
+    ];
+    expect(mentionedAgentPubkey('please ask @Brisk Pilot to inspect this', agents)).toBe('agent-a');
+    expect(mentionedAgentPubkey('hello @brisk!', agents)).toBe('agent-b');
+    expect(mentionedAgentPubkey('email @briskness later', agents)).toBeUndefined();
   });
 });

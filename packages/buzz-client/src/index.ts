@@ -151,6 +151,7 @@ export {
   listCommunities,
   communityChannels,
   communityMembers,
+  attachCommunityMemberToChannel,
   createInvite,
   redeemInvite,
   inviteTokenHash,

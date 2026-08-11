@@ -95,7 +95,7 @@ beforeAll(() => {
 
 afterAll(() => vi.restoreAllMocks());
 
-function renderShell(onSelect = vi.fn(), onAdd = vi.fn()): ReactTestRenderer {
+function renderShell(onSelect = vi.fn(), onAdd = vi.fn(), onSettings = vi.fn()): ReactTestRenderer {
   const community = {
     communityId: 'community-1',
     name: 'Night Shift',
@@ -111,6 +111,7 @@ function renderShell(onSelect = vi.fn(), onAdd = vi.fn()): ReactTestRenderer {
           activeCommunityId: 'community-1',
           onSelect,
           onAdd,
+          onSettings,
         },
         React.createElement(CommunityDrawerTrigger, { community }),
       ),
@@ -158,6 +159,17 @@ describe('Workspace drawer', () => {
     open();
     act(() => renderer.root.findByProps({ testID: 'community-rail-add' }).props.onPress());
     expect(onAdd).toHaveBeenCalledOnce();
+    expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);
+  });
+
+  it('keeps global Settings at the bottom of the switcher and closes before opening it', () => {
+    const onSettings = vi.fn();
+    const renderer = renderShell(vi.fn(), vi.fn(), onSettings);
+
+    act(() => renderer.root.findByProps({ testID: 'community-drawer-trigger' }).props.onPress());
+    act(() => renderer.root.findByProps({ testID: 'community-rail-settings' }).props.onPress());
+
+    expect(onSettings).toHaveBeenCalledOnce();
     expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);
   });
 });

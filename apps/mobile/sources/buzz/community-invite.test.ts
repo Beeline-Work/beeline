@@ -1,11 +1,39 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { signEvent } from '@beeline/nostr';
+import {
+  KIND_STREAM_MESSAGE,
+  TAG_COMMUNITY_INVITE,
+  createIdentity,
+  inviteTokenHash,
+} from '@beeline/buzz-client';
 import {
   buildCommunityInviteUrl,
   createCommunityInviteUrl,
+  loadCommunityInvitePreview,
   parseCommunityInviteToken,
+  resolveCommunityInviteRelayUrl,
 } from './community-invite';
 
+const buzzClientMocks = vi.hoisted(() => ({
+  createBuzzClient: vi.fn(),
+  queryEvents: vi.fn(),
+}));
+
+vi.mock('@beeline/buzz-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@beeline/buzz-client')>();
+  return {
+    ...actual,
+    createBuzzClient: buzzClientMocks.createBuzzClient,
+    queryEvents: buzzClientMocks.queryEvents,
+  };
+});
+
 const token = `bzi_${'ab'.repeat(32)}`;
+
+beforeEach(() => {
+  buzzClientMocks.createBuzzClient.mockReset();
+  buzzClientMocks.queryEvents.mockReset();
+});
 
 describe('community invite links', () => {
   it('builds the public join URL from the configured relay origin', () => {
@@ -41,5 +69,95 @@ describe('community invite links', () => {
     expect(parseCommunityInviteToken(`https://example.com/invite/${token}`)).toBeNull();
     expect(parseCommunityInviteToken('bzi_short')).toBeNull();
     expect(parseCommunityInviteToken(undefined)).toBeNull();
+  });
+
+  it('uses an HTTPS invite origin instead of a stale configured relay', () => {
+    expect(
+      resolveCommunityInviteRelayUrl(
+        `https://relay.buzzrouter.com/join/${token}`,
+        token,
+        'http://10.0.2.2:3010',
+      ),
+    ).toBe('https://relay.buzzrouter.com');
+    expect(
+      resolveCommunityInviteRelayUrl(`buzzy://join/${token}`, token, 'http://10.0.2.2:3010'),
+    ).toBe('http://10.0.2.2:3010');
+    expect(
+      resolveCommunityInviteRelayUrl(
+        `https://relay.example/join/bzi_${'cd'.repeat(32)}`,
+        token,
+        'https://relay.buzzrouter.com',
+      ),
+    ).toBe('https://relay.buzzrouter.com');
+  });
+
+  it('signs the initial invite preview query with its reader identity', async () => {
+    const reader = createIdentity('invite-reader');
+    const owner = createIdentity('invite-owner');
+    const communityId = 'workspace-123';
+    const createdAt = Math.floor(Date.now() / 1000);
+    const inviteEvent = signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: createdAt,
+        kind: KIND_STREAM_MESSAGE,
+        tags: [
+          ['h', communityId],
+          ['t', TAG_COMMUNITY_INVITE],
+          ['d', inviteTokenHash(token)],
+          ['community', communityId],
+          ['expiration', String(createdAt + 3600)],
+        ],
+        content: '',
+      },
+      owner.secretKey,
+    );
+    const community = {
+      communityId,
+      name: 'NIP-98 Workspace',
+      createdBy: owner.publicKey,
+      ownerPubkey: owner.publicKey,
+      createdAt,
+      raw: inviteEvent,
+    };
+    const client = {
+      getCommunity: vi.fn().mockResolvedValue(community),
+      communityMembers: vi.fn().mockResolvedValue([
+        { pubkey: owner.publicKey, role: 'owner' },
+      ]),
+    };
+    buzzClientMocks.queryEvents.mockResolvedValue([inviteEvent]);
+    buzzClientMocks.createBuzzClient.mockReturnValue(client);
+
+    await expect(
+      loadCommunityInvitePreview('https://relay.example/', token, reader),
+    ).resolves.toMatchObject({ community });
+
+    expect(buzzClientMocks.queryEvents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseUrl: 'https://relay.example',
+        host: 'relay.example',
+        identity: reader,
+      }),
+      expect.any(Array),
+      reader.publicKey,
+    );
+    expect(buzzClientMocks.createBuzzClient).toHaveBeenCalledWith({
+      baseUrl: 'https://relay.example',
+      host: 'relay.example',
+      identity: reader,
+    });
+
+    buzzClientMocks.queryEvents.mockClear();
+    buzzClientMocks.createBuzzClient.mockClear();
+    await loadCommunityInvitePreview('https://relay.example/', token);
+    const [httpOptions, , queryPubkey] = buzzClientMocks.queryEvents.mock.calls[0]!;
+    expect(httpOptions.identity).toMatchObject({ publicKey: queryPubkey });
+    expect(httpOptions.identity.secretKey).toBeInstanceOf(Uint8Array);
+    expect(buzzClientMocks.createBuzzClient).toHaveBeenCalledWith({
+      baseUrl: 'https://relay.example',
+      host: 'relay.example',
+      identity: httpOptions.identity,
+    });
   });
 });

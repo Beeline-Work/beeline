@@ -23,7 +23,13 @@ import {
   type AcpPermissionRequest,
   type McpServerWire,
 } from './acp.js';
-import { projectActivity, postAgentMessage, postControlMessage } from './activity.js';
+import {
+  projectActivity,
+  postAgentMessage,
+  postAgentTurnStatus,
+  postControlMessage,
+  stripAgentReplyPreamble,
+} from './activity.js';
 import {
   createChannel,
   setMemberRole,
@@ -895,28 +901,61 @@ export class Body {
       transitionedToCorner: false,
     };
     this.pendingRoomTurns.set(tlcChannelId, turn);
-    let result: Awaited<ReturnType<AcpClient['sessionPrompt']>>;
     try {
-      result = await this.runOnSession(session, () =>
+      await postAgentTurnStatus(
+        tlcChannelId,
+        this.agentIdentity,
+        request.eventId,
+        session.logicalSessionId ?? session.sessionId,
+        'working',
+      );
+      const result = await this.runOnSession(session, () =>
         session.client.sessionPrompt(session.sessionId, prompt, 10 * 60_000),
       );
+      if (turn.transitionedToCorner) {
+        await postAgentTurnStatus(
+          tlcChannelId,
+          this.agentIdentity,
+          request.eventId,
+          session.logicalSessionId ?? session.sessionId,
+          'complete',
+        );
+        return true;
+      }
+      const reply =
+        stripAgentReplyPreamble(result.agentText).trim() ||
+        (turn.permissionHandled
+          ? 'Editing was not allowed. I’ll stay in the read-only Room conversation.'
+          : '');
+      if (!reply) throw new Error('agent returned an empty Room reply');
+      await this.durableState.appendConversation(tlcChannelId, {
+        role: 'agent',
+        text: reply,
+        at: new Date().toISOString(),
+      });
+      await postAgentMessage(tlcChannelId, this.agentIdentity, reply, request.eventId);
+      await postAgentTurnStatus(
+        tlcChannelId,
+        this.agentIdentity,
+        request.eventId,
+        session.logicalSessionId ?? session.sessionId,
+        'complete',
+      );
+      return false;
+    } catch (error) {
+      await postAgentTurnStatus(
+        tlcChannelId,
+        this.agentIdentity,
+        request.eventId,
+        session.logicalSessionId ?? session.sessionId,
+        'failed',
+      ).catch((statusError) =>
+        console.error('[body] failed to publish Room turn failure status:', statusError),
+      );
+      throw error;
     } finally {
       this.pendingRoomTurns.delete(tlcChannelId);
     }
-    if (turn.transitionedToCorner) return true;
-    const reply =
-      result.agentText.trim() ||
-      (turn.permissionHandled
-        ? 'Editing was not allowed. I’ll stay in the read-only Room conversation.'
-        : '');
-    if (!reply) throw new Error('agent returned an empty Room reply');
-    await this.durableState.appendConversation(tlcChannelId, {
-      role: 'agent',
-      text: reply,
-      at: new Date().toISOString(),
-    });
-    await postAgentMessage(tlcChannelId, this.agentIdentity, reply, request.eventId);
-    return false;
   }
 
   /**
@@ -1095,7 +1134,8 @@ export class Body {
           ].join('\n'),
           10 * 60_000,
         );
-        info.mergeSummary = result.agentText.trim() || `Completed: ${prompt}`;
+        info.mergeSummary =
+          stripAgentReplyPreamble(result.agentText).trim() || `Completed: ${prompt}`;
         await this.durableState.appendConversation(info.subchannelId, {
           role: 'agent',
           text: info.mergeSummary,

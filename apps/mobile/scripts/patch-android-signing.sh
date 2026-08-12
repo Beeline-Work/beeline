@@ -59,55 +59,8 @@ content = content.replace(
             signingConfig signingConfigs.release'''
 )
 
-# Remove google-services plugin (no Firebase project for Buzzy sideload builds)
-# The line is at the end of the file; strip it by removing the whole line
-content = '\n'.join(l for l in content.split('\n') if 'com.google.gms.google-services' not in l)
-
-# Also check if the google-services.json needs replacing — remove the plugin line
-# from settings.gradle if present
 open('$BUILD_GRADLE', 'w').write(content)
-print('Patched signing config + removed google-services plugin.')
-
-# Patch settings.gradle if it references google-services
-settings_gradle = 'android/settings.gradle'
-if os.path.exists(settings_gradle):
-    sg = open(settings_gradle, 'r').read()
-    if 'google-services' in sg:
-        sg = sg.replace("id 'com.google.gms.google-services' version '", "// id 'com.google.gms.google-services' version '")
-        sg = sg.replace("id 'com.google.gms.google-services'", "// id 'com.google.gms.google-services'")
-        open(settings_gradle, 'w').write(sg)
-        print('Also patched settings.gradle.')
-
-# Replace google-services.json with a stub matching the buzzy package names
-gs_json = 'android/app/google-services.json'
-stub = '''{
-  "project_info": {
-    "project_number": "0",
-    "project_id": "buzzy-sideload"
-  },
-  "client": [
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:0:android:0000000000000000",
-        "android_client_info": {
-            "package_name": "app.buzzy.mobile"
-        }
-      },
-      "oauth_client": [],
-      "api_key": [{"current_key": "stub"}],
-      "services": {"appinvite_service": {"other_platform_oauth_client": []}}
-    }
-  ],
-  "configuration_version": "1"
-}'''
-if os.path.exists(gs_json):
-    open(gs_json, 'w').write(stub)
-    print('Replaced google-services.json stubs for all package names.')
-else:
-    # Ensure directory exists
-    os.makedirs(os.path.dirname(gs_json), exist_ok=True)
-    open(gs_json, 'w').write(stub)
-    print('Created stub google-services.json.')
+print('Patched signing config; preserved Firebase google-services configuration.')
 
 # Sideload builds must support operator-provided HTTP relays on a LAN.
 manifest = 'android/app/src/main/AndroidManifest.xml'

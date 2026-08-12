@@ -84,7 +84,7 @@ function CornerActivityEntry({ item }: { item: AgentActivityItem }) {
   const [expanded, setExpanded] = useState(
     item.kind !== 'tool' || item.status === 'pending' || item.status === 'in_progress',
   );
-  const glyph = item.kind === 'thinking' ? '·' : item.kind === 'tool' ? '◆' : '›';
+  const glyph = item.kind === 'thinking' ? '·' : '›';
   const label = item.kind === 'thinking' ? 'THINKING' : item.title.toUpperCase();
 
   return (
@@ -652,7 +652,7 @@ export default function BuzzChat() {
           <NewMessageMaterialize enabled={Boolean(item.isNew)}>
             <View style={styles.terminalTurn}>
               <View style={styles.terminalTurnHeading}>
-                <Text style={styles.terminalTurnGlyph}>{isOwn ? '›' : isAgent ? '◆' : '·'}</Text>
+                <Text style={styles.terminalTurnGlyph}>{isOwn || isAgent ? '›' : '·'}</Text>
                 <Text style={styles.terminalTurnLabel}>
                   {isOwn ? 'USER' : isAgent ? 'FINAL' : 'MESSAGE'}
                 </Text>
@@ -744,13 +744,19 @@ export default function BuzzChat() {
           style={[styles.header, { minHeight: insets.top + 60, paddingTop: insets.top + 8 }]}
         >
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <Text style={styles.backText}>‹</Text>
+            <Text style={[styles.backText, isCorner && styles.cornerBackText]}>‹</Text>
           </TouchableOpacity>
           <View style={styles.headerCenter}>
-            <Text style={styles.channelName} numberOfLines={1}>
+            <Text
+              style={[styles.channelName, isCorner && styles.cornerChannelName]}
+              numberOfLines={1}
+            >
               {roomName}
             </Text>
-            <Text style={styles.headerMeta} numberOfLines={1}>
+            <Text
+              style={[styles.headerMeta, isCorner && styles.cornerHeaderMeta]}
+              numberOfLines={1}
+            >
               {participantsHydrated
                 ? formatRoomParticipantTotal(participantPubkeys.size)
                 : 'LOADING MEMBERS'}
@@ -797,7 +803,14 @@ export default function BuzzChat() {
                 <Text style={styles.approvalSentText}>NOT ALLOWED</Text>
               </View>
             ) : approvalState === 'none' ? (
-              <MonoButton label="Approve" onPress={handleApprove} />
+              <TouchableOpacity
+                accessibilityRole="button"
+                onPress={handleApprove}
+                style={styles.approveButton}
+                testID="approve-corner"
+              >
+                <Text style={styles.approveButtonText}>Approve</Text>
+              </TouchableOpacity>
             ) : approvalState === 'sending' ? (
               <View style={styles.approvalPending}>
                 <PixelLoader compact />
@@ -820,7 +833,9 @@ export default function BuzzChat() {
           renderItem={renderItem}
           ListEmptyComponent={
             <View style={styles.emptyState}>
-              <Text style={styles.emptyText}>No messages yet</Text>
+              <Text style={[styles.emptyText, isCorner && styles.cornerEmptyText]}>
+                No messages yet
+              </Text>
             </View>
           }
           onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
@@ -829,7 +844,7 @@ export default function BuzzChat() {
         {/* P2: Archived channels are read-only */}
         {isArchived ? (
           <View style={[styles.archivedInputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-            <Text style={styles.archivedInputText}>
+            <Text style={[styles.archivedInputText, isCorner && styles.cornerArchivedInputText]}>
               {parentChannelId ? 'Corner' : ROOM_LABEL} archived (read-only)
             </Text>
           </View>
@@ -852,10 +867,18 @@ export default function BuzzChat() {
                 <Text style={styles.cancelTurnText}>■ CANCEL</Text>
               </TouchableOpacity>
             )}
-            <View style={[styles.composer, composerFocused && styles.composerFocused]}>
-              <Text style={styles.composerPrefix}>›</Text>
+            <View
+              style={[
+                styles.composer,
+                isCorner && styles.cornerComposer,
+                composerFocused && styles.composerFocused,
+              ]}
+            >
+              <Text style={[styles.composerPrefix, isCorner && styles.cornerComposerPrefix]}>
+                ›
+              </Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, isCorner && styles.cornerInput]}
                 value={inputText}
                 onChangeText={setInputText}
                 onFocus={() => setComposerFocused(true)}
@@ -875,11 +898,28 @@ export default function BuzzChat() {
                 onPress={handleSend}
                 disabled={!inputText.trim() || sending}
               >
-                <Text style={[styles.sendButtonText, mergeTarget && styles.sendButtonTextQuiet]}>
+                <Text
+                  style={[
+                    styles.sendButtonText,
+                    isCorner && styles.cornerSendButtonText,
+                    mergeTarget && styles.sendButtonTextQuiet,
+                  ]}
+                >
                   ⏎
                 </Text>
               </TouchableOpacity>
             </View>
+            {isCorner && (
+              <Text style={styles.cornerFooter} numberOfLines={1}>
+                <Text style={styles.cornerFooterRule}>╰─ </Text>
+                <Text style={styles.cornerFooterValue}>Agent</Text>
+                <Text style={styles.cornerFooterSeparator}> · edit · </Text>
+                <Text style={mergeTarget ? styles.cornerFooterState : styles.cornerFooterActive}>
+                  active
+                </Text>
+                <Text style={styles.cornerFooterRule}> ─╯</Text>
+              </Text>
+            )}
           </View>
         )}
       </KeyboardAvoidingView>
@@ -1039,6 +1079,7 @@ const styles = StyleSheet.create({
     fontSize: 22,
     color: groknight.muted,
   },
+  cornerBackText: { ...Typography.mono(), color: groknight.textMuted },
   headerCenter: {
     flex: 1,
   },
@@ -1048,6 +1089,10 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     color: groknight.textPrimary,
   },
+  cornerChannelName: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+  },
   headerMeta: {
     ...Typography.default(),
     fontSize: 11,
@@ -1055,6 +1100,7 @@ const styles = StyleSheet.create({
     color: groknight.textMuted,
     marginTop: 2,
   },
+  cornerHeaderMeta: { ...Typography.mono(), color: groknight.textMuted },
   addMembersButton: {
     width: 44,
     minHeight: 44,
@@ -1252,15 +1298,12 @@ const styles = StyleSheet.create({
   activityGroup: {
     width: '100%',
     minWidth: 0,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: groknight.border,
-    backgroundColor: groknight.bgBase,
+    backgroundColor: groknight.bgTerminal,
   },
   activityEntry: {
     minWidth: 0,
     borderBottomWidth: 1,
-    borderBottomColor: groknight.borderQuiet,
+    borderBottomColor: groknight.border,
   },
   activityHeading: {
     minWidth: 0,
@@ -1271,19 +1314,18 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   activityGlyph: {
-    ...Typography.mono('semiBold'),
+    ...Typography.mono(),
     width: 12,
     color: groknight.steel,
     fontSize: 11,
   },
   activityTitle: {
-    ...Typography.mono('semiBold'),
+    ...Typography.mono(),
     flex: 1,
     minWidth: 0,
-    color: groknight.textSecondary,
-    fontSize: 10,
-    lineHeight: 14,
-    letterSpacing: 0.45,
+    color: groknight.textPrimary,
+    fontSize: 11,
+    lineHeight: 15,
   },
   activityStatus: {
     ...Typography.mono(),
@@ -1304,17 +1346,18 @@ const styles = StyleSheet.create({
     minWidth: 0,
     paddingHorizontal: 12,
     paddingBottom: 11,
-    color: groknight.textMuted,
-    fontSize: 11,
-    lineHeight: 17,
+    color: groknight.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
   },
   terminalTurn: {
     width: '100%',
     minWidth: 0,
-    marginBottom: 10,
-    padding: 11,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
+    marginBottom: 6,
+    paddingHorizontal: 11,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderColor: groknight.border,
     backgroundColor: groknight.bgTerminal,
   },
   terminalTurnHeading: {
@@ -1325,15 +1368,14 @@ const styles = StyleSheet.create({
     marginBottom: 7,
   },
   terminalTurnGlyph: {
-    ...Typography.mono('semiBold'),
-    color: groknight.chrome,
+    ...Typography.mono(),
+    color: groknight.textMuted,
     fontSize: 11,
   },
   terminalTurnLabel: {
-    ...Typography.mono('semiBold'),
+    ...Typography.mono(),
     color: groknight.textPrimary,
     fontSize: 10,
-    letterSpacing: 0.6,
   },
   terminalTurnAuthor: {
     ...Typography.mono(),
@@ -1344,12 +1386,12 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   terminalTurnText: {
-    ...Typography.default(),
+    ...Typography.mono(),
     width: '100%',
     minWidth: 0,
     color: groknight.textSecondary,
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 12,
+    lineHeight: 18,
   },
 
   // ── Parent Room corner status ──────────────────────────────────
@@ -1402,13 +1444,13 @@ const styles = StyleSheet.create({
     borderBottomColor: groknight.border,
   },
   mergeSummaryTitle: {
-    ...Typography.default('semiBold'),
+    ...Typography.mono(),
     fontSize: 12,
     color: groknight.chrome,
     marginBottom: 4,
   },
   mergeSummaryText: {
-    ...Typography.default(),
+    ...Typography.mono(),
     fontSize: 12,
     color: groknight.textSecondary,
     lineHeight: 16,
@@ -1442,9 +1484,9 @@ const styles = StyleSheet.create({
   approvalBar: {
     paddingHorizontal: 16,
     paddingVertical: 14,
-    backgroundColor: groknight.bgRaised,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgTerminal,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.border,
     gap: 8,
   },
   approvalInfo: {
@@ -1453,16 +1495,31 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   prChip: {
-    ...Typography.default('semiBold'),
-    fontSize: 14,
+    ...Typography.mono(),
+    fontSize: 12,
     color: groknight.textPrimary,
   },
   approvalBarText: {
-    ...Typography.default(),
+    ...Typography.mono(),
     flex: 1,
     fontSize: 11,
     lineHeight: 16,
     color: groknight.textMuted,
+  },
+  approveButton: {
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: groknight.accent,
+    borderRadius: 7,
+    backgroundColor: groknight.bgTerminal,
+  },
+  approveButtonText: {
+    ...Typography.mono(),
+    color: groknight.accent,
+    fontSize: 12,
+    lineHeight: 16,
   },
   approvalPending: {
     flexDirection: 'row',
@@ -1472,7 +1529,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   approvalStateText: {
-    ...Typography.default(),
+    ...Typography.mono(),
     fontSize: 11,
     color: groknight.textMuted,
   },
@@ -1481,10 +1538,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   approvalSentText: {
-    ...Typography.default('semiBold'),
-    color: groknight.chrome,
+    ...Typography.mono(),
+    color: groknight.textPrimary,
     fontSize: 12,
-    fontWeight: '600',
   },
 
   // ── Composer ────────────────────────────────────────────────────
@@ -1499,6 +1555,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: groknight.muted,
   },
+  cornerEmptyText: { ...Typography.mono(), color: groknight.textMuted },
   inputBar: {
     paddingHorizontal: 8,
     paddingTop: 8,
@@ -1516,7 +1573,7 @@ const styles = StyleSheet.create({
   },
   agentLiveStatusText: {
     ...Typography.mono('semiBold'),
-    color: groknight.textMuted,
+    color: groknight.accent,
     fontSize: 10,
     lineHeight: 14,
     letterSpacing: 0.35,
@@ -1531,7 +1588,7 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgBase,
   },
   cancelTurnText: {
-    ...Typography.default('semiBold'),
+    ...Typography.mono(),
     color: groknight.textSecondary,
     fontSize: 10,
     letterSpacing: 0.5,
@@ -1592,12 +1649,17 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgBase,
   },
   composerFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 9 },
+  cornerComposer: {
+    borderRadius: 8,
+    backgroundColor: groknight.bgTerminal,
+  },
   composerPrefix: {
     ...Typography.default('semiBold'),
     fontSize: 14,
     color: groknight.steel,
     marginRight: 8,
   },
+  cornerComposerPrefix: { ...Typography.mono(), color: groknight.textSecondary },
   input: {
     ...Typography.default(),
     flex: 1,
@@ -1607,6 +1669,7 @@ const styles = StyleSheet.create({
     height: 40,
     paddingVertical: 0,
   },
+  cornerInput: { ...Typography.mono(), color: groknight.textPrimary },
   sendButton: {
     width: 40,
     height: 40,
@@ -1621,7 +1684,21 @@ const styles = StyleSheet.create({
     color: groknight.textPrimary,
     fontSize: 16,
   },
+  cornerSendButtonText: { ...Typography.mono(), color: groknight.textMuted },
   sendButtonTextQuiet: { color: groknight.textDisabled },
+  cornerFooter: {
+    ...Typography.mono(),
+    marginTop: 3,
+    paddingHorizontal: 8,
+    color: groknight.textMuted,
+    fontSize: 9,
+    lineHeight: 13,
+  },
+  cornerFooterRule: { ...Typography.mono(), color: groknight.border },
+  cornerFooterValue: { ...Typography.mono(), color: groknight.textMuted },
+  cornerFooterSeparator: { ...Typography.mono(), color: groknight.faint },
+  cornerFooterState: { ...Typography.mono(), color: groknight.tertiary },
+  cornerFooterActive: { ...Typography.mono(), color: groknight.accent },
   archivedInputBar: {
     paddingHorizontal: 16,
     paddingTop: 12,
@@ -1637,4 +1714,5 @@ const styles = StyleSheet.create({
     color: groknight.muted,
     fontStyle: 'italic',
   },
+  cornerArchivedInputText: { ...Typography.mono('italic'), color: groknight.textMuted },
 });

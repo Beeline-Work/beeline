@@ -1,56 +1,59 @@
 import brand from './brand.json';
 
 /**
- * Grok Mono Hull palette.
+ * Grok Build palette measured from the 1.0.3 terminal capture.
  *
- * Every value is grayscale. State is encoded with luminance, shape, copy,
- * texture, and motion rather than a generic chromatic accent.
+ * State is encoded primarily with copy, luminance, shape, and motion. The
+ * muted-gold accent is reserved for a single live or high-value element.
  */
 export const groknight = {
   /** Backgrounds */
-  bgVoid: '#090909',
-  bgTerminal: '#090909',
-  bgBase: '#111111',
-  bgRaised: '#171717',
-  bgCode: '#171717',
-  bgHighlight: '#1d1d1d',
-  bgHover: '#222222',
-  bgPressed: '#292929',
-  bgTexturePeak: '#303030',
-  bgVisual: '#303030',
+  bgVoid: '#121212',
+  bgTerminal: '#121212',
+  bgBase: '#121212',
+  bgRaised: '#121212',
+  bgCode: '#121212',
+  bgHighlight: '#121212',
+  bgHover: '#181818',
+  bgPressed: '#1e1e1e',
+  bgTexturePeak: '#585858',
+  bgVisual: '#181818',
 
   /** Text */
-  textPrimary: '#e8e8e8',
-  textSecondary: '#c6c6c6',
-  textMuted: '#929292',
-  textDisabled: '#787878',
-  textInverted: '#111111',
+  textPrimary: '#e4e4e4',
+  textSecondary: '#c9ccd1',
+  textMuted: '#767676',
+  textDisabled: '#6c6c6c',
+  textInverted: '#121212',
 
   /** Semantic metal and state roles */
-  actionFill: '#dddddd',
-  chrome: '#dddddd',
-  steel: '#929292',
-  signalBright: '#d8d8d8',
-  signalMid: '#929292',
-  signalDim: '#444444',
-  danger: '#c6c6c6',
-  success: '#d8d8d8',
-  warning: '#c6c6c6',
+  actionFill: '#e4e4e4',
+  chrome: '#e4e4e4',
+  steel: '#767676',
+  signalBright: '#c9ccd1',
+  signalMid: '#767676',
+  signalDim: '#585858',
+  danger: '#c9ccd1',
+  success: '#c9ccd1',
+  warning: '#d7af5f',
+  accent: '#d7af5f',
   brandMark: brand.mark,
 
   /** Borders and selection */
-  borderQuiet: '#303030',
-  border: '#444444',
-  borderStrong: '#606060',
-  focus: '#b8b8b8',
-  selectedBorder: '#b8b8b8',
-  selection: '#222222',
+  borderQuiet: '#4e4e4e',
+  border: '#4e4e4e',
+  borderStrong: '#4e4e4e',
+  focus: '#767676',
+  selectedBorder: '#767676',
+  selection: '#181818',
 
   /** Compatibility aliases for non-semantic decoration only. */
-  muted: '#929292',
-  dim: '#787878',
-  gutter: '#787878',
-  borderActive: '#606060',
+  muted: '#767676',
+  dim: '#767676',
+  gutter: '#6c6c6c',
+  faint: '#585858',
+  tertiary: '#6c6c6c',
+  borderActive: '#767676',
 } as const;
 
 export type GrokNightToken = keyof typeof groknight;

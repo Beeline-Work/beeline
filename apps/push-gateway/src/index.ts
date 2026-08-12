@@ -20,10 +20,12 @@ async function main(): Promise<void> {
     throw new Error('set GOOGLE_APPLICATION_CREDENTIALS or BUZZY_PUSH_SA_FILE');
   }
 
-  const firebaseApp = getApps()[0] ?? initializeApp({
-    credential: applicationDefault(),
-    projectId: 'buzzy-e11e7',
-  });
+  const firebaseApp =
+    getApps()[0] ??
+    initializeApp({
+      credential: applicationDefault(),
+      projectId: 'buzzy-e11e7',
+    });
   const registry = await TokenRegistry.load(REGISTRY_FILE);
   const relayClient = createBuzzClient({
     baseUrl: RELAY_URL,
@@ -42,12 +44,15 @@ async function main(): Promise<void> {
       query: (filters) => queryEvents(relayHttp, filters, pubkey),
       disconnect: () => undefined,
     }),
-    (event, recipientPubkey) => gateway.handleRelayEvent(event, recipientPubkey),
+    (event, recipientPubkey, reader) => gateway.handleRelayEvent(event, recipientPubkey, reader),
   );
 
   const pollRegisteredEvent = (): void => {
     void poller.pollNext().catch((error) => {
-      console.error('[push] relay event poll failed:', error instanceof Error ? error.message : String(error));
+      console.error(
+        '[push] relay event poll failed:',
+        error instanceof Error ? error.message : String(error),
+      );
     });
   };
 
@@ -61,7 +66,9 @@ async function main(): Promise<void> {
 
   const server = createRegistrationServer(registry);
   server.listen(PORT, HOST, () => {
-    console.log(`[push] gateway listening on http://${HOST}:${PORT}; relay=${RELAY_URL}; devices=${registry.tokenCount}`);
+    console.log(
+      `[push] gateway listening on http://${HOST}:${PORT}; relay=${RELAY_URL}; devices=${registry.tokenCount}`,
+    );
   });
 
   const shutdown = () => {

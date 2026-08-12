@@ -53,6 +53,49 @@ export interface SteerResult {
   messageId: string;
 }
 
+export interface AcpPermissionOption {
+  kind?: string;
+  optionId?: string;
+  name?: string;
+}
+
+export interface AcpPermissionRequest {
+  sessionId?: string;
+  toolCall?: {
+    toolCallId?: string;
+    title?: string;
+    kind?: string;
+    rawInput?: unknown;
+    [key: string]: unknown;
+  };
+  options?: AcpPermissionOption[];
+  [key: string]: unknown;
+}
+
+export type AcpPermissionDecision = 'allow' | 'reject';
+export type AcpPermissionHandler = (
+  request: AcpPermissionRequest,
+) => Promise<AcpPermissionDecision>;
+
+/**
+ * ACP tool kinds are intentionally portable and runtimes sometimes put the
+ * concrete tool name in the title or raw input. Treat shell/execute as
+ * mutating because an arbitrary command can cross the write boundary.
+ */
+export function isMutatingPermissionRequest(request: AcpPermissionRequest): boolean {
+  const tool = request.toolCall;
+  const kind = tool?.kind?.toLowerCase();
+  if (kind && ['edit', 'execute', 'delete', 'move'].includes(kind)) return true;
+  const description = [tool?.title, tool?.rawInput]
+    .filter((value) => value !== undefined)
+    .map((value) => (typeof value === 'string' ? value : JSON.stringify(value)))
+    .join(' ')
+    .toLowerCase();
+  return /(^|[^a-z])(str_replace|write|edit|shell|bash|execute|create|delete|remove|move|rename|patch|apply_patch)([^a-z]|$)/.test(
+    description,
+  );
+}
+
 interface Pending {
   resolve: (v: unknown) => void;
   reject: (e: Error) => void;
@@ -72,6 +115,7 @@ export class AcpClient extends EventEmitter {
   private agentCommand: string;
   private agentArgs: string[];
   private autoApprove: boolean;
+  private permissionHandler?: AcpPermissionHandler;
 
   constructor(opts: {
     /** Legacy bare-binary option. Prefer agentCommand + agentArgs. */
@@ -80,6 +124,7 @@ export class AcpClient extends EventEmitter {
     agentArgs?: string[];
     agentEnv: Record<string, string>;
     autoApprovePermissions?: boolean;
+    permissionHandler?: AcpPermissionHandler;
   }) {
     super();
     const command = opts.agentCommand ?? opts.agentBinary;
@@ -88,6 +133,7 @@ export class AcpClient extends EventEmitter {
     this.agentArgs = [...(opts.agentArgs ?? [])];
     this.agentEnv = opts.agentEnv;
     this.autoApprove = opts.autoApprovePermissions ?? true;
+    this.permissionHandler = opts.permissionHandler;
   }
 
   async start(): Promise<void> {
@@ -438,10 +484,17 @@ export class AcpClient extends EventEmitter {
   }
 
   private async handlePermission(id: unknown, params: unknown): Promise<void> {
-    const p = params as {
-      options?: Array<{ kind?: string; optionId?: string }>;
-    };
-    if (this.autoApprove) {
+    const p = (params ?? {}) as AcpPermissionRequest;
+    let decision: AcpPermissionDecision = this.autoApprove ? 'allow' : 'reject';
+    if (this.permissionHandler) {
+      try {
+        decision = await this.permissionHandler(p);
+      } catch (error) {
+        this.emit('permission/error', error);
+        decision = 'reject';
+      }
+    }
+    if (decision === 'allow') {
       const allow =
         p?.options?.find((o) => o.kind === 'allow_once' || o.kind === 'allow_always') ??
         p?.options?.[0];

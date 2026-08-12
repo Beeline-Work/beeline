@@ -62,23 +62,20 @@ describe.runIf(authEnforced && reachable)('daemon relay authentication', () => {
     expect(new Set(participants)).toEqual(new Set([human.publicKey, agent.publicKey]));
 
     const detected: Array<{ prompt: string; author: string }> = [];
-    Reflect.set(body, 'openSubchannel', async (_room: string, _repo: unknown, prompt: string, request: { authorPubkey: string }) => ({
-      request,
-      prompt,
-    }));
-    Reflect.set(body, 'startAgentTask', (info: { request: { authorPubkey: string } }, prompt: string) => {
-      detected.push({ prompt, author: info.request.authorPubkey });
+    Reflect.set(body, 'replyInRoom', async (_room: string, _repo: unknown, request: { authorPubkey: string; content: string }) => {
+      detected.push({ prompt: request.content, author: request.authorPubkey });
+      return false;
     });
 
     const message = `two-party request ${randomUUID()}`;
-    await humanClient.startAgentWork(roomId, message, agent.publicKey);
+    await humanClient.messageSubmit(roomId, message);
     expect(
       await body.pollChannelRequests(roomId, {
         repo: 'auth-live',
         repositoryKey: 'auth-live',
         localOnly: true,
       }),
-    ).toBe(1);
+    ).toBe(0);
     expect(detected).toEqual([{ prompt: message, author: human.publicKey }]);
 
     humanClient.disconnect();

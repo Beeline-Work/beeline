@@ -126,6 +126,13 @@ export type ChatDisplayMessage = {
     agentPubkey?: string;
     status: CornerCardStatus;
   };
+  writePermission?: {
+    permissionId: string;
+    requestId: string;
+    agentPubkey: string;
+    tool: string;
+    status: 'pending' | 'allowed' | 'denied' | 'expired' | 'failed';
+  };
 };
 
 export type ChatEventProjection = {
@@ -211,6 +218,50 @@ export function projectChatEvent(
   const mergeTarget = eventHasTag(event, 't', 'merge-ready') && repo && branch && tip
     ? { repo, branch, tip }
     : undefined;
+  const permissionId = eventTagValue(event, 'permission');
+  const permissionRequestId = eventTagValue(event, 'request');
+  const permissionAgent = eventTagValue(event, 'agent') ?? eventTagValue(event, 'p');
+  const isPermissionRequest = eventHasTag(event, 't', 'buzz-write-permission-request');
+  const isPermissionResponse = eventHasTag(event, 't', 'buzz-write-permission-response');
+
+  // A response is proposed human intent. Body verifies current membership and
+  // human identity, then emits the authoritative request-status projection.
+  if (isPermissionResponse) return {};
+
+  if (
+    permissionId &&
+    permissionRequestId &&
+    permissionAgent &&
+    isPermissionRequest
+  ) {
+    const wireStatus = eventTagValue(event, 'status');
+    const status = wireStatus === 'allowed'
+      ? 'allowed'
+      : wireStatus === 'denied'
+        ? 'denied'
+        : wireStatus === 'expired'
+          ? 'expired'
+          : wireStatus === 'failed'
+            ? 'failed'
+          : 'pending';
+    return {
+      message: {
+        id: `write-permission-${permissionId}`,
+        text,
+        isUser: false,
+        timestamp: eventTimestamp(event),
+        ...(pubkey ? { pubkey } : {}),
+        writePermission: {
+          permissionId,
+          requestId: permissionRequestId,
+          agentPubkey: permissionAgent,
+          tool: eventTagValue(event, 'tool') ?? 'edit files',
+          status,
+        },
+        ...(isNew ? { isNew: true } : {}),
+      },
+    };
+  }
 
   if (
     eventHasTag(event, 't', 'change-review-manifest') ||
@@ -302,7 +353,7 @@ export function upsertChatMessages(
   incoming: ChatDisplayMessage[],
 ): ChatDisplayMessage[] {
   const byId = new Map(current.map((message) => [message.id, message]));
-  for (const message of incoming) {
+  for (let message of incoming) {
     const existing = byId.get(message.id);
     if (
       existing?.corner &&
@@ -310,6 +361,18 @@ export function upsertChatMessages(
       CORNER_STATUS_ORDER[message.corner.status] < CORNER_STATUS_ORDER[existing.corner.status]
     ) {
       continue;
+    }
+    if (existing?.writePermission && message.writePermission) {
+      message = {
+        ...message,
+        writePermission: {
+          ...message.writePermission,
+          tool:
+            message.writePermission.tool === 'edit files'
+              ? existing.writePermission.tool
+              : message.writePermission.tool,
+        },
+      };
     }
     byId.set(message.id, message);
   }

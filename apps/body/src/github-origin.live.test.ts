@@ -7,6 +7,7 @@ import { BASE_URL, newIdentity, queryEvents } from '@beeline/gate';
 import { createBuzzClient, repositoryRoomId } from '@beeline/buzz-client';
 import { resolveAgentCommand } from './agent-command.js';
 import { findRuntimeConfigPaths, inspectLocalRepository, readRuntimeRecord } from './runtime.js';
+import { respondToWritePermission } from './write-permission.live-helper.js';
 
 const checkout = process.env.BUZZY_GITHUB_LIVE_CHECKOUT ?? '';
 const selectedAgent = process.env.BUZZY_LIVE_AGENT_KIND ?? 'codex';
@@ -112,10 +113,17 @@ describe.runIf(live)('GitHub-origin pair → conversation → direct land', () =
       });
       expect(await humanClient.listSubchannels(roomId)).toHaveLength(0);
 
-      const request = await humanClient.startAgentWork(
+      const request = await humanClient.messageSubmit(
         roomId,
         `Create AGENT-LANDED.txt containing ${marker}, then commit it.`,
+        { mentionAgent: runtime.agent.publicKey },
+      );
+      await respondToWritePermission(
+        humanClient,
+        roomId,
+        request.id,
         runtime.agent.publicKey,
+        'allow',
       );
       let subchannelId = '';
       await waitUntil(async () => {

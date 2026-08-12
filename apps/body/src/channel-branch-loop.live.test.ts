@@ -22,6 +22,7 @@ import {
   setMemberRole,
 } from '@beeline/gate';
 import { createBuzzClient } from '@beeline/buzz-client';
+import { respondToWritePermission } from './write-permission.live-helper.js';
 
 const marker = `branch-loop-${randomUUID().slice(0, 8)}`;
 const human = newIdentity(`${marker}-human`);
@@ -101,17 +102,19 @@ describe.runIf(relayUp)('live channel → subchannel branch loop', () => {
   it('runs the full loop and leaves the parent discussion writable', async () => {
     if (skipped || !body) return;
     const client = createBuzzClient({ baseUrl: BASE_URL, identity: human });
-    await client.startAgentWork(
+    const request = await client.messageSubmit(
       channelId,
       `Create LOOP-PROOF.txt containing ${marker}, then commit it.`,
-      agent.publicKey,
+      { mentionAgent: agent.publicKey },
     );
 
-    expect(await body.pollChannelRequests(channelId, {
+    const poll = body.pollChannelRequests(channelId, {
       ownerHex: human.publicKey,
       repo,
       targetBranch: 'refs/heads/main',
-    })).toBe(1);
+    });
+    await respondToWritePermission(client, channelId, request.id, agent.publicKey, 'allow');
+    expect(await poll).toBe(1);
     const active = [...body.getSubchannels().values()];
     expect(active).toHaveLength(1);
     subchannelId = active[0]!.subchannelId;

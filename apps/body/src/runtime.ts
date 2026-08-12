@@ -87,9 +87,8 @@ export function runtimeAgentCommand(
   runtime: Pick<AgentRuntimeRecord, 'agentKind' | 'agentCommand' | 'agentArgs' | 'agentBinary'>,
 ): AgentCommand {
   const command = runtime.agentCommand ?? runtime.agentBinary;
-  const inferredKind: AgentKind = command.endsWith('/buzz-agent') || command === 'buzz-agent'
-    ? 'reference'
-    : 'custom';
+  const inferredKind: AgentKind =
+    command.endsWith('/buzz-agent') || command === 'buzz-agent' ? 'reference' : 'custom';
   return {
     kind: runtime.agentKind ?? inferredKind,
     command,
@@ -399,7 +398,7 @@ export async function pairRepositoryAgent(
     resolveRoom(
       pairing: RedeemAgentPairingResult,
       repository: RepositoryBinding,
-      mergeWorkerPubkey: string,
+      mergeWorkerPubkey?: string,
     ): Promise<RepositoryRoomResult>;
     validate?(
       pairing: RedeemAgentPairingResult,
@@ -415,7 +414,7 @@ export async function pairRepositoryAgent(
   const room = await deps.resolveRoom(
     pairing,
     repo.repository,
-    input.mergeWorkerIdentity.publicKey,
+    repo.relayRepo ? input.mergeWorkerIdentity.publicKey : undefined,
   );
   await deps.validate?.(pairing, room, repo);
   const runtime: AgentRuntimeRecord = {
@@ -428,7 +427,7 @@ export async function pairRepositoryAgent(
       {
         channelId: room.channelId,
         repo,
-        ...(room.mergeWorkerProvisioned
+        ...(repo.relayRepo && room.mergeWorkerProvisioned
           ? { mergeWorker: storeIdentity(input.mergeWorkerIdentity, 'buzzy-merge-worker') }
           : {}),
         membershipSince: Math.floor(Date.now() / 1000),

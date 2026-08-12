@@ -5,18 +5,19 @@
  * its `h` UUID; kind:9000 mutations project its members through 39002. Channels
  * point back to that UUID with the same tag on their kind:9007 create event.
  *
- * Invites are signed kind:9 events inside the open community group. Only the
- * SHA-256 token hash is published. Redemption verifies the marker and expiry,
- * then self-adds through kind:9000. Repeated redemption is effect-idempotent.
+ * Invites are signed parameterized-replaceable lookup records. Only the SHA-256
+ * token hash is published. Redemption verifies the marker and expiry, then
+ * self-adds through kind:9000. Repeated redemption is effect-idempotent.
  */
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
-import { publishEvent, queryEvents } from './http.js';
+import { publishEvent, queryEvents, type HttpBridgeOptions } from './http.js';
 import { getDirectMessage } from './direct-message.js';
 import {
   KIND_CHANNEL_ADMINS,
   KIND_CHANNEL_MEMBERS,
+  KIND_COMMUNITY_INVITE,
   KIND_CREATE_GROUP,
   KIND_STREAM_MESSAGE,
   TAG_COMMUNITY,
@@ -43,7 +44,7 @@ import type {
   RedeemInviteResult,
 } from './types.js';
 
-const DEFAULT_INVITE_TTL_SECONDS = 7 * 24 * 60 * 60;
+export const DEFAULT_INVITE_TTL_SECONDS = 100 * 365 * 24 * 60 * 60;
 
 function now(): number {
   return Math.floor(Date.now() / 1000);
@@ -383,7 +384,12 @@ function inviteExpiry(options: CreateInviteOptions | undefined, createdAt: numbe
 
 /** Parse and verify a signed invite marker. */
 export function parseCommunityInvite(event: NostrEvent): CommunityInviteRecord | null {
-  if (event.kind !== KIND_STREAM_MESSAGE || !verifyEvent(event)) return null;
+  if (
+    (event.kind !== KIND_COMMUNITY_INVITE && event.kind !== KIND_STREAM_MESSAGE) ||
+    !verifyEvent(event)
+  ) {
+    return null;
+  }
   if (!tagValues(event, 't').includes(TAG_COMMUNITY_INVITE)) return null;
   const tokenHash = tagValue(event, 'd');
   const communityId = tagValue(event, 'h');
@@ -400,6 +406,44 @@ export function parseCommunityInvite(event: NostrEvent): CommunityInviteRecord |
     mintedBy: event.pubkey,
     event,
   };
+}
+
+/** Find a current invite by token hash, including legacy group-scoped kind:9 markers. */
+export async function findCommunityInvite(
+  http: HttpBridgeOptions,
+  tokenHash: string,
+  readerPubkey: string,
+): Promise<CommunityInviteRecord | null> {
+  const current = await queryEvents(
+    http,
+    [
+      {
+        kinds: [KIND_COMMUNITY_INVITE],
+        '#d': [tokenHash],
+        '#t': [TAG_COMMUNITY_INVITE],
+        limit: 20,
+      },
+    ],
+    readerPubkey,
+  );
+  const foundCurrent = current
+    .map(parseCommunityInvite)
+    .find((record): record is CommunityInviteRecord => record?.tokenHash === tokenHash);
+  if (foundCurrent) return foundCurrent;
+
+  // Buzz requires an h filter to read a channel-scoped kind:9 event, but the
+  // token alone cannot reveal that h value. Scan the indexed invite marker tag
+  // to keep links minted by older clients resolvable until their expiry.
+  const legacy = await queryEvents(
+    http,
+    [{ kinds: [KIND_STREAM_MESSAGE], '#t': [TAG_COMMUNITY_INVITE], limit: 500 }],
+    readerPubkey,
+  );
+  return (
+    legacy
+      .map(parseCommunityInvite)
+      .find((record): record is CommunityInviteRecord => record?.tokenHash === tokenHash) ?? null
+  );
 }
 
 /** Mint a signed invite. Only its hash is published; return the plaintext once. */
@@ -421,7 +465,7 @@ export async function createInvite(
   const tokenHash = inviteTokenHash(token);
   const event = sign(
     ctx,
-    KIND_STREAM_MESSAGE,
+    KIND_COMMUNITY_INVITE,
     [
       ['h', communityId],
       ['t', TAG_COMMUNITY_INVITE],
@@ -451,21 +495,7 @@ export async function redeemInvite(
 ): Promise<RedeemInviteResult> {
   if (!token || token.length > 512) throw new Error('invalid invite token');
   const tokenHash = inviteTokenHash(token);
-  const events = await queryEvents(
-    ctx.http,
-    [
-      {
-        kinds: [KIND_STREAM_MESSAGE],
-        '#d': [tokenHash],
-        '#t': [TAG_COMMUNITY_INVITE],
-        limit: 20,
-      },
-    ],
-    ctx.identity.publicKey,
-  );
-  const invite = events
-    .map(parseCommunityInvite)
-    .find((record): record is CommunityInviteRecord => record?.tokenHash === tokenHash);
+  const invite = await findCommunityInvite(ctx.http, tokenHash, ctx.identity.publicKey);
   if (!invite) throw new Error('invalid invite token');
 
   const members = await communityMembers(ctx, invite.communityId);

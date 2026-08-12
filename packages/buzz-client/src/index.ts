@@ -71,6 +71,7 @@ export {
   KIND_CHANNEL_METADATA,
   KIND_CHANNEL_ADMINS,
   KIND_CHANNEL_MEMBERS,
+  KIND_COMMUNITY_INVITE,
   KIND_AGENT_SOUL,
   KIND_PERSON_PROFILE,
   KIND_AUTH,
@@ -171,6 +172,8 @@ export {
   redeemInvite,
   inviteTokenHash,
   parseCommunityInvite,
+  findCommunityInvite,
+  DEFAULT_INVITE_TTL_SECONDS,
 } from './community.js';
 
 export {

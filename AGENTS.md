@@ -100,7 +100,7 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - SDK authority: `packages/buzz-client/src/community.ts`; gate convention + live proof: `apps/gate/src/community.live.test.ts`.
 - A community reuses NIP-29 group state: kind:9007 stream create with a self-referencing `community=<h UUID>` tag, kind:9000 roles, and 39001/39002 admin/member projections. Contained channels carry `community=<community UUID>`; absent remains a valid standalone channel.
 - Workspace membership is asserted as direct membership in every live top-level Room for people: invite redemption skips corners, DMs, and archived Rooms while repairing existing Room membership, and new community-linked Rooms mirror current human members. Registered agents are linked once at Workspace scope but require an explicit per-Room attachment.
-- Invites are signed community-scoped kind:9 events (`t=buzz-community-invite`, `d=SHA-256(token)`, NIP-40 `expiration`). Redemption validates the marker and self-adds through kind:9000; plaintext tokens are never published.
+- Invites are signed kind:30078 lookup records (`t=buzz-community-invite`, `d=SHA-256(token)`, NIP-40 `expiration`). Token-only reads must use `findCommunityInvite`, which also scans the marker tag for legacy group-scoped kind:9 records because Buzz requires an unknown `h` to query those directly. Redemption validates the marker and self-adds through kind:9000; plaintext tokens are never published.
 - Invite web authority is `relay-stack/nginx.conf`: the `relay-front` service owns the published relay port, serves `/join/bzi_*` plus both `/.well-known` app-association documents from `relay-stack/web/`, and proxies every other HTTP/WebSocket request to Buzz.
 
 ## Direct messages

@@ -1,11 +1,9 @@
 import {
   KIND_CREATE_GROUP,
-  KIND_STREAM_MESSAGE,
   TAG_COMMUNITY,
-  TAG_COMMUNITY_INVITE,
   createIdentity,
+  findCommunityInvite,
   inviteTokenHash,
-  parseCommunityInvite,
   queryEvents,
 } from '@beeline/buzz-client';
 import { verifyEvent } from '@beeline/nostr';
@@ -36,21 +34,7 @@ export async function resolveWorkspaceName(baseUrl, token) {
     identity,
   };
   const tokenHash = inviteTokenHash(token);
-  const inviteEvents = await queryEvents(
-    http,
-    [
-      {
-        kinds: [KIND_STREAM_MESSAGE],
-        '#d': [tokenHash],
-        '#t': [TAG_COMMUNITY_INVITE],
-        limit: 20,
-      },
-    ],
-    identity.publicKey,
-  );
-  const invite = inviteEvents
-    .map(parseCommunityInvite)
-    .find((record) => record?.tokenHash === tokenHash);
+  const invite = await findCommunityInvite(http, tokenHash, identity.publicKey);
   if (!invite || invite.expiresAt <= Math.floor(Date.now() / 1000)) return null;
 
   const communityEvents = await queryEvents(

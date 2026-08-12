@@ -1,13 +1,16 @@
 export interface AgentAvatarGeometry {
-  /** Outer hull family. This is the strongest small-size identity cue. */
-  hullVariant: number;
-  /** Sensor assembly family: cyclops, pair, slit bank, tower, prism, or grid. */
-  sensorVariant: number;
-  /** Large armor seam layout. */
-  armorVariant: number;
-  /** Mirrors asymmetric machining without changing the overall agent language. */
-  direction: -1 | 1;
-  crownDepth: number;
+  /** Faceted abdomen silhouette. */
+  bodyVariant: number;
+  /** Angular wing assembly. */
+  wingVariant: number;
+  /** Bands are the strongest small-size bee cue. */
+  stripeCount: number;
+  /** Slants the bands without softening their machined edges. */
+  stripeSkew: number;
+  /** Rotates the complete mark within its chamfered frame. */
+  rotation: number;
+  /** Selects one of the neutral body metals. */
+  bodyTone: number;
 }
 
 function hash32(value: string): number {
@@ -28,19 +31,20 @@ function mix32(value: number): number {
   return (mixed ^ (mixed >>> 16)) >>> 0;
 }
 
-/** Stable bilateral machine geometry derived from cosmetic seed or pubkey. */
+/** Stable abstract bee geometry derived from cosmetic seed or pubkey. */
 export function agentAvatarGeometry(seed: string): AgentAvatarGeometry {
   const value = seed || 'unknown-agent';
   const baseHash = hash32(value);
-  const hullHash = mix32(baseHash ^ 0x9e3779b9);
-  const sensorHash = mix32(baseHash ^ 0x85ebca6b);
-  const armorHash = mix32(baseHash ^ 0xc2b2ae35);
-  const directionHash = mix32(baseHash ^ 0x27d4eb2f);
+  const bodyHash = mix32(baseHash ^ 0x9e3779b9);
+  const wingHash = mix32(baseHash ^ 0x85ebca6b);
+  const stripeHash = mix32(baseHash ^ 0xc2b2ae35);
+  const angleHash = mix32(baseHash ^ 0x27d4eb2f);
   return {
-    hullVariant: hullHash % 6,
-    sensorVariant: sensorHash % 6,
-    armorVariant: armorHash % 4,
-    direction: (directionHash & 1) === 0 ? -1 : 1,
-    crownDepth: 16 + ((hullHash >>> 8) % 13),
+    bodyVariant: bodyHash % 3,
+    wingVariant: wingHash % 3,
+    stripeCount: 2 + (stripeHash % 3),
+    stripeSkew: -6 + ((stripeHash >>> 8) % 13),
+    rotation: -8 + (angleHash % 17),
+    bodyTone: (bodyHash >>> 8) % 3,
   };
 }

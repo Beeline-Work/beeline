@@ -1,15 +1,30 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  FlatList,
+  Modal,
+  Pressable,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   KIND_CREATE_GROUP,
   TAG_COMMUNITY,
+  TAG_DIRECT_MESSAGE,
   TAG_PARENT,
   tagValue,
+  tagValues,
+  type Agent,
   type Community,
   type Identity,
+  type PersonProfile,
 } from '@beeline/buzz-client';
 import {
   DEFAULT_RELAY_URL,
@@ -22,6 +37,8 @@ import { createCommunityInviteUrl } from '@/buzz/community-invite';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
 import { latestRoomMessage } from '@/buzz/room-list-summary';
 import { roomParticipantPubkeys } from '@/buzz/room-participants';
+import { shortMemberNpub } from '@/buzz/member-display';
+import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { cornerStatusPresentation, sortCorners, type CornerSummary } from '@/buzz/corners';
 import {
   CHANGES_LABEL,
@@ -31,6 +48,8 @@ import {
   WORKSPACE_LABEL,
 } from '@/buzz/vocabulary';
 import { CommunityInviteEntry } from '@/components/buzz/CommunityInviteEntry';
+import { AgentAvatar } from '@/components/buzz/AgentAvatar';
+import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
 import { BuzzRigTransport } from '@/sync/transport';
 import type { SessionSummary } from '@/sync/transport';
@@ -49,6 +68,22 @@ type ChannelDisplayItem = SessionSummary & {
   latestMessage?: string;
   participantCount?: number;
 };
+
+type DirectMessageDisplayItem = {
+  id: string;
+  peerPubkey: string;
+  peerName: string;
+  peerKind: 'person' | 'agent';
+  peerAgent?: Agent;
+  avatarUrl?: string;
+  latestMessage?: string;
+  updatedAt: number;
+};
+
+type WorkspaceMemberDisplayItem = Omit<
+  DirectMessageDisplayItem,
+  'id' | 'latestMessage' | 'updatedAt'
+>;
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -70,6 +105,7 @@ async function loadDisplayChannelBasics(
     for (const create of creates) {
       if (tagValue(create, TAG_COMMUNITY) !== activeCommunityId) continue;
       if (tagValue(create, TAG_PARENT)) continue;
+      if (tagValues(create, 't').includes(TAG_DIRECT_MESSAGE)) continue;
       const id = tagValue(create, 'h') ?? tagValue(create, 'd');
       if (!id || id === activeCommunityId) continue;
       const prior = roomCreates.get(id);
@@ -119,6 +155,83 @@ async function loadDisplayChannelBasics(
     }),
   );
   return resolved.filter((item) => !item.parentChannelId);
+}
+
+async function loadWorkspaceRoster(
+  transport: BuzzRigTransport,
+  communityId: string,
+  viewerPubkey: string,
+): Promise<{ members: WorkspaceMemberDisplayItem[]; profiles: PersonProfile[] }> {
+  const client = await transport.ensureClient();
+  const [workspaceMembers, agents] = await Promise.all([
+    client.communityMembers(communityId),
+    client.listAgents(communityId),
+  ]);
+  const agentsByPubkey = new Map(agents.map((agent) => [agent.pubkey, agent]));
+  const people = workspaceMembers.filter(
+    (member) => member.pubkey !== viewerPubkey && !agentsByPubkey.has(member.pubkey),
+  );
+  const profiles = await client.listPersonProfiles(
+    communityId,
+    people.map((person) => person.pubkey),
+  );
+  const profileByPubkey = new Map(profiles.map((profile) => [profile.pubkey, profile]));
+  const members: WorkspaceMemberDisplayItem[] = [
+    ...people.map((person) => ({
+      peerPubkey: person.pubkey,
+      peerName: shortMemberNpub(person.pubkey),
+      peerKind: 'person' as const,
+      avatarUrl: profileByPubkey.get(person.pubkey)?.avatar,
+    })),
+    ...agents
+      .filter((agent) => agent.pubkey !== viewerPubkey)
+      .map((agent) => {
+        const display = resolveAgentDisplayIdentity(agent.pubkey, agent);
+        return {
+          peerPubkey: agent.pubkey,
+          peerName: display.name,
+          peerKind: 'agent' as const,
+          peerAgent: agent,
+          avatarUrl: display.avatarUrl,
+        };
+      }),
+  ].sort((a, b) => a.peerName.localeCompare(b.peerName));
+  return { members, profiles };
+}
+
+async function loadDirectMessageDisplays(
+  transport: BuzzRigTransport,
+  communityId: string,
+  viewerPubkey: string,
+  roster: WorkspaceMemberDisplayItem[],
+): Promise<DirectMessageDisplayItem[]> {
+  const client = await transport.ensureClient();
+  const rosterByPubkey = new Map(roster.map((member) => [member.peerPubkey, member]));
+  const dms = await client.listDirectMessages(communityId);
+  const displays = await Promise.all(
+    dms.map(async (dm): Promise<DirectMessageDisplayItem | null> => {
+      const peerPubkey = dm.participants.find((pubkey) => pubkey !== viewerPubkey);
+      if (!peerPubkey) return null;
+      const member = rosterByPubkey.get(peerPubkey);
+      if (!member) return null;
+      const events = await transport.sessionEventsBackfill(dm.channelId, { limit: 30 });
+      const latestEventAt = events.reduce((latest, event) => {
+        if (event.type !== 'raw' || !event.payload || typeof event.payload !== 'object')
+          return latest;
+        const createdAt = (event.payload as { createdAt?: unknown }).createdAt;
+        return typeof createdAt === 'number' ? Math.max(latest, createdAt) : latest;
+      }, dm.createdAt);
+      return {
+        id: dm.channelId,
+        ...member,
+        latestMessage: latestRoomMessage(events) ?? undefined,
+        updatedAt: latestEventAt,
+      };
+    }),
+  );
+  return displays
+    .filter((dm): dm is DirectMessageDisplayItem => dm !== null)
+    .sort((a, b) => b.updatedAt - a.updatedAt || a.peerName.localeCompare(b.peerName));
 }
 
 async function enrichDisplayChannels(
@@ -188,6 +301,10 @@ export default function BuzzChannels() {
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
   const [personalWorkspaceId, setPersonalWorkspaceId] = useState<string | null>(null);
   const [displayChannels, setDisplayChannels] = useState<ChannelDisplayItem[]>([]);
+  const [directMessages, setDirectMessages] = useState<DirectMessageDisplayItem[]>([]);
+  const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMemberDisplayItem[]>([]);
+  const [memberPickerVisible, setMemberPickerVisible] = useState(false);
+  const [messagingPubkey, setMessagingPubkey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -247,14 +364,27 @@ export default function BuzzChannels() {
           setLoading(false);
         }
 
-        const [viewerProfile, enriched] = await Promise.all([
+        const roster = active
+          ? await loadWorkspaceRoster(nextTransport, active, currentIdentity.publicKey)
+          : { members: [], profiles: [] };
+        const [viewerProfile, enriched, dms] = await Promise.all([
           active
             ? client.getPersonProfile(active, currentIdentity.publicKey)
             : Promise.resolve(null),
           enrichDisplayChannels(nextTransport, channels, active),
+          active
+            ? loadDirectMessageDisplays(
+                nextTransport,
+                active,
+                currentIdentity.publicKey,
+                roster.members,
+              )
+            : Promise.resolve([]),
         ]);
         if (isCurrent()) {
           setDisplayChannels(enriched);
+          setWorkspaceMembers(roster.members);
+          setDirectMessages(dms);
           setViewerAvatarUrl(viewerProfile?.avatar);
         }
       } catch (err) {
@@ -298,12 +428,20 @@ export default function BuzzChannels() {
       const channels = await loadDisplayChannelBasics(transport, active, available);
       if (!isCurrent()) return;
       setDisplayChannels(channels);
-      const [enriched, viewerProfile] = await Promise.all([
+      const roster = active
+        ? await loadWorkspaceRoster(transport, active, identity.publicKey)
+        : { members: [], profiles: [] };
+      const [enriched, viewerProfile, dms] = await Promise.all([
         enrichDisplayChannels(transport, channels, active),
         active ? client.getPersonProfile(active, identity.publicKey) : Promise.resolve(undefined),
+        active
+          ? loadDirectMessageDisplays(transport, active, identity.publicKey, roster.members)
+          : Promise.resolve([]),
       ]);
       if (!isCurrent()) return;
       setDisplayChannels(enriched);
+      setWorkspaceMembers(roster.members);
+      setDirectMessages(dms);
       setViewerAvatarUrl(viewerProfile?.avatar);
     } catch (err) {
       if (isCurrent()) setError(String(err));
@@ -333,6 +471,32 @@ export default function BuzzChannels() {
       router.push(`/buzz/chat/${encodeURIComponent(channel.id)}` as Href);
     },
     [activeCommunityId, identity],
+  );
+
+  const handleDirectMessagePress = useCallback(
+    (channelId: string) => {
+      if (identity) void saveLastViewedChannel(identity.publicKey, activeCommunityId, channelId);
+      router.push(`/buzz/chat/${encodeURIComponent(channelId)}` as Href);
+    },
+    [activeCommunityId, identity],
+  );
+
+  const handleStartDirectMessage = useCallback(
+    async (member: WorkspaceMemberDisplayItem) => {
+      if (!transport || !activeCommunityId || messagingPubkey) return;
+      setMessagingPubkey(member.peerPubkey);
+      setError(null);
+      try {
+        const result = await transport.resolveDirectMessage(activeCommunityId, member.peerPubkey);
+        setMemberPickerVisible(false);
+        handleDirectMessagePress(result.channelId);
+      } catch (err) {
+        setError(`Could not message ${member.peerName}: ${String(err)}`);
+      } finally {
+        setMessagingPubkey(null);
+      }
+    },
+    [activeCommunityId, handleDirectMessagePress, messagingPubkey, transport],
   );
 
   const handleCreateChannel = useCallback(async () => {
@@ -407,6 +571,16 @@ export default function BuzzChannels() {
           <View style={styles.headerActions}>
             {activeCommunityId && (
               <TouchableOpacity
+                accessibilityLabel={`${WORKSPACE_LABEL} members`}
+                onPress={() => setMemberPickerVisible(true)}
+                style={styles.iconButton}
+                testID="workspace-members"
+              >
+                <Text style={styles.iconButtonText}>◇</Text>
+              </TouchableOpacity>
+            )}
+            {activeCommunityId && (
+              <TouchableOpacity
                 accessibilityLabel={`${WORKSPACE_LABEL} Agents`}
                 onPress={() =>
                   router.push(
@@ -478,14 +652,63 @@ export default function BuzzChannels() {
             displayChannels.length === 0 ? styles.emptyContainer : styles.listContent
           }
           ListHeaderComponent={
-            displayChannels.length > 0 ? (
-              <CommunityInviteEntry
-                community={activeCommunity}
-                creatingInvite={creatingInvite}
-                allowPeopleInvites={activeCommunityId !== personalWorkspaceId}
-                onInvitePeople={() => void handleInvitePeople()}
-              />
-            ) : null
+            <>
+              {directMessages.length > 0 && (
+                <View style={styles.dmSection}>
+                  <View style={styles.dmSectionHeading}>
+                    <Text style={styles.dmSectionTitle}>Direct messages</Text>
+                    <Text style={styles.dmSectionCount}>{directMessages.length}</Text>
+                  </View>
+                  {directMessages.map((dm) => {
+                    const display = dm.peerAgent
+                      ? resolveAgentDisplayIdentity(dm.peerPubkey, dm.peerAgent)
+                      : undefined;
+                    return (
+                      <TouchableOpacity
+                        accessibilityLabel={`Open direct message with ${dm.peerName}`}
+                        key={dm.id}
+                        onPress={() => handleDirectMessagePress(dm.id)}
+                        style={styles.dmRow}
+                        testID={`direct-message-${dm.peerPubkey}`}
+                      >
+                        {display ? (
+                          <AgentAvatar
+                            pubkey={dm.peerPubkey}
+                            avatarSeed={display.avatarSeed}
+                            avatarUrl={display.avatarUrl}
+                            name={display.name}
+                            size={38}
+                          />
+                        ) : (
+                          <PersonAvatar
+                            pubkey={dm.peerPubkey}
+                            avatarUrl={dm.avatarUrl}
+                            name={dm.peerName}
+                            size={38}
+                          />
+                        )}
+                        <View style={styles.dmCopy}>
+                          <Text numberOfLines={1} style={styles.dmName}>
+                            {dm.peerName}
+                          </Text>
+                          <Text numberOfLines={1} style={styles.latestMessage}>
+                            {dm.latestMessage ?? 'No messages yet'}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+              {displayChannels.length > 0 && (
+                <CommunityInviteEntry
+                  community={activeCommunity}
+                  creatingInvite={creatingInvite}
+                  allowPeopleInvites={activeCommunityId !== personalWorkspaceId}
+                  onInvitePeople={() => void handleInvitePeople()}
+                />
+              )}
+            </>
           }
           ListEmptyComponent={
             <View style={styles.emptyState}>
@@ -614,6 +837,85 @@ export default function BuzzChannels() {
           refreshing={refreshing}
         />
       </View>
+
+      <Modal
+        animationType="fade"
+        onRequestClose={() => setMemberPickerVisible(false)}
+        transparent
+        visible={memberPickerVisible}
+      >
+        <View style={styles.memberModalRoot}>
+          <Pressable
+            accessibilityLabel={`Close ${WORKSPACE_LABEL} member list`}
+            onPress={() => setMemberPickerVisible(false)}
+            style={StyleSheet.absoluteFill}
+          />
+          <HullSurface strength="raised" style={styles.memberModal}>
+            <View style={styles.memberModalHeading}>
+              <View style={styles.memberModalHeadingCopy}>
+                <Text style={styles.memberModalTitle}>{WORKSPACE_LABEL} members</Text>
+                <Text style={styles.memberModalHint}>Start a private conversation.</Text>
+              </View>
+              <TouchableOpacity
+                accessibilityLabel={`Close ${WORKSPACE_LABEL} member list`}
+                onPress={() => setMemberPickerVisible(false)}
+                style={styles.memberModalClose}
+              >
+                <Text style={styles.memberModalCloseText}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView
+              contentContainerStyle={styles.memberList}
+              showsVerticalScrollIndicator={false}
+            >
+              {workspaceMembers.map((member) => {
+                const display = member.peerAgent
+                  ? resolveAgentDisplayIdentity(member.peerPubkey, member.peerAgent)
+                  : undefined;
+                const busy = messagingPubkey === member.peerPubkey;
+                return (
+                  <View key={member.peerPubkey} style={styles.memberRow}>
+                    {display ? (
+                      <AgentAvatar
+                        pubkey={member.peerPubkey}
+                        avatarSeed={display.avatarSeed}
+                        avatarUrl={display.avatarUrl}
+                        name={display.name}
+                        size={36}
+                      />
+                    ) : (
+                      <PersonAvatar
+                        pubkey={member.peerPubkey}
+                        avatarUrl={member.avatarUrl}
+                        name={member.peerName}
+                        size={36}
+                      />
+                    )}
+                    <View style={styles.memberCopy}>
+                      <Text numberOfLines={1} style={styles.memberName}>
+                        {member.peerName}
+                      </Text>
+                      <Text style={styles.memberKind}>{member.peerKind.toUpperCase()}</Text>
+                    </View>
+                    <TouchableOpacity
+                      accessibilityLabel={`Message ${member.peerName}`}
+                      disabled={Boolean(messagingPubkey)}
+                      onPress={() => void handleStartDirectMessage(member)}
+                      style={styles.messageButton}
+                      testID={`message-workspace-member-${member.peerPubkey}`}
+                    >
+                      <Text style={styles.messageButtonText}>{busy ? 'OPENING…' : 'MESSAGE'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+              {workspaceMembers.length === 0 && (
+                <Text style={styles.memberEmpty}>No other members yet</Text>
+              )}
+            </ScrollView>
+          </HullSurface>
+        </View>
+      </Modal>
     </BuzzCommunityShell>
   );
 }
@@ -721,6 +1023,112 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   listContent: { paddingVertical: 4 },
+  dmSection: {
+    paddingTop: 8,
+    paddingBottom: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.borderStrong,
+  },
+  dmSectionHeading: {
+    minHeight: 32,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  dmSectionTitle: {
+    ...Typography.default('semiBold'),
+    color: groknight.textSecondary,
+    fontSize: 12,
+  },
+  dmSectionCount: { ...Typography.mono(), color: groknight.textMuted, fontSize: 10 },
+  dmRow: {
+    minHeight: 62,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    borderTopWidth: 1,
+    borderTopColor: groknight.border,
+  },
+  dmCopy: { flex: 1, minWidth: 0 },
+  dmName: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 14,
+  },
+  memberModalRoot: {
+    flex: 1,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(5, 5, 6, 0.84)',
+  },
+  memberModal: {
+    width: '100%',
+    maxWidth: 460,
+    maxHeight: '78%',
+    padding: 16,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgRaised,
+  },
+  memberModalHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  memberModalHeadingCopy: { flex: 1, minWidth: 0 },
+  memberModalTitle: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 17,
+  },
+  memberModalHint: {
+    ...Typography.default(),
+    marginTop: 3,
+    color: groknight.textMuted,
+    fontSize: 12,
+  },
+  memberModalClose: {
+    width: 44,
+    height: 44,
+    marginTop: -10,
+    marginRight: -10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  memberModalCloseText: { ...Typography.default(), color: groknight.steel, fontSize: 24 },
+  memberList: { paddingTop: 16, paddingBottom: 4 },
+  memberRow: {
+    minHeight: 60,
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    borderTopWidth: 1,
+    borderTopColor: groknight.border,
+    backgroundColor: groknight.bgBase,
+  },
+  memberCopy: { flex: 1, minWidth: 0 },
+  memberName: { ...Typography.default('semiBold'), color: groknight.textSecondary, fontSize: 13 },
+  memberKind: { ...Typography.mono(), marginTop: 2, color: groknight.textMuted, fontSize: 9 },
+  messageButton: {
+    minHeight: 44,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  messageButtonText: {
+    ...Typography.mono('semiBold'),
+    color: groknight.chrome,
+    fontSize: 9,
+    letterSpacing: 0.3,
+  },
+  memberEmpty: {
+    ...Typography.default(),
+    paddingVertical: 24,
+    color: groknight.textMuted,
+    textAlign: 'center',
+    fontSize: 12,
+  },
   roomCell: {
     borderBottomWidth: 1,
     borderBottomColor: groknight.border,

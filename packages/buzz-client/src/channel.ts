@@ -96,6 +96,10 @@ export async function createChannel(
     parentChannelId?: string;
     communityId?: string;
     repository?: RepositoryBinding;
+    /** Internal protocol tags for specialized channel shapes such as DMs. */
+    extraTags?: string[][];
+    /** Workspace Rooms mirror people; private two-party Rooms opt out. */
+    mirrorCommunityMembers?: boolean;
   },
 ): Promise<string> {
   const channelId = opts?.channelId ?? newChannelUuid();
@@ -117,9 +121,10 @@ export async function createChannel(
     tags.push(['repo-scope', opts.repository.localOnly ? 'local' : 'remote']);
     if (opts.repository.remote) tags.push(['repo-remote', opts.repository.remote]);
   }
+  if (opts?.extraTags) tags.push(...opts.extraTags);
   const event = sign(ctx.identity, KIND_CREATE_GROUP, tags);
   await publishEvent(ctx.http, event);
-  if (opts?.communityId) {
+  if (opts?.communityId && opts.mirrorCommunityMembers !== false) {
     // A community tag makes the channel discoverable, but NIP-29 authorization
     // still comes from the channel's direct member projection. Wait for the
     // creator's implicit ownership first, then mirror every other current
@@ -137,6 +142,9 @@ export async function createChannel(
       });
       await waitUntilMember(ctx, channelId, member.pubkey);
     }
+  }
+  if (opts?.communityId && opts.mirrorCommunityMembers === false) {
+    await waitUntilMember(ctx, channelId, ctx.identity.publicKey);
   }
   return channelId;
 }

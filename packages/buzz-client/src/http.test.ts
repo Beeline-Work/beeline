@@ -34,10 +34,78 @@ function signedEvent(): NostrEvent {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe('HTTP bridge NIP-98 auth', () => {
+  it('retries transient HTTP failures with the same signed event until it lands', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const event = signedEvent();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('bad gateway', { status: 502 }))
+      .mockResolvedValueOnce(new Response('unavailable', { status: 503 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ accepted: true }), { status: 200 }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const publishing = publishEvent(opts, event);
+    const result = expect(publishing).resolves.toMatchObject({ status: 200, accepted: true });
+    await vi.runAllTimersAsync();
+    await result;
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls.map((call) => call[1]?.body)).toEqual([
+      JSON.stringify(event),
+      JSON.stringify(event),
+      JSON.stringify(event),
+    ]);
+    expect(warning).toHaveBeenCalledTimes(2);
+    expect(warning.mock.calls[0]?.[0]).toContain('HTTP 502');
+    expect(warning.mock.calls[1]?.[0]).toContain('HTTP 503');
+  });
+
+  it('retries network errors and attempt timeouts before succeeding', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockImplementationOnce(
+        async (_input: string | URL | Request, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              'abort',
+              () => reject(new DOMException('timed out', 'AbortError')),
+              { once: true },
+            );
+          }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const publishing = publishEvent(opts, signedEvent());
+    const result = expect(publishing).resolves.toMatchObject({ status: 200, accepted: true });
+    await vi.runAllTimersAsync();
+    await result;
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry a non-transient publish rejection', async () => {
+    const fetchMock = vi.fn(async () => new Response('unauthorized', { status: 401 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(publishEvent(opts, signedEvent())).rejects.toThrow('HTTP 401');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('authenticates query and publish against their exact request URLs', async () => {
     const requests: Array<{ input: string; init?: RequestInit }> = [];
     vi.stubGlobal(

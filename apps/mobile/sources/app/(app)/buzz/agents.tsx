@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import * as Clipboard from 'expo-clipboard';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -268,7 +269,8 @@ export default function BuzzAgents() {
           </TouchableOpacity>
         </HullSurface>
 
-        <ScrollView
+        <KeyboardAwareScrollView
+          bottomOffset={16}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
         >
@@ -500,7 +502,7 @@ export default function BuzzAgents() {
               )}
             </View>
           )}
-        </ScrollView>
+        </KeyboardAwareScrollView>
       </View>
     </BuzzCommunityShell>
   );

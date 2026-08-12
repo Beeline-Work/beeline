@@ -22,7 +22,6 @@ import {
   setMemberRole,
 } from '@beeline/gate';
 import { createBuzzClient } from '@beeline/buzz-client';
-import { respondToWritePermission } from './write-permission.live-helper.js';
 
 const marker = `branch-loop-${randomUUID().slice(0, 8)}`;
 const human = newIdentity(`${marker}-human`);
@@ -102,19 +101,19 @@ describe.runIf(relayUp)('live channel → subchannel branch loop', () => {
   it('runs the full loop and leaves the parent discussion writable', async () => {
     if (skipped || !body) return;
     const client = createBuzzClient({ baseUrl: BASE_URL, identity: human });
-    const request = await client.messageSubmit(
+    await client.messageSubmit(
       channelId,
-      `Create LOOP-PROOF.txt containing ${marker}, then commit it.`,
+      `Open a corner to create LOOP-PROOF.txt containing ${marker}, then commit it.`,
       { mentionAgent: agent.publicKey },
     );
 
-    const poll = body.pollChannelRequests(channelId, {
-      ownerHex: human.publicKey,
-      repo,
-      targetBranch: 'refs/heads/main',
-    });
-    await respondToWritePermission(client, channelId, request.id, agent.publicKey, 'allow');
-    expect(await poll).toBe(1);
+    expect(
+      await body.pollChannelRequests(channelId, {
+        ownerHex: human.publicKey,
+        repo,
+        targetBranch: 'refs/heads/main',
+      }),
+    ).toBe(1);
     const active = [...body.getSubchannels().values()];
     expect(active).toHaveLength(1);
     subchannelId = active[0]!.subchannelId;
@@ -153,10 +152,30 @@ describe.runIf(relayUp)('live channel → subchannel branch loop', () => {
 
     const metadata = await client.getChannelMetadata(subchannelId);
     expect(metadata?.archived).toBe(true);
+    const roomMetadata = await client.getChannelMetadata(channelId);
+    expect(roomMetadata?.archived).not.toBe(true);
     const continuation = `${marker}-parent-discussion-continues`;
-    await client.messageSubmit(channelId, continuation);
+    const continuationEvent = await client.messageSubmit(channelId, continuation, {
+      mentionAgent: agent.publicKey,
+    });
+    expect(
+      await body.pollChannelRequests(channelId, {
+        ownerHex: human.publicKey,
+        repo,
+        targetBranch: 'refs/heads/main',
+      }),
+    ).toBe(0);
     const history = await client.sessionEventsBackfill(channelId, { limit: 100 });
-    expect(history.some((event) => event.content === continuation)).toBe(true);
+    expect(history.some((event) => event.event.content === continuation)).toBe(true);
+    expect(
+      history.some(
+        (event) =>
+          event.event.pubkey === agent.publicKey &&
+          event.event.tags.some(
+            (tag) => tag[0] === 'e' && tag[1] === continuationEvent.id && tag[3] === 'reply',
+          ),
+      ),
+    ).toBe(true);
     client.disconnect();
   }, 180_000);
 });

@@ -51,6 +51,7 @@ import {
   WRITE_PERMISSION_RESPONSE_TAG,
   listAgents,
   listMembers,
+  getParentChannelId,
   tagValue,
   waitUntilMember,
   type ChannelOpsContext,
@@ -153,6 +154,26 @@ export interface SubchannelInfo {
   mergeSummary?: string;
   /** Successfully forwarded member events, preventing same-second relay replays. */
   processedMemberEventIds?: Set<string>;
+}
+
+/** Fail closed unless an archive target is the exact relay-linked child session. */
+export function assertSubchannelArchiveTarget(
+  info: SubchannelInfo,
+  relayParentChannelId: string | null,
+): void {
+  const sessionParentChannelId = info.session.parentChannelId;
+  if (
+    info.session.channelId !== info.subchannelId ||
+    !sessionParentChannelId ||
+    sessionParentChannelId === info.subchannelId ||
+    relayParentChannelId !== sessionParentChannelId
+  ) {
+    throw new Error(
+      `refusing to archive non-corner channel ${info.subchannelId}: ` +
+        `session=${info.session.channelId} sessionParent=${sessionParentChannelId ?? 'none'} ` +
+        `relayParent=${relayParentChannelId ?? 'none'}`,
+    );
+  }
 }
 
 export interface BoundRepo {
@@ -1633,6 +1654,15 @@ export class Body {
     if (!info) {
       throw new Error(`Subchannel ${subchannelId} not found`);
     }
+
+    // The map name is not authority. Confirm both the in-memory session and
+    // the immutable kind:9007 parent link before any cleanup or metadata edit.
+    // A top-level Room has no parent link and can never pass this gate.
+    const relayParentChannelId = await getParentChannelId(
+      this.agentClientContext(),
+      subchannelId,
+    );
+    assertSubchannelArchiveTarget(info, relayParentChannelId);
 
     const { session, worktreePath, featureBranch, subchannelId: scId } = info;
 

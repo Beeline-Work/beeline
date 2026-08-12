@@ -23,8 +23,12 @@ import { randomUUID } from 'node:crypto';
 
 import { Body } from './body.js';
 import { AcpClient, type McpServerWire } from './acp.js';
-import { loadBodyConfig, hasLlmCredentials } from './config.js';
 import { projectActivity, postControlMessage } from './activity.js';
+import {
+  hasLiveAgent,
+  liveAcpClientOptions,
+  loadLiveBodyConfig,
+} from './live-test-agent.js';
 import {
   newIdentity,
   createChannel,
@@ -82,13 +86,13 @@ describe('multi-member steering', () => {
       return;
     }
 
-    const config = loadBodyConfig({
+    const config = loadLiveBodyConfig({
       workspaceRoot: '/tmp/buzzy-body-test',
       llmEnvFile: LLM_ENV_FILE,
     });
 
-    if (!hasLlmCredentials(config.agentEnv)) {
-      log('no LLM credentials — soft-skipping');
+    if (!hasLiveAgent(config)) {
+      log('no live ACP runtime — soft-skipping');
       return;
     }
 
@@ -147,11 +151,7 @@ describe('multi-member steering', () => {
     log('worktree ready:', worktreePath);
 
     // 5. Start edit-mode ACP session.
-    const acpClient = new AcpClient({
-      agentBinary: config.agentBinary,
-      agentEnv: config.agentEnv,
-      autoApprovePermissions: true,
-    });
+    const acpClient = new AcpClient(liveAcpClientOptions(config));
     await acpClient.start();
 
     const { sessionId } = await acpClient.sessionNew({

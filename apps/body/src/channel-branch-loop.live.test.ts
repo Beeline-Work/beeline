@@ -4,8 +4,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { Body, AGENT_REQUEST_TAG } from './body.js';
-import { hasLlmCredentials, loadBodyConfig } from './config.js';
+import { Body } from './body.js';
+import { hasLiveAgent, loadLiveBodyConfig } from './live-test-agent.js';
 import {
   announceRepo,
   attemptMerge,
@@ -60,11 +60,11 @@ const relayUp = await reachable();
 describe.runIf(relayUp)('live channel → subchannel branch loop', () => {
   beforeAll(async () => {
     testDir = await mkdtemp(resolve(tmpdir(), 'buzzy-branch-loop-'));
-    const config = loadBodyConfig({
+    const config = loadLiveBodyConfig({
       workspaceRoot: testDir,
       llmEnvFile: process.env.BUZZY_BODY_LLM_FILE ?? undefined,
     });
-    if (!hasLlmCredentials(config.agentEnv)) return;
+    if (!hasLiveAgent(config)) return;
 
     const communityId = await createCommunity(human, `${marker}-community`);
     channelId = await createChannel(human, `${marker}-channel`, { communityId });
@@ -101,10 +101,10 @@ describe.runIf(relayUp)('live channel → subchannel branch loop', () => {
   it('runs the full loop and leaves the parent discussion writable', async () => {
     if (skipped || !body) return;
     const client = createBuzzClient({ baseUrl: BASE_URL, identity: human });
-    await client.messageSubmit(
+    await client.startAgentWork(
       channelId,
       `Create LOOP-PROOF.txt containing ${marker}, then commit it.`,
-      { mentionAgent: agent.publicKey, extraTags: [['t', AGENT_REQUEST_TAG]] },
+      agent.publicKey,
     );
 
     expect(await body.pollChannelRequests(channelId, {

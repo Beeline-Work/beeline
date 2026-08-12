@@ -52,6 +52,9 @@ const monoStyles = new Set([
   'participantCount',
   'cornerPeekCount',
   'cornerStatus',
+  'cornerStatusLabel',
+  'openCornerText',
+  'startWorkText',
 ]);
 
 function styleDefinition(source: string, name: string): string {

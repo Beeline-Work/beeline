@@ -17,7 +17,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { AcpClient, type McpServerWire } from './acp.js';
-import { projectActivity, postControlMessage } from './activity.js';
+import { projectActivity, postAgentMessage, postControlMessage } from './activity.js';
 import {
   createChannel,
   setMemberRole,
@@ -181,14 +181,14 @@ export function cornerNameForIntent(intent: string | undefined, parentChannelId:
 }
 
 /**
- * Conversation-native Room → edit-session trigger.
+ * Whether a Room message is addressed to this agent.
  *
  * A direct @ mention always addresses this agent. In a two-party Room the
  * sole human can speak naturally because there is nobody else to address.
  * Machine-held merge workers are removed before `roomParticipants` reaches
  * this helper, so they never make a human/agent conversation look multi-party.
  */
-export function isChannelTaskRequest(
+export function isChannelAddressedMessage(
   event: NostrEvent,
   agentPubkey: string,
   roomParticipants: readonly string[] = [],
@@ -200,6 +200,21 @@ export function isChannelTaskRequest(
   participants.delete(agentPubkey);
   return participants.size === 1 && participants.has(event.pubkey);
 }
+
+/** Only a signed, explicitly addressed Start work action authorizes edits. */
+export function isChannelWorkIntent(
+  event: NostrEvent,
+  agentPubkey: string,
+  roomParticipants: readonly string[] = [],
+): boolean {
+  return (
+    isChannelAddressedMessage(event, agentPubkey, roomParticipants) &&
+    event.tags.some((tag) => tag[0] === 't' && tag[1] === AGENT_REQUEST_TAG)
+  );
+}
+
+/** @deprecated Use isChannelWorkIntent; retained for wire/test compatibility. */
+export const isChannelTaskRequest = isChannelWorkIntent;
 
 /** Create the relay-side child channel under the agent's own signing key. */
 export function createAgentSubchannel(
@@ -650,25 +665,7 @@ export class Body {
         ]
       : [];
 
-    // 7. Post link message to TLC with repo and tip.
-    await postControlMessage(
-      tlcChannelId,
-      agentId,
-      `Agent opened a work branch for: ${intent?.trim() || 'channel request'}`,
-      [
-        ['subchannel', subchannelId],
-        ['session', session.logicalSessionId!],
-        ['agent', agentId.publicKey],
-        ['feature', featureBranch],
-        ['branch', targetBranch],
-        ['mode', 'edit'],
-        ['status', 'open'],
-        ['repo', repoId],
-        ...requestTags,
-      ],
-    );
-
-    // 8. Post intro to subchannel with merge target metadata.
+    // 7. Post intro to subchannel with merge target metadata.
     await postControlMessage(
       subchannelId,
       agentId,
@@ -686,13 +683,21 @@ export class Body {
       ],
     );
 
+    // 8. The parent renders this as a durable card. IDs stay in tags for
+    // navigation and are never exposed as transcript copy.
+    await this.postParentCornerStatus(
+      info,
+      'starting',
+      `Agent is starting work on: ${intent?.trim() || 'channel request'}`,
+    );
+
     return info;
   }
 
   /**
-   * Poll a human-created Room for messages this agent should answer.
-   * Every accepted request opens exactly one agent-owned subchannel. Agent-authored
-   * requests are rejected, preserving the human → agent direction of the loop.
+   * Poll a Room for addressed conversation and explicit work intent.
+   * Ordinary addressed messages stay in the read-only Room session. Only the
+   * signed Start work marker opens one agent-owned edit corner.
    */
   async pollChannelRequests(tlcChannelId: string, boundRepo: BoundRepo): Promise<number> {
     const durableCursor = await this.durableState.cursor(tlcChannelId);
@@ -728,11 +733,16 @@ export class Body {
         await this.durableState.delivered(tlcChannelId, event.id);
         continue;
       }
-      if (!isChannelTaskRequest(event, this.agentIdentity.publicKey, roomParticipants)) {
+      if (!isChannelAddressedMessage(event, this.agentIdentity.publicKey, roomParticipants)) {
         await this.durableState.delivered(tlcChannelId, event.id);
         continue;
       }
-      if (await this.requestAlreadyOpened(tlcChannelId, event.id)) {
+      const startsWork = isChannelWorkIntent(
+        event,
+        this.agentIdentity.publicKey,
+        roomParticipants,
+      );
+      if (startsWork && (await this.requestAlreadyOpened(tlcChannelId, event.id))) {
         this.processedRequestIds.add(event.id);
         await this.durableState.delivered(tlcChannelId, event.id);
         continue;
@@ -745,7 +755,9 @@ export class Body {
           await postControlMessage(
             tlcChannelId,
             this.agentIdentity,
-            'Agent-authored work request refused. Ask a human channel member to start work.',
+            startsWork
+              ? 'Agent-authored work request refused. Ask a human channel member to start work.'
+              : 'Agent-authored Room prompt refused.',
             [
               ['request', event.id],
               ['status', 'refused'],
@@ -762,11 +774,15 @@ export class Body {
           content: event.content.trim(),
           createdAt: event.created_at,
         };
-        const info = await this.openSubchannel(tlcChannelId, boundRepo, request.content, request);
-        this.startAgentTask(info, request.content);
+        if (startsWork) {
+          const info = await this.openSubchannel(tlcChannelId, boundRepo, request.content, request);
+          this.startAgentTask(info, request.content);
+          opened++;
+        } else {
+          await this.replyInRoom(tlcChannelId, boundRepo, request);
+        }
         this.processedRequestIds.add(event.id);
         await this.durableState.delivered(tlcChannelId, event.id);
-        opened++;
       } catch (error) {
         await this.durableState.failed(tlcChannelId, event.id, error);
         throw error;
@@ -777,10 +793,46 @@ export class Body {
     return opened;
   }
 
+  /** Run one addressed turn through the provisioned read-only Room session. */
+  private async replyInRoom(
+    tlcChannelId: string,
+    boundRepo: BoundRepo,
+    request: ChannelTaskRequest,
+  ): Promise<void> {
+    const session =
+      this.sessions.get(tlcChannelId) ?? (await this.provision(tlcChannelId, boundRepo));
+    if (session.mode !== 'readonly') {
+      throw new Error('Room conversation requires a read-only ACP session');
+    }
+    const prompt = `[Member ${request.authorPubkey.slice(0, 12)}]: ${request.content}`;
+    await this.durableState.appendConversation(tlcChannelId, {
+      role: 'user',
+      text: prompt,
+      eventId: request.eventId,
+      at: new Date().toISOString(),
+    });
+    const result = await this.runOnSession(session, () =>
+      session.client.sessionPrompt(session.sessionId, prompt, 120_000),
+    );
+    const reply = result.agentText.trim();
+    if (!reply) throw new Error('agent returned an empty Room reply');
+    await this.durableState.appendConversation(tlcChannelId, {
+      role: 'agent',
+      text: reply,
+      at: new Date().toISOString(),
+    });
+    await postAgentMessage(tlcChannelId, this.agentIdentity, reply, request.eventId);
+  }
+
   /** Start the requested work without blocking discovery/UI updates. */
   private startAgentTask(info: SubchannelInfo, prompt: string): void {
     const task = this.runOnSession(info.session, async () => {
       try {
+        await this.postParentCornerStatus(
+          info,
+          'working',
+          `Agent is working on: ${prompt}`,
+        );
         await this.durableState.appendConversation(info.subchannelId, {
           role: 'user',
           text: prompt,
@@ -803,6 +855,11 @@ export class Body {
           text: info.mergeSummary,
           at: new Date().toISOString(),
         });
+        await postAgentMessage(
+          info.subchannelId,
+          this.agentIdentity,
+          info.mergeSummary,
+        );
         await this.publishMergeReady(info);
       } catch (error) {
         await postControlMessage(
@@ -811,11 +868,39 @@ export class Body {
           `Agent task stopped before merge-ready: ${String(error)}`,
           [['status', 'failed']],
         ).catch(() => undefined);
+        await this.postParentCornerStatus(
+          info,
+          'failed',
+          'Work stopped. Open corner for details.',
+        ).catch(() => undefined);
       } finally {
         this.runningAgentTasks.delete(info.subchannelId);
       }
     });
     this.runningAgentTasks.set(info.subchannelId, task);
+  }
+
+  private postParentCornerStatus(
+    info: SubchannelInfo,
+    status: 'starting' | 'working' | 'needs-attention' | 'ready' | 'failed',
+    message: string,
+  ): Promise<void> {
+    const parentId = info.session.parentChannelId;
+    if (!parentId) return Promise.resolve();
+    const boundRepo = info.boundRepo;
+    const wireStatus = status === 'starting' ? 'open' : status;
+    return postControlMessage(parentId, this.agentIdentity, message, [
+      ['subchannel', info.subchannelId],
+      ['session', info.session.logicalSessionId ?? info.session.sessionId],
+      ['agent', this.agentIdentity.publicKey],
+      ['feature', info.featureBranch],
+      ['branch', boundRepo?.targetBranch ?? 'refs/heads/main'],
+      ['mode', 'edit'],
+      ['status', wireStatus],
+      ['display-status', status],
+      ...(boundRepo ? [['repo', this.repoId(boundRepo)]] : []),
+      ...(info.request ? [['request', info.request.eventId]] : []),
+    ]);
   }
 
   /** Push the agent's feature tip and publish the exact human-approval target. */
@@ -844,6 +929,11 @@ export class Body {
         this.agentIdentity,
         `Feature push failed; merge approval is not available. ${push.stderr.trim()}`,
         [['status', 'failed']],
+      );
+      await this.postParentCornerStatus(
+        info,
+        'failed',
+        'Delivery failed. Open corner for details.',
       );
       return false;
     }
@@ -917,6 +1007,7 @@ export class Body {
         ['agent', this.agentIdentity.publicKey],
       ],
     );
+    await this.postParentCornerStatus(info, 'ready', 'Work is ready for review.');
     return true;
   }
 
@@ -1162,6 +1253,7 @@ export class Body {
         // cleanup and preserve this message as the next ordered prompt.
         const prompt = `[Member ${evt.pubkey.slice(0, 12)}]: ${evt.content}`;
         try {
+          let agentReply = '';
           const runningTask = this.runningAgentTasks.get(subchannelId);
           if (runningTask || session.client.activeRunId(session.sessionId)) {
             try {
@@ -1172,14 +1264,16 @@ export class Body {
               const result = await this.runOnSession(session, () =>
                 session.client.sessionPrompt(session.sessionId, prompt, 60_000),
               );
-              info.mergeSummary = result.agentText.trim() || info.mergeSummary;
+              agentReply = result.agentText.trim();
+              info.mergeSummary = agentReply || info.mergeSummary;
               await this.publishMergeReady(info);
             }
           } else {
             const result = await this.runOnSession(session, () =>
               session.client.sessionPrompt(session.sessionId, prompt, 60_000),
             );
-            info.mergeSummary = result.agentText.trim() || info.mergeSummary;
+            agentReply = result.agentText.trim();
+            info.mergeSummary = agentReply || info.mergeSummary;
             await this.publishMergeReady(info);
           }
           await this.durableState.appendConversation(subchannelId, {
@@ -1188,12 +1282,13 @@ export class Body {
             eventId: evt.id,
             at: new Date().toISOString(),
           });
-          if (info.mergeSummary) {
+          if (agentReply) {
             await this.durableState.appendConversation(subchannelId, {
               role: 'agent',
-              text: info.mergeSummary,
+              text: agentReply,
               at: new Date().toISOString(),
             });
+            await postAgentMessage(subchannelId, this.agentIdentity, agentReply);
           }
           processed.add(evt.id);
           await this.durableState.delivered(subchannelId, evt.id);

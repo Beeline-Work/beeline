@@ -5,6 +5,23 @@ import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 
 const REGISTRATION_TIMEOUT_MS = 7_500;
 
+async function withRegistrationTimeout<T>(operation: Promise<T>, description: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`${description} timed out after ${REGISTRATION_TIMEOUT_MS}ms`)),
+          REGISTRATION_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 async function grantedAndroidNotificationPermission(): Promise<boolean> {
   const current = await Notifications.getPermissionsAsync();
   if (current.granted) return true;
@@ -22,7 +39,10 @@ export async function registerBuzzPushNotifications(identity: Identity): Promise
   try {
     if (!(await grantedAndroidNotificationPermission())) return false;
 
-    const nativeToken = await Notifications.getDevicePushTokenAsync();
+    const nativeToken = await withRegistrationTimeout(
+      Notifications.getDevicePushTokenAsync(),
+      'FCM token acquisition',
+    );
     // Expo identifies native tokens by platform; on Android the string is the
     // raw FCM registration token consumed by Firebase Admin.
     if (nativeToken.type !== 'android' || typeof nativeToken.data !== 'string') {

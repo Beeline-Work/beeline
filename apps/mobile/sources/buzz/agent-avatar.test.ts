@@ -6,25 +6,30 @@ describe('deterministic agent avatar', () => {
     const first = agentAvatarGeometry('ab'.repeat(32));
     expect(agentAvatarGeometry('ab'.repeat(32))).toEqual(first);
     expect(agentAvatarGeometry('cd'.repeat(32))).not.toEqual(first);
-    expect(first.hullVariant).toBeGreaterThanOrEqual(0);
-    expect(first.hullVariant).toBeLessThan(6);
-    expect(first.sensorVariant).toBeGreaterThanOrEqual(0);
-    expect(first.sensorVariant).toBeLessThan(6);
+    expect(first.bodyVariant).toBeGreaterThanOrEqual(0);
+    expect(first.bodyVariant).toBeLessThan(3);
+    expect(first.wingVariant).toBeGreaterThanOrEqual(0);
+    expect(first.wingVariant).toBeLessThan(3);
+    expect(first.stripeCount).toBeGreaterThanOrEqual(2);
+    expect(first.stripeCount).toBeLessThanOrEqual(4);
+    expect(first.rotation).toBeGreaterThanOrEqual(-8);
+    expect(first.rotation).toBeLessThanOrEqual(8);
   });
 
-  it('spreads a group across unmistakable silhouette and sensor families', () => {
+  it('spreads a group across bee silhouettes, wings, and stripe rhythms', () => {
     const geometries = Array.from({ length: 24 }, (_, index) =>
       agentAvatarGeometry(index.toString(16).padStart(64, '0')),
     );
-    expect(new Set(geometries.map((geometry) => geometry.hullVariant)).size).toBeGreaterThanOrEqual(
-      5,
-    );
+    expect(new Set(geometries.map((geometry) => geometry.bodyVariant)).size).toBe(3);
+    expect(new Set(geometries.map((geometry) => geometry.wingVariant)).size).toBe(3);
+    expect(new Set(geometries.map((geometry) => geometry.stripeCount)).size).toBe(3);
     expect(
-      new Set(geometries.map((geometry) => geometry.sensorVariant)).size,
-    ).toBeGreaterThanOrEqual(5);
-    expect(
-      new Set(geometries.map((geometry) => `${geometry.hullVariant}:${geometry.sensorVariant}`))
-        .size,
+      new Set(
+        geometries.map(
+          (geometry) =>
+            `${geometry.bodyVariant}:${geometry.wingVariant}:${geometry.stripeCount}:${geometry.rotation}`,
+        ),
+      ).size,
     ).toBeGreaterThanOrEqual(12);
   });
 });

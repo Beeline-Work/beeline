@@ -4,7 +4,8 @@ import brand from './brand.json';
  * Grok Build palette measured from the 1.0.3 terminal capture.
  *
  * State is encoded primarily with copy, luminance, shape, and motion. The
- * muted-gold accent is reserved for a single live or high-value element.
+ * muted-gold accent is reserved for a single live or high-value element,
+ * including the Agent identity system.
  */
 export const groknight = {
   /** Backgrounds */
@@ -38,6 +39,13 @@ export const groknight = {
   warning: '#d7af5f',
   accent: '#d7af5f',
   brandMark: brand.mark,
+
+  /** Deterministic identity marks */
+  avatarGround: '#121212',
+  avatarInk: '#e4e4e4',
+  avatarSoft: '#767676',
+  avatarDim: '#4e4e4e',
+  agentAccent: '#d7af5f',
 
   /** Borders and selection */
   borderQuiet: '#4e4e4e',

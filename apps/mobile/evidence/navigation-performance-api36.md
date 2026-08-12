@@ -41,10 +41,20 @@ unfiltered intermediate count.
 No Room/Corner styling, daemon/work trigger, Agent authority, or merge-gate behavior
 was changed.
 
+## Post-rebase validation
+
+Repeated on 2026-08-12 after rebasing onto `d3bc989` (the first-write permission
+prompt change), using the same API 36 `emulator-5554`, public relay, one-participant
+`PerfRoom` fixture, zero Agents, and a warm Metro bundle. The integrated tip reached
+primary paint in 306 ms for Workspace home, 430 ms for Room chat, and 486 ms for
+Agents. The temporary probes were again removed after capture.
+
 ## Verification
 
 - API 36 on-device transitions were repeated on the same `emulator-5554` fixture.
-- `npm test`: 10/10 root workspace tasks passed.
-- `npx vitest run --maxWorkers=1` in `apps/mobile`: 110 files and 996 tests passed.
+- `npx turbo run test --concurrency=1 --force -- --testTimeout 20000`: 10/10
+  root workspace tasks passed. The extended timeout covers the known pre-existing
+  PGlite cold-start flake in `@beeline/auth`; Auth is not part of this change.
+- `npx vitest run --maxWorkers=1` in `apps/mobile`: 111 files and 1,000 tests passed.
 - `npm run typecheck`: all root workspaces plus the isolated mobile TypeScript check passed.
 - `npm run build`: all seven build tasks passed.

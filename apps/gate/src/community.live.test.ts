@@ -5,8 +5,10 @@
  * owner reads from the existing channel.
  */
 import { beforeAll, describe, expect, it } from 'vitest';
-import { createBuzzClient, createIdentity } from '@beeline/buzz-client';
+import { createBuzzClient } from '@beeline/buzz-client';
+import { archiveChannel } from './buzz.js';
 import { BASE_URL, HOST } from './config.js';
+import { newIdentity } from './identity.js';
 
 const RELAY_PROBE_MS = 2500;
 
@@ -31,14 +33,21 @@ const reachable = await relayReachable();
 
   it('invitee joins and steers an existing community channel', async () => {
     const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    const owner = createIdentity('community-owner');
-    const joiner = createIdentity('community-joiner');
+    const owner = newIdentity('community-owner');
+    const joiner = newIdentity('community-joiner');
     const ownerClient = createBuzzClient({ baseUrl: BASE_URL, host: HOST, identity: owner });
     const joinerClient = createBuzzClient({ baseUrl: BASE_URL, host: HOST, identity: joiner });
 
     const communityId = await ownerClient.createCommunity(`community-${runId}`);
     await ownerClient.waitUntilMember(communityId, owner.publicKey);
     const channelId = await ownerClient.createChannel(`general-${runId}`, { communityId });
+    const cornerId = await ownerClient.createSubchannel(channelId, `finished-${runId}`, {
+      communityId,
+    });
+    await archiveChannel(owner, cornerId);
+    expect((await ownerClient.getChannelMetadata(cornerId))?.archived).toBe(true);
+    expect((await ownerClient.getChannelMetadata(channelId))?.archived).not.toBe(true);
+    expect((await ownerClient.getChannelMetadata(communityId))?.archived).not.toBe(true);
     const invite = await ownerClient.createInvite(communityId, { expiresInSeconds: 3600 });
 
     const redemption = await joinerClient.redeemInvite(invite.token);
@@ -64,6 +73,7 @@ const reachable = await relayReachable();
     expect(channels).toContain(channelId);
     expect(await joinerClient.getChannelCommunityId(channelId)).toBe(communityId);
     await joinerClient.waitUntilMember(channelId, joiner.publicKey);
+    expect(await joinerClient.isMember(cornerId, joiner.publicKey)).toBe(false);
 
     const messageText = `steer-existing-room-${runId}`;
     const publishedMessage = await joinerClient.messageSubmit(channelId, messageText);

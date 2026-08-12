@@ -1,9 +1,11 @@
 export interface PersonAvatarGeometry {
-  headWidth: number;
-  headLift: number;
-  eyeOffset: number;
-  orbitTilt: number;
-  orbitGap: number;
+  petalCount: number;
+  petalLength: number;
+  petalWidth: number;
+  rotation: number;
+  petalTone: number;
+  arrangement: number;
+  centerRadius: number;
 }
 
 function hash32(value: string): number {
@@ -15,15 +17,17 @@ function hash32(value: string): number {
   return hash;
 }
 
-/** Stable rounded porthole geometry for human identities. */
+/** Stable soft flower geometry for human identities. */
 export function personAvatarGeometry(pubkey: string): PersonAvatarGeometry {
   const hash = hash32(pubkey || 'unknown-person');
   const byte = (shift: number) => (hash >>> shift) & 0xff;
   return {
-    headWidth: 31 + (byte(0) % 9),
-    headLift: 1 + (byte(8) % 5),
-    eyeOffset: 8 + (byte(16) % 4),
-    orbitTilt: -16 + (byte(24) % 33),
-    orbitGap: 5 + (byte(0) % 7),
+    petalCount: 5 + (byte(0) % 4),
+    petalLength: 27 + (byte(8) % 7),
+    petalWidth: 15 + (byte(16) % 6),
+    rotation: byte(24) % 36,
+    petalTone: byte(8) % 2,
+    arrangement: byte(16) % 2,
+    centerRadius: 11 + (byte(24) % 5),
   };
 }

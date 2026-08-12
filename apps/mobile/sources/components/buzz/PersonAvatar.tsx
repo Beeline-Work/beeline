@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Image, StyleSheet, View } from 'react-native';
-import Svg, { Circle, Ellipse, G, Path } from 'react-native-svg';
+import Svg, { Circle, Ellipse, G } from 'react-native-svg';
 import { personAvatarGeometry } from '@/buzz/person-avatar';
 import { groknight } from '@/buzz/groknight';
 
@@ -15,6 +15,8 @@ export function PersonAvatar({ pubkey, avatarUrl, name = 'Person', size = 52 }: 
   const [failedAvatar, setFailedAvatar] = useState<string | null>(null);
   const showRelayAvatar = Boolean(avatarUrl && failedAvatar !== avatarUrl);
   const geometry = personAvatarGeometry(pubkey);
+  const petals = Array.from({ length: geometry.petalCount }, (_, index) => index);
+  const petalTone = [groknight.avatarInk, groknight.avatarSoft][geometry.petalTone]!;
 
   useEffect(() => setFailedAvatar(null), [avatarUrl]);
 
@@ -36,58 +38,39 @@ export function PersonAvatar({ pubkey, avatarUrl, name = 'Person', size = 52 }: 
             cx="50"
             cy="50"
             r="48"
-            fill={groknight.bgHighlight}
-            stroke={groknight.borderStrong}
+            fill={groknight.avatarGround}
+            stroke={groknight.avatarDim}
             strokeWidth="3"
           />
-          <G rotation={geometry.orbitTilt} origin="50, 50">
-            <Ellipse
-              cx="50"
-              cy="50"
-              rx="43"
-              ry={22 + geometry.orbitGap}
-              fill="none"
-              stroke={groknight.signalDim}
-              strokeWidth="3"
-              strokeDasharray="42 12"
-            />
-            <Ellipse
-              cx="50"
-              cy="50"
-              rx={35 - geometry.orbitGap / 2}
-              ry="43"
-              fill="none"
-              stroke={groknight.border}
-              strokeWidth="2"
-              strokeDasharray="18 15"
-            />
-          </G>
-          <Ellipse
+          {petals.map((index) => {
+            const alternateScale = geometry.arrangement === 1 && index % 2 === 1 ? 0.84 : 1;
+            const petalLength = geometry.petalLength * alternateScale;
+            const petalCenter = 50 - geometry.centerRadius - petalLength * 0.34;
+            return (
+              <G
+                key={index}
+                rotation={geometry.rotation + (360 / geometry.petalCount) * index}
+                origin="50, 50"
+              >
+                <Ellipse
+                  cx="50"
+                  cy={petalCenter}
+                  rx={(geometry.petalWidth * alternateScale) / 2}
+                  ry={petalLength / 2}
+                  fill={petalTone}
+                  stroke={groknight.avatarInk}
+                  strokeWidth="2"
+                />
+              </G>
+            );
+          })}
+          <Circle
             cx="50"
-            cy={43 - geometry.headLift}
-            rx={geometry.headWidth / 2}
-            ry="19"
-            fill={groknight.bgCode}
-            stroke={groknight.chrome}
-            strokeWidth="3"
-          />
-          <Circle
-            cx={50 - geometry.eyeOffset}
-            cy={42 - geometry.headLift}
-            r="2.8"
-            fill={groknight.signalBright}
-          />
-          <Circle
-            cx={50 + geometry.eyeOffset}
-            cy={42 - geometry.headLift}
-            r="2.8"
-            fill={groknight.signalBright}
-          />
-          <Path
-            d="M22 84 C27 65 39 59 50 59 C61 59 73 65 78 84"
-            fill={groknight.bgCode}
-            stroke={groknight.chrome}
-            strokeWidth="3"
+            cy="50"
+            r={geometry.centerRadius}
+            fill={geometry.petalTone === 0 ? groknight.avatarSoft : groknight.avatarDim}
+            stroke={groknight.avatarInk}
+            strokeWidth="2.5"
           />
         </Svg>
       )}
@@ -100,7 +83,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: groknight.bgHighlight,
+    backgroundColor: groknight.avatarGround,
   },
   image: { width: '100%', height: '100%' },
 });

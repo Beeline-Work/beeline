@@ -174,11 +174,14 @@ export async function listCommunities(
   pubkey: string,
   limit = 50,
 ): Promise<Community[]> {
-  const memberEvents = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_CHANNEL_MEMBERS], '#p': [pubkey], limit }],
-    ctx.identity.publicKey,
-  );
+  const [memberEvents, createEvents] = await Promise.all([
+    queryEvents(
+      ctx.http,
+      [{ kinds: [KIND_CHANNEL_MEMBERS], '#p': [pubkey], limit }],
+      ctx.identity.publicKey,
+    ),
+    queryEvents(ctx.http, [{ kinds: [KIND_CREATE_GROUP], limit: 500 }], ctx.identity.publicKey),
+  ]);
   const ids = [
     ...new Set(
       memberEvents
@@ -188,12 +191,26 @@ export async function listCommunities(
   ];
   if (ids.length === 0) return [];
 
-  // Query each projected group independently. Some relay HTTP bridges interpret
-  // multiple values in a tag filter as an intersection instead of NIP-01 OR,
-  // which otherwise makes every community disappear once a member also owns a
-  // community-linked channel.
-  const communities = await Promise.all(ids.map((id) => getCommunity(ctx, id)));
-  return communities
+  const wanted = new Set(ids);
+  const byId = new Map<string, Community>();
+  for (const event of createEvents) {
+    const community = toCommunity(event);
+    if (!community || !wanted.has(community.communityId)) continue;
+    const prior = byId.get(community.communityId);
+    if (!prior || community.createdAt < prior.createdAt) {
+      byId.set(community.communityId, community);
+    }
+  }
+
+  // The broad create scan is shared with Room discovery. Fall back to exact
+  // reads for an older Workspace that fell outside the relay's scan window.
+  const missing = ids.filter((id) => !byId.has(id));
+  const recovered = await Promise.all(missing.map((id) => getCommunity(ctx, id)));
+  for (const community of recovered) {
+    if (community) byId.set(community.communityId, community);
+  }
+
+  return [...byId.values()]
     .filter((community): community is Community => community !== null)
     .sort((a, b) => a.createdAt - b.createdAt);
 }

@@ -100,11 +100,10 @@ export default function BuzzAgents() {
           currentIdentity.publicKey,
           requestedCommunityId,
         );
-        const listed = await client.listAgents(activeWorkspaceId);
-        const viewerProfile = await client.getPersonProfile(
-          activeWorkspaceId,
-          currentIdentity.publicKey,
-        );
+        const [listed, viewerProfile] = await Promise.all([
+          client.listAgents(activeWorkspaceId),
+          client.getPersonProfile(activeWorkspaceId, currentIdentity.publicKey),
+        ]);
         if (cancelled) return;
         setIdentity(currentIdentity);
         setTransport(nextTransport);
@@ -113,6 +112,7 @@ export default function BuzzAgents() {
         setAgents(listed);
         setViewerAvatarUrl(viewerProfile?.avatar);
         interval = setInterval(() => {
+          if (!pairingPending.current) return;
           void refreshAgents(nextTransport, activeWorkspaceId).catch(() => undefined);
         }, 2000);
       } catch (caught) {

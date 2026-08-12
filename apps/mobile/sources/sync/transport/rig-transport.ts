@@ -38,8 +38,23 @@ export type SessionDetail = SessionSummary & {
     metadata?: unknown;
 };
 
+export type AgentActivityItem = {
+    kind: 'thinking' | 'tool' | 'output';
+    title: string;
+    text?: string;
+    status?: string;
+};
+
 export type SessionEvent =
-    | { type: 'assistant_delta'; sessionId: SessionId; text: string; id?: string; seq?: number; pubkey?: string }
+    | {
+          type: 'assistant_delta';
+          sessionId: SessionId;
+          text: string;
+          id?: string;
+          seq?: number;
+          pubkey?: string;
+          activity?: AgentActivityItem[];
+      }
     | { type: 'permission_review'; sessionId: SessionId; requestId: string; tool?: string; payload?: unknown }
     | { type: 'status'; sessionId: SessionId; status: string; payload?: unknown }
     | { type: 'raw'; sessionId: SessionId; payload: unknown };

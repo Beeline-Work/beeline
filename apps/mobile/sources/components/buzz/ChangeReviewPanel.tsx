@@ -1,11 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  FlatList,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import type { ChangedFile } from '@/sync/transport';
 import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
@@ -258,9 +252,9 @@ const styles = StyleSheet.create({
   panel: {
     borderWidth: 1,
     borderColor: groknight.border,
-    borderRadius: 5,
+    borderRadius: 8,
     overflow: 'hidden',
-    backgroundColor: groknight.bgRaised,
+    backgroundColor: groknight.bgTerminal,
   },
   loading: {
     minHeight: 72,
@@ -280,20 +274,25 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   errorTitle: {
-    ...Typography.default('semiBold'),
+    ...Typography.mono('semiBold'),
     color: groknight.textPrimary,
     fontSize: 11,
     lineHeight: 15,
   },
   mutedText: {
-    ...Typography.default(),
+    ...Typography.mono(),
     color: groknight.textMuted,
     fontSize: 11,
     lineHeight: 15,
   },
-  retryButton: { minHeight: 44, alignSelf: 'flex-start', justifyContent: 'center', paddingRight: 12 },
+  retryButton: {
+    minHeight: 44,
+    alignSelf: 'flex-start',
+    justifyContent: 'center',
+    paddingRight: 12,
+  },
   retryText: {
-    ...Typography.default('semiBold'),
+    ...Typography.mono('semiBold'),
     color: groknight.textPrimary,
     fontSize: 11,
   },
@@ -307,7 +306,7 @@ const styles = StyleSheet.create({
     borderBottomColor: groknight.border,
   },
   summaryTitle: {
-    ...Typography.default('semiBold'),
+    ...Typography.mono('semiBold'),
     color: groknight.textPrimary,
     fontSize: 11,
   },
@@ -322,7 +321,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 9,
     flexDirection: 'row',
     alignItems: 'center',
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: 1,
     borderBottomColor: groknight.border,
     gap: 8,
   },
@@ -351,12 +350,12 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   chevron: {
-    ...Typography.default(),
+    ...Typography.mono(),
     color: groknight.steel,
     fontSize: 16,
   },
   emptyText: {
-    ...Typography.default(),
+    ...Typography.mono(),
     color: groknight.textMuted,
     fontSize: 11,
     padding: 12,
@@ -372,7 +371,7 @@ const styles = StyleSheet.create({
   },
   filesButton: { minHeight: 44, justifyContent: 'center', paddingRight: 8 },
   filesButtonText: {
-    ...Typography.default('semiBold'),
+    ...Typography.mono('semiBold'),
     color: groknight.textSecondary,
     fontSize: 11,
   },
@@ -389,9 +388,9 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 17,
   },
-  diffHeaderLine: { color: groknight.chrome, backgroundColor: groknight.bgHighlight },
-  diffAddedLine: { color: groknight.textPrimary, backgroundColor: groknight.selection },
-  diffRemovedLine: { color: groknight.textMuted, backgroundColor: groknight.bgRaised },
+  diffHeaderLine: { color: groknight.textPrimary, backgroundColor: groknight.bgTerminal },
+  diffAddedLine: { color: groknight.textPrimary, backgroundColor: groknight.bgTerminal },
+  diffRemovedLine: { color: groknight.textMuted, backgroundColor: groknight.bgTerminal },
   diffContextLine: { color: groknight.textSecondary, backgroundColor: groknight.bgTerminal },
   diffLoading: {
     height: 180,
@@ -401,7 +400,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   binaryTitle: {
-    ...Typography.default('semiBold'),
+    ...Typography.mono('semiBold'),
     color: groknight.textPrimary,
     fontSize: 12,
   },

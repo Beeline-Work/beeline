@@ -1,11 +1,11 @@
-import type { SessionEvent } from './rig-transport';
+import type { AgentActivityItem, SessionEvent } from './rig-transport';
 import type { MergeTarget, SessionEvent as BuzzSessionEvent } from '@beeline/buzz-client';
 
 type UnknownRecord = Record<string, unknown>;
 
 function asRecord(value: unknown): UnknownRecord | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as UnknownRecord
+    ? (value as UnknownRecord)
     : undefined;
 }
 
@@ -32,49 +32,82 @@ function readTextContent(value: unknown, depth = 0): string | undefined {
  * user-facing content, not that transport envelope. Plain-text activity from
  * older bodies remains valid.
  */
-export function agentActivityText(content: string): string {
+export function agentActivityDetails(content: string): AgentActivityItem[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(content) as unknown;
   } catch {
-    return content;
+    return content.trim() ? [{ kind: 'output', title: 'Output', text: content }] : [];
   }
 
-  if (typeof parsed === 'string') return parsed;
+  if (typeof parsed === 'string') {
+    return parsed.trim() ? [{ kind: 'output', title: 'Output', text: parsed }] : [];
+  }
   const envelope = asRecord(parsed);
-  if (!envelope) return '';
+  if (!envelope) return [];
   const update = asRecord(envelope.update);
-  if (!update) return readTextContent(envelope.content) ?? '';
+  if (!update) {
+    const text = readTextContent(envelope.content);
+    return text ? [{ kind: 'output', title: 'Output', text }] : [];
+  }
 
   if (update.sessionUpdate === 'activity_batch' && Array.isArray(update.updates)) {
-    return update.updates
-      .map((item) => agentActivityText(JSON.stringify({ update: item })))
-      .filter(Boolean)
-      .join('\n');
+    return update.updates.flatMap((item) => agentActivityDetails(JSON.stringify({ update: item })));
   }
 
-  const text = readTextContent(update.content)
-    ?? readTextContent(update.message)
-    ?? readTextContent(update.output);
-  if (text) return text;
-
-  // Keep tool progress legible when ACP sends no content block.
+  const sessionUpdate = typeof update.sessionUpdate === 'string' ? update.sessionUpdate : '';
+  const text =
+    readTextContent(update.content) ??
+    readTextContent(update.message) ??
+    readTextContent(update.output);
   const toolCall = asRecord(update.toolCall);
-  const title = typeof update.title === 'string'
-    ? update.title
-    : typeof toolCall?.title === 'string' ? toolCall.title : undefined;
-  const status = typeof update.status === 'string'
-    ? update.status
-    : typeof toolCall?.status === 'string' ? toolCall.status : undefined;
-  if (title || status) return [title ?? 'tool', status].filter(Boolean).join(' · ');
+  const title =
+    typeof update.title === 'string'
+      ? update.title
+      : typeof toolCall?.title === 'string'
+        ? toolCall.title
+        : undefined;
+  const status =
+    typeof update.status === 'string'
+      ? update.status
+      : typeof toolCall?.status === 'string'
+        ? toolCall.status
+        : undefined;
+
+  if (sessionUpdate.includes('thought') || sessionUpdate.includes('thinking')) {
+    return text ? [{ kind: 'thinking', title: 'Thinking', text }] : [];
+  }
+  if (
+    sessionUpdate === 'tool_call' ||
+    sessionUpdate === 'tool_call_update' ||
+    sessionUpdate === 'tool_result'
+  ) {
+    return [
+      {
+        kind: 'tool',
+        title: title ?? (sessionUpdate === 'tool_result' ? 'Result' : 'Tool'),
+        ...(text ? { text } : {}),
+        ...(status ? { status } : {}),
+      },
+    ];
+  }
+  if (text) return [{ kind: 'output', title: 'Output', text }];
 
   // Metadata-only session updates should not become empty JSON chat bubbles.
-  return '';
+  return [];
+}
+
+export function agentActivityText(content: string): string {
+  return agentActivityDetails(content)
+    .map((item) => item.text ?? [item.title, item.status].filter(Boolean).join(' · '))
+    .filter(Boolean)
+    .join('\n');
 }
 
 /** Preserve raw Nostr tags because the branch-loop UI projects lifecycle from them. */
 export function toRigEvent(ev: BuzzSessionEvent): SessionEvent {
   if (ev.kind === 'agent-activity') {
+    const activity = agentActivityDetails(ev.content);
     return {
       type: 'assistant_delta',
       sessionId: ev.channelId,
@@ -82,6 +115,7 @@ export function toRigEvent(ev: BuzzSessionEvent): SessionEvent {
       text: agentActivityText(ev.content),
       seq: ev.createdAt,
       pubkey: ev.pubkey,
+      activity,
     };
   }
   if (ev.kind === 'message') {
@@ -104,12 +138,7 @@ export function toRigEvent(ev: BuzzSessionEvent): SessionEvent {
   };
 }
 
-export type CornerCardStatus =
-  | 'starting'
-  | 'working'
-  | 'needs-attention'
-  | 'ready'
-  | 'failed';
+export type CornerCardStatus = 'starting' | 'working' | 'needs-attention' | 'ready' | 'failed';
 
 export type ChatDisplayMessage = {
   id: string;
@@ -120,6 +149,7 @@ export type ChatDisplayMessage = {
   isMergeSummary?: boolean;
   isArchivedNotice?: boolean;
   isAgentActivity?: boolean;
+  activity?: AgentActivityItem[];
   isNew?: boolean;
   corner?: {
     subchannelId: string;
@@ -149,7 +179,8 @@ function eventTags(event: SessionEvent): string[][] {
   const tags = eventPayload(event)?.tags;
   return Array.isArray(tags)
     ? tags.filter(
-        (tag): tag is string[] => Array.isArray(tag) && tag.every((value) => typeof value === 'string'),
+        (tag): tag is string[] =>
+          Array.isArray(tag) && tag.every((value) => typeof value === 'string'),
       )
     : [];
 }
@@ -174,6 +205,10 @@ function eventPubkey(event: SessionEvent): string | undefined {
   if (event.type === 'assistant_delta') return event.pubkey;
   const pubkey = eventPayload(event)?.pubkey;
   return typeof pubkey === 'string' ? pubkey : undefined;
+}
+
+function eventActivity(event: SessionEvent): AgentActivityItem[] | undefined {
+  return event.type === 'assistant_delta' ? event.activity : undefined;
 }
 
 function eventTimestamp(event: SessionEvent): number {
@@ -215,9 +250,10 @@ export function projectChatEvent(
   const repo = eventTagValue(event, 'repo');
   const branch = eventTagValue(event, 'branch');
   const tip = eventTagValue(event, 'tip');
-  const mergeTarget = eventHasTag(event, 't', 'merge-ready') && repo && branch && tip
-    ? { repo, branch, tip }
-    : undefined;
+  const mergeTarget =
+    eventHasTag(event, 't', 'merge-ready') && repo && branch && tip
+      ? { repo, branch, tip }
+      : undefined;
   const permissionId = eventTagValue(event, 'permission');
   const permissionRequestId = eventTagValue(event, 'request');
   const permissionAgent = eventTagValue(event, 'agent') ?? eventTagValue(event, 'p');
@@ -262,7 +298,6 @@ export function projectChatEvent(
       },
     };
   }
-
   if (
     eventHasTag(event, 't', 'change-review-manifest') ||
     eventHasTag(event, 't', 'change-review-file')
@@ -334,9 +369,23 @@ export function projectChatEvent(
       timestamp: eventTimestamp(event),
       ...(pubkey ? { pubkey } : {}),
       ...(event.type === 'assistant_delta' ? { isAgentActivity: true } : {}),
+      ...(eventActivity(event)?.length ? { activity: eventActivity(event) } : {}),
       ...(isNew ? { isNew: true } : {}),
     },
   };
+}
+
+/** Rooms show conversation plus one compact Corner card; telemetry stays in Corners. */
+export function transcriptMessages(
+  messages: ChatDisplayMessage[],
+  isCorner: boolean,
+): ChatDisplayMessage[] {
+  if (isCorner) return messages;
+  return messages.filter(
+    (message) =>
+      Boolean(message.corner) ||
+      (!message.isAgentActivity && !message.isMergeSummary && !message.isArchivedNotice),
+  );
 }
 
 const CORNER_STATUS_ORDER: Record<CornerCardStatus, number> = {
@@ -376,7 +425,5 @@ export function upsertChatMessages(
     }
     byId.set(message.id, message);
   }
-  return [...byId.values()].sort(
-    (a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id),
-  );
+  return [...byId.values()].sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id));
 }

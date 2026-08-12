@@ -27,6 +27,9 @@ export const KIND_AGENT_SOUL = 30078;
 /** NIP-33 parameterized replaceable application data (human cosmetic profiles). */
 export const KIND_PERSON_PROFILE = 30078;
 
+/** NIP-33 parameterized replaceable application data (community invite lookup). */
+export const KIND_COMMUNITY_INVITE = 30078;
+
 /** NIP-42 AUTH challenge response. */
 export const KIND_AUTH = 22242;
 
@@ -54,7 +57,7 @@ export const TAG_PARENT = 'parent';
 /** App-convention community linkage tag on channels and invite events. */
 export const TAG_COMMUNITY = 'community';
 
-/** Marker tag value for a signed, channel-scoped community invite. */
+/** Marker tag value for a signed community invite. */
 export const TAG_COMMUNITY_INVITE = 'buzz-community-invite';
 
 /** Marker tag value for a private, exactly-two-member direct-message Room. */

@@ -43,8 +43,8 @@ export interface BodyConfig {
   relayWsUrl: string;
   /**
    * When true, edit-mode sessions auto-approve session/request_permission.
-   * Stock buzz-acp does this; the body owns the ACP bridge so we mirror it
-   * for operator-run sessions (phone-mediated permissions are a later track).
+   * Room sessions always route the first mutating request through the signed
+   * human permission flow instead.
    */
   autoApprovePermissions: boolean;
 }

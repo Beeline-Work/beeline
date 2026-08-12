@@ -197,6 +197,12 @@ export { buildMediaUploadAuthorization, uploadMedia } from './media.js';
 export { buildMergeApproval, verifyMergeApproval, APPROVAL_MARKER } from './approval.js';
 
 export {
+  WRITE_PERMISSION_REQUEST_TAG,
+  WRITE_PERMISSION_RESPONSE_TAG,
+  type WritePermissionDecision,
+} from './write-permission.js';
+
+export {
   CHANGE_REVIEW_EVENT_KIND,
   CHANGE_REVIEW_MANIFEST_TAG,
   CHANGE_REVIEW_FILE_TAG,

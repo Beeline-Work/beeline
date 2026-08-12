@@ -13,7 +13,7 @@ import {
   isChannelTaskRequest,
   isChannelWorkIntent,
 } from './body.js';
-import { AcpClient } from './acp.js';
+import { AcpClient, isMutatingPermissionRequest } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { postAgentMessage } from './activity.js';
@@ -63,6 +63,18 @@ describe('acp', () => {
       agentEnv: {},
     });
     await expect(client.sessionNew({ cwd: '/tmp' })).rejects.toThrow('AcpClient not started');
+  });
+
+  it('classifies edit, write, and shell permissions without treating reads as writes', () => {
+    expect(
+      isMutatingPermissionRequest({ toolCall: { kind: 'edit', title: 'str_replace' } }),
+    ).toBe(true);
+    expect(
+      isMutatingPermissionRequest({ toolCall: { kind: 'execute', title: 'Run shell' } }),
+    ).toBe(true);
+    expect(
+      isMutatingPermissionRequest({ toolCall: { kind: 'read', title: 'Read package.json' } }),
+    ).toBe(false);
   });
 });
 
@@ -138,7 +150,7 @@ describe('agent identity boundary', () => {
   });
 });
 
-describe('Room conversation and explicit work intent', () => {
+describe('Room conversation and permission-gated work intent', () => {
   const human = newIdentity('human');
   const agent = newIdentity('agent');
 
@@ -195,11 +207,11 @@ describe('Room conversation and explicit work intent', () => {
     ).toBe(false);
   });
 
-  it('opens work only for the signed Start work marker', () => {
+  it('retires the signed Start work marker as an edit authorization', () => {
     const participants = [human.publicKey, agent.publicKey];
     const work = requestEvent([['t', AGENT_REQUEST_TAG]]);
     expect(isChannelAddressedMessage(work, agent.publicKey, participants)).toBe(true);
-    expect(isChannelWorkIntent(work, agent.publicKey, participants)).toBe(true);
+    expect(isChannelWorkIntent(work, agent.publicKey, participants)).toBe(false);
   });
 
   it('never accepts the agent tasking itself', () => {
@@ -260,7 +272,7 @@ describe('Room conversation and explicit work intent', () => {
     expect(prompt).toHaveBeenCalledWith(
       'readonly-session',
       expect.stringContaining("Hey, what's up?"),
-      120_000,
+      600_000,
     );
     expect(body.listSessions()).toHaveLength(1);
     expect(published).toHaveLength(1);
@@ -270,6 +282,111 @@ describe('Room conversation and explicit work intent', () => {
     });
     expect(published[0]!.tags).toContainEqual(['h', 'parent-channel']);
     expect(published[0]!.tags).toContainEqual(['t', 'agent-message']);
+  });
+
+  it('opens an edit corner only after a human allows the first mutating request', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-room-permission-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    const request = {
+      eventId: 'human-request',
+      authorPubkey: human.publicKey,
+      content: 'Create a file and commit it.',
+      createdAt: 1,
+    };
+    const turn = {
+      request,
+      boundRepo: { repo: 'repo' },
+      permissionHandled: false,
+      transitionedToCorner: false,
+    };
+    (Reflect.get(body, 'pendingRoomTurns') as Map<string, unknown>).set('parent-channel', turn);
+    vi.spyOn(body as never, 'waitForWritePermissionDecision' as never).mockResolvedValue(
+      'allow' as never,
+    );
+    const editClient = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    const info = {
+      subchannelId: 'corner-id',
+      worktreePath: '/tmp/worktree',
+      featureBranch: 'feature/corner',
+      role: body.agent,
+      session: {
+        channelId: 'corner-id',
+        sessionId: 'edit-session',
+        client: editClient,
+        mode: 'edit' as const,
+      },
+      lastPolledAt: 1,
+      archived: false,
+    };
+    const open = vi.spyOn(body, 'openSubchannel').mockResolvedValue(info);
+    const start = vi
+      .spyOn(body as never, 'startAgentTask' as never)
+      .mockImplementation(() => undefined as never);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ accepted: true }), { status: 200 })),
+    );
+
+    await expect(
+      Reflect.get(body, 'handleRoomPermissionRequest').call(body, 'parent-channel', {
+        sessionId: 'readonly-session',
+        toolCall: { kind: 'edit', title: 'str_replace README.md' },
+      }),
+    ).resolves.toBe('reject');
+
+    expect(open).toHaveBeenCalledWith('parent-channel', { repo: 'repo' }, request.content, request);
+    expect(start).toHaveBeenCalledWith(info, request.content);
+    expect(turn.transitionedToCorner).toBe(true);
+  });
+
+  it('keeps the Room read-only when the human denies editing', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-room-deny-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    const turn = {
+      request: {
+        eventId: 'human-request',
+        authorPubkey: human.publicKey,
+        content: 'Edit README.',
+        createdAt: 1,
+      },
+      boundRepo: { repo: 'repo' },
+      permissionHandled: false,
+      transitionedToCorner: false,
+    };
+    (Reflect.get(body, 'pendingRoomTurns') as Map<string, unknown>).set('parent-channel', turn);
+    vi.spyOn(body as never, 'waitForWritePermissionDecision' as never).mockResolvedValue(
+      'deny' as never,
+    );
+    const open = vi.spyOn(body, 'openSubchannel');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ accepted: true }), { status: 200 })),
+    );
+
+    await Reflect.get(body, 'handleRoomPermissionRequest').call(body, 'parent-channel', {
+      toolCall: { kind: 'execute', title: 'shell' },
+    });
+
+    expect(open).not.toHaveBeenCalled();
+    expect(turn.transitionedToCorner).toBe(false);
   });
 });
 

@@ -16,6 +16,10 @@ import {
   setAgentSoul,
 } from './agent.js';
 import {
+  WRITE_PERMISSION_RESPONSE_TAG,
+  type WritePermissionDecision,
+} from './write-permission.js';
+import {
   backfillMessages,
   createChannel,
   createSubchannel,
@@ -358,12 +362,36 @@ export class BuzzClient {
     return sendMessage(this.ctx, channelId, text, opts);
   }
 
-  /** Explicit signed user intent to open one edit corner with the addressed agent. */
+  /** @deprecated Work now starts from an agent-originated write permission request. */
   startAgentWork(channelId: string, text: string, agentPubkey: string): Promise<NostrEvent> {
     return sendMessage(this.ctx, channelId, text, {
       mentionAgent: agentPubkey,
       extraTags: [['t', 'buzz-agent-request']],
     });
+  }
+
+  /** Human response to one agent-originated write request; grants no role or merge authority. */
+  respondToWritePermission(
+    channelId: string,
+    permissionId: string,
+    requestId: string,
+    agentPubkey: string,
+    decision: WritePermissionDecision,
+  ): Promise<NostrEvent> {
+    return sendMessage(
+      this.ctx,
+      channelId,
+      decision === 'allow' ? 'Allowed editing.' : 'Editing denied.',
+      {
+        mentionAgent: agentPubkey,
+        extraTags: [
+          ['t', WRITE_PERMISSION_RESPONSE_TAG],
+          ['permission', permissionId],
+          ['request', requestId],
+          ['decision', decision],
+        ],
+      },
+    );
   }
 
   /**

@@ -16,7 +16,13 @@ import { mkdir, rm, writeFile, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { AcpClient, type McpServerWire } from './acp.js';
+import {
+  AcpClient,
+  isMutatingPermissionRequest,
+  type AcpPermissionHandler,
+  type AcpPermissionRequest,
+  type McpServerWire,
+} from './acp.js';
 import { projectActivity, postAgentMessage, postControlMessage } from './activity.js';
 import {
   createChannel,
@@ -41,6 +47,8 @@ import {
   CHANGE_REVIEW_FILE_TAG,
   CHANGE_REVIEW_MANIFEST_TAG,
   CHANGE_REVIEW_VERSION,
+  WRITE_PERMISSION_REQUEST_TAG,
+  WRITE_PERMISSION_RESPONSE_TAG,
   listAgents,
   listMembers,
   tagValue,
@@ -166,6 +174,14 @@ export interface ChannelTaskRequest {
   createdAt: number;
 }
 
+interface PendingRoomTurn {
+  request: ChannelTaskRequest;
+  boundRepo: BoundRepo;
+  permissionHandled: boolean;
+  transitionedToCorner: boolean;
+}
+
+/** @deprecated Explicit Start-work events are ordinary Room messages now. */
 export const AGENT_REQUEST_TAG = 'buzz-agent-request';
 export const MERGE_READY_TAG = 'merge-ready';
 export const LANDED_TAG = 'landed';
@@ -203,16 +219,13 @@ export function isChannelAddressedMessage(
   return participants.size === 1 && participants.has(event.pubkey);
 }
 
-/** Only a signed, explicitly addressed Start work action authorizes edits. */
+/** @deprecated Work is authorized only by a response to an agent write request. */
 export function isChannelWorkIntent(
-  event: NostrEvent,
-  agentPubkey: string,
-  roomParticipants: readonly string[] = [],
+  _event: NostrEvent,
+  _agentPubkey: string,
+  _roomParticipants: readonly string[] = [],
 ): boolean {
-  return (
-    isChannelAddressedMessage(event, agentPubkey, roomParticipants) &&
-    event.tags.some((tag) => tag[0] === 't' && tag[1] === AGENT_REQUEST_TAG)
-  );
+  return false;
 }
 
 /** @deprecated Use isChannelWorkIntent; retained for wire/test compatibility. */
@@ -252,6 +265,7 @@ export class Body {
   private durableState: DurableBodyState;
   private agentRelay: RelayClient;
   private mergeWorkerRelay?: RelayClient;
+  private pendingRoomTurns = new Map<string, PendingRoomTurn>();
 
   constructor(
     config: BodyConfig,
@@ -328,6 +342,7 @@ export class Body {
     mcpServers: McpServerWire[];
     systemPrompt: string;
     autoApprovePermissions: boolean;
+    permissionHandler?: AcpPermissionHandler;
     parentChannelId?: string;
     worktreePath?: string;
     featureBranch?: string;
@@ -338,6 +353,7 @@ export class Body {
       agentArgs: this.config.agentArgs,
       agentEnv: this.config.agentEnv,
       autoApprovePermissions: input.autoApprovePermissions,
+      permissionHandler: input.permissionHandler,
     });
     const session: AgentSession = {
       channelId: input.channelId,
@@ -357,6 +373,7 @@ export class Body {
           agentArgs: this.config.agentArgs,
           agentEnv: this.config.agentEnv,
           autoApprovePermissions: input.autoApprovePermissions,
+          permissionHandler: input.permissionHandler,
         });
         session.client = client;
         const profile = input.communityId
@@ -545,13 +562,16 @@ export class Body {
       systemPrompt: [
         'You are a helpful coding assistant in a read-only conversation channel.',
         'You can answer questions, discuss architecture, and help plan work.',
-        'You CANNOT create, edit, or delete files in this channel.',
-        'You do not have shell access or file edit tools.',
-        'When the user asks you to write code, explain that you need an edit session.',
+        'You CANNOT create, edit, or delete files until the host grants a human-approved edit session.',
+        'When the user asks for a concrete file change, attempt the appropriate write/edit tool.',
+        'The host will turn that first mutating permission request into a human allow/deny prompt.',
+        'Never claim that work started until the host transitions you into an edit session.',
       ].join('\n'),
       // Read-only mode must reject native-agent permission escalation as well
       // as omitting write MCP servers. Edit corners remain auto-approved below.
       autoApprovePermissions: false,
+      permissionHandler: (permission) =>
+        this.handleRoomPermissionRequest(tlcChannelId, permission),
       ...(communityId ? { communityId } : {}),
     });
 
@@ -698,11 +718,7 @@ export class Body {
     return info;
   }
 
-  /**
-   * Poll a Room for addressed conversation and explicit work intent.
-   * Ordinary addressed messages stay in the read-only Room session. Only the
-   * signed Start work marker opens one agent-owned edit corner.
-   */
+  /** Poll a Room for addressed conversation. Message receipt never opens work. */
   async pollChannelRequests(tlcChannelId: string, boundRepo: BoundRepo): Promise<number> {
     const durableCursor = await this.durableState.cursor(tlcChannelId);
     const since = Math.max(this.requestCursors.get(tlcChannelId) ?? 0, durableCursor.createdAt);
@@ -737,12 +753,20 @@ export class Body {
         await this.durableState.delivered(tlcChannelId, event.id);
         continue;
       }
+      if (
+        event.tags.some(
+          (tag) => tag[0] === 't' && tag[1] === WRITE_PERMISSION_RESPONSE_TAG,
+        )
+      ) {
+        this.processedRequestIds.add(event.id);
+        await this.durableState.delivered(tlcChannelId, event.id);
+        continue;
+      }
       if (!isChannelAddressedMessage(event, this.agentIdentity.publicKey, roomParticipants)) {
         await this.durableState.delivered(tlcChannelId, event.id);
         continue;
       }
-      const startsWork = isChannelWorkIntent(event, this.agentIdentity.publicKey, roomParticipants);
-      if (startsWork && (await this.requestAlreadyOpened(tlcChannelId, event.id))) {
+      if (await this.requestAlreadyOpened(tlcChannelId, event.id)) {
         this.processedRequestIds.add(event.id);
         await this.durableState.delivered(tlcChannelId, event.id);
         continue;
@@ -755,9 +779,7 @@ export class Body {
           await postControlMessage(
             tlcChannelId,
             this.agentIdentity,
-            startsWork
-              ? 'Agent-authored work request refused. Ask a human channel member to start work.'
-              : 'Agent-authored Room prompt refused.',
+            'Agent-authored Room prompt refused.',
             [
               ['request', event.id],
               ['status', 'refused'],
@@ -774,13 +796,7 @@ export class Body {
           content: event.content.trim(),
           createdAt: event.created_at,
         };
-        if (startsWork) {
-          const info = await this.openSubchannel(tlcChannelId, boundRepo, request.content, request);
-          this.startAgentTask(info, request.content);
-          opened++;
-        } else {
-          await this.replyInRoom(tlcChannelId, boundRepo, request);
-        }
+        if (await this.replyInRoom(tlcChannelId, boundRepo, request)) opened++;
         this.processedRequestIds.add(event.id);
         await this.durableState.delivered(tlcChannelId, event.id);
       } catch (error) {
@@ -798,7 +814,7 @@ export class Body {
     tlcChannelId: string,
     boundRepo: BoundRepo,
     request: ChannelTaskRequest,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const session =
       this.sessions.get(tlcChannelId) ?? (await this.provision(tlcChannelId, boundRepo));
     if (session.mode !== 'readonly') {
@@ -811,10 +827,27 @@ export class Body {
       eventId: request.eventId,
       at: new Date().toISOString(),
     });
-    const result = await this.runOnSession(session, () =>
-      session.client.sessionPrompt(session.sessionId, prompt, 120_000),
-    );
-    const reply = result.agentText.trim();
+    const turn: PendingRoomTurn = {
+      request,
+      boundRepo,
+      permissionHandled: false,
+      transitionedToCorner: false,
+    };
+    this.pendingRoomTurns.set(tlcChannelId, turn);
+    let result: Awaited<ReturnType<AcpClient['sessionPrompt']>>;
+    try {
+      result = await this.runOnSession(session, () =>
+        session.client.sessionPrompt(session.sessionId, prompt, 10 * 60_000),
+      );
+    } finally {
+      this.pendingRoomTurns.delete(tlcChannelId);
+    }
+    if (turn.transitionedToCorner) return true;
+    const reply =
+      result.agentText.trim() ||
+      (turn.permissionHandled
+        ? 'Editing was not allowed. I’ll stay in the read-only Room conversation.'
+        : '');
     if (!reply) throw new Error('agent returned an empty Room reply');
     await this.durableState.appendConversation(tlcChannelId, {
       role: 'agent',
@@ -822,6 +855,162 @@ export class Body {
       at: new Date().toISOString(),
     });
     await postAgentMessage(tlcChannelId, this.agentIdentity, reply, request.eventId);
+    return false;
+  }
+
+  /**
+   * A Room ACP process always rejects the concrete tool invocation: allowing it
+   * in-place would mutate the paired checkout. Human ALLOW instead creates the
+   * isolated edit corner and replays the same request there.
+   */
+  private async handleRoomPermissionRequest(
+    tlcChannelId: string,
+    permission: AcpPermissionRequest,
+  ): Promise<'reject'> {
+    const turn = this.pendingRoomTurns.get(tlcChannelId);
+    if (!turn || turn.permissionHandled || !isMutatingPermissionRequest(permission)) {
+      return 'reject';
+    }
+    turn.permissionHandled = true;
+    const permissionId = randomUUID();
+    const tool = this.permissionToolLabel(permission);
+    await postControlMessage(
+      tlcChannelId,
+      this.agentIdentity,
+      `${this.agentIdentity.name || 'Agent'} wants to start editing files — allow?`,
+      [
+        ['t', WRITE_PERMISSION_REQUEST_TAG],
+        ['permission', permissionId],
+        ['request', turn.request.eventId],
+        ['requester', turn.request.authorPubkey],
+        ['agent', this.agentIdentity.publicKey],
+        ['p', this.agentIdentity.publicKey],
+        ['tool', tool],
+        ['status', 'pending'],
+      ],
+    );
+
+    const decision = await this.waitForWritePermissionDecision(
+      tlcChannelId,
+      permissionId,
+      turn.request.eventId,
+    );
+    if (decision === 'allow') {
+      await this.postWritePermissionStatus(
+        tlcChannelId,
+        permissionId,
+        turn.request.eventId,
+        tool,
+        'allowed',
+        'Editing allowed. Opening an isolated corner and worktree.',
+      );
+      try {
+        const info = await this.openSubchannel(
+          tlcChannelId,
+          turn.boundRepo,
+          turn.request.content,
+          turn.request,
+        );
+        turn.transitionedToCorner = true;
+        this.startAgentTask(info, turn.request.content);
+      } catch (error) {
+        await this.postWritePermissionStatus(
+          tlcChannelId,
+          permissionId,
+          turn.request.eventId,
+          tool,
+          'failed',
+          'Editing was allowed, but the isolated corner could not be opened.',
+        ).catch(() => undefined);
+        throw error;
+      }
+    } else if (decision === 'deny') {
+      await this.postWritePermissionStatus(
+        tlcChannelId,
+        permissionId,
+        turn.request.eventId,
+        tool,
+        'denied',
+        'Editing denied. The Agent remains read-only.',
+      );
+    } else if (decision === 'timeout') {
+      await this.postWritePermissionStatus(
+        tlcChannelId,
+        permissionId,
+        turn.request.eventId,
+        tool,
+        'expired',
+        'Editing request expired. The Agent remains read-only.',
+      );
+    }
+    return 'reject';
+  }
+
+  private permissionToolLabel(permission: AcpPermissionRequest): string {
+    const title = permission.toolCall?.title?.trim();
+    const kind = permission.toolCall?.kind?.trim();
+    return (title || kind || 'edit files').replace(/\s+/g, ' ').slice(0, 120);
+  }
+
+  private postWritePermissionStatus(
+    tlcChannelId: string,
+    permissionId: string,
+    requestId: string,
+    tool: string,
+    status: 'allowed' | 'denied' | 'expired' | 'failed',
+    message: string,
+  ): Promise<void> {
+    return postControlMessage(tlcChannelId, this.agentIdentity, message, [
+      ['t', WRITE_PERMISSION_REQUEST_TAG],
+      ['permission', permissionId],
+      ['request', requestId],
+      ['agent', this.agentIdentity.publicKey],
+      ['tool', tool],
+      ['status', status],
+    ]);
+  }
+
+  private async waitForWritePermissionDecision(
+    tlcChannelId: string,
+    permissionId: string,
+    requestId: string,
+    timeoutMs = 10 * 60_000,
+  ): Promise<'allow' | 'deny' | 'timeout'> {
+    const startedAt = Math.floor(Date.now() / 1000) - 1;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const events = await this.agentRelay.queryEvents([
+        {
+          kinds: [9],
+          '#h': [tlcChannelId],
+          '#t': [WRITE_PERMISSION_RESPONSE_TAG],
+          since: startedAt,
+          limit: 100,
+        },
+      ]);
+      const candidates = events
+        .filter(
+          (event) =>
+            event.pubkey !== this.agentIdentity.publicKey &&
+            tagValue(event, 'permission') === permissionId &&
+            tagValue(event, 'request') === requestId &&
+            tagValue(event, 'p') === this.agentIdentity.publicKey,
+        )
+        .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
+      for (const event of candidates) {
+        const members = new Set(
+          (await listMembers(this.agentClientContext(), tlcChannelId)).map(
+            (member) => member.pubkey,
+          ),
+        );
+        if (!members.has(event.pubkey)) continue;
+        if (await isRegisteredAgentIdentity(event.pubkey, this.agentRelay)) continue;
+        const decision = tagValue(event, 'decision');
+        if (decision === 'allow' || decision === 'deny') return decision;
+      }
+      await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+    }
+    return 'timeout';
   }
 
   /** Start the requested work without blocking discovery/UI updates. */

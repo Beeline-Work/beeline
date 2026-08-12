@@ -11,10 +11,15 @@ import {
   newIdentity,
   setMemberRole,
 } from '@beeline/gate';
-import { createBuzzClient } from '@beeline/buzz-client';
+import {
+  createBuzzClient,
+  tagValue,
+  WRITE_PERMISSION_REQUEST_TAG,
+} from '@beeline/buzz-client';
 import { Body } from './body.js';
 import { loadBodyConfig } from './config.js';
 import { resolveAgentCommand, type AgentKind } from './agent-command.js';
+import { waitForWritePermissionPrompt } from './write-permission.live-helper.js';
 
 const selectedKind = (process.env.BUZZY_LIVE_AGENT_KIND ?? 'codex') as AgentKind;
 let workspace = '';
@@ -124,6 +129,13 @@ describe.runIf(live)('production Room conversation contract', () => {
       ),
     );
     expect(await client.listSubchannels(roomId)).toHaveLength(0);
+    expect(
+      (await messages()).some((event) =>
+        event.event.tags.some(
+          (tag) => tag[0] === 't' && tag[1] === WRITE_PERMISSION_REQUEST_TAG,
+        ),
+      ),
+    ).toBe(false);
 
     const architecture = await client.messageSubmit(
       roomId,
@@ -162,13 +174,26 @@ describe.runIf(live)('production Room conversation contract', () => {
     console.log('[room-conversation] multi-party-unmentioned=IGNORED named-agent=REPLIED');
   }, 180_000);
 
-  it('opens exactly one explicit work corner and mirrors ready and delivery failure', async () => {
-    const request = await client.startAgentWork(
+  it('opens work only after ALLOW, while DENY leaves the Room read-only', async () => {
+    const request = await client.messageSubmit(
       roomId,
       'Create LIVE-WORK.txt containing room-work-proof and commit it.',
-      agent.publicKey,
+      { mentionAgent: agent.publicKey },
     );
-    expect(await body!.pollChannelRequests(roomId, binding())).toBe(1);
+    const allowedPoll = body!.pollChannelRequests(roomId, binding());
+    const permission = await waitForWritePermissionPrompt(client, roomId, request.id);
+    expect(tagValue(permission.event, 'agent')).toBe(agent.publicKey);
+    expect(tagValue(permission.event, 'request')).toBe(request.id);
+    expect(tagValue(permission.event, 'status')).toBe('pending');
+    expect(await client.listSubchannels(roomId)).toHaveLength(0);
+    await client.respondToWritePermission(
+      roomId,
+      tagValue(permission.event, 'permission')!,
+      request.id,
+      agent.publicKey,
+      'allow',
+    );
+    expect(await allowedPoll).toBe(1);
     expect(await client.listSubchannels(roomId)).toHaveLength(1);
     await body!.waitForAgentTasks();
     const firstEvents = await messages();
@@ -184,12 +209,21 @@ describe.runIf(live)('production Room conversation contract', () => {
     await mkdir(resolve(remote, 'hooks'), { recursive: true });
     await writeFile(hook, '#!/bin/sh\necho delivery-rejected >&2\nexit 1\n');
     await chmod(hook, 0o755);
-    const failure = await client.startAgentWork(
+    const failure = await client.messageSubmit(
       roomId,
       'Create LIVE-FAILURE.txt containing delivery-failure-proof and commit it.',
-      agent.publicKey,
+      { mentionAgent: agent.publicKey },
     );
-    expect(await body!.pollChannelRequests(roomId, binding())).toBe(1);
+    const failurePoll = body!.pollChannelRequests(roomId, binding());
+    const failurePermission = await waitForWritePermissionPrompt(client, roomId, failure.id);
+    await client.respondToWritePermission(
+      roomId,
+      tagValue(failurePermission.event, 'permission')!,
+      failure.id,
+      agent.publicKey,
+      'allow',
+    );
+    expect(await failurePoll).toBe(1);
     expect(await client.listSubchannels(roomId)).toHaveLength(2);
     await body!.waitForAgentTasks();
     const failureEvents = (await messages()).filter((event) =>
@@ -201,6 +235,26 @@ describe.runIf(live)('production Room conversation contract', () => {
       ),
     ).toBe(true);
     expect(failureEvents.some((event) => event.content.includes('Delivery failed'))).toBe(true);
-    console.log('[room-conversation] explicit-work=ONE-CORNER ready=VISIBLE failure=VISIBLE');
+
+    const denied = await client.messageSubmit(
+      roomId,
+      'Create LIVE-DENIED.txt containing should-not-exist.',
+      { mentionAgent: agent.publicKey },
+    );
+    const deniedPoll = body!.pollChannelRequests(roomId, binding());
+    const deniedPermission = await waitForWritePermissionPrompt(client, roomId, denied.id);
+    expect(await client.listSubchannels(roomId)).toHaveLength(2);
+    await client.respondToWritePermission(
+      roomId,
+      tagValue(deniedPermission.event, 'permission')!,
+      denied.id,
+      agent.publicKey,
+      'deny',
+    );
+    expect(await deniedPoll).toBe(0);
+    expect(await client.listSubchannels(roomId)).toHaveLength(2);
+    console.log(
+      '[room-conversation] chat=NO-CORNER first-write=PROMPT allow=ONE-CORNER deny=NO-CORNER',
+    );
   }, 300_000);
 });

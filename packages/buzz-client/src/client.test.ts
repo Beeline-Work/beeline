@@ -5,9 +5,9 @@ import type { NostrEvent } from '@beeline/nostr';
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe('explicit Agent work intent', () => {
-  it('signs the addressed Start work marker as one Room event', async () => {
-    const identity = createIdentity('start-work-client');
+describe('Agent write permission', () => {
+  it('signs a response bound to the permission, request, and agent', async () => {
+    const identity = createIdentity('write-permission-client');
     let published: NostrEvent | undefined;
     vi.stubGlobal(
       'fetch',
@@ -18,11 +18,20 @@ describe('explicit Agent work intent', () => {
     );
     const client = createBuzzClient({ baseUrl: 'https://relay.test', identity });
 
-    await client.startAgentWork('room-id', 'Fix the scheduler', 'b'.repeat(64));
+    await client.respondToWritePermission(
+      'room-id',
+      'permission-id',
+      'request-id',
+      'b'.repeat(64),
+      'allow',
+    );
 
-    expect(published).toMatchObject({ kind: 9, content: 'Fix the scheduler' });
+    expect(published).toMatchObject({ kind: 9, content: 'Allowed editing.' });
     expect(published!.tags).toContainEqual(['h', 'room-id']);
     expect(published!.tags).toContainEqual(['p', 'b'.repeat(64)]);
-    expect(published!.tags).toContainEqual(['t', 'buzz-agent-request']);
+    expect(published!.tags).toContainEqual(['t', 'buzz-write-permission-response']);
+    expect(published!.tags).toContainEqual(['permission', 'permission-id']);
+    expect(published!.tags).toContainEqual(['request', 'request-id']);
+    expect(published!.tags).toContainEqual(['decision', 'allow']);
   });
 });

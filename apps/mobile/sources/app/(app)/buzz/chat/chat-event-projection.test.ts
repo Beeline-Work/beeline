@@ -154,4 +154,67 @@ describe('Buzz Room screen event projection', () => {
       isNew: undefined,
     });
   });
+
+  it('projects write permission request and response into one stable prompt', () => {
+    const permissionId = 'permission-1';
+    const request = raw(
+      'permission-request',
+      'Lina wants to start editing files — allow?',
+      [
+        ['t', 'body-control'],
+        ['t', 'buzz-write-permission-request'],
+        ['permission', permissionId],
+        ['request', 'human-request'],
+        ['agent', agent],
+        ['tool', 'str_replace README.md'],
+        ['status', 'pending'],
+      ],
+      7,
+    );
+    const response = raw(
+      'permission-response',
+      'Allowed editing.',
+      [
+        ['t', 'buzz-write-permission-response'],
+        ['permission', permissionId],
+        ['request', 'human-request'],
+        ['p', agent],
+        ['decision', 'allow'],
+      ],
+      8,
+    );
+    const acknowledged = raw(
+      'permission-acknowledged',
+      'Editing allowed. Opening an isolated corner and worktree.',
+      [
+        ['t', 'body-control'],
+        ['t', 'buzz-write-permission-request'],
+        ['permission', permissionId],
+        ['request', 'human-request'],
+        ['agent', agent],
+        ['tool', 'str_replace README.md'],
+        ['status', 'allowed'],
+      ],
+      9,
+    );
+
+    const pending = projectChatEvent(request, viewer).message;
+    expect(pending).toMatchObject({
+      id: `write-permission-${permissionId}`,
+      writePermission: {
+        permissionId,
+        requestId: 'human-request',
+        agentPubkey: agent,
+        tool: 'str_replace README.md',
+        status: 'pending',
+      },
+    });
+    expect(projectChatEvent(response, viewer)).toEqual({});
+    expect(displaySequence([request, response, acknowledged])).toMatchObject([
+      {
+        id: `write-permission-${permissionId}`,
+        writePermission: { tool: 'str_replace README.md', status: 'allowed' },
+      },
+    ]);
+  });
 });

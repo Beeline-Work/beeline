@@ -21,6 +21,21 @@ interface RunningRoom {
   promise: Promise<void>;
 }
 
+interface DesiredChannel {
+  membershipSince: number;
+  /** DMs borrow the paired runtime's primary repository context. */
+  repositoryRoom?: RoomRuntimeRecord;
+}
+
+/** A Workspace DM has no repository tag; the paired agent's oldest Room is its context. */
+export function directMessageRepositoryRoom(
+  runtime: Pick<AgentRuntimeRecord, 'rooms'>,
+): RoomRuntimeRecord | undefined {
+  return [...runtime.rooms].sort(
+    (a, b) => a.membershipSince - b.membershipSince || a.channelId.localeCompare(b.channelId),
+  )[0];
+}
+
 function relayRepoFromBinding(
   binding: RepositoryBinding,
 ): { ownerHex: string; repo: string } | undefined {
@@ -132,20 +147,38 @@ export class WorkspaceSupervisor {
         return false;
       }
       const memberships = await client.listMyChannels();
-      const desired = new Map<string, number>();
+      const desired = new Map<string, DesiredChannel>();
       for (const membership of memberships) {
         const channelId = membership.channelId;
         // listMyChannels reads the relay's current member/admin projections.
         // Known Rooms need no further control-plane queries: disappearing
         // from this list is the authoritative removal signal.
-        if (this.runtime.rooms.some((candidate) => candidate.channelId === channelId)) {
-          desired.set(channelId, membership.event.created_at);
+        const knownRoom = this.runtime.rooms.find((candidate) => candidate.channelId === channelId);
+        if (knownRoom) {
+          desired.set(channelId, {
+            membershipSince: membership.event.created_at,
+            repositoryRoom: knownRoom,
+          });
           continue;
         }
         if ((await client.getChannelCommunityId(channelId)) !== this.runtime.communityId) continue;
         if (await client.getParentChannelId(channelId)) continue;
-        if (!(await client.getChannelRepositoryBinding(channelId))) continue;
-        desired.set(channelId, membership.event.created_at);
+        const binding = await client.getChannelRepositoryBinding(channelId);
+        if (binding) {
+          desired.set(channelId, { membershipSince: membership.event.created_at });
+          continue;
+        }
+        const dm = await client.getDirectMessage(channelId);
+        if (!dm || !dm.participants.includes(this.agent.publicKey)) continue;
+        const repositoryRoom = directMessageRepositoryRoom(this.runtime);
+        if (!repositoryRoom) {
+          console.error(`[supervisor] DM ${channelId} has no paired repository context`);
+          continue;
+        }
+        desired.set(channelId, {
+          membershipSince: membership.event.created_at,
+          repositoryRoom,
+        });
       }
 
       for (const [channelId, running] of [...this.running]) {
@@ -155,17 +188,20 @@ export class WorkspaceSupervisor {
         await running.promise.catch(() => undefined);
       }
 
-      for (const [channelId, membershipSince] of desired) {
+      for (const [channelId, target] of desired) {
         if (this.running.has(channelId)) continue;
         let room = this.runtime.rooms.find((candidate) => candidate.channelId === channelId);
         if (!room) {
           const binding = await client.getChannelRepositoryBinding(channelId);
-          if (!binding) continue;
-          room = await this.materializeRoom(channelId, membershipSince, binding);
-          this.runtime.rooms.push(room);
-          await writeRuntimeRecord(this.runtime);
+          if (binding) {
+            room = await this.materializeRoom(channelId, target.membershipSince, binding);
+            this.runtime.rooms.push(room);
+            await writeRuntimeRecord(this.runtime);
+          } else {
+            room = target.repositoryRoom;
+          }
         }
-        this.startRoom(room);
+        if (room) this.startRoom(room, channelId);
       }
       return true;
     } finally {
@@ -173,9 +209,9 @@ export class WorkspaceSupervisor {
     }
   }
 
-  private startRoom(room: RoomRuntimeRecord): void {
+  private startRoom(room: RoomRuntimeRecord, channelId = room.channelId): void {
     const controller = new AbortController();
-    const workspaceRoot = resolve(dirname(this.configPath), 'rooms', room.channelId);
+    const workspaceRoot = resolve(dirname(this.configPath), 'rooms', channelId);
     const config: BodyConfig = { ...this.baseConfig, workspaceRoot };
     const body = new Body(
       config,
@@ -188,20 +224,20 @@ export class WorkspaceSupervisor {
       },
     );
     const promise = body
-      .runRepositoryRoomLoop(this.runtime.communityId, room.channelId, boundRepoFromRoom(room), {
+      .runRepositoryRoomLoop(this.runtime.communityId, channelId, boundRepoFromRoom(room), {
         signal: controller.signal,
       })
       .catch((error) => {
         if (!controller.signal.aborted) {
-          console.error(`[supervisor] Room ${room.channelId} quarantined:`, error);
+          console.error(`[supervisor] Room ${channelId} quarantined:`, error);
         }
       })
       .finally(async () => {
         await body.dispose();
-        if (this.running.get(room.channelId)?.body === body) this.running.delete(room.channelId);
+        if (this.running.get(channelId)?.body === body) this.running.delete(channelId);
       });
-    this.running.set(room.channelId, { body, controller, promise });
-    console.log(`[supervisor] serving Room ${room.channelId} from ${room.repo.root}`);
+    this.running.set(channelId, { body, controller, promise });
+    console.log(`[supervisor] serving Room ${channelId} from ${room.repo.root}`);
   }
 
   private async materializeRoom(

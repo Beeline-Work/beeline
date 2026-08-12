@@ -256,6 +256,20 @@ export default function BuzzAgents() {
     }
   }, [communityId, refreshAgents, selected, transport]);
 
+  const messageSelectedAgent = useCallback(async () => {
+    if (!transport || !communityId || !selected) return;
+    setWorking(true);
+    setError(null);
+    try {
+      const result = await transport.resolveDirectMessage(communityId, selected.pubkey);
+      router.push(`/buzz/chat/${encodeURIComponent(result.channelId)}` as Href);
+    } catch (caught) {
+      setError(`Could not message Agent: ${String(caught)}`);
+    } finally {
+      setWorking(false);
+    }
+  }, [communityId, selected, transport]);
+
   if (loading) {
     return (
       <View style={[styles.loading, { paddingTop: insets.top }]}>
@@ -424,6 +438,15 @@ export default function BuzzAgents() {
                 </View>
               </View>
               <View style={styles.avatarActions}>
+                <TouchableOpacity
+                  accessibilityLabel={`Message ${resolveAgentDisplayIdentity(selected.pubkey, selected).name}`}
+                  style={styles.secondaryButton}
+                  disabled={working}
+                  onPress={() => void messageSelectedAgent()}
+                  testID={`message-agent-${selected.pubkey}`}
+                >
+                  <Text style={styles.secondaryButtonText}>Message</Text>
+                </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.secondaryButton}
                   disabled={working}

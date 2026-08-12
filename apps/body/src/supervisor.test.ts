@@ -12,7 +12,7 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => ({
   createBuzzClient: mocks.createBuzzClient,
 }));
 
-import { WorkspaceSupervisor } from './supervisor.js';
+import { directMessageRepositoryRoom, WorkspaceSupervisor } from './supervisor.js';
 
 function storedIdentity(name: string) {
   const identity = newIdentity(name);
@@ -57,5 +57,24 @@ describe('WorkspaceSupervisor removal lease', () => {
     await expect(supervisor.run({ pollMs: 1 })).resolves.toBe('agent-removed');
     expect(supervisor.activeRoomIds()).toEqual([]);
     expect(disconnect).toHaveBeenCalledOnce();
+  });
+});
+
+describe('WorkspaceSupervisor direct messages', () => {
+  it('uses the oldest paired repository Room as stable DM context', () => {
+    const older = {
+      channelId: 'older',
+      membershipSince: 10,
+      discoveredAt: new Date(0).toISOString(),
+      repo: {} as never,
+    };
+    const newer = {
+      channelId: 'newer',
+      membershipSince: 20,
+      discoveredAt: new Date(0).toISOString(),
+      repo: {} as never,
+    };
+    expect(directMessageRepositoryRoom({ rooms: [newer, older] })).toBe(older);
+    expect(directMessageRepositoryRoom({ rooms: [] })).toBeUndefined();
   });
 });

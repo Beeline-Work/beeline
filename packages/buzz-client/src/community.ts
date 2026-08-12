@@ -13,6 +13,7 @@ import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { publishEvent, queryEvents } from './http.js';
+import { getDirectMessage } from './direct-message.js';
 import {
   KIND_CHANNEL_ADMINS,
   KIND_CHANNEL_MEMBERS,
@@ -243,6 +244,8 @@ async function assertCommunityMemberInChannels(
 ): Promise<void> {
   const channelIds = await communityChannels(ctx, communityId);
   for (const channelId of channelIds) {
+    // Workspace joins mirror into shared Rooms, never into private DMs.
+    if (await getDirectMessage(ctx, channelId)) continue;
     if (await isMember(ctx, channelId, pubkey)) continue;
     await setMemberRole(ctx, channelId, pubkey, 'member', {
       extraTags: [[TAG_COMMUNITY, communityId]],
@@ -287,6 +290,9 @@ export async function attachCommunityMemberToChannel(
   memberPubkey: string,
   communityId: string,
 ): Promise<{ joined: boolean; membershipSince: number }> {
+  if (await getDirectMessage(ctx, channelId)) {
+    throw new Error('direct messages cannot add a third member');
+  }
   const roomCommunityId = await getChannelCommunityId(ctx, channelId);
   if (roomCommunityId !== communityId) {
     throw new Error('member placement requires a Room in this Workspace');

@@ -246,6 +246,28 @@ describe('Room-scoped Workspace membership', () => {
       'workspace-1',
     );
   });
+
+  it('returns the deterministic DM channel and whether it was newly created', async () => {
+    const identity = {
+      publicKey: 'a'.repeat(64),
+      secretKey: new Uint8Array(32).fill(1),
+      name: 'operator',
+    } as Identity;
+    const client = {
+      resolveDirectMessage: vi.fn(async () => ({
+        directMessage: { channelId: 'dm-1' },
+        created: false,
+      })),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(transport.resolveDirectMessage('workspace-1', 'person-1')).resolves.toEqual({
+      channelId: 'dm-1',
+      created: false,
+    });
+    expect(client.resolveDirectMessage).toHaveBeenCalledWith('workspace-1', 'person-1');
+  });
 });
 
 describe('Buzz change review metadata', () => {

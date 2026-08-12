@@ -56,3 +56,6 @@ export const TAG_COMMUNITY = 'community';
 
 /** Marker tag value for a signed, channel-scoped community invite. */
 export const TAG_COMMUNITY_INVITE = 'buzz-community-invite';
+
+/** Marker tag value for a private, exactly-two-member direct-message Room. */
+export const TAG_DIRECT_MESSAGE = 'buzz-dm';

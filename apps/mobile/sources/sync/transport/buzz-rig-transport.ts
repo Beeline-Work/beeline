@@ -195,6 +195,16 @@ export class BuzzRigTransport implements RigTransport {
     return result.joined;
   }
 
+  /** Create or reopen the unique private Room for two Workspace members. */
+  async resolveDirectMessage(
+    communityId: string,
+    otherPubkey: string,
+  ): Promise<{ channelId: string; created: boolean }> {
+    const client = await this.getClient();
+    const result = await client.resolveDirectMessage(communityId, otherPubkey);
+    return { channelId: result.directMessage.channelId, created: result.created };
+  }
+
   async runAbort(sessionId: SessionId): Promise<void> {
     const client = await this.getClient();
     await client.messageSubmit(sessionId, 'Cancel the active Agent turn.', {

@@ -1,11 +1,8 @@
 import {
-  KIND_STREAM_MESSAGE,
-  TAG_COMMUNITY_INVITE,
   createBuzzClient,
   createIdentity,
+  findCommunityInvite,
   inviteTokenHash,
-  parseCommunityInvite,
-  queryEvents,
   type Community,
   type CommunityInviteRecord,
   type Identity,
@@ -96,21 +93,11 @@ export async function loadCommunityInvitePreview(
   const normalizedBaseUrl = baseUrl.replace(/\/$/, '');
   const host = new URL(normalizedBaseUrl).host;
   const tokenHash = inviteTokenHash(parsedToken);
-  const events = await queryEvents(
+  const invite = await findCommunityInvite(
     { baseUrl: normalizedBaseUrl, host, identity: reader },
-    [
-      {
-        kinds: [KIND_STREAM_MESSAGE],
-        '#d': [tokenHash],
-        '#t': [TAG_COMMUNITY_INVITE],
-        limit: 20,
-      },
-    ],
+    tokenHash,
     reader.publicKey,
   );
-  const invite = events
-    .map(parseCommunityInvite)
-    .find((record): record is CommunityInviteRecord => record?.tokenHash === tokenHash);
   if (!invite) throw new Error('invite not found');
   if (invite.expiresAt <= Math.floor(Date.now() / 1000)) {
     throw new Error('invite has expired');

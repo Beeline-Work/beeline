@@ -2,8 +2,8 @@
 
 Android-only FCM gateway for Buzzy. It accepts an FCM device registration,
 subscribes to kind-9 channel events on the Buzz relay, resolves current channel
-membership, and sends generic Firebase notifications to registered members
-other than the event author.
+visibility through ACL-scoped reads, and sends generic Firebase notifications
+to registered members other than the event author.
 
 The WebSocket subscription wakes an ACL-scoped bridge poll. The bridge queries
 with each registered public key (never a secret key), so private-channel reads
@@ -32,7 +32,8 @@ The service account file stays outside the repository. Do not log or commit it.
 The response and logs never contain the FCM token. The v1 registry is a local
 JSON file written mode 0600; it survives normal restarts, but is local to one
 gateway host and is lost if that file is removed. Re-importing or generating a
-Buzz identity registers the device again.
+Buzz identity registers the device, and each mobile cold start refreshes the
+binding in case Firebase rotated the device token.
 
 ## Privacy
 

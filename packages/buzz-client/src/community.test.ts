@@ -286,7 +286,8 @@ describe('community model', () => {
           return jsonResponse([channelMembers, communityMembers]);
         }
         if (kind === KIND_CREATE_GROUP) {
-          const ids = filter['#h'] as string[];
+          const ids = filter['#h'] as string[] | undefined;
+          if (!ids) return jsonResponse([channelCreate, create]);
           if (ids[0] === channelId) return jsonResponse([channelCreate]);
           if (ids[0] === communityId) return jsonResponse([create]);
         }

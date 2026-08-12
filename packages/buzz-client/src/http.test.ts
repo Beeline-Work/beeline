@@ -124,4 +124,37 @@ describe('HTTP bridge NIP-98 auth', () => {
 
     await expect(publishEvent(opts, signedEvent())).rejects.toThrow('was not accepted');
   });
+
+  it('deduplicates concurrent projection reads without caching mutable state', async () => {
+    const fetchMock = vi.fn(async () => new Response('[]', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const filters = [{ kinds: [39_002], '#d': ['cache-test'], limit: 5 }];
+
+    await Promise.all([
+      queryEvents(opts, filters, identity.publicKey),
+      queryEvents(opts, filters, identity.publicKey),
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await queryEvents(opts, filters, identity.publicKey);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('invalidates cached projections after a publish', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) =>
+      String(input).endsWith('/query')
+        ? new Response('[]', { status: 200 })
+        : new Response(JSON.stringify({ accepted: true }), { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const filters = [{ kinds: [9_007], '#h': ['publish-cache-test'], limit: 5 }];
+
+    await queryEvents(opts, filters, identity.publicKey);
+    await queryEvents(opts, filters, identity.publicKey);
+    await publishEvent(opts, signedEvent());
+    await queryEvents(opts, filters, identity.publicKey);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
 });

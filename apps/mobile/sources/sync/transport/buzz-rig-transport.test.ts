@@ -149,6 +149,20 @@ describe('Buzz branch-loop event projection', () => {
   });
 });
 
+describe('Buzz transport bootstrap', () => {
+  it('does not open a WebSocket for HTTP-only screen reads', async () => {
+    const identity = {
+      publicKey: 'f'.repeat(64),
+      secretKey: new Uint8Array(32).fill(7),
+      name: 'operator',
+    } as Identity;
+
+    const client = await new BuzzRigTransport(identity, 'https://relay.test').ensureClient();
+
+    expect(client.socket).toBeNull();
+  });
+});
+
 describe('Room-scoped Workspace membership', () => {
   it('sends @-mentioned Room messages with an address and no private request marker', async () => {
     const identity = {

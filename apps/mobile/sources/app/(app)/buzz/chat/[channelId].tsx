@@ -104,6 +104,7 @@ export default function BuzzChat() {
   const [addingMemberPubkey, setAddingMemberPubkey] = useState<string | null>(null);
   const [personProfiles, setPersonProfiles] = useState<PersonProfile[]>([]);
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
+  const [participantsHydrated, setParticipantsHydrated] = useState(false);
   const [roomName, setRoomName] = useState(ROOM_LABEL);
   const [participantPickerVisible, setParticipantPickerVisible] = useState(false);
   const [membershipError, setMembershipError] = useState<string | null>(null);
@@ -179,6 +180,8 @@ export default function BuzzChat() {
 
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
+    setLoading(true);
+    setParticipantsHydrated(false);
 
     (async () => {
       try {
@@ -194,14 +197,23 @@ export default function BuzzChat() {
         setUserPubkey(identity.publicKey);
 
         const client = await t.ensureClient();
-        const [availableCommunities, directCommunityId, channelMetadata, roomMembers, parentId] =
-          await Promise.all([
-            client.listCommunities(),
-            client.getChannelCommunityId(decodedId),
-            client.getChannelMetadata(decodedId),
-            client.listMembers(decodedId),
-            t.getParentChannelId(decodedId),
-          ]);
+        const [
+          availableCommunities,
+          directCommunityId,
+          channelMetadata,
+          roomMembers,
+          parentId,
+          events,
+          identityIsAgent,
+        ] = await Promise.all([
+          client.listCommunities(),
+          client.getChannelCommunityId(decodedId),
+          client.getChannelMetadata(decodedId),
+          client.listMembers(decodedId),
+          t.getParentChannelId(decodedId),
+          t.sessionEventsBackfill(decodedId, { limit: 50 }),
+          client.isAgentIdentity(identity.publicKey),
+        ]);
         // Corners inherit their Workspace from the parent Room. Their create event
         // predates the redundant community tag, so resolve through the parent when
         // needed before loading cosmetic agent overlays.
@@ -209,39 +221,14 @@ export default function BuzzChat() {
           directCommunityId ??
           (parentId ? await client.getChannelCommunityId(parentId) : null) ??
           null;
-        const [communityAgents, communityMembers, identityIsAgent] = await Promise.all([
-          channelCommunityId ? client.listAgents(channelCommunityId) : Promise.resolve([]),
-          channelCommunityId ? client.communityMembers(channelCommunityId) : Promise.resolve([]),
-          client.isAgentIdentity(identity.publicKey),
-        ]);
-        const agentPubkeys = new Set(communityAgents.map((agent) => agent.pubkey));
-        const humanMembers = communityMembers.filter((member) => !agentPubkeys.has(member.pubkey));
-        const humanProfiles = channelCommunityId
-          ? await client.listPersonProfiles(
-              channelCommunityId,
-              humanMembers.map((member) => member.pubkey),
-            )
-          : [];
         if (!cancelled) {
           setCommunities(availableCommunities);
           setActiveCommunityId(channelCommunityId);
-          setAvailableAgents(communityAgents);
           const roomPubkeys = new Set(roomMembers.map((member) => member.pubkey));
-          setAvailablePeople(humanMembers);
-          setPersonProfiles(humanProfiles);
           setRoomMemberPubkeys(roomPubkeys);
           setViewerIsAgent(identityIsAgent);
           setRoomName(channelMetadata?.name?.trim() || ROOM_LABEL);
           if (parentId) setParentChannelId(parentId);
-        }
-        await Promise.all([
-          saveActiveCommunityId(identity.publicKey, channelCommunityId),
-          saveLastViewedChannel(identity.publicKey, channelCommunityId, decodedId),
-        ]);
-
-        // Render the primary chat history before slower P2 channel enrichment.
-        const events = await t.sessionEventsBackfill(decodedId, { limit: 50 });
-        if (!cancelled) {
           let msgs: ChatDisplayMessage[] = [];
           for (const e of events) {
             const projected = projectChatEvent(e, identity.publicKey);
@@ -254,21 +241,13 @@ export default function BuzzChat() {
           setLoading(false);
         }
 
-        // Check if this channel is a subchannel (has parent).
-        // The parent linkage lives on the 9007 create event, not on 39000 metadata.
-        // Check if channel is archived
-        const archived = await t.isChannelArchived(decodedId);
-        if (archived) setIsArchived(true);
+        void Promise.all([
+          saveActiveCommunityId(identity.publicKey, channelCommunityId),
+          saveLastViewedChannel(identity.publicKey, channelCommunityId, decodedId),
+        ]).catch(() => undefined);
 
-        // P2: If in a subchannel, try to get merge target from control messages
-        if (parentId) {
-          const mergeInfo = await t.getSubchannelMergeTarget(decodedId);
-          if (mergeInfo) {
-            setMergeTarget(mergeInfo.target);
-          }
-        }
-
-        // Subscribe to live messages
+        // Subscribe as soon as the primary transcript is painted. The client
+        // performs its WebSocket handshake lazily and does not block this path.
         unsubscribe = t.sessionEventsSubscribe(decodedId, (event) => {
           if (cancelled) return;
           const projected = projectChatEvent(event, identity.publicKey, true);
@@ -279,6 +258,29 @@ export default function BuzzChat() {
           }
           if (projected.message) addMessages([projected.message]);
         });
+
+        const [communityAgents, communityMembers, archived, mergeInfo] = await Promise.all([
+          channelCommunityId ? client.listAgents(channelCommunityId) : Promise.resolve([]),
+          channelCommunityId ? client.communityMembers(channelCommunityId) : Promise.resolve([]),
+          t.isChannelArchived(decodedId),
+          parentId ? t.getSubchannelMergeTarget(decodedId) : Promise.resolve(null),
+        ]);
+        const agentPubkeys = new Set(communityAgents.map((agent) => agent.pubkey));
+        const humanMembers = communityMembers.filter((member) => !agentPubkeys.has(member.pubkey));
+        const humanProfiles = channelCommunityId
+          ? await client.listPersonProfiles(
+              channelCommunityId,
+              humanMembers.map((member) => member.pubkey),
+            )
+          : [];
+        if (!cancelled) {
+          setAvailableAgents(communityAgents);
+          setAvailablePeople(humanMembers);
+          setPersonProfiles(humanProfiles);
+          setParticipantsHydrated(true);
+          if (archived) setIsArchived(true);
+          if (mergeInfo) setMergeTarget(mergeInfo.target);
+        }
       } catch (err) {
         console.warn('Failed to init BuzzChat:', err);
       } finally {
@@ -650,7 +652,9 @@ export default function BuzzChat() {
               {roomName}
             </Text>
             <Text style={styles.headerMeta} numberOfLines={1}>
-              {formatRoomParticipantTotal(participantPubkeys.size)}
+              {participantsHydrated
+                ? formatRoomParticipantTotal(participantPubkeys.size)
+                : 'LOADING MEMBERS'}
             </Text>
           </View>
           {!parentChannelId && !viewerIsAgent && !isArchived && (

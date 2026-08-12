@@ -1,9 +1,16 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { Community, Identity } from '@beeline/buzz-client';
+import {
+  KIND_CREATE_GROUP,
+  TAG_COMMUNITY,
+  TAG_PARENT,
+  tagValue,
+  type Community,
+  type Identity,
+} from '@beeline/buzz-client';
 import {
   DEFAULT_RELAY_URL,
   getEffectiveRelayUrl,
@@ -47,20 +54,114 @@ function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-async function channelSummary(
+async function loadDisplayChannelBasics(
   transport: BuzzRigTransport,
-  channelId: string,
-): Promise<ChannelDisplayItem> {
+  activeCommunityId: string | null,
+  communities: Community[],
+): Promise<ChannelDisplayItem[]> {
   const client = await transport.ensureClient();
-  const metadata = await client.getChannelMetadata(channelId);
-  return {
-    id: channelId,
-    active: !metadata?.archived,
-    title: metadata?.name ?? `${ROOM_LABEL.toLowerCase()} ${channelId.slice(0, 8)}`,
-    updatedAt: metadata?.raw?.created_at,
-    createdAt: metadata?.raw?.created_at,
-    archived: metadata?.archived,
-  };
+
+  if (activeCommunityId) {
+    // One create-event scan carries the Workspace, parent linkage, name, and
+    // creation time for every Room. Keep only top-level Rooms before doing the
+    // exact metadata reads, so Corners do not create an N+1 bootstrap path.
+    const creates = await client.query([{ kinds: [KIND_CREATE_GROUP], limit: 500 }]);
+    const roomCreates = new Map<string, (typeof creates)[number]>();
+    for (const create of creates) {
+      if (tagValue(create, TAG_COMMUNITY) !== activeCommunityId) continue;
+      if (tagValue(create, TAG_PARENT)) continue;
+      const id = tagValue(create, 'h') ?? tagValue(create, 'd');
+      if (!id || id === activeCommunityId) continue;
+      const prior = roomCreates.get(id);
+      if (!prior || create.created_at < prior.created_at) roomCreates.set(id, create);
+    }
+    const rooms = await Promise.all(
+      [...roomCreates.entries()].map(async ([id, create]) => {
+        const metadata = await client.getChannelMetadata(id);
+        return {
+          id,
+          active: !metadata?.archived,
+          title:
+            metadata?.name ??
+            tagValue(create, 'name') ??
+            `${ROOM_LABEL.toLowerCase()} ${id.slice(0, 8)}`,
+          updatedAt: metadata?.raw?.created_at ?? create.created_at,
+          createdAt: create.created_at,
+          archived: metadata?.archived,
+        } satisfies ChannelDisplayItem;
+      }),
+    );
+    return rooms.sort(
+      (a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0),
+    );
+  }
+
+  const all = await transport.sessionsRead();
+  const communityIds = new Set(communities.map((community) => community.communityId));
+  const memberships = await Promise.all(
+    all.map(async (channel) => ({
+      channel,
+      communityId: await client.getChannelCommunityId(channel.id),
+    })),
+  );
+  const standalone: ChannelDisplayItem[] = memberships
+    .filter(({ channel, communityId }) => !communityId && !communityIds.has(channel.id))
+    .map(({ channel }) => ({ ...channel }));
+  const resolved: ChannelDisplayItem[] = await Promise.all(
+    standalone.map(async (channel): Promise<ChannelDisplayItem> => {
+      try {
+        const parentId = await transport.getParentChannelId(channel.id);
+        const archived = channel.archived ?? (await transport.isChannelArchived(channel.id));
+        return { ...channel, archived, parentChannelId: parentId ?? undefined };
+      } catch {
+        return channel;
+      }
+    }),
+  );
+  return resolved.filter((item) => !item.parentChannelId);
+}
+
+async function enrichDisplayChannels(
+  transport: BuzzRigTransport,
+  rooms: ChannelDisplayItem[],
+  activeCommunityId: string | null,
+): Promise<ChannelDisplayItem[]> {
+  const client = await transport.ensureClient();
+  const [workspacePeople, workspaceAgents] = activeCommunityId
+    ? await Promise.all([
+        client.communityMembers(activeCommunityId),
+        client.listAgents(activeCommunityId),
+      ])
+    : [undefined, undefined];
+  const enriched = await Promise.all(
+    rooms.map(async (room): Promise<ChannelDisplayItem> => {
+      const [corners, events, members] = await Promise.allSettled([
+        transport.listSubchannelLifecycle(room.id),
+        transport.sessionEventsBackfill(room.id, { limit: 30 }),
+        client.listMembers(room.id),
+      ]);
+      return {
+        ...room,
+        corners: corners.status === 'fulfilled' ? sortCorners(corners.value) : [],
+        latestMessage:
+          events.status === 'fulfilled'
+            ? (latestRoomMessage(events.value) ?? undefined)
+            : undefined,
+        participantCount:
+          members.status === 'fulfilled'
+            ? roomParticipantPubkeys(
+                new Set(members.value.map((member) => member.pubkey)),
+                workspacePeople,
+                workspaceAgents,
+              ).size
+            : 0,
+      };
+    }),
+  );
+
+  return enriched.sort(
+    (a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0),
+  );
 }
 
 async function loadDisplayChannels(
@@ -68,72 +169,8 @@ async function loadDisplayChannels(
   activeCommunityId: string | null,
   communities: Community[],
 ): Promise<ChannelDisplayItem[]> {
-  const client = await transport.ensureClient();
-  let list: ChannelDisplayItem[];
-
-  if (activeCommunityId) {
-    const ids = await client.communityChannels(activeCommunityId);
-    list = await Promise.all(ids.map((id) => channelSummary(transport, id)));
-  } else {
-    const all = await transport.sessionsRead();
-    const communityIds = new Set(communities.map((community) => community.communityId));
-    const memberships = await Promise.all(
-      all.map(async (channel) => ({
-        channel,
-        communityId: await client.getChannelCommunityId(channel.id),
-      })),
-    );
-    list = memberships
-      .filter(({ channel, communityId }) => !communityId && !communityIds.has(channel.id))
-      .map(({ channel }) => ({ ...channel }));
-  }
-
-  const allItems: ChannelDisplayItem[] = [];
-
-  await Promise.all(
-    list.map(async (channel) => {
-      try {
-        const parentId = await transport.getParentChannelId(channel.id);
-        const archived = channel.archived ?? (await transport.isChannelArchived(channel.id));
-        const item = { ...channel, archived, parentChannelId: parentId ?? undefined };
-        allItems.push(item);
-      } catch {
-        allItems.push(channel);
-      }
-    }),
-  );
-
-  const rooms = allItems.filter((item) => !item.parentChannelId);
-  const [workspacePeople, workspaceAgents] = activeCommunityId
-    ? await Promise.all([
-        client.communityMembers(activeCommunityId),
-        client.listAgents(activeCommunityId),
-      ])
-    : [undefined, undefined];
-  await Promise.all(
-    rooms.map(async (room) => {
-      const [corners, events, members] = await Promise.allSettled([
-        transport.listSubchannelLifecycle(room.id),
-        transport.sessionEventsBackfill(room.id, { limit: 30 }),
-        client.listMembers(room.id),
-      ]);
-      room.corners = corners.status === 'fulfilled' ? sortCorners(corners.value) : [];
-      room.latestMessage =
-        events.status === 'fulfilled' ? (latestRoomMessage(events.value) ?? undefined) : undefined;
-      room.participantCount =
-        members.status === 'fulfilled'
-          ? roomParticipantPubkeys(
-              new Set(members.value.map((member) => member.pubkey)),
-              workspacePeople,
-              workspaceAgents,
-            ).size
-          : 0;
-    }),
-  );
-
-  return rooms.sort(
-    (a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0),
-  );
+  const basics = await loadDisplayChannelBasics(transport, activeCommunityId, communities);
+  return enrichDisplayChannels(transport, basics, activeCommunityId);
 }
 
 export default function BuzzChannels() {
@@ -163,6 +200,8 @@ export default function BuzzChannels() {
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [readyInviteUrl, setReadyInviteUrl] = useState<string | undefined>(inviteUrl);
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
+  const skipInitialFocusRefresh = useRef(true);
+  const loadGeneration = useRef(0);
 
   const activeCommunity = useMemo(
     () => communities.find((community) => community.communityId === activeCommunityId) ?? null,
@@ -171,6 +210,9 @@ export default function BuzzChannels() {
 
   useEffect(() => {
     let cancelled = false;
+    const generation = ++loadGeneration.current;
+    const isCurrent = () => !cancelled && loadGeneration.current === generation;
+    skipInitialFocusRefresh.current = true;
     void (async () => {
       setLoading(true);
       setError(null);
@@ -192,11 +234,8 @@ export default function BuzzChannels() {
           activeWorkspaceId: active,
           personalWorkspaceId: personal,
         } = workspaceContext;
-        const viewerProfile = active
-          ? await client.getPersonProfile(active, currentIdentity.publicKey)
-          : null;
-        const channels = await loadDisplayChannels(nextTransport, active, available);
-        if (!cancelled) {
+        const channels = await loadDisplayChannelBasics(nextTransport, active, available);
+        if (isCurrent()) {
           setIdentity(currentIdentity);
           setRelayUrl(url);
           setTransport(nextTransport);
@@ -205,12 +244,23 @@ export default function BuzzChannels() {
           setPersonalWorkspaceId(personal);
           setDisplayChannels(channels);
           setViewerIsAgent(identityIsAgent);
+          setLoading(false);
+        }
+
+        const [viewerProfile, enriched] = await Promise.all([
+          active
+            ? client.getPersonProfile(active, currentIdentity.publicKey)
+            : Promise.resolve(null),
+          enrichDisplayChannels(nextTransport, channels, active),
+        ]);
+        if (isCurrent()) {
+          setDisplayChannels(enriched);
           setViewerAvatarUrl(viewerProfile?.avatar);
         }
       } catch (err) {
-        if (!cancelled) setError(String(err));
+        if (isCurrent()) setError(String(err));
       } finally {
-        if (!cancelled) setLoading(false);
+        if (isCurrent()) setLoading(false);
       }
     })();
     return () => {
@@ -230,6 +280,8 @@ export default function BuzzChannels() {
 
   const handleRefresh = useCallback(async () => {
     if (!transport || !identity) return;
+    const generation = ++loadGeneration.current;
+    const isCurrent = () => loadGeneration.current === generation;
     setRefreshing(true);
     setError(null);
     try {
@@ -239,17 +291,24 @@ export default function BuzzChannels() {
         activeWorkspaceId: active,
         personalWorkspaceId: personal,
       } = await prepareWorkspaceContext(client, identity.publicKey, activeCommunityId ?? undefined);
+      if (!isCurrent()) return;
       setCommunities(available);
       setActiveCommunityId(active);
       setPersonalWorkspaceId(personal);
-      setDisplayChannels(await loadDisplayChannels(transport, active, available));
-      setViewerAvatarUrl(
-        active ? (await client.getPersonProfile(active, identity.publicKey))?.avatar : undefined,
-      );
+      const channels = await loadDisplayChannelBasics(transport, active, available);
+      if (!isCurrent()) return;
+      setDisplayChannels(channels);
+      const [enriched, viewerProfile] = await Promise.all([
+        enrichDisplayChannels(transport, channels, active),
+        active ? client.getPersonProfile(active, identity.publicKey) : Promise.resolve(undefined),
+      ]);
+      if (!isCurrent()) return;
+      setDisplayChannels(enriched);
+      setViewerAvatarUrl(viewerProfile?.avatar);
     } catch (err) {
-      setError(String(err));
+      if (isCurrent()) setError(String(err));
     } finally {
-      setRefreshing(false);
+      if (isCurrent()) setRefreshing(false);
     }
   }, [activeCommunityId, identity, transport]);
 
@@ -258,14 +317,18 @@ export default function BuzzChannels() {
   useFocusEffect(
     useCallback(() => {
       if (!transport || !identity) return;
+      if (skipInitialFocusRefresh.current) {
+        skipInitialFocusRefresh.current = false;
+        return;
+      }
       void handleRefresh();
     }, [handleRefresh, identity, transport]),
   );
 
   const handleRoomPress = useCallback(
-    async (channel: ChannelDisplayItem) => {
+    (channel: ChannelDisplayItem) => {
       if (identity) {
-        await saveLastViewedChannel(identity.publicKey, activeCommunityId, channel.id);
+        void saveLastViewedChannel(identity.publicKey, activeCommunityId, channel.id);
       }
       router.push(`/buzz/chat/${encodeURIComponent(channel.id)}` as Href);
     },

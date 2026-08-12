@@ -15,6 +15,8 @@ export interface HttpBridgeOptions {
   host: string;
   /** Identity used only to sign short-lived, host-bound NIP-98 request auth. */
   identity?: Pick<Identity, 'secretKey' | 'publicKey'>;
+  /** Coalesce same-turn reads into one multi-filter request. */
+  batchQueries?: boolean;
 }
 
 /** HTTP bridge options whose signing identity cannot be omitted accidentally. */
@@ -25,6 +27,14 @@ export interface AuthenticatedHttpBridgeOptions extends HttpBridgeOptions {
 const IMMUTABLE_CREATE_CACHE_TTL_MS = 5 * 60_000;
 const CREATE_SCAN_CACHE_TTL_MS = 500;
 const QUERY_CACHE_MAX_ENTRIES = 200;
+const BATCHABLE_FILTER_KEYS = new Set([
+  'ids',
+  'authors',
+  'kinds',
+  'since',
+  'until',
+  'limit',
+]);
 
 type QueryCacheEntry = {
   expiresAt: number;
@@ -34,6 +44,16 @@ type QueryCacheEntry = {
 const queryCache = new Map<string, QueryCacheEntry>();
 const fetchIds = new WeakMap<object, number>();
 let nextFetchId = 1;
+
+type PendingQuery = {
+  opts: HttpBridgeOptions;
+  filters: Record<string, unknown>[];
+  queryPubkey: string;
+  resolve: (events: readonly NostrEvent[]) => void;
+  reject: (error: unknown) => void;
+};
+
+const pendingQueryBatches = new Map<string, PendingQuery[]>();
 
 function currentFetchId(): number {
   const fetchFunction = fetch as unknown as object;
@@ -53,6 +73,118 @@ function invalidateQueryCache(opts: HttpBridgeOptions, pubkey: string): void {
   for (const key of queryCache.keys()) {
     if (key.startsWith(prefix)) queryCache.delete(key);
   }
+}
+
+function canPartitionFilter(filter: Record<string, unknown>): boolean {
+  return Object.keys(filter).every(
+    (key) => BATCHABLE_FILTER_KEYS.has(key) || key.startsWith('#'),
+  );
+}
+
+function matchesPrefix(value: string, candidates: unknown): boolean {
+  return (
+    Array.isArray(candidates) &&
+    candidates.some((candidate) => typeof candidate === 'string' && value.startsWith(candidate))
+  );
+}
+
+function eventMatchesFilter(event: NostrEvent, filter: Record<string, unknown>): boolean {
+  if (filter.ids !== undefined && !matchesPrefix(event.id, filter.ids)) return false;
+  if (filter.authors !== undefined && !matchesPrefix(event.pubkey, filter.authors)) return false;
+  if (
+    filter.kinds !== undefined &&
+    (!Array.isArray(filter.kinds) || !filter.kinds.includes(event.kind))
+  ) {
+    return false;
+  }
+  if (typeof filter.since === 'number' && event.created_at < filter.since) return false;
+  if (typeof filter.until === 'number' && event.created_at > filter.until) return false;
+  for (const [key, values] of Object.entries(filter)) {
+    if (!key.startsWith('#')) continue;
+    if (!Array.isArray(values)) return false;
+    const tagName = key.slice(1);
+    if (
+      !event.tags.some(
+        (tag) => tag[0] === tagName && typeof tag[1] === 'string' && values.includes(tag[1]),
+      )
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function selectQueryEvents(
+  events: readonly NostrEvent[],
+  filters: Record<string, unknown>[],
+): readonly NostrEvent[] {
+  const selected: NostrEvent[] = [];
+  const seen = new Set<string>();
+  for (const filter of filters) {
+    const matching = events.filter((event) => eventMatchesFilter(event, filter));
+    const limit = typeof filter.limit === 'number' ? Math.max(0, filter.limit) : matching.length;
+    for (const event of matching.slice(0, limit)) {
+      if (seen.has(event.id)) continue;
+      seen.add(event.id);
+      selected.push(event);
+    }
+  }
+  return selected;
+}
+
+async function requestQueryEvents(
+  opts: HttpBridgeOptions,
+  filters: Record<string, unknown>[],
+  queryPubkey: string,
+): Promise<readonly NostrEvent[]> {
+  const url = `${opts.baseUrl}/query`;
+  const method = 'POST';
+  const res = await fetch(url, {
+    method,
+    headers: bridgeHeaders(opts, queryPubkey, url, method),
+    body: JSON.stringify(filters),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`queryEvents failed: HTTP ${res.status} ${text}`);
+  }
+  const parsed = JSON.parse(text) as unknown;
+  if (!Array.isArray(parsed)) {
+    throw new Error(`queryEvents: expected array, got ${text.slice(0, 200)}`);
+  }
+  return parsed as NostrEvent[];
+}
+
+async function flushQueryBatch(batchKey: string, batch: PendingQuery[]): Promise<void> {
+  pendingQueryBatches.delete(batchKey);
+  const first = batch[0];
+  if (!first) return;
+  const filters = batch.flatMap((query) => query.filters);
+  try {
+    const events = await requestQueryEvents(first.opts, filters, first.queryPubkey);
+    for (const query of batch) query.resolve(selectQueryEvents(events, query.filters));
+  } catch (error) {
+    for (const query of batch) query.reject(error);
+  }
+}
+
+function enqueueQueryEvents(
+  opts: HttpBridgeOptions,
+  filters: Record<string, unknown>[],
+  queryPubkey: string,
+): Promise<readonly NostrEvent[]> {
+  const scope = `${queryCachePrefix(opts, queryPubkey)}${currentFetchId()}\u0000${opts.identity ? 'auth' : 'anon'}`;
+  const batchKey = filters.every(canPartitionFilter)
+    ? scope
+    : `${scope}\u0000unpartitioned\u0000${JSON.stringify(filters)}`;
+  return new Promise((resolve, reject) => {
+    const existing = pendingQueryBatches.get(batchKey);
+    const batch = existing ?? [];
+    batch.push({ opts, filters, queryPubkey, resolve, reject });
+    if (existing) return;
+    pendingQueryBatches.set(batchKey, batch);
+    queueMicrotask(() => void flushQueryBatch(batchKey, batch));
+  });
 }
 
 function queryCacheTtl(filters: Record<string, unknown>[], events: readonly NostrEvent[]): number {
@@ -136,24 +268,12 @@ export async function queryEvents(
   }
   if (cached) queryCache.delete(cacheKey);
 
-  const url = `${opts.baseUrl}/query`;
-  const method = 'POST';
-  const result = (async (): Promise<readonly NostrEvent[]> => {
-    const res = await fetch(url, {
-      method,
-      headers: bridgeHeaders(opts, queryPubkey, url, method),
-      body: JSON.stringify(filters),
-    });
-    const text = await res.text();
-    if (!res.ok) {
-      throw new Error(`queryEvents failed: HTTP ${res.status} ${text}`);
-    }
-    const parsed = JSON.parse(text) as unknown;
-    if (!Array.isArray(parsed)) {
-      throw new Error(`queryEvents: expected array, got ${text.slice(0, 200)}`);
-    }
-    return parsed as NostrEvent[];
-  })();
+  // All reads started in one JS turn share one authenticated HTTP request. The
+  // relay already accepts multiple NIP-01 filters; partition its union response
+  // back to each caller so higher-level APIs keep their exact result semantics.
+  const result = opts.batchQueries
+    ? enqueueQueryEvents(opts, filters, queryPubkey)
+    : requestQueryEvents(opts, filters, queryPubkey);
 
   const entry: QueryCacheEntry = { expiresAt: Number.POSITIVE_INFINITY, result };
   queryCache.set(cacheKey, entry);

@@ -8,6 +8,7 @@ const opts: HttpBridgeOptions = {
   baseUrl: 'https://relay.example',
   host: 'relay.example',
   identity,
+  batchQueries: true,
 };
 
 function authEvent(init?: RequestInit): NostrEvent {
@@ -139,6 +140,30 @@ describe('HTTP bridge NIP-98 auth', () => {
     await queryEvents(opts, filters, identity.publicKey);
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('batches distinct concurrent filters into one request and partitions the response', async () => {
+    const alpha = { ...signedEvent(), id: 'alpha', kind: 1, tags: [['h', 'alpha-room']] };
+    const beta = { ...signedEvent(), id: 'beta', kind: 2, tags: [['h', 'beta-room']] };
+    let postedFilters: unknown;
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      postedFilters = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify([alpha, beta]), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const [alphaEvents, betaEvents] = await Promise.all([
+      queryEvents(opts, [{ kinds: [1], '#h': ['alpha-room'], limit: 5 }], identity.publicKey),
+      queryEvents(opts, [{ kinds: [2], '#h': ['beta-room'], limit: 5 }], identity.publicKey),
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(postedFilters).toEqual([
+      { kinds: [1], '#h': ['alpha-room'], limit: 5 },
+      { kinds: [2], '#h': ['beta-room'], limit: 5 },
+    ]);
+    expect(alphaEvents.map((event) => event.id)).toEqual(['alpha']);
+    expect(betaEvents.map((event) => event.id)).toEqual(['beta']);
   });
 
   it('invalidates cached projections after a publish', async () => {

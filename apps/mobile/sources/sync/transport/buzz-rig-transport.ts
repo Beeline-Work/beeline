@@ -59,18 +59,13 @@ export class BuzzRigTransport implements RigTransport {
 
   private async getClient(): Promise<BuzzClient> {
     if (!this.client) {
-      const client = createBuzzClient({
+      // Screen bootstrap reads use the authenticated HTTP bridge. The client
+      // connects its WebSocket lazily when the first live subscription starts,
+      // so navigation never waits on an unrelated socket handshake.
+      this.client = createBuzzClient({
         baseUrl: this.baseUrl,
         identity: this.identity,
       });
-      try {
-        await client.connect();
-      } catch {
-        client.disconnect();
-        await new Promise((resolve) => setTimeout(resolve, 250));
-        await client.connect();
-      }
-      this.client = client;
     }
     return this.client;
   }

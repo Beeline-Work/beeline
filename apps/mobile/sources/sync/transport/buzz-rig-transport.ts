@@ -43,6 +43,22 @@ import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { cornerName, type CornerSummary } from '@/buzz/corners';
 import { toRigEvent } from './buzz-event-projection';
 
+let sharedClientEntry: { key: string; client: BuzzClient } | undefined;
+
+function sharedClient(identity: Identity, baseUrl: string): BuzzClient {
+  const normalizedBaseUrl = baseUrl.replace(/\/$/, '');
+  const key = `${normalizedBaseUrl}\u0000${identity.publicKey}`;
+  if (sharedClientEntry?.key === key) return sharedClientEntry.client;
+  sharedClientEntry?.client.disconnect();
+  const client = createBuzzClient({
+    baseUrl: normalizedBaseUrl,
+    identity,
+    batchQueries: true,
+  });
+  sharedClientEntry = { key, client };
+  return client;
+}
+
 export class BuzzRigTransport implements RigTransport {
   private client: BuzzClient | null = null;
   private identity: Identity;
@@ -61,11 +77,9 @@ export class BuzzRigTransport implements RigTransport {
     if (!this.client) {
       // Screen bootstrap reads use the authenticated HTTP bridge. The client
       // connects its WebSocket lazily when the first live subscription starts,
-      // so navigation never waits on an unrelated socket handshake.
-      this.client = createBuzzClient({
-        baseUrl: this.baseUrl,
-        identity: this.identity,
-      });
+      // so navigation never waits on an unrelated socket handshake. Clients are
+      // shared by relay + identity so a later Room reuses the authenticated WS.
+      this.client = sharedClient(this.identity, this.baseUrl);
     }
     return this.client;
   }
@@ -488,13 +502,17 @@ export class BuzzRigTransport implements RigTransport {
   async listSubchannelLifecycle(parentChannelId: string): Promise<CornerSummary[]> {
     const client = await this.getClient();
     const ids = await client.listSubchannels(parentChannelId);
-    const parentEvents = await client.sessionEventsBackfill(parentChannelId, { limit: 500 });
+    const parentEvents = await client.query([
+      {
+        kinds: [9],
+        '#h': [parentChannelId],
+        '#t': ['merge-summary'],
+        limit: 500,
+      },
+    ]);
     const mergedIds = new Set(
       parentEvents
-        .filter((event) =>
-          event.event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-summary'),
-        )
-        .map((event) => tagValue(event.event, 'subchannel'))
+        .map((event) => tagValue(event, 'subchannel'))
         .filter((id): id is string => Boolean(id)),
     );
 

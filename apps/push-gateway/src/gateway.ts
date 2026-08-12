@@ -1,6 +1,7 @@
 import type { NostrEvent } from '@beeline/nostr';
 import type { BatchResponse, Messaging } from 'firebase-admin/messaging';
-import { mapEventToNotification } from './mapping.js';
+import { isNotifiableEvent, mapEventToNotification } from './mapping.js';
+import { NotificationMetadataResolver, type RelayEventReader } from './metadata.js';
 import { TokenRegistry } from './registry.js';
 
 const PERMANENT_TOKEN_ERRORS = new Set([
@@ -8,10 +9,7 @@ const PERMANENT_TOKEN_ERRORS = new Set([
   'messaging/registration-token-not-registered',
 ]);
 
-export interface RelayEventReader {
-  query(filters: Record<string, unknown>[]): Promise<NostrEvent[]>;
-  disconnect(): void;
-}
+export type { RelayEventReader } from './metadata.js';
 
 type PollResult = 'backoff' | 'busy' | 'empty' | 'polled';
 
@@ -39,7 +37,11 @@ export class RegisteredEventPoller {
   constructor(
     private readonly registry: TokenRegistry,
     private readonly readerForPubkey: (pubkey: string) => RelayEventReader,
-    private readonly handleEvent: (event: NostrEvent, recipientPubkey: string) => Promise<void>,
+    private readonly handleEvent: (
+      event: NostrEvent,
+      recipientPubkey: string,
+      reader: RelayEventReader,
+    ) => Promise<void>,
     private readonly now: () => number = Date.now,
   ) {
     this.initialSince = Math.floor(this.now() / 1_000) - 5;
@@ -68,7 +70,7 @@ export class RegisteredEventPoller {
         if (this.seenEvents.has(deliveryId)) continue;
         this.seenEvents.set(deliveryId, event.created_at);
         try {
-          await this.handleEvent(event, recipientPubkey);
+          await this.handleEvent(event, recipientPubkey, reader);
         } catch (error) {
           this.seenEvents.delete(deliveryId);
           throw error;
@@ -95,14 +97,17 @@ export class PushGateway {
   constructor(
     private readonly registry: TokenRegistry,
     private readonly messaging: Messaging,
+    private readonly metadata = new NotificationMetadataResolver(),
   ) {}
 
-  async handleRelayEvent(event: NostrEvent, recipientPubkey: string): Promise<void> {
+  async handleRelayEvent(
+    event: NostrEvent,
+    recipientPubkey: string,
+    reader: RelayEventReader,
+  ): Promise<void> {
     const channelId = event.tags.find((tag) => tag[0] === 'h')?.[1];
     if (!channelId) return;
-
-    const plan = mapEventToNotification(event);
-    if (!plan) return;
+    if (!isNotifiableEvent(event)) return;
     if (recipientPubkey === event.pubkey) return;
 
     // The relay query was performed as this registered identity, so visibility
@@ -110,13 +115,18 @@ export class PushGateway {
     const tokens = this.registry.tokensForPubkeys([recipientPubkey]);
     if (tokens.length === 0) return;
 
+    const context = await this.metadata.resolve(event, reader);
+    const plan = mapEventToNotification(event, context);
+    if (!plan) return;
+
     const result = await this.messaging.sendEachForMulticast({
       tokens,
       notification: { title: plan.title, body: plan.body },
       data: plan.data,
       android: {
+        collapseKey: channelId,
         priority: 'high',
-        notification: { channelId: 'messages' },
+        notification: { channelId: 'messages', tag: `room:${channelId}` },
       },
     });
 

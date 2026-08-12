@@ -161,6 +161,16 @@ export interface ChannelMetadata {
   raw?: NostrEvent;
 }
 
+/** Immutable create-event binding for a private two-member Room. */
+export interface DirectMessage {
+  channelId: string;
+  communityId: string;
+  participants: [string, string];
+  createdBy: string;
+  createdAt: number;
+  raw: NostrEvent;
+}
+
 export type CommunityRole = 'owner' | 'admin' | 'member';
 
 /** A community is a self-linked NIP-29 group whose membership projects on 39002. */

@@ -19,6 +19,7 @@ import {
 } from './kinds.js';
 import { tagValue, tagValues } from './parse.js';
 import { fallbackAgentName, isSingleWordAgentName, resolveAgentName } from './display-name.js';
+import { getDirectMessage } from './direct-message.js';
 import type {
   Agent,
   AgentPairingCode,
@@ -527,6 +528,9 @@ export async function attachAgentToChannel(
   agentPubkey: string,
   knownCommunityId?: string,
 ): Promise<{ joined: boolean; membershipSince: number }> {
+  if (await getDirectMessage(ctx, channelId)) {
+    throw new Error('direct messages cannot add a third member');
+  }
   // The invite UI and Workspace supervisor already know their Workspace.
   // Relay create-event discovery is a compatibility fallback, not a required
   // read-after-write dependency for the membership mutation.

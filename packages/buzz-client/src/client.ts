@@ -15,10 +15,7 @@ import {
   redeemAgentPairingCode,
   setAgentSoul,
 } from './agent.js';
-import {
-  WRITE_PERMISSION_RESPONSE_TAG,
-  type WritePermissionDecision,
-} from './write-permission.js';
+import { WRITE_PERMISSION_RESPONSE_TAG, type WritePermissionDecision } from './write-permission.js';
 import {
   backfillMessages,
   createChannel,
@@ -51,6 +48,7 @@ import {
 import { publishEvent, queryEvents, type HttpBridgeOptions } from './http.js';
 import { KIND_STREAM_MESSAGE } from './kinds.js';
 import { getPersonProfile, listPersonProfiles, setPersonProfile } from './person-profile.js';
+import { getDirectMessage, listDirectMessages, resolveDirectMessage } from './direct-message.js';
 import { uploadMedia } from './media.js';
 import { toSessionEvent } from './parse.js';
 import {
@@ -69,6 +67,7 @@ import type {
   ChannelFilterOpts,
   ChannelMember,
   ChannelMetadata,
+  DirectMessage,
   Community,
   CommunityInvite,
   CommunityMember,
@@ -150,6 +149,22 @@ export class BuzzClient {
     return createChannel(this.ctx, name, opts);
   }
 
+  /** Create or reopen the deterministic private Room for one Workspace member pair. */
+  resolveDirectMessage(
+    communityId: string,
+    otherPubkey: string,
+  ): Promise<{ directMessage: DirectMessage; created: boolean }> {
+    return resolveDirectMessage(this.ctx, communityId, otherPubkey);
+  }
+
+  listDirectMessages(communityId: string): Promise<DirectMessage[]> {
+    return listDirectMessages(this.ctx, communityId);
+  }
+
+  getDirectMessage(channelId: string): Promise<DirectMessage | null> {
+    return getDirectMessage(this.ctx, channelId);
+  }
+
   /** Child channel under a TLC (parent tag convention). */
   createSubchannel(
     parentChannelId: string,
@@ -163,16 +178,23 @@ export class BuzzClient {
    * Add/set a member role (kind:9000). Publish ok ≠ effect —
    * follow with `waitUntilMember` or `assertMember`.
    */
-  addMember(
+  async addMember(
     channelId: string,
     targetPubkey: string,
     role: 'owner' | 'admin' | 'member' = 'member',
   ): Promise<PublishResult> {
+    const dm = await getDirectMessage(this.ctx, channelId);
+    if (dm && !dm.participants.includes(targetPubkey)) {
+      throw new Error('direct messages cannot add a third member');
+    }
     return setMemberRole(this.ctx, channelId, targetPubkey, role);
   }
 
   /** Remove a member (kind:9001). Publish ok is followed by projection checks by callers. */
-  removeMember(channelId: string, targetPubkey: string): Promise<PublishResult> {
+  async removeMember(channelId: string, targetPubkey: string): Promise<PublishResult> {
+    if (await getDirectMessage(this.ctx, channelId)) {
+      throw new Error('direct-message membership is immutable');
+    }
     return removeMember(this.ctx, channelId, targetPubkey);
   }
 

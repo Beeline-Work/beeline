@@ -32,9 +32,11 @@ import {
 } from '@beeline/buzz-client';
 import {
   projectChatEvent,
+  transcriptMessages,
   upsertChatMessages,
   type ChatDisplayMessage,
 } from '@/sync/transport/buzz-event-projection';
+import type { AgentActivityItem } from '@/sync/transport/rig-transport';
 import { groknight } from '@/buzz/groknight';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
@@ -76,6 +78,50 @@ function shortNpub(pubkeyHex: string): string {
   } catch {
     return `${pubkeyHex.slice(0, 8)}…`;
   }
+}
+
+function CornerActivityEntry({ item }: { item: AgentActivityItem }) {
+  const [expanded, setExpanded] = useState(
+    item.kind !== 'tool' || item.status === 'pending' || item.status === 'in_progress',
+  );
+  const glyph = item.kind === 'thinking' ? '·' : item.kind === 'tool' ? '◆' : '›';
+  const label = item.kind === 'thinking' ? 'THINKING' : item.title.toUpperCase();
+
+  return (
+    <View style={styles.activityEntry}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        onPress={() => setExpanded((current) => !current)}
+        style={styles.activityHeading}
+      >
+        <Text style={styles.activityGlyph}>{glyph}</Text>
+        <Text numberOfLines={1} style={styles.activityTitle}>
+          {label}
+        </Text>
+        {item.status && <Text style={styles.activityStatus}>{item.status.toUpperCase()}</Text>}
+        <Text style={styles.activityDisclosure}>{expanded ? '⌃' : '⌄'}</Text>
+      </Pressable>
+      {expanded && item.text && (
+        <Text selectable style={styles.activityOutput}>
+          {item.text}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+function CornerActivity({ message }: { message: ChatDisplayMessage }) {
+  const activity = message.activity?.length
+    ? message.activity
+    : [{ kind: 'output' as const, title: 'Output', text: message.text }];
+  return (
+    <View style={styles.activityGroup} testID="corner-activity">
+      {activity.map((item, index) => (
+        <CornerActivityEntry key={`${message.id}-${index}`} item={item} />
+      ))}
+    </View>
+  );
 }
 
 export default function BuzzChat() {
@@ -165,6 +211,22 @@ export default function BuzzChat() {
         .map((participant) => ({ pubkey: participant.pubkey, name: participant.label })),
     [roomParticipants],
   );
+  const isCorner = Boolean(parentChannelId);
+  const visibleMessages = useMemo(
+    () => transcriptMessages(messages, isCorner),
+    [isCorner, messages],
+  );
+  const activeCorner = useMemo(
+    () =>
+      [...messages]
+        .reverse()
+        .find(
+          (message) =>
+            message.corner?.status === 'starting' || message.corner?.status === 'working',
+        ),
+    [messages],
+  );
+
   // Helper to add new messages, deduplicating by id.
   const addMessages = useCallback((newMsgs: ChatDisplayMessage[]) => {
     setMessages((prev) =>
@@ -535,9 +597,6 @@ export default function BuzzChat() {
             <View style={styles.cornerStatusCopy}>
               <Text style={styles.cornerStatusAgent}>{display?.name ?? 'Agent'}</Text>
               <Text style={styles.cornerStatusLabel}>{statusLabel}</Text>
-              {item.corner.status === 'failed' && (
-                <Text style={styles.cornerFailureText}>{item.text}</Text>
-              )}
             </View>
             <View style={styles.openCornerAction}>
               <Text style={styles.openCornerText}>OPEN {CORNER_LABEL.toUpperCase()}</Text>
@@ -545,6 +604,10 @@ export default function BuzzChat() {
             </View>
           </TouchableOpacity>
         );
+      }
+
+      if (item.isAgentActivity && parentChannelId) {
+        return <CornerActivity message={item} />;
       }
 
       // ── Merge summary ────────────────────────────────────────────
@@ -583,39 +646,72 @@ export default function BuzzChat() {
       const display = isAgent
         ? resolveAgentDisplayIdentity(item.pubkey ?? 'unknown-agent', knownAgent)
         : null;
-      return (
-        <NewMessageMaterialize enabled={Boolean(item.isNew)}>
-          <View style={[styles.messageBubble, isAgent ? styles.agentBlock : styles.userBlock]}>
-            <View style={styles.authorRow}>
-              {display ? (
-                <AgentAvatar
-                  pubkey={item.pubkey ?? 'unknown-agent'}
-                  avatarSeed={display.avatarSeed}
-                  avatarUrl={display.avatarUrl}
-                  name={display.name}
-                  size={24}
-                />
-              ) : item.pubkey ? (
-                <PersonAvatar
-                  pubkey={item.pubkey}
-                  avatarUrl={personProfileByPubkey.get(item.pubkey)?.avatar}
-                  name={isOwn ? 'You' : shortNpub(item.pubkey)}
-                  size={24}
-                />
-              ) : null}
-              <Text style={[styles.roleLabel, isAgent ? styles.roleAgent : styles.roleUser]}>
-                {isOwn ? '◇ YOU' : display ? display.name : `◇ ${shortNpub(item.pubkey ?? '')}`}
+
+      if (parentChannelId) {
+        return (
+          <NewMessageMaterialize enabled={Boolean(item.isNew)}>
+            <View style={styles.terminalTurn}>
+              <View style={styles.terminalTurnHeading}>
+                <Text style={styles.terminalTurnGlyph}>{isOwn ? '›' : isAgent ? '◆' : '·'}</Text>
+                <Text style={styles.terminalTurnLabel}>
+                  {isOwn ? 'USER' : isAgent ? 'FINAL' : 'MESSAGE'}
+                </Text>
+                {!isOwn && display && (
+                  <Text numberOfLines={1} style={styles.terminalTurnAuthor}>
+                    {display.name}
+                  </Text>
+                )}
+              </View>
+              <Text selectable style={styles.terminalTurnText}>
+                {item.text}
               </Text>
             </View>
-            <Text style={styles.messageText}>{item.text}</Text>
-            {item.pubkey && !isOwn && !isAgent && (
-              <Text style={styles.provenanceText}>{shortNpub(item.pubkey)}</Text>
-            )}
+          </NewMessageMaterialize>
+        );
+      }
+
+      return (
+        <NewMessageMaterialize enabled={Boolean(item.isNew)}>
+          <View style={[styles.roomMessageRow, isOwn && styles.roomMessageRowOwn]}>
+            <View style={[styles.messageBubble, isOwn ? styles.ownBubble : styles.otherBubble]}>
+              <View style={styles.authorRow}>
+                {display ? (
+                  <AgentAvatar
+                    pubkey={item.pubkey ?? 'unknown-agent'}
+                    avatarSeed={display.avatarSeed}
+                    avatarUrl={display.avatarUrl}
+                    name={display.name}
+                    size={22}
+                  />
+                ) : item.pubkey && !isOwn ? (
+                  <PersonAvatar
+                    pubkey={item.pubkey}
+                    avatarUrl={personProfileByPubkey.get(item.pubkey)?.avatar}
+                    name={shortNpub(item.pubkey)}
+                    size={22}
+                  />
+                ) : null}
+                <Text style={[styles.roleLabel, isAgent ? styles.roleAgent : styles.roleUser]}>
+                  {isOwn ? 'YOU' : display ? display.name : shortNpub(item.pubkey ?? '')}
+                </Text>
+              </View>
+              <Text style={styles.messageText}>{item.text}</Text>
+              {item.pubkey && !isOwn && !isAgent && (
+                <Text style={styles.provenanceText}>{shortNpub(item.pubkey)}</Text>
+              )}
+            </View>
           </View>
         </NewMessageMaterialize>
       );
     },
-    [agentByPubkey, handleWritePermission, permissionActionId, personProfileByPubkey, viewerIsAgent],
+    [
+      agentByPubkey,
+      handleWritePermission,
+      parentChannelId,
+      permissionActionId,
+      personProfileByPubkey,
+      viewerIsAgent,
+    ],
   );
 
   if (loading) {
@@ -638,12 +734,15 @@ export default function BuzzChat() {
       viewerAvatarUrl={personProfileByPubkey.get(userPubkey)?.avatar}
     >
       <KeyboardAvoidingView
-        style={[styles.container, { paddingTop: insets.top }]}
+        style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         {/* Header */}
-        <HullSurface strength="quiet" style={styles.header}>
+        <HullSurface
+          strength="quiet"
+          style={[styles.header, { minHeight: insets.top + 60, paddingTop: insets.top + 8 }]}
+        >
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
             <Text style={styles.backText}>‹</Text>
           </TouchableOpacity>
@@ -668,7 +767,6 @@ export default function BuzzChat() {
               testID="room-member-picker"
             >
               <Text style={styles.addMembersGlyph}>＋</Text>
-              <Text style={styles.addMembersText}>MEMBERS</Text>
             </TouchableOpacity>
           )}
           {isArchived && (
@@ -678,47 +776,11 @@ export default function BuzzChat() {
           )}
         </HullSurface>
 
-        {roomParticipants.length > 0 && (
-          <View style={styles.participantBar} accessibilityLabel="Room participants">
-            <Text style={styles.participantLabel}>IN THIS {ROOM_LABEL.toUpperCase()}</Text>
-            <View style={styles.participantList}>
-              {roomParticipants.map((participant) => {
-                const display = participant.agent
-                  ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
-                  : undefined;
-                return (
-                  <View key={participant.pubkey} style={styles.participantIdentity}>
-                    {display ? (
-                      <AgentAvatar
-                        pubkey={participant.pubkey}
-                        avatarSeed={display.avatarSeed}
-                        avatarUrl={display.avatarUrl}
-                        name={display.name}
-                        size={28}
-                      />
-                    ) : (
-                      <PersonAvatar
-                        pubkey={participant.pubkey}
-                        avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
-                        name={participant.label}
-                        size={28}
-                      />
-                    )}
-                    <Text style={styles.participantName} numberOfLines={1}>
-                      {participant.label}
-                    </Text>
-                  </View>
-                );
-              })}
-            </View>
-          </View>
-        )}
-
         {/* The one human gate: collapsing a corner into the protected line. */}
         {mergeTarget && !isArchived && (
           <HullSurface strength="raised" style={styles.approvalBar}>
             <View style={styles.approvalInfo}>
-              <Text style={styles.prChip}>Review this {CORNER_LABEL}</Text>
+              <Text style={styles.prChip}>Review</Text>
               <Text style={styles.approvalBarText}>
                 {mergeTarget.repo} · {mergeTarget.tip.slice(0, 8)}
               </Text>
@@ -730,24 +792,20 @@ export default function BuzzChat() {
                 tip={mergeTarget.tip}
               />
             )}
-            <Text style={styles.humanBoundaryText}>
-              The Agent works freely inside this {CORNER_LABEL}. A person approves only the final
-              collapse into the protected line.
-            </Text>
             {viewerIsAgent ? (
               <View style={styles.approvalSent}>
-                <Text style={styles.approvalSentText}>⊘ AGENTS CANNOT APPROVE OR COLLAPSE</Text>
+                <Text style={styles.approvalSentText}>NOT ALLOWED</Text>
               </View>
             ) : approvalState === 'none' ? (
-              <MonoButton label="Approve corner collapse" onPress={handleApprove} />
+              <MonoButton label="Approve" onPress={handleApprove} />
             ) : approvalState === 'sending' ? (
               <View style={styles.approvalPending}>
                 <PixelLoader compact />
-                <Text style={styles.approvalStateText}>SENDING APPROVAL</Text>
+                <Text style={styles.approvalStateText}>SENDING</Text>
               </View>
             ) : (
               <View style={styles.approvalSent}>
-                <Text style={styles.approvalSentText}>✓ APPROVED · WAITING FOR COLLAPSE</Text>
+                <Text style={styles.approvalSentText}>✓ APPROVED</Text>
               </View>
             )}
           </HullSurface>
@@ -755,7 +813,7 @@ export default function BuzzChat() {
 
         <FlatList
           ref={flatListRef}
-          data={messages}
+          data={visibleMessages}
           keyExtractor={(item: ChatDisplayMessage) => item.id}
           style={styles.messageList}
           contentContainerStyle={styles.messageListContent}
@@ -777,13 +835,21 @@ export default function BuzzChat() {
           </View>
         ) : (
           <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+            {!parentChannelId && activeCorner?.corner && (
+              <View style={styles.agentLiveStatus} testID="agent-live-status">
+                <PixelLoader compact />
+                <Text style={styles.agentLiveStatusText}>
+                  {activeCorner.corner.status === 'starting' ? 'thinking…' : 'working…'}
+                </Text>
+              </View>
+            )}
             {parentChannelId && !viewerIsAgent && (
               <TouchableOpacity
                 accessibilityLabel="Cancel active Agent turn"
                 style={styles.cancelTurnButton}
                 onPress={() => void handleCancel()}
               >
-                <Text style={styles.cancelTurnText}>■ CANCEL TURN</Text>
+                <Text style={styles.cancelTurnText}>■ CANCEL</Text>
               </TouchableOpacity>
             )}
             <View style={[styles.composer, composerFocused && styles.composerFocused]}>
@@ -794,15 +860,12 @@ export default function BuzzChat() {
                 onChangeText={setInputText}
                 onFocus={() => setComposerFocused(true)}
                 onBlur={() => setComposerFocused(false)}
-                placeholder={
-                  parentChannelId
-                    ? 'steer the live Agent…'
-                    : mentionableAgents.length > 1 || roomParticipants.length > 2
-                      ? 'message the room; @name targets an Agent…'
-                      : `continue ${ROOM_LABEL.toLowerCase()} discussion…`
-                }
+                placeholder={parentChannelId ? 'Steer' : 'Message'}
                 placeholderTextColor={groknight.dim}
-                multiline
+                multiline={false}
+                numberOfLines={1}
+                returnKeyType="send"
+                onSubmitEditing={() => void handleSend()}
               />
               <TouchableOpacity
                 style={[
@@ -836,10 +899,7 @@ export default function BuzzChat() {
           <HullSurface strength="raised" style={styles.memberModal}>
             <View style={styles.memberModalHeading}>
               <View style={styles.memberModalHeadingCopy}>
-                <Text style={styles.memberModalTitle}>Add to this {ROOM_LABEL}</Text>
-                <Text style={styles.memberModalSubtitle}>
-                  Workspace roster. Current members stay at the top; add others below. Members only.
-                </Text>
+                <Text style={styles.memberModalTitle}>Add people</Text>
               </View>
               <TouchableOpacity
                 accessibilityLabel="Close Room member picker"
@@ -855,10 +915,10 @@ export default function BuzzChat() {
               showsVerticalScrollIndicator={false}
             >
               {[
-                { key: 'in-room', label: 'IN THIS ROOM', options: roomRosterSections.inRoom },
+                { key: 'in-room', label: 'IN ROOM', options: roomRosterSections.inRoom },
                 {
                   key: 'addable',
-                  label: 'ADD FROM WORKSPACE',
+                  label: 'ADD',
                   options: roomRosterSections.addable,
                 },
               ].map((section, sectionIndex) =>
@@ -909,12 +969,12 @@ export default function BuzzChat() {
                                 @{option.label}
                               </Text>
                               <Text style={styles.memberPickerNpub}>
-                                {option.kind === 'agent' ? 'LINKED AGENT' : 'WORKSPACE PERSON'}
+                                {option.kind === 'agent' ? 'AGENT' : 'PERSON'}
                               </Text>
                             </View>
                           </View>
                           <Text style={styles.memberPickerAction}>
-                            {adding ? 'ADDING…' : inRoom ? 'IN ROOM' : '＋ ADD'}
+                            {adding ? 'ADDING…' : inRoom ? 'HERE' : '＋ ADD'}
                           </Text>
                         </TouchableOpacity>
                       );
@@ -962,7 +1022,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingBottom: 8,
     borderBottomWidth: 1,
     borderBottomColor: groknight.border,
     backgroundColor: groknight.bgBase,
@@ -996,28 +1056,17 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   addMembersButton: {
-    minWidth: 62,
+    width: 44,
     minHeight: 44,
     marginLeft: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgHighlight,
   },
   addMembersGlyph: {
     ...Typography.default('semiBold'),
     color: groknight.chrome,
-    fontSize: 15,
-    lineHeight: 16,
-  },
-  addMembersText: {
-    ...Typography.mono('semiBold'),
-    marginTop: 1,
-    color: groknight.textMuted,
-    fontSize: 8,
-    lineHeight: 10,
-    letterSpacing: 0.4,
+    fontSize: 24,
+    lineHeight: 28,
   },
   archivedBadge: {
     backgroundColor: groknight.bgHighlight,
@@ -1031,36 +1080,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 15,
   },
-  participantBar: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-    backgroundColor: groknight.bgBase,
-  },
-  participantLabel: {
-    ...Typography.default('semiBold'),
-    marginBottom: 6,
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 0.7,
-  },
-  participantList: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  participantIdentity: {
-    minWidth: 0,
-    maxWidth: 180,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-  },
-  participantName: {
-    ...Typography.default('semiBold'),
-    flexShrink: 1,
-    color: groknight.textSecondary,
-    fontSize: 11,
-  },
-
   // ── Room membership picker ─────────────────────────────────────
   memberModalRoot: {
     flex: 1,
@@ -1085,13 +1104,6 @@ const styles = StyleSheet.create({
     color: groknight.textPrimary,
     fontSize: 17,
     lineHeight: 22,
-  },
-  memberModalSubtitle: {
-    ...Typography.default(),
-    marginTop: 4,
-    color: groknight.textMuted,
-    fontSize: 12,
-    lineHeight: 17,
   },
   memberModalClose: {
     width: 44,
@@ -1174,22 +1186,32 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   messageListContent: {
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
   },
+  roomMessageRow: {
+    width: '100%',
+    minWidth: 0,
+    alignItems: 'flex-start',
+  },
+  roomMessageRowOwn: { alignItems: 'flex-end' },
   messageBubble: {
-    position: 'relative',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    marginBottom: 6,
+    minWidth: 92,
+    maxWidth: '84%',
+    paddingVertical: 8,
+    paddingHorizontal: 11,
+    marginBottom: 8,
+    borderRadius: 12,
   },
-  agentBlock: {
+  otherBubble: {
     backgroundColor: groknight.bgRaised,
     borderWidth: 1,
     borderColor: groknight.borderQuiet,
   },
-  userBlock: {
-    backgroundColor: groknight.bgVoid,
+  ownBubble: {
+    backgroundColor: groknight.bgHighlight,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
   },
   authorRow: {
     minWidth: 0,
@@ -1213,9 +1235,10 @@ const styles = StyleSheet.create({
   },
   messageText: {
     ...Typography.default(),
-    fontSize: 13,
+    flexShrink: 1,
+    fontSize: 14,
     color: groknight.textSecondary,
-    lineHeight: 18,
+    lineHeight: 20,
   },
   provenanceText: {
     ...Typography.mono(),
@@ -1223,6 +1246,110 @@ const styles = StyleSheet.create({
     lineHeight: 15,
     color: groknight.textMuted,
     marginTop: 4,
+  },
+
+  // ── Corner terminal transcript ─────────────────────────────────
+  activityGroup: {
+    width: '100%',
+    minWidth: 0,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: groknight.border,
+    backgroundColor: groknight.bgBase,
+  },
+  activityEntry: {
+    minWidth: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.borderQuiet,
+  },
+  activityHeading: {
+    minWidth: 0,
+    minHeight: 42,
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  activityGlyph: {
+    ...Typography.mono('semiBold'),
+    width: 12,
+    color: groknight.steel,
+    fontSize: 11,
+  },
+  activityTitle: {
+    ...Typography.mono('semiBold'),
+    flex: 1,
+    minWidth: 0,
+    color: groknight.textSecondary,
+    fontSize: 10,
+    lineHeight: 14,
+    letterSpacing: 0.45,
+  },
+  activityStatus: {
+    ...Typography.mono(),
+    flexShrink: 0,
+    color: groknight.textMuted,
+    fontSize: 9,
+  },
+  activityDisclosure: {
+    ...Typography.mono(),
+    width: 14,
+    color: groknight.gutter,
+    fontSize: 11,
+    textAlign: 'right',
+  },
+  activityOutput: {
+    ...Typography.mono(),
+    width: '100%',
+    minWidth: 0,
+    paddingHorizontal: 12,
+    paddingBottom: 11,
+    color: groknight.textMuted,
+    fontSize: 11,
+    lineHeight: 17,
+  },
+  terminalTurn: {
+    width: '100%',
+    minWidth: 0,
+    marginBottom: 10,
+    padding: 11,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgTerminal,
+  },
+  terminalTurnHeading: {
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    marginBottom: 7,
+  },
+  terminalTurnGlyph: {
+    ...Typography.mono('semiBold'),
+    color: groknight.chrome,
+    fontSize: 11,
+  },
+  terminalTurnLabel: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 10,
+    letterSpacing: 0.6,
+  },
+  terminalTurnAuthor: {
+    ...Typography.mono(),
+    flex: 1,
+    minWidth: 0,
+    color: groknight.textMuted,
+    fontSize: 10,
+    textAlign: 'right',
+  },
+  terminalTurnText: {
+    ...Typography.default(),
+    width: '100%',
+    minWidth: 0,
+    color: groknight.textSecondary,
+    fontSize: 13,
+    lineHeight: 19,
   },
 
   // ── Parent Room corner status ──────────────────────────────────
@@ -1251,13 +1378,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     lineHeight: 14,
     letterSpacing: 0.6,
-  },
-  cornerFailureText: {
-    ...Typography.default(),
-    color: groknight.textMuted,
-    fontSize: 11,
-    lineHeight: 15,
-    marginTop: 3,
   },
   openCornerAction: {
     flexShrink: 0,
@@ -1344,12 +1464,6 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     color: groknight.textMuted,
   },
-  humanBoundaryText: {
-    ...Typography.default(),
-    color: groknight.textPrimary,
-    fontSize: 14,
-    lineHeight: 20,
-  },
   approvalPending: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1391,6 +1505,21 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: groknight.border,
     backgroundColor: groknight.bgTerminal,
+  },
+  agentLiveStatus: {
+    minHeight: 30,
+    marginBottom: 6,
+    paddingHorizontal: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  agentLiveStatusText: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textMuted,
+    fontSize: 10,
+    lineHeight: 14,
+    letterSpacing: 0.35,
   },
   cancelTurnButton: {
     minHeight: 36,
@@ -1452,9 +1581,10 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   composer: {
+    height: 46,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
+    paddingVertical: 3,
     paddingHorizontal: 10,
     borderRadius: 4,
     borderWidth: 1,
@@ -1474,12 +1604,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     color: groknight.textSecondary,
-    paddingVertical: 2,
-    maxHeight: 80,
+    height: 40,
+    paddingVertical: 0,
   },
   sendButton: {
-    width: 44,
-    height: 44,
+    width: 40,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
   },

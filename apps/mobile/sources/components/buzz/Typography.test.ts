@@ -56,6 +56,16 @@ const monoStyles = new Set([
   'openCornerText',
   'writePermissionTool',
   'writePermissionStatus',
+  'startWorkText',
+  'activityGlyph',
+  'activityTitle',
+  'activityStatus',
+  'activityDisclosure',
+  'activityOutput',
+  'terminalTurnGlyph',
+  'terminalTurnLabel',
+  'terminalTurnAuthor',
+  'agentLiveStatusText',
 ]);
 
 function styleDefinition(source: string, name: string): string {

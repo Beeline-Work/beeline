@@ -49,6 +49,9 @@ export async function publishEvent(
   opts: HttpBridgeOptions,
   event: NostrEvent,
 ): Promise<PublishResult> {
+  if (opts.identity && opts.identity.publicKey !== event.pubkey) {
+    throw new Error(`publishEvent kind=${event.kind} signer does not match relay auth identity`);
+  }
   const url = `${opts.baseUrl}/events`;
   const method = 'POST';
   const res = await fetch(url, {
@@ -70,6 +73,9 @@ export async function publishEvent(
     typeof body === 'object' && body !== null && 'accepted' in body
       ? Boolean((body as { accepted: unknown }).accepted)
       : true;
+  if (!accepted) {
+    throw new Error(`publishEvent kind=${event.kind} was not accepted: ${text}`);
+  }
   return { status: res.status, accepted, body };
 }
 

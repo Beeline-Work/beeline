@@ -252,5 +252,15 @@ describe('agent pairing and soul overlays', () => {
         },
       },
     ]);
+
+    const pictureOnlyProfile = await setAgentSoul(ctx(), communityId, agentIdentity.publicKey, {
+      name: 'Ada',
+      personality: 'Keeps the suite green and refactors mercilessly.',
+      intent: '',
+      avatarSeed: agentIdentity.publicKey,
+      avatar: 'https://relay.test/media/ada-updated.jpg',
+    });
+    expect(pictureOnlyProfile.intent).toBeUndefined();
+    expect(pictureOnlyProfile.avatar).toBe('https://relay.test/media/ada-updated.jpg');
   });
 });

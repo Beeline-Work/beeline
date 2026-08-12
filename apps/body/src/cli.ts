@@ -17,11 +17,8 @@
 import { dirname, resolve } from 'node:path';
 import { unlink } from 'node:fs/promises';
 import { loadBodyConfig, BASE_URL } from './config.js';
-import {
-  formatAgentCommand,
-  resolveAgentCommand,
-  type AgentKind,
-} from './agent-command.js';
+import { formatAgentCommand, type AgentKind } from './agent-command.js';
+import { selectPairAgentCommand } from './pair-agent-selection.js';
 import { Body } from './body.js';
 import { WorkspaceSupervisor } from './supervisor.js';
 import {
@@ -77,12 +74,16 @@ Usage:
                [--agent-command '<command> [args...]']
 
 Agent choices:
-  reference  Bundled buzz-agent (default; preserves existing behavior)
   codex      Operator's Codex through the codex-acp adapter
   claude     Operator's Claude Code through a Claude ACP adapter
   goose      Operator's Goose through its native 'goose acp' server
   pi         Operator's Pi through the pi-acp adapter
+  reference  Bundled buzz-agent (explicit fallback; requires an LLM key)
   custom     Explicit ACP command supplied with --agent-command
+
+With no --agent flag, beeline detects installed ACP-capable coding agents. It
+uses the only match automatically, or asks you to choose when several are found.
+Non-interactive sessions with several matches must pass --agent <name>.
 
 Examples:
   beeline pair BUZZ-XXXX-XXXX --agent codex
@@ -93,8 +94,8 @@ Examples:
 `);
 }
 
-function parsePairOptions(args: string[]): { kind: AgentKind; customCommand?: string } {
-  let kind: AgentKind = 'reference';
+function parsePairOptions(args: string[]): { kind?: AgentKind; customCommand?: string } {
+  let kind: AgentKind | undefined;
   let customCommand: string | undefined;
   for (let index = 2; index < args.length; index += 1) {
     const flag = args[index];
@@ -107,7 +108,10 @@ function parsePairOptions(args: string[]): { kind: AgentKind; customCommand?: st
     else customCommand = value;
     index += 1;
   }
-  return { kind, ...(customCommand !== undefined ? { customCommand } : {}) };
+  return {
+    ...(kind !== undefined ? { kind } : {}),
+    ...(customCommand !== undefined ? { customCommand } : {}),
+  };
 }
 
 async function assertRuntimeSafe(runtime: AgentRuntimeRecord): Promise<void> {
@@ -245,8 +249,8 @@ async function main(): Promise<void> {
     const code = args[1];
     if (!code) usage();
     const pairOptions = parsePairOptions(args);
-    const selectedAgent = resolveAgentCommand({
-      kind: pairOptions.kind,
+    const selectedAgent = await selectPairAgentCommand({
+      explicitKind: pairOptions.kind,
       customCommand: pairOptions.customCommand,
       env: process.env,
       cwd: process.cwd(),

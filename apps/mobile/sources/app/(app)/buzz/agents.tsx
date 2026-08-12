@@ -184,18 +184,49 @@ export default function BuzzAgents() {
   );
 
   const changeAvatar = useCallback(async () => {
-    if (!transport) return;
+    if (!transport || !communityId || !selected) return;
     setWorking(true);
     setError(null);
     try {
-      const nextAvatar = await pickAndUploadAvatar(await transport.ensureClient());
-      if (nextAvatar) setAvatarUrl(nextAvatar);
+      const client = await transport.ensureClient();
+      const nextAvatar = await pickAndUploadAvatar(client);
+      if (!nextAvatar) return;
+      await client.setAgentSoul(communityId, selected.pubkey, {
+        name,
+        personality,
+        intent,
+        avatarSeed: selected.pubkey,
+        avatar: nextAvatar,
+      });
+      setAvatarUrl(nextAvatar);
+      await refreshAgents(transport, communityId);
     } catch (caught) {
       setError(`Could not set Agent picture: ${String(caught)}`);
     } finally {
       setWorking(false);
     }
-  }, [transport]);
+  }, [communityId, intent, name, personality, refreshAgents, selected, transport]);
+
+  const resetAvatar = useCallback(async () => {
+    if (!transport || !communityId || !selected) return;
+    setWorking(true);
+    setError(null);
+    try {
+      const client = await transport.ensureClient();
+      await client.setAgentSoul(communityId, selected.pubkey, {
+        name,
+        personality,
+        intent,
+        avatarSeed: selected.pubkey,
+      });
+      setAvatarUrl(undefined);
+      await refreshAgents(transport, communityId);
+    } catch (caught) {
+      setError(`Could not restore generated Agent mark: ${String(caught)}`);
+    } finally {
+      setWorking(false);
+    }
+  }, [communityId, intent, name, personality, refreshAgents, selected, transport]);
 
   const handleUseDefault = useCallback(() => {
     if (!selected) return;
@@ -406,7 +437,7 @@ export default function BuzzAgents() {
                   <TouchableOpacity
                     style={styles.avatarReset}
                     disabled={working}
-                    onPress={() => setAvatarUrl(undefined)}
+                    onPress={() => void resetAvatar()}
                   >
                     <Text style={styles.avatarResetText}>Use generated mark</Text>
                   </TouchableOpacity>

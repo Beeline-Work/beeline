@@ -3,9 +3,7 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
-      "@/*": [
-        "./sources/*"
-      ]
+      "@/*": ["./sources/*"]
     },
     "jsx": "react-jsx",
     "esModuleInterop": true,
@@ -13,11 +11,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "target": "ES2022",
-    "lib": [
-      "ES2022",
-      "DOM",
-      "DOM.Iterable"
-    ],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
@@ -31,16 +25,12 @@
       }
     ]
   },
-  "include": [
-    "**/*.ts",
-    "**/*.tsx",
-    ".expo/types/**/*.ts",
-    "expo-env.d.ts",
-    "nativewind-env.d.ts"
-  ],
+  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts", "nativewind-env.d.ts"],
   "exclude": [
     "**/*.spec.ts",
     "**/*.test.ts",
+    "android",
+    "ios",
     "node_modules",
     "sources/trash/**/*",
     "vendor/happy-wire/**/*.test.ts"

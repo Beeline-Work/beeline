@@ -213,9 +213,9 @@ export async function resolveRepositoryRoom(
   if (pairedBy !== agentCtx.identity.publicKey) {
     await ensureRepositoryRoomAdmin(agentCtx, channelId, pairedBy, true);
   }
-  // The creating agent still owns the deterministic Room at this point. Give a
-  // distinct, machine-held gate key the only non-owner push-capable role before
-  // irreversibly projecting the autonomous agent down to plain member.
+  // Relay-backed callers provide a distinct gate key before the autonomous
+  // agent is projected down to member. User-hosted git origins intentionally
+  // omit it because delivery is governed by the user's ambient git authority.
   if (mergeWorkerPubkey && mergeWorkerPubkey !== agentCtx.identity.publicKey) {
     await setMemberRole(agentCtx, channelId, mergeWorkerPubkey, 'admin');
     await waitUntilRole(agentCtx, channelId, mergeWorkerPubkey, 'admin');

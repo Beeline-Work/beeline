@@ -27,6 +27,10 @@ export interface AuthenticatedHttpBridgeOptions extends HttpBridgeOptions {
 const IMMUTABLE_CREATE_CACHE_TTL_MS = 5 * 60_000;
 const CREATE_SCAN_CACHE_TTL_MS = 500;
 const QUERY_CACHE_MAX_ENTRIES = 200;
+const PUBLISH_MAX_ATTEMPTS = 4;
+const PUBLISH_ATTEMPT_TIMEOUT_MS = 5_000;
+const PUBLISH_RETRY_BASE_MS = 200;
+const PUBLISH_RETRY_MAX_MS = 1_000;
 const BATCHABLE_FILTER_KEYS = new Set([
   'ids',
   'authors',
@@ -219,7 +223,37 @@ function bridgeHeaders(
   return headers;
 }
 
-/** Publish a signed event via the HTTP bridge. Throws on non-2xx. */
+function publishRetryDelayMs(failedAttempt: number): number {
+  const exponential = Math.min(
+    PUBLISH_RETRY_MAX_MS,
+    PUBLISH_RETRY_BASE_MS * 2 ** (failedAttempt - 1),
+  );
+  return Math.round(exponential * (1 + Math.random() * 0.25));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function logPublishRetry(event: NostrEvent, attempt: number, delayMs: number, reason: string): void {
+  console.warn(
+    `[buzz-client] publishEvent kind=${event.kind} id=${event.id.slice(0, 12)} ` +
+      `attempt=${attempt}/${PUBLISH_MAX_ATTEMPTS} failed (${reason}); retrying in ${delayMs}ms`,
+  );
+}
+
+/**
+ * Publish a signed event via the HTTP bridge.
+ *
+ * A signed Nostr event has a stable id, so every retry sends the exact same
+ * event. Relay id deduplication makes an ambiguous response safe to retry.
+ * Only transport failures and HTTP 5xx responses are transient; 4xx responses
+ * and explicit negative acknowledgements fail immediately.
+ */
 export async function publishEvent(
   opts: HttpBridgeOptions,
   event: NostrEvent,
@@ -229,30 +263,63 @@ export async function publishEvent(
   }
   const url = `${opts.baseUrl}/events`;
   const method = 'POST';
-  const res = await fetch(url, {
-    method,
-    headers: bridgeHeaders(opts, event.pubkey, url, method),
-    body: JSON.stringify(event),
-  });
-  const text = await res.text();
-  let body: unknown = text;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    /* keep raw */
+  const requestBody = JSON.stringify(event);
+
+  for (let attempt = 1; attempt <= PUBLISH_MAX_ATTEMPTS; attempt++) {
+    let res: Response;
+    let text: string;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), PUBLISH_ATTEMPT_TIMEOUT_MS);
+    try {
+      res = await fetch(url, {
+        method,
+        headers: bridgeHeaders(opts, event.pubkey, url, method),
+        body: requestBody,
+        signal: controller.signal,
+      });
+      text = await res.text();
+    } catch (error) {
+      if (attempt === PUBLISH_MAX_ATTEMPTS) {
+        throw new Error(
+          `publishEvent kind=${event.kind} failed after ${attempt} attempts: ${errorMessage(error)}`,
+        );
+      }
+      const delayMs = publishRetryDelayMs(attempt);
+      logPublishRetry(event, attempt, delayMs, `network/timeout: ${errorMessage(error)}`);
+      await sleep(delayMs);
+      continue;
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (!res.ok) {
+      if (res.status >= 500 && res.status <= 599 && attempt < PUBLISH_MAX_ATTEMPTS) {
+        const delayMs = publishRetryDelayMs(attempt);
+        logPublishRetry(event, attempt, delayMs, `HTTP ${res.status}`);
+        await sleep(delayMs);
+        continue;
+      }
+      throw new Error(`publishEvent kind=${event.kind} failed: HTTP ${res.status} ${text}`);
+    }
+
+    let body: unknown = text;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      /* keep raw */
+    }
+    const accepted =
+      typeof body === 'object' && body !== null && 'accepted' in body
+        ? Boolean((body as { accepted: unknown }).accepted)
+        : true;
+    if (!accepted) {
+      throw new Error(`publishEvent kind=${event.kind} was not accepted: ${text}`);
+    }
+    invalidateQueryCache(opts, event.pubkey);
+    return { status: res.status, accepted, body };
   }
-  if (!res.ok) {
-    throw new Error(`publishEvent kind=${event.kind} failed: HTTP ${res.status} ${text}`);
-  }
-  const accepted =
-    typeof body === 'object' && body !== null && 'accepted' in body
-      ? Boolean((body as { accepted: unknown }).accepted)
-      : true;
-  if (!accepted) {
-    throw new Error(`publishEvent kind=${event.kind} was not accepted: ${text}`);
-  }
-  invalidateQueryCache(opts, event.pubkey);
-  return { status: res.status, accepted, body };
+
+  throw new Error(`publishEvent kind=${event.kind} exhausted retry attempts`);
 }
 
 /** Query events. `queryPubkey` is the reader identity (X-Pubkey). */

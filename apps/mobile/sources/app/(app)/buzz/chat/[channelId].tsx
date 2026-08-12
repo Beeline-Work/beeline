@@ -219,6 +219,10 @@ export default function BuzzChat() {
         ),
     [messages],
   );
+  const activeAgentTurn = useMemo(
+    () => [...messages].reverse().find((message) => message.agentTurn?.status === 'working'),
+    [messages],
+  );
 
   // Helper to add new messages, deduplicating by id.
   const addMessages = useCallback((newMsgs: ChatDisplayMessage[]) => {
@@ -876,11 +880,15 @@ export default function BuzzChat() {
           </View>
         ) : (
           <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-            {!parentChannelId && activeCorner?.corner && (
+            {!parentChannelId && (activeCorner?.corner || activeAgentTurn?.agentTurn) && (
               <View style={styles.agentLiveStatus} testID="agent-live-status">
                 <PixelLoader compact />
                 <Text style={styles.agentLiveStatusText}>
-                  {activeCorner.corner.status === 'starting' ? 'thinking…' : 'working…'}
+                  {activeAgentTurn?.agentTurn
+                    ? 'thinking…'
+                    : activeCorner?.corner?.status === 'starting'
+                      ? 'thinking…'
+                      : 'working…'}
                 </Text>
               </View>
             )}

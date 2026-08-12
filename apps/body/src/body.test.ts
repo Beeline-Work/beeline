@@ -17,9 +17,12 @@ import {
 import { AcpClient, isMutatingPermissionRequest } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
-import { postAgentMessage } from './activity.js';
+import { postAgentMessage, stripAgentReplyPreamble } from './activity.js';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe('mcp-inventory', () => {
   it('hasWriteTools returns false for empty list', () => {
@@ -312,7 +315,8 @@ describe('Room conversation and permission-gated work intent', () => {
     const prompt = vi.spyOn(client, 'sessionPrompt').mockResolvedValue({
       stopReason: 'end_turn',
       updates: [],
-      agentText: 'Doing well. What are you thinking about?',
+      agentText:
+        'Warning: Skill descriptions were shortened to fit the 2% skills context budget. Codex can still see every skill by reading its SKILL.md.\n\nDoing well. What are you thinking about?',
       toolCalls: [],
     });
     body.registerSession({
@@ -348,13 +352,21 @@ describe('Room conversation and permission-gated work intent', () => {
       600_000,
     );
     expect(body.listSessions()).toHaveLength(1);
-    expect(published).toHaveLength(1);
+    expect(published).toHaveLength(3);
     expect(published[0]).toMatchObject({
+      kind: 9,
+      content: expect.stringContaining('thinking'),
+    });
+    expect(published[0]!.tags).toContainEqual(['t', 'agent-turn']);
+    expect(published[0]!.tags).toContainEqual(['status', 'working']);
+    expect(published[1]).toMatchObject({
       kind: 9,
       content: 'Doing well. What are you thinking about?',
     });
-    expect(published[0]!.tags).toContainEqual(['h', 'parent-channel']);
-    expect(published[0]!.tags).toContainEqual(['t', 'agent-message']);
+    expect(published[1]!.tags).toContainEqual(['h', 'parent-channel']);
+    expect(published[1]!.tags).toContainEqual(['t', 'agent-message']);
+    expect(published[2]!.tags).toContainEqual(['t', 'agent-turn']);
+    expect(published[2]!.tags).toContainEqual(['status', 'complete']);
   });
 
   it('opens explicitly authorized corner work without prompting the read-only session', async () => {
@@ -529,6 +541,18 @@ describe('Room conversation and permission-gated work intent', () => {
 });
 
 describe('first-class assistant messages', () => {
+  it('strips only a leading Codex skill-budget warning', () => {
+    const warning =
+      'Warning: Skill descriptions were shortened to fit the 2% skills context budget. Codex can still see every skill by reading its SKILL.md.';
+    expect(stripAgentReplyPreamble(`\n${warning}\n\nThe real answer.`)).toBe('The real answer.');
+    expect(stripAgentReplyPreamble(`The real answer.\n\n${warning}`)).toBe(
+      `The real answer.\n\n${warning}`,
+    );
+    expect(stripAgentReplyPreamble('Warning: This API is deprecated.\nUse v2.')).toBe(
+      'Warning: This API is deprecated.\nUse v2.',
+    );
+  });
+
   it('omits cross-channel reply linkage for corner outcomes', async () => {
     const agent = newIdentity('corner-agent-message');
     const published: NostrEvent[] = [];

@@ -19,10 +19,13 @@ by projecting agent activity into the relay channel.
 ```
 
 - **TLC (read-only):** ACP session with **no MCP mounted** (`mcpServers: []`).
-  The agent can converse but has **no shell or file tools**.
+  The agent converses normally. Its first native mutating-tool permission
+  request becomes a signed Room prompt; message receipt itself never creates a
+  corner or worktree.
 - **Subchannel (edit):** ACP session with `buzz-dev-mcp` mounted, `cwd` set to
   a git worktree on a feature branch. Agent has full write access **only within
-  the worktree**.
+  the worktree**. A human member's ALLOW response creates this session and
+  replays the concrete request; DENY leaves the Room read-only.
 - **Workspace supervisor:** one `beeline pair` creates one durable agent
   identity. Humans explicitly invite that existing identity to repository Rooms;
   the supervisor discovers current role projections and starts or drains an
@@ -67,7 +70,7 @@ by projecting agent activity into the relay channel.
 | `BUZZY_BODY_SESSION_IDLE_MS` | No       | `300000`                | Idle time before process suspension  |
 | `BUZZ_BODY_KEY`              | No       | auto                    | Body operator Nostr nsec/hex         |
 | `BUZZ_AGENT_KEY`             | No       | generated at pair       | Existing agent Nostr nsec/hex        |
-| `BUZZY_BODY_AUTO_APPROVE`    | No       | `1`                     | Auto-approve ACP permission requests |
+| `BUZZY_BODY_AUTO_APPROVE`    | No       | `1`                     | Auto-approve permissions inside edit corners only |
 
 ### LLM credentials
 
@@ -205,7 +208,8 @@ const body = new Body(config, newIdentity('operator'), newIdentity('coding-agent
 // Provision read-only agent to a TLC
 const session = await body.provision(tlcChannelId);
 
-// Open an edit session under the TLC
+// Internal/diagnostic direct-open API. The supported Room flow opens this only
+// after the agent requests a mutating tool and a human allows it.
 const sub = await body.openSubchannel(tlcChannelId, {
   ownerHex: '...',
   repo: 'my-repo',
@@ -247,7 +251,12 @@ into the process environment.
 
 - **The boundary IS the MCP mount:** stock buzz-dev-mcp always registers `shell`,
   `str_replace`, etc. There is no env flag to disable write tools. The body
-  enforces read-only by **not mounting** the MCP at all (`mcpServers: []`).
+  enforces read-only by **not mounting** the MCP at all (`mcpServers: []`). A
+  Room ALLOW never approves the original tool against the paired checkout; it
+  opens an isolated worktree and replays the request in a new edit session.
+- **Permission intent is authority-free:** any current human Room member may
+  answer the prompt. The signed response is bound to the agent, permission UUID,
+  and original request event; it changes no Room role and grants no merge power.
 - **Driving buzz-agent directly:** buzz-acp auto-approves permissions and does
   not expose `session/update` to the relay. The body owns the ACP bridge so it
   can enforce the tool boundary and project activity.

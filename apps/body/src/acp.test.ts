@@ -93,6 +93,7 @@ import { createInterface } from 'node:readline';
 if (JSON.stringify(process.argv.slice(2)) !== JSON.stringify(['acp', '--profile', 'operator'])) {
   process.exit(64);
 }
+
 const lines = createInterface({ input: process.stdin });
 const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
 let promptId;
@@ -137,7 +138,87 @@ lines.on('line', (line) => {
   return binary;
 }
 
+async function fakePermissionAgent(): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-permission-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'fake-permission-agent.mjs');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+
+const lines = createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+let promptId;
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'permission-session' } });
+  } else if (message.method === 'session/prompt') {
+    promptId = message.id;
+    send({
+      jsonrpc: '2.0',
+      id: 99,
+      method: 'session/request_permission',
+      params: {
+        sessionId: 'permission-session',
+        toolCall: { toolCallId: 'tool-1', kind: 'edit', title: 'str_replace README.md' },
+        options: [
+          { kind: 'allow_once', optionId: 'allow' },
+          { kind: 'reject_once', optionId: 'reject' },
+        ],
+      },
+    });
+  } else if (message.id === 99 && message.result) {
+    send({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'permission-session',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: message.result.outcome.optionId },
+        },
+      },
+    });
+    send({ jsonrpc: '2.0', id: promptId, result: { stopReason: 'end_turn' } });
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
 describe('AcpClient live steering', () => {
+  it('lets the host intercept and reject a mutating permission request', async () => {
+    const requests: unknown[] = [];
+    const client = new AcpClient({
+      agentBinary: await fakePermissionAgent(),
+      agentEnv: {},
+      autoApprovePermissions: false,
+      permissionHandler: async (request) => {
+        requests.push(request);
+        return 'reject';
+      },
+    });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const result = await client.sessionPrompt(sessionId, 'Edit README.md', 5_000);
+      expect(requests).toMatchObject([
+        { toolCall: { kind: 'edit', title: 'str_replace README.md' } },
+      ]);
+      expect(result.agentText).toBe('reject');
+    } finally {
+      await client.stop();
+    }
+  });
+
   it('spawns an ACP command with its configured arguments', async () => {
     const client = new AcpClient({
       agentCommand: await fakeArgumentAgent(),

@@ -54,7 +54,8 @@ const monoStyles = new Set([
   'cornerStatus',
   'cornerStatusLabel',
   'openCornerText',
-  'startWorkText',
+  'writePermissionTool',
+  'writePermissionStatus',
 ]);
 
 function styleDefinition(source: string, name: string): string {

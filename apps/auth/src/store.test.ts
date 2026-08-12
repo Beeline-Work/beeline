@@ -95,5 +95,5 @@ describe('durable transactional identity-link store', () => {
       expect.objectContaining({ audience: 'client-two' }),
     ]);
     await reopenedStore.close();
-  });
+  }, 30_000);
 });

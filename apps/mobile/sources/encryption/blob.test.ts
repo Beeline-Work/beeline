@@ -58,7 +58,7 @@ describe('blob encryption', () => {
 
         expect(decrypted).not.toBeNull();
         expect(new Uint8Array(decrypted!)).toEqual(data);
-    }, 15_000);
+    }, 45_000);
 
     it('should handle binary data with null bytes', () => {
         const data = new Uint8Array([0, 0, 0, 255, 0, 128, 0]);

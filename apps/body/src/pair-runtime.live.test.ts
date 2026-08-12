@@ -22,13 +22,13 @@ import {
   resolveChannelRole,
 } from '@beeline/gate';
 import { createBuzzClient, repositoryRoomId } from '@beeline/buzz-client';
+import { buildAgentEnv, hasLlmCredentials, resolveMcpBinary } from './config.js';
 import {
-  buildAgentEnv,
-  hasLlmCredentials,
-  resolveBinaries,
-  resolveMcpBinary,
-} from './config.js';
-import { resolveAgentCommand, type AgentKind } from './agent-command.js';
+  detectInstalledAgentCommands,
+  resolveAgentCommand,
+  type AgentCommand,
+  type AgentKind,
+} from './agent-command.js';
 import {
   findRuntimeConfigPaths,
   inspectLocalRepository,
@@ -44,6 +44,12 @@ let protectedPushCheckout = '';
 let daemonPid: number | undefined;
 let daemonLog = '';
 const selectedAgentKind = process.env.BUZZY_LIVE_AGENT_KIND as AgentKind | undefined;
+
+function availableLiveAgent(): AgentCommand | undefined {
+  if (selectedAgentKind) return resolveAgentCommand({ kind: selectedAgentKind });
+  const detected = detectInstalledAgentCommands();
+  return detected.length === 1 ? detected[0] : undefined;
+}
 
 async function reachable(): Promise<boolean> {
   try {
@@ -68,13 +74,10 @@ async function waitUntil(check: () => Promise<boolean>, timeoutMs = 180_000): Pr
 
 function runtimeAvailable(): boolean {
   try {
-    if (selectedAgentKind) {
-      resolveAgentCommand({ kind: selectedAgentKind });
-      resolveMcpBinary();
-      if (selectedAgentKind !== 'reference') return true;
-    } else {
-      resolveBinaries();
-    }
+    const agent = availableLiveAgent();
+    if (!agent) return false;
+    resolveMcpBinary();
+    if (agent.kind !== 'reference') return true;
     return hasLlmCredentials(
       buildAgentEnv(process.env, process.env.BUZZY_BODY_LLM_FILE ?? undefined),
     );
@@ -108,7 +111,8 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
   it('pairs inside the repo and produces a reviewable feature branch there', async () => {
     const marker = `pair-runtime-${Date.now()}`;
     const repo = marker;
-    const exerciseSecondRoom = !selectedAgentKind || selectedAgentKind === 'reference';
+    const liveAgent = availableLiveAgent()!;
+    const exerciseSecondRoom = liveAgent.kind === 'reference';
     const communityId = await createCommunity(human, `${marker}-workspace`);
     const humanClient = createBuzzClient({ baseUrl: BASE_URL, identity: human });
     const pairing = await humanClient.createAgentPairingCode(communityId);
@@ -132,37 +136,40 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
     const seed = gitAuthed(checkout, human, human.publicKey, repo, ['push', 'origin', 'main']);
     if (!seed.ok) throw new Error(`seed push failed: ${seed.stderr}`);
 
-    const binaries = selectedAgentKind
-      ? {
-          agentBinary: resolveAgentCommand({ kind: selectedAgentKind }).command,
-          mcpBinary: resolveMcpBinary(),
-        }
-      : resolveBinaries();
-    const command = spawnSync(process.execPath, [
-      resolve('dist/cli.js'),
-      'pair',
-      pairing.code,
-      ...(selectedAgentKind ? ['--agent', selectedAgentKind] : []),
-    ], {
-      cwd: checkout,
-      env: {
-        ...process.env,
-        BUZZ_AGENT_BIN: binaries.agentBinary,
-        BUZZ_DEV_MCP_BIN: binaries.mcpBinary,
+    const binaries = {
+      agentBinary: liveAgent.command,
+      mcpBinary: resolveMcpBinary(),
+    };
+    const command = spawnSync(
+      process.execPath,
+      [
+        resolve('dist/cli.js'),
+        'pair',
+        pairing.code,
+        ...(selectedAgentKind ? ['--agent', selectedAgentKind] : []),
+      ],
+      {
+        cwd: checkout,
+        env: {
+          ...process.env,
+          BUZZ_AGENT_BIN: binaries.agentBinary,
+          BUZZ_DEV_MCP_BIN: binaries.mcpBinary,
+        },
+        encoding: 'utf8',
+        timeout: 60_000,
       },
-      encoding: 'utf8',
-      timeout: 60_000,
-    });
+    );
     expect(command.status, command.stderr).toBe(0);
     expect(command.stdout).toContain(`[buzz] room: ${roomId}`);
-    if (selectedAgentKind) {
-      expect(command.stdout).toContain(`[body] agent binary: ${selectedAgentKind}:`);
+    if (!selectedAgentKind) {
+      expect(command.stdout).toContain(`[buzz] using ${liveAgent.kind} (auto-detected)`);
     }
+    expect(command.stdout).toContain(`[body] agent binary: ${liveAgent.kind}:`);
 
     const configs = await findRuntimeConfigPaths(checkout);
     expect(configs).toHaveLength(1);
     const runtime = await readRuntimeRecord(configs[0]!);
-    if (selectedAgentKind) expect(runtime.agentKind).toBe(selectedAgentKind);
+    expect(runtime.agentKind).toBe(liveAgent.kind);
     const runtimeRoom = runtime.rooms.find((room) => room.channelId === roomId)!;
     daemonLog = resolve(dirname(configs[0]!), 'daemon.log');
     daemonPid = Number((await readFile(resolve(configs[0]!, '..', 'daemon.pid'), 'utf8')).trim());
@@ -413,9 +420,7 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
     // committing. Other ACP agents may finish the original request first, so their
     // portable contract is the original requested artifact and committed feature tip.
     const firstProofFile =
-      selectedAgentKind && selectedAgentKind !== 'reference'
-        ? 'PAIR-RUNTIME-PROOF.txt'
-        : 'STEERED.txt';
+      liveAgent.kind !== 'reference' ? 'PAIR-RUNTIME-PROOF.txt' : 'STEERED.txt';
     expect(git(checkout, ['show', `${tip}:${firstProofFile}`]).stdout).toContain(marker);
     console.log(
       `[live-pair-runtime] first-corner=COMMITTED branch=${feature} tip=${tip} file=${firstProofFile}`,
@@ -578,9 +583,9 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
 
 if (!live) {
   describe('live one-command pair → Room → branch (prerequisites)', () => {
-    it('SKIPPED — requires relay, local buzz-agent binaries, and operator LLM env', () => {
+    it('SKIPPED — requires relay and exactly one available ACP agent (plus LLM env for reference)', () => {
       console.warn(
-        'Start with `npm run stack:up` and provide the documented local LLM environment.',
+        'Start the relay and install/select a documented ACP agent; reference also needs LLM credentials.',
       );
     });
   });

@@ -1,15 +1,10 @@
 import { accessSync, constants, existsSync } from 'node:fs';
 import { delimiter, isAbsolute, resolve } from 'node:path';
 
-export const AGENT_KINDS = [
-  'codex',
-  'claude',
-  'goose',
-  'pi',
-  'reference',
-  'custom',
-] as const;
+export const AGENT_KINDS = ['codex', 'claude', 'goose', 'pi', 'reference', 'custom'] as const;
 export type AgentKind = (typeof AGENT_KINDS)[number];
+
+export const AUTO_DETECT_AGENT_KINDS = ['codex', 'claude', 'goose', 'pi'] as const;
 
 export interface AgentCommand {
   kind: AgentKind;
@@ -207,16 +202,34 @@ export function resolveAgentCommand(opts: {
         cwd,
         `Reference agent not found or not executable: ${configured}`,
       )
-    : firstExisting([
+    : (firstExisting([
         resolve(cwd, '.scratch-target', 'debug', 'buzz-agent'),
         resolve(cwd, '..', '..', '.scratch-target', 'debug', 'buzz-agent'),
-      ]) ?? executableOnPath('buzz-agent', env);
+      ]) ?? executableOnPath('buzz-agent', env));
   if (!command) {
     throw new Error(
       'buzz-agent binary not found. Build with: cargo build -p buzz-agent -p buzz-dev-mcp --target-dir .scratch-target (from block-buzz), or set BUZZ_AGENT_BIN',
     );
   }
   return { kind: typedKind, command, args: [] };
+}
+
+/** Resolve every installed user-owned coding agent using the preset's full ACP checks. */
+export function detectInstalledAgentCommands(
+  opts: {
+    env?: NodeJS.ProcessEnv;
+    cwd?: string;
+  } = {},
+): AgentCommand[] {
+  const detected: AgentCommand[] = [];
+  for (const kind of AUTO_DETECT_AGENT_KINDS) {
+    try {
+      detected.push(resolveAgentCommand({ kind, env: opts.env, cwd: opts.cwd }));
+    } catch {
+      // A preset is detectable only when its complete harness + ACP resolution succeeds.
+    }
+  }
+  return detected;
 }
 
 function displayWord(value: string): string {

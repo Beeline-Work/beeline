@@ -55,19 +55,19 @@ by projecting agent activity into the relay channel.
 
 ## Configuration (env vars)
 
-| Variable                     | Required | Default            | Description                          |
-| ---------------------------- | -------- | ------------------ | ------------------------------------ |
-| `BUZZ_AGENT_BIN`             | No       | auto-detect        | Reference `buzz-agent` override      |
-| `BUZZ_DEV_MCP_BIN`           | No       | auto-detect        | Path to `buzz-dev-mcp` binary        |
-| `BUZZY_RELAY_HOST`           | No       | `relay.buzzrouter.com` | Relay HTTP/WS host                   |
-| `BUZZY_RELAY_SCHEME`         | No       | `https`            | Relay scheme                         |
-| `BUZZY_BODY_WORKSPACE`       | No       | `./body-workspace` | Agent workspace root                 |
-| `BUZZY_BODY_LLM_FILE`        | No       | —                  | Path to LLM credentials env file     |
-| `BUZZY_BODY_MAX_SESSIONS`    | No       | `4`                | Maximum live ACP processes           |
-| `BUZZY_BODY_SESSION_IDLE_MS` | No       | `300000`           | Idle time before process suspension  |
-| `BUZZ_BODY_KEY`              | No       | auto               | Body operator Nostr nsec/hex         |
-| `BUZZ_AGENT_KEY`             | No       | generated at pair  | Existing agent Nostr nsec/hex        |
-| `BUZZY_BODY_AUTO_APPROVE`    | No       | `1`                | Auto-approve ACP permission requests |
+| Variable                     | Required | Default                 | Description                          |
+| ---------------------------- | -------- | ----------------------- | ------------------------------------ |
+| `BUZZ_AGENT_BIN`             | No       | explicit reference only | Reference `buzz-agent` override      |
+| `BUZZ_DEV_MCP_BIN`           | No       | auto-detect             | Path to `buzz-dev-mcp` binary        |
+| `BUZZY_RELAY_HOST`           | No       | `relay.buzzrouter.com`  | Relay HTTP/WS host                   |
+| `BUZZY_RELAY_SCHEME`         | No       | `https`                 | Relay scheme                         |
+| `BUZZY_BODY_WORKSPACE`       | No       | `./body-workspace`      | Agent workspace root                 |
+| `BUZZY_BODY_LLM_FILE`        | No       | —                       | Path to LLM credentials env file     |
+| `BUZZY_BODY_MAX_SESSIONS`    | No       | `4`                     | Maximum live ACP processes           |
+| `BUZZY_BODY_SESSION_IDLE_MS` | No       | `300000`                | Idle time before process suspension  |
+| `BUZZ_BODY_KEY`              | No       | auto                    | Body operator Nostr nsec/hex         |
+| `BUZZ_AGENT_KEY`             | No       | generated at pair       | Existing agent Nostr nsec/hex        |
+| `BUZZY_BODY_AUTO_APPROVE`    | No       | `1`                     | Auto-approve ACP permission requests |
 
 ### LLM credentials
 
@@ -102,8 +102,13 @@ on `PATH`; the installer prints the exact export when it is not.
 # Supported user path: run once from the repository the agent will work in.
 # The command redeems the Workspace code, resolves or creates the repo's Room,
 # stores machine-only keys under .git, and launches the durable daemon.
-BUZZY_BODY_LLM_FILE=/path/to/local-model.env \
-  beeline pair BUZZ-XXXX-XXXX
+# With no --agent flag, Beeline detects ACP-capable Codex, Claude Code,
+# Goose, and Pi installations. One match is selected automatically; several
+# matches produce a numbered choice on an interactive terminal.
+beeline pair BUZZ-XXXX-XXXX
+
+# Piped/non-interactive sessions with several matches must choose explicitly.
+beeline pair BUZZ-XXXX-XXXX --agent codex
 
 # Use the operator's own funded Codex configuration through the official ACP
 # adapter. Install once with:
@@ -120,6 +125,11 @@ beeline pair BUZZ-XXXX-XXXX --agent goose
 # Pi uses the registry-listed pi-acp adapter:
 #   npm install -g @mariozechner/pi-coding-agent pi-acp
 beeline pair BUZZ-XXXX-XXXX --agent pi
+
+# The bundled reference agent is an explicit fallback for development and
+# requires an LLM key/configuration from the operator.
+BUZZY_BODY_LLM_FILE=/path/to/local-model.env \
+  beeline pair BUZZ-XXXX-XXXX --agent reference
 
 # Any ACP-over-stdio server can be selected explicitly. The command is parsed
 # into argv and spawned directly; no shell expansion is performed.
@@ -174,7 +184,8 @@ relaunched with `beeline start`. A restart rediscovers Rooms, restores corner
 worktrees and durable inboxes, replays isolated conversation history into fresh
 ACP processes, and resumes undelivered input without duplicating handled events.
 
-The coding model always comes from the operator's local environment or
+The coding model always comes from the selected operator-owned coding agent. The
+explicit `reference` fallback instead uses the operator's local environment or
 `BUZZY_BODY_LLM_FILE`; pairing neither requests nor stores a Beeline LLM key.
 Souls are separate, human-signed persona overlays. Their name, personality, and
 intent are passed directly into ACP session instructions; they are never written

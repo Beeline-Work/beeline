@@ -7,6 +7,7 @@ import { hasWriteTools, inventoryForMcpServers } from './mcp-inventory.js';
 import { parseEnvFile, hasLlmCredentials } from './config.js';
 import {
   AGENT_REQUEST_TAG,
+  assertSubchannelArchiveTarget,
   Body,
   cornerNameForIntent,
   isChannelAddressedMessage,
@@ -147,6 +148,48 @@ describe('agent identity boundary', () => {
       body.assertRepositorySafety(roomId, { repo: 'local-repo', localOnly: true }),
     ).resolves.toBeUndefined();
     expect(authEvents.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('corner archive boundary', () => {
+  const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+  const role = newIdentity('corner-owner');
+
+  function info(options: { channelId?: string; parentChannelId?: string } = {}) {
+    return {
+      subchannelId: 'corner',
+      worktreePath: '/tmp/corner',
+      featureBranch: 'feature/corner',
+      role,
+      session: {
+        channelId: options.channelId ?? 'corner',
+        sessionId: 'session',
+        client,
+        mode: 'edit' as const,
+        ...(options.parentChannelId ? { parentChannelId: options.parentChannelId } : {}),
+      },
+      lastPolledAt: 0,
+      archived: false,
+    };
+  }
+
+  it('accepts only the exact relay-linked corner identity', () => {
+    expect(() =>
+      assertSubchannelArchiveTarget(info({ parentChannelId: 'room' }), 'room'),
+    ).not.toThrow();
+  });
+
+  it('refuses top-level Rooms and mismatched session identities', () => {
+    expect(() => assertSubchannelArchiveTarget(info(), null)).toThrow('non-corner');
+    expect(() =>
+      assertSubchannelArchiveTarget(
+        info({ channelId: 'room', parentChannelId: 'room' }),
+        'room',
+      ),
+    ).toThrow('non-corner');
+    expect(() =>
+      assertSubchannelArchiveTarget(info({ parentChannelId: 'room' }), 'other-room'),
+    ).toThrow('non-corner');
   });
 });
 

@@ -219,13 +219,37 @@ export function isChannelAddressedMessage(
   return participants.size === 1 && participants.has(event.pubkey);
 }
 
-/** @deprecated Work is authorized only by a response to an agent write request. */
+/**
+ * Whether an addressed Room message explicitly authorizes opening a corner.
+ *
+ * This intentionally recognizes only direct corner commands. A vague request
+ * to implement something still enters the read-only Room session, where the
+ * first mutating tool request uses the existing human ALLOW/DENY boundary.
+ */
 export function isChannelWorkIntent(
-  _event: NostrEvent,
-  _agentPubkey: string,
-  _roomParticipants: readonly string[] = [],
+  event: NostrEvent,
+  agentPubkey: string,
+  roomParticipants: readonly string[] = [],
 ): boolean {
-  return false;
+  if (!isChannelAddressedMessage(event, agentPubkey, roomParticipants)) return false;
+
+  const content = event.content
+    .normalize('NFKC')
+    .replace(/\s+/g, ' ')
+    .trim()
+    // Addressing is already authenticated through the signed `p` tag. Ignore
+    // a leading display-name mention when deciding whether the rest is a command.
+    .replace(/^@[\p{L}\p{N}_-]+[,:]?\s+/u, '');
+  const requestLead = String.raw`(?:(?:please|kindly)\s+|(?:can|could|would|will)\s+you\s+|i\s+(?:want|need)\s+you\s+to\s+|i(?:['’]d| would)\s+like\s+you\s+to\s+)?`;
+  const directCornerCommand = new RegExp(
+    String.raw`^${requestLead}(?:open|create|launch|start)\s+(?:up\s+)?(?:a\s+|the\s+)?(?:new\s+)?corner\b`,
+    'i',
+  );
+  const startWorkInCornerCommand = new RegExp(
+    String.raw`^${requestLead}start\s+(?:(?:the|this|that)\s+)?(?:work|working)\b.{0,200}\b(?:in|inside|within)\s+(?:a\s+|the\s+)?(?:new\s+)?corner\b`,
+    'i',
+  );
+  return directCornerCommand.test(content) || startWorkInCornerCommand.test(content);
 }
 
 /** @deprecated Use isChannelWorkIntent; retained for wire/test compatibility. */
@@ -718,7 +742,7 @@ export class Body {
     return info;
   }
 
-  /** Poll a Room for addressed conversation. Message receipt never opens work. */
+  /** Poll a Room for addressed conversation and explicit corner commands. */
   async pollChannelRequests(tlcChannelId: string, boundRepo: BoundRepo): Promise<number> {
     const durableCursor = await this.durableState.cursor(tlcChannelId);
     const since = Math.max(this.requestCursors.get(tlcChannelId) ?? 0, durableCursor.createdAt);
@@ -796,7 +820,16 @@ export class Body {
           content: event.content.trim(),
           createdAt: event.created_at,
         };
-        if (await this.replyInRoom(tlcChannelId, boundRepo, request)) opened++;
+        if (
+          await this.replyInRoom(
+            tlcChannelId,
+            boundRepo,
+            request,
+            isChannelWorkIntent(event, this.agentIdentity.publicKey, roomParticipants),
+          )
+        ) {
+          opened++;
+        }
         this.processedRequestIds.add(event.id);
         await this.durableState.delivered(tlcChannelId, event.id);
       } catch (error) {
@@ -814,12 +847,8 @@ export class Body {
     tlcChannelId: string,
     boundRepo: BoundRepo,
     request: ChannelTaskRequest,
+    explicitCornerWork = false,
   ): Promise<boolean> {
-    const session =
-      this.sessions.get(tlcChannelId) ?? (await this.provision(tlcChannelId, boundRepo));
-    if (session.mode !== 'readonly') {
-      throw new Error('Room conversation requires a read-only ACP session');
-    }
     const prompt = `[Member ${request.authorPubkey.slice(0, 12)}]: ${request.content}`;
     await this.durableState.appendConversation(tlcChannelId, {
       role: 'user',
@@ -827,6 +856,17 @@ export class Body {
       eventId: request.eventId,
       at: new Date().toISOString(),
     });
+    if (explicitCornerWork) {
+      const info = await this.openSubchannel(tlcChannelId, boundRepo, request.content, request);
+      this.startAgentTask(info, request.content);
+      return true;
+    }
+
+    const session =
+      this.sessions.get(tlcChannelId) ?? (await this.provision(tlcChannelId, boundRepo));
+    if (session.mode !== 'readonly') {
+      throw new Error('Room conversation requires a read-only ACP session');
+    }
     const turn: PendingRoomTurn = {
       request,
       boundRepo,

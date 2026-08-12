@@ -888,6 +888,7 @@ export class Body {
     const parentId = info.session.parentChannelId;
     if (!parentId) return Promise.resolve();
     const boundRepo = info.boundRepo;
+    const wireStatus = status === 'starting' ? 'open' : status;
     return postControlMessage(parentId, this.agentIdentity, message, [
       ['subchannel', info.subchannelId],
       ['session', info.session.logicalSessionId ?? info.session.sessionId],
@@ -895,7 +896,8 @@ export class Body {
       ['feature', info.featureBranch],
       ['branch', boundRepo?.targetBranch ?? 'refs/heads/main'],
       ['mode', 'edit'],
-      ['status', status],
+      ['status', wireStatus],
+      ['display-status', status],
       ...(boundRepo ? [['repo', this.repoId(boundRepo)]] : []),
       ...(info.request ? [['request', info.request.eventId]] : []),
     ]);

@@ -35,7 +35,6 @@ import {
   readRuntimeRecord,
   runtimeIdentity,
 } from './runtime.js';
-import { AGENT_REQUEST_TAG } from './body.js';
 
 const human = newIdentity('pair-runtime-human');
 let checkout = '';
@@ -298,24 +297,18 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
       );
     }
 
-    await humanClient.messageSubmit(
+    await humanClient.startAgentWork(
       roomId,
       exerciseSecondRoom
         ? `Create PAIR-RUNTIME-PROOF.txt containing ${marker}. Before committing, run sleep 12 so a human can steer this active turn.`
         : `Create PAIR-RUNTIME-PROOF.txt containing ${marker}, then commit it.`,
-      {
-        mentionAgent: runtime.agent.publicKey,
-        extraTags: [['t', AGENT_REQUEST_TAG]],
-      },
+      runtime.agent.publicKey,
     );
     if (exerciseSecondRoom) {
-      await humanClient.messageSubmit(
+      await humanClient.startAgentWork(
         secondRoomId,
         `Create SECOND-ROOM-PROOF.txt containing ${marker}, then commit it.`,
-        {
-          mentionAgent: runtime.agent.publicKey,
-          extraTags: [['t', AGENT_REQUEST_TAG]],
-        },
+        runtime.agent.publicKey,
       );
     }
 

@@ -181,7 +181,7 @@ describe('Room-scoped Workspace membership', () => {
       name: 'operator',
     } as Identity;
     const client = {
-      messageSubmit: vi.fn(async () => ({ id: 'work-event' })),
+      startAgentWork: vi.fn(async () => ({ id: 'work-event' })),
     };
     const transport = new BuzzRigTransport(identity, 'https://relay.test');
     (transport as unknown as { client: typeof client }).client = client;
@@ -189,10 +189,11 @@ describe('Room-scoped Workspace membership', () => {
     await expect(
       transport.messageSubmitWorkIntent('room-1', 'Refactor the scheduler', 'agent-pubkey'),
     ).resolves.toBe('work-event');
-    expect(client.messageSubmit).toHaveBeenCalledWith('room-1', 'Refactor the scheduler', {
-      mentionAgent: 'agent-pubkey',
-      extraTags: [['t', 'buzz-agent-request']],
-    });
+    expect(client.startAgentWork).toHaveBeenCalledWith(
+      'room-1',
+      'Refactor the scheduler',
+      'agent-pubkey',
+    );
   });
 
   it('routes existing people through the member-only SDK attachment', async () => {

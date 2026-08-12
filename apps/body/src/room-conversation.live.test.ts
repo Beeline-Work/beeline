@@ -12,7 +12,7 @@ import {
   setMemberRole,
 } from '@beeline/gate';
 import { createBuzzClient } from '@beeline/buzz-client';
-import { AGENT_REQUEST_TAG, Body } from './body.js';
+import { Body } from './body.js';
 import { loadBodyConfig } from './config.js';
 import { resolveAgentCommand, type AgentKind } from './agent-command.js';
 
@@ -163,13 +163,10 @@ describe.runIf(live)('production Room conversation contract', () => {
   }, 180_000);
 
   it('opens exactly one explicit work corner and mirrors ready and delivery failure', async () => {
-    const request = await client.messageSubmit(
+    const request = await client.startAgentWork(
       roomId,
       'Create LIVE-WORK.txt containing room-work-proof and commit it.',
-      {
-        mentionAgent: agent.publicKey,
-        extraTags: [['t', AGENT_REQUEST_TAG]],
-      },
+      agent.publicKey,
     );
     expect(await body!.pollChannelRequests(roomId, binding())).toBe(1);
     expect(await client.listSubchannels(roomId)).toHaveLength(1);
@@ -187,13 +184,10 @@ describe.runIf(live)('production Room conversation contract', () => {
     await mkdir(resolve(remote, 'hooks'), { recursive: true });
     await writeFile(hook, '#!/bin/sh\necho delivery-rejected >&2\nexit 1\n');
     await chmod(hook, 0o755);
-    const failure = await client.messageSubmit(
+    const failure = await client.startAgentWork(
       roomId,
       'Create LIVE-FAILURE.txt containing delivery-failure-proof and commit it.',
-      {
-        mentionAgent: agent.publicKey,
-        extraTags: [['t', AGENT_REQUEST_TAG]],
-      },
+      agent.publicKey,
     );
     expect(await body!.pollChannelRequests(roomId, binding())).toBe(1);
     expect(await client.listSubchannels(roomId)).toHaveLength(2);

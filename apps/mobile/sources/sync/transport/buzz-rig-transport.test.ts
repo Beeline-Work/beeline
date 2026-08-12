@@ -566,3 +566,72 @@ describe('Buzz corner lifecycle projection', () => {
     ]);
   });
 });
+
+describe('Buzz channel archive scope', () => {
+  const identity = {
+    publicKey: 'a'.repeat(64),
+    secretKey: new Uint8Array(32).fill(1),
+    name: 'reviewer',
+  } as Identity;
+
+  function archivedControl(channelId: string, subchannelId?: string) {
+    const tags = [
+      ['h', channelId],
+      ['t', 'body-control'],
+      ['status', 'archived'],
+      ...(subchannelId ? [['subchannel', subchannelId]] : []),
+    ];
+    const raw = {
+      id: `${channelId}-${subchannelId ?? 'self'}-archived`,
+      pubkey: 'd'.repeat(64),
+      created_at: 42,
+      kind: 9,
+      tags,
+      content: 'archived',
+      sig: 'e'.repeat(128),
+    };
+    return {
+      kind: 'message' as const,
+      event: raw,
+      channelId,
+      content: raw.content,
+      pubkey: raw.pubkey,
+      createdAt: raw.created_at,
+      id: raw.id,
+    };
+  }
+
+  function transportWithArchiveState(options: {
+    metadataArchived?: boolean;
+    parentChannelId?: string | null;
+    events?: ReturnType<typeof archivedControl>[];
+  }) {
+    const client = {
+      getChannelMetadata: vi.fn(async () => ({ archived: options.metadataArchived ?? false })),
+      getParentChannelId: vi.fn(async () => options.parentChannelId ?? null),
+      sessionEventsBackfill: vi.fn(async () => options.events ?? []),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+    return transport;
+  }
+
+  it('does not archive a Room when its merged corner is archived', async () => {
+    const transport = transportWithArchiveState({
+      events: [archivedControl('room', 'corner')],
+    });
+
+    await expect(transport.isChannelArchived('room')).resolves.toBe(false);
+  });
+
+  it('still recognizes metadata and self-scoped archive state', async () => {
+    const metadataArchived = transportWithArchiveState({ metadataArchived: true });
+    const selfScoped = transportWithArchiveState({
+      parentChannelId: 'room',
+      events: [archivedControl('corner')],
+    });
+
+    await expect(metadataArchived.isChannelArchived('room')).resolves.toBe(true);
+    await expect(selfScoped.isChannelArchived('corner')).resolves.toBe(true);
+  });
+});

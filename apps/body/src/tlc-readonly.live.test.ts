@@ -18,8 +18,12 @@ import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { Body } from './body.js';
-import { loadBodyConfig, hasLlmCredentials } from './config.js';
 import { AcpClient } from './acp.js';
+import {
+  hasLiveAgent,
+  liveAcpClientOptions,
+  loadLiveBodyConfig,
+} from './live-test-agent.js';
 import { inventoryForMcpServers, hasWriteTools, callMcpTool } from './mcp-inventory.js';
 import {
   newIdentity,
@@ -60,14 +64,14 @@ describe('TLC read-only boundary', () => {
       return;
     }
 
-    // Check LLM credentials.
-    const config = loadBodyConfig({
+    // Check the selected live ACP runtime.
+    const config = loadLiveBodyConfig({
       workspaceRoot: '/tmp/buzzy-body-test',
       llmEnvFile: LLM_ENV_FILE,
     });
 
-    if (!hasLlmCredentials(config.agentEnv)) {
-      console.warn('[tlc-readonly] no LLM credentials — soft-skipping');
+    if (!hasLiveAgent(config)) {
+      console.warn('[tlc-readonly] no live ACP runtime — soft-skipping');
       return;
     }
 
@@ -151,16 +155,12 @@ describe('TLC read-only boundary', () => {
     async () => {
       if (ctx.skipped) return;
 
-      const config = loadBodyConfig({
+      const config = loadLiveBodyConfig({
         workspaceRoot: ctx.testDir,
         llmEnvFile: LLM_ENV_FILE,
       });
 
-      const editClient = new AcpClient({
-        agentBinary: config.agentBinary,
-        agentEnv: config.agentEnv,
-        autoApprovePermissions: true,
-      });
+      const editClient = new AcpClient(liveAcpClientOptions(config));
 
       await editClient.start();
 

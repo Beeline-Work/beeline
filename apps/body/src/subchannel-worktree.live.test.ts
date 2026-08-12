@@ -18,8 +18,12 @@ import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { Body } from './body.js';
-import { loadBodyConfig, hasLlmCredentials } from './config.js';
 import { AcpClient } from './acp.js';
+import {
+  hasLiveAgent,
+  liveAcpClientOptions,
+  loadLiveBodyConfig,
+} from './live-test-agent.js';
 import { inventoryForMcpServers, hasWriteTools } from './mcp-inventory.js';
 import {
   newIdentity,
@@ -54,13 +58,13 @@ describe('subchannel worktree boundary', () => {
       return; // soft skip — relay unreachable
     }
 
-    const config = loadBodyConfig({
+    const config = loadLiveBodyConfig({
       workspaceRoot: '/tmp/buzzy-body-test',
       llmEnvFile: LLM_ENV_FILE,
     });
 
-    if (!hasLlmCredentials(config.agentEnv)) {
-      return; // soft skip — no LLM creds
+    if (!hasLiveAgent(config)) {
+      return; // soft skip — no live ACP runtime
     }
 
     const testDir = await mkdtemp(resolve(tmpdir(), 'buzzy-subchan-test-'));
@@ -91,7 +95,7 @@ describe('subchannel worktree boundary', () => {
     async () => {
       if (!ctx.tlcChannelId) return; // soft skip
 
-      const config = loadBodyConfig({
+      const config = loadLiveBodyConfig({
         workspaceRoot: ctx.testDir,
         llmEnvFile: LLM_ENV_FILE,
       });
@@ -103,11 +107,7 @@ describe('subchannel worktree boundary', () => {
       mkdirSync(outsideDir, { recursive: true });
 
       // Use AcpClient directly with buzz-dev-mcp pointing at worktree.
-      const editClient = new AcpClient({
-        agentBinary: config.agentBinary,
-        agentEnv: config.agentEnv,
-        autoApprovePermissions: true,
-      });
+      const editClient = new AcpClient(liveAcpClientOptions(config));
 
       await editClient.start();
 

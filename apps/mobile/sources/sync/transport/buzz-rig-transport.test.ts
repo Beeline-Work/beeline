@@ -174,6 +174,28 @@ describe('Room-scoped Workspace membership', () => {
     });
   });
 
+  it('adds work intent only for the explicit Start work action', async () => {
+    const identity = {
+      publicKey: 'a'.repeat(64),
+      secretKey: new Uint8Array(32).fill(1),
+      name: 'operator',
+    } as Identity;
+    const client = {
+      startAgentWork: vi.fn(async () => ({ id: 'work-event' })),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(
+      transport.messageSubmitWorkIntent('room-1', 'Refactor the scheduler', 'agent-pubkey'),
+    ).resolves.toBe('work-event');
+    expect(client.startAgentWork).toHaveBeenCalledWith(
+      'room-1',
+      'Refactor the scheduler',
+      'agent-pubkey',
+    );
+  });
+
   it('routes existing people through the member-only SDK attachment', async () => {
     const identity = {
       publicKey: 'a'.repeat(64),

@@ -154,6 +154,17 @@ export class BuzzRigTransport implements RigTransport {
     return event.id;
   }
 
+  /** Explicit signed Start work action; ordinary messages never carry this tag. */
+  async messageSubmitWorkIntent(
+    channelId: string,
+    text: string,
+    agentPubkey: string,
+  ): Promise<string> {
+    const client = await this.getClient();
+    const event = await client.startAgentWork(channelId, text, agentPubkey);
+    return event.id;
+  }
+
   /** Invite one already-linked Workspace agent to this Room; no pairing/restart. */
   async inviteAgentToChannel(
     channelId: string,

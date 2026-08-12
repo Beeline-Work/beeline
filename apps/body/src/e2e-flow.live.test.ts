@@ -23,8 +23,12 @@ import { randomUUID } from 'node:crypto';
 
 import { Body } from './body.js';
 import { AcpClient, type McpServerWire } from './acp.js';
-import { loadBodyConfig, hasLlmCredentials } from './config.js';
 import { projectActivity } from './activity.js';
+import {
+  hasLiveAgent,
+  liveAcpClientOptions,
+  loadLiveBodyConfig,
+} from './live-test-agent.js';
 import {
   newIdentity,
   createChannel,
@@ -87,14 +91,14 @@ describe('E2E live flow', () => {
       return;
     }
 
-    // Check LLM credentials.
-    const config = loadBodyConfig({
+    // Check the selected live ACP runtime.
+    const config = loadLiveBodyConfig({
       workspaceRoot: '/tmp/buzzy-body-test',
       llmEnvFile: LLM_ENV_FILE,
     });
 
-    if (!hasLlmCredentials(config.agentEnv)) {
-      e2eLog('no LLM credentials — soft-skipping');
+    if (!hasLiveAgent(config)) {
+      e2eLog('no live ACP runtime — soft-skipping');
       return;
     }
 
@@ -184,11 +188,7 @@ describe('E2E live flow', () => {
       },
     ];
 
-    const acpClient = new AcpClient({
-      agentBinary: config.agentBinary,
-      agentEnv: config.agentEnv,
-      autoApprovePermissions: true,
-    });
+    const acpClient = new AcpClient(liveAcpClientOptions(config));
     ctx.acpClient = acpClient;
     await acpClient.start();
 

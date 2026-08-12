@@ -183,7 +183,7 @@ function eventId(event: SessionEvent): string {
 }
 
 function cornerStatus(event: SessionEvent): CornerCardStatus | undefined {
-  const status = eventTagValue(event, 'status');
+  const status = eventTagValue(event, 'display-status') ?? eventTagValue(event, 'status');
   if (status === 'starting') return 'starting';
   if (status === 'working' || status === 'open' || status === 'live') return 'working';
   if (status === 'needs-attention') return 'needs-attention';

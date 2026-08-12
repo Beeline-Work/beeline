@@ -42,8 +42,6 @@ import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { cornerName, type CornerSummary } from '@/buzz/corners';
 import { toRigEvent } from './buzz-event-projection';
 
-export const WORK_INTENT_TAG = 'buzz-agent-request';
-
 export class BuzzRigTransport implements RigTransport {
   private client: BuzzClient | null = null;
   private identity: Identity;
@@ -163,10 +161,7 @@ export class BuzzRigTransport implements RigTransport {
     agentPubkey: string,
   ): Promise<string> {
     const client = await this.getClient();
-    const event = await client.messageSubmit(channelId, text, {
-      mentionAgent: agentPubkey,
-      extraTags: [['t', WORK_INTENT_TAG]],
-    });
+    const event = await client.startAgentWork(channelId, text, agentPubkey);
     return event.id;
   }
 

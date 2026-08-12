@@ -6,6 +6,8 @@ import {
   communityMembers,
   createCommunity,
   createInvite,
+  DEFAULT_INVITE_TTL_SECONDS,
+  findCommunityInvite,
   inviteTokenHash,
   listCommunities,
   parseCommunityInvite,
@@ -16,6 +18,7 @@ import {
   KIND_CHANNEL_ADMINS,
   KIND_CHANNEL_METADATA,
   KIND_CHANNEL_MEMBERS,
+  KIND_COMMUNITY_INVITE,
   KIND_CREATE_GROUP,
   KIND_PUT_USER,
   KIND_STREAM_MESSAGE,
@@ -323,12 +326,13 @@ describe('community invites', () => {
       }),
     );
 
-    const invite = await createInvite(ctx(), communityId, { expiresInSeconds: 3600 });
+    const invite = await createInvite(ctx(), communityId);
     const event = published[0]!;
     expect(invite.token).toMatch(/^bzi_[0-9a-f]{64}$/);
     expect(invite.tokenHash).toBe(inviteTokenHash(invite.token));
     expect(JSON.stringify(event)).not.toContain(invite.token);
-    expect(event.kind).toBe(KIND_STREAM_MESSAGE);
+    expect(event.kind).toBe(KIND_COMMUNITY_INVITE);
+    expect(invite.expiresAt - event.created_at).toBe(DEFAULT_INVITE_TTL_SECONDS);
     expect(tagValues(event, 't')).toContain(TAG_COMMUNITY_INVITE);
     expect(tagValue(event, 'd')).toBe(invite.tokenHash);
     expect(tagValue(event, TAG_COMMUNITY)).toBe(communityId);
@@ -339,6 +343,66 @@ describe('community invites', () => {
       tokenHash: invite.tokenHash,
     });
     expect(parseCommunityInvite({ ...event, content: 'tampered' })).toBeNull();
+  });
+
+  it('keeps shorter explicit invite TTLs', async () => {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          return jsonResponse({ accepted: true });
+        }
+        const kind = (filterFrom(init).kinds as number[])[0];
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([communityCreate()]);
+        if (kind === KIND_CHANNEL_MEMBERS) return jsonResponse([memberState()]);
+        if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([adminState()]);
+        return jsonResponse([]);
+      }),
+    );
+
+    const invite = await createInvite(ctx(), communityId, { expiresInSeconds: 3600 });
+    expect(invite.expiresAt - published[0]!.created_at).toBe(3600);
+  });
+
+  it('falls back to the marker-tag scan for legacy group-scoped invites', async () => {
+    const token = 'bzi_' + 'fa'.repeat(32);
+    const tokenHash = inviteTokenHash(token);
+    const createdAt = Math.floor(Date.now() / 1000) - 10;
+    const invite = signed(
+      owner,
+      KIND_STREAM_MESSAGE,
+      [
+        ['h', communityId],
+        ['t', TAG_COMMUNITY_INVITE],
+        ['d', tokenHash],
+        [TAG_COMMUNITY, communityId],
+        ['expiration', String(createdAt + 3600)],
+      ],
+      createdAt,
+    );
+    const filters: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const filter = filterFrom(init);
+        filters.push(filter);
+        return jsonResponse(filter.kinds?.[0] === KIND_STREAM_MESSAGE ? [invite] : []);
+      }),
+    );
+
+    await expect(findCommunityInvite(ctx().http, tokenHash, owner.publicKey)).resolves.toMatchObject({
+      tokenHash,
+      communityId,
+    });
+    expect(filters).toEqual([
+      expect.objectContaining({ kinds: [KIND_COMMUNITY_INVITE], '#d': [tokenHash] }),
+      expect.objectContaining({
+        kinds: [KIND_STREAM_MESSAGE],
+        '#t': [TAG_COMMUNITY_INVITE],
+      }),
+    ]);
   });
 
   it('rejects an invite signed by a non-member', async () => {
@@ -426,6 +490,58 @@ describe('community invites', () => {
       alreadyMember: true,
     });
     expect(published).toHaveLength(1);
+  });
+
+  it('lets two identities redeem the same current invite without consuming its marker', async () => {
+    const token = 'bzi_' + 'ac'.repeat(32);
+    const tokenHash = inviteTokenHash(token);
+    const createdAt = Math.floor(Date.now() / 1000) - 10;
+    const invite = signed(
+      owner,
+      KIND_COMMUNITY_INVITE,
+      [
+        ['h', communityId],
+        ['t', TAG_COMMUNITY_INVITE],
+        ['d', tokenHash],
+        [TAG_COMMUNITY, communityId],
+        ['expiration', String(createdAt + 3600)],
+        ['role', 'member'],
+      ],
+      createdAt,
+    );
+    const joined = new Set<string>();
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          const event = JSON.parse(String(init?.body)) as NostrEvent;
+          published.push(event);
+          if (event.kind === KIND_PUT_USER) joined.add(tagValue(event, 'p')!);
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        if (kind === KIND_COMMUNITY_INVITE) return jsonResponse([invite]);
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([communityCreate()]);
+        if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([adminState()]);
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          return jsonResponse([
+            signed(owner, KIND_CHANNEL_MEMBERS, [
+              ['d', communityId],
+              ['p', owner.publicKey],
+              ...[...joined].map((pubkey) => ['p', pubkey]),
+            ]),
+          ]);
+        }
+        return jsonResponse([]);
+      }),
+    );
+
+    await expect(redeemInvite(ctx(invitee), token)).resolves.toMatchObject({ joined: true });
+    await expect(redeemInvite(ctx(outsider), token)).resolves.toMatchObject({ joined: true });
+    expect(joined).toEqual(new Set([invitee.publicKey, outsider.publicKey]));
+    expect(published.filter((event) => event.kind === KIND_PUT_USER)).toHaveLength(2);
   });
 
   it('asserts invite membership into existing community channels and repairs repeats', async () => {

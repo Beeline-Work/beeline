@@ -16,7 +16,7 @@ import {
 
 const buzzClientMocks = vi.hoisted(() => ({
   createBuzzClient: vi.fn(),
-  queryEvents: vi.fn(),
+  findCommunityInvite: vi.fn(),
 }));
 
 vi.mock('@beeline/buzz-client', async (importOriginal) => {
@@ -24,7 +24,7 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
   return {
     ...actual,
     createBuzzClient: buzzClientMocks.createBuzzClient,
-    queryEvents: buzzClientMocks.queryEvents,
+    findCommunityInvite: buzzClientMocks.findCommunityInvite,
   };
 });
 
@@ -32,7 +32,7 @@ const token = `bzi_${'ab'.repeat(32)}`;
 
 beforeEach(() => {
   buzzClientMocks.createBuzzClient.mockReset();
-  buzzClientMocks.queryEvents.mockReset();
+  buzzClientMocks.findCommunityInvite.mockReset();
 });
 
 describe('community invite links', () => {
@@ -126,20 +126,26 @@ describe('community invite links', () => {
         { pubkey: owner.publicKey, role: 'owner' },
       ]),
     };
-    buzzClientMocks.queryEvents.mockResolvedValue([inviteEvent]);
+    buzzClientMocks.findCommunityInvite.mockResolvedValue({
+      tokenHash: inviteTokenHash(token),
+      communityId,
+      expiresAt: createdAt + 3600,
+      mintedBy: owner.publicKey,
+      event: inviteEvent,
+    });
     buzzClientMocks.createBuzzClient.mockReturnValue(client);
 
     await expect(
       loadCommunityInvitePreview('https://relay.example/', token, reader),
     ).resolves.toMatchObject({ community });
 
-    expect(buzzClientMocks.queryEvents).toHaveBeenCalledWith(
+    expect(buzzClientMocks.findCommunityInvite).toHaveBeenCalledWith(
       expect.objectContaining({
         baseUrl: 'https://relay.example',
         host: 'relay.example',
         identity: reader,
       }),
-      expect.any(Array),
+      inviteTokenHash(token),
       reader.publicKey,
     );
     expect(buzzClientMocks.createBuzzClient).toHaveBeenCalledWith({
@@ -148,10 +154,10 @@ describe('community invite links', () => {
       identity: reader,
     });
 
-    buzzClientMocks.queryEvents.mockClear();
+    buzzClientMocks.findCommunityInvite.mockClear();
     buzzClientMocks.createBuzzClient.mockClear();
     await loadCommunityInvitePreview('https://relay.example/', token);
-    const [httpOptions, , queryPubkey] = buzzClientMocks.queryEvents.mock.calls[0]!;
+    const [httpOptions, , queryPubkey] = buzzClientMocks.findCommunityInvite.mock.calls[0]!;
     expect(httpOptions.identity).toMatchObject({ publicKey: queryPubkey });
     expect(httpOptions.identity.secretKey).toBeInstanceOf(Uint8Array);
     expect(buzzClientMocks.createBuzzClient).toHaveBeenCalledWith({

@@ -42,6 +42,8 @@ import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { cornerName, type CornerSummary } from '@/buzz/corners';
 import { toRigEvent } from './buzz-event-projection';
 
+export const WORK_INTENT_TAG = 'buzz-agent-request';
+
 export class BuzzRigTransport implements RigTransport {
   private client: BuzzClient | null = null;
   private identity: Identity;
@@ -150,6 +152,20 @@ export class BuzzRigTransport implements RigTransport {
     const client = await this.getClient();
     const event = await client.messageSubmit(channelId, text, {
       mentionAgent: agentPubkey,
+    });
+    return event.id;
+  }
+
+  /** Explicit signed Start work action; ordinary messages never carry this tag. */
+  async messageSubmitWorkIntent(
+    channelId: string,
+    text: string,
+    agentPubkey: string,
+  ): Promise<string> {
+    const client = await this.getClient();
+    const event = await client.messageSubmit(channelId, text, {
+      mentionAgent: agentPubkey,
+      extraTags: [['t', WORK_INTENT_TAG]],
     });
     return event.id;
   }

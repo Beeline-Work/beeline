@@ -23,8 +23,6 @@ import { useLocalSearchParams, router, type Href } from 'expo-router';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
 import { BuzzRigTransport } from '@/sync/transport';
 import {
-  CHANGE_REVIEW_FILE_TAG,
-  CHANGE_REVIEW_MANIFEST_TAG,
   encodeNpub,
   type Agent,
   type Community,
@@ -32,7 +30,11 @@ import {
   type MergeTarget,
   type PersonProfile,
 } from '@beeline/buzz-client';
-import type { SessionEvent } from '@/sync/transport';
+import {
+  projectChatEvent,
+  upsertChatMessages,
+  type ChatDisplayMessage,
+} from '@/sync/transport/buzz-event-projection';
 import { groknight } from '@/buzz/groknight';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
@@ -56,22 +58,6 @@ import {
   PixelLoader,
 } from '@/components/buzz/MonoHull';
 
-type DisplayMessage = {
-  id: string;
-  text: string;
-  isUser: boolean;
-  timestamp: number;
-  pubkey?: string;
-  /** True if this is a merge-summary control message from the body. */
-  isMergeSummary?: boolean;
-  /** True if this is an archived notification. */
-  isArchivedNotice?: boolean;
-  /** True if this is an agent-activity frame from the body. */
-  isAgentActivity?: boolean;
-  /** True only for subscription/optimistic inserts, never initial backfill. */
-  isNew?: boolean;
-};
-
 type RoomMemberOption = {
   pubkey: string;
   label: string;
@@ -92,101 +78,14 @@ function shortNpub(pubkeyHex: string): string {
   }
 }
 
-/** Extract a usable timestamp from a SessionEvent. */
-function eventTimestamp(e: SessionEvent): number {
-  if (e.type === 'assistant_delta' && e.seq) return e.seq;
-  if (e.type === 'raw') {
-    const p = e.payload as Record<string, unknown> | undefined;
-    if (p && typeof p.createdAt === 'number') return p.createdAt;
-  }
-  return Date.now();
-}
-
-/** Extract text content from a SessionEvent. */
-function eventText(e: SessionEvent): string {
-  if (e.type === 'assistant_delta') return e.text;
-  if (e.type === 'raw') {
-    const p = e.payload as Record<string, unknown> | undefined;
-    if (p && typeof p.content === 'string') return p.content;
-    return String(e.payload ?? '');
-  }
-  return String(e.payload ?? '');
-}
-
-/** Extract a stable id from a SessionEvent. */
-function eventId(e: SessionEvent, fallback: string): string {
-  if (e.type === 'raw') {
-    const p = e.payload as Record<string, unknown> | undefined;
-    if (p && typeof p.id === 'string') return p.id;
-  }
-  if (e.type === 'assistant_delta') {
-    if (e.id) return e.id;
-    if (e.seq) return `delta-${e.seq}`;
-  }
-  return fallback;
-}
-
-/** Extract pubkey from a SessionEvent. */
-function eventPubkey(e: SessionEvent): string | undefined {
-  if (e.type === 'assistant_delta') return e.pubkey;
-  if (e.type === 'raw') {
-    const p = e.payload as Record<string, unknown> | undefined;
-    if (p && typeof p.pubkey === 'string') return p.pubkey;
-  }
-  return undefined;
-}
-
-/** Extract tag values from raw event payload. */
-function eventTagValue(e: SessionEvent, tagName: string): string | undefined {
-  if (e.type === 'raw') {
-    const p = e.payload as Record<string, unknown> | undefined;
-    if (p && typeof p === 'object') {
-      const ev = p as { tags?: string[][] };
-      if (ev.tags) {
-        const tag = ev.tags.find((t: string[]) => t[0] === tagName);
-        if (tag && tag[1]) return tag[1];
-      }
-    }
-  }
-  return undefined;
-}
-
-/** Check if event carries specific t tag values. */
-function eventHasTag(e: SessionEvent, tagName: string, tagValue?: string): boolean {
-  if (e.type === 'raw') {
-    const p = e.payload as Record<string, unknown> | undefined;
-    if (p && typeof p === 'object') {
-      const ev = p as { tags?: string[][] };
-      if (ev.tags) {
-        const tTags = ev.tags.filter((t: string[]) => t[0] === tagName);
-        if (tagValue) return tTags.some((t: string[]) => t[1] === tagValue);
-        return tTags.length > 0;
-      }
-    }
-  }
-  return false;
-}
-
-/**
- * Body parent-link records are not conversation. The text fallback covers old
- * mobile projections that retained content but dropped the raw Nostr tags.
- */
-function isCornerControlMessage(e: SessionEvent, text: string): boolean {
-  return (
-    eventHasTag(e, 't', 'body-control') ||
-    Boolean(eventTagValue(e, 'subchannel')) ||
-    /^Agent opened(?: #| a work branch for:)/.test(text)
-  );
-}
-
 export default function BuzzChat() {
   const { channelId } = useLocalSearchParams<{ channelId: string }>();
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
   const insets = useSafeAreaInsets();
-  const flatListRef = useRef<FlatList<DisplayMessage>>(null);
+  const flatListRef = useRef<FlatList<ChatDisplayMessage>>(null);
 
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
-  const [messages, setMessages] = useState<DisplayMessage[]>([]);
+  const [messages, setMessages] = useState<ChatDisplayMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -264,16 +163,20 @@ export default function BuzzChat() {
         .map((participant) => ({ pubkey: participant.pubkey, name: participant.label })),
     [roomParticipants],
   );
+  const workIntentAgent = useMemo(() => {
+    const mentioned = mentionedAgentPubkey(inputText, mentionableAgents);
+    if (mentioned) return mentionableAgents.find((agent) => agent.pubkey === mentioned);
+    return mentionableAgents.length === 1 ? mentionableAgents[0] : undefined;
+  }, [inputText, mentionableAgents]);
 
   // Helper to add new messages, deduplicating by id.
-  const addMessages = useCallback((newMsgs: DisplayMessage[]) => {
-    setMessages((prev) => {
-      const existingIds = new Set(prev.map((m) => m.id));
-      const unique = newMsgs
-        .filter((m) => !existingIds.has(m.id))
-        .map((message) => ({ ...message, isNew: true }));
-      return [...prev, ...unique].sort((a, b) => a.timestamp - b.timestamp);
-    });
+  const addMessages = useCallback((newMsgs: ChatDisplayMessage[]) => {
+    setMessages((prev) =>
+      upsertChatMessages(
+        prev,
+        newMsgs.map((message) => ({ ...message, isNew: true })),
+      ),
+    );
   }, []);
 
   useEffect(() => {
@@ -344,62 +247,12 @@ export default function BuzzChat() {
         // Render the primary chat history before slower P2 channel enrichment.
         const events = await t.sessionEventsBackfill(decodedId, { limit: 50 });
         if (!cancelled) {
-          const msgs: DisplayMessage[] = [];
+          let msgs: ChatDisplayMessage[] = [];
           for (const e of events) {
-            const pk = eventPubkey(e);
-            const text = eventText(e);
-            const isAgentActivity = e.type === 'assistant_delta';
-            if (isAgentActivity && !text.trim()) continue;
-            // Parent-link control records are identified redundantly. Some relay
-            // projections preserve the subchannel binding but omit duplicate `t`
-            // markers, so the binding itself must never fall through as chat copy.
-            const hasBodyControl = isCornerControlMessage(e, text);
-            const isChangeReviewMetadata =
-              eventHasTag(e, 't', CHANGE_REVIEW_MANIFEST_TAG) ||
-              eventHasTag(e, 't', CHANGE_REVIEW_FILE_TAG);
-            if (isChangeReviewMetadata) continue;
-            const hasMergeSummary = eventHasTag(e, 't', 'merge-summary');
-            const hasStatusArchived = eventHasTag(e, 'status', 'archived');
-
-            if (hasMergeSummary) {
-              msgs.push({
-                id: eventId(e, `merge-${Math.random()}`),
-                text,
-                isUser: false,
-                timestamp: eventTimestamp(e),
-                pubkey: pk,
-                isMergeSummary: true,
-              });
-              continue;
-            }
-
-            // Control records drive navigation and lifecycle state. They are never
-            // conversation copy and must not leak raw IDs, branches, or worktree paths.
-            if (hasBodyControl) {
-              const controlledSubchannelId = eventTagValue(e, 'subchannel');
-              if (hasStatusArchived && !controlledSubchannelId) {
-                msgs.push({
-                  id: eventId(e, `archive-${Math.random()}`),
-                  text,
-                  isUser: false,
-                  timestamp: eventTimestamp(e),
-                  pubkey: pk,
-                  isArchivedNotice: true,
-                });
-                continue;
-              }
-              continue;
-            }
-
-            // Regular message
-            msgs.push({
-              id: eventId(e, `backfill-${Math.random()}`),
-              text,
-              isUser: pk === identity.publicKey,
-              timestamp: eventTimestamp(e),
-              pubkey: pk,
-              isAgentActivity: e.type === 'assistant_delta',
-            });
+            const projected = projectChatEvent(e, identity.publicKey);
+            if (projected.mergeTarget) setMergeTarget(projected.mergeTarget);
+            if (projected.archiveChannel) setIsArchived(true);
+            if (projected.message) msgs = upsertChatMessages(msgs, [projected.message]);
           }
 
           setMessages(msgs);
@@ -423,72 +276,13 @@ export default function BuzzChat() {
         // Subscribe to live messages
         unsubscribe = t.sessionEventsSubscribe(decodedId, (event) => {
           if (cancelled) return;
-
-          const pk = eventPubkey(event);
-          const text = eventText(event);
-          const isAgentActivity = event.type === 'assistant_delta';
-          if (isAgentActivity && !text.trim()) return;
-          const hasBodyControl = isCornerControlMessage(event, text);
-          const isChangeReviewMetadata =
-            eventHasTag(event, 't', CHANGE_REVIEW_MANIFEST_TAG) ||
-            eventHasTag(event, 't', CHANGE_REVIEW_FILE_TAG);
-          if (isChangeReviewMetadata) return;
-          const hasMergeSummary = eventHasTag(event, 't', 'merge-summary');
-          const hasStatusArchived = eventHasTag(event, 'status', 'archived');
-          const isMergeReady = eventHasTag(event, 't', 'merge-ready');
-
-          if (isMergeReady) {
-            const repo = eventTagValue(event, 'repo');
-            const branch = eventTagValue(event, 'branch');
-            const tip = eventTagValue(event, 'tip');
-            if (repo && branch && tip) setMergeTarget({ repo, branch, tip });
+          const projected = projectChatEvent(event, identity.publicKey, true);
+          if (projected.mergeTarget) setMergeTarget(projected.mergeTarget);
+          if (projected.archiveChannel) {
+            setIsArchived(true);
+            setApprovalState('merged');
           }
-
-          if (hasMergeSummary) {
-            addMessages([
-              {
-                id: eventId(event, `merge-live-${Math.random()}`),
-                text,
-                isUser: false,
-                timestamp: eventTimestamp(event),
-                pubkey: pk,
-                isMergeSummary: true,
-              },
-            ]);
-            return;
-          }
-
-          if (hasBodyControl) {
-            const subId = eventTagValue(event, 'subchannel');
-            if (hasStatusArchived) {
-              if (!subId) {
-                setIsArchived(true);
-                setApprovalState('merged');
-              }
-              addMessages([
-                {
-                  id: eventId(event, `archive-live-${Math.random()}`),
-                  text,
-                  isUser: false,
-                  timestamp: eventTimestamp(event),
-                  pubkey: pk,
-                  isArchivedNotice: true,
-                },
-              ]);
-              return;
-            }
-          }
-
-          addMessages([
-            {
-              id: eventId(event, `live-${Math.random()}`),
-              text,
-              isUser: pk === identity.publicKey,
-              timestamp: eventTimestamp(event),
-              pubkey: pk,
-              isAgentActivity: event.type === 'assistant_delta',
-            },
-          ]);
+          if (projected.message) addMessages([projected.message]);
         });
       } catch (err) {
         console.warn('Failed to init BuzzChat:', err);
@@ -542,6 +336,46 @@ export default function BuzzChat() {
     userPubkey,
     parentChannelId,
     mentionableAgents,
+  ]);
+
+  const handleStartWork = useCallback(async () => {
+    const text = inputText.trim();
+    if (!text || !transport || !workIntentAgent || isArchived || parentChannelId) return;
+
+    setSending(true);
+    setInputText('');
+    const optimisticId = `optimistic-work-${Date.now()}`;
+    addMessages([
+      {
+        id: optimisticId,
+        text,
+        isUser: true,
+        timestamp: Date.now(),
+        pubkey: userPubkey,
+      },
+    ]);
+    try {
+      const eventId = await transport.messageSubmitWorkIntent(
+        decodedId,
+        text,
+        workIntentAgent.pubkey,
+      );
+      setMessages((prev) => reconcileOptimisticMessage(prev, optimisticId, eventId));
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (err) {
+      console.warn('Start work failed:', err);
+    } finally {
+      setSending(false);
+    }
+  }, [
+    addMessages,
+    decodedId,
+    inputText,
+    isArchived,
+    parentChannelId,
+    transport,
+    userPubkey,
+    workIntentAgent,
   ]);
 
   const handleAddRoomMember = useCallback(
@@ -609,11 +443,47 @@ export default function BuzzChat() {
   }, []);
 
   const renderItem = useCallback(
-    ({ item }: { item: DisplayMessage }) => {
-      // Legacy projections may already have materialized a parent-link record as
-      // a plain message before its Nostr tags reach this screen. Keep the room
-      // transcript clean at the final person-facing boundary as well.
-      if (/^Agent opened(?: #| a work branch for:)/.test(item.text)) return null;
+    ({ item }: { item: ChatDisplayMessage }) => {
+      if (item.corner) {
+        const cornerAgent = item.corner.agentPubkey
+          ? agentByPubkey.get(item.corner.agentPubkey)
+          : undefined;
+        const display = item.corner.agentPubkey
+          ? resolveAgentDisplayIdentity(item.corner.agentPubkey, cornerAgent)
+          : undefined;
+        const statusLabel = item.corner.status.replace('-', ' ').toUpperCase();
+        return (
+          <TouchableOpacity
+            accessibilityLabel={`${display?.name ?? 'Agent'} work ${statusLabel.toLowerCase()}. Open corner`}
+            onPress={() =>
+              router.push(`/buzz/chat/${encodeURIComponent(item.corner!.subchannelId)}` as Href)
+            }
+            style={styles.cornerStatusCard}
+            testID={`corner-status-${item.corner.status}`}
+          >
+            {item.corner.agentPubkey && (
+              <AgentAvatar
+                pubkey={item.corner.agentPubkey}
+                avatarSeed={display?.avatarSeed}
+                avatarUrl={display?.avatarUrl}
+                name={display?.name ?? 'Agent'}
+                size={30}
+              />
+            )}
+            <View style={styles.cornerStatusCopy}>
+              <Text style={styles.cornerStatusAgent}>{display?.name ?? 'Agent'}</Text>
+              <Text style={styles.cornerStatusLabel}>{statusLabel}</Text>
+              {item.corner.status === 'failed' && (
+                <Text style={styles.cornerFailureText}>{item.text}</Text>
+              )}
+            </View>
+            <View style={styles.openCornerAction}>
+              <Text style={styles.openCornerText}>OPEN {CORNER_LABEL.toUpperCase()}</Text>
+              <Text style={styles.openCornerGlyph}>›</Text>
+            </View>
+          </TouchableOpacity>
+        );
+      }
 
       // ── Merge summary ────────────────────────────────────────────
       if (item.isMergeSummary) {
@@ -822,7 +692,7 @@ export default function BuzzChat() {
         <FlatList
           ref={flatListRef}
           data={messages}
-          keyExtractor={(item: DisplayMessage) => item.id}
+          keyExtractor={(item: ChatDisplayMessage) => item.id}
           style={styles.messageList}
           contentContainerStyle={styles.messageListContent}
           renderItem={renderItem}
@@ -850,6 +720,27 @@ export default function BuzzChat() {
                 onPress={() => void handleCancel()}
               >
                 <Text style={styles.cancelTurnText}>■ CANCEL TURN</Text>
+              </TouchableOpacity>
+            )}
+            {!parentChannelId && !viewerIsAgent && inputText.trim() && (
+              <TouchableOpacity
+                accessibilityLabel={
+                  workIntentAgent
+                    ? `Start work with ${workIntentAgent.name}`
+                    : 'Mention one Agent to start work'
+                }
+                disabled={!workIntentAgent || sending}
+                onPress={() => void handleStartWork()}
+                style={[
+                  styles.startWorkButton,
+                  (!workIntentAgent || sending) && styles.startWorkButtonDisabled,
+                ]}
+                testID="start-work-action"
+              >
+                <Text style={styles.startWorkGlyph}>＋</Text>
+                <Text style={styles.startWorkText}>
+                  {workIntentAgent ? `START WORK · ${workIntentAgent.name}` : 'MENTION AN AGENT'}
+                </Text>
               </TouchableOpacity>
             )}
             <View style={[styles.composer, composerFocused && styles.composerFocused]}>
@@ -1291,6 +1182,54 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 
+  // ── Parent Room corner status ──────────────────────────────────
+  cornerStatusCard: {
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgRaised,
+  },
+  cornerStatusCopy: { flex: 1, minWidth: 0 },
+  cornerStatusAgent: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  cornerStatusLabel: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textSecondary,
+    fontSize: 10,
+    lineHeight: 14,
+    letterSpacing: 0.6,
+  },
+  cornerFailureText: {
+    ...Typography.default(),
+    color: groknight.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
+    marginTop: 3,
+  },
+  openCornerAction: {
+    flexShrink: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  openCornerText: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 9,
+    letterSpacing: 0.4,
+  },
+  openCornerGlyph: { ...Typography.default(), color: groknight.textPrimary, fontSize: 18 },
+
   // ── Merge summary ───────────────────────────────────────────────
   mergeSummaryBubble: {
     paddingHorizontal: 10,
@@ -1424,6 +1363,26 @@ const styles = StyleSheet.create({
     color: groknight.textSecondary,
     fontSize: 10,
     letterSpacing: 0.5,
+  },
+  startWorkButton: {
+    minHeight: 38,
+    marginBottom: 7,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgHighlight,
+  },
+  startWorkButtonDisabled: { opacity: 0.45 },
+  startWorkGlyph: { ...Typography.default('semiBold'), color: groknight.textPrimary, fontSize: 14 },
+  startWorkText: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 10,
+    letterSpacing: 0.6,
   },
   composer: {
     flexDirection: 'row',

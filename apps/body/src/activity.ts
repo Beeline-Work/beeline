@@ -14,6 +14,22 @@ import { signEvent, type NostrEvent } from '@beeline/nostr';
 
 export const ACTIVITY_TAG = 'agent-activity';
 export const AGENT_MESSAGE_TAG = 'agent-message';
+export const AGENT_TURN_TAG = 'agent-turn';
+
+const CODEX_SKILL_BUDGET_WARNING =
+  /^(?:⚠(?:️)?\s*)?warning:\s*skill descriptions (?:were|have been) shortened to fit the \d+(?:\.\d+)?% skills context budget\.\s*codex can still see every skill(?:\b|…)/i;
+
+/** Remove only the known leading Codex startup warning, never mid-reply text. */
+export function stripAgentReplyPreamble(message: string): string {
+  const lines = message.split(/\r?\n/);
+  const firstContent = lines.findIndex((line) => line.trim().length > 0);
+  if (firstContent < 0 || !CODEX_SKILL_BUDGET_WARNING.test(lines[firstContent]!.trim())) {
+    return message;
+  }
+  let replyStart = firstContent + 1;
+  while (replyStart < lines.length && !lines[replyStart]!.trim()) replyStart++;
+  return lines.slice(replyStart).join('\n');
+}
 
 /** Batched activity to emit as a single channel event. */
 export interface ActivityBatch {
@@ -84,6 +100,30 @@ export async function postAgentMessage(
   );
 
   await publishEvent(event, owner);
+}
+
+/** Publish the read-only Room turn lifecycle used by the thinking indicator. */
+export function postAgentTurnStatus(
+  channelId: string,
+  owner: Identity,
+  requestId: string,
+  sessionId: string,
+  status: 'working' | 'complete' | 'failed',
+): Promise<void> {
+  const message =
+    status === 'working'
+      ? 'Agent is thinking…'
+      : status === 'complete'
+        ? 'Agent reply complete.'
+        : 'Agent reply stopped.';
+  return postControlMessage(channelId, owner, message, [
+    ['t', AGENT_TURN_TAG],
+    ['request', requestId],
+    ['session', sessionId],
+    ['agent', owner.publicKey],
+    ['mode', 'readonly'],
+    ['status', status],
+  ]);
 }
 
 /** Emit an ordered batch of session updates as one kind:9 channel event. */

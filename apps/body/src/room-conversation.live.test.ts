@@ -119,7 +119,16 @@ describe.runIf(live)('production Room conversation contract', () => {
     const greeting = await client.messageSubmit(roomId, "Hey @Agent what's up", {
       mentionAgent: agent.publicKey,
     });
-    expect(await body!.pollChannelRequests(roomId, binding())).toBe(0);
+    const greetingPoll = body!.pollChannelRequests(roomId, binding());
+    await waitUntil(async () =>
+      (await messages()).some(
+        (event) =>
+          event.event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-turn') &&
+          event.event.tags.some((tag) => tag[0] === 'request' && tag[1] === greeting.id) &&
+          event.event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'working'),
+      ),
+    );
+    expect(await greetingPoll).toBe(0);
     await waitUntil(async () =>
       (await messages()).some(
         (event) =>
@@ -127,6 +136,24 @@ describe.runIf(live)('production Room conversation contract', () => {
           event.event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message') &&
           event.event.tags.some((tag) => tag[0] === 'e' && tag[1] === greeting.id),
       ),
+    );
+    const roomEvents = await messages();
+    const greetingEvents = roomEvents.filter((event) =>
+      event.event.tags.some((tag) => tag[0] === 'request' && tag[1] === greeting.id),
+    );
+    const greetingStatuses = greetingEvents
+      .map((event) => event.event.tags.find((tag) => tag[0] === 'status')?.[1])
+      .filter(Boolean);
+    expect(greetingStatuses).toContain('working');
+    expect(greetingStatuses).toContain('complete');
+    const greetingReply = roomEvents.find(
+      (event) =>
+        event.event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message') &&
+        event.event.tags.some((tag) => tag[0] === 'e' && tag[1] === greeting.id),
+    );
+    expect(greetingReply?.content).toBeTruthy();
+    expect(greetingReply?.content).not.toMatch(
+      /Warning:\s*Skill descriptions (?:were|have been) shortened/i,
     );
     expect(await client.listSubchannels(roomId)).toHaveLength(0);
     expect(
@@ -148,7 +175,9 @@ describe.runIf(live)('production Room conversation contract', () => {
       ),
     );
     expect(await client.listSubchannels(roomId)).toHaveLength(0);
-    console.log('[room-conversation] greeting=REPLIED architecture=REPLIED corners=0');
+    console.log(
+      `[room-conversation] greeting=REPLIED indicator=${greetingStatuses.join('>')} preamble=CLEAN architecture=REPLIED corners=0`,
+    );
   }, 240_000);
 
   it('opens explicitly authorized work directly without a permission prompt', async () => {

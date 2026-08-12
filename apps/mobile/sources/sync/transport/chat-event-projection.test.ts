@@ -55,6 +55,45 @@ describe('Buzz Room screen event projection', () => {
     ]);
   });
 
+  it('drives and clears the Room thinking indicator from read-only agent turns', () => {
+    const working = raw(
+      'turn-working',
+      'Agent is thinking…',
+      [
+        ['t', 'body-control'],
+        ['t', 'agent-turn'],
+        ['request', 'chat-request'],
+        ['agent', agent],
+        ['mode', 'readonly'],
+        ['status', 'working'],
+      ],
+      2,
+    );
+    const complete = raw(
+      'turn-complete',
+      'Agent reply complete.',
+      [
+        ['t', 'body-control'],
+        ['t', 'agent-turn'],
+        ['request', 'chat-request'],
+        ['agent', agent],
+        ['mode', 'readonly'],
+        ['status', 'complete'],
+      ],
+      3,
+    );
+
+    expect(displaySequence([working])).toMatchObject([
+      { id: 'agent-turn-chat-request', agentTurn: { status: 'working' } },
+    ]);
+    const completed = displaySequence([working, complete]);
+    expect(completed).toMatchObject([
+      { id: 'agent-turn-chat-request', agentTurn: { status: 'complete' } },
+    ]);
+    expect(transcriptMessages(completed, false)).toEqual([]);
+    expect(displaySequence([complete, working])).toEqual(completed);
+  });
+
   it('collapses starting → working → ready into one tappable card after reload', () => {
     const events = [
       raw(

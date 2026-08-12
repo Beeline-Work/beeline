@@ -139,6 +139,7 @@ export function toRigEvent(ev: BuzzSessionEvent): SessionEvent {
 }
 
 export type CornerCardStatus = 'starting' | 'working' | 'needs-attention' | 'ready' | 'failed';
+export type AgentTurnStatus = 'working' | 'complete' | 'failed';
 
 export type ChatDisplayMessage = {
   id: string;
@@ -155,6 +156,11 @@ export type ChatDisplayMessage = {
     subchannelId: string;
     agentPubkey?: string;
     status: CornerCardStatus;
+  };
+  agentTurn?: {
+    requestId: string;
+    agentPubkey: string;
+    status: AgentTurnStatus;
   };
   writePermission?: {
     permissionId: string;
@@ -259,6 +265,31 @@ export function projectChatEvent(
   const permissionAgent = eventTagValue(event, 'agent') ?? eventTagValue(event, 'p');
   const isPermissionRequest = eventHasTag(event, 't', 'buzz-write-permission-request');
   const isPermissionResponse = eventHasTag(event, 't', 'buzz-write-permission-response');
+  const isAgentTurn = eventHasTag(event, 't', 'agent-turn');
+
+  if (isAgentTurn) {
+    const requestId = eventTagValue(event, 'request');
+    const agentPubkey = eventTagValue(event, 'agent') ?? pubkey;
+    const turnStatus = eventTagValue(event, 'status');
+    if (
+      requestId &&
+      agentPubkey &&
+      (turnStatus === 'working' || turnStatus === 'complete' || turnStatus === 'failed')
+    ) {
+      return {
+        message: {
+          id: `agent-turn-${requestId}`,
+          text,
+          isUser: false,
+          timestamp: eventTimestamp(event),
+          pubkey: agentPubkey,
+          agentTurn: { requestId, agentPubkey, status: turnStatus },
+          ...(isNew ? { isNew: true } : {}),
+        },
+      };
+    }
+    return {};
+  }
 
   // A response is proposed human intent. Body verifies current membership and
   // human identity, then emits the authoritative request-status projection.
@@ -384,7 +415,10 @@ export function transcriptMessages(
   return messages.filter(
     (message) =>
       Boolean(message.corner) ||
-      (!message.isAgentActivity && !message.isMergeSummary && !message.isArchivedNotice),
+      (!message.agentTurn &&
+        !message.isAgentActivity &&
+        !message.isMergeSummary &&
+        !message.isArchivedNotice),
   );
 }
 
@@ -394,6 +428,12 @@ const CORNER_STATUS_ORDER: Record<CornerCardStatus, number> = {
   'needs-attention': 2,
   ready: 3,
   failed: 4,
+};
+
+const AGENT_TURN_STATUS_ORDER: Record<AgentTurnStatus, number> = {
+  working: 0,
+  complete: 1,
+  failed: 1,
 };
 
 /** Stable-id upsert keeps lifecycle cards monotonic across replay order. */
@@ -408,6 +448,14 @@ export function upsertChatMessages(
       existing?.corner &&
       message.corner &&
       CORNER_STATUS_ORDER[message.corner.status] < CORNER_STATUS_ORDER[existing.corner.status]
+    ) {
+      continue;
+    }
+    if (
+      existing?.agentTurn &&
+      message.agentTurn &&
+      AGENT_TURN_STATUS_ORDER[message.agentTurn.status] <
+        AGENT_TURN_STATUS_ORDER[existing.agentTurn.status]
     ) {
       continue;
     }

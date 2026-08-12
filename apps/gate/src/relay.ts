@@ -1,5 +1,6 @@
 /** Authenticated HTTP client for the Buzz relay bridge. */
 import { nip98AuthHeader, type NostrEvent } from '@beeline/nostr';
+import { publishEvent as publishHttpEvent } from '@beeline/buzz-client';
 import { BASE_URL, HOST } from './config.js';
 import type { Identity } from './identity.js';
 
@@ -50,28 +51,7 @@ export function createRelayClient(
       if (event.pubkey !== identity.publicKey) {
         throw new Error('relay auth identity must match the published event signer');
       }
-      const url = `${baseUrl}/events`;
-      const method = 'POST';
-      const res = await fetch(url, {
-        method,
-        headers: { ...headers(identity, url, method), host: config.host },
-        body: JSON.stringify(event),
-      });
-      const text = await res.text();
-      let body: unknown = text;
-      try {
-        body = JSON.parse(text);
-      } catch {
-        /* keep raw text */
-      }
-      if (!res.ok) {
-        throw new Error(`publishEvent ${event.kind} failed: HTTP ${res.status} ${text}`);
-      }
-      const accepted =
-        typeof body === 'object' && body !== null && 'accepted' in body
-          ? Boolean((body as { accepted: unknown }).accepted)
-          : true;
-      return { status: res.status, accepted, body };
+      return publishHttpEvent({ baseUrl, host: config.host, identity }, event);
     },
 
     async queryEvents(filters: Record<string, unknown>[]): Promise<NostrEvent[]> {

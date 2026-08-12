@@ -56,6 +56,27 @@ export function git(cwd: string, args: string[]): GitResult {
 }
 
 /**
+ * Run git with the operator's ambient configuration and credentials.
+ *
+ * This is deliberately separate from `git`/`gitAuthed`: GitHub-origin
+ * delivery is authorized exactly like the operator's own `git push` (for
+ * example via credential.helper, `gh auth setup-git`, or SSH), while relay
+ * repositories continue to use the isolated NIP-98 path above.
+ */
+export function gitWithUserCredentials(cwd: string, args: string[]): GitResult {
+  const res = spawnSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+  });
+  return {
+    ok: res.status === 0,
+    status: res.status,
+    stdout: res.stdout ?? '',
+    stderr: res.stderr ?? '',
+  };
+}
+
+/**
  * Run a git command that talks to the relay as `identity`. The NIP-98 header
  * is bound to `ownerHex/repo`'s repo-root URL and signed fresh per call.
  */

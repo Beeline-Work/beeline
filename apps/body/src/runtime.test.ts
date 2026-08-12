@@ -61,7 +61,7 @@ describe('repository binding', () => {
 });
 
 describe('pair → run unification', () => {
-  it('binds the current repo, stores machine identities, and launches the daemon', async () => {
+  it('binds a GitHub-style repo without provisioning a Beeline merge worker', async () => {
     const root = await repository('https://example.com/team/project.git');
     const agent = newIdentity('agent');
     const body = newIdentity('body');
@@ -100,12 +100,12 @@ describe('pair → run unification', () => {
         },
         resolveRoom: async (_pairing, binding, mergeWorkerPubkey) => {
           expect(binding.name).toBe('project');
-          expect(mergeWorkerPubkey).toBe(mergeWorker.publicKey);
+          expect(mergeWorkerPubkey).toBeUndefined();
           return {
             channelId: '22222222-2222-4222-8222-222222222222',
             created: true,
             joined: true,
-            mergeWorkerProvisioned: true,
+            mergeWorkerProvisioned: false,
           };
         },
         launch: async (path) => {
@@ -124,7 +124,7 @@ describe('pair → run unification', () => {
     const stored = await readRuntimeRecord(result.configPath);
     expect(stored.agent.publicKey).toBe(agent.publicKey);
     expect(stored.body.publicKey).toBe(body.publicKey);
-    expect(stored.rooms[0]!.mergeWorker?.publicKey).toBe(mergeWorker.publicKey);
+    expect(stored.rooms[0]!.mergeWorker).toBeUndefined();
     expect(stored.agentBinary).toBe('/usr/bin/codex-acp');
     expect(runtimeAgentCommand(stored)).toEqual({
       kind: 'codex',

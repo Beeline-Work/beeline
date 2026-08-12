@@ -14,6 +14,7 @@ import {
 import { createIdentity } from './identity.js';
 import {
   KIND_CHANNEL_ADMINS,
+  KIND_CHANNEL_METADATA,
   KIND_CHANNEL_MEMBERS,
   KIND_CREATE_GROUP,
   KIND_PUT_USER,
@@ -451,6 +452,19 @@ describe('community invites', () => {
       ['visibility', 'open'],
       [TAG_COMMUNITY, communityId],
     ]);
+    const cornerId = '33333333-3333-4333-8333-333333333333';
+    const archivedRoomId = '44444444-4444-4444-8444-444444444444';
+    const cornerCreate = signed(owner, KIND_CREATE_GROUP, [
+      ['h', cornerId],
+      ['name', 'finished-corner'],
+      ['parent', channelId],
+      [TAG_COMMUNITY, communityId],
+    ]);
+    const archivedRoomCreate = signed(owner, KIND_CREATE_GROUP, [
+      ['h', archivedRoomId],
+      ['name', 'old-room'],
+      [TAG_COMMUNITY, communityId],
+    ]);
     let communityJoined = false;
     let channelJoined = false;
     const published: NostrEvent[] = [];
@@ -468,6 +482,17 @@ describe('community invites', () => {
         }
         const filter = filterFrom(init);
         const kind = (filter.kinds as number[])[0];
+        if (kind === KIND_CHANNEL_METADATA) {
+          const requestedId = (filter['#d'] as string[] | undefined)?.[0];
+          return requestedId === archivedRoomId
+            ? jsonResponse([
+                signed(owner, KIND_CHANNEL_METADATA, [
+                  ['d', archivedRoomId],
+                  ['archived', 'true'],
+                ]),
+              ])
+            : jsonResponse([]);
+        }
         if (kind === KIND_STREAM_MESSAGE) return jsonResponse([invite]);
         if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([adminState()]);
         if (kind === KIND_CHANNEL_MEMBERS) {
@@ -487,7 +512,12 @@ describe('community invites', () => {
           const requestedId = (filter['#h'] as string[] | undefined)?.[0];
           if (requestedId === communityId) return jsonResponse([communityCreate()]);
           if (requestedId === channelId) return jsonResponse([channelCreate]);
-          return jsonResponse([communityCreate(), channelCreate]);
+          return jsonResponse([
+            communityCreate(),
+            channelCreate,
+            cornerCreate,
+            archivedRoomCreate,
+          ]);
         }
         return jsonResponse([]);
       }),
@@ -506,6 +536,13 @@ describe('community invites', () => {
     expect(tagValue(channelMutation!, 'p')).toBe(invitee.publicKey);
     expect(tagValue(channelMutation!, 'role')).toBe('member');
     expect(tagValue(channelMutation!, TAG_COMMUNITY)).toBe(communityId);
+    expect(
+      published.some(
+        (event) =>
+          event.kind === KIND_PUT_USER &&
+          [cornerId, archivedRoomId].includes(tagValue(event, 'h') ?? ''),
+      ),
+    ).toBe(false);
 
     channelJoined = false;
     await expect(redeemInvite(ctx(invitee), token)).resolves.toMatchObject({
@@ -514,6 +551,55 @@ describe('community invites', () => {
     });
     expect(published.filter((event) => event.kind === KIND_PUT_USER)).toHaveLength(3);
     expect(channelJoined).toBe(true);
+  });
+
+  it('fails an archived Workspace invite with an actionable error before publishing', async () => {
+    const token = 'bzi_' + 'de'.repeat(32);
+    const tokenHash = inviteTokenHash(token);
+    const createdAt = Math.floor(Date.now() / 1000) - 10;
+    const invite = signed(
+      owner,
+      KIND_STREAM_MESSAGE,
+      [
+        ['h', communityId],
+        ['t', TAG_COMMUNITY_INVITE],
+        ['d', tokenHash],
+        [TAG_COMMUNITY, communityId],
+        ['expiration', String(createdAt + 3600)],
+        ['role', 'member'],
+      ],
+      createdAt,
+    );
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        if (kind === KIND_STREAM_MESSAGE) return jsonResponse([invite]);
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([communityCreate()]);
+        if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([adminState()]);
+        if (kind === KIND_CHANNEL_MEMBERS) return jsonResponse([memberState(false)]);
+        if (kind === KIND_CHANNEL_METADATA) {
+          return jsonResponse([
+            signed(owner, KIND_CHANNEL_METADATA, [
+              ['d', communityId],
+              ['archived', 'true'],
+            ]),
+          ]);
+        }
+        return jsonResponse([]);
+      }),
+    );
+
+    await expect(redeemInvite(ctx(invitee), token)).rejects.toThrow(
+      'This Workspace is archived. Ask a Workspace admin to restore it before joining.',
+    );
+    expect(published).toHaveLength(0);
   });
 
   it('rejects an expired invite for a new member', async () => {

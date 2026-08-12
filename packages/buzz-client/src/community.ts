@@ -21,10 +21,13 @@ import {
   KIND_STREAM_MESSAGE,
   TAG_COMMUNITY,
   TAG_COMMUNITY_INVITE,
+  TAG_DIRECT_MESSAGE,
+  TAG_PARENT,
 } from './kinds.js';
 import { parseMembersEvent, tagValue, tagValues } from './parse.js';
 import {
   getChannelCommunityId,
+  getChannelMetadata,
   isMember,
   setMemberRole,
   waitUntilMember,
@@ -222,19 +225,60 @@ export async function communityChannels(
   communityId: string,
   limit = 500,
 ): Promise<string[]> {
+  const events = await communityChannelCreates(ctx, communityId, limit);
+  const ids = new Set<string>();
+  for (const event of events) {
+    const channelId = tagValue(event, 'h') ?? tagValue(event, 'd');
+    if (channelId) ids.add(channelId);
+  }
+  return [...ids];
+}
+
+async function communityChannelCreates(
+  ctx: ChannelOpsContext,
+  communityId: string,
+  limit = 500,
+): Promise<NostrEvent[]> {
   const events = await queryEvents(
     ctx.http,
     [{ kinds: [KIND_CREATE_GROUP], limit }],
     ctx.identity.publicKey,
   );
+  return events.filter(
+    (event) =>
+      tagValue(event, TAG_COMMUNITY) === communityId &&
+      !isCommunityCreate(event) &&
+      (tagValue(event, 'h') ?? tagValue(event, 'd')) !== communityId,
+  );
+}
+
+async function communityRoomIds(
+  ctx: ChannelOpsContext,
+  communityId: string,
+): Promise<string[]> {
+  const creates = await communityChannelCreates(ctx, communityId);
   const ids = new Set<string>();
-  for (const event of events) {
-    if (tagValue(event, TAG_COMMUNITY) !== communityId) continue;
-    if (isCommunityCreate(event)) continue;
+  for (const event of creates) {
+    // Workspace joins propagate only to shared, top-level Rooms. Corners keep
+    // the exact membership they inherited when opened, and DMs are immutable
+    // two-person Rooms that can never accept an ambient Workspace member.
+    if (tagValue(event, TAG_PARENT)) continue;
+    if (tagValues(event, 't').includes(TAG_DIRECT_MESSAGE)) continue;
     const channelId = tagValue(event, 'h') ?? tagValue(event, 'd');
-    if (channelId && channelId !== communityId) ids.add(channelId);
+    if (channelId) ids.add(channelId);
   }
   return [...ids];
+}
+
+function isArchivedChannelError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /channel is archived/i.test(message);
+}
+
+function archivedWorkspaceError(): Error {
+  return new Error(
+    'This Workspace is archived. Ask a Workspace admin to restore it before joining.',
+  );
 }
 
 async function assertCommunityMemberInChannels(
@@ -242,14 +286,23 @@ async function assertCommunityMemberInChannels(
   communityId: string,
   pubkey: string,
 ): Promise<void> {
-  const channelIds = await communityChannels(ctx, communityId);
+  const channelIds = await communityRoomIds(ctx, communityId);
   for (const channelId of channelIds) {
-    // Workspace joins mirror into shared Rooms, never into private DMs.
-    if (await getDirectMessage(ctx, channelId)) continue;
+    // An archived historical Room is not a valid join target. Skip it and
+    // continue into the Workspace's live Rooms instead of surfacing the
+    // relay's low-level kind:9000 rejection in the app.
+    if ((await getChannelMetadata(ctx, channelId))?.archived) continue;
     if (await isMember(ctx, channelId, pubkey)) continue;
-    await setMemberRole(ctx, channelId, pubkey, 'member', {
-      extraTags: [[TAG_COMMUNITY, communityId]],
-    });
+    try {
+      await setMemberRole(ctx, channelId, pubkey, 'member', {
+        extraTags: [[TAG_COMMUNITY, communityId]],
+      });
+    } catch (error) {
+      // Metadata may race the relay's archive mutation. Treat the relay's
+      // authoritative rejection exactly like the preflight result.
+      if (isArchivedChannelError(error)) continue;
+      throw error;
+    }
     await waitUntilMember(ctx, channelId, pubkey);
   }
 }
@@ -419,6 +472,9 @@ export async function redeemInvite(
   if (!members.some((member) => member.pubkey === invite.mintedBy)) {
     throw new Error('invite minter is not a community member');
   }
+  if ((await getChannelMetadata(ctx, invite.communityId))?.archived) {
+    throw archivedWorkspaceError();
+  }
   if (members.some((member) => member.pubkey === ctx.identity.publicKey)) {
     // Repeated redemption also repairs Rooms created before membership
     // propagation existed, or any prior partial mirror failure.
@@ -433,12 +489,17 @@ export async function redeemInvite(
   }
   if (invite.expiresAt <= now()) throw new Error('invite has expired');
 
-  await setMemberRole(ctx, invite.communityId, ctx.identity.publicKey, 'member', {
-    extraTags: [
-      ['invite', tokenHash],
-      [TAG_COMMUNITY, invite.communityId],
-    ],
-  });
+  try {
+    await setMemberRole(ctx, invite.communityId, ctx.identity.publicKey, 'member', {
+      extraTags: [
+        ['invite', tokenHash],
+        [TAG_COMMUNITY, invite.communityId],
+      ],
+    });
+  } catch (error) {
+    if (isArchivedChannelError(error)) throw archivedWorkspaceError();
+    throw error;
+  }
   await waitUntilMember(ctx, invite.communityId, ctx.identity.publicKey);
   await assertCommunityMemberInChannels(ctx, invite.communityId, ctx.identity.publicKey);
   return {

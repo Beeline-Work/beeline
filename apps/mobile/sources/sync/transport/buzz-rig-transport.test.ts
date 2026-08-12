@@ -97,6 +97,10 @@ describe('Buzz branch-loop event projection', () => {
     expect(projected).toMatchObject({
       type: 'assistant_delta',
       text: 'First\nEdit file · completed',
+      activity: [
+        { kind: 'output', title: 'Output', text: 'First' },
+        { kind: 'tool', title: 'Edit file', status: 'completed' },
+      ],
     });
   });
 

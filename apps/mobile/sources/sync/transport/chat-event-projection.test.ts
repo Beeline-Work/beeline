@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SessionEvent } from '@/sync/transport';
 import {
   projectChatEvent,
+  transcriptMessages,
   upsertChatMessages,
   type ChatDisplayMessage,
 } from '@/sync/transport/buzz-event-projection';
@@ -31,7 +32,10 @@ describe('Buzz Room screen event projection', () => {
       raw(
         'session-control',
         'Agent session started (read-only) — session=opaque',
-        [['t', 'body-control'], ['mode', 'readonly']],
+        [
+          ['t', 'body-control'],
+          ['mode', 'readonly'],
+        ],
         1,
       ),
       raw(
@@ -216,5 +220,50 @@ describe('Buzz Room screen event projection', () => {
         writePermission: { tool: 'str_replace README.md', status: 'allowed' },
       },
     ]);
+  });
+
+  it('keeps telemetry, merge dumps, and lifecycle notices out of the Room', () => {
+    const conversation: ChatDisplayMessage = {
+      id: 'answer',
+      text: 'The fix is ready.',
+      isUser: false,
+      timestamp: 1,
+    };
+    const activity: ChatDisplayMessage = {
+      id: 'activity',
+      text: 'rg -n scheduler',
+      isUser: false,
+      timestamp: 2,
+      isAgentActivity: true,
+    };
+    const merge: ChatDisplayMessage = {
+      id: 'merge',
+      text: 'Merge summary — files changed',
+      isUser: false,
+      timestamp: 3,
+      isMergeSummary: true,
+    };
+    const lifecycle: ChatDisplayMessage = {
+      id: 'archived',
+      text: 'corner archived',
+      isUser: false,
+      timestamp: 4,
+      isArchivedNotice: true,
+    };
+    const corner: ChatDisplayMessage = {
+      id: 'corner-1',
+      text: 'Agent is working.',
+      isUser: false,
+      timestamp: 5,
+      corner: { subchannelId: 'corner-1', status: 'working' },
+    };
+
+    expect(transcriptMessages([conversation, activity, merge, lifecycle, corner], false)).toEqual([
+      conversation,
+      corner,
+    ]);
+    expect(
+      transcriptMessages([conversation, activity, merge, lifecycle, corner], true),
+    ).toHaveLength(5);
   });
 });

@@ -22,6 +22,7 @@ export type {
   PublishResult,
   ChannelMember,
   ChannelMetadata,
+  DirectMessage,
   Community,
   CommunityRole,
   CommunityMember,
@@ -82,6 +83,7 @@ export {
   TAG_PARENT,
   TAG_COMMUNITY,
   TAG_COMMUNITY_INVITE,
+  TAG_DIRECT_MESSAGE,
 } from './kinds.js';
 
 export {
@@ -140,6 +142,14 @@ export {
   eventIsAgentActivity,
 } from './channel.js';
 export type { ChannelOpsContext } from './channel.js';
+
+export {
+  directMessageChannelId,
+  parseDirectMessage,
+  getDirectMessage,
+  listDirectMessages,
+  resolveDirectMessage,
+} from './direct-message.js';
 
 export {
   repositoryRoomId,

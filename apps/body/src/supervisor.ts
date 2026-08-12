@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { createBuzzClient, type RepositoryBinding } from '@beeline/buzz-client';
-import { git, gitAuthed, type Identity } from '@beeline/gate';
+import { gitAuthed, gitWithUserCredentials, type Identity } from '@beeline/gate';
 import { Body, type BoundRepo } from './body.js';
 import type { BodyConfig } from './config.js';
 import {
@@ -223,7 +223,7 @@ export class WorkspaceSupervisor {
             `${this.runtime.relayBaseUrl}/git/${relayRepo.ownerHex}/${relayRepo.repo}`,
             root,
           ])
-        : git(repositories, ['clone', cloneUrl(binding), root]);
+        : gitWithUserCredentials(repositories, ['clone', cloneUrl(binding), root]);
       if (!result.ok)
         throw new Error(`could not clone invited Room ${channelId}: ${result.stderr}`);
     }

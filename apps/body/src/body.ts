@@ -28,6 +28,7 @@ import {
   DurableMergeGate,
   git,
   gitAuthed,
+  gitWithUserCredentials,
   lsRemoteRef,
   isRegisteredAgentIdentity,
   type Identity,
@@ -167,6 +168,7 @@ export interface ChannelTaskRequest {
 
 export const AGENT_REQUEST_TAG = 'buzz-agent-request';
 export const MERGE_READY_TAG = 'merge-ready';
+export const LANDED_TAG = 'landed';
 export const AGENT_CANCEL_TAG = 'buzz-agent-cancel';
 
 export function cornerNameForIntent(intent: string | undefined, parentChannelId: string): string {
@@ -422,16 +424,14 @@ export class Body {
       for (const subchannelId of ids) {
         if (this.subchannels.has(subchannelId)) continue;
         if ((await client.getChannelMetadata(subchannelId))?.archived) continue;
-        const events = await this.agentRelay.queryEvents(
-          [
-            {
-              kinds: [9],
-              '#h': [subchannelId],
-              authors: [this.agentIdentity.publicKey],
-              limit: 5_000,
-            },
-          ],
-        );
+        const events = await this.agentRelay.queryEvents([
+          {
+            kinds: [9],
+            '#h': [subchannelId],
+            authors: [this.agentIdentity.publicKey],
+            limit: 5_000,
+          },
+        ]);
         const control = [...events]
           .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
           .find((event) => tagValue(event, 'feature') && tagValue(event, 'parent'));
@@ -479,7 +479,11 @@ export class Body {
           : undefined;
         const ready = [...events]
           .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))
-          .find((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === MERGE_READY_TAG));
+          .find((event) =>
+            event.tags.some(
+              (tag) => tag[0] === 't' && (tag[1] === MERGE_READY_TAG || tag[1] === LANDED_TAG),
+            ),
+          );
         const tip = ready ? tagValue(ready, 'tip') : undefined;
         const info: SubchannelInfo = {
           subchannelId,
@@ -627,8 +631,8 @@ export class Body {
         `Repo: ${boundRepo.ownerHex}/${boundRepo.repo}`,
         ...(intent ? [`User intent: ${intent}`] : []),
       ].join('\n'),
-      // A corner is the agent's isolated worktree. Tool use inside it is yolo by
-      // design; the only human gate is the protected-line merge handled elsewhere.
+      // A corner is the agent's isolated worktree. Relay repositories retain the
+      // protected-line human gate; ordinary remotes land with operator credentials.
       autoApprovePermissions: true,
       parentChannelId: tlcChannelId,
       worktreePath,
@@ -737,11 +741,7 @@ export class Body {
         await this.durableState.delivered(tlcChannelId, event.id);
         continue;
       }
-      const startsWork = isChannelWorkIntent(
-        event,
-        this.agentIdentity.publicKey,
-        roomParticipants,
-      );
+      const startsWork = isChannelWorkIntent(event, this.agentIdentity.publicKey, roomParticipants);
       if (startsWork && (await this.requestAlreadyOpened(tlcChannelId, event.id))) {
         this.processedRequestIds.add(event.id);
         await this.durableState.delivered(tlcChannelId, event.id);
@@ -828,11 +828,7 @@ export class Body {
   private startAgentTask(info: SubchannelInfo, prompt: string): void {
     const task = this.runOnSession(info.session, async () => {
       try {
-        await this.postParentCornerStatus(
-          info,
-          'working',
-          `Agent is working on: ${prompt}`,
-        );
+        await this.postParentCornerStatus(info, 'working', `Agent is working on: ${prompt}`);
         await this.durableState.appendConversation(info.subchannelId, {
           role: 'user',
           text: prompt,
@@ -855,11 +851,7 @@ export class Body {
           text: info.mergeSummary,
           at: new Date().toISOString(),
         });
-        await postAgentMessage(
-          info.subchannelId,
-          this.agentIdentity,
-          info.mergeSummary,
-        );
+        await postAgentMessage(info.subchannelId, this.agentIdentity, info.mergeSummary);
         await this.publishMergeReady(info);
       } catch (error) {
         await postControlMessage(
@@ -884,6 +876,7 @@ export class Body {
     info: SubchannelInfo,
     status: 'starting' | 'working' | 'needs-attention' | 'ready' | 'failed',
     message: string,
+    extraTags: string[][] = [],
   ): Promise<void> {
     const parentId = info.session.parentChannelId;
     if (!parentId) return Promise.resolve();
@@ -900,6 +893,7 @@ export class Body {
       ['display-status', status],
       ...(boundRepo ? [['repo', this.repoId(boundRepo)]] : []),
       ...(info.request ? [['request', info.request.eventId]] : []),
+      ...extraTags,
     ]);
   }
 
@@ -910,19 +904,17 @@ export class Body {
     const tip = git(info.worktreePath, ['rev-parse', 'HEAD']).stdout.trim();
     if (!/^[0-9a-f]{40}$/.test(tip)) return false;
 
+    if (!boundRepo.ownerHex && boundRepo.remoteName) {
+      return this.publishDirectRemoteDelivery(info, tip);
+    }
+
     const push = boundRepo.ownerHex
       ? gitAuthed(info.worktreePath, this.agentIdentity, boundRepo.ownerHex, boundRepo.repo, [
           'push',
           boundRepo.remoteName ?? 'origin',
           `${info.featureBranch}:refs/heads/${info.featureBranch}`,
         ])
-      : boundRepo.remoteName
-        ? git(info.worktreePath, [
-            'push',
-            boundRepo.remoteName,
-            `${info.featureBranch}:refs/heads/${info.featureBranch}`,
-          ])
-        : { ok: true, status: 0, stdout: '', stderr: '' };
+      : { ok: true, status: 0, stdout: '', stderr: '' };
     if (!push.ok) {
       await postControlMessage(
         info.subchannelId,
@@ -1011,7 +1003,88 @@ export class Body {
     return true;
   }
 
-  /** Archive only after the protected target ref actually reaches the approved tip. */
+  /**
+   * Push and land a non-relay remote with the operator's own git credentials.
+   * No Beeline merge worker, approval, or protected-push assertion participates
+   * in this path; the remote host's branch policy is the remaining authority.
+   */
+  private async publishDirectRemoteDelivery(info: SubchannelInfo, tip: string): Promise<boolean> {
+    const boundRepo = info.boundRepo;
+    const remote = boundRepo?.remoteName;
+    if (!boundRepo || !remote) return false;
+    const branch = boundRepo.targetBranch ?? 'refs/heads/main';
+    const featureRef = `refs/heads/${info.featureBranch}`;
+    const featurePush = gitWithUserCredentials(info.worktreePath, [
+      'push',
+      remote,
+      `${tip}:${featureRef}`,
+    ]);
+    if (!featurePush.ok) {
+      await postControlMessage(
+        info.subchannelId,
+        this.agentIdentity,
+        `Feature push failed; work was not landed. ${featurePush.stderr.trim()}`,
+        [['status', 'failed']],
+      );
+      await this.postParentCornerStatus(
+        info,
+        'failed',
+        'Delivery failed. Open corner for details.',
+      );
+      return false;
+    }
+
+    const land = gitWithUserCredentials(info.worktreePath, ['push', remote, `${tip}:${branch}`]);
+    if (!land.ok) {
+      await postControlMessage(
+        info.subchannelId,
+        this.agentIdentity,
+        `Feature branch pushed, but landing on ${branch} failed. ${land.stderr.trim()}`,
+        [
+          ['status', 'failed'],
+          ['feature', info.featureBranch],
+          ['tip', tip],
+        ],
+      );
+      await this.postParentCornerStatus(
+        info,
+        'failed',
+        'Delivery failed after the feature push. Open corner for details.',
+        [['tip', tip]],
+      );
+      return false;
+    }
+
+    const target = { repo: this.repoId(boundRepo), branch, tip };
+    info.mergeTarget = target;
+    await postControlMessage(
+      info.subchannelId,
+      this.agentIdentity,
+      `Work landed on ${branch} at ${tip}.`,
+      [
+        ['t', LANDED_TAG],
+        ['status', 'ready'],
+        ['delivery', 'landed'],
+        ['repo', target.repo],
+        ['branch', target.branch],
+        ['feature', info.featureBranch],
+        ['tip', target.tip],
+        ['agent', this.agentIdentity.publicKey],
+      ],
+    );
+    await this.postParentCornerStatus(
+      info,
+      'ready',
+      `Work landed at ${tip.slice(0, 12)} on ${branch.replace(/^refs\/heads\//, '')}.`,
+      [
+        ['delivery', 'landed'],
+        ['tip', tip],
+      ],
+    );
+    return true;
+  }
+
+  /** Archive only after the target ref actually reaches the delivered tip. */
   async pollMergeCompletions(): Promise<number> {
     let merged = 0;
     for (const info of [...this.subchannels.values()]) {
@@ -1024,13 +1097,21 @@ export class Body {
             info.boundRepo.repo,
             info.mergeTarget.branch,
           )
-        : info.boundRepo.localPath
-          ? git(info.boundRepo.localPath, [
-              'rev-parse',
-              '--verify',
+        : info.boundRepo.remoteName
+          ? gitWithUserCredentials(info.worktreePath, [
+              'ls-remote',
+              info.boundRepo.remoteName,
               info.mergeTarget.branch,
-            ]).stdout.trim()
-          : undefined;
+            ])
+              .stdout.trim()
+              .split(/\s+/)[0]
+          : info.boundRepo.localPath
+            ? git(info.boundRepo.localPath, [
+                'rev-parse',
+                '--verify',
+                info.mergeTarget.branch,
+              ]).stdout.trim()
+            : undefined;
       if (targetTip !== info.mergeTarget.tip) continue;
       await this.postMergeSummary(
         info.subchannelId,
@@ -1451,8 +1532,7 @@ export class Body {
       const members = await listMembers(this.agentClientContext(), sourceChannelId);
       for (const member of members) {
         if (member.pubkey === this.agentIdentity.publicKey) continue;
-        const role =
-          member.role === 'owner' || member.role === 'admin' ? member.role : 'member';
+        const role = member.role === 'owner' || member.role === 'admin' ? member.role : 'member';
         await setMemberRole(this.agentIdentity, targetChannelId, member.pubkey, role);
       }
     } catch (err) {
@@ -1481,7 +1561,7 @@ export class Body {
               'fetch',
               boundRepo.remoteName,
             ])
-          : git(boundRepo.localPath, ['fetch', boundRepo.remoteName]);
+          : gitWithUserCredentials(boundRepo.localPath, ['fetch', boundRepo.remoteName]);
         if (!fetch.ok) throw new Error(`git fetch failed: ${fetch.stderr}`);
       }
       const target = (boundRepo.targetBranch ?? 'refs/heads/main').replace(/^refs\/heads\//, '');
@@ -1617,17 +1697,15 @@ export class Body {
   }
 
   private async requestAlreadyOpened(channelId: string, requestId: string): Promise<boolean> {
-    const events = await this.agentRelay.queryEvents(
-      [
-        {
-          kinds: [9],
-          '#h': [channelId],
-          '#request': [requestId],
-          authors: [this.agentIdentity.publicKey],
-          limit: 5,
-        },
-      ],
-    );
+    const events = await this.agentRelay.queryEvents([
+      {
+        kinds: [9],
+        '#h': [channelId],
+        '#request': [requestId],
+        authors: [this.agentIdentity.publicKey],
+        limit: 5,
+      },
+    ]);
     return events.some((event) =>
       event.tags.some((tag) => tag[0] === 'request' && tag[1] === requestId),
     );

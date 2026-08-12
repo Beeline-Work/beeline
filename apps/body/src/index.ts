@@ -4,6 +4,8 @@
 export {
   Body,
   createAgentSubchannel,
+  isChannelAddressedMessage,
+  isChannelWorkIntent,
   isChannelTaskRequest,
   AGENT_REQUEST_TAG,
   AGENT_CANCEL_TAG,
@@ -41,8 +43,10 @@ export {
 } from './mcp-inventory.js';
 export {
   projectActivity,
+  postAgentMessage,
   postControlMessage,
   ACTIVITY_TAG,
+  AGENT_MESSAGE_TAG,
   type ActivityBatch,
 } from './activity.js';
 export {

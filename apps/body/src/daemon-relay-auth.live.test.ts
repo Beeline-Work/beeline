@@ -71,7 +71,7 @@ describe.runIf(authEnforced && reachable)('daemon relay authentication', () => {
     });
 
     const message = `two-party request ${randomUUID()}`;
-    await humanClient.messageSubmit(roomId, message);
+    await humanClient.startAgentWork(roomId, message, agent.publicKey);
     expect(
       await body.pollChannelRequests(roomId, {
         repo: 'auth-live',

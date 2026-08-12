@@ -5,10 +5,18 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { hasWriteTools, inventoryForMcpServers } from './mcp-inventory.js';
 import { parseEnvFile, hasLlmCredentials } from './config.js';
-import { AGENT_REQUEST_TAG, Body, cornerNameForIntent, isChannelTaskRequest } from './body.js';
+import {
+  AGENT_REQUEST_TAG,
+  Body,
+  cornerNameForIntent,
+  isChannelAddressedMessage,
+  isChannelTaskRequest,
+  isChannelWorkIntent,
+} from './body.js';
 import { AcpClient } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
+import { postAgentMessage } from './activity.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -130,7 +138,7 @@ describe('agent identity boundary', () => {
   });
 });
 
-describe('Room conversation → subchannel request trigger', () => {
+describe('Room conversation and explicit work intent', () => {
   const human = newIdentity('human');
   const agent = newIdentity('agent');
 
@@ -147,38 +155,140 @@ describe('Room conversation → subchannel request trigger', () => {
     );
   }
 
-  it('accepts an @-addressed request without a private UI-only marker', () => {
-    expect(isChannelTaskRequest(requestEvent([['p', agent.publicKey]]), agent.publicKey)).toBe(
-      true,
-    );
-
-    expect(isChannelTaskRequest(requestEvent([['t', AGENT_REQUEST_TAG]]), agent.publicKey)).toBe(
-      false,
-    );
+  it('replies to an @-addressed ordinary message without authorizing work', () => {
+    const event = requestEvent([['p', agent.publicKey]]);
+    expect(isChannelAddressedMessage(event, agent.publicKey)).toBe(true);
+    expect(isChannelWorkIntent(event, agent.publicKey)).toBe(false);
+    expect(isChannelTaskRequest(event, agent.publicKey)).toBe(false);
   });
 
-  it('answers every human message when the agent is the sole other party', () => {
-    expect(
-      isChannelTaskRequest(requestEvent([]), agent.publicKey, [human.publicKey, agent.publicKey]),
-    ).toBe(true);
+  it('replies conversationally in a two-party Room without opening work', () => {
+    const event = requestEvent([]);
+    const participants = [human.publicKey, agent.publicKey];
+    expect(isChannelAddressedMessage(event, agent.publicKey, participants)).toBe(true);
+    expect(isChannelWorkIntent(event, agent.publicKey, participants)).toBe(false);
   });
 
   it('requires @-addressing when multiple people or agents share the Room', () => {
     const colleague = newIdentity('colleague');
-    const participants = [human.publicKey, colleague.publicKey, agent.publicKey];
-    expect(isChannelTaskRequest(requestEvent([]), agent.publicKey, participants)).toBe(false);
+    const otherAgent = newIdentity('other-agent');
+    const participants = [
+      human.publicKey,
+      colleague.publicKey,
+      agent.publicKey,
+      otherAgent.publicKey,
+    ];
+    expect(isChannelAddressedMessage(requestEvent([]), agent.publicKey, participants)).toBe(false);
     expect(
-      isChannelTaskRequest(requestEvent([['p', agent.publicKey]]), agent.publicKey, participants),
+      isChannelAddressedMessage(
+        requestEvent([['p', agent.publicKey]]),
+        agent.publicKey,
+        participants,
+      ),
     ).toBe(true);
+    expect(
+      isChannelAddressedMessage(
+        requestEvent([['p', agent.publicKey]]),
+        otherAgent.publicKey,
+        participants,
+      ),
+    ).toBe(false);
+  });
+
+  it('opens work only for the signed Start work marker', () => {
+    const participants = [human.publicKey, agent.publicKey];
+    const work = requestEvent([['t', AGENT_REQUEST_TAG]]);
+    expect(isChannelAddressedMessage(work, agent.publicKey, participants)).toBe(true);
+    expect(isChannelWorkIntent(work, agent.publicKey, participants)).toBe(true);
   });
 
   it('never accepts the agent tasking itself', () => {
     expect(
-      isChannelTaskRequest(requestEvent([['p', agent.publicKey]], agent), agent.publicKey, [
+      isChannelAddressedMessage(requestEvent([['p', agent.publicKey]], agent), agent.publicKey, [
         human.publicKey,
         agent.publicKey,
       ]),
     ).toBe(false);
+  });
+
+  it('uses the read-only Room session and publishes one durable assistant message', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-room-reply-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    const prompt = vi.spyOn(client, 'sessionPrompt').mockResolvedValue({
+      stopReason: 'end_turn',
+      updates: [],
+      agentText: 'Doing well. What are you thinking about?',
+      toolCalls: [],
+    });
+    body.registerSession({
+      channelId: 'parent-channel',
+      sessionId: 'readonly-session',
+      client,
+      mode: 'readonly',
+    });
+    const durableState = Reflect.get(body, 'durableState') as {
+      appendConversation: (...args: unknown[]) => Promise<void>;
+    };
+    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const event = requestEvent([['p', body.agent.publicKey]]);
+
+    await Reflect.get(body, 'replyInRoom').call(body, 'parent-channel', { repo: 'repo' }, {
+      eventId: event.id,
+      authorPubkey: event.pubkey,
+      content: "Hey, what's up?",
+      createdAt: event.created_at,
+    });
+
+    expect(prompt).toHaveBeenCalledWith(
+      'readonly-session',
+      expect.stringContaining("Hey, what's up?"),
+      120_000,
+    );
+    expect(body.listSessions()).toHaveLength(1);
+    expect(published).toHaveLength(1);
+    expect(published[0]).toMatchObject({
+      kind: 9,
+      content: 'Doing well. What are you thinking about?',
+    });
+    expect(published[0]!.tags).toContainEqual(['h', 'parent-channel']);
+    expect(published[0]!.tags).toContainEqual(['t', 'agent-message']);
+  });
+});
+
+describe('first-class assistant messages', () => {
+  it('omits cross-channel reply linkage for corner outcomes', async () => {
+    const agent = newIdentity('corner-agent-message');
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    await postAgentMessage('child-corner', agent, 'Completed the requested work.');
+
+    expect(published[0]!.tags).toContainEqual(['h', 'child-corner']);
+    expect(published[0]!.tags.some((tag) => tag[0] === 'e')).toBe(false);
   });
 });
 

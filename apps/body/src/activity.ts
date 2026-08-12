@@ -13,6 +13,7 @@ import { publishEvent } from '@beeline/gate';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 
 export const ACTIVITY_TAG = 'agent-activity';
+export const AGENT_MESSAGE_TAG = 'agent-message';
 
 /** Batched activity to emit as a single channel event. */
 export interface ActivityBatch {
@@ -42,6 +43,10 @@ export function projectActivity(
   };
   const onUpdate = (u: SessionUpdate) => {
     if (u.sessionId !== sessionId) return;
+    // Assistant prose is published once, as a first-class channel message,
+    // after sessionPrompt completes. Keep the activity stream for thought/tool
+    // telemetry so conversation copy cannot be duplicated or lost in a batch.
+    if (u.update.sessionUpdate === 'agent_message_chunk') return;
     pending.push(u);
     // One paired identity can serve several Rooms. A five-second batch keeps
     // shared live visibility while staying below per-pubkey relay quotas under
@@ -54,6 +59,31 @@ export function projectActivity(
     client.off('session/update', onUpdate);
     flush();
   };
+}
+
+/** Publish a completed assistant turn as durable conversation, not telemetry. */
+export async function postAgentMessage(
+  channelId: string,
+  owner: Identity,
+  message: string,
+  replyTo?: string,
+): Promise<void> {
+  const event: NostrEvent = signEvent(
+    {
+      pubkey: owner.publicKey,
+      created_at: Math.floor(Date.now() / 1000),
+      kind: 9,
+      tags: [
+        ['h', channelId],
+        ['t', AGENT_MESSAGE_TAG],
+        ...(replyTo ? [['e', replyTo, '', 'reply']] : []),
+      ],
+      content: message,
+    },
+    owner.secretKey,
+  );
+
+  await publishEvent(event, owner);
 }
 
 /** Emit an ordered batch of session updates as one kind:9 channel event. */

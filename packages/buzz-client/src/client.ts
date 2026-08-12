@@ -358,6 +358,14 @@ export class BuzzClient {
     return sendMessage(this.ctx, channelId, text, opts);
   }
 
+  /** Explicit signed user intent to open one edit corner with the addressed agent. */
+  startAgentWork(channelId: string, text: string, agentPubkey: string): Promise<NostrEvent> {
+    return sendMessage(this.ctx, channelId, text, {
+      mentionAgent: agentPubkey,
+      extraTags: [['t', 'buzz-agent-request']],
+    });
+  }
+
   /**
    * Publish a body-style agent-activity event (kind:9, #t=agent-activity).
    * Used by tests (and later the agent body) to fan out session/update frames.

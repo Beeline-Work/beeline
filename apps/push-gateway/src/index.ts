@@ -1,8 +1,7 @@
 import { applicationDefault, getApps, initializeApp } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
-import { createBuzzClient, createIdentity } from '@beeline/buzz-client';
-import type { NostrEvent } from '@beeline/nostr';
-import { PushGateway } from './gateway.js';
+import { createBuzzClient, createIdentity, queryEvents } from '@beeline/buzz-client';
+import { PushGateway, RegisteredEventPoller } from './gateway.js';
 import { TokenRegistry } from './registry.js';
 import { createRegistrationServer } from './server.js';
 
@@ -32,69 +31,33 @@ async function main(): Promise<void> {
   });
   await relayClient.connect();
 
-  const gateway = new PushGateway(relayClient, registry, getMessaging(firebaseApp));
-  const queryKey = createIdentity('push-gateway-query');
-  const seenEvents = new Map<string, number>();
-  let querySince = Math.floor(Date.now() / 1000) - 5;
-  let polling = false;
+  const gateway = new PushGateway(registry, getMessaging(firebaseApp));
+  const relayHttp = { baseUrl: RELAY_URL, host: new URL(RELAY_URL).host };
+  const poller = new RegisteredEventPoller(
+    registry,
+    (pubkey) => ({
+      // The gateway is co-located with the production relay and uses its
+      // trusted X-Pubkey bridge to perform an ACL-scoped read. Do not point
+      // this process at a public relay origin that requires a user's NIP-98 key.
+      query: (filters) => queryEvents(relayHttp, filters, pubkey),
+      disconnect: () => undefined,
+    }),
+    (event, recipientPubkey) => gateway.handleRelayEvent(event, recipientPubkey),
+  );
 
-  const pollRegisteredEvents = async (): Promise<void> => {
-    if (polling || registry.pubkeyCount === 0) return;
-    polling = true;
-    const since = querySince;
-    let newestCreatedAt = since;
-    try {
-      for (const pubkey of registry.pubkeys()) {
-        // The local relay bridge authorizes reads with X-Pubkey. A query-only
-        // client lets the gateway see exactly the channels of each registered
-        // identity without collecting that identity's secret key.
-        const reader = createBuzzClient({
-          baseUrl: RELAY_URL,
-          identity: { ...queryKey, publicKey: pubkey },
-        });
-        try {
-          const events = (await reader.query([{ kinds: [9], since }])) as NostrEvent[];
-          events.sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
-          for (const event of events) {
-            newestCreatedAt = Math.max(newestCreatedAt, event.created_at);
-            if (seenEvents.has(event.id)) continue;
-            seenEvents.set(event.id, event.created_at);
-            try {
-              await gateway.handleRelayEvent(event, reader);
-            } catch (error) {
-              seenEvents.delete(event.id);
-              throw error;
-            }
-          }
-        } finally {
-          reader.disconnect();
-        }
-      }
-      querySince = Math.max(querySince, newestCreatedAt - 1);
-      const expiry = Math.floor(Date.now() / 1000) - 600;
-      for (const [eventId, createdAt] of seenEvents) {
-        if (createdAt < expiry) seenEvents.delete(eventId);
-      }
-    } finally {
-      polling = false;
-    }
+  const pollRegisteredEvent = (): void => {
+    void poller.pollNext().catch((error) => {
+      console.error('[push] relay event poll failed:', error instanceof Error ? error.message : String(error));
+    });
   };
 
   const unsubscribe = relayClient.socket!.subscribe(
     [{ kinds: [9], since: Math.floor(Date.now() / 1000) }],
-    () => {
-      void pollRegisteredEvents().catch((error) => {
-        console.error('[push] relay event poll failed:', error instanceof Error ? error.message : String(error));
-      });
-    },
+    pollRegisteredEvent,
     { subId: 'buzzy-push-events' },
   );
-  const pollTimer = setInterval(() => {
-    void pollRegisteredEvents().catch((error) => {
-      console.error('[push] relay event poll failed:', error instanceof Error ? error.message : String(error));
-    });
-  }, POLL_INTERVAL_MS);
-  void pollRegisteredEvents();
+  const pollTimer = setInterval(pollRegisteredEvent, POLL_INTERVAL_MS);
+  pollRegisteredEvent();
 
   const server = createRegistrationServer(registry);
   server.listen(PORT, HOST, () => {

@@ -14,7 +14,7 @@ import { initialWindowMetrics, SafeAreaProvider, useSafeAreaInsets } from 'react
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SidebarNavigator } from '@/components/SidebarNavigator';
 import sodium from '@/encryption/libsodium.lib';
-import { View, Platform, AppState } from 'react-native';
+import { View, Platform } from 'react-native';
 import { ModalProvider } from '@/modal';
 import { PostHogProvider } from 'posthog-react-native';
 import { tracking } from '@/track/tracking';
@@ -35,16 +35,18 @@ import { applyVoiceUpsellOverride } from '@/realtime/voiceExperiment';
 import { useTauriZoom } from '@/hooks/useTauriZoom';
 import { useTauriDrag } from '@/hooks/useTauriDrag';
 import { BrowserNavigationShortcuts } from '@/hooks/useBrowserNavigationShortcuts';
+import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
 
-// Configure notification handler — suppress push display when app is in foreground
+// Keep remote notifications visible while the app is foregrounded. The sender
+// may be writing in a different Room than the one currently on screen.
 Notifications.setNotificationHandler({
     handleNotification: async () => {
-        const isForeground = AppState.currentState === 'active';
         return {
-            shouldShowAlert: !isForeground,
-            shouldPlaySound: !isForeground,
+            shouldShowAlert: true,
+            shouldPlaySound: true,
             shouldSetBadge: true,
-            shouldShowBanner: !isForeground,
+            shouldShowBanner: true,
             shouldShowList: true,
         };
     },
@@ -204,6 +206,20 @@ function getDevWebQueryCredentials(): AuthCredentials | null {
 }
 
 export default function RootLayout() {
+    React.useEffect(() => {
+        // Refresh the FCM binding on every cold start. Firebase can rotate the
+        // device token long after onboarding, so registration cannot be a
+        // one-time side effect of importing or creating an identity.
+        void loadBuzzIdentity()
+            .then((identity) => identity && registerBuzzPushNotifications(identity))
+            .catch((error: unknown) => {
+                console.warn(
+                    '[buzzy-push] startup registration unavailable:',
+                    error instanceof Error ? error.message : String(error),
+                );
+            });
+    }, []);
+
     useTauriZoom();
     useTauriDrag();
     const router = useRouter();

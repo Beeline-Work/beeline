@@ -466,22 +466,31 @@ export class BuzzRigTransport implements RigTransport {
     }
   }
 
-  /**
-   * Check if a channel is archived (from metadata or control messages).
-   */
+  /** Check whether this channel itself is archived. */
   async isChannelArchived(channelId: string): Promise<boolean> {
     try {
       const client = await this.getClient();
       const meta = await client.getChannelMetadata(channelId);
       if (meta?.archived) return true;
-      // Also check for archive status control messages.
+      const parentChannelId = await client.getParentChannelId(channelId);
+      if (!parentChannelId) return false;
+      // A corner archive also posts a status card into its parent Room. That
+      // card describes the tagged subchannel; it is not Room lifecycle state.
+      // Legacy self-archive messages have no subchannel tag, so keep accepting
+      // those for verified corners when relay metadata has not materialized.
       const events = await client.sessionEventsBackfill(channelId, { limit: 10 });
       for (const ev of events) {
         const tTags = (ev.event.tags ?? []).filter((t: string[]) => t[0] === 't');
         const isControl = tTags.some((t: string[]) => t[1] === 'body-control');
         if (isControl) {
           const status = tagValue(ev.event, 'status');
-          if (status === 'archived') return true;
+          const scopedSubchannel = tagValue(ev.event, 'subchannel');
+          if (
+            status === 'archived' &&
+            (!scopedSubchannel || scopedSubchannel === channelId)
+          ) {
+            return true;
+          }
         }
       }
       return false;

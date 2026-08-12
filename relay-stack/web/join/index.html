@@ -141,6 +141,14 @@
         outline-offset: 3px;
       }
 
+      .primary[aria-disabled='true'] {
+        border-color: #555555;
+        background: #333333;
+        color: #8a8a8a;
+        cursor: wait;
+        transform: none;
+      }
+
       .status {
         min-height: 18px;
         margin: 12px 0 0;
@@ -163,11 +171,11 @@
       <div class="mark" aria-hidden="true">B</div>
       <p class="eyebrow">Signed Workspace invite</p>
       <h1 id="invite-heading">You're invited to a Workspace</h1>
-      <p class="details">
-        Open this invite in Beeline to preview the Workspace and join as a member. The invite
-        remains bound to its signed relay record.
+      <p class="details" id="invite-details">
+        Join with Beeline to preview the Workspace and become a member. If Beeline is not installed,
+        this page will keep your invite ready while you get the app.
       </p>
-      <a class="primary" id="join-workspace" href="#">Join Workspace</a>
+      <a class="primary" id="join-workspace" href="#" aria-disabled="true">Resolving invite…</a>
       <p class="status" id="status" role="status" aria-live="polite">Resolving signed invite…</p>
     </main>
   </body>

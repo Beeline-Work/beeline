@@ -33,6 +33,11 @@ the complete `relay-stack/` directory so nginx can serve:
 - `/install` as `text/x-shellscript`
 - `/dl/beeline-<os>-<arch>.tar.gz` and its `.sha256` sidecar
 
+The invite landing page also expects the latest signed Android release APK at
+`web/dl/beeline-android.apk`. This stable deployment alias is not committed;
+copy the same APK attached to the current GitHub release before deploying the
+relay front so new invitees can install Beeline without losing their invite URL.
+
 For local verification, override the install origin while using the same
 published script:
 

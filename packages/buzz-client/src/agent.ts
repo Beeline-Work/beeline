@@ -361,7 +361,7 @@ export async function setAgentSoul(
   const personality = input.personality.trim().slice(0, 280);
   const intent = input.intent.trim().slice(0, 500);
   const avatarSeed = input.avatarSeed.trim().slice(0, 128);
-  if (!name || !personality || !intent || !avatarSeed) {
+  if (!name || !personality || !avatarSeed) {
     throw new Error('agent soul fields must not be empty');
   }
   if (!isSingleWordAgentName(name)) {

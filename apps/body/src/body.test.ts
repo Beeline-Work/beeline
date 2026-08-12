@@ -154,14 +154,18 @@ describe('Room conversation and permission-gated work intent', () => {
   const human = newIdentity('human');
   const agent = newIdentity('agent');
 
-  function requestEvent(tags: string[][], author = human) {
+  function requestEvent(
+    tags: string[][],
+    author = human,
+    content = 'Implement the channel request',
+  ) {
     return signEvent(
       {
         pubkey: author.publicKey,
         created_at: 1,
         kind: 9,
         tags: [['h', 'parent-channel'], ...tags],
-        content: 'Implement the channel request',
+        content,
       },
       author.secretKey,
     );
@@ -179,6 +183,32 @@ describe('Room conversation and permission-gated work intent', () => {
     const participants = [human.publicKey, agent.publicKey];
     expect(isChannelAddressedMessage(event, agent.publicKey, participants)).toBe(true);
     expect(isChannelWorkIntent(event, agent.publicKey, participants)).toBe(false);
+  });
+
+  it.each([
+    'open a new corner to do work: add a FEATURE.md',
+    'open a corner and implement the retry',
+    'start work on the retry in a corner',
+    'Could you create a new corner for this change?',
+  ])('recognizes an explicit corner command: %s', (content) => {
+    const participants = [human.publicKey, agent.publicKey];
+    expect(
+      isChannelWorkIntent(requestEvent([], human, content), agent.publicKey, participants),
+    ).toBe(true);
+  });
+
+  it.each([
+    'Create FEATURE.md and commit it.',
+    'Can you implement the retry?',
+    'What happens when an agent opens a corner?',
+    'Should we open a corner for this?',
+    "Don't open a corner; just explain the change.",
+    'Tell me about the active corner.',
+  ])('keeps vague or conversational intent in the Room: %s', (content) => {
+    const participants = [human.publicKey, agent.publicKey];
+    expect(
+      isChannelWorkIntent(requestEvent([], human, content), agent.publicKey, participants),
+    ).toBe(false);
   });
 
   it('requires @-addressing when multiple people or agents share the Room', () => {
@@ -282,6 +312,71 @@ describe('Room conversation and permission-gated work intent', () => {
     });
     expect(published[0]!.tags).toContainEqual(['h', 'parent-channel']);
     expect(published[0]!.tags).toContainEqual(['t', 'agent-message']);
+  });
+
+  it('opens explicitly authorized corner work without prompting the read-only session', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-explicit-corner-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    const prompt = vi.spyOn(client, 'sessionPrompt');
+    body.registerSession({
+      channelId: 'parent-channel',
+      sessionId: 'readonly-session',
+      client,
+      mode: 'readonly',
+    });
+    const durableState = Reflect.get(body, 'durableState') as {
+      appendConversation: (...args: unknown[]) => Promise<void>;
+    };
+    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
+    const request = {
+      eventId: 'explicit-corner-request',
+      authorPubkey: human.publicKey,
+      content: 'open a new corner to do work: add a FEATURE.md',
+      createdAt: 1,
+    };
+    const editClient = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    const info = {
+      subchannelId: 'corner-id',
+      worktreePath: '/tmp/worktree',
+      featureBranch: 'feature/corner',
+      role: body.agent,
+      session: {
+        channelId: 'corner-id',
+        sessionId: 'edit-session',
+        client: editClient,
+        mode: 'edit' as const,
+      },
+      lastPolledAt: 1,
+      archived: false,
+    };
+    const open = vi.spyOn(body, 'openSubchannel').mockResolvedValue(info);
+    const start = vi
+      .spyOn(body as never, 'startAgentTask' as never)
+      .mockImplementation(() => undefined as never);
+
+    await expect(
+      Reflect.get(body, 'replyInRoom').call(
+        body,
+        'parent-channel',
+        { repo: 'repo' },
+        request,
+        true,
+      ),
+    ).resolves.toBe(true);
+
+    expect(open).toHaveBeenCalledWith('parent-channel', { repo: 'repo' }, request.content, request);
+    expect(start).toHaveBeenCalledWith(info, request.content);
+    expect(prompt).not.toHaveBeenCalled();
   });
 
   it('opens an edit corner only after a human allows the first mutating request', async () => {

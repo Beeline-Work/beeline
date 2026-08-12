@@ -163,7 +163,7 @@ export default function BuzzCorners() {
             const display = resolveAgentDisplayIdentity(item.openerPubkey, agent);
             return (
               <TouchableOpacity
-                accessibilityLabel={`Open corner ${item.name}, ${status.label.toLowerCase()}`}
+                accessibilityLabel={`View corner ${item.name}, ${status.label.toLowerCase()}`}
                 style={styles.cornerRow}
                 onPress={() => router.push(`/buzz/chat/${encodeURIComponent(item.id)}`)}
               >

@@ -288,4 +288,6 @@ export interface BuzzClientConfig {
   skipAuth?: boolean;
   /** Connect timeout for the first WS open + AUTH, ms. */
   connectTimeoutMs?: number;
+  /** Coalesce same-turn HTTP reads into one multi-filter relay query. */
+  batchQueries?: boolean;
 }

@@ -1,8 +1,13 @@
 export interface AgentAvatarGeometry {
-  sensorOffset: number;
-  aperture: number;
-  crown: number;
-  struts: [number, number, number];
+  /** Outer hull family. This is the strongest small-size identity cue. */
+  hullVariant: number;
+  /** Sensor assembly family: cyclops, pair, slit bank, tower, prism, or grid. */
+  sensorVariant: number;
+  /** Large armor seam layout. */
+  armorVariant: number;
+  /** Mirrors asymmetric machining without changing the overall agent language. */
+  direction: -1 | 1;
+  crownDepth: number;
 }
 
 function hash32(value: string): number {
@@ -14,14 +19,28 @@ function hash32(value: string): number {
   return hash;
 }
 
+function mix32(value: number): number {
+  let mixed = value >>> 0;
+  mixed ^= mixed >>> 16;
+  mixed = Math.imul(mixed, 0x7feb352d) >>> 0;
+  mixed ^= mixed >>> 15;
+  mixed = Math.imul(mixed, 0x846ca68b) >>> 0;
+  return (mixed ^ (mixed >>> 16)) >>> 0;
+}
+
 /** Stable bilateral machine geometry derived from cosmetic seed or pubkey. */
 export function agentAvatarGeometry(seed: string): AgentAvatarGeometry {
-  const hash = hash32(seed || 'unknown-agent');
-  const byte = (shift: number) => (hash >>> shift) & 0xff;
+  const value = seed || 'unknown-agent';
+  const baseHash = hash32(value);
+  const hullHash = mix32(baseHash ^ 0x9e3779b9);
+  const sensorHash = mix32(baseHash ^ 0x85ebca6b);
+  const armorHash = mix32(baseHash ^ 0xc2b2ae35);
+  const directionHash = mix32(baseHash ^ 0x27d4eb2f);
   return {
-    sensorOffset: 17 + (byte(0) % 8),
-    aperture: 5 + (byte(8) % 5),
-    crown: 27 + (byte(16) % 13),
-    struts: [31 + (byte(0) % 5), 48 + (byte(8) % 5), 65 + (byte(16) % 5)],
+    hullVariant: hullHash % 6,
+    sensorVariant: sensorHash % 6,
+    armorVariant: armorHash % 4,
+    direction: (directionHash & 1) === 0 ? -1 : 1,
+    crownDepth: 16 + ((hullHash >>> 8) % 13),
   };
 }

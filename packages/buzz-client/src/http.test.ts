@@ -89,4 +89,39 @@ describe('HTTP bridge NIP-98 auth', () => {
     expect(headers?.['x-pubkey']).toBe(identity.publicKey);
     expect(headers?.authorization).toBeUndefined();
   });
+
+  it('fails before relay polling when the auth signer and event signer differ', async () => {
+    const otherIdentity = createIdentity('other-http-test');
+    const mismatched = signEvent(
+      {
+        pubkey: otherIdentity.publicKey,
+        created_at: 1_700_000_000,
+        kind: 9001,
+        tags: [['h', 'room-id']],
+        content: '',
+      },
+      otherIdentity.secretKey,
+    );
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await expect(publishEvent(opts, mismatched)).rejects.toThrow(
+      'signer does not match relay auth identity',
+    );
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('treats an explicit negative publish acknowledgement as a failure', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ accepted: false, error: 'actor not authorized' }), {
+            status: 200,
+          }),
+      ),
+    );
+
+    await expect(publishEvent(opts, signedEvent())).rejects.toThrow('was not accepted');
+  });
 });

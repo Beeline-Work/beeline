@@ -17,7 +17,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
-import { publishEvent } from './relay.js';
+import { publishEvent, queryEvents } from './relay.js';
 import type { Identity } from './identity.js';
 
 export const KIND_PUT_USER = 9000;
@@ -101,14 +101,31 @@ export async function setMemberRole(
 }
 
 /**
- * Archive a channel by publishing a kind:9002 edit-metadata event.
+ * Archive a child channel by publishing a kind:9002 edit-metadata event.
  * The relay will set `archived=true` in the DB and re-emit kind:39000
  * with `archived=true` tag so clients see the channel as read-only.
  *
- * The caller MUST be an owner/admin of the channel, or the relay will
- * reject the mutation.
+ * Fail closed unless the immutable kind:9007 create event proves this target
+ * has a distinct parent. A Workspace or top-level Room can never pass this
+ * writer boundary, even if an upstream caller confuses its session identity.
+ * The relay separately requires the caller to be an owner/admin.
  */
 export async function archiveChannel(actor: Identity, channelId: string): Promise<void> {
+  const creates = await queryEvents(
+    [{ kinds: [KIND_CREATE_GROUP], '#h': [channelId], limit: 20 }],
+    actor,
+  );
+  const create = creates
+    .filter(
+      (event) =>
+        event.kind === KIND_CREATE_GROUP &&
+        event.tags.some((tag) => tag[0] === 'h' && tag[1] === channelId),
+    )
+    .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))[0];
+  const parentChannelId = create?.tags.find((tag) => tag[0] === 'parent')?.[1];
+  if (!parentChannelId || parentChannelId === channelId) {
+    throw new Error(`refusing to archive non-corner channel ${channelId}`);
+  }
   const event = sign(actor, KIND_EDIT_METADATA, [
     ['h', channelId],
     ['archived', 'true'],

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { newIdentity } from './identity.js';
+import { archiveChannel, KIND_CREATE_GROUP, KIND_EDIT_METADATA } from './buzz.js';
 import { createRelayClient } from './relay.js';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -66,5 +67,78 @@ describe('authenticated relay client', () => {
     );
 
     await expect(client.publishEvent(event)).rejects.toThrow('must match');
+  });
+});
+
+describe('archive writer boundary', () => {
+  it('publishes kind:9002 only for an immutable child channel', async () => {
+    const identity = newIdentity('corner-owner');
+    const cornerId = 'corner';
+    const create = signEvent(
+      {
+        pubkey: identity.publicKey,
+        created_at: 1_700_000_000,
+        kind: KIND_CREATE_GROUP,
+        tags: [
+          ['h', cornerId],
+          ['parent', 'room'],
+        ],
+        content: '',
+      },
+      identity.secretKey,
+    );
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/query')) {
+          return new Response(JSON.stringify([create]), { status: 200 });
+        }
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response('{"accepted":true}', { status: 200 });
+      }),
+    );
+
+    await archiveChannel(identity, cornerId);
+
+    expect(published).toHaveLength(1);
+    expect(published[0]).toMatchObject({ kind: KIND_EDIT_METADATA });
+    expect(published[0]?.tags).toEqual(
+      expect.arrayContaining([
+        ['h', cornerId],
+        ['archived', 'true'],
+      ]),
+    );
+  });
+
+  it('refuses a Workspace or top-level Room before kind:9002 is published', async () => {
+    const identity = newIdentity('room-owner');
+    const roomId = 'room';
+    const create = signEvent(
+      {
+        pubkey: identity.publicKey,
+        created_at: 1_700_000_000,
+        kind: KIND_CREATE_GROUP,
+        tags: [['h', roomId]],
+        content: '',
+      },
+      identity.secretKey,
+    );
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/query')) {
+          return new Response(JSON.stringify([create]), { status: 200 });
+        }
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response('{"accepted":true}', { status: 200 });
+      }),
+    );
+
+    await expect(archiveChannel(identity, roomId)).rejects.toThrow(
+      'refusing to archive non-corner channel room',
+    );
+    expect(published).toHaveLength(0);
   });
 });

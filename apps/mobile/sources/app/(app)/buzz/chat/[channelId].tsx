@@ -578,7 +578,7 @@ export default function BuzzChat() {
         const statusLabel = item.corner.status.replace('-', ' ').toUpperCase();
         return (
           <TouchableOpacity
-            accessibilityLabel={`${display?.name ?? 'Agent'} work ${statusLabel.toLowerCase()}. Open corner`}
+            accessibilityLabel={`${display?.name ?? 'Agent'} work ${statusLabel.toLowerCase()}. View corner`}
             onPress={() =>
               router.push(`/buzz/chat/${encodeURIComponent(item.corner!.subchannelId)}` as Href)
             }
@@ -599,7 +599,7 @@ export default function BuzzChat() {
               <Text style={styles.cornerStatusLabel}>{statusLabel}</Text>
             </View>
             <View style={styles.openCornerAction}>
-              <Text style={styles.openCornerText}>OPEN {CORNER_LABEL.toUpperCase()}</Text>
+              <Text style={styles.openCornerText}>VIEW {CORNER_LABEL.toUpperCase()}</Text>
               <Text style={styles.openCornerGlyph}>›</Text>
             </View>
           </TouchableOpacity>

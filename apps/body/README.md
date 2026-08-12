@@ -20,12 +20,14 @@ by projecting agent activity into the relay channel.
 
 - **TLC (read-only):** ACP session with **no MCP mounted** (`mcpServers: []`).
   The agent converses normally. Its first native mutating-tool permission
-  request becomes a signed Room prompt; message receipt itself never creates a
-  corner or worktree.
+  request becomes a signed Room prompt. An explicit human command to open a
+  corner is the only message that creates a corner directly; vague work
+  requests and casual chat remain on the read-only path.
 - **Subchannel (edit):** ACP session with `buzz-dev-mcp` mounted, `cwd` set to
   a git worktree on a feature branch. Agent has full write access **only within
-  the worktree**. A human member's ALLOW response creates this session and
-  replays the concrete request; DENY leaves the Room read-only.
+  the worktree**. Either an explicit open-a-corner command or a human member's
+  ALLOW response creates this session. ALLOW replays the concrete request;
+  DENY leaves the Room read-only.
 - **Workspace supervisor:** one `beeline pair` creates one durable agent
   identity. Humans explicitly invite that existing identity to repository Rooms;
   the supervisor discovers current role projections and starts or drains an
@@ -254,6 +256,8 @@ into the process environment.
   enforces read-only by **not mounting** the MCP at all (`mcpServers: []`). A
   Room ALLOW never approves the original tool against the paired checkout; it
   opens an isolated worktree and replays the request in a new edit session.
+  Explicit open-a-corner commands bypass that extra prompt by authorizing the
+  isolated worktree directly; merge authority is unchanged.
 - **Permission intent is authority-free:** any current human Room member may
   answer the prompt. The signed response is bound to the agent, permission UUID,
   and original request event; it changes no Room role and grants no merge power.

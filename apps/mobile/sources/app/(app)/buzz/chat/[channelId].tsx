@@ -108,6 +108,7 @@ export default function BuzzChat() {
   const [participantPickerVisible, setParticipantPickerVisible] = useState(false);
   const [membershipError, setMembershipError] = useState<string | null>(null);
   const [composerFocused, setComposerFocused] = useState(false);
+  const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
   const agentByPubkey = useMemo(
     () => new Map(availableAgents.map((agent) => [agent.pubkey, agent])),
     [availableAgents],
@@ -163,12 +164,6 @@ export default function BuzzChat() {
         .map((participant) => ({ pubkey: participant.pubkey, name: participant.label })),
     [roomParticipants],
   );
-  const workIntentAgent = useMemo(() => {
-    const mentioned = mentionedAgentPubkey(inputText, mentionableAgents);
-    if (mentioned) return mentionableAgents.find((agent) => agent.pubkey === mentioned);
-    return mentionableAgents.length === 1 ? mentionableAgents[0] : undefined;
-  }, [inputText, mentionableAgents]);
-
   // Helper to add new messages, deduplicating by id.
   const addMessages = useCallback((newMsgs: ChatDisplayMessage[]) => {
     setMessages((prev) =>
@@ -338,45 +333,45 @@ export default function BuzzChat() {
     mentionableAgents,
   ]);
 
-  const handleStartWork = useCallback(async () => {
-    const text = inputText.trim();
-    if (!text || !transport || !workIntentAgent || isArchived || parentChannelId) return;
-
-    setSending(true);
-    setInputText('');
-    const optimisticId = `optimistic-work-${Date.now()}`;
-    addMessages([
-      {
-        id: optimisticId,
-        text,
-        isUser: true,
-        timestamp: Date.now(),
-        pubkey: userPubkey,
-      },
-    ]);
-    try {
-      const eventId = await transport.messageSubmitWorkIntent(
-        decodedId,
-        text,
-        workIntentAgent.pubkey,
-      );
-      setMessages((prev) => reconcileOptimisticMessage(prev, optimisticId, eventId));
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (err) {
-      console.warn('Start work failed:', err);
-    } finally {
-      setSending(false);
-    }
-  }, [
-    addMessages,
-    decodedId,
-    inputText,
-    isArchived,
-    parentChannelId,
-    transport,
-    userPubkey,
-    workIntentAgent,
-  ]);
+  const handleWritePermission = useCallback(
+    async (message: ChatDisplayMessage, decision: 'allow' | 'deny') => {
+      const permission = message.writePermission;
+      if (!transport || !permission || permission.status !== 'pending' || viewerIsAgent) return;
+      setPermissionActionId(permission.permissionId);
+      try {
+        await transport.respondToWritePermission(
+          decodedId,
+          permission.permissionId,
+          permission.requestId,
+          permission.agentPubkey,
+          decision,
+        );
+        setMessages((current) =>
+          current.map((item) =>
+            item.id === message.id && item.writePermission
+              ? {
+                  ...item,
+                  writePermission: {
+                    ...item.writePermission,
+                    status: decision === 'allow' ? 'allowed' : 'denied',
+                  },
+                }
+              : item,
+          ),
+        );
+        void Haptics.notificationAsync(
+          decision === 'allow'
+            ? Haptics.NotificationFeedbackType.Success
+            : Haptics.NotificationFeedbackType.Warning,
+        );
+      } catch (err) {
+        console.warn('Write permission response failed:', err);
+      } finally {
+        setPermissionActionId(null);
+      }
+    },
+    [decodedId, transport, viewerIsAgent],
+  );
 
   const handleAddRoomMember = useCallback(
     async (option: RoomMemberOption) => {
@@ -444,6 +439,71 @@ export default function BuzzChat() {
 
   const renderItem = useCallback(
     ({ item }: { item: ChatDisplayMessage }) => {
+      if (item.writePermission) {
+        const permission = item.writePermission;
+        const permissionAgent = agentByPubkey.get(permission.agentPubkey);
+        const display = resolveAgentDisplayIdentity(permission.agentPubkey, permissionAgent);
+        const pending = permission.status === 'pending';
+        const busy = permissionActionId === permission.permissionId;
+        return (
+          <HullSurface
+            strength="raised"
+            style={styles.writePermissionCard}
+            testID={`write-permission-${permission.status}`}
+          >
+            <View style={styles.writePermissionHeading}>
+              <AgentAvatar
+                pubkey={permission.agentPubkey}
+                avatarSeed={display.avatarSeed}
+                avatarUrl={display.avatarUrl}
+                name={display.name}
+                size={30}
+              />
+              <View style={styles.writePermissionCopy}>
+                <Text style={styles.writePermissionTitle}>
+                  {display.name} wants to start editing files
+                </Text>
+                <Text style={styles.writePermissionTool} numberOfLines={2}>
+                  FIRST WRITE · {permission.tool}
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.writePermissionBoundary}>
+              Allowing creates an isolated corner and worktree. It does not grant merge authority.
+            </Text>
+            {pending && !viewerIsAgent ? (
+              <View style={styles.writePermissionActions}>
+                <MonoButton
+                  label="Deny"
+                  variant="secondary"
+                  disabled={busy}
+                  onPress={() => void handleWritePermission(item, 'deny')}
+                  style={styles.writePermissionButton}
+                />
+                <MonoButton
+                  label="Allow editing"
+                  loading={busy}
+                  onPress={() => void handleWritePermission(item, 'allow')}
+                  style={styles.writePermissionButton}
+                />
+              </View>
+            ) : (
+              <Text style={styles.writePermissionStatus}>
+                {viewerIsAgent && pending
+                  ? '⊘ A PERSON MUST RESPOND'
+                  : permission.status === 'allowed'
+                    ? '✓ EDITING ALLOWED · OPENING CORNER'
+                    : permission.status === 'expired'
+                      ? '□ REQUEST EXPIRED · STILL READ-ONLY'
+                      : permission.status === 'failed'
+                        ? '□ CORNER COULD NOT OPEN · STILL READ-ONLY'
+                        : '□ EDITING DENIED · STILL READ-ONLY'}
+              </Text>
+            )}
+          </HullSurface>
+        );
+      }
+
       if (item.corner) {
         const cornerAgent = item.corner.agentPubkey
           ? agentByPubkey.get(item.corner.agentPubkey)
@@ -553,7 +613,7 @@ export default function BuzzChat() {
         </NewMessageMaterialize>
       );
     },
-    [agentByPubkey, personProfileByPubkey],
+    [agentByPubkey, handleWritePermission, permissionActionId, personProfileByPubkey, viewerIsAgent],
   );
 
   if (loading) {
@@ -720,27 +780,6 @@ export default function BuzzChat() {
                 onPress={() => void handleCancel()}
               >
                 <Text style={styles.cancelTurnText}>■ CANCEL TURN</Text>
-              </TouchableOpacity>
-            )}
-            {!parentChannelId && !viewerIsAgent && inputText.trim() && (
-              <TouchableOpacity
-                accessibilityLabel={
-                  workIntentAgent
-                    ? `Start work with ${workIntentAgent.name}`
-                    : 'Mention one Agent to start work'
-                }
-                disabled={!workIntentAgent || sending}
-                onPress={() => void handleStartWork()}
-                style={[
-                  styles.startWorkButton,
-                  (!workIntentAgent || sending) && styles.startWorkButtonDisabled,
-                ]}
-                testID="start-work-action"
-              >
-                <Text style={styles.startWorkGlyph}>＋</Text>
-                <Text style={styles.startWorkText}>
-                  {workIntentAgent ? `START WORK · ${workIntentAgent.name}` : 'MENTION AN AGENT'}
-                </Text>
               </TouchableOpacity>
             )}
             <View style={[styles.composer, composerFocused && styles.composerFocused]}>
@@ -1364,25 +1403,49 @@ const styles = StyleSheet.create({
     fontSize: 10,
     letterSpacing: 0.5,
   },
-  startWorkButton: {
-    minHeight: 38,
-    marginBottom: 7,
-    paddingHorizontal: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 7,
+  writePermissionCard: {
+    minWidth: 0,
+    marginBottom: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
     borderWidth: 1,
     borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgHighlight,
+    gap: 10,
   },
-  startWorkButtonDisabled: { opacity: 0.45 },
-  startWorkGlyph: { ...Typography.default('semiBold'), color: groknight.textPrimary, fontSize: 14 },
-  startWorkText: {
-    ...Typography.mono('semiBold'),
+  writePermissionHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  writePermissionCopy: { flex: 1, minWidth: 0 },
+  writePermissionTitle: {
+    ...Typography.default('semiBold'),
     color: groknight.textPrimary,
-    fontSize: 10,
-    letterSpacing: 0.6,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  writePermissionTool: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textMuted,
+    fontSize: 9,
+    lineHeight: 13,
+    letterSpacing: 0.4,
+    marginTop: 2,
+  },
+  writePermissionBoundary: {
+    ...Typography.default(),
+    color: groknight.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  writePermissionActions: { flexDirection: 'row', gap: 8 },
+  writePermissionButton: { flex: 1, minWidth: 0 },
+  writePermissionStatus: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textSecondary,
+    fontSize: 9,
+    lineHeight: 14,
+    letterSpacing: 0.5,
   },
   composer: {
     flexDirection: 'row',

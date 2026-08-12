@@ -37,6 +37,7 @@ import {
   type BuzzClient,
   type Identity,
   type MergeTarget,
+  type WritePermissionDecision,
 } from '@beeline/buzz-client';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { cornerName, type CornerSummary } from '@/buzz/corners';
@@ -154,14 +155,22 @@ export class BuzzRigTransport implements RigTransport {
     return event.id;
   }
 
-  /** Explicit signed Start work action; ordinary messages never carry this tag. */
-  async messageSubmitWorkIntent(
+  /** Respond to the agent's first mutating-tool request in a Room. */
+  async respondToWritePermission(
     channelId: string,
-    text: string,
+    permissionId: string,
+    requestId: string,
     agentPubkey: string,
+    decision: WritePermissionDecision,
   ): Promise<string> {
     const client = await this.getClient();
-    const event = await client.startAgentWork(channelId, text, agentPubkey);
+    const event = await client.respondToWritePermission(
+      channelId,
+      permissionId,
+      requestId,
+      agentPubkey,
+      decision,
+    );
     return event.id;
   }
 

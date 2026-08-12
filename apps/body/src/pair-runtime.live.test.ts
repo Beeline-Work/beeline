@@ -35,6 +35,7 @@ import {
   readRuntimeRecord,
   runtimeIdentity,
 } from './runtime.js';
+import { respondToWritePermission } from './write-permission.live-helper.js';
 
 const human = newIdentity('pair-runtime-human');
 let checkout = '';
@@ -297,20 +298,39 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
       );
     }
 
-    await humanClient.startAgentWork(
+    const firstRequest = await humanClient.messageSubmit(
       roomId,
       exerciseSecondRoom
         ? `Create PAIR-RUNTIME-PROOF.txt containing ${marker}. Before committing, run sleep 12 so a human can steer this active turn.`
         : `Create PAIR-RUNTIME-PROOF.txt containing ${marker}, then commit it.`,
-      runtime.agent.publicKey,
+      { mentionAgent: runtime.agent.publicKey },
     );
+    const permissionResponses = [
+      respondToWritePermission(
+        humanClient,
+        roomId,
+        firstRequest.id,
+        runtime.agent.publicKey,
+        'allow',
+      ),
+    ];
     if (exerciseSecondRoom) {
-      await humanClient.startAgentWork(
+      const secondRequest = await humanClient.messageSubmit(
         secondRoomId,
         `Create SECOND-ROOM-PROOF.txt containing ${marker}, then commit it.`,
-        runtime.agent.publicKey,
+        { mentionAgent: runtime.agent.publicKey },
+      );
+      permissionResponses.push(
+        respondToWritePermission(
+          humanClient,
+          secondRoomId,
+          secondRequest.id,
+          runtime.agent.publicKey,
+          'allow',
+        ),
       );
     }
+    await Promise.all(permissionResponses);
 
     const roomEvents = async () =>
       queryEvents(

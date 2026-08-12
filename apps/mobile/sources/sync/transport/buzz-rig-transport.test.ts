@@ -165,6 +165,24 @@ describe('Buzz transport bootstrap', () => {
 
     expect(client.socket).toBeNull();
   });
+
+  it('reuses one socket owner across screens and disconnects it when relay scope changes', async () => {
+    const identity = {
+      publicKey: 'e'.repeat(64),
+      secretKey: new Uint8Array(32).fill(6),
+      name: 'operator',
+    } as Identity;
+
+    const firstScreen = new BuzzRigTransport(identity, 'https://pooled-relay.test/');
+    const nextScreen = new BuzzRigTransport(identity, 'https://pooled-relay.test');
+
+    const shared = await firstScreen.ensureClient();
+    const disconnect = vi.spyOn(shared, 'disconnect');
+    expect(await nextScreen.ensureClient()).toBe(shared);
+
+    await new BuzzRigTransport(identity, 'https://other-relay.test').ensureClient();
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
 });
 
 describe('Room-scoped Workspace membership', () => {
@@ -498,6 +516,14 @@ describe('Buzz corner lifecycle projection', () => {
       listSubchannels: vi.fn(async () => ids),
       query: vi.fn(async (filters: Array<Record<string, unknown>>) => {
         const id = (filters[0]?.['#h'] as string[])[0]!;
+        if ((filters[0]?.kinds as number[])[0] === 9) {
+          return [
+            event('room', [
+              ['t', 'merge-summary'],
+              ['subchannel', 'merged'],
+            ]).event,
+          ];
+        }
         return [
           {
             id: `create-${id}`,
@@ -515,14 +541,6 @@ describe('Buzz corner lifecycle projection', () => {
       }),
       getChannelMetadata: vi.fn(async (id: string) => ({ archived: id === 'archived' })),
       sessionEventsBackfill: vi.fn(async (id: string) => {
-        if (id === 'room') {
-          return [
-            event('room', [
-              ['t', 'merge-summary'],
-              ['subchannel', 'merged'],
-            ]),
-          ];
-        }
         if (id === 'open')
           return [
             event(id, [
@@ -542,6 +560,9 @@ describe('Buzz corner lifecycle projection', () => {
       { id: 'open', name: 'open-corner', status: 'open' },
       { id: 'merged', name: 'merged-corner', status: 'merged' },
       { id: 'archived', name: 'archived-corner', status: 'archived' },
+    ]);
+    expect(client.query).toHaveBeenCalledWith([
+      expect.objectContaining({ '#h': ['room'], '#t': ['merge-summary'], limit: 500 }),
     ]);
   });
 });

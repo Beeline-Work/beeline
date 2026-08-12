@@ -859,7 +859,6 @@ export class Body {
           info.subchannelId,
           this.agentIdentity,
           info.mergeSummary,
-          info.request?.eventId,
         );
         await this.publishMergeReady(info);
       } catch (error) {
@@ -888,10 +887,16 @@ export class Body {
   ): Promise<void> {
     const parentId = info.session.parentChannelId;
     if (!parentId) return Promise.resolve();
+    const boundRepo = info.boundRepo;
     return postControlMessage(parentId, this.agentIdentity, message, [
       ['subchannel', info.subchannelId],
+      ['session', info.session.logicalSessionId ?? info.session.sessionId],
       ['agent', this.agentIdentity.publicKey],
+      ['feature', info.featureBranch],
+      ['branch', boundRepo?.targetBranch ?? 'refs/heads/main'],
+      ['mode', 'edit'],
       ['status', status],
+      ...(boundRepo ? [['repo', this.repoId(boundRepo)]] : []),
       ...(info.request ? [['request', info.request.eventId]] : []),
     ]);
   }
@@ -1246,6 +1251,7 @@ export class Body {
         // cleanup and preserve this message as the next ordered prompt.
         const prompt = `[Member ${evt.pubkey.slice(0, 12)}]: ${evt.content}`;
         try {
+          let agentReply = '';
           const runningTask = this.runningAgentTasks.get(subchannelId);
           if (runningTask || session.client.activeRunId(session.sessionId)) {
             try {
@@ -1256,14 +1262,16 @@ export class Body {
               const result = await this.runOnSession(session, () =>
                 session.client.sessionPrompt(session.sessionId, prompt, 60_000),
               );
-              info.mergeSummary = result.agentText.trim() || info.mergeSummary;
+              agentReply = result.agentText.trim();
+              info.mergeSummary = agentReply || info.mergeSummary;
               await this.publishMergeReady(info);
             }
           } else {
             const result = await this.runOnSession(session, () =>
               session.client.sessionPrompt(session.sessionId, prompt, 60_000),
             );
-            info.mergeSummary = result.agentText.trim() || info.mergeSummary;
+            agentReply = result.agentText.trim();
+            info.mergeSummary = agentReply || info.mergeSummary;
             await this.publishMergeReady(info);
           }
           await this.durableState.appendConversation(subchannelId, {
@@ -1272,12 +1280,13 @@ export class Body {
             eventId: evt.id,
             at: new Date().toISOString(),
           });
-          if (info.mergeSummary) {
+          if (agentReply) {
             await this.durableState.appendConversation(subchannelId, {
               role: 'agent',
-              text: info.mergeSummary,
+              text: agentReply,
               at: new Date().toISOString(),
             });
+            await postAgentMessage(subchannelId, this.agentIdentity, agentReply);
           }
           processed.add(evt.id);
           await this.durableState.delivered(subchannelId, evt.id);

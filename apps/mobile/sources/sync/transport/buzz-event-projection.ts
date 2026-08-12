@@ -1,5 +1,5 @@
 import type { SessionEvent } from './rig-transport';
-import type { SessionEvent as BuzzSessionEvent } from '@beeline/buzz-client';
+import type { MergeTarget, SessionEvent as BuzzSessionEvent } from '@beeline/buzz-client';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -102,4 +102,218 @@ export function toRigEvent(ev: BuzzSessionEvent): SessionEvent {
     sessionId: ev.channelId,
     payload: ev.event,
   };
+}
+
+export type CornerCardStatus =
+  | 'starting'
+  | 'working'
+  | 'needs-attention'
+  | 'ready'
+  | 'failed';
+
+export type ChatDisplayMessage = {
+  id: string;
+  text: string;
+  isUser: boolean;
+  timestamp: number;
+  pubkey?: string;
+  isMergeSummary?: boolean;
+  isArchivedNotice?: boolean;
+  isAgentActivity?: boolean;
+  isNew?: boolean;
+  corner?: {
+    subchannelId: string;
+    agentPubkey?: string;
+    status: CornerCardStatus;
+  };
+};
+
+export type ChatEventProjection = {
+  message?: ChatDisplayMessage;
+  mergeTarget?: MergeTarget;
+  archiveChannel?: boolean;
+};
+
+function eventPayload(event: SessionEvent): UnknownRecord | undefined {
+  return event.type === 'raw' ? asRecord(event.payload) : undefined;
+}
+
+function eventTags(event: SessionEvent): string[][] {
+  const tags = eventPayload(event)?.tags;
+  return Array.isArray(tags)
+    ? tags.filter(
+        (tag): tag is string[] => Array.isArray(tag) && tag.every((value) => typeof value === 'string'),
+      )
+    : [];
+}
+
+function eventTagValue(event: SessionEvent, name: string): string | undefined {
+  return eventTags(event).find((tag) => tag[0] === name)?.[1];
+}
+
+function eventHasTag(event: SessionEvent, name: string, value?: string): boolean {
+  return eventTags(event).some(
+    (tag) => tag[0] === name && (value === undefined || tag[1] === value),
+  );
+}
+
+function eventText(event: SessionEvent): string {
+  if (event.type === 'assistant_delta') return event.text;
+  const content = eventPayload(event)?.content;
+  return typeof content === 'string' ? content : '';
+}
+
+function eventPubkey(event: SessionEvent): string | undefined {
+  if (event.type === 'assistant_delta') return event.pubkey;
+  const pubkey = eventPayload(event)?.pubkey;
+  return typeof pubkey === 'string' ? pubkey : undefined;
+}
+
+function eventTimestamp(event: SessionEvent): number {
+  if (event.type === 'assistant_delta' && event.seq) return event.seq;
+  const createdAt = eventPayload(event)?.createdAt;
+  return typeof createdAt === 'number' ? createdAt : Date.now();
+}
+
+function eventId(event: SessionEvent): string {
+  if (event.type === 'assistant_delta' && event.id) return event.id;
+  const id = eventPayload(event)?.id;
+  if (typeof id === 'string') return id;
+  return `${event.type}-${eventTimestamp(event)}-${eventText(event).slice(0, 32)}`;
+}
+
+function cornerStatus(event: SessionEvent): CornerCardStatus | undefined {
+  const status = eventTagValue(event, 'status');
+  if (status === 'starting') return 'starting';
+  if (status === 'working' || status === 'open' || status === 'live') return 'working';
+  if (status === 'needs-attention') return 'needs-attention';
+  if (status === 'ready') return 'ready';
+  if (status === 'failed') return 'failed';
+  return undefined;
+}
+
+/** One display projection for both initial backfill and live subscription events. */
+export function projectChatEvent(
+  event: SessionEvent,
+  viewerPubkey: string,
+  isNew = false,
+): ChatEventProjection {
+  const text = eventText(event);
+  const pubkey = eventPubkey(event);
+  const subchannelId = eventTagValue(event, 'subchannel');
+  const bodyControl = eventHasTag(event, 't', 'body-control') || Boolean(subchannelId);
+  const status = cornerStatus(event);
+  const isMergeSummary = eventHasTag(event, 't', 'merge-summary');
+  const isArchived = eventHasTag(event, 'status', 'archived');
+  const repo = eventTagValue(event, 'repo');
+  const branch = eventTagValue(event, 'branch');
+  const tip = eventTagValue(event, 'tip');
+  const mergeTarget = eventHasTag(event, 't', 'merge-ready') && repo && branch && tip
+    ? { repo, branch, tip }
+    : undefined;
+
+  if (
+    eventHasTag(event, 't', 'change-review-manifest') ||
+    eventHasTag(event, 't', 'change-review-file')
+  ) {
+    return {};
+  }
+  if (event.type === 'assistant_delta' && !text.trim()) return {};
+
+  if (isMergeSummary) {
+    return {
+      ...(mergeTarget ? { mergeTarget } : {}),
+      message: {
+        id: eventId(event),
+        text,
+        isUser: false,
+        timestamp: eventTimestamp(event),
+        ...(pubkey ? { pubkey } : {}),
+        isMergeSummary: true,
+        ...(isNew ? { isNew: true } : {}),
+      },
+    };
+  }
+
+  if (bodyControl) {
+    if (subchannelId && status) {
+      return {
+        ...(mergeTarget ? { mergeTarget } : {}),
+        message: {
+          id: `corner-${subchannelId}`,
+          text,
+          isUser: false,
+          timestamp: eventTimestamp(event),
+          ...(pubkey ? { pubkey } : {}),
+          corner: {
+            subchannelId,
+            agentPubkey: eventTagValue(event, 'agent') ?? pubkey,
+            status,
+          },
+          ...(isNew ? { isNew: true } : {}),
+        },
+      };
+    }
+    if (isArchived && !subchannelId) {
+      return {
+        archiveChannel: true,
+        message: {
+          id: eventId(event),
+          text,
+          isUser: false,
+          timestamp: eventTimestamp(event),
+          ...(pubkey ? { pubkey } : {}),
+          isArchivedNotice: true,
+          ...(isNew ? { isNew: true } : {}),
+        },
+      };
+    }
+    return {
+      ...(mergeTarget ? { mergeTarget } : {}),
+      ...(isArchived && !subchannelId ? { archiveChannel: true } : {}),
+    };
+  }
+
+  return {
+    ...(mergeTarget ? { mergeTarget } : {}),
+    message: {
+      id: eventId(event),
+      text,
+      isUser: pubkey === viewerPubkey,
+      timestamp: eventTimestamp(event),
+      ...(pubkey ? { pubkey } : {}),
+      ...(event.type === 'assistant_delta' ? { isAgentActivity: true } : {}),
+      ...(isNew ? { isNew: true } : {}),
+    },
+  };
+}
+
+const CORNER_STATUS_ORDER: Record<CornerCardStatus, number> = {
+  starting: 0,
+  working: 1,
+  'needs-attention': 2,
+  ready: 3,
+  failed: 4,
+};
+
+/** Stable-id upsert keeps lifecycle cards monotonic across replay order. */
+export function upsertChatMessages(
+  current: ChatDisplayMessage[],
+  incoming: ChatDisplayMessage[],
+): ChatDisplayMessage[] {
+  const byId = new Map(current.map((message) => [message.id, message]));
+  for (const message of incoming) {
+    const existing = byId.get(message.id);
+    if (
+      existing?.corner &&
+      message.corner &&
+      CORNER_STATUS_ORDER[message.corner.status] < CORNER_STATUS_ORDER[existing.corner.status]
+    ) {
+      continue;
+    }
+    byId.set(message.id, message);
+  }
+  return [...byId.values()].sort(
+    (a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id),
+  );
 }

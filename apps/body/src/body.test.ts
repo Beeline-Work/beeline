@@ -16,6 +16,7 @@ import {
 import { AcpClient } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
+import { postAgentMessage } from './activity.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -170,7 +171,13 @@ describe('Room conversation and explicit work intent', () => {
 
   it('requires @-addressing when multiple people or agents share the Room', () => {
     const colleague = newIdentity('colleague');
-    const participants = [human.publicKey, colleague.publicKey, agent.publicKey];
+    const otherAgent = newIdentity('other-agent');
+    const participants = [
+      human.publicKey,
+      colleague.publicKey,
+      agent.publicKey,
+      otherAgent.publicKey,
+    ];
     expect(isChannelAddressedMessage(requestEvent([]), agent.publicKey, participants)).toBe(false);
     expect(
       isChannelAddressedMessage(
@@ -179,6 +186,13 @@ describe('Room conversation and explicit work intent', () => {
         participants,
       ),
     ).toBe(true);
+    expect(
+      isChannelAddressedMessage(
+        requestEvent([['p', agent.publicKey]]),
+        otherAgent.publicKey,
+        participants,
+      ),
+    ).toBe(false);
   });
 
   it('opens work only for the signed Start work marker', () => {
@@ -256,6 +270,25 @@ describe('Room conversation and explicit work intent', () => {
     });
     expect(published[0]!.tags).toContainEqual(['h', 'parent-channel']);
     expect(published[0]!.tags).toContainEqual(['t', 'agent-message']);
+  });
+});
+
+describe('first-class assistant messages', () => {
+  it('omits cross-channel reply linkage for corner outcomes', async () => {
+    const agent = newIdentity('corner-agent-message');
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    await postAgentMessage('child-corner', agent, 'Completed the requested work.');
+
+    expect(published[0]!.tags).toContainEqual(['h', 'child-corner']);
+    expect(published[0]!.tags.some((tag) => tag[0] === 'e')).toBe(false);
   });
 });
 

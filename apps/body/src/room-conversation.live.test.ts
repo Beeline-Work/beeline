@@ -1,6 +1,6 @@
 /** Production-relay proof for Room conversation, explicit work, and parent status. */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -151,6 +151,33 @@ describe.runIf(live)('production Room conversation contract', () => {
     console.log('[room-conversation] greeting=REPLIED architecture=REPLIED corners=0');
   }, 240_000);
 
+  it('opens explicitly authorized work directly without a permission prompt', async () => {
+    const request = await client.messageSubmit(
+      roomId,
+      'open a new corner to do work: add a FEATURE.md',
+    );
+
+    expect(await body!.pollChannelRequests(roomId, binding())).toBe(1);
+    expect(await client.listSubchannels(roomId)).toHaveLength(1);
+    const requestEvents = (await messages()).filter((event) =>
+      event.event.tags.some((tag) => tag[0] === 'request' && tag[1] === request.id),
+    );
+    expect(
+      requestEvents.some((event) =>
+        event.event.tags.some((tag) => tag[0] === 't' && tag[1] === WRITE_PERMISSION_REQUEST_TAG),
+      ),
+    ).toBe(false);
+
+    await body!.waitForAgentTasks();
+    const info = [...body!.getSubchannels().values()].find(
+      (candidate) => candidate.request?.eventId === request.id,
+    );
+    expect(info).toBeDefined();
+    expect(await readFile(resolve(info!.worktreePath, 'FEATURE.md'), 'utf8')).not.toHaveLength(0);
+    expect(git(info!.worktreePath, ['status', '--porcelain']).stdout).toBe('');
+    console.log('[room-conversation] explicit-corner=DIRECT permission=NONE feature=COMMITTED');
+  }, 240_000);
+
   it('ignores unmentioned multi-party chat and answers only a named mention', async () => {
     await setMemberRole(human, roomId, colleague.publicKey, 'member');
     await waitUntil(() => client.isMember(roomId, colleague.publicKey));
@@ -170,11 +197,11 @@ describe.runIf(live)('production Room conversation contract', () => {
         event.event.tags.some((tag) => tag[0] === 'e' && tag[1] === mentioned.id),
       ),
     );
-    expect(await client.listSubchannels(roomId)).toHaveLength(0);
+    expect(await client.listSubchannels(roomId)).toHaveLength(1);
     console.log('[room-conversation] multi-party-unmentioned=IGNORED named-agent=REPLIED');
   }, 180_000);
 
-  it('opens work only after ALLOW, while DENY leaves the Room read-only', async () => {
+  it('keeps implicit work behind ALLOW, while DENY leaves the Room read-only', async () => {
     const request = await client.messageSubmit(
       roomId,
       'Create LIVE-WORK.txt containing room-work-proof and commit it.',
@@ -185,7 +212,7 @@ describe.runIf(live)('production Room conversation contract', () => {
     expect(tagValue(permission.event, 'agent')).toBe(agent.publicKey);
     expect(tagValue(permission.event, 'request')).toBe(request.id);
     expect(tagValue(permission.event, 'status')).toBe('pending');
-    expect(await client.listSubchannels(roomId)).toHaveLength(0);
+    expect(await client.listSubchannels(roomId)).toHaveLength(1);
     await client.respondToWritePermission(
       roomId,
       tagValue(permission.event, 'permission')!,
@@ -194,7 +221,7 @@ describe.runIf(live)('production Room conversation contract', () => {
       'allow',
     );
     expect(await allowedPoll).toBe(1);
-    expect(await client.listSubchannels(roomId)).toHaveLength(1);
+    expect(await client.listSubchannels(roomId)).toHaveLength(2);
     await body!.waitForAgentTasks();
     const firstEvents = await messages();
     const firstStatuses = firstEvents
@@ -224,7 +251,7 @@ describe.runIf(live)('production Room conversation contract', () => {
       'allow',
     );
     expect(await failurePoll).toBe(1);
-    expect(await client.listSubchannels(roomId)).toHaveLength(2);
+    expect(await client.listSubchannels(roomId)).toHaveLength(3);
     await body!.waitForAgentTasks();
     const failureEvents = (await messages()).filter((event) =>
       event.event.tags.some((tag) => tag[0] === 'request' && tag[1] === failure.id),
@@ -243,7 +270,7 @@ describe.runIf(live)('production Room conversation contract', () => {
     );
     const deniedPoll = body!.pollChannelRequests(roomId, binding());
     const deniedPermission = await waitForWritePermissionPrompt(client, roomId, denied.id);
-    expect(await client.listSubchannels(roomId)).toHaveLength(2);
+    expect(await client.listSubchannels(roomId)).toHaveLength(3);
     await client.respondToWritePermission(
       roomId,
       tagValue(deniedPermission.event, 'permission')!,
@@ -252,7 +279,7 @@ describe.runIf(live)('production Room conversation contract', () => {
       'deny',
     );
     expect(await deniedPoll).toBe(0);
-    expect(await client.listSubchannels(roomId)).toHaveLength(2);
+    expect(await client.listSubchannels(roomId)).toHaveLength(3);
     console.log(
       '[room-conversation] chat=NO-CORNER first-write=PROMPT allow=ONE-CORNER deny=NO-CORNER',
     );

@@ -62,6 +62,7 @@ const monoStyles = new Set([
   'rosterSectionLabel',
   'rosterHandle',
   'rosterKind',
+  'rosterRemoveText',
   'participantCount',
   'cornerPeekCount',
   'cornerStatus',
@@ -99,6 +100,8 @@ const monoStyles = new Set([
   'cornerFooterState',
   'cornerFooterActive',
   'cornerArchivedInputText',
+  'roomActionsModalEyebrow',
+  'roomLifecycleTitle',
 ]);
 
 function styleDefinition(source: string, name: string): string {

@@ -11,13 +11,16 @@ import {
   KIND_CHANNEL_MEMBERS,
   KIND_CHANNEL_METADATA,
   KIND_CREATE_GROUP,
+  KIND_EDIT_METADATA,
   KIND_PUT_USER,
   KIND_REMOVE_USER,
   KIND_STREAM_MESSAGE,
   TAG_AGENT_ACTIVITY,
   TAG_AGENT,
   TAG_COMMUNITY,
+  TAG_DIRECT_MESSAGE,
   TAG_PARENT,
+  TAG_ROOM_LIFECYCLE,
 } from './kinds.js';
 import { publishEvent, queryEvents, type AuthenticatedHttpBridgeOptions } from './http.js';
 import {
@@ -85,6 +88,8 @@ export interface ChannelOpsContext {
   http: AuthenticatedHttpBridgeOptions;
   identity: Identity;
 }
+
+export type ChannelRole = 'owner' | 'admin' | 'member';
 
 /** Create an open stream channel owned by `identity`. Returns channel UUID. */
 export async function createChannel(
@@ -253,6 +258,125 @@ export async function isMember(
 ): Promise<boolean> {
   const members = await listMembers(ctx, channelId);
   return members.some((m) => m.pubkey === pubkey);
+}
+
+/** Resolve one identity's current role from the relay's authoritative projections. */
+export async function getChannelRole(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  pubkey: string,
+): Promise<ChannelRole | null> {
+  const member = (await listMembers(ctx, channelId)).find((item) => item.pubkey === pubkey);
+  if (!member) return null;
+  return member.role === 'owner' || member.role === 'admin' ? member.role : 'member';
+}
+
+function canManageRole(role: ChannelRole | null): role is 'owner' | 'admin' {
+  return role === 'owner' || role === 'admin';
+}
+
+async function assertTopLevelRoom(ctx: ChannelOpsContext, channelId: string): Promise<void> {
+  const creates = await queryEvents(
+    ctx.http,
+    [{ kinds: [KIND_CREATE_GROUP], '#h': [channelId], limit: 20 }],
+    ctx.identity.publicKey,
+  );
+  const create = [...creates]
+    .filter((event) => tagValue(event, 'h') === channelId)
+    .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))[0];
+  if (!create) throw new Error(`Room ${channelId} does not have an immutable create event`);
+  if (tagValue(create, TAG_PARENT))
+    throw new Error('Room lifecycle actions cannot target a corner');
+  if (tagValues(create, 't').includes(TAG_DIRECT_MESSAGE)) {
+    throw new Error('direct-message membership and lifecycle are immutable');
+  }
+  if (tagValue(create, TAG_COMMUNITY) === channelId) {
+    throw new Error('Room lifecycle actions cannot target a Workspace');
+  }
+}
+
+/** Admin-only member removal with current-role and relay-projection verification. */
+export async function removeRoomMember(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  targetPubkey: string,
+): Promise<void> {
+  await assertTopLevelRoom(ctx, channelId);
+  const members = await listMembers(ctx, channelId);
+  const actor = members.find((member) => member.pubkey === ctx.identity.publicKey);
+  const target = members.find((member) => member.pubkey === targetPubkey);
+  const actorRole = await getChannelRole(ctx, channelId, ctx.identity.publicKey);
+  if (!canManageRole(actorRole)) throw new Error('only a Room owner or admin can remove members');
+  if (!actor || !target) throw new Error('the selected identity is not a current Room member');
+  if (targetPubkey === ctx.identity.publicKey) {
+    throw new Error('Room admins cannot remove themselves; delete the Room instead');
+  }
+  const targetRole = target.role === 'owner' || target.role === 'admin' ? target.role : 'member';
+  if (targetRole === 'owner' || (actorRole === 'admin' && targetRole === 'admin')) {
+    throw new Error('this member has equal or greater Room authority');
+  }
+  await removeMember(ctx, channelId, targetPubkey, {
+    extraTags: [
+      ['t', TAG_ROOM_LIFECYCLE],
+      ['action', 'admin-remove'],
+    ],
+  });
+  await waitUntilNotMember(ctx, channelId, targetPubkey);
+}
+
+/** A normal member may remove only their own membership; admins use Room deletion. */
+export async function leaveRoom(ctx: ChannelOpsContext, channelId: string): Promise<void> {
+  await assertTopLevelRoom(ctx, channelId);
+  const role = await getChannelRole(ctx, channelId, ctx.identity.publicKey);
+  if (role !== 'member') {
+    throw new Error(
+      canManageRole(role)
+        ? 'Room admins cannot leave; delete the Room or transfer authority first'
+        : 'you are not a current member of this Room',
+    );
+  }
+  await removeMember(ctx, channelId, ctx.identity.publicKey, {
+    extraTags: [
+      ['t', TAG_ROOM_LIFECYCLE],
+      ['action', 'member-leave'],
+    ],
+  });
+  await waitUntilNotMember(ctx, channelId, ctx.identity.publicKey);
+}
+
+/** Poll until relay metadata projects the explicit archive state. */
+export async function waitUntilRoomArchived(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  opts?: { timeoutMs?: number; intervalMs?: number },
+): Promise<void> {
+  const timeoutMs = opts?.timeoutMs ?? 15_000;
+  const intervalMs = opts?.intervalMs ?? 300;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if ((await getChannelMetadata(ctx, channelId))?.archived === true) return;
+    await new Promise((resolveWait) => setTimeout(resolveWait, intervalMs));
+  }
+  throw new Error(`Room ${channelId} did not become archived after ${timeoutMs}ms`);
+}
+
+/**
+ * Explicit owner/admin Room archive path.
+ * This is intentionally separate from Gate's corner-only archive writer.
+ * Relay data is retained; recovery projection/UI is a separate follow-up.
+ */
+export async function archiveRoom(ctx: ChannelOpsContext, channelId: string): Promise<void> {
+  await assertTopLevelRoom(ctx, channelId);
+  const role = await getChannelRole(ctx, channelId, ctx.identity.publicKey);
+  if (!canManageRole(role)) throw new Error('only a Room owner or admin can change Room lifecycle');
+  const event = sign(ctx.identity, KIND_EDIT_METADATA, [
+    ['h', channelId],
+    ['archived', 'true'],
+    ['t', TAG_ROOM_LIFECYCLE],
+    ['action', 'admin-delete'],
+  ]);
+  await publishEvent(ctx.http, event);
+  await waitUntilRoomArchived(ctx, channelId);
 }
 
 /**

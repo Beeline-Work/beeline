@@ -100,7 +100,11 @@ async function loadDisplayChannelBasics(
     // One create-event scan carries the Workspace, parent linkage, name, and
     // creation time for every Room. Keep only top-level Rooms before doing the
     // exact metadata reads, so Corners do not create an N+1 bootstrap path.
-    const creates = await client.query([{ kinds: [KIND_CREATE_GROUP], limit: 500 }]);
+    const [creates, memberships] = await Promise.all([
+      client.query([{ kinds: [KIND_CREATE_GROUP], limit: 500 }]),
+      client.listMyChannels(),
+    ]);
+    const membershipIds = new Set(memberships.map(({ channelId }) => channelId));
     const roomCreates = new Map<string, (typeof creates)[number]>();
     for (const create of creates) {
       if (tagValue(create, TAG_COMMUNITY) !== activeCommunityId) continue;
@@ -108,6 +112,7 @@ async function loadDisplayChannelBasics(
       if (tagValues(create, 't').includes(TAG_DIRECT_MESSAGE)) continue;
       const id = tagValue(create, 'h') ?? tagValue(create, 'd');
       if (!id || id === activeCommunityId) continue;
+      if (!membershipIds.has(id)) continue;
       const prior = roomCreates.get(id);
       if (!prior || create.created_at < prior.created_at) roomCreates.set(id, create);
     }
@@ -127,9 +132,9 @@ async function loadDisplayChannelBasics(
         } satisfies ChannelDisplayItem;
       }),
     );
-    return rooms.sort(
-      (a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0),
-    );
+    return rooms
+      .filter((room) => !room.archived)
+      .sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0));
   }
 
   const all = await transport.sessionsRead();
@@ -154,7 +159,7 @@ async function loadDisplayChannelBasics(
       }
     }),
   );
-  return resolved.filter((item) => !item.parentChannelId);
+  return resolved.filter((item) => !item.parentChannelId && !item.archived);
 }
 
 async function loadWorkspaceRoster(

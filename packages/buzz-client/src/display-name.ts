@@ -87,6 +87,26 @@ export function fallbackAgentName(pubkey: string): string {
   return FIRST_NAMES[stableHash(pubkey.toLowerCase()) % FIRST_NAMES.length]!;
 }
 
+/** Human identities use the same stable, friendly first-name pool as Agents. */
+export function fallbackPersonName(pubkey: string): string {
+  return FIRST_NAMES[stableHash(pubkey.toLowerCase()) % FIRST_NAMES.length]!;
+}
+
+export const PERSON_NAME_MAX_LENGTH = 60;
+
+/** Normalize authored human display names before publishing or showing them. */
+export function normalizePersonName(value: string): string | null {
+  const normalized = value.trim().replace(/\s+/g, ' ');
+  if (
+    !normalized ||
+    normalized.length > PERSON_NAME_MAX_LENGTH ||
+    /[\u0000-\u001f\u007f]/u.test(normalized)
+  ) {
+    return null;
+  }
+  return normalized;
+}
+
 export function isSingleWordAgentName(value: string): boolean {
   return /^\p{L}[\p{L}\p{M}'’]*$/u.test(value.trim());
 }
@@ -104,4 +124,13 @@ export function agentHandle(name: string, pubkey: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '');
   return handle || fallbackAgentName(pubkey).toLowerCase();
+}
+
+export function personHandle(name: string, pubkey: string): string {
+  const handle = name
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+  return handle || fallbackPersonName(pubkey).toLowerCase();
 }

@@ -131,6 +131,102 @@ describe('Buzz Room screen event projection', () => {
     expect(displaySequence([complete, working])).toEqual(completed);
   });
 
+  it('coalesces activity only inside a turn and keeps final answers as separate units', () => {
+    const thinkingOne: ChatDisplayMessage = {
+      id: 'activity-1',
+      text: 'Planning',
+      isUser: false,
+      isAgentActivity: true,
+      activity: [{ kind: 'thinking', title: 'Thinking', text: '**Planning**' }],
+      timestamp: 1,
+    };
+    const toolOne: ChatDisplayMessage = {
+      id: 'activity-2',
+      text: 'Read file',
+      isUser: false,
+      isAgentActivity: true,
+      activity: [{ kind: 'tool', title: 'read apps/body/src/body.ts' }],
+      timestamp: 2,
+    };
+    const firstFinal: ChatDisplayMessage = {
+      id: 'final-1',
+      text: 'First paragraph.\n\nSecond paragraph.',
+      isUser: false,
+      timestamp: 3,
+    };
+    const thinkingTwo: ChatDisplayMessage = {
+      id: 'activity-3',
+      text: 'Verifying',
+      isUser: false,
+      isAgentActivity: true,
+      activity: [{ kind: 'thinking', title: 'Thinking', text: '**Verifying**' }],
+      timestamp: 4,
+    };
+    const nextLifecycle: ChatDisplayMessage = {
+      id: 'agent-turn-next',
+      text: 'Agent is thinking…',
+      isUser: false,
+      timestamp: 3.5,
+      agentTurn: { requestId: 'next', agentPubkey: agent, status: 'working' },
+    };
+    const secondFinal: ChatDisplayMessage = {
+      id: 'final-2',
+      text: 'Tests pass. The boundary remains intact.',
+      isUser: false,
+      timestamp: 5,
+    };
+    const lifecycle: ChatDisplayMessage = {
+      id: 'agent-turn-2',
+      text: 'Agent reply complete.',
+      isUser: false,
+      timestamp: 6,
+      agentTurn: { requestId: '2', agentPubkey: agent, status: 'complete' },
+    };
+
+    const transcript = transcriptMessages(
+      [thinkingOne, toolOne, firstFinal, nextLifecycle, thinkingTwo, secondFinal, lifecycle],
+      true,
+    );
+
+    expect(transcript).toHaveLength(4);
+    expect(transcript[0]).toMatchObject({
+      id: 'activity-1',
+      activity: [
+        { kind: 'thinking', text: '**Planning**' },
+        { kind: 'tool', title: 'read apps/body/src/body.ts' },
+      ],
+    });
+    expect(transcript[1]).toEqual(firstFinal);
+    expect(transcript[2]).toMatchObject({ id: 'activity-3' });
+    expect(transcript[3]).toEqual(secondFinal);
+  });
+
+  it('uses agent-turn lifecycle as a hard boundary between activity runs', () => {
+    const activity = (id: string, timestamp: number): ChatDisplayMessage => ({
+      id,
+      text: id,
+      isUser: false,
+      isAgentActivity: true,
+      activity: [{ kind: 'thinking', title: 'Thinking', text: `**${id}**` }],
+      timestamp,
+    });
+    const lifecycle: ChatDisplayMessage = {
+      id: 'turn-boundary',
+      text: 'Agent reply complete.',
+      isUser: false,
+      timestamp: 2,
+      agentTurn: { requestId: 'one', agentPubkey: agent, status: 'complete' },
+    };
+
+    const transcript = transcriptMessages(
+      [activity('one', 1), lifecycle, activity('two', 3)],
+      true,
+    );
+
+    expect(transcript).toHaveLength(2);
+    expect(transcript.map((message) => message.id)).toEqual(['one', 'two']);
+  });
+
   it('collapses starting → working → ready into one tappable card after reload', () => {
     const events = [
       raw(
@@ -350,6 +446,6 @@ describe('Buzz Room screen event projection', () => {
     ]);
     expect(
       transcriptMessages([conversation, activity, merge, lifecycle, corner], true),
-    ).toHaveLength(5);
+    ).toHaveLength(4);
   });
 });

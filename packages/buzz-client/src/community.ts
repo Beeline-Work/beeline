@@ -16,10 +16,13 @@ import { publishEvent, queryEvents, type HttpBridgeOptions } from './http.js';
 import { getDirectMessage } from './direct-message.js';
 import {
   KIND_CHANNEL_ADMINS,
+  KIND_CHANNEL_METADATA,
   KIND_CHANNEL_MEMBERS,
   KIND_COMMUNITY_INVITE,
   KIND_CREATE_GROUP,
+  KIND_EDIT_METADATA,
   KIND_STREAM_MESSAGE,
+  TAG_AGENT,
   TAG_COMMUNITY,
   TAG_COMMUNITY_INVITE,
   TAG_DIRECT_MESSAGE,
@@ -45,6 +48,7 @@ import type {
 } from './types.js';
 
 export const DEFAULT_INVITE_TTL_SECONDS = 100 * 365 * 24 * 60 * 60;
+const COMMUNITY_AVATAR_PURPOSE_PREFIX = 'buzz-workspace-avatar:';
 
 function now(): number {
   return Math.floor(Date.now() / 1000);
@@ -96,21 +100,106 @@ function isCommunityCreate(event: NostrEvent): boolean {
   );
 }
 
-function toCommunity(event: NostrEvent): Community | null {
-  if (!isCommunityCreate(event)) return null;
-  const communityId = tagValue(event, 'h');
-  const name = tagValue(event, 'name');
+function metadataAvatar(event: NostrEvent | undefined): string | undefined {
+  if (!event) return undefined;
+  const direct = tagValue(event, 'avatar') ?? tagValue(event, 'picture');
+  if (direct) return direct;
+  const purpose = tagValue(event, 'purpose');
+  if (!purpose?.startsWith(COMMUNITY_AVATAR_PURPOSE_PREFIX)) return undefined;
+  const avatar = purpose.slice(COMMUNITY_AVATAR_PURPOSE_PREFIX.length);
+  return avatar || undefined;
+}
+
+function latestEvent(events: NostrEvent[]): NostrEvent | undefined {
+  return [...events].sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))[0];
+}
+
+function toCommunity(events: NostrEvent[], metadata?: NostrEvent): Community | null {
+  const created = events
+    .filter(isCommunityCreate)
+    .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))[0];
+  if (!created) return null;
+  const communityId = tagValue(created, 'h');
+  const name = tagValue(metadata ?? created, 'name') ?? tagValue(created, 'name');
   if (!communityId || !name) return null;
-  const avatar = tagValue(event, 'avatar') ?? tagValue(event, 'picture');
+  const avatar = metadataAvatar(metadata) ?? metadataAvatar(created);
   return {
     communityId,
     name,
     ...(avatar ? { avatar } : {}),
-    createdBy: event.pubkey,
-    ownerPubkey: event.pubkey,
-    createdAt: event.created_at,
-    raw: event,
+    createdBy: created.pubkey,
+    ownerPubkey: created.pubkey,
+    createdAt: created.created_at,
+    raw: created,
   };
+}
+
+function groupMetadataEvents(events: NostrEvent[]): Map<string, NostrEvent> {
+  const grouped = new Map<string, NostrEvent[]>();
+  for (const event of events) {
+    if (event.kind !== KIND_CHANNEL_METADATA) continue;
+    const communityId = tagValue(event, 'd') ?? tagValue(event, 'h');
+    if (!communityId) continue;
+    const records = grouped.get(communityId) ?? [];
+    records.push(event);
+    grouped.set(communityId, records);
+  }
+  return new Map(
+    [...grouped].flatMap(([communityId, records]) => {
+      const current = latestEvent(records);
+      return current ? [[communityId, current] as const] : [];
+    }),
+  );
+}
+
+async function getCommunityMetadata(
+  ctx: ChannelOpsContext,
+  communityId: string,
+): Promise<NostrEvent | undefined> {
+  const events = await queryEvents(
+    ctx.http,
+    [{ kinds: [KIND_CHANNEL_METADATA], '#d': [communityId], limit: 5 }],
+    ctx.identity.publicKey,
+  );
+  if (events.length > 0) return latestEvent(events);
+  const fallback = await queryEvents(
+    ctx.http,
+    [{ kinds: [KIND_CHANNEL_METADATA], '#h': [communityId], limit: 5 }],
+    ctx.identity.publicKey,
+  );
+  return latestEvent(fallback);
+}
+
+async function getCommunityCreateEvents(
+  ctx: ChannelOpsContext,
+  communityId: string,
+): Promise<NostrEvent[]> {
+  const events = await queryEvents(
+    ctx.http,
+    [{ kinds: [KIND_CREATE_GROUP], '#h': [communityId], limit: 20 }],
+    ctx.identity.publicKey,
+  );
+  return events.filter((event) => tagValue(event, 'h') === communityId);
+}
+
+async function getImmutableCommunity(
+  ctx: ChannelOpsContext,
+  communityId: string,
+): Promise<Community | null> {
+  return toCommunity(await getCommunityCreateEvents(ctx, communityId));
+}
+
+function groupCommunityEvents(events: NostrEvent[]): Map<string, NostrEvent[]> {
+  const grouped = new Map<string, NostrEvent[]>();
+  for (const event of events) {
+    if (!isCommunityCreate(event)) continue;
+    const communityId = tagValue(event, 'h');
+    if (!communityId) continue;
+    const records = grouped.get(communityId) ?? [];
+    records.push(event);
+    grouped.set(communityId, records);
+  }
+  return grouped;
 }
 
 async function queryGroupState(
@@ -161,16 +250,49 @@ export async function getCommunity(
   ctx: ChannelOpsContext,
   communityId: string,
 ): Promise<Community | null> {
-  const events = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_CREATE_GROUP], '#h': [communityId], limit: 5 }],
-    ctx.identity.publicKey,
-  );
-  const communities = events
-    .map(toCommunity)
-    .filter((value): value is Community => value !== null)
-    .sort((a, b) => a.createdAt - b.createdAt);
-  return communities[0] ?? null;
+  const [events, metadata] = await Promise.all([
+    getCommunityCreateEvents(ctx, communityId),
+    getCommunityMetadata(ctx, communityId),
+  ]);
+  return toCommunity(events, metadata);
+}
+
+/** Publish admin-gated metadata and assert the replaceable projection carries the avatar. */
+export async function setCommunityAvatar(
+  ctx: ChannelOpsContext,
+  communityId: string,
+  avatarUrl: string,
+): Promise<Community> {
+  const avatar = avatarUrl.trim();
+  if (!avatar || avatar.length > 2048 || !/^https?:\/\//i.test(avatar)) {
+    throw new Error('Workspace picture must be an http(s) URL');
+  }
+  const community = await getCommunity(ctx, communityId);
+  if (!community) throw new Error(`community not found: ${communityId}`);
+  const members = await communityMembers(ctx, communityId);
+  const actor = members.find((member) => member.pubkey === ctx.identity.publicKey);
+  if (actor?.role !== 'owner' && actor?.role !== 'admin') {
+    throw new Error('only a Workspace owner or admin can change its picture');
+  }
+
+  const event = sign(ctx, KIND_EDIT_METADATA, [
+    ['h', communityId],
+    // Name is privileged NIP-29 metadata. Repeating its current value makes
+    // the relay enforce owner/admin authority for this cosmetic projection.
+    ['name', community.name],
+    ['avatar', avatar],
+    ['picture', avatar],
+    ['purpose', `${COMMUNITY_AVATAR_PURPOSE_PREFIX}${avatar}`],
+    [TAG_COMMUNITY, communityId],
+  ]);
+  await publishEvent(ctx.http, event);
+  const timeoutAt = Date.now() + 15_000;
+  while (Date.now() < timeoutAt) {
+    const projected = await getCommunity(ctx, communityId);
+    if (projected?.avatar === avatar) return projected;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 300));
+  }
+  throw new Error(`Workspace picture was not projected after 15000ms`);
 }
 
 /** List self-linked communities whose 39002 member projection contains `pubkey`. */
@@ -179,14 +301,20 @@ export async function listCommunities(
   pubkey: string,
   limit = 50,
 ): Promise<Community[]> {
-  const [memberEvents, createEvents] = await Promise.all([
+  const [memberEvents, communityEvents] = await Promise.all([
     queryEvents(
       ctx.http,
       [{ kinds: [KIND_CHANNEL_MEMBERS], '#p': [pubkey], limit }],
       ctx.identity.publicKey,
     ),
-    queryEvents(ctx.http, [{ kinds: [KIND_CREATE_GROUP], limit: 500 }], ctx.identity.publicKey),
+    queryEvents(
+      ctx.http,
+      [{ kinds: [KIND_CREATE_GROUP, KIND_CHANNEL_METADATA], limit: 1000 }],
+      ctx.identity.publicKey,
+    ),
   ]);
+  const createEvents = communityEvents.filter((event) => event.kind === KIND_CREATE_GROUP);
+  const metadataEvents = communityEvents.filter((event) => event.kind === KIND_CHANNEL_METADATA);
   const ids = [
     ...new Set(
       memberEvents
@@ -198,19 +326,18 @@ export async function listCommunities(
 
   const wanted = new Set(ids);
   const byId = new Map<string, Community>();
-  for (const event of createEvents) {
-    const community = toCommunity(event);
-    if (!community || !wanted.has(community.communityId)) continue;
-    const prior = byId.get(community.communityId);
-    if (!prior || community.createdAt < prior.createdAt) {
-      byId.set(community.communityId, community);
-    }
+  const groupedCreateEvents = groupCommunityEvents(createEvents);
+  const metadataById = groupMetadataEvents(metadataEvents);
+  for (const [communityId, events] of groupedCreateEvents) {
+    if (!wanted.has(communityId)) continue;
+    const community = toCommunity(events, metadataById.get(communityId));
+    if (community) byId.set(communityId, community);
   }
 
   // The broad create scan is shared with Room discovery. Fall back to exact
   // reads for an older Workspace that fell outside the relay's scan window.
-  const missing = ids.filter((id) => !byId.has(id));
-  const recovered = await Promise.all(missing.map((id) => getCommunity(ctx, id)));
+  const exactIds = ids.filter((id) => !byId.has(id));
+  const recovered = await Promise.all(exactIds.map((id) => getCommunity(ctx, id)));
   for (const community of recovered) {
     if (community) byId.set(community.communityId, community);
   }
@@ -286,8 +413,9 @@ async function assertCommunityMemberInChannels(
   ctx: ChannelOpsContext,
   communityId: string,
   pubkey: string,
-): Promise<void> {
+): Promise<string[]> {
   const channelIds = await communityRoomIds(ctx, communityId);
+  const repaired: string[] = [];
   for (const channelId of channelIds) {
     // An archived historical Room is not a valid join target. Skip it and
     // continue into the Workspace's live Rooms instead of surfacing the
@@ -305,7 +433,35 @@ async function assertCommunityMemberInChannels(
       throw error;
     }
     await waitUntilMember(ctx, channelId, pubkey);
+    repaired.push(channelId);
   }
+  return repaired;
+}
+
+async function isRegisteredAgentIdentity(ctx: ChannelOpsContext, pubkey: string): Promise<boolean> {
+  const events = await queryEvents(
+    ctx.http,
+    [{ kinds: [KIND_STREAM_MESSAGE], authors: [pubkey], '#t': [TAG_AGENT], limit: 50 }],
+    ctx.identity.publicKey,
+  );
+  return events.some(
+    (event) =>
+      event.pubkey === pubkey && verifyEvent(event) && tagValues(event, 't').includes(TAG_AGENT),
+  );
+}
+
+/** Repair missing direct Room projections for the current human Workspace member. */
+export async function repairCommunityRoomMemberships(
+  ctx: ChannelOpsContext,
+  communityId: string,
+): Promise<string[]> {
+  const pubkey = ctx.identity.publicKey;
+  if (await isRegisteredAgentIdentity(ctx, pubkey)) return [];
+  const members = await communityMembers(ctx, communityId);
+  if (!members.some((member) => member.pubkey === pubkey)) {
+    throw new Error('Room membership repair requires current Workspace membership');
+  }
+  return assertCommunityMemberInChannels(ctx, communityId, pubkey);
 }
 
 /** Read community membership and overlay owner/admin roles from kind:39001. */
@@ -316,7 +472,7 @@ export async function communityMembers(
   const [memberEvents, adminEvents, community] = await Promise.all([
     queryGroupState(ctx, KIND_CHANNEL_MEMBERS, communityId),
     queryGroupState(ctx, KIND_CHANNEL_ADMINS, communityId),
-    getCommunity(ctx, communityId),
+    getImmutableCommunity(ctx, communityId),
   ]);
   if (!community) return [];
 

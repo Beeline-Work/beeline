@@ -7,7 +7,11 @@ import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import { getRandomBytes } from 'expo-crypto';
 import {
+  fallbackPersonName,
+  normalizePersonName,
   OidcBindError,
+  personHandle,
+  type BuzzClient,
   buildOidcBindEvent,
   finishOidcBind,
   lookupRecovery,
@@ -29,11 +33,22 @@ import {
   type GoogleOnboardingNotice,
   type GoogleOnboardingStatus,
 } from '@/auth/google-onboarding-state';
+import {
+  clearPersonNameOnboardingPending,
+  isPersonNameOnboardingPending,
+  loadPreferredPersonName,
+  markPersonNameOnboardingPending,
+  publishPreferredPersonName,
+  resolveOnboardingPersonName,
+  savePreferredPersonName,
+} from '@/buzz/person-name';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { groknight } from '@/buzz/groknight';
 import { BeelineMark } from '@/components/buzz/BeelineMark';
 import { MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
+import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
+import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -69,9 +84,47 @@ export default function BuzzOnboarding() {
   const [notice, setNotice] = useState<GoogleOnboardingNotice | null>(
     Platform.OS === 'web' ? WEB_NOTICE : null,
   );
-  const [loadingAction, setLoadingAction] = useState<'google' | 'bind' | 'import' | null>(null);
+  const [loadingAction, setLoadingAction] = useState<'google' | 'bind' | 'import' | 'name' | null>(
+    null,
+  );
   const [inputFocused, setInputFocused] = useState(false);
+  const [nameFocused, setNameFocused] = useState(false);
+  const [namingIdentity, setNamingIdentity] = useState<Identity | null>(null);
+  const [namingClient, setNamingClient] = useState<BuzzClient | null>(null);
+  const [namingCommunityId, setNamingCommunityId] = useState<string | null>(null);
+  const [nameInput, setNameInput] = useState('');
   const loading = loadingAction !== null;
+
+  const continueAfterIdentity = async (identity: Identity) => {
+    setStatus('entering_workspace');
+    try {
+      const transport = new BuzzRigTransport(identity, getBuzzRuntimeConfig().relayUrl);
+      const client = await transport.ensureClient();
+      const resolved = await resolveOnboardingPersonName(client, identity.publicKey);
+      if (!resolved.needsPrompt) {
+        await clearPersonNameOnboardingPending();
+        router.replace('/buzz/channels');
+        return;
+      }
+      setNamingClient(client);
+      setNamingCommunityId(resolved.communityId);
+      setNameInput(resolved.name);
+      setNamingIdentity(identity);
+      setNotice(null);
+    } catch {
+      const preferred = await loadPreferredPersonName(identity.publicKey);
+      if (preferred) {
+        await clearPersonNameOnboardingPending();
+        router.replace('/buzz/channels');
+        return;
+      }
+      setNamingClient(null);
+      setNamingCommunityId(null);
+      setNameInput(fallbackPersonName(identity.publicKey));
+      setNamingIdentity(identity);
+      setNotice(null);
+    }
+  };
 
   useEffect(() => {
     if (Platform.OS === 'web') {
@@ -83,10 +136,13 @@ export default function BuzzOnboarding() {
       .then(async (identity) => {
         if (!identity) return;
         existingIdentity.current = identity;
+        if (await isPersonNameOnboardingPending()) {
+          if (alive) await continueAfterIdentity(identity);
+          return;
+        }
         const links = await lookupRecovery(getBuzzRuntimeConfig().relayUrl, identity);
         if (!alive || links.length === 0) return;
-        setStatus('entering_workspace');
-        router.replace('/buzz/channels');
+        await continueAfterIdentity(identity);
       })
       .catch((error: unknown) => {
         if (alive && error instanceof OidcBindError && error.code === 'offline') {
@@ -116,11 +172,12 @@ export default function BuzzOnboarding() {
         pending.bound = true;
       }
       // The key enters SecureStore only after the server confirms this exact pubkey.
+      await markPersonNameOnboardingPending();
       await saveBuzzIdentity(pending.identity);
       await registerBuzzPushNotifications(pending.identity);
       pendingBind.current = null;
       setStatus(nextGoogleOnboardingStatus('binding', 'bind_succeeded'));
-      router.replace('/buzz/channels');
+      await continueAfterIdentity(pending.identity);
     } catch (error) {
       const normalized =
         error instanceof OidcBindError
@@ -142,7 +199,7 @@ export default function BuzzOnboarding() {
   const handleGoogle = async () => {
     if (Platform.OS === 'web') return;
     if (status === 'existing_device') {
-      router.replace('/buzz/channels');
+      if (existingIdentity.current) await continueAfterIdentity(existingIdentity.current);
       return;
     }
     setLoadingAction('google');
@@ -163,8 +220,7 @@ export default function BuzzOnboarding() {
           WebBrowser.openAuthSessionAsync(start.authorizationUrl, start.redirectUri, {
             preferUniversalLinks: start.redirectUri.startsWith('https://'),
           }),
-        subscribeToUrls: (listener) =>
-          Linking.addEventListener('url', ({ url }) => listener(url)),
+        subscribeToUrls: (listener) => Linking.addEventListener('url', ({ url }) => listener(url)),
       });
       setStatus(nextGoogleOnboardingStatus('opening_browser', 'callback_received'));
       const challenge = parseOidcBindCallback(callbackUrl, state);
@@ -198,11 +254,15 @@ export default function BuzzOnboarding() {
     }
     setLoadingAction('import');
     setNotice(null);
+    let identitySaved = false;
     try {
+      await markPersonNameOnboardingPending();
       const identity = await importBuzzIdentity(trimmed);
+      identitySaved = true;
       await registerBuzzPushNotifications(identity);
-      router.replace('/buzz/channels');
+      await continueAfterIdentity(identity);
     } catch (error) {
+      if (!identitySaved) await clearPersonNameOnboardingPending();
       setNotice({
         status: 'bind_retry',
         title: 'IMPORT FAILED',
@@ -214,8 +274,108 @@ export default function BuzzOnboarding() {
     }
   };
 
+  const handleNameContinue = async () => {
+    if (!namingIdentity) return;
+    const normalized = normalizePersonName(nameInput);
+    if (!normalized) {
+      setNotice({
+        status: 'bind_retry',
+        title: 'NAME REQUIRED',
+        message: 'Choose a name between 1 and 60 characters.',
+        retryable: false,
+      });
+      return;
+    }
+    setLoadingAction('name');
+    setNotice(null);
+    try {
+      if (namingClient && namingCommunityId) {
+        await publishPreferredPersonName(
+          namingClient,
+          namingCommunityId,
+          namingIdentity.publicKey,
+          normalized,
+        );
+      } else {
+        await savePreferredPersonName(namingIdentity.publicKey, normalized);
+      }
+      await clearPersonNameOnboardingPending();
+      router.replace('/buzz/channels');
+    } catch (error) {
+      setNotice({
+        status: 'bind_retry',
+        title: 'NAME NOT SAVED',
+        message: error instanceof Error ? error.message : String(error),
+        retryable: false,
+      });
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
   const canRetryBind = notice?.retryable === true && pendingBind.current !== null;
   const googleLabel = status === 'existing_device' ? 'Open Workspace' : 'Continue with Google';
+
+  if (namingIdentity) {
+    const normalized = normalizePersonName(nameInput);
+    const handle = personHandle(
+      normalized ?? fallbackPersonName(namingIdentity.publicKey),
+      namingIdentity.publicKey,
+    );
+    return (
+      <View
+        style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
+        testID="onboarding-person-name-step"
+      >
+        <PixelGateReveal style={styles.namePanel}>
+          <Text style={styles.sectionLabel}>IDENTITY · YOUR WORKSPACE</Text>
+          <View style={styles.nameAvatar}>
+            <PersonAvatar
+              pubkey={namingIdentity.publicKey}
+              name={normalized ?? nameInput}
+              size={82}
+            />
+          </View>
+          <Text style={styles.nameTitle}>What should we call you?</Text>
+          <Text style={styles.nameBody}>
+            This is how people and Agents will recognize you. You can change it later in Identity
+            settings.
+          </Text>
+          <TextInput
+            accessibilityLabel="Your display name"
+            autoCapitalize="words"
+            autoCorrect={false}
+            autoFocus
+            editable={!loading}
+            maxLength={60}
+            onBlur={() => setNameFocused(false)}
+            onChangeText={setNameInput}
+            onFocus={() => setNameFocused(true)}
+            onSubmitEditing={() => void handleNameContinue()}
+            placeholder="Ada"
+            placeholderTextColor={groknight.textDisabled}
+            returnKeyType="done"
+            style={[styles.nameInput, nameFocused && styles.inputFocused]}
+            testID="onboarding-person-name-input"
+            value={nameInput}
+          />
+          <Text style={styles.nameHandle}>@{handle}</Text>
+          {notice && (
+            <View accessibilityRole="alert" style={styles.noticePanel}>
+              <Text style={styles.statusLabel}>◇ {notice.title}</Text>
+              <Text style={styles.noticeText}>{notice.message}</Text>
+            </View>
+          )}
+          <MonoButton
+            disabled={!normalized || loading}
+            label="Enter Workspace"
+            loading={loadingAction === 'name'}
+            onPress={() => void handleNameContinue()}
+          />
+        </PixelGateReveal>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
@@ -387,5 +547,44 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     textAlign: 'center',
     letterSpacing: 0.2,
+  },
+  namePanel: { width: '100%', maxWidth: 420, alignSelf: 'center' },
+  nameAvatar: { alignItems: 'center', marginTop: 18, marginBottom: 18 },
+  nameTitle: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 26,
+    lineHeight: 32,
+    textAlign: 'center',
+  },
+  nameBody: {
+    ...Typography.default(),
+    marginTop: 10,
+    marginBottom: 18,
+    color: groknight.textSecondary,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  nameInput: {
+    ...Typography.default('semiBold'),
+    minHeight: 52,
+    borderWidth: 1,
+    borderColor: groknight.border,
+    borderRadius: 3,
+    paddingHorizontal: 14,
+    color: groknight.textPrimary,
+    backgroundColor: groknight.bgBase,
+    fontSize: 18,
+    textAlign: 'center',
+  },
+  nameHandle: {
+    ...Typography.mono('semiBold'),
+    marginTop: 8,
+    marginBottom: 18,
+    color: groknight.textMuted,
+    fontSize: 11,
+    letterSpacing: 0.5,
+    textAlign: 'center',
   },
 });

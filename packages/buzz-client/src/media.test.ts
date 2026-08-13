@@ -18,7 +18,7 @@ function decodeAuthorization(value: string): NostrEvent {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('relay media upload', () => {
-  it('binds a signed BUD-11 authorization to the exact image bytes', async () => {
+  it('binds a signed BUD-11 authorization to the exact media bytes', async () => {
     const bytes = new Uint8Array([1, 2, 3, 4, 5]);
     let request: { url: string; init?: RequestInit } | undefined;
     vi.stubGlobal(
@@ -53,5 +53,30 @@ describe('relay media upload', () => {
     expect(verifyEvent(authorization)).toBe(true);
     expect(new Uint8Array(request!.init!.body as ArrayBufferView).length).toBe(bytes.length);
     expect(blob.url).toContain(headers['X-SHA-256']!);
+  });
+
+  it('allows documents while rejecting an invalid MIME type', async () => {
+    const bytes = new Uint8Array([37, 80, 68, 70]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const hash = (init?.headers as Record<string, string>)['X-SHA-256']!;
+        return new Response(
+          JSON.stringify({
+            url: `https://relay.example/media/${hash}.pdf`,
+            sha256: hash,
+            size: bytes.byteLength,
+            type: 'application/pdf',
+          }),
+          { status: 200 },
+        );
+      }),
+    );
+
+    await expect(uploadMedia(http, bytes, 'application/pdf')).resolves.toMatchObject({
+      type: 'application/pdf',
+      size: 4,
+    });
+    await expect(uploadMedia(http, bytes, 'not-a-mime')).rejects.toThrow('valid MIME type');
   });
 });

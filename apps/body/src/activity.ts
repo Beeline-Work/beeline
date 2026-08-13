@@ -11,6 +11,8 @@ import type { AcpClient, SessionUpdate } from './acp.js';
 import type { Identity } from '@beeline/gate';
 import { publishEvent } from '@beeline/gate';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
+import { buildAttachmentTags, type AttachmentReference } from '@beeline/buzz-client';
+import { sanitizeActivityUpdate } from './attachments.js';
 
 export const ACTIVITY_TAG = 'agent-activity';
 export const AGENT_MESSAGE_TAG = 'agent-message';
@@ -55,7 +57,8 @@ export function projectActivity(
     timer = undefined;
     const events = pending;
     pending = [];
-    if (events.length) void emitActivityEvent(channelId, channelOwner, { sessionId, channelId, events });
+    if (events.length)
+      void emitActivityEvent(channelId, channelOwner, { sessionId, channelId, events });
   };
   const onUpdate = (u: SessionUpdate) => {
     if (u.sessionId !== sessionId) return;
@@ -63,7 +66,7 @@ export function projectActivity(
     // after sessionPrompt completes. Keep the activity stream for thought/tool
     // telemetry so conversation copy cannot be duplicated or lost in a batch.
     if (u.update.sessionUpdate === 'agent_message_chunk') return;
-    pending.push(u);
+    pending.push({ ...u, update: sanitizeActivityUpdate(u.update) });
     // One paired identity can serve several Rooms. A five-second batch keeps
     // shared live visibility while staying below per-pubkey relay quotas under
     // concurrent tool-call bursts.
@@ -83,6 +86,7 @@ export async function postAgentMessage(
   owner: Identity,
   message: string,
   replyTo?: string,
+  attachments: readonly AttachmentReference[] = [],
 ): Promise<void> {
   const event: NostrEvent = signEvent(
     {
@@ -93,6 +97,7 @@ export async function postAgentMessage(
         ['h', channelId],
         ['t', AGENT_MESSAGE_TAG],
         ...(replyTo ? [['e', replyTo, '', 'reply']] : []),
+        ...buildAttachmentTags(attachments),
       ],
       content: message,
     },
@@ -179,11 +184,7 @@ export async function postControlMessage(
       pubkey: owner.publicKey,
       created_at: Math.floor(Date.now() / 1000),
       kind: 9,
-      tags: [
-        ['h', channelId],
-        ['t', 'body-control'],
-        ...extraTags,
-      ],
+      tags: [['h', channelId], ['t', 'body-control'], ...extraTags],
       content: msg,
     },
     owner.secretKey,

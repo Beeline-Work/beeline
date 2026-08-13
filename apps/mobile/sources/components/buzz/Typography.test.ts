@@ -75,6 +75,8 @@ const monoStyles = new Set([
   'activityStatus',
   'activityDisclosure',
   'activityOutput',
+  'attachmentMeta',
+  'pendingAttachmentMeta',
   'terminalTurnGlyph',
   'terminalTurnLabel',
   'terminalTurnAuthor',

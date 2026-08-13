@@ -12,9 +12,9 @@
  *   - Activity projection bridges ACP session/update → relay channel events.
  */
 import { randomUUID } from 'node:crypto';
-import { mkdir, rm, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile, readFile, realpath, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { basename, isAbsolute, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   AcpClient,
@@ -22,6 +22,7 @@ import {
   type AcpPermissionHandler,
   type AcpPermissionRequest,
   type McpServerWire,
+  type PromptResult,
 } from './acp.js';
 import {
   projectActivity,
@@ -55,12 +56,14 @@ import {
   CHANGE_REVIEW_VERSION,
   WRITE_PERMISSION_REQUEST_TAG,
   WRITE_PERMISSION_RESPONSE_TAG,
+  parseAttachmentTags,
   listAgents,
   listMembers,
   getParentChannelId,
   tagValue,
   waitUntilMember,
   type ChannelOpsContext,
+  type AttachmentReference,
 } from '@beeline/buzz-client';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import type { BodyConfig } from './config.js';
@@ -74,6 +77,14 @@ import {
   readChangeReviewPatch,
   resolveReviewBaseTip,
 } from './change-review.js';
+import {
+  MAX_AGENT_ATTACHMENT_BYTES,
+  attachmentPrompt,
+  mimeTypeForName,
+  outputCandidates,
+  stripAttachmentDirectives,
+  type AgentOutputCandidate,
+} from './attachments.js';
 
 /** Tracks a single agent session. */
 export interface AgentSession {
@@ -87,6 +98,8 @@ export interface AgentSession {
   mode: 'readonly' | 'edit';
   /** Git worktree path (edit mode only). */
   worktreePath?: string;
+  /** Filesystem boundary used to resolve agent-authored attachment paths. */
+  cwd?: string;
   /** Feature branch name (edit mode only). */
   featureBranch?: string;
   /** Parent TLC channel ID (subchannels only). */
@@ -198,6 +211,7 @@ export interface ChannelTaskRequest {
   eventId: string;
   authorPubkey: string;
   content: string;
+  attachments?: AttachmentReference[];
   createdAt: number;
 }
 
@@ -238,7 +252,12 @@ export function isChannelAddressedMessage(
   agentPubkey: string,
   roomParticipants: readonly string[] = [],
 ): boolean {
-  if (event.kind !== 9 || !event.content.trim() || event.pubkey === agentPubkey) return false;
+  if (
+    event.kind !== 9 ||
+    (!event.content.trim() && parseAttachmentTags(event.tags).length === 0) ||
+    event.pubkey === agentPubkey
+  )
+    return false;
   if (event.tags.some((tag) => tag[0] === 'p' && tag[1] === agentPubkey)) return true;
 
   const participants = new Set(roomParticipants);
@@ -412,6 +431,7 @@ export class Body {
       logicalSessionId: `${this.agentIdentity.publicKey}:${input.channelId}`,
       client,
       mode: input.mode,
+      cwd: input.cwd,
       ...(input.parentChannelId ? { parentChannelId: input.parentChannelId } : {}),
       ...(input.worktreePath ? { worktreePath: input.worktreePath } : {}),
       ...(input.featureBranch ? { featureBranch: input.featureBranch } : {}),
@@ -445,7 +465,14 @@ export class Body {
         const created = await client.sessionNew({
           cwd: input.cwd,
           mcpServers: input.mcpServers,
-          systemPrompt: `${appendPersonaSessionInstructions(input.systemPrompt, profile)}${restored}`,
+          systemPrompt: [
+            appendPersonaSessionInstructions(input.systemPrompt, profile),
+            '',
+            'To share an image or file with the Room, include [[buzz-attachment:path]] in your final response.',
+            'The host removes that directive, uploads the file, and sends a link-only attachment card.',
+            'Never inline base64 or file bytes in the response. Generated ACP image outputs are attached automatically.',
+            restored,
+          ].join('\n'),
           mode: input.mode,
         });
         session.sessionId = created.sessionId;
@@ -474,6 +501,96 @@ export class Body {
   private runOnSession<T>(session: AgentSession, task: () => Promise<T>): Promise<T> {
     if (!session.lifecycle) return task();
     return this.scheduler.run(session.channelId, session.lifecycle, task);
+  }
+
+  private async candidateBytes(
+    session: AgentSession,
+    candidate: AgentOutputCandidate,
+  ): Promise<Uint8Array> {
+    if (candidate.path) {
+      try {
+        const sessionCwd = await realpath(
+          session.cwd ?? session.worktreePath ?? this.config.workspaceRoot,
+        );
+        const resolvedPath = await realpath(
+          isAbsolute(candidate.path) ? resolve(candidate.path) : resolve(sessionCwd, candidate.path),
+        );
+        const pathWithinSession = relative(sessionCwd, resolvedPath);
+        if (!pathWithinSession.startsWith('..') && !isAbsolute(pathWithinSession)) {
+          const details = await stat(resolvedPath);
+          if (!details.isFile()) throw new Error(`${candidate.name} is not a regular file`);
+          if (details.size > MAX_AGENT_ATTACHMENT_BYTES)
+            throw new Error(`${candidate.name} exceeds the 25 MB attachment limit`);
+          return new Uint8Array(await readFile(resolvedPath));
+        }
+      } catch (error) {
+        if (!candidate.bytes) throw error;
+      }
+    }
+    if (candidate.bytes) {
+      if (candidate.bytes.byteLength > MAX_AGENT_ATTACHMENT_BYTES)
+        throw new Error(`${candidate.name} exceeds the 25 MB attachment limit`);
+      return candidate.bytes;
+    }
+    throw new Error(`${candidate.name} is outside the agent session directory`);
+  }
+
+  /** Upload agent-produced outputs through the same authenticated media client as mobile. */
+  private async uploadAgentOutputs(
+    session: AgentSession,
+    result: PromptResult,
+  ): Promise<{ attachments: AttachmentReference[]; errors: string[] }> {
+    const candidates = outputCandidates(result);
+    if (!candidates.length) return { attachments: [], errors: [] };
+    const client = createBuzzClient({
+      baseUrl: this.config.relayBaseUrl,
+      host: this.config.relayHost,
+      identity: this.agentIdentity,
+    });
+    const attachments: AttachmentReference[] = [];
+    const errors: string[] = [];
+    try {
+      for (const candidate of candidates) {
+        try {
+          const bytes = await this.candidateBytes(session, candidate);
+          const uploaded = await client.uploadMedia(bytes, candidate.mimeType);
+          const dim = uploaded.dim?.match(/^(\d+)x(\d+)$/);
+          attachments.push({
+            url: uploaded.url,
+            name: basename(candidate.name),
+            mimeType: uploaded.type ?? candidate.mimeType ?? mimeTypeForName(candidate.name),
+            size: uploaded.size,
+            sha256: uploaded.sha256,
+            ...(uploaded.thumb ? { thumbnailUrl: uploaded.thumb } : {}),
+            ...(dim ? { width: Number(dim[1]), height: Number(dim[2]) } : {}),
+          });
+        } catch (error) {
+          errors.push(
+            `${basename(candidate.name)}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+    } finally {
+      client.disconnect();
+    }
+    return { attachments, errors };
+  }
+
+  private async publishAgentResult(
+    channelId: string,
+    session: AgentSession,
+    result: PromptResult,
+    fallback: string,
+    replyTo?: string,
+  ): Promise<string> {
+    const uploaded = await this.uploadAgentOutputs(session, result);
+    let reply = stripAttachmentDirectives(stripAgentReplyPreamble(result.agentText)).trim();
+    if (!reply) reply = uploaded.attachments.length ? 'Shared an attachment.' : fallback;
+    if (uploaded.errors.length)
+      reply = `${reply}\n\nAttachment unavailable: ${uploaded.errors.join('; ')}`;
+    if (!reply) throw new Error('agent returned an empty reply');
+    await postAgentMessage(channelId, this.agentIdentity, reply, replyTo, uploaded.attachments);
+    return reply;
   }
 
   /** Rebuild durable corner actors after a daemon restart. */
@@ -542,6 +659,7 @@ export class Body {
               eventId: requestEvent.id,
               authorPubkey: requestEvent.pubkey,
               content: requestEvent.content.trim(),
+              attachments: parseAttachmentTags(requestEvent.tags),
               createdAt: requestEvent.created_at,
             }
           : undefined;
@@ -575,7 +693,11 @@ export class Body {
         };
         session.lastPolledAt = cursor.createdAt;
         this.registerSubchannel(info);
-        if (request && !tip) this.startAgentTask(info, request.content);
+        if (request && !tip)
+          this.startAgentTask(
+            info,
+            attachmentPrompt(request.authorPubkey, request.content, request.attachments ?? []),
+          );
       }
     } finally {
       client.disconnect();
@@ -621,8 +743,7 @@ export class Body {
       // Read-only mode must reject native-agent permission escalation as well
       // as omitting write MCP servers. Edit corners remain auto-approved below.
       autoApprovePermissions: false,
-      permissionHandler: (permission) =>
-        this.handleRoomPermissionRequest(tlcChannelId, permission),
+      permissionHandler: (permission) => this.handleRoomPermissionRequest(tlcChannelId, permission),
       ...(communityId ? { communityId } : {}),
     });
 
@@ -804,11 +925,7 @@ export class Body {
         await this.durableState.delivered(tlcChannelId, event.id);
         continue;
       }
-      if (
-        event.tags.some(
-          (tag) => tag[0] === 't' && tag[1] === WRITE_PERMISSION_RESPONSE_TAG,
-        )
-      ) {
+      if (event.tags.some((tag) => tag[0] === 't' && tag[1] === WRITE_PERMISSION_RESPONSE_TAG)) {
         this.processedRequestIds.add(event.id);
         await this.durableState.delivered(tlcChannelId, event.id);
         continue;
@@ -845,6 +962,7 @@ export class Body {
           eventId: event.id,
           authorPubkey: event.pubkey,
           content: event.content.trim(),
+          attachments: parseAttachmentTags(event.tags),
           createdAt: event.created_at,
         };
         if (
@@ -876,7 +994,11 @@ export class Body {
     request: ChannelTaskRequest,
     explicitCornerWork = false,
   ): Promise<boolean> {
-    const prompt = `[Member ${request.authorPubkey.slice(0, 12)}]: ${request.content}`;
+    const prompt = attachmentPrompt(
+      request.authorPubkey,
+      request.content,
+      request.attachments ?? [],
+    );
     await this.durableState.appendConversation(tlcChannelId, {
       role: 'user',
       text: prompt,
@@ -885,7 +1007,7 @@ export class Body {
     });
     if (explicitCornerWork) {
       const info = await this.openSubchannel(tlcChannelId, boundRepo, request.content, request);
-      this.startAgentTask(info, request.content);
+      this.startAgentTask(info, request.attachments?.length ? prompt : request.content);
       return true;
     }
 
@@ -922,18 +1044,22 @@ export class Body {
         );
         return true;
       }
-      const reply =
-        stripAgentReplyPreamble(result.agentText).trim() ||
-        (turn.permissionHandled
-          ? 'Editing was not allowed. I’ll stay in the read-only Room conversation.'
-          : '');
+      const fallback = turn.permissionHandled
+        ? 'Editing was not allowed. I’ll stay in the read-only Room conversation.'
+        : '';
+      const reply = await this.publishAgentResult(
+        tlcChannelId,
+        session,
+        result,
+        fallback,
+        request.eventId,
+      );
       if (!reply) throw new Error('agent returned an empty Room reply');
       await this.durableState.appendConversation(tlcChannelId, {
         role: 'agent',
         text: reply,
         at: new Date().toISOString(),
       });
-      await postAgentMessage(tlcChannelId, this.agentIdentity, reply, request.eventId);
       await postAgentTurnStatus(
         tlcChannelId,
         this.agentIdentity,
@@ -1134,14 +1260,17 @@ export class Body {
           ].join('\n'),
           10 * 60_000,
         );
-        info.mergeSummary =
-          stripAgentReplyPreamble(result.agentText).trim() || `Completed: ${prompt}`;
+        info.mergeSummary = await this.publishAgentResult(
+          info.subchannelId,
+          info.session,
+          result,
+          `Completed: ${prompt}`,
+        );
         await this.durableState.appendConversation(info.subchannelId, {
           role: 'agent',
           text: info.mergeSummary,
           at: new Date().toISOString(),
         });
-        await postAgentMessage(info.subchannelId, this.agentIdentity, info.mergeSummary);
         await this.publishMergeReady(info);
       } catch (error) {
         await postControlMessage(
@@ -1594,8 +1723,12 @@ export class Body {
           await this.durableState.delivered(subchannelId, evt.id);
           continue;
         }
-        // Skip events that are not plain text messages.
-        if (!evt.content || evt.tags.some((t) => t[0] === 't' && t[1] === 'agent-activity')) {
+        const attachments = parseAttachmentTags(evt.tags);
+        // Skip events that carry neither prose nor a valid link attachment.
+        if (
+          (!evt.content.trim() && attachments.length === 0) ||
+          evt.tags.some((t) => t[0] === 't' && t[1] === 'agent-activity')
+        ) {
           await this.durableState.delivered(subchannelId, evt.id);
           continue;
         }
@@ -1622,9 +1755,10 @@ export class Body {
         // Forward the member's message into the active run when possible. If
         // the original task ended between polling and delivery, wait for its
         // cleanup and preserve this message as the next ordered prompt.
-        const prompt = `[Member ${evt.pubkey.slice(0, 12)}]: ${evt.content}`;
+        const prompt = attachmentPrompt(evt.pubkey, evt.content, attachments);
         try {
           let agentReply = '';
+          let agentResult: PromptResult | undefined;
           const runningTask = this.runningAgentTasks.get(subchannelId);
           if (runningTask || session.client.activeRunId(session.sessionId)) {
             try {
@@ -1632,20 +1766,14 @@ export class Body {
             } catch (error) {
               if (!runningTask) throw error;
               await runningTask;
-              const result = await this.runOnSession(session, () =>
+              agentResult = await this.runOnSession(session, () =>
                 session.client.sessionPrompt(session.sessionId, prompt, 60_000),
               );
-              agentReply = result.agentText.trim();
-              info.mergeSummary = agentReply || info.mergeSummary;
-              await this.publishMergeReady(info);
             }
           } else {
-            const result = await this.runOnSession(session, () =>
+            agentResult = await this.runOnSession(session, () =>
               session.client.sessionPrompt(session.sessionId, prompt, 60_000),
             );
-            agentReply = result.agentText.trim();
-            info.mergeSummary = agentReply || info.mergeSummary;
-            await this.publishMergeReady(info);
           }
           await this.durableState.appendConversation(subchannelId, {
             role: 'user',
@@ -1653,13 +1781,20 @@ export class Body {
             eventId: evt.id,
             at: new Date().toISOString(),
           });
-          if (agentReply) {
+          if (agentResult) {
+            agentReply = await this.publishAgentResult(
+              subchannelId,
+              session,
+              agentResult,
+              'Completed the requested follow-up.',
+            );
+            info.mergeSummary = agentReply || info.mergeSummary;
             await this.durableState.appendConversation(subchannelId, {
               role: 'agent',
               text: agentReply,
               at: new Date().toISOString(),
             });
-            await postAgentMessage(subchannelId, this.agentIdentity, agentReply);
+            await this.publishMergeReady(info);
           }
           processed.add(evt.id);
           await this.durableState.delivered(subchannelId, evt.id);
@@ -1698,10 +1833,7 @@ export class Body {
     // The map name is not authority. Confirm both the in-memory session and
     // the immutable kind:9007 parent link before any cleanup or metadata edit.
     // A top-level Room has no parent link and can never pass this gate.
-    const relayParentChannelId = await getParentChannelId(
-      this.agentClientContext(),
-      subchannelId,
-    );
+    const relayParentChannelId = await getParentChannelId(this.agentClientContext(), subchannelId);
     assertSubchannelArchiveTarget(info, relayParentChannelId);
 
     const { session, worktreePath, featureBranch, subchannelId: scId } = info;

@@ -61,6 +61,47 @@ function commit(dir: string, file: string, content: string, msg: string) {
   if (!c.ok) throw new Error(`git commit failed: ${c.stderr}`);
 }
 
+async function postFixtureEvent(
+  channelId: string,
+  identity: ReturnType<typeof newIdentity>,
+  content: string,
+  tags: string[][],
+  createdAt: number,
+) {
+  await publishEvent(
+    signEvent(
+      {
+        pubkey: identity.publicKey,
+        created_at: createdAt,
+        kind: 9,
+        tags: [['h', channelId], ...tags],
+        content,
+      },
+      identity.secretKey,
+    ),
+    identity,
+  );
+}
+
+async function postActivityFixture(
+  channelId: string,
+  agent: ReturnType<typeof newIdentity>,
+  sessionId: string,
+  update: Record<string, unknown>,
+  createdAt: number,
+) {
+  await postFixtureEvent(
+    channelId,
+    agent,
+    JSON.stringify({ sessionId, update, projected: true }),
+    [
+      ['t', 'agent-activity'],
+      ['session', sessionId],
+    ],
+    createdAt,
+  );
+}
+
 async function main() {
   const res = await fetch(`${BASE_URL}/health`, {
     headers: { host: HOST },
@@ -78,11 +119,11 @@ async function main() {
     : createIdentity('ui-demo-reviewer'); // review identity for UI
   const agent = newIdentity('ui-demo-agent');
   const channelContext = {
-    http: { baseUrl: BASE_URL, host: HOST },
+    http: { baseUrl: BASE_URL, host: HOST, identity: owner },
     identity: owner,
   };
   const agentContext = {
-    http: { baseUrl: BASE_URL, host: HOST },
+    http: { baseUrl: BASE_URL, host: HOST, identity: agent },
     identity: agent,
   };
   log('Owner npub:', identityNpub(owner));
@@ -139,6 +180,114 @@ async function main() {
     subchannelId,
     'The implementation is ready for review. Tests cover the fallback and overlay paths.',
     { agentActivity: true },
+  );
+
+  // Dense, realistic ACP telemetry fixture for the corner activity UI. The
+  // sequence intentionally spans two final-message boundaries so screenshots
+  // can prove compact defaults, markdown, expansion, and turn separation.
+  const sessionId = `ses_${RUN_MARKER}`;
+  const activityStart = Math.floor(Date.now() / 1000) - 40;
+  let activityOffset = 0;
+  await postFixtureEvent(
+    subchannelId,
+    agent,
+    'Agent is thinking…',
+    [
+      ['t', 'body-control'],
+      ['t', 'agent-turn'],
+      ['request', `${RUN_MARKER}-turn-1`],
+      ['session', sessionId],
+      ['agent', agent.publicKey],
+      ['status', 'working'],
+    ],
+    activityStart + activityOffset++,
+  );
+  for (const text of [
+    '**Planning platform detection**',
+    'I am checking the Android runtime and the existing activity projection.',
+    '**Tracing turn boundaries**',
+    'Each final message must remain separate from the telemetry that precedes it.',
+    '**Implementing compact actions**',
+    'The default stream should reveal milestones, not every internal delta.',
+  ]) {
+    await postActivityFixture(
+      subchannelId,
+      agent,
+      sessionId,
+      { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text } },
+      activityStart + activityOffset++,
+    );
+  }
+  for (const update of [
+    {
+      sessionUpdate: 'tool_call_update',
+      title: 'read apps/body/src/activity.ts',
+      status: 'completed',
+      content: { type: 'text', text: 'Read 184 lines.' },
+    },
+    {
+      sessionUpdate: 'tool_call_update',
+      title: 'grep "agent_message_chunk"',
+      status: 'completed',
+      content: { type: 'text', text: '12 matches' },
+    },
+    {
+      sessionUpdate: 'tool_call_update',
+      title: 'bash',
+      status: 'completed',
+      content: { type: 'text', text: 'Tests passed. Exited with code 0.' },
+    },
+  ]) {
+    await postActivityFixture(
+      subchannelId,
+      agent,
+      sessionId,
+      update,
+      activityStart + activityOffset++,
+    );
+  }
+  await postFixtureEvent(
+    subchannelId,
+    agent,
+    '**First pass complete.**\n\n- Markdown is rendered.\n- Tool detail stays available on tap.',
+    [['t', 'agent-message']],
+    activityStart + activityOffset++,
+  );
+  await postFixtureEvent(
+    subchannelId,
+    reviewer,
+    'Verify that a second turn stays separate.',
+    [],
+    activityStart + activityOffset++,
+  );
+  await postActivityFixture(
+    subchannelId,
+    agent,
+    sessionId,
+    {
+      sessionUpdate: 'agent_thought_chunk',
+      content: { type: 'text', text: '**Verifying whitespace preservation**' },
+    },
+    activityStart + activityOffset++,
+  );
+  await postActivityFixture(
+    subchannelId,
+    agent,
+    sessionId,
+    {
+      sessionUpdate: 'tool_call_update',
+      title: 'typecheck mobile',
+      status: 'completed',
+      content: { type: 'text', text: 'Exited with code 0.' },
+    },
+    activityStart + activityOffset++,
+  );
+  await postFixtureEvent(
+    subchannelId,
+    agent,
+    '**Second turn complete.**\n\nParagraph spacing stays intact. The previous answer remains its own unit.',
+    [['t', 'agent-message']],
+    activityStart + activityOffset++,
   );
 
   // ── 3. Seed repo + push feature branch ────────────────────────────

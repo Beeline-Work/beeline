@@ -230,6 +230,36 @@ export function PixelLoader({ compact = false }: { compact?: boolean }) {
   );
 }
 
+/** One restrained live tip for a streaming activity timeline. */
+export function HullActivityTip({ label = 'working…' }: { label?: string }) {
+  const reducedMotion = useReducedMotion();
+  const opacity = useSharedValue(1);
+
+  useEffect(() => {
+    if (reducedMotion) {
+      opacity.value = 1;
+      return;
+    }
+    opacity.value = withRepeat(
+      withTiming(0.28, {
+        duration: motionTokens.liveCycle,
+        easing: easeOutQuint,
+        reduceMotion: ReduceMotion.System,
+      }),
+      -1,
+      true,
+    );
+  }, [opacity, reducedMotion]);
+
+  const dotStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  return (
+    <View accessibilityLabel={label} accessibilityRole="progressbar" style={styles.activityTip}>
+      <Animated.View style={[styles.activityTipDot, dotStyle]} />
+      <Text style={styles.activityTipLabel}>{label}</Text>
+    </View>
+  );
+}
+
 function LoaderCell({
   frame,
   index,
@@ -463,6 +493,14 @@ const styles = StyleSheet.create({
   loaderCell: { width: 7, height: 7, backgroundColor: groknight.signalBright },
   loaderCellCompact: { width: 5, height: 5 },
   staticLoader: { ...Typography.mono('semiBold'), color: groknight.signalBright, fontSize: 12 },
+  activityTip: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  activityTipDot: { width: 5, height: 5, backgroundColor: groknight.accent },
+  activityTipLabel: {
+    ...Typography.mono(),
+    color: groknight.accent,
+    fontSize: 9,
+    lineHeight: 12,
+  },
   waveSignal: { minHeight: 20, flexDirection: 'row', alignItems: 'center', gap: 6 },
   waveSegments: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   waveSegment: { width: 3, height: 6, backgroundColor: groknight.signalBright },

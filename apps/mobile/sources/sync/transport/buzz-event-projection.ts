@@ -415,7 +415,40 @@ export function transcriptMessages(
   messages: ChatDisplayMessage[],
   isCorner: boolean,
 ): ChatDisplayMessage[] {
-  if (isCorner) return messages;
+  if (isCorner) {
+    const transcript: ChatDisplayMessage[] = [];
+    let activityRunOpen = false;
+    for (const message of messages) {
+      // Lifecycle is presentation state, not a blank conversational message,
+      // but it remains a hard turn boundary for the activity on either side.
+      if (message.agentTurn) {
+        activityRunOpen = false;
+        continue;
+      }
+
+      if (message.isAgentActivity) {
+        if (!message.activity?.length) {
+          activityRunOpen = false;
+          continue;
+        }
+        const previous = transcript.at(-1);
+        if (activityRunOpen && previous?.isAgentActivity) {
+          previous.activity = [...(previous.activity ?? []), ...message.activity];
+          // Keep the first event id stable while the live run grows. Never join
+          // prose here: final messages and user messages remain hard boundaries.
+          continue;
+        }
+        activityRunOpen = true;
+      } else {
+        activityRunOpen = false;
+      }
+      transcript.push({
+        ...message,
+        ...(message.activity ? { activity: [...message.activity] } : {}),
+      });
+    }
+    return transcript;
+  }
   return messages.filter(
     (message) =>
       Boolean(message.corner) ||

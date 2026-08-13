@@ -98,6 +98,8 @@ type RoomMemberOption = {
 
 /** Known body pubkeys for provenance display (hardcoded for dev). */
 const BODY_PUBKEYS = new Set<string>();
+const COMPOSER_MIN_HEIGHT = 40;
+const COMPOSER_MAX_HEIGHT = 120;
 
 function CornerActivity({ message, active }: { message: ChatDisplayMessage; active: boolean }) {
   const activity = message.activity?.length
@@ -165,6 +167,7 @@ export default function BuzzChat() {
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
   const [messages, setMessages] = useState<ChatDisplayMessage[]>([]);
   const [inputText, setInputText] = useState('');
+  const [composerHeight, setComposerHeight] = useState(COMPOSER_MIN_HEIGHT);
   const [inputSelection, setInputSelection] = useState({ start: 0, end: 0 });
   const [highlightedMentionIndex, setHighlightedMentionIndex] = useState(0);
   const [dismissedMentionKey, setDismissedMentionKey] = useState<string | null>(null);
@@ -365,6 +368,10 @@ export default function BuzzChat() {
     return () => clearTimeout(settleTimer);
   }, [keyboardHeight, scrollToLatestMessage]);
 
+  useLayoutEffect(() => {
+    if (followsLatestMessageRef.current) scrollToLatestMessage(false);
+  }, [composerHeight, scrollToLatestMessage]);
+
   useEffect(() => {
     setHighlightedMentionIndex(0);
   }, [mentionMenuKey]);
@@ -528,6 +535,7 @@ export default function BuzzChat() {
         ? [await uploadChatAttachment(await transport.ensureClient(), pendingAttachment)]
         : [];
       setInputText('');
+      setComposerHeight(COMPOSER_MIN_HEIGHT);
       setInputSelection({ start: 0, end: 0 });
       setPendingAttachment(null);
       const optimisticId = `optimistic-${Date.now()}`;
@@ -639,17 +647,6 @@ export default function BuzzChat() {
     },
     [activeMention, inputText],
   );
-
-  const handleComposerSubmit = useCallback(() => {
-    const selected = mentionMenuVisible
-      ? mentionSuggestions.matches[highlightedMentionIndex]
-      : undefined;
-    if (selected) {
-      selectMention(selected);
-      return;
-    }
-    void handleSend();
-  }, [handleSend, highlightedMentionIndex, mentionMenuVisible, mentionSuggestions, selectMention]);
 
   const handleWritePermission = useCallback(
     async (message: ChatDisplayMessage, decision: 'allow' | 'deny') => {
@@ -1391,15 +1388,25 @@ export default function BuzzChat() {
               </TouchableOpacity>
               <TextInput
                 ref={composerRef}
-                style={[styles.input, isCorner && styles.cornerInput]}
+                style={[styles.input, { height: composerHeight }, isCorner && styles.cornerInput]}
                 value={inputText}
                 onChangeText={setInputText}
+                onContentSizeChange={(event) => {
+                  const contentHeight = Math.ceil(event.nativeEvent.contentSize.height);
+                  setComposerHeight(
+                    Math.min(COMPOSER_MAX_HEIGHT, Math.max(COMPOSER_MIN_HEIGHT, contentHeight)),
+                  );
+                }}
                 onFocus={() => setComposerFocused(true)}
                 onBlur={() => setComposerFocused(false)}
                 onKeyPress={(event) => {
                   if (!mentionMenuVisible) return;
                   const key = event.nativeEvent.key;
-                  if (key === 'ArrowDown' || key === 'ArrowUp') {
+                  if (key === 'Enter') {
+                    event.preventDefault();
+                    const selected = mentionSuggestions.matches[highlightedMentionIndex];
+                    if (selected) selectMention(selected);
+                  } else if (key === 'ArrowDown' || key === 'ArrowUp') {
                     event.preventDefault();
                     const direction = key === 'ArrowDown' ? 1 : -1;
                     setHighlightedMentionIndex((current) => {
@@ -1414,11 +1421,12 @@ export default function BuzzChat() {
                 onSelectionChange={(event) => setInputSelection(event.nativeEvent.selection)}
                 placeholder={parentChannelId ? 'Steer' : 'Message'}
                 placeholderTextColor={groknight.dim}
-                multiline={false}
+                multiline
                 numberOfLines={1}
-                returnKeyType="send"
+                returnKeyType="default"
+                scrollEnabled={composerHeight >= COMPOSER_MAX_HEIGHT}
                 selection={inputSelection}
-                onSubmitEditing={handleComposerSubmit}
+                submitBehavior="newline"
               />
               <TouchableOpacity
                 style={[
@@ -2729,9 +2737,10 @@ const styles = StyleSheet.create({
     fontSize: 20,
   },
   composer: {
-    height: 46,
+    minHeight: 46,
+    maxHeight: 126,
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     paddingVertical: 3,
     paddingHorizontal: 10,
     borderRadius: 4,
@@ -2771,8 +2780,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     color: groknight.textSecondary,
-    height: 40,
-    paddingVertical: 0,
+    minHeight: 40,
+    maxHeight: 120,
+    paddingVertical: 10,
+    textAlignVertical: 'top',
   },
   cornerInput: { ...Typography.mono(), color: groknight.textPrimary },
   sendButton: {

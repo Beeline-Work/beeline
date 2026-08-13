@@ -84,6 +84,8 @@ const monoStyles = new Set([
   'terminalTurnAuthor',
   'terminalTurnText',
   'agentLiveStatusText',
+  'agentOfflineHintTitle',
+  'offlineDeliveryNote',
   'cornerBackText',
   'cornerChannelName',
   'cornerHeaderMeta',

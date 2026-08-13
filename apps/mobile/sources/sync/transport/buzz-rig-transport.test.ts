@@ -185,6 +185,82 @@ describe('Buzz transport bootstrap', () => {
   });
 });
 
+describe('Room-scoped agent presence transport', () => {
+  const identity = {
+    publicKey: 'd'.repeat(64),
+    secretKey: new Uint8Array(32).fill(4),
+    name: 'operator',
+  } as Identity;
+
+  it('backfills only the replaceable presence kind', async () => {
+    const event = {
+      kind: 'other' as const,
+      event: {
+        id: 'presence',
+        pubkey: 'a'.repeat(64),
+        created_at: 42,
+        kind: 30078,
+        tags: [['h', 'room']],
+        content: 'online',
+        sig: 'b'.repeat(128),
+      },
+      channelId: 'room',
+      content: 'online',
+      pubkey: 'a'.repeat(64),
+      createdAt: 42,
+      id: 'presence',
+    } satisfies BuzzSessionEvent;
+    const client = { agentPresenceBackfill: vi.fn(async () => [event]) };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(transport.agentPresenceBackfill('room')).resolves.toHaveLength(1);
+    expect(client.agentPresenceBackfill).toHaveBeenCalledWith('room');
+  });
+
+  it('subscribes only to presence and releases the live subscription', async () => {
+    const relayUnsubscribe = vi.fn();
+    let relayHandler: ((event: BuzzSessionEvent) => void) | undefined;
+    const client = {
+      agentPresenceSubscribe: vi.fn(
+        async (_room: string, handler: (event: BuzzSessionEvent) => void) => {
+          relayHandler = handler;
+          return relayUnsubscribe;
+        },
+      ),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+    const handler = vi.fn();
+
+    const stop = transport.agentPresenceSubscribe('room', handler);
+    await vi.waitFor(() => expect(client.agentPresenceSubscribe).toHaveBeenCalled());
+    expect(client.agentPresenceSubscribe).toHaveBeenCalledWith('room', expect.any(Function));
+    relayHandler?.({
+      kind: 'other',
+      event: {
+        id: 'presence',
+        pubkey: 'a'.repeat(64),
+        created_at: 42,
+        kind: 30078,
+        tags: [['h', 'room']],
+        content: 'online',
+        sig: 'b'.repeat(128),
+      },
+      channelId: 'room',
+      content: 'online',
+      pubkey: 'a'.repeat(64),
+      createdAt: 42,
+      id: 'presence',
+    });
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'raw', sessionId: 'room' }),
+    );
+    stop();
+    expect(relayUnsubscribe).toHaveBeenCalledOnce();
+  });
+});
+
 describe('Room-scoped Workspace membership', () => {
   it('sends @-mentioned Room messages with an address and no private request marker', async () => {
     const identity = {

@@ -30,6 +30,9 @@ export const KIND_AGENT_SOUL = 30078;
 /** NIP-33 parameterized replaceable application data (human cosmetic profiles). */
 export const KIND_PERSON_PROFILE = 30078;
 
+/** NIP-33 parameterized replaceable Room-scoped daemon presence record. */
+export const KIND_AGENT_PRESENCE = 30078;
+
 /** NIP-33 parameterized replaceable application data (community invite lookup). */
 export const KIND_COMMUNITY_INVITE = 30078;
 
@@ -38,6 +41,9 @@ export const KIND_AUTH = 22242;
 
 /** Marker tag value for agent-activity body projection (session/update bus). */
 export const TAG_AGENT_ACTIVITY = 'agent-activity';
+
+/** Marker tag value for a Room-scoped agent daemon heartbeat. */
+export const TAG_AGENT_PRESENCE = 'agent-presence';
 
 /** Marker tag value for a self-signed first-class agent record. */
 export const TAG_AGENT = 'buzz-agent';

@@ -11,7 +11,14 @@ import type { AcpClient, SessionUpdate } from './acp.js';
 import type { Identity } from '@beeline/gate';
 import { publishEvent } from '@beeline/gate';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
-import { buildAttachmentTags, type AttachmentReference } from '@beeline/buzz-client';
+import {
+  AGENT_PRESENCE_HEARTBEAT_MS,
+  KIND_AGENT_PRESENCE,
+  TAG_AGENT_PRESENCE,
+  buildAttachmentTags,
+  type AgentPresenceStatus,
+  type AttachmentReference,
+} from '@beeline/buzz-client';
 import { sanitizeActivityUpdate } from './attachments.js';
 
 export const ACTIVITY_TAG = 'agent-activity';
@@ -129,6 +136,72 @@ export function postAgentTurnStatus(
     ['mode', 'readonly'],
     ['status', status],
   ]);
+}
+
+/** Publish one signed, replaceable Room-scoped daemon presence marker. */
+export async function postAgentPresence(
+  channelId: string,
+  owner: Identity,
+  status: AgentPresenceStatus,
+  createdAt = Math.floor(Date.now() / 1_000),
+): Promise<void> {
+  const event: NostrEvent = signEvent(
+    {
+      pubkey: owner.publicKey,
+      created_at: createdAt,
+      kind: KIND_AGENT_PRESENCE,
+      tags: [
+        ['d', `agent-presence:${channelId}`],
+        ['h', channelId],
+        ['t', TAG_AGENT_PRESENCE],
+        ['agent', owner.publicKey],
+        ['status', status],
+      ],
+      content: status,
+    },
+    owner.secretKey,
+  );
+  await publishEvent(event, owner);
+}
+
+/**
+ * Start a low-rate heartbeat. Publishes immediately and serializes refreshes so
+ * a slow relay cannot create overlapping requests. The returned stop function
+ * emits an offline marker after any in-flight heartbeat settles.
+ */
+export function startAgentPresence(
+  channelId: string,
+  owner: Identity,
+  intervalMs = AGENT_PRESENCE_HEARTBEAT_MS,
+): () => Promise<void> {
+  let stopped = false;
+  let lastCreatedAt = 0;
+  let chain = Promise.resolve();
+  const enqueue = (status: AgentPresenceStatus) => {
+    const createdAt = Math.max(Math.floor(Date.now() / 1_000), lastCreatedAt + 1);
+    lastCreatedAt = createdAt;
+    chain = chain
+      .then(() => postAgentPresence(channelId, owner, status, createdAt))
+      .catch((error) => console.error(`[body] agent presence ${status} failed:`, error));
+    return chain;
+  };
+
+  void enqueue('online');
+  const timer = setInterval(() => {
+    if (!stopped) void enqueue('online');
+  }, intervalMs);
+  timer.unref?.();
+
+  return async () => {
+    if (stopped) return;
+    stopped = true;
+    clearInterval(timer);
+    await chain;
+    const createdAt = Math.max(Math.floor(Date.now() / 1_000), lastCreatedAt + 1);
+    await postAgentPresence(channelId, owner, 'offline', createdAt).catch((error) =>
+      console.error('[body] agent presence offline failed:', error),
+    );
+  };
 }
 
 /** Emit an ordered batch of session updates as one kind:9 channel event. */

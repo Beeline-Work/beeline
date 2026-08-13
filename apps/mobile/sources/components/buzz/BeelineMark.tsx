@@ -10,11 +10,11 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { groknight } from '@/buzz/groknight';
+import beelineMark from '@/buzz/beeline-mark.json';
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 
-const MARK_PATH =
-  'M 32 182 C 48 181, 58 180, 68 176 C 86 168, 60 143, 80 132 C 92 126, 104 138, 97 153 C 92 163, 77 164, 70 172 C 62 180, 82 185, 98 178 C 144 168, 176 148, 194 112 C 203 92, 208 66, 211 44';
+const MARK_PATH = beelineMark.path;
 
 export function BeelineMark({ size = 112, shimmer = false }: { size?: number; shimmer?: boolean }) {
   const reducedMotion = useReducedMotion();
@@ -48,19 +48,11 @@ export function BeelineMark({ size = 112, shimmer = false }: { size?: number; sh
     >
       <Path
         d={MARK_PATH}
-        fill="none"
-        stroke={groknight.brandMark}
-        strokeWidth={8}
-        strokeLinecap="round"
-        strokeLinejoin="round"
+        fill={groknight.brandMark}
       />
       <AnimatedPath
         d={MARK_PATH}
-        fill="none"
-        stroke={groknight.textPrimary}
-        strokeWidth={8}
-        strokeLinecap="round"
-        strokeLinejoin="round"
+        fill={groknight.textPrimary}
         animatedProps={highlightProps}
       />
     </Svg>

@@ -96,7 +96,7 @@ export default {
             }
         },
         android: {
-            versionCode: 14,
+            versionCode: 15,
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",
                 monochromeImage: "./sources/assets/images/icon-monochrome.png",

@@ -435,8 +435,11 @@ export default function BuzzChat() {
         setUserPubkey(identity.publicKey);
 
         const client = await t.ensureClient();
+        // Self-listing repairs any missing direct Room projections left by an
+        // interrupted or historical Workspace invite. Await it before backfill
+        // so a notification deep-link cannot race into an empty transcript.
+        const availableCommunities = await client.listCommunities();
         const [
-          availableCommunities,
           directCommunityId,
           channelMetadata,
           roomMembers,
@@ -445,7 +448,6 @@ export default function BuzzChat() {
           identityIsAgent,
           dm,
         ] = await Promise.all([
-          client.listCommunities(),
           client.getChannelCommunityId(decodedId),
           client.getChannelMetadata(decodedId),
           client.listMembers(decodedId),

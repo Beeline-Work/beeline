@@ -2,6 +2,7 @@ import { applicationDefault, getApps, initializeApp } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import { createBuzzClient, createIdentity, queryEvents } from '@beeline/buzz-client';
 import { loadPushGatewayConfig } from './config.js';
+import { DeliveryState } from './delivery-state.js';
 import { PushGateway, RegisteredEventPoller } from './gateway.js';
 import { TokenRegistry } from './registry.js';
 import { createRegistrationServer } from './server.js';
@@ -23,13 +24,14 @@ async function main(): Promise<void> {
       projectId: 'buzzy-e11e7',
     });
   const registry = await TokenRegistry.load(config.registryFile);
+  const deliveryState = await DeliveryState.load(config.deliveryStateFile);
   const relayClient = createBuzzClient({
     baseUrl: config.subscriptionRelayUrl,
     identity: createIdentity('push-gateway'),
   });
   await relayClient.connect();
 
-  const gateway = new PushGateway(registry, getMessaging(firebaseApp));
+  const gateway = new PushGateway(registry, getMessaging(firebaseApp), deliveryState);
   const relayHttp = { baseUrl: config.queryRelayUrl, host: config.relayHost };
   const poller = new RegisteredEventPoller(
     registry,
@@ -41,6 +43,8 @@ async function main(): Promise<void> {
       disconnect: () => undefined,
     }),
     (event, recipientPubkey, reader) => gateway.handleRelayEvent(event, recipientPubkey, reader),
+    deliveryState,
+    Date.now,
   );
 
   const pollRegisteredEvent = (): void => {

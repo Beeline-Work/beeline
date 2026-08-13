@@ -76,8 +76,10 @@ export {
   KIND_COMMUNITY_INVITE,
   KIND_AGENT_SOUL,
   KIND_PERSON_PROFILE,
+  KIND_AGENT_PRESENCE,
   KIND_AUTH,
   TAG_AGENT_ACTIVITY,
+  TAG_AGENT_PRESENCE,
   TAG_AGENT,
   TAG_AGENT_PAIRING,
   TAG_AGENT_SOUL,
@@ -89,6 +91,14 @@ export {
   TAG_DIRECT_MESSAGE,
   TAG_ROOM_LIFECYCLE,
 } from './kinds.js';
+
+export {
+  AGENT_PRESENCE_HEARTBEAT_MS,
+  AGENT_PRESENCE_STALE_MS,
+  isAgentPresenceOnline,
+  newerAgentPresence,
+} from './agent-presence.js';
+export type { AgentPresence, AgentPresenceStatus } from './agent-presence.js';
 
 export {
   tagValue,

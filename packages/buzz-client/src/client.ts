@@ -53,7 +53,7 @@ import {
   setCommunityAvatar,
 } from './community.js';
 import { publishEvent, queryEvents, type HttpBridgeOptions } from './http.js';
-import { KIND_STREAM_MESSAGE } from './kinds.js';
+import { KIND_AGENT_PRESENCE, KIND_STREAM_MESSAGE, TAG_AGENT_PRESENCE } from './kinds.js';
 import { getPersonProfile, listPersonProfiles, setPersonProfile } from './person-profile.js';
 import { getDirectMessage, listDirectMessages, resolveDirectMessage } from './direct-message.js';
 import { uploadMedia } from './media.js';
@@ -479,6 +479,25 @@ export class BuzzClient {
     );
   }
 
+  /** Read this Room's parameterized-replaceable agent presence records. */
+  agentPresenceBackfill(channelId: string): Promise<SessionEvent[]> {
+    return queryEvents(
+      this.http,
+      [
+        {
+          kinds: [KIND_AGENT_PRESENCE],
+          '#d': [`${TAG_AGENT_PRESENCE}:${channelId}`],
+          limit: 20,
+        },
+      ],
+      this.identity.publicKey,
+    ).then((events) =>
+      events
+        .map(toSessionEvent)
+        .filter((event): event is SessionEvent => event !== null && event.channelId === channelId),
+    );
+  }
+
   /**
    * Live subscribe over WS: yields human messages and agent-activity in arrival
    * order (sessionEventsSubscribe for RigTransport).
@@ -499,6 +518,29 @@ export class BuzzClient {
       const se = toSessionEvent(event);
       if (se) handler(se);
     });
+  }
+
+  /** Subscribe only to this Room's replaceable presence records. */
+  async agentPresenceSubscribe(
+    channelId: string,
+    handler: SessionEventHandler,
+  ): Promise<Unsubscribe> {
+    if (!this.ws?.connected) {
+      await this.connect();
+    }
+    const ws = this.ws!;
+    return ws.subscribe(
+      [
+        {
+          kinds: [KIND_AGENT_PRESENCE],
+          '#d': [`${TAG_AGENT_PRESENCE}:${channelId}`],
+        },
+      ],
+      (event) => {
+        const sessionEvent = toSessionEvent(event);
+        if (sessionEvent?.channelId === channelId) handler(sessionEvent);
+      },
+    );
   }
 
   /** Low-level publish (already-signed event) via HTTP. */

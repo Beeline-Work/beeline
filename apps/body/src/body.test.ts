@@ -22,7 +22,12 @@ import {
 import { AcpClient, isMutatingPermissionRequest } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
-import { postAgentMessage, stripAgentReplyPreamble } from './activity.js';
+import {
+  postAgentMessage,
+  postAgentPresence,
+  startAgentPresence,
+  stripAgentReplyPreamble,
+} from './activity.js';
 import { isReadOnlyMcpPermissionRequest } from './read-only-policy.js';
 
 afterEach(() => {
@@ -215,6 +220,59 @@ describe('agent identity boundary', () => {
       body.assertRepositorySafety(roomId, { repo: 'local-repo', localOnly: true }),
     ).resolves.toBeUndefined();
     expect(authEvents.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('agent presence', () => {
+  it('publishes signed online and offline markers as replaceable Room records', async () => {
+    const agent = newIdentity('presence-agent');
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    await postAgentPresence('presence-room', agent, 'online');
+    await postAgentPresence('presence-room', agent, 'offline');
+
+    expect(published).toHaveLength(2);
+    expect(published.map((event) => event.kind)).toEqual([30078, 30078]);
+    expect(published.map((event) => verifyEvent(event))).toEqual([true, true]);
+    expect(published[0]!.tags).toEqual(
+      expect.arrayContaining([
+        ['h', 'presence-room'],
+        ['d', 'agent-presence:presence-room'],
+        ['t', 'agent-presence'],
+        ['agent', agent.publicKey],
+        ['status', 'online'],
+      ]),
+    );
+    expect(published[1]!.tags).toContainEqual(['status', 'offline']);
+  });
+
+  it('heartbeats periodically and marks a clean stop offline', async () => {
+    vi.useFakeTimers();
+    const agent = newIdentity('heartbeat-agent');
+    const statuses: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const event = JSON.parse(String(init?.body)) as NostrEvent;
+        statuses.push(event.tags.find((tag) => tag[0] === 'status')?.[1] ?? '');
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    const stop = startAgentPresence('presence-room', agent, 1_000);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await stop();
+
+    expect(statuses).toEqual(['online', 'online', 'offline']);
+    vi.useRealTimers();
   });
 });
 

@@ -304,6 +304,44 @@ export class BuzzRigTransport implements RigTransport {
     return buzzEvents.map(toRigEvent);
   }
 
+  /** Read the current parameterized-replaceable presence record(s) for a Room. */
+  async agentPresenceBackfill(channelId: string): Promise<SessionEvent[]> {
+    const client = await this.getClient();
+    const buzzEvents = await client.agentPresenceBackfill(channelId);
+    return buzzEvents.map(toRigEvent);
+  }
+
+  /** Subscribe only to Room presence, keeping telemetry out of chat backfill. */
+  agentPresenceSubscribe(channelId: string, handler: (event: SessionEvent) => void): () => void {
+    const subscriptionKey = `presence:${channelId}`;
+    let unsub: (() => void) | undefined;
+    let cancelled = false;
+
+    this.getClient()
+      .then((client) =>
+        client.agentPresenceSubscribe(channelId, (event) => handler(toRigEvent(event))),
+      )
+      .then((nextUnsub) => {
+        if (cancelled) {
+          nextUnsub();
+          return;
+        }
+        unsub = nextUnsub;
+        this.subscriptions.set(subscriptionKey, nextUnsub);
+      })
+      .catch((error) => {
+        console.warn(`BuzzRigTransport: agentPresenceSubscribe(${channelId}) failed:`, error);
+      });
+
+    const unsubscribe = () => {
+      cancelled = true;
+      unsub?.();
+      this.subscriptions.delete(subscriptionKey);
+    };
+    this.subscriptions.set(subscriptionKey, unsubscribe);
+    return unsubscribe;
+  }
+
   async permissionRespond(
     _sessionId: SessionId,
     _requestId: string,

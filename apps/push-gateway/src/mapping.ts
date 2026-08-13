@@ -24,6 +24,11 @@ export interface NotificationFormattingOptions {
 }
 
 const MESSAGE_PREVIEW_LENGTH = 120;
+const CHAT_MESSAGE_MARKERS = new Set([
+  'agent-message',
+  'buzz-agent-request',
+  'buzz-attachment',
+]);
 
 function normalizedDisplayText(value: string | undefined, maxLength: number): string | undefined {
   const normalized = value?.trim().replace(/\s+/g, ' ');
@@ -40,9 +45,10 @@ export function formatMessagePreview(content: string): string {
 export function isNotifiableEvent(event: NostrEvent): boolean {
   if (event.kind !== 9 || !tagValue(event, 'h')) return false;
   const markers = tagValues(event, 't');
-  if (markers.includes('agent-activity') || markers.includes('buzz-merge-approval')) return false;
-  if (!markers.includes('body-control')) return true;
-  return Boolean(tagValue(event, 'repo') && tagValue(event, 'branch') && tagValue(event, 'tip'));
+  if (markers.includes('body-control')) {
+    return Boolean(tagValue(event, 'repo') && tagValue(event, 'branch') && tagValue(event, 'tip'));
+  }
+  return markers.every((marker) => CHAT_MESSAGE_MARKERS.has(marker));
 }
 
 /** The single notification-content policy seam, including message-preview privacy. */

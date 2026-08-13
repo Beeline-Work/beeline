@@ -42,6 +42,13 @@ by projecting agent activity into the relay channel.
 - **Activity projection:** ACP `session/update` notifications are bridged in
   ordered batches as kind:9 events with `#t=agent-activity`, so **all channel
   members see the agent work live** without exhausting per-key relay quotas.
+- **Link-only attachments:** Room messages expose files to ACP as a durable URL,
+  filename, MIME type, and byte count; the agent fetches that URL only when the
+  task requires it. To send a worktree file back, the agent writes
+  `[[buzz-attachment:path]]` in its final response. Body removes the directive,
+  uploads the file through the authenticated relay media endpoint, and signs the
+  same attachment tags used by mobile. Structured ACP image outputs are detected
+  automatically, while their base64 fields are removed from projected activity.
 - **Identity boundary:** the operator and agent always have distinct Nostr
   keypairs. The agent signs session activity, control messages, and kind:9007
   subchannel creation. Community-linked TLCs also get a self-signed agent record.
@@ -60,18 +67,18 @@ by projecting agent activity into the relay channel.
 
 ## Configuration (env vars)
 
-| Variable                     | Required | Default                 | Description                          |
-| ---------------------------- | -------- | ----------------------- | ------------------------------------ |
-| `BUZZ_AGENT_BIN`             | No       | explicit reference only | Reference `buzz-agent` override      |
-| `BUZZ_DEV_MCP_BIN`           | No       | auto-detect             | Path to `buzz-dev-mcp` binary        |
-| `BUZZY_RELAY_HOST`           | No       | `relay.buzzrouter.com`  | Relay HTTP/WS host                   |
-| `BUZZY_RELAY_SCHEME`         | No       | `https`                 | Relay scheme                         |
-| `BUZZY_BODY_WORKSPACE`       | No       | `./body-workspace`      | Agent workspace root                 |
-| `BUZZY_BODY_LLM_FILE`        | No       | —                       | Path to LLM credentials env file     |
-| `BUZZY_BODY_MAX_SESSIONS`    | No       | `4`                     | Maximum live ACP processes           |
-| `BUZZY_BODY_SESSION_IDLE_MS` | No       | `300000`                | Idle time before process suspension  |
-| `BUZZ_BODY_KEY`              | No       | auto                    | Body operator Nostr nsec/hex         |
-| `BUZZ_AGENT_KEY`             | No       | generated at pair       | Existing agent Nostr nsec/hex        |
+| Variable                     | Required | Default                 | Description                                       |
+| ---------------------------- | -------- | ----------------------- | ------------------------------------------------- |
+| `BUZZ_AGENT_BIN`             | No       | explicit reference only | Reference `buzz-agent` override                   |
+| `BUZZ_DEV_MCP_BIN`           | No       | auto-detect             | Path to `buzz-dev-mcp` binary                     |
+| `BUZZY_RELAY_HOST`           | No       | `relay.buzzrouter.com`  | Relay HTTP/WS host                                |
+| `BUZZY_RELAY_SCHEME`         | No       | `https`                 | Relay scheme                                      |
+| `BUZZY_BODY_WORKSPACE`       | No       | `./body-workspace`      | Agent workspace root                              |
+| `BUZZY_BODY_LLM_FILE`        | No       | —                       | Path to LLM credentials env file                  |
+| `BUZZY_BODY_MAX_SESSIONS`    | No       | `4`                     | Maximum live ACP processes                        |
+| `BUZZY_BODY_SESSION_IDLE_MS` | No       | `300000`                | Idle time before process suspension               |
+| `BUZZ_BODY_KEY`              | No       | auto                    | Body operator Nostr nsec/hex                      |
+| `BUZZ_AGENT_KEY`             | No       | generated at pair       | Existing agent Nostr nsec/hex                     |
 | `BUZZY_BODY_AUTO_APPROVE`    | No       | `1`                     | Auto-approve permissions inside edit corners only |
 
 ### LLM credentials

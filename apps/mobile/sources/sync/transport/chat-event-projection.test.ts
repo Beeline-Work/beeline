@@ -55,6 +55,43 @@ describe('Buzz Room screen event projection', () => {
     ]);
   });
 
+  it('projects an attachment as URL metadata without inline file content', () => {
+    const event = raw(
+      'attachment',
+      'Here it is.',
+      [
+        ['t', 'agent-message'],
+        ['t', 'buzz-attachment'],
+        [
+          'imeta',
+          'url https://relay.example/media/mushroom.png',
+          'm image/png',
+          'size 24000000',
+          'thumb https://relay.example/media/mushroom-thumb.jpg',
+          'dim 1024x1024',
+        ],
+        ['attachment', 'https://relay.example/media/mushroom.png', 'mushroom.png'],
+      ],
+      2,
+    );
+
+    expect(projectChatEvent(event, viewer).message).toMatchObject({
+      text: 'Here it is.',
+      attachments: [
+        {
+          url: 'https://relay.example/media/mushroom.png',
+          name: 'mushroom.png',
+          mimeType: 'image/png',
+          size: 24_000_000,
+          thumbnailUrl: 'https://relay.example/media/mushroom-thumb.jpg',
+          width: 1024,
+          height: 1024,
+        },
+      ],
+    });
+    expect(JSON.stringify(event.payload)).not.toContain('base64');
+  });
+
   it('drives and clears the Room thinking indicator from read-only agent turns', () => {
     const working = raw(
       'turn-working',

@@ -36,7 +36,7 @@ export function buildMediaUploadAuthorization(
         ['expiration', String(createdAt + 300)],
         ['server', http.host],
       ],
-      content: 'Upload avatar',
+      content: 'Upload media',
     },
     http.identity.secretKey,
   );
@@ -48,7 +48,8 @@ export async function uploadMedia(
   mimeType: string,
 ): Promise<MediaBlob> {
   if (!bytes.byteLength) throw new Error('media upload is empty');
-  if (!mimeType.startsWith('image/')) throw new Error('avatar media must be an image');
+  if (!/^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/i.test(mimeType))
+    throw new Error('media upload requires a valid MIME type');
   const hash = bytesToHex(sha256(bytes));
   const authorization = buildMediaUploadAuthorization(http, hash);
   const authorizationJson = JSON.stringify(authorization);

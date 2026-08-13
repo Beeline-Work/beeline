@@ -12,6 +12,49 @@ export interface AgentCommand {
   args: string[];
 }
 
+export interface AdapterInstallCommand {
+  command: 'npm';
+  args: ['install', '-g', string];
+}
+
+export type DetectedAgentCommand =
+  | {
+      kind: (typeof AUTO_DETECT_AGENT_KINDS)[number];
+      status: 'ready';
+      agent: AgentCommand;
+    }
+  | {
+      kind: 'codex' | 'claude' | 'pi';
+      status: 'missing-adapter';
+      install: AdapterInstallCommand;
+    };
+
+const AGENT_EXECUTABLES: Record<(typeof AUTO_DETECT_AGENT_KINDS)[number], string> = {
+  codex: 'codex',
+  claude: 'claude',
+  goose: 'goose',
+  pi: 'pi',
+};
+
+const ADAPTER_INSTALL_COMMANDS: Record<'codex' | 'claude' | 'pi', AdapterInstallCommand> = {
+  codex: {
+    command: 'npm',
+    args: ['install', '-g', '@agentclientprotocol/codex-acp'],
+  },
+  claude: {
+    command: 'npm',
+    args: ['install', '-g', '@agentclientprotocol/claude-agent-acp'],
+  },
+  pi: {
+    command: 'npm',
+    args: ['install', '-g', 'pi-acp'],
+  },
+};
+
+function adapterInstallHint(kind: keyof typeof ADAPTER_INSTALL_COMMANDS): string {
+  return formatAdapterInstallCommand(ADAPTER_INSTALL_COMMANDS[kind]);
+}
+
 function firstExisting(paths: string[]): string | undefined {
   return paths.find((path) => path && existsSync(path));
 }
@@ -132,7 +175,7 @@ export function resolveAgentCommand(opts: {
       'codex-acp',
       env,
       cwd,
-      'Codex ACP adapter not found. Install it with `npm install -g @agentclientprotocol/codex-acp`, then retry with `--agent codex`.',
+      `Codex ACP adapter not found. Install it with \`${adapterInstallHint('codex')}\`, then retry with \`--agent codex\`.`,
     );
     return { kind: typedKind, command, args: [] };
   }
@@ -148,7 +191,7 @@ export function resolveAgentCommand(opts: {
       executableOnPath('claude-agent-acp', env) ?? executableOnPath('claude-code-acp', env);
     if (!command) {
       throw new Error(
-        'Claude Code needs an ACP adapter. Install it with `npm install -g @agentclientprotocol/claude-agent-acp`, then retry with `--agent claude`.',
+        `Claude Code needs an ACP adapter. Install it with \`${adapterInstallHint('claude')}\`, then retry with \`--agent claude\`.`,
       );
     }
     return { kind: typedKind, command, args: [] };
@@ -175,7 +218,7 @@ export function resolveAgentCommand(opts: {
       'pi-acp',
       env,
       cwd,
-      'Pi needs an ACP adapter. Install it with `npm install -g pi-acp`, then retry with `--agent pi`.',
+      `Pi needs an ACP adapter. Install it with \`${adapterInstallHint('pi')}\`, then retry with \`--agent pi\`.`,
     );
     return { kind: typedKind, command, args: [] };
   }
@@ -214,19 +257,31 @@ export function resolveAgentCommand(opts: {
   return { kind: typedKind, command, args: [] };
 }
 
-/** Resolve every installed user-owned coding agent using the preset's full ACP checks. */
+/** Detect installed user-owned agents, retaining an actionable missing-adapter state. */
 export function detectInstalledAgentCommands(
   opts: {
     env?: NodeJS.ProcessEnv;
     cwd?: string;
   } = {},
-): AgentCommand[] {
-  const detected: AgentCommand[] = [];
+): DetectedAgentCommand[] {
+  const env = opts.env ?? process.env;
+  const detected: DetectedAgentCommand[] = [];
   for (const kind of AUTO_DETECT_AGENT_KINDS) {
+    if (!executableOnPath(AGENT_EXECUTABLES[kind], env)) continue;
     try {
-      detected.push(resolveAgentCommand({ kind, env: opts.env, cwd: opts.cwd }));
+      detected.push({
+        kind,
+        status: 'ready',
+        agent: resolveAgentCommand({ kind, env, cwd: opts.cwd }),
+      });
     } catch {
-      // A preset is detectable only when its complete harness + ACP resolution succeeds.
+      if (kind !== 'goose') {
+        detected.push({
+          kind,
+          status: 'missing-adapter',
+          install: ADAPTER_INSTALL_COMMANDS[kind],
+        });
+      }
     }
   }
   return detected;
@@ -238,4 +293,8 @@ function displayWord(value: string): string {
 
 export function formatAgentCommand(agent: AgentCommand): string {
   return `${agent.kind}: ${[agent.command, ...agent.args].map(displayWord).join(' ')}`;
+}
+
+export function formatAdapterInstallCommand(install: AdapterInstallCommand): string {
+  return [install.command, ...install.args].map(displayWord).join(' ');
 }

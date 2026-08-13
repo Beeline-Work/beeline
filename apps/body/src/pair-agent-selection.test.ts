@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, resolve } from 'node:path';
@@ -14,14 +15,14 @@ afterEach(async () => {
 async function executables(...names: string[]): Promise<string> {
   const directory = await mkdtemp(resolve(tmpdir(), 'beeline-pair-agent-'));
   cleanup.push(directory);
-  await Promise.all(
-    names.map(async (name) => {
-      const path = resolve(directory, name);
-      await writeFile(path, '#!/bin/sh\nexit 0\n');
-      await chmod(path, 0o755);
-    }),
-  );
+  await Promise.all(names.map((name) => addExecutable(directory, name)));
   return directory;
+}
+
+async function addExecutable(directory: string, name: string): Promise<void> {
+  const path = resolve(directory, name);
+  await writeFile(path, '#!/bin/sh\nexit 0\n');
+  await chmod(path, 0o755);
 }
 
 function capture(): { output: Pick<NodeJS.WritableStream, 'write'>; text: () => string } {
@@ -87,6 +88,158 @@ describe('pair agent auto-selection', () => {
         interactive: false,
       }),
     ).rejects.toThrow(/codex, goose.*non-interactive.*--agent <name>/);
+  });
+
+  it('surfaces an installed agent with a missing adapter and installs it when selected', async () => {
+    const directory = await executables('claude', 'goose');
+    const log = capture();
+    const installs: Array<{ command: string; args: string[] }> = [];
+
+    const selected = await selectPairAgentCommand({
+      env: { PATH: directory },
+      interactive: true,
+      output: log.output,
+      ask: async () => '1',
+      install: async (command) => {
+        installs.push(command);
+        await addExecutable(directory, 'claude-agent-acp');
+      },
+    });
+
+    expect(log.text()).toContain('1) claude (adapter not installed — install now?)\n  2) goose');
+    expect(installs).toEqual([
+      {
+        command: 'npm',
+        args: ['install', '-g', '@agentclientprotocol/claude-agent-acp'],
+      },
+    ]);
+    expect(selected).toEqual({
+      kind: 'claude',
+      command: resolve(directory, 'claude-agent-acp'),
+      args: [],
+    });
+    expect(log.text()).toContain('[buzz] using claude (adapter installed)');
+  });
+
+  it.each([
+    {
+      kind: 'codex' as const,
+      binary: 'codex',
+      adapter: 'codex-acp',
+      packageName: '@agentclientprotocol/codex-acp',
+    },
+    {
+      kind: 'claude' as const,
+      binary: 'claude',
+      adapter: 'claude-agent-acp',
+      packageName: '@agentclientprotocol/claude-agent-acp',
+    },
+    { kind: 'pi' as const, binary: 'pi', adapter: 'pi-acp', packageName: 'pi-acp' },
+  ])(
+    'offers the exact $kind adapter install for an explicit preset and re-resolves it',
+    async ({ kind, binary, adapter, packageName }) => {
+      const directory = await executables(binary);
+      const installs: Array<{ command: string; args: string[] }> = [];
+
+      const selected = await selectPairAgentCommand({
+        explicitKind: kind,
+        env: { PATH: directory },
+        interactive: true,
+        ask: async () => 'yes',
+        install: async (command) => {
+          installs.push(command);
+          await addExecutable(directory, adapter);
+        },
+      });
+
+      expect(installs).toEqual([{ command: 'npm', args: ['install', '-g', packageName] }]);
+      expect(selected).toEqual({ kind, command: resolve(directory, adapter), args: [] });
+    },
+  );
+
+  it('prints the manual command and does not install an explicit preset without a TTY', async () => {
+    const directory = await executables('pi');
+    const log = capture();
+    let installed = false;
+
+    await expect(
+      selectPairAgentCommand({
+        explicitKind: 'pi',
+        env: { PATH: directory },
+        interactive: false,
+        output: log.output,
+        install: async () => {
+          installed = true;
+        },
+      }),
+    ).rejects.toThrow(/cannot be used non-interactively/);
+
+    expect(log.text()).toBe('pi adapter not installed; install it with: npm install -g pi-acp\n');
+    expect(installed).toBe(false);
+  });
+
+  it('surfaces a missing adapter without auto-installing during non-interactive detection', async () => {
+    const directory = await executables('claude');
+    const log = capture();
+    let installed = false;
+
+    await expect(
+      selectPairAgentCommand({
+        env: { PATH: directory },
+        interactive: false,
+        output: log.output,
+        install: async () => {
+          installed = true;
+        },
+      }),
+    ).rejects.toThrow(/need ACP adapter setup/);
+
+    expect(log.text()).toBe(
+      'claude adapter not installed; install it with: npm install -g @agentclientprotocol/claude-agent-acp\n',
+    );
+    expect(installed).toBe(false);
+  });
+
+  it('exits nonzero and prints the exact manual command through the real CLI', async () => {
+    const directory = await executables('pi');
+    const result = spawnSync(
+      process.execPath,
+      ['--import', 'tsx', 'src/cli.ts', 'pair', 'BUZZ-TEST-TEST', '--agent', 'pi'],
+      {
+        cwd: process.cwd(),
+        env: { ...process.env, PATH: directory },
+        encoding: 'utf8',
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      'pi adapter not installed; install it with: npm install -g pi-acp',
+    );
+    expect(result.stderr).toContain('pi cannot be used non-interactively');
+  });
+
+  it('reports install failure with the manual command and lets another menu choice proceed', async () => {
+    const directory = await executables('claude', 'goose');
+    const log = capture();
+    const answers = ['1', '2'];
+
+    const selected = await selectPairAgentCommand({
+      env: { PATH: directory },
+      interactive: true,
+      output: log.output,
+      ask: async () => answers.shift()!,
+      install: async () => {
+        throw new Error('permission denied');
+      },
+    });
+
+    expect(selected.kind).toBe('goose');
+    expect(log.text()).toContain('could not install the claude adapter: permission denied');
+    expect(log.text()).toContain(
+      'install it with: npm install -g @agentclientprotocol/claude-agent-acp',
+    );
+    expect(log.text()).toContain('[buzz] using goose (selected)');
   });
 
   it('lets an explicit preset bypass detection and prompting', async () => {

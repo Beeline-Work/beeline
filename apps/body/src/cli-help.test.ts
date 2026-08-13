@@ -13,8 +13,9 @@ describe('beeline pair help', () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('--agent <codex|claude|goose|pi|reference|custom>');
-    expect(result.stdout).toContain('With no --agent flag, beeline detects installed');
-    expect(result.stdout).toContain('Non-interactive sessions with several matches');
+    expect(result.stdout).toContain('With no --agent flag, beeline detects supported installed');
+    expect(result.stdout).toContain('ACP adapters stay visible');
+    expect(result.stdout).toContain('never installs packages automatically');
     expect(result.stdout).toContain(
       'reference  Bundled buzz-agent (explicit fallback; requires an LLM key)',
     );

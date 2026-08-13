@@ -20,6 +20,7 @@ import {
   KIND_COMMUNITY_INVITE,
   KIND_CREATE_GROUP,
   KIND_STREAM_MESSAGE,
+  TAG_AGENT,
   TAG_COMMUNITY,
   TAG_COMMUNITY_INVITE,
   TAG_DIRECT_MESSAGE,
@@ -286,8 +287,9 @@ async function assertCommunityMemberInChannels(
   ctx: ChannelOpsContext,
   communityId: string,
   pubkey: string,
-): Promise<void> {
+): Promise<string[]> {
   const channelIds = await communityRoomIds(ctx, communityId);
+  const repaired: string[] = [];
   for (const channelId of channelIds) {
     // An archived historical Room is not a valid join target. Skip it and
     // continue into the Workspace's live Rooms instead of surfacing the
@@ -305,7 +307,35 @@ async function assertCommunityMemberInChannels(
       throw error;
     }
     await waitUntilMember(ctx, channelId, pubkey);
+    repaired.push(channelId);
   }
+  return repaired;
+}
+
+async function isRegisteredAgentIdentity(ctx: ChannelOpsContext, pubkey: string): Promise<boolean> {
+  const events = await queryEvents(
+    ctx.http,
+    [{ kinds: [KIND_STREAM_MESSAGE], authors: [pubkey], '#t': [TAG_AGENT], limit: 50 }],
+    ctx.identity.publicKey,
+  );
+  return events.some(
+    (event) =>
+      event.pubkey === pubkey && verifyEvent(event) && tagValues(event, 't').includes(TAG_AGENT),
+  );
+}
+
+/** Repair missing direct Room projections for the current human Workspace member. */
+export async function repairCommunityRoomMemberships(
+  ctx: ChannelOpsContext,
+  communityId: string,
+): Promise<string[]> {
+  const pubkey = ctx.identity.publicKey;
+  if (await isRegisteredAgentIdentity(ctx, pubkey)) return [];
+  const members = await communityMembers(ctx, communityId);
+  if (!members.some((member) => member.pubkey === pubkey)) {
+    throw new Error('Room membership repair requires current Workspace membership');
+  }
+  return assertCommunityMemberInChannels(ctx, communityId, pubkey);
 }
 
 /** Read community membership and overlay owner/admin roles from kind:39001. */

@@ -370,6 +370,7 @@ describe('Buzz Room screen event projection', () => {
         ['agent', agent],
         ['tool', 'str_replace README.md'],
         ['status', 'allowed'],
+        ['subchannel', cornerId],
       ],
       9,
     );
@@ -389,7 +390,16 @@ describe('Buzz Room screen event projection', () => {
     expect(displaySequence([request, response, acknowledged])).toMatchObject([
       {
         id: `write-permission-${permissionId}`,
-        writePermission: { tool: 'str_replace README.md', status: 'allowed' },
+        writePermission: {
+          tool: 'str_replace README.md',
+          status: 'allowed',
+          subchannelId: cornerId,
+        },
+      },
+    ]);
+    expect(displaySequence([acknowledged, request])).toMatchObject([
+      {
+        writePermission: { status: 'allowed', subchannelId: cornerId },
       },
     ]);
   });

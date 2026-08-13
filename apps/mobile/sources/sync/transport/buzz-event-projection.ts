@@ -174,6 +174,7 @@ export type ChatDisplayMessage = {
     agentPubkey: string;
     tool: string;
     status: 'pending' | 'allowed' | 'denied' | 'expired' | 'failed';
+    subchannelId?: string;
   };
 };
 
@@ -327,6 +328,7 @@ export function projectChatEvent(
           agentPubkey: permissionAgent,
           tool: eventTagValue(event, 'tool') ?? 'edit files',
           status,
+          ...(subchannelId ? { subchannelId } : {}),
         },
         ...(isNew ? { isNew: true } : {}),
       },
@@ -473,6 +475,17 @@ const AGENT_TURN_STATUS_ORDER: Record<AgentTurnStatus, number> = {
   failed: 1,
 };
 
+const WRITE_PERMISSION_STATUS_ORDER: Record<
+  NonNullable<ChatDisplayMessage['writePermission']>['status'],
+  number
+> = {
+  pending: 0,
+  allowed: 1,
+  denied: 1,
+  expired: 1,
+  failed: 2,
+};
+
 /** Stable-id upsert keeps lifecycle cards monotonic across replay order. */
 export function upsertChatMessages(
   current: ChatDisplayMessage[],
@@ -497,6 +510,12 @@ export function upsertChatMessages(
       continue;
     }
     if (existing?.writePermission && message.writePermission) {
+      if (
+        WRITE_PERMISSION_STATUS_ORDER[message.writePermission.status] <
+        WRITE_PERMISSION_STATUS_ORDER[existing.writePermission.status]
+      ) {
+        continue;
+      }
       message = {
         ...message,
         writePermission: {
@@ -505,6 +524,8 @@ export function upsertChatMessages(
             message.writePermission.tool === 'edit files'
               ? existing.writePermission.tool
               : message.writePermission.tool,
+          subchannelId:
+            message.writePermission.subchannelId ?? existing.writePermission.subchannelId,
         },
       };
     }

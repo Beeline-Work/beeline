@@ -3,7 +3,7 @@
  * These tests do NOT require a relay or LLM endpoint.
  */
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hasWriteTools, inventoryForMcpServers } from './mcp-inventory.js';
@@ -16,11 +16,14 @@ import {
   isChannelAddressedMessage,
   isChannelTaskRequest,
   isChannelWorkIntent,
+  isReadOnlyInformationRequest,
+  readOnlyMcpServer,
 } from './body.js';
 import { AcpClient, isMutatingPermissionRequest } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { postAgentMessage, stripAgentReplyPreamble } from './activity.js';
+import { isReadOnlyMcpPermissionRequest } from './read-only-policy.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -42,6 +45,32 @@ describe('mcp-inventory', () => {
   it('inventoryForMcpServers returns empty for no servers', async () => {
     const tools = await inventoryForMcpServers([]);
     expect(tools).toEqual([]);
+  });
+
+  it('binds the read-only MCP to the exact paired checkout', () => {
+    expect(
+      readOnlyMcpServer(
+        {
+          agentBinary: '/agent',
+          mcpBinary: '/buzz-dev-mcp',
+          readonlyMcpCommand: '/buzz-readonly-mcp',
+          readonlyMcpArgs: ['--fixed-entrypoint'],
+          agentEnv: {},
+          workspaceRoot: '/workspace',
+          relayBaseUrl: 'http://relay.test',
+          relayHost: 'relay.test',
+          relayScheme: 'http',
+          relayWsUrl: 'ws://relay.test',
+          autoApprovePermissions: true,
+        },
+        '/paired/repository',
+      ),
+    ).toEqual({
+      name: 'buzz-readonly-mcp',
+      command: '/buzz-readonly-mcp',
+      args: ['--fixed-entrypoint'],
+      env: [{ name: 'BUZZ_READONLY_ROOT', value: '/paired/repository' }],
+    });
   });
 });
 
@@ -73,14 +102,46 @@ describe('acp', () => {
   });
 
   it('classifies edit, write, and shell permissions without treating reads as writes', () => {
-    expect(
-      isMutatingPermissionRequest({ toolCall: { kind: 'edit', title: 'str_replace' } }),
-    ).toBe(true);
-    expect(
-      isMutatingPermissionRequest({ toolCall: { kind: 'execute', title: 'Run shell' } }),
-    ).toBe(true);
+    expect(isMutatingPermissionRequest({ toolCall: { kind: 'edit', title: 'str_replace' } })).toBe(
+      true,
+    );
+    expect(isMutatingPermissionRequest({ toolCall: { kind: 'execute', title: 'Run shell' } })).toBe(
+      true,
+    );
     expect(
       isMutatingPermissionRequest({ toolCall: { kind: 'read', title: 'Read package.json' } }),
+    ).toBe(false);
+  });
+
+  it('recognizes only exact host-marked read-only MCP approvals', () => {
+    expect(
+      isReadOnlyMcpPermissionRequest({
+        _meta: { is_mcp_tool_approval: true },
+        toolCall: {
+          kind: 'execute',
+          title: 'mcp.buzz-readonly-mcp.read_file',
+          rawInput: { server: 'buzz-readonly-mcp', tool: 'read_file', arguments: {} },
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isReadOnlyMcpPermissionRequest({
+        toolCall: {
+          kind: 'execute',
+          title: 'mcp.buzz-readonly-mcp.read_file',
+          rawInput: { server: 'buzz-readonly-mcp', tool: 'read_file', arguments: {} },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isReadOnlyMcpPermissionRequest({
+        _meta: { is_mcp_tool_approval: true },
+        toolCall: {
+          kind: 'execute',
+          title: 'mcp.buzz-readonly-mcp.shell',
+          rawInput: { server: 'buzz-readonly-mcp', tool: 'shell', arguments: {} },
+        },
+      }),
     ).toBe(false);
   });
 });
@@ -188,10 +249,7 @@ describe('corner archive boundary', () => {
   it('refuses top-level Rooms and mismatched session identities', () => {
     expect(() => assertSubchannelArchiveTarget(info(), null)).toThrow('non-corner');
     expect(() =>
-      assertSubchannelArchiveTarget(
-        info({ channelId: 'room', parentChannelId: 'room' }),
-        'room',
-      ),
+      assertSubchannelArchiveTarget(info({ channelId: 'room', parentChannelId: 'room' }), 'room'),
     ).toThrow('non-corner');
     expect(() =>
       assertSubchannelArchiveTarget(info({ parentChannelId: 'room' }), 'other-room'),
@@ -258,6 +316,29 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(
       isChannelWorkIntent(requestEvent([], human, content), agent.publicKey, participants),
     ).toBe(false);
+  });
+
+  it.each([
+    'analyze this repository and tell me its principal user stories',
+    'Explain what the session scheduler does.',
+    'summarize the authentication flow',
+    'What does isChannelWorkIntent do?',
+    'Find where merge approval is verified.',
+    'In one sentence, what is the purpose of a repository Room?',
+    "I'd like you to explain how corners work.",
+  ])('locks a pure information request to read-only Room analysis: %s', (content) => {
+    expect(isReadOnlyInformationRequest(content)).toBe(true);
+  });
+
+  it.each([
+    'Analyze the scheduler, then fix it.',
+    'Explain this and implement the change.',
+    'Find and replace the old API.',
+    'Review this code and commit any fixes.',
+    'Fix the scheduler and explain why it was broken.',
+    'Analyze the scheduler. Fix the race.',
+  ])('does not misclassify a mixed write request as information-only: %s', (content) => {
+    expect(isReadOnlyInformationRequest(content)).toBe(false);
   });
 
   it('requires @-addressing when multiple people or agents share the Room', () => {
@@ -342,12 +423,17 @@ describe('Room conversation and permission-gated work intent', () => {
     );
     const event = requestEvent([['p', body.agent.publicKey]]);
 
-    await Reflect.get(body, 'replyInRoom').call(body, 'parent-channel', { repo: 'repo' }, {
-      eventId: event.id,
-      authorPubkey: event.pubkey,
-      content: "Hey, what's up?",
-      createdAt: event.created_at,
-    });
+    await Reflect.get(body, 'replyInRoom').call(
+      body,
+      'parent-channel',
+      { repo: 'repo' },
+      {
+        eventId: event.id,
+        authorPubkey: event.pubkey,
+        content: "Hey, what's up?",
+        createdAt: event.created_at,
+      },
+    );
 
     expect(prompt).toHaveBeenCalledWith(
       'readonly-session',
@@ -460,6 +546,7 @@ describe('Room conversation and permission-gated work intent', () => {
       boundRepo: { repo: 'repo' },
       permissionHandled: false,
       transitionedToCorner: false,
+      readOnlyInformationRequest: false,
     };
     (Reflect.get(body, 'pendingRoomTurns') as Map<string, unknown>).set('parent-channel', turn);
     vi.spyOn(body as never, 'waitForWritePermissionDecision' as never).mockResolvedValue(
@@ -484,9 +571,13 @@ describe('Room conversation and permission-gated work intent', () => {
     const start = vi
       .spyOn(body as never, 'startAgentTask' as never)
       .mockImplementation(() => undefined as never);
+    const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response(JSON.stringify({ accepted: true }), { status: 200 })),
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
     );
 
     await expect(
@@ -499,6 +590,13 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(open).toHaveBeenCalledWith('parent-channel', { repo: 'repo' }, request.content, request);
     expect(start).toHaveBeenCalledWith(info, request.content);
     expect(turn.transitionedToCorner).toBe(true);
+    expect(
+      published.some(
+        (event) =>
+          event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'allowed') &&
+          event.tags.some((tag) => tag[0] === 'subchannel' && tag[1] === 'corner-id'),
+      ),
+    ).toBe(true);
   });
 
   it('keeps the Room read-only when the human denies editing', async () => {
@@ -523,6 +621,7 @@ describe('Room conversation and permission-gated work intent', () => {
       boundRepo: { repo: 'repo' },
       permissionHandled: false,
       transitionedToCorner: false,
+      readOnlyInformationRequest: false,
     };
     (Reflect.get(body, 'pendingRoomTurns') as Map<string, unknown>).set('parent-channel', turn);
     vi.spyOn(body as never, 'waitForWritePermissionDecision' as never).mockResolvedValue(
@@ -540,6 +639,69 @@ describe('Room conversation and permission-gated work intent', () => {
 
     expect(open).not.toHaveBeenCalled();
     expect(turn.transitionedToCorner).toBe(false);
+  });
+
+  it('refuses agent mutation escalation for research without posting ALLOW or opening a corner', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'buzzy-research-boundary-'));
+    const source = join(root, 'README.md');
+    await writeFile(source, '# Evidence\n');
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: root,
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    const turn = {
+      request: {
+        eventId: 'research-request',
+        authorPubkey: human.publicKey,
+        content: 'Analyze this repository and summarize its user stories.',
+        createdAt: 1,
+      },
+      boundRepo: { repo: 'repo', localPath: root },
+      permissionHandled: false,
+      transitionedToCorner: false,
+      readOnlyInformationRequest: true,
+    };
+    (Reflect.get(body, 'pendingRoomTurns') as Map<string, unknown>).set('parent-channel', turn);
+    const open = vi.spyOn(body, 'openSubchannel');
+    const publish = vi.fn();
+    vi.stubGlobal('fetch', publish);
+
+    await expect(
+      Reflect.get(body, 'handleRoomPermissionRequest').call(body, 'parent-channel', {
+        sessionId: 'readonly-session',
+        _meta: { is_mcp_tool_approval: true },
+        toolCall: {
+          kind: 'execute',
+          title: 'mcp.buzz-readonly-mcp.read_file',
+          rawInput: {
+            server: 'buzz-readonly-mcp',
+            tool: 'read_file',
+            arguments: { path: 'README.md' },
+          },
+        },
+      }),
+    ).resolves.toBe('allow');
+
+    await expect(
+      Reflect.get(body, 'handleRoomPermissionRequest').call(body, 'parent-channel', {
+        sessionId: 'readonly-session',
+        toolCall: { kind: 'execute', title: 'shell: echo mutation > README.md' },
+      }),
+    ).resolves.toBe('reject');
+
+    expect(open).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(turn.permissionHandled).toBe(false);
+    expect(turn.transitionedToCorner).toBe(false);
+    expect(await readFile(source, 'utf8')).toBe('# Evidence\n');
+    await rm(root, { recursive: true, force: true });
   });
 });
 

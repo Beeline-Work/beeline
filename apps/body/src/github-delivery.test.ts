@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -108,14 +108,15 @@ afterEach(async () => {
 });
 
 describe('GitHub-origin delivery', () => {
-  it('pushes the feature and target refs directly and reports the landed commit', async () => {
+  it('publishes review-ready work without autonomously landing or archiving it', async () => {
     const { remote, worktree, info, body } = await repository();
     const events = captureEvents();
     const tip = run(worktree, ['rev-parse', 'HEAD']);
+    const mainBefore = run(worktree, ['ls-remote', remote, 'refs/heads/main']).split(/\s+/)[0]!;
 
     await expect(publish(body, info)).resolves.toBe(true);
     expect(run(worktree, ['ls-remote', remote, 'refs/heads/feature/corner'])).toContain(tip);
-    expect(run(worktree, ['ls-remote', remote, 'refs/heads/main'])).toContain(tip);
+    expect(run(worktree, ['ls-remote', remote, 'refs/heads/main'])).toContain(mainBefore);
     expect(info.mergeTarget).toEqual({
       repo: 'remote/github-scratch',
       branch: 'refs/heads/main',
@@ -123,40 +124,47 @@ describe('GitHub-origin delivery', () => {
     });
     expect(
       events.some((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready')),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       events.find((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === LANDED_TAG)),
-    ).toMatchObject({ content: `Work landed on refs/heads/main at ${tip}.` });
-    expect(
-      events.find(
-        (event) =>
-          event.tags.some((tag) => tag[0] === 'delivery' && tag[1] === 'landed') &&
-          event.tags.some((tag) => tag[0] === 'subchannel'),
-      ),
-    ).toMatchObject({ content: `Work landed at ${tip.slice(0, 12)} on main.` });
+    ).toBeUndefined();
+    expect(info.humanMergeApproval).toBeUndefined();
+
+    // Even if the target ref reaches the feature tip out-of-band, Body cannot
+    // infer authority from repository state and archive the corner.
+    run(worktree, ['push', remote, `${tip}:refs/heads/main`]);
+    vi.spyOn(body as never, 'findHumanMergeApproval' as never).mockResolvedValue(
+      undefined as never,
+    );
+    const archive = vi.spyOn(body, 'archiveSubchannel');
+    await expect(body.pollMergeCompletions()).resolves.toBe(0);
+    expect(archive).not.toHaveBeenCalled();
+    expect(info.archived).toBe(false);
   });
 
-  it('leaves the feature pushed and reports a clear failure when the target rejects landing', async () => {
+  it('lands a non-relay target only after an exact human approval is recorded', async () => {
     const { remote, worktree, info, body } = await repository();
     const events = captureEvents();
     const tip = run(worktree, ['rev-parse', 'HEAD']);
     const mainBefore = run(worktree, ['ls-remote', remote, 'refs/heads/main']).split(/\s+/)[0]!;
-    const hook = resolve(remote, 'hooks', 'pre-receive');
-    await writeFile(
-      hook,
-      '#!/bin/sh\nwhile read old new ref; do\n  if [ "$ref" = "refs/heads/main" ]; then\n    echo "target branch rejected" >&2\n    exit 1\n  fi\ndone\n',
-    );
-    await chmod(hook, 0o755);
 
-    await expect(publish(body, info)).resolves.toBe(false);
+    await expect(publish(body, info)).resolves.toBe(true);
     expect(run(worktree, ['ls-remote', remote, 'refs/heads/feature/corner'])).toContain(tip);
     expect(run(worktree, ['ls-remote', remote, 'refs/heads/main'])).toContain(mainBefore);
-    expect(info.mergeTarget).toBeUndefined();
-    expect(events.some((event) => event.content.includes('target branch rejected'))).toBe(true);
+    info.humanMergeApproval = {
+      id: 'signed-human-approval',
+      reviewer: 'human-admin',
+      tip,
+    };
+    vi.spyOn(body as never, 'findHumanMergeApproval' as never).mockResolvedValue(
+      info.humanMergeApproval as never,
+    );
+
+    await expect(Reflect.get(body, 'pollDirectRemoteApprovals').call(body)).resolves.toBe(1);
+
+    expect(run(worktree, ['ls-remote', remote, 'refs/heads/main'])).toContain(tip);
     expect(
-      events.find((event) =>
-        event.tags.some((tag) => tag[0] === 'display-status' && tag[1] === 'failed'),
-      )?.content,
-    ).toBe('Delivery failed after the feature push. Open corner for details.');
+      events.find((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === LANDED_TAG)),
+    )?.toMatchObject({ content: `Human-approved work landed on refs/heads/main at ${tip}.` });
   });
 });

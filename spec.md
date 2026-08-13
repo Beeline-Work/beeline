@@ -166,6 +166,9 @@ not one account** (that scoping is the shared-session feature).
 ## Failure modes → each needs a test
 - **Agent can write in the parent** (read-only boundary broken): assert the
   agent's write tools are inert in a TLC; only a subchannel worktree is writable.
+- **Research escalates into work**: analysis, explanation, summary, and other
+  information-only requests must answer in the Room with inspection-only tools;
+  an agent-requested mutation must not project ALLOW or open a corner.
 - **Agent in push-rights** (misconfig): the agent can push the protected branch.
   Test an unauthorized push is rejected + a provisioning check the agent is never
   in `push-allowed`. **Write this first.**
@@ -173,6 +176,9 @@ not one account** (that scoping is the shared-session feature).
   agent's key does NOT merge; a human key does.
 - **Merge before the grant lands** (race): the suspended step must not merge until
   a valid grant arrives.
+- **Agent completion lands or archives a corner**: publishing `merge-ready` is
+  not authority; target mutation and archive cleanup require an exact signed
+  human-admin approval.
 - **Approval replay / wrong-target**: the grant must bind to exact (branch tip +
   repo); a grant for merge A is rejected for merge B.
 - **Two participants, one subchannel** (the multiuser proof): both attached, both

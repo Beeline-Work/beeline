@@ -202,9 +202,13 @@ export {
 
 export {
   fallbackAgentName,
+  fallbackPersonName,
   isSingleWordAgentName,
+  normalizePersonName,
+  PERSON_NAME_MAX_LENGTH,
   resolveAgentName,
   agentHandle,
+  personHandle,
 } from './display-name.js';
 
 export {

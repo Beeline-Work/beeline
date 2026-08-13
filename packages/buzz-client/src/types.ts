@@ -179,7 +179,7 @@ export type CommunityRole = 'owner' | 'admin' | 'member';
 export interface Community {
   communityId: string;
   name: string;
-  /** Optional relay-assigned image URL for this community. */
+  /** Optional owner/admin-managed image URL for this community. */
   avatar?: string;
   createdBy: string;
   ownerPubkey: string;

@@ -13,6 +13,15 @@ export const APK_DOWNLOAD_URL = '/dl/beeline-android.apk';
 export const RESOLVE_TIMEOUT_MS = 8_000;
 export const APP_OPEN_TIMEOUT_MS = 1_800;
 
+let invitePreviewIdentity;
+
+function getInvitePreviewIdentity() {
+  // This reader exists only in page memory. It authenticates relay reads without
+  // creating or persisting a Beeline account for the visitor.
+  invitePreviewIdentity ??= createIdentity('beeline-anonymous-invite-preview');
+  return invitePreviewIdentity;
+}
+
 function tagValue(event, name) {
   return event.tags.find((tag) => tag[0] === name)?.[1];
 }
@@ -26,7 +35,7 @@ function parseWorkspaceName(event, communityId) {
 }
 
 export async function resolveWorkspaceName(baseUrl, token) {
-  const identity = createIdentity('beeline-invite-preview');
+  const identity = getInvitePreviewIdentity();
   const relay = new URL(baseUrl);
   const http = {
     baseUrl: relay.origin,

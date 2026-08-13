@@ -3,8 +3,8 @@
   "bundles": {
     "linux-x64": {
       "file": "beeline-linux-x64.tar.gz",
-      "sha256": "11a513cc37ee5f2757b1721370a821a2c2d9255bc8aa132f9d7c13e7023c777c",
-      "bytes": 14404931,
+      "sha256": "c1bac8e538f41b95dd906be8fd63a36e7504d0ad6d4e807e37d0f76ac8db8825",
+      "bytes": 14408671,
       "node": ">=20.11.0"
     }
   }

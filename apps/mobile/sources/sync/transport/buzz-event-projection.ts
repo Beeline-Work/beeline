@@ -1,5 +1,10 @@
 import type { AgentActivityItem, SessionEvent } from './rig-transport';
-import type { MergeTarget, SessionEvent as BuzzSessionEvent } from '@beeline/buzz-client';
+import {
+  parseAttachmentTags,
+  type AttachmentReference,
+  type MergeTarget,
+  type SessionEvent as BuzzSessionEvent,
+} from '@beeline/buzz-client';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -151,6 +156,7 @@ export type ChatDisplayMessage = {
   isArchivedNotice?: boolean;
   isAgentActivity?: boolean;
   activity?: AgentActivityItem[];
+  attachments?: AttachmentReference[];
   isNew?: boolean;
   corner?: {
     subchannelId: string;
@@ -266,6 +272,7 @@ export function projectChatEvent(
   const isPermissionRequest = eventHasTag(event, 't', 'buzz-write-permission-request');
   const isPermissionResponse = eventHasTag(event, 't', 'buzz-write-permission-response');
   const isAgentTurn = eventHasTag(event, 't', 'agent-turn');
+  const attachments = parseAttachmentTags(eventTags(event));
 
   if (isAgentTurn) {
     const requestId = eventTagValue(event, 'request');
@@ -295,22 +302,18 @@ export function projectChatEvent(
   // human identity, then emits the authoritative request-status projection.
   if (isPermissionResponse) return {};
 
-  if (
-    permissionId &&
-    permissionRequestId &&
-    permissionAgent &&
-    isPermissionRequest
-  ) {
+  if (permissionId && permissionRequestId && permissionAgent && isPermissionRequest) {
     const wireStatus = eventTagValue(event, 'status');
-    const status = wireStatus === 'allowed'
-      ? 'allowed'
-      : wireStatus === 'denied'
-        ? 'denied'
-        : wireStatus === 'expired'
-          ? 'expired'
-          : wireStatus === 'failed'
-            ? 'failed'
-          : 'pending';
+    const status =
+      wireStatus === 'allowed'
+        ? 'allowed'
+        : wireStatus === 'denied'
+          ? 'denied'
+          : wireStatus === 'expired'
+            ? 'expired'
+            : wireStatus === 'failed'
+              ? 'failed'
+              : 'pending';
     return {
       message: {
         id: `write-permission-${permissionId}`,
@@ -401,6 +404,7 @@ export function projectChatEvent(
       ...(pubkey ? { pubkey } : {}),
       ...(event.type === 'assistant_delta' ? { isAgentActivity: true } : {}),
       ...(eventActivity(event)?.length ? { activity: eventActivity(event) } : {}),
+      ...(attachments.length ? { attachments } : {}),
       ...(isNew ? { isNew: true } : {}),
     },
   };

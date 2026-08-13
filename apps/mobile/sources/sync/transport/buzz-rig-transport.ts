@@ -28,6 +28,7 @@ import type {
 import { RigTransportNotImplementedError, RigTransportStubbedError } from './rig-transport';
 import {
   createBuzzClient,
+  buildAttachmentTags,
   tagValue,
   classifySessionEvent,
   CHANGE_REVIEW_EVENT_KIND,
@@ -38,6 +39,7 @@ import {
   type Identity,
   type MergeTarget,
   type WritePermissionDecision,
+  type AttachmentReference,
 } from '@beeline/buzz-client';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { cornerName, type CornerSummary } from '@/buzz/corners';
@@ -147,7 +149,12 @@ export class BuzzRigTransport implements RigTransport {
   /** Submit a message and return the signed event id for optimistic UI reconciliation. */
   async messageSubmitWithEventId(input: MessageSubmitInput): Promise<string> {
     const client = await this.getClient();
-    const event = await client.messageSubmit(input.sessionId, input.text);
+    const attachmentTags = buildAttachmentTags(input.attachments ?? []);
+    const event = await client.messageSubmit(
+      input.sessionId,
+      input.text,
+      attachmentTags.length ? { extraTags: attachmentTags } : undefined,
+    );
     return event.id;
   }
 
@@ -156,10 +163,13 @@ export class BuzzRigTransport implements RigTransport {
     channelId: string,
     text: string,
     agentPubkey: string,
+    attachments: AttachmentReference[] = [],
   ): Promise<string> {
     const client = await this.getClient();
+    const attachmentTags = buildAttachmentTags(attachments);
     const event = await client.messageSubmit(channelId, text, {
       mentionAgent: agentPubkey,
+      ...(attachmentTags.length ? { extraTags: attachmentTags } : {}),
     });
     return event.id;
   }
@@ -485,10 +495,7 @@ export class BuzzRigTransport implements RigTransport {
         if (isControl) {
           const status = tagValue(ev.event, 'status');
           const scopedSubchannel = tagValue(ev.event, 'subchannel');
-          if (
-            status === 'archived' &&
-            (!scopedSubchannel || scopedSubchannel === channelId)
-          ) {
+          if (status === 'archived' && (!scopedSubchannel || scopedSubchannel === channelId)) {
             return true;
           }
         }

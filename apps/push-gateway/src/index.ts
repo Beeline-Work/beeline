@@ -1,17 +1,13 @@
 import { applicationDefault, getApps, initializeApp } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import { createBuzzClient, createIdentity, queryEvents } from '@beeline/buzz-client';
+import { loadPushGatewayConfig } from './config.js';
 import { PushGateway, RegisteredEventPoller } from './gateway.js';
 import { TokenRegistry } from './registry.js';
 import { createRegistrationServer } from './server.js';
 
-const RELAY_URL = process.env.BUZZY_RELAY_URL ?? 'http://127.0.0.1:3010';
-const PORT = Number(process.env.PORT ?? '8788');
-const HOST = process.env.BUZZY_PUSH_HOST ?? '127.0.0.1';
-const REGISTRY_FILE = process.env.BUZZY_PUSH_REGISTRY_FILE ?? '.data/registrations.json';
-const POLL_INTERVAL_MS = Number(process.env.BUZZY_PUSH_POLL_INTERVAL_MS ?? '1500');
-
 async function main(): Promise<void> {
+  const config = loadPushGatewayConfig();
   const serviceAccountPath = process.env.BUZZY_PUSH_SA_FILE;
   if (serviceAccountPath && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
     process.env.GOOGLE_APPLICATION_CREDENTIALS = serviceAccountPath;
@@ -26,15 +22,15 @@ async function main(): Promise<void> {
       credential: applicationDefault(),
       projectId: 'buzzy-e11e7',
     });
-  const registry = await TokenRegistry.load(REGISTRY_FILE);
+  const registry = await TokenRegistry.load(config.registryFile);
   const relayClient = createBuzzClient({
-    baseUrl: RELAY_URL,
+    baseUrl: config.subscriptionRelayUrl,
     identity: createIdentity('push-gateway'),
   });
   await relayClient.connect();
 
   const gateway = new PushGateway(registry, getMessaging(firebaseApp));
-  const relayHttp = { baseUrl: RELAY_URL, host: new URL(RELAY_URL).host };
+  const relayHttp = { baseUrl: config.queryRelayUrl, host: config.relayHost };
   const poller = new RegisteredEventPoller(
     registry,
     (pubkey) => ({
@@ -61,13 +57,15 @@ async function main(): Promise<void> {
     pollRegisteredEvent,
     { subId: 'buzzy-push-events' },
   );
-  const pollTimer = setInterval(pollRegisteredEvent, POLL_INTERVAL_MS);
+  const pollTimer = setInterval(pollRegisteredEvent, config.pollIntervalMs);
   pollRegisteredEvent();
 
   const server = createRegistrationServer(registry);
-  server.listen(PORT, HOST, () => {
+  server.listen(config.port, config.host, () => {
     console.log(
-      `[push] gateway listening on http://${HOST}:${PORT}; relay=${RELAY_URL}; devices=${registry.tokenCount}`,
+      `[push] gateway listening on http://${config.host}:${config.port}; ` +
+        `queryRelay=${config.queryRelayUrl}; subscriptionRelay=${config.subscriptionRelayUrl}; ` +
+        `devices=${registry.tokenCount}`,
     );
   });
 

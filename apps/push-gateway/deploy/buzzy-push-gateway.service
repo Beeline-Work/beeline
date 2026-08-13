@@ -1,0 +1,25 @@
+[Unit]
+Description=Beeline Android push gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/buzzy-push-gateway/current
+Environment=BUZZY_RELAY_URL=http://127.0.0.1:3410
+Environment=BUZZY_RELAY_HOST=relay.buzzrouter.com
+Environment=BUZZY_RELAY_SUBSCRIPTION_URL=https://relay.buzzrouter.com
+Environment=BUZZY_PUSH_HOST=127.0.0.1
+Environment=PORT=8788
+Environment=BUZZY_PUSH_SA_FILE=%h/buzzy-push-gateway/secrets/fcm-service-account.json
+Environment=BUZZY_PUSH_REGISTRY_FILE=%h/buzzy-push-gateway/state/registrations.json
+ExecStart=%h/buzzy-push-gateway/bin/node apps/push-gateway/dist/index.js
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

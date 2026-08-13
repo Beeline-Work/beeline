@@ -349,6 +349,7 @@ async function main(): Promise<void> {
     })}`,
   );
   console.log(`[body] mcp binary: ${config.mcpBinary}`);
+  console.log(`[body] read-only mcp: ${config.readonlyMcpCommand}`);
   console.log(`[body] relay: ${config.relayWsUrl}`);
 
   try {

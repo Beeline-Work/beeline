@@ -169,14 +169,29 @@ async function main() {
     '--define:import.meta.url="beeline:bundle"',
     `--outfile=${resolve(staging, 'lib', 'beeline', 'beeline-cli.mjs')}`,
   ]);
+  run('npx', [
+    '--no-install',
+    'esbuild',
+    resolve(repoRoot, 'apps/body/dist/read-only-mcp.js'),
+    '--bundle',
+    '--platform=node',
+    '--format=esm',
+    '--target=node20',
+    `--outfile=${resolve(staging, 'lib', 'beeline', 'beeline-readonly-mcp.mjs')}`,
+  ]);
 
   await copyFile(binaries.agent, resolve(staging, 'bin', 'buzz-agent'));
   await copyFile(binaries.mcp, resolve(staging, 'bin', 'buzz-dev-mcp'));
   await chmod(resolve(staging, 'bin', 'buzz-agent'), 0o755);
   await chmod(resolve(staging, 'bin', 'buzz-dev-mcp'), 0o755);
   await writeFile(
+    resolve(staging, 'bin', 'buzz-readonly-mcp'),
+    `#!/bin/sh\nset -eu\nbin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)\nlib_dir=$(CDPATH= cd -- "$bin_dir/../lib/beeline" && pwd -P)\nexec node "$lib_dir/beeline-readonly-mcp.mjs"\n`,
+    { mode: 0o755 },
+  );
+  await writeFile(
     resolve(staging, 'bin', 'beeline'),
-    `#!/bin/sh\nset -eu\nbin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)\nlib_dir=$(CDPATH= cd -- "$bin_dir/../lib/beeline" && pwd -P)\n: "\${BUZZ_AGENT_BIN:=$bin_dir/buzz-agent}"\n: "\${BUZZ_DEV_MCP_BIN:=$bin_dir/buzz-dev-mcp}"\nexport BUZZ_AGENT_BIN BUZZ_DEV_MCP_BIN\nexec node "$lib_dir/beeline-cli.mjs" "$@"\n`,
+    `#!/bin/sh\nset -eu\nbin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)\nlib_dir=$(CDPATH= cd -- "$bin_dir/../lib/beeline" && pwd -P)\n: "\${BUZZ_AGENT_BIN:=$bin_dir/buzz-agent}"\n: "\${BUZZ_DEV_MCP_BIN:=$bin_dir/buzz-dev-mcp}"\n: "\${BUZZ_READONLY_MCP_BIN:=$bin_dir/buzz-readonly-mcp}"\nexport BUZZ_AGENT_BIN BUZZ_DEV_MCP_BIN BUZZ_READONLY_MCP_BIN\nexec node "$lib_dir/beeline-cli.mjs" "$@"\n`,
     { mode: 0o755 },
   );
 

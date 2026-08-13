@@ -50,6 +50,7 @@ import {
   listCommunities,
   repairCommunityRoomMemberships,
   redeemInvite,
+  setCommunityAvatar,
 } from './community.js';
 import { publishEvent, queryEvents, type HttpBridgeOptions } from './http.js';
 import { KIND_STREAM_MESSAGE } from './kinds.js';
@@ -289,6 +290,10 @@ export class BuzzClient {
 
   getCommunity(communityId: string): Promise<Community | null> {
     return getCommunity(this.ctx, communityId);
+  }
+
+  setCommunityAvatar(communityId: string, avatarUrl: string): Promise<Community> {
+    return setCommunityAvatar(this.ctx, communityId, avatarUrl);
   }
 
   /**

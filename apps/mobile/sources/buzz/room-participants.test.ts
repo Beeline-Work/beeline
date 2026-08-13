@@ -5,6 +5,7 @@ import {
   formatRoomParticipantTotal,
   mentionedAgentPubkey,
   roomParticipantPubkeys,
+  sectionRoomParticipants,
   sectionRoomRoster,
 } from './room-participants';
 
@@ -35,6 +36,19 @@ describe('Room participant presentation', () => {
   it('formats the compact header total', () => {
     expect(formatRoomParticipantTotal(1)).toBe('1 participant');
     expect(formatRoomParticipantTotal(8)).toBe('8 participants');
+  });
+
+  it('groups the visible Room roster into people and Agents', () => {
+    const participants = [
+      { pubkey: 'person-a', kind: 'person' as const },
+      { pubkey: 'agent-a', kind: 'agent' as const },
+      { pubkey: 'person-b', kind: 'person' as const },
+    ];
+
+    expect(sectionRoomParticipants(participants)).toEqual({
+      people: [participants[0], participants[2]],
+      agents: [participants[1]],
+    });
   });
 
   it('excludes Room-only infrastructure identities from the participant roster', () => {

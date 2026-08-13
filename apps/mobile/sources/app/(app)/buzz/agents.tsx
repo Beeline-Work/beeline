@@ -363,7 +363,7 @@ export default function BuzzAgents() {
 
           {agents.length > 0 && (
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Connected</Text>
+              <Text style={styles.sectionTitle}>Registered</Text>
               <Text style={styles.count}>{agents.length}</Text>
             </View>
           )}

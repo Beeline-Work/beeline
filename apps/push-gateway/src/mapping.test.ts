@@ -98,6 +98,64 @@ describe('mapEventToNotification', () => {
     ).toBeNull();
   });
 
+  it('ignores agent identity records and other structured control events', () => {
+    const context = { roomName: 'Workspace', senderName: 'Rhea' };
+    expect(
+      mapEventToNotification(
+        event(
+          [
+            ['h', 'workspace-123'],
+            ['t', 'buzz-agent'],
+            ['d', 'agent-1'],
+            ['p', 'b'.repeat(64)],
+          ],
+          JSON.stringify({ displayName: 'Rhea' }),
+        ),
+        context,
+      ),
+    ).toBeNull();
+    expect(
+      mapEventToNotification(
+        event([
+          ['h', 'room-123'],
+          ['t', 'buzz-agent-cancel'],
+        ]),
+        context,
+      ),
+    ).toBeNull();
+    expect(
+      mapEventToNotification(
+        event([
+          ['h', 'room-123'],
+          ['t', 'unknown-control-record'],
+        ]),
+        context,
+      ),
+    ).toBeNull();
+  });
+
+  it('keeps known tagged chat messages notifiable', () => {
+    const context = { roomName: 'Room', senderName: 'Joy' };
+    expect(
+      mapEventToNotification(
+        event([
+          ['h', 'room-123'],
+          ['t', 'agent-message'],
+        ]),
+        context,
+      )?.title,
+    ).toBe('Joy');
+    expect(
+      mapEventToNotification(
+        event([
+          ['h', 'room-123'],
+          ['t', 'buzz-attachment'],
+        ]),
+        context,
+      )?.title,
+    ).toBe('Joy');
+  });
+
   it('ignores events without a channel', () => {
     expect(mapEventToNotification(event([]), { roomName: 'Room' })).toBeNull();
   });

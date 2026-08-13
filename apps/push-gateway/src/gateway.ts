@@ -1,3 +1,4 @@
+import { KIND_AGENT_SOUL, TAG_AGENT_SOUL } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
 import type { BatchResponse, Messaging } from 'firebase-admin/messaging';
 import { isNotifiableEvent, mapEventToNotification } from './mapping.js';
@@ -12,6 +13,13 @@ const PERMANENT_TOKEN_ERRORS = new Set([
 export type { RelayEventReader } from './metadata.js';
 
 type PollResult = 'backoff' | 'busy' | 'empty' | 'polled';
+
+function registeredEventFilters(since: number): Record<string, unknown>[] {
+  return [
+    { kinds: [9], since },
+    { kinds: [KIND_AGENT_SOUL], '#t': [TAG_AGENT_SOUL], since },
+  ];
+}
 
 function retryAfterMs(error: unknown): number | null {
   const match = String(error).match(/retry in\s+(\d+)s/i);
@@ -62,7 +70,7 @@ export class RegisteredEventPoller {
     this.polling = true;
 
     try {
-      const events = await reader.query([{ kinds: [9], since }]);
+      const events = await reader.query(registeredEventFilters(since));
       events.sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
       for (const event of events) {
         newestCreatedAt = Math.max(newestCreatedAt, event.created_at);
@@ -105,6 +113,7 @@ export class PushGateway {
     recipientPubkey: string,
     reader: RelayEventReader,
   ): Promise<void> {
+    this.metadata.invalidate(event);
     const channelId = event.tags.find((tag) => tag[0] === 'h')?.[1];
     if (!channelId) return;
     if (!isNotifiableEvent(event)) return;

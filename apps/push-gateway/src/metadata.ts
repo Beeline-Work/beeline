@@ -119,6 +119,13 @@ export class NotificationMetadataResolver {
     private readonly now: () => number = Date.now,
   ) {}
 
+  /** A verified soul update makes any cached sender presentation stale immediately. */
+  invalidate(event: NostrEvent): void {
+    const soul = parseAgentSoul(event);
+    if (!soul) return;
+    this.senders.delete(`${soul.communityId}:${soul.agentPubkey}`);
+  }
+
   async resolve(event: NostrEvent, reader: RelayEventReader): Promise<NotificationContext> {
     const channelId = tagValue(event, 'h');
     if (!channelId) return { roomName: 'Room' };

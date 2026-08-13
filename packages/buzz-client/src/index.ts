@@ -67,6 +67,7 @@ export {
   KIND_STREAM_MESSAGE,
   KIND_PUT_USER,
   KIND_REMOVE_USER,
+  KIND_EDIT_METADATA,
   KIND_CREATE_GROUP,
   KIND_CHANNEL_METADATA,
   KIND_CHANNEL_ADMINS,
@@ -85,6 +86,7 @@ export {
   TAG_COMMUNITY,
   TAG_COMMUNITY_INVITE,
   TAG_DIRECT_MESSAGE,
+  TAG_ROOM_LIFECYCLE,
 } from './kinds.js';
 
 export {
@@ -128,10 +130,15 @@ export {
   createSubchannel,
   setMemberRole,
   removeMember,
+  removeRoomMember,
+  leaveRoom,
   listMembers,
   isMember,
+  getChannelRole,
   waitUntilMember,
   waitUntilNotMember,
+  waitUntilRoomArchived,
+  archiveRoom,
   listChannelsForPubkey,
   getChannelMetadata,
   listSubchannels,
@@ -142,7 +149,7 @@ export {
   backfillMessages,
   eventIsAgentActivity,
 } from './channel.js';
-export type { ChannelOpsContext } from './channel.js';
+export type { ChannelOpsContext, ChannelRole } from './channel.js';
 
 export {
   directMessageChannelId,

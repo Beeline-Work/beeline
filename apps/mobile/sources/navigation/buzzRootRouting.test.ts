@@ -6,12 +6,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 const auth = vi.hoisted(() => ({ isAuthenticated: false }));
 const buzzIdentityStorage = vi.hoisted(() => ({ loadBuzzIdentity: vi.fn() }));
 const linking = vi.hoisted(() => ({ getInitialURL: vi.fn() }));
+const personName = vi.hoisted(() => ({ isPersonNameOnboardingPending: vi.fn() }));
 const navigation = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
 
 vi.mock('@/auth/AuthContext', () => ({ useAuth: () => auth }));
 vi.mock('@/auth/buzz-identity-storage', () => buzzIdentityStorage);
 vi.mock('expo-router', () => ({ router: navigation }));
 vi.mock('expo-linking', () => linking);
+vi.mock('@/buzz/person-name', () => personName);
 
 vi.mock('react-native', async () => {
     const ReactModule = await import('react');
@@ -54,6 +56,7 @@ beforeEach(() => {
     auth.isAuthenticated = false;
     buzzIdentityStorage.loadBuzzIdentity.mockResolvedValue(null);
     linking.getInitialURL.mockResolvedValue(null);
+    personName.isPersonNameOnboardingPending.mockResolvedValue(false);
 });
 
 async function renderHome() {
@@ -86,6 +89,16 @@ describe('Buzz root launch routing', () => {
         await renderHome();
 
         expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+    });
+
+    it('keeps a newly saved identity in onboarding until its name is set', async () => {
+        buzzIdentityStorage.loadBuzzIdentity.mockResolvedValue({ publicKey: 'buzz-user' });
+        personName.isPersonNameOnboardingPending.mockResolvedValue(true);
+
+        await renderHome();
+
+        expect(navigation.replace).toHaveBeenCalledWith('/buzz/onboarding');
+        expect(navigation.replace).not.toHaveBeenCalledWith('/buzz/channels');
     });
 
     it('preserves a cold-start invite link instead of replacing it with the app root', async () => {

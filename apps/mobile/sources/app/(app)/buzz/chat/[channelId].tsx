@@ -38,6 +38,7 @@ import {
   type MergeTarget,
   type PersonProfile,
   type AttachmentReference,
+  personHandle,
 } from '@beeline/buzz-client';
 import {
   projectChatEvent,
@@ -45,7 +46,6 @@ import {
   upsertChatMessages,
   type ChatDisplayMessage,
 } from '@/sync/transport/buzz-event-projection';
-import type { AgentActivityItem } from '@/sync/transport/rig-transport';
 import { groknight } from '@/buzz/groknight';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
@@ -79,6 +79,8 @@ import { ChangeReviewPanel } from '@/components/buzz/ChangeReviewPanel';
 import { AgentAvatar } from '@/components/buzz/AgentAvatar';
 import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome';
+import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
+import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
 import {
   HullSurface,
   MonoButton,
@@ -97,46 +99,13 @@ type RoomMemberOption = {
 /** Known body pubkeys for provenance display (hardcoded for dev). */
 const BODY_PUBKEYS = new Set<string>();
 
-function CornerActivityEntry({ item }: { item: AgentActivityItem }) {
-  const [expanded, setExpanded] = useState(
-    item.kind !== 'tool' || item.status === 'pending' || item.status === 'in_progress',
-  );
-  const glyph = item.kind === 'thinking' ? '·' : '›';
-  const label = item.kind === 'thinking' ? 'THINKING' : item.title.toUpperCase();
-
-  return (
-    <View style={styles.activityEntry}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ expanded }}
-        onPress={() => setExpanded((current) => !current)}
-        style={styles.activityHeading}
-      >
-        <Text style={styles.activityGlyph}>{glyph}</Text>
-        <Text numberOfLines={1} style={styles.activityTitle}>
-          {label}
-        </Text>
-        {item.status && <Text style={styles.activityStatus}>{item.status.toUpperCase()}</Text>}
-        <Text style={styles.activityDisclosure}>{expanded ? '⌃' : '⌄'}</Text>
-      </Pressable>
-      {expanded && item.text && (
-        <Text selectable style={styles.activityOutput}>
-          {item.text}
-        </Text>
-      )}
-    </View>
-  );
-}
-
-function CornerActivity({ message }: { message: ChatDisplayMessage }) {
+function CornerActivity({ message, active }: { message: ChatDisplayMessage; active: boolean }) {
   const activity = message.activity?.length
     ? message.activity
     : [{ kind: 'output' as const, title: 'Output', text: message.text }];
   return (
     <View style={styles.activityGroup} testID="corner-activity">
-      {activity.map((item, index) => (
-        <CornerActivityEntry key={`${message.id}-${index}`} item={item} />
-      ))}
+      <ActivityTimeline active={active} items={activity} testID="corner-activity-timeline" />
     </View>
   );
 }
@@ -241,10 +210,13 @@ export default function BuzzChat() {
     const options = new Map<string, RoomMemberOption>();
     for (const person of availablePeople) {
       const shortNpub = shortMemberNpub(person.pubkey);
+      const profileName = personProfileByPubkey.get(person.pubkey)?.name;
       options.set(person.pubkey, {
         pubkey: person.pubkey,
-        name: person.pubkey === userPubkey ? 'You' : shortNpub,
-        handle: person.pubkey === userPubkey ? 'you' : shortNpub.replace(/[^a-zA-Z0-9_-]/g, ''),
+        name: person.pubkey === userPubkey ? 'You' : (profileName ?? shortNpub),
+        handle: profileName
+          ? personHandle(profileName, person.pubkey)
+          : shortNpub.replace(/[^a-zA-Z0-9_-]/g, ''),
         kind: 'person',
       });
     }
@@ -263,7 +235,7 @@ export default function BuzzChat() {
       if (b.pubkey === userPubkey) return 1;
       return a.name.localeCompare(b.name);
     });
-  }, [availableAgents, availablePeople, userPubkey]);
+  }, [availableAgents, availablePeople, personProfileByPubkey, userPubkey]);
   const participantPubkeys = useMemo(
     () =>
       roomParticipantPubkeys(
@@ -342,6 +314,11 @@ export default function BuzzChat() {
     () => [...messages].reverse().find((message) => message.agentTurn?.status === 'working'),
     [messages],
   );
+  const activeActivityId = useMemo(() => {
+    if (!activeAgentTurn) return undefined;
+    const latest = visibleMessages.at(-1);
+    return isCorner && !isArchived && latest?.isAgentActivity ? latest.id : undefined;
+  }, [activeAgentTurn, isArchived, isCorner, visibleMessages]);
 
   const scrollToLatestMessage = useCallback((animated: boolean) => {
     requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated }));
@@ -426,8 +403,11 @@ export default function BuzzChat() {
         setUserPubkey(identity.publicKey);
 
         const client = await t.ensureClient();
+        // Self-listing repairs any missing direct Room projections left by an
+        // interrupted or historical Workspace invite. Await it before backfill
+        // so a notification deep-link cannot race into an empty transcript.
+        const availableCommunities = await client.listCommunities();
         const [
-          availableCommunities,
           directCommunityId,
           channelMetadata,
           roomMembers,
@@ -436,7 +416,6 @@ export default function BuzzChat() {
           identityIsAgent,
           dm,
         ] = await Promise.all([
-          client.listCommunities(),
           client.getChannelCommunityId(decodedId),
           client.getChannelMetadata(decodedId),
           client.listMembers(decodedId),
@@ -513,10 +492,11 @@ export default function BuzzChat() {
           if (dm) {
             const peerPubkey = directMessagePeer(dm, identity.publicKey);
             const peerAgent = communityAgents.find((agent) => agent.pubkey === peerPubkey);
+            const peerProfile = humanProfiles.find((profile) => profile.pubkey === peerPubkey);
             setRoomName(
               peerAgent
                 ? resolveAgentDisplayIdentity(peerPubkey, peerAgent).name
-                : shortMemberNpub(peerPubkey),
+                : (peerProfile?.name ?? shortMemberNpub(peerPubkey)),
             );
           }
           setParticipantsHydrated(true);
@@ -993,7 +973,7 @@ export default function BuzzChat() {
       }
 
       if (item.isAgentActivity && parentChannelId) {
-        return <CornerActivity message={item} />;
+        return <CornerActivity active={item.id === activeActivityId} message={item} />;
       }
 
       // ── Merge summary ────────────────────────────────────────────
@@ -1032,6 +1012,7 @@ export default function BuzzChat() {
       const display = isAgent
         ? resolveAgentDisplayIdentity(item.pubkey ?? 'unknown-agent', knownAgent)
         : null;
+      const personName = item.pubkey ? personProfileByPubkey.get(item.pubkey)?.name : undefined;
 
       if (parentChannelId) {
         return (
@@ -1047,11 +1028,20 @@ export default function BuzzChat() {
                     {display.name}
                   </Text>
                 )}
+                {!isOwn && !display && personName && (
+                  <Text numberOfLines={1} style={styles.terminalTurnAuthor}>
+                    {personName}
+                  </Text>
+                )}
               </View>
               {item.text ? (
-                <Text selectable style={styles.terminalTurnText}>
-                  {item.text}
-                </Text>
+                !isOwn && isAgent ? (
+                  <MonoMarkdown markdown={item.text} tone="final" testID="corner-final-markdown" />
+                ) : (
+                  <Text selectable style={styles.terminalTurnText}>
+                    {item.text}
+                  </Text>
+                )
               ) : null}
               {item.attachments?.map((attachment) => (
                 <AttachmentCard attachment={attachment} key={`${item.id}-${attachment.url}`} />
@@ -1078,12 +1068,16 @@ export default function BuzzChat() {
                   <PersonAvatar
                     pubkey={item.pubkey}
                     avatarUrl={personProfileByPubkey.get(item.pubkey)?.avatar}
-                    name={shortMemberNpub(item.pubkey)}
+                    name={personName ?? shortMemberNpub(item.pubkey)}
                     size={22}
                   />
                 ) : null}
                 <Text style={[styles.roleLabel, isAgent ? styles.roleAgent : styles.roleUser]}>
-                  {isOwn ? 'YOU' : display ? display.name : shortMemberNpub(item.pubkey ?? '')}
+                  {isOwn
+                    ? 'YOU'
+                    : display
+                      ? display.name
+                      : (personName ?? shortMemberNpub(item.pubkey ?? ''))}
                 </Text>
               </View>
               {item.text ? <Text style={styles.messageText}>{item.text}</Text> : null}
@@ -1100,6 +1094,7 @@ export default function BuzzChat() {
     },
     [
       agentByPubkey,
+      activeActivityId,
       handleWritePermission,
       parentChannelId,
       permissionActionId,
@@ -2340,64 +2335,19 @@ const styles = StyleSheet.create({
   activityGroup: {
     width: '100%',
     minWidth: 0,
+    marginBottom: 2,
+    borderTopWidth: 1,
+    borderTopColor: groknight.border,
     backgroundColor: groknight.bgTerminal,
-  },
-  activityEntry: {
-    minWidth: 0,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-  },
-  activityHeading: {
-    minWidth: 0,
-    minHeight: 42,
-    paddingHorizontal: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  activityGlyph: {
-    ...Typography.mono(),
-    width: 12,
-    color: groknight.steel,
-    fontSize: 11,
-  },
-  activityTitle: {
-    ...Typography.mono(),
-    flex: 1,
-    minWidth: 0,
-    color: groknight.textPrimary,
-    fontSize: 11,
-    lineHeight: 15,
-  },
-  activityStatus: {
-    ...Typography.mono(),
-    flexShrink: 0,
-    color: groknight.textMuted,
-    fontSize: 9,
-  },
-  activityDisclosure: {
-    ...Typography.mono(),
-    width: 14,
-    color: groknight.gutter,
-    fontSize: 11,
-    textAlign: 'right',
-  },
-  activityOutput: {
-    ...Typography.mono(),
-    width: '100%',
-    minWidth: 0,
-    paddingHorizontal: 12,
-    paddingBottom: 11,
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
   },
   terminalTurn: {
     width: '100%',
     minWidth: 0,
-    marginBottom: 6,
-    paddingHorizontal: 11,
-    paddingVertical: 12,
+    marginTop: 7,
+    marginBottom: 3,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    borderTopWidth: 1,
     borderBottomWidth: 1,
     borderColor: groknight.border,
     backgroundColor: groknight.bgTerminal,
@@ -2415,9 +2365,10 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   terminalTurnLabel: {
-    ...Typography.mono(),
+    ...Typography.mono('semiBold'),
     color: groknight.textPrimary,
     fontSize: 10,
+    letterSpacing: 0.7,
   },
   terminalTurnAuthor: {
     ...Typography.mono(),

@@ -74,12 +74,34 @@ describe('human cosmetic profiles', () => {
     );
 
     const profile = await setPersonProfile(ctx, communityId, {
+      name: 'Ada Lovelace',
       avatar: 'https://relay.test/media/person.jpg',
     });
+    expect(profile.name).toBe('Ada Lovelace');
     expect(profile.avatar).toBe('https://relay.test/media/person.jpg');
     expect(published?.pubkey).toBe(person.publicKey);
     expect(published?.tags).toContainEqual(['t', TAG_PERSON_PROFILE]);
     expect(published?.tags).not.toContainEqual(['role', 'admin']);
+    expect(JSON.parse(published?.content ?? '{}')).toEqual({
+      name: 'Ada Lovelace',
+      avatar: 'https://relay.test/media/person.jpg',
+    });
+  });
+
+  it('reads legacy displayName profile content', () => {
+    const event = signed(
+      person,
+      KIND_PERSON_PROFILE,
+      [
+        ['d', `${communityId}:${person.publicKey}`],
+        ['h', communityId],
+        ['p', person.publicKey],
+        ['t', TAG_PERSON_PROFILE],
+        [TAG_COMMUNITY, communityId],
+      ],
+      JSON.stringify({ displayName: 'Grace Hopper', avatar: '' }),
+    );
+    expect(parsePersonProfile(event)?.name).toBe('Grace Hopper');
   });
 
   it('rejects a profile that points at a pubkey other than its signer', () => {

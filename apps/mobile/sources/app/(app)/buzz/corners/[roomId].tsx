@@ -179,7 +179,7 @@ export default function BuzzCorners() {
                   <PersonAvatar
                     pubkey={item.openerPubkey}
                     avatarUrl={personProfile?.avatar}
-                    name="Corner opener"
+                    name={personProfile?.name ?? 'Corner opener'}
                     size={34}
                   />
                 )}
@@ -188,7 +188,10 @@ export default function BuzzCorners() {
                     {item.name}
                   </Text>
                   <Text style={styles.agent} numberOfLines={1}>
-                    Opened by {agent ? display.name : `${item.openerPubkey.slice(0, 8)}…`}
+                    Opened by{' '}
+                    {agent
+                      ? display.name
+                      : (personProfile?.name ?? `${item.openerPubkey.slice(0, 8)}…`)}
                   </Text>
                 </View>
                 <View style={styles.statusBlock}>

@@ -8,10 +8,13 @@ import {
   createInvite,
   DEFAULT_INVITE_TTL_SECONDS,
   findCommunityInvite,
+  getCommunity,
   inviteTokenHash,
   listCommunities,
   parseCommunityInvite,
+  repairCommunityRoomMemberships,
   redeemInvite,
+  setCommunityAvatar,
 } from './community.js';
 import { createIdentity } from './identity.js';
 import {
@@ -20,8 +23,10 @@ import {
   KIND_CHANNEL_MEMBERS,
   KIND_COMMUNITY_INVITE,
   KIND_CREATE_GROUP,
+  KIND_EDIT_METADATA,
   KIND_PUT_USER,
   KIND_STREAM_MESSAGE,
+  TAG_AGENT,
   TAG_COMMUNITY,
   TAG_COMMUNITY_INVITE,
 } from './kinds.js';
@@ -30,6 +35,7 @@ import { tagValue, tagValues } from './parse.js';
 const communityId = '11111111-1111-4111-8111-111111111111';
 const channelId = '22222222-2222-4222-8222-222222222222';
 const owner = createIdentity('owner');
+const admin = createIdentity('admin');
 const invitee = createIdentity('invitee');
 const outsider = createIdentity('outsider');
 const http = { baseUrl: 'http://relay.test', host: 'relay.test' };
@@ -190,6 +196,144 @@ describe('community model', () => {
     expect(tagValue(published[1]!, 'channel_type')).toBe('stream');
   });
 
+  it('lets an owner publish and verify a Workspace picture metadata projection', async () => {
+    const create = communityCreate();
+    const published: NostrEvent[] = [];
+    let projectedAvatar: string | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          const event = JSON.parse(String(init?.body)) as NostrEvent;
+          published.push(event);
+          projectedAvatar = tagValue(event, 'avatar');
+          return jsonResponse({ accepted: true });
+        }
+        const kind = (filterFrom(init).kinds as number[])[0];
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([create]);
+        if (kind === KIND_CHANNEL_MEMBERS) return jsonResponse([memberState()]);
+        if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([adminState()]);
+        if (kind === KIND_CHANNEL_METADATA) {
+          return jsonResponse([
+            signed(owner, KIND_CHANNEL_METADATA, [
+              ['d', communityId],
+              ['name', 'Builders'],
+              ...(projectedAvatar ? [['purpose', `buzz-workspace-avatar:${projectedAvatar}`]] : []),
+            ]),
+          ]);
+        }
+        return jsonResponse([]);
+      }),
+    );
+
+    const updated = await setCommunityAvatar(
+      ctx(),
+      communityId,
+      ' https://media.example.test/workspace.png ',
+    );
+
+    expect(updated).toMatchObject({
+      communityId,
+      ownerPubkey: owner.publicKey,
+      avatar: 'https://media.example.test/workspace.png',
+    });
+    expect(published).toHaveLength(1);
+    expect(published[0]).toMatchObject({ kind: KIND_EDIT_METADATA, pubkey: owner.publicKey });
+    expect(published[0]!.tags).toEqual(
+      expect.arrayContaining([
+        ['h', communityId],
+        ['name', 'Builders'],
+        ['avatar', 'https://media.example.test/workspace.png'],
+        ['picture', 'https://media.example.test/workspace.png'],
+        ['purpose', 'buzz-workspace-avatar:https://media.example.test/workspace.png'],
+        [TAG_COMMUNITY, communityId],
+      ]),
+    );
+  });
+
+  it('allows current admins to update a Workspace picture and rejects ordinary members', async () => {
+    const create = communityCreate();
+    const members = signed(owner, KIND_CHANNEL_MEMBERS, [
+      ['d', communityId],
+      ['p', owner.publicKey],
+      ['p', admin.publicKey],
+      ['p', invitee.publicKey],
+    ]);
+    const admins = signed(owner, KIND_CHANNEL_ADMINS, [
+      ['d', communityId],
+      ['p', owner.publicKey, 'owner'],
+      ['p', admin.publicKey, 'admin'],
+    ]);
+    const published: NostrEvent[] = [];
+    let projectedAvatar: string | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          const event = JSON.parse(String(init?.body)) as NostrEvent;
+          published.push(event);
+          projectedAvatar = tagValue(event, 'avatar');
+          return jsonResponse({ accepted: true });
+        }
+        const kind = (filterFrom(init).kinds as number[])[0];
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([create]);
+        if (kind === KIND_CHANNEL_MEMBERS) return jsonResponse([members]);
+        if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([admins]);
+        if (kind === KIND_CHANNEL_METADATA) {
+          return jsonResponse([
+            signed(owner, KIND_CHANNEL_METADATA, [
+              ['d', communityId],
+              ['name', 'Builders'],
+              ...(projectedAvatar ? [['purpose', `buzz-workspace-avatar:${projectedAvatar}`]] : []),
+            ]),
+          ]);
+        }
+        return jsonResponse([]);
+      }),
+    );
+
+    await expect(
+      setCommunityAvatar(ctx(admin), communityId, 'https://media.example.test/admin.png'),
+    ).resolves.toMatchObject({ avatar: 'https://media.example.test/admin.png' });
+    await expect(
+      setCommunityAvatar(ctx(invitee), communityId, 'https://media.example.test/member.png'),
+    ).rejects.toThrow('only a Workspace owner or admin');
+    expect(published).toHaveLength(1);
+    expect(published[0]!.pubkey).toBe(admin.publicKey);
+  });
+
+  it('reads Workspace picture metadata while preserving the immutable create record', async () => {
+    const create = communityCreate();
+    const metadata = signed(
+      owner,
+      KIND_CHANNEL_METADATA,
+      [
+        ['d', communityId],
+        ['name', 'Builders'],
+        ['picture', 'https://media.example.test/newest.png'],
+      ],
+      create.created_at + 10,
+    );
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const kind = (filterFrom(init).kinds as number[])[0];
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([create]);
+        if (kind === KIND_CHANNEL_METADATA) return jsonResponse([metadata]);
+        return jsonResponse([]);
+      }),
+    );
+
+    await expect(getCommunity(ctx(invitee), communityId)).resolves.toMatchObject({
+      communityId,
+      avatar: 'https://media.example.test/newest.png',
+      createdBy: owner.publicKey,
+      ownerPubkey: owner.publicKey,
+      createdAt: create.created_at,
+      raw: create,
+    });
+  });
+
   it('mirrors current community members into a newly linked channel', async () => {
     const published: NostrEvent[] = [];
     const channelMemberPubkeys = new Set([owner.publicKey]);
@@ -234,15 +378,24 @@ describe('community model', () => {
 
   it('lists communities by member pubkey and preserves owner/member roles', async () => {
     const create = communityCreate();
+    const metadata = signed(owner, KIND_CHANNEL_METADATA, [
+      ['d', communityId],
+      ['name', 'Builders'],
+      ['picture', 'https://media.example.test/projected.png'],
+    ]);
     const members = memberState(true);
     const admins = adminState();
     vi.stubGlobal(
       'fetch',
       vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
         const filter = filterFrom(init);
-        const kind = (filter.kinds as number[])[0];
+        const kinds = filter.kinds as number[];
+        const kind = kinds[0];
         if (kind === KIND_CHANNEL_MEMBERS) return jsonResponse([members]);
         if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([admins]);
+        if (kinds.includes(KIND_CREATE_GROUP) && kinds.includes(KIND_CHANNEL_METADATA)) {
+          return jsonResponse([create, metadata]);
+        }
         if (kind === KIND_CREATE_GROUP) return jsonResponse([create]);
         return jsonResponse([]);
       }),
@@ -253,7 +406,7 @@ describe('community model', () => {
       {
         communityId,
         name: 'Builders',
-        avatar: 'https://example.test/builders.png',
+        avatar: 'https://media.example.test/projected.png',
         createdBy: owner.publicKey,
         ownerPubkey: owner.publicKey,
       },
@@ -302,6 +455,29 @@ describe('community model', () => {
     await expect(listCommunities(ctx(), owner.publicKey)).resolves.toMatchObject([
       { communityId, name: 'Builders' },
     ]);
+  });
+
+  it('never ambiently repairs a registered agent into Workspace Rooms', async () => {
+    const agentMarker = signed(invitee, KIND_STREAM_MESSAGE, [
+      ['h', communityId],
+      ['t', TAG_AGENT],
+    ]);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        return kind === KIND_STREAM_MESSAGE ? jsonResponse([agentMarker]) : jsonResponse([]);
+      }),
+    );
+
+    await expect(repairCommunityRoomMemberships(ctx(invitee), communityId)).resolves.toEqual([]);
+    expect(published).toEqual([]);
   });
 });
 

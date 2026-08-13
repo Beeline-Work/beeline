@@ -39,6 +39,7 @@ import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
 import { latestRoomMessage } from '@/buzz/room-list-summary';
 import { roomParticipantPubkeys } from '@/buzz/room-participants';
 import { shortMemberNpub } from '@/buzz/member-display';
+import { ensurePersonNameForWorkspace } from '@/buzz/person-name';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { cornerStatusPresentation, sortCorners, type CornerSummary } from '@/buzz/corners';
 import {
@@ -189,7 +190,7 @@ async function loadWorkspaceRoster(
   const members: WorkspaceMemberDisplayItem[] = [
     ...people.map((person) => ({
       peerPubkey: person.pubkey,
-      peerName: shortMemberNpub(person.pubkey),
+      peerName: profileByPubkey.get(person.pubkey)?.name ?? shortMemberNpub(person.pubkey),
       peerKind: 'person' as const,
       avatarUrl: profileByPubkey.get(person.pubkey)?.avatar,
     })),
@@ -369,6 +370,7 @@ export default function BuzzChannels() {
           activeWorkspaceId: active,
           personalWorkspaceId: personal,
         } = workspaceContext;
+        await ensurePersonNameForWorkspace(client, active, currentIdentity.publicKey);
         const channels = await loadDisplayChannelBasics(nextTransport, active, available);
         if (isCurrent()) {
           setIdentity(currentIdentity);
@@ -440,6 +442,7 @@ export default function BuzzChannels() {
         activeWorkspaceId: active,
         personalWorkspaceId: personal,
       } = await prepareWorkspaceContext(client, identity.publicKey, activeCommunityId ?? undefined);
+      await ensurePersonNameForWorkspace(client, active, identity.publicKey);
       if (!isCurrent()) return;
       setCommunities(available);
       setActiveCommunityId(active);

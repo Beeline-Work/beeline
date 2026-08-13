@@ -6,6 +6,7 @@ import type { Community, Identity } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { createCommunityInviteUrl, parseCommunityInviteToken } from '@/buzz/community-invite';
 import { loadActiveCommunityId, saveActiveCommunityId } from '@/buzz/community-storage';
+import { ensurePersonNameForWorkspace } from '@/buzz/person-name';
 import { groknight } from '@/buzz/groknight';
 import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
@@ -74,6 +75,7 @@ export default function BuzzCommunityCreateOrJoin() {
       const client = await transport.ensureClient();
       const communityId = await client.createCommunity(name);
       await client.waitUntilMember(communityId, identity.publicKey);
+      await ensurePersonNameForWorkspace(client, communityId, identity.publicKey);
       const inviteUrl = await createCommunityInviteUrl(client, communityId, relayUrl);
       await saveActiveCommunityId(identity.publicKey, communityId);
       router.replace({

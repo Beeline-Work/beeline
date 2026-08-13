@@ -47,7 +47,7 @@ export default function BuzzSettings() {
         >
           <View style={styles.rowCopy}>
             <Text style={styles.rowTitle}>Identity & backup</Text>
-            <Text style={styles.rowSubtitle}>Picture and secret-key export</Text>
+            <Text style={styles.rowSubtitle}>Name, picture, and secret-key export</Text>
           </View>
           <Text style={styles.rowChevron}>›</Text>
         </TouchableOpacity>

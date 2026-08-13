@@ -85,12 +85,15 @@ export interface AgentSoulProfile extends Omit<AgentSoulInput, 'intent'> {
 export interface PersonProfile {
   communityId: string;
   pubkey: string;
+  name?: string;
   avatar?: string;
   updatedAt: number;
   raw: NostrEvent;
 }
 
 export interface PersonProfileInput {
+  /** Empty or absent removes the authored display name. */
+  name?: string;
   /** Empty or absent removes the custom image and restores the deterministic mark. */
   avatar?: string;
 }

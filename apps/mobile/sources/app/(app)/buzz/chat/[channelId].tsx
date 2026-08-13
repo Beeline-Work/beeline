@@ -52,7 +52,6 @@ import {
   upsertChatMessages,
   type ChatDisplayMessage,
 } from '@/sync/transport/buzz-event-projection';
-import type { AgentActivityItem } from '@/sync/transport/rig-transport';
 import { groknight } from '@/buzz/groknight';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
@@ -85,6 +84,8 @@ import { Typography } from '@/constants/Typography';
 import { ChangeReviewPanel } from '@/components/buzz/ChangeReviewPanel';
 import { AgentAvatar } from '@/components/buzz/AgentAvatar';
 import { PersonAvatar } from '@/components/buzz/PersonAvatar';
+import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
+import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
 import {
   HullSurface,
   MonoButton,
@@ -103,46 +104,13 @@ type RoomMemberOption = {
 /** Known body pubkeys for provenance display (hardcoded for dev). */
 const BODY_PUBKEYS = new Set<string>();
 
-function CornerActivityEntry({ item }: { item: AgentActivityItem }) {
-  const [expanded, setExpanded] = useState(
-    item.kind !== 'tool' || item.status === 'pending' || item.status === 'in_progress',
-  );
-  const glyph = item.kind === 'thinking' ? '·' : '›';
-  const label = item.kind === 'thinking' ? 'THINKING' : item.title.toUpperCase();
-
-  return (
-    <View style={styles.activityEntry}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ expanded }}
-        onPress={() => setExpanded((current) => !current)}
-        style={styles.activityHeading}
-      >
-        <Text style={styles.activityGlyph}>{glyph}</Text>
-        <Text numberOfLines={1} style={styles.activityTitle}>
-          {label}
-        </Text>
-        {item.status && <Text style={styles.activityStatus}>{item.status.toUpperCase()}</Text>}
-        <Text style={styles.activityDisclosure}>{expanded ? '⌃' : '⌄'}</Text>
-      </Pressable>
-      {expanded && item.text && (
-        <Text selectable style={styles.activityOutput}>
-          {item.text}
-        </Text>
-      )}
-    </View>
-  );
-}
-
-function CornerActivity({ message }: { message: ChatDisplayMessage }) {
+function CornerActivity({ message, active }: { message: ChatDisplayMessage; active: boolean }) {
   const activity = message.activity?.length
     ? message.activity
     : [{ kind: 'output' as const, title: 'Output', text: message.text }];
   return (
     <View style={styles.activityGroup} testID="corner-activity">
-      {activity.map((item, index) => (
-        <CornerActivityEntry key={`${message.id}-${index}`} item={item} />
-      ))}
+      <ActivityTimeline active={active} items={activity} testID="corner-activity-timeline" />
     </View>
   );
 }
@@ -348,6 +316,11 @@ export default function BuzzChat() {
     () => [...messages].reverse().find((message) => message.agentTurn?.status === 'working'),
     [messages],
   );
+  const activeActivityId = useMemo(() => {
+    if (!activeAgentTurn) return undefined;
+    const latest = visibleMessages.at(-1);
+    return isCorner && !isArchived && latest?.isAgentActivity ? latest.id : undefined;
+  }, [activeAgentTurn, isArchived, isCorner, visibleMessages]);
 
   const scrollToLatestMessage = useCallback((animated: boolean) => {
     requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated }));
@@ -1006,7 +979,7 @@ export default function BuzzChat() {
       }
 
       if (item.isAgentActivity && parentChannelId) {
-        return <CornerActivity message={item} />;
+        return <CornerActivity active={item.id === activeActivityId} message={item} />;
       }
 
       // ── Merge summary ────────────────────────────────────────────
@@ -1062,9 +1035,13 @@ export default function BuzzChat() {
                 )}
               </View>
               {item.text ? (
-                <Text selectable style={styles.terminalTurnText}>
-                  {item.text}
-                </Text>
+                !isOwn && isAgent ? (
+                  <MonoMarkdown markdown={item.text} tone="final" testID="corner-final-markdown" />
+                ) : (
+                  <Text selectable style={styles.terminalTurnText}>
+                    {item.text}
+                  </Text>
+                )
               ) : null}
               {item.attachments?.map((attachment) => (
                 <AttachmentCard attachment={attachment} key={`${item.id}-${attachment.url}`} />
@@ -1113,6 +1090,7 @@ export default function BuzzChat() {
     },
     [
       agentByPubkey,
+      activeActivityId,
       handleWritePermission,
       parentChannelId,
       permissionActionId,
@@ -2353,64 +2331,19 @@ const styles = StyleSheet.create({
   activityGroup: {
     width: '100%',
     minWidth: 0,
+    marginBottom: 2,
+    borderTopWidth: 1,
+    borderTopColor: groknight.border,
     backgroundColor: groknight.bgTerminal,
-  },
-  activityEntry: {
-    minWidth: 0,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-  },
-  activityHeading: {
-    minWidth: 0,
-    minHeight: 42,
-    paddingHorizontal: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  activityGlyph: {
-    ...Typography.mono(),
-    width: 12,
-    color: groknight.steel,
-    fontSize: 11,
-  },
-  activityTitle: {
-    ...Typography.mono(),
-    flex: 1,
-    minWidth: 0,
-    color: groknight.textPrimary,
-    fontSize: 11,
-    lineHeight: 15,
-  },
-  activityStatus: {
-    ...Typography.mono(),
-    flexShrink: 0,
-    color: groknight.textMuted,
-    fontSize: 9,
-  },
-  activityDisclosure: {
-    ...Typography.mono(),
-    width: 14,
-    color: groknight.gutter,
-    fontSize: 11,
-    textAlign: 'right',
-  },
-  activityOutput: {
-    ...Typography.mono(),
-    width: '100%',
-    minWidth: 0,
-    paddingHorizontal: 12,
-    paddingBottom: 11,
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
   },
   terminalTurn: {
     width: '100%',
     minWidth: 0,
-    marginBottom: 6,
-    paddingHorizontal: 11,
-    paddingVertical: 12,
+    marginTop: 7,
+    marginBottom: 3,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    borderTopWidth: 1,
     borderBottomWidth: 1,
     borderColor: groknight.border,
     backgroundColor: groknight.bgTerminal,
@@ -2428,9 +2361,10 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   terminalTurnLabel: {
-    ...Typography.mono(),
+    ...Typography.mono('semiBold'),
     color: groknight.textPrimary,
     fontSize: 10,
+    letterSpacing: 0.7,
   },
   terminalTurnAuthor: {
     ...Typography.mono(),

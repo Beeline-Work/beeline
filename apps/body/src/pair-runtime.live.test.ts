@@ -47,8 +47,10 @@ const selectedAgentKind = process.env.BUZZY_LIVE_AGENT_KIND as AgentKind | undef
 
 function availableLiveAgent(): AgentCommand | undefined {
   if (selectedAgentKind) return resolveAgentCommand({ kind: selectedAgentKind });
-  const detected = detectInstalledAgentCommands();
-  return detected.length === 1 ? detected[0] : undefined;
+  const detected = detectInstalledAgentCommands().filter(
+    (candidate) => candidate.status === 'ready',
+  );
+  return detected.length === 1 ? detected[0]!.agent : undefined;
 }
 
 async function reachable(): Promise<boolean> {

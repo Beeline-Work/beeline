@@ -114,9 +114,10 @@ on `PATH`; the installer prints the exact export when it is not.
 # Supported user path: run once from the repository the agent will work in.
 # The command redeems the Workspace code, resolves or creates the repo's Room,
 # stores machine-only keys under .git, and launches the durable daemon.
-# With no --agent flag, Beeline detects ACP-capable Codex, Claude Code,
-# Goose, and Pi installations. One match is selected automatically; several
-# matches produce a numbered choice on an interactive terminal.
+# With no --agent flag, Beeline detects Codex, Claude Code, Goose, and Pi.
+# Installed agents with a missing ACP adapter remain in the numbered menu and
+# offer to install it when selected. Non-interactive runs print the exact manual
+# install command and never install packages automatically.
 beeline pair BUZZ-XXXX-XXXX
 
 # Piped/non-interactive sessions with several matches must choose explicitly.

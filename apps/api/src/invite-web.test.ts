@@ -2,11 +2,23 @@ import { readFileSync } from 'node:fs';
 import { buildSync } from 'esbuild';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  KIND_COMMUNITY_INVITE,
+  KIND_CREATE_GROUP,
+  TAG_COMMUNITY,
+  TAG_COMMUNITY_INVITE,
+  createIdentity,
+  inviteTokenHash,
+} from '@beeline/buzz-client';
+import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 
 import {
   APK_DOWNLOAD_URL,
+  resolveWorkspaceName,
   startInviteLanding,
 } from '../../../relay-stack/web/join/invite-source.js';
+
+const INVITE_TOKEN = 'bzi_cd2f4ae16feb43b42a6566ce72ed437b38d374397b0769307c9bdcc29cfb2b38';
 
 const repoFile = (path: string) =>
   readFileSync(new URL(`../../../${path}`, import.meta.url), 'utf8');
@@ -56,9 +68,12 @@ describe('relay invite web front', () => {
     expect(nginx).toContain('location = /join/invite.js');
     expect(nginx).toContain('proxy_pass http://relay:3000');
     expect(nginx).toContain('proxy_set_header Upgrade $http_upgrade');
+    expect(nginx).toContain("img-src 'self' data:");
     expect(compose).toContain('${BUZZ_HTTP_PORT:-3010}:3000');
     expect(compose).toContain('./web:/usr/share/nginx/html:ro');
     expect(landing).toContain("You're invited to a Workspace");
+    expect(landing).toContain('rel="icon"');
+    expect(landing).toContain('data:image/svg+xml');
     expect(script).toContain('buzzy://join/');
   });
 
@@ -79,6 +94,75 @@ describe('relay invite web front', () => {
         return red === green && green === blue;
       }),
     ).toBe(true);
+  });
+
+  it('resolves an invite anonymously with an ephemeral NIP-98 identity', async () => {
+    const inviter = createIdentity('invite-web-test-owner');
+    const communityId = '49af6fcb-cd8e-4e07-8cfe-462d58185386';
+    const createdAt = Math.floor(Date.now() / 1000);
+    const invite = signEvent(
+      {
+        pubkey: inviter.publicKey,
+        created_at: createdAt,
+        kind: KIND_COMMUNITY_INVITE,
+        tags: [
+          ['d', inviteTokenHash(INVITE_TOKEN)],
+          ['h', communityId],
+          [TAG_COMMUNITY, communityId],
+          ['t', TAG_COMMUNITY_INVITE],
+          ['expiration', String(createdAt + 3_600)],
+        ],
+        content: '',
+      },
+      inviter.secretKey,
+    );
+    const workspace = signEvent(
+      {
+        pubkey: inviter.publicKey,
+        created_at: createdAt,
+        kind: KIND_CREATE_GROUP,
+        tags: [
+          ['h', communityId],
+          ['name', 'Test workspace 1'],
+          [TAG_COMMUNITY, communityId],
+        ],
+        content: '',
+      },
+      inviter.secretKey,
+    );
+    const requests: Array<{ input: string; init?: RequestInit }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        requests.push({ input: String(input), init });
+        const filters = JSON.parse(String(init?.body)) as Array<{ kinds?: number[] }>;
+        const events = filters.some((filter) => filter.kinds?.includes(KIND_COMMUNITY_INVITE))
+          ? [invite]
+          : filters.some((filter) => filter.kinds?.includes(KIND_CREATE_GROUP))
+            ? [workspace]
+            : [];
+        return new Response(JSON.stringify(events), { status: 200 });
+      }),
+    );
+
+    await expect(resolveWorkspaceName('https://relay.buzzrouter.com', INVITE_TOKEN)).resolves.toBe(
+      'Test workspace 1',
+    );
+
+    expect(requests).toHaveLength(2);
+    const ephemeralPubkeys = requests.map(({ input, init }) => {
+      const headers = init?.headers as Record<string, string>;
+      const auth = decodeNip98Auth(headers.authorization);
+      expect(input).toBe('https://relay.buzzrouter.com/query');
+      expect(headers.authorization).toMatch(/^Nostr /);
+      expect(headers['x-pubkey']).toBe(auth.pubkey);
+      expect(auth.pubkey).not.toBe(inviter.publicKey);
+      expect(auth.tags).toContainEqual(['u', input]);
+      expect(auth.tags).toContainEqual(['method', 'POST']);
+      expect(verifyEvent(auth)).toBe(true);
+      return auth.pubkey;
+    });
+    expect(new Set(ephemeralPubkeys).size).toBe(1);
   });
 
   it('times out failed invite resolution and lets the visitor retry', async () => {
@@ -174,7 +258,7 @@ function invitePage() {
   };
   const window = {
     location: {
-      pathname: '/join/bzi_cd2f4ae16feb43b42a6566ce72ed437b38d374397b0769307c9bdcc29cfb2b38',
+      pathname: `/join/${INVITE_TOKEN}`,
       origin: 'https://relay.buzzrouter.com',
       assign: vi.fn(),
     },
@@ -189,6 +273,14 @@ function invitePage() {
     details: elements['#invite-details'],
     status: elements['#status'],
   };
+}
+
+function decodeNip98Auth(value: string): NostrEvent {
+  const encoded = value.slice('Nostr '.length);
+  const json = new TextDecoder().decode(
+    Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0)),
+  );
+  return JSON.parse(json) as NostrEvent;
 }
 
 function fakeElement() {

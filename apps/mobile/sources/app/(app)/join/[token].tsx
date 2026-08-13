@@ -1,11 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useURL } from 'expo-linking';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,6 +16,11 @@ import {
   type CommunityInvitePreview,
 } from '@/buzz/community-invite';
 import { saveActiveCommunityId } from '@/buzz/community-storage';
+import {
+  ensurePersonNameForWorkspace,
+  resolveOnboardingPersonName,
+  savePreferredPersonName,
+} from '@/buzz/person-name';
 import { groknight } from '@/buzz/groknight';
 import { ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
@@ -96,7 +95,14 @@ export default function CommunityInviteJoin() {
       const joiningIdentity = identity ?? (await generateBuzzIdentity(displayName.trim()));
       if (!identity) await registerBuzzPushNotifications(joiningIdentity);
       const client = createBuzzClient({ baseUrl: relayUrl, identity: joiningIdentity });
+      if (identity) {
+        await resolveOnboardingPersonName(client, joiningIdentity.publicKey);
+      } else {
+        await savePreferredPersonName(joiningIdentity.publicKey, displayName);
+      }
       const redemption = await client.redeemInvite(token);
+      await client.waitUntilMember(redemption.communityId, joiningIdentity.publicKey);
+      await ensurePersonNameForWorkspace(client, redemption.communityId, joiningIdentity.publicKey);
       const community = await client.getCommunity(redemption.communityId);
       if (!community)
         throw new Error(`Joined, but ${WORKSPACE_LABEL} details are not visible yet.`);

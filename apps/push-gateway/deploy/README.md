@@ -48,7 +48,10 @@ token to the production service.
 
 The checked-in proof creates and archives a private Room between throwaway
 identities, posts one real production kind-9 event, proves an outsider cannot
-read it, and captures exactly one formatted FCM payload without calling FCM:
+read it and the public `/query` remains auth-enforced, then captures exactly one
+formatted FCM payload without calling FCM. It re-polls, reloads the durable
+state as a forced-restart simulation, and replays the event; all three paths
+must leave the capture count at one:
 
 ```sh
 npm run verify:live -w @beeline/push-gateway

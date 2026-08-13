@@ -43,7 +43,12 @@ fi
 
 ln -sfn "$release_dir" "$install_dir/current"
 ln -sfn "$(readlink -f "$(command -v node)")" "$install_dir/bin/node"
-install -m 600 "$service_account_source" "$install_dir/secrets/fcm-service-account.json"
+service_account_target="$install_dir/secrets/fcm-service-account.json"
+if [[ "$(readlink -f "$service_account_source")" != "$(readlink -f "$service_account_target")" ]]; then
+  install -m 600 "$service_account_source" "$service_account_target"
+else
+  chmod 600 "$service_account_target"
+fi
 if [[ ! -e "$install_dir/state/registrations.json" ]]; then
   install -m 600 "$registry_source" "$install_dir/state/registrations.json"
 fi

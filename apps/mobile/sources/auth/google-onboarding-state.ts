@@ -6,6 +6,7 @@ export type GoogleOnboardingStatus =
   | 'existing_device'
   | 'opening_browser'
   | 'binding'
+  | 'entering_workspace'
   | 'bind_retry'
   | 'browser_canceled'
   | 'token_expired'
@@ -17,6 +18,82 @@ export interface GoogleOnboardingNotice {
   title: string;
   message: string;
   retryable: boolean;
+}
+
+type GoogleOnboardingEvent = 'callback_received' | 'bind_succeeded';
+
+interface GoogleAuthBrowserResult {
+  type: string;
+  url?: string;
+}
+
+interface GoogleAuthUrlSubscription {
+  remove(): void;
+}
+
+interface WaitForGoogleAuthCallbackInput {
+  redirectUri: string;
+  openAuthSession(): Promise<GoogleAuthBrowserResult>;
+  subscribeToUrls(listener: (url: string) => void): GoogleAuthUrlSubscription;
+  callbackGraceMs?: number;
+}
+
+/** Keep the onboarding state transition explicit and independently testable. */
+export function nextGoogleOnboardingStatus(
+  current: GoogleOnboardingStatus,
+  event: GoogleOnboardingEvent,
+): GoogleOnboardingStatus {
+  if (event === 'callback_received' && current === 'opening_browser') return 'binding';
+  if (event === 'bind_succeeded' && current === 'binding') return 'entering_workspace';
+  return current;
+}
+
+function isExpectedCallback(url: string, redirectUri: string): boolean {
+  return url === redirectUri || url.startsWith(`${redirectUri}?`);
+}
+
+/**
+ * Android's WebBrowser polyfill races AppState becoming active against the
+ * matching Linking event. Preserve that event when AppState wins by a few
+ * milliseconds instead of reporting a successful OAuth round-trip as canceled.
+ */
+export async function waitForGoogleAuthCallback({
+  redirectUri,
+  openAuthSession,
+  subscribeToUrls,
+  callbackGraceMs = 1_500,
+}: WaitForGoogleAuthCallbackInput): Promise<string> {
+  let resolveObservedCallback: (url: string) => void = () => undefined;
+  const observedCallback = new Promise<string>((resolve) => {
+    resolveObservedCallback = resolve;
+  });
+  const subscription = subscribeToUrls((url) => {
+    if (isExpectedCallback(url, redirectUri)) resolveObservedCallback(url);
+  });
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    const browserResult = await openAuthSession();
+    if (
+      browserResult.type === 'success' &&
+      browserResult.url &&
+      isExpectedCallback(browserResult.url, redirectUri)
+    ) {
+      return browserResult.url;
+    }
+
+    const callbackUrl = await Promise.race([
+      observedCallback,
+      new Promise<null>((resolve) => {
+        timeout = setTimeout(() => resolve(null), callbackGraceMs);
+      }),
+    ]);
+    if (callbackUrl) return callbackUrl;
+    throw new OidcBindError('browser_canceled', 'Google authorization was canceled');
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+    subscription.remove();
+  }
 }
 
 export function noticeForOidcError(error: unknown): GoogleOnboardingNotice {

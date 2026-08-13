@@ -23,7 +23,9 @@ import {
   saveBuzzIdentity,
 } from '@/auth/buzz-identity-storage';
 import {
+  nextGoogleOnboardingStatus,
   noticeForOidcError,
+  waitForGoogleAuthCallback,
   type GoogleOnboardingNotice,
   type GoogleOnboardingStatus,
 } from '@/auth/google-onboarding-state';
@@ -83,14 +85,8 @@ export default function BuzzOnboarding() {
         existingIdentity.current = identity;
         const links = await lookupRecovery(getBuzzRuntimeConfig().relayUrl, identity);
         if (!alive || links.length === 0) return;
-        setStatus('existing_device');
-        setNotice({
-          status: 'existing_device',
-          title: 'DEVICE LINKED',
-          message:
-            'This device already holds the key linked to your Google account. No recovery is needed.',
-          retryable: false,
-        });
+        setStatus('entering_workspace');
+        router.replace('/buzz/channels');
       })
       .catch((error: unknown) => {
         if (alive && error instanceof OidcBindError && error.code === 'offline') {
@@ -123,6 +119,7 @@ export default function BuzzOnboarding() {
       await saveBuzzIdentity(pending.identity);
       await registerBuzzPushNotifications(pending.identity);
       pendingBind.current = null;
+      setStatus(nextGoogleOnboardingStatus('binding', 'bind_succeeded'));
       router.replace('/buzz/channels');
     } catch (error) {
       const normalized =
@@ -160,14 +157,17 @@ export default function BuzzOnboarding() {
           ? `${authOrigin.origin}/auth/oidc/mobile-callback`
           : Linking.createURL('buzz/oidc-callback');
       const start = startOidcBind(authBaseUrl, { redirectUri, state });
-      const result = await WebBrowser.openAuthSessionAsync(
-        start.authorizationUrl,
-        start.redirectUri,
-      );
-      if (result.type !== 'success') {
-        throw new OidcBindError('browser_canceled', 'Google authorization was canceled');
-      }
-      const challenge = parseOidcBindCallback(result.url, state);
+      const callbackUrl = await waitForGoogleAuthCallback({
+        redirectUri: start.redirectUri,
+        openAuthSession: () =>
+          WebBrowser.openAuthSessionAsync(start.authorizationUrl, start.redirectUri, {
+            preferUniversalLinks: start.redirectUri.startsWith('https://'),
+          }),
+        subscribeToUrls: (listener) =>
+          Linking.addEventListener('url', ({ url }) => listener(url)),
+      });
+      setStatus(nextGoogleOnboardingStatus('opening_browser', 'callback_received'));
+      const challenge = parseOidcBindCallback(callbackUrl, state);
       // Preserve upgraded users' existing device-held identity; only first-time
       // devices create a candidate key after Google proof succeeds.
       const identity =

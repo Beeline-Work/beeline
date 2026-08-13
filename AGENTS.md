@@ -60,7 +60,7 @@ When updating this file, preserve this bar for all agents and keep entries conci
 
 ## Grok Mono Hull UI theme
 
-- **Design tokens**: `apps/mobile/sources/buzz/groknight.ts` — fully grayscale semantic roles for surfaces, text, action, focus, selection, and signals. `apps/mobile/sources/buzz/brand.json` is the one-line swappable mark color; regenerate platform art with `apps/mobile/scripts/generate-monochrome-assets.sh`.
+- **Design tokens and mark authority**: `apps/mobile/sources/buzz/groknight.ts` owns grayscale semantic roles; `apps/mobile/sources/buzz/brand.json` owns the light mark color; and `apps/mobile/sources/buzz/beeline-mark.json` locks the approved continuous-line outline used by in-app and SVG assets. Regenerate platform art and both theme lockups with `apps/mobile/scripts/generate-monochrome-assets.sh`.
 - **Design authority**: Grok Mono Hull. No chromatic state or brand color survives in Buzz. State is redundant through text, glyph, contrast, geometry, faint deterministic texture, reduced-motion-aware mechanical signals, and haptics. Shared primitives live in `apps/mobile/sources/components/buzz/MonoHull.tsx`.
 - **Restyled screens**: `buzz/channels.tsx`, `buzz/chat/[channelId].tsx`, `buzz/onboarding.tsx` — session/channel list, live session transcript with merge controls and composer, and key onboarding.
 

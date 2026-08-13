@@ -5,6 +5,7 @@
  */
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import {
+  Alert,
   View,
   Text,
   FlatList,
@@ -24,6 +25,7 @@ import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-sto
 import { BuzzRigTransport } from '@/sync/transport';
 import {
   type Agent,
+  type ChannelMember,
   type Community,
   type CommunityMember,
   type DirectMessage,
@@ -52,6 +54,11 @@ import {
 } from '@/buzz/room-participants';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { directMessagePeer, shortMemberNpub } from '@/buzz/member-display';
+import {
+  canRemoveRoomParticipant,
+  normalizedRoomRole,
+  roomLifecycleAction,
+} from '@/buzz/room-management';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
@@ -147,14 +154,18 @@ export default function BuzzChat() {
   const [availableAgents, setAvailableAgents] = useState<Agent[]>([]);
   const [availablePeople, setAvailablePeople] = useState<CommunityMember[]>([]);
   const [roomMemberPubkeys, setRoomMemberPubkeys] = useState<Set<string>>(new Set());
+  const [roomMembers, setRoomMembers] = useState<ChannelMember[]>([]);
   const [addingMemberPubkey, setAddingMemberPubkey] = useState<string | null>(null);
   const [personProfiles, setPersonProfiles] = useState<PersonProfile[]>([]);
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
   const [participantsHydrated, setParticipantsHydrated] = useState(false);
   const [roomName, setRoomName] = useState(ROOM_LABEL);
   const [rosterVisible, setRosterVisible] = useState(false);
+  const [roomActionsVisible, setRoomActionsVisible] = useState(false);
   const [participantPickerVisible, setParticipantPickerVisible] = useState(false);
   const [membershipError, setMembershipError] = useState<string | null>(null);
+  const [membershipActionPubkey, setMembershipActionPubkey] = useState<string | null>(null);
+  const [roomLifecycleBusy, setRoomLifecycleBusy] = useState(false);
   const [directMessage, setDirectMessage] = useState<DirectMessage | null>(null);
   const [composerFocused, setComposerFocused] = useState(false);
   const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
@@ -215,6 +226,12 @@ export default function BuzzChat() {
     [roomParticipants],
   );
   const roomParticipantTotal = roomParticipants.length;
+  const roomMemberByPubkey = useMemo(
+    () => new Map(roomMembers.map((member) => [member.pubkey, member])),
+    [roomMembers],
+  );
+  const viewerRoomRole = normalizedRoomRole(roomMemberByPubkey.get(userPubkey));
+  const lifecycleAction = roomLifecycleAction(viewerRoomRole);
   const mentionableAgents = useMemo(
     () =>
       roomParticipants
@@ -333,6 +350,7 @@ export default function BuzzChat() {
           setActiveCommunityId(channelCommunityId);
           const roomPubkeys = new Set(roomMembers.map((member) => member.pubkey));
           setRoomMemberPubkeys(roomPubkeys);
+          setRoomMembers(roomMembers);
           setViewerIsAgent(identityIsAgent);
           setDirectMessage(dm);
           setRoomName(channelMetadata?.name?.trim() || ROOM_LABEL);
@@ -546,6 +564,10 @@ export default function BuzzChat() {
           );
         }
         setRoomMemberPubkeys((current) => new Set([...current, option.pubkey]));
+        setRoomMembers((current) => [
+          ...current.filter((member) => member.pubkey !== option.pubkey),
+          { pubkey: option.pubkey, role: 'member' },
+        ]);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
         setMembershipError(`Could not add @${option.name}: ${String(err)}`);
@@ -555,6 +577,95 @@ export default function BuzzChat() {
     },
     [activeCommunityId, addingMemberPubkey, decodedId, roomMemberPubkeys, transport],
   );
+
+  const handleRemoveRoomMember = useCallback(
+    (participant: RoomMemberOption) => {
+      const targetRole = normalizedRoomRole(roomMemberByPubkey.get(participant.pubkey));
+      if (
+        !transport ||
+        !canRemoveRoomParticipant(viewerRoomRole, targetRole, participant.pubkey === userPubkey)
+      )
+        return;
+      Alert.alert(
+        `Remove ${participant.name}?`,
+        `Their membership will be removed and this ${ROOM_LABEL} will disappear from their workspace list.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Remove',
+            style: 'destructive',
+            onPress: () => {
+              setMembershipActionPubkey(participant.pubkey);
+              setMembershipError(null);
+              void transport
+                .removeRoomMember(decodedId, participant.pubkey)
+                .then(() => {
+                  setRoomMemberPubkeys((current) => {
+                    const next = new Set(current);
+                    next.delete(participant.pubkey);
+                    return next;
+                  });
+                  setRoomMembers((current) =>
+                    current.filter((member) => member.pubkey !== participant.pubkey),
+                  );
+                  void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                })
+                .catch((err) => {
+                  setMembershipError(`Could not remove ${participant.name}: ${String(err)}`);
+                })
+                .finally(() => setMembershipActionPubkey(null));
+            },
+          },
+        ],
+      );
+    },
+    [decodedId, roomMemberByPubkey, transport, userPubkey, viewerRoomRole],
+  );
+
+  const returnToRoomList = useCallback(() => {
+    setRosterVisible(false);
+    setRoomActionsVisible(false);
+    router.replace({
+      pathname: '/buzz/channels',
+      ...(activeCommunityId ? { params: { communityId: activeCommunityId } } : {}),
+    });
+  }, [activeCommunityId]);
+
+  const handleRoomLifecycle = useCallback(() => {
+    if (!transport || !lifecycleAction || roomLifecycleBusy) return;
+    const deleting = lifecycleAction === 'delete';
+    Alert.alert(
+      deleting ? `Delete ${roomName}?` : `Leave ${roomName}?`,
+      deleting
+        ? `This ${ROOM_LABEL} will disappear from the workspace list. Its messages and room data remain stored for future recovery.`
+        : `You will lose access to this ${ROOM_LABEL}. Other members will keep their access.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: deleting ? `Delete ${ROOM_LABEL}` : `Leave ${ROOM_LABEL}`,
+          style: 'destructive',
+          onPress: () => {
+            setRoomLifecycleBusy(true);
+            setMembershipError(null);
+            const operation = deleting
+              ? transport.archiveRoom(decodedId)
+              : transport.leaveRoom(decodedId);
+            void operation
+              .then(() => {
+                void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                returnToRoomList();
+              })
+              .catch((err) => {
+                setMembershipError(
+                  `Could not ${deleting ? 'delete' : 'leave'} ${ROOM_LABEL}: ${String(err)}`,
+                );
+              })
+              .finally(() => setRoomLifecycleBusy(false));
+          },
+        },
+      ],
+    );
+  }, [decodedId, lifecycleAction, returnToRoomList, roomLifecycleBusy, roomName, transport]);
 
   const handleStartDirectMessage = useCallback(
     async (option: RoomMemberOption) => {
@@ -890,6 +1001,24 @@ export default function BuzzChat() {
               <Text style={styles.addMembersGlyph}>＋</Text>
             </TouchableOpacity>
           )}
+          {!parentChannelId &&
+            !isDirectMessage &&
+            !viewerIsAgent &&
+            !isArchived &&
+            lifecycleAction && (
+              <TouchableOpacity
+                accessibilityLabel={`${ROOM_LABEL} actions`}
+                accessibilityRole="button"
+                onPress={() => {
+                  setMembershipError(null);
+                  setRoomActionsVisible(true);
+                }}
+                style={styles.roomActionsButton}
+                testID="room-actions-menu"
+              >
+                <Text style={styles.roomActionsGlyph}>•••</Text>
+              </TouchableOpacity>
+            )}
           {isArchived && (
             <View style={styles.archivedBadge}>
               <Text style={styles.archivedBadgeText}>□ ARCHIVED</Text>
@@ -1175,8 +1304,20 @@ export default function BuzzChat() {
                         ? display.name
                         : participant.pubkey === userPubkey
                           ? 'You'
-                          : participant.label;
+                          : participant.name;
                       const handle = display?.handle ?? shortMemberNpub(participant.pubkey);
+                      const targetRole = normalizedRoomRole(
+                        roomMemberByPubkey.get(participant.pubkey),
+                      );
+                      const canRemove =
+                        !parentChannelId &&
+                        !isDirectMessage &&
+                        canRemoveRoomParticipant(
+                          viewerRoomRole,
+                          targetRole,
+                          participant.pubkey === userPubkey,
+                        );
+                      const removing = membershipActionPubkey === participant.pubkey;
                       return (
                         <View
                           accessibilityLabel={`${displayName}, ${participant.kind}, at ${handle}`}
@@ -1208,9 +1349,28 @@ export default function BuzzChat() {
                               @{handle}
                             </Text>
                           </View>
-                          <Text style={styles.rosterKind}>
-                            {participant.kind === 'agent' ? 'AGENT' : 'PERSON'}
-                          </Text>
+                          <View style={styles.rosterActions}>
+                            <Text style={styles.rosterKind}>
+                              {participant.kind === 'agent' ? 'AGENT' : 'PERSON'}
+                              {targetRole && targetRole !== 'member'
+                                ? ` · ${targetRole.toUpperCase()}`
+                                : ''}
+                            </Text>
+                            {canRemove && (
+                              <TouchableOpacity
+                                accessibilityLabel={`Remove ${displayName} from this ${ROOM_LABEL}`}
+                                accessibilityRole="button"
+                                disabled={Boolean(membershipActionPubkey)}
+                                onPress={() => handleRemoveRoomMember(participant)}
+                                style={styles.rosterRemoveButton}
+                                testID={`remove-room-member-${participant.pubkey}`}
+                              >
+                                <Text style={styles.rosterRemoveText}>
+                                  {removing ? 'REMOVING…' : 'REMOVE'}
+                                </Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
                         </View>
                       );
                     })}
@@ -1221,6 +1381,83 @@ export default function BuzzChat() {
                 <Text style={styles.rosterEmpty}>No visible participants</Text>
               )}
             </ScrollView>
+            {membershipError && (
+              <View accessibilityRole="alert" style={styles.membershipError}>
+                <Text style={styles.membershipErrorText}>! {membershipError}</Text>
+              </View>
+            )}
+          </HullSurface>
+        </View>
+      </Modal>
+
+      <Modal
+        animationType="fade"
+        onRequestClose={() => setRoomActionsVisible(false)}
+        transparent
+        visible={roomActionsVisible}
+      >
+        <View style={styles.roomActionsModalRoot}>
+          <Pressable
+            accessibilityLabel={`Close ${ROOM_LABEL} actions`}
+            onPress={() => setRoomActionsVisible(false)}
+            style={StyleSheet.absoluteFill}
+          />
+          <HullSurface strength="raised" style={styles.roomActionsModal}>
+            <View style={styles.roomActionsModalHeading}>
+              <View style={styles.roomActionsModalCopy}>
+                <Text style={styles.roomActionsModalEyebrow}>{ROOM_LABEL.toUpperCase()}</Text>
+                <Text numberOfLines={1} style={styles.roomActionsModalTitle}>
+                  {roomName}
+                </Text>
+              </View>
+              <TouchableOpacity
+                accessibilityLabel={`Close ${ROOM_LABEL} actions`}
+                onPress={() => setRoomActionsVisible(false)}
+                style={styles.roomActionsModalClose}
+              >
+                <Text style={styles.roomActionsModalCloseText}>×</Text>
+              </TouchableOpacity>
+            </View>
+            {lifecycleAction === 'delete' ? (
+              <TouchableOpacity
+                accessibilityLabel={`Delete ${ROOM_LABEL}`}
+                accessibilityRole="button"
+                disabled={roomLifecycleBusy}
+                onPress={handleRoomLifecycle}
+                style={styles.roomLifecycleAction}
+                testID="delete-room-action"
+              >
+                <View style={styles.roomLifecycleCopy}>
+                  <Text style={styles.roomLifecycleTitle}>
+                    {roomLifecycleBusy ? 'DELETING…' : `DELETE ${ROOM_LABEL.toUpperCase()}`}
+                  </Text>
+                  <Text style={styles.roomLifecycleHint}>Archive; relay data is retained.</Text>
+                </View>
+                <Text style={styles.roomLifecycleGlyph}>□</Text>
+              </TouchableOpacity>
+            ) : lifecycleAction === 'leave' ? (
+              <TouchableOpacity
+                accessibilityLabel={`Leave ${ROOM_LABEL}`}
+                accessibilityRole="button"
+                disabled={roomLifecycleBusy}
+                onPress={handleRoomLifecycle}
+                style={styles.roomLifecycleAction}
+                testID="leave-room-action"
+              >
+                <View style={styles.roomLifecycleCopy}>
+                  <Text style={styles.roomLifecycleTitle}>
+                    {roomLifecycleBusy ? 'LEAVING…' : `LEAVE ${ROOM_LABEL.toUpperCase()}`}
+                  </Text>
+                  <Text style={styles.roomLifecycleHint}>Other members keep their access.</Text>
+                </View>
+                <Text style={styles.roomLifecycleGlyph}>↗</Text>
+              </TouchableOpacity>
+            ) : null}
+            {membershipError && (
+              <View accessibilityRole="alert" style={styles.membershipError}>
+                <Text style={styles.membershipErrorText}>! {membershipError}</Text>
+              </View>
+            )}
           </HullSurface>
         </View>
       </Modal>
@@ -1439,6 +1676,19 @@ const styles = StyleSheet.create({
     fontSize: 24,
     lineHeight: 28,
   },
+  roomActionsButton: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  roomActionsGlyph: {
+    ...Typography.default('semiBold'),
+    color: groknight.steel,
+    fontSize: 12,
+    lineHeight: 16,
+    letterSpacing: 1.2,
+  },
   archivedBadge: {
     backgroundColor: groknight.bgHighlight,
     borderRadius: 3,
@@ -1535,12 +1785,113 @@ const styles = StyleSheet.create({
     lineHeight: 12,
     letterSpacing: 0.7,
   },
+  rosterActions: {
+    flexShrink: 0,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  rosterRemoveButton: {
+    minHeight: 44,
+    paddingLeft: 12,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  rosterRemoveText: {
+    ...Typography.mono('semiBold'),
+    color: groknight.chrome,
+    fontSize: 9,
+    lineHeight: 13,
+    letterSpacing: 0.4,
+  },
   rosterEmpty: {
     ...Typography.default(),
     paddingVertical: 28,
     color: groknight.textMuted,
     fontSize: 12,
     textAlign: 'center',
+  },
+  // ── Room lifecycle menu ─────────────────────────────────────────
+  roomActionsModalRoot: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingBottom: 18,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(5, 5, 6, 0.84)',
+  },
+  roomActionsModal: {
+    width: '100%',
+    maxWidth: 460,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgRaised,
+  },
+  roomActionsModalHeading: {
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  roomActionsModalCopy: { flex: 1, minWidth: 0 },
+  roomActionsModalEyebrow: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textMuted,
+    fontSize: 9,
+    lineHeight: 12,
+    letterSpacing: 0.8,
+  },
+  roomActionsModalTitle: {
+    ...Typography.default('semiBold'),
+    marginTop: 4,
+    color: groknight.textPrimary,
+    fontSize: 19,
+    lineHeight: 24,
+  },
+  roomActionsModalClose: {
+    width: 44,
+    height: 44,
+    marginTop: -10,
+    marginRight: -10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  roomActionsModalCloseText: {
+    ...Typography.default(),
+    color: groknight.steel,
+    fontSize: 24,
+  },
+  roomLifecycleAction: {
+    minHeight: 66,
+    marginTop: 18,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgBase,
+  },
+  roomLifecycleCopy: { flex: 1, minWidth: 0 },
+  roomLifecycleTitle: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 10,
+    lineHeight: 14,
+    letterSpacing: 0.6,
+  },
+  roomLifecycleHint: {
+    ...Typography.default(),
+    marginTop: 3,
+    color: groknight.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  roomLifecycleGlyph: {
+    ...Typography.default(),
+    color: groknight.steel,
+    fontSize: 17,
+    lineHeight: 22,
   },
   // ── Room membership picker ─────────────────────────────────────
   memberModalRoot: {

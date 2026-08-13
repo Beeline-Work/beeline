@@ -23,16 +23,21 @@ import {
   getChannelCommunityId as getChannelCommunityIdFn,
   getChannelRepositoryBinding,
   getChannelMetadata,
+  getChannelRole,
   getParentChannelId as getParentChannelIdFn,
   isMember,
   listChannelsForPubkey,
   listMembers,
+  leaveRoom,
   removeMember,
+  removeRoomMember,
+  archiveRoom,
   listSubchannels,
   sendMessage,
   setMemberRole,
   waitUntilMember,
   waitUntilNotMember,
+  type ChannelRole,
   type ChannelOpsContext,
 } from './channel.js';
 import {
@@ -205,6 +210,25 @@ export class BuzzClient {
 
   listMembers(channelId: string): Promise<ChannelMember[]> {
     return listMembers(this.ctx, channelId);
+  }
+
+  getChannelRole(channelId: string, pubkey = this.identity.publicKey): Promise<ChannelRole | null> {
+    return getChannelRole(this.ctx, channelId, pubkey);
+  }
+
+  /** Remove another member after proving this identity has sufficient Room authority. */
+  removeRoomMember(channelId: string, targetPubkey: string): Promise<void> {
+    return removeRoomMember(this.ctx, channelId, targetPubkey);
+  }
+
+  /** Remove this normal member's own Room membership. */
+  leaveRoom(channelId: string): Promise<void> {
+    return leaveRoom(this.ctx, channelId);
+  }
+
+  /** Archive a top-level Room through the explicit human-admin path. */
+  archiveRoom(channelId: string): Promise<void> {
+    return archiveRoom(this.ctx, channelId);
   }
 
   isMember(channelId: string, pubkey: string): Promise<boolean> {

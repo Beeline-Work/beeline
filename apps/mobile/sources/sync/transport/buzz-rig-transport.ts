@@ -209,6 +209,24 @@ export class BuzzRigTransport implements RigTransport {
     return result.joined;
   }
 
+  /** Remove another Room participant through the SDK's admin-authorized path. */
+  async removeRoomMember(channelId: string, memberPubkey: string): Promise<void> {
+    const client = await this.getClient();
+    await client.removeRoomMember(channelId, memberPubkey);
+  }
+
+  /** Leave a Room as a normal member and wait until the relay projection drops us. */
+  async leaveRoom(channelId: string): Promise<void> {
+    const client = await this.getClient();
+    await client.leaveRoom(channelId);
+  }
+
+  /** Archive a top-level Room through the explicit human-admin path. */
+  async archiveRoom(channelId: string): Promise<void> {
+    const client = await this.getClient();
+    await client.archiveRoom(channelId);
+  }
+
   /** Create or reopen the unique private Room for two Workspace members. */
   async resolveDirectMessage(
     communityId: string,
@@ -485,10 +503,7 @@ export class BuzzRigTransport implements RigTransport {
         if (isControl) {
           const status = tagValue(ev.event, 'status');
           const scopedSubchannel = tagValue(ev.event, 'subchannel');
-          if (
-            status === 'archived' &&
-            (!scopedSubchannel || scopedSubchannel === channelId)
-          ) {
+          if (status === 'archived' && (!scopedSubchannel || scopedSubchannel === channelId)) {
             return true;
           }
         }

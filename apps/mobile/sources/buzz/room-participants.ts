@@ -1,5 +1,6 @@
 type MentionableAgent = { pubkey: string; name: string };
 type RoomRosterMember = { pubkey: string };
+type RoomParticipant = RoomRosterMember & { kind: 'person' | 'agent' };
 
 /**
  * Resolve person-facing Room participants from direct Room membership.
@@ -31,6 +32,19 @@ export function sectionRoomRoster<T extends RoomRosterMember>(
     (roomMemberPubkeys.has(member.pubkey) ? inRoom : addable).push(member);
   }
   return { inRoom, addable };
+}
+
+/** Split the authoritative Room roster by visible identity kind. */
+export function sectionRoomParticipants<T extends RoomParticipant>(
+  participants: T[],
+): {
+  people: T[];
+  agents: T[];
+} {
+  return {
+    people: participants.filter((participant) => participant.kind === 'person'),
+    agents: participants.filter((participant) => participant.kind === 'agent'),
+  };
 }
 
 /** Slack-style participant copy: five names at most, with overflow folded into the fifth slot. */

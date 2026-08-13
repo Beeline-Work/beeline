@@ -3,19 +3,60 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# Change sources/buzz/brand.json, then run this script to swap the mark everywhere.
-mark_color="$(node -p "require('./sources/buzz/brand.json').mark")"
+light_mark="$(node -p "require('./sources/buzz/brand.json').mark")"
+dark_mark="#0b0b0d"
 surface_color="#090909"
-icon_svg="sources/assets/images/icon.svg"
-mark_svg="sources/assets/images/mark.svg"
+image_dir="sources/assets/images"
+font_file="sources/assets/fonts/BricolageGrotesque-Bold.ttf"
 
-sed -i -E "s/stroke=\"#[0-9a-fA-F]{6}\"/stroke=\"${mark_color}\"/" "$mark_svg"
-sed -i -E "s/fill=\"#[0-9a-fA-F]{6}\"/fill=\"${surface_color}\"/; s/stroke=\"#[0-9a-fA-F]{6}\"/stroke=\"${mark_color}\"/" "$icon_svg"
+render_svg() {
+  local source="$1"
+  local geometry="$2"
+  local destination="$3"
+  convert -background none "$source" -resize "$geometry" \
+    -define png:exclude-chunk=date,time "$destination"
+}
 
-convert -background none "$icon_svg" -resize 1024x1024 sources/assets/images/icon.png
-convert -background none "$icon_svg" -resize 1024x1024 sources/assets/images/favicon.png
-convert -background none "$icon_svg" -resize 1024x1024 sources/assets/images/splash-android-light.png
-convert -background none "$icon_svg" -resize 1024x1024 sources/assets/images/splash-android-dark.png
-convert -background none "$mark_svg" -resize 1024x1024 sources/assets/images/icon-adaptive.png
+render_lockup() {
+  local color="$1"
+  local scale="$2"
+  local destination="$3"
+  local canvas_width=$((180 * scale))
+  local canvas_height=$((154 * scale))
+  local mark_size=$((112 * scale))
+  local word_size=$((28 * scale))
+  local word_y=$((112 * scale))
+  local mark_source="$image_dir/mark.svg"
 
-echo "Generated monochrome brand assets with mark ${mark_color} on ${surface_color}."
+  if [[ "$color" == "$dark_mark" ]]; then
+    mark_source="$image_dir/mark-dark.svg"
+  fi
+
+  convert -size "${canvas_width}x${canvas_height}" xc:none \
+    \( -background none "$mark_source" -resize "${mark_size}x${mark_size}" \) \
+    -gravity north -geometry +0+0 -composite \
+    \( -background none -fill "$color" -font "$font_file" -pointsize "$word_size" label:beeline \) \
+    -gravity north -geometry "+0+${word_y}" -composite \
+    -define png:exclude-chunk=date,time \
+    "$destination"
+}
+
+render_svg "$image_dir/icon.svg" 1024x1024 "$image_dir/icon.png"
+render_svg "$image_dir/icon.svg" 1024x1024 "$image_dir/favicon.png"
+render_svg "$image_dir/icon.svg" 1024x1024 "$image_dir/splash-android-light.png"
+render_svg "$image_dir/icon.svg" 1024x1024 "$image_dir/splash-android-dark.png"
+render_svg "$image_dir/mark.svg" 1024x1024 "$image_dir/icon-adaptive.png"
+render_svg "$image_dir/mark.svg" 1024x1024 "$image_dir/icon-monochrome.png"
+render_svg "$image_dir/mark.svg" 512x512 "$image_dir/icon-notification.png"
+render_svg "$image_dir/mark-dark.svg" 1024x1024 "$image_dir/logo-black.png"
+
+render_lockup "$dark_mark" 1 "$image_dir/logotype-dark.png"
+render_lockup "$dark_mark" 2 "$image_dir/logotype-dark@2x.png"
+render_lockup "$dark_mark" 3 "$image_dir/logotype-dark@3x.png"
+render_lockup "$light_mark" 1 "$image_dir/logotype-light.png"
+render_lockup "$light_mark" 2 "$image_dir/logotype-light@2x.png"
+render_lockup "$light_mark" 3 "$image_dir/logotype-light@3x.png"
+
+convert "$image_dir/favicon-active.svg" -define icon:auto-resize=48,32,16 public/favicon-active.ico
+
+echo "Generated continuous-line brand assets in ${light_mark}, ${dark_mark}, and ${surface_color}."

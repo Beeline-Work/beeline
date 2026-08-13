@@ -123,7 +123,7 @@ export const SettingsView = React.memo(function SettingsView({
                         <Image
                             source={theme.dark ? require('@/assets/images/logotype-light.png') : require('@/assets/images/logotype-dark.png')}
                             contentFit="contain"
-                            style={{ width: 300, height: 90, marginBottom: 12 }}
+                            style={{ width: 180, height: 154, marginBottom: 12 }}
                         />
                     )}
                 </View>

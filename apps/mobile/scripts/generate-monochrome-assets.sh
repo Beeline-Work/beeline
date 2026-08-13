@@ -8,12 +8,25 @@ dark_mark="#0b0b0d"
 surface_color="#090909"
 image_dir="sources/assets/images"
 font_file="sources/assets/fonts/BricolageGrotesque-Bold.ttf"
+# The mark is 146 units tall on its 240-unit source canvas, leaving an
+# average 47-unit vertical margin. 59.22 / 47 = 1.26, so the new mark height
+# is 121.56 units and the corresponding linear scale is 83.260274%.
+icon_mark_scale="83.260274%"
 
 render_svg() {
   local source="$1"
   local geometry="$2"
   local destination="$3"
   convert -background none "$source" -resize "$geometry" \
+    -define png:exclude-chunk=date,time "$destination"
+}
+
+render_inset_svg() {
+  local source="$1"
+  local geometry="$2"
+  local destination="$3"
+  convert -background none "$source" -resize "$geometry" \
+    -resize "$icon_mark_scale" -gravity center -extent "$geometry" \
     -define png:exclude-chunk=date,time "$destination"
 }
 
@@ -45,9 +58,9 @@ render_svg "$image_dir/icon.svg" 1024x1024 "$image_dir/icon.png"
 render_svg "$image_dir/icon.svg" 1024x1024 "$image_dir/favicon.png"
 render_svg "$image_dir/icon.svg" 1024x1024 "$image_dir/splash-android-light.png"
 render_svg "$image_dir/icon.svg" 1024x1024 "$image_dir/splash-android-dark.png"
-render_svg "$image_dir/mark.svg" 1024x1024 "$image_dir/icon-adaptive.png"
-render_svg "$image_dir/mark.svg" 1024x1024 "$image_dir/icon-monochrome.png"
-render_svg "$image_dir/mark.svg" 512x512 "$image_dir/icon-notification.png"
+render_inset_svg "$image_dir/mark.svg" 1024x1024 "$image_dir/icon-adaptive.png"
+render_inset_svg "$image_dir/mark.svg" 1024x1024 "$image_dir/icon-monochrome.png"
+render_inset_svg "$image_dir/mark.svg" 512x512 "$image_dir/icon-notification.png"
 render_svg "$image_dir/mark-dark.svg" 1024x1024 "$image_dir/logo-black.png"
 
 render_lockup "$dark_mark" 1 "$image_dir/logotype-dark.png"

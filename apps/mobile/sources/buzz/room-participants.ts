@@ -1,6 +1,77 @@
 type MentionableAgent = { pubkey: string; name: string };
 type RoomRosterMember = { pubkey: string };
 
+export type MentionCandidate = {
+  name: string;
+  handle: string;
+};
+
+export type ActiveMention = {
+  start: number;
+  end: number;
+  query: string;
+};
+
+const MENTION_QUERY_PATTERN = /(?:^|[\s([{])@([\p{L}\p{M}\p{N}_-]*)$/u;
+
+function normalizeMentionSearch(value: string): string {
+  return value.normalize('NFKC').toLocaleLowerCase();
+}
+
+/** Find the mention fragment ending at a collapsed composer cursor. */
+export function activeMentionAtCursor(text: string, cursor: number): ActiveMention | null {
+  if (!Number.isInteger(cursor) || cursor < 0 || cursor > text.length) return null;
+  const beforeCursor = text.slice(0, cursor);
+  const match = MENTION_QUERY_PATTERN.exec(beforeCursor);
+  if (!match) return null;
+  const query = match[1] ?? '';
+  return {
+    start: cursor - query.length - 1,
+    end: cursor,
+    query,
+  };
+}
+
+/** Prefix matches lead substring matches while preserving Room roster order within each group. */
+export function filterMentionCandidates<T extends MentionCandidate>(
+  candidates: readonly T[],
+  query: string,
+  limit = 6,
+): { matches: T[]; overflow: number } {
+  const normalizedQuery = normalizeMentionSearch(query);
+  const matching = candidates
+    .map((candidate, index) => {
+      const name = normalizeMentionSearch(candidate.name);
+      const handle = normalizeMentionSearch(candidate.handle);
+      if (!name.includes(normalizedQuery) && !handle.includes(normalizedQuery)) return null;
+      return {
+        candidate,
+        index,
+        prefix: name.startsWith(normalizedQuery) || handle.startsWith(normalizedQuery),
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null)
+    .sort((a, b) => Number(b.prefix) - Number(a.prefix) || a.index - b.index);
+  const safeLimit = Math.max(0, limit);
+  return {
+    matches: matching.slice(0, safeLimit).map((item) => item.candidate),
+    overflow: Math.max(0, matching.length - safeLimit),
+  };
+}
+
+/** Replace only the active @fragment and return the cursor position after the inserted handle. */
+export function replaceActiveMention(
+  text: string,
+  mention: ActiveMention,
+  handle: string,
+): { text: string; cursor: number } {
+  const inserted = `@${handle}`;
+  return {
+    text: `${text.slice(0, mention.start)}${inserted}${text.slice(mention.end)}`,
+    cursor: mention.start + inserted.length,
+  };
+}
+
 /**
  * Resolve person-facing Room participants from direct Room membership.
  * Workspace Rooms exclude infrastructure-only keys that have Room authority

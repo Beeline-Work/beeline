@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  activeMentionAtCursor,
+  filterMentionCandidates,
   formatRoomParticipantList,
   formatRoomParticipantTotal,
   mentionedAgentPubkey,
+  replaceActiveMention,
   roomParticipantPubkeys,
   sectionRoomRoster,
 } from './room-participants';
@@ -57,5 +60,36 @@ describe('Room participant presentation', () => {
     expect(mentionedAgentPubkey('please ask @Brisk Pilot to inspect this', agents)).toBe('agent-a');
     expect(mentionedAgentPubkey('hello @brisk!', agents)).toBe('agent-b');
     expect(mentionedAgentPubkey('email @briskness later', agents)).toBeUndefined();
+  });
+
+  it('finds a mention at the cursor without treating emails or word-internal @ as mentions', () => {
+    expect(activeMentionAtCursor('@li', 3)).toEqual({ start: 0, end: 3, query: 'li' });
+    expect(activeMentionAtCursor('ask (@li about it', 8)).toEqual({
+      start: 5,
+      end: 8,
+      query: 'li',
+    });
+    expect(activeMentionAtCursor('mail a@li', 9)).toBeNull();
+    expect(activeMentionAtCursor('word@li', 7)).toBeNull();
+    expect(activeMentionAtCursor('@li later', 9)).toBeNull();
+  });
+
+  it('ranks prefix matches before substring matches and reports capped overflow', () => {
+    const candidates = [
+      { name: 'Alice', handle: 'alice' },
+      { name: 'Elio', handle: 'elio' },
+      { name: 'Lina', handle: 'lina' },
+    ];
+
+    expect(filterMentionCandidates(candidates, 'li', 2)).toEqual({
+      matches: [candidates[2], candidates[0]],
+      overflow: 1,
+    });
+  });
+
+  it('replaces the mention fragment at the cursor without disturbing trailing text', () => {
+    expect(
+      replaceActiveMention('Ask @li tomorrow', { start: 4, end: 7, query: 'li' }, 'lina'),
+    ).toEqual({ text: 'Ask @lina tomorrow', cursor: 9 });
   });
 });

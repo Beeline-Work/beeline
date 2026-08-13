@@ -48,6 +48,7 @@ import {
   createInvite,
   getCommunity,
   listCommunities,
+  repairCommunityRoomMemberships,
   redeemInvite,
 } from './community.js';
 import { publishEvent, queryEvents, type HttpBridgeOptions } from './http.js';
@@ -290,9 +291,17 @@ export class BuzzClient {
     return getCommunity(this.ctx, communityId);
   }
 
-  /** Communities for any pubkey; defaults to this client's restored identity. */
-  listCommunities(pubkey = this.identity.publicKey): Promise<Community[]> {
-    return listCommunities(this.ctx, pubkey);
+  /**
+   * Communities for any pubkey; defaults to this client's restored identity.
+   * Self-listing also repairs missing direct Room projections for human members.
+   */
+  async listCommunities(pubkey = this.identity.publicKey): Promise<Community[]> {
+    const communities = await listCommunities(this.ctx, pubkey);
+    if (pubkey !== this.identity.publicKey) return communities;
+    for (const community of communities) {
+      await repairCommunityRoomMemberships(this.ctx, community.communityId);
+    }
+    return communities;
   }
 
   communityChannels(communityId: string): Promise<string[]> {
@@ -301,6 +310,11 @@ export class BuzzClient {
 
   communityMembers(communityId: string): Promise<CommunityMember[]> {
     return communityMembers(this.ctx, communityId);
+  }
+
+  /** Restore any missing direct Room projections for this human Workspace member. */
+  repairCommunityRoomMemberships(communityId: string): Promise<string[]> {
+    return repairCommunityRoomMemberships(this.ctx, communityId);
   }
 
   /** Place one existing Workspace member into one Room without elevating their role. */

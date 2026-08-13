@@ -11,6 +11,7 @@ import {
   inviteTokenHash,
   listCommunities,
   parseCommunityInvite,
+  repairCommunityRoomMemberships,
   redeemInvite,
 } from './community.js';
 import { createIdentity } from './identity.js';
@@ -22,6 +23,7 @@ import {
   KIND_CREATE_GROUP,
   KIND_PUT_USER,
   KIND_STREAM_MESSAGE,
+  TAG_AGENT,
   TAG_COMMUNITY,
   TAG_COMMUNITY_INVITE,
 } from './kinds.js';
@@ -302,6 +304,29 @@ describe('community model', () => {
     await expect(listCommunities(ctx(), owner.publicKey)).resolves.toMatchObject([
       { communityId, name: 'Builders' },
     ]);
+  });
+
+  it('never ambiently repairs a registered agent into Workspace Rooms', async () => {
+    const agentMarker = signed(invitee, KIND_STREAM_MESSAGE, [
+      ['h', communityId],
+      ['t', TAG_AGENT],
+    ]);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        return kind === KIND_STREAM_MESSAGE ? jsonResponse([agentMarker]) : jsonResponse([]);
+      }),
+    );
+
+    await expect(repairCommunityRoomMemberships(ctx(invitee), communityId)).resolves.toEqual([]);
+    expect(published).toEqual([]);
   });
 });
 

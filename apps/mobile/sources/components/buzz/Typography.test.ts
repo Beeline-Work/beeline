@@ -54,6 +54,8 @@ const monoStyles = new Set([
   'memberKind',
   'messageButtonText',
   'mentionHandle',
+  'nameHandle',
+  'nameSaved',
   'mentionKind',
   'mentionMenuLabel',
   'mentionOverflow',

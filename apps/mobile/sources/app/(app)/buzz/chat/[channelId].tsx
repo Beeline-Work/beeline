@@ -3,14 +3,7 @@
  *
  * Grok Mono Hull design: neutral metal surfaces with redundant state encoding.
  */
-import React, {
-  useEffect,
-  useState,
-  useRef,
-  useCallback,
-  useLayoutEffect,
-  useMemo,
-} from 'react';
+import React, { useEffect, useState, useRef, useCallback, useLayoutEffect, useMemo } from 'react';
 import {
   Alert,
   View,
@@ -45,6 +38,7 @@ import {
   type MergeTarget,
   type PersonProfile,
   type AttachmentReference,
+  personHandle,
 } from '@beeline/buzz-client';
 import {
   projectChatEvent,
@@ -247,10 +241,13 @@ export default function BuzzChat() {
     const options = new Map<string, RoomMemberOption>();
     for (const person of availablePeople) {
       const shortNpub = shortMemberNpub(person.pubkey);
+      const profileName = personProfileByPubkey.get(person.pubkey)?.name;
       options.set(person.pubkey, {
         pubkey: person.pubkey,
-        name: person.pubkey === userPubkey ? 'You' : shortNpub,
-        handle: person.pubkey === userPubkey ? 'you' : shortNpub.replace(/[^a-zA-Z0-9_-]/g, ''),
+        name: person.pubkey === userPubkey ? 'You' : (profileName ?? shortNpub),
+        handle: profileName
+          ? personHandle(profileName, person.pubkey)
+          : shortNpub.replace(/[^a-zA-Z0-9_-]/g, ''),
         kind: 'person',
       });
     }
@@ -269,7 +266,7 @@ export default function BuzzChat() {
       if (b.pubkey === userPubkey) return 1;
       return a.name.localeCompare(b.name);
     });
-  }, [availableAgents, availablePeople, userPubkey]);
+  }, [availableAgents, availablePeople, personProfileByPubkey, userPubkey]);
   const participantPubkeys = useMemo(
     () =>
       roomParticipantPubkeys(
@@ -353,18 +350,15 @@ export default function BuzzChat() {
     requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated }));
   }, []);
 
-  const handleMessageListScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      if (keyboardFollowPendingRef.current) return;
-      const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-      followsLatestMessageRef.current = isNearChatBottom({
-        contentHeight: contentSize.height,
-        viewportHeight: layoutMeasurement.height,
-        offsetY: contentOffset.y,
-      });
-    },
-    [],
-  );
+  const handleMessageListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (keyboardFollowPendingRef.current) return;
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    followsLatestMessageRef.current = isNearChatBottom({
+      contentHeight: contentSize.height,
+      viewportHeight: layoutMeasurement.height,
+      offsetY: contentOffset.y,
+    });
+  }, []);
 
   const handleMessageListContentSizeChange = useCallback(() => {
     if (!hasPositionedInitialMessagesRef.current) {
@@ -524,10 +518,11 @@ export default function BuzzChat() {
           if (dm) {
             const peerPubkey = directMessagePeer(dm, identity.publicKey);
             const peerAgent = communityAgents.find((agent) => agent.pubkey === peerPubkey);
+            const peerProfile = humanProfiles.find((profile) => profile.pubkey === peerPubkey);
             setRoomName(
               peerAgent
                 ? resolveAgentDisplayIdentity(peerPubkey, peerAgent).name
-                : shortMemberNpub(peerPubkey),
+                : (peerProfile?.name ?? shortMemberNpub(peerPubkey)),
             );
           }
           setParticipantsHydrated(true);
@@ -1045,6 +1040,7 @@ export default function BuzzChat() {
       const display = isAgent
         ? resolveAgentDisplayIdentity(item.pubkey ?? 'unknown-agent', knownAgent)
         : null;
+      const personName = item.pubkey ? personProfileByPubkey.get(item.pubkey)?.name : undefined;
 
       if (parentChannelId) {
         return (
@@ -1058,6 +1054,11 @@ export default function BuzzChat() {
                 {!isOwn && display && (
                   <Text numberOfLines={1} style={styles.terminalTurnAuthor}>
                     {display.name}
+                  </Text>
+                )}
+                {!isOwn && !display && personName && (
+                  <Text numberOfLines={1} style={styles.terminalTurnAuthor}>
+                    {personName}
                   </Text>
                 )}
               </View>
@@ -1091,12 +1092,16 @@ export default function BuzzChat() {
                   <PersonAvatar
                     pubkey={item.pubkey}
                     avatarUrl={personProfileByPubkey.get(item.pubkey)?.avatar}
-                    name={shortMemberNpub(item.pubkey)}
+                    name={personName ?? shortMemberNpub(item.pubkey)}
                     size={22}
                   />
                 ) : null}
                 <Text style={[styles.roleLabel, isAgent ? styles.roleAgent : styles.roleUser]}>
-                  {isOwn ? 'YOU' : display ? display.name : shortMemberNpub(item.pubkey ?? '')}
+                  {isOwn
+                    ? 'YOU'
+                    : display
+                      ? display.name
+                      : (personName ?? shortMemberNpub(item.pubkey ?? ''))}
                 </Text>
               </View>
               {item.text ? <Text style={styles.messageText}>{item.text}</Text> : null}

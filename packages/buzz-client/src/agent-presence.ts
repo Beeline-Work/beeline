@@ -1,0 +1,40 @@
+/**
+ * Presence uses the relay's existing parameterized-replaceable application
+ * kind, so each agent/Room retains one current record instead of crowding chat
+ * history. A heartbeat every 45s is cheap enough for a multi-Room daemon while
+ * a 120s lease tolerates transient relay reconnects without leaving a dead
+ * daemon looking online for long.
+ */
+export const AGENT_PRESENCE_HEARTBEAT_MS = 45_000;
+export const AGENT_PRESENCE_STALE_MS = 120_000;
+
+export type AgentPresenceStatus = 'online' | 'offline';
+
+export type AgentPresence = {
+  agentPubkey: string;
+  status: AgentPresenceStatus;
+  observedAt: number;
+};
+
+export function isAgentPresenceOnline(
+  presence: AgentPresence | undefined,
+  now = Date.now(),
+): boolean {
+  return (
+    presence?.status === 'online' &&
+    now - presence.observedAt >= 0 &&
+    now - presence.observedAt <= AGENT_PRESENCE_STALE_MS
+  );
+}
+
+/** Keep the newest signal; an explicit offline marker wins a same-second tie. */
+export function newerAgentPresence(
+  current: AgentPresence | undefined,
+  incoming: AgentPresence,
+): AgentPresence {
+  if (!current || incoming.observedAt > current.observedAt) return incoming;
+  if (incoming.observedAt === current.observedAt && incoming.status === 'offline') {
+    return incoming;
+  }
+  return current;
+}

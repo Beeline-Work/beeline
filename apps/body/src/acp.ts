@@ -109,6 +109,8 @@ export class AcpClient extends EventEmitter {
   private pending = new Map<number, Pending>();
   private activeRunIds = new Map<string, string>();
   private activePromptSessions = new Set<string>();
+  /** Tool metadata arrives in session/update just before a sparse permission request. */
+  private toolCallMetadata = new Map<string, AcpPermissionRequest['toolCall']>();
   private supportsStandardSteering = false;
   private alive = false;
   private agentEnv: Record<string, string>;
@@ -156,13 +158,12 @@ export class AcpClient extends EventEmitter {
       this.alive = false;
       for (const [, p] of this.pending) {
         this.clearTimer(p);
-        p.reject(
-          new Error(`ACP agent ${this.agentCommand} exited code=${code} signal=${signal}`),
-        );
+        p.reject(new Error(`ACP agent ${this.agentCommand} exited code=${code} signal=${signal}`));
       }
       this.pending.clear();
       this.activeRunIds.clear();
       this.activePromptSessions.clear();
+      this.toolCallMetadata.clear();
       this.emit('exit', { code, signal });
     });
 
@@ -209,6 +210,7 @@ export class AcpClient extends EventEmitter {
     this.alive = false;
     this.activeRunIds.clear();
     this.activePromptSessions.clear();
+    this.toolCallMetadata.clear();
   }
 
   get isAlive(): boolean {
@@ -259,11 +261,7 @@ export class AcpClient extends EventEmitter {
     await this.request('session/set_mode', { sessionId, modeId: target });
   }
 
-  async sessionPrompt(
-    sessionId: string,
-    text: string,
-    timeoutMs = 120_000,
-  ): Promise<PromptResult> {
+  async sessionPrompt(sessionId: string, text: string, timeoutMs = 120_000): Promise<PromptResult> {
     const updates: SessionUpdate[] = [];
     let promptRunId: string | undefined;
     const onUpdate = (u: SessionUpdate) => {
@@ -330,11 +328,7 @@ export class AcpClient extends EventEmitter {
    * buzz-agent advertises the target run through ACP session metadata; binding
    * the request to that id prevents a late message from steering a newer turn.
    */
-  async sessionSteer(
-    sessionId: string,
-    text: string,
-    timeoutMs = 60_000,
-  ): Promise<SteerResult> {
+  async sessionSteer(sessionId: string, text: string, timeoutMs = 60_000): Promise<SteerResult> {
     if (this.supportsStandardSteering) {
       const raw = (await this.request(
         '_session/steering',
@@ -439,6 +433,27 @@ export class AcpClient extends EventEmitter {
     if (method === 'session/update') {
       const params = msg.params as { sessionId?: string; update?: Record<string, unknown> };
       if (params?.sessionId && params.update) {
+        const toolCallId = params.update.toolCallId;
+        const sessionUpdate = params.update.sessionUpdate;
+        if (
+          typeof toolCallId === 'string' &&
+          (sessionUpdate === 'tool_call' || sessionUpdate === 'tool_call_update')
+        ) {
+          const metadataKey = `${params.sessionId}\0${toolCallId}`;
+          const status = params.update.status;
+          if (status === 'completed' || status === 'failed') {
+            this.toolCallMetadata.delete(metadataKey);
+          } else {
+            const existing = this.toolCallMetadata.get(metadataKey);
+            this.toolCallMetadata.set(metadataKey, {
+              ...existing,
+              toolCallId,
+              ...(typeof params.update.title === 'string' ? { title: params.update.title } : {}),
+              ...(typeof params.update.kind === 'string' ? { kind: params.update.kind } : {}),
+              ...('rawInput' in params.update ? { rawInput: params.update.rawInput } : {}),
+            });
+          }
+        }
         const u: SessionUpdate = {
           sessionId: params.sessionId,
           update: params.update,
@@ -485,6 +500,10 @@ export class AcpClient extends EventEmitter {
 
   private async handlePermission(id: unknown, params: unknown): Promise<void> {
     const p = (params ?? {}) as AcpPermissionRequest;
+    const toolCallId = p.toolCall?.toolCallId;
+    const metadataKey = p.sessionId && toolCallId ? `${p.sessionId}\0${toolCallId}` : undefined;
+    const tracked = metadataKey ? this.toolCallMetadata.get(metadataKey) : undefined;
+    if (tracked) p.toolCall = { ...tracked, ...p.toolCall };
     let decision: AcpPermissionDecision = this.autoApprove ? 'allow' : 'reject';
     if (this.permissionHandler) {
       try {
@@ -499,6 +518,7 @@ export class AcpClient extends EventEmitter {
         p?.options?.find((o) => o.kind === 'allow_once' || o.kind === 'allow_always') ??
         p?.options?.[0];
       if (allow?.optionId) {
+        if (metadataKey) this.toolCallMetadata.delete(metadataKey);
         this.write({
           jsonrpc: '2.0',
           id,
@@ -512,6 +532,7 @@ export class AcpClient extends EventEmitter {
     // Reject if we cannot approve.
     const reject = p?.options?.find((o) => o.kind === 'reject_once' || o.kind === 'reject_always');
     if (reject?.optionId) {
+      if (metadataKey) this.toolCallMetadata.delete(metadataKey);
       this.write({
         jsonrpc: '2.0',
         id,
@@ -521,6 +542,7 @@ export class AcpClient extends EventEmitter {
       });
       return;
     }
+    if (metadataKey) this.toolCallMetadata.delete(metadataKey);
     this.write({
       jsonrpc: '2.0',
       id,
@@ -528,11 +550,7 @@ export class AcpClient extends EventEmitter {
     });
   }
 
-  private request(
-    method: string,
-    params: unknown,
-    timeoutMs = 60_000,
-  ): Promise<unknown> {
+  private request(method: string, params: unknown, timeoutMs = 60_000): Promise<unknown> {
     if (!this.child || !this.alive) {
       return Promise.reject(new Error('AcpClient not started'));
     }

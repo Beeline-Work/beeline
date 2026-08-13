@@ -5,6 +5,7 @@ import { loadBodyConfig } from './config.js';
 const binaryEnv = {
   BUZZ_AGENT_BIN: process.execPath,
   BUZZ_DEV_MCP_BIN: process.execPath,
+  BUZZ_READONLY_MCP_BIN: process.execPath,
 };
 
 describe('loadBodyConfig relay resolution', () => {

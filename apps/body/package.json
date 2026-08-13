@@ -6,7 +6,8 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "beeline": "./dist/cli.js"
+    "beeline": "./dist/cli.js",
+    "buzz-readonly-mcp": "./dist/read-only-mcp.js"
   },
   "exports": {
     ".": {

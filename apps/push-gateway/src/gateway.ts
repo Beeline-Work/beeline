@@ -1,7 +1,12 @@
 import { KIND_AGENT_SOUL, TAG_AGENT_SOUL } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
 import type { BatchResponse, Messaging } from 'firebase-admin/messaging';
-import { isNotifiableEvent, mapEventToNotification } from './mapping.js';
+import { DeliveryState } from './delivery-state.js';
+import {
+  isNotifiableEvent,
+  isSuppressedFixtureNotification,
+  mapEventToNotification,
+} from './mapping.js';
 import { NotificationMetadataResolver, type RelayEventReader } from './metadata.js';
 import { TokenRegistry } from './registry.js';
 
@@ -16,8 +21,8 @@ type PollResult = 'backoff' | 'busy' | 'empty' | 'polled';
 
 function registeredEventFilters(since: number): Record<string, unknown>[] {
   return [
-    { kinds: [9], since },
-    { kinds: [KIND_AGENT_SOUL], '#t': [TAG_AGENT_SOUL], since },
+    { kinds: [9], since, limit: 1_000 },
+    { kinds: [KIND_AGENT_SOUL], '#t': [TAG_AGENT_SOUL], since, limit: 1_000 },
   ];
 }
 
@@ -38,8 +43,6 @@ export class RegisteredEventPoller {
   private cursor = 0;
   private polling = false;
   private backoffUntilMs = 0;
-  private readonly sinceByPubkey = new Map<string, number>();
-  private readonly seenEvents = new Map<string, number>();
   private readonly initialSince: number;
 
   constructor(
@@ -50,6 +53,7 @@ export class RegisteredEventPoller {
       recipientPubkey: string,
       reader: RelayEventReader,
     ) => Promise<void>,
+    private readonly deliveryState: DeliveryState,
     private readonly now: () => number = Date.now,
   ) {
     this.initialSince = Math.floor(this.now() / 1_000) - 5;
@@ -64,7 +68,7 @@ export class RegisteredEventPoller {
 
     const recipientPubkey = pubkeys[this.cursor % pubkeys.length]!;
     this.cursor = (this.cursor + 1) % pubkeys.length;
-    const since = this.sinceByPubkey.get(recipientPubkey) ?? this.initialSince;
+    const since = this.deliveryState.cursorFor(recipientPubkey, this.initialSince);
     let newestCreatedAt = since;
     const reader = this.readerForPubkey(recipientPubkey);
     this.polling = true;
@@ -74,21 +78,10 @@ export class RegisteredEventPoller {
       events.sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
       for (const event of events) {
         newestCreatedAt = Math.max(newestCreatedAt, event.created_at);
-        const deliveryId = `${recipientPubkey}:${event.id}`;
-        if (this.seenEvents.has(deliveryId)) continue;
-        this.seenEvents.set(deliveryId, event.created_at);
-        try {
-          await this.handleEvent(event, recipientPubkey, reader);
-        } catch (error) {
-          this.seenEvents.delete(deliveryId);
-          throw error;
-        }
+        if (this.deliveryState.isBehindCursor(recipientPubkey, event.created_at)) continue;
+        await this.handleEvent(event, recipientPubkey, reader);
       }
-      this.sinceByPubkey.set(recipientPubkey, Math.max(since, newestCreatedAt - 1));
-      const expiry = Math.floor(this.now() / 1_000) - 600;
-      for (const [deliveryId, createdAt] of this.seenEvents) {
-        if (createdAt < expiry) this.seenEvents.delete(deliveryId);
-      }
+      await this.deliveryState.advanceCursor(recipientPubkey, newestCreatedAt);
       return 'polled';
     } catch (error) {
       const delayMs = retryAfterMs(error);
@@ -105,6 +98,7 @@ export class PushGateway {
   constructor(
     private readonly registry: TokenRegistry,
     private readonly messaging: Messaging,
+    private readonly deliveryState: DeliveryState,
     private readonly metadata = new NotificationMetadataResolver(),
   ) {}
 
@@ -125,8 +119,15 @@ export class PushGateway {
     if (tokens.length === 0) return;
 
     const context = await this.metadata.resolve(event, reader);
+    if (isSuppressedFixtureNotification(event, context)) return;
     const plan = mapEventToNotification(event, context);
     if (!plan) return;
+
+    // Claim durably before FCM. An ambiguous network result is never retried:
+    // at-most-once delivery is more important than risking a duplicate alert.
+    if (!(await this.deliveryState.reserveAttempt(event.id, event.created_at, recipientPubkey))) {
+      return;
+    }
 
     const result = await this.messaging.sendEachForMulticast({
       tokens,
@@ -139,6 +140,7 @@ export class PushGateway {
       },
     });
 
+    await this.deliveryState.markDelivered(event.id, recipientPubkey);
     await this.removePermanentFailures(tokens, result);
     console.log(
       `[push] FCM sent event=${event.id.slice(0, 12)} channel=${channelId} recipient=${recipientPubkey.slice(0, 12)} devices=${tokens.length} success=${result.successCount} failure=${result.failureCount}`,

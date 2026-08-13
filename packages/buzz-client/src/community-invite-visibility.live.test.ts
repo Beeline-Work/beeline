@@ -3,7 +3,7 @@
  * top-level Room. The broad message query mirrors the push gateway's per-reader
  * polling shape; listMyChannels + backfill mirror the mobile Room list/open path.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { createBuzzClient } from './client.js';
 import { createIdentity } from './identity.js';
 import {
@@ -31,10 +31,16 @@ describe.runIf(reachable)('live late Workspace invitee Room visibility', () => {
       host: DEFAULT_HOST,
       identity: friend,
     });
+    let roomId = '';
+    onTestFinished(async () => {
+      if (roomId) await ownerClient.archiveRoom(roomId).catch(() => undefined);
+      ownerClient.disconnect();
+      friendClient.disconnect();
+    });
 
     const communityId = await ownerClient.createCommunity(`workspace-${runId}`);
     await ownerClient.waitUntilMember(communityId, owner.publicKey);
-    const roomId = await ownerClient.createChannel(`room-${runId}`, { communityId });
+    roomId = await ownerClient.createChannel(`room-${runId}`, { communityId });
     const existingText = `existing-${runId}`;
     const notificationText = `notification-${runId}`;
     await ownerClient.messageSubmit(roomId, existingText);
@@ -91,10 +97,16 @@ describe.runIf(reachable)('live late Workspace invitee Room visibility', () => {
       host: DEFAULT_HOST,
       identity: friend,
     });
+    let roomId = '';
+    onTestFinished(async () => {
+      if (roomId) await ownerClient.archiveRoom(roomId).catch(() => undefined);
+      ownerClient.disconnect();
+      friendClient.disconnect();
+    });
 
     const communityId = await ownerClient.createCommunity(`workspace-${runId}`);
     await ownerClient.waitUntilMember(communityId, owner.publicKey);
-    const roomId = await ownerClient.createChannel(`room-${runId}`, { communityId });
+    roomId = await ownerClient.createChannel(`room-${runId}`, { communityId });
     const existingText = `existing-${runId}`;
     const notificationText = `notification-${runId}`;
     await ownerClient.messageSubmit(roomId, existingText);

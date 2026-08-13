@@ -1,13 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import {
-  createBuzzClient,
-  createIdentity,
-  queryEvents,
-  type Identity,
-} from '@beeline/buzz-client';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createBuzzClient, createIdentity, queryEvents, type Identity } from '@beeline/buzz-client';
 import { signEvent } from '@beeline/nostr';
 import type { BatchResponse, Messaging, MulticastMessage } from 'firebase-admin/messaging';
-import { PushGateway, type RelayEventReader } from '../src/gateway.js';
+import { DeliveryState } from '../src/delivery-state.js';
+import { PushGateway, RegisteredEventPoller, type RelayEventReader } from '../src/gateway.js';
 import { TokenRegistry } from '../src/registry.js';
 
 const publicRelayUrl = process.env.BUZZY_RELAY_SUBSCRIPTION_URL ?? 'https://relay.buzzrouter.com';
@@ -20,8 +19,7 @@ function client(identity: Identity) {
 
 function reader(pubkey: string): RelayEventReader {
   return {
-    query: (filters) =>
-      queryEvents({ baseUrl: privateRelayUrl, host: relayHost }, filters, pubkey),
+    query: (filters) => queryEvents({ baseUrl: privateRelayUrl, host: relayHost }, filters, pubkey),
     disconnect: () => undefined,
   };
 }
@@ -68,6 +66,21 @@ async function main(): Promise<void> {
       );
     }
 
+    const unauthenticatedPublicQuery = await fetch(`${publicRelayUrl}/query`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        host: relayHost,
+        'x-pubkey': recipient.publicKey,
+      },
+      body: JSON.stringify(filter),
+    });
+    if (unauthenticatedPublicQuery.status !== 401) {
+      throw new Error(
+        `public relay auth proof failed: expected HTTP 401, got ${unauthenticatedPublicQuery.status}`,
+      );
+    }
+
     const registry = await TokenRegistry.load();
     await registry.register(recipient.publicKey, `throwaway-capture-only-${marker}-not-fcm`);
     const captured: MulticastMessage[] = [];
@@ -82,9 +95,47 @@ async function main(): Promise<void> {
       },
     } as unknown as Messaging;
 
-    const gateway = new PushGateway(registry, messaging);
-    await gateway.handleRelayEvent(messageEvent, recipient.publicKey, reader(recipient.publicKey));
-    if (captured.length !== 1) throw new Error(`expected one FCM payload, got ${captured.length}`);
+    const directory = await mkdtemp(join(tmpdir(), 'buzzy-push-live-proof-'));
+    const deliveryStateFile = join(directory, 'deliveries.json');
+    const replayingReader = (): RelayEventReader => ({
+      query: async (filters) => {
+        const isRegisteredEventPoll =
+          filters.length === 2 &&
+          (filters[0]?.kinds as number[] | undefined)?.includes(9) &&
+          (filters[1]?.kinds as number[] | undefined)?.includes(30078);
+        return isRegisteredEventPoll ? [messageEvent] : reader(recipient.publicKey).query(filters);
+      },
+      disconnect: () => undefined,
+    });
+    const runPoll = async (state: DeliveryState, count: number): Promise<PushGateway> => {
+      const gateway = new PushGateway(registry, messaging, state);
+      const poller = new RegisteredEventPoller(
+        registry,
+        replayingReader,
+        (event, pubkey, scopedReader) => gateway.handleRelayEvent(event, pubkey, scopedReader),
+        state,
+        Date.now,
+      );
+      for (let index = 0; index < count; index += 1) await poller.pollNext();
+      return gateway;
+    };
+
+    const firstState = await DeliveryState.load(deliveryStateFile);
+    await runPoll(firstState, 2);
+    if (captured.length !== 1) {
+      throw new Error(
+        `duplicate poll proof failed: expected one FCM payload, got ${captured.length}`,
+      );
+    }
+
+    const restartedState = await DeliveryState.load(deliveryStateFile);
+    const restartedGateway = await runPoll(restartedState, 1);
+    await restartedGateway.handleRelayEvent(messageEvent, recipient.publicKey, replayingReader());
+    if (captured.length !== 1) {
+      throw new Error(
+        `restart/replay proof failed: expected one FCM payload, got ${captured.length}`,
+      );
+    }
     const payload = captured[0]!;
     if (
       payload.notification?.title !== senderName ||
@@ -102,7 +153,9 @@ async function main(): Promise<void> {
         publicRelay: publicRelayUrl,
         event: messageEvent.id.slice(0, 12),
         acl: { recipient: recipientEvents.length, outsider: outsiderEvents.length },
+        publicRelayUnauthenticatedQueryStatus: unauthenticatedPublicQuery.status,
         fcmPayloadCount: captured.length,
+        dedup: { firstPoll: 1, duplicatePollAdditional: 0, restartReplayAdditional: 0 },
         notification: payload.notification,
         roomName: payload.data?.roomName,
       }),

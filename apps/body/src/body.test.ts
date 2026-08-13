@@ -3,6 +3,9 @@
  * These tests do NOT require a relay or LLM endpoint.
  */
 import { afterEach, describe, it, expect, vi } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { hasWriteTools, inventoryForMcpServers } from './mcp-inventory.js';
 import { parseEnvFile, hasLlmCredentials } from './config.js';
 import {
@@ -597,6 +600,72 @@ describe('first-class assistant messages', () => {
     expect(serialized).toContain('https://relay.example/media/mushroom.png');
     expect(serialized).not.toContain('base64');
     expect(serialized.length).toBeLessThan(2_000);
+  });
+
+  it('uploads an agent worktree file before publishing only its link metadata', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'buzzy-agent-output-'));
+    const fileBytes = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="8" /></svg>';
+    await writeFile(join(workspace, 'mushroom.svg'), fileBytes);
+    const agent = newIdentity('agent-output-upload');
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith('/upload')) {
+          const hash = new Headers(init?.headers).get('X-SHA-256');
+          return new Response(
+            JSON.stringify({
+              url: 'https://relay.example/media/mushroom.svg',
+              sha256: hash,
+              size: new TextEncoder().encode(fileBytes).byteLength,
+              type: 'image/svg+xml',
+              thumb: 'https://relay.example/media/mushroom-thumb.jpg',
+            }),
+            { status: 200 },
+          );
+        }
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: workspace,
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+    );
+
+    try {
+      await Reflect.get(body, 'publishAgentResult').call(
+        body,
+        'room-id',
+        { cwd: workspace },
+        {
+          agentText: 'Here it is. [[buzz-attachment:mushroom.svg]]',
+          updates: [],
+        },
+        'Done.',
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+
+    const serialized = JSON.stringify(published[0]);
+    expect(published[0]!.content).toBe('Here it is.');
+    expect(serialized).toContain('https://relay.example/media/mushroom.svg');
+    expect(serialized).toContain('https://relay.example/media/mushroom-thumb.jpg');
+    expect(serialized).not.toContain(fileBytes);
+    expect(serialized).not.toContain('base64');
   });
 });
 

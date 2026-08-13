@@ -8,7 +8,10 @@ import {
   Alert,
   View,
   Text,
+  Image,
   FlatList,
+  Alert,
+  Linking,
   Modal,
   Pressable,
   ScrollView,
@@ -18,6 +21,8 @@ import {
   Platform,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router, type Href } from 'expo-router';
@@ -31,6 +36,7 @@ import {
   type DirectMessage,
   type MergeTarget,
   type PersonProfile,
+  type AttachmentReference,
 } from '@beeline/buzz-client';
 import {
   projectChatEvent,
@@ -60,6 +66,11 @@ import {
   roomLifecycleAction,
 } from '@/buzz/room-management';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
+import {
+  formatAttachmentSize,
+  uploadChatAttachment,
+  type PickedChatAttachment,
+} from '@/buzz/chat-attachment';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
 import { ChangeReviewPanel } from '@/components/buzz/ChangeReviewPanel';
@@ -127,6 +138,46 @@ function CornerActivity({ message }: { message: ChatDisplayMessage }) {
   );
 }
 
+function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
+  const image = attachment.mimeType.startsWith('image/') && attachment.thumbnailUrl;
+  const open = () => {
+    void Linking.openURL(attachment.url).catch(() => {
+      Alert.alert('Could not open attachment', 'The file link could not be opened on this device.');
+    });
+  };
+  return (
+    <Pressable
+      accessibilityLabel={`Open attachment ${attachment.name}`}
+      accessibilityRole="link"
+      onPress={open}
+      style={styles.attachmentCard}
+      testID={`chat-attachment-${attachment.name}`}
+    >
+      {image ? (
+        <Image
+          accessibilityIgnoresInvertColors
+          resizeMode="cover"
+          source={{ uri: attachment.thumbnailUrl }}
+          style={styles.attachmentThumbnail}
+        />
+      ) : (
+        <View style={styles.attachmentFileGlyph}>
+          <Text style={styles.attachmentFileGlyphText}>▧</Text>
+        </View>
+      )}
+      <View style={styles.attachmentCopy}>
+        <Text numberOfLines={1} style={styles.attachmentName}>
+          {attachment.name}
+        </Text>
+        <Text numberOfLines={1} style={styles.attachmentMeta}>
+          {attachment.mimeType.toUpperCase()} · {formatAttachmentSize(attachment.size)}
+        </Text>
+      </View>
+      <Text style={styles.attachmentOpenGlyph}>↗</Text>
+    </Pressable>
+  );
+}
+
 export default function BuzzChat() {
   const { channelId } = useLocalSearchParams<{ channelId: string }>();
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
@@ -142,6 +193,7 @@ export default function BuzzChat() {
   const [dismissedMentionKey, setDismissedMentionKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [pendingAttachment, setPendingAttachment] = useState<PickedChatAttachment | null>(null);
   const [isArchived, setIsArchived] = useState(false);
   const [userPubkey, setUserPubkey] = useState<string>('');
   const [mergeTarget, setMergeTarget] = useState<MergeTarget | null>(null);
@@ -431,37 +483,48 @@ export default function BuzzChat() {
 
   const handleSend = useCallback(async () => {
     const text = inputText.trim();
-    if (!text || !transport || isArchived) return;
+    if ((!text && !pendingAttachment) || !transport || isArchived) return;
 
     setSending(true);
-    setInputText('');
-    setInputSelection({ start: 0, end: 0 });
-    const optimisticId = `optimistic-${Date.now()}`;
-    addMessages([
-      {
-        id: optimisticId,
-        text,
-        isUser: true,
-        timestamp: Date.now(),
-        pubkey: userPubkey,
-      },
-    ]);
 
     try {
+      const attachments = pendingAttachment
+        ? [await uploadChatAttachment(await transport.ensureClient(), pendingAttachment)]
+        : [];
+      setInputText('');
+      setInputSelection({ start: 0, end: 0 });
+      setPendingAttachment(null);
+      const optimisticId = `optimistic-${Date.now()}`;
+      addMessages([
+        {
+          id: optimisticId,
+          text,
+          isUser: true,
+          timestamp: Date.now(),
+          pubkey: userPubkey,
+          ...(attachments.length ? { attachments } : {}),
+        },
+      ]);
       const mentionedAgent = parentChannelId
         ? undefined
         : mentionedAgentPubkey(text, mentionableAgents);
       const eventId = mentionedAgent
-        ? await transport.messageSubmitMentioningAgent(decodedId, text, mentionedAgent)
-        : await transport.messageSubmitWithEventId({ sessionId: decodedId, text });
+        ? await transport.messageSubmitMentioningAgent(decodedId, text, mentionedAgent, attachments)
+        : await transport.messageSubmitWithEventId({
+            sessionId: decodedId,
+            text,
+            attachments,
+          });
       setMessages((prev) => reconcileOptimisticMessage(prev, optimisticId, eventId));
     } catch (err) {
       console.warn('Send failed:', err);
+      Alert.alert('Attachment not sent', err instanceof Error ? err.message : String(err));
     } finally {
       setSending(false);
     }
   }, [
     inputText,
+    pendingAttachment,
     transport,
     decodedId,
     addMessages,
@@ -470,6 +533,56 @@ export default function BuzzChat() {
     parentChannelId,
     mentionableAgents,
   ]);
+
+  const pickPhoto = useCallback(async () => {
+    if (Platform.OS === 'ios') {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (permission.status !== 'granted') {
+        Alert.alert('Photo access needed', 'Allow photo access to attach an image.');
+        return;
+      }
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsMultipleSelection: false,
+      quality: 1,
+      exif: false,
+    });
+    const asset = result.canceled ? undefined : result.assets[0];
+    if (!asset) return;
+    setPendingAttachment({
+      uri: asset.uri,
+      name: asset.fileName?.trim() || `photo-${Date.now()}.jpg`,
+      mimeType: asset.mimeType ?? 'image/jpeg',
+      size: asset.fileSize ?? 0,
+      width: asset.width,
+      height: asset.height,
+    });
+  }, []);
+
+  const pickDocument = useCallback(async () => {
+    const result = await DocumentPicker.getDocumentAsync({
+      copyToCacheDirectory: true,
+      multiple: false,
+      type: '*/*',
+    });
+    const asset = result.canceled ? undefined : result.assets[0];
+    if (!asset) return;
+    setPendingAttachment({
+      uri: asset.uri,
+      name: asset.name?.trim() || `file-${Date.now()}`,
+      mimeType: asset.mimeType ?? 'application/octet-stream',
+      size: asset.size ?? 0,
+    });
+  }, []);
+
+  const chooseAttachment = useCallback(() => {
+    Alert.alert('Attach to message', 'Choose a photo or a document.', [
+      { text: 'Photo', onPress: () => void pickPhoto() },
+      { text: 'Document', onPress: () => void pickDocument() },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }, [pickDocument, pickPhoto]);
 
   const selectMention = useCallback(
     (participant: RoomMemberOption) => {
@@ -881,9 +994,14 @@ export default function BuzzChat() {
                   </Text>
                 )}
               </View>
-              <Text selectable style={styles.terminalTurnText}>
-                {item.text}
-              </Text>
+              {item.text ? (
+                <Text selectable style={styles.terminalTurnText}>
+                  {item.text}
+                </Text>
+              ) : null}
+              {item.attachments?.map((attachment) => (
+                <AttachmentCard attachment={attachment} key={`${item.id}-${attachment.url}`} />
+              ))}
             </View>
           </NewMessageMaterialize>
         );
@@ -914,7 +1032,10 @@ export default function BuzzChat() {
                   {isOwn ? 'YOU' : display ? display.name : shortMemberNpub(item.pubkey ?? '')}
                 </Text>
               </View>
-              <Text style={styles.messageText}>{item.text}</Text>
+              {item.text ? <Text style={styles.messageText}>{item.text}</Text> : null}
+              {item.attachments?.map((attachment) => (
+                <AttachmentCard attachment={attachment} key={`${item.id}-${attachment.url}`} />
+              ))}
               {item.pubkey && !isOwn && !isAgent && (
                 <Text style={styles.provenanceText}>{shortMemberNpub(item.pubkey)}</Text>
               )}
@@ -1174,6 +1295,26 @@ export default function BuzzChat() {
                 )}
               </View>
             )}
+            {pendingAttachment && (
+              <View style={styles.pendingAttachment} testID="pending-chat-attachment">
+                <View style={styles.pendingAttachmentCopy}>
+                  <Text numberOfLines={1} style={styles.pendingAttachmentName}>
+                    {pendingAttachment.name}
+                  </Text>
+                  <Text style={styles.pendingAttachmentMeta}>
+                    {sending ? 'UPLOADING' : formatAttachmentSize(pendingAttachment.size)}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  accessibilityLabel={`Remove ${pendingAttachment.name}`}
+                  disabled={sending}
+                  onPress={() => setPendingAttachment(null)}
+                  style={styles.pendingAttachmentRemove}
+                >
+                  <Text style={styles.pendingAttachmentRemoveText}>×</Text>
+                </TouchableOpacity>
+              </View>
+            )}
             <View
               style={[
                 styles.composer,
@@ -1184,6 +1325,16 @@ export default function BuzzChat() {
               <Text style={[styles.composerPrefix, isCorner && styles.cornerComposerPrefix]}>
                 ›
               </Text>
+              <TouchableOpacity
+                accessibilityLabel="Attach photo or document"
+                accessibilityRole="button"
+                disabled={sending}
+                onPress={chooseAttachment}
+                style={styles.attachButton}
+                testID="chat-attach-button"
+              >
+                <Text style={styles.attachButtonText}>＋</Text>
+              </TouchableOpacity>
               <TextInput
                 ref={composerRef}
                 style={[styles.input, isCorner && styles.cornerInput]}
@@ -1218,10 +1369,11 @@ export default function BuzzChat() {
               <TouchableOpacity
                 style={[
                   styles.sendButton,
-                  (!inputText.trim() || sending) && styles.sendButtonDisabled,
+                  ((!inputText.trim() && !pendingAttachment) || sending) &&
+                    styles.sendButtonDisabled,
                 ]}
                 onPress={handleSend}
-                disabled={!inputText.trim() || sending}
+                disabled={(!inputText.trim() && !pendingAttachment) || sending}
               >
                 <Text
                   style={[
@@ -2071,6 +2223,59 @@ const styles = StyleSheet.create({
     color: groknight.textMuted,
     marginTop: 4,
   },
+  attachmentCard: {
+    minWidth: 0,
+    width: '100%',
+    minHeight: 58,
+    marginTop: 8,
+    padding: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgBase,
+  },
+  attachmentThumbnail: {
+    width: 46,
+    height: 46,
+    backgroundColor: groknight.bgHighlight,
+  },
+  attachmentFileGlyph: {
+    width: 46,
+    height: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: groknight.border,
+    backgroundColor: groknight.bgHighlight,
+  },
+  attachmentFileGlyphText: {
+    ...Typography.default(),
+    color: groknight.steel,
+    fontSize: 20,
+  },
+  attachmentCopy: { flex: 1, minWidth: 0 },
+  attachmentName: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  attachmentMeta: {
+    ...Typography.mono(),
+    marginTop: 3,
+    color: groknight.textMuted,
+    fontSize: 8,
+    lineHeight: 11,
+  },
+  attachmentOpenGlyph: {
+    ...Typography.default(),
+    width: 22,
+    color: groknight.steel,
+    fontSize: 14,
+    textAlign: 'center',
+  },
 
   // ── Corner terminal transcript ─────────────────────────────────
   activityGroup: {
@@ -2478,6 +2683,41 @@ const styles = StyleSheet.create({
     lineHeight: 12,
     letterSpacing: 0.4,
   },
+  pendingAttachment: {
+    minWidth: 0,
+    minHeight: 44,
+    marginBottom: 6,
+    paddingLeft: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgHighlight,
+  },
+  pendingAttachmentCopy: { flex: 1, minWidth: 0 },
+  pendingAttachmentName: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  pendingAttachmentMeta: {
+    ...Typography.mono(),
+    color: groknight.textMuted,
+    fontSize: 8,
+    lineHeight: 11,
+  },
+  pendingAttachmentRemove: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pendingAttachmentRemoveText: {
+    ...Typography.default(),
+    color: groknight.textSecondary,
+    fontSize: 20,
+  },
   composer: {
     height: 46,
     flexDirection: 'row',
@@ -2501,6 +2741,20 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   cornerComposerPrefix: { ...Typography.mono(), color: groknight.textSecondary },
+  attachButton: {
+    width: 40,
+    height: 40,
+    marginLeft: -6,
+    marginRight: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  attachButtonText: {
+    ...Typography.default(),
+    color: groknight.textMuted,
+    fontSize: 18,
+    lineHeight: 22,
+  },
   input: {
     ...Typography.default(),
     flex: 1,

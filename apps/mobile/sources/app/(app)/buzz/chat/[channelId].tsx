@@ -41,8 +41,11 @@ import { groknight } from '@/buzz/groknight';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
 import {
+  activeMentionAtCursor,
+  filterMentionCandidates,
   formatRoomParticipantTotal,
   mentionedAgentPubkey,
+  replaceActiveMention,
   roomParticipantPubkeys,
   sectionRoomRoster,
 } from '@/buzz/room-participants';
@@ -63,7 +66,8 @@ import {
 
 type RoomMemberOption = {
   pubkey: string;
-  label: string;
+  name: string;
+  handle: string;
   kind: 'person' | 'agent';
   agent?: Agent;
 };
@@ -120,10 +124,14 @@ export default function BuzzChat() {
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList<ChatDisplayMessage>>(null);
+  const composerRef = useRef<TextInput>(null);
 
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
   const [messages, setMessages] = useState<ChatDisplayMessage[]>([]);
   const [inputText, setInputText] = useState('');
+  const [inputSelection, setInputSelection] = useState({ start: 0, end: 0 });
+  const [highlightedMentionIndex, setHighlightedMentionIndex] = useState(0);
+  const [dismissedMentionKey, setDismissedMentionKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [isArchived, setIsArchived] = useState(false);
@@ -159,16 +167,20 @@ export default function BuzzChat() {
   const memberOptions = useMemo<RoomMemberOption[]>(() => {
     const options = new Map<string, RoomMemberOption>();
     for (const person of availablePeople) {
+      const shortNpub = shortMemberNpub(person.pubkey);
       options.set(person.pubkey, {
         pubkey: person.pubkey,
-        label: person.pubkey === userPubkey ? 'You' : shortMemberNpub(person.pubkey),
+        name: person.pubkey === userPubkey ? 'You' : shortNpub,
+        handle: person.pubkey === userPubkey ? 'you' : shortNpub.replace(/[^a-zA-Z0-9_-]/g, ''),
         kind: 'person',
       });
     }
     for (const agent of availableAgents) {
+      const display = resolveAgentDisplayIdentity(agent.pubkey, agent);
       options.set(agent.pubkey, {
         pubkey: agent.pubkey,
-        label: resolveAgentDisplayIdentity(agent.pubkey, agent).name,
+        name: display.name,
+        handle: display.handle,
         kind: 'agent',
         agent,
       });
@@ -176,7 +188,7 @@ export default function BuzzChat() {
     return [...options.values()].sort((a, b) => {
       if (a.pubkey === userPubkey) return -1;
       if (b.pubkey === userPubkey) return 1;
-      return a.label.localeCompare(b.label);
+      return a.name.localeCompare(b.name);
     });
   }, [availableAgents, availablePeople, userPubkey]);
   const participantPubkeys = useMemo(
@@ -200,8 +212,31 @@ export default function BuzzChat() {
     () =>
       roomParticipants
         .filter((participant) => participant.kind === 'agent')
-        .map((participant) => ({ pubkey: participant.pubkey, name: participant.label })),
+        .map((participant) => ({ pubkey: participant.pubkey, name: participant.name })),
     [roomParticipants],
+  );
+  const activeMention = useMemo(
+    () =>
+      !parentChannelId && inputSelection.start === inputSelection.end
+        ? activeMentionAtCursor(inputText, inputSelection.start)
+        : null,
+    [inputSelection.end, inputSelection.start, inputText, parentChannelId],
+  );
+  const mentionMenuKey = activeMention
+    ? `${inputText}:${activeMention.start}:${activeMention.end}`
+    : null;
+  const mentionSuggestions = useMemo(
+    () =>
+      activeMention
+        ? filterMentionCandidates(roomParticipants, activeMention.query)
+        : { matches: [], overflow: 0 },
+    [activeMention, roomParticipants],
+  );
+  const mentionMenuVisible = Boolean(
+    composerFocused &&
+    mentionMenuKey &&
+    mentionMenuKey !== dismissedMentionKey &&
+    mentionSuggestions.matches.length > 0,
   );
   const isCorner = Boolean(parentChannelId);
   const isDirectMessage = Boolean(directMessage);
@@ -223,6 +258,10 @@ export default function BuzzChat() {
     () => [...messages].reverse().find((message) => message.agentTurn?.status === 'working'),
     [messages],
   );
+
+  useEffect(() => {
+    setHighlightedMentionIndex(0);
+  }, [mentionMenuKey]);
 
   // Helper to add new messages, deduplicating by id.
   const addMessages = useCallback((newMsgs: ChatDisplayMessage[]) => {
@@ -371,6 +410,7 @@ export default function BuzzChat() {
 
     setSending(true);
     setInputText('');
+    setInputSelection({ start: 0, end: 0 });
     const optimisticId = `optimistic-${Date.now()}`;
     addMessages([
       {
@@ -405,6 +445,37 @@ export default function BuzzChat() {
     parentChannelId,
     mentionableAgents,
   ]);
+
+  const selectMention = useCallback(
+    (participant: RoomMemberOption) => {
+      if (!activeMention) return;
+      const inserted = replaceActiveMention(inputText, activeMention, participant.handle);
+      const nextSelection = { start: inserted.cursor, end: inserted.cursor };
+      const completedMention = activeMentionAtCursor(inserted.text, inserted.cursor);
+      setInputText(inserted.text);
+      setInputSelection(nextSelection);
+      setDismissedMentionKey(
+        completedMention
+          ? `${inserted.text}:${completedMention.start}:${completedMention.end}`
+          : null,
+      );
+      setHighlightedMentionIndex(0);
+      requestAnimationFrame(() => composerRef.current?.focus());
+      void Haptics.selectionAsync();
+    },
+    [activeMention, inputText],
+  );
+
+  const handleComposerSubmit = useCallback(() => {
+    const selected = mentionMenuVisible
+      ? mentionSuggestions.matches[highlightedMentionIndex]
+      : undefined;
+    if (selected) {
+      selectMention(selected);
+      return;
+    }
+    void handleSend();
+  }, [handleSend, highlightedMentionIndex, mentionMenuVisible, mentionSuggestions, selectMention]);
 
   const handleWritePermission = useCallback(
     async (message: ChatDisplayMessage, decision: 'allow' | 'deny') => {
@@ -470,7 +541,7 @@ export default function BuzzChat() {
         setRoomMemberPubkeys((current) => new Set([...current, option.pubkey]));
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
-        setMembershipError(`Could not add @${option.label}: ${String(err)}`);
+        setMembershipError(`Could not add @${option.name}: ${String(err)}`);
       } finally {
         setAddingMemberPubkey(null);
       }
@@ -491,7 +562,7 @@ export default function BuzzChat() {
         setParticipantPickerVisible(false);
         router.push(`/buzz/chat/${encodeURIComponent(dmChannelId)}` as Href);
       } catch (err) {
-        setMembershipError(`Could not message @${option.label}: ${String(err)}`);
+        setMembershipError(`Could not message @${option.name}: ${String(err)}`);
       } finally {
         setAddingMemberPubkey(null);
       }
@@ -901,6 +972,65 @@ export default function BuzzChat() {
                 <Text style={styles.cancelTurnText}>■ CANCEL</Text>
               </TouchableOpacity>
             )}
+            {mentionMenuVisible && (
+              <View
+                accessibilityLabel="Mention a Room participant"
+                style={styles.mentionMenu}
+                testID="mention-suggestions"
+              >
+                <Text style={styles.mentionMenuLabel}>MENTION</Text>
+                {mentionSuggestions.matches.map((participant, index) => {
+                  const selected = index === highlightedMentionIndex;
+                  const display = participant.agent
+                    ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
+                    : undefined;
+                  return (
+                    <TouchableOpacity
+                      accessibilityLabel={`${participant.name}, @${participant.handle}, ${participant.kind}`}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      key={participant.pubkey}
+                      onPress={() => selectMention(participant)}
+                      style={[styles.mentionRow, selected && styles.mentionRowSelected]}
+                      testID={`mention-suggestion-${participant.handle}`}
+                    >
+                      {display ? (
+                        <AgentAvatar
+                          pubkey={participant.pubkey}
+                          avatarSeed={display.avatarSeed}
+                          avatarUrl={display.avatarUrl}
+                          name={display.name}
+                          size={28}
+                        />
+                      ) : (
+                        <PersonAvatar
+                          pubkey={participant.pubkey}
+                          avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
+                          name={participant.name}
+                          size={28}
+                        />
+                      )}
+                      <View style={styles.mentionIdentity}>
+                        <Text numberOfLines={1} style={styles.mentionName}>
+                          {participant.name}
+                        </Text>
+                        <Text numberOfLines={1} style={styles.mentionHandle}>
+                          @{participant.handle}
+                        </Text>
+                      </View>
+                      <Text style={styles.mentionKind}>
+                        {participant.kind === 'agent' ? 'AGENT' : 'PERSON'}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+                {mentionSuggestions.overflow > 0 && (
+                  <Text style={styles.mentionOverflow} testID="mention-suggestion-overflow">
+                    AND {mentionSuggestions.overflow} OTHERS
+                  </Text>
+                )}
+              </View>
+            )}
             <View
               style={[
                 styles.composer,
@@ -912,17 +1042,35 @@ export default function BuzzChat() {
                 ›
               </Text>
               <TextInput
+                ref={composerRef}
                 style={[styles.input, isCorner && styles.cornerInput]}
                 value={inputText}
                 onChangeText={setInputText}
                 onFocus={() => setComposerFocused(true)}
                 onBlur={() => setComposerFocused(false)}
+                onKeyPress={(event) => {
+                  if (!mentionMenuVisible) return;
+                  const key = event.nativeEvent.key;
+                  if (key === 'ArrowDown' || key === 'ArrowUp') {
+                    event.preventDefault();
+                    const direction = key === 'ArrowDown' ? 1 : -1;
+                    setHighlightedMentionIndex((current) => {
+                      const count = mentionSuggestions.matches.length;
+                      return (current + direction + count) % count;
+                    });
+                  } else if (key === 'Escape' || key === 'Esc') {
+                    event.preventDefault();
+                    setDismissedMentionKey(mentionMenuKey);
+                  }
+                }}
+                onSelectionChange={(event) => setInputSelection(event.nativeEvent.selection)}
                 placeholder={parentChannelId ? 'Steer' : 'Message'}
                 placeholderTextColor={groknight.dim}
                 multiline={false}
                 numberOfLines={1}
                 returnKeyType="send"
-                onSubmitEditing={() => void handleSend()}
+                selection={inputSelection}
+                onSubmitEditing={handleComposerSubmit}
               />
               <TouchableOpacity
                 style={[
@@ -1032,13 +1180,13 @@ export default function BuzzChat() {
                               <PersonAvatar
                                 pubkey={option.pubkey}
                                 avatarUrl={personProfileByPubkey.get(option.pubkey)?.avatar}
-                                name={option.label}
+                                name={option.name}
                                 size={28}
                               />
                             )}
                             <View style={styles.memberPickerCopy}>
                               <Text numberOfLines={1} style={styles.memberPickerName}>
-                                @{option.label}
+                                @{option.name}
                               </Text>
                               <Text style={styles.memberPickerNpub}>
                                 {option.kind === 'agent' ? 'AGENT' : 'PERSON'}
@@ -1048,7 +1196,7 @@ export default function BuzzChat() {
                           <View style={styles.memberPickerActions}>
                             {!isSelf && (
                               <TouchableOpacity
-                                accessibilityLabel={`Message ${option.label}`}
+                                accessibilityLabel={`Message ${option.name}`}
                                 disabled={Boolean(addingMemberPubkey)}
                                 onPress={() => void handleStartDirectMessage(option)}
                                 style={styles.memberPickerActionButton}
@@ -1059,7 +1207,7 @@ export default function BuzzChat() {
                             )}
                             {!inRoom && (
                               <TouchableOpacity
-                                accessibilityLabel={`Add ${option.label}`}
+                                accessibilityLabel={`Add ${option.name}`}
                                 disabled={Boolean(addingMemberPubkey)}
                                 onPress={() => void handleAddRoomMember(option)}
                                 style={styles.memberPickerActionButton}
@@ -1702,6 +1850,69 @@ const styles = StyleSheet.create({
     fontSize: 9,
     lineHeight: 14,
     letterSpacing: 0.5,
+  },
+  mentionMenu: {
+    marginBottom: 6,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    borderRadius: 4,
+    backgroundColor: groknight.bgBase,
+  },
+  mentionMenuLabel: {
+    ...Typography.mono('semiBold'),
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    color: groknight.textMuted,
+    fontSize: 9,
+    lineHeight: 12,
+    letterSpacing: 0.7,
+  },
+  mentionRow: {
+    minHeight: 46,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderTopWidth: 1,
+    borderTopColor: groknight.border,
+  },
+  mentionRowSelected: {
+    backgroundColor: groknight.selection,
+  },
+  mentionIdentity: {
+    flex: 1,
+    minWidth: 0,
+  },
+  mentionName: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 12,
+    lineHeight: 15,
+  },
+  mentionHandle: {
+    ...Typography.mono(),
+    color: groknight.textMuted,
+    fontSize: 10,
+    lineHeight: 13,
+  },
+  mentionKind: {
+    ...Typography.mono('semiBold'),
+    color: groknight.faint,
+    fontSize: 8,
+    letterSpacing: 0.5,
+  },
+  mentionOverflow: {
+    ...Typography.mono('semiBold'),
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderTopWidth: 1,
+    borderTopColor: groknight.border,
+    color: groknight.textMuted,
+    fontSize: 9,
+    lineHeight: 12,
+    letterSpacing: 0.4,
   },
   composer: {
     height: 46,

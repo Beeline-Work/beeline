@@ -3,14 +3,20 @@
  *
  * Grok Mono Hull design: neutral metal surfaces with redundant state encoding.
  */
-import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import React, {
+  useEffect,
+  useState,
+  useRef,
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+} from 'react';
 import {
   Alert,
   View,
   Text,
   Image,
   FlatList,
-  Alert,
   Linking,
   Modal,
   Pressable,
@@ -19,11 +25,13 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { KeyboardAvoidingView, useKeyboardState } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router, type Href } from 'expo-router';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
@@ -71,6 +79,7 @@ import {
   uploadChatAttachment,
   type PickedChatAttachment,
 } from '@/buzz/chat-attachment';
+import { isNearChatBottom } from '@/buzz/chat-scroll';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
 import { ChangeReviewPanel } from '@/components/buzz/ChangeReviewPanel';
@@ -184,6 +193,11 @@ export default function BuzzChat() {
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList<ChatDisplayMessage>>(null);
   const composerRef = useRef<TextInput>(null);
+  const followsLatestMessageRef = useRef(true);
+  const hasPositionedInitialMessagesRef = useRef(false);
+  const keyboardFollowPendingRef = useRef(false);
+  const previousKeyboardHeightRef = useRef(0);
+  const keyboardHeight = useKeyboardState((state) => (state.isVisible ? state.height : 0));
 
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
   const [messages, setMessages] = useState<ChatDisplayMessage[]>([]);
@@ -335,6 +349,54 @@ export default function BuzzChat() {
     [messages],
   );
 
+  const scrollToLatestMessage = useCallback((animated: boolean) => {
+    requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated }));
+  }, []);
+
+  const handleMessageListScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (keyboardFollowPendingRef.current) return;
+      const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+      followsLatestMessageRef.current = isNearChatBottom({
+        contentHeight: contentSize.height,
+        viewportHeight: layoutMeasurement.height,
+        offsetY: contentOffset.y,
+      });
+    },
+    [],
+  );
+
+  const handleMessageListContentSizeChange = useCallback(() => {
+    if (!hasPositionedInitialMessagesRef.current) {
+      hasPositionedInitialMessagesRef.current = true;
+      followsLatestMessageRef.current = true;
+      scrollToLatestMessage(false);
+      return;
+    }
+    if (followsLatestMessageRef.current || keyboardFollowPendingRef.current) {
+      scrollToLatestMessage(true);
+    }
+  }, [scrollToLatestMessage]);
+
+  useLayoutEffect(() => {
+    const keyboardIsOpening = keyboardHeight > 0 && previousKeyboardHeightRef.current <= 0;
+    previousKeyboardHeightRef.current = keyboardHeight;
+    if (!keyboardIsOpening) return;
+
+    keyboardFollowPendingRef.current = followsLatestMessageRef.current;
+    if (!keyboardFollowPendingRef.current) return;
+
+    scrollToLatestMessage(false);
+    const settleTimer = setTimeout(() => {
+      scrollToLatestMessage(false);
+      requestAnimationFrame(() => {
+        keyboardFollowPendingRef.current = false;
+      });
+    }, 350);
+
+    return () => clearTimeout(settleTimer);
+  }, [keyboardHeight, scrollToLatestMessage]);
+
   useEffect(() => {
     setHighlightedMentionIndex(0);
   }, [mentionMenuKey]);
@@ -354,6 +416,8 @@ export default function BuzzChat() {
 
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
+    hasPositionedInitialMessagesRef.current = false;
+    followsLatestMessageRef.current = true;
     setLoading(true);
     setParticipantsHydrated(false);
 
@@ -486,6 +550,7 @@ export default function BuzzChat() {
     if ((!text && !pendingAttachment) || !transport || isArchived) return;
 
     setSending(true);
+    followsLatestMessageRef.current = true;
 
     try {
       const attachments = pendingAttachment
@@ -1194,7 +1259,10 @@ export default function BuzzChat() {
           data={visibleMessages}
           keyExtractor={(item: ChatDisplayMessage) => item.id}
           style={styles.messageList}
-          contentContainerStyle={styles.messageListContent}
+          contentContainerStyle={[
+            styles.messageListContent,
+            { paddingBottom: 12 + keyboardHeight },
+          ]}
           renderItem={renderItem}
           ListEmptyComponent={
             <View style={styles.emptyState}>
@@ -1203,7 +1271,9 @@ export default function BuzzChat() {
               </Text>
             </View>
           }
-          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
+          onContentSizeChange={handleMessageListContentSizeChange}
+          onScroll={handleMessageListScroll}
+          scrollEventThrottle={16}
         />
 
         {/* P2: Archived channels are read-only */}

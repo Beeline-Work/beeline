@@ -93,7 +93,7 @@ When updating this file, preserve this bar for all agents and keep entries conci
 
 - App registration lives in `apps/mobile/sources/push/buzz-push-registration.ts`; runtime defaults/overrides are in `app.config.js` and `sources/buzz/runtime-config.ts`. The public gateway default is `https://push.buzzrouter.com`.
 - Notification presentation authority is `apps/push-gateway/src/mapping.ts`; cached recipient-authorized Room/sender resolution is in `metadata.ts`. Message previews are intentionally lock-screen-visible, while Android `tag`/FCM collapse keys replace rapid updates per Room.
-- Gateway authority and operations: `apps/push-gateway/README.md`. It binds `127.0.0.1:8788` by default, persists registrations under its ignored `.data/`, and requires a service-account path via environment variable; credentials and device tokens must never be logged or committed.
+- Gateway authority and operations: `apps/push-gateway/README.md`; durable production deployment is `apps/push-gateway/deploy/README.md`. Production reads use a host-loopback-only, query-only trusted relay sidecar that preserves the relay's per-recipient channel ACL, while event wakeups stay on the public auth-enforced relay. Credentials and device tokens must never be logged or committed.
 - Gateway checks: `npm run build -w @beeline/push-gateway && npm test -w @beeline/push-gateway`.
 
 ## Community model

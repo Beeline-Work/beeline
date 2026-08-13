@@ -22,7 +22,9 @@ The service account file stays outside the repository. Do not log or commit it.
 | -------------------------------- | -------------------------- | ---------------------------------------------------------------------------------- |
 | `BUZZY_PUSH_SA_FILE`             | —                          | Firebase service-account path; used when `GOOGLE_APPLICATION_CREDENTIALS` is unset |
 | `GOOGLE_APPLICATION_CREDENTIALS` | —                          | Standard Google credential path                                                    |
-| `BUZZY_RELAY_URL`                | `http://127.0.0.1:3010`    | Buzz relay HTTP origin; WS is derived by `@beeline/buzz-client`                    |
+| `BUZZY_RELAY_URL`                | `http://127.0.0.1:3010`    | ACL-scoped HTTP query origin                                                        |
+| `BUZZY_RELAY_HOST`               | subscription origin host   | Relay tenant authority sent to the private query origin                            |
+| `BUZZY_RELAY_SUBSCRIPTION_URL`   | same as `BUZZY_RELAY_URL`  | Authenticated WebSocket event-wakeup origin                                         |
 | `BUZZY_PUSH_HOST`                | `127.0.0.1`                | Registration HTTP bind host                                                        |
 | `PORT`                           | `8788`                     | Registration HTTP port (the public tunnel targets this port)                       |
 | `BUZZY_PUSH_REGISTRY_FILE`       | `.data/registrations.json` | Local token registry path                                                          |
@@ -46,3 +48,7 @@ can select the generic form without changing relay lookup or delivery code.
 Changes under this service require a push-gateway redeploy. Changes to the
 Android notification channel label require a new APK; the application label is
 already Beeline.
+
+The production deployment uses a loopback-only query origin and the public,
+auth-enforced relay only for its authenticated WebSocket wakeup. See
+[`deploy/README.md`](deploy/README.md).

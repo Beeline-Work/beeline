@@ -135,26 +135,53 @@ const CommunityDrawerContext = createContext<CommunityDrawerContextValue | null>
 
 type CommunityDrawerTriggerProps = {
   community?: Community | null;
+  canEditAvatar?: boolean;
+  avatarWorking?: boolean;
+  onEditAvatar?: () => void;
 };
 
-export function CommunityDrawerTrigger({ community }: CommunityDrawerTriggerProps) {
+export function CommunityDrawerTrigger({
+  community,
+  canEditAvatar = false,
+  avatarWorking = false,
+  onEditAvatar,
+}: CommunityDrawerTriggerProps) {
   const drawer = useContext(CommunityDrawerContext);
   if (!drawer) {
     throw new Error('CommunityDrawerTrigger must be rendered inside BuzzCommunityShell.');
   }
+  const editable = canEditAvatar && Boolean(onEditAvatar);
 
   return (
-    <TouchableOpacity
-      accessibilityLabel={`Open ${WORKSPACE_LABEL} switcher`}
-      accessibilityRole="button"
-      accessibilityState={{ expanded: drawer.drawerOpen }}
-      onPress={drawer.openDrawer}
-      style={styles.drawerTrigger}
-      testID="community-drawer-trigger"
-    >
-      <WorkspaceAvatar community={community} size={38} testID="workspace-avatar-header" />
-      <Text style={styles.drawerTriggerChevron}>›</Text>
-    </TouchableOpacity>
+    <View style={styles.drawerTrigger}>
+      <TouchableOpacity
+        accessibilityLabel={
+          editable ? `Change ${WORKSPACE_LABEL} picture` : `Open ${WORKSPACE_LABEL} switcher`
+        }
+        accessibilityRole="button"
+        disabled={editable && avatarWorking}
+        onPress={editable ? onEditAvatar : drawer.openDrawer}
+        style={styles.drawerAvatarButton}
+        testID={editable ? 'workspace-avatar-edit' : 'workspace-avatar-trigger'}
+      >
+        <WorkspaceAvatar community={community} size={38} testID="workspace-avatar-header" />
+        {editable && (
+          <View style={styles.avatarEditBadge}>
+            <Text style={styles.avatarEditBadgeText}>{avatarWorking ? '⋯' : '+'}</Text>
+          </View>
+        )}
+      </TouchableOpacity>
+      <TouchableOpacity
+        accessibilityLabel={`Open ${WORKSPACE_LABEL} switcher`}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: drawer.drawerOpen }}
+        onPress={drawer.openDrawer}
+        style={styles.drawerToggleButton}
+        testID="community-drawer-trigger"
+      >
+        <Text style={styles.drawerTriggerChevron}>›</Text>
+      </TouchableOpacity>
+    </View>
   );
 }
 
@@ -349,17 +376,47 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgTerminal,
   },
   drawerTrigger: {
-    width: 52,
+    width: 76,
     height: 44,
-    marginRight: 10,
+    marginRight: 6,
     flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  drawerAvatarButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  drawerToggleButton: {
+    width: 32,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
   drawerTriggerChevron: {
     ...Typography.default('semiBold'),
-    marginLeft: 2,
     color: groknight.steel,
     fontSize: 13,
+  },
+  avatarEditBadge: {
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
+    width: 17,
+    height: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: groknight.selectedBorder,
+    backgroundColor: groknight.bgRaised,
+  },
+  avatarEditBadgeText: {
+    ...Typography.default('semiBold'),
+    color: groknight.signalBright,
+    fontSize: 11,
+    lineHeight: 13,
   },
 });

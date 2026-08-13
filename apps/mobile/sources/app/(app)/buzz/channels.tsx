@@ -32,6 +32,7 @@ import {
   loadBuzzIdentity,
 } from '@/auth/buzz-identity-storage';
 import { groknight } from '@/buzz/groknight';
+import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { saveLastViewedChannel } from '@/buzz/community-storage';
 import { createCommunityInviteUrl } from '@/buzz/community-invite';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
@@ -166,7 +167,11 @@ async function loadWorkspaceRoster(
   transport: BuzzRigTransport,
   communityId: string,
   viewerPubkey: string,
-): Promise<{ members: WorkspaceMemberDisplayItem[]; profiles: PersonProfile[] }> {
+): Promise<{
+  members: WorkspaceMemberDisplayItem[];
+  profiles: PersonProfile[];
+  canEditAvatar: boolean;
+}> {
   const client = await transport.ensureClient();
   const [workspaceMembers, agents] = await Promise.all([
     client.communityMembers(communityId),
@@ -201,7 +206,12 @@ async function loadWorkspaceRoster(
         };
       }),
   ].sort((a, b) => a.peerName.localeCompare(b.peerName));
-  return { members, profiles };
+  const viewerRole = workspaceMembers.find((member) => member.pubkey === viewerPubkey)?.role;
+  return {
+    members,
+    profiles,
+    canEditAvatar: viewerRole === 'owner' || viewerRole === 'admin',
+  };
 }
 
 async function loadDirectMessageDisplays(
@@ -319,6 +329,8 @@ export default function BuzzChannels() {
   const [creatingChannel, setCreatingChannel] = useState(false);
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
   const [viewerAvatarUrl, setViewerAvatarUrl] = useState<string | undefined>();
+  const [canEditWorkspaceAvatar, setCanEditWorkspaceAvatar] = useState(false);
+  const [workspaceAvatarWorking, setWorkspaceAvatarWorking] = useState(false);
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [readyInviteUrl, setReadyInviteUrl] = useState<string | undefined>(inviteUrl);
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
@@ -338,6 +350,7 @@ export default function BuzzChannels() {
     void (async () => {
       setLoading(true);
       setError(null);
+      setCanEditWorkspaceAvatar(false);
       try {
         const currentIdentity = await loadBuzzIdentity();
         if (!currentIdentity) {
@@ -371,7 +384,7 @@ export default function BuzzChannels() {
 
         const roster = active
           ? await loadWorkspaceRoster(nextTransport, active, currentIdentity.publicKey)
-          : { members: [], profiles: [] };
+          : { members: [], profiles: [], canEditAvatar: false };
         const [viewerProfile, enriched, dms] = await Promise.all([
           active
             ? client.getPersonProfile(active, currentIdentity.publicKey)
@@ -391,6 +404,7 @@ export default function BuzzChannels() {
           setWorkspaceMembers(roster.members);
           setDirectMessages(dms);
           setViewerAvatarUrl(viewerProfile?.avatar);
+          setCanEditWorkspaceAvatar(roster.canEditAvatar);
         }
       } catch (err) {
         if (isCurrent()) setError(String(err));
@@ -435,7 +449,7 @@ export default function BuzzChannels() {
       setDisplayChannels(channels);
       const roster = active
         ? await loadWorkspaceRoster(transport, active, identity.publicKey)
-        : { members: [], profiles: [] };
+        : { members: [], profiles: [], canEditAvatar: false };
       const [enriched, viewerProfile, dms] = await Promise.all([
         enrichDisplayChannels(transport, channels, active),
         active ? client.getPersonProfile(active, identity.publicKey) : Promise.resolve(undefined),
@@ -448,6 +462,7 @@ export default function BuzzChannels() {
       setWorkspaceMembers(roster.members);
       setDirectMessages(dms);
       setViewerAvatarUrl(viewerProfile?.avatar);
+      setCanEditWorkspaceAvatar(roster.canEditAvatar);
     } catch (err) {
       if (isCurrent()) setError(String(err));
     } finally {
@@ -546,6 +561,28 @@ export default function BuzzChannels() {
     }
   }, [activeCommunityId, creatingInvite, readyInviteUrl, relayUrl, transport]);
 
+  const handleChangeWorkspaceAvatar = useCallback(async () => {
+    if (!transport || !activeCommunityId || !canEditWorkspaceAvatar || workspaceAvatarWorking)
+      return;
+    setWorkspaceAvatarWorking(true);
+    setError(null);
+    try {
+      const client = await transport.ensureClient();
+      const avatar = await pickAndUploadAvatar(client);
+      if (!avatar) return;
+      const updated = await client.setCommunityAvatar(activeCommunityId, avatar);
+      setCommunities((current) =>
+        current.map((community) =>
+          community.communityId === activeCommunityId ? updated : community,
+        ),
+      );
+    } catch (err) {
+      setError(`Could not set ${WORKSPACE_LABEL} picture: ${String(err)}`);
+    } finally {
+      setWorkspaceAvatarWorking(false);
+    }
+  }, [activeCommunityId, canEditWorkspaceAvatar, transport, workspaceAvatarWorking]);
+
   if (loading && !transport) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
@@ -567,7 +604,12 @@ export default function BuzzChannels() {
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <HullSurface strength="quiet" style={styles.header}>
-          <CommunityDrawerTrigger community={activeCommunity} />
+          <CommunityDrawerTrigger
+            community={activeCommunity}
+            canEditAvatar={canEditWorkspaceAvatar}
+            avatarWorking={workspaceAvatarWorking}
+            onEditAvatar={() => void handleChangeWorkspaceAvatar()}
+          />
           <View style={styles.headerIdentity}>
             <Text style={styles.headerTitle} numberOfLines={1}>
               {activeCommunity?.name ?? WORKSPACE_LABEL}

@@ -107,6 +107,7 @@ function renderShell(
   onAdd = vi.fn(),
   onSettings = vi.fn(),
   viewer?: { pubkey: string; avatarUrl?: string },
+  avatarEdit?: { canEditAvatar: boolean; avatarWorking?: boolean; onEditAvatar: () => void },
 ): ReactTestRenderer {
   const community = {
     communityId: 'community-1',
@@ -127,7 +128,7 @@ function renderShell(
           viewerPubkey: viewer?.pubkey,
           viewerAvatarUrl: viewer?.avatarUrl,
         },
-        React.createElement(CommunityDrawerTrigger, { community }),
+        React.createElement(CommunityDrawerTrigger, { community, ...avatarEdit }),
       ),
     );
   });
@@ -138,6 +139,7 @@ describe('Workspace drawer', () => {
   it('is hidden by default and toggles from the active Workspace avatar', () => {
     const renderer = renderShell();
     expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'workspace-avatar-edit' })).toHaveLength(0);
     expect(
       renderer.root.findByProps({ testID: 'workspace-avatar-header' }).props.community,
     ).toMatchObject({ communityId: 'community-1', avatar: 'https://example.test/night-shift.png' });
@@ -156,6 +158,23 @@ describe('Workspace drawer', () => {
 
     act(() => renderer.root.findByProps({ testID: 'community-drawer-scrim' }).props.onPress());
     expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);
+  });
+
+  it('shows a separate picture action only to Workspace admins', () => {
+    const onEditAvatar = vi.fn();
+    const renderer = renderShell(vi.fn(), vi.fn(), vi.fn(), undefined, {
+      canEditAvatar: true,
+      onEditAvatar,
+    });
+
+    const edit = renderer.root.findByProps({ testID: 'workspace-avatar-edit' });
+    expect(edit.props.accessibilityLabel).toBe('Change Workspace picture');
+    act(() => edit.props.onPress());
+    expect(onEditAvatar).toHaveBeenCalledOnce();
+    expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);
+
+    act(() => renderer.root.findByProps({ testID: 'community-drawer-trigger' }).props.onPress());
+    expect(renderer.root.findByProps({ testID: 'community-drawer-overlay' })).toBeDefined();
   });
 
   it('closes after selecting or adding a Workspace', () => {

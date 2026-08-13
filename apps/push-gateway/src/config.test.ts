@@ -13,6 +13,7 @@ describe('loadPushGatewayConfig', () => {
       queryRelayUrl: 'http://127.0.0.1:3410',
       relayHost: 'relay.buzzrouter.com',
       subscriptionRelayUrl: 'https://relay.buzzrouter.com',
+      deliveryStateFile: '.data/deliveries.json',
     });
   });
 
@@ -23,6 +24,19 @@ describe('loadPushGatewayConfig', () => {
       subscriptionRelayUrl: 'http://127.0.0.1:3010',
       host: '127.0.0.1',
       port: 8788,
+      deliveryStateFile: '.data/deliveries.json',
     });
+  });
+
+  it('places delivery state beside a custom registry unless explicitly overridden', () => {
+    expect(
+      loadPushGatewayConfig({ BUZZY_PUSH_REGISTRY_FILE: '/srv/push/registrations.json' }),
+    ).toMatchObject({ deliveryStateFile: '/srv/push/deliveries.json' });
+    expect(
+      loadPushGatewayConfig({
+        BUZZY_PUSH_REGISTRY_FILE: '/srv/push/registrations.json',
+        BUZZY_PUSH_DELIVERY_STATE_FILE: '/durable/dedup.json',
+      }),
+    ).toMatchObject({ deliveryStateFile: '/durable/dedup.json' });
   });
 });

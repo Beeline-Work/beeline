@@ -28,6 +28,7 @@ import {
 import {
   projectActivity,
   postAgentMessage,
+  startAgentPresence,
   postAgentTurnStatus,
   postControlMessage,
   stripAgentReplyPreamble,
@@ -1688,18 +1689,23 @@ export class Body {
     boundRepo: BoundRepo,
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<void> {
-    await this.assertRepositorySafety(tlcChannelId, boundRepo);
-    await this.provision(tlcChannelId, boundRepo);
-    if (boundRepo.repositoryKey) await this.restoreSubchannels(tlcChannelId, boundRepo);
-    const pollMs = opts.pollMs ?? 1_000;
-    while (!opts.signal?.aborted) {
-      await this.pollChannelRequests(tlcChannelId, boundRepo);
-      await Promise.all(
-        [...this.subchannels.keys()].map((subchannelId) => this.pollMembers(subchannelId)),
-      );
-      await this.pollDirectRemoteApprovals();
-      await this.pollMergeCompletions();
-      await this.waitForPoll(pollMs, opts.signal);
+    const stopPresence = startAgentPresence(tlcChannelId, this.agentIdentity);
+    try {
+      await this.assertRepositorySafety(tlcChannelId, boundRepo);
+      await this.provision(tlcChannelId, boundRepo);
+      if (boundRepo.repositoryKey) await this.restoreSubchannels(tlcChannelId, boundRepo);
+      const pollMs = opts.pollMs ?? 1_000;
+      while (!opts.signal?.aborted) {
+        await this.pollChannelRequests(tlcChannelId, boundRepo);
+        await Promise.all(
+          [...this.subchannels.keys()].map((subchannelId) => this.pollMembers(subchannelId)),
+        );
+        await this.pollDirectRemoteApprovals();
+        await this.pollMergeCompletions();
+        await this.waitForPoll(pollMs, opts.signal);
+      }
+    } finally {
+      await stopPresence();
     }
   }
 
@@ -1711,52 +1717,56 @@ export class Body {
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<void> {
     if (!boundRepo.repositoryKey) throw new Error('paired Room is missing its repository key');
-    await this.assertRepositorySafety(channelId, boundRepo);
+    const stopPresence = startAgentPresence(channelId, this.agentIdentity);
+    try {
+      await this.assertRepositorySafety(channelId, boundRepo);
 
-    const mergeGate =
-      this.mergeWorkerIdentity && boundRepo.ownerHex
-        ? new DurableMergeGate({
-            worker: this.mergeWorkerIdentity,
-            ownerHex: boundRepo.ownerHex,
-            repo: boundRepo.repo,
-            channelId,
-            targetBranch: boundRepo.targetBranch ?? 'refs/heads/main',
-            ...(this.mergeWorkerRelay ? { relay: this.mergeWorkerRelay } : {}),
-          })
-        : undefined;
+      const mergeGate =
+        this.mergeWorkerIdentity && boundRepo.ownerHex
+          ? new DurableMergeGate({
+              worker: this.mergeWorkerIdentity,
+              ownerHex: boundRepo.ownerHex,
+              repo: boundRepo.repo,
+              channelId,
+              targetBranch: boundRepo.targetBranch ?? 'refs/heads/main',
+              ...(this.mergeWorkerRelay ? { relay: this.mergeWorkerRelay } : {}),
+            })
+          : undefined;
 
-    const pollMs = opts.pollMs ?? 3_000;
-    await this.provision(channelId, boundRepo);
-    await this.restoreSubchannels(channelId, boundRepo);
-
-    while (!opts.signal?.aborted) {
-      // The Workspace supervisor owns current-role discovery. It aborts this
-      // loop when the Room disappears from the agent's member/admin projection,
-      // then waits for accepted turns to drain before disposing the Body.
-      try {
-        await this.pollChannelRequests(channelId, boundRepo);
-      } catch (error) {
-        console.error('[body] repository Room request poll failed:', error);
-      }
-      await Promise.all(
-        [...this.subchannels.keys()].map((subchannelId) => this.pollMembers(subchannelId)),
-      );
-      if (mergeGate) {
+      const pollMs = opts.pollMs ?? 3_000;
+      await this.provision(channelId, boundRepo);
+      await this.restoreSubchannels(channelId, boundRepo);
+      while (!opts.signal?.aborted) {
+        // The Workspace supervisor owns current-role discovery. It aborts this
+        // loop when the Room disappears from the agent's member/admin projection,
+        // then waits for accepted turns to drain before disposing the Body.
         try {
-          const attempts = await mergeGate.poll();
-          for (const attempt of attempts) {
-            console.log(
-              `[gate] ${attempt.outcome.merged ? 'LANDED' : attempt.outcome.reason} ` +
-                `${attempt.candidate.featureBranch} approval=${attempt.approvalId}`,
-            );
-          }
+          await this.pollChannelRequests(channelId, boundRepo);
         } catch (error) {
-          console.error('[gate] Room merge poll failed; will retry:', error);
+          console.error('[body] repository Room request poll failed:', error);
         }
+        await Promise.all(
+          [...this.subchannels.keys()].map((subchannelId) => this.pollMembers(subchannelId)),
+        );
+        if (mergeGate) {
+          try {
+            const attempts = await mergeGate.poll();
+            for (const attempt of attempts) {
+              console.log(
+                `[gate] ${attempt.outcome.merged ? 'LANDED' : attempt.outcome.reason} ` +
+                  `${attempt.candidate.featureBranch} approval=${attempt.approvalId}`,
+              );
+            }
+          } catch (error) {
+            console.error('[gate] Room merge poll failed; will retry:', error);
+          }
+        }
+        await this.pollDirectRemoteApprovals();
+        await this.pollMergeCompletions();
+        await this.waitForPoll(pollMs, opts.signal);
       }
-      await this.pollDirectRemoteApprovals();
-      await this.pollMergeCompletions();
-      await this.waitForPoll(pollMs, opts.signal);
+    } finally {
+      await stopPresence();
     }
   }
 

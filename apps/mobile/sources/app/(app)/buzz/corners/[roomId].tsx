@@ -2,7 +2,13 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { Agent, Community, PersonProfile } from '@beeline/buzz-client';
+import {
+  isAgentPresenceOnline,
+  type Agent,
+  type AgentPresence,
+  type Community,
+  type PersonProfile,
+} from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { cornerStatusPresentation, sortCorners, type CornerSummary } from '@/buzz/corners';
 import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
@@ -14,6 +20,11 @@ import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { HullSurface, PixelLoader } from '@/components/buzz/MonoHull';
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
+import {
+  agentPresenceFromSessionEvent,
+  mergeAgentPresence,
+  presenceMapFromSessionEvents,
+} from '@/buzz/agent-presence';
 
 export default function BuzzCorners() {
   const { roomId } = useLocalSearchParams<{ roomId: string }>();
@@ -30,6 +41,8 @@ export default function BuzzCorners() {
   const [error, setError] = useState<string | null>(null);
   const [viewerPubkey, setViewerPubkey] = useState<string | undefined>();
   const [viewerAvatarUrl, setViewerAvatarUrl] = useState<string | undefined>();
+  const [agentPresences, setAgentPresences] = useState<Record<string, AgentPresence>>({});
+  const [presenceNow, setPresenceNow] = useState(Date.now());
   const transportRef = useRef<BuzzRigTransport | null>(null);
 
   const loadCorners = useCallback(
@@ -40,16 +53,20 @@ export default function BuzzCorners() {
       setError(null);
       try {
         const client = await t.ensureClient();
-        const [nextCorners, metadata, nextCommunities, communityId] = await Promise.all([
-          t.listSubchannelLifecycle(decodedId),
-          client.getChannelMetadata(decodedId),
-          client.listCommunities(),
-          client.getChannelCommunityId(decodedId),
-        ]);
+        const [nextCorners, metadata, nextCommunities, communityId, presenceEvents] =
+          await Promise.all([
+            t.listSubchannelLifecycle(decodedId),
+            client.getChannelMetadata(decodedId),
+            client.listCommunities(),
+            client.getChannelCommunityId(decodedId),
+            t.agentPresenceBackfill(decodedId),
+          ]);
         setCorners(sortCorners(nextCorners));
         setRoomName(metadata?.name?.trim() || ROOM_LABEL);
         setCommunities(nextCommunities);
         setActiveCommunityId(communityId);
+        setAgentPresences(presenceMapFromSessionEvents(presenceEvents));
+        setPresenceNow(Date.now());
         setAgents(communityId ? await client.listAgents(communityId) : []);
         setPersonProfiles(
           communityId
@@ -72,6 +89,7 @@ export default function BuzzCorners() {
 
   useEffect(() => {
     let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
     void (async () => {
       try {
         const identity = await loadBuzzIdentity();
@@ -83,14 +101,27 @@ export default function BuzzCorners() {
         if (cancelled) return;
         transportRef.current = t;
         await loadCorners(t);
+        unsubscribe = t.agentPresenceSubscribe(decodedId, (event) => {
+          if (cancelled) return;
+          const presence = agentPresenceFromSessionEvent(event);
+          if (!presence) return;
+          setAgentPresences((current) => mergeAgentPresence(current, presence));
+          setPresenceNow(Date.now());
+        });
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
     return () => {
       cancelled = true;
+      unsubscribe?.();
     };
-  }, [loadCorners]);
+  }, [decodedId, loadCorners]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setPresenceNow(Date.now()), 5_000);
+    return () => clearInterval(timer);
+  }, []);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -161,9 +192,15 @@ export default function BuzzCorners() {
               (candidate) => candidate.pubkey === item.openerPubkey,
             );
             const display = resolveAgentDisplayIdentity(item.openerPubkey, agent);
+            const displayStatus =
+              agent &&
+              (item.status === 'live' || item.status === 'open') &&
+              !isAgentPresenceOnline(agentPresences[item.openerPubkey], presenceNow)
+                ? { glyph: '□', label: 'OFFLINE' }
+                : status;
             return (
               <TouchableOpacity
-                accessibilityLabel={`View corner ${item.name}, ${status.label.toLowerCase()}`}
+                accessibilityLabel={`View corner ${item.name}, ${displayStatus.label.toLowerCase()}`}
                 style={styles.cornerRow}
                 onPress={() => router.push(`/buzz/chat/${encodeURIComponent(item.id)}`)}
               >
@@ -195,8 +232,8 @@ export default function BuzzCorners() {
                   </Text>
                 </View>
                 <View style={styles.statusBlock}>
-                  <Text style={styles.statusGlyph}>{status.glyph}</Text>
-                  <Text style={styles.statusLabel}>{status.label}</Text>
+                  <Text style={styles.statusGlyph}>{displayStatus.glyph}</Text>
+                  <Text style={styles.statusLabel}>{displayStatus.label}</Text>
                 </View>
                 <Text style={styles.chevron}>›</Text>
               </TouchableOpacity>

@@ -131,6 +131,29 @@ describe('Buzz Room screen event projection', () => {
     expect(displaySequence([complete, working])).toEqual(completed);
   });
 
+  it('projects presence as state without adding a transcript message', () => {
+    const event = raw(
+      'presence-online',
+      'Agent online.',
+      [
+        ['t', 'body-control'],
+        ['t', 'agent-presence'],
+        ['agent', agent],
+        ['status', 'online'],
+      ],
+      1_700_000_000,
+    );
+
+    expect(projectChatEvent(event, viewer)).toEqual({
+      agentPresence: {
+        agentPubkey: agent,
+        status: 'online',
+        observedAt: 1_700_000_000_000,
+      },
+    });
+    expect(displaySequence([event])).toEqual([]);
+  });
+
   it('coalesces activity only inside a turn and keeps final answers as separate units', () => {
     const thinkingOne: ChatDisplayMessage = {
       id: 'activity-1',

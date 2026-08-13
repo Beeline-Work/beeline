@@ -38,6 +38,8 @@ import {
   type MergeTarget,
   type PersonProfile,
   type AttachmentReference,
+  type AgentPresence,
+  isAgentPresenceOnline,
   personHandle,
 } from '@beeline/buzz-client';
 import {
@@ -73,6 +75,7 @@ import {
   type PickedChatAttachment,
 } from '@/buzz/chat-attachment';
 import { isNearChatBottom } from '@/buzz/chat-scroll';
+import { mergeAgentPresence, presenceMapFromSessionEvents } from '@/buzz/agent-presence';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
 import { ChangeReviewPanel } from '@/components/buzz/ChangeReviewPanel';
@@ -201,6 +204,9 @@ export default function BuzzChat() {
   const [directMessage, setDirectMessage] = useState<DirectMessage | null>(null);
   const [composerFocused, setComposerFocused] = useState(false);
   const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
+  const [agentPresences, setAgentPresences] = useState<Record<string, AgentPresence>>({});
+  const [presenceNow, setPresenceNow] = useState(Date.now());
+  const [offlineQueuedIds, setOfflineQueuedIds] = useState<Set<string>>(new Set());
   const agentByPubkey = useMemo(
     () => new Map(availableAgents.map((agent) => [agent.pubkey, agent])),
     [availableAgents],
@@ -261,6 +267,24 @@ export default function BuzzChat() {
     [roomParticipants],
   );
   const roomParticipantTotal = roomParticipants.length;
+  const roomAgents = useMemo(
+    () => roomParticipants.filter((participant) => participant.kind === 'agent'),
+    [roomParticipants],
+  );
+  const onlineAgentCount = roomAgents.filter((agent) =>
+    isAgentPresenceOnline(agentPresences[agent.pubkey], presenceNow),
+  ).length;
+  const hasRoomAgent = roomAgents.length > 0;
+  const agentsOffline = hasRoomAgent && onlineAgentCount === 0;
+  const presenceSummary = hasRoomAgent
+    ? agentsOffline
+      ? roomAgents.length === 1
+        ? 'AGENT OFFLINE'
+        : 'AGENTS OFFLINE'
+      : roomAgents.length === 1
+        ? 'AGENT READY'
+        : `${onlineAgentCount}/${roomAgents.length} AGENTS ONLINE`
+    : undefined;
   const roomMemberByPubkey = useMemo(
     () => new Map(roomMembers.map((member) => [member.pubkey, member])),
     [roomMembers],
@@ -322,6 +346,17 @@ export default function BuzzChat() {
     const latest = visibleMessages.at(-1);
     return isCorner && !isArchived && latest?.isAgentActivity ? latest.id : undefined;
   }, [activeAgentTurn, isArchived, isCorner, visibleMessages]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setPresenceNow(Date.now()), 5_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const applyAgentPresence = useCallback((presence: AgentPresence | undefined) => {
+    if (!presence) return;
+    setAgentPresences((current) => mergeAgentPresence(current, presence));
+    setPresenceNow(Date.now());
+  }, []);
 
   const scrollToLatestMessage = useCallback((animated: boolean) => {
     requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated }));
@@ -391,10 +426,12 @@ export default function BuzzChat() {
 
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
+    let unsubscribePresence: (() => void) | undefined;
     hasPositionedInitialMessagesRef.current = false;
     followsLatestMessageRef.current = true;
     setLoading(true);
     setParticipantsHydrated(false);
+    setAgentPresences({});
 
     (async () => {
       try {
@@ -438,6 +475,9 @@ export default function BuzzChat() {
           directCommunityId ??
           (parentId ? await client.getChannelCommunityId(parentId) : null) ??
           null;
+        const presenceEvents = parentId
+          ? await t.agentPresenceBackfill(parentId)
+          : await t.agentPresenceBackfill(decodedId);
         if (!cancelled) {
           setCommunities(availableCommunities);
           setActiveCommunityId(channelCommunityId);
@@ -447,6 +487,8 @@ export default function BuzzChat() {
           setViewerIsAgent(identityIsAgent);
           setDirectMessage(dm);
           setRoomName(channelMetadata?.name?.trim() || ROOM_LABEL);
+          setAgentPresences(presenceMapFromSessionEvents(presenceEvents));
+          setPresenceNow(Date.now());
           if (parentId) setParentChannelId(parentId);
           let msgs: ChatDisplayMessage[] = [];
           for (const e of events) {
@@ -475,7 +517,12 @@ export default function BuzzChat() {
             setIsArchived(true);
             setApprovalState('merged');
           }
+          applyAgentPresence(projected.agentPresence);
           if (projected.message) addMessages([projected.message]);
+        });
+        unsubscribePresence = t.agentPresenceSubscribe(parentId ?? decodedId, (event) => {
+          if (cancelled) return;
+          applyAgentPresence(projectChatEvent(event, identity.publicKey).agentPresence);
         });
 
         const [communityAgents, communityMembers, archived, mergeInfo] = await Promise.all([
@@ -520,8 +567,9 @@ export default function BuzzChat() {
     return () => {
       cancelled = true;
       if (unsubscribe) unsubscribe();
+      if (unsubscribePresence) unsubscribePresence();
     };
-  }, [decodedId, addMessages]);
+  }, [decodedId, addMessages, applyAgentPresence]);
 
   const handleSend = useCallback(async () => {
     const text = inputText.trim();
@@ -529,6 +577,7 @@ export default function BuzzChat() {
 
     setSending(true);
     followsLatestMessageRef.current = true;
+    const sentWhileOffline = agentsOffline;
 
     try {
       const attachments = pendingAttachment
@@ -539,6 +588,9 @@ export default function BuzzChat() {
       setInputSelection({ start: 0, end: 0 });
       setPendingAttachment(null);
       const optimisticId = `optimistic-${Date.now()}`;
+      if (sentWhileOffline) {
+        setOfflineQueuedIds((current) => new Set(current).add(optimisticId));
+      }
       addMessages([
         {
           id: optimisticId,
@@ -560,6 +612,14 @@ export default function BuzzChat() {
             attachments,
           });
       setMessages((prev) => reconcileOptimisticMessage(prev, optimisticId, eventId));
+      if (sentWhileOffline) {
+        setOfflineQueuedIds((current) => {
+          const next = new Set(current);
+          next.delete(optimisticId);
+          next.add(eventId);
+          return next;
+        });
+      }
     } catch (err) {
       console.warn('Send failed:', err);
       Alert.alert('Attachment not sent', err instanceof Error ? err.message : String(err));
@@ -576,6 +636,7 @@ export default function BuzzChat() {
     userPubkey,
     parentChannelId,
     mentionableAgents,
+    agentsOffline,
   ]);
 
   const pickPhoto = useCallback(async () => {
@@ -938,7 +999,13 @@ export default function BuzzChat() {
         const display = item.corner.agentPubkey
           ? resolveAgentDisplayIdentity(item.corner.agentPubkey, cornerAgent)
           : undefined;
-        const statusLabel = item.corner.status.replace('-', ' ').toUpperCase();
+        const cornerOnline = item.corner.agentPubkey
+          ? isAgentPresenceOnline(agentPresences[item.corner.agentPubkey], presenceNow)
+          : false;
+        const statusLabel =
+          item.corner.status !== 'failed' && !cornerOnline
+            ? 'OFFLINE'
+            : item.corner.status.replace('-', ' ').toUpperCase();
         return (
           <TouchableOpacity
             accessibilityLabel={`${display?.name ?? 'Agent'} work ${statusLabel.toLowerCase()}. View corner`}
@@ -946,7 +1013,7 @@ export default function BuzzChat() {
               router.push(`/buzz/chat/${encodeURIComponent(item.corner!.subchannelId)}` as Href)
             }
             style={styles.cornerStatusCard}
-            testID={`corner-status-${item.corner.status}`}
+            testID={`corner-status-${statusLabel.toLowerCase().replace(' ', '-')}`}
           >
             {item.corner.agentPubkey && (
               <AgentAvatar
@@ -1040,6 +1107,9 @@ export default function BuzzChat() {
                   </Text>
                 )
               ) : null}
+              {isOwn && offlineQueuedIds.has(item.id) && (
+                <Text style={styles.offlineDeliveryNote}>SENT TO ROOM · AGENT OFFLINE</Text>
+              )}
               {item.attachments?.map((attachment) => (
                 <AttachmentCard attachment={attachment} key={`${item.id}-${attachment.url}`} />
               ))}
@@ -1078,6 +1148,9 @@ export default function BuzzChat() {
                 </Text>
               </View>
               {item.text ? <Text style={styles.messageText}>{item.text}</Text> : null}
+              {isOwn && offlineQueuedIds.has(item.id) && (
+                <Text style={styles.offlineDeliveryNote}>SENT TO ROOM · AGENT OFFLINE</Text>
+              )}
               {item.attachments?.map((attachment) => (
                 <AttachmentCard attachment={attachment} key={`${item.id}-${attachment.url}`} />
               ))}
@@ -1097,6 +1170,9 @@ export default function BuzzChat() {
       permissionActionId,
       personProfileByPubkey,
       viewerIsAgent,
+      agentPresences,
+      presenceNow,
+      offlineQueuedIds,
     ],
   );
 
@@ -1151,7 +1227,7 @@ export default function BuzzChat() {
               numberOfLines={1}
             >
               {participantsHydrated
-                ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ·  IN THIS ROOM  ›`
+                ? `${presenceSummary ? `${presenceSummary}  ·  ` : ''}${formatRoomParticipantTotal(roomParticipantTotal)}  ·  IN THIS ROOM  ›`
                 : 'LOADING MEMBERS'}
             </Text>
           </TouchableOpacity>
@@ -1268,13 +1344,23 @@ export default function BuzzChat() {
           <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
             {!parentChannelId && (activeCorner?.corner || activeAgentTurn?.agentTurn) && (
               <View style={styles.agentLiveStatus} testID="agent-live-status">
-                <PixelLoader compact />
+                {!agentsOffline && <PixelLoader compact />}
                 <Text style={styles.agentLiveStatusText}>
-                  {activeAgentTurn?.agentTurn
-                    ? 'thinking…'
-                    : activeCorner?.corner?.status === 'starting'
+                  {agentsOffline
+                    ? 'OFFLINE'
+                    : activeAgentTurn?.agentTurn
                       ? 'thinking…'
-                      : 'working…'}
+                      : activeCorner?.corner?.status === 'starting'
+                        ? 'thinking…'
+                        : 'working…'}
+                </Text>
+              </View>
+            )}
+            {agentsOffline && (
+              <View style={styles.agentOfflineHint} testID="agent-offline-hint">
+                <Text style={styles.agentOfflineHintTitle}>□ AGENT OFFLINE</Text>
+                <Text style={styles.agentOfflineHintText}>
+                  Messages stay in this Room and will be answered when the Agent is back.
                 </Text>
               </View>
             )}
@@ -1453,8 +1539,16 @@ export default function BuzzChat() {
                 <Text style={styles.cornerFooterRule}>╰─ </Text>
                 <Text style={styles.cornerFooterValue}>Agent</Text>
                 <Text style={styles.cornerFooterSeparator}> · edit · </Text>
-                <Text style={mergeTarget ? styles.cornerFooterState : styles.cornerFooterActive}>
-                  active
+                <Text
+                  style={
+                    agentsOffline
+                      ? styles.cornerFooterState
+                      : mergeTarget
+                        ? styles.cornerFooterState
+                        : styles.cornerFooterActive
+                  }
+                >
+                  {agentsOffline ? 'offline' : 'active'}
                 </Text>
                 <Text style={styles.cornerFooterRule}> ─╯</Text>
               </Text>
@@ -1565,7 +1659,9 @@ export default function BuzzChat() {
                           </View>
                           <View style={styles.rosterActions}>
                             <Text style={styles.rosterKind}>
-                              {participant.kind === 'agent' ? 'AGENT' : 'PERSON'}
+                              {participant.kind === 'agent'
+                                ? `AGENT · ${isAgentPresenceOnline(agentPresences[participant.pubkey], presenceNow) ? 'ONLINE' : 'OFFLINE'}`
+                                : 'PERSON'}
                               {targetRole && targetRole !== 'member'
                                 ? ` · ${targetRole.toUpperCase()}`
                                 : ''}
@@ -2285,6 +2381,14 @@ const styles = StyleSheet.create({
     color: groknight.textMuted,
     marginTop: 4,
   },
+  offlineDeliveryNote: {
+    ...Typography.mono('semiBold'),
+    marginTop: 7,
+    color: groknight.textMuted,
+    fontSize: 9,
+    lineHeight: 13,
+    letterSpacing: 0.4,
+  },
   attachmentCard: {
     minWidth: 0,
     width: '100%',
@@ -2578,6 +2682,29 @@ const styles = StyleSheet.create({
     fontSize: 10,
     lineHeight: 14,
     letterSpacing: 0.35,
+  },
+  agentOfflineHint: {
+    minWidth: 0,
+    marginBottom: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgBase,
+  },
+  agentOfflineHintTitle: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 10,
+    lineHeight: 14,
+    letterSpacing: 0.55,
+  },
+  agentOfflineHintText: {
+    ...Typography.default(),
+    marginTop: 3,
+    color: groknight.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
   },
   cancelTurnButton: {
     minHeight: 36,

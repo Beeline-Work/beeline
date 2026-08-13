@@ -2,9 +2,11 @@ import type { AgentActivityItem, SessionEvent } from './rig-transport';
 import {
   parseAttachmentTags,
   type AttachmentReference,
+  type AgentPresence,
   type MergeTarget,
   type SessionEvent as BuzzSessionEvent,
 } from '@beeline/buzz-client';
+import { agentPresenceFromSessionEvent } from '@/buzz/agent-presence';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -182,6 +184,7 @@ export type ChatEventProjection = {
   message?: ChatDisplayMessage;
   mergeTarget?: MergeTarget;
   archiveChannel?: boolean;
+  agentPresence?: AgentPresence;
 };
 
 function eventPayload(event: SessionEvent): UnknownRecord | undefined {
@@ -253,6 +256,8 @@ export function projectChatEvent(
   viewerPubkey: string,
   isNew = false,
 ): ChatEventProjection {
+  const agentPresence = agentPresenceFromSessionEvent(event);
+  if (agentPresence) return { agentPresence };
   const text = eventText(event);
   const pubkey = eventPubkey(event);
   const subchannelId = eventTagValue(event, 'subchannel');

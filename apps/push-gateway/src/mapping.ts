@@ -24,11 +24,7 @@ export interface NotificationFormattingOptions {
 }
 
 const MESSAGE_PREVIEW_LENGTH = 120;
-const CHAT_MESSAGE_MARKERS = new Set([
-  'agent-message',
-  'buzz-agent-request',
-  'buzz-attachment',
-]);
+const CHAT_MESSAGE_MARKERS = new Set(['agent-message', 'buzz-agent-request', 'buzz-attachment']);
 
 function normalizedDisplayText(value: string | undefined, maxLength: number): string | undefined {
   const normalized = value?.trim().replace(/\s+/g, ' ');
@@ -49,6 +45,24 @@ export function isNotifiableEvent(event: NostrEvent): boolean {
     return Boolean(tagValue(event, 'repo') && tagValue(event, 'branch') && tagValue(event, 'tip'));
   }
   return markers.every((marker) => CHAT_MESSAGE_MARKERS.has(marker));
+}
+
+const FIXTURE_ROOM_PATTERNS = [
+  /^ui-demo-/i,
+  /^room-invite-(?:repair|visibility)-/i,
+  /^(?:review-corner-navigation|live-agent-iteration|merged-gate-proof|archived-copy-spike)$/i,
+];
+
+/** Fail closed for checked-in demo/live-test fixtures that must never reach real devices. */
+export function isSuppressedFixtureNotification(
+  event: NostrEvent,
+  context: NotificationContext,
+): boolean {
+  const fixture = tagValue(event, 'fixture');
+  if (fixture && /^(?:demo|test|ui-demo)$/i.test(fixture)) return true;
+  if (FIXTURE_ROOM_PATTERNS.some((pattern) => pattern.test(context.roomName))) return true;
+  const repo = tagValue(event, 'repo')?.split('/').at(-1);
+  return repo ? /^ui-demo-/i.test(repo) : false;
 }
 
 /** The single notification-content policy seam, including message-preview privacy. */

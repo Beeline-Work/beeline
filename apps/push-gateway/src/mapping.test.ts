@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { NostrEvent } from '@beeline/nostr';
-import { mapEventToNotification } from './mapping.js';
+import { isSuppressedFixtureNotification, mapEventToNotification } from './mapping.js';
 
 function event(tags: string[][], content = '  Ship the preview now.  '): NostrEvent {
   return {
@@ -15,6 +15,33 @@ function event(tags: string[][], content = '  Ship the preview now.  '): NostrEv
 }
 
 describe('mapEventToNotification', () => {
+  it('suppresses checked-in demo and live-test fixtures before delivery', () => {
+    expect(
+      isSuppressedFixtureNotification(event([['h', 'fixture']]), {
+        roomName: 'ui-demo-uidemo-123',
+      }),
+    ).toBe(true);
+    expect(
+      isSuppressedFixtureNotification(event([['h', 'fixture']]), {
+        roomName: 'room-invite-repair-abc',
+      }),
+    ).toBe(true);
+    expect(
+      isSuppressedFixtureNotification(
+        event([
+          ['h', 'fixture'],
+          ['repo', `${'d'.repeat(64)}/ui-demo-uidemo-123`],
+        ]),
+        { roomName: 'review-corner-navigation' },
+      ),
+    ).toBe(true);
+    expect(
+      isSuppressedFixtureNotification(event([['h', 'real-room']]), {
+        roomName: 'buzzy',
+      }),
+    ).toBe(false);
+  });
+
   it('maps a channel message to its sender and trimmed plaintext preview', () => {
     const result = mapEventToNotification(event([['h', 'channel-123']]), {
       roomName: 'Demo channel',

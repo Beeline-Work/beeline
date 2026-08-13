@@ -2,6 +2,7 @@ import { createIdentity } from '@beeline/buzz-client';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import type { Messaging } from 'firebase-admin/messaging';
 import { describe, expect, it, vi } from 'vitest';
+import { DeliveryState } from './delivery-state.js';
 import { PushGateway, RegisteredEventPoller } from './gateway.js';
 import { NotificationMetadataResolver, type RelayEventReader } from './metadata.js';
 import { TokenRegistry } from './registry.js';
@@ -26,6 +27,79 @@ function event(id: string, pubkey = AUTHOR, roomId = 'room-1234'): NostrEvent {
 }
 
 describe('RegisteredEventPoller', () => {
+  it('sends exactly once across duplicate polls, restart, and subscription replay', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'buzzy-push-restart-'));
+    const stateFile = join(directory, 'deliveries.json');
+    const registry = await TokenRegistry.load();
+    await registry.register(PUBKEY_A, TOKEN_A);
+    const replayedEvent = event('e');
+    const sendEachForMulticast = vi.fn(async () => ({
+      successCount: 1,
+      failureCount: 0,
+      responses: [{ success: true, messageId: 'capture-only' }],
+    }));
+    const metadata = {
+      resolve: async () => ({ roomName: 'Roadmap', senderName: 'Ada' }),
+      invalidate: () => undefined,
+    } as never;
+
+    const run = async (state: DeliveryState, polls: number): Promise<void> => {
+      const gateway = new PushGateway(
+        registry,
+        { sendEachForMulticast } as unknown as Messaging,
+        state,
+        metadata,
+      );
+      const poller = new RegisteredEventPoller(
+        registry,
+        () => ({ query: async () => [replayedEvent], disconnect: () => undefined }),
+        (relayEvent, recipient, scopedReader) =>
+          gateway.handleRelayEvent(relayEvent, recipient, scopedReader),
+        state,
+        () => 105_000,
+      );
+      for (let index = 0; index < polls; index += 1) await poller.pollNext();
+    };
+
+    await run(await DeliveryState.load(stateFile), 2);
+    expect(sendEachForMulticast).toHaveBeenCalledOnce();
+
+    // A new gateway/poller pair models a forced process restart. The relay
+    // intentionally returns the old backlog event again, as can a WS replay.
+    await run(await DeliveryState.load(stateFile), 2);
+    expect(sendEachForMulticast).toHaveBeenCalledOnce();
+  });
+
+  it('never retries an ambiguous FCM attempt after restart', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'buzzy-push-attempt-'));
+    const stateFile = join(directory, 'deliveries.json');
+    const registry = await TokenRegistry.load();
+    await registry.register(PUBKEY_A, TOKEN_A);
+    const sendEachForMulticast = vi.fn().mockRejectedValueOnce(new Error('FCM timeout'));
+    const metadata = {
+      resolve: async () => ({ roomName: 'Roadmap', senderName: 'Ada' }),
+      invalidate: () => undefined,
+    } as never;
+    const first = new PushGateway(
+      registry,
+      { sendEachForMulticast } as unknown as Messaging,
+      await DeliveryState.load(stateFile),
+      metadata,
+    );
+
+    await expect(first.handleRelayEvent(event('d'), PUBKEY_A, reader)).rejects.toThrow(
+      'FCM timeout',
+    );
+    const restarted = new PushGateway(
+      registry,
+      { sendEachForMulticast } as unknown as Messaging,
+      await DeliveryState.load(stateFile),
+      metadata,
+    );
+    await expect(restarted.handleRelayEvent(event('d'), PUBKEY_A, reader)).resolves.toBeUndefined();
+    expect(sendEachForMulticast).toHaveBeenCalledOnce();
+  });
+
   it('polls one ACL identity per tick and delivers the event to each visible recipient', async () => {
     const registry = await TokenRegistry.load();
     await registry.register(PUBKEY_A, TOKEN_A);
@@ -46,14 +120,15 @@ describe('RegisteredEventPoller', () => {
       async (relayEvent, recipient) => {
         delivered.push(`${recipient}:${relayEvent.id}`);
       },
+      await DeliveryState.load(),
       () => 105_000,
     );
 
     await expect(poller.pollNext()).resolves.toBe('polled');
     expect(queried).toEqual([PUBKEY_A]);
     expect(queriedFilters[0]).toEqual([
-      { kinds: [9], since: 100 },
-      { kinds: [30078], '#t': ['buzz-agent-soul'], since: 100 },
+      { kinds: [9], since: 100, limit: 1_000 },
+      { kinds: [30078], '#t': ['buzz-agent-soul'], since: 100, limit: 1_000 },
     ]);
     await expect(poller.pollNext()).resolves.toBe('polled');
     expect(queried).toEqual([PUBKEY_A, PUBKEY_B]);
@@ -77,6 +152,7 @@ describe('RegisteredEventPoller', () => {
         disconnect: () => undefined,
       }),
       async () => undefined,
+      await DeliveryState.load(),
       () => now,
     );
 
@@ -103,6 +179,7 @@ describe('PushGateway', () => {
     const gateway = new PushGateway(
       registry,
       { sendEachForMulticast } as unknown as Messaging,
+      await DeliveryState.load(),
       {
         resolve: async () => ({ roomName: 'Roadmap', senderName: 'Ada' }),
         invalidate: () => undefined,
@@ -137,6 +214,7 @@ describe('PushGateway', () => {
     const gateway = new PushGateway(
       registry,
       { sendEachForMulticast } as unknown as Messaging,
+      await DeliveryState.load(),
       {
         resolve: async (relayEvent: NostrEvent) => {
           const roomId = relayEvent.tags.find((tag) => tag[0] === 'h')?.[1];
@@ -248,7 +326,7 @@ describe('PushGateway', () => {
       roomName: 'Launch room',
       senderName: 'Rhea',
     });
-    const gateway = new PushGateway(registry, messaging, resolver);
+    const gateway = new PushGateway(registry, messaging, await DeliveryState.load(), resolver);
 
     await gateway.handleRelayEvent(agentRecord, PUBKEY_A, authorizedReader);
     await gateway.handleRelayEvent(soul, PUBKEY_A, authorizedReader);
@@ -266,3 +344,6 @@ describe('PushGateway', () => {
     expect(JSON.stringify(captured)).not.toContain('displayName');
   });
 });
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';

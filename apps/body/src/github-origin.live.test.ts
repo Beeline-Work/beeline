@@ -1,4 +1,4 @@
-/** Production-relay proof that a paired Codex agent self-lands on a GitHub origin. */
+/** Production-relay proof that GitHub-origin landing waits for a signed human approval. */
 import { afterAll, describe, expect, it } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -52,7 +52,7 @@ function localGit(args: string[]): string {
 
 const live = Boolean(checkout) && runtimeAvailable() && (await reachable());
 
-describe.runIf(live)('GitHub-origin pair → conversation → direct land', () => {
+describe.runIf(live)('GitHub-origin pair → conversation → human-approved land', () => {
   afterAll(() => {
     humanClient?.disconnect();
     if (daemonPid) {
@@ -65,7 +65,7 @@ describe.runIf(live)('GitHub-origin pair → conversation → direct land', () =
   });
 
   it(
-    'uses ambient user credentials and no Beeline merge gate',
+    'uses ambient user credentials only after a signed human-admin approval',
     async () => {
       const marker = `github-origin-${Date.now()}`;
       const human = newIdentity(`${marker}-human`);
@@ -139,33 +139,51 @@ describe.runIf(live)('GitHub-origin pair → conversation → direct land', () =
       });
 
       let tip = '';
+      let feature = '';
+      let mergeTarget: { repo: string; branch: string; tip: string } | undefined;
       await waitUntil(async () => {
         const events = await queryEvents(
           [{ kinds: [9], '#h': [subchannelId], authors: [runtime.agent.publicKey], limit: 300 }],
           human,
         );
-        const landed = events.find((event) =>
-          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'landed'),
+        const ready = events.find((event) =>
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
         );
-        tip = landed?.tags.find((tag) => tag[0] === 'tip')?.[1] ?? '';
-        return Boolean(tip);
+        tip = ready?.tags.find((tag) => tag[0] === 'tip')?.[1] ?? '';
+        feature = ready?.tags.find((tag) => tag[0] === 'feature')?.[1] ?? '';
+        const repo = ready?.tags.find((tag) => tag[0] === 'repo')?.[1];
+        const branch = ready?.tags.find((tag) => tag[0] === 'branch')?.[1];
+        if (repo && branch && tip) mergeTarget = { repo, branch, tip };
+        return Boolean(mergeTarget && feature);
       });
 
-      const childEvents = await queryEvents(
+      const beforeApprovalEvents = await queryEvents(
         [{ kinds: [9], '#h': [subchannelId], authors: [runtime.agent.publicKey], limit: 300 }],
         human,
       );
       expect(
-        childEvents.some((event) =>
-          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+        beforeApprovalEvents.some((event) =>
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'landed'),
         ),
       ).toBe(false);
-      expect(localGit(['ls-remote', 'origin', 'refs/heads/main'])).toContain(tip);
-      const feature = childEvents
-        .find((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'landed'))
-        ?.tags.find((tag) => tag[0] === 'feature')?.[1];
-      expect(feature).toBeTruthy();
+      expect(localGit(['ls-remote', 'origin', 'refs/heads/main'])).not.toContain(tip);
       expect(localGit(['ls-remote', 'origin', `refs/heads/${feature}`])).toContain(tip);
+      expect((await humanClient.getChannelMetadata(subchannelId))?.archived).not.toBe(true);
+
+      await humanClient.submitMergeApproval(subchannelId, mergeTarget!);
+      await waitUntil(async () => {
+        const events = await queryEvents(
+          [{ kinds: [9], '#h': [subchannelId], authors: [runtime.agent.publicKey], limit: 300 }],
+          human,
+        );
+        return events.some((event) =>
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'landed'),
+        );
+      });
+      await waitUntil(
+        async () => (await humanClient!.getChannelMetadata(subchannelId))?.archived === true,
+      );
+      expect(localGit(['ls-remote', 'origin', 'refs/heads/main'])).toContain(tip);
       expect(localGit(['show', `${tip}:AGENT-LANDED.txt`])).toContain(marker);
 
       const roomEvents = await queryEvents(
@@ -187,15 +205,17 @@ describe.runIf(live)('GitHub-origin pair → conversation → direct land', () =
         .replace(/\.git$/, '')
         .replace(/^git@github\.com:/, 'https://github.com/');
       console.log(`[github-origin-live] conversation=REPLIED corners-before-work=0`);
-      console.log(`[github-origin-live] gate=ABSENT feature=${feature}`);
-      console.log(`[github-origin-live] landed=${origin}/commit/${tip} status=ready/landed`);
+      console.log(`[github-origin-live] gate=SIGNED-HUMAN-APPROVAL feature=${feature}`);
+      console.log(
+        `[github-origin-live] before-approval=NO-LAND/NO-ARCHIVE after-approval=LANDED/ARCHIVED commit=${origin}/commit/${tip}`,
+      );
     },
     12 * 60_000,
   );
 });
 
 if (!live) {
-  describe('GitHub-origin pair → conversation → direct land (prerequisite)', () => {
+  describe('GitHub-origin pair → conversation → human-approved land (prerequisite)', () => {
     it('SKIPPED — requires BUZZY_GITHUB_LIVE_CHECKOUT, production relay, and Codex', () => {
       console.warn('Set BUZZY_GITHUB_LIVE_CHECKOUT to an ambient-auth GitHub checkout.');
     });

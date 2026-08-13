@@ -9,7 +9,9 @@ const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
+    temporaryDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -160,11 +162,38 @@ lines.on('line', (line) => {
     promptId = message.id;
     send({
       jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'permission-session',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tool-1',
+          kind: 'edit',
+          title: 'str_replace README.md',
+          rawInput: { path: 'README.md' },
+          status: 'in_progress',
+        },
+      },
+    });
+    send({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'permission-session',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'tool-1',
+          status: 'in_progress',
+        },
+      },
+    });
+    send({
+      jsonrpc: '2.0',
       id: 99,
       method: 'session/request_permission',
       params: {
         sessionId: 'permission-session',
-        toolCall: { toolCallId: 'tool-1', kind: 'edit', title: 'str_replace README.md' },
+        toolCall: { toolCallId: 'tool-1', kind: 'edit', status: 'pending' },
         options: [
           { kind: 'allow_once', optionId: 'allow' },
           { kind: 'reject_once', optionId: 'reject' },

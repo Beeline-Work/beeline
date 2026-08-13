@@ -3,14 +3,7 @@
  *
  * Grok Mono Hull design: neutral metal surfaces with redundant state encoding.
  */
-import React, {
-  useEffect,
-  useState,
-  useRef,
-  useCallback,
-  useLayoutEffect,
-  useMemo,
-} from 'react';
+import React, { useEffect, useState, useRef, useCallback, useLayoutEffect, useMemo } from 'react';
 import {
   Alert,
   View,
@@ -85,6 +78,7 @@ import { Typography } from '@/constants/Typography';
 import { ChangeReviewPanel } from '@/components/buzz/ChangeReviewPanel';
 import { AgentAvatar } from '@/components/buzz/AgentAvatar';
 import { PersonAvatar } from '@/components/buzz/PersonAvatar';
+import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome';
 import {
   HullSurface,
   MonoButton,
@@ -353,18 +347,15 @@ export default function BuzzChat() {
     requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated }));
   }, []);
 
-  const handleMessageListScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      if (keyboardFollowPendingRef.current) return;
-      const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-      followsLatestMessageRef.current = isNearChatBottom({
-        contentHeight: contentSize.height,
-        viewportHeight: layoutMeasurement.height,
-        offsetY: contentOffset.y,
-      });
-    },
-    [],
-  );
+  const handleMessageListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (keyboardFollowPendingRef.current) return;
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    followsLatestMessageRef.current = isNearChatBottom({
+      contentHeight: contentSize.height,
+      viewportHeight: layoutMeasurement.height,
+      offsetY: contentOffset.y,
+    });
+  }, []);
 
   const handleMessageListContentSizeChange = useCallback(() => {
     if (!hasPositionedInitialMessagesRef.current) {
@@ -922,15 +913,16 @@ export default function BuzzChat() {
               />
               <View style={styles.writePermissionCopy}>
                 <Text style={styles.writePermissionTitle}>
-                  {display.name} wants to start editing files
+                  {display.name} needs to change repository files
                 </Text>
                 <Text style={styles.writePermissionTool} numberOfLines={2}>
-                  FIRST WRITE · {permission.tool}
+                  WRITE REQUEST · {permission.tool}
                 </Text>
               </View>
             </View>
             <Text style={styles.writePermissionBoundary}>
-              Allowing creates an isolated corner and worktree. It does not grant merge authority.
+              The write is refused in this read-only Room. Allowing opens an isolated corner and
+              worktree; merge authority stays human-only.
             </Text>
             {pending && !viewerIsAgent ? (
               <View style={styles.writePermissionActions}>
@@ -942,24 +934,21 @@ export default function BuzzChat() {
                   style={styles.writePermissionButton}
                 />
                 <MonoButton
-                  label="Allow editing"
+                  label="Open edit corner"
                   loading={busy}
                   onPress={() => void handleWritePermission(item, 'allow')}
                   style={styles.writePermissionButton}
                 />
               </View>
             ) : (
-              <Text style={styles.writePermissionStatus}>
-                {viewerIsAgent && pending
-                  ? '⊘ A PERSON MUST RESPOND'
-                  : permission.status === 'allowed'
-                    ? '✓ EDITING ALLOWED · OPENING CORNER'
-                    : permission.status === 'expired'
-                      ? '□ REQUEST EXPIRED · STILL READ-ONLY'
-                      : permission.status === 'failed'
-                        ? '□ CORNER COULD NOT OPEN · STILL READ-ONLY'
-                        : '□ EDITING DENIED · STILL READ-ONLY'}
-              </Text>
+              <WritePermissionOutcome
+                status={permission.status}
+                subchannelId={permission.subchannelId}
+                awaitingPerson={viewerIsAgent && pending}
+                onOpenCorner={(subchannelId) =>
+                  router.push(`/buzz/chat/${encodeURIComponent(subchannelId)}` as Href)
+                }
+              />
             )}
           </HullSurface>
         );

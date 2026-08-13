@@ -19,8 +19,22 @@ import {
 
 export type SessionMode = 'readonly' | 'edit';
 
-/** Write-tool names that must be absent in TLC (read-only) sessions. */
-export const WRITE_TOOL_NAMES = ['shell', 'str_replace', 'write', 'Write', 'Bash'] as const;
+/** Mutation-class tool names that must be absent in Room read-only sessions. */
+export const WRITE_TOOL_NAMES = [
+  'shell',
+  'execute',
+  'str_replace',
+  'write',
+  'Write',
+  'write_file',
+  'Bash',
+  'apply_patch',
+  'git_commit',
+  'git_checkout',
+  'git_branch',
+  'git_config',
+  'git_push',
+] as const;
 
 export interface BodyConfig {
   /** Backward-compatible alias of agentCommand. */
@@ -31,6 +45,9 @@ export interface BodyConfig {
   agentArgs?: string[];
   /** Absolute path to the buzz-dev-mcp binary (edit mode only). */
   mcpBinary: string;
+  /** Built-in inspection MCP command mounted only in read-only Room sessions. */
+  readonlyMcpCommand?: string;
+  readonlyMcpArgs?: string[];
   /** Env vars inherited by the selected ACP agent process. */
   agentEnv: Record<string, string>;
   /** Base directory for TLC workspaces and git worktrees. */
@@ -84,6 +101,36 @@ export function resolveMcpBinary(env: NodeJS.ProcessEnv = process.env): string {
     );
   }
   return mcp;
+}
+
+/** Resolve the Beeline-owned read-only MCP without borrowing buzz-dev-mcp. */
+export function resolveReadonlyMcpCommand(env: NodeJS.ProcessEnv = process.env): {
+  command: string;
+  args: string[];
+} {
+  const binary = env.BUZZ_READONLY_MCP_BIN ?? executableOnPath('buzz-readonly-mcp', env);
+  if (binary) return { command: binary, args: [] };
+
+  const script = env.BUZZ_READONLY_MCP_SCRIPT;
+  if (script && existsSync(script)) return { command: process.execPath, args: [script] };
+
+  const built = firstExisting([
+    resolve(process.cwd(), 'apps', 'body', 'dist', 'read-only-mcp.js'),
+    resolve(process.cwd(), 'dist', 'read-only-mcp.js'),
+    resolve(process.cwd(), '..', '..', 'apps', 'body', 'dist', 'read-only-mcp.js'),
+  ]);
+  if (built) return { command: process.execPath, args: [built] };
+
+  const source = firstExisting([
+    resolve(process.cwd(), 'apps', 'body', 'src', 'read-only-mcp.ts'),
+    resolve(process.cwd(), 'src', 'read-only-mcp.ts'),
+  ]);
+  const tsx = executableOnPath('tsx', env);
+  if (source && tsx) return { command: tsx, args: [source] };
+
+  throw new Error(
+    'buzz-readonly-mcp not found. Build @beeline/body or set BUZZ_READONLY_MCP_BIN / BUZZ_READONLY_MCP_SCRIPT',
+  );
 }
 
 /**
@@ -188,6 +235,7 @@ export function loadBodyConfig(opts: {
   const env = opts.env ?? process.env;
   const agent = opts.agent ?? resolveAgentCommand({ kind: 'reference', env });
   const mcpBinary = resolveMcpBinary(env);
+  const readonlyMcp = resolveReadonlyMcpCommand(env);
   const agentEnv = buildAgentEnv(env, opts.llmEnvFile);
   const host = env.BUZZY_RELAY_HOST ?? DEFAULT_RELAY_HOST;
   const scheme = env.BUZZY_RELAY_SCHEME ?? DEFAULT_RELAY_SCHEME;
@@ -203,6 +251,8 @@ export function loadBodyConfig(opts: {
     agentCommand: agent.command,
     agentArgs: [...agent.args],
     mcpBinary,
+    readonlyMcpCommand: readonlyMcp.command,
+    readonlyMcpArgs: readonlyMcp.args,
     agentEnv,
     workspaceRoot: resolve(opts.workspaceRoot),
     relayBaseUrl: base,

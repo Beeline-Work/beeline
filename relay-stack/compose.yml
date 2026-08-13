@@ -8,6 +8,43 @@ name: buzzy-gate
 # invite/app-association routes and proxies every other request to Buzz.
 
 services:
+  auth:
+    build:
+      context: ..
+      dockerfile: apps/auth/Dockerfile
+    image: ${BUZZY_AUTH_IMAGE:-beeline-auth:local}
+    env_file:
+      - ${BUZZY_AUTH_ENV_FILE:-/home/lunchbox/buzzy-auth/oidc.env}
+    environment:
+      NODE_ENV: production
+      PORT: "8789"
+      BUZZY_AUTH_HOST: 0.0.0.0
+      DATABASE_URL: postgres://${POSTGRES_USER:-buzz}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-buzz}
+      BUZZY_AUTH_TENANTS_JSON: >-
+        [{"host":"relay.buzzrouter.com","community":"relay.buzzrouter.com","origin":"https://relay.buzzrouter.com"}]
+      BUZZY_AUTH_OIDC_ISSUER: https://accounts.google.com
+      BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT: https://accounts.google.com/o/oauth2/v2/auth
+      BUZZY_AUTH_OIDC_TOKEN_ENDPOINT: https://oauth2.googleapis.com/token
+      BUZZY_AUTH_OIDC_JWKS_URI: https://www.googleapis.com/oauth2/v3/certs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8789/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - buzzy-net
+
   relay:
     image: ${BUZZ_IMAGE:-ghcr.io/block/buzz:main}
     env_file:
@@ -63,6 +100,8 @@ services:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./web:/usr/share/nginx/html:ro
     depends_on:
+      auth:
+        condition: service_healthy
       relay:
         condition: service_healthy
     healthcheck:

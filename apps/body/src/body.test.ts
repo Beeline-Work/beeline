@@ -569,6 +569,35 @@ describe('first-class assistant messages', () => {
     expect(published[0]!.tags).toContainEqual(['h', 'child-corner']);
     expect(published[0]!.tags.some((tag) => tag[0] === 'e')).toBe(false);
   });
+
+  it('publishes agent outputs as the shared link-only attachment format', async () => {
+    const agent = newIdentity('agent-file-message');
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    await postAgentMessage('room-id', agent, 'Here it is.', undefined, [
+      {
+        url: 'https://relay.example/media/mushroom.png',
+        thumbnailUrl: 'https://relay.example/media/mushroom-thumb.jpg',
+        name: 'mushroom.png',
+        mimeType: 'image/png',
+        size: 12_000_000,
+      },
+    ]);
+
+    const serialized = JSON.stringify(published[0]);
+    expect(published[0]!.content).toBe('Here it is.');
+    expect(published[0]!.tags).toContainEqual(['t', 'buzz-attachment']);
+    expect(serialized).toContain('https://relay.example/media/mushroom.png');
+    expect(serialized).not.toContain('base64');
+    expect(serialized.length).toBeLessThan(2_000);
+  });
 });
 
 describe('corner display names', () => {

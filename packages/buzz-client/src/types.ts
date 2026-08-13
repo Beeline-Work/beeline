@@ -107,6 +107,8 @@ export interface MediaBlob {
   thumb?: string;
 }
 
+export type { AttachmentReference } from './attachment.js';
+
 export interface CreateAgentOptions {
   agentId?: string;
   displayName?: string;

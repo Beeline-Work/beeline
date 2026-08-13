@@ -17,6 +17,7 @@ export type {
   PersonProfile,
   PersonProfileInput,
   MediaBlob,
+  AttachmentReference,
   WebSocketLike,
   WebSocketConstructor,
   PublishResult,
@@ -206,6 +207,17 @@ export {
 } from './person-profile.js';
 
 export { buildMediaUploadAuthorization, uploadMedia } from './media.js';
+
+export {
+  ATTACHMENT_MARKER,
+  ATTACHMENT_METADATA_TAG,
+  ATTACHMENT_FILENAME_TAG,
+  normalizeAttachmentReference,
+  buildAttachmentTag,
+  buildAttachmentTags,
+  parseAttachmentTags,
+  eventAttachments,
+} from './attachment.js';
 
 export { buildMergeApproval, verifyMergeApproval, APPROVAL_MARKER } from './approval.js';
 

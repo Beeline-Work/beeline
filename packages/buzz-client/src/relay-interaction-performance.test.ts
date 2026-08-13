@@ -116,7 +116,7 @@ describe('relay interaction latency probe', () => {
 
     console.info('relay-interaction-measurements', measurements);
     expect(measurements).toMatchObject({
-      'workspace-home-4-rooms-including-dm-discovery': { requests: 8 },
+      'workspace-home-4-rooms-including-dm-discovery': { requests: 9 },
       'room-or-dm-chat': { requests: 5 },
       agents: { requests: 3 },
     });

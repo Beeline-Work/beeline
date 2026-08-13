@@ -172,6 +172,7 @@ export {
 export {
   createCommunity,
   getCommunity,
+  setCommunityAvatar,
   listCommunities,
   communityChannels,
   communityMembers,

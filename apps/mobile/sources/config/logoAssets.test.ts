@@ -33,4 +33,10 @@ describe('Beeline continuous-line logo assets', () => {
     expect(appConfig).toContain('monochromeImage: "./sources/assets/images/icon-monochrome.png"');
     expect(appConfig).toContain('favicon: "./sources/assets/images/favicon.png"');
   });
+
+  it('keeps the app icon mark inset at the approved 26%-larger margin', () => {
+    expect(vectors[0]).toContain(
+      'transform="translate(20.087671 20.087671) scale(0.83260274)"',
+    );
+  });
 });

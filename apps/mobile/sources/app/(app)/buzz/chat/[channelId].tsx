@@ -44,6 +44,7 @@ import {
   formatRoomParticipantTotal,
   mentionedAgentPubkey,
   roomParticipantPubkeys,
+  sectionRoomParticipants,
   sectionRoomRoster,
 } from '@/buzz/room-participants';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
@@ -143,6 +144,7 @@ export default function BuzzChat() {
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
   const [participantsHydrated, setParticipantsHydrated] = useState(false);
   const [roomName, setRoomName] = useState(ROOM_LABEL);
+  const [rosterVisible, setRosterVisible] = useState(false);
   const [participantPickerVisible, setParticipantPickerVisible] = useState(false);
   const [membershipError, setMembershipError] = useState<string | null>(null);
   const [directMessage, setDirectMessage] = useState<DirectMessage | null>(null);
@@ -196,6 +198,11 @@ export default function BuzzChat() {
     () => sectionRoomRoster(memberOptions, roomMemberPubkeys),
     [memberOptions, roomMemberPubkeys],
   );
+  const visibleRosterSections = useMemo(
+    () => sectionRoomParticipants(roomParticipants),
+    [roomParticipants],
+  );
+  const roomParticipantTotal = roomParticipants.length;
   const mentionableAgents = useMemo(
     () =>
       roomParticipants
@@ -776,7 +783,14 @@ export default function BuzzChat() {
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
             <Text style={[styles.backText, isCorner && styles.cornerBackText]}>‹</Text>
           </TouchableOpacity>
-          <View style={styles.headerCenter}>
+          <TouchableOpacity
+            accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)} in this ${ROOM_LABEL}`}
+            accessibilityRole="button"
+            disabled={!participantsHydrated}
+            onPress={() => setRosterVisible(true)}
+            style={styles.headerCenter}
+            testID="room-participant-roster-trigger"
+          >
             <Text
               style={[styles.channelName, isCorner && styles.cornerChannelName]}
               numberOfLines={1}
@@ -788,10 +802,10 @@ export default function BuzzChat() {
               numberOfLines={1}
             >
               {participantsHydrated
-                ? formatRoomParticipantTotal(participantPubkeys.size)
+                ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ·  IN THIS ROOM  ›`
                 : 'LOADING MEMBERS'}
             </Text>
-          </View>
+          </TouchableOpacity>
           {!parentChannelId && !isDirectMessage && !viewerIsAgent && !isArchived && (
             <TouchableOpacity
               accessibilityLabel={`Add people or Agents to this ${ROOM_LABEL}`}
@@ -957,6 +971,111 @@ export default function BuzzChat() {
           </View>
         )}
       </KeyboardAvoidingView>
+
+      <Modal
+        animationType="fade"
+        onRequestClose={() => setRosterVisible(false)}
+        transparent
+        visible={rosterVisible}
+      >
+        <View style={styles.rosterModalRoot}>
+          <Pressable
+            accessibilityLabel={`Close ${ROOM_LABEL} roster`}
+            onPress={() => setRosterVisible(false)}
+            style={StyleSheet.absoluteFill}
+          />
+          <HullSurface strength="raised" style={styles.rosterModal} testID="room-roster-sheet">
+            <View style={styles.rosterModalHeading}>
+              <View style={styles.rosterModalHeadingCopy}>
+                <Text style={styles.rosterModalEyebrow}>IN THIS ROOM</Text>
+                <Text style={styles.rosterModalTitle}>
+                  {formatRoomParticipantTotal(roomParticipantTotal)}
+                </Text>
+              </View>
+              <TouchableOpacity
+                accessibilityLabel={`Close ${ROOM_LABEL} roster`}
+                onPress={() => setRosterVisible(false)}
+                style={styles.rosterModalClose}
+              >
+                <Text style={styles.rosterModalCloseText}>×</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              contentContainerStyle={styles.rosterContent}
+              showsVerticalScrollIndicator={false}
+            >
+              {[
+                { key: 'people', label: 'PEOPLE', options: visibleRosterSections.people },
+                { key: 'agents', label: 'AGENTS', options: visibleRosterSections.agents },
+              ].map((section, sectionIndex) =>
+                section.options.length > 0 ? (
+                  <View key={section.key}>
+                    <Text
+                      style={[
+                        styles.rosterSectionLabel,
+                        sectionIndex > 0 && styles.rosterSectionLabelSpaced,
+                      ]}
+                    >
+                      {section.label} {section.options.length}
+                    </Text>
+                    {section.options.map((participant) => {
+                      const display = participant.agent
+                        ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
+                        : undefined;
+                      const displayName = display
+                        ? display.name
+                        : participant.pubkey === userPubkey
+                          ? 'You'
+                          : participant.label;
+                      const handle = display?.handle ?? shortMemberNpub(participant.pubkey);
+                      return (
+                        <View
+                          accessibilityLabel={`${displayName}, ${participant.kind}, at ${handle}`}
+                          key={participant.pubkey}
+                          style={styles.rosterRow}
+                          testID={`room-roster-${participant.kind}-${participant.pubkey}`}
+                        >
+                          {display ? (
+                            <AgentAvatar
+                              pubkey={participant.pubkey}
+                              avatarSeed={display.avatarSeed}
+                              avatarUrl={display.avatarUrl}
+                              name={display.name}
+                              size={38}
+                            />
+                          ) : (
+                            <PersonAvatar
+                              pubkey={participant.pubkey}
+                              avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
+                              name={displayName}
+                              size={38}
+                            />
+                          )}
+                          <View style={styles.rosterIdentity}>
+                            <Text numberOfLines={1} style={styles.rosterName}>
+                              {displayName}
+                            </Text>
+                            <Text numberOfLines={1} style={styles.rosterHandle}>
+                              @{handle}
+                            </Text>
+                          </View>
+                          <Text style={styles.rosterKind}>
+                            {participant.kind === 'agent' ? 'AGENT' : 'PERSON'}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                ) : null,
+              )}
+              {roomParticipantTotal === 0 && (
+                <Text style={styles.rosterEmpty}>No visible participants</Text>
+              )}
+            </ScrollView>
+          </HullSurface>
+        </View>
+      </Modal>
 
       <Modal
         animationType="fade"
@@ -1137,6 +1256,9 @@ const styles = StyleSheet.create({
   cornerBackText: { ...Typography.mono(), color: groknight.textMuted },
   headerCenter: {
     flex: 1,
+    minHeight: 44,
+    minWidth: 0,
+    justifyContent: 'center',
   },
   channelName: {
     ...Typography.default('semiBold'),
@@ -1180,6 +1302,97 @@ const styles = StyleSheet.create({
     color: groknight.textMuted,
     fontSize: 11,
     lineHeight: 15,
+  },
+  // ── Read-only Room roster ──────────────────────────────────────
+  rosterModalRoot: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingBottom: 18,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(5, 5, 6, 0.84)',
+  },
+  rosterModal: {
+    width: '100%',
+    maxWidth: 460,
+    maxHeight: '82%',
+    padding: 16,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgRaised,
+  },
+  rosterModalHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  rosterModalHeadingCopy: { flex: 1, minWidth: 0 },
+  rosterModalEyebrow: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textMuted,
+    fontSize: 9,
+    lineHeight: 12,
+    letterSpacing: 0.8,
+  },
+  rosterModalTitle: {
+    ...Typography.default('semiBold'),
+    marginTop: 4,
+    color: groknight.textPrimary,
+    fontSize: 19,
+    lineHeight: 24,
+  },
+  rosterModalClose: {
+    width: 44,
+    height: 44,
+    marginTop: -10,
+    marginRight: -10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rosterModalCloseText: { ...Typography.default(), color: groknight.steel, fontSize: 24 },
+  rosterContent: { paddingTop: 18, paddingBottom: 4 },
+  rosterSectionLabel: {
+    ...Typography.mono('semiBold'),
+    marginBottom: 7,
+    color: groknight.textMuted,
+    fontSize: 9,
+    lineHeight: 12,
+    letterSpacing: 0.7,
+  },
+  rosterSectionLabelSpaced: { marginTop: 20 },
+  rosterRow: {
+    minHeight: 62,
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderTopWidth: 1,
+    borderColor: groknight.border,
+    backgroundColor: groknight.bgBase,
+  },
+  rosterIdentity: { flex: 1, minWidth: 0 },
+  rosterName: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 13,
+    lineHeight: 17,
+  },
+  rosterHandle: {
+    ...Typography.mono(),
+    marginTop: 2,
+    color: groknight.textMuted,
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  rosterKind: {
+    ...Typography.mono('semiBold'),
+    color: groknight.steel,
+    fontSize: 8,
+    lineHeight: 12,
+    letterSpacing: 0.7,
+  },
+  rosterEmpty: {
+    ...Typography.default(),
+    paddingVertical: 28,
+    color: groknight.textMuted,
+    fontSize: 12,
+    textAlign: 'center',
   },
   // ── Room membership picker ─────────────────────────────────────
   memberModalRoot: {

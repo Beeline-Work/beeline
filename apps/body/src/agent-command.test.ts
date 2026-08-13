@@ -3,7 +3,11 @@ import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, resolve } from 'node:path';
 
-import { parseAgentCommand, resolveAgentCommand } from './agent-command.js';
+import {
+  detectInstalledAgentCommands,
+  parseAgentCommand,
+  resolveAgentCommand,
+} from './agent-command.js';
 
 const cleanup: string[] = [];
 
@@ -21,6 +25,43 @@ async function executable(name: string): Promise<{ directory: string; path: stri
 }
 
 describe('agent command selection', () => {
+  it('distinguishes ready, missing-adapter, and absent auto-detect presets', async () => {
+    const codex = await executable('codex');
+    const codexAdapter = await executable('codex-acp');
+    const claude = await executable('claude');
+    const pi = await executable('pi');
+
+    const detected = detectInstalledAgentCommands({
+      env: {
+        PATH: [codex.directory, codexAdapter.directory, claude.directory, pi.directory].join(
+          delimiter,
+        ),
+      },
+    });
+
+    expect(detected).toEqual([
+      {
+        kind: 'codex',
+        status: 'ready',
+        agent: { kind: 'codex', command: codexAdapter.path, args: [] },
+      },
+      {
+        kind: 'claude',
+        status: 'missing-adapter',
+        install: {
+          command: 'npm',
+          args: ['install', '-g', '@agentclientprotocol/claude-agent-acp'],
+        },
+      },
+      {
+        kind: 'pi',
+        status: 'missing-adapter',
+        install: { command: 'npm', args: ['install', '-g', 'pi-acp'] },
+      },
+    ]);
+    expect(detected.some((candidate) => candidate.kind === 'goose')).toBe(false);
+  });
+
   it('resolves the Codex CLI and its ACP adapter to an exact command', async () => {
     const codex = await executable('codex');
     const adapter = await executable('codex-acp');
@@ -35,12 +76,12 @@ describe('agent command selection', () => {
   it('gives an actionable error when Claude Code has no ACP adapter', async () => {
     const claude = await executable('claude');
 
-    expect(() =>
-      resolveAgentCommand({ kind: 'claude', env: { PATH: claude.directory } }),
-    ).toThrow('npm install -g @agentclientprotocol/claude-agent-acp');
+    expect(() => resolveAgentCommand({ kind: 'claude', env: { PATH: claude.directory } })).toThrow(
+      'npm install -g @agentclientprotocol/claude-agent-acp',
+    );
   });
 
-  it('uses Goose\'s native ACP subcommand', async () => {
+  it("uses Goose's native ACP subcommand", async () => {
     const goose = await executable('goose');
 
     expect(resolveAgentCommand({ kind: 'goose', env: { PATH: goose.directory } })).toEqual({

@@ -81,9 +81,10 @@ Agent choices:
   reference  Bundled buzz-agent (explicit fallback; requires an LLM key)
   custom     Explicit ACP command supplied with --agent-command
 
-With no --agent flag, beeline detects installed ACP-capable coding agents. It
-uses the only match automatically, or asks you to choose when several are found.
-Non-interactive sessions with several matches must pass --agent <name>.
+With no --agent flag, beeline detects supported installed coding agents. Missing
+ACP adapters stay visible and can be installed when selected on a terminal. In a
+non-interactive session, beeline prints the manual adapter install command and
+never installs packages automatically. Several ready matches require --agent.
 
 Examples:
   beeline pair BUZZ-XXXX-XXXX --agent codex

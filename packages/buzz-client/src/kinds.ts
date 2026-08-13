@@ -9,6 +9,9 @@ export const KIND_PUT_USER = 9000;
 /** NIP-29: remove user from a group. */
 export const KIND_REMOVE_USER = 9001;
 
+/** NIP-29: edit group metadata (including reversible archive state). */
+export const KIND_EDIT_METADATA = 9002;
+
 /** NIP-29: create group/channel. */
 export const KIND_CREATE_GROUP = 9007;
 
@@ -62,3 +65,6 @@ export const TAG_COMMUNITY_INVITE = 'buzz-community-invite';
 
 /** Marker tag value for a private, exactly-two-member direct-message Room. */
 export const TAG_DIRECT_MESSAGE = 'buzz-dm';
+
+/** Marker for an explicit human-admin Room lifecycle mutation. */
+export const TAG_ROOM_LIFECYCLE = 'buzz-room-lifecycle';

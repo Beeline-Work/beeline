@@ -16,14 +16,25 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as QRCode from 'qrcode';
 import Svg, { Path, Rect } from 'react-native-svg';
-import type { BuzzClient } from '@beeline/buzz-client';
+import {
+  fallbackPersonName,
+  normalizePersonName,
+  personHandle,
+  type BuzzClient,
+} from '@beeline/buzz-client';
 import {
   getEffectiveRelayUrl,
   loadBuzzIdentity,
   loadBuzzIdentityNsecForExport,
 } from '@/auth/buzz-identity-storage';
 import { groknight } from '@/buzz/groknight';
+import { loadActiveCommunityId } from '@/buzz/community-storage';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
+import {
+  loadPreferredPersonName,
+  publishPreferredPersonName,
+  savePreferredPersonName,
+} from '@/buzz/person-name';
 import { Typography } from '@/constants/Typography';
 import { HullSurface, MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
 import { PersonAvatar } from '@/components/buzz/PersonAvatar';
@@ -95,6 +106,11 @@ export default function BuzzIdentitySettings() {
   const [profilePubkey, setProfilePubkey] = useState<string | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>();
   const [avatarWorking, setAvatarWorking] = useState(false);
+  const [profileName, setProfileName] = useState('');
+  const [savedProfileName, setSavedProfileName] = useState('');
+  const [nameWorking, setNameWorking] = useState(false);
+  const [nameFocused, setNameFocused] = useState(false);
+  const [nameSaved, setNameSaved] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,20 +120,32 @@ export default function BuzzIdentitySettings() {
         if (!identity) return;
         const transport = new BuzzRigTransport(identity, await getEffectiveRelayUrl());
         const client = await transport.ensureClient();
-        const communities = await client.listCommunities(identity.publicKey);
+        const [communities, activeCommunityId, preferredName] = await Promise.all([
+          client.listCommunities(identity.publicKey),
+          loadActiveCommunityId(identity.publicKey),
+          loadPreferredPersonName(identity.publicKey),
+        ]);
         const communityId =
           requestedCommunityId &&
           communities.some((item) => item.communityId === requestedCommunityId)
             ? requestedCommunityId
-            : communities[0]?.communityId;
+            : communities.some((item) => item.communityId === activeCommunityId)
+              ? (activeCommunityId ?? undefined)
+              : communities[0]?.communityId;
         const profile = communityId
           ? await client.getPersonProfile(communityId, identity.publicKey)
           : null;
+        if (profile?.name && !preferredName) {
+          await savePreferredPersonName(identity.publicKey, profile.name);
+        }
         if (!cancelled) {
           setProfileClient(client);
           setProfileCommunityId(communityId ?? null);
           setProfilePubkey(identity.publicKey);
           setAvatarUrl(profile?.avatar);
+          const nextName = profile?.name ?? preferredName ?? fallbackPersonName(identity.publicKey);
+          setProfileName(nextName);
+          setSavedProfileName(nextName);
         }
       } catch (caught) {
         if (!cancelled) setError(`Could not load your profile: ${String(caught)}`);
@@ -135,28 +163,62 @@ export default function BuzzIdentitySettings() {
     try {
       const next = await pickAndUploadAvatar(profileClient);
       if (!next) return;
-      await profileClient.setPersonProfile(profileCommunityId, { avatar: next });
+      await profileClient.setPersonProfile(profileCommunityId, {
+        name: normalizePersonName(savedProfileName) ?? undefined,
+        avatar: next,
+      });
       setAvatarUrl(next);
     } catch (caught) {
       setError(`Could not set your picture: ${String(caught)}`);
     } finally {
       setAvatarWorking(false);
     }
-  }, [profileClient, profileCommunityId]);
+  }, [profileClient, profileCommunityId, savedProfileName]);
 
   const resetAvatar = useCallback(async () => {
     if (!profileClient || !profileCommunityId) return;
     setAvatarWorking(true);
     setError(null);
     try {
-      await profileClient.setPersonProfile(profileCommunityId, {});
+      await profileClient.setPersonProfile(profileCommunityId, {
+        name: normalizePersonName(savedProfileName) ?? undefined,
+        avatar: '',
+      });
       setAvatarUrl(undefined);
     } catch (caught) {
       setError(`Could not restore your generated mark: ${String(caught)}`);
     } finally {
       setAvatarWorking(false);
     }
-  }, [profileClient, profileCommunityId]);
+  }, [profileClient, profileCommunityId, savedProfileName]);
+
+  const saveName = useCallback(async () => {
+    if (!profileClient || !profileCommunityId || !profilePubkey) return;
+    const normalized = normalizePersonName(profileName);
+    if (!normalized) {
+      setError('Choose a name between 1 and 60 characters.');
+      return;
+    }
+    setNameWorking(true);
+    setNameSaved(false);
+    setError(null);
+    try {
+      await publishPreferredPersonName(
+        profileClient,
+        profileCommunityId,
+        profilePubkey,
+        normalized,
+      );
+      setProfileName(normalized);
+      setSavedProfileName(normalized);
+      setNameSaved(true);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (caught) {
+      setError(`Could not save your name: ${String(caught)}`);
+    } finally {
+      setNameWorking(false);
+    }
+  }, [profileClient, profileCommunityId, profileName, profilePubkey]);
 
   const lockExport = useCallback(() => {
     setSecret(null);
@@ -283,32 +345,83 @@ export default function BuzzIdentitySettings() {
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {profilePubkey && profileCommunityId && (
-          <View style={styles.avatarSection}>
-            <PersonAvatar pubkey={profilePubkey} avatarUrl={avatarUrl} name="You" size={76} />
-            <View style={styles.avatarCopy}>
-              <Text style={styles.heading}>Your picture</Text>
+          <View style={styles.profileSection}>
+            <View style={styles.nameSection} testID="identity-person-name-setting">
+              <Text style={styles.sectionLabel}>WORKSPACE IDENTITY</Text>
+              <Text style={styles.heading}>What should we call you?</Text>
               <Text style={styles.body}>
-                Cosmetic only. Your generated person mark returns if the image is removed.
+                People and Agents see this name in Rooms. New Workspaces start with the same name.
               </Text>
-              <View style={styles.actions}>
-                <TouchableOpacity
-                  style={styles.secondaryButton}
-                  disabled={avatarWorking}
-                  onPress={() => void changeAvatar()}
-                >
-                  <Text style={styles.secondaryButtonText}>
-                    {avatarWorking ? 'Working…' : avatarUrl ? 'Change picture' : 'Set picture'}
-                  </Text>
-                </TouchableOpacity>
-                {avatarUrl && (
+              <TextInput
+                accessibilityLabel="Your display name"
+                autoCapitalize="words"
+                autoCorrect={false}
+                editable={!nameWorking}
+                maxLength={60}
+                onBlur={() => setNameFocused(false)}
+                onChangeText={(value) => {
+                  setProfileName(value);
+                  setNameSaved(false);
+                }}
+                onFocus={() => setNameFocused(true)}
+                onSubmitEditing={() => void saveName()}
+                placeholder="Ada"
+                placeholderTextColor={groknight.dim}
+                returnKeyType="done"
+                style={[styles.nameInput, nameFocused && styles.nameInputFocused]}
+                testID="identity-person-name-input"
+                value={profileName}
+              />
+              <View style={styles.nameMetaRow}>
+                <Text style={styles.nameHandle}>
+                  @{personHandle(profileName || savedProfileName, profilePubkey)}
+                </Text>
+                {nameSaved && <Text style={styles.nameSaved}>✓ SAVED</Text>}
+              </View>
+              <MonoButton
+                disabled={
+                  nameWorking ||
+                  !normalizePersonName(profileName) ||
+                  normalizePersonName(profileName) === savedProfileName
+                }
+                label="Save name"
+                loading={nameWorking}
+                onPress={() => void saveName()}
+                style={styles.nameButton}
+              />
+            </View>
+            <View style={styles.avatarSection}>
+              <PersonAvatar
+                pubkey={profilePubkey}
+                avatarUrl={avatarUrl}
+                name={profileName || 'You'}
+                size={76}
+              />
+              <View style={styles.avatarCopy}>
+                <Text style={styles.heading}>Your picture</Text>
+                <Text style={styles.body}>
+                  Cosmetic only. Your generated person mark returns if the image is removed.
+                </Text>
+                <View style={styles.actions}>
                   <TouchableOpacity
                     style={styles.secondaryButton}
                     disabled={avatarWorking}
-                    onPress={() => void resetAvatar()}
+                    onPress={() => void changeAvatar()}
                   >
-                    <Text style={styles.secondaryButtonText}>Use generated mark</Text>
+                    <Text style={styles.secondaryButtonText}>
+                      {avatarWorking ? 'Working…' : avatarUrl ? 'Change picture' : 'Set picture'}
+                    </Text>
                   </TouchableOpacity>
-                )}
+                  {avatarUrl && (
+                    <TouchableOpacity
+                      style={styles.secondaryButton}
+                      disabled={avatarWorking}
+                      onPress={() => void resetAvatar()}
+                    >
+                      <Text style={styles.secondaryButtonText}>Use generated mark</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
               </View>
             </View>
           </View>
@@ -454,14 +567,17 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   content: { paddingHorizontal: 20, paddingTop: 28, paddingBottom: 36 },
-  avatarSection: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 16,
+  profileSection: {
     paddingBottom: 24,
     marginBottom: 28,
     borderBottomWidth: 1,
     borderBottomColor: groknight.border,
+  },
+  nameSection: { marginBottom: 28 },
+  avatarSection: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 16,
   },
   avatarCopy: { flex: 1, minWidth: 0 },
   intro: { maxWidth: 560 },
@@ -485,6 +601,39 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
+  nameInput: {
+    ...Typography.default('semiBold'),
+    minHeight: 48,
+    marginTop: 16,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: groknight.border,
+    borderRadius: 4,
+    color: groknight.textPrimary,
+    backgroundColor: groknight.bgBase,
+    fontSize: 17,
+  },
+  nameInputFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 11 },
+  nameMetaRow: {
+    minHeight: 26,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  nameHandle: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textMuted,
+    fontSize: 11,
+    letterSpacing: 0.4,
+  },
+  nameSaved: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textSecondary,
+    fontSize: 10,
+    letterSpacing: 0.7,
+  },
+  nameButton: { marginTop: 8 },
   warning: {
     marginTop: 24,
     padding: 12,

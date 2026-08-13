@@ -4,6 +4,7 @@ import { isAgentIdentity } from './agent.js';
 import { publishEvent, queryEvents } from './http.js';
 import { KIND_PERSON_PROFILE, TAG_COMMUNITY, TAG_PERSON_PROFILE } from './kinds.js';
 import { tagValue, tagValues } from './parse.js';
+import { normalizePersonName } from './display-name.js';
 import type { PersonProfile, PersonProfileInput } from './types.js';
 import type { ChannelOpsContext } from './channel.js';
 
@@ -26,6 +27,11 @@ function optionalAvatar(value: unknown): string | undefined {
   return avatar;
 }
 
+function optionalName(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  return normalizePersonName(value) ?? undefined;
+}
+
 export function parsePersonProfile(event: NostrEvent): PersonProfile | null {
   if (event.kind !== KIND_PERSON_PROFILE || !verifyEvent(event)) return null;
   if (!tagValues(event, 't').includes(TAG_PERSON_PROFILE)) return null;
@@ -41,11 +47,15 @@ export function parsePersonProfile(event: NostrEvent): PersonProfile | null {
   try {
     const content = JSON.parse(event.content) as Record<string, unknown>;
     if (typeof content !== 'object' || content === null || Array.isArray(content)) return null;
+    const rawName = content.name ?? content.displayName;
+    const name = optionalName(rawName);
+    if (rawName !== undefined && !name && rawName !== '') return null;
     const avatar = optionalAvatar(content.avatar);
     if (content.avatar !== undefined && !avatar && content.avatar !== '') return null;
     return {
       communityId,
       pubkey: event.pubkey,
+      ...(name ? { name } : {}),
       ...(avatar ? { avatar } : {}),
       updatedAt: event.created_at,
       raw: event,
@@ -100,6 +110,11 @@ export async function setPersonProfile(
   if (await isAgentIdentity(ctx, ctx.identity.publicKey)) {
     throw new Error('agent identities cannot author human profiles');
   }
+  const name =
+    input.name === undefined || input.name === '' ? undefined : normalizePersonName(input.name);
+  if (input.name !== undefined && input.name !== '' && !name) {
+    throw new Error('profile name must be 1-60 readable characters');
+  }
   const avatar = input.avatar?.trim();
   if (avatar && (avatar.length > 2048 || !/^https?:\/\//i.test(avatar))) {
     throw new Error('profile avatar must be an http(s) URL');
@@ -116,7 +131,7 @@ export async function setPersonProfile(
         ['t', TAG_PERSON_PROFILE],
         [TAG_COMMUNITY, communityId],
       ],
-      content: JSON.stringify({ avatar: avatar ?? '' }),
+      content: JSON.stringify({ name: name ?? '', avatar: avatar ?? '' }),
     },
     ctx.identity.secretKey,
   );

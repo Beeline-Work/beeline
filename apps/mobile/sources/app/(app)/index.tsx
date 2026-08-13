@@ -7,11 +7,13 @@ import { StyleSheet } from "react-native-unistyles";
 import { Typography } from "@/constants/Typography";
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { parseCommunityInviteToken } from '@/buzz/community-invite';
+import { isPersonNameOnboardingPending } from '@/buzz/person-name';
 
 export default function Home() {
     const [buzzCheckDone, setBuzzCheckDone] = React.useState(false);
     const [hasBuzzIdentity, setHasBuzzIdentity] = React.useState(false);
     const [initialInviteToken, setInitialInviteToken] = React.useState<string | null>(null);
+    const [personNameOnboardingPending, setPersonNameOnboardingPending] = React.useState(false);
     const [buzzStorageError, setBuzzStorageError] = React.useState<string | null>(null);
 
     React.useEffect(() => {
@@ -19,8 +21,11 @@ export default function Home() {
             loadBuzzIdentity(),
             Linking.getInitialURL().catch(() => null),
         ])
-            .then(([identity, initialUrl]) => {
+            .then(async ([identity, initialUrl]) => {
                 setHasBuzzIdentity(identity !== null);
+                setPersonNameOnboardingPending(
+                    identity ? await isPersonNameOnboardingPending() : false,
+                );
                 setInitialInviteToken(parseCommunityInviteToken(initialUrl ?? undefined));
                 setBuzzCheckDone(true);
             })
@@ -38,12 +43,18 @@ export default function Home() {
                 pathname: '/join/[token]',
                 params: { token: initialInviteToken },
             });
-        } else if (hasBuzzIdentity) {
+        } else if (hasBuzzIdentity && !personNameOnboardingPending) {
             router.replace('/buzz/channels');
         } else {
             router.replace('/buzz/onboarding');
         }
-    }, [buzzCheckDone, buzzStorageError, hasBuzzIdentity, initialInviteToken]);
+    }, [
+        buzzCheckDone,
+        buzzStorageError,
+        hasBuzzIdentity,
+        initialInviteToken,
+        personNameOnboardingPending,
+    ]);
 
     // Wait for the async buzz check before rendering.
     if (!buzzCheckDone) {

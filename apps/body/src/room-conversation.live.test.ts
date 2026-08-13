@@ -3,19 +3,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import {
-  BASE_URL,
-  HOST,
-  createChannel,
-  git,
-  newIdentity,
-  setMemberRole,
-} from '@beeline/gate';
-import {
-  createBuzzClient,
-  tagValue,
-  WRITE_PERMISSION_REQUEST_TAG,
-} from '@beeline/buzz-client';
+import { BASE_URL, HOST, createChannel, git, newIdentity, setMemberRole } from '@beeline/gate';
+import { createBuzzClient, tagValue, WRITE_PERMISSION_REQUEST_TAG } from '@beeline/buzz-client';
 import { Body } from './body.js';
 import { loadBodyConfig } from './config.js';
 import { resolveAgentCommand, type AgentKind } from './agent-command.js';
@@ -73,7 +62,11 @@ describe.runIf(live)('production Room conversation contract', () => {
     remote = await mkdtemp(resolve(tmpdir(), 'beeline-room-remote-'));
     git(workspace, ['init', '-q', '-b', 'main']);
     await writeFile(resolve(workspace, 'README.md'), '# Room conversation live proof\n');
-    git(workspace, ['add', 'README.md']);
+    await writeFile(
+      resolve(workspace, 'PRODUCT-STORIES.md'),
+      '# Shared Repository Stewardship\n\nThe principal user story is that a Room member can ask an agent to inspect a repository and explain it without granting edit authority.\n',
+    );
+    git(workspace, ['add', 'README.md', 'PRODUCT-STORIES.md']);
     git(workspace, ['commit', '-m', 'seed live proof']);
     git(remote, ['init', '--bare', '-q']);
     git(workspace, ['remote', 'add', 'origin', remote]);
@@ -115,7 +108,7 @@ describe.runIf(live)('production Room conversation contract', () => {
     return client.sessionEventsBackfill(roomId, { limit: 500 });
   }
 
-  it('replies to chat and architecture questions in the Room with zero corners', async () => {
+  it('analyzes repository files in the Room with no permission prompt or corner', async () => {
     const greeting = await client.messageSubmit(roomId, "Hey @Agent what's up", {
       mentionAgent: agent.publicKey,
     });
@@ -158,9 +151,7 @@ describe.runIf(live)('production Room conversation contract', () => {
     expect(await client.listSubchannels(roomId)).toHaveLength(0);
     expect(
       (await messages()).some((event) =>
-        event.event.tags.some(
-          (tag) => tag[0] === 't' && tag[1] === WRITE_PERMISSION_REQUEST_TAG,
-        ),
+        event.event.tags.some((tag) => tag[0] === 't' && tag[1] === WRITE_PERMISSION_REQUEST_TAG),
       ),
     ).toBe(false);
 
@@ -175,8 +166,49 @@ describe.runIf(live)('production Room conversation contract', () => {
       ),
     );
     expect(await client.listSubchannels(roomId)).toHaveLength(0);
+
+    const analysisStatusBefore = git(workspace, [
+      'status',
+      '--porcelain=v1',
+      '--untracked-files=all',
+    ]).stdout;
+    const analysisSourceBefore = await readFile(resolve(workspace, 'PRODUCT-STORIES.md'), 'utf8');
+    const analysis = await client.messageSubmit(
+      roomId,
+      'Analyze this repository with the read-only repository tools. Read PRODUCT-STORIES.md, identify its principal user story, and include its exact Markdown heading in your answer.',
+    );
+    expect(await body!.pollChannelRequests(roomId, binding())).toBe(0);
+    await waitUntil(async () =>
+      (await messages()).some(
+        (event) =>
+          event.event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message') &&
+          event.event.tags.some((tag) => tag[0] === 'e' && tag[1] === analysis.id),
+      ),
+    );
+    const analysisEvents = await messages();
+    const analysisReply = analysisEvents.find(
+      (event) =>
+        event.event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message') &&
+        event.event.tags.some((tag) => tag[0] === 'e' && tag[1] === analysis.id),
+    );
+    expect(analysisReply?.content).toContain('Shared Repository Stewardship');
+    expect(
+      analysisEvents.some(
+        (event) =>
+          event.event.tags.some(
+            (tag) => tag[0] === 't' && tag[1] === WRITE_PERMISSION_REQUEST_TAG,
+          ) && event.event.tags.some((tag) => tag[0] === 'request' && tag[1] === analysis.id),
+      ),
+    ).toBe(false);
+    expect(await client.listSubchannels(roomId)).toHaveLength(0);
+    expect(await readFile(resolve(workspace, 'PRODUCT-STORIES.md'), 'utf8')).toBe(
+      analysisSourceBefore,
+    );
+    expect(git(workspace, ['status', '--porcelain=v1', '--untracked-files=all']).stdout).toBe(
+      analysisStatusBefore,
+    );
     console.log(
-      `[room-conversation] greeting=REPLIED indicator=${greetingStatuses.join('>')} preamble=CLEAN architecture=REPLIED corners=0`,
+      `[room-conversation] greeting=REPLIED indicator=${greetingStatuses.join('>')} preamble=CLEAN architecture=REPLIED analysis=READ_FILE permission=NONE corners=0 repo-write=NONE`,
     );
   }, 240_000);
 

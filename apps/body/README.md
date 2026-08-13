@@ -13,16 +13,21 @@ by projecting agent activity into the relay channel.
 │   ├── Room B Body ──► isolated Room/corner ACP processes     │
 │   └── bounded scheduler + durable per-channel inbox          │
 │                │                                             │
+│                ├── read mode MCP ──► buzz-readonly-mcp       │
 │                ├── edit mode MCP ──► buzz-dev-mcp            │
 │                └── batched session/update ──► relay          │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-- **TLC (read-only):** ACP session with **no MCP mounted** (`mcpServers: []`).
-  The agent converses normally. Its first native mutating-tool permission
-  request becomes a signed Room prompt. An explicit human command to open a
-  corner is the only message that creates a corner directly; vague work
-  requests and casual chat remain on the read-only path.
+- **TLC (read-only):** ACP session with only Beeline's fixed
+  `buzz-readonly-mcp` inspection surface mounted. It can list and read files,
+  perform bounded literal search, and inspect local commit history/diffs. It
+  exposes no shell, raw git arguments, filesystem mutation, package install, or
+  server process. The agent converses normally. Pure analysis, explanation,
+  summary, and research requests are locked to a Room answer and cannot become
+  an ALLOW prompt. For non-research work, the first actual mutating-tool request
+  becomes a signed Room prompt. An explicit human command to open a corner is
+  the only message that creates a corner directly.
 - **Subchannel (edit):** ACP session with `buzz-dev-mcp` mounted, `cwd` set to
   a git worktree on a feature branch. Agent has full write access **only within
   the worktree**. Either an explicit open-a-corner command or a human member's
@@ -71,6 +76,7 @@ by projecting agent activity into the relay channel.
 | ---------------------------- | -------- | ----------------------- | ------------------------------------------------- |
 | `BUZZ_AGENT_BIN`             | No       | explicit reference only | Reference `buzz-agent` override                   |
 | `BUZZ_DEV_MCP_BIN`           | No       | auto-detect             | Path to `buzz-dev-mcp` binary                     |
+| `BUZZ_READONLY_MCP_BIN`      | No       | bundled/auto-detect     | Path to Beeline's inspection-only MCP             |
 | `BUZZY_RELAY_HOST`           | No       | `relay.buzzrouter.com`  | Relay HTTP/WS host                                |
 | `BUZZY_RELAY_SCHEME`         | No       | `https`                 | Relay scheme                                      |
 | `BUZZY_BODY_WORKSPACE`       | No       | `./body-workspace`      | Agent workspace root                              |
@@ -106,7 +112,7 @@ curl -fsSL https://relay.buzzrouter.com/install | sh
 ```
 
 The installer selects the platform bundle, verifies its checksum, and installs
-`beeline`, `buzz-agent`, and `buzz-dev-mcp` under `~/.local`. It is safe to run
+`beeline`, `buzz-agent`, `buzz-dev-mcp`, and `buzz-readonly-mcp` under `~/.local`. It is safe to run
 again and does not modify any existing `buzz` command. Ensure `~/.local/bin` is
 on `PATH`; the installer prints the exact export when it is not.
 
@@ -155,8 +161,8 @@ beeline start
 # Provision a read-only agent to a TLC channel
 npm run body -- provision <channel-uuid>
 
-# Keep the body attached: explicit human @agent requests open agent-owned
-# subchannels, steering is forwarded, and merged branches archive automatically
+# Keep the body attached: addressed chat stays in the read-only Room; human-
+# authorized edits use corners, and signed exact-tip approvals land + archive
 npm run body -- serve <channel-uuid> <repo-owner-hex> <repo-name>
 
 # Open a subchannel (edit session) under a TLC
@@ -261,11 +267,16 @@ into the process environment.
 
 - **The boundary IS the MCP mount:** stock buzz-dev-mcp always registers `shell`,
   `str_replace`, etc. There is no env flag to disable write tools. The body
-  enforces read-only by **not mounting** the MCP at all (`mcpServers: []`). A
+  mounts its own narrow `buzz-readonly-mcp` in Rooms and never mounts
+  `buzz-dev-mcp` there. The inspection server uses repository-root-contained
+  read APIs and fixed local git commands; it has no shell or mutation tool. A
   Room ALLOW never approves the original tool against the paired checkout; it
   opens an isolated worktree and replays the request in a new edit session.
   Explicit open-a-corner commands bypass that extra prompt by authorizing the
-  isolated worktree directly; merge authority is unchanged.
+  isolated worktree directly. Information-only turns reject any model-requested
+  mutation without projecting ALLOW. Agent completion can publish only the
+  feature ref and `merge-ready`; target landing and archive cleanup require an
+  independently verified, exact-tip approval from a device-held human admin.
 - **Permission intent is authority-free:** any current human Room member may
   answer the prompt. The signed response is bound to the agent, permission UUID,
   and original request event; it changes no Room role and grants no merge power.

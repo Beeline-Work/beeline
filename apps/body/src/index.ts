@@ -5,8 +5,10 @@ export {
   Body,
   createAgentSubchannel,
   isChannelAddressedMessage,
+  isReadOnlyInformationRequest,
   isChannelWorkIntent,
   isChannelTaskRequest,
+  readOnlyMcpServer,
   AGENT_REQUEST_TAG,
   AGENT_CANCEL_TAG,
   MERGE_READY_TAG,
@@ -28,6 +30,7 @@ export {
 export {
   loadBodyConfig,
   resolveBinaries,
+  resolveReadonlyMcpCommand,
   buildAgentEnv,
   hasLlmCredentials,
   parseEnvFile,
@@ -41,6 +44,11 @@ export {
   hasWriteTools,
   type McpServerSpec,
 } from './mcp-inventory.js';
+export {
+  isReadOnlyMcpPermissionRequest,
+  READ_ONLY_MCP_SERVER_NAME,
+  READ_ONLY_TOOL_NAMES,
+} from './read-only-policy.js';
 export {
   projectActivity,
   postAgentMessage,

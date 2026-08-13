@@ -19,6 +19,7 @@ import { spawnSync } from 'node:child_process';
 import {
   AcpClient,
   isMutatingPermissionRequest,
+  type AcpPermissionDecision,
   type AcpPermissionHandler,
   type AcpPermissionRequest,
   type McpServerWire,
@@ -44,6 +45,9 @@ import {
   gitWithUserCredentials,
   lsRemoteRef,
   isRegisteredAgentIdentity,
+  APPROVAL_MARKER,
+  authorizeReviewer,
+  verifyApproval,
   type Identity,
   type RelayClient,
 } from '@beeline/gate';
@@ -85,6 +89,7 @@ import {
   stripAttachmentDirectives,
   type AgentOutputCandidate,
 } from './attachments.js';
+import { isReadOnlyMcpPermissionRequest, READ_ONLY_MCP_SERVER_NAME } from './read-only-policy.js';
 
 /** Tracks a single agent session. */
 export interface AgentSession {
@@ -171,6 +176,8 @@ export interface SubchannelInfo {
   mergeTarget?: { repo: string; branch: string; tip: string };
   /** Latest agent-authored completion summary. */
   mergeSummary?: string;
+  /** Exact signed human approval that authorizes landing and archive cleanup. */
+  humanMergeApproval?: { id: string; reviewer: string; tip: string };
   /** Successfully forwarded member events, preventing same-second relay replays. */
   processedMemberEventIds?: Set<string>;
 }
@@ -207,6 +214,19 @@ export interface BoundRepo {
   localOnly?: boolean;
 }
 
+/** The only MCP mounted in a Room: a fixed, Beeline-owned inspection surface. */
+export function readOnlyMcpServer(config: BodyConfig, cwd: string): McpServerWire {
+  if (!config.readonlyMcpCommand) {
+    throw new Error('read-only MCP command is required for Room sessions');
+  }
+  return {
+    name: READ_ONLY_MCP_SERVER_NAME,
+    command: config.readonlyMcpCommand,
+    args: [...(config.readonlyMcpArgs ?? [])],
+    env: [{ name: 'BUZZ_READONLY_ROOT', value: resolve(cwd) }],
+  };
+}
+
 export interface ChannelTaskRequest {
   eventId: string;
   authorPubkey: string;
@@ -220,6 +240,8 @@ interface PendingRoomTurn {
   boundRepo: BoundRepo;
   permissionHandled: boolean;
   transitionedToCorner: boolean;
+  /** Information-only turns can never be escalated into editing by the agent. */
+  readOnlyInformationRequest: boolean;
 }
 
 /** @deprecated Explicit Start-work events are ordinary Room messages now. */
@@ -227,6 +249,33 @@ export const AGENT_REQUEST_TAG = 'buzz-agent-request';
 export const MERGE_READY_TAG = 'merge-ready';
 export const LANDED_TAG = 'landed';
 export const AGENT_CANCEL_TAG = 'buzz-agent-cancel';
+
+/**
+ * Whether a Room request is explicitly asking for information rather than a
+ * repository change. This is a safety classification, not an LLM hint: once a
+ * turn matches, a mutating ACP request is rejected without projecting ALLOW.
+ */
+export function isReadOnlyInformationRequest(content: string): boolean {
+  const normalized = content
+    .normalize('NFKC')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^@[\p{L}\p{N}_-]+[,:]?\s+/u, '');
+  const requestLead = String.raw`(?:(?:please|kindly)\s+|(?:can|could|would|will)\s+you\s+|i\s+(?:want|need)\s+you\s+to\s+|i(?:['’]d| would)\s+like\s+you\s+to\s+)?`;
+  const mutationVerb = String.raw`(?:add|apply|archive|build|checkout|commit|create|delete|edit|fix|implement|install|land|make|merge|modify|move|push|refactor|remove|rename|replace|rewrite|start\s+(?:a\s+)?server|update|write)`;
+  if (new RegExp(String.raw`^${requestLead}${mutationVerb}\b`, 'i').test(normalized)) return false;
+  const informationSignal = new RegExp(
+    String.raw`(?:^${requestLead}(?:analy[sz]e|describe|explain|identify|inspect|list|locate|research|review|summari[sz]e|tell\s+me|find\b|help\s+me\s+understand|give\s+me\s+an?\s+overview|take\s+a\s+look)|\b(?:what|where|which|who|why|how)\b)`,
+    'i',
+  );
+  if (!informationSignal.test(normalized)) return false;
+  // Mutation words may be the subject of research ("where is merge
+  // verified?"). Only an additional imperative clause makes the turn mixed.
+  return !new RegExp(
+    String.raw`(?:\b(?:and|then|also|after\s+that)\b|[,.!?;])\s*(?:please\s+)?${mutationVerb}\b`,
+    'i',
+  ).test(normalized);
+}
 
 export function cornerNameForIntent(intent: string | undefined, parentChannelId: string): string {
   const slug = intent
@@ -513,7 +562,9 @@ export class Body {
           session.cwd ?? session.worktreePath ?? this.config.workspaceRoot,
         );
         const resolvedPath = await realpath(
-          isAbsolute(candidate.path) ? resolve(candidate.path) : resolve(sessionCwd, candidate.path),
+          isAbsolute(candidate.path)
+            ? resolve(candidate.path)
+            : resolve(sessionCwd, candidate.path),
         );
         const pathWithinSession = relative(sessionCwd, resolvedPath);
         if (!pathWithinSession.startsWith('..') && !isAbsolute(pathWithinSession)) {
@@ -642,6 +693,7 @@ export class Body {
             `You are working in a git worktree: ${worktreePath}`,
             `Your feature branch is: ${featureBranch}`,
             'Continue the restored transcript on this branch. Never start a second context.',
+            'Never merge, push or change the target branch, or archive this corner; only a signed human approval may authorize those effects.',
           ].join('\n'),
           autoApprovePermissions: true,
           parentChannelId,
@@ -708,7 +760,7 @@ export class Body {
    * Provision a read-only agent session for a TLC channel.
    *
    * 1. Ensure the agent is a member of the channel.
-   * 2. Start an ACP session with NO write MCP (empty mcpServers).
+   * 2. Start an ACP session with the Beeline-owned read-only MCP only.
    * 3. Project activity into the TLC channel.
    */
   async provision(tlcChannelId: string, boundRepo?: BoundRepo): Promise<AgentSession> {
@@ -726,16 +778,21 @@ export class Body {
     await this.ensureAgentEntity(tlcChannelId);
     const communityId = await this.channelCommunityId(tlcChannelId);
 
-    // Read-only session: NO mcpServers — the boundary IS the MCP mount.
+    const readonlyCwd = boundRepo?.localPath ?? this.config.workspaceRoot;
+    // The boundary remains the MCP mount: only Beeline's fixed inspection MCP
+    // is present here; buzz-dev-mcp and native permissions remain unavailable.
     const session = await this.createManagedSession({
       channelId: tlcChannelId,
       mode: 'readonly',
-      cwd: boundRepo?.localPath ?? this.config.workspaceRoot,
-      mcpServers: [],
+      cwd: readonlyCwd,
+      mcpServers: [readOnlyMcpServer(this.config, readonlyCwd)],
       systemPrompt: [
         'You are a helpful coding assistant in a read-only conversation channel.',
-        'You can answer questions, discuss architecture, and help plan work.',
+        'Use buzz-readonly-mcp to list, read, search, and inspect local git history when analysis needs repository evidence.',
+        'Those inspection tools are non-mutating and do not require human approval.',
+        'Never request native shell or execute permission for listing, reading, searching, or git-history inspection; use the read-only MCP tools instead.',
         'You CANNOT create, edit, or delete files until the host grants a human-approved edit session.',
+        'An information-only request (analysis, explanation, summary, research, or a question) must be answered here and must never be escalated into editing.',
         'When the user asks for a concrete file change, attempt the appropriate write/edit tool.',
         'The host will turn that first mutating permission request into a human allow/deny prompt.',
         'Never claim that work started until the host transitions you into an edit session.',
@@ -820,11 +877,12 @@ export class Body {
         'You have full shell and file editing tools available.',
         'You CAN create, edit, and delete files in this worktree.',
         'Commit your changes to the feature branch when appropriate.',
+        'Never merge, push or change the target branch, or archive this corner. Stop after committing the feature branch; only a signed human approval may authorize landing and archive cleanup.',
         `Repo: ${boundRepo.ownerHex}/${boundRepo.repo}`,
         ...(intent ? [`User intent: ${intent}`] : []),
       ].join('\n'),
-      // A corner is the agent's isolated worktree. Relay repositories retain the
-      // protected-line human gate; ordinary remotes land with operator credentials.
+      // A corner is the agent's isolated worktree. Target landing and archive
+      // cleanup remain behind an independently verified signed human approval.
       autoApprovePermissions: true,
       parentChannelId: tlcChannelId,
       worktreePath,
@@ -994,14 +1052,24 @@ export class Body {
     request: ChannelTaskRequest,
     explicitCornerWork = false,
   ): Promise<boolean> {
-    const prompt = attachmentPrompt(
+    const informationOnly = isReadOnlyInformationRequest(request.content);
+    const userPrompt = attachmentPrompt(
       request.authorPubkey,
       request.content,
       request.attachments ?? [],
     );
+    const prompt = informationOnly
+      ? [
+          'Host boundary: this is an information-only request.',
+          'Inspect with the read-only repository tools and answer conversationally in this Room.',
+          'Do not request editing, execute a native shell, open a corner, or change repository state.',
+          '',
+          userPrompt,
+        ].join('\n')
+      : userPrompt;
     await this.durableState.appendConversation(tlcChannelId, {
       role: 'user',
-      text: prompt,
+      text: userPrompt,
       eventId: request.eventId,
       at: new Date().toISOString(),
     });
@@ -1021,6 +1089,7 @@ export class Body {
       boundRepo,
       permissionHandled: false,
       transitionedToCorner: false,
+      readOnlyInformationRequest: informationOnly,
     };
     this.pendingRoomTurns.set(tlcChannelId, turn);
     try {
@@ -1092,11 +1161,16 @@ export class Body {
   private async handleRoomPermissionRequest(
     tlcChannelId: string,
     permission: AcpPermissionRequest,
-  ): Promise<'reject'> {
+  ): Promise<AcpPermissionDecision> {
+    if (isReadOnlyMcpPermissionRequest(permission)) return 'allow';
     const turn = this.pendingRoomTurns.get(tlcChannelId);
     if (!turn || turn.permissionHandled || !isMutatingPermissionRequest(permission)) {
       return 'reject';
     }
+    // The model cannot reinterpret a human's research request as authorization
+    // to edit. Reject the concrete invocation in place and do not project an
+    // ALLOW card or create a corner for an information-only turn.
+    if (turn.readOnlyInformationRequest) return 'reject';
     turn.permissionHandled = true;
     const permissionId = randomUUID();
     const tool = this.permissionToolLabel(permission);
@@ -1138,6 +1212,17 @@ export class Body {
           turn.request,
         );
         turn.transitionedToCorner = true;
+        await this.postWritePermissionStatus(
+          tlcChannelId,
+          permissionId,
+          turn.request.eventId,
+          tool,
+          'allowed',
+          'Editing is isolated in the new corner. Open it to follow the work.',
+          info.subchannelId,
+        ).catch((statusError) =>
+          console.error('[body] failed to publish direct corner navigation:', statusError),
+        );
         this.startAgentTask(info, turn.request.content);
       } catch (error) {
         await this.postWritePermissionStatus(
@@ -1185,6 +1270,7 @@ export class Body {
     tool: string,
     status: 'allowed' | 'denied' | 'expired' | 'failed',
     message: string,
+    subchannelId?: string,
   ): Promise<void> {
     return postControlMessage(tlcChannelId, this.agentIdentity, message, [
       ['t', WRITE_PERMISSION_REQUEST_TAG],
@@ -1193,6 +1279,7 @@ export class Body {
       ['agent', this.agentIdentity.publicKey],
       ['tool', tool],
       ['status', status],
+      ...(subchannelId ? [['subchannel', subchannelId]] : []),
     ]);
   }
 
@@ -1255,6 +1342,7 @@ export class Body {
           [
             'Implement the following human request in this worktree.',
             'Keep all edits on the current feature branch. Commit the completed work.',
+            'Do not merge, push or change the target branch, or archive this corner.',
             '',
             prompt,
           ].join('\n'),
@@ -1323,17 +1411,19 @@ export class Body {
     const tip = git(info.worktreePath, ['rev-parse', 'HEAD']).stdout.trim();
     if (!/^[0-9a-f]{40}$/.test(tip)) return false;
 
-    if (!boundRepo.ownerHex && boundRepo.remoteName) {
-      return this.publishDirectRemoteDelivery(info, tip);
-    }
-
     const push = boundRepo.ownerHex
       ? gitAuthed(info.worktreePath, this.agentIdentity, boundRepo.ownerHex, boundRepo.repo, [
           'push',
           boundRepo.remoteName ?? 'origin',
           `${info.featureBranch}:refs/heads/${info.featureBranch}`,
         ])
-      : { ok: true, status: 0, stdout: '', stderr: '' };
+      : boundRepo.remoteName
+        ? gitWithUserCredentials(info.worktreePath, [
+            'push',
+            boundRepo.remoteName,
+            `${tip}:refs/heads/${info.featureBranch}`,
+          ])
+        : { ok: true, status: 0, stdout: '', stderr: '' };
     if (!push.ok) {
       await postControlMessage(
         info.subchannelId,
@@ -1422,92 +1512,142 @@ export class Body {
     return true;
   }
 
-  /**
-   * Push and land a non-relay remote with the operator's own git credentials.
-   * No Beeline merge worker, approval, or protected-push assertion participates
-   * in this path; the remote host's branch policy is the remaining authority.
-   */
-  private async publishDirectRemoteDelivery(info: SubchannelInfo, tip: string): Promise<boolean> {
-    const boundRepo = info.boundRepo;
-    const remote = boundRepo?.remoteName;
-    if (!boundRepo || !remote) return false;
-    const branch = boundRepo.targetBranch ?? 'refs/heads/main';
-    const featureRef = `refs/heads/${info.featureBranch}`;
-    const featurePush = gitWithUserCredentials(info.worktreePath, [
-      'push',
-      remote,
-      `${tip}:${featureRef}`,
-    ]);
-    if (!featurePush.ok) {
-      await postControlMessage(
-        info.subchannelId,
-        this.agentIdentity,
-        `Feature push failed; work was not landed. ${featurePush.stderr.trim()}`,
-        [['status', 'failed']],
-      );
-      await this.postParentCornerStatus(
-        info,
-        'failed',
-        'Delivery failed. Open corner for details.',
-      );
-      return false;
-    }
+  /** Find an exact-tip approval from a device-held human admin, never an agent. */
+  private async findHumanMergeApproval(
+    info: SubchannelInfo,
+  ): Promise<SubchannelInfo['humanMergeApproval']> {
+    const target = info.mergeTarget;
+    if (!target) return undefined;
+    info.humanMergeApproval = undefined;
 
-    const land = gitWithUserCredentials(info.worktreePath, ['push', remote, `${tip}:${branch}`]);
-    if (!land.ok) {
+    let approvals: NostrEvent[];
+    try {
+      approvals = await this.agentRelay.queryEvents([
+        {
+          kinds: [9],
+          '#h': [info.subchannelId],
+          '#t': [APPROVAL_MARKER],
+          limit: 100,
+        },
+      ]);
+    } catch (error) {
+      console.error('[body] human merge approval lookup failed closed:', error);
+      return undefined;
+    }
+    for (const approval of approvals) {
+      if (!verifyApproval(approval, approval.pubkey, target)) continue;
+      const authority = await authorizeReviewer({
+        pubkey: approval.pubkey,
+        relay: this.agentRelay,
+        channelId: info.subchannelId,
+        custody: 'device',
+      });
+      if (!authority.authorized) continue;
+      info.humanMergeApproval = {
+        id: approval.id,
+        reviewer: approval.pubkey,
+        tip: target.tip,
+      };
+      return info.humanMergeApproval;
+    }
+    return undefined;
+  }
+
+  /**
+   * Land non-relay work only after an exact signed human-admin approval. The
+   * agent completion path may push its feature ref, but can never advance the
+   * target ref by itself.
+   */
+  private async pollDirectRemoteApprovals(): Promise<number> {
+    let landed = 0;
+    for (const info of this.subchannels.values()) {
+      const boundRepo = info.boundRepo;
+      const remote = boundRepo?.remoteName;
+      const target = info.mergeTarget;
+      if (info.archived || boundRepo?.ownerHex || !remote || !target) continue;
+      if (!(await this.findHumanMergeApproval(info))) continue;
+
+      const featureTip = gitWithUserCredentials(info.worktreePath, [
+        'ls-remote',
+        remote,
+        `refs/heads/${info.featureBranch}`,
+      ])
+        .stdout.trim()
+        .split(/\s+/)[0];
+      if (featureTip !== target.tip) continue;
+      const targetTip = gitWithUserCredentials(info.worktreePath, [
+        'ls-remote',
+        remote,
+        target.branch,
+      ])
+        .stdout.trim()
+        .split(/\s+/)[0];
+      if (targetTip === target.tip) continue;
+
+      const land = gitWithUserCredentials(info.worktreePath, [
+        'push',
+        remote,
+        `${target.tip}:${target.branch}`,
+      ]);
+      if (!land.ok) {
+        await postControlMessage(
+          info.subchannelId,
+          this.agentIdentity,
+          `Human-approved landing on ${target.branch} failed. ${land.stderr.trim()}`,
+          [
+            ['status', 'failed'],
+            ['feature', info.featureBranch],
+            ['tip', target.tip],
+          ],
+        );
+        await this.postParentCornerStatus(
+          info,
+          'failed',
+          'Human-approved delivery failed. Open corner for details.',
+          [['tip', target.tip]],
+        );
+        continue;
+      }
+
       await postControlMessage(
         info.subchannelId,
         this.agentIdentity,
-        `Feature branch pushed, but landing on ${branch} failed. ${land.stderr.trim()}`,
+        `Human-approved work landed on ${target.branch} at ${target.tip}.`,
         [
-          ['status', 'failed'],
+          ['t', LANDED_TAG],
+          ['status', 'ready'],
+          ['delivery', 'landed'],
+          ['approval', info.humanMergeApproval!.id],
+          ['reviewer', info.humanMergeApproval!.reviewer],
+          ['repo', target.repo],
+          ['branch', target.branch],
           ['feature', info.featureBranch],
-          ['tip', tip],
+          ['tip', target.tip],
+          ['agent', this.agentIdentity.publicKey],
         ],
       );
       await this.postParentCornerStatus(
         info,
-        'failed',
-        'Delivery failed after the feature push. Open corner for details.',
-        [['tip', tip]],
+        'ready',
+        `Human-approved work landed at ${target.tip.slice(0, 12)} on ${target.branch.replace(/^refs\/heads\//, '')}.`,
+        [
+          ['delivery', 'landed'],
+          ['approval', info.humanMergeApproval!.id],
+          ['reviewer', info.humanMergeApproval!.reviewer],
+          ['tip', target.tip],
+        ],
       );
-      return false;
+      landed++;
     }
-
-    const target = { repo: this.repoId(boundRepo), branch, tip };
-    info.mergeTarget = target;
-    await postControlMessage(
-      info.subchannelId,
-      this.agentIdentity,
-      `Work landed on ${branch} at ${tip}.`,
-      [
-        ['t', LANDED_TAG],
-        ['status', 'ready'],
-        ['delivery', 'landed'],
-        ['repo', target.repo],
-        ['branch', target.branch],
-        ['feature', info.featureBranch],
-        ['tip', target.tip],
-        ['agent', this.agentIdentity.publicKey],
-      ],
-    );
-    await this.postParentCornerStatus(
-      info,
-      'ready',
-      `Work landed at ${tip.slice(0, 12)} on ${branch.replace(/^refs\/heads\//, '')}.`,
-      [
-        ['delivery', 'landed'],
-        ['tip', tip],
-      ],
-    );
-    return true;
+    return landed;
   }
 
-  /** Archive only after the target ref actually reaches the delivered tip. */
+  /** Archive only after human approval and the target ref reach the exact tip. */
   async pollMergeCompletions(): Promise<number> {
     let merged = 0;
     for (const info of [...this.subchannels.values()]) {
       if (info.archived || !info.mergeTarget || !info.boundRepo) continue;
+      if (!(await this.findHumanMergeApproval(info))) continue;
       const targetTip = info.boundRepo.ownerHex
         ? lsRemoteRef(
             info.worktreePath,
@@ -1557,6 +1697,7 @@ export class Body {
       await Promise.all(
         [...this.subchannels.keys()].map((subchannelId) => this.pollMembers(subchannelId)),
       );
+      await this.pollDirectRemoteApprovals();
       await this.pollMergeCompletions();
       await this.waitForPoll(pollMs, opts.signal);
     }
@@ -1613,6 +1754,7 @@ export class Body {
           console.error('[gate] Room merge poll failed; will retry:', error);
         }
       }
+      await this.pollDirectRemoteApprovals();
       await this.pollMergeCompletions();
       await this.waitForPoll(pollMs, opts.signal);
     }
@@ -1641,11 +1783,7 @@ export class Body {
     await Promise.all([...this.runningAgentTasks.values()]);
   }
 
-  /**
-   * Post a merge summary to the parent channel and mark subchannel as archived.
-   * After calling this, polling for member messages stops and the subchannel
-   * is considered read-only.
-   */
+  /** Post a merge summary. Archival remains a separate human-authorized effect. */
   async postMergeSummary(subchannelId: string, summary: string): Promise<void> {
     const info = this.subchannels.get(subchannelId);
     if (!info) {
@@ -1666,10 +1804,6 @@ export class Body {
         ['t', 'merge-summary'],
       ],
     );
-
-    // Mark subchannel as archived.
-    info.archived = true;
-    info.session.archived = true;
   }
 
   /**

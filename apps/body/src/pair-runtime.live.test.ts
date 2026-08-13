@@ -21,7 +21,11 @@ import {
   queryEvents,
   resolveChannelRole,
 } from '@beeline/gate';
-import { createBuzzClient, repositoryRoomId } from '@beeline/buzz-client';
+import {
+  createBuzzClient,
+  repositoryRoomId,
+  WRITE_PERMISSION_REQUEST_TAG,
+} from '@beeline/buzz-client';
 import { buildAgentEnv, hasLlmCredentials, resolveMcpBinary } from './config.js';
 import {
   detectInstalledAgentCommands,
@@ -241,6 +245,47 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
     expect(protectedPush.ok, protectedPush.stderr).toBe(false);
     console.log('[live-pair-runtime] protected-push=REFUSED');
 
+    const researchStatusBefore = git(checkout, [
+      'status',
+      '--porcelain=v1',
+      '--untracked-files=all',
+    ]).stdout;
+    const researchSourceBefore = await readFile(resolve(checkout, 'README.md'), 'utf8');
+    const research = await humanClient.messageSubmit(
+      roomId,
+      'Analyze this repository without editing it. Read README.md and include its exact heading in your answer.',
+      { mentionAgent: runtime.agent.publicKey },
+    );
+    let researchEvents: Awaited<ReturnType<typeof queryEvents>> = [];
+    await waitUntil(async () => {
+      researchEvents = await queryEvents(
+        [{ kinds: [9], '#h': [roomId], authors: [runtime.agent.publicKey], limit: 200 }],
+        human,
+      );
+      return researchEvents.some((event) =>
+        event.tags.some((tag) => tag[0] === 'e' && tag[1] === research.id),
+      );
+    }, 120_000);
+    const researchReply = researchEvents.find((event) =>
+      event.tags.some((tag) => tag[0] === 'e' && tag[1] === research.id),
+    );
+    expect(researchReply?.content).toContain(marker);
+    expect(
+      researchEvents.some(
+        (event) =>
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === WRITE_PERMISSION_REQUEST_TAG) &&
+          event.tags.some((tag) => tag[0] === 'request' && tag[1] === research.id),
+      ),
+    ).toBe(false);
+    expect(await humanClient.listSubchannels(roomId)).toHaveLength(0);
+    expect(await readFile(resolve(checkout, 'README.md'), 'utf8')).toBe(researchSourceBefore);
+    expect(git(checkout, ['status', '--porcelain=v1', '--untracked-files=all']).stdout).toBe(
+      researchStatusBefore,
+    );
+    console.log(
+      '[live-pair-runtime] daemon-research=READ-FILE/REPLIED permission=NONE corners=0 repo-write=NONE',
+    );
+
     // Create a second repository Room after the one and only pairing. Workspace
     // agent membership must not ambiently mirror into it; the in-app helper is
     // the sole attachment write the running supervisor discovers.
@@ -274,10 +319,7 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
       ]);
       expect(secondSeed.ok, secondSeed.stderr).toBe(true);
 
-      const humanRoom = await humanClient.resolveRepositoryRoomForHuman(
-        communityId,
-        secondBinding,
-      );
+      const humanRoom = await humanClient.resolveRepositoryRoomForHuman(communityId, secondBinding);
       expect(humanRoom.channelId).toBe(secondRoomId);
       expect(await humanClient.isMember(secondRoomId, human.publicKey)).toBe(true);
       // Move smart-HTTP authority from the seed staging channel to the final
@@ -474,26 +516,22 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
             .join('\n')}\n--- daemon.log ---\n${log}`,
         );
       }
-      const remoteSecondFeature = gitAuthed(
-        secondCheckout,
-        human,
-        human.publicKey,
-        secondRepo,
-        ['ls-remote', 'origin', `refs/heads/${secondFeature}`],
-      );
+      const remoteSecondFeature = gitAuthed(secondCheckout, human, human.publicKey, secondRepo, [
+        'ls-remote',
+        'origin',
+        `refs/heads/${secondFeature}`,
+      ]);
       expect(remoteSecondFeature.ok, remoteSecondFeature.stderr).toBe(true);
       expect(remoteSecondFeature.stdout).toContain(secondTip);
-      const fetchSecond = gitAuthed(
-        secondCheckout,
-        human,
-        human.publicKey,
-        secondRepo,
-        ['fetch', 'origin', `refs/heads/${secondFeature}`],
-      );
+      const fetchSecond = gitAuthed(secondCheckout, human, human.publicKey, secondRepo, [
+        'fetch',
+        'origin',
+        `refs/heads/${secondFeature}`,
+      ]);
       expect(fetchSecond.ok, fetchSecond.stderr).toBe(true);
-      expect(
-        git(secondCheckout, ['show', `${secondTip}:SECOND-ROOM-PROOF.txt`]).stdout,
-      ).toContain(marker);
+      expect(git(secondCheckout, ['show', `${secondTip}:SECOND-ROOM-PROOF.txt`]).stdout).toContain(
+        marker,
+      );
       console.log(
         `[live-pair-runtime] concurrent-rooms=SERVED firstTip=${tip} secondTip=${secondTip}`,
       );
@@ -541,11 +579,7 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
     const mergeWorkerRelay = createRelayClient(mergeWorkerIdentity);
     let landed = false;
     for (let attempt = 0; attempt < 3 && !landed; attempt += 1) {
-      let reviewerRole = await resolveChannelRole(
-        subchannel!,
-        human.publicKey,
-        mergeWorkerRelay,
-      );
+      let reviewerRole = await resolveChannelRole(subchannel!, human.publicKey, mergeWorkerRelay);
       if (reviewerRole !== 'admin' && reviewerRole !== 'owner') {
         await mergeWorkerClient.addMember(subchannel!, human.publicKey, 'admin');
         await waitUntil(
@@ -556,11 +590,7 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
         // Role projections are asynchronous; require the grant to remain current
         // after the next second-resolution ordering boundary.
         await new Promise((resolveWait) => setTimeout(resolveWait, 1_100));
-        reviewerRole = await resolveChannelRole(
-          subchannel!,
-          human.publicKey,
-          mergeWorkerRelay,
-        );
+        reviewerRole = await resolveChannelRole(subchannel!, human.publicKey, mergeWorkerRelay);
         if (reviewerRole !== 'admin' && reviewerRole !== 'owner') continue;
       }
 
@@ -572,21 +602,22 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
         const log = existsSync(daemonLog) ? await readFile(daemonLog, 'utf8') : '';
         return log.includes(`approval=${approval.id}`);
       }, 30_000);
-      landed =
-        lsRemoteRef(checkout, human, human.publicKey, repo, 'refs/heads/main') === tip;
+      landed = lsRemoteRef(checkout, human, human.publicKey, repo, 'refs/heads/main') === tip;
     }
     mergeWorkerClient.disconnect();
     if (!landed) {
       const log = existsSync(daemonLog)
         ? await readFile(daemonLog, 'utf8')
         : '(missing daemon log)';
-      throw new Error(`human admin approval did not land after three grants\n--- daemon.log ---\n${log}`);
+      throw new Error(
+        `human admin approval did not land after three grants\n--- daemon.log ---\n${log}`,
+      );
     }
     await waitUntil(
       async () => (await humanClient.getChannelMetadata(subchannel!))?.archived === true,
     );
     expect(lsRemoteRef(checkout, human, human.publicKey, repo, 'refs/heads/main')).toBe(tip);
-    console.log('[live-pair-runtime] human-admin-approval=AUTO-LANDED');
+    console.log('[live-pair-runtime] human-admin-approval=LANDED-AND-ARCHIVED');
     agentClient.disconnect();
     expect(existsSync(resolve(runtime.supervisorRoot, 'beeline', 'agents'))).toBe(true);
     console.log(

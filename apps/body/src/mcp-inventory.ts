@@ -4,7 +4,7 @@
  * The ACP `session/new` response does not list tools. The real inventory is
  * whatever the mounted MCP servers advertise via MCP `tools/list`. For the
  * read-only boundary we assert:
- *   - readonly sessions mount **no** write MCP → inventory is empty
+ *   - readonly sessions mount buzz-readonly-mcp → fixed inspection inventory
  *   - edit sessions mount buzz-dev-mcp → inventory includes shell / str_replace
  *
  * This helper speaks a minimal MCP-over-stdio client so tests assert at the
@@ -33,10 +33,7 @@ interface JsonRpcMsg {
  * Spawn an MCP server briefly, run initialize + tools/list, return tool names.
  * Kills the process when done.
  */
-export async function listMcpToolNames(
-  spec: McpServerSpec,
-  timeoutMs = 15_000,
-): Promise<string[]> {
+export async function listMcpToolNames(spec: McpServerSpec, timeoutMs = 15_000): Promise<string[]> {
   const child: ChildProcessWithoutNullStreams = spawn(spec.command, spec.args ?? [], {
     cwd: spec.cwd,
     env: { ...process.env, ...spec.env },
@@ -50,6 +47,7 @@ export async function listMcpToolNames(
   >();
   let nextId = 1;
   let settled = false;
+  let stderr = '';
 
   const cleanup = () => {
     if (settled) return;
@@ -68,6 +66,10 @@ export async function listMcpToolNames(
   }, timeoutMs);
 
   child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk: string) => {
+    stderr = `${stderr}${chunk}`.slice(-4_000);
+  });
   child.stdout.on('data', (chunk: string) => {
     buf += chunk;
     let nl: number;
@@ -105,6 +107,13 @@ export async function listMcpToolNames(
 
   child.on('error', (err) => {
     for (const [, p] of pending) p.reject(err);
+    pending.clear();
+  });
+  child.on('exit', (code, signal) => {
+    const error = new Error(
+      `MCP server exited code=${code} signal=${signal}${stderr.trim() ? `: ${stderr.trim()}` : ''}`,
+    );
+    for (const [, p] of pending) p.reject(error);
     pending.clear();
   });
 
@@ -147,9 +156,7 @@ export async function listMcpToolNames(
  * - Empty mcpServers → [] (read-only boundary)
  * - Each stdio MCP is listed via tools/list
  */
-export async function inventoryForMcpServers(
-  servers: McpServerSpec[],
-): Promise<string[]> {
+export async function inventoryForMcpServers(servers: McpServerSpec[]): Promise<string[]> {
   if (servers.length === 0) return [];
   const all: string[] = [];
   for (const s of servers) {
@@ -185,11 +192,16 @@ export async function callMcpTool(
   >();
   let nextId = 1;
   let settled = false;
+  let stderr = '';
 
   const cleanup = () => {
     if (settled) return;
     settled = true;
-    try { child.kill('SIGKILL'); } catch { /* ignore */ }
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* ignore */
+    }
   };
 
   const deadline = setTimeout(() => {
@@ -199,6 +211,10 @@ export async function callMcpTool(
   }, timeoutMs);
 
   child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk: string) => {
+    stderr = `${stderr}${chunk}`.slice(-4_000);
+  });
   child.stdout.on('data', (chunk: string) => {
     buf += chunk;
     let nl: number;
@@ -207,7 +223,11 @@ export async function callMcpTool(
       buf = buf.slice(nl + 1);
       if (!line) continue;
       let msg: JsonRpcMsg;
-      try { msg = JSON.parse(line) as JsonRpcMsg; } catch { continue; }
+      try {
+        msg = JSON.parse(line) as JsonRpcMsg;
+      } catch {
+        continue;
+      }
       // Server requests — empty result.
       if (msg.method && msg.id !== undefined) {
         child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }) + '\n');
@@ -225,7 +245,17 @@ export async function callMcpTool(
     }
   });
 
-  child.on('error', (err) => { for (const [, p] of pending) p.reject(err); pending.clear(); });
+  child.on('error', (err) => {
+    for (const [, p] of pending) p.reject(err);
+    pending.clear();
+  });
+  child.on('exit', (code, signal) => {
+    const error = new Error(
+      `MCP server exited code=${code} signal=${signal}${stderr.trim() ? `: ${stderr.trim()}` : ''}`,
+    );
+    for (const [, p] of pending) p.reject(error);
+    pending.clear();
+  });
 
   const request = (method: string, params: unknown): Promise<JsonRpcMsg> => {
     const id = nextId++;
@@ -261,7 +291,19 @@ export async function callMcpTool(
 /** True if any write-class tool name appears in the inventory. */
 export function hasWriteTools(
   toolNames: string[],
-  writeNames: readonly string[] = ['shell', 'str_replace', 'write'],
+  writeNames: readonly string[] = [
+    'shell',
+    'execute',
+    'str_replace',
+    'write',
+    'write_file',
+    'apply_patch',
+    'git_commit',
+    'git_checkout',
+    'git_branch',
+    'git_config',
+    'git_push',
+  ],
 ): boolean {
   const lower = new Set(toolNames.map((n) => n.toLowerCase()));
   return writeNames.some((w) => lower.has(w.toLowerCase()));

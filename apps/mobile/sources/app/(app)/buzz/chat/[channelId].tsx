@@ -160,7 +160,10 @@ function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
 }
 
 export default function BuzzChat() {
-  const { channelId } = useLocalSearchParams<{ channelId: string }>();
+  const { channelId, notificationResponseId } = useLocalSearchParams<{
+    channelId: string;
+    notificationResponseId?: string;
+  }>();
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList<ChatDisplayMessage>>(null);
@@ -584,7 +587,7 @@ export default function BuzzChat() {
       if (unsubscribe) unsubscribe();
       if (unsubscribePresence) unsubscribePresence();
     };
-  }, [decodedId, addMessages, applyAgentPresence]);
+  }, [decodedId, notificationResponseId, addMessages, applyAgentPresence]);
 
   const handleSend = useCallback(async () => {
     const text = inputText.trim();

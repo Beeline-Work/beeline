@@ -1,3 +1,5 @@
+import type { Router } from 'expo-router';
+
 function getObjectValue(value: unknown, key: string): unknown {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         return null;
@@ -78,4 +80,22 @@ export function getSessionRouteFromNotificationData(data: unknown): `/session/${
 export function getSessionRouteFromNotificationResponse(response: unknown): `/session/${string}` | null {
     const contentData = getObjectValue(getObjectValue(getObjectValue(response, 'notification'), 'request'), 'content');
     return getSessionRouteFromNotificationData(getObjectValue(contentData, 'data'));
+}
+
+/**
+ * Bring a notification's Room to the front without creating another copy.
+ * The response id also invalidates the retained screen's transcript backfill.
+ */
+export function navigateToBuzzChannelFromNotification(
+    router: Pick<Router, 'navigate'>,
+    channelId: string,
+    notificationResponseId: string,
+): void {
+    router.navigate(
+        {
+            pathname: '/buzz/chat/[channelId]',
+            params: { channelId, notificationResponseId },
+        },
+        { dangerouslySingular: true },
+    );
 }

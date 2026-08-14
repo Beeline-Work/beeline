@@ -36,6 +36,8 @@ The service account file stays outside the repository. Do not log or commit it.
 `environment` is optional for legacy clients, but registrations explicitly marked
 `test`, `emulator`, or `simulator` are acknowledged and discarded. The mobile
 client sends `physical` or `emulator` from `expo-device`.
+`DELETE /registrations` accepts `{ "pubkey", "token" }` with an exact-method/URL
+NIP-98 authorization from that pubkey, and removes only that device binding.
 The response and logs never contain the FCM token. The v1 registry is a local
 JSON file written mode 0600; it survives normal restarts, but is local to one
 gateway host and is lost if that file is removed. Re-importing or generating a

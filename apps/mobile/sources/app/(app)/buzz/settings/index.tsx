@@ -42,14 +42,14 @@ export default function BuzzSettings() {
       <View style={styles.content}>
         <Text style={styles.sectionLabel}>IDENTITY</Text>
         <TouchableOpacity
-          accessibilityLabel="Open identity and backup settings"
+          accessibilityLabel="Open My Settings"
           onPress={() => router.push('/buzz/settings/identity' as Href)}
           style={styles.settingsRow}
           testID="backup-key-setting"
         >
           <View style={styles.rowCopy}>
-            <Text style={styles.rowTitle}>Identity & backup</Text>
-            <Text style={styles.rowSubtitle}>Name, picture, and secret-key export</Text>
+            <Text style={styles.rowTitle}>My Settings</Text>
+            <Text style={styles.rowSubtitle}>Identity, notifications, sign-in, and key backup</Text>
           </View>
           <Text style={styles.rowChevron}>›</Text>
         </TouchableOpacity>

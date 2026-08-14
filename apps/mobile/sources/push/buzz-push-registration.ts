@@ -1,3 +1,5 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { nip98AuthHeader } from '@beeline/nostr';
 import type { Identity } from '@beeline/buzz-client';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
@@ -5,6 +7,20 @@ import { Platform } from 'react-native';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 
 const REGISTRATION_TIMEOUT_MS = 7_500;
+const PUSH_ENABLED_PREFIX = '@beeline/buzz-push/enabled/';
+const PUSH_TOKEN_PREFIX = '@beeline/buzz-push/token/';
+
+function enabledKey(pubkey: string): string {
+  return `${PUSH_ENABLED_PREFIX}${pubkey}`;
+}
+
+function tokenKey(pubkey: string): string {
+  return `${PUSH_TOKEN_PREFIX}${pubkey}`;
+}
+
+export async function getBuzzPushEnabled(pubkey: string): Promise<boolean> {
+  return (await AsyncStorage.getItem(enabledKey(pubkey))) !== '0';
+}
 
 async function withRegistrationTimeout<T>(operation: Promise<T>, description: string): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -36,6 +52,7 @@ async function grantedAndroidNotificationPermission(): Promise<boolean> {
  */
 export async function registerBuzzPushNotifications(identity: Identity): Promise<boolean> {
   if (Platform.OS !== 'android') return false;
+  if (!(await getBuzzPushEnabled(identity.publicKey))) return false;
 
   try {
     if (!(await grantedAndroidNotificationPermission())) return false;
@@ -54,9 +71,18 @@ export async function registerBuzzPushNotifications(identity: Identity): Promise
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REGISTRATION_TIMEOUT_MS);
     try {
-      const response = await fetch(`${getBuzzRuntimeConfig().pushGatewayUrl}/registrations`, {
+      const registrationUrl = `${getBuzzRuntimeConfig().pushGatewayUrl}/registrations`;
+      const response = await fetch(registrationUrl, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          authorization: nip98AuthHeader(
+            identity.secretKey,
+            identity.publicKey,
+            registrationUrl,
+            'POST',
+          ),
+        },
         body: JSON.stringify({
           pubkey: identity.publicKey,
           token: nativeToken.data,
@@ -72,6 +98,7 @@ export async function registerBuzzPushNotifications(identity: Identity): Promise
         console.log('[buzzy-push] non-production FCM device ignored');
         return false;
       }
+      await AsyncStorage.setItem(tokenKey(identity.publicKey), nativeToken.data);
     } finally {
       clearTimeout(timeout);
     }
@@ -85,4 +112,42 @@ export async function registerBuzzPushNotifications(identity: Identity): Promise
     );
     return false;
   }
+}
+
+export async function setBuzzPushEnabled(identity: Identity, enabled: boolean): Promise<boolean> {
+  await AsyncStorage.setItem(enabledKey(identity.publicKey), enabled ? '1' : '0');
+  if (enabled) return registerBuzzPushNotifications(identity);
+
+  let token = await AsyncStorage.getItem(tokenKey(identity.publicKey));
+  if (!token && Platform.OS === 'android') {
+    try {
+      const permission = await Notifications.getPermissionsAsync();
+      if (permission.granted) {
+        const current = await Notifications.getDevicePushTokenAsync();
+        if (current.type === 'android' && typeof current.data === 'string') token = current.data;
+      }
+    } catch {
+      // A device without configured FCM cannot have completed registration.
+      // Keep the local opt-out instead of making the switch appear stuck on.
+      return false;
+    }
+  }
+  if (!token) return false;
+  const registrationUrl = `${getBuzzRuntimeConfig().pushGatewayUrl}/registrations`;
+  const response = await fetch(registrationUrl, {
+    method: 'DELETE',
+    headers: {
+      'content-type': 'application/json',
+      authorization: nip98AuthHeader(
+        identity.secretKey,
+        identity.publicKey,
+        registrationUrl,
+        'DELETE',
+      ),
+    },
+    body: JSON.stringify({ pubkey: identity.publicKey, token }),
+  });
+  if (!response.ok) throw new Error(`gateway returned HTTP ${response.status}`);
+  await AsyncStorage.removeItem(tokenKey(identity.publicKey));
+  return false;
 }

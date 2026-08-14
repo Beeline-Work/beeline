@@ -692,6 +692,7 @@ export class Body {
       new SessionScheduler({
         maxLiveSessions: Number(process.env.BUZZY_BODY_MAX_SESSIONS ?? '4'),
         idleMs: Number(process.env.BUZZY_BODY_SESSION_IDLE_MS ?? String(5 * 60_000)),
+        reserveInteractiveSlot: true,
       });
     this.ownsScheduler = !services.scheduler;
     this.resolveNamedRepository = services.resolveNamedRepository;
@@ -827,15 +828,22 @@ export class Body {
       },
     };
     session.lifecycle = lifecycle;
-    // Provisioning itself consumes capacity: this evicts the least-recently-used
-    // quiet process before another ACP child is spawned.
-    await this.scheduler.run(input.channelId, lifecycle, async () => undefined);
+    // Room sessions activate eagerly so the conversational surface is ready.
+    // Edit sessions stay lazy: opening a second corner can publish its queued
+    // status immediately instead of waiting for another corner's ACP turn.
+    if (input.mode === 'readonly') {
+      await this.scheduler.run(input.channelId, lifecycle, async () => undefined, {
+        priority: 'interactive',
+      });
+    }
     return session;
   }
 
   private runOnSession<T>(session: AgentSession, task: () => Promise<T>): Promise<T> {
     if (!session.lifecycle) return task();
-    return this.scheduler.run(session.channelId, session.lifecycle, task);
+    return this.scheduler.run(session.channelId, session.lifecycle, task, {
+      priority: session.mode === 'readonly' ? 'interactive' : 'background',
+    });
   }
 
   private async candidateBytes(

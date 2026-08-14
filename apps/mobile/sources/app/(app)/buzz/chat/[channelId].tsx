@@ -33,6 +33,7 @@ import { BuzzRigTransport } from '@/sync/transport';
 import {
   type Agent,
   type Community,
+  type ChannelRole,
   type DirectMessage,
   type MergeTarget,
   type AttachmentReference,
@@ -48,6 +49,7 @@ import {
   channelCacheKey,
   getCachedChannel,
   profileCacheKey,
+  selectChannelList,
   setActiveBuzzCacheViewer,
   useBuzzLocalCache,
 } from '@/buzz/local-cache';
@@ -68,6 +70,7 @@ import {
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { directMessagePeer, shortMemberNpub } from '@/buzz/member-display';
 import {
+  canRenameRoom,
   canRemoveRoomParticipant,
   normalizedRoomRole,
   roomLifecycleAction,
@@ -213,8 +216,13 @@ export default function BuzzChat() {
   const [addingMemberPubkey, setAddingMemberPubkey] = useState<string | null>(null);
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
   const [roomName, setRoomName] = useState(initialChannelCache?.roomName ?? ROOM_LABEL);
+  const [viewerChannelRole, setViewerChannelRole] = useState<ChannelRole | null>(null);
   const [rosterVisible, setRosterVisible] = useState(false);
   const [roomActionsVisible, setRoomActionsVisible] = useState(false);
+  const [renameEditing, setRenameEditing] = useState(false);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
   const [participantPickerVisible, setParticipantPickerVisible] = useState(false);
   const [membershipError, setMembershipError] = useState<string | null>(null);
   const [membershipActionPubkey, setMembershipActionPubkey] = useState<string | null>(null);
@@ -577,6 +585,7 @@ export default function BuzzChat() {
           messageSync,
           identityIsAgent,
           dm,
+          channelRole,
         ] = await Promise.all([
           client.getChannelCommunityId(decodedId),
           client.getChannelMetadata(decodedId),
@@ -585,6 +594,7 @@ export default function BuzzChat() {
           revalidateCachedMessages(t, identity.publicKey, decodedId),
           client.isAgentIdentity(identity.publicKey),
           client.getDirectMessage(decodedId),
+          client.getChannelRole(decodedId),
         ]);
         // Corners inherit their Workspace from the parent Room. Their create event
         // predates the redundant community tag, so resolve through the parent when
@@ -629,6 +639,7 @@ export default function BuzzChat() {
           setCommunities(availableCommunities);
           setActiveCommunityId(channelCommunityId);
           setViewerIsAgent(identityIsAgent);
+          setViewerChannelRole(channelRole);
           setDirectMessage(dm);
           setRoomName(channelMetadata?.name?.trim() || ROOM_LABEL);
           const initialPresences = presenceMapFromSessionEvents(presenceEvents);
@@ -1126,6 +1137,59 @@ export default function BuzzChat() {
     );
   }, [decodedId, lifecycleAction, returnToRoomList, roomLifecycleBusy, roomName, transport]);
 
+  const patchCachedRoomName = useCallback(
+    (name: string) => {
+      if (!cacheViewerPubkey) return;
+      const cache = useBuzzLocalCache.getState();
+      cache.patchChannel(cacheViewerPubkey, decodedId, { roomName: name });
+      const list = selectChannelList(cache, cacheViewerPubkey, activeCommunityId ?? undefined);
+      if (list) {
+        cache.patchChannelList(cacheViewerPubkey, activeCommunityId, {
+          channels: list.channels.map((channel) =>
+            channel.id === decodedId ? { ...channel, title: name } : channel,
+          ),
+        });
+      }
+    },
+    [activeCommunityId, cacheViewerPubkey, decodedId],
+  );
+
+  const handleRenameRoom = useCallback(async () => {
+    const name = renameDraft.trim();
+    if (!name) {
+      setRenameError(`${ROOM_LABEL} name cannot be empty.`);
+      return;
+    }
+    if (!transport || !canRenameRoom(viewerChannelRole) || renameBusy) return;
+
+    const previousName = roomName;
+    setRenameBusy(true);
+    setRenameError(null);
+    setRoomName(name);
+    patchCachedRoomName(name);
+    try {
+      const client = await transport.ensureClient();
+      await client.renameChannel(decodedId, name);
+      setRenameEditing(false);
+      setRoomActionsVisible(false);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (err) {
+      setRoomName(previousName);
+      patchCachedRoomName(previousName);
+      setRenameError(`Could not rename ${ROOM_LABEL}: ${String(err)}`);
+    } finally {
+      setRenameBusy(false);
+    }
+  }, [
+    decodedId,
+    patchCachedRoomName,
+    renameBusy,
+    renameDraft,
+    roomName,
+    transport,
+    viewerChannelRole,
+  ]);
+
   const handleStartDirectMessage = useCallback(
     async (option: RoomMemberOption) => {
       if (!transport || !activeCommunityId || option.pubkey === userPubkey) return;
@@ -1524,6 +1588,8 @@ export default function BuzzChat() {
                 accessibilityRole="button"
                 onPress={() => {
                   setMembershipError(null);
+                  setRenameEditing(false);
+                  setRenameError(null);
                   setRoomActionsVisible(true);
                 }}
                 style={styles.roomActionsButton}
@@ -1977,14 +2043,24 @@ export default function BuzzChat() {
 
       <Modal
         animationType="fade"
-        onRequestClose={() => setRoomActionsVisible(false)}
+        onRequestClose={() => {
+          if (renameBusy) return;
+          setRenameEditing(false);
+          setRenameError(null);
+          setRoomActionsVisible(false);
+        }}
         transparent
         visible={roomActionsVisible}
       >
         <View style={styles.roomActionsModalRoot}>
           <Pressable
             accessibilityLabel={`Close ${ROOM_LABEL} actions`}
-            onPress={() => setRoomActionsVisible(false)}
+            disabled={renameBusy}
+            onPress={() => {
+              setRenameEditing(false);
+              setRenameError(null);
+              setRoomActionsVisible(false);
+            }}
             style={StyleSheet.absoluteFill}
           />
           <HullSurface strength="raised" style={styles.roomActionsModal}>
@@ -1997,12 +2073,87 @@ export default function BuzzChat() {
               </View>
               <TouchableOpacity
                 accessibilityLabel={`Close ${ROOM_LABEL} actions`}
-                onPress={() => setRoomActionsVisible(false)}
+                disabled={renameBusy}
+                onPress={() => {
+                  setRenameEditing(false);
+                  setRenameError(null);
+                  setRoomActionsVisible(false);
+                }}
                 style={styles.roomActionsModalClose}
               >
                 <Text style={styles.roomActionsModalCloseText}>×</Text>
               </TouchableOpacity>
             </View>
+            {canRenameRoom(viewerChannelRole) &&
+              (renameEditing ? (
+                <View style={styles.roomRenameEditor} testID="rename-room-editor">
+                  <Text style={styles.roomRenameLabel}>NEW {ROOM_LABEL.toUpperCase()} NAME</Text>
+                  <TextInput
+                    accessibilityLabel={`New ${ROOM_LABEL} name`}
+                    autoCapitalize="sentences"
+                    autoCorrect
+                    editable={!renameBusy}
+                    onChangeText={(value) => {
+                      setRenameDraft(value);
+                      if (value.trim()) setRenameError(null);
+                    }}
+                    onSubmitEditing={() => void handleRenameRoom()}
+                    returnKeyType="done"
+                    selectTextOnFocus
+                    style={styles.roomRenameInput}
+                    testID="rename-room-input"
+                    value={renameDraft}
+                  />
+                  <View style={styles.roomRenameControls}>
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      disabled={renameBusy}
+                      onPress={() => {
+                        setRenameEditing(false);
+                        setRenameError(null);
+                      }}
+                      style={styles.roomRenameCancel}
+                    >
+                      <Text style={styles.roomRenameCancelText}>CANCEL</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      disabled={renameBusy || !renameDraft.trim()}
+                      onPress={() => void handleRenameRoom()}
+                      style={[
+                        styles.roomRenameApply,
+                        (renameBusy || !renameDraft.trim()) && styles.roomRenameApplyDisabled,
+                      ]}
+                      testID="apply-room-rename"
+                    >
+                      <Text style={styles.roomRenameApplyText}>
+                        {renameBusy ? 'RENAMING…' : 'APPLY'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  accessibilityLabel={`Rename ${ROOM_LABEL}`}
+                  accessibilityRole="button"
+                  disabled={renameBusy}
+                  onPress={() => {
+                    setRenameDraft(roomName);
+                    setRenameError(null);
+                    setRenameEditing(true);
+                  }}
+                  style={styles.roomRenameAction}
+                  testID="rename-room-action"
+                >
+                  <View style={styles.roomLifecycleCopy}>
+                    <Text style={styles.roomLifecycleTitle}>
+                      RENAME {ROOM_LABEL.toUpperCase()}
+                    </Text>
+                    <Text style={styles.roomLifecycleHint}>Change its display name.</Text>
+                  </View>
+                  <Text style={styles.roomLifecycleGlyph}>✎</Text>
+                </TouchableOpacity>
+              ))}
             {lifecycleAction === 'delete' ? (
               <TouchableOpacity
                 accessibilityLabel={`Delete ${ROOM_LABEL}`}
@@ -2038,9 +2189,9 @@ export default function BuzzChat() {
                 <Text style={styles.roomLifecycleGlyph}>↗</Text>
               </TouchableOpacity>
             ) : null}
-            {membershipError && (
+            {(renameError || membershipError) && (
               <View accessibilityRole="alert" style={styles.membershipError}>
-                <Text style={styles.membershipErrorText}>! {membershipError}</Text>
+                <Text style={styles.membershipErrorText}>! {renameError ?? membershipError}</Text>
               </View>
             )}
           </HullSurface>
@@ -2445,6 +2596,76 @@ const styles = StyleSheet.create({
     ...Typography.default(),
     color: groknight.steel,
     fontSize: 24,
+  },
+  roomRenameAction: {
+    minHeight: 66,
+    marginTop: 18,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgBase,
+  },
+  roomRenameEditor: {
+    marginTop: 18,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgBase,
+  },
+  roomRenameLabel: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textMuted,
+    fontSize: 9,
+    lineHeight: 12,
+    letterSpacing: 0.7,
+  },
+  roomRenameInput: {
+    ...Typography.default('semiBold'),
+    minHeight: 44,
+    marginTop: 8,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    color: groknight.textPrimary,
+    backgroundColor: groknight.bgRaised,
+    fontSize: 16,
+  },
+  roomRenameControls: {
+    marginTop: 10,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  roomRenameCancel: {
+    minHeight: 40,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  roomRenameCancelText: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textMuted,
+    fontSize: 10,
+    letterSpacing: 0.6,
+  },
+  roomRenameApply: {
+    minHeight: 40,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: groknight.textPrimary,
+    backgroundColor: groknight.textPrimary,
+  },
+  roomRenameApplyDisabled: { opacity: 0.45 },
+  roomRenameApplyText: {
+    ...Typography.mono('semiBold'),
+    color: groknight.bgBase,
+    fontSize: 10,
+    letterSpacing: 0.6,
   },
   roomLifecycleAction: {
     minHeight: 66,

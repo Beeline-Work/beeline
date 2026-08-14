@@ -20,36 +20,15 @@ function ReasoningRow({
   entry: Extract<ActivityTimelineEntry, { kind: 'reasoning' }>;
   active: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const hasDetail = Boolean(entry.detail);
   return (
     <View style={styles.entry}>
-      <Pressable
-        accessibilityLabel={`${entry.title}${entry.count > 1 ? `, ${entry.count} reasoning updates` : ''}`}
-        accessibilityRole={hasDetail ? 'button' : undefined}
-        accessibilityState={hasDetail ? { expanded } : undefined}
-        disabled={!hasDetail}
-        hitSlop={5}
-        onPress={() => setExpanded((value) => !value)}
-        style={styles.row}
-        testID="activity-reasoning-row"
-      >
+      <View accessibilityLabel="Working" style={styles.row} testID="activity-reasoning-row">
         <View style={[styles.node, active && styles.activeNode]} />
         <Text numberOfLines={1} style={styles.reasoningTitle}>
-          {entry.title}
+          Working
         </Text>
-        {entry.count > 1 ? <Text style={styles.meta}>{entry.count} notes</Text> : null}
-        {active ? (
-          <HullActivityTip />
-        ) : hasDetail ? (
-          <Text style={styles.disclosure}>{expanded ? '⌃' : '⌄'}</Text>
-        ) : null}
-      </Pressable>
-      {expanded && hasDetail ? (
-        <View style={styles.detail} testID="activity-reasoning-detail">
-          <MonoMarkdown markdown={entry.detail} tone="reasoning" />
-        </View>
-      ) : null}
+        {active ? <HullActivityTip /> : null}
+      </View>
     </View>
   );
 }
@@ -68,7 +47,7 @@ function ActionRow({
   return (
     <View style={styles.entry}>
       <Pressable
-        accessibilityLabel={`${entry.title}${entry.summary ? `, ${entry.summary}` : ''}`}
+        accessibilityLabel={`${entry.title}${entry.count > 1 ? `, ${entry.count} actions` : ''}`}
         accessibilityRole={hasDetail ? 'button' : undefined}
         accessibilityState={hasDetail ? { expanded } : undefined}
         disabled={!hasDetail}
@@ -82,7 +61,7 @@ function ActionRow({
         <Text numberOfLines={1} style={styles.actionTitle}>
           {entry.title}
         </Text>
-        {entry.summary ? <Text style={styles.meta}>· {entry.summary}</Text> : null}
+        {entry.count > 1 ? <Text style={styles.meta}>× {entry.count}</Text> : null}
         {active ? (
           <HullActivityTip />
         ) : hasDetail ? (
@@ -102,12 +81,15 @@ function ActionRow({
 export function ActivityTimeline({ active = false, items, testID }: ActivityTimelineProps) {
   const entries = useMemo(() => buildActivityTimeline(items), [items]);
   if (!entries.length) return null;
+  const actions = entries.filter((entry) => entry.kind === 'action');
+  const displayEntries = actions.length > 0 ? actions : active ? entries.slice(-1) : [];
+  if (!displayEntries.length) return null;
 
   return (
     <View style={styles.timeline} testID={testID}>
       <View pointerEvents="none" style={styles.rule} />
-      {entries.map((entry, index) => {
-        const isActiveTip = active && index === entries.length - 1;
+      {displayEntries.map((entry, index) => {
+        const isActiveTip = active && index === displayEntries.length - 1;
         return entry.kind === 'reasoning' ? (
           <ReasoningRow
             active={isActiveTip}

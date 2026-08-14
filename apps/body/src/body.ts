@@ -393,6 +393,7 @@ export class Body {
   private agentRelay: RelayClient;
   private mergeWorkerRelay?: RelayClient;
   private pendingRoomTurns = new Map<string, PendingRoomTurn>();
+  private presenceGenerations = new Map<string, string>();
 
   constructor(
     config: BodyConfig,
@@ -1134,6 +1135,7 @@ export class Body {
         request.eventId,
         session.logicalSessionId ?? session.sessionId,
         'working',
+        this.presenceGenerations.get(tlcChannelId),
       );
       const result = await this.runOnSession(session, () =>
         session.client.sessionPrompt(session.sessionId, prompt, 10 * 60_000),
@@ -1145,12 +1147,13 @@ export class Body {
           request.eventId,
           session.logicalSessionId ?? session.sessionId,
           'complete',
+          this.presenceGenerations.get(tlcChannelId),
         );
         return true;
       }
       const fallback = turn.permissionHandled
         ? 'Editing was not allowed. I’ll stay in the read-only Room conversation.'
-        : '';
+        : 'No repository findings to report.';
       const reply = await this.publishAgentResult(
         tlcChannelId,
         session,
@@ -1170,6 +1173,7 @@ export class Body {
         request.eventId,
         session.logicalSessionId ?? session.sessionId,
         'complete',
+        this.presenceGenerations.get(tlcChannelId),
       );
       return false;
     } catch (error) {
@@ -1179,6 +1183,7 @@ export class Body {
         request.eventId,
         session.logicalSessionId ?? session.sessionId,
         'failed',
+        this.presenceGenerations.get(tlcChannelId),
       ).catch((statusError) =>
         console.error('[body] failed to publish Room turn failure status:', statusError),
       );
@@ -1724,6 +1729,7 @@ export class Body {
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<void> {
     const stopPresence = startAgentPresence(tlcChannelId, this.agentIdentity);
+    this.presenceGenerations.set(tlcChannelId, stopPresence.generationId);
     try {
       await this.assertRepositorySafety(tlcChannelId, boundRepo);
       await this.provision(tlcChannelId, boundRepo);
@@ -1739,6 +1745,7 @@ export class Body {
         await this.waitForPoll(pollMs, opts.signal);
       }
     } finally {
+      this.presenceGenerations.delete(tlcChannelId);
       await stopPresence();
     }
   }
@@ -1752,6 +1759,7 @@ export class Body {
   ): Promise<void> {
     if (!boundRepo.repositoryKey) throw new Error('paired Room is missing its repository key');
     const stopPresence = startAgentPresence(channelId, this.agentIdentity);
+    this.presenceGenerations.set(channelId, stopPresence.generationId);
     try {
       await this.assertRepositorySafety(channelId, boundRepo);
 
@@ -1800,6 +1808,7 @@ export class Body {
         await this.waitForPoll(pollMs, opts.signal);
       }
     } finally {
+      this.presenceGenerations.delete(channelId);
       await stopPresence();
     }
   }

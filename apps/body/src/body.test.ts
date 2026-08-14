@@ -24,6 +24,8 @@ import {
   isTransientPermissionPollError,
   humanAgentExchangeRequest,
   ReadOnlyToolsUnavailableError,
+  ROOM_AGENT_PROMPT_TIMEOUT_MS,
+  ROOM_POLL_FAILURE_BACKOFF_CAP_MS,
   RoomPollBackoff,
   readOnlyMcpServer,
   roomEditPolicyInstructions,
@@ -39,6 +41,7 @@ import {
   stripAgentReplyPreamble,
 } from './activity.js';
 import { isReadOnlyMcpPermissionRequest } from './read-only-policy.js';
+import { SessionScheduler } from './session-scheduler.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -470,6 +473,185 @@ describe('Room poll resilience', () => {
     expect(backoff.failed()).toBe(1_000);
   });
 
+  it('honors repeated relay 429 retry-after hints, then reaches a minutes-long cap', () => {
+    const backoff = new RoomPollBackoff(1_000);
+    const rateLimited = new Error('HTTP 429 {"error":"rate-limited: quota exceeded; retry in 2s"}');
+
+    expect(backoff.failed(rateLimited)).toBe(2_000);
+    expect(backoff.failed(rateLimited)).toBe(2_000);
+    expect(backoff.failed(rateLimited)).toBe(4_000);
+    for (let failures = 0; failures < 20; failures++) backoff.failed(rateLimited);
+    expect(backoff.failed(rateLimited)).toBe(ROOM_POLL_FAILURE_BACKOFF_CAP_MS);
+  });
+
+  it('does not spend a failed Room tick on auxiliary relay maintenance', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ accepted: true }))));
+    const controller = new AbortController();
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: '/tmp/buzzy-429-backoff',
+        relayBaseUrl: 'http://relay.test',
+        relayHost: 'relay.test',
+        relayScheme: 'http',
+        relayWsUrl: 'ws://relay.test',
+        autoApprovePermissions: true,
+      },
+      newIdentity('429-operator'),
+      newIdentity('429-agent'),
+    );
+    vi.spyOn(body, 'assertRepositorySafety').mockResolvedValue(undefined);
+    vi.spyOn(body, 'provision').mockResolvedValue({} as never);
+    vi.spyOn(body, 'restoreSubchannels').mockResolvedValue(undefined);
+    const poll = vi
+      .spyOn(body, 'pollChannelRequests')
+      .mockRejectedValue(new Error('HTTP 429 {"error":"retry in 2s"}'));
+    const maintenance = vi.spyOn(body as never, 'pollRoomMaintenance').mockResolvedValue(undefined);
+    const delays: number[] = [];
+    vi.spyOn(body as never, 'waitForPoll').mockImplementation(async (delayMs: number) => {
+      delays.push(delayMs);
+      if (delays.length === 3) controller.abort();
+    });
+
+    await body.runRepositoryRoomLoop(
+      'workspace',
+      'rate-limited-room',
+      { repo: 'cherry', repositoryKey: 'cherry', localOnly: true },
+      { pollMs: 1_000, signal: controller.signal },
+    );
+
+    expect(poll).toHaveBeenCalledTimes(3);
+    expect(delays).toEqual([2_000, 2_000, 4_000]);
+    expect(maintenance).not.toHaveBeenCalled();
+  });
+
+  it('lets a healthy Room continue polling while a rate-limited sibling waits', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ accepted: true }))));
+    const failingController = new AbortController();
+    const healthyController = new AbortController();
+    const bodyConfig = {
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-independent-rooms',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http' as const,
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    };
+    const failing = new Body(bodyConfig, newIdentity('failing-operator'), newIdentity('failing-agent'));
+    const healthy = new Body(bodyConfig, newIdentity('healthy-operator'), newIdentity('healthy-agent'));
+    for (const body of [failing, healthy]) {
+      vi.spyOn(body, 'assertRepositorySafety').mockResolvedValue(undefined);
+      vi.spyOn(body, 'provision').mockResolvedValue({} as never);
+      vi.spyOn(body, 'restoreSubchannels').mockResolvedValue(undefined);
+      vi.spyOn(body as never, 'pollRoomMaintenance').mockResolvedValue(undefined);
+    }
+    vi.spyOn(failing, 'pollChannelRequests').mockRejectedValue(
+      new Error('HTTP 429 {"error":"retry in 2s"}'),
+    );
+    let failureWaitStarted!: () => void;
+    const failureWait = new Promise<void>((resolve) => {
+      failureWaitStarted = resolve;
+    });
+    const failingDelays: number[] = [];
+    vi.spyOn(failing as never, 'waitForPoll').mockImplementation(async (delayMs: number) => {
+      failingDelays.push(delayMs);
+      failureWaitStarted();
+      await new Promise<void>((resolve) =>
+        failingController.signal.addEventListener('abort', () => resolve(), { once: true }),
+      );
+    });
+    let healthyPolls = 0;
+    vi.spyOn(healthy, 'pollChannelRequests').mockImplementation(async () => {
+      healthyPolls++;
+      if (healthyPolls === 3) healthyController.abort();
+      return 0;
+    });
+    vi.spyOn(healthy as never, 'waitForPoll').mockResolvedValue(undefined);
+
+    const failingLoop = failing.runRepositoryRoomLoop(
+      'workspace',
+      'failing-room',
+      { repo: 'cherry', repositoryKey: 'cherry', localOnly: true },
+      { pollMs: 1_000, signal: failingController.signal },
+    );
+    await failureWait;
+    await healthy.runRepositoryRoomLoop(
+      'workspace',
+      'healthy-room',
+      { repo: 'beebee', repositoryKey: 'beebee', localOnly: true },
+      { pollMs: 1_000, signal: healthyController.signal },
+    );
+    failingController.abort();
+    await failingLoop;
+
+    expect(failingDelays).toEqual([2_000]);
+    expect(healthyPolls).toBe(3);
+  });
+
+  it('bounds a non-returning ACP prompt to one minute and retires its session generation', async () => {
+    vi.useFakeTimers();
+    try {
+      const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
+      const body = new Body(
+        {
+          agentBinary: '/nonexistent',
+          mcpBinary: '/nonexistent',
+          agentEnv: {},
+          workspaceRoot: '/tmp/buzzy-hung-acp',
+          relayBaseUrl: 'http://relay.test',
+          relayHost: 'relay.test',
+          relayScheme: 'http',
+          relayWsUrl: 'ws://relay.test',
+          autoApprovePermissions: true,
+        },
+        newIdentity('hung-operator'),
+        newIdentity('hung-agent'),
+        undefined,
+        { scheduler },
+      );
+      const sessionCancel = vi.fn();
+      const sessionPrompt = vi.fn(
+        (_sessionId: string, _prompt: string, timeoutMs: number) =>
+          new Promise<never>((_resolve, reject) =>
+            setTimeout(
+              () => reject(new Error(`ACP session/prompt timed out after ${timeoutMs}ms`)),
+              timeoutMs,
+            ),
+          ),
+      );
+      const suspend = vi.fn().mockResolvedValue(undefined);
+      const session = {
+        channelId: 'hung-room',
+        sessionId: 'hung-session',
+        mode: 'readonly',
+        client: { sessionPrompt, sessionCancel },
+        lifecycle: { activate: vi.fn().mockResolvedValue('hung-session'), suspend },
+      } as never;
+
+      const prompt = Reflect.get(body, 'promptAgent').call(body, session, 'hello');
+      const rejection = expect(prompt).rejects.toThrow(
+        `ACP session/prompt timed out after ${ROOM_AGENT_PROMPT_TIMEOUT_MS}ms`,
+      );
+      await vi.advanceTimersByTimeAsync(ROOM_AGENT_PROMPT_TIMEOUT_MS - 1);
+      expect(suspend).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await rejection;
+
+      expect(sessionPrompt).toHaveBeenCalledWith('hung-session', 'hello', ROOM_AGENT_PROMPT_TIMEOUT_MS);
+      expect(sessionCancel).toHaveBeenCalledWith('hung-session');
+      expect(suspend).toHaveBeenCalledOnce();
+      expect(scheduler.snapshot().busy).toBe(0);
+      await scheduler.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('contains an ETIMEDOUT poll in its Room, backs off, and returns presence online on recovery', async () => {
     const statuses: string[] = [];
     vi.stubGlobal(
@@ -850,7 +1032,7 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(prompt).toHaveBeenCalledWith(
       'readonly-session',
       expect.stringContaining("Hey, what's up?"),
-      600_000,
+      ROOM_AGENT_PROMPT_TIMEOUT_MS,
     );
     expect(body.listSessions()).toHaveLength(1);
     expect(published).toHaveLength(3);

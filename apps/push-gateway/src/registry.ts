@@ -82,6 +82,15 @@ export class TokenRegistry {
     if (changed) await this.persist();
   }
 
+  async unregister(pubkey: string, token: string): Promise<void> {
+    if (!TokenRegistry.validPubkey(pubkey)) throw new Error('invalid pubkey');
+    if (!TokenRegistry.validToken(token)) throw new Error('invalid FCM token');
+    const tokens = this.byPubkey.get(pubkey);
+    if (!tokens?.delete(token)) return;
+    if (tokens.size === 0) this.byPubkey.delete(pubkey);
+    await this.persist();
+  }
+
   private registerInMemory(pubkey: string, token: string): void {
     // An FCM installation belongs to exactly one signed-in identity. Rebinding
     // removes the old identity so logout/key switches cannot receive stale pushes.

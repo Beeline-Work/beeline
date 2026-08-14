@@ -410,6 +410,41 @@ export async function renameChannel(
   throw new Error(`Room name was not projected after 15000ms`);
 }
 
+/** Change a top-level Room between public discovery and invite-only access. */
+export async function setChannelVisibility(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  visibility: 'public' | 'invite-only',
+): Promise<ChannelMetadata> {
+  if (visibility !== 'public' && visibility !== 'invite-only') {
+    throw new Error('invalid Room visibility');
+  }
+  await assertTopLevelRoom(ctx, channelId);
+  const role = await getChannelRole(ctx, channelId, ctx.identity.publicKey);
+  if (!canManageRole(role)) {
+    throw new Error('only a Room owner or admin can change its visibility');
+  }
+
+  const current = await getChannelMetadata(ctx, channelId);
+  const tags: string[][] = [
+    ['h', channelId],
+    ['visibility', visibility === 'invite-only' ? 'private' : 'open'],
+  ];
+  if (current?.name) tags.push(['name', current.name]);
+  if (current?.about) tags.push(['about', current.about]);
+  if (current?.archived) tags.push(['archived', 'true']);
+  if (current?.communityId) tags.push([TAG_COMMUNITY, current.communityId]);
+
+  await publishEvent(ctx.http, sign(ctx.identity, KIND_EDIT_METADATA, tags));
+  const timeoutAt = Date.now() + 15_000;
+  while (Date.now() < timeoutAt) {
+    const projected = await getChannelMetadata(ctx, channelId);
+    if (projected?.visibility === visibility) return projected;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 300));
+  }
+  throw new Error('Room visibility was not projected after 15000ms');
+}
+
 /**
  * Poll until membership is visible (gotcha: accepted 9000 ≠ applied).
  * Throws if not listed within timeout.

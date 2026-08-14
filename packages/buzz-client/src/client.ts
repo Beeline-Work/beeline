@@ -33,6 +33,7 @@ import {
   removeRoomMember,
   archiveRoom,
   renameChannel,
+  setChannelVisibility,
   listSubchannels,
   sendMessage,
   setMemberRole,
@@ -48,14 +49,24 @@ import {
   createCommunity,
   createInvite,
   getCommunity,
+  listCommunityInvites,
   listCommunities,
+  renameCommunity,
   repairCommunityRoomMemberships,
   redeemInvite,
+  revokeCommunityInvite,
   setCommunityAvatar,
+  setCommunityVisibility,
 } from './community.js';
 import { publishEvent, queryEvents, type HttpBridgeOptions } from './http.js';
 import { KIND_AGENT_PRESENCE, KIND_STREAM_MESSAGE, TAG_AGENT_PRESENCE } from './kinds.js';
-import { getPersonProfile, listPersonProfiles, setPersonProfile } from './person-profile.js';
+import {
+  getGlobalPersonProfile,
+  getPersonProfile,
+  listPersonProfiles,
+  setGlobalPersonProfile,
+  setPersonProfile,
+} from './person-profile.js';
 import { getDirectMessage, listDirectMessages, resolveDirectMessage } from './direct-message.js';
 import { uploadMedia } from './media.js';
 import { toSessionEvent } from './parse.js';
@@ -77,6 +88,7 @@ import type {
   ChannelMetadata,
   DirectMessage,
   Community,
+  CommunityInviteRecord,
   CommunityInvite,
   CommunityMember,
   CreateInviteOptions,
@@ -239,6 +251,13 @@ export class BuzzClient {
     return renameChannel(this.ctx, channelId, name);
   }
 
+  setChannelVisibility(
+    channelId: string,
+    visibility: 'public' | 'invite-only',
+  ): Promise<ChannelMetadata> {
+    return setChannelVisibility(this.ctx, channelId, visibility);
+  }
+
   isMember(channelId: string, pubkey: string): Promise<boolean> {
     return isMember(this.ctx, channelId, pubkey);
   }
@@ -302,6 +321,17 @@ export class BuzzClient {
     return setCommunityAvatar(this.ctx, communityId, avatarUrl);
   }
 
+  renameCommunity(communityId: string, name: string): Promise<Community> {
+    return renameCommunity(this.ctx, communityId, name);
+  }
+
+  setCommunityVisibility(
+    communityId: string,
+    visibility: Community['visibility'],
+  ): Promise<Community> {
+    return setCommunityVisibility(this.ctx, communityId, visibility);
+  }
+
   /**
    * Communities for any pubkey; defaults to this client's restored identity.
    * Self-listing also repairs missing direct Room projections for human members.
@@ -341,11 +371,23 @@ export class BuzzClient {
     return createInvite(this.ctx, communityId, options);
   }
 
+  listCommunityInvites(communityId: string): Promise<CommunityInviteRecord[]> {
+    return listCommunityInvites(this.ctx, communityId);
+  }
+
+  revokeCommunityInvite(communityId: string, tokenHash: string): Promise<void> {
+    return revokeCommunityInvite(this.ctx, communityId, tokenHash);
+  }
+
   redeemInvite(token: string): Promise<RedeemInviteResult> {
     return redeemInvite(this.ctx, token);
   }
 
   // ── Cosmetic identity ops ─────────────────────────────────────────────
+
+  getGlobalPersonProfile(pubkey = this.identity.publicKey): Promise<PersonProfile | null> {
+    return getGlobalPersonProfile(this.ctx, pubkey);
+  }
 
   getPersonProfile(
     communityId: string,
@@ -360,6 +402,10 @@ export class BuzzClient {
 
   setPersonProfile(communityId: string, input: PersonProfileInput): Promise<PersonProfile> {
     return setPersonProfile(this.ctx, communityId, input);
+  }
+
+  setGlobalPersonProfile(input: PersonProfileInput): Promise<PersonProfile> {
+    return setGlobalPersonProfile(this.ctx, input);
   }
 
   uploadMedia(bytes: Uint8Array, mimeType: string): Promise<MediaBlob> {

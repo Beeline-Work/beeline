@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { NIP98_KIND, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { TokenRegistry } from './registry.js';
 
 const MAX_BODY_BYTES = 32 * 1024;
@@ -19,6 +20,26 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
     chunks.push(buffer);
   }
   return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+}
+
+function authenticatedPubkey(request: IncomingMessage): string | null {
+  const authorization = request.headers.authorization;
+  if (!authorization?.startsWith('Nostr ')) return null;
+  try {
+    const event = JSON.parse(
+      Buffer.from(authorization.slice('Nostr '.length), 'base64').toString('utf8'),
+    ) as NostrEvent;
+    if (event.kind !== NIP98_KIND || !verifyEvent(event)) return null;
+    if (Math.abs(Math.floor(Date.now() / 1000) - event.created_at) > 300) return null;
+    const method = event.tags.find((tag) => tag[0] === 'method')?.[1];
+    const target = event.tags.find((tag) => tag[0] === 'u')?.[1];
+    if (method !== request.method || !target) return null;
+    const url = new URL(target);
+    if (url.pathname !== request.url || url.search || url.hash) return null;
+    return event.pubkey;
+  } catch {
+    return null;
+  }
 }
 
 export function createRegistrationServer(registry: TokenRegistry) {
@@ -57,6 +78,25 @@ export function createRegistrationServer(registry: TokenRegistry) {
           `[push] device registered pubkey=${pubkey.slice(0, 12)}… devices=${registry.tokenCount}`,
         );
         json(response, 201, { registered: true });
+        return;
+      }
+
+      if (request.method === 'DELETE' && request.url === '/registrations') {
+        const body = await readJson(request);
+        if (!body || typeof body !== 'object') throw new Error('expected JSON object');
+        const { pubkey, token } = body as Record<string, unknown>;
+        if (typeof pubkey !== 'string' || !TokenRegistry.validPubkey(pubkey)) {
+          throw new Error('invalid pubkey');
+        }
+        if (authenticatedPubkey(request) !== pubkey) {
+          json(response, 401, { error: 'valid identity authorization required' });
+          return;
+        }
+        if (typeof token !== 'string' || !TokenRegistry.validToken(token)) {
+          throw new Error('invalid FCM token');
+        }
+        await registry.unregister(pubkey, token);
+        json(response, 200, { registered: false });
         return;
       }
 

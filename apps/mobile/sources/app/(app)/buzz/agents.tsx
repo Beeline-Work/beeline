@@ -51,6 +51,7 @@ export default function BuzzAgents() {
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>();
   const [confirmingRemoval, setConfirmingRemoval] = useState(false);
   const [viewerAvatarUrl, setViewerAvatarUrl] = useState<string | undefined>();
+  const [canManageWorkspace, setCanManageWorkspace] = useState(false);
   const pairingBaseline = useRef<Set<string>>(new Set());
   const pairingPending = useRef(false);
 
@@ -111,6 +112,10 @@ export default function BuzzAgents() {
         setCommunityId(activeWorkspaceId);
         setAgents(listed);
         setViewerAvatarUrl(viewerProfile?.avatar);
+        const role = available.find(
+          (workspace) => workspace.communityId === activeWorkspaceId,
+        )?.viewerRole;
+        setCanManageWorkspace(role === 'owner' || role === 'admin');
         interval = setInterval(() => {
           if (!pairingPending.current) return;
           void refreshAgents(nextTransport, activeWorkspaceId).catch(() => undefined);
@@ -287,7 +292,11 @@ export default function BuzzAgents() {
         router.replace({ pathname: '/buzz/channels', params: { communityId: id } });
       }}
       onAdd={() => router.push('/buzz/community' as Href)}
-      onSettings={() => router.push('/buzz/settings' as Href)}
+      onSettings={() => router.push('/buzz/settings/identity' as Href)}
+      onWorkspaceSettings={(id) =>
+        router.push({ pathname: '/buzz/settings/workspace', params: { communityId: id } } as Href)
+      }
+      canManageActiveCommunity={canManageWorkspace}
       viewerPubkey={identity?.publicKey}
       viewerAvatarUrl={viewerAvatarUrl}
     >

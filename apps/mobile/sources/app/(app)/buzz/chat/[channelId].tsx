@@ -213,6 +213,7 @@ export default function BuzzChat() {
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(
     initialChannelCache?.communityId ?? null,
   );
+  const [canManageWorkspace, setCanManageWorkspace] = useState(false);
   const [addingMemberPubkey, setAddingMemberPubkey] = useState<string | null>(null);
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
   const [roomName, setRoomName] = useState(initialChannelCache?.roomName ?? ROOM_LABEL);
@@ -764,6 +765,10 @@ export default function BuzzChat() {
             )
           : [];
         if (!cancelled) {
+          const workspaceRole = communityMembers.find(
+            (member) => member.pubkey === identity.publicKey,
+          )?.role;
+          setCanManageWorkspace(workspaceRole === 'owner' || workspaceRole === 'admin');
           let resolvedRoomName = channelMetadata?.name?.trim() || ROOM_LABEL;
           if (dm) {
             const peerPubkey = directMessagePeer(dm, identity.publicKey);
@@ -1525,7 +1530,11 @@ export default function BuzzChat() {
       activeCommunityId={activeCommunityId}
       onSelect={handleCommunitySelect}
       onAdd={() => router.push('/buzz/community' as Href)}
-      onSettings={() => router.push('/buzz/settings' as Href)}
+      onSettings={() => router.push('/buzz/settings/identity' as Href)}
+      onWorkspaceSettings={(communityId) =>
+        router.push({ pathname: '/buzz/settings/workspace', params: { communityId } } as Href)
+      }
+      canManageActiveCommunity={canManageWorkspace}
       viewerPubkey={userPubkey || undefined}
       viewerAvatarUrl={personProfileByPubkey.get(userPubkey)?.avatar}
     >
@@ -2146,9 +2155,7 @@ export default function BuzzChat() {
                   testID="rename-room-action"
                 >
                   <View style={styles.roomLifecycleCopy}>
-                    <Text style={styles.roomLifecycleTitle}>
-                      RENAME {ROOM_LABEL.toUpperCase()}
-                    </Text>
+                    <Text style={styles.roomLifecycleTitle}>RENAME {ROOM_LABEL.toUpperCase()}</Text>
                     <Text style={styles.roomLifecycleHint}>Change its display name.</Text>
                   </View>
                   <Text style={styles.roomLifecycleGlyph}>✎</Text>

@@ -379,6 +379,37 @@ export async function archiveRoom(ctx: ChannelOpsContext, channelId: string): Pr
   await waitUntilRoomArchived(ctx, channelId);
 }
 
+/** Rename a top-level Room through the current owner/admin metadata path. */
+export async function renameChannel(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  nextName: string,
+): Promise<ChannelMetadata> {
+  const name = nextName.trim();
+  if (!name) throw new Error('Room name cannot be empty');
+  await assertTopLevelRoom(ctx, channelId);
+  const role = await getChannelRole(ctx, channelId, ctx.identity.publicKey);
+  if (!canManageRole(role)) throw new Error('only a Room owner or admin can rename it');
+
+  const current = await getChannelMetadata(ctx, channelId);
+  const tags: string[][] = [
+    ['h', channelId],
+    ['name', name],
+  ];
+  if (current?.about) tags.push(['about', current.about]);
+  if (current?.archived) tags.push(['archived', 'true']);
+  if (current?.communityId) tags.push([TAG_COMMUNITY, current.communityId]);
+
+  await publishEvent(ctx.http, sign(ctx.identity, KIND_EDIT_METADATA, tags));
+  const timeoutAt = Date.now() + 15_000;
+  while (Date.now() < timeoutAt) {
+    const projected = await getChannelMetadata(ctx, channelId);
+    if (projected?.name === name) return projected;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 300));
+  }
+  throw new Error(`Room name was not projected after 15000ms`);
+}
+
 /**
  * Poll until membership is visible (gotcha: accepted 9000 ≠ applied).
  * Throws if not listed within timeout.

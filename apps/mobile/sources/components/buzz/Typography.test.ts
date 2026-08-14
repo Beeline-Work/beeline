@@ -109,6 +109,9 @@ const monoStyles = new Set([
   'cornerFooterActive',
   'cornerArchivedInputText',
   'roomActionsModalEyebrow',
+  'roomRenameLabel',
+  'roomRenameCancelText',
+  'roomRenameApplyText',
   'roomLifecycleTitle',
 ]);
 

@@ -12,6 +12,10 @@ export function roomLifecycleAction(role: ChannelRole | null): RoomLifecycleActi
   return role === 'member' ? 'leave' : null;
 }
 
+export function canRenameRoom(role: ChannelRole | null): boolean {
+  return role === 'owner' || role === 'admin';
+}
+
 export function canRemoveRoomParticipant(
   viewerRole: ChannelRole | null,
   targetRole: ChannelRole | null,

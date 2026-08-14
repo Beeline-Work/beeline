@@ -150,6 +150,7 @@ export {
   waitUntilNotMember,
   waitUntilRoomArchived,
   archiveRoom,
+  renameChannel,
   listChannelsForPubkey,
   getChannelMetadata,
   listSubchannels,

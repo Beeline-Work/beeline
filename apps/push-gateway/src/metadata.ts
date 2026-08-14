@@ -133,6 +133,14 @@ function personName(
   pubkey: string,
   communityId?: string,
 ): string | undefined {
+  const nipProfile = latest(
+    events.filter((event) => event.kind === 0 && event.pubkey === pubkey && verifyEvent(event)),
+  );
+  const nipContent = nipProfile ? jsonObject(nipProfile.content) : undefined;
+  const globalName = cleanName(nipContent?.display_name) ?? cleanName(nipContent?.name);
+  if (globalName) return globalName;
+
+  // Older installs may not have migrated their Workspace-scoped profile yet.
   const communityProfile = latest(
     events.filter(
       (event) =>
@@ -145,13 +153,7 @@ function personName(
   );
   const communityContent = communityProfile ? jsonObject(communityProfile.content) : undefined;
   const communityName = cleanName(communityContent?.displayName ?? communityContent?.name);
-  if (communityName) return communityName;
-
-  const nipProfile = latest(
-    events.filter((event) => event.kind === 0 && event.pubkey === pubkey && verifyEvent(event)),
-  );
-  const nipContent = nipProfile ? jsonObject(nipProfile.content) : undefined;
-  return cleanName(nipContent?.display_name ?? nipContent?.name);
+  return communityName;
 }
 
 /** Cached, recipient-authorized relay metadata used only for notification presentation. */
@@ -276,6 +278,12 @@ export class NotificationMetadataResolver {
     if (communityId) {
       filters.push(
         { kinds: [KIND_AGENT_SOUL], '#d': [`${communityId}:${pubkey}`], limit: 20 },
+        {
+          kinds: [KIND_PERSON_PROFILE],
+          authors: [pubkey],
+          '#d': [`${communityId}:${pubkey}`],
+          limit: 5,
+        },
         {
           kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
           '#d': [communityId],

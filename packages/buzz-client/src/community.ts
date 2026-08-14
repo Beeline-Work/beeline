@@ -49,9 +49,16 @@ import type {
 
 export const DEFAULT_INVITE_TTL_SECONDS = 100 * 365 * 24 * 60 * 60;
 const COMMUNITY_AVATAR_PURPOSE_PREFIX = 'buzz-workspace-avatar:';
+let lastCommunityMutationTimestamp = 0;
 
 function now(): number {
   return Math.floor(Date.now() / 1000);
+}
+
+function nextCommunityTimestamp(): number {
+  const current = now();
+  lastCommunityMutationTimestamp = Math.max(current, lastCommunityMutationTimestamp + 1);
+  return lastCommunityMutationTimestamp;
 }
 
 function newUuid(): string {
@@ -110,6 +117,27 @@ function metadataAvatar(event: NostrEvent | undefined): string | undefined {
   return avatar || undefined;
 }
 
+function metadataClearsAvatar(event: NostrEvent | undefined): boolean {
+  if (!event) return false;
+  return event.tags.some(
+    (tag) =>
+      ((tag[0] === 'avatar' || tag[0] === 'picture') && tag[1] === '') ||
+      (tag[0] === 'purpose' && tag[1] === COMMUNITY_AVATAR_PURPOSE_PREFIX),
+  );
+}
+
+function metadataVisibility(event: NostrEvent | undefined): Community['visibility'] | undefined {
+  if (event?.tags.some((tag) => tag[0] === 'private')) return 'invite-only';
+  const value = event ? tagValue(event, 'visibility') : undefined;
+  if (value === 'private' || value === 'invite-only') return 'invite-only';
+  if (value === 'open' || value === 'public') return 'public';
+  return undefined;
+}
+
+function wireVisibility(visibility: Community['visibility']): 'open' | 'private' {
+  return visibility === 'invite-only' ? 'private' : 'open';
+}
+
 function latestEvent(events: NostrEvent[]): NostrEvent | undefined {
   return [...events].sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))[0];
 }
@@ -122,11 +150,14 @@ function toCommunity(events: NostrEvent[], metadata?: NostrEvent): Community | n
   const communityId = tagValue(created, 'h');
   const name = tagValue(metadata ?? created, 'name') ?? tagValue(created, 'name');
   if (!communityId || !name) return null;
-  const avatar = metadataAvatar(metadata) ?? metadataAvatar(created);
+  const avatar = metadataClearsAvatar(metadata)
+    ? undefined
+    : (metadataAvatar(metadata) ?? metadataAvatar(created));
   return {
     communityId,
     name,
     ...(avatar ? { avatar } : {}),
+    visibility: metadataVisibility(metadata) ?? metadataVisibility(created) ?? 'public',
     createdBy: created.pubkey,
     ownerPubkey: created.pubkey,
     createdAt: created.created_at,
@@ -264,7 +295,7 @@ export async function setCommunityAvatar(
   avatarUrl: string,
 ): Promise<Community> {
   const avatar = avatarUrl.trim();
-  if (!avatar || avatar.length > 2048 || !/^https?:\/\//i.test(avatar)) {
+  if (avatar && (avatar.length > 2048 || !/^https?:\/\//i.test(avatar))) {
     throw new Error('Workspace picture must be an http(s) URL');
   }
   const community = await getCommunity(ctx, communityId);
@@ -275,27 +306,129 @@ export async function setCommunityAvatar(
     throw new Error('only a Workspace owner or admin can change its picture');
   }
 
-  const event = sign(ctx, KIND_EDIT_METADATA, [
+  const tags: string[][] = [
     ['h', communityId],
     // Name is privileged NIP-29 metadata. Repeating its current value makes
     // the relay enforce owner/admin authority for this cosmetic projection.
     ['name', community.name],
-    ['avatar', avatar],
-    ['picture', avatar],
-    ['purpose', `${COMMUNITY_AVATAR_PURPOSE_PREFIX}${avatar}`],
+    ['visibility', wireVisibility(community.visibility)],
     [TAG_COMMUNITY, communityId],
-  ]);
+  ];
+  if (avatar) {
+    tags.push(['avatar', avatar]);
+    tags.push(['picture', avatar]);
+    tags.push(['purpose', `${COMMUNITY_AVATAR_PURPOSE_PREFIX}${avatar}`]);
+  } else {
+    // An explicit empty value prevents an immutable legacy create-event image
+    // from reappearing when a current admin removes the Workspace picture.
+    tags.push(['avatar', '']);
+    tags.push(['picture', '']);
+    tags.push(['purpose', COMMUNITY_AVATAR_PURPOSE_PREFIX]);
+  }
+  const event = sign(ctx, KIND_EDIT_METADATA, tags);
   await publishEvent(ctx.http, event);
   const timeoutAt = Date.now() + 15_000;
   while (Date.now() < timeoutAt) {
     const projected = await getCommunity(ctx, communityId);
-    if (projected?.avatar === avatar) return projected;
+    if (projected && (projected.avatar ?? '') === avatar) return projected;
     await new Promise((resolveWait) => setTimeout(resolveWait, 300));
   }
   throw new Error(`Workspace picture was not projected after 15000ms`);
 }
 
-/** List self-linked communities whose 39002 member projection contains `pubkey`. */
+/** Rename a Workspace through the existing owner/admin metadata projection. */
+export async function renameCommunity(
+  ctx: ChannelOpsContext,
+  communityId: string,
+  nextName: string,
+): Promise<Community> {
+  const name = nextName.trim();
+  if (!name) throw new Error('Workspace name cannot be empty');
+  if (name.length > 80) throw new Error('Workspace name must be 80 characters or fewer');
+  const community = await getCommunity(ctx, communityId);
+  if (!community) throw new Error(`community not found: ${communityId}`);
+  const members = await communityMembers(ctx, communityId);
+  const actor = members.find((member) => member.pubkey === ctx.identity.publicKey);
+  if (actor?.role !== 'owner' && actor?.role !== 'admin') {
+    throw new Error('only a Workspace owner or admin can rename it');
+  }
+  const tags: string[][] = [
+    ['h', communityId],
+    ['name', name],
+    ['visibility', wireVisibility(community.visibility)],
+    [TAG_COMMUNITY, communityId],
+  ];
+  if (community.avatar) {
+    tags.push(['avatar', community.avatar]);
+    tags.push(['picture', community.avatar]);
+    tags.push(['purpose', `${COMMUNITY_AVATAR_PURPOSE_PREFIX}${community.avatar}`]);
+  }
+  await publishEvent(ctx.http, sign(ctx, KIND_EDIT_METADATA, tags));
+  const timeoutAt = Date.now() + 15_000;
+  while (Date.now() < timeoutAt) {
+    const projected = await getCommunity(ctx, communityId);
+    if (projected?.name === name) return projected;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 300));
+  }
+  throw new Error('Workspace name was not projected after 15000ms');
+}
+
+/** Change whether a Workspace is publicly discoverable or requires an invite. */
+export async function setCommunityVisibility(
+  ctx: ChannelOpsContext,
+  communityId: string,
+  visibility: Community['visibility'],
+): Promise<Community> {
+  if (visibility !== 'public' && visibility !== 'invite-only') {
+    throw new Error('invalid Workspace visibility');
+  }
+  const community = await getCommunity(ctx, communityId);
+  if (!community) throw new Error(`community not found: ${communityId}`);
+  const members = await communityMembers(ctx, communityId);
+  const actor = members.find((member) => member.pubkey === ctx.identity.publicKey);
+  if (actor?.role !== 'owner' && actor?.role !== 'admin') {
+    throw new Error('only a Workspace owner or admin can change visibility');
+  }
+  const tags: string[][] = [
+    ['h', communityId],
+    ['name', community.name],
+    ['visibility', wireVisibility(visibility)],
+    [TAG_COMMUNITY, communityId],
+  ];
+  if (community.avatar) {
+    tags.push(['avatar', community.avatar]);
+    tags.push(['picture', community.avatar]);
+    tags.push(['purpose', `${COMMUNITY_AVATAR_PURPOSE_PREFIX}${community.avatar}`]);
+  }
+  await publishEvent(ctx.http, sign(ctx, KIND_EDIT_METADATA, tags));
+  const timeoutAt = Date.now() + 15_000;
+  while (Date.now() < timeoutAt) {
+    const projected = await getCommunity(ctx, communityId);
+    if (projected?.visibility === visibility) return projected;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 300));
+  }
+  throw new Error('Workspace visibility was not projected after 15000ms');
+}
+
+function projectedCommunityRole(
+  events: NostrEvent[],
+  communityId: string,
+  pubkey: string,
+): CommunityRole | undefined {
+  const forCommunity = (event: NostrEvent) =>
+    (tagValue(event, 'd') ?? tagValue(event, 'h')) === communityId;
+  const admins = latestEvent(
+    events.filter((event) => event.kind === KIND_CHANNEL_ADMINS && forCommunity(event)),
+  );
+  const admin = admins?.tags.find((tag) => tag[0] === 'p' && tag[1] === pubkey);
+  if (admin) return admin[2] === 'owner' ? 'owner' : 'admin';
+  const members = latestEvent(
+    events.filter((event) => event.kind === KIND_CHANNEL_MEMBERS && forCommunity(event)),
+  );
+  return members?.tags.some((tag) => tag[0] === 'p' && tag[1] === pubkey) ? 'member' : undefined;
+}
+
+/** List self-linked communities whose current role projections contain `pubkey`. */
 export async function listCommunities(
   ctx: ChannelOpsContext,
   pubkey: string,
@@ -304,7 +437,7 @@ export async function listCommunities(
   const [memberEvents, communityEvents] = await Promise.all([
     queryEvents(
       ctx.http,
-      [{ kinds: [KIND_CHANNEL_MEMBERS], '#p': [pubkey], limit }],
+      [{ kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS], '#p': [pubkey], limit }],
       ctx.identity.publicKey,
     ),
     queryEvents(
@@ -331,7 +464,13 @@ export async function listCommunities(
   for (const [communityId, events] of groupedCreateEvents) {
     if (!wanted.has(communityId)) continue;
     const community = toCommunity(events, metadataById.get(communityId));
-    if (community) byId.set(communityId, community);
+    if (community) {
+      const viewerRole =
+        community.ownerPubkey === pubkey
+          ? 'owner'
+          : projectedCommunityRole(memberEvents, communityId, pubkey);
+      byId.set(communityId, { ...community, ...(viewerRole ? { viewerRole } : {}) });
+    }
   }
 
   // The broad create scan is shared with Room discovery. Fall back to exact
@@ -339,7 +478,16 @@ export async function listCommunities(
   const exactIds = ids.filter((id) => !byId.has(id));
   const recovered = await Promise.all(exactIds.map((id) => getCommunity(ctx, id)));
   for (const community of recovered) {
-    if (community) byId.set(community.communityId, community);
+    if (community) {
+      const viewerRole =
+        community.ownerPubkey === pubkey
+          ? 'owner'
+          : projectedCommunityRole(memberEvents, community.communityId, pubkey);
+      byId.set(community.communityId, {
+        ...community,
+        ...(viewerRole ? { viewerRole } : {}),
+      });
+    }
   }
 
   return [...byId.values()]
@@ -380,10 +528,7 @@ async function communityChannelCreates(
   );
 }
 
-async function communityRoomIds(
-  ctx: ChannelOpsContext,
-  communityId: string,
-): Promise<string[]> {
+async function communityRoomIds(ctx: ChannelOpsContext, communityId: string): Promise<string[]> {
   const creates = await communityChannelCreates(ctx, communityId);
   const ids = new Set<string>();
   for (const event of creates) {
@@ -552,6 +697,7 @@ export function parseCommunityInvite(event: NostrEvent): CommunityInviteRecord |
   const communityTag = tagValue(event, TAG_COMMUNITY);
   const expiresRaw = tagValue(event, 'expiration');
   const expiresAt = expiresRaw === undefined ? NaN : Number(expiresRaw);
+  const revoked = tagValue(event, 'revoked') === 'true';
   if (!tokenHash || !/^[0-9a-f]{64}$/.test(tokenHash)) return null;
   if (!communityId || communityTag !== communityId) return null;
   if (!Number.isSafeInteger(expiresAt) || expiresAt <= event.created_at) return null;
@@ -560,8 +706,19 @@ export function parseCommunityInvite(event: NostrEvent): CommunityInviteRecord |
     communityId,
     expiresAt,
     mintedBy: event.pubkey,
+    ...(revoked ? { revoked: true } : {}),
     event,
   };
+}
+
+function latestInviteRecord(events: NostrEvent[], tokenHash: string): CommunityInviteRecord | null {
+  const record = events
+    .map(parseCommunityInvite)
+    .filter((candidate): candidate is CommunityInviteRecord => candidate?.tokenHash === tokenHash)
+    .sort(
+      (a, b) => b.event.created_at - a.event.created_at || b.event.id.localeCompare(a.event.id),
+    )[0];
+  return record && !record.revoked ? record : null;
 }
 
 /** Find a current invite by token hash, including legacy group-scoped kind:9 markers. */
@@ -582,10 +739,9 @@ export async function findCommunityInvite(
     ],
     readerPubkey,
   );
-  const foundCurrent = current
-    .map(parseCommunityInvite)
-    .find((record): record is CommunityInviteRecord => record?.tokenHash === tokenHash);
+  const foundCurrent = latestInviteRecord(current, tokenHash);
   if (foundCurrent) return foundCurrent;
+  if (current.some((event) => parseCommunityInvite(event)?.revoked)) return null;
 
   // Buzz requires an h filter to read a channel-scoped kind:9 event, but the
   // token alone cannot reveal that h value. Scan the indexed invite marker tag
@@ -595,11 +751,79 @@ export async function findCommunityInvite(
     [{ kinds: [KIND_STREAM_MESSAGE], '#t': [TAG_COMMUNITY_INVITE], limit: 500 }],
     readerPubkey,
   );
-  return (
-    legacy
-      .map(parseCommunityInvite)
-      .find((record): record is CommunityInviteRecord => record?.tokenHash === tokenHash) ?? null
+  return latestInviteRecord(legacy, tokenHash);
+}
+
+/** List the current identity's active invites so each can be revoked by its signer. */
+export async function listCommunityInvites(
+  ctx: ChannelOpsContext,
+  communityId: string,
+): Promise<CommunityInviteRecord[]> {
+  const events = await queryEvents(
+    ctx.http,
+    [
+      {
+        kinds: [KIND_COMMUNITY_INVITE],
+        authors: [ctx.identity.publicKey],
+        '#t': [TAG_COMMUNITY_INVITE],
+        limit: 500,
+      },
+    ],
+    ctx.identity.publicKey,
   );
+  const latestByToken = new Map<string, CommunityInviteRecord>();
+  for (const event of events) {
+    const record = parseCommunityInvite(event);
+    if (!record || record.communityId !== communityId) continue;
+    const current = latestByToken.get(record.tokenHash);
+    if (
+      !current ||
+      record.event.created_at > current.event.created_at ||
+      (record.event.created_at === current.event.created_at && record.event.id > current.event.id)
+    ) {
+      latestByToken.set(record.tokenHash, record);
+    }
+  }
+  const currentTime = now();
+  return [...latestByToken.values()]
+    .filter((record) => !record.revoked && record.expiresAt > currentTime)
+    .sort((a, b) => b.event.created_at - a.event.created_at);
+}
+
+/** Revoke an invite by replacing the current signer's parameterized record. */
+export async function revokeCommunityInvite(
+  ctx: ChannelOpsContext,
+  communityId: string,
+  tokenHash: string,
+): Promise<void> {
+  if (!/^[0-9a-f]{64}$/.test(tokenHash)) throw new Error('invalid invite');
+  const members = await communityMembers(ctx, communityId);
+  const actor = members.find((member) => member.pubkey === ctx.identity.publicKey);
+  if (actor?.role !== 'owner' && actor?.role !== 'admin') {
+    throw new Error('only a Workspace owner or admin can revoke invites');
+  }
+  const invite = (await listCommunityInvites(ctx, communityId)).find(
+    (record) => record.tokenHash === tokenHash,
+  );
+  if (!invite) throw new Error('invite is no longer active');
+  const createdAt = Math.max(nextCommunityTimestamp(), invite.event.created_at + 1);
+  lastCommunityMutationTimestamp = createdAt;
+  const event = sign(
+    ctx,
+    KIND_COMMUNITY_INVITE,
+    [
+      ['h', communityId],
+      ['t', TAG_COMMUNITY_INVITE],
+      ['d', tokenHash],
+      [TAG_COMMUNITY, communityId],
+      ['expiration', String(Math.max(invite.expiresAt, createdAt + 1))],
+      ['role', 'member'],
+      ['revoked', 'true'],
+    ],
+    '',
+    createdAt,
+  );
+  await publishEvent(ctx.http, event);
 }
 
 /** Mint a signed invite. Only its hash is published; return the plaintext once. */

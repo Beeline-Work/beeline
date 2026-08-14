@@ -179,18 +179,34 @@ export async function queryEventBacklog(
   );
 }
 
+/** Long enough to make a persistently failing Room a negligible relay consumer. */
+export const ROOM_POLL_FAILURE_BACKOFF_CAP_MS = 5 * 60_000;
+
+/** A wedged ACP process must not occupy an interactive session for ten minutes. */
+export const ROOM_AGENT_PROMPT_TIMEOUT_MS = 60_000;
+
+function relayRetryAfterMs(error: unknown): number {
+  const seconds = [...String(error).matchAll(/retry in\s+(\d+(?:\.\d+)?)s/gi)].map((match) =>
+    Number(match[1]),
+  );
+  return seconds.length ? Math.ceil(Math.max(...seconds) * 1_000) : 0;
+}
+
 /** Bounded exponential spacing for one Room's failed request poll. */
 export class RoomPollBackoff {
   private failures = 0;
 
   constructor(
     private readonly baseMs: number,
-    private readonly maxMs = 60_000,
+    private readonly maxMs = ROOM_POLL_FAILURE_BACKOFF_CAP_MS,
   ) {}
 
-  failed(): number {
+  failed(error?: unknown): number {
     this.failures++;
-    return Math.min(this.maxMs, this.baseMs * 2 ** (this.failures - 1));
+    const exponentialMs = Math.min(this.maxMs, this.baseMs * 2 ** (this.failures - 1));
+    // A relay may advertise a delay beyond our steady-state cap. That explicit
+    // quota instruction always wins: retrying earlier would recreate the storm.
+    return Math.max(exponentialMs, relayRetryAfterMs(error));
   }
 
   recovered(): boolean {
@@ -688,6 +704,7 @@ export class Body {
   private activeExchangeReplies = new Set<string>();
   private resolveNamedRepository?: (target: NamedRepositoryTarget) => Promise<BoundRepo>;
   private onRoomPollSuccess?: (channelId: string) => void;
+  private onRoomPollFailure?: (channelId: string, retryInMs: number) => void;
   private onRoomPresence?: (channelId: string, status: 'online' | 'offline') => void;
 
   constructor(
@@ -700,6 +717,7 @@ export class Body {
       statePath?: string;
       resolveNamedRepository?: (target: NamedRepositoryTarget) => Promise<BoundRepo>;
       onRoomPollSuccess?: (channelId: string) => void;
+      onRoomPollFailure?: (channelId: string, retryInMs: number) => void;
       onRoomPresence?: (channelId: string, status: 'online' | 'offline') => void;
     } = {},
   ) {
@@ -722,6 +740,7 @@ export class Body {
     this.ownsScheduler = !services.scheduler;
     this.resolveNamedRepository = services.resolveNamedRepository;
     this.onRoomPollSuccess = services.onRoomPollSuccess;
+    this.onRoomPollFailure = services.onRoomPollFailure;
     this.onRoomPresence = services.onRoomPresence;
     this.durableState = new DurableBodyState(
       services.statePath ?? resolve(config.workspaceRoot, '.beeline-body-state.json'),
@@ -886,6 +905,25 @@ export class Body {
     return this.scheduler.run(session.channelId, session.lifecycle, task, {
       priority: session.mode === 'readonly' ? 'interactive' : 'background',
     });
+  }
+
+  /**
+   * Prompt deadlines are process-health boundaries, not merely UI timeouts.
+   * Retire a non-returning ACP generation so the next Room turn gets a fresh
+   * process instead of reusing one that has already stopped answering.
+   */
+  private async promptAgent(session: AgentSession, prompt: string): Promise<PromptResult> {
+    try {
+      return await this.runOnSession(session, () =>
+        session.client.sessionPrompt(session.sessionId, prompt, ROOM_AGENT_PROMPT_TIMEOUT_MS),
+      );
+    } catch (error) {
+      if (/ACP session\/prompt timed out after \d+ms/.test(String(error))) {
+        session.client.sessionCancel(session.sessionId);
+        await this.scheduler.forceSuspend(session.channelId);
+      }
+      throw error;
+    }
   }
 
   private async candidateBytes(
@@ -1636,9 +1674,7 @@ export class Body {
         this.presenceGenerations.get(channelId),
       );
       try {
-        const result = await this.runOnSession(session, () =>
-          session.client.sessionPrompt(session.sessionId, prompt, 10 * 60_000),
-        );
+        const result = await this.promptAgent(session, prompt);
         const reply = await this.publishAgentResult(
           channelId,
           session,
@@ -2045,9 +2081,7 @@ export class Body {
         'working',
         this.presenceGenerations.get(tlcChannelId),
       );
-      const result = await this.runOnSession(session, () =>
-        session.client.sessionPrompt(session.sessionId, prompt, 10 * 60_000),
-      );
+      const result = await this.promptAgent(session, prompt);
       if (turn.transitionedToCorner) {
         await this.appendRoomPermissionOutcome(tlcChannelId, turn);
         await postAgentTurnStatus(
@@ -2370,7 +2404,7 @@ export class Body {
 
   /** Start the requested work without blocking discovery/UI updates. */
   private startAgentTask(info: SubchannelInfo, prompt: string): void {
-    const task = this.runOnSession(info.session, async () => {
+    const task = (async () => {
       try {
         await this.postParentCornerStatus(info, 'working', `Agent is working on: ${prompt}`);
         await this.durableState.appendConversation(info.subchannelId, {
@@ -2379,8 +2413,8 @@ export class Body {
           eventId: info.request?.eventId,
           at: new Date().toISOString(),
         });
-        const result = await info.session.client.sessionPrompt(
-          info.session.sessionId,
+        const result = await this.promptAgent(
+          info.session,
           [
             'Implement the following human request in this worktree.',
             'Keep all edits on the current feature branch. Commit the completed work.',
@@ -2388,7 +2422,6 @@ export class Body {
             '',
             prompt,
           ].join('\n'),
-          10 * 60_000,
         );
         info.mergeSummary = await this.publishAgentResult(
           info.subchannelId,
@@ -2417,7 +2450,7 @@ export class Body {
       } finally {
         this.runningAgentTasks.delete(info.subchannelId);
       }
-    });
+    })();
     this.runningAgentTasks.set(info.subchannelId, task);
   }
 
@@ -2742,19 +2775,22 @@ export class Body {
       const backoff = new RoomPollBackoff(pollMs);
       while (!opts.signal?.aborted) {
         let delayMs = pollMs;
+        let pollSucceeded = false;
         try {
           await this.pollChannelRequests(tlcChannelId, boundRepo);
+          pollSucceeded = true;
           this.onRoomPollSuccess?.(tlcChannelId);
           if (backoff.recovered()) await stopPresence.setStatus('online');
         } catch (error) {
-          delayMs = backoff.failed();
+          delayMs = backoff.failed(error);
+          this.onRoomPollFailure?.(tlcChannelId, delayMs);
           await stopPresence.setStatus('offline');
           console.error(
             `[body] repository Room request poll failed; retrying in ${delayMs}ms:`,
             error,
           );
         }
-        await this.pollRoomMaintenance(tlcChannelId);
+        if (pollSucceeded) await this.pollRoomMaintenance(tlcChannelId);
         await this.waitForPoll(delayMs, opts.signal);
       }
     } finally {
@@ -2782,19 +2818,22 @@ export class Body {
       const backoff = new RoomPollBackoff(pollMs);
       while (!opts.signal?.aborted) {
         let delayMs = pollMs;
+        let pollSucceeded = false;
         try {
           await this.pollChannelRequests(channelId, undefined, editPolicy);
+          pollSucceeded = true;
           this.onRoomPollSuccess?.(channelId);
           if (backoff.recovered()) await stopPresence.setStatus('online');
         } catch (error) {
-          delayMs = backoff.failed();
+          delayMs = backoff.failed(error);
+          this.onRoomPollFailure?.(channelId, delayMs);
           await stopPresence.setStatus('offline');
           console.error(
             `[body] read-only Room request poll failed; retrying in ${delayMs}ms:`,
             error,
           );
         }
-        await this.pollRoomMaintenance(channelId);
+        if (pollSucceeded) await this.pollRoomMaintenance(channelId);
         await this.waitForPoll(delayMs, opts.signal);
       }
     } finally {
@@ -2839,19 +2878,22 @@ export class Body {
         // loop when the Room disappears from the agent's member/admin projection,
         // then waits for accepted turns to drain before disposing the Body.
         let delayMs = pollMs;
+        let pollSucceeded = false;
         try {
           await this.pollChannelRequests(channelId, boundRepo);
+          pollSucceeded = true;
           this.onRoomPollSuccess?.(channelId);
           if (backoff.recovered()) await stopPresence.setStatus('online');
         } catch (error) {
-          delayMs = backoff.failed();
+          delayMs = backoff.failed(error);
+          this.onRoomPollFailure?.(channelId, delayMs);
           await stopPresence.setStatus('offline');
           console.error(
             `[body] repository Room request poll failed; retrying in ${delayMs}ms:`,
             error,
           );
         }
-        await this.pollRoomMaintenance(channelId, mergeGate);
+        if (pollSucceeded) await this.pollRoomMaintenance(channelId, mergeGate);
         await this.waitForPoll(delayMs, opts.signal);
       }
     } finally {

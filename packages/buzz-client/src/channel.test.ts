@@ -5,6 +5,7 @@ import {
   listChannelsForPubkey,
   listMembers,
   renameChannel,
+  setChannelVisibility,
   type ChannelOpsContext,
 } from './channel.js';
 import { createIdentity } from './identity.js';
@@ -261,5 +262,93 @@ describe('renameChannel', () => {
       'only a Room owner or admin can rename it',
     );
     expect(published).toHaveLength(0);
+  });
+});
+
+describe('setChannelVisibility', () => {
+  it('publishes and verifies invite-only Room metadata for an owner', async () => {
+    const channelId = 'visibility-room';
+    let projectedVisibility = 'open';
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          const event = JSON.parse(String(init?.body)) as NostrEvent;
+          published.push(event);
+          projectedVisibility = tagValue(event, 'visibility') ?? projectedVisibility;
+          return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+        }
+        const filter = (JSON.parse(String(init?.body)) as Record<string, unknown>[])[0]!;
+        const kind = (filter.kinds as number[])[0];
+        if (kind === KIND_CREATE_GROUP) {
+          return new Response(
+            JSON.stringify([
+              signEvent(
+                {
+                  pubkey: identity.publicKey,
+                  created_at: 1_700_000_000,
+                  kind,
+                  tags: [
+                    ['h', channelId],
+                    ['name', 'Visibility room'],
+                  ],
+                  content: '',
+                },
+                identity.secretKey,
+              ),
+            ]),
+          );
+        }
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          return new Response(JSON.stringify([projection(kind, channelId)]));
+        }
+        if (kind === KIND_CHANNEL_ADMINS) {
+          return new Response(
+            JSON.stringify([
+              signEvent(
+                {
+                  pubkey: identity.publicKey,
+                  created_at: 1_700_000_000,
+                  kind,
+                  tags: [
+                    ['d', channelId],
+                    ['p', identity.publicKey, 'owner'],
+                  ],
+                  content: '',
+                },
+                identity.secretKey,
+              ),
+            ]),
+          );
+        }
+        if (kind === KIND_CHANNEL_METADATA) {
+          return new Response(
+            JSON.stringify([
+              signEvent(
+                {
+                  pubkey: identity.publicKey,
+                  created_at: 1_700_000_001,
+                  kind,
+                  tags: [
+                    ['d', channelId],
+                    ['name', 'Visibility room'],
+                    ...(projectedVisibility === 'private' ? [['private'], ['closed']] : []),
+                  ],
+                  content: '',
+                },
+                identity.secretKey,
+              ),
+            ]),
+          );
+        }
+        return new Response(JSON.stringify([]));
+      }),
+    );
+
+    await expect(setChannelVisibility(ctx, channelId, 'invite-only')).resolves.toMatchObject({
+      visibility: 'invite-only',
+    });
+    expect(published[0]!.tags).toContainEqual(['visibility', 'private']);
   });
 });

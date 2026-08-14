@@ -41,6 +41,7 @@ export default function BuzzCorners() {
   const [error, setError] = useState<string | null>(null);
   const [viewerPubkey, setViewerPubkey] = useState<string | undefined>();
   const [viewerAvatarUrl, setViewerAvatarUrl] = useState<string | undefined>();
+  const [canManageWorkspace, setCanManageWorkspace] = useState(false);
   const [agentPresences, setAgentPresences] = useState<Record<string, AgentPresence>>({});
   const [presenceNow, setPresenceNow] = useState(Date.now());
   const transportRef = useRef<BuzzRigTransport | null>(null);
@@ -65,6 +66,10 @@ export default function BuzzCorners() {
         setRoomName(metadata?.name?.trim() || ROOM_LABEL);
         setCommunities(nextCommunities);
         setActiveCommunityId(communityId);
+        const workspaceRole = nextCommunities.find(
+          (workspace) => workspace.communityId === communityId,
+        )?.viewerRole;
+        setCanManageWorkspace(workspaceRole === 'owner' || workspaceRole === 'admin');
         setAgentPresences(presenceMapFromSessionEvents(presenceEvents));
         setPresenceNow(Date.now());
         setAgents(communityId ? await client.listAgents(communityId) : []);
@@ -149,7 +154,11 @@ export default function BuzzCorners() {
       activeCommunityId={activeCommunityId}
       onSelect={handleCommunitySelect}
       onAdd={() => router.push('/buzz/community' as Href)}
-      onSettings={() => router.push('/buzz/settings' as Href)}
+      onSettings={() => router.push('/buzz/settings/identity' as Href)}
+      onWorkspaceSettings={(communityId) =>
+        router.push({ pathname: '/buzz/settings/workspace', params: { communityId } } as Href)
+      }
+      canManageActiveCommunity={canManageWorkspace}
       viewerPubkey={viewerPubkey}
       viewerAvatarUrl={viewerAvatarUrl}
     >

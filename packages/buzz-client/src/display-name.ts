@@ -93,6 +93,7 @@ export function fallbackPersonName(pubkey: string): string {
 }
 
 export const PERSON_NAME_MAX_LENGTH = 60;
+export const PERSON_HANDLE_MAX_LENGTH = 30;
 
 /** Normalize authored human display names before publishing or showing them. */
 export function normalizePersonName(value: string): string | null {
@@ -101,6 +102,19 @@ export function normalizePersonName(value: string): string | null {
     !normalized ||
     normalized.length > PERSON_NAME_MAX_LENGTH ||
     /[\u0000-\u001f\u007f]/u.test(normalized)
+  ) {
+    return null;
+  }
+  return normalized;
+}
+
+/** Normalize the authored global handle shown with a leading @ in the UI. */
+export function normalizePersonHandle(value: string): string | null {
+  const normalized = value.trim().replace(/^@+/, '').toLowerCase();
+  if (
+    !normalized ||
+    normalized.length > PERSON_HANDLE_MAX_LENGTH ||
+    !/^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/u.test(normalized)
   ) {
     return null;
   }

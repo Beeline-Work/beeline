@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import { createIdentity } from './identity.js';
-import { parsePersonProfile, setPersonProfile } from './person-profile.js';
 import {
-  KIND_CHANNEL_ADMINS,
-  KIND_CHANNEL_MEMBERS,
-  KIND_CREATE_GROUP,
+  KIND_NOSTR_PROFILE,
+  parseGlobalPersonProfile,
+  parsePersonProfile,
+  setPersonProfile,
+} from './person-profile.js';
+import {
   KIND_PERSON_PROFILE,
   KIND_STREAM_MESSAGE,
   TAG_COMMUNITY,
@@ -40,7 +42,7 @@ function filter(init?: RequestInit): Record<string, unknown> {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('human cosmetic profiles', () => {
-  it('publishes a self-authored Workspace profile without authority tags', async () => {
+  it('publishes a self-authored global kind:0 profile without authority tags', async () => {
     let published: NostrEvent | undefined;
     vi.stubGlobal(
       'fetch',
@@ -50,24 +52,6 @@ describe('human cosmetic profiles', () => {
           return response({ accepted: true });
         }
         const kind = (filter(init).kinds as number[])[0];
-        if (kind === KIND_CREATE_GROUP)
-          return response([
-            signed(person, KIND_CREATE_GROUP, [
-              ['h', communityId],
-              ['name', 'Hull'],
-              ['channel_type', 'stream'],
-              ['visibility', 'open'],
-              [TAG_COMMUNITY, communityId],
-            ]),
-          ]);
-        if (kind === KIND_CHANNEL_MEMBERS)
-          return response([
-            signed(person, KIND_CHANNEL_MEMBERS, [
-              ['d', communityId],
-              ['p', person.publicKey],
-            ]),
-          ]);
-        if (kind === KIND_CHANNEL_ADMINS) return response([]);
         if (kind === KIND_STREAM_MESSAGE) return response([]);
         return response([]);
       }),
@@ -75,15 +59,24 @@ describe('human cosmetic profiles', () => {
 
     const profile = await setPersonProfile(ctx, communityId, {
       name: 'Ada Lovelace',
+      handle: 'ada',
       avatar: 'https://relay.test/media/person.jpg',
     });
     expect(profile.name).toBe('Ada Lovelace');
+    expect(profile.handle).toBe('ada');
     expect(profile.avatar).toBe('https://relay.test/media/person.jpg');
     expect(published?.pubkey).toBe(person.publicKey);
-    expect(published?.tags).toContainEqual(['t', TAG_PERSON_PROFILE]);
+    expect(published?.kind).toBe(KIND_NOSTR_PROFILE);
+    expect(published?.tags).toEqual([]);
     expect(published?.tags).not.toContainEqual(['role', 'admin']);
     expect(JSON.parse(published?.content ?? '{}')).toEqual({
+      name: 'ada',
+      display_name: 'Ada Lovelace',
+      picture: 'https://relay.test/media/person.jpg',
+    });
+    expect(published && parseGlobalPersonProfile(published)).toMatchObject({
       name: 'Ada Lovelace',
+      handle: 'ada',
       avatar: 'https://relay.test/media/person.jpg',
     });
   });

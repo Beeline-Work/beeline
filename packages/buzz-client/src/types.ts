@@ -81,20 +81,24 @@ export interface AgentSoulProfile extends Omit<AgentSoulInput, 'intent'> {
   raw: NostrEvent;
 }
 
-/** Workspace-scoped, self-authored cosmetic metadata for a human identity. */
+/** Global kind:0, self-authored cosmetic metadata for a human identity. */
 export interface PersonProfile {
-  communityId: string;
+  /** Present only when a legacy Workspace-scoped profile supplied the fallback. */
+  communityId?: string;
   pubkey: string;
   name?: string;
+  handle?: string;
   avatar?: string;
   updatedAt: number;
   raw: NostrEvent;
 }
 
 export interface PersonProfileInput {
-  /** Empty or absent removes the authored display name. */
+  /** Empty removes the display name. Absent preserves the current name. */
   name?: string;
-  /** Empty or absent removes the custom image and restores the deterministic mark. */
+  /** Empty removes the global handle. Absent preserves the current handle. */
+  handle?: string;
+  /** Empty removes the custom image. Absent preserves the current image. */
   avatar?: string;
 }
 
@@ -161,6 +165,7 @@ export interface ChannelMetadata {
   name?: string;
   about?: string;
   archived?: boolean;
+  visibility?: 'public' | 'invite-only';
   parentChannelId?: string;
   communityId?: string;
   raw?: NostrEvent;
@@ -184,6 +189,9 @@ export interface Community {
   name: string;
   /** Optional owner/admin-managed image URL for this community. */
   avatar?: string;
+  visibility: 'public' | 'invite-only';
+  /** Role of the pubkey used to list this Workspace, when known. */
+  viewerRole?: CommunityRole;
   createdBy: string;
   ownerPubkey: string;
   createdAt: number;
@@ -218,6 +226,7 @@ export interface CommunityInviteRecord {
   communityId: string;
   expiresAt: number;
   mintedBy: string;
+  revoked?: boolean;
   event: NostrEvent;
 }
 

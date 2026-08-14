@@ -28,6 +28,8 @@ type CommunityRailProps = {
   onSelect: (communityId: string | null) => void;
   onAdd: () => void;
   onSettings: () => void;
+  onWorkspaceSettings?: (communityId: string) => void;
+  canManageActiveCommunity?: boolean;
   viewerPubkey?: string;
   viewerAvatarUrl?: string;
 };
@@ -65,6 +67,8 @@ export function CommunityRail({
   onSelect,
   onAdd,
   onSettings,
+  onWorkspaceSettings,
+  canManageActiveCommunity = false,
   viewerPubkey,
   viewerAvatarUrl,
 }: CommunityRailProps) {
@@ -83,20 +87,32 @@ export function CommunityRail({
         {communities.map((community) => {
           const active = activeCommunityId === community.communityId;
           return (
-            <RailButton
-              key={community.communityId}
-              active={active}
-              label={community.name}
-              onPress={() => onSelect(community.communityId)}
-              testID={`community-rail-${community.communityId}`}
-            >
-              <WorkspaceAvatar
+            <View key={community.communityId} style={styles.workspaceRailGroup}>
+              <RailButton
                 active={active}
-                community={community}
-                size={42}
-                testID={`workspace-avatar-${community.communityId}`}
-              />
-            </RailButton>
+                label={community.name}
+                onPress={() => onSelect(community.communityId)}
+                testID={`community-rail-${community.communityId}`}
+              >
+                <WorkspaceAvatar
+                  active={active}
+                  community={community}
+                  size={42}
+                  testID={`workspace-avatar-${community.communityId}`}
+                />
+              </RailButton>
+              {active && canManageActiveCommunity && onWorkspaceSettings && (
+                <TouchableOpacity
+                  accessibilityLabel={`${community.name} ${WORKSPACE_LABEL} settings`}
+                  accessibilityRole="button"
+                  onPress={() => onWorkspaceSettings(community.communityId)}
+                  style={styles.workspaceSettingsButton}
+                  testID={`workspace-settings-${community.communityId}`}
+                >
+                  <Text style={styles.workspaceSettingsGlyph}>⚙</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           );
         })}
       </ScrollView>
@@ -111,7 +127,7 @@ export function CommunityRail({
       </RailButton>
       <RailButton
         active={false}
-        label="Settings"
+        label="My Settings"
         onPress={onSettings}
         testID="community-rail-settings"
       >
@@ -135,41 +151,24 @@ const CommunityDrawerContext = createContext<CommunityDrawerContextValue | null>
 
 type CommunityDrawerTriggerProps = {
   community?: Community | null;
-  canEditAvatar?: boolean;
-  avatarWorking?: boolean;
-  onEditAvatar?: () => void;
 };
 
-export function CommunityDrawerTrigger({
-  community,
-  canEditAvatar = false,
-  avatarWorking = false,
-  onEditAvatar,
-}: CommunityDrawerTriggerProps) {
+export function CommunityDrawerTrigger({ community }: CommunityDrawerTriggerProps) {
   const drawer = useContext(CommunityDrawerContext);
   if (!drawer) {
     throw new Error('CommunityDrawerTrigger must be rendered inside BuzzCommunityShell.');
   }
-  const editable = canEditAvatar && Boolean(onEditAvatar);
-
   return (
     <View style={styles.drawerTrigger}>
       <TouchableOpacity
-        accessibilityLabel={
-          editable ? `Change ${WORKSPACE_LABEL} picture` : `Open ${WORKSPACE_LABEL} switcher`
-        }
+        accessibilityLabel={`Open ${WORKSPACE_LABEL} switcher`}
         accessibilityRole="button"
-        disabled={editable && avatarWorking}
-        onPress={editable ? onEditAvatar : drawer.openDrawer}
+        accessibilityState={{ expanded: drawer.drawerOpen }}
+        onPress={drawer.openDrawer}
         style={styles.drawerAvatarButton}
-        testID={editable ? 'workspace-avatar-edit' : 'workspace-avatar-trigger'}
+        testID="workspace-avatar-trigger"
       >
         <WorkspaceAvatar community={community} size={38} testID="workspace-avatar-header" />
-        {editable && (
-          <View style={styles.avatarEditBadge}>
-            <Text style={styles.avatarEditBadgeText}>{avatarWorking ? '⋯' : '+'}</Text>
-          </View>
-        )}
       </TouchableOpacity>
       <TouchableOpacity
         accessibilityLabel={`Open ${WORKSPACE_LABEL} switcher`}
@@ -196,6 +195,8 @@ export function BuzzCommunityShell({
   onSelect,
   onAdd,
   onSettings,
+  onWorkspaceSettings,
+  canManageActiveCommunity,
   viewerPubkey,
   viewerAvatarUrl,
 }: BuzzCommunityShellProps) {
@@ -256,6 +257,14 @@ export function BuzzCommunityShell({
     onSettings();
   }, [closeDrawer, onSettings]);
 
+  const workspaceSettingsAndClose = useCallback(
+    (communityId: string) => {
+      closeDrawer();
+      onWorkspaceSettings?.(communityId);
+    },
+    [closeDrawer, onWorkspaceSettings],
+  );
+
   const drawerStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: drawerX.value }],
   }));
@@ -283,6 +292,8 @@ export function BuzzCommunityShell({
                 onSelect={selectAndClose}
                 onAdd={addAndClose}
                 onSettings={settingsAndClose}
+                onWorkspaceSettings={workspaceSettingsAndClose}
+                canManageActiveCommunity={canManageActiveCommunity}
                 viewerPubkey={viewerPubkey}
                 viewerAvatarUrl={viewerAvatarUrl}
               />
@@ -319,6 +330,7 @@ const styles = StyleSheet.create({
   communityScrollContent: {
     alignItems: 'center',
   },
+  workspaceRailGroup: { width: DRAWER_WIDTH, alignItems: 'center' },
   railButtonSlot: {
     width: DRAWER_WIDTH,
     height: 60,
@@ -348,6 +360,23 @@ const styles = StyleSheet.create({
     ...Typography.default(),
     color: groknight.steel,
     fontSize: 18,
+  },
+  workspaceSettingsButton: {
+    width: 32,
+    height: 32,
+    marginTop: -5,
+    marginBottom: 5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: groknight.border,
+    backgroundColor: groknight.bgRaised,
+  },
+  workspaceSettingsGlyph: {
+    ...Typography.default(),
+    color: groknight.steel,
+    fontSize: 14,
   },
   activeNotch: {
     position: 'absolute',
@@ -399,24 +428,5 @@ const styles = StyleSheet.create({
     ...Typography.default('semiBold'),
     color: groknight.steel,
     fontSize: 13,
-  },
-  avatarEditBadge: {
-    position: 'absolute',
-    right: 0,
-    bottom: 0,
-    width: 17,
-    height: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 5,
-    borderWidth: 1,
-    borderColor: groknight.selectedBorder,
-    backgroundColor: groknight.bgRaised,
-  },
-  avatarEditBadgeText: {
-    ...Typography.default('semiBold'),
-    color: groknight.signalBright,
-    fontSize: 11,
-    lineHeight: 13,
   },
 });

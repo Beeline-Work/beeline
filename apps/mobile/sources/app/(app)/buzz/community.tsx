@@ -27,6 +27,7 @@ export default function BuzzCommunityCreateOrJoin() {
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [viewerAvatarUrl, setViewerAvatarUrl] = useState<string | undefined>();
+  const [canManageWorkspace, setCanManageWorkspace] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -57,6 +58,10 @@ export default function BuzzCommunityCreateOrJoin() {
           available.some((community) => community.communityId === stored) ? stored : null,
         );
         setViewerAvatarUrl(profile?.avatar);
+        const role = available.find(
+          (workspace) => workspace.communityId === selectedCommunityId,
+        )?.viewerRole;
+        setCanManageWorkspace(role === 'owner' || role === 'admin');
       } catch (err) {
         if (!cancelled) setError(String(err));
       }
@@ -120,7 +125,11 @@ export default function BuzzCommunityCreateOrJoin() {
       activeCommunityId={activeCommunityId}
       onSelect={selectCommunity}
       onAdd={() => undefined}
-      onSettings={() => router.push('/buzz/settings' as Href)}
+      onSettings={() => router.push('/buzz/settings/identity' as Href)}
+      onWorkspaceSettings={(communityId) =>
+        router.push({ pathname: '/buzz/settings/workspace', params: { communityId } } as Href)
+      }
+      canManageActiveCommunity={canManageWorkspace}
       viewerPubkey={identity?.publicKey}
       viewerAvatarUrl={viewerAvatarUrl}
     >

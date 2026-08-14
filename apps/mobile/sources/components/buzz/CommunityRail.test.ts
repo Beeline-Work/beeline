@@ -107,7 +107,7 @@ function renderShell(
   onAdd = vi.fn(),
   onSettings = vi.fn(),
   viewer?: { pubkey: string; avatarUrl?: string },
-  avatarEdit?: { canEditAvatar: boolean; avatarWorking?: boolean; onEditAvatar: () => void },
+  workspaceSettings?: { canManage: boolean; onOpen: (communityId: string) => void },
 ): ReactTestRenderer {
   const community = {
     communityId: 'community-1',
@@ -125,10 +125,12 @@ function renderShell(
           onSelect,
           onAdd,
           onSettings,
+          canManageActiveCommunity: workspaceSettings?.canManage,
+          onWorkspaceSettings: workspaceSettings?.onOpen,
           viewerPubkey: viewer?.pubkey,
           viewerAvatarUrl: viewer?.avatarUrl,
         },
-        React.createElement(CommunityDrawerTrigger, { community, ...avatarEdit }),
+        React.createElement(CommunityDrawerTrigger, { community }),
       ),
     );
   });
@@ -144,7 +146,7 @@ describe('Workspace drawer', () => {
       renderer.root.findByProps({ testID: 'workspace-avatar-header' }).props.community,
     ).toMatchObject({ communityId: 'community-1', avatar: 'https://example.test/night-shift.png' });
 
-    const trigger = renderer.root.findByProps({ testID: 'community-drawer-trigger' });
+    const trigger = renderer.root.findByProps({ testID: 'workspace-avatar-trigger' });
     expect(trigger.props.accessibilityState).toEqual({ expanded: false });
     act(() => trigger.props.onPress());
 
@@ -153,28 +155,38 @@ describe('Workspace drawer', () => {
       renderer.root.findByProps({ testID: 'workspace-avatar-community-1' }).props.community,
     ).toMatchObject({ communityId: 'community-1', avatar: 'https://example.test/night-shift.png' });
     expect(
-      renderer.root.findByProps({ testID: 'community-drawer-trigger' }).props.accessibilityState,
+      renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.accessibilityState,
     ).toEqual({ expanded: true });
 
     act(() => renderer.root.findByProps({ testID: 'community-drawer-scrim' }).props.onPress());
     expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);
   });
 
-  it('shows a separate picture action only to Workspace admins', () => {
-    const onEditAvatar = vi.fn();
+  it('shows a scoped settings gear only to Workspace admins', () => {
+    const onOpen = vi.fn();
     const renderer = renderShell(vi.fn(), vi.fn(), vi.fn(), undefined, {
-      canEditAvatar: true,
-      onEditAvatar,
+      canManage: true,
+      onOpen,
     });
 
-    const edit = renderer.root.findByProps({ testID: 'workspace-avatar-edit' });
-    expect(edit.props.accessibilityLabel).toBe('Change Workspace picture');
-    act(() => edit.props.onPress());
-    expect(onEditAvatar).toHaveBeenCalledOnce();
+    act(() => renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.onPress());
+    expect(renderer.root.findByProps({ testID: 'community-drawer-overlay' })).toBeDefined();
+    const gear = renderer.root.findByProps({ testID: 'workspace-settings-community-1' });
+    expect(gear.props.accessibilityLabel).toBe('Night Shift Workspace settings');
+    act(() => gear.props.onPress());
+    expect(onOpen).toHaveBeenCalledWith('community-1');
     expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);
 
-    act(() => renderer.root.findByProps({ testID: 'community-drawer-trigger' }).props.onPress());
-    expect(renderer.root.findByProps({ testID: 'community-drawer-overlay' })).toBeDefined();
+    const memberRenderer = renderShell(vi.fn(), vi.fn(), vi.fn(), undefined, {
+      canManage: false,
+      onOpen,
+    });
+    act(() =>
+      memberRenderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.onPress(),
+    );
+    expect(
+      memberRenderer.root.findAllByProps({ testID: 'workspace-settings-community-1' }),
+    ).toHaveLength(0);
   });
 
   it('closes after selecting or adding a Workspace', () => {
@@ -182,7 +194,7 @@ describe('Workspace drawer', () => {
     const onAdd = vi.fn();
     const renderer = renderShell(onSelect, onAdd);
     const open = () =>
-      act(() => renderer.root.findByProps({ testID: 'community-drawer-trigger' }).props.onPress());
+      act(() => renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.onPress());
 
     open();
     act(() => renderer.root.findByProps({ testID: 'community-rail-community-1' }).props.onPress());
@@ -199,7 +211,11 @@ describe('Workspace drawer', () => {
     const onSettings = vi.fn();
     const renderer = renderShell(vi.fn(), vi.fn(), onSettings);
 
-    act(() => renderer.root.findByProps({ testID: 'community-drawer-trigger' }).props.onPress());
+    act(() => renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.onPress());
+    const mySettings = renderer.root
+      .findAllByType('TouchableOpacity' as any)
+      .find((node) => node.props.testID === 'community-rail-settings');
+    expect(mySettings?.props.accessibilityLabel).toBe('My Settings');
     act(() => renderer.root.findByProps({ testID: 'community-rail-settings' }).props.onPress());
 
     expect(onSettings).toHaveBeenCalledOnce();
@@ -212,7 +228,7 @@ describe('Workspace drawer', () => {
       avatarUrl: 'https://example.test/person.png',
     });
 
-    act(() => renderer.root.findByProps({ testID: 'community-drawer-trigger' }).props.onPress());
+    act(() => renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.onPress());
     expect(renderer.root.findByType('PersonAvatar').props).toMatchObject({
       pubkey: 'person-pubkey',
       avatarUrl: 'https://example.test/person.png',

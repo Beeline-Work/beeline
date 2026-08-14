@@ -4,6 +4,7 @@ import {
   Platform,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -12,15 +13,18 @@ import {
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as LocalAuthentication from 'expo-local-authentication';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as QRCode from 'qrcode';
 import Svg, { Path, Rect } from 'react-native-svg';
 import {
   fallbackPersonName,
+  lookupRecovery,
+  normalizePersonHandle,
   normalizePersonName,
   personHandle,
   type BuzzClient,
+  type Identity,
 } from '@beeline/buzz-client';
 import {
   getEffectiveRelayUrl,
@@ -31,14 +35,17 @@ import { groknight } from '@/buzz/groknight';
 import { loadActiveCommunityId } from '@/buzz/community-storage';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import {
+  ensurePersonNameForWorkspace,
   loadPreferredPersonName,
-  publishPreferredPersonName,
   savePreferredPersonName,
 } from '@/buzz/person-name';
+import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { Typography } from '@/constants/Typography';
 import { HullSurface, MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
 import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { BuzzRigTransport } from '@/sync/transport';
+import { getBuzzPushEnabled, setBuzzPushEnabled } from '@/push/buzz-push-registration';
+import { getPushPermissionInfo, type PushPermissionInfo } from '@/sync/pushRegistration';
 
 const TYPED_CONFIRMATION = 'EXPORT';
 
@@ -87,10 +94,6 @@ function QrCode({ value }: { value: string }) {
 
 export default function BuzzIdentitySettings() {
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ communityId?: string | string[] }>();
-  const requestedCommunityId = Array.isArray(params.communityId)
-    ? params.communityId[0]
-    : params.communityId;
   const [confirmationMethod, setConfirmationMethod] = useState<ConfirmationMethod>('checking');
   const [biometricLabel, setBiometricLabel] = useState('biometrics');
   const [typedConfirmation, setTypedConfirmation] = useState('');
@@ -102,15 +105,24 @@ export default function BuzzIdentitySettings() {
   const [inputFocused, setInputFocused] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [profileClient, setProfileClient] = useState<BuzzClient | null>(null);
-  const [profileCommunityId, setProfileCommunityId] = useState<string | null>(null);
+  const [profileIdentity, setProfileIdentity] = useState<Identity | null>(null);
   const [profilePubkey, setProfilePubkey] = useState<string | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>();
   const [avatarWorking, setAvatarWorking] = useState(false);
   const [profileName, setProfileName] = useState('');
   const [savedProfileName, setSavedProfileName] = useState('');
+  const [profileHandle, setProfileHandle] = useState('');
+  const [savedProfileHandle, setSavedProfileHandle] = useState('');
   const [nameWorking, setNameWorking] = useState(false);
   const [nameFocused, setNameFocused] = useState(false);
+  const [handleFocused, setHandleFocused] = useState(false);
   const [nameSaved, setNameSaved] = useState(false);
+  const [pushEnabled, setPushEnabledState] = useState<boolean | null>(null);
+  const [pushPermission, setPushPermission] = useState<PushPermissionInfo | null>(null);
+  const [pushWorking, setPushWorking] = useState(false);
+  const [linkedGoogle, setLinkedGoogle] = useState<
+    'checking' | 'connected' | 'not-linked' | 'unavailable'
+  >('checking');
 
   useEffect(() => {
     let cancelled = false;
@@ -120,32 +132,43 @@ export default function BuzzIdentitySettings() {
         if (!identity) return;
         const transport = new BuzzRigTransport(identity, await getEffectiveRelayUrl());
         const client = await transport.ensureClient();
-        const [communities, activeCommunityId, preferredName] = await Promise.all([
-          client.listCommunities(identity.publicKey),
-          loadActiveCommunityId(identity.publicKey),
-          loadPreferredPersonName(identity.publicKey),
-        ]);
-        const communityId =
-          requestedCommunityId &&
-          communities.some((item) => item.communityId === requestedCommunityId)
-            ? requestedCommunityId
-            : communities.some((item) => item.communityId === activeCommunityId)
-              ? (activeCommunityId ?? undefined)
-              : communities[0]?.communityId;
+        const [communities, activeCommunityId, preferredName, enabled, permission] =
+          await Promise.all([
+            client.listCommunities(identity.publicKey),
+            loadActiveCommunityId(identity.publicKey),
+            loadPreferredPersonName(identity.publicKey),
+            getBuzzPushEnabled(identity.publicKey),
+            getPushPermissionInfo(),
+          ]);
+        const communityId = communities.some((item) => item.communityId === activeCommunityId)
+          ? (activeCommunityId ?? undefined)
+          : communities[0]?.communityId;
         const profile = communityId
-          ? await client.getPersonProfile(communityId, identity.publicKey)
-          : null;
+          ? await ensurePersonNameForWorkspace(client, communityId, identity.publicKey)
+          : await client.getGlobalPersonProfile(identity.publicKey);
         if (profile?.name && !preferredName) {
           await savePreferredPersonName(identity.publicKey, profile.name);
         }
         if (!cancelled) {
           setProfileClient(client);
-          setProfileCommunityId(communityId ?? null);
+          setProfileIdentity(identity);
           setProfilePubkey(identity.publicKey);
           setAvatarUrl(profile?.avatar);
           const nextName = profile?.name ?? preferredName ?? fallbackPersonName(identity.publicKey);
+          const nextHandle = profile?.handle ?? personHandle(nextName, identity.publicKey);
           setProfileName(nextName);
           setSavedProfileName(nextName);
+          setProfileHandle(nextHandle);
+          setSavedProfileHandle(nextHandle);
+          setPushEnabledState(enabled);
+          setPushPermission(permission);
+        }
+        try {
+          const links = await lookupRecovery(getBuzzRuntimeConfig().relayUrl, identity);
+          const google = links.some((link) => link.provider.includes('google.com'));
+          if (!cancelled) setLinkedGoogle(google ? 'connected' : 'not-linked');
+        } catch {
+          if (!cancelled) setLinkedGoogle('unavailable');
         }
       } catch (caught) {
         if (!cancelled) setError(`Could not load your profile: ${String(caught)}`);
@@ -154,17 +177,18 @@ export default function BuzzIdentitySettings() {
     return () => {
       cancelled = true;
     };
-  }, [requestedCommunityId]);
+  }, []);
 
   const changeAvatar = useCallback(async () => {
-    if (!profileClient || !profileCommunityId) return;
+    if (!profileClient) return;
     setAvatarWorking(true);
     setError(null);
     try {
       const next = await pickAndUploadAvatar(profileClient);
       if (!next) return;
-      await profileClient.setPersonProfile(profileCommunityId, {
+      await profileClient.setGlobalPersonProfile({
         name: normalizePersonName(savedProfileName) ?? undefined,
+        handle: normalizePersonHandle(savedProfileHandle) ?? undefined,
         avatar: next,
       });
       setAvatarUrl(next);
@@ -173,15 +197,16 @@ export default function BuzzIdentitySettings() {
     } finally {
       setAvatarWorking(false);
     }
-  }, [profileClient, profileCommunityId, savedProfileName]);
+  }, [profileClient, savedProfileHandle, savedProfileName]);
 
   const resetAvatar = useCallback(async () => {
-    if (!profileClient || !profileCommunityId) return;
+    if (!profileClient) return;
     setAvatarWorking(true);
     setError(null);
     try {
-      await profileClient.setPersonProfile(profileCommunityId, {
+      await profileClient.setGlobalPersonProfile({
         name: normalizePersonName(savedProfileName) ?? undefined,
+        handle: normalizePersonHandle(savedProfileHandle) ?? undefined,
         avatar: '',
       });
       setAvatarUrl(undefined);
@@ -190,27 +215,34 @@ export default function BuzzIdentitySettings() {
     } finally {
       setAvatarWorking(false);
     }
-  }, [profileClient, profileCommunityId, savedProfileName]);
+  }, [profileClient, savedProfileHandle, savedProfileName]);
 
   const saveName = useCallback(async () => {
-    if (!profileClient || !profileCommunityId || !profilePubkey) return;
+    if (!profileClient || !profilePubkey) return;
     const normalized = normalizePersonName(profileName);
+    const normalizedHandle = normalizePersonHandle(profileHandle);
     if (!normalized) {
       setError('Choose a name between 1 and 60 characters.');
+      return;
+    }
+    if (!normalizedHandle) {
+      setError('Choose a handle using 1-30 letters, numbers, dots, dashes, or underscores.');
       return;
     }
     setNameWorking(true);
     setNameSaved(false);
     setError(null);
     try {
-      await publishPreferredPersonName(
-        profileClient,
-        profileCommunityId,
-        profilePubkey,
-        normalized,
-      );
+      await profileClient.setGlobalPersonProfile({
+        name: normalized,
+        handle: normalizedHandle,
+        avatar: avatarUrl,
+      });
+      await savePreferredPersonName(profilePubkey, normalized);
       setProfileName(normalized);
       setSavedProfileName(normalized);
+      setProfileHandle(normalizedHandle);
+      setSavedProfileHandle(normalizedHandle);
       setNameSaved(true);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (caught) {
@@ -218,7 +250,25 @@ export default function BuzzIdentitySettings() {
     } finally {
       setNameWorking(false);
     }
-  }, [profileClient, profileCommunityId, profileName, profilePubkey]);
+  }, [avatarUrl, profileClient, profileHandle, profileName, profilePubkey]);
+
+  const togglePush = useCallback(
+    async (enabled: boolean) => {
+      if (!profileIdentity || pushWorking) return;
+      setPushWorking(true);
+      setError(null);
+      try {
+        await setBuzzPushEnabled(profileIdentity, enabled);
+        setPushEnabledState(enabled);
+        setPushPermission(await getPushPermissionInfo());
+      } catch (caught) {
+        setError(`Could not update notifications: ${String(caught)}`);
+      } finally {
+        setPushWorking(false);
+      }
+    },
+    [profileIdentity, pushWorking],
+  );
 
   const lockExport = useCallback(() => {
     setSecret(null);
@@ -327,6 +377,23 @@ export default function BuzzIdentitySettings() {
   const maskedSecret = secret
     ? `${secret.slice(0, 5)}${'•'.repeat(Math.max(8, secret.length - 5))}`
     : '';
+  const pushPermissionLabel = pushPermission
+    ? pushPermission.status === 'unsupported'
+      ? 'Not supported on this device'
+      : pushPermission.granted
+        ? 'OS permission: allowed'
+        : pushPermission.canAskAgain
+          ? 'OS permission: not allowed yet'
+          : 'OS permission: blocked in device settings'
+    : 'Checking OS permission';
+  const linkedGoogleLabel =
+    linkedGoogle === 'connected'
+      ? 'Google account connected'
+      : linkedGoogle === 'not-linked'
+        ? 'No Google account linked'
+        : linkedGoogle === 'unavailable'
+          ? 'Google link unavailable while offline'
+          : 'Checking linked account';
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
@@ -339,18 +406,18 @@ export default function BuzzIdentitySettings() {
           <Text style={styles.backButtonText}>‹</Text>
         </TouchableOpacity>
         <View style={styles.headerCopy}>
-          <Text style={styles.title}>Identity</Text>
+          <Text style={styles.title}>My Settings</Text>
         </View>
       </HullSurface>
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {profilePubkey && profileCommunityId && (
+        {profilePubkey && (
           <View style={styles.profileSection}>
             <View style={styles.nameSection} testID="identity-person-name-setting">
-              <Text style={styles.sectionLabel}>WORKSPACE IDENTITY</Text>
-              <Text style={styles.heading}>What should we call you?</Text>
+              <Text style={styles.sectionLabel}>GLOBAL IDENTITY</Text>
+              <Text style={styles.heading}>How people see you</Text>
               <Text style={styles.body}>
-                People and Agents see this name in Rooms. New Workspaces start with the same name.
+                Your name, handle, and picture stay the same in every Workspace, Room, and DM.
               </Text>
               <TextInput
                 accessibilityLabel="Your display name"
@@ -372,19 +439,42 @@ export default function BuzzIdentitySettings() {
                 testID="identity-person-name-input"
                 value={profileName}
               />
+              <View style={[styles.handleInputRow, handleFocused && styles.nameInputFocused]}>
+                <Text style={styles.handlePrefix}>@</Text>
+                <TextInput
+                  accessibilityLabel="Your handle"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  editable={!nameWorking}
+                  maxLength={30}
+                  onBlur={() => setHandleFocused(false)}
+                  onChangeText={(value) => {
+                    setProfileHandle(value.replace(/^@+/, ''));
+                    setNameSaved(false);
+                  }}
+                  onFocus={() => setHandleFocused(true)}
+                  onSubmitEditing={() => void saveName()}
+                  placeholder={personHandle(profileName, profilePubkey)}
+                  placeholderTextColor={groknight.dim}
+                  returnKeyType="done"
+                  style={styles.handleInput}
+                  testID="identity-person-handle-input"
+                  value={profileHandle}
+                />
+              </View>
               <View style={styles.nameMetaRow}>
-                <Text style={styles.nameHandle}>
-                  @{personHandle(profileName || savedProfileName, profilePubkey)}
-                </Text>
+                <Text style={styles.nameHandle}>ONE PROFILE · ALL WORKSPACES</Text>
                 {nameSaved && <Text style={styles.nameSaved}>✓ SAVED</Text>}
               </View>
               <MonoButton
                 disabled={
                   nameWorking ||
                   !normalizePersonName(profileName) ||
-                  normalizePersonName(profileName) === savedProfileName
+                  !normalizePersonHandle(profileHandle) ||
+                  (normalizePersonName(profileName) === savedProfileName &&
+                    normalizePersonHandle(profileHandle) === savedProfileHandle)
                 }
-                label="Save name"
+                label="Save identity"
                 loading={nameWorking}
                 onPress={() => void saveName()}
                 style={styles.nameButton}
@@ -426,7 +516,41 @@ export default function BuzzIdentitySettings() {
             </View>
           </View>
         )}
+        <View style={styles.settingsSection} testID="notifications-setting">
+          <Text style={styles.sectionLabel}>NOTIFICATIONS</Text>
+          <View style={styles.settingLine}>
+            <View style={styles.settingCopy}>
+              <Text style={styles.settingTitle}>Push notifications</Text>
+              <Text style={styles.settingSubtitle}>{pushPermissionLabel}</Text>
+            </View>
+            <Switch
+              accessibilityLabel="Push notifications"
+              disabled={pushEnabled === null || pushWorking}
+              onValueChange={(enabled) => void togglePush(enabled)}
+              testID="push-notifications-toggle"
+              thumbColor={groknight.textPrimary}
+              trackColor={{ false: groknight.bgRaised, true: groknight.chrome }}
+              value={pushEnabled ?? false}
+            />
+          </View>
+        </View>
+
+        <View style={styles.settingsSection} testID="linked-sign-in-setting">
+          <Text style={styles.sectionLabel}>LINKED SIGN-IN</Text>
+          <View style={styles.settingLine}>
+            <View style={styles.linkedGlyph}>
+              <Text style={styles.linkedGlyphText}>G</Text>
+            </View>
+            <View style={styles.settingCopy}>
+              <Text style={styles.settingTitle}>Google</Text>
+              <Text style={styles.settingSubtitle}>{linkedGoogleLabel}</Text>
+            </View>
+            <Text style={styles.linkedState}>{linkedGoogle === 'connected' ? '✓' : '·'}</Text>
+          </View>
+        </View>
+
         <View style={styles.intro}>
+          <Text style={styles.sectionLabel}>KEY BACKUP</Text>
           <Text style={styles.heading}>Export your key</Text>
           <Text style={styles.body}>Save a copy so you can recover your Beeline identity.</Text>
         </View>
@@ -614,6 +738,31 @@ const styles = StyleSheet.create({
     fontSize: 17,
   },
   nameInputFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 11 },
+  handleInputRow: {
+    minHeight: 48,
+    marginTop: 10,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: groknight.border,
+    borderRadius: 4,
+    backgroundColor: groknight.bgBase,
+  },
+  handlePrefix: {
+    ...Typography.mono('semiBold'),
+    marginRight: 2,
+    color: groknight.textMuted,
+    fontSize: 15,
+  },
+  handleInput: {
+    ...Typography.mono('semiBold'),
+    flex: 1,
+    minWidth: 0,
+    minHeight: 44,
+    color: groknight.textPrimary,
+    fontSize: 15,
+  },
   nameMetaRow: {
     minHeight: 26,
     flexDirection: 'row',
@@ -634,6 +783,56 @@ const styles = StyleSheet.create({
     letterSpacing: 0.7,
   },
   nameButton: { marginTop: 8 },
+  settingsSection: {
+    paddingBottom: 24,
+    marginBottom: 28,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.border,
+  },
+  settingLine: {
+    minHeight: 68,
+    marginTop: 9,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: groknight.border,
+    backgroundColor: groknight.bgBase,
+  },
+  settingCopy: { flex: 1, minWidth: 0, paddingVertical: 12 },
+  settingTitle: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 14,
+  },
+  settingSubtitle: {
+    ...Typography.default(),
+    marginTop: 4,
+    color: groknight.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  linkedGlyph: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+  },
+  linkedGlyphText: {
+    ...Typography.default('semiBold'),
+    color: groknight.textSecondary,
+    fontSize: 13,
+  },
+  linkedState: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textSecondary,
+    fontSize: 13,
+  },
   warning: {
     marginTop: 24,
     padding: 12,

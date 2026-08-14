@@ -73,6 +73,15 @@ export function parseMetadataEvent(event: NostrEvent): ChannelMetadata {
       : archivedRaw === 'false' || archivedRaw === '0'
         ? false
         : undefined;
+  const visibilityRaw = tagValue(event, 'visibility');
+  const visibility =
+    event.tags.some((tag) => tag[0] === 'private') ||
+    visibilityRaw === 'private' ||
+    visibilityRaw === 'invite-only'
+      ? 'invite-only'
+      : visibilityRaw === 'open' || visibilityRaw === 'public'
+        ? 'public'
+        : 'public';
   const parentChannelId = tagValue(event, TAG_PARENT);
   const communityId = tagValue(event, TAG_COMMUNITY);
   return {
@@ -80,6 +89,7 @@ export function parseMetadataEvent(event: NostrEvent): ChannelMetadata {
     ...(name !== undefined ? { name } : {}),
     ...(about !== undefined ? { about } : {}),
     ...(archived !== undefined ? { archived } : {}),
+    ...(visibility !== undefined ? { visibility } : {}),
     ...(parentChannelId !== undefined ? { parentChannelId } : {}),
     ...(communityId !== undefined ? { communityId } : {}),
     raw: event,

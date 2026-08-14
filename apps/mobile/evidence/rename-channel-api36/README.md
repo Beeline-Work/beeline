@@ -8,3 +8,9 @@ Captured on `emulator-5554` with the production release APK (`versionCode 23`) a
 - `non-admin-menu.png`: an invited member in the same Room sees **Leave Room** and no rename action.
 
 After capture, the throwaway member was removed and the test Room was archived.
+
+Fresh-clone verification after building workspace packages:
+
+- `npm test -w @beeline/buzz-client` — exit 0, 20 files / 91 tests.
+- `npm test -- --run` in `apps/mobile` — exit 0, 122 files / 1,063 tests.
+- `npm run typecheck` — exit 0, all workspace and mobile checks.

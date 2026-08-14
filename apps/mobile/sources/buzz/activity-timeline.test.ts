@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildActivityTimeline } from './activity-timeline';
 
 describe('buildActivityTimeline', () => {
-  it('collapses a thinking firehose into one quiet phase row', () => {
+  it('keeps a thinking firehose as one quiet progress item', () => {
     expect(
       buildActivityTimeline([
         { kind: 'thinking', title: 'Thinking', text: '**Planning platform detection**' },
@@ -20,32 +20,62 @@ describe('buildActivityTimeline', () => {
     ]);
   });
 
-  it('coalesces adjacent tool updates and surfaces only useful result metadata', () => {
+  it('turns tool plumbing into readable, collapsed actions', () => {
     expect(
       buildActivityTimeline([
-        { kind: 'tool', title: 'grep "isChannelWorkIntent"', status: 'in_progress' },
+        { kind: 'tool', title: 'Tool', status: 'in_progress' },
         {
           kind: 'tool',
           title: 'grep "isChannelWorkIntent"',
           status: 'completed',
           text: '12 matches',
         },
-        { kind: 'tool', title: 'bash', status: 'completed', text: 'exited with code 0' },
+        { kind: 'tool', title: 'Read /home/buzzy/apps/mobile/a.tsx', status: 'completed' },
+        { kind: 'tool', title: 'Read /home/buzzy/apps/mobile/b.tsx', status: 'completed' },
+        {
+          kind: 'tool',
+          title: 'bash: git status',
+          status: 'completed',
+          text: 'exited with code 0',
+        },
       ]),
     ).toEqual([
       {
         kind: 'action',
-        title: 'grep "isChannelWorkIntent"',
-        summary: '12 matches',
+        title: 'Searched for isChannelWorkIntent',
         detail: '12 matches',
-        status: 'completed',
+        count: 1,
       },
       {
         kind: 'action',
-        title: 'bash',
-        summary: 'exit 0',
+        title: 'Read 2 files',
+        count: 2,
+      },
+      {
+        kind: 'action',
+        title: 'Ran git status',
         detail: 'exited with code 0',
-        status: 'completed',
+        count: 1,
+      },
+    ]);
+  });
+
+  it('turns failures into a human explanation and redacts full paths from details', () => {
+    expect(
+      buildActivityTimeline([
+        {
+          kind: 'tool',
+          title: 'Code search',
+          status: 'failed',
+          text: 'Code search unavailable at /home/buzzy/.codegraph/index.db',
+        },
+      ]),
+    ).toEqual([
+      {
+        kind: 'action',
+        title: 'Code search unavailable',
+        detail: 'Code search unavailable at index.db',
+        count: 1,
       },
     ]);
   });

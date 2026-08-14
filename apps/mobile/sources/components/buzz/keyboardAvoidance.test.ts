@@ -16,6 +16,8 @@ describe('Buzz keyboard avoidance', () => {
       "behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}",
     );
     expect(chatSource).not.toContain("Platform.OS === 'ios' ? 'padding' : 'height'");
+    expect(chatSource).toContain('contentContainerStyle={styles.messageListContent}');
+    expect(chatSource).not.toContain('{ paddingBottom: 12 + keyboardHeight }');
   });
 
   it('keeps focused Agent fields visible in keyboard-aware scroll content', () => {

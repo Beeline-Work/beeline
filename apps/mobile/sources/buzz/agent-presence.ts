@@ -10,6 +10,16 @@ import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection'
 type UnknownRecord = Record<string, unknown>;
 export type RoomAgentPresence = AgentPresence & { generationId?: string };
 
+/** Keep only a previously-online agent optimistic while foreground reconnection is pending. */
+export function isAgentPresenceOnlineWithReconnectGrace(
+  presence: RoomAgentPresence | undefined,
+  now = Date.now(),
+  reconnectGraceUntil = 0,
+): boolean {
+  if (presence?.status !== 'online') return false;
+  return isAgentPresenceOnline(presence, now) || now <= reconnectGraceUntil;
+}
+
 function rawPayload(event: SessionEvent): UnknownRecord | undefined {
   return event.type === 'raw' && event.payload && typeof event.payload === 'object'
     ? (event.payload as UnknownRecord)
@@ -48,8 +58,14 @@ export function isAgentTurnActive(
   turn: NonNullable<ChatDisplayMessage['agentTurn']>,
   presence: RoomAgentPresence | undefined,
   now = Date.now(),
+  reconnectGraceUntil = 0,
 ): boolean {
-  if (turn.status !== 'working' || !isAgentPresenceOnline(presence, now)) return false;
+  if (
+    turn.status !== 'working' ||
+    !isAgentPresenceOnlineWithReconnectGrace(presence, now, reconnectGraceUntil)
+  ) {
+    return false;
+  }
   return !presence?.generationId || turn.generationId === presence.generationId;
 }
 
@@ -69,4 +85,13 @@ export function presenceMapFromSessionEvents(
     const signal = agentPresenceFromSessionEvent(event);
     return signal ? mergeAgentPresence(presence, signal) : presence;
   }, {});
+}
+
+/** Reinstall relay delivery before reading the current replaceable presence snapshot. */
+export async function reconnectPresenceAfterForeground(
+  installSubscription: () => Promise<void>,
+  backfill: () => Promise<readonly SessionEvent[]>,
+): Promise<Record<string, RoomAgentPresence>> {
+  await installSubscription();
+  return presenceMapFromSessionEvents(await backfill());
 }

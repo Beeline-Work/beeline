@@ -21,6 +21,7 @@ import {
   MAX_CACHED_MESSAGES_PER_CHANNEL,
   channelCacheKey,
   clearBuzzLocalCache,
+  mergeChannelBasicsWithCache,
   profileCacheKey,
   useBuzzLocalCache,
 } from './local-cache';
@@ -48,6 +49,33 @@ beforeEach(() => {
 });
 
 describe('Buzz local cache', () => {
+  it('keeps warm previews while refreshed channel basics are revalidated', () => {
+    expect(
+      mergeChannelBasicsWithCache(
+        [{ id: 'room', active: true, title: 'Fresh title', updatedAt: 5 }],
+        [
+          {
+            id: 'room',
+            active: true,
+            title: 'Cached title',
+            updatedAt: 12,
+            latestMessage: 'Warm preview',
+            participantCount: 3,
+            corners: [],
+          },
+        ],
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        title: 'Fresh title',
+        updatedAt: 12,
+        latestMessage: 'Warm preview',
+        participantCount: 3,
+        corners: [],
+      }),
+    ]);
+  });
+
   it('caps messages and evicts least-recently-used Rooms', () => {
     const store = useBuzzLocalCache.getState();
     store.replaceMessages(
@@ -149,6 +177,9 @@ describe('Buzz local cache', () => {
     await revalidateCachedMessages(transport as never, viewer, 'room');
     expect(sessionEventsBackfill).toHaveBeenNthCalledWith(1, 'room', { limit: 50 });
     expect(useBuzzLocalCache.getState().channels[channelCacheKey(viewer, 'room')]?.cursor).toBe(10);
+    expect(useBuzzLocalCache.getState().channels[channelCacheKey(viewer, 'room')]?.backfilled).toBe(
+      true,
+    );
 
     await revalidateCachedMessages(transport as never, viewer, 'room');
     expect(sessionEventsBackfill).toHaveBeenNthCalledWith(2, 'room', { afterSeq: 10 });
@@ -160,5 +191,22 @@ describe('Buzz local cache', () => {
     expect(
       useBuzzLocalCache.getState().channelLists[`${viewer}:workspace`]?.channels[0],
     ).toMatchObject({ latestMessage: 'live', updatedAt: 12 });
+  });
+
+  it('does a full backfill without dropping a live event that created the cache first', async () => {
+    const sessionEventsBackfill = vi.fn().mockResolvedValue([event('history', 10)]);
+    cacheLiveSessionEvent(viewer, 'room', event('live', 12));
+
+    await revalidateCachedMessages({ sessionEventsBackfill } as never, viewer, 'room');
+
+    expect(sessionEventsBackfill).toHaveBeenCalledWith('room', { limit: 50 });
+    expect(
+      useBuzzLocalCache
+        .getState()
+        .channels[channelCacheKey(viewer, 'room')]?.messages?.map((item) => item.id),
+    ).toEqual(['history', 'live']);
+    expect(
+      useBuzzLocalCache.getState().channels[channelCacheKey(viewer, 'room')]?.latestMessage,
+    ).toBe('live');
   });
 });

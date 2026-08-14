@@ -183,6 +183,60 @@ describe('Buzz transport bootstrap', () => {
     await new BuzzRigTransport(identity, 'https://other-relay.test').ensureClient();
     expect(disconnect).toHaveBeenCalledOnce();
   });
+
+  it('can await a live Room subscription before taking a backfill snapshot', async () => {
+    const identity = {
+      publicKey: 'c'.repeat(64),
+      secretKey: new Uint8Array(32).fill(5),
+      name: 'operator',
+    } as Identity;
+    const relayUnsubscribe = vi.fn();
+    let relayHandler: ((event: BuzzSessionEvent) => void) | undefined;
+    let installSubscription: ((unsubscribe: () => void) => void) | undefined;
+    const client = {
+      sessionEventsSubscribe: vi.fn((_room: string, handler: (event: BuzzSessionEvent) => void) => {
+        relayHandler = handler;
+        return new Promise<() => void>((resolve) => {
+          installSubscription = resolve;
+        });
+      }),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+    const handler = vi.fn();
+
+    const ready = transport.sessionEventsSubscribeReady('room', handler);
+    await vi.waitFor(() => expect(client.sessionEventsSubscribe).toHaveBeenCalled());
+    let settled = false;
+    void ready.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    installSubscription?.(relayUnsubscribe);
+    const stop = await ready;
+    relayHandler?.({
+      kind: 'message',
+      event: {
+        id: 'live',
+        pubkey: 'a'.repeat(64),
+        created_at: 42,
+        kind: 9,
+        tags: [['h', 'room']],
+        content: 'arrived live',
+        sig: 'b'.repeat(128),
+      },
+      channelId: 'room',
+      content: 'arrived live',
+      pubkey: 'a'.repeat(64),
+      createdAt: 42,
+      id: 'live',
+    });
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({ type: 'raw' }));
+    stop();
+    expect(relayUnsubscribe).toHaveBeenCalledOnce();
+  });
 });
 
 describe('Room-scoped agent presence transport', () => {

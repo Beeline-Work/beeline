@@ -56,6 +56,7 @@ import { Typography } from '@/constants/Typography';
 import {
   selectChannelList,
   channelListCacheKey,
+  mergeChannelBasicsWithCache,
   setActiveBuzzCacheViewer,
   useBuzzLocalCache,
   type ChannelDisplayItem,
@@ -327,6 +328,7 @@ export default function BuzzChannels() {
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
   const skipInitialFocusRefresh = useRef(true);
   const loadGeneration = useRef(0);
+  const visibleRefreshGeneration = useRef<number | null>(null);
   const cachedListEntry = useBuzzLocalCache((state) =>
     selectChannelList(state, identity?.publicKey ?? state.activeViewerPubkey, requestedCommunity),
   );
@@ -403,7 +405,7 @@ export default function BuzzChannels() {
           cacheState.setChannelList({
             viewerPubkey: currentIdentity.publicKey,
             communityId: active,
-            channels,
+            channels: mergeChannelBasicsWithCache(channels, existing?.channels),
             directMessages: existing?.directMessages ?? [],
             workspaceMembers: existing?.workspaceMembers ?? [],
             communities: available,
@@ -478,70 +480,85 @@ export default function BuzzChannels() {
     });
   }, []);
 
-  const handleRefresh = useCallback(async () => {
-    if (!transport || !identity) return;
-    const generation = ++loadGeneration.current;
-    const isCurrent = () => loadGeneration.current === generation;
-    setRefreshing(true);
-    setError(null);
-    try {
-      const client = await transport.ensureClient();
-      const {
-        workspaces: available,
-        activeWorkspaceId: active,
-        personalWorkspaceId: personal,
-      } = await prepareWorkspaceContext(client, identity.publicKey, activeCommunityId ?? undefined);
-      await ensurePersonNameForWorkspace(client, active, identity.publicKey);
-      if (!isCurrent()) return;
-      setCommunities(available);
-      setActiveCommunityId(active);
-      setPersonalWorkspaceId(personal);
-      const channels = await loadDisplayChannelBasics(transport, active, available);
-      if (!isCurrent()) return;
-      useBuzzLocalCache
-        .getState()
-        .patchChannelList(identity.publicKey, active, { channels, communities: available });
-      const roster = active
-        ? await loadWorkspaceRoster(transport, active, identity.publicKey)
-        : { members: [], profiles: [], canEditAvatar: false };
-      const [enriched, viewerProfile, dms] = await Promise.all([
-        enrichDisplayChannels(transport, channels, active, identity.publicKey),
-        active ? client.getPersonProfile(active, identity.publicKey) : Promise.resolve(undefined),
-        active
-          ? loadDirectMessageDisplays(transport, active, identity.publicKey, roster.members)
-          : Promise.resolve([]),
-      ]);
-      if (!isCurrent()) return;
-      setViewerAvatarUrl(viewerProfile?.avatar);
-      setCanEditWorkspaceAvatar(roster.canEditAvatar);
-      const now = Date.now();
-      const cacheState = useBuzzLocalCache.getState();
-      cacheState.setChannelList({
-        viewerPubkey: identity.publicKey,
-        communityId: active,
-        channels: enriched,
-        directMessages: dms,
-        workspaceMembers: roster.members,
-        communities: available,
-        personalWorkspaceId: personal,
-        viewerIsAgent,
-        viewerAvatarUrl: viewerProfile?.avatar,
-        canEditWorkspaceAvatar: roster.canEditAvatar,
-        updatedAt: now,
-        lastAccessedAt: now,
-      });
-      if (active) {
-        cacheState.replaceProfiles(identity.publicKey, active, [
-          ...roster.profiles,
-          ...(viewerProfile ? [viewerProfile] : []),
-        ]);
+  const handleRefresh = useCallback(
+    async (showSpinner: boolean) => {
+      if (!transport || !identity) return;
+      const generation = ++loadGeneration.current;
+      const isCurrent = () => loadGeneration.current === generation;
+      if (showSpinner) {
+        visibleRefreshGeneration.current = generation;
+        setRefreshing(true);
       }
-    } catch (err) {
-      if (isCurrent()) setError(String(err));
-    } finally {
-      if (isCurrent()) setRefreshing(false);
-    }
-  }, [activeCommunityId, identity, transport, viewerIsAgent]);
+      setError(null);
+      try {
+        const client = await transport.ensureClient();
+        const {
+          workspaces: available,
+          activeWorkspaceId: active,
+          personalWorkspaceId: personal,
+        } = await prepareWorkspaceContext(
+          client,
+          identity.publicKey,
+          activeCommunityId ?? undefined,
+        );
+        await ensurePersonNameForWorkspace(client, active, identity.publicKey);
+        if (!isCurrent()) return;
+        setCommunities(available);
+        setActiveCommunityId(active);
+        setPersonalWorkspaceId(personal);
+        const channels = await loadDisplayChannelBasics(transport, active, available);
+        if (!isCurrent()) return;
+        const cacheState = useBuzzLocalCache.getState();
+        const existing = cacheState.channelLists[channelListCacheKey(identity.publicKey, active)];
+        cacheState.patchChannelList(identity.publicKey, active, {
+          channels: mergeChannelBasicsWithCache(channels, existing?.channels),
+          communities: available,
+        });
+        const roster = active
+          ? await loadWorkspaceRoster(transport, active, identity.publicKey)
+          : { members: [], profiles: [], canEditAvatar: false };
+        const [enriched, viewerProfile, dms] = await Promise.all([
+          enrichDisplayChannels(transport, channels, active, identity.publicKey),
+          active ? client.getPersonProfile(active, identity.publicKey) : Promise.resolve(undefined),
+          active
+            ? loadDirectMessageDisplays(transport, active, identity.publicKey, roster.members)
+            : Promise.resolve([]),
+        ]);
+        if (!isCurrent()) return;
+        setViewerAvatarUrl(viewerProfile?.avatar);
+        setCanEditWorkspaceAvatar(roster.canEditAvatar);
+        const now = Date.now();
+        cacheState.setChannelList({
+          viewerPubkey: identity.publicKey,
+          communityId: active,
+          channels: enriched,
+          directMessages: dms,
+          workspaceMembers: roster.members,
+          communities: available,
+          personalWorkspaceId: personal,
+          viewerIsAgent,
+          viewerAvatarUrl: viewerProfile?.avatar,
+          canEditWorkspaceAvatar: roster.canEditAvatar,
+          updatedAt: now,
+          lastAccessedAt: now,
+        });
+        if (active) {
+          cacheState.replaceProfiles(identity.publicKey, active, [
+            ...roster.profiles,
+            ...(viewerProfile ? [viewerProfile] : []),
+          ]);
+        }
+      } catch (err) {
+        if (isCurrent()) setError(String(err));
+      } finally {
+        if (visibleRefreshGeneration.current === generation) {
+          visibleRefreshGeneration.current = null;
+          setRefreshing(false);
+        }
+      }
+    },
+    [activeCommunityId, identity, transport, viewerIsAgent],
+  );
 
   // A newly-created Workspace is already relay-backed, but device Back can reveal
   // an older mounted home screen. Refresh on focus so its switcher is never stale.
@@ -552,7 +569,7 @@ export default function BuzzChannels() {
         skipInitialFocusRefresh.current = false;
         return;
       }
-      void handleRefresh();
+      void handleRefresh(false);
     }, [handleRefresh, identity, transport]),
   );
 
@@ -767,7 +784,7 @@ export default function BuzzChannels() {
             <Text accessibilityRole="alert" style={styles.errorText}>
               {error}
             </Text>
-            <TouchableOpacity onPress={() => void handleRefresh()}>
+            <TouchableOpacity onPress={() => void handleRefresh(true)}>
               <Text style={styles.retryText}>Retry</Text>
             </TouchableOpacity>
           </View>
@@ -959,7 +976,7 @@ export default function BuzzChannels() {
               </View>
             );
           }}
-          onRefresh={() => void handleRefresh()}
+          onRefresh={() => void handleRefresh(true)}
           refreshing={refreshing}
         />
       </View>

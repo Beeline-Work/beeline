@@ -81,6 +81,7 @@ export class WorkspaceSupervisor {
     this.scheduler = new SessionScheduler({
       maxLiveSessions: Number(process.env.BUZZY_BODY_MAX_SESSIONS ?? '4'),
       idleMs: Number(process.env.BUZZY_BODY_SESSION_IDLE_MS ?? String(5 * 60_000)),
+      reserveInteractiveSlot: true,
     });
   }
 

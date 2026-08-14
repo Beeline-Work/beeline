@@ -1684,8 +1684,8 @@ export default function BuzzChat() {
                     : activeAgentTurn?.agentTurn
                       ? 'thinking…'
                       : activeCorner?.corner?.status === 'starting'
-                        ? 'thinking…'
-                        : 'working…'}
+                        ? 'opening corner…'
+                        : 'working in corner…'}
                 </Text>
               </View>
             )}

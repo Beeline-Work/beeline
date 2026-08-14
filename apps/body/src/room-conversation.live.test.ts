@@ -280,6 +280,7 @@ describe.runIf(live)('production Room conversation contract', () => {
       request.id,
       agent.publicKey,
       'allow',
+      tagValue(permission.event, 'repo')!,
     );
     expect(await allowedPoll).toBe(1);
     expect(await client.listSubchannels(roomId)).toHaveLength(2);
@@ -310,6 +311,7 @@ describe.runIf(live)('production Room conversation contract', () => {
       failure.id,
       agent.publicKey,
       'allow',
+      tagValue(failurePermission.event, 'repo')!,
     );
     expect(await failurePoll).toBe(1);
     expect(await client.listSubchannels(roomId)).toHaveLength(3);
@@ -338,6 +340,7 @@ describe.runIf(live)('production Room conversation contract', () => {
       denied.id,
       agent.publicKey,
       'deny',
+      tagValue(deniedPermission.event, 'repo')!,
     );
     expect(await deniedPoll).toBe(0);
     expect(await client.listSubchannels(roomId)).toHaveLength(3);

@@ -18,8 +18,11 @@ import {
   isChannelTaskRequest,
   isChannelWorkIntent,
   isReadOnlyInformationRequest,
+  isRepositoryMutationRequest,
+  isTransientPermissionPollError,
   ReadOnlyToolsUnavailableError,
   readOnlyMcpServer,
+  roomEditPolicyInstructions,
   roomTurnPrompt,
 } from './body.js';
 import { AcpClient, isMutatingPermissionRequest } from './acp.js';
@@ -753,6 +756,74 @@ describe('Room conversation and permission-gated work intent', () => {
     ).toEqual(['working', 'failed']);
   });
 
+  it('recycles the read-only ACP generation after a handled edit permission', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-room-permission-recycle-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    const scheduler = Reflect.get(body, 'scheduler') as {
+      suspend: (channelId: string) => Promise<void>;
+    };
+    const suspend = vi.spyOn(scheduler, 'suspend').mockResolvedValue();
+    const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    vi.spyOn(client, 'sessionPrompt').mockImplementation(async () => {
+      const turn = (
+        Reflect.get(body, 'pendingRoomTurns') as Map<string, { permissionHandled: boolean }>
+      ).get('parent-channel');
+      if (!turn) throw new Error('expected a pending Room turn');
+      turn.permissionHandled = true;
+      return {
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: 'Editing was not allowed, so I stayed read-only.',
+        toolCalls: [],
+      };
+    });
+    body.registerSession({
+      channelId: 'parent-channel',
+      sessionId: 'readonly-session',
+      client,
+      mode: 'readonly',
+    });
+    const durableState = Reflect.get(body, 'durableState') as {
+      appendConversation: (...args: unknown[]) => Promise<void>;
+    };
+    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ accepted: true }), {
+            status: 200,
+          }),
+      ),
+    );
+
+    await expect(
+      Reflect.get(body, 'replyInRoom').call(
+        body,
+        'parent-channel',
+        { repo: 'repo' },
+        {
+          eventId: 'permission-request',
+          authorPubkey: human.publicKey,
+          content: 'Take care of the requested repository task.',
+          createdAt: 1,
+        },
+      ),
+    ).resolves.toBe(false);
+
+    expect(suspend).toHaveBeenCalledOnce();
+    expect(suspend).toHaveBeenCalledWith('parent-channel');
+  });
+
   it('opens explicitly authorized corner work without prompting the read-only session', async () => {
     const body = new Body({
       agentBinary: '/nonexistent',
@@ -892,6 +963,523 @@ describe('Room conversation and permission-gated work intent', () => {
           event.tags.some((tag) => tag[0] === 'subchannel' && tag[1] === 'corner-id'),
       ),
     ).toBe(true);
+  });
+
+  it('keeps DMs strictly read-only without publishing an edit-permission prompt', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-dm-readonly-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    const turn = {
+      request: {
+        eventId: 'dm-edit-request',
+        authorPubkey: human.publicKey,
+        content: 'Edit lunchboxfortwo/buzzy.',
+        createdAt: 1,
+      },
+      editPolicy: 'direct-message',
+      permissionHandled: false,
+      transitionedToCorner: false,
+      readOnlyInformationRequest: false,
+    };
+    (Reflect.get(body, 'pendingRoomTurns') as Map<string, unknown>).set('dm-channel', turn);
+    const open = vi.spyOn(body, 'openSubchannel');
+    const wait = vi.spyOn(body as never, 'waitForWritePermissionDecision' as never);
+    const publish = vi.fn();
+    vi.stubGlobal('fetch', publish);
+
+    await expect(
+      Reflect.get(body, 'handleRoomPermissionRequest').call(
+        body,
+        'dm-channel',
+        {
+          toolCall: {
+            kind: 'execute',
+            title: 'Run shell',
+            rawInput: {
+              command: 'beeline-request-edit-corner --repo lunchboxfortwo/buzzy',
+            },
+          },
+        },
+        'direct-message',
+      ),
+    ).resolves.toBe('reject');
+
+    expect(open).not.toHaveBeenCalled();
+    expect(wait).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(turn.permissionHandled).toBe(false);
+    expect(roomEditPolicyInstructions('direct-message').join(' ')).toContain('strictly read-only');
+  });
+
+  it('answers DM edit requests without starting ACP or suggesting an approval path', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-dm-edit-answer-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    const provision = vi.spyOn(body, 'provision');
+    const open = vi.spyOn(body, 'openSubchannel');
+    const durableState = Reflect.get(body, 'durableState') as {
+      appendConversation: (...args: unknown[]) => Promise<void>;
+    };
+    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    await expect(
+      Reflect.get(body, 'replyInRoom').call(
+        body,
+        'dm-channel',
+        undefined,
+        {
+          eventId: 'dm-edit-answer',
+          authorPubkey: human.publicKey,
+          content: 'Append DM-EDIT-PROOF to README.md now.',
+          createdAt: 1,
+        },
+        false,
+        'direct-message',
+      ),
+    ).resolves.toBe(false);
+
+    expect(isRepositoryMutationRequest('Append DM-EDIT-PROOF to README.md now.')).toBe(true);
+    expect(provision).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    expect(published).toHaveLength(1);
+    expect(published[0]!.content).toContain('DMs are strictly read-only');
+    expect(published[0]!.content).not.toMatch(/allow|approve|permission/i);
+    expect(published[0]!.tags).toContainEqual(['t', 'agent-message']);
+  });
+
+  it('retries only transient write-permission polling failures', () => {
+    expect(isTransientPermissionPollError(new Error('HTTP 429 quota exceeded'))).toBe(true);
+    expect(isTransientPermissionPollError(new Error('HTTP 503 unavailable'))).toBe(true);
+    expect(isTransientPermissionPollError(new Error('fetch failed'))).toBe(true);
+    expect(isTransientPermissionPollError(new Error('HTTP 403 forbidden'))).toBe(false);
+    expect(isTransientPermissionPollError(new Error('invalid signature'))).toBe(false);
+  });
+
+  it('starts the bound-repository permission flow directly for explicit mutation intent', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-direct-bound-request-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    const permission = vi
+      .spyOn(body as never, 'handleRoomPermissionRequest' as never)
+      .mockImplementation(async () => {
+        const turn = (
+          Reflect.get(body, 'pendingRoomTurns') as Map<string, { permissionHandled: boolean }>
+        ).get('parent-channel');
+        if (turn) turn.permissionHandled = true;
+        return 'reject' as never;
+      });
+    const provision = vi.spyOn(body, 'provision');
+    const durableState = Reflect.get(body, 'durableState') as {
+      appendConversation: (...args: unknown[]) => Promise<void>;
+    };
+    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
+
+    await expect(
+      Reflect.get(body, 'replyInRoom').call(
+        body,
+        'parent-channel',
+        { repo: 'buzzy', repositoryId: 'lunchboxfortwo/buzzy' },
+        {
+          eventId: 'direct-bound-request',
+          authorPubkey: human.publicKey,
+          content: 'Create PROOF.txt and commit it.',
+          createdAt: 1,
+        },
+      ),
+    ).resolves.toBe(false);
+
+    expect(permission).toHaveBeenCalledWith(
+      'parent-channel',
+      expect.objectContaining({
+        toolCall: expect.objectContaining({
+          title: 'Request edit corner on lunchboxfortwo/buzzy',
+          rawInput: { command: 'beeline-request-edit-corner' },
+        }),
+      }),
+      'repository',
+    );
+    expect(provision).not.toHaveBeenCalled();
+  });
+
+  it('keeps a repo-less Room read-only when the agent does not name an exact target', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-no-target-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    const turn = {
+      request: {
+        eventId: 'no-target-request',
+        authorPubkey: human.publicKey,
+        content: 'Please edit the code.',
+        createdAt: 1,
+      },
+      editPolicy: 'named-repository',
+      permissionHandled: false,
+      transitionedToCorner: false,
+      readOnlyInformationRequest: false,
+    };
+    (Reflect.get(body, 'pendingRoomTurns') as Map<string, unknown>).set('repo-less-room', turn);
+    const open = vi.spyOn(body, 'openSubchannel');
+    const publish = vi.fn();
+    vi.stubGlobal('fetch', publish);
+
+    await expect(
+      Reflect.get(body, 'handleRoomPermissionRequest').call(
+        body,
+        'repo-less-room',
+        { toolCall: { kind: 'edit', title: 'str_replace README.md' } },
+        'named-repository',
+      ),
+    ).resolves.toBe('reject');
+
+    expect(open).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(turn.permissionHandled).toBe(false);
+  });
+
+  it('starts the target-bound permission flow directly for an explicit repo-less edit request', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-direct-named-request-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    const permission = vi
+      .spyOn(body as never, 'handleRoomPermissionRequest' as never)
+      .mockResolvedValue('reject' as never);
+    const provision = vi.spyOn(body, 'provision');
+    const durableState = Reflect.get(body, 'durableState') as {
+      appendConversation: (...args: unknown[]) => Promise<void>;
+    };
+    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
+
+    await expect(
+      Reflect.get(body, 'replyInRoom').call(
+        body,
+        'repo-less-room',
+        undefined,
+        {
+          eventId: 'direct-named-request',
+          authorPubkey: human.publicKey,
+          content: 'Repo lunchboxfortwo/buzzy append PROOF to README.',
+          createdAt: 1,
+        },
+        false,
+        'named-repository',
+      ),
+    ).resolves.toBe(false);
+
+    expect(permission).toHaveBeenCalledWith(
+      'repo-less-room',
+      expect.objectContaining({
+        toolCall: expect.objectContaining({
+          rawInput: {
+            command: 'beeline-request-edit-corner --repo lunchboxfortwo/buzzy',
+          },
+        }),
+      }),
+      'named-repository',
+    );
+    expect(provision).not.toHaveBeenCalled();
+  });
+
+  it('opens a repo-less Room corner only after target-bound human approval', async () => {
+    const targetRepo = {
+      repo: 'buzzy',
+      repositoryId: 'lunchboxfortwo/buzzy',
+      localPath: '/tmp/named-buzzy',
+      remoteName: 'origin',
+      targetBranch: 'refs/heads/main',
+    };
+    const resolveNamedRepository = vi.fn(async () => targetRepo);
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: '/tmp/buzzy-named-repo-unit',
+        relayBaseUrl: 'http://relay.test',
+        relayHost: 'relay.test',
+        relayScheme: 'http',
+        relayWsUrl: 'ws://relay.test',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      undefined,
+      undefined,
+      { resolveNamedRepository },
+    );
+    const request = {
+      eventId: 'named-repo-request',
+      authorPubkey: human.publicKey,
+      content: 'Edit lunchboxfortwo/buzzy.',
+      createdAt: 1,
+    };
+    const turn = {
+      request,
+      editPolicy: 'named-repository',
+      namedRepositoryTarget: {
+        id: 'lunchboxfortwo/buzzy',
+        owner: 'lunchboxfortwo',
+        repo: 'buzzy',
+        kind: 'github',
+      },
+      permissionHandled: false,
+      transitionedToCorner: false,
+      readOnlyInformationRequest: false,
+    };
+    (Reflect.get(body, 'pendingRoomTurns') as Map<string, unknown>).set('parent-channel', turn);
+    vi.spyOn(body as never, 'waitForWritePermissionDecision' as never).mockResolvedValue(
+      'allow' as never,
+    );
+    vi.spyOn(body, 'assertRepositorySafety').mockResolvedValue();
+    const editClient = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    const info = {
+      subchannelId: 'named-corner-id',
+      worktreePath: '/tmp/named-worktree',
+      featureBranch: 'feature/named',
+      role: body.agent,
+      session: {
+        channelId: 'named-corner-id',
+        sessionId: 'edit-session',
+        client: editClient,
+        mode: 'edit' as const,
+      },
+      lastPolledAt: 1,
+      archived: false,
+    };
+    const open = vi.spyOn(body, 'openSubchannel').mockResolvedValue(info);
+    vi.spyOn(body as never, 'startAgentTask' as never).mockImplementation(() => undefined as never);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    await Reflect.get(body, 'handleRoomPermissionRequest').call(
+      body,
+      'parent-channel',
+      {
+        toolCall: {
+          kind: 'edit',
+          title: 'Apply patch to README.md',
+          rawInput: { path: 'README.md' },
+        },
+      },
+      'named-repository',
+    );
+
+    expect(resolveNamedRepository).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'lunchboxfortwo/buzzy', kind: 'github' }),
+    );
+    expect(open).toHaveBeenCalledWith('parent-channel', targetRepo, request.content, request);
+    expect(turn.transitionedToCorner).toBe(true);
+    expect(
+      published.find((event) =>
+        event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'pending'),
+      ),
+    ).toMatchObject({ content: expect.stringContaining('lunchboxfortwo/buzzy') });
+    expect(
+      published.every((event) => {
+        const status = event.tags.find((tag) => tag[0] === 'status')?.[1];
+        return (
+          !status ||
+          event.tags.some((tag) => tag[0] === 'repo' && tag[1] === 'lunchboxfortwo/buzzy')
+        );
+      }),
+    ).toBe(true);
+  });
+
+  it('fails closed before creating a corner when the approved repo cannot be cloned', async () => {
+    const resolveNamedRepository = vi.fn(async () => {
+      throw new Error(
+        'repository inaccessible-owner/private-repo could not be cloned or accessed with the available credentials',
+      );
+    });
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: '/tmp/buzzy-named-repo-failure-unit',
+        relayBaseUrl: 'http://relay.test',
+        relayHost: 'relay.test',
+        relayScheme: 'http',
+        relayWsUrl: 'ws://relay.test',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      undefined,
+      undefined,
+      { resolveNamedRepository },
+    );
+    const turn = {
+      request: {
+        eventId: 'uncloneable-request',
+        authorPubkey: human.publicKey,
+        content: 'Edit inaccessible-owner/private-repo.',
+        createdAt: 1,
+      },
+      editPolicy: 'named-repository',
+      permissionHandled: false,
+      transitionedToCorner: false,
+      readOnlyInformationRequest: false,
+    };
+    (Reflect.get(body, 'pendingRoomTurns') as Map<string, unknown>).set('parent-channel', turn);
+    vi.spyOn(body as never, 'waitForWritePermissionDecision' as never).mockResolvedValue(
+      'allow' as never,
+    );
+    const open = vi.spyOn(body, 'openSubchannel');
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    await Reflect.get(body, 'handleRoomPermissionRequest').call(
+      body,
+      'parent-channel',
+      {
+        toolCall: {
+          kind: 'execute',
+          title: 'Run shell',
+          rawInput: {
+            command: 'beeline-request-edit-corner --repo inaccessible-owner/private-repo',
+          },
+        },
+      },
+      'named-repository',
+    );
+
+    expect(open).not.toHaveBeenCalled();
+    expect(turn.transitionedToCorner).toBe(false);
+    const failed = published.find((event) =>
+      event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'failed'),
+    );
+    expect(failed?.content).toContain('inaccessible-owner/private-repo');
+    expect(failed?.content).toContain('could not be cloned or accessed');
+    expect(failed?.tags).toContainEqual(['repo', 'inaccessible-owner/private-repo']);
+    expect(failed?.tags.some((tag) => tag[0] === 'subchannel')).toBe(false);
+  });
+
+  it('does not clone or open a named repository when the human denies it', async () => {
+    const resolveNamedRepository = vi.fn();
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: '/tmp/buzzy-named-deny-unit',
+        relayBaseUrl: 'http://relay.test',
+        relayHost: 'relay.test',
+        relayScheme: 'http',
+        relayWsUrl: 'ws://relay.test',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      undefined,
+      undefined,
+      { resolveNamedRepository },
+    );
+    const turn = {
+      request: {
+        eventId: 'named-deny-request',
+        authorPubkey: human.publicKey,
+        content: 'Edit lunchboxfortwo/buzzy.',
+        createdAt: 1,
+      },
+      editPolicy: 'named-repository',
+      permissionHandled: false,
+      transitionedToCorner: false,
+      readOnlyInformationRequest: false,
+    };
+    (Reflect.get(body, 'pendingRoomTurns') as Map<string, unknown>).set('repo-less-room', turn);
+    vi.spyOn(body as never, 'waitForWritePermissionDecision' as never).mockResolvedValue(
+      'deny' as never,
+    );
+    const open = vi.spyOn(body, 'openSubchannel');
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    await Reflect.get(body, 'handleRoomPermissionRequest').call(
+      body,
+      'repo-less-room',
+      {
+        toolCall: {
+          kind: 'execute',
+          title: 'Run shell',
+          rawInput: {
+            command: 'beeline-request-edit-corner --repo lunchboxfortwo/buzzy',
+          },
+        },
+      },
+      'named-repository',
+    );
+
+    expect(resolveNamedRepository).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    expect(turn.transitionedToCorner).toBe(false);
+    expect(
+      published.find((event) =>
+        event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'denied'),
+      )?.tags,
+    ).toContainEqual(['repo', 'lunchboxfortwo/buzzy']);
   });
 
   it('keeps the Room read-only when the human denies editing', async () => {

@@ -46,12 +46,21 @@ compose project. End-to-end notification tests must use a separate throwaway
 registry and a capturing `Messaging` implementation; do not submit a fake FCM
 token to the production service.
 
-The checked-in proof creates and archives a private Room between throwaway
-identities, posts one real production kind-9 event, proves an outsider cannot
-read it and the public `/query` remains auth-enforced, then captures exactly one
-formatted FCM payload without calling FCM. It re-polls, reloads the durable
-state as a forced-restart simulation, and replays the event; all three paths
-must leave the capture count at one:
+On-device and live-relay tests must create a fresh test identity and a separate
+Workspace containing only generated test identities. The captain's identity
+must not be a Workspace/Room member, and the captain's device token must never
+be registered or copied into the test registry. Emulator/test clients must send
+`environment: "emulator"` or `environment: "test"`; the registration endpoint
+acknowledges those tokens without storing them. A test harness that cannot prove
+these constraints must use capture-only messaging and stop before registration.
+
+The checked-in proof creates an isolated Workspace whose exact member set is two
+fresh identities, plus a persistent real Room and a
+`research-no-findings-*` fixture Room. It posts one event to each, proves the
+recipient can privately read the real event while an outsider cannot and the
+public `/query` remains auth-enforced, then captures payloads without any FCM
+network client. The fixture produces zero captures and the real Room exactly
+one. Duplicate polling, durable-state reload, and direct replay add zero sends:
 
 ```sh
 npm run verify:live -w @beeline/push-gateway

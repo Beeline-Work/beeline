@@ -31,7 +31,11 @@ The service account file stays outside the repository. Do not log or commit it.
 | `BUZZY_PUSH_DELIVERY_STATE_FILE` | registry directory + `deliveries.json` | Durable event-id ledger and recipient cursors                                      |
 | `BUZZY_PUSH_POLL_INTERVAL_MS`    | `1500`                                 | ACL-scoped relay poll interval                                                     |
 
-`POST /registrations` accepts `{ "pubkey", "token", "platform": "android" }`.
+`POST /registrations` accepts
+`{ "pubkey", "token", "platform": "android", "environment": "physical" }`.
+`environment` is optional for legacy clients, but registrations explicitly marked
+`test`, `emulator`, or `simulator` are acknowledged and discarded. The mobile
+client sends `physical` or `emulator` from `expo-device`.
 The response and logs never contain the FCM token. The v1 registry is a local
 JSON file written mode 0600; it survives normal restarts, but is local to one
 gateway host and is lost if that file is removed. Re-importing or generating a
@@ -42,8 +46,14 @@ The separate delivery-state file is written atomically beside the registry. It
 reserves each event-id/recipient attempt before calling FCM and never retries an
 ambiguous attempt. Delivered ids are retained for 30 days and capped at 50,000;
 durable per-recipient cursors keep pruned backlog events permanently ineligible.
-Checked-in `ui-demo-*`, change-review demo, and room-invite live-test fixtures
-are suppressed before any FCM call as a second safety boundary.
+FCM eligibility fails closed unless the Room has an immutable kind-9007 create
+linked to a self-linked persistent Workspace create. The final pre-FCM boundary
+then suppresses explicit `fixture` tags; `change-review*`, `ui-test`, `ui-demo`,
+`uidemo`, and `test-fixture` markers; fixture names/repositories including
+`ui-demo-*`, `research-no-findings-*`, `review-corner-*`, `*-uidemo-*`, and
+room-invite repair/visibility fixtures; and all Rooms linked to an obviously
+test/demo/fixture/throwaway Workspace. ACL-scoped reads remain the per-recipient
+delivery authority for every genuine eligible Room.
 
 ## Notification content and deployment
 

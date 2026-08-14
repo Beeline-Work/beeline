@@ -2,7 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createBuzzClient, createIdentity, queryEvents, type Identity } from '@beeline/buzz-client';
+import {
+  createBuzzClient,
+  createChannel,
+  createIdentity,
+  queryEvents,
+  type Identity,
+} from '@beeline/buzz-client';
 import { signEvent } from '@beeline/nostr';
 import type { BatchResponse, Messaging, MulticastMessage } from 'firebase-admin/messaging';
 import { DeliveryState } from '../src/delivery-state.js';
@@ -34,15 +40,55 @@ async function main(): Promise<void> {
   const recipient = createIdentity(`push-recipient-${marker}`);
   const outsider = createIdentity(`push-outsider-${marker}`);
   const senderClient = client(sender);
-  const roomName = `Push Proof ${marker}`;
+  const workspaceName = `Capture Isolation ${marker}`;
+  const roomName = `Persistent Product Room ${marker}`;
+  const fixtureRoomName = `research-no-findings-${marker}`;
   const senderName = `Push Tester ${marker}`;
   const messageText = `Private push proof ${marker}`;
-  let channelId = '';
+  let realChannelId = '';
+  let fixtureChannelId = '';
 
   try {
-    channelId = await senderClient.createChannel(roomName, { visibility: 'private' });
-    await senderClient.addMember(channelId, recipient.publicKey, 'member');
-    await senderClient.waitUntilMember(channelId, recipient.publicKey, { timeoutMs: 15_000 });
+    const communityId = await senderClient.createCommunity(workspaceName);
+    await senderClient.addMember(communityId, recipient.publicKey, 'member');
+    await senderClient.waitUntilMember(communityId, recipient.publicKey, { timeoutMs: 15_000 });
+    const channelContext = {
+      identity: sender,
+      http: { baseUrl: publicRelayUrl, host: relayHost, identity: sender },
+    };
+    realChannelId = await createChannel(channelContext, roomName, {
+      communityId,
+      visibility: 'private',
+      repository: {
+        key: `capture/real-${marker}`,
+        name: `real-${marker}`,
+        localOnly: false,
+      },
+    });
+    fixtureChannelId = await createChannel(channelContext, fixtureRoomName, {
+      communityId,
+      visibility: 'private',
+      repository: {
+        key: `capture/${fixtureRoomName}`,
+        name: fixtureRoomName,
+        localOnly: false,
+      },
+    });
+    await senderClient.waitUntilMember(realChannelId, recipient.publicKey, {
+      timeoutMs: 15_000,
+    });
+    await senderClient.waitUntilMember(fixtureChannelId, recipient.publicKey, {
+      timeoutMs: 15_000,
+    });
+
+    const workspaceMembers = await senderClient.communityMembers(communityId);
+    const expectedMembers = new Set([sender.publicKey, recipient.publicKey]);
+    if (
+      workspaceMembers.length !== expectedMembers.size ||
+      workspaceMembers.some((member) => !expectedMembers.has(member.pubkey))
+    ) {
+      throw new Error('test identity isolation failed: unexpected Workspace member');
+    }
 
     const profile = signEvent(
       {
@@ -55,7 +101,11 @@ async function main(): Promise<void> {
       sender.secretKey,
     );
     await senderClient.publish(profile);
-    const messageEvent = await senderClient.messageSubmit(channelId, messageText);
+    const fixtureEvent = await senderClient.messageSubmit(
+      fixtureChannelId,
+      `Fixture message that must never reach FCM ${marker}`,
+    );
+    const messageEvent = await senderClient.messageSubmit(realChannelId, messageText);
 
     const filter = [{ ids: [messageEvent.id] }];
     const recipientEvents = await reader(recipient.publicKey).query(filter);
@@ -103,7 +153,9 @@ async function main(): Promise<void> {
           filters.length === 2 &&
           (filters[0]?.kinds as number[] | undefined)?.includes(9) &&
           (filters[1]?.kinds as number[] | undefined)?.includes(30078);
-        return isRegisteredEventPoll ? [messageEvent] : reader(recipient.publicKey).query(filters);
+        return isRegisteredEventPoll
+          ? [fixtureEvent, messageEvent]
+          : reader(recipient.publicKey).query(filters);
       },
       disconnect: () => undefined,
     });
@@ -124,12 +176,16 @@ async function main(): Promise<void> {
     await runPoll(firstState, 2);
     if (captured.length !== 1) {
       throw new Error(
-        `duplicate poll proof failed: expected one FCM payload, got ${captured.length}`,
+        `fixture/duplicate poll proof failed: expected one real FCM payload, got ${captured.length}`,
       );
+    }
+    if (captured[0]?.data?.channelId !== realChannelId) {
+      throw new Error('fixture suppression proof failed: captured payload was not the real Room');
     }
 
     const restartedState = await DeliveryState.load(deliveryStateFile);
     const restartedGateway = await runPoll(restartedState, 1);
+    await restartedGateway.handleRelayEvent(fixtureEvent, recipient.publicKey, replayingReader());
     await restartedGateway.handleRelayEvent(messageEvent, recipient.publicKey, replayingReader());
     if (captured.length !== 1) {
       throw new Error(
@@ -155,13 +211,16 @@ async function main(): Promise<void> {
         acl: { recipient: recipientEvents.length, outsider: outsiderEvents.length },
         publicRelayUnauthenticatedQueryStatus: unauthenticatedPublicQuery.status,
         fcmPayloadCount: captured.length,
+        fixture: { roomName: fixtureRoomName, fcmPayloadCount: 0 },
+        real: { roomName, fcmPayloadCount: 1 },
         dedup: { firstPoll: 1, duplicatePollAdditional: 0, restartReplayAdditional: 0 },
         notification: payload.notification,
         roomName: payload.data?.roomName,
       }),
     );
   } finally {
-    if (channelId) await senderClient.archiveRoom(channelId).catch(() => undefined);
+    if (fixtureChannelId) await senderClient.archiveRoom(fixtureChannelId).catch(() => undefined);
+    if (realChannelId) await senderClient.archiveRoom(realChannelId).catch(() => undefined);
     senderClient.disconnect();
   }
 }

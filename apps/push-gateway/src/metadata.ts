@@ -28,6 +28,10 @@ export interface RelayEventReader {
 interface RoomMetadata {
   roomName: string;
   communityId?: string;
+  workspaceName?: string;
+  persistentWorkspaceRoom: boolean;
+  fixtureCandidates: string[];
+  fixtureMarkers: string[];
 }
 
 interface CacheEntry<T> {
@@ -53,6 +57,44 @@ function latest(events: NostrEvent[]): NostrEvent | undefined {
   return [...events].sort(
     (left, right) => right.created_at - left.created_at || right.id.localeCompare(left.id),
   )[0];
+}
+
+function earliest(events: NostrEvent[]): NostrEvent | undefined {
+  return [...events].sort(
+    (left, right) => left.created_at - right.created_at || left.id.localeCompare(right.id),
+  )[0];
+}
+
+const FIXTURE_MARKERS = new Set([
+  'change-review',
+  'change-review-file',
+  'change-review-manifest',
+  'ui-test',
+  'ui-demo',
+  'uidemo',
+  'test-fixture',
+]);
+
+function fixtureFields(events: Array<NostrEvent | undefined>): {
+  candidates: string[];
+  markers: string[];
+} {
+  const candidates = new Set<string>();
+  const markers = new Set<string>();
+  for (const event of events) {
+    if (!event) continue;
+    for (const name of ['name', 'repo-key', 'repo-name']) {
+      const value = tagValue(event, name);
+      if (value) candidates.add(value);
+    }
+    for (const tag of event.tags) {
+      if (tag[0] === 'fixture') markers.add(`fixture:${tag[1] ?? ''}`);
+      if (tag[0] === 't' && tag[1] && FIXTURE_MARKERS.has(tag[1].toLowerCase())) {
+        markers.add(tag[1].toLowerCase());
+      }
+    }
+  }
+  return { candidates: [...candidates], markers: [...markers] };
 }
 
 function jsonObject(content: string): Record<string, unknown> | undefined {
@@ -134,7 +176,14 @@ export class NotificationMetadataResolver {
     const senderName = await this.cached(this.senders, senderKey, () =>
       this.loadSender(event.pubkey, room.communityId, reader),
     );
-    return { roomName: room.roomName, ...(senderName ? { senderName } : {}) };
+    return {
+      roomName: room.roomName,
+      persistentWorkspaceRoom: room.persistentWorkspaceRoom,
+      ...(room.workspaceName ? { workspaceName: room.workspaceName } : {}),
+      fixtureCandidates: room.fixtureCandidates,
+      fixtureMarkers: room.fixtureMarkers,
+      ...(senderName ? { senderName } : {}),
+    };
   }
 
   private async loadRoom(channelId: string, reader: RelayEventReader): Promise<RoomMetadata> {
@@ -143,16 +192,68 @@ export class NotificationMetadataResolver {
       { kinds: [KIND_CHANNEL_METADATA], '#h': [channelId], limit: 5 },
       { kinds: [KIND_CREATE_GROUP], '#h': [channelId], limit: 5 },
     ]);
-    const metadata = latest(events.filter((event) => event.kind === KIND_CHANNEL_METADATA));
-    const creation = latest(events.filter((event) => event.kind === KIND_CREATE_GROUP));
+    const metadata = latest(
+      events.filter(
+        (event) =>
+          event.kind === KIND_CHANNEL_METADATA &&
+          (tagValue(event, 'd') === channelId || tagValue(event, 'h') === channelId),
+      ),
+    );
+    const creation = earliest(
+      events.filter(
+        (event) => event.kind === KIND_CREATE_GROUP && tagValue(event, 'h') === channelId,
+      ),
+    );
     const roomName =
       cleanName(metadata ? tagValue(metadata, 'name') : undefined) ??
       cleanName(creation ? tagValue(creation, 'name') : undefined) ??
       'Room';
-    const communityId =
-      (metadata ? tagValue(metadata, TAG_COMMUNITY) : undefined) ??
-      (creation ? tagValue(creation, TAG_COMMUNITY) : undefined);
-    return { roomName, ...(communityId ? { communityId } : {}) };
+    // Only the immutable create can establish the Workspace binding. Mutable
+    // metadata may refine presentation but cannot make a standalone Room FCM-eligible.
+    const communityId = creation ? tagValue(creation, TAG_COMMUNITY) : undefined;
+    if (!creation || !communityId || communityId === channelId) {
+      const fixture = fixtureFields([creation, metadata]);
+      return {
+        roomName,
+        persistentWorkspaceRoom: false,
+        fixtureCandidates: fixture.candidates,
+        fixtureMarkers: fixture.markers,
+        ...(communityId ? { communityId } : {}),
+      };
+    }
+
+    const workspaceEvents = await reader.query([
+      { kinds: [KIND_CHANNEL_METADATA], '#d': [communityId], limit: 5 },
+      { kinds: [KIND_CHANNEL_METADATA], '#h': [communityId], limit: 5 },
+      { kinds: [KIND_CREATE_GROUP], '#h': [communityId], limit: 20 },
+    ]);
+    const workspaceCreation = earliest(
+      workspaceEvents.filter(
+        (event) =>
+          event.kind === KIND_CREATE_GROUP &&
+          tagValue(event, 'h') === communityId &&
+          tagValue(event, TAG_COMMUNITY) === communityId,
+      ),
+    );
+    const workspaceMetadata = latest(
+      workspaceEvents.filter(
+        (event) =>
+          event.kind === KIND_CHANNEL_METADATA &&
+          (tagValue(event, 'd') === communityId || tagValue(event, 'h') === communityId),
+      ),
+    );
+    const workspaceName =
+      cleanName(workspaceMetadata ? tagValue(workspaceMetadata, 'name') : undefined) ??
+      cleanName(workspaceCreation ? tagValue(workspaceCreation, 'name') : undefined);
+    const fixture = fixtureFields([creation, metadata, workspaceCreation, workspaceMetadata]);
+    return {
+      roomName,
+      communityId,
+      ...(workspaceName ? { workspaceName } : {}),
+      persistentWorkspaceRoom: Boolean(workspaceCreation && workspaceName),
+      fixtureCandidates: fixture.candidates,
+      fixtureMarkers: fixture.markers,
+    };
   }
 
   private async loadSender(

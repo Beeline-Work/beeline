@@ -204,6 +204,7 @@ describe('WorkspaceSupervisor Room watchdog', () => {
       lastPollAt: 1,
       lastPresenceAt: 1,
       presence: 'offline',
+      backoffUntil: 0,
       recovering: false,
     });
     running.set('healthy-room', {
@@ -213,6 +214,7 @@ describe('WorkspaceSupervisor Room watchdog', () => {
       lastPollAt: now,
       lastPresenceAt: now,
       presence: 'online',
+      backoffUntil: 0,
       recovering: false,
     });
 
@@ -224,6 +226,39 @@ describe('WorkspaceSupervisor Room watchdog', () => {
     expect(healthyController.signal.aborted).toBe(false);
     expect(supervisor.activeRoomIds()).toEqual(['healthy-room', 'stale-room']);
     now += 1;
+  });
+
+  it('does not reset a rate-limited Room while its relay-directed delay is active', async () => {
+    let now = 100_000;
+    const runtime = runtimeWithRooms();
+    const supervisor = new WorkspaceSupervisor(
+      runtime,
+      `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+      { now: () => now, watchdogStaleMs: 1_000 },
+    );
+    const controller = new AbortController();
+    const body = { forceRecoverRoom: vi.fn().mockResolvedValue(undefined) };
+    const running = (supervisor as never).running as Map<string, unknown>;
+    running.set('rate-limited-room', {
+      body,
+      controller,
+      promise: Promise.resolve(),
+      lastPollAt: 1,
+      lastPresenceAt: 1,
+      presence: 'offline',
+      backoffUntil: now + 120_000,
+      recovering: false,
+    });
+
+    await (supervisor as never).watchdog();
+    expect(body.forceRecoverRoom).not.toHaveBeenCalled();
+    expect(controller.signal.aborted).toBe(false);
+
+    now += 120_001;
+    await (supervisor as never).watchdog();
+    expect(body.forceRecoverRoom).toHaveBeenCalledWith('rate-limited-room');
+    expect(controller.signal.aborted).toBe(true);
   });
 
   it('starts every configured repository Room again after a supervisor restart', async () => {

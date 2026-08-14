@@ -26,6 +26,8 @@ interface RunningRoom {
   /** Last presence marker the relay accepted for this Room. */
   lastPresenceAt: number;
   presence: 'online' | 'offline';
+  /** A Room-directed retry delay. The watchdog must not erase this backoff. */
+  backoffUntil: number;
   recovering: boolean;
 }
 
@@ -240,6 +242,7 @@ export class WorkspaceSupervisor {
     const startedAt = this.now();
     const health = {
       poll: () => this.notePoll(channelId),
+      failure: (_roomId: string, retryInMs: number) => this.notePollFailure(channelId, retryInMs),
       presence: (_roomId: string, status: 'online' | 'offline') =>
         this.notePresence(channelId, status),
     };
@@ -253,6 +256,7 @@ export class WorkspaceSupervisor {
         statePath: resolve(workspaceRoot, 'body-state.json'),
         resolveNamedRepository: (target) => this.resolveNamedRepository(target),
         onRoomPollSuccess: health.poll,
+        onRoomPollFailure: health.failure,
         onRoomPresence: health.presence,
       },
     );
@@ -276,6 +280,7 @@ export class WorkspaceSupervisor {
       lastPollAt: startedAt,
       lastPresenceAt: startedAt,
       presence: 'offline',
+      backoffUntil: 0,
       recovering: false,
     });
     console.log(`[supervisor] serving Room ${channelId} from ${room.repo.root}`);
@@ -294,6 +299,7 @@ export class WorkspaceSupervisor {
       statePath: resolve(workspaceRoot, 'body-state.json'),
       resolveNamedRepository: (target) => this.resolveNamedRepository(target),
       onRoomPollSuccess: () => this.notePoll(channelId),
+      onRoomPollFailure: (_roomId, retryInMs) => this.notePollFailure(channelId, retryInMs),
       onRoomPresence: (_roomId, status) => this.notePresence(channelId, status),
     });
     const promise = body
@@ -314,6 +320,7 @@ export class WorkspaceSupervisor {
       lastPollAt: startedAt,
       lastPresenceAt: startedAt,
       presence: 'offline',
+      backoffUntil: 0,
       recovering: false,
     });
     console.log(
@@ -436,7 +443,15 @@ export class WorkspaceSupervisor {
 
   private notePoll(channelId: string): void {
     const running = this.running.get(channelId);
-    if (running) running.lastPollAt = this.now();
+    if (running) {
+      running.lastPollAt = this.now();
+      running.backoffUntil = 0;
+    }
+  }
+
+  private notePollFailure(channelId: string, retryInMs: number): void {
+    const running = this.running.get(channelId);
+    if (running) running.backoffUntil = Math.max(running.backoffUntil, this.now() + retryInMs);
   }
 
   private notePresence(channelId: string, status: 'online' | 'offline'): void {
@@ -455,6 +470,9 @@ export class WorkspaceSupervisor {
     const now = this.now();
     for (const [channelId, running] of this.running) {
       if (running.recovering) continue;
+      // Poll failure is an expected, Room-local degraded state. Do not turn a
+      // relay-directed wait into a fresh aggressive generation before it ends.
+      if (now <= running.backoffUntil) continue;
       const pollAge = now - running.lastPollAt;
       const presenceAge = now - running.lastPresenceAt;
       if (pollAge <= this.watchdogStaleMs && presenceAge <= this.watchdogStaleMs) continue;

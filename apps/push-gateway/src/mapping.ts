@@ -1,3 +1,4 @@
+import { fallbackPersonName } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
 
 const tagValue = (event: NostrEvent, name: string): string | undefined =>
@@ -14,8 +15,10 @@ export interface PushNotificationPlan {
 }
 
 export interface NotificationContext {
-  roomName: string;
+  roomName?: string;
   senderName?: string;
+  /** Derived from the immutable Room create's existing buzz-dm marker. */
+  isDirectMessage?: boolean;
   /** True only after resolving an immutable Room create linked to a real Workspace create. */
   persistentWorkspaceRoom?: boolean;
   workspaceName?: string;
@@ -122,18 +125,30 @@ export function mapEventToNotification(
   const isMergeRequest =
     markers.includes('body-control') &&
     Boolean(tagValue(event, 'repo') && tagValue(event, 'branch') && tagValue(event, 'tip'));
-  const roomName = normalizedDisplayText(context.roomName, 80) ?? 'Room';
-  const senderName = normalizedDisplayText(context.senderName, 80) ?? roomName;
+  const resolvedRoomName = normalizedDisplayText(context.roomName, 80);
+  const roomName = resolvedRoomName ?? 'Room';
+  const senderName =
+    normalizedDisplayText(context.senderName, 80) ?? fallbackPersonName(event.pubkey);
   const showMessagePreview = options.showMessagePreview ?? true;
   const preview = formatMessagePreview(event.content);
 
   return {
     channelId,
-    title: isMergeRequest ? 'Merge approval requested' : senderName,
+    title: isMergeRequest
+      ? 'Merge approval requested'
+      : context.isDirectMessage
+        ? senderName
+        : resolvedRoomName
+          ? resolvedRoomName.startsWith('#')
+            ? resolvedRoomName
+            : `#${resolvedRoomName}`
+          : senderName,
     body: isMergeRequest
       ? `Review requested in ${roomName}`
       : showMessagePreview && preview
-        ? preview
+        ? context.isDirectMessage
+          ? preview
+          : `${senderName}: ${preview}`
         : `New message in ${roomName}`,
     data: {
       channelId,

@@ -9,7 +9,9 @@ import {
   TAG_AGENT,
   TAG_AGENT_SOUL,
   TAG_COMMUNITY,
+  TAG_DIRECT_MESSAGE,
   TAG_PERSON_PROFILE,
+  fallbackPersonName,
   parseAgent,
   parseAgentSoul,
   resolveAgentName,
@@ -26,7 +28,8 @@ export interface RelayEventReader {
 }
 
 interface RoomMetadata {
-  roomName: string;
+  roomName?: string;
+  isDirectMessage: boolean;
   communityId?: string;
   workspaceName?: string;
   persistentWorkspaceRoom: boolean;
@@ -170,14 +173,15 @@ export class NotificationMetadataResolver {
 
   async resolve(event: NostrEvent, reader: RelayEventReader): Promise<NotificationContext> {
     const channelId = tagValue(event, 'h');
-    if (!channelId) return { roomName: 'Room' };
+    if (!channelId) return {};
     const room = await this.cached(this.rooms, channelId, () => this.loadRoom(channelId, reader));
     const senderKey = `${room.communityId ?? ''}:${event.pubkey}`;
     const senderName = await this.cached(this.senders, senderKey, () =>
       this.loadSender(event.pubkey, room.communityId, reader),
     );
     return {
-      roomName: room.roomName,
+      ...(room.roomName ? { roomName: room.roomName } : {}),
+      isDirectMessage: room.isDirectMessage,
       persistentWorkspaceRoom: room.persistentWorkspaceRoom,
       ...(room.workspaceName ? { workspaceName: room.workspaceName } : {}),
       fixtureCandidates: room.fixtureCandidates,
@@ -206,15 +210,18 @@ export class NotificationMetadataResolver {
     );
     const roomName =
       cleanName(metadata ? tagValue(metadata, 'name') : undefined) ??
-      cleanName(creation ? tagValue(creation, 'name') : undefined) ??
-      'Room';
+      cleanName(creation ? tagValue(creation, 'name') : undefined);
+    const isDirectMessage = Boolean(
+      creation && tagValues(creation, 't').includes(TAG_DIRECT_MESSAGE),
+    );
     // Only the immutable create can establish the Workspace binding. Mutable
     // metadata may refine presentation but cannot make a standalone Room FCM-eligible.
     const communityId = creation ? tagValue(creation, TAG_COMMUNITY) : undefined;
     if (!creation || !communityId || communityId === channelId) {
       const fixture = fixtureFields([creation, metadata]);
       return {
-        roomName,
+        ...(roomName ? { roomName } : {}),
+        isDirectMessage,
         persistentWorkspaceRoom: false,
         fixtureCandidates: fixture.candidates,
         fixtureMarkers: fixture.markers,
@@ -247,7 +254,8 @@ export class NotificationMetadataResolver {
       cleanName(workspaceCreation ? tagValue(workspaceCreation, 'name') : undefined);
     const fixture = fixtureFields([creation, metadata, workspaceCreation, workspaceMetadata]);
     return {
-      roomName,
+      ...(roomName ? { roomName } : {}),
+      isDirectMessage,
       communityId,
       ...(workspaceName ? { workspaceName } : {}),
       persistentWorkspaceRoom: Boolean(workspaceCreation && workspaceName),
@@ -313,7 +321,7 @@ export class NotificationMetadataResolver {
       const soulProfile = soul ? parseAgentSoul(soul) : null;
       return resolveAgentName(soulProfile?.name ?? agent.displayName, pubkey);
     }
-    return personName(events, pubkey, communityId);
+    return personName(events, pubkey, communityId) ?? fallbackPersonName(pubkey);
   }
 
   private cached<T>(

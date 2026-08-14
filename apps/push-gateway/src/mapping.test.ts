@@ -15,31 +15,85 @@ function event(tags: string[][], content = '  Ship the preview now.  '): NostrEv
 }
 
 describe('mapEventToNotification', () => {
-  it('suppresses checked-in demo and live-test fixtures before delivery', () => {
+  it('fails closed unless the Room is durably linked to a non-fixture Workspace', () => {
+    const relayEvent = event([['h', 'room']]);
+    expect(isSuppressedFixtureNotification(relayEvent, { roomName: 'Roadmap' })).toBe(true);
     expect(
-      isSuppressedFixtureNotification(event([['h', 'fixture']]), {
-        roomName: 'ui-demo-uidemo-123',
+      isSuppressedFixtureNotification(relayEvent, {
+        roomName: 'Roadmap',
+        workspaceName: 'Product Engineering',
+        persistentWorkspaceRoom: true,
+      }),
+    ).toBe(false);
+    expect(
+      isSuppressedFixtureNotification(relayEvent, {
+        roomName: 'Roadmap',
+        workspaceName: 'Push test workspace',
+        persistentWorkspaceRoom: true,
       }),
     ).toBe(true);
+  });
+
+  it.each([
+    'ui-demo-uidemo-123',
+    'research-no-findings-xyz',
+    'review-corner-navigation',
+    'repository-uidemo-123',
+    'room-invite-repair-abc',
+    'room-invite-visibility-abc',
+  ])('suppresses fixture room or repository name %s', (fixtureName) => {
     expect(
       isSuppressedFixtureNotification(event([['h', 'fixture']]), {
-        roomName: 'room-invite-repair-abc',
+        roomName: fixtureName,
+        workspaceName: 'Product Engineering',
+        persistentWorkspaceRoom: true,
       }),
     ).toBe(true);
     expect(
       isSuppressedFixtureNotification(
         event([
           ['h', 'fixture'],
-          ['repo', `${'d'.repeat(64)}/ui-demo-uidemo-123`],
+          ['repo', `${'d'.repeat(64)}/${fixtureName}`],
         ]),
-        { roomName: 'review-corner-navigation' },
+        {
+          roomName: 'Roadmap',
+          workspaceName: 'Product Engineering',
+          persistentWorkspaceRoom: true,
+        },
+      ),
+    ).toBe(true);
+  });
+
+  it('suppresses explicit message and resolved Room fixture markers', () => {
+    const context = {
+      roomName: 'Roadmap',
+      workspaceName: 'Product Engineering',
+      persistentWorkspaceRoom: true,
+    };
+    expect(
+      isSuppressedFixtureNotification(
+        event([
+          ['h', 'room'],
+          ['fixture', 'anything'],
+        ]),
+        context,
       ),
     ).toBe(true);
     expect(
-      isSuppressedFixtureNotification(event([['h', 'real-room']]), {
-        roomName: 'buzzy',
+      isSuppressedFixtureNotification(
+        event([
+          ['h', 'room'],
+          ['t', 'ui-test'],
+        ]),
+        context,
+      ),
+    ).toBe(true);
+    expect(
+      isSuppressedFixtureNotification(event([['h', 'room']]), {
+        ...context,
+        fixtureMarkers: ['change-review-manifest'],
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('maps a channel message to its sender and trimmed plaintext preview', () => {

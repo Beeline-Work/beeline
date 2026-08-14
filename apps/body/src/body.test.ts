@@ -17,6 +17,7 @@ import {
   isChannelTaskRequest,
   isChannelWorkIntent,
   isReadOnlyInformationRequest,
+  ReadOnlyToolsUnavailableError,
   readOnlyMcpServer,
 } from './body.js';
 import { AcpClient, isMutatingPermissionRequest } from './acp.js';
@@ -76,6 +77,25 @@ describe('mcp-inventory', () => {
       args: ['--fixed-entrypoint'],
       env: [{ name: 'BUZZ_READONLY_ROOT', value: '/paired/repository' }],
     });
+  });
+
+  it('refuses to construct a Room server when read-only tools are unavailable', () => {
+    expect(() =>
+      readOnlyMcpServer(
+        {
+          agentBinary: '/agent',
+          mcpBinary: '/buzz-dev-mcp',
+          agentEnv: {},
+          workspaceRoot: '/workspace',
+          relayBaseUrl: 'http://relay.test',
+          relayHost: 'relay.test',
+          relayScheme: 'http',
+          relayWsUrl: 'ws://relay.test',
+          autoApprovePermissions: true,
+        },
+        '/paired/repository',
+      ),
+    ).toThrow('read-only tools unavailable');
   });
 });
 
@@ -173,6 +193,138 @@ describe('agent identity boundary', () => {
     const operator = newIdentity('operator');
     const body = new Body(config, operator);
     expect(() => body.setAgentIdentity(operator)).toThrow('must be distinct');
+  });
+
+  it('mounts only buzz-readonly-mcp when provisioning a Room', async () => {
+    const body = new Body({
+      ...config,
+      readonlyMcpCommand: '/buzz-readonly-mcp',
+      readonlyMcpArgs: ['--fixed-entrypoint'],
+    });
+    const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    const session = {
+      channelId: 'room-id',
+      sessionId: 'readonly-session',
+      client,
+      mode: 'readonly' as const,
+    };
+    vi.spyOn(body as never, 'ensureAgentInChannel' as never).mockResolvedValue(undefined as never);
+    vi.spyOn(body as never, 'ensureAgentEntity' as never).mockResolvedValue(undefined as never);
+    vi.spyOn(body as never, 'channelCommunityId' as never).mockResolvedValue(null as never);
+    const create = vi
+      .spyOn(body as never, 'createManagedSession' as never)
+      .mockResolvedValue(session as never);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ accepted: true }), { status: 200 })),
+    );
+
+    await expect(
+      body.provision('room-id', { repo: 'repo', localPath: '/paired/repo' }),
+    ).resolves.toBe(session);
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelId: 'room-id',
+        mode: 'readonly',
+        autoApprovePermissions: false,
+        mcpServers: [
+          {
+            name: 'buzz-readonly-mcp',
+            command: '/buzz-readonly-mcp',
+            args: ['--fixed-entrypoint'],
+            env: [{ name: 'BUZZ_READONLY_ROOT', value: '/paired/repo' }],
+          },
+        ],
+      }),
+    );
+    expect(JSON.stringify(create.mock.calls)).not.toContain('buzz-dev-mcp');
+  });
+
+  it('fails a research Room closed when buzz-readonly-mcp is unresolved', async () => {
+    const body = new Body({ ...config, workspaceRoot: '/tmp/buzzy-readonly-unavailable-unit' });
+    const open = vi.spyOn(body, 'openSubchannel');
+    const create = vi.spyOn(body as never, 'createManagedSession' as never);
+    const durableState = Reflect.get(body, 'durableState') as {
+      appendConversation: (...args: unknown[]) => Promise<void>;
+    };
+    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    await expect(
+      Reflect.get(body, 'replyInRoom').call(
+        body,
+        'research-room',
+        { repo: 'repo' },
+        {
+          eventId: 'research-request',
+          authorPubkey: body.identity.publicKey,
+          content: 'Research how session scheduling works.',
+          createdAt: 1,
+        },
+      ),
+    ).resolves.toBe(false);
+
+    expect(create).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    expect(body.listSessions()).toEqual([]);
+    expect(published).toHaveLength(1);
+    expect(published[0]).toMatchObject({
+      content: expect.stringContaining('Read-only tools unavailable'),
+    });
+    expect(published[0]!.tags).toContainEqual(['t', 'agent-message']);
+  });
+
+  it('never reuses an edit session as a read-only Room session', async () => {
+    const body = new Body({ ...config, readonlyMcpCommand: '/buzz-readonly-mcp' });
+    const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    body.registerSession({
+      channelId: 'room-id',
+      sessionId: 'edit-session',
+      client,
+      mode: 'edit',
+    });
+    const open = vi.spyOn(body, 'openSubchannel');
+    const prompt = vi.spyOn(client, 'sessionPrompt');
+    const durableState = Reflect.get(body, 'durableState') as {
+      appendConversation: (...args: unknown[]) => Promise<void>;
+    };
+    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    await expect(body.provision('room-id')).rejects.toBeInstanceOf(ReadOnlyToolsUnavailableError);
+    await expect(
+      Reflect.get(body, 'replyInRoom').call(
+        body,
+        'room-id',
+        { repo: 'repo' },
+        {
+          eventId: 'research-request',
+          authorPubkey: body.identity.publicKey,
+          content: 'Explain how the scheduler works.',
+          createdAt: 1,
+        },
+      ),
+    ).resolves.toBe(false);
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    expect(published).toHaveLength(1);
+    expect(published[0]!.content).toContain('Read-only tools unavailable');
   });
 
   it('NIP-98-authenticates repository safety reads as the agent', async () => {

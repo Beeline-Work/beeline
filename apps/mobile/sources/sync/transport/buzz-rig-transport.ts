@@ -258,25 +258,37 @@ export class BuzzRigTransport implements RigTransport {
 
   // ── Realtime + permissions (P1: subscribe + backfill) ──────────────────
 
+  /** Resolve only once relay delivery is installed, so callers can backfill without a race gap. */
+  async sessionEventsSubscribeReady(
+    sessionId: SessionId,
+    handler: (event: SessionEvent) => void,
+  ): Promise<() => void> {
+    const client = await this.getClient();
+    const relayUnsubscribe = await client.sessionEventsSubscribe(sessionId, (event) => {
+      handler(toRigEvent(event));
+    });
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      relayUnsubscribe();
+      if (this.subscriptions.get(sessionId) === stop) this.subscriptions.delete(sessionId);
+    };
+    this.subscriptions.set(sessionId, stop);
+    return stop;
+  }
+
   sessionEventsSubscribe(sessionId: SessionId, handler: (event: SessionEvent) => void): () => void {
-    let unsub: (() => void) | undefined;
+    let stopReadySubscription: (() => void) | undefined;
     let cancelled = false;
 
-    this.getClient()
-      .then((client) => {
-        if (cancelled) return;
-        client
-          .sessionEventsSubscribe(sessionId, (bev) => {
-            handler(toRigEvent(bev));
-          })
-          .then((u) => {
-            if (cancelled) {
-              u();
-              return;
-            }
-            unsub = u;
-            this.subscriptions.set(sessionId, u);
-          });
+    this.sessionEventsSubscribeReady(sessionId, handler)
+      .then((stop) => {
+        if (cancelled) {
+          stop();
+          return;
+        }
+        stopReadySubscription = stop;
       })
       .catch((err) => {
         console.warn(`BuzzRigTransport: sessionEventsSubscribe(${sessionId}) failed:`, err);
@@ -284,10 +296,7 @@ export class BuzzRigTransport implements RigTransport {
 
     const unsubscribe = () => {
       cancelled = true;
-      if (unsub) {
-        unsub();
-        this.subscriptions.delete(sessionId);
-      }
+      stopReadySubscription?.();
     };
     this.subscriptions.set(sessionId, unsubscribe);
     return unsubscribe;
@@ -314,22 +323,41 @@ export class BuzzRigTransport implements RigTransport {
   }
 
   /** Subscribe only to Room presence, keeping telemetry out of chat backfill. */
+  async agentPresenceSubscribeReady(
+    channelId: string,
+    handler: (event: SessionEvent) => void,
+  ): Promise<() => void> {
+    const subscriptionKey = `presence:${channelId}`;
+    const client = await this.getClient();
+    const relayUnsubscribe = await client.agentPresenceSubscribe(channelId, (event) => {
+      handler(toRigEvent(event));
+    });
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      relayUnsubscribe();
+      if (this.subscriptions.get(subscriptionKey) === stop) {
+        this.subscriptions.delete(subscriptionKey);
+      }
+    };
+    this.subscriptions.set(subscriptionKey, stop);
+    return stop;
+  }
+
+  /** Subscribe only to Room presence, keeping telemetry out of chat backfill. */
   agentPresenceSubscribe(channelId: string, handler: (event: SessionEvent) => void): () => void {
     const subscriptionKey = `presence:${channelId}`;
-    let unsub: (() => void) | undefined;
+    let stopReadySubscription: (() => void) | undefined;
     let cancelled = false;
 
-    this.getClient()
-      .then((client) =>
-        client.agentPresenceSubscribe(channelId, (event) => handler(toRigEvent(event))),
-      )
-      .then((nextUnsub) => {
+    this.agentPresenceSubscribeReady(channelId, handler)
+      .then((stop) => {
         if (cancelled) {
-          nextUnsub();
+          stop();
           return;
         }
-        unsub = nextUnsub;
-        this.subscriptions.set(subscriptionKey, nextUnsub);
+        stopReadySubscription = stop;
       })
       .catch((error) => {
         console.warn(`BuzzRigTransport: agentPresenceSubscribe(${channelId}) failed:`, error);
@@ -337,8 +365,10 @@ export class BuzzRigTransport implements RigTransport {
 
     const unsubscribe = () => {
       cancelled = true;
-      unsub?.();
-      this.subscriptions.delete(subscriptionKey);
+      stopReadySubscription?.();
+      if (this.subscriptions.get(subscriptionKey) === unsubscribe) {
+        this.subscriptions.delete(subscriptionKey);
+      }
     };
     this.subscriptions.set(subscriptionKey, unsubscribe);
     return unsubscribe;

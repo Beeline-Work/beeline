@@ -16,6 +16,13 @@ export interface PushNotificationPlan {
 export interface NotificationContext {
   roomName: string;
   senderName?: string;
+  /** True only after resolving an immutable Room create linked to a real Workspace create. */
+  persistentWorkspaceRoom?: boolean;
+  workspaceName?: string;
+  /** Names and repository identifiers carried by the Room/Workspace records. */
+  fixtureCandidates?: string[];
+  /** Recognized fixture markers carried by the Room/Workspace records. */
+  fixtureMarkers?: string[];
 }
 
 export interface NotificationFormattingOptions {
@@ -47,22 +54,58 @@ export function isNotifiableEvent(event: NostrEvent): boolean {
   return markers.every((marker) => CHAT_MESSAGE_MARKERS.has(marker));
 }
 
-const FIXTURE_ROOM_PATTERNS = [
-  /^ui-demo-/i,
-  /^room-invite-(?:repair|visibility)-/i,
-  /^(?:review-corner-navigation|live-agent-iteration|merged-gate-proof|archived-copy-spike)$/i,
+const FIXTURE_NAME_PATTERNS = [
+  /(?:^|[\s._-])ui-demo(?:$|[\s._-])/i,
+  /(?:^|[\s._-])uidemo(?:$|[\s._-])/i,
+  /(?:^|[\s._-])research-no-findings(?:$|[\s._-])/i,
+  /(?:^|[\s._-])review-corner(?:$|[\s._-])/i,
+  /(?:^|[\s._-])room-invite-(?:repair|visibility)(?:$|[\s._-])/i,
+  /^(?:live-agent-iteration|merged-gate-proof|archived-copy-spike)$/i,
 ];
+
+const THROWAWAY_WORKSPACE_PATTERN =
+  /(?:^|[\s._-])(?:test|tests|testing|demo|fixture|fixtures|throwaway|temporary|temp|tmp|smoke|e2e|proof)(?:$|[\s._-])/i;
+
+const FIXTURE_EVENT_MARKERS = new Set([
+  'change-review',
+  'change-review-file',
+  'change-review-manifest',
+  'ui-test',
+  'ui-demo',
+  'uidemo',
+  'test-fixture',
+]);
+
+function fixtureName(value: string | undefined): boolean {
+  return Boolean(value && FIXTURE_NAME_PATTERNS.some((pattern) => pattern.test(value)));
+}
 
 /** Fail closed for checked-in demo/live-test fixtures that must never reach real devices. */
 export function isSuppressedFixtureNotification(
   event: NostrEvent,
   context: NotificationContext,
 ): boolean {
-  const fixture = tagValue(event, 'fixture');
-  if (fixture && /^(?:demo|test|ui-demo)$/i.test(fixture)) return true;
-  if (FIXTURE_ROOM_PATTERNS.some((pattern) => pattern.test(context.roomName))) return true;
+  // Positive safety boundary: ACL visibility is necessary but not sufficient.
+  // Standalone/legacy groups and partially resolved groups do not reach FCM.
+  if (context.persistentWorkspaceRoom !== true) return true;
+
+  // An explicit fixture tag is itself authoritative, regardless of its value.
+  if (event.tags.some((tag) => tag[0] === 'fixture')) return true;
+  if (tagValues(event, 't').some((marker) => FIXTURE_EVENT_MARKERS.has(marker.toLowerCase()))) {
+    return true;
+  }
+  if ((context.fixtureMarkers?.length ?? 0) > 0) return true;
+
   const repo = tagValue(event, 'repo')?.split('/').at(-1);
-  return repo ? /^ui-demo-/i.test(repo) : false;
+  const candidates = [context.roomName, repo, ...(context.fixtureCandidates ?? [])];
+  if (candidates.some(fixtureName)) return true;
+
+  // Membership inherited from an obvious test/demo Workspace must never make
+  // a production device eligible, even when the Room name itself looks real.
+  return Boolean(
+    context.workspaceName &&
+    (fixtureName(context.workspaceName) || THROWAWAY_WORKSPACE_PATTERN.test(context.workspaceName)),
+  );
 }
 
 /** The single notification-content policy seam, including message-preview privacy. */

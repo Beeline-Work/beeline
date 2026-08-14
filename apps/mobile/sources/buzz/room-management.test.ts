@@ -1,11 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
+  canRenameRoom,
   canRemoveRoomParticipant,
   normalizedRoomRole,
   roomLifecycleAction,
 } from './room-management';
 
 describe('Room management capabilities', () => {
+  it('exposes rename only to owners and admins', () => {
+    expect(canRenameRoom('owner')).toBe(true);
+    expect(canRenameRoom('admin')).toBe(true);
+    expect(canRenameRoom('member')).toBe(false);
+    expect(canRenameRoom(null)).toBe(false);
+  });
+
   it('shows delete to owners/admins and leave only to normal members', () => {
     expect(roomLifecycleAction('owner')).toBe('delete');
     expect(roomLifecycleAction('admin')).toBe('delete');

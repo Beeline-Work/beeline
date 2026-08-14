@@ -21,7 +21,6 @@ import {
   TAG_PARENT,
   tagValue,
   tagValues,
-  type Agent,
   type Community,
   type Identity,
   type PersonProfile,
@@ -36,12 +35,11 @@ import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { saveLastViewedChannel } from '@/buzz/community-storage';
 import { createCommunityInviteUrl } from '@/buzz/community-invite';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
-import { latestRoomMessage } from '@/buzz/room-list-summary';
 import { roomParticipantPubkeys } from '@/buzz/room-participants';
 import { shortMemberNpub } from '@/buzz/member-display';
 import { ensurePersonNameForWorkspace } from '@/buzz/person-name';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
-import { cornerStatusPresentation, sortCorners, type CornerSummary } from '@/buzz/corners';
+import { cornerStatusPresentation, sortCorners } from '@/buzz/corners';
 import {
   CHANGES_LABEL,
   CORNER_LABEL,
@@ -54,38 +52,23 @@ import { AgentAvatar } from '@/components/buzz/AgentAvatar';
 import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
 import { BuzzRigTransport } from '@/sync/transport';
-import type { SessionSummary } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
+import {
+  selectChannelList,
+  channelListCacheKey,
+  setActiveBuzzCacheViewer,
+  useBuzzLocalCache,
+  type ChannelDisplayItem,
+  type DirectMessageDisplayItem,
+  type WorkspaceMemberDisplayItem,
+} from '@/buzz/local-cache';
+import { revalidateCachedMessages } from '@/buzz/local-cache-sync';
 import {
   BrittlePress,
   HullSurface,
   PixelGateReveal,
   PixelLoader,
 } from '@/components/buzz/MonoHull';
-
-type ChannelDisplayItem = SessionSummary & {
-  archived?: boolean;
-  parentChannelId?: string;
-  corners?: CornerSummary[];
-  latestMessage?: string;
-  participantCount?: number;
-};
-
-type DirectMessageDisplayItem = {
-  id: string;
-  peerPubkey: string;
-  peerName: string;
-  peerKind: 'person' | 'agent';
-  peerAgent?: Agent;
-  avatarUrl?: string;
-  latestMessage?: string;
-  updatedAt: number;
-};
-
-type WorkspaceMemberDisplayItem = Omit<
-  DirectMessageDisplayItem,
-  'id' | 'latestMessage' | 'updatedAt'
->;
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -230,18 +213,12 @@ async function loadDirectMessageDisplays(
       if (!peerPubkey) return null;
       const member = rosterByPubkey.get(peerPubkey);
       if (!member) return null;
-      const events = await transport.sessionEventsBackfill(dm.channelId, { limit: 30 });
-      const latestEventAt = events.reduce((latest, event) => {
-        if (event.type !== 'raw' || !event.payload || typeof event.payload !== 'object')
-          return latest;
-        const createdAt = (event.payload as { createdAt?: unknown }).createdAt;
-        return typeof createdAt === 'number' ? Math.max(latest, createdAt) : latest;
-      }, dm.createdAt);
+      const synced = await revalidateCachedMessages(transport, viewerPubkey, dm.channelId);
       return {
         id: dm.channelId,
         ...member,
-        latestMessage: latestRoomMessage(events) ?? undefined,
-        updatedAt: latestEventAt,
+        latestMessage: synced.entry.latestMessage,
+        updatedAt: synced.entry.latestEventAt ?? dm.createdAt,
       };
     }),
   );
@@ -254,6 +231,7 @@ async function enrichDisplayChannels(
   transport: BuzzRigTransport,
   rooms: ChannelDisplayItem[],
   activeCommunityId: string | null,
+  viewerPubkey: string,
 ): Promise<ChannelDisplayItem[]> {
   const client = await transport.ensureClient();
   const [workspacePeople, workspaceAgents] = activeCommunityId
@@ -264,18 +242,15 @@ async function enrichDisplayChannels(
     : [undefined, undefined];
   const enriched = await Promise.all(
     rooms.map(async (room): Promise<ChannelDisplayItem> => {
-      const [corners, events, members] = await Promise.allSettled([
+      const [corners, synced, members] = await Promise.allSettled([
         transport.listSubchannelLifecycle(room.id),
-        transport.sessionEventsBackfill(room.id, { limit: 30 }),
+        revalidateCachedMessages(transport, viewerPubkey, room.id),
         client.listMembers(room.id),
       ]);
       return {
         ...room,
         corners: corners.status === 'fulfilled' ? sortCorners(corners.value) : [],
-        latestMessage:
-          events.status === 'fulfilled'
-            ? (latestRoomMessage(events.value) ?? undefined)
-            : undefined,
+        latestMessage: synced.status === 'fulfilled' ? synced.value.entry.latestMessage : undefined,
         participantCount:
           members.status === 'fulfilled'
             ? roomParticipantPubkeys(
@@ -297,9 +272,10 @@ async function loadDisplayChannels(
   transport: BuzzRigTransport,
   activeCommunityId: string | null,
   communities: Community[],
+  viewerPubkey: string,
 ): Promise<ChannelDisplayItem[]> {
   const basics = await loadDisplayChannelBasics(transport, activeCommunityId, communities);
-  return enrichDisplayChannels(transport, basics, activeCommunityId);
+  return enrichDisplayChannels(transport, basics, activeCommunityId, viewerPubkey);
 }
 
 export default function BuzzChannels() {
@@ -310,33 +286,49 @@ export default function BuzzChannels() {
   }>();
   const requestedCommunity = firstParam(params.communityId);
   const inviteUrl = firstParam(params.inviteUrl);
+  const initialCacheState = useBuzzLocalCache.getState();
+  const initialListCache = selectChannelList(
+    initialCacheState,
+    initialCacheState.activeViewerPubkey,
+    requestedCommunity,
+  );
 
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
-  const [communities, setCommunities] = useState<Community[]>([]);
-  const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
-  const [personalWorkspaceId, setPersonalWorkspaceId] = useState<string | null>(null);
-  const [displayChannels, setDisplayChannels] = useState<ChannelDisplayItem[]>([]);
-  const [directMessages, setDirectMessages] = useState<DirectMessageDisplayItem[]>([]);
-  const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMemberDisplayItem[]>([]);
+  const [communities, setCommunities] = useState<Community[]>(initialListCache?.communities ?? []);
+  const [activeCommunityId, setActiveCommunityId] = useState<string | null>(
+    initialListCache?.communityId ?? null,
+  );
+  const [personalWorkspaceId, setPersonalWorkspaceId] = useState<string | null>(
+    initialListCache?.personalWorkspaceId ?? null,
+  );
   const [memberPickerVisible, setMemberPickerVisible] = useState(false);
   const [messagingPubkey, setMessagingPubkey] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_URL);
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [channelName, setChannelName] = useState('');
   const [creatingChannel, setCreatingChannel] = useState(false);
-  const [viewerIsAgent, setViewerIsAgent] = useState(false);
-  const [viewerAvatarUrl, setViewerAvatarUrl] = useState<string | undefined>();
-  const [canEditWorkspaceAvatar, setCanEditWorkspaceAvatar] = useState(false);
+  const [viewerIsAgent, setViewerIsAgent] = useState(initialListCache?.viewerIsAgent ?? false);
+  const [viewerAvatarUrl, setViewerAvatarUrl] = useState<string | undefined>(
+    initialListCache?.viewerAvatarUrl,
+  );
+  const [canEditWorkspaceAvatar, setCanEditWorkspaceAvatar] = useState(
+    initialListCache?.canEditWorkspaceAvatar ?? false,
+  );
   const [workspaceAvatarWorking, setWorkspaceAvatarWorking] = useState(false);
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [readyInviteUrl, setReadyInviteUrl] = useState<string | undefined>(inviteUrl);
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
   const skipInitialFocusRefresh = useRef(true);
   const loadGeneration = useRef(0);
+  const cachedListEntry = useBuzzLocalCache((state) =>
+    selectChannelList(state, identity?.publicKey ?? state.activeViewerPubkey, requestedCommunity),
+  );
+  const displayChannels = cachedListEntry?.channels ?? [];
+  const directMessages = cachedListEntry?.directMessages ?? [];
+  const workspaceMembers = cachedListEntry?.workspaceMembers ?? [];
 
   const activeCommunity = useMemo(
     () => communities.find((community) => community.communityId === activeCommunityId) ?? null,
@@ -349,15 +341,14 @@ export default function BuzzChannels() {
     const isCurrent = () => !cancelled && loadGeneration.current === generation;
     skipInitialFocusRefresh.current = true;
     void (async () => {
-      setLoading(true);
       setError(null);
-      setCanEditWorkspaceAvatar(false);
       try {
         const currentIdentity = await loadBuzzIdentity();
         if (!currentIdentity) {
           router.replace('/buzz/onboarding');
           return;
         }
+        setActiveBuzzCacheViewer(currentIdentity.publicKey);
         const url = await getEffectiveRelayUrl();
         const nextTransport = new BuzzRigTransport(currentIdentity, url);
         const client = await nextTransport.ensureClient();
@@ -379,9 +370,25 @@ export default function BuzzChannels() {
           setCommunities(available);
           setActiveCommunityId(active);
           setPersonalWorkspaceId(personal);
-          setDisplayChannels(channels);
           setViewerIsAgent(identityIsAgent);
-          setLoading(false);
+          const cacheState = useBuzzLocalCache.getState();
+          const existing =
+            cacheState.channelLists[channelListCacheKey(currentIdentity.publicKey, active)];
+          const now = Date.now();
+          cacheState.setChannelList({
+            viewerPubkey: currentIdentity.publicKey,
+            communityId: active,
+            channels,
+            directMessages: existing?.directMessages ?? [],
+            workspaceMembers: existing?.workspaceMembers ?? [],
+            communities: available,
+            personalWorkspaceId: personal,
+            viewerIsAgent: identityIsAgent,
+            viewerAvatarUrl: existing?.viewerAvatarUrl,
+            canEditWorkspaceAvatar: existing?.canEditWorkspaceAvatar ?? false,
+            updatedAt: now,
+            lastAccessedAt: now,
+          });
         }
 
         const roster = active
@@ -391,7 +398,7 @@ export default function BuzzChannels() {
           active
             ? client.getPersonProfile(active, currentIdentity.publicKey)
             : Promise.resolve(null),
-          enrichDisplayChannels(nextTransport, channels, active),
+          enrichDisplayChannels(nextTransport, channels, active, currentIdentity.publicKey),
           active
             ? loadDirectMessageDisplays(
                 nextTransport,
@@ -402,16 +409,33 @@ export default function BuzzChannels() {
             : Promise.resolve([]),
         ]);
         if (isCurrent()) {
-          setDisplayChannels(enriched);
-          setWorkspaceMembers(roster.members);
-          setDirectMessages(dms);
           setViewerAvatarUrl(viewerProfile?.avatar);
           setCanEditWorkspaceAvatar(roster.canEditAvatar);
+          const now = Date.now();
+          const cacheState = useBuzzLocalCache.getState();
+          cacheState.setChannelList({
+            viewerPubkey: currentIdentity.publicKey,
+            communityId: active,
+            channels: enriched,
+            directMessages: dms,
+            workspaceMembers: roster.members,
+            communities: available,
+            personalWorkspaceId: personal,
+            viewerIsAgent: identityIsAgent,
+            viewerAvatarUrl: viewerProfile?.avatar,
+            canEditWorkspaceAvatar: roster.canEditAvatar,
+            updatedAt: now,
+            lastAccessedAt: now,
+          });
+          if (active) {
+            cacheState.replaceProfiles(currentIdentity.publicKey, active, [
+              ...roster.profiles,
+              ...(viewerProfile ? [viewerProfile] : []),
+            ]);
+          }
         }
       } catch (err) {
         if (isCurrent()) setError(String(err));
-      } finally {
-        if (isCurrent()) setLoading(false);
       }
     })();
     return () => {
@@ -449,29 +473,50 @@ export default function BuzzChannels() {
       setPersonalWorkspaceId(personal);
       const channels = await loadDisplayChannelBasics(transport, active, available);
       if (!isCurrent()) return;
-      setDisplayChannels(channels);
+      useBuzzLocalCache
+        .getState()
+        .patchChannelList(identity.publicKey, active, { channels, communities: available });
       const roster = active
         ? await loadWorkspaceRoster(transport, active, identity.publicKey)
         : { members: [], profiles: [], canEditAvatar: false };
       const [enriched, viewerProfile, dms] = await Promise.all([
-        enrichDisplayChannels(transport, channels, active),
+        enrichDisplayChannels(transport, channels, active, identity.publicKey),
         active ? client.getPersonProfile(active, identity.publicKey) : Promise.resolve(undefined),
         active
           ? loadDirectMessageDisplays(transport, active, identity.publicKey, roster.members)
           : Promise.resolve([]),
       ]);
       if (!isCurrent()) return;
-      setDisplayChannels(enriched);
-      setWorkspaceMembers(roster.members);
-      setDirectMessages(dms);
       setViewerAvatarUrl(viewerProfile?.avatar);
       setCanEditWorkspaceAvatar(roster.canEditAvatar);
+      const now = Date.now();
+      const cacheState = useBuzzLocalCache.getState();
+      cacheState.setChannelList({
+        viewerPubkey: identity.publicKey,
+        communityId: active,
+        channels: enriched,
+        directMessages: dms,
+        workspaceMembers: roster.members,
+        communities: available,
+        personalWorkspaceId: personal,
+        viewerIsAgent,
+        viewerAvatarUrl: viewerProfile?.avatar,
+        canEditWorkspaceAvatar: roster.canEditAvatar,
+        updatedAt: now,
+        lastAccessedAt: now,
+      });
+      if (active) {
+        cacheState.replaceProfiles(identity.publicKey, active, [
+          ...roster.profiles,
+          ...(viewerProfile ? [viewerProfile] : []),
+        ]);
+      }
     } catch (err) {
       if (isCurrent()) setError(String(err));
     } finally {
       if (isCurrent()) setRefreshing(false);
     }
-  }, [activeCommunityId, identity, transport]);
+  }, [activeCommunityId, identity, transport, viewerIsAgent]);
 
   // A newly-created Workspace is already relay-backed, but device Back can reveal
   // an older mounted home screen. Refresh on focus so its switcher is never stale.
@@ -524,7 +569,7 @@ export default function BuzzChannels() {
 
   const handleCreateChannel = useCallback(async () => {
     const name = channelName.trim();
-    if (!name || !transport || viewerIsAgent) return;
+    if (!name || !transport || !identity || viewerIsAgent) return;
     setCreatingChannel(true);
     setError(null);
     try {
@@ -535,13 +580,21 @@ export default function BuzzChannels() {
       await client.waitUntilMember(channelId, client.identity.publicKey);
       setChannelName('');
       setShowCreateChannel(false);
-      setDisplayChannels(await loadDisplayChannels(transport, activeCommunityId, communities));
+      const channels = await loadDisplayChannels(
+        transport,
+        activeCommunityId,
+        communities,
+        identity.publicKey,
+      );
+      useBuzzLocalCache
+        .getState()
+        .patchChannelList(identity.publicKey, activeCommunityId, { channels });
     } catch (err) {
       setError(`Could not create ${ROOM_LABEL}: ${String(err)}`);
     } finally {
       setCreatingChannel(false);
     }
-  }, [activeCommunityId, channelName, communities, transport, viewerIsAgent]);
+  }, [activeCommunityId, channelName, communities, identity, transport, viewerIsAgent]);
 
   const handleInvitePeople = useCallback(async () => {
     if (!transport || !activeCommunityId || creatingInvite) return;
@@ -586,7 +639,7 @@ export default function BuzzChannels() {
     }
   }, [activeCommunityId, canEditWorkspaceAvatar, transport, workspaceAvatarWorking]);
 
-  if (loading && !transport) {
+  if (!cachedListEntry) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <PixelLoader />

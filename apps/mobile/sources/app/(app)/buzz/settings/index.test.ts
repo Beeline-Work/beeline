@@ -5,9 +5,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
 const identityStorage = vi.hoisted(() => ({ clearBuzzIdentity: vi.fn(async () => undefined) }));
+const localCache = vi.hoisted(() => ({ clearBuzzLocalCache: vi.fn() }));
 
 vi.mock('expo-router', () => ({ router: navigation }));
 vi.mock('@/auth/buzz-identity-storage', () => identityStorage);
+vi.mock('@/buzz/local-cache', () => localCache);
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
@@ -80,6 +82,7 @@ describe('Buzz global Settings', () => {
       await renderer.root.findByProps({ testID: 'sign-out-setting' }).props.onPress();
     });
     expect(identityStorage.clearBuzzIdentity).toHaveBeenCalledOnce();
+    expect(localCache.clearBuzzLocalCache).toHaveBeenCalledOnce();
     expect(navigation.replace).toHaveBeenCalledWith('/buzz/onboarding');
   });
 });

@@ -27,3 +27,10 @@ represent the corrected surface output:
 - `launcher-scope-before-after.png`: launcher inset is unchanged.
 - `splash-scope-before-after.png`: splash no longer inherits the launcher inset.
 - `favicon-scope-before-after.png`: favicon no longer inherits the launcher inset.
+
+API 36 final visual proof (production release APK/web export):
+
+- `on-device-launcher-api36.png`: installed launcher icon retains breathing room.
+- `on-device-splash-api36.png`: splash uses the larger, untransformed mark.
+- `web-favicon-production.png`: Chrome renders the production-exported favicon
+  as the full mark without the launcher treatment.

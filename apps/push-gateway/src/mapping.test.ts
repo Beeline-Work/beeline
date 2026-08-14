@@ -96,18 +96,51 @@ describe('mapEventToNotification', () => {
     ).toBe(true);
   });
 
-  it('maps a channel message to its sender and trimmed plaintext preview', () => {
-    const result = mapEventToNotification(event([['h', 'channel-123']]), {
-      roomName: 'Demo channel',
-      senderName: 'Ada',
-    });
+  it('maps a named channel message to a Slack-style title and sender-prefixed preview', () => {
+    const result = mapEventToNotification(
+      event([['h', 'channel-123']], 'just for 2 people please'),
+      {
+        roomName: 'chodeclaw',
+        senderName: 'Milo',
+      },
+    );
 
     expect(result).toEqual({
       channelId: 'channel-123',
-      title: 'Ada',
-      body: 'Ship the preview now.',
-      data: { channelId: 'channel-123', roomName: 'Demo channel', type: 'channel-activity' },
+      title: '#chodeclaw',
+      body: 'Milo: just for 2 people please',
+      data: { channelId: 'channel-123', roomName: 'chodeclaw', type: 'channel-activity' },
     });
+  });
+
+  it('does not double-prefix a channel name that already starts with #', () => {
+    const result = mapEventToNotification(event([['h', 'channel-123']]), {
+      roomName: '#chodeclaw',
+      senderName: 'Milo',
+    });
+
+    expect(result?.title).toBe('#chodeclaw');
+    expect(result?.body).toBe('Milo: Ship the preview now.');
+  });
+
+  it('keeps direct messages person-titled with a plain message body', () => {
+    const result = mapEventToNotification(event([['h', 'dm-123']]), {
+      roomName: 'Direct message',
+      senderName: 'Milo',
+      isDirectMessage: true,
+    });
+
+    expect(result?.title).toBe('Milo');
+    expect(result?.body).toBe('Ship the preview now.');
+  });
+
+  it('falls back to the resolved sender when a channel name or authored sender name is absent', () => {
+    const result = mapEventToNotification(event([['h', 'channel-123']]), {});
+
+    expect(result?.title).not.toMatch(/^#/);
+    expect(result?.title).not.toBe('New message');
+    expect(result?.body).toBe(`${result?.title}: Ship the preview now.`);
+    expect(result?.data.roomName).toBe('Room');
   });
 
   it('truncates long previews to 120 characters with an ellipsis', () => {
@@ -116,8 +149,7 @@ describe('mapEventToNotification', () => {
       senderName: 'Ada',
     });
 
-    expect(result?.body).toHaveLength(120);
-    expect(result?.body).toBe(`${'x'.repeat(119)}…`);
+    expect(result?.body).toBe(`Ada: ${'x'.repeat(119)}…`);
   });
 
   it('keeps hide-preview policy localized and falls back to the room for an unknown sender', () => {
@@ -127,7 +159,7 @@ describe('mapEventToNotification', () => {
       { showMessagePreview: false },
     );
 
-    expect(result?.title).toBe('Demo channel');
+    expect(result?.title).toBe('#Demo channel');
     expect(result?.body).toBe('New message in Demo channel');
   });
 
@@ -225,7 +257,7 @@ describe('mapEventToNotification', () => {
         ]),
         context,
       )?.title,
-    ).toBe('Joy');
+    ).toBe('#Room');
     expect(
       mapEventToNotification(
         event([
@@ -234,7 +266,7 @@ describe('mapEventToNotification', () => {
         ]),
         context,
       )?.title,
-    ).toBe('Joy');
+    ).toBe('#Room');
   });
 
   it('ignores events without a channel', () => {

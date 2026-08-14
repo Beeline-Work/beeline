@@ -228,7 +228,7 @@ describe('PushGateway', () => {
     expect(sendEachForMulticast).toHaveBeenCalledOnce();
     expect(sendEachForMulticast.mock.calls[0]![0]).toMatchObject({
       tokens: [TOKEN_A],
-      notification: { title: 'Ada', body: 'private message' },
+      notification: { title: '#Roadmap', body: 'Ada: private message' },
       data: { channelId: 'room-1234', roomName: 'Roadmap', type: 'channel-activity' },
       android: {
         collapseKey: 'room-1234',
@@ -391,6 +391,7 @@ describe('PushGateway', () => {
     const firstMessage = event('8', agent.publicKey, roomId);
     await expect(resolver.resolve(firstMessage, authorizedReader)).resolves.toEqual({
       roomName: 'Launch room',
+      isDirectMessage: false,
       persistentWorkspaceRoom: true,
       workspaceName: 'Product Engineering',
       fixtureCandidates: ['Launch room', 'Product Engineering'],
@@ -409,7 +410,7 @@ describe('PushGateway', () => {
     expect(captured).toHaveLength(1);
     expect(captured[0]).toMatchObject({
       tokens: [TOKEN_A],
-      notification: { title: 'Joy', body: 'private message' },
+      notification: { title: '#Launch room', body: 'Joy: private message' },
       data: { channelId: roomId, roomName: 'Launch room', type: 'channel-activity' },
     });
     expect(JSON.stringify(captured)).not.toContain('displayName');

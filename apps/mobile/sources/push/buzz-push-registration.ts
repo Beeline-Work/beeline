@@ -1,4 +1,5 @@
 import type { Identity } from '@beeline/buzz-client';
+import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
@@ -60,11 +61,16 @@ export async function registerBuzzPushNotifications(identity: Identity): Promise
           pubkey: identity.publicKey,
           token: nativeToken.data,
           platform: 'android',
+          environment: Device.isDevice ? 'physical' : 'emulator',
         }),
         signal: controller.signal,
       });
       if (!response.ok) {
         throw new Error(`gateway returned HTTP ${response.status}`);
+      }
+      if (response.status === 202) {
+        console.log('[buzzy-push] non-production FCM device ignored');
+        return false;
       }
     } finally {
       clearTimeout(timeout);
@@ -73,7 +79,10 @@ export async function registerBuzzPushNotifications(identity: Identity): Promise
     console.log('[buzzy-push] FCM device registered');
     return true;
   } catch (error) {
-    console.warn('[buzzy-push] FCM registration unavailable:', error instanceof Error ? error.message : String(error));
+    console.warn(
+      '[buzzy-push] FCM registration unavailable:',
+      error instanceof Error ? error.message : String(error),
+    );
     return false;
   }
 }

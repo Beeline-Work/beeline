@@ -13,6 +13,12 @@ export interface AgentOutputCandidate {
   bytes?: Uint8Array;
 }
 
+export interface RoomAuthorAttribution {
+  kind: 'Agent' | 'Person' | 'Member';
+  name: string;
+  handle: string;
+}
+
 function objectValue(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -125,11 +131,15 @@ export function attachmentPrompt(
   authorPubkey: string,
   content: string,
   attachments: readonly AttachmentReference[],
+  author?: RoomAuthorAttribution,
 ): string {
   const message = content.trim() || '(shared attachments)';
-  if (!attachments.length) return `[Member ${authorPubkey.slice(0, 12)}]: ${message}`;
+  const attribution = author
+    ? `${author.kind} ${author.name} (@${author.handle}) · ${authorPubkey.slice(0, 12)}`
+    : `Member ${authorPubkey.slice(0, 12)}`;
+  if (!attachments.length) return `[${attribution}]: ${message}`;
   return [
-    `[Member ${authorPubkey.slice(0, 12)}]: ${message}`,
+    `[${attribution}]: ${message}`,
     '',
     'Attachments (links and metadata only; fetch a URL only if the task requires the file):',
     ...attachments.map(

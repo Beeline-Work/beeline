@@ -32,6 +32,7 @@ import {
   removeMember,
   removeRoomMember,
   archiveRoom,
+  renameChannel,
   listSubchannels,
   sendMessage,
   setMemberRole,
@@ -231,6 +232,11 @@ export class BuzzClient {
   /** Archive a top-level Room through the explicit human-admin path. */
   archiveRoom(channelId: string): Promise<void> {
     return archiveRoom(this.ctx, channelId);
+  }
+
+  /** Rename a top-level Room through the explicit human-admin path. */
+  renameChannel(channelId: string, name: string): Promise<ChannelMetadata> {
+    return renameChannel(this.ctx, channelId, name);
   }
 
   isMember(channelId: string, pubkey: string): Promise<boolean> {

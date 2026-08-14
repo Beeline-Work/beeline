@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { AGENT_PRESENCE_STALE_MS } from '@beeline/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
 import {
   agentPresenceFromSessionEvent,
+  isAgentPresenceOnlineWithReconnectGrace,
   isAgentTurnActive,
   presenceMapFromSessionEvents,
+  reconnectPresenceAfterForeground,
 } from './agent-presence';
 
 const agent = 'b'.repeat(64);
@@ -90,5 +93,43 @@ describe('mobile agent presence projection', () => {
     expect(presenceMapFromSessionEvents([presence('offline', 4), presence('online', 4)])).toEqual({
       [agent]: { agentPubkey: agent, status: 'offline', observedAt: 4_000 },
     });
+  });
+
+  it('keeps last-known online through foreground reconnect without masking real offline', () => {
+    const now = 1_700_000_000_000;
+    const staleOnline = agentPresenceFromSessionEvent(
+      presence('online', now - AGENT_PRESENCE_STALE_MS - 1),
+    );
+    const explicitOffline = agentPresenceFromSessionEvent(presence('offline', now));
+    const graceUntil = now + AGENT_PRESENCE_STALE_MS;
+
+    expect(isAgentPresenceOnlineWithReconnectGrace(staleOnline, now, graceUntil)).toBe(true);
+    expect(isAgentPresenceOnlineWithReconnectGrace(explicitOffline, now, graceUntil)).toBe(false);
+    expect(isAgentPresenceOnlineWithReconnectGrace(staleOnline, graceUntil + 1, graceUntil)).toBe(
+      false,
+    );
+    expect(
+      isAgentPresenceOnlineWithReconnectGrace(
+        agentPresenceFromSessionEvent(presence('online', now)),
+        now,
+        0,
+      ),
+    ).toBe(true);
+  });
+
+  it('reinstalls foreground delivery before backfilling the missed heartbeat', async () => {
+    const order: string[] = [];
+    const installSubscription = vi.fn(async () => {
+      order.push('subscribe');
+    });
+    const backfill = vi.fn(async () => {
+      order.push('backfill');
+      return [presence('online', 1_700_000_000)];
+    });
+
+    const refreshed = await reconnectPresenceAfterForeground(installSubscription, backfill);
+
+    expect(order).toEqual(['subscribe', 'backfill']);
+    expect(refreshed[agent]).toMatchObject({ status: 'online' });
   });
 });

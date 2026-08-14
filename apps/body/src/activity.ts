@@ -7,6 +7,7 @@
  * the stdio-local ACP stream into the relay channel so all members receive live
  * agent activity.
  */
+import { randomUUID } from 'node:crypto';
 import type { AcpClient, SessionUpdate } from './acp.js';
 import type { Identity } from '@beeline/gate';
 import { publishEvent } from '@beeline/gate';
@@ -121,6 +122,7 @@ export function postAgentTurnStatus(
   requestId: string,
   sessionId: string,
   status: 'working' | 'complete' | 'failed',
+  generationId?: string,
 ): Promise<void> {
   const message =
     status === 'working'
@@ -135,6 +137,7 @@ export function postAgentTurnStatus(
     ['agent', owner.publicKey],
     ['mode', 'readonly'],
     ['status', status],
+    ...(generationId ? [['generation', generationId]] : []),
   ]);
 }
 
@@ -144,6 +147,7 @@ export async function postAgentPresence(
   owner: Identity,
   status: AgentPresenceStatus,
   createdAt = Math.floor(Date.now() / 1_000),
+  generationId?: string,
 ): Promise<void> {
   const event: NostrEvent = signEvent(
     {
@@ -156,6 +160,7 @@ export async function postAgentPresence(
         ['t', TAG_AGENT_PRESENCE],
         ['agent', owner.publicKey],
         ['status', status],
+        ...(generationId ? [['generation', generationId]] : []),
       ],
       content: status,
     },
@@ -173,15 +178,16 @@ export function startAgentPresence(
   channelId: string,
   owner: Identity,
   intervalMs = AGENT_PRESENCE_HEARTBEAT_MS,
-): () => Promise<void> {
+): (() => Promise<void>) & { generationId: string } {
   let stopped = false;
   let lastCreatedAt = 0;
   let chain = Promise.resolve();
+  const generationId = randomUUID();
   const enqueue = (status: AgentPresenceStatus) => {
     const createdAt = Math.max(Math.floor(Date.now() / 1_000), lastCreatedAt + 1);
     lastCreatedAt = createdAt;
     chain = chain
-      .then(() => postAgentPresence(channelId, owner, status, createdAt))
+      .then(() => postAgentPresence(channelId, owner, status, createdAt, generationId))
       .catch((error) => console.error(`[body] agent presence ${status} failed:`, error));
     return chain;
   };
@@ -192,16 +198,17 @@ export function startAgentPresence(
   }, intervalMs);
   timer.unref?.();
 
-  return async () => {
+  const stop = async () => {
     if (stopped) return;
     stopped = true;
     clearInterval(timer);
     await chain;
     const createdAt = Math.max(Math.floor(Date.now() / 1_000), lastCreatedAt + 1);
-    await postAgentPresence(channelId, owner, 'offline', createdAt).catch((error) =>
+    await postAgentPresence(channelId, owner, 'offline', createdAt, generationId).catch((error) =>
       console.error('[body] agent presence offline failed:', error),
     );
   };
+  return Object.assign(stop, { generationId });
 }
 
 /** Emit an ordered batch of session updates as one kind:9 channel event. */

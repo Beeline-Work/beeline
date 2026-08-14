@@ -1,10 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionEvent } from '@/sync/transport';
-import { agentPresenceFromSessionEvent, presenceMapFromSessionEvents } from './agent-presence';
+import {
+  agentPresenceFromSessionEvent,
+  isAgentTurnActive,
+  presenceMapFromSessionEvents,
+} from './agent-presence';
 
 const agent = 'b'.repeat(64);
 
-function presence(status: 'online' | 'offline', createdAt: number, pubkey = agent): SessionEvent {
+function presence(
+  status: 'online' | 'offline',
+  createdAt: number,
+  pubkey = agent,
+  generationId?: string,
+): SessionEvent {
   return {
     type: 'raw',
     sessionId: 'room',
@@ -19,6 +28,7 @@ function presence(status: 'online' | 'offline', createdAt: number, pubkey = agen
         ['t', 'agent-presence'],
         ['agent', agent],
         ['status', status],
+        ...(generationId ? [['generation', generationId]] : []),
       ],
     },
   };
@@ -35,6 +45,42 @@ describe('mobile agent presence projection', () => {
 
   it('rejects a presence marker that names another agent', () => {
     expect(agentPresenceFromSessionEvent(presence('online', 1, 'c'.repeat(64)))).toBeUndefined();
+  });
+
+  it('binds active turns to the current online daemon generation', () => {
+    const current = agentPresenceFromSessionEvent(presence('online', 10, agent, 'daemon-new'));
+    expect(current).toMatchObject({ generationId: 'daemon-new' });
+    expect(
+      isAgentTurnActive(
+        {
+          requestId: 'current-turn',
+          agentPubkey: agent,
+          status: 'working',
+          generationId: 'daemon-new',
+        },
+        current,
+        10_000,
+      ),
+    ).toBe(true);
+    expect(
+      isAgentTurnActive(
+        { requestId: 'stale-turn', agentPubkey: agent, status: 'working' },
+        current,
+        10_000,
+      ),
+    ).toBe(false);
+    expect(
+      isAgentTurnActive(
+        {
+          requestId: 'offline-turn',
+          agentPubkey: agent,
+          status: 'working',
+          generationId: 'daemon-new',
+        },
+        agentPresenceFromSessionEvent(presence('offline', 11, agent, 'daemon-new')),
+        11_000,
+      ),
+    ).toBe(false);
   });
 
   it('keeps explicit offline when online and offline share a relay second', () => {

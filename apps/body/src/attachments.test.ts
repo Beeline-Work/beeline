@@ -24,6 +24,16 @@ describe('Body attachment boundary', () => {
     expect(prompt.length).toBeLessThan(500);
   });
 
+  it('attributes a Room participant by display name, handle, and stable key prefix', () => {
+    expect(
+      attachmentPrompt('f'.repeat(64), 'Mushroom works for me.', [], {
+        kind: 'Agent',
+        name: 'Joy',
+        handle: 'joy',
+      }),
+    ).toBe('[Agent Joy (@joy) · ffffffffffff]: Mushroom works for me.');
+  });
+
   it('extracts agent file directives and removes them from visible prose', () => {
     const text = 'Here it is. [[buzz-attachment:art/mushroom.png]] data:image/png;base64,ZmFrZQ==';
     expect(attachmentPathsFromText(text)).toEqual(['art/mushroom.png']);

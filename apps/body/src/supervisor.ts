@@ -21,6 +21,12 @@ interface RunningRoom {
   body: Body;
   controller: AbortController;
   promise: Promise<void>;
+  /** Last successful Room request poll (not merely a running JS promise). */
+  lastPollAt: number;
+  /** Last presence marker the relay accepted for this Room. */
+  lastPresenceAt: number;
+  presence: 'online' | 'offline';
+  recovering: boolean;
 }
 
 interface DesiredChannel {
@@ -63,6 +69,8 @@ function reconcileRetryMs(error: unknown, pollMs: number): number {
   return match ? Math.max(pollMs, (Number(match[1]) + 1) * 1_000) : pollMs;
 }
 
+export const DEFAULT_ROOM_WATCHDOG_STALE_MS = 90_000;
+
 /** One durable Workspace control plane multiplexing isolated Room bodies. */
 export class WorkspaceSupervisor {
   private runtime: AgentRuntimeRecord;
@@ -72,8 +80,15 @@ export class WorkspaceSupervisor {
   private readonly running = new Map<string, RunningRoom>();
   private readonly scheduler: SessionScheduler;
   private readonly namedRepositoryResolutions = new Map<string, Promise<BoundRepo>>();
+  private readonly now: () => number;
+  private readonly watchdogStaleMs: number;
 
-  constructor(runtime: AgentRuntimeRecord, configPath: string, baseConfig: BodyConfig) {
+  constructor(
+    runtime: AgentRuntimeRecord,
+    configPath: string,
+    baseConfig: BodyConfig,
+    options: { now?: () => number; watchdogStaleMs?: number } = {},
+  ) {
     this.runtime = runtime;
     this.configPath = configPath;
     this.baseConfig = baseConfig;
@@ -83,6 +98,10 @@ export class WorkspaceSupervisor {
       idleMs: Number(process.env.BUZZY_BODY_SESSION_IDLE_MS ?? String(5 * 60_000)),
       reserveInteractiveSlot: true,
     });
+    this.now = options.now ?? Date.now;
+    this.watchdogStaleMs =
+      options.watchdogStaleMs ??
+      Number(process.env.BUZZY_BODY_ROOM_WATCHDOG_STALE_MS ?? DEFAULT_ROOM_WATCHDOG_STALE_MS);
   }
 
   activeRoomIds(): string[] {
@@ -106,6 +125,10 @@ export class WorkspaceSupervisor {
           waitMs = reconcileRetryMs(error, pollMs);
           console.error(`[supervisor] discovery failed; retrying in ${waitMs}ms:`, error);
         }
+        // Keep Room recovery independent from Workspace discovery: a transient
+        // control-plane read cannot prevent the watchdog from reviving a
+        // stale Room already known to this daemon.
+        await this.watchdog();
         await new Promise<void>((resolveWait) => {
           const timer = setTimeout(resolveWait, waitMs);
           opts.signal?.addEventListener(
@@ -214,6 +237,12 @@ export class WorkspaceSupervisor {
     const controller = new AbortController();
     const workspaceRoot = resolve(dirname(this.configPath), 'rooms', channelId);
     const config: BodyConfig = { ...this.baseConfig, workspaceRoot };
+    const startedAt = this.now();
+    const health = {
+      poll: () => this.notePoll(channelId),
+      presence: (_roomId: string, status: 'online' | 'offline') =>
+        this.notePresence(channelId, status),
+    };
     const body = new Body(
       config,
       runtimeIdentity(this.runtime.body),
@@ -223,6 +252,8 @@ export class WorkspaceSupervisor {
         scheduler: this.scheduler,
         statePath: resolve(workspaceRoot, 'body-state.json'),
         resolveNamedRepository: (target) => this.resolveNamedRepository(target),
+        onRoomPollSuccess: health.poll,
+        onRoomPresence: health.presence,
       },
     );
     const promise = body
@@ -238,7 +269,15 @@ export class WorkspaceSupervisor {
         await body.dispose();
         if (this.running.get(channelId)?.body === body) this.running.delete(channelId);
       });
-    this.running.set(channelId, { body, controller, promise });
+    this.running.set(channelId, {
+      body,
+      controller,
+      promise,
+      lastPollAt: startedAt,
+      lastPresenceAt: startedAt,
+      presence: 'offline',
+      recovering: false,
+    });
     console.log(`[supervisor] serving Room ${channelId} from ${room.repo.root}`);
   }
 
@@ -249,10 +288,13 @@ export class WorkspaceSupervisor {
     const controller = new AbortController();
     const workspaceRoot = resolve(dirname(this.configPath), 'rooms', channelId);
     const config: BodyConfig = { ...this.baseConfig, workspaceRoot };
+    const startedAt = this.now();
     const body = new Body(config, runtimeIdentity(this.runtime.body), this.agent, undefined, {
       scheduler: this.scheduler,
       statePath: resolve(workspaceRoot, 'body-state.json'),
       resolveNamedRepository: (target) => this.resolveNamedRepository(target),
+      onRoomPollSuccess: () => this.notePoll(channelId),
+      onRoomPresence: (_roomId, status) => this.notePresence(channelId, status),
     });
     const promise = body
       .runConversationRoomLoop(channelId, kind, { signal: controller.signal })
@@ -265,7 +307,15 @@ export class WorkspaceSupervisor {
         await body.dispose();
         if (this.running.get(channelId)?.body === body) this.running.delete(channelId);
       });
-    this.running.set(channelId, { body, controller, promise });
+    this.running.set(channelId, {
+      body,
+      controller,
+      promise,
+      lastPollAt: startedAt,
+      lastPresenceAt: startedAt,
+      presence: 'offline',
+      recovering: false,
+    });
     console.log(
       `[supervisor] serving ${kind === 'direct-message' ? 'read-only DM' : 'repo-less Room'} ${channelId}`,
     );
@@ -382,5 +432,46 @@ export class WorkspaceSupervisor {
     const rooms = [...this.running.values()];
     for (const room of rooms) room.controller.abort();
     await Promise.all(rooms.map((room) => room.promise.catch(() => undefined)));
+  }
+
+  private notePoll(channelId: string): void {
+    const running = this.running.get(channelId);
+    if (running) running.lastPollAt = this.now();
+  }
+
+  private notePresence(channelId: string, status: 'online' | 'offline'): void {
+    const running = this.running.get(channelId);
+    if (!running) return;
+    running.lastPresenceAt = this.now();
+    running.presence = status;
+  }
+
+  /**
+   * A Room is healthy only when it is both still polling and successfully
+   * refreshing presence. Recover just that Room when either signal goes stale;
+   * sibling Bodies and the shared Workspace supervisor keep serving normally.
+   */
+  private async watchdog(): Promise<void> {
+    const now = this.now();
+    for (const [channelId, running] of this.running) {
+      if (running.recovering) continue;
+      const pollAge = now - running.lastPollAt;
+      const presenceAge = now - running.lastPresenceAt;
+      if (pollAge <= this.watchdogStaleMs && presenceAge <= this.watchdogStaleMs) continue;
+      running.recovering = true;
+      console.error(
+        `[supervisor] Room ${channelId} watchdog recovery: ` +
+          `pollAge=${pollAge}ms presenceAge=${presenceAge}ms presence=${running.presence}`,
+      );
+      // forceSuspend kills a stuck ACP request; AbortController exits the Room
+      // loop once its bounded relay request returns. reconcile starts a fresh
+      // Body generation on its next control-plane pass.
+      await running.body
+        .forceRecoverRoom(channelId)
+        .catch((error) =>
+          console.error(`[supervisor] Room ${channelId} watchdog ACP cleanup failed:`, error),
+        );
+      running.controller.abort();
+    }
   }
 }

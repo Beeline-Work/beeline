@@ -153,3 +153,104 @@ describe('WorkspaceSupervisor unbound channel policy', () => {
     expect(startConversation).toHaveBeenCalledWith('repo-less-room', 'named-repository');
   });
 });
+
+describe('WorkspaceSupervisor Room watchdog', () => {
+  function runtimeWithRooms(): AgentRuntimeRecord {
+    const agent = storedIdentity('watchdog-agent');
+    const body = storedIdentity('watchdog-body');
+    const room = (channelId: string) => ({
+      channelId,
+      repo: {
+        root: `/tmp/${channelId}`,
+        repository: { name: channelId, key: channelId, localOnly: true },
+        targetBranch: 'main',
+      } as never,
+      membershipSince: 1,
+      discoveredAt: new Date(0).toISOString(),
+    });
+    return {
+      version: 2,
+      communityId: '11111111-1111-4111-8111-111111111111',
+      pairedBy: 'a'.repeat(64),
+      agent: agent.stored,
+      body: body.stored,
+      rooms: [room('stale-room'), room('healthy-room')],
+      supervisorRoot: '/tmp/beeline-watchdog-test',
+      relayBaseUrl: 'http://relay.test',
+      agentBinary: '/bin/true',
+      mcpBinary: '/bin/true',
+      createdAt: new Date(0).toISOString(),
+    };
+  }
+
+  it('restarts only a stale Room while its sibling remains served', async () => {
+    let now = 100_000;
+    const runtime = runtimeWithRooms();
+    const supervisor = new WorkspaceSupervisor(
+      runtime,
+      `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+      { now: () => now, watchdogStaleMs: 1_000 },
+    );
+    const staleController = new AbortController();
+    const healthyController = new AbortController();
+    const staleBody = { forceRecoverRoom: vi.fn().mockResolvedValue(undefined) };
+    const healthyBody = { forceRecoverRoom: vi.fn().mockResolvedValue(undefined) };
+    const running = (supervisor as never).running as Map<string, unknown>;
+    running.set('stale-room', {
+      body: staleBody,
+      controller: staleController,
+      promise: Promise.resolve(),
+      lastPollAt: 1,
+      lastPresenceAt: 1,
+      presence: 'offline',
+      recovering: false,
+    });
+    running.set('healthy-room', {
+      body: healthyBody,
+      controller: healthyController,
+      promise: Promise.resolve(),
+      lastPollAt: now,
+      lastPresenceAt: now,
+      presence: 'online',
+      recovering: false,
+    });
+
+    await (supervisor as never).watchdog();
+
+    expect(staleBody.forceRecoverRoom).toHaveBeenCalledWith('stale-room');
+    expect(staleController.signal.aborted).toBe(true);
+    expect(healthyBody.forceRecoverRoom).not.toHaveBeenCalled();
+    expect(healthyController.signal.aborted).toBe(false);
+    expect(supervisor.activeRoomIds()).toEqual(['healthy-room', 'stale-room']);
+    now += 1;
+  });
+
+  it('starts every configured repository Room again after a supervisor restart', async () => {
+    const runtime = runtimeWithRooms();
+    const disconnect = vi.fn();
+    mocks.createBuzzClient.mockReturnValue({
+      isMember: vi.fn().mockResolvedValue(true),
+      listMyChannels: vi
+        .fn()
+        .mockResolvedValue(
+          runtime.rooms.map((room) => ({ channelId: room.channelId, event: { created_at: 1 } })),
+        ),
+      disconnect,
+    });
+    const supervisor = new WorkspaceSupervisor(
+      runtime,
+      `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+    );
+    const start = vi
+      .spyOn(supervisor as never, 'startRepositoryRoom' as never)
+      .mockImplementation(() => undefined as never);
+
+    await expect(supervisor.reconcile()).resolves.toBe(true);
+
+    expect(start).toHaveBeenCalledWith(runtime.rooms[0], 'stale-room');
+    expect(start).toHaveBeenCalledWith(runtime.rooms[1], 'healthy-room');
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
+});

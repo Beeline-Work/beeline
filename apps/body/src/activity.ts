@@ -26,6 +26,12 @@ export const ACTIVITY_TAG = 'agent-activity';
 export const AGENT_MESSAGE_TAG = 'agent-message';
 export const AGENT_TURN_TAG = 'agent-turn';
 
+export type AgentPresenceController = (() => Promise<void>) & {
+  generationId: string;
+  /** Immediately publish a new availability state and use it for later heartbeats. */
+  setStatus(status: AgentPresenceStatus): Promise<void>;
+};
+
 const CODEX_HARNESS_NOTICE =
   /^(?:⚠(?:️)?\s*)?(?:warning|notice):\s*(?:skill|tool|plugin) descriptions?\b.*\b(?:context budget|budget limit)\b/i;
 const CODEX_HARNESS_NOTICE_CONTINUATION =
@@ -189,25 +195,33 @@ export function startAgentPresence(
   channelId: string,
   owner: Identity,
   intervalMs = AGENT_PRESENCE_HEARTBEAT_MS,
-): (() => Promise<void>) & { generationId: string } {
+  onPublished?: (status: AgentPresenceStatus) => void,
+): AgentPresenceController {
   let stopped = false;
   let lastCreatedAt = 0;
   let chain = Promise.resolve();
+  let status: AgentPresenceStatus = 'online';
   const generationId = randomUUID();
-  const enqueue = (status: AgentPresenceStatus) => {
+  const enqueue = (nextStatus: AgentPresenceStatus) => {
     const createdAt = Math.max(Math.floor(Date.now() / 1_000), lastCreatedAt + 1);
     lastCreatedAt = createdAt;
     chain = chain
-      .then(() => postAgentPresence(channelId, owner, status, createdAt, generationId))
-      .catch((error) => console.error(`[body] agent presence ${status} failed:`, error));
+      .then(() => postAgentPresence(channelId, owner, nextStatus, createdAt, generationId))
+      .then(() => onPublished?.(nextStatus))
+      .catch((error) => console.error(`[body] agent presence ${nextStatus} failed:`, error));
     return chain;
   };
 
-  void enqueue('online');
+  void enqueue(status);
   const timer = setInterval(() => {
-    if (!stopped) void enqueue('online');
+    if (!stopped) void enqueue(status);
   }, intervalMs);
   timer.unref?.();
+
+  const setStatus = (nextStatus: AgentPresenceStatus) => {
+    status = nextStatus;
+    return enqueue(status);
+  };
 
   const stop = async () => {
     if (stopped) return;
@@ -215,11 +229,11 @@ export function startAgentPresence(
     clearInterval(timer);
     await chain;
     const createdAt = Math.max(Math.floor(Date.now() / 1_000), lastCreatedAt + 1);
-    await postAgentPresence(channelId, owner, 'offline', createdAt, generationId).catch((error) =>
-      console.error('[body] agent presence offline failed:', error),
-    );
+    await postAgentPresence(channelId, owner, 'offline', createdAt, generationId)
+      .then(() => onPublished?.('offline'))
+      .catch((error) => console.error('[body] agent presence offline failed:', error));
   };
-  return Object.assign(stop, { generationId });
+  return Object.assign(stop, { generationId, setStatus });
 }
 
 /** Emit an ordered batch of session updates as one kind:9 channel event. */

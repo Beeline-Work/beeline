@@ -23,6 +23,14 @@ export interface RelayClient extends RelayReader {
   publishEvent(event: NostrEvent): Promise<SubmitResult>;
 }
 
+const QUERY_MAX_ATTEMPTS = 3;
+const QUERY_ATTEMPT_TIMEOUT_MS = 10_000;
+const QUERY_RETRY_BASE_MS = 250;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function headers(
   identity: Pick<Identity, 'secretKey' | 'publicKey'>,
   url: string,
@@ -57,20 +65,52 @@ export function createRelayClient(
     async queryEvents(filters: Record<string, unknown>[]): Promise<NostrEvent[]> {
       const url = `${baseUrl}/query`;
       const method = 'POST';
-      const res = await fetch(url, {
-        method,
-        headers: { ...headers(identity, url, method), host: config.host },
-        body: JSON.stringify(filters),
-      });
-      const text = await res.text();
-      if (!res.ok) {
-        throw new Error(`queryEvents failed: HTTP ${res.status} ${text}`);
+      for (let attempt = 1; attempt <= QUERY_MAX_ATTEMPTS; attempt++) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), QUERY_ATTEMPT_TIMEOUT_MS);
+        try {
+          const res = await fetch(url, {
+            method,
+            headers: { ...headers(identity, url, method), host: config.host },
+            body: JSON.stringify(filters),
+            signal: controller.signal,
+          });
+          const text = await res.text();
+          if (res.ok) {
+            const parsed = JSON.parse(text) as unknown;
+            if (!Array.isArray(parsed)) {
+              throw new Error(`queryEvents: expected array, got ${text.slice(0, 200)}`);
+            }
+            return parsed as NostrEvent[];
+          }
+          if (res.status >= 500 && res.status <= 599 && attempt < QUERY_MAX_ATTEMPTS) {
+            await sleep(QUERY_RETRY_BASE_MS * attempt);
+            continue;
+          }
+          throw Object.assign(new Error(`queryEvents failed: HTTP ${res.status} ${text}`), {
+            nonRetryable: true,
+          });
+        } catch (error) {
+          if (
+            typeof error === 'object' &&
+            error !== null &&
+            'nonRetryable' in error &&
+            error.nonRetryable === true
+          ) {
+            throw error;
+          }
+          if (attempt === QUERY_MAX_ATTEMPTS) {
+            throw new Error(
+              `queryEvents failed after ${attempt} attempts: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+          await sleep(QUERY_RETRY_BASE_MS * attempt);
+          continue;
+        } finally {
+          clearTimeout(timeout);
+        }
       }
-      const parsed = JSON.parse(text) as unknown;
-      if (!Array.isArray(parsed)) {
-        throw new Error(`queryEvents: expected array, got ${text.slice(0, 200)}`);
-      }
-      return parsed as NostrEvent[];
+      throw new Error(`queryEvents exhausted ${QUERY_MAX_ATTEMPTS} attempts`);
     },
   };
 }

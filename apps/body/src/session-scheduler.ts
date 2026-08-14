@@ -120,6 +120,20 @@ export class SessionScheduler {
     this.wakeCapacityWaiters();
   }
 
+  /**
+   * Tear down a poisoned session even when its task is still marked busy.
+   * The watchdog uses this only after a Room has stopped making progress; the
+   * killed ACP client rejects its pending request and releases the old queue.
+   */
+  async forceSuspend(key: string): Promise<void> {
+    const session = this.live.get(key);
+    if (!session) return;
+    this.live.delete(key);
+    this.busy.delete(key);
+    await session.lifecycle.suspend();
+    this.wakeCapacityWaiters();
+  }
+
   async dispose(): Promise<void> {
     if (this.sweepTimer) clearInterval(this.sweepTimer);
     this.sweepTimer = undefined;

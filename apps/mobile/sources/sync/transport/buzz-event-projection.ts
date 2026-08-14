@@ -169,6 +169,7 @@ export type ChatDisplayMessage = {
     requestId: string;
     agentPubkey: string;
     status: AgentTurnStatus;
+    generationId?: string;
   };
   writePermission?: {
     permissionId: string;
@@ -284,6 +285,7 @@ export function projectChatEvent(
     const requestId = eventTagValue(event, 'request');
     const agentPubkey = eventTagValue(event, 'agent') ?? pubkey;
     const turnStatus = eventTagValue(event, 'status');
+    const generationId = eventTagValue(event, 'generation');
     if (
       requestId &&
       agentPubkey &&
@@ -296,7 +298,12 @@ export function projectChatEvent(
           isUser: false,
           timestamp: eventTimestamp(event),
           pubkey: agentPubkey,
-          agentTurn: { requestId, agentPubkey, status: turnStatus },
+          agentTurn: {
+            requestId,
+            agentPubkey,
+            status: turnStatus,
+            ...(generationId ? { generationId } : {}),
+          },
           ...(isNew ? { isNew: true } : {}),
         },
       };

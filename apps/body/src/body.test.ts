@@ -409,11 +409,13 @@ describe('agent presence', () => {
     vi.useFakeTimers();
     const agent = newIdentity('heartbeat-agent');
     const statuses: string[] = [];
+    const generations: string[] = [];
     vi.stubGlobal(
       'fetch',
       vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
         const event = JSON.parse(String(init?.body)) as NostrEvent;
         statuses.push(event.tags.find((tag) => tag[0] === 'status')?.[1] ?? '');
+        generations.push(event.tags.find((tag) => tag[0] === 'generation')?.[1] ?? '');
         return new Response(JSON.stringify({ accepted: true }), { status: 200 });
       }),
     );
@@ -424,6 +426,7 @@ describe('agent presence', () => {
     await stop();
 
     expect(statuses).toEqual(['online', 'online', 'offline']);
+    expect(new Set(generations)).toEqual(new Set([stop.generationId]));
     vi.useRealTimers();
   });
 });
@@ -666,6 +669,47 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(published[1]!.tags).toContainEqual(['t', 'agent-message']);
     expect(published[2]!.tags).toContainEqual(['t', 'agent-turn']);
     expect(published[2]!.tags).toContainEqual(['status', 'complete']);
+
+    prompt.mockResolvedValueOnce({
+      stopReason: 'end_turn',
+      updates: [],
+      agentText: '',
+      toolCalls: [],
+    });
+    await Reflect.get(body, 'replyInRoom').call(
+      body,
+      'parent-channel',
+      { repo: 'repo' },
+      {
+        eventId: 'empty-research-result',
+        authorPubkey: event.pubkey,
+        content: 'Research the repository and report any findings.',
+        createdAt: event.created_at + 1,
+      },
+    );
+
+    expect(
+      published.slice(-3).map((item) => item.tags.find((tag) => tag[0] === 'status')?.[1]),
+    ).toEqual(['working', undefined, 'complete']);
+    expect(published.at(-2)?.content).toBe('No repository findings to report.');
+
+    prompt.mockRejectedValueOnce(new Error('prompt cancelled'));
+    await expect(
+      Reflect.get(body, 'replyInRoom').call(
+        body,
+        'parent-channel',
+        { repo: 'repo' },
+        {
+          eventId: 'cancelled-research-result',
+          authorPubkey: event.pubkey,
+          content: 'Research this, but cancel the turn.',
+          createdAt: event.created_at + 2,
+        },
+      ),
+    ).rejects.toThrow('prompt cancelled');
+    expect(
+      published.slice(-2).map((item) => item.tags.find((tag) => tag[0] === 'status')?.[1]),
+    ).toEqual(['working', 'failed']);
   });
 
   it('opens explicitly authorized corner work without prompting the read-only session', async () => {

@@ -2085,7 +2085,12 @@ export default function BuzzChat() {
         transparent
         visible={roomActionsVisible}
       >
-        <View style={styles.roomActionsModalRoot}>
+        <View
+          style={[
+            styles.roomActionsModalRoot,
+            { paddingBottom: Math.max(insets.bottom, 18) },
+          ]}
+        >
           <Pressable
             accessibilityLabel={`Close ${ROOM_LABEL} actions`}
             disabled={renameBusy}

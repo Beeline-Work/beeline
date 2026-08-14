@@ -1,8 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { describe, expect, it, vi } from 'vitest';
 import {
     getSessionRouteFromNotificationData,
     getSessionRouteFromNotificationResponse,
+    navigateToBuzzChannelFromNotification,
 } from './notificationRouting';
+
+const buzzChatSource = readFileSync(
+    new URL('../app/(app)/buzz/chat/[channelId].tsx', import.meta.url),
+    'utf8',
+);
 
 describe('getSessionRouteFromNotificationData', () => {
     it('returns a session route when sessionId exists', () => {
@@ -47,5 +54,35 @@ describe('getSessionRouteFromNotificationResponse', () => {
                 }
             }
         })).toBeNull();
+    });
+});
+
+describe('navigateToBuzzChannelFromNotification', () => {
+    it('reuses the room route and refreshes it for each notification response', () => {
+        const navigate = vi.fn();
+
+        navigateToBuzzChannelFromNotification(
+            { navigate },
+            'room-123',
+            'notification-456',
+        );
+
+        expect(navigate).toHaveBeenCalledWith(
+            {
+                pathname: '/buzz/chat/[channelId]',
+                params: {
+                    channelId: 'room-123',
+                    notificationResponseId: 'notification-456',
+                },
+            },
+            { dangerouslySingular: true },
+        );
+    });
+
+    it('uses the notification response id to invalidate the retained room backfill', () => {
+        expect(buzzChatSource).toContain('const { channelId, notificationResponseId }');
+        expect(buzzChatSource).toContain(
+            '[decodedId, notificationResponseId, addMessages, applyAgentPresence]',
+        );
     });
 });

@@ -29,7 +29,10 @@ import { initConsoleLogging, setConsoleOutputEnabled } from '@/utils/consoleLogg
 import { useLocalSetting } from '@/sync/storage';
 import { useUnistyles } from 'react-native-unistyles';
 import { AsyncLock } from '@/utils/lock';
-import { getSessionRouteFromNotificationResponse } from '@/utils/notificationRouting';
+import {
+    getSessionRouteFromNotificationResponse,
+    navigateToBuzzChannelFromNotification,
+} from '@/utils/notificationRouting';
 import { navigateToSession } from '@/hooks/useNavigateToSession';
 import { applyVoiceUpsellOverride } from '@/realtime/voiceExperiment';
 import { useTauriZoom } from '@/hooks/useTauriZoom';
@@ -324,10 +327,7 @@ export default function RootLayout() {
                 : null;
             if (buzzChannelId) {
                 console.log(`[PUSH ROUTING] Navigating to Buzz channel: ${buzzChannelId}`);
-                router.push({
-                    pathname: '/buzz/chat/[channelId]',
-                    params: { channelId: buzzChannelId },
-                });
+                navigateToBuzzChannelFromNotification(router, buzzChannelId, responseId);
                 return;
             }
             const route = getSessionRouteFromNotificationResponse(response);

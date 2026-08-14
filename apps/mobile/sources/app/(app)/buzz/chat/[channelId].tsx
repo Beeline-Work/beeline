@@ -38,7 +38,6 @@ import {
   type MergeTarget,
   type PersonProfile,
   type AttachmentReference,
-  type AgentPresence,
   isAgentPresenceOnline,
   personHandle,
 } from '@beeline/buzz-client';
@@ -75,7 +74,12 @@ import {
   type PickedChatAttachment,
 } from '@/buzz/chat-attachment';
 import { isNearChatBottom } from '@/buzz/chat-scroll';
-import { mergeAgentPresence, presenceMapFromSessionEvents } from '@/buzz/agent-presence';
+import {
+  isAgentTurnActive,
+  mergeAgentPresence,
+  presenceMapFromSessionEvents,
+  type RoomAgentPresence,
+} from '@/buzz/agent-presence';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
 import { ChangeReviewPanel } from '@/components/buzz/ChangeReviewPanel';
@@ -204,7 +208,7 @@ export default function BuzzChat() {
   const [directMessage, setDirectMessage] = useState<DirectMessage | null>(null);
   const [composerFocused, setComposerFocused] = useState(false);
   const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
-  const [agentPresences, setAgentPresences] = useState<Record<string, AgentPresence>>({});
+  const [agentPresences, setAgentPresences] = useState<Record<string, RoomAgentPresence>>({});
   const [presenceNow, setPresenceNow] = useState(Date.now());
   const [offlineQueuedIds, setOfflineQueuedIds] = useState<Set<string>>(new Set());
   const agentByPubkey = useMemo(
@@ -338,8 +342,19 @@ export default function BuzzChat() {
     [messages],
   );
   const activeAgentTurn = useMemo(
-    () => [...messages].reverse().find((message) => message.agentTurn?.status === 'working'),
-    [messages],
+    () =>
+      [...messages]
+        .reverse()
+        .find(
+          (message) =>
+            message.agentTurn &&
+            isAgentTurnActive(
+              message.agentTurn,
+              agentPresences[message.agentTurn.agentPubkey],
+              presenceNow,
+            ),
+        ),
+    [agentPresences, messages, presenceNow],
   );
   const activeActivityId = useMemo(() => {
     if (!activeAgentTurn) return undefined;
@@ -352,7 +367,7 @@ export default function BuzzChat() {
     return () => clearInterval(timer);
   }, []);
 
-  const applyAgentPresence = useCallback((presence: AgentPresence | undefined) => {
+  const applyAgentPresence = useCallback((presence: RoomAgentPresence | undefined) => {
     if (!presence) return;
     setAgentPresences((current) => mergeAgentPresence(current, presence));
     setPresenceNow(Date.now());

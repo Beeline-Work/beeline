@@ -103,6 +103,7 @@ describe('Buzz Room screen event projection', () => {
         ['agent', agent],
         ['mode', 'readonly'],
         ['status', 'working'],
+        ['generation', 'daemon-generation'],
       ],
       2,
     );
@@ -121,7 +122,10 @@ describe('Buzz Room screen event projection', () => {
     );
 
     expect(displaySequence([working])).toMatchObject([
-      { id: 'agent-turn-chat-request', agentTurn: { status: 'working' } },
+      {
+        id: 'agent-turn-chat-request',
+        agentTurn: { status: 'working', generationId: 'daemon-generation' },
+      },
     ]);
     const completed = displaySequence([working, complete]);
     expect(completed).toMatchObject([

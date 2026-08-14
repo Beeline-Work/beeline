@@ -92,4 +92,70 @@ describe('Workspace session scheduler', () => {
     expect(scheduler.generations('corner-b')).toEqual(['corner-b-physical']);
     await scheduler.dispose();
   });
+
+  it('keeps a Room responsive while later corner work waits for background capacity', async () => {
+    const scheduler = new SessionScheduler({
+      maxLiveSessions: 1,
+      idleMs: 60_000,
+      reserveInteractiveSlot: true,
+    });
+    const releaseFirstCorner = deferred();
+    const firstCornerStarted = deferred();
+    const releaseRoom = deferred();
+    const roomStarted = deferred();
+    const active = new Set<string>();
+    let maxActive = 0;
+    const lifecycle = (channel: string): SessionLifecycle => ({
+      activate: async () => {
+        active.add(channel);
+        maxActive = Math.max(maxActive, active.size);
+        return `${channel}-physical`;
+      },
+      suspend: async () => {
+        active.delete(channel);
+      },
+    });
+
+    const firstCorner = scheduler.run(
+      'corner-a',
+      lifecycle('corner-a'),
+      async () => {
+        firstCornerStarted.resolve();
+        await releaseFirstCorner.promise;
+      },
+      { priority: 'background' },
+    );
+    await firstCornerStarted.promise;
+    const nextCorner = scheduler.run(
+      'corner-b',
+      lifecycle('corner-b'),
+      async () => undefined,
+      { priority: 'background' },
+    );
+
+    expect(scheduler.generations('corner-b')).toHaveLength(0);
+
+    const room = scheduler.run(
+      'room',
+      lifecycle('room'),
+      async () => {
+        roomStarted.resolve();
+        await releaseRoom.promise;
+      },
+      { priority: 'interactive' },
+    );
+    await roomStarted.promise;
+
+    expect(scheduler.generations('room')).toEqual(['room-physical']);
+    expect(scheduler.snapshot()).toMatchObject({ live: 2, maxLive: 2 });
+    expect(maxActive).toBe(2);
+
+    releaseRoom.resolve();
+    await room;
+    releaseFirstCorner.resolve();
+    await Promise.all([firstCorner, nextCorner]);
+    expect(scheduler.generations('corner-b')).toEqual(['corner-b-physical']);
+    expect(maxActive).toBe(2);
+    await scheduler.dispose();
+  });
 });

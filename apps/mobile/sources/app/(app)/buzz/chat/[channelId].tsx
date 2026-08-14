@@ -31,12 +31,9 @@ import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-sto
 import { BuzzRigTransport } from '@/sync/transport';
 import {
   type Agent,
-  type ChannelMember,
   type Community,
-  type CommunityMember,
   type DirectMessage,
   type MergeTarget,
-  type PersonProfile,
   type AttachmentReference,
   isAgentPresenceOnline,
   personHandle,
@@ -44,9 +41,16 @@ import {
 import {
   projectChatEvent,
   transcriptMessages,
-  upsertChatMessages,
   type ChatDisplayMessage,
 } from '@/sync/transport/buzz-event-projection';
+import {
+  channelCacheKey,
+  getCachedChannel,
+  profileCacheKey,
+  setActiveBuzzCacheViewer,
+  useBuzzLocalCache,
+} from '@/buzz/local-cache';
+import { cacheLiveSessionEvent, revalidateCachedMessages } from '@/buzz/local-cache-sync';
 import { groknight } from '@/buzz/groknight';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
@@ -165,6 +169,11 @@ export default function BuzzChat() {
     notificationResponseId?: string;
   }>();
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
+  const initialCacheState = useBuzzLocalCache.getState();
+  const initialViewerPubkey = initialCacheState.activeViewerPubkey;
+  const initialChannelCache = initialViewerPubkey
+    ? getCachedChannel(initialViewerPubkey, decodedId)
+    : undefined;
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList<ChatDisplayMessage>>(null);
   const composerRef = useRef<TextInput>(null);
@@ -175,45 +184,68 @@ export default function BuzzChat() {
   const keyboardHeight = useKeyboardState((state) => (state.isVisible ? state.height : 0));
 
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
-  const [messages, setMessages] = useState<ChatDisplayMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const [composerHeight, setComposerHeight] = useState(COMPOSER_MIN_HEIGHT);
   const [inputSelection, setInputSelection] = useState({ start: 0, end: 0 });
   const [highlightedMentionIndex, setHighlightedMentionIndex] = useState(0);
   const [dismissedMentionKey, setDismissedMentionKey] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [pendingAttachment, setPendingAttachment] = useState<PickedChatAttachment | null>(null);
-  const [isArchived, setIsArchived] = useState(false);
+  const [isArchived, setIsArchived] = useState(initialChannelCache?.archived ?? false);
   const [userPubkey, setUserPubkey] = useState<string>('');
-  const [mergeTarget, setMergeTarget] = useState<MergeTarget | null>(null);
+  const [mergeTarget, setMergeTarget] = useState<MergeTarget | null>(
+    initialChannelCache?.mergeTarget ?? null,
+  );
   const [approvalState, setApprovalState] = useState<'none' | 'sending' | 'sent' | 'merged'>(
     'none',
   );
-  const [parentChannelId, setParentChannelId] = useState<string | undefined>(undefined);
+  const [parentChannelId, setParentChannelId] = useState<string | undefined>(
+    initialChannelCache?.parentChannelId,
+  );
   const [communities, setCommunities] = useState<Community[]>([]);
-  const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
-  const [availableAgents, setAvailableAgents] = useState<Agent[]>([]);
-  const [availablePeople, setAvailablePeople] = useState<CommunityMember[]>([]);
-  const [roomMemberPubkeys, setRoomMemberPubkeys] = useState<Set<string>>(new Set());
-  const [roomMembers, setRoomMembers] = useState<ChannelMember[]>([]);
+  const [activeCommunityId, setActiveCommunityId] = useState<string | null>(
+    initialChannelCache?.communityId ?? null,
+  );
   const [addingMemberPubkey, setAddingMemberPubkey] = useState<string | null>(null);
-  const [personProfiles, setPersonProfiles] = useState<PersonProfile[]>([]);
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
-  const [participantsHydrated, setParticipantsHydrated] = useState(false);
-  const [roomName, setRoomName] = useState(ROOM_LABEL);
+  const [roomName, setRoomName] = useState(initialChannelCache?.roomName ?? ROOM_LABEL);
   const [rosterVisible, setRosterVisible] = useState(false);
   const [roomActionsVisible, setRoomActionsVisible] = useState(false);
   const [participantPickerVisible, setParticipantPickerVisible] = useState(false);
   const [membershipError, setMembershipError] = useState<string | null>(null);
   const [membershipActionPubkey, setMembershipActionPubkey] = useState<string | null>(null);
   const [roomLifecycleBusy, setRoomLifecycleBusy] = useState(false);
-  const [directMessage, setDirectMessage] = useState<DirectMessage | null>(null);
+  const [directMessage, setDirectMessage] = useState<DirectMessage | null>(
+    initialChannelCache?.directMessage ?? null,
+  );
   const [composerFocused, setComposerFocused] = useState(false);
   const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
   const [agentPresences, setAgentPresences] = useState<Record<string, RoomAgentPresence>>({});
   const [presenceNow, setPresenceNow] = useState(Date.now());
   const [offlineQueuedIds, setOfflineQueuedIds] = useState<Set<string>>(new Set());
+  const activeCacheViewer = useBuzzLocalCache((state) => state.activeViewerPubkey);
+  const cacheViewerPubkey = userPubkey || activeCacheViewer || '';
+  const channelCache = useBuzzLocalCache((state) =>
+    cacheViewerPubkey ? state.channels[channelCacheKey(cacheViewerPubkey, decodedId)] : undefined,
+  );
+  const messages = channelCache?.messages ?? [];
+  const availableAgents = channelCache?.availableAgents ?? [];
+  const availablePeople = channelCache?.availablePeople ?? [];
+  const roomMembers = channelCache?.roomMembers ?? [];
+  const roomMemberPubkeys = useMemo(
+    () => new Set(roomMembers.map((member) => member.pubkey)),
+    [roomMembers],
+  );
+  const cachedPersonProfiles = useBuzzLocalCache((state) =>
+    cacheViewerPubkey && activeCommunityId
+      ? state.profiles[profileCacheKey(cacheViewerPubkey, activeCommunityId)]
+      : undefined,
+  );
+  const personProfiles = cachedPersonProfiles ?? [];
+  const participantsHydrated =
+    channelCache?.roomMembers !== undefined &&
+    channelCache.availablePeople !== undefined &&
+    channelCache.availableAgents !== undefined;
   const agentByPubkey = useMemo(
     () => new Map(availableAgents.map((agent) => [agent.pubkey, agent])),
     [availableAgents],
@@ -430,14 +462,18 @@ export default function BuzzChat() {
   }, [mentionMenuKey]);
 
   // Helper to add new messages, deduplicating by id.
-  const addMessages = useCallback((newMsgs: ChatDisplayMessage[]) => {
-    setMessages((prev) =>
-      upsertChatMessages(
-        prev,
+  const addMessages = useCallback(
+    (newMsgs: ChatDisplayMessage[]) => {
+      const viewerPubkey = useBuzzLocalCache.getState().activeViewerPubkey;
+      if (!viewerPubkey) return;
+      useBuzzLocalCache.getState().upsertMessages(
+        viewerPubkey,
+        decodedId,
         newMsgs.map((message) => ({ ...message, isNew: true })),
-      ),
-    );
-  }, []);
+      );
+    },
+    [decodedId],
+  );
 
   useEffect(() => {
     if (!decodedId) return;
@@ -447,8 +483,6 @@ export default function BuzzChat() {
     let unsubscribePresence: (() => void) | undefined;
     hasPositionedInitialMessagesRef.current = false;
     followsLatestMessageRef.current = true;
-    setLoading(true);
-    setParticipantsHydrated(false);
     setAgentPresences({});
 
     (async () => {
@@ -458,6 +492,7 @@ export default function BuzzChat() {
           router.replace('/buzz/onboarding');
           return;
         }
+        setActiveBuzzCacheViewer(identity.publicKey);
 
         const url = await getEffectiveRelayUrl();
         const t = new BuzzRigTransport(identity, url);
@@ -474,7 +509,7 @@ export default function BuzzChat() {
           channelMetadata,
           roomMembers,
           parentId,
-          events,
+          messageSync,
           identityIsAgent,
           dm,
         ] = await Promise.all([
@@ -482,7 +517,7 @@ export default function BuzzChat() {
           client.getChannelMetadata(decodedId),
           client.listMembers(decodedId),
           t.getParentChannelId(decodedId),
-          t.sessionEventsBackfill(decodedId, { limit: 50 }),
+          revalidateCachedMessages(t, identity.publicKey, decodedId),
           client.isAgentIdentity(identity.publicKey),
           client.getDirectMessage(decodedId),
         ]);
@@ -499,25 +534,23 @@ export default function BuzzChat() {
         if (!cancelled) {
           setCommunities(availableCommunities);
           setActiveCommunityId(channelCommunityId);
-          const roomPubkeys = new Set(roomMembers.map((member) => member.pubkey));
-          setRoomMemberPubkeys(roomPubkeys);
-          setRoomMembers(roomMembers);
           setViewerIsAgent(identityIsAgent);
           setDirectMessage(dm);
           setRoomName(channelMetadata?.name?.trim() || ROOM_LABEL);
           setAgentPresences(presenceMapFromSessionEvents(presenceEvents));
           setPresenceNow(Date.now());
           if (parentId) setParentChannelId(parentId);
-          let msgs: ChatDisplayMessage[] = [];
-          for (const e of events) {
-            const projected = projectChatEvent(e, identity.publicKey);
-            if (projected.mergeTarget) setMergeTarget(projected.mergeTarget);
-            if (projected.archiveChannel) setIsArchived(true);
-            if (projected.message) msgs = upsertChatMessages(msgs, [projected.message]);
-          }
-
-          setMessages(msgs);
-          setLoading(false);
+          if (messageSync.mergeTarget) setMergeTarget(messageSync.mergeTarget);
+          if (messageSync.archiveChannel) setIsArchived(true);
+          useBuzzLocalCache.getState().patchChannel(identity.publicKey, decodedId, {
+            roomMembers,
+            communityId: channelCommunityId,
+            parentChannelId: parentId ?? undefined,
+            directMessage: dm,
+            roomName: channelMetadata?.name?.trim() || ROOM_LABEL,
+            archived: messageSync.entry.archived,
+            mergeTarget: messageSync.entry.mergeTarget,
+          });
         }
 
         void Promise.all([
@@ -529,14 +562,13 @@ export default function BuzzChat() {
         // performs its WebSocket handshake lazily and does not block this path.
         unsubscribe = t.sessionEventsSubscribe(decodedId, (event) => {
           if (cancelled) return;
-          const projected = projectChatEvent(event, identity.publicKey, true);
+          const projected = cacheLiveSessionEvent(identity.publicKey, decodedId, event);
           if (projected.mergeTarget) setMergeTarget(projected.mergeTarget);
           if (projected.archiveChannel) {
             setIsArchived(true);
             setApprovalState('merged');
           }
           applyAgentPresence(projected.agentPresence);
-          if (projected.message) addMessages([projected.message]);
         });
         unsubscribePresence = t.agentPresenceSubscribe(parentId ?? decodedId, (event) => {
           if (cancelled) return;
@@ -558,27 +590,37 @@ export default function BuzzChat() {
             )
           : [];
         if (!cancelled) {
-          setAvailableAgents(communityAgents);
-          setAvailablePeople(humanMembers);
-          setPersonProfiles(humanProfiles);
+          let resolvedRoomName = channelMetadata?.name?.trim() || ROOM_LABEL;
           if (dm) {
             const peerPubkey = directMessagePeer(dm, identity.publicKey);
             const peerAgent = communityAgents.find((agent) => agent.pubkey === peerPubkey);
             const peerProfile = humanProfiles.find((profile) => profile.pubkey === peerPubkey);
-            setRoomName(
-              peerAgent
-                ? resolveAgentDisplayIdentity(peerPubkey, peerAgent).name
-                : (peerProfile?.name ?? shortMemberNpub(peerPubkey)),
-            );
+            resolvedRoomName = peerAgent
+              ? resolveAgentDisplayIdentity(peerPubkey, peerAgent).name
+              : (peerProfile?.name ?? shortMemberNpub(peerPubkey));
+            setRoomName(resolvedRoomName);
           }
-          setParticipantsHydrated(true);
+          useBuzzLocalCache.getState().patchChannel(identity.publicKey, decodedId, {
+            availableAgents: communityAgents,
+            availablePeople: humanMembers,
+            roomMembers,
+            communityId: channelCommunityId,
+          });
+          if (channelCommunityId) {
+            useBuzzLocalCache
+              .getState()
+              .replaceProfiles(identity.publicKey, channelCommunityId, humanProfiles);
+          }
           if (archived) setIsArchived(true);
           if (mergeInfo) setMergeTarget(mergeInfo.target);
+          useBuzzLocalCache.getState().patchChannel(identity.publicKey, decodedId, {
+            archived,
+            mergeTarget: mergeInfo?.target ?? messageSync.entry.mergeTarget,
+            roomName: resolvedRoomName,
+          });
         }
       } catch (err) {
         console.warn('Failed to init BuzzChat:', err);
-      } finally {
-        if (!cancelled) setLoading(false);
       }
     })();
 
@@ -629,7 +671,11 @@ export default function BuzzChat() {
             text,
             attachments,
           });
-      setMessages((prev) => reconcileOptimisticMessage(prev, optimisticId, eventId));
+      useBuzzLocalCache
+        .getState()
+        .updateMessages(cacheViewerPubkey, decodedId, (current) =>
+          reconcileOptimisticMessage(current, optimisticId, eventId),
+        );
       if (sentWhileOffline) {
         setOfflineQueuedIds((current) => {
           const next = new Set(current);
@@ -655,6 +701,7 @@ export default function BuzzChat() {
     parentChannelId,
     mentionableAgents,
     agentsOffline,
+    cacheViewerPubkey,
   ]);
 
   const pickPhoto = useCallback(async () => {
@@ -740,7 +787,7 @@ export default function BuzzChat() {
           permission.agentPubkey,
           decision,
         );
-        setMessages((current) =>
+        useBuzzLocalCache.getState().updateMessages(cacheViewerPubkey, decodedId, (current) =>
           current.map((item) =>
             item.id === message.id && item.writePermission
               ? {
@@ -764,7 +811,7 @@ export default function BuzzChat() {
         setPermissionActionId(null);
       }
     },
-    [decodedId, transport, viewerIsAgent],
+    [cacheViewerPubkey, decodedId, transport, viewerIsAgent],
   );
 
   const handleAddRoomMember = useCallback(
@@ -788,11 +835,12 @@ export default function BuzzChat() {
             activeCommunityId,
           );
         }
-        setRoomMemberPubkeys((current) => new Set([...current, option.pubkey]));
-        setRoomMembers((current) => [
-          ...current.filter((member) => member.pubkey !== option.pubkey),
-          { pubkey: option.pubkey, role: 'member' },
-        ]);
+        useBuzzLocalCache.getState().patchChannel(cacheViewerPubkey, decodedId, {
+          roomMembers: [
+            ...roomMembers.filter((member) => member.pubkey !== option.pubkey),
+            { pubkey: option.pubkey, role: 'member' },
+          ],
+        });
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
         setMembershipError(`Could not add @${option.name}: ${String(err)}`);
@@ -800,7 +848,15 @@ export default function BuzzChat() {
         setAddingMemberPubkey(null);
       }
     },
-    [activeCommunityId, addingMemberPubkey, decodedId, roomMemberPubkeys, transport],
+    [
+      activeCommunityId,
+      addingMemberPubkey,
+      cacheViewerPubkey,
+      decodedId,
+      roomMemberPubkeys,
+      roomMembers,
+      transport,
+    ],
   );
 
   const handleRemoveRoomMember = useCallback(
@@ -825,14 +881,11 @@ export default function BuzzChat() {
               void transport
                 .removeRoomMember(decodedId, participant.pubkey)
                 .then(() => {
-                  setRoomMemberPubkeys((current) => {
-                    const next = new Set(current);
-                    next.delete(participant.pubkey);
-                    return next;
+                  useBuzzLocalCache.getState().patchChannel(cacheViewerPubkey, decodedId, {
+                    roomMembers: roomMembers.filter(
+                      (member) => member.pubkey !== participant.pubkey,
+                    ),
                   });
-                  setRoomMembers((current) =>
-                    current.filter((member) => member.pubkey !== participant.pubkey),
-                  );
                   void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                 })
                 .catch((err) => {
@@ -844,7 +897,15 @@ export default function BuzzChat() {
         ],
       );
     },
-    [decodedId, roomMemberByPubkey, transport, userPubkey, viewerRoomRole],
+    [
+      cacheViewerPubkey,
+      decodedId,
+      roomMemberByPubkey,
+      roomMembers,
+      transport,
+      userPubkey,
+      viewerRoomRole,
+    ],
   );
 
   const returnToRoomList = useCallback(() => {
@@ -1194,7 +1255,7 @@ export default function BuzzChat() {
     ],
   );
 
-  if (loading) {
+  if (channelCache?.messages === undefined) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <PixelLoader />

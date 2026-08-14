@@ -251,6 +251,10 @@ async function enrichDisplayChannels(
         ...room,
         corners: corners.status === 'fulfilled' ? sortCorners(corners.value) : [],
         latestMessage: synced.status === 'fulfilled' ? synced.value.entry.latestMessage : undefined,
+        updatedAt:
+          synced.status === 'fulfilled'
+            ? (synced.value.entry.latestEventAt ?? room.createdAt ?? room.updatedAt)
+            : (room.createdAt ?? room.updatedAt),
         participantCount:
           members.status === 'fulfilled'
             ? roomParticipantPubkeys(
@@ -329,6 +333,27 @@ export default function BuzzChannels() {
   const displayChannels = cachedListEntry?.channels ?? [];
   const directMessages = cachedListEntry?.directMessages ?? [];
   const workspaceMembers = cachedListEntry?.workspaceMembers ?? [];
+  const orderedChannels = useMemo(
+    () =>
+      [...displayChannels].sort((a, b) => {
+        const aActive = a.corners?.some((corner) => corner.status === 'live') ? 1 : 0;
+        const bActive = b.corners?.some((corner) => corner.status === 'live') ? 1 : 0;
+        return (
+          bActive - aActive ||
+          (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0) ||
+          (a.title ?? a.id).localeCompare(b.title ?? b.id)
+        );
+      }),
+    [displayChannels],
+  );
+  const orderedDirectMessages = useMemo(
+    () =>
+      [...directMessages].sort(
+        (a, b) => b.updatedAt - a.updatedAt || a.peerName.localeCompare(b.peerName),
+      ),
+    [directMessages],
+  );
+  const hasConversations = orderedChannels.length > 0 || orderedDirectMessages.length > 0;
 
   const activeCommunity = useMemo(
     () => communities.find((community) => community.communityId === activeCommunityId) ?? null,
@@ -749,101 +774,99 @@ export default function BuzzChannels() {
         )}
 
         <FlatList
-          data={displayChannels}
+          data={orderedChannels}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={
-            displayChannels.length === 0 ? styles.emptyContainer : styles.listContent
-          }
+          contentContainerStyle={hasConversations ? styles.listContent : styles.emptyContainer}
           ListHeaderComponent={
-            <>
-              {directMessages.length > 0 && (
-                <View style={styles.dmSection}>
-                  <View style={styles.dmSectionHeading}>
-                    <Text style={styles.dmSectionTitle}>Direct messages</Text>
-                    <Text style={styles.dmSectionCount}>{directMessages.length}</Text>
-                  </View>
-                  {directMessages.map((dm) => {
-                    const display = dm.peerAgent
-                      ? resolveAgentDisplayIdentity(dm.peerPubkey, dm.peerAgent)
-                      : undefined;
-                    return (
-                      <TouchableOpacity
-                        accessibilityLabel={`Open direct message with ${dm.peerName}`}
-                        key={dm.id}
-                        onPress={() => handleDirectMessagePress(dm.id)}
-                        style={styles.dmRow}
-                        testID={`direct-message-${dm.peerPubkey}`}
-                      >
-                        {display ? (
-                          <AgentAvatar
-                            pubkey={dm.peerPubkey}
-                            avatarSeed={display.avatarSeed}
-                            avatarUrl={display.avatarUrl}
-                            name={display.name}
-                            size={38}
-                          />
-                        ) : (
-                          <PersonAvatar
-                            pubkey={dm.peerPubkey}
-                            avatarUrl={dm.avatarUrl}
-                            name={dm.peerName}
-                            size={38}
-                          />
-                        )}
-                        <View style={styles.dmCopy}>
-                          <Text numberOfLines={1} style={styles.dmName}>
-                            {dm.peerName}
-                          </Text>
-                          <Text numberOfLines={1} style={styles.latestMessage}>
-                            {dm.latestMessage ?? 'No messages yet'}
-                          </Text>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
+            orderedChannels.length > 0 ? (
+              <View style={styles.sectionHeading}>
+                <Text style={styles.sectionTitle}>Channels</Text>
+                <Text style={styles.dmSectionCount}>{orderedChannels.length}</Text>
+              </View>
+            ) : null
+          }
+          ListFooterComponent={
+            orderedDirectMessages.length > 0 ? (
+              <View style={styles.dmSection}>
+                <View style={styles.sectionHeading}>
+                  <Text style={styles.sectionTitle}>Direct messages</Text>
+                  <Text style={styles.dmSectionCount}>{orderedDirectMessages.length}</Text>
                 </View>
-              )}
-              {displayChannels.length > 0 && (
+                {orderedDirectMessages.map((dm) => {
+                  const display = dm.peerAgent
+                    ? resolveAgentDisplayIdentity(dm.peerPubkey, dm.peerAgent)
+                    : undefined;
+                  return (
+                    <TouchableOpacity
+                      accessibilityLabel={`Open direct message with ${dm.peerName}`}
+                      key={dm.id}
+                      onPress={() => handleDirectMessagePress(dm.id)}
+                      style={styles.dmRow}
+                      testID={`direct-message-${dm.peerPubkey}`}
+                    >
+                      {display ? (
+                        <AgentAvatar
+                          pubkey={dm.peerPubkey}
+                          avatarSeed={display.avatarSeed}
+                          avatarUrl={display.avatarUrl}
+                          name={display.name}
+                          size={38}
+                        />
+                      ) : (
+                        <PersonAvatar
+                          pubkey={dm.peerPubkey}
+                          avatarUrl={dm.avatarUrl}
+                          name={dm.peerName}
+                          size={38}
+                        />
+                      )}
+                      <View style={styles.dmCopy}>
+                        <Text numberOfLines={1} style={styles.dmName}>
+                          {dm.peerName}
+                        </Text>
+                        <Text numberOfLines={1} style={styles.latestMessage}>
+                          {dm.latestMessage ?? 'No messages yet'}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            ) : null
+          }
+          ListEmptyComponent={
+            !hasConversations ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyGlyph}>⌁</Text>
+                <Text style={styles.emptyTitle}>No {ROOMS_LABEL.toLowerCase()} yet</Text>
+                <Text style={styles.emptySubtitle}>
+                  {activeCommunity
+                    ? `Start a focused place for steering and review.`
+                    : `${WORKSPACE_LABEL} setup is still finishing.`}
+                </Text>
+                {!viewerIsAgent && !showCreateChannel && (
+                  <TouchableOpacity
+                    style={styles.primaryButton}
+                    onPress={() => setShowCreateChannel(true)}
+                  >
+                    <Text style={styles.primaryButtonText}>New {ROOM_LABEL.toLowerCase()}</Text>
+                  </TouchableOpacity>
+                )}
                 <CommunityInviteEntry
                   community={activeCommunity}
                   creatingInvite={creatingInvite}
                   allowPeopleInvites={activeCommunityId !== personalWorkspaceId}
+                  showManageAgents
                   onInvitePeople={() => void handleInvitePeople()}
+                  onManageAgents={() =>
+                    activeCommunityId &&
+                    router.push(
+                      `/buzz/agents?communityId=${encodeURIComponent(activeCommunityId)}` as Href,
+                    )
+                  }
                 />
-              )}
-            </>
-          }
-          ListEmptyComponent={
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyGlyph}>⌁</Text>
-              <Text style={styles.emptyTitle}>No {ROOMS_LABEL.toLowerCase()} yet</Text>
-              <Text style={styles.emptySubtitle}>
-                {activeCommunity
-                  ? `Start a focused place for steering and review.`
-                  : `${WORKSPACE_LABEL} setup is still finishing.`}
-              </Text>
-              {!viewerIsAgent && !showCreateChannel && (
-                <TouchableOpacity
-                  style={styles.primaryButton}
-                  onPress={() => setShowCreateChannel(true)}
-                >
-                  <Text style={styles.primaryButtonText}>New {ROOM_LABEL.toLowerCase()}</Text>
-                </TouchableOpacity>
-              )}
-              <CommunityInviteEntry
-                community={activeCommunity}
-                creatingInvite={creatingInvite}
-                allowPeopleInvites={activeCommunityId !== personalWorkspaceId}
-                showManageAgents
-                onInvitePeople={() => void handleInvitePeople()}
-                onManageAgents={() =>
-                  activeCommunityId &&
-                  router.push(
-                    `/buzz/agents?communityId=${encodeURIComponent(activeCommunityId)}` as Href,
-                  )
-                }
-              />
-            </View>
+              </View>
+            ) : null
           }
           renderItem={({ item }) => {
             const corners = item.corners ?? [];
@@ -971,6 +994,12 @@ export default function BuzzChannels() {
               contentContainerStyle={styles.memberList}
               showsVerticalScrollIndicator={false}
             >
+              <CommunityInviteEntry
+                community={activeCommunity}
+                creatingInvite={creatingInvite}
+                allowPeopleInvites={activeCommunityId !== personalWorkspaceId}
+                onInvitePeople={() => void handleInvitePeople()}
+              />
               {workspaceMembers.map((member) => {
                 const display = member.peerAgent
                   ? resolveAgentDisplayIdentity(member.peerPubkey, member.peerAgent)
@@ -1129,17 +1158,17 @@ const styles = StyleSheet.create({
   dmSection: {
     paddingTop: 8,
     paddingBottom: 4,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.borderStrong,
+    borderTopWidth: 1,
+    borderTopColor: groknight.borderStrong,
   },
-  dmSectionHeading: {
+  sectionHeading: {
     minHeight: 32,
     paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  dmSectionTitle: {
+  sectionTitle: {
     ...Typography.default('semiBold'),
     color: groknight.textSecondary,
     fontSize: 12,

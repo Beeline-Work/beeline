@@ -91,6 +91,7 @@ describe('NotificationMetadataResolver', () => {
 
     await expect(resolver.resolve(message, reader)).resolves.toEqual({
       roomName: 'Launch room',
+      isDirectMessage: false,
       persistentWorkspaceRoom: true,
       workspaceName: 'Product Engineering',
       fixtureCandidates: ['Launch room', 'owner/repository', 'Product Engineering'],
@@ -99,6 +100,7 @@ describe('NotificationMetadataResolver', () => {
     });
     await expect(resolver.resolve(message, reader)).resolves.toEqual({
       roomName: 'Launch room',
+      isDirectMessage: false,
       persistentWorkspaceRoom: true,
       workspaceName: 'Product Engineering',
       fixtureCandidates: ['Launch room', 'owner/repository', 'Product Engineering'],
@@ -128,12 +130,37 @@ describe('NotificationMetadataResolver', () => {
     message.pubkey = person.publicKey;
 
     await expect(new NotificationMetadataResolver().resolve(message, reader)).resolves.toEqual({
-      roomName: 'Room',
+      isDirectMessage: false,
       persistentWorkspaceRoom: false,
       fixtureCandidates: [],
       fixtureMarkers: [],
       senderName: 'Grace Hopper',
     });
+  });
+
+  it('classifies a DM from the existing immutable Room marker', async () => {
+    const roomCreate = unsignedEvent(9007, [
+      ['h', ROOM_ID],
+      ['name', 'Direct message'],
+      ['community', COMMUNITY_ID],
+      ['t', 'buzz-dm'],
+    ]);
+    const workspaceCreate = unsignedEvent(9007, [
+      ['h', COMMUNITY_ID],
+      ['name', 'Product Engineering'],
+      ['community', COMMUNITY_ID],
+    ]);
+    const reader: RelayEventReader = {
+      query: async (filters) => {
+        if (!filters.some((filter) => (filter.kinds as number[]).includes(39000))) return [];
+        return JSON.stringify(filters).includes(COMMUNITY_ID) ? [workspaceCreate] : [roomCreate];
+      },
+      disconnect: () => undefined,
+    };
+
+    await expect(
+      new NotificationMetadataResolver().resolve(unsignedEvent(9, [['h', ROOM_ID]]), reader),
+    ).resolves.toMatchObject({ roomName: 'Direct message', isDirectMessage: true });
   });
 
   it('projects Room fixture tags into the final pre-FCM context', async () => {

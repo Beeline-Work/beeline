@@ -28,23 +28,26 @@ export function WritePermissionOutcome(props: {
   awaitingPerson?: boolean;
   onOpenCorner: (subchannelId: string) => void;
 }) {
+  if (props.status === 'allowed' && props.subchannelId) {
+    return (
+      <TouchableOpacity
+        accessibilityLabel={`Open ${CORNER_LABEL}`}
+        accessibilityRole="button"
+        onPress={() => props.onOpenCorner(props.subchannelId!)}
+        style={styles.cornerOpenChip}
+        testID="write-permission-open-corner"
+      >
+        <Text style={styles.cornerOpenState}>✓ {CORNER_LABEL.toUpperCase()} OPEN</Text>
+        <Text style={styles.cornerOpenAction}>VIEW ›</Text>
+      </TouchableOpacity>
+    );
+  }
+
   return (
     <View style={styles.outcome}>
       <Text style={styles.status}>
         {writePermissionStatusLabel(props.status, props.subchannelId, props.awaitingPerson)}
       </Text>
-      {props.status === 'allowed' && props.subchannelId && (
-        <TouchableOpacity
-          accessibilityLabel={`Open ${CORNER_LABEL}`}
-          accessibilityRole="button"
-          onPress={() => props.onOpenCorner(props.subchannelId!)}
-          style={styles.openCornerAction}
-          testID="write-permission-open-corner"
-        >
-          <Text style={styles.openCornerText}>OPEN {CORNER_LABEL.toUpperCase()}</Text>
-          <Text style={styles.openCornerGlyph}>›</Text>
-        </TouchableOpacity>
-      )}
     </View>
   );
 }
@@ -58,23 +61,28 @@ const styles = StyleSheet.create({
     lineHeight: 14,
     letterSpacing: 0.5,
   },
-  openCornerAction: {
-    minHeight: 38,
+  cornerOpenChip: {
     minWidth: 0,
+    minHeight: 40,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-end',
+    justifyContent: 'space-between',
     gap: 5,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     borderWidth: 1,
     borderColor: groknight.borderStrong,
     backgroundColor: groknight.bgBase,
   },
-  openCornerText: {
+  cornerOpenState: {
     ...Typography.mono('semiBold'),
     color: groknight.textPrimary,
     fontSize: 9,
     letterSpacing: 0.4,
   },
-  openCornerGlyph: { ...Typography.default(), color: groknight.textPrimary, fontSize: 18 },
+  cornerOpenAction: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textMuted,
+    fontSize: 9,
+    letterSpacing: 0.4,
+  },
 });

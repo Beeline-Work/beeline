@@ -8,6 +8,7 @@ export {
   isReadOnlyInformationRequest,
   isChannelWorkIntent,
   isChannelTaskRequest,
+  ReadOnlyToolsUnavailableError,
   readOnlyMcpServer,
   AGENT_REQUEST_TAG,
   AGENT_CANCEL_TAG,

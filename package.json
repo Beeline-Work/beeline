@@ -24,6 +24,7 @@
     "prove": "node --import tsx scripts/money-shot.ts",
     "install:beeline": "bash scripts/install-beeline.sh",
     "bundle:beeline": "node scripts/build-beeline-bundle.mjs",
+    "verify:beeline-install": "node scripts/verify-beeline-install.mjs",
     "mobile:install": "npm install --prefix apps/mobile",
     "mobile:web": "npm run web --prefix apps/mobile",
     "mobile:typecheck": "npm run typecheck --prefix apps/mobile"

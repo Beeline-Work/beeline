@@ -215,10 +215,17 @@ export interface BoundRepo {
   localOnly?: boolean;
 }
 
+/** A Room cannot safely start unless its fixed inspection MCP is available. */
+export class ReadOnlyToolsUnavailableError extends Error {
+  override readonly name = 'ReadOnlyToolsUnavailableError';
+}
+
 /** The only MCP mounted in a Room: a fixed, Beeline-owned inspection surface. */
 export function readOnlyMcpServer(config: BodyConfig, cwd: string): McpServerWire {
   if (!config.readonlyMcpCommand) {
-    throw new Error('read-only MCP command is required for Room sessions');
+    throw new ReadOnlyToolsUnavailableError(
+      'read-only tools unavailable: buzz-readonly-mcp is required for Room sessions',
+    );
   }
   return {
     name: READ_ONLY_MCP_SERVER_NAME,
@@ -768,42 +775,54 @@ export class Body {
     const existing = this.sessions.get(tlcChannelId);
     if (existing) {
       if (existing.mode === 'readonly') return existing;
-      // If there's a read-only session, we're good. If the existing is edit,
-      // we need a separate read-only session — but for now return it since
-      // edit implies read-only capabilities too.
-      return existing;
+      throw new ReadOnlyToolsUnavailableError(
+        'read-only tools unavailable: refusing to reuse an edit session for a Room',
+      );
     }
 
+    const readonlyCwd = boundRepo?.localPath ?? this.config.workspaceRoot;
+    // Resolve the server before any relay membership or session side effect.
+    // Missing read-only tools must never create a no-tool or edit-tool session.
+    const readonlyServer = readOnlyMcpServer(this.config, readonlyCwd);
     const agentId = this.agentIdentity;
     await this.ensureAgentInChannel(tlcChannelId, agentId);
     await this.ensureAgentEntity(tlcChannelId);
     const communityId = await this.channelCommunityId(tlcChannelId);
 
-    const readonlyCwd = boundRepo?.localPath ?? this.config.workspaceRoot;
     // The boundary remains the MCP mount: only Beeline's fixed inspection MCP
     // is present here; buzz-dev-mcp and native permissions remain unavailable.
-    const session = await this.createManagedSession({
-      channelId: tlcChannelId,
-      mode: 'readonly',
-      cwd: readonlyCwd,
-      mcpServers: [readOnlyMcpServer(this.config, readonlyCwd)],
-      systemPrompt: [
-        'You are a helpful coding assistant in a read-only conversation channel.',
-        'Use buzz-readonly-mcp to list, read, search, and inspect local git history when analysis needs repository evidence.',
-        'Those inspection tools are non-mutating and do not require human approval.',
-        'Never request native shell or execute permission for listing, reading, searching, or git-history inspection; use the read-only MCP tools instead.',
-        'You CANNOT create, edit, or delete files until the host grants a human-approved edit session.',
-        'An information-only request (analysis, explanation, summary, research, or a question) must be answered here and must never be escalated into editing.',
-        'When the user asks for a concrete file change, attempt the appropriate write/edit tool.',
-        'The host will turn that first mutating permission request into a human allow/deny prompt.',
-        'Never claim that work started until the host transitions you into an edit session.',
-      ].join('\n'),
-      // Read-only mode must reject native-agent permission escalation as well
-      // as omitting write MCP servers. Edit corners remain auto-approved below.
-      autoApprovePermissions: false,
-      permissionHandler: (permission) => this.handleRoomPermissionRequest(tlcChannelId, permission),
-      ...(communityId ? { communityId } : {}),
-    });
+    let session: AgentSession;
+    try {
+      session = await this.createManagedSession({
+        channelId: tlcChannelId,
+        mode: 'readonly',
+        cwd: readonlyCwd,
+        mcpServers: [readonlyServer],
+        systemPrompt: [
+          'You are a helpful coding assistant in a read-only conversation channel.',
+          'Use buzz-readonly-mcp to list, read, search, and inspect local git history when analysis needs repository evidence.',
+          'Those inspection tools are non-mutating and do not require human approval.',
+          'Never request native shell or execute permission for listing, reading, searching, or git-history inspection; use the read-only MCP tools instead.',
+          'You CANNOT create, edit, or delete files until the host grants a human-approved edit session.',
+          'An information-only request (analysis, explanation, summary, research, or a question) must be answered here and must never be escalated into editing.',
+          'When the user asks for a concrete file change, attempt the appropriate write/edit tool.',
+          'The host will turn that first mutating permission request into a human allow/deny prompt.',
+          'Never claim that work started until the host transitions you into an edit session.',
+        ].join('\n'),
+        // Read-only mode must reject native-agent permission escalation as well
+        // as omitting write MCP servers. Edit corners remain auto-approved below.
+        autoApprovePermissions: false,
+        permissionHandler: (permission) =>
+          this.handleRoomPermissionRequest(tlcChannelId, permission),
+        ...(communityId ? { communityId } : {}),
+      });
+    } catch (error) {
+      if (error instanceof ReadOnlyToolsUnavailableError) throw error;
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new ReadOnlyToolsUnavailableError(
+        `read-only tools unavailable: buzz-readonly-mcp could not start (${detail})`,
+      );
+    }
 
     this.sessions.set(tlcChannelId, session);
 
@@ -1080,10 +1099,25 @@ export class Body {
       return true;
     }
 
-    const session =
-      this.sessions.get(tlcChannelId) ?? (await this.provision(tlcChannelId, boundRepo));
-    if (session.mode !== 'readonly') {
-      throw new Error('Room conversation requires a read-only ACP session');
+    let session: AgentSession;
+    try {
+      session = this.sessions.get(tlcChannelId) ?? (await this.provision(tlcChannelId, boundRepo));
+      if (session.mode !== 'readonly') {
+        throw new ReadOnlyToolsUnavailableError(
+          'read-only tools unavailable: refusing to use an edit session for a Room conversation',
+        );
+      }
+    } catch (error) {
+      if (!(error instanceof ReadOnlyToolsUnavailableError)) throw error;
+      const reply =
+        'Read-only tools unavailable. I cannot safely inspect this repository until the Beeline read-only helper is restored.';
+      await postAgentMessage(tlcChannelId, this.agentIdentity, reply, request.eventId);
+      await this.durableState.appendConversation(tlcChannelId, {
+        role: 'agent',
+        text: reply,
+        at: new Date().toISOString(),
+      });
+      return false;
     }
     const turn: PendingRoomTurn = {
       request,

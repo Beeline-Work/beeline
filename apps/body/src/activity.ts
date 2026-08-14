@@ -26,18 +26,27 @@ export const ACTIVITY_TAG = 'agent-activity';
 export const AGENT_MESSAGE_TAG = 'agent-message';
 export const AGENT_TURN_TAG = 'agent-turn';
 
-const CODEX_SKILL_BUDGET_WARNING =
-  /^(?:⚠(?:️)?\s*)?warning:\s*skill descriptions (?:were|have been) shortened to fit the \d+(?:\.\d+)?% skills context budget\.\s*codex can still see every skill(?:\b|…)/i;
+const CODEX_HARNESS_NOTICE =
+  /^(?:⚠(?:️)?\s*)?(?:warning|notice):\s*(?:skill|tool|plugin) descriptions?\b.*\b(?:context budget|budget limit)\b/i;
+const CODEX_HARNESS_NOTICE_CONTINUATION =
+  /^(?:codex can still (?:see|access|read)|(?:use|open|read)\s+\S*skill\.md\b)/i;
 
 /** Remove only the known leading Codex startup warning, never mid-reply text. */
 export function stripAgentReplyPreamble(message: string): string {
   const lines = message.split(/\r?\n/);
   const firstContent = lines.findIndex((line) => line.trim().length > 0);
-  if (firstContent < 0 || !CODEX_SKILL_BUDGET_WARNING.test(lines[firstContent]!.trim())) {
+  if (firstContent < 0 || !CODEX_HARNESS_NOTICE.test(lines[firstContent]!.trim())) {
     return message;
   }
   let replyStart = firstContent + 1;
-  while (replyStart < lines.length && !lines[replyStart]!.trim()) replyStart++;
+  while (
+    replyStart < lines.length &&
+    (!lines[replyStart]!.trim() ||
+      CODEX_HARNESS_NOTICE_CONTINUATION.test(lines[replyStart]!.trim()) ||
+      CODEX_HARNESS_NOTICE.test(lines[replyStart]!.trim()))
+  ) {
+    replyStart++;
+  }
   return lines.slice(replyStart).join('\n');
 }
 
@@ -95,6 +104,7 @@ export async function postAgentMessage(
   message: string,
   replyTo?: string,
   attachments: readonly AttachmentReference[] = [],
+  extraTags: readonly string[][] = [],
 ): Promise<void> {
   const event: NostrEvent = signEvent(
     {
@@ -106,6 +116,7 @@ export async function postAgentMessage(
         ['t', AGENT_MESSAGE_TAG],
         ...(replyTo ? [['e', replyTo, '', 'reply']] : []),
         ...buildAttachmentTags(attachments),
+        ...extraTags,
       ],
       content: message,
     },

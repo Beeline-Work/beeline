@@ -44,7 +44,11 @@ describe('authenticated relay client', () => {
           pubkey: identity.publicKey,
           created_at: 1_700_000_000,
           kind: 9000,
-          tags: [['h', 'room'], ['p', identity.publicKey], ['role', 'member']],
+          tags: [
+            ['h', 'room'],
+            ['p', identity.publicKey],
+            ['role', 'member'],
+          ],
           content: '',
         },
         identity.secretKey,
@@ -67,6 +71,29 @@ describe('authenticated relay client', () => {
     );
 
     await expect(client.publishEvent(event)).rejects.toThrow('must match');
+  });
+
+  it('bounds and retries a timed-out query before succeeding', async () => {
+    const identity = newIdentity('query-retry-agent');
+    const client = createRelayClient(identity, {
+      baseUrl: 'https://relay.test',
+      host: 'relay.test',
+    });
+    const timeout = Object.assign(new TypeError('fetch failed'), {
+      cause: Object.assign(new Error('connect ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+    });
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(timeout)
+      .mockRejectedValueOnce(timeout)
+      .mockResolvedValueOnce(new Response('[]', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(client.queryEvents([{ kinds: [9], '#h': ['sumo-room'] }])).resolves.toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    for (const call of fetchMock.mock.calls) {
+      expect((call[1] as RequestInit).signal).toBeInstanceOf(AbortSignal);
+    }
   });
 });
 

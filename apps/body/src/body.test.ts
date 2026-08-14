@@ -24,6 +24,7 @@ import {
   isTransientPermissionPollError,
   humanAgentExchangeRequest,
   ReadOnlyToolsUnavailableError,
+  RoomPollBackoff,
   readOnlyMcpServer,
   roomEditPolicyInstructions,
   roomTurnPrompt,
@@ -436,6 +437,90 @@ describe('agent presence', () => {
     expect(statuses).toEqual(['online', 'online', 'offline']);
     expect(new Set(generations)).toEqual(new Set([stop.generationId]));
     vi.useRealTimers();
+  });
+
+  it('switches availability offline during a failed Room poll and back online on recovery', async () => {
+    const agent = newIdentity('recovery-presence-agent');
+    const statuses: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const event = JSON.parse(String(init?.body)) as NostrEvent;
+        statuses.push(event.tags.find((tag) => tag[0] === 'status')?.[1] ?? '');
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const presence = startAgentPresence('presence-room', agent, 60_000);
+    await presence.setStatus('offline');
+    await presence.setStatus('online');
+    await presence();
+
+    expect(statuses).toEqual(['online', 'offline', 'online', 'offline']);
+  });
+});
+
+describe('Room poll resilience', () => {
+  it('backs off one Room independently and resets immediately after a successful poll', () => {
+    const backoff = new RoomPollBackoff(1_000, 4_000);
+    expect(backoff.failed()).toBe(1_000);
+    expect(backoff.failed()).toBe(2_000);
+    expect(backoff.failed()).toBe(4_000);
+    expect(backoff.failed()).toBe(4_000);
+    expect(backoff.recovered()).toBe(true);
+    expect(backoff.failed()).toBe(1_000);
+  });
+
+  it('contains an ETIMEDOUT poll in its Room, backs off, and returns presence online on recovery', async () => {
+    const statuses: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const event = JSON.parse(String(init?.body)) as NostrEvent;
+        statuses.push(event.tags.find((tag) => tag[0] === 'status')?.[1] ?? '');
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const controller = new AbortController();
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: '/tmp/buzzy-poll-resilience',
+        relayBaseUrl: 'http://relay.test',
+        relayHost: 'relay.test',
+        relayScheme: 'http',
+        relayWsUrl: 'ws://relay.test',
+        autoApprovePermissions: true,
+      },
+      newIdentity('poll-operator'),
+      newIdentity('poll-agent'),
+    );
+    vi.spyOn(body, 'assertRepositorySafety').mockResolvedValue(undefined);
+    vi.spyOn(body, 'provision').mockResolvedValue({} as never);
+    vi.spyOn(body, 'restoreSubchannels').mockResolvedValue(undefined);
+    const timedOut = Object.assign(new TypeError('fetch failed'), {
+      cause: Object.assign(new Error('ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+    });
+    const poll = vi
+      .spyOn(body, 'pollChannelRequests')
+      .mockRejectedValueOnce(timedOut)
+      .mockImplementationOnce(async () => {
+        controller.abort();
+        return 0;
+      });
+
+    const loop = body.runRepositoryRoomLoop(
+      'workspace',
+      'sumo-room',
+      { repo: 'cherry', repositoryKey: 'cherry', localOnly: true },
+      { pollMs: 5, signal: controller.signal },
+    );
+    await loop;
+
+    expect(poll).toHaveBeenCalledTimes(2);
+    expect(statuses).toEqual(expect.arrayContaining(['online', 'offline', 'online']));
+    expect(statuses.at(-1)).toBe('offline');
   });
 });
 

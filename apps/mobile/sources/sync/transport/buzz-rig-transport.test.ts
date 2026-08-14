@@ -305,6 +305,7 @@ describe('Room-scoped Workspace membership', () => {
         'request-1',
         'agent-pubkey',
         'allow',
+        'lunchboxfortwo/buzzy',
       ),
     ).resolves.toBe('permission-event');
     expect(client.respondToWritePermission).toHaveBeenCalledWith(
@@ -313,6 +314,7 @@ describe('Room-scoped Workspace membership', () => {
       'request-1',
       'agent-pubkey',
       'allow',
+      'lunchboxfortwo/buzzy',
     );
   });
 

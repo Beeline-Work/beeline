@@ -45,7 +45,8 @@ async function performMessageRevalidation(
   channelId: string,
 ): Promise<MessageSyncResult> {
   const cached = getCachedChannel(viewerPubkey, channelId);
-  const warm = cached?.messages !== undefined && cached.cursor !== undefined;
+  const warm =
+    cached?.messages !== undefined && cached.cursor !== undefined && cached.backfilled === true;
   const fetchStartedAt = Math.floor(Date.now() / 1000);
   const events = await transport.sessionEventsBackfill(
     channelId,
@@ -59,7 +60,11 @@ async function performMessageRevalidation(
   // An empty Room is still warm after its first successful relay read. Keep one
   // overlap second so an event racing the HTTP query is picked up next time.
   const cursor = Math.max(cached?.cursor ?? 0, eventCursor || Math.max(0, fetchStartedAt - 1));
-  const latestMessage = latestRoomMessage(events) ?? undefined;
+  const fetchedLatestMessage = latestRoomMessage(events) ?? undefined;
+  const latestMessage =
+    cached?.latestMessage && (cached.latestEventAt ?? 0) >= eventCursor
+      ? cached.latestMessage
+      : fetchedLatestMessage;
   const latestEventAt = Math.max(cached?.latestEventAt ?? 0, eventCursor) || undefined;
   const store = useBuzzLocalCache.getState();
   if (warm) {
@@ -68,10 +73,16 @@ async function performMessageRevalidation(
       ...(latestEventAt ? { latestEventAt } : {}),
     });
   } else {
-    store.replaceMessages(viewerPubkey, channelId, projected.messages, cursor, {
-      ...(latestMessage ? { latestMessage } : {}),
-      ...(latestEventAt ? { latestEventAt } : {}),
-    });
+    store.replaceMessages(
+      viewerPubkey,
+      channelId,
+      upsertChatMessages(projected.messages, cached?.messages ?? []),
+      cursor,
+      {
+        ...(latestMessage ? { latestMessage } : {}),
+        ...(latestEventAt ? { latestEventAt } : {}),
+      },
+    );
   }
   if (projected.archiveChannel || projected.mergeTarget) {
     store.patchChannel(viewerPubkey, channelId, {

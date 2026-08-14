@@ -6,6 +6,7 @@
 import React, { useEffect, useState, useRef, useCallback, useLayoutEffect, useMemo } from 'react';
 import {
   Alert,
+  AppState,
   View,
   Text,
   Image,
@@ -35,7 +36,7 @@ import {
   type DirectMessage,
   type MergeTarget,
   type AttachmentReference,
-  isAgentPresenceOnline,
+  AGENT_PRESENCE_STALE_MS,
   personHandle,
 } from '@beeline/buzz-client';
 import {
@@ -79,9 +80,11 @@ import {
 } from '@/buzz/chat-attachment';
 import { isNearChatBottom } from '@/buzz/chat-scroll';
 import {
+  isAgentPresenceOnlineWithReconnectGrace,
   isAgentTurnActive,
   mergeAgentPresence,
   presenceMapFromSessionEvents,
+  reconnectPresenceAfterForeground,
   type RoomAgentPresence,
 } from '@/buzz/agent-presence';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
@@ -111,6 +114,7 @@ type RoomMemberOption = {
 const BODY_PUBKEYS = new Set<string>();
 const COMPOSER_MIN_HEIGHT = 40;
 const COMPOSER_MAX_HEIGHT = 120;
+const FOREGROUND_RECONNECT_SETTLE_MS = 750;
 
 function CornerActivity({ message, active }: { message: ChatDisplayMessage; active: boolean }) {
   const activity = message.activity?.length
@@ -221,8 +225,13 @@ export default function BuzzChat() {
   const [composerFocused, setComposerFocused] = useState(false);
   const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
   const [agentPresences, setAgentPresences] = useState<Record<string, RoomAgentPresence>>({});
+  const [presenceReconnectGrace, setPresenceReconnectGrace] = useState<Record<string, number>>({});
   const [presenceNow, setPresenceNow] = useState(Date.now());
   const [offlineQueuedIds, setOfflineQueuedIds] = useState<Set<string>>(new Set());
+  const agentPresencesRef = useRef(agentPresences);
+  const presenceReconnectGraceRef = useRef(presenceReconnectGrace);
+  agentPresencesRef.current = agentPresences;
+  presenceReconnectGraceRef.current = presenceReconnectGrace;
   const activeCacheViewer = useBuzzLocalCache((state) => state.activeViewerPubkey);
   const cacheViewerPubkey = userPubkey || activeCacheViewer || '';
   const channelCache = useBuzzLocalCache((state) =>
@@ -311,7 +320,11 @@ export default function BuzzChat() {
     [roomParticipants],
   );
   const onlineAgentCount = roomAgents.filter((agent) =>
-    isAgentPresenceOnline(agentPresences[agent.pubkey], presenceNow),
+    isAgentPresenceOnlineWithReconnectGrace(
+      agentPresences[agent.pubkey],
+      presenceNow,
+      presenceReconnectGrace[agent.pubkey],
+    ),
   ).length;
   const hasRoomAgent = roomAgents.length > 0;
   const agentsOffline = hasRoomAgent && onlineAgentCount === 0;
@@ -387,9 +400,10 @@ export default function BuzzChat() {
               message.agentTurn,
               agentPresences[message.agentTurn.agentPubkey],
               presenceNow,
+              presenceReconnectGrace[message.agentTurn.agentPubkey],
             ),
         ),
-    [agentPresences, messages, presenceNow],
+    [agentPresences, messages, presenceNow, presenceReconnectGrace],
   );
   const activeActivityId = useMemo(() => {
     if (!activeAgentTurn) return undefined;
@@ -404,7 +418,18 @@ export default function BuzzChat() {
 
   const applyAgentPresence = useCallback((presence: RoomAgentPresence | undefined) => {
     if (!presence) return;
-    setAgentPresences((current) => mergeAgentPresence(current, presence));
+    setAgentPresences((current) => {
+      const next = mergeAgentPresence(current, presence);
+      agentPresencesRef.current = next;
+      return next;
+    });
+    setPresenceReconnectGrace((current) => {
+      if (current[presence.agentPubkey] === undefined) return current;
+      const next = { ...current };
+      delete next[presence.agentPubkey];
+      presenceReconnectGraceRef.current = next;
+      return next;
+    });
     setPresenceNow(Date.now());
   }, []);
 
@@ -481,9 +506,14 @@ export default function BuzzChat() {
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
     let unsubscribePresence: (() => void) | undefined;
+    let appStateSubscription: ReturnType<typeof AppState.addEventListener> | undefined;
+    let foregroundReconnectGeneration = 0;
     hasPositionedInitialMessagesRef.current = false;
     followsLatestMessageRef.current = true;
+    agentPresencesRef.current = {};
+    presenceReconnectGraceRef.current = {};
     setAgentPresences({});
+    setPresenceReconnectGrace({});
 
     (async () => {
       try {
@@ -500,6 +530,41 @@ export default function BuzzChat() {
         setUserPubkey(identity.publicKey);
 
         const client = await t.ensureClient();
+        const handleLiveMessage = (event: Parameters<typeof cacheLiveSessionEvent>[2]) => {
+          if (cancelled) return;
+          const projected = cacheLiveSessionEvent(identity.publicKey, decodedId, event);
+          if (projected.mergeTarget) setMergeTarget(projected.mergeTarget);
+          if (projected.archiveChannel) {
+            setIsArchived(true);
+            setApprovalState('merged');
+          }
+          applyAgentPresence(projected.agentPresence);
+        };
+        const installLiveMessages = async () => {
+          const previousSubscription = unsubscribe;
+          unsubscribe = undefined;
+          previousSubscription?.();
+          try {
+            const stopLiveMessages = await t.sessionEventsSubscribeReady(
+              decodedId,
+              handleLiveMessage,
+            );
+            if (cancelled) {
+              stopLiveMessages();
+              return;
+            }
+            unsubscribe = stopLiveMessages;
+          } catch (error) {
+            console.warn(`Failed to establish live Room subscription for ${decodedId}:`, error);
+            if (!cancelled) unsubscribe = t.sessionEventsSubscribe(decodedId, handleLiveMessage);
+          }
+        };
+        // Install live delivery before taking the history snapshot. Stable ids
+        // dedupe overlap, while this ordering closes the push-visible gap between
+        // an HTTP backfill response and a later WebSocket subscription.
+        await installLiveMessages();
+        if (cancelled) return;
+
         // Self-listing repairs any missing direct Room projections left by an
         // interrupted or historical Workspace invite. Await it before backfill
         // so a notification deep-link cannot race into an empty transcript.
@@ -528,16 +593,47 @@ export default function BuzzChat() {
           directCommunityId ??
           (parentId ? await client.getChannelCommunityId(parentId) : null) ??
           null;
-        const presenceEvents = parentId
-          ? await t.agentPresenceBackfill(parentId)
-          : await t.agentPresenceBackfill(decodedId);
+        const presenceChannelId = parentId ?? decodedId;
+        const handleLivePresence = (event: Parameters<typeof projectChatEvent>[0]) => {
+          if (cancelled) return;
+          applyAgentPresence(projectChatEvent(event, identity.publicKey).agentPresence);
+        };
+        const installLivePresence = async () => {
+          const previousSubscription = unsubscribePresence;
+          unsubscribePresence = undefined;
+          previousSubscription?.();
+          try {
+            const stopLivePresence = await t.agentPresenceSubscribeReady(
+              presenceChannelId,
+              handleLivePresence,
+            );
+            if (cancelled) {
+              stopLivePresence();
+              return;
+            }
+            unsubscribePresence = stopLivePresence;
+          } catch (error) {
+            console.warn(
+              `Failed to establish live agent presence for ${presenceChannelId}:`,
+              error,
+            );
+            if (!cancelled) {
+              unsubscribePresence = t.agentPresenceSubscribe(presenceChannelId, handleLivePresence);
+            }
+          }
+        };
+        await installLivePresence();
+        if (cancelled) return;
+        const presenceEvents = await t.agentPresenceBackfill(presenceChannelId);
         if (!cancelled) {
           setCommunities(availableCommunities);
           setActiveCommunityId(channelCommunityId);
           setViewerIsAgent(identityIsAgent);
           setDirectMessage(dm);
           setRoomName(channelMetadata?.name?.trim() || ROOM_LABEL);
-          setAgentPresences(presenceMapFromSessionEvents(presenceEvents));
+          const initialPresences = presenceMapFromSessionEvents(presenceEvents);
+          agentPresencesRef.current = initialPresences;
+          setAgentPresences(initialPresences);
           setPresenceNow(Date.now());
           if (parentId) setParentChannelId(parentId);
           if (messageSync.mergeTarget) setMergeTarget(messageSync.mergeTarget);
@@ -558,21 +654,88 @@ export default function BuzzChat() {
           saveLastViewedChannel(identity.publicKey, channelCommunityId, decodedId),
         ]).catch(() => undefined);
 
-        // Subscribe as soon as the primary transcript is painted. The client
-        // performs its WebSocket handshake lazily and does not block this path.
-        unsubscribe = t.sessionEventsSubscribe(decodedId, (event) => {
-          if (cancelled) return;
-          const projected = cacheLiveSessionEvent(identity.publicKey, decodedId, event);
-          if (projected.mergeTarget) setMergeTarget(projected.mergeTarget);
-          if (projected.archiveChannel) {
-            setIsArchived(true);
-            setApprovalState('merged');
+        let lastAppState = AppState.currentState;
+        let onlineBeforeBackground = new Set<string>();
+        appStateSubscription = AppState.addEventListener('change', (nextAppState) => {
+          const previousAppState = lastAppState;
+          lastAppState = nextAppState;
+
+          if (nextAppState !== 'active') {
+            if (previousAppState === 'active') {
+              foregroundReconnectGeneration += 1;
+              const now = Date.now();
+              onlineBeforeBackground = new Set(
+                Object.entries(agentPresencesRef.current)
+                  .filter(([pubkey, presence]) =>
+                    isAgentPresenceOnlineWithReconnectGrace(
+                      presence,
+                      now,
+                      presenceReconnectGraceRef.current[pubkey],
+                    ),
+                  )
+                  .map(([pubkey]) => pubkey),
+              );
+              const backgroundGrace = Object.fromEntries(
+                [...onlineBeforeBackground].map((pubkey) => [pubkey, Number.MAX_SAFE_INTEGER]),
+              );
+              presenceReconnectGraceRef.current = backgroundGrace;
+              setPresenceReconnectGrace(backgroundGrace);
+            }
+            return;
           }
-          applyAgentPresence(projected.agentPresence);
-        });
-        unsubscribePresence = t.agentPresenceSubscribe(parentId ?? decodedId, (event) => {
-          if (cancelled) return;
-          applyAgentPresence(projectChatEvent(event, identity.publicKey).agentPresence);
+          if (previousAppState === 'active' || cancelled) return;
+
+          const reconnectGeneration = ++foregroundReconnectGeneration;
+          const now = Date.now();
+          const graceUntil = now + AGENT_PRESENCE_STALE_MS;
+          const foregroundGrace = Object.fromEntries(
+            [...onlineBeforeBackground].map((pubkey) => [pubkey, graceUntil]),
+          );
+          presenceReconnectGraceRef.current = foregroundGrace;
+          setPresenceReconnectGrace(foregroundGrace);
+          setPresenceNow(now);
+
+          void (async () => {
+            // Android can report AppState=active just before its network path
+            // has thawed. A socket opened in that sliver can authenticate and
+            // then die without a subscription error, so let the path settle
+            // while last-known-online grace keeps the header honest.
+            await new Promise((resolve) => setTimeout(resolve, FOREGROUND_RECONNECT_SETTLE_MS));
+            if (
+              cancelled ||
+              reconnectGeneration !== foregroundReconnectGeneration ||
+              AppState.currentState !== 'active'
+            ) {
+              return;
+            }
+            // React Native can leave a backgrounded socket looking OPEN even
+            // after the network path has died. Force one clean authenticated
+            // connection before reinstalling both Room subscriptions.
+            t.disconnect();
+            await installLiveMessages();
+            if (cancelled || reconnectGeneration !== foregroundReconnectGeneration) return;
+            void revalidateCachedMessages(t, identity.publicKey, decodedId).catch((error) => {
+              console.warn(`Failed to refresh messages after foregrounding ${decodedId}:`, error);
+            });
+            try {
+              const refreshedPresence = await reconnectPresenceAfterForeground(
+                installLivePresence,
+                () => t.agentPresenceBackfill(presenceChannelId),
+              );
+              if (cancelled || reconnectGeneration !== foregroundReconnectGeneration) return;
+              setAgentPresences((current) => {
+                const next = Object.values(refreshedPresence).reduce(mergeAgentPresence, current);
+                agentPresencesRef.current = next;
+                return next;
+              });
+              setPresenceNow(Date.now());
+            } catch (error) {
+              console.warn(
+                `Failed to refresh agent presence after foregrounding ${presenceChannelId}:`,
+                error,
+              );
+            }
+          })();
         });
 
         const [communityAgents, communityMembers, archived, mergeInfo] = await Promise.all([
@@ -626,6 +789,8 @@ export default function BuzzChat() {
 
     return () => {
       cancelled = true;
+      foregroundReconnectGeneration += 1;
+      appStateSubscription?.remove();
       if (unsubscribe) unsubscribe();
       if (unsubscribePresence) unsubscribePresence();
     };
@@ -1100,7 +1265,11 @@ export default function BuzzChat() {
           ? resolveAgentDisplayIdentity(item.corner.agentPubkey, cornerAgent)
           : undefined;
         const cornerOnline = item.corner.agentPubkey
-          ? isAgentPresenceOnline(agentPresences[item.corner.agentPubkey], presenceNow)
+          ? isAgentPresenceOnlineWithReconnectGrace(
+              agentPresences[item.corner.agentPubkey],
+              presenceNow,
+              presenceReconnectGrace[item.corner.agentPubkey],
+            )
           : false;
         const statusLabel =
           item.corner.status !== 'failed' && !cornerOnline
@@ -1272,6 +1441,7 @@ export default function BuzzChat() {
       viewerIsAgent,
       agentPresences,
       presenceNow,
+      presenceReconnectGrace,
       offlineQueuedIds,
     ],
   );
@@ -1416,10 +1586,7 @@ export default function BuzzChat() {
           data={visibleMessages}
           keyExtractor={(item: ChatDisplayMessage) => item.id}
           style={styles.messageList}
-          contentContainerStyle={[
-            styles.messageListContent,
-            { paddingBottom: 12 + keyboardHeight },
-          ]}
+          contentContainerStyle={styles.messageListContent}
           renderItem={renderItem}
           ListEmptyComponent={
             <View style={styles.emptyState}>
@@ -1760,7 +1927,15 @@ export default function BuzzChat() {
                           <View style={styles.rosterActions}>
                             <Text style={styles.rosterKind}>
                               {participant.kind === 'agent'
-                                ? `AGENT · ${isAgentPresenceOnline(agentPresences[participant.pubkey], presenceNow) ? 'ONLINE' : 'OFFLINE'}`
+                                ? `AGENT · ${
+                                    isAgentPresenceOnlineWithReconnectGrace(
+                                      agentPresences[participant.pubkey],
+                                      presenceNow,
+                                      presenceReconnectGrace[participant.pubkey],
+                                    )
+                                      ? 'ONLINE'
+                                      : 'OFFLINE'
+                                  }`
                                 : 'PERSON'}
                               {targetRole && targetRole !== 'member'
                                 ? ` · ${targetRole.toUpperCase()}`

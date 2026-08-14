@@ -6,7 +6,7 @@
  * The file provides `BUZZY_LLM_*` vars; we map those onto buzz-agent's
  * `OPENAI_COMPAT_*` names.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { HOST, SCHEME, BASE_URL } from '@beeline/gate';
 import { DEFAULT_RELAY_HOST, DEFAULT_RELAY_SCHEME } from '@beeline/buzz-client';
@@ -108,7 +108,19 @@ export function resolveReadonlyMcpCommand(env: NodeJS.ProcessEnv = process.env):
   command: string;
   args: string[];
 } {
-  const binary = env.BUZZ_READONLY_MCP_BIN ?? executableOnPath('buzz-readonly-mcp', env);
+  const configuredBinary = env.BUZZ_READONLY_MCP_BIN;
+  if (configuredBinary) {
+    try {
+      accessSync(configuredBinary, constants.X_OK);
+      return { command: resolve(configuredBinary), args: [] };
+    } catch {
+      throw new Error(
+        `read-only tools unavailable: BUZZ_READONLY_MCP_BIN is not executable: ${configuredBinary}`,
+      );
+    }
+  }
+
+  const binary = executableOnPath('buzz-readonly-mcp', env);
   if (binary) return { command: binary, args: [] };
 
   const script = env.BUZZ_READONLY_MCP_SCRIPT;
@@ -129,7 +141,7 @@ export function resolveReadonlyMcpCommand(env: NodeJS.ProcessEnv = process.env):
   if (source && tsx) return { command: tsx, args: [source] };
 
   throw new Error(
-    'buzz-readonly-mcp not found. Build @beeline/body or set BUZZ_READONLY_MCP_BIN / BUZZ_READONLY_MCP_SCRIPT',
+    'read-only tools unavailable: buzz-readonly-mcp was not found. Reinstall Beeline or set BUZZ_READONLY_MCP_BIN / BUZZ_READONLY_MCP_SCRIPT',
   );
 }
 

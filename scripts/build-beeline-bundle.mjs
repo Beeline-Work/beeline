@@ -225,6 +225,21 @@ async function main() {
   };
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
+  // Prove the just-written artifact installs and starts from a cwd with no
+  // checkout and no BUZZ_READONLY_MCP_* overrides. This keeps release bundles
+  // from drifting behind the read-only boundary implemented by Body.
+  if (platform === hostPlatform()) {
+    run(process.execPath, [
+      resolve(repoRoot, 'scripts', 'verify-beeline-install.mjs'),
+      '--platform',
+      platform,
+    ]);
+  } else {
+    console.log(
+      `build-beeline-bundle: skipping executable install probe for cross-platform ${platform}`,
+    );
+  }
+
   console.log(`build-beeline-bundle: ${archive}`);
   console.log(`build-beeline-bundle: sha256 ${digest}`);
 }

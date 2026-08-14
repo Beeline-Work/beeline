@@ -11,3 +11,26 @@ average vertical margin: exactly 1.26 times the previous margin.
 
 - `launcher-before.png`: current `main`, production versionCode 16.
 - `launcher-after.png`: this change, production versionCode 17.
+
+## Surface scoping
+
+The 26%-larger margin is a launcher treatment, not a logo treatment. The
+launcher source and Android adaptive/monochrome foregrounds retain it. Web
+favicon and Android splash sources render the untransformed continuous-line
+mark on their surface background; the Android notification icon renders the
+same untransformed mark transparently.
+
+The comparison boards use the exact generated source assets. Their left tiles
+represent the previously shared launcher-inset source, and their right tiles
+represent the corrected surface output:
+
+- `launcher-scope-before-after.png`: launcher inset is unchanged.
+- `splash-scope-before-after.png`: splash no longer inherits the launcher inset.
+- `favicon-scope-before-after.png`: favicon no longer inherits the launcher inset.
+
+API 36 final visual proof (production release APK/web export):
+
+- `on-device-launcher-api36.png`: installed launcher icon retains breathing room.
+- `on-device-splash-api36.png`: splash uses the larger, untransformed mark.
+- `web-favicon-production.png`: Chrome renders the production-exported favicon
+  as the full mark without the launcher treatment.

@@ -179,6 +179,27 @@ export async function queryEventBacklog(
   );
 }
 
+/** Bounded exponential spacing for one Room's failed request poll. */
+export class RoomPollBackoff {
+  private failures = 0;
+
+  constructor(
+    private readonly baseMs: number,
+    private readonly maxMs = 60_000,
+  ) {}
+
+  failed(): number {
+    this.failures++;
+    return Math.min(this.maxMs, this.baseMs * 2 ** (this.failures - 1));
+  }
+
+  recovered(): boolean {
+    const wasFailing = this.failures > 0;
+    this.failures = 0;
+    return wasFailing;
+  }
+}
+
 export interface SubchannelInfo {
   subchannelId: string;
   worktreePath: string;
@@ -666,6 +687,8 @@ export class Body {
   private presenceGenerations = new Map<string, string>();
   private activeExchangeReplies = new Set<string>();
   private resolveNamedRepository?: (target: NamedRepositoryTarget) => Promise<BoundRepo>;
+  private onRoomPollSuccess?: (channelId: string) => void;
+  private onRoomPresence?: (channelId: string, status: 'online' | 'offline') => void;
 
   constructor(
     config: BodyConfig,
@@ -676,6 +699,8 @@ export class Body {
       scheduler?: SessionScheduler;
       statePath?: string;
       resolveNamedRepository?: (target: NamedRepositoryTarget) => Promise<BoundRepo>;
+      onRoomPollSuccess?: (channelId: string) => void;
+      onRoomPresence?: (channelId: string, status: 'online' | 'offline') => void;
     } = {},
   ) {
     this.config = config;
@@ -696,6 +721,8 @@ export class Body {
       });
     this.ownsScheduler = !services.scheduler;
     this.resolveNamedRepository = services.resolveNamedRepository;
+    this.onRoomPollSuccess = services.onRoomPollSuccess;
+    this.onRoomPresence = services.onRoomPresence;
     this.durableState = new DurableBodyState(
       services.statePath ?? resolve(config.workspaceRoot, '.beeline-body-state.json'),
     );
@@ -708,6 +735,21 @@ export class Body {
 
   get agent(): Identity {
     return this.agentIdentity;
+  }
+
+  /**
+   * Break a Room out of a wedged ACP request so its supervisor can establish a
+   * clean session generation. This is deliberately lifecycle-only: it never
+   * changes Room membership, gate authority, or repository state.
+   */
+  async forceRecoverRoom(channelId: string): Promise<void> {
+    const affected = [...this.sessions.values()].filter(
+      (session) => session.channelId === channelId || session.parentChannelId === channelId,
+    );
+    for (const session of affected) session.client.sessionCancel(session.sessionId);
+    await Promise.allSettled(
+      affected.map((session) => this.scheduler.forceSuspend(session.channelId)),
+    );
   }
 
   /** Register a session for a channel (used by tests to add externally-created sessions). */
@@ -2688,21 +2730,32 @@ export class Body {
     boundRepo: BoundRepo,
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<void> {
-    const stopPresence = startAgentPresence(tlcChannelId, this.agentIdentity);
+    const stopPresence = startAgentPresence(tlcChannelId, this.agentIdentity, undefined, (status) =>
+      this.onRoomPresence?.(tlcChannelId, status),
+    );
     this.presenceGenerations.set(tlcChannelId, stopPresence.generationId);
     try {
       await this.assertRepositorySafety(tlcChannelId, boundRepo);
       await this.provision(tlcChannelId, boundRepo);
       if (boundRepo.repositoryKey) await this.restoreSubchannels(tlcChannelId, boundRepo);
       const pollMs = opts.pollMs ?? 1_000;
+      const backoff = new RoomPollBackoff(pollMs);
       while (!opts.signal?.aborted) {
-        await this.pollChannelRequests(tlcChannelId, boundRepo);
-        await Promise.all(
-          [...this.subchannels.keys()].map((subchannelId) => this.pollMembers(subchannelId)),
-        );
-        await this.pollDirectRemoteApprovals();
-        await this.pollMergeCompletions();
-        await this.waitForPoll(pollMs, opts.signal);
+        let delayMs = pollMs;
+        try {
+          await this.pollChannelRequests(tlcChannelId, boundRepo);
+          this.onRoomPollSuccess?.(tlcChannelId);
+          if (backoff.recovered()) await stopPresence.setStatus('online');
+        } catch (error) {
+          delayMs = backoff.failed();
+          await stopPresence.setStatus('offline');
+          console.error(
+            `[body] repository Room request poll failed; retrying in ${delayMs}ms:`,
+            error,
+          );
+        }
+        await this.pollRoomMaintenance(tlcChannelId);
+        await this.waitForPoll(delayMs, opts.signal);
       }
     } finally {
       this.presenceGenerations.delete(tlcChannelId);
@@ -2716,7 +2769,9 @@ export class Body {
     editPolicy: Exclude<RoomEditPolicy, 'repository'>,
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<void> {
-    const stopPresence = startAgentPresence(channelId, this.agentIdentity);
+    const stopPresence = startAgentPresence(channelId, this.agentIdentity, undefined, (status) =>
+      this.onRoomPresence?.(channelId, status),
+    );
     this.presenceGenerations.set(channelId, stopPresence.generationId);
     try {
       const pollMs = opts.pollMs ?? 3_000;
@@ -2724,18 +2779,23 @@ export class Body {
       // A DM must not revive historical borrowed-repository corners. A normal
       // repo-less Room may resume only its already-approved named-repo corners.
       if (editPolicy === 'named-repository') await this.restoreSubchannels(channelId);
+      const backoff = new RoomPollBackoff(pollMs);
       while (!opts.signal?.aborted) {
+        let delayMs = pollMs;
         try {
           await this.pollChannelRequests(channelId, undefined, editPolicy);
+          this.onRoomPollSuccess?.(channelId);
+          if (backoff.recovered()) await stopPresence.setStatus('online');
         } catch (error) {
-          console.error('[body] read-only Room request poll failed:', error);
+          delayMs = backoff.failed();
+          await stopPresence.setStatus('offline');
+          console.error(
+            `[body] read-only Room request poll failed; retrying in ${delayMs}ms:`,
+            error,
+          );
         }
-        await Promise.all(
-          [...this.subchannels.keys()].map((subchannelId) => this.pollMembers(subchannelId)),
-        );
-        await this.pollDirectRemoteApprovals();
-        await this.pollMergeCompletions();
-        await this.waitForPoll(pollMs, opts.signal);
+        await this.pollRoomMaintenance(channelId);
+        await this.waitForPoll(delayMs, opts.signal);
       }
     } finally {
       this.presenceGenerations.delete(channelId);
@@ -2751,7 +2811,9 @@ export class Body {
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<void> {
     if (!boundRepo.repositoryKey) throw new Error('paired Room is missing its repository key');
-    const stopPresence = startAgentPresence(channelId, this.agentIdentity);
+    const stopPresence = startAgentPresence(channelId, this.agentIdentity, undefined, (status) =>
+      this.onRoomPresence?.(channelId, status),
+    );
     this.presenceGenerations.set(channelId, stopPresence.generationId);
     try {
       await this.assertRepositorySafety(channelId, boundRepo);
@@ -2771,39 +2833,69 @@ export class Body {
       const pollMs = opts.pollMs ?? 3_000;
       await this.provision(channelId, boundRepo);
       await this.restoreSubchannels(channelId, boundRepo);
+      const backoff = new RoomPollBackoff(pollMs);
       while (!opts.signal?.aborted) {
         // The Workspace supervisor owns current-role discovery. It aborts this
         // loop when the Room disappears from the agent's member/admin projection,
         // then waits for accepted turns to drain before disposing the Body.
+        let delayMs = pollMs;
         try {
           await this.pollChannelRequests(channelId, boundRepo);
+          this.onRoomPollSuccess?.(channelId);
+          if (backoff.recovered()) await stopPresence.setStatus('online');
         } catch (error) {
-          console.error('[body] repository Room request poll failed:', error);
+          delayMs = backoff.failed();
+          await stopPresence.setStatus('offline');
+          console.error(
+            `[body] repository Room request poll failed; retrying in ${delayMs}ms:`,
+            error,
+          );
         }
-        await Promise.all(
-          [...this.subchannels.keys()].map((subchannelId) => this.pollMembers(subchannelId)),
-        );
-        if (mergeGate) {
-          try {
-            const attempts = await mergeGate.poll();
-            for (const attempt of attempts) {
-              console.log(
-                `[gate] ${attempt.outcome.merged ? 'LANDED' : attempt.outcome.reason} ` +
-                  `${attempt.candidate.featureBranch} approval=${attempt.approvalId}`,
-              );
-            }
-          } catch (error) {
-            console.error('[gate] Room merge poll failed; will retry:', error);
-          }
-        }
-        await this.pollDirectRemoteApprovals();
-        await this.pollMergeCompletions();
-        await this.waitForPoll(pollMs, opts.signal);
+        await this.pollRoomMaintenance(channelId, mergeGate);
+        await this.waitForPoll(delayMs, opts.signal);
       }
     } finally {
       this.presenceGenerations.delete(channelId);
       await stopPresence();
     }
+  }
+
+  /**
+   * Keep optional Room maintenance from terminating the request loop. A failed
+   * child poll or merge check is retried on this Room's next tick; it cannot
+   * dispose this Room or interfere with another Room's Body instance.
+   */
+  private async pollRoomMaintenance(
+    channelId: string,
+    mergeGate?: DurableMergeGate,
+  ): Promise<void> {
+    const guarded = async (label: string, run: () => Promise<unknown>) => {
+      try {
+        await run();
+      } catch (error) {
+        console.error(`[body] Room ${channelId} ${label} failed; will retry:`, error);
+      }
+    };
+    await guarded('corner member poll', async () => {
+      const results = await Promise.allSettled(
+        [...this.subchannels.keys()].map((subchannelId) => this.pollMembers(subchannelId)),
+      );
+      const failed = results.find((result) => result.status === 'rejected');
+      if (failed?.status === 'rejected') throw failed.reason;
+    });
+    if (mergeGate) {
+      await guarded('merge gate poll', async () => {
+        const attempts = await mergeGate.poll();
+        for (const attempt of attempts) {
+          console.log(
+            `[gate] ${attempt.outcome.merged ? 'LANDED' : attempt.outcome.reason} ` +
+              `${attempt.candidate.featureBranch} approval=${attempt.approvalId}`,
+          );
+        }
+      });
+    }
+    await guarded('direct merge approval poll', () => this.pollDirectRemoteApprovals());
+    await guarded('merge completion poll', () => this.pollMergeCompletions());
   }
 
   /**
@@ -3326,6 +3418,7 @@ export class Body {
   }
 
   private async waitForPoll(pollMs: number, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return;
     await new Promise<void>((resolveWait) => {
       const timer = setTimeout(resolveWait, pollMs);
       signal?.addEventListener(

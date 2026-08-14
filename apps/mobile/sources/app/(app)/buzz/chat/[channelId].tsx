@@ -388,6 +388,17 @@ export default function BuzzChat() {
     () => transcriptMessages(messages, isCorner),
     [isCorner, messages],
   );
+  const openedCornerIds = useMemo(
+    () =>
+      new Set(
+        messages.flatMap((message) =>
+          message.writePermission?.status === 'allowed' && message.writePermission.subchannelId
+            ? [message.writePermission.subchannelId]
+            : [],
+        ),
+      ),
+    [messages],
+  );
   const activeCorner = useMemo(
     () =>
       [...messages]
@@ -1256,6 +1267,17 @@ export default function BuzzChat() {
         const display = resolveAgentDisplayIdentity(permission.agentPubkey, permissionAgent);
         const pending = permission.status === 'pending';
         const busy = permissionActionId === permission.permissionId;
+        if (permission.status === 'allowed' && permission.subchannelId) {
+          return (
+            <WritePermissionOutcome
+              status={permission.status}
+              subchannelId={permission.subchannelId}
+              onOpenCorner={(subchannelId) =>
+                router.push(`/buzz/chat/${encodeURIComponent(subchannelId)}` as Href)
+              }
+            />
+          );
+        }
         return (
           <HullSurface
             strength="raised"
@@ -1327,6 +1349,7 @@ export default function BuzzChat() {
       }
 
       if (item.corner) {
+        if (openedCornerIds.has(item.corner.subchannelId)) return null;
         const cornerAgent = item.corner.agentPubkey
           ? agentByPubkey.get(item.corner.agentPubkey)
           : undefined;
@@ -1512,6 +1535,7 @@ export default function BuzzChat() {
       presenceNow,
       presenceReconnectGrace,
       offlineQueuedIds,
+      openedCornerIds,
     ],
   );
 

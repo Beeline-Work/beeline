@@ -4,6 +4,7 @@ import { router, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { clearBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { clearBuzzLocalCache } from '@/buzz/local-cache';
 import { groknight } from '@/buzz/groknight';
 import { HullSurface, PixelGateReveal } from '@/components/buzz/MonoHull';
 import { Typography } from '@/constants/Typography';
@@ -18,6 +19,7 @@ export default function BuzzSettings() {
       return;
     }
     await clearBuzzIdentity();
+    clearBuzzLocalCache();
     router.replace('/buzz/onboarding');
   }, [confirmForget]);
 

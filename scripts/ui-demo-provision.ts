@@ -265,6 +265,49 @@ async function main() {
     agent,
     sessionId,
     {
+      sessionUpdate: 'activity_batch',
+      updates: [
+        { sessionUpdate: 'tool_call_update', title: 'Tool', status: 'in_progress' },
+        {
+          sessionUpdate: 'tool_call_update',
+          title: 'Read /home/agent/work/apps/mobile/sources/buzz/rename.ts',
+          status: 'completed',
+        },
+        {
+          sessionUpdate: 'tool_call_update',
+          title: 'Read /home/agent/work/apps/mobile/sources/buzz/rename.test.ts',
+          status: 'completed',
+        },
+        {
+          sessionUpdate: 'tool_call_update',
+          title: 'grep "rename handler"',
+          status: 'completed',
+          content: { type: 'text', text: '12 matches under /home/agent/work/apps/mobile' },
+        },
+        {
+          sessionUpdate: 'tool_call_update',
+          title: 'bash: git status',
+          status: 'completed',
+          content: { type: 'text', text: 'On branch feature/demo' },
+        },
+        {
+          sessionUpdate: 'tool_call_update',
+          title: 'Code search',
+          status: 'failed',
+          content: {
+            type: 'text',
+            text: 'Code search unavailable at /home/agent/.codegraph/index.db',
+          },
+        },
+      ],
+    },
+    activityStart + activityOffset++,
+  );
+  await postActivityFixture(
+    subchannelId,
+    agent,
+    sessionId,
+    {
       sessionUpdate: 'agent_thought_chunk',
       content: { type: 'text', text: '**Verifying whitespace preservation**' },
     },
@@ -411,6 +454,23 @@ async function main() {
     owner.secretKey,
   );
   await publishEvent(parentLink, owner);
+  await postFixtureEvent(
+    parentChannelId,
+    agent,
+    'Editing allowed. The agent is working in an isolated corner.',
+    [
+      ['t', 'body-control'],
+      ['t', 'buzz-write-permission-request'],
+      ['permission', `${RUN_MARKER}-permission`],
+      ['request', `${RUN_MARKER}-human-request`],
+      ['agent', agent.publicKey],
+      ['tool', 'str_replace apps/mobile/sources/buzz/rename.ts'],
+      ['repo', repoId],
+      ['status', 'allowed'],
+      ['subchannel', subchannelId],
+    ],
+    Math.floor(Date.now() / 1000) + 1,
+  );
   log('Parent link message posted');
 
   // Extra lifecycle fixtures keep the nested navigation compact while making

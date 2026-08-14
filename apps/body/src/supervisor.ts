@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -5,6 +6,7 @@ import { createBuzzClient, type RepositoryBinding } from '@beeline/buzz-client';
 import { gitAuthed, gitWithUserCredentials, type Identity } from '@beeline/gate';
 import { Body, type BoundRepo } from './body.js';
 import type { BodyConfig } from './config.js';
+import type { NamedRepositoryTarget } from './repository-target.js';
 import {
   inspectLocalRepository,
   runtimeIdentity,
@@ -23,17 +25,8 @@ interface RunningRoom {
 
 interface DesiredChannel {
   membershipSince: number;
-  /** DMs borrow the paired runtime's primary repository context. */
+  kind: 'repository' | 'named-repository' | 'direct-message';
   repositoryRoom?: RoomRuntimeRecord;
-}
-
-/** A Workspace DM has no repository tag; the paired agent's oldest Room is its context. */
-export function directMessageRepositoryRoom(
-  runtime: Pick<AgentRuntimeRecord, 'rooms'>,
-): RoomRuntimeRecord | undefined {
-  return [...runtime.rooms].sort(
-    (a, b) => a.membershipSince - b.membershipSince || a.channelId.localeCompare(b.channelId),
-  )[0];
 }
 
 function relayRepoFromBinding(
@@ -78,6 +71,7 @@ export class WorkspaceSupervisor {
   private readonly agent: Identity;
   private readonly running = new Map<string, RunningRoom>();
   private readonly scheduler: SessionScheduler;
+  private readonly namedRepositoryResolutions = new Map<string, Promise<BoundRepo>>();
 
   constructor(runtime: AgentRuntimeRecord, configPath: string, baseConfig: BodyConfig) {
     this.runtime = runtime;
@@ -157,27 +151,29 @@ export class WorkspaceSupervisor {
         if (knownRoom) {
           desired.set(channelId, {
             membershipSince: membership.event.created_at,
+            kind: 'repository',
             repositoryRoom: knownRoom,
           });
           continue;
         }
         if ((await client.getChannelCommunityId(channelId)) !== this.runtime.communityId) continue;
+        if (channelId === this.runtime.communityId) continue;
         if (await client.getParentChannelId(channelId)) continue;
         const binding = await client.getChannelRepositoryBinding(channelId);
         if (binding) {
-          desired.set(channelId, { membershipSince: membership.event.created_at });
+          desired.set(channelId, {
+            membershipSince: membership.event.created_at,
+            kind: 'repository',
+          });
           continue;
         }
         const dm = await client.getDirectMessage(channelId);
-        if (!dm || !dm.participants.includes(this.agent.publicKey)) continue;
-        const repositoryRoom = directMessageRepositoryRoom(this.runtime);
-        if (!repositoryRoom) {
-          console.error(`[supervisor] DM ${channelId} has no paired repository context`);
-          continue;
-        }
         desired.set(channelId, {
           membershipSince: membership.event.created_at,
-          repositoryRoom,
+          kind:
+            dm && dm.participants.includes(this.agent.publicKey)
+              ? 'direct-message'
+              : 'named-repository',
         });
       }
 
@@ -190,18 +186,22 @@ export class WorkspaceSupervisor {
 
       for (const [channelId, target] of desired) {
         if (this.running.has(channelId)) continue;
-        let room = this.runtime.rooms.find((candidate) => candidate.channelId === channelId);
-        if (!room) {
-          const binding = await client.getChannelRepositoryBinding(channelId);
-          if (binding) {
-            room = await this.materializeRoom(channelId, target.membershipSince, binding);
-            this.runtime.rooms.push(room);
-            await writeRuntimeRecord(this.runtime);
-          } else {
-            room = target.repositoryRoom;
+        if (target.kind === 'repository') {
+          let room = this.runtime.rooms.find((candidate) => candidate.channelId === channelId);
+          if (!room) {
+            const binding = await client.getChannelRepositoryBinding(channelId);
+            if (binding) {
+              room = await this.materializeRoom(channelId, target.membershipSince, binding);
+              this.runtime.rooms.push(room);
+              await writeRuntimeRecord(this.runtime);
+            } else {
+              room = target.repositoryRoom;
+            }
           }
+          if (room) this.startRepositoryRoom(room, channelId);
+        } else {
+          this.startConversationRoom(channelId, target.kind);
         }
-        if (room) this.startRoom(room, channelId);
       }
       return true;
     } finally {
@@ -209,7 +209,7 @@ export class WorkspaceSupervisor {
     }
   }
 
-  private startRoom(room: RoomRuntimeRecord, channelId = room.channelId): void {
+  private startRepositoryRoom(room: RoomRuntimeRecord, channelId = room.channelId): void {
     const controller = new AbortController();
     const workspaceRoot = resolve(dirname(this.configPath), 'rooms', channelId);
     const config: BodyConfig = { ...this.baseConfig, workspaceRoot };
@@ -221,6 +221,7 @@ export class WorkspaceSupervisor {
       {
         scheduler: this.scheduler,
         statePath: resolve(workspaceRoot, 'body-state.json'),
+        resolveNamedRepository: (target) => this.resolveNamedRepository(target),
       },
     );
     const promise = body
@@ -238,6 +239,102 @@ export class WorkspaceSupervisor {
       });
     this.running.set(channelId, { body, controller, promise });
     console.log(`[supervisor] serving Room ${channelId} from ${room.repo.root}`);
+  }
+
+  private startConversationRoom(
+    channelId: string,
+    kind: 'named-repository' | 'direct-message',
+  ): void {
+    const controller = new AbortController();
+    const workspaceRoot = resolve(dirname(this.configPath), 'rooms', channelId);
+    const config: BodyConfig = { ...this.baseConfig, workspaceRoot };
+    const body = new Body(config, runtimeIdentity(this.runtime.body), this.agent, undefined, {
+      scheduler: this.scheduler,
+      statePath: resolve(workspaceRoot, 'body-state.json'),
+      resolveNamedRepository: (target) => this.resolveNamedRepository(target),
+    });
+    const promise = body
+      .runConversationRoomLoop(channelId, kind, { signal: controller.signal })
+      .catch((error) => {
+        if (!controller.signal.aborted) {
+          console.error(`[supervisor] Room ${channelId} quarantined:`, error);
+        }
+      })
+      .finally(async () => {
+        await body.dispose();
+        if (this.running.get(channelId)?.body === body) this.running.delete(channelId);
+      });
+    this.running.set(channelId, { body, controller, promise });
+    console.log(
+      `[supervisor] serving ${kind === 'direct-message' ? 'read-only DM' : 'repo-less Room'} ${channelId}`,
+    );
+  }
+
+  private resolveNamedRepository(target: NamedRepositoryTarget): Promise<BoundRepo> {
+    const existing = this.namedRepositoryResolutions.get(target.id);
+    if (existing) return existing;
+    const resolution = this.materializeNamedRepository(target).finally(() => {
+      if (this.namedRepositoryResolutions.get(target.id) === resolution) {
+        this.namedRepositoryResolutions.delete(target.id);
+      }
+    });
+    this.namedRepositoryResolutions.set(target.id, resolution);
+    return resolution;
+  }
+
+  private async materializeNamedRepository(target: NamedRepositoryTarget): Promise<BoundRepo> {
+    const repositories = resolve(dirname(this.configPath), 'repositories');
+    const key = createHash('sha256')
+      .update(`${target.kind}:${target.relayOwnerHex ?? target.owner}/${target.repo}`)
+      .digest('hex');
+    const root = resolve(repositories, `named-${key}`);
+    await mkdir(repositories, { recursive: true, mode: 0o700 });
+    if (!existsSync(root)) {
+      const result = target.relayOwnerHex
+        ? gitAuthed(repositories, this.agent, target.relayOwnerHex, target.repo, [
+            'clone',
+            `${this.runtime.relayBaseUrl}/git/${target.relayOwnerHex}/${target.repo}`,
+            root,
+          ])
+        : gitWithUserCredentials(repositories, [
+            'clone',
+            `https://github.com/${target.owner}/${target.repo}.git`,
+            root,
+          ]);
+      if (!result.ok) {
+        console.error(
+          `[supervisor] named repository clone failed for ${target.id}:`,
+          result.stderr,
+        );
+        throw new Error(
+          `repository ${target.id} could not be cloned or accessed with the available credentials`,
+        );
+      }
+    }
+
+    let local: LocalRepositoryBinding;
+    try {
+      local = inspectLocalRepository(root);
+    } catch (error) {
+      console.error(`[supervisor] named repository inspection failed for ${target.id}:`, error);
+      throw new Error(`repository ${target.id} could not be verified after cloning`);
+    }
+    const matchesTarget = target.relayOwnerHex
+      ? local.relayRepo?.ownerHex === target.relayOwnerHex && local.relayRepo.repo === target.repo
+      : local.repository.remote === `git://github.com/${target.owner}/${target.repo}`;
+    if (!matchesTarget) {
+      throw new Error(`repository clone did not match the approved target ${target.id}`);
+    }
+    return {
+      repo: target.repo,
+      ...(target.relayOwnerHex ? { ownerHex: target.relayOwnerHex } : {}),
+      targetBranch: `refs/heads/${local.targetBranch}`,
+      localPath: local.root,
+      ...(local.remoteName ? { remoteName: local.remoteName } : {}),
+      repositoryKey: local.repository.key,
+      localOnly: false,
+      repositoryId: target.id,
+    };
   }
 
   private async materializeRoom(

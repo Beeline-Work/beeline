@@ -24,15 +24,20 @@ describe('Agent write permission', () => {
       'request-id',
       'b'.repeat(64),
       'allow',
+      'lunchboxfortwo/buzzy',
     );
 
-    expect(published).toMatchObject({ kind: 9, content: 'Allowed editing.' });
+    expect(published).toMatchObject({
+      kind: 9,
+      content: 'Allowed editing on lunchboxfortwo/buzzy.',
+    });
     expect(published!.tags).toContainEqual(['h', 'room-id']);
     expect(published!.tags).toContainEqual(['p', 'b'.repeat(64)]);
     expect(published!.tags).toContainEqual(['t', 'buzz-write-permission-response']);
     expect(published!.tags).toContainEqual(['permission', 'permission-id']);
     expect(published!.tags).toContainEqual(['request', 'request-id']);
     expect(published!.tags).toContainEqual(['decision', 'allow']);
+    expect(published!.tags).toContainEqual(['repo', 'lunchboxfortwo/buzzy']);
   });
 });
 

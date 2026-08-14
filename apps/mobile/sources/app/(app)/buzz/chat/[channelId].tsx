@@ -777,7 +777,14 @@ export default function BuzzChat() {
   const handleWritePermission = useCallback(
     async (message: ChatDisplayMessage, decision: 'allow' | 'deny') => {
       const permission = message.writePermission;
-      if (!transport || !permission || permission.status !== 'pending' || viewerIsAgent) return;
+      if (
+        !transport ||
+        !permission ||
+        !permission.repository ||
+        permission.status !== 'pending' ||
+        viewerIsAgent
+      )
+        return;
       setPermissionActionId(permission.permissionId);
       try {
         await transport.respondToWritePermission(
@@ -786,6 +793,7 @@ export default function BuzzChat() {
           permission.requestId,
           permission.agentPubkey,
           decision,
+          permission.repository,
         );
         useBuzzLocalCache.getState().updateMessages(cacheViewerPubkey, decodedId, (current) =>
           current.map((item) =>
@@ -1030,18 +1038,29 @@ export default function BuzzChat() {
               />
               <View style={styles.writePermissionCopy}>
                 <Text style={styles.writePermissionTitle}>
-                  {display.name} needs to change repository files
+                  {permission.repository
+                    ? `${display.name} requests a new edit corner`
+                    : `${display.name} needs to change repository files`}
                 </Text>
                 <Text style={styles.writePermissionTool} numberOfLines={2}>
                   WRITE REQUEST · {permission.tool}
                 </Text>
               </View>
             </View>
+            {permission.repository && (
+              <Text style={styles.writePermissionRepository} testID="write-permission-repository">
+                EDIT CORNER ON {permission.repository}
+              </Text>
+            )}
             <Text style={styles.writePermissionBoundary}>
-              The write is refused in this read-only Room. Allowing opens an isolated corner and
-              worktree; merge authority stays human-only.
+              {permission.repository
+                ? `The write is refused here. Allowing grants isolated edit access to exactly ${permission.repository}; merge authority stays human-only.`
+                : 'This write request is missing its repository target and cannot be allowed.'}
             </Text>
-            {pending && !viewerIsAgent ? (
+            {permission.status === 'failed' && (
+              <Text style={styles.writePermissionFailure}>{item.text}</Text>
+            )}
+            {pending && !viewerIsAgent && permission.repository ? (
               <View style={styles.writePermissionActions}>
                 <MonoButton
                   label="Deny"
@@ -1057,6 +1076,8 @@ export default function BuzzChat() {
                   style={styles.writePermissionButton}
                 />
               </View>
+            ) : pending && !viewerIsAgent ? (
+              <Text style={styles.writePermissionStatus}>MISSING TARGET · CANNOT APPROVE</Text>
             ) : (
               <WritePermissionOutcome
                 status={permission.status}
@@ -2829,11 +2850,24 @@ const styles = StyleSheet.create({
     letterSpacing: 0.4,
     marginTop: 2,
   },
+  writePermissionRepository: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 11,
+    lineHeight: 16,
+    letterSpacing: 0.35,
+  },
   writePermissionBoundary: {
     ...Typography.default(),
     color: groknight.textSecondary,
     fontSize: 12,
     lineHeight: 17,
+  },
+  writePermissionFailure: {
+    ...Typography.mono(),
+    color: groknight.textSecondary,
+    fontSize: 10,
+    lineHeight: 15,
   },
   writePermissionActions: { flexDirection: 'row', gap: 8 },
   writePermissionButton: { flex: 1, minWidth: 0 },

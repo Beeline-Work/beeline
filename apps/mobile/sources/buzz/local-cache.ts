@@ -67,6 +67,8 @@ export type ChannelCacheEntry = {
   channelId: string;
   messages?: ChatDisplayMessage[];
   cursor?: number;
+  /** True only after a complete initial history read, not merely a live event. */
+  backfilled?: boolean;
   latestMessage?: string;
   latestEventAt?: number;
   roomMembers?: ChannelMember[];
@@ -197,6 +199,31 @@ function boundedMessages(messages: ChatDisplayMessage[]): ChatDisplayMessage[] {
   return messages.slice(-MAX_CACHED_MESSAGES_PER_CHANNEL);
 }
 
+/** Keep warm previews and Room enrichment while fresh structural basics load. */
+export function mergeChannelBasicsWithCache(
+  basics: ChannelDisplayItem[],
+  cached: ChannelDisplayItem[] = [],
+): ChannelDisplayItem[] {
+  const cachedById = new Map(cached.map((channel) => [channel.id, channel]));
+  return basics.map((channel) => {
+    const existing = cachedById.get(channel.id);
+    if (!existing) return channel;
+    const updatedAt = Math.max(
+      channel.updatedAt ?? channel.createdAt ?? 0,
+      existing.updatedAt ?? existing.createdAt ?? 0,
+    );
+    return {
+      ...channel,
+      ...(existing.corners !== undefined ? { corners: existing.corners } : {}),
+      ...(existing.latestMessage !== undefined ? { latestMessage: existing.latestMessage } : {}),
+      ...(existing.participantCount !== undefined
+        ? { participantCount: existing.participantCount }
+        : {}),
+      ...(updatedAt > 0 ? { updatedAt } : {}),
+    };
+  });
+}
+
 function updateListSummaries(
   lists: Record<string, ChannelListCacheEntry>,
   viewerPubkey: string,
@@ -292,6 +319,7 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
               ...summary,
               messages: boundedMessages(messages),
               cursor,
+              backfilled: true,
               updatedAt: now,
               lastAccessedAt: now,
             },

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { loadBodyConfig } from './config.js';
+import { loadBodyConfig, resolveReadonlyMcpCommand } from './config.js';
 
 const binaryEnv = {
   BUZZ_AGENT_BIN: process.execPath,
@@ -44,5 +44,16 @@ describe('loadBodyConfig relay resolution', () => {
     });
 
     expect(config.relayWsUrl).toBe('ws://legacy-ws.test');
+  });
+});
+
+describe('resolveReadonlyMcpCommand', () => {
+  it('fails clearly when an explicit helper path is not executable', () => {
+    expect(() =>
+      resolveReadonlyMcpCommand({
+        PATH: '',
+        BUZZ_READONLY_MCP_BIN: '/definitely/missing/buzz-readonly-mcp',
+      }),
+    ).toThrow('read-only tools unavailable');
   });
 });

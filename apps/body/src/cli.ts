@@ -207,6 +207,15 @@ async function main(): Promise<void> {
   const workspaceRoot = process.env.BUZZY_BODY_WORKSPACE ?? './body-workspace';
   const agentPrivateKey = process.env.BUZZ_AGENT_KEY ?? process.env.BUZZ_PRIVATE_KEY;
 
+  if (command === '--version' || command === 'version') {
+    const config = loadBodyConfig({ workspaceRoot, llmEnvFile });
+    console.log('beeline 0.0.0');
+    console.log(`[body] agent binary: ${config.agentCommand ?? config.agentBinary}`);
+    console.log(`[body] mcp binary: ${config.mcpBinary}`);
+    console.log(`[body] read-only mcp: ${config.readonlyMcpCommand}`);
+    return;
+  }
+
   if (command === 'daemon') {
     const configFlag = args.indexOf('--config');
     const configPath = configFlag >= 0 ? args[configFlag + 1] : undefined;

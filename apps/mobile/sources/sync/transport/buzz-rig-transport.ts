@@ -181,6 +181,7 @@ export class BuzzRigTransport implements RigTransport {
     requestId: string,
     agentPubkey: string,
     decision: WritePermissionDecision,
+    repository: string,
   ): Promise<string> {
     const client = await this.getClient();
     const event = await client.respondToWritePermission(
@@ -189,6 +190,7 @@ export class BuzzRigTransport implements RigTransport {
       requestId,
       agentPubkey,
       decision,
+      repository,
     );
     return event.id;
   }

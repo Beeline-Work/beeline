@@ -370,6 +370,7 @@ describe('Buzz Room screen event projection', () => {
         ['request', 'human-request'],
         ['agent', agent],
         ['tool', 'str_replace README.md'],
+        ['repo', 'lunchboxfortwo/buzzy'],
         ['status', 'pending'],
       ],
       7,
@@ -383,6 +384,7 @@ describe('Buzz Room screen event projection', () => {
         ['request', 'human-request'],
         ['p', agent],
         ['decision', 'allow'],
+        ['repo', 'lunchboxfortwo/buzzy'],
       ],
       8,
     );
@@ -396,6 +398,7 @@ describe('Buzz Room screen event projection', () => {
         ['request', 'human-request'],
         ['agent', agent],
         ['tool', 'str_replace README.md'],
+        ['repo', 'lunchboxfortwo/buzzy'],
         ['status', 'allowed'],
         ['subchannel', cornerId],
       ],
@@ -410,6 +413,7 @@ describe('Buzz Room screen event projection', () => {
         requestId: 'human-request',
         agentPubkey: agent,
         tool: 'str_replace README.md',
+        repository: 'lunchboxfortwo/buzzy',
         status: 'pending',
       },
     });
@@ -419,6 +423,7 @@ describe('Buzz Room screen event projection', () => {
         id: `write-permission-${permissionId}`,
         writePermission: {
           tool: 'str_replace README.md',
+          repository: 'lunchboxfortwo/buzzy',
           status: 'allowed',
           subchannelId: cornerId,
         },

@@ -71,6 +71,8 @@ const monoStyles = new Set([
   'cornerStatusLabel',
   'openCornerText',
   'writePermissionTool',
+  'writePermissionRepository',
+  'writePermissionFailure',
   'writePermissionStatus',
   'activityGlyph',
   'activityTitle',

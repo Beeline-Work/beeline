@@ -82,6 +82,13 @@ import {
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import type { BodyConfig } from './config.js';
 import { DurableBodyState } from './durable-state.js';
+import {
+  NAMED_REPOSITORY_PERMISSION_COMMAND,
+  namedRepositoryTargetFromPermission,
+  namedRepositoryTargetFromRoomRequest,
+  parseNamedRepositoryTarget,
+  type NamedRepositoryTarget,
+} from './repository-target.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import { appendPersonaSessionInstructions } from './persona-instructions.js';
 import {
@@ -223,7 +230,11 @@ export interface BoundRepo {
   remoteName?: string;
   repositoryKey?: string;
   localOnly?: boolean;
+  /** Exact owner/repo identity shown on permission, corner, and merge events. */
+  repositoryId?: string;
 }
+
+export type RoomEditPolicy = 'repository' | 'named-repository' | 'direct-message';
 
 /** A Room cannot safely start unless its fixed inspection MCP is available. */
 export class ReadOnlyToolsUnavailableError extends Error {
@@ -245,6 +256,31 @@ export function readOnlyMcpServer(config: BodyConfig, cwd: string): McpServerWir
   };
 }
 
+export function roomEditPolicyInstructions(policy: RoomEditPolicy): string[] {
+  if (policy === 'direct-message') {
+    return [
+      'This direct message is strictly read-only and can never open an edit corner.',
+      'If asked to change code, explain that editing must be requested from a Room instead.',
+      'Never request native shell, file mutation, or edit permission in this direct message.',
+    ];
+  }
+  if (policy === 'named-repository') {
+    return [
+      'This Room has no repository assigned. Never guess or silently select one.',
+      'For a concrete code change, first identify the exact owner/repo target.',
+      `Request its edit corner by attempting this exact native command: ${NAMED_REPOSITORY_PERMISSION_COMMAND} --repo owner/repo`,
+      'Replace owner/repo with the repository you name. Do not use a clone URL or append .git.',
+      'The host will reject that command itself and project a human allow/deny prompt bound to the exact repository.',
+      'If no exact repository is known, ask for one and remain read-only.',
+    ];
+  }
+  return [
+    'When the user asks for a concrete file change, attempt the appropriate write/edit tool.',
+    'The host will turn that first mutating permission request into a human allow/deny prompt.',
+    'Never claim that work started until the host transitions you into an edit session.',
+  ];
+}
+
 export interface ChannelTaskRequest {
   eventId: string;
   authorPubkey: string;
@@ -256,11 +292,14 @@ export interface ChannelTaskRequest {
 
 interface PendingRoomTurn {
   request: ChannelTaskRequest;
-  boundRepo: BoundRepo;
+  boundRepo?: BoundRepo;
+  editPolicy: RoomEditPolicy;
   permissionHandled: boolean;
   transitionedToCorner: boolean;
   /** Information-only turns can never be escalated into editing by the agent. */
   readOnlyInformationRequest: boolean;
+  /** Exact target written in this turn; absent stays fail-closed. */
+  namedRepositoryTarget?: NamedRepositoryTarget;
 }
 
 /** @deprecated Explicit Start-work events are ordinary Room messages now. */
@@ -315,24 +354,59 @@ export function roomTurnPrompt(
  * repository change. This is a safety classification, not an LLM hint: once a
  * turn matches, a mutating ACP request is rejected without projecting ALLOW.
  */
-export function isReadOnlyInformationRequest(content: string): boolean {
-  const normalized = content
+const REQUEST_LEAD = String.raw`(?:(?:please|kindly)\s+|(?:can|could|would|will)\s+you\s+|i\s+(?:want|need)\s+you\s+to\s+|i(?:['’]d| would)\s+like\s+you\s+to\s+)?`;
+const REPOSITORY_MUTATION_VERB = String.raw`(?:add|append|apply|archive|build|checkout|commit|create|delete|edit|fix|implement|install|land|make|merge|modify|move|push|refactor|remove|rename|replace|rewrite|start\s+(?:a\s+)?server|update|write)`;
+
+function normalizeRoomRequest(content: string): string {
+  return content
     .normalize('NFKC')
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/^@[\p{L}\p{N}_-]+[,:]?\s+/u, '');
-  const requestLead = String.raw`(?:(?:please|kindly)\s+|(?:can|could|would|will)\s+you\s+|i\s+(?:want|need)\s+you\s+to\s+|i(?:['’]d| would)\s+like\s+you\s+to\s+)?`;
-  const mutationVerb = String.raw`(?:add|apply|archive|build|checkout|commit|create|delete|edit|fix|implement|install|land|make|merge|modify|move|push|refactor|remove|rename|replace|rewrite|start\s+(?:a\s+)?server|update|write)`;
-  if (new RegExp(String.raw`^${requestLead}${mutationVerb}\b`, 'i').test(normalized)) return false;
+}
+
+function requestsMutationAfterNamedTarget(content: string, target: NamedRepositoryTarget): boolean {
+  const normalized = normalizeRoomRequest(content);
+  const targetOffset = normalized.toLowerCase().indexOf(target.id.toLowerCase());
+  if (targetOffset < 0) return false;
+  const afterTarget = normalized.slice(targetOffset + target.id.length);
+  return new RegExp(
+    String.raw`^[\s,:;()\[\]-]*(?:please\s+)?${REPOSITORY_MUTATION_VERB}\b`,
+    'i',
+  ).test(afterTarget);
+}
+
+/** Detect an explicit repository mutation before a DM turn can invent an escalation path. */
+export function isRepositoryMutationRequest(content: string): boolean {
+  const normalized = normalizeRoomRequest(content);
+  if (new RegExp(String.raw`^${REQUEST_LEAD}${REPOSITORY_MUTATION_VERB}\b`, 'i').test(normalized)) {
+    return true;
+  }
+  return new RegExp(
+    String.raw`^${REQUEST_LEAD}(?:open|create|launch|start)\s+(?:up\s+)?(?:a\s+|the\s+)?(?:new\s+)?(?:edit\s+)?corner\b`,
+    'i',
+  ).test(normalized);
+}
+
+export function isTransientPermissionPollError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /(?:HTTP\s+(?:429|5\d\d)\b|fetch failed|ECONNRESET|ETIMEDOUT|socket hang up)/i.test(
+    message,
+  );
+}
+
+export function isReadOnlyInformationRequest(content: string): boolean {
+  const normalized = normalizeRoomRequest(content);
+  if (isRepositoryMutationRequest(content)) return false;
   const informationSignal = new RegExp(
-    String.raw`(?:^${requestLead}(?:analy[sz]e|describe|explain|identify|inspect|list|locate|research|review|summari[sz]e|tell\s+me|find\b|help\s+me\s+understand|give\s+me\s+an?\s+overview|take\s+a\s+look)|\b(?:what|where|which|who|why|how)\b)`,
+    String.raw`(?:^${REQUEST_LEAD}(?:analy[sz]e|describe|explain|identify|inspect|list|locate|research|review|summari[sz]e|tell\s+me|find\b|help\s+me\s+understand|give\s+me\s+an?\s+overview|take\s+a\s+look)|\b(?:what|where|which|who|why|how)\b)`,
     'i',
   );
   if (!informationSignal.test(normalized)) return false;
   // Mutation words may be the subject of research ("where is merge
   // verified?"). Only an additional imperative clause makes the turn mixed.
   return !new RegExp(
-    String.raw`(?:\b(?:and|then|also|after\s+that)\b|[,.!?;])\s*(?:please\s+)?${mutationVerb}\b`,
+    String.raw`(?:\b(?:and|then|also|after\s+that)\b|[,.!?;])\s*(?:please\s+)?${REPOSITORY_MUTATION_VERB}\b`,
     'i',
   ).test(normalized);
 }
@@ -446,13 +520,18 @@ export class Body {
   private mergeWorkerRelay?: RelayClient;
   private pendingRoomTurns = new Map<string, PendingRoomTurn>();
   private presenceGenerations = new Map<string, string>();
+  private resolveNamedRepository?: (target: NamedRepositoryTarget) => Promise<BoundRepo>;
 
   constructor(
     config: BodyConfig,
     bodyIdentity?: Identity,
     agentIdentity?: Identity,
     mergeWorkerIdentity?: Identity,
-    services: { scheduler?: SessionScheduler; statePath?: string } = {},
+    services: {
+      scheduler?: SessionScheduler;
+      statePath?: string;
+      resolveNamedRepository?: (target: NamedRepositoryTarget) => Promise<BoundRepo>;
+    } = {},
   ) {
     this.config = config;
     this.bodyIdentity = bodyIdentity ?? newIdentity('buzzy-body');
@@ -470,6 +549,7 @@ export class Body {
         idleMs: Number(process.env.BUZZY_BODY_SESSION_IDLE_MS ?? String(5 * 60_000)),
       });
     this.ownsScheduler = !services.scheduler;
+    this.resolveNamedRepository = services.resolveNamedRepository;
     this.durableState = new DurableBodyState(
       services.statePath ?? resolve(config.workspaceRoot, '.beeline-body-state.json'),
     );
@@ -706,7 +786,7 @@ export class Body {
   }
 
   /** Rebuild durable corner actors after a daemon restart. */
-  private async restoreSubchannels(parentChannelId: string, boundRepo: BoundRepo): Promise<void> {
+  private async restoreSubchannels(parentChannelId: string, boundRepo?: BoundRepo): Promise<void> {
     const client = createBuzzClient({
       baseUrl: this.config.relayBaseUrl,
       host: this.config.relayHost,
@@ -734,6 +814,23 @@ export class Body {
           .find((event) => tagValue(event, 'feature') && tagValue(event, 'parent'));
         const featureBranch = control ? tagValue(control, 'feature') : undefined;
         if (!featureBranch) continue;
+        let cornerRepo = boundRepo;
+        if (!cornerRepo) {
+          const repository = control ? tagValue(control, 'repo') : undefined;
+          try {
+            cornerRepo = await this.resolveApprovedNamedRepository(
+              repository ? parseNamedRepositoryTarget(repository) : undefined,
+            );
+          } catch (error) {
+            await postControlMessage(
+              subchannelId,
+              this.agentIdentity,
+              `Agent restart could not restore the approved repository: ${this.safePermissionFailure(error)}`,
+              [['status', 'failed']],
+            ).catch(() => undefined);
+            continue;
+          }
+        }
         const worktreePath = resolve(this.config.workspaceRoot, `.worktrees/${subchannelId}`);
         if (!existsSync(worktreePath)) {
           await postControlMessage(
@@ -792,13 +889,14 @@ export class Body {
           session,
           lastPolledAt: cursor.createdAt,
           archived: false,
-          boundRepo,
+          boundRepo: cornerRepo,
           ...(request ? { request } : {}),
           ...(tip
             ? {
                 mergeTarget: {
-                  repo: tagValue(ready!, 'repo') ?? this.repoId(boundRepo),
-                  branch: tagValue(ready!, 'branch') ?? boundRepo.targetBranch ?? 'refs/heads/main',
+                  repo: tagValue(ready!, 'repo') ?? this.repoId(cornerRepo),
+                  branch:
+                    tagValue(ready!, 'branch') ?? cornerRepo.targetBranch ?? 'refs/heads/main',
                   tip,
                 },
               }
@@ -824,7 +922,11 @@ export class Body {
    * 2. Start an ACP session with the Beeline-owned read-only MCP only.
    * 3. Project activity into the TLC channel.
    */
-  async provision(tlcChannelId: string, boundRepo?: BoundRepo): Promise<AgentSession> {
+  async provision(
+    tlcChannelId: string,
+    boundRepo?: BoundRepo,
+    editPolicy: RoomEditPolicy = boundRepo ? 'repository' : 'direct-message',
+  ): Promise<AgentSession> {
     const existing = this.sessions.get(tlcChannelId);
     if (existing) {
       if (existing.mode === 'readonly') return existing;
@@ -858,15 +960,18 @@ export class Body {
           'Never request native shell or execute permission for listing, reading, searching, or git-history inspection; use the read-only MCP tools instead.',
           'You CANNOT create, edit, or delete files until the host grants a human-approved edit session.',
           'An information-only request (analysis, explanation, summary, research, or a question) must be answered here and must never be escalated into editing.',
-          'When the user asks for a concrete file change, attempt the appropriate write/edit tool.',
-          'The host will turn that first mutating permission request into a human allow/deny prompt.',
-          'Never claim that work started until the host transitions you into an edit session.',
+          ...roomEditPolicyInstructions(editPolicy),
+          ...(editPolicy === 'named-repository'
+            ? [
+                'When the current human request explicitly says repository owner/repo, the host binds your first actual mutation request to that exact target. It never selects a repository for you.',
+              ]
+            : []),
         ].join('\n'),
         // Read-only mode must reject native-agent permission escalation as well
         // as omitting write MCP servers. Edit corners remain auto-approved below.
         autoApprovePermissions: false,
         permissionHandler: (permission) =>
-          this.handleRoomPermissionRequest(tlcChannelId, permission),
+          this.handleRoomPermissionRequest(tlcChannelId, permission, editPolicy),
         ...(communityId ? { communityId } : {}),
       });
     } catch (error) {
@@ -951,7 +1056,7 @@ export class Body {
         'You CAN create, edit, and delete files in this worktree.',
         'Commit your changes to the feature branch when appropriate.',
         'Never merge, push or change the target branch, or archive this corner. Stop after committing the feature branch; only a signed human approval may authorize landing and archive cleanup.',
-        `Repo: ${boundRepo.ownerHex}/${boundRepo.repo}`,
+        `Repo: ${this.repoId(boundRepo)}`,
         ...(intent ? [`User intent: ${intent}`] : []),
       ].join('\n'),
       // A corner is the agent's isolated worktree. Target landing and archive
@@ -1118,7 +1223,11 @@ export class Body {
   }
 
   /** Poll a Room for addressed conversation and explicit corner commands. */
-  async pollChannelRequests(tlcChannelId: string, boundRepo: BoundRepo): Promise<number> {
+  async pollChannelRequests(
+    tlcChannelId: string,
+    boundRepo?: BoundRepo,
+    editPolicy: RoomEditPolicy = boundRepo ? 'repository' : 'direct-message',
+  ): Promise<number> {
     const durableCursor = await this.durableState.cursor(tlcChannelId);
     const since = Math.max(this.requestCursors.get(tlcChannelId) ?? 0, durableCursor.createdAt);
     const client = createBuzzClient({
@@ -1218,7 +1327,9 @@ export class Body {
             tlcChannelId,
             boundRepo,
             request,
-            isChannelWorkIntent(event, this.agentIdentity.publicKey, roomParticipants),
+            editPolicy === 'repository' &&
+              isChannelWorkIntent(event, this.agentIdentity.publicKey, roomParticipants),
+            editPolicy,
           )
         ) {
           opened++;
@@ -1238,9 +1349,10 @@ export class Body {
   /** Run one addressed turn through the provisioned read-only Room session. */
   private async replyInRoom(
     tlcChannelId: string,
-    boundRepo: BoundRepo,
+    boundRepo: BoundRepo | undefined,
     request: ChannelTaskRequest,
     explicitCornerWork = false,
+    editPolicy: RoomEditPolicy = boundRepo ? 'repository' : 'direct-message',
   ): Promise<boolean> {
     const informationOnly = isReadOnlyInformationRequest(request.content);
     const requestAuthor =
@@ -1259,7 +1371,7 @@ export class Body {
       request.attachments ?? [],
       requestAuthor,
     );
-    if (explicitCornerWork) {
+    if (explicitCornerWork && boundRepo && editPolicy === 'repository') {
       await this.durableState.appendConversation(tlcChannelId, {
         role: 'user',
         text: userPrompt,
@@ -1271,9 +1383,85 @@ export class Body {
       return true;
     }
 
+    if (editPolicy === 'direct-message' && isRepositoryMutationRequest(request.content)) {
+      await this.durableState.appendConversation(tlcChannelId, {
+        role: 'user',
+        text: userPrompt,
+        eventId: request.eventId,
+        at: new Date(request.createdAt * 1_000).toISOString(),
+      });
+      const reply =
+        'I cannot make that change from a direct message. DMs are strictly read-only and cannot request or open edit corners.';
+      await postAgentMessage(tlcChannelId, this.agentIdentity, reply, request.eventId);
+      await this.durableState.appendConversation(tlcChannelId, {
+        role: 'agent',
+        text: attachmentPrompt(this.agentIdentity.publicKey, reply, [], this.ownRoomAttribution()),
+        at: new Date().toISOString(),
+      });
+      return false;
+    }
+
+    const namedRepositoryTarget =
+      editPolicy === 'named-repository'
+        ? namedRepositoryTargetFromRoomRequest(request.content)
+        : undefined;
+    const explicitBoundRepositoryMutation =
+      editPolicy === 'repository' &&
+      boundRepo !== undefined &&
+      !informationOnly &&
+      isRepositoryMutationRequest(request.content);
+    const explicitNamedRepositoryMutation =
+      namedRepositoryTarget !== undefined &&
+      !informationOnly &&
+      (isRepositoryMutationRequest(request.content) ||
+        requestsMutationAfterNamedTarget(request.content, namedRepositoryTarget));
+    if (explicitBoundRepositoryMutation || explicitNamedRepositoryMutation) {
+      await this.durableState.appendConversation(tlcChannelId, {
+        role: 'user',
+        text: userPrompt,
+        eventId: request.eventId,
+        at: new Date(request.createdAt * 1_000).toISOString(),
+      });
+      const turn: PendingRoomTurn = {
+        request,
+        boundRepo,
+        editPolicy,
+        namedRepositoryTarget,
+        permissionHandled: false,
+        transitionedToCorner: false,
+        readOnlyInformationRequest: false,
+      };
+      this.pendingRoomTurns.set(tlcChannelId, turn);
+      try {
+        await this.handleRoomPermissionRequest(
+          tlcChannelId,
+          {
+            toolCall: {
+              kind: 'execute',
+              title: `Request edit corner on ${
+                namedRepositoryTarget?.id ?? this.repoId(boundRepo!)
+              }`,
+              rawInput: {
+                command: namedRepositoryTarget
+                  ? `${NAMED_REPOSITORY_PERMISSION_COMMAND} --repo ${namedRepositoryTarget.id}`
+                  : 'beeline-request-edit-corner',
+              },
+            },
+          },
+          editPolicy,
+        );
+        await this.appendRoomPermissionOutcome(tlcChannelId, turn);
+        return turn.transitionedToCorner;
+      } finally {
+        this.pendingRoomTurns.delete(tlcChannelId);
+      }
+    }
+
     let session: AgentSession;
     try {
-      session = this.sessions.get(tlcChannelId) ?? (await this.provision(tlcChannelId, boundRepo));
+      session =
+        this.sessions.get(tlcChannelId) ??
+        (await this.provision(tlcChannelId, boundRepo, editPolicy));
       if (session.mode !== 'readonly') {
         throw new ReadOnlyToolsUnavailableError(
           'read-only tools unavailable: refusing to use an edit session for a Room conversation',
@@ -1320,9 +1508,13 @@ export class Body {
     const turn: PendingRoomTurn = {
       request,
       boundRepo,
+      editPolicy,
       permissionHandled: false,
       transitionedToCorner: false,
       readOnlyInformationRequest: informationOnly,
+      ...(editPolicy === 'named-repository'
+        ? { namedRepositoryTarget: namedRepositoryTargetFromRoomRequest(request.content) }
+        : {}),
     };
     this.pendingRoomTurns.set(tlcChannelId, turn);
     try {
@@ -1338,6 +1530,7 @@ export class Body {
         session.client.sessionPrompt(session.sessionId, prompt, 10 * 60_000),
       );
       if (turn.transitionedToCorner) {
+        await this.appendRoomPermissionOutcome(tlcChannelId, turn);
         await postAgentTurnStatus(
           tlcChannelId,
           this.agentIdentity,
@@ -1387,7 +1580,32 @@ export class Body {
       throw error;
     } finally {
       this.pendingRoomTurns.delete(tlcChannelId);
+      if (turn.permissionHandled) {
+        // A rejected in-place mutation leaves some ACP agents reluctant to ask
+        // again on a later Room turn. Retire that physical read-only generation
+        // after every completed permission ceremony; the next turn reactivates
+        // the same logical session from the durable transcript.
+        await this.scheduler
+          .suspend(tlcChannelId)
+          .catch((error) =>
+            console.error('[body] failed to recycle Room session after permission:', error),
+          );
+      }
     }
+  }
+
+  private async appendRoomPermissionOutcome(
+    tlcChannelId: string,
+    turn: PendingRoomTurn,
+  ): Promise<void> {
+    const reply = turn.transitionedToCorner
+      ? 'A human approved this request, so its editing work continues in an isolated corner.'
+      : 'The requested edit corner was not opened. This Room remains read-only.';
+    await this.durableState.appendConversation(tlcChannelId, {
+      role: 'agent',
+      text: attachmentPrompt(this.agentIdentity.publicKey, reply, [], this.ownRoomAttribution()),
+      at: new Date().toISOString(),
+    });
   }
 
   /**
@@ -1398,23 +1616,42 @@ export class Body {
   private async handleRoomPermissionRequest(
     tlcChannelId: string,
     permission: AcpPermissionRequest,
+    editPolicy?: RoomEditPolicy,
   ): Promise<AcpPermissionDecision> {
     if (isReadOnlyMcpPermissionRequest(permission)) return 'allow';
     const turn = this.pendingRoomTurns.get(tlcChannelId);
     if (!turn || turn.permissionHandled || !isMutatingPermissionRequest(permission)) {
       return 'reject';
     }
+    const policy =
+      editPolicy ?? turn.editPolicy ?? (turn.boundRepo ? 'repository' : 'direct-message');
+    // DMs have no escalation path at all: no permission card, no resolver, no corner.
+    if (policy === 'direct-message') return 'reject';
     // The model cannot reinterpret a human's research request as authorization
     // to edit. Reject the concrete invocation in place and do not project an
     // ALLOW card or create a corner for an information-only turn.
     if (turn.readOnlyInformationRequest) return 'reject';
+    let namedTarget: NamedRepositoryTarget | undefined;
+    if (policy === 'named-repository') {
+      try {
+        namedTarget = namedRepositoryTargetFromPermission(permission) ?? turn.namedRepositoryTarget;
+      } catch (error) {
+        console.error('[body] invalid named-repository permission target:', error);
+        return 'reject';
+      }
+      // No exact marker or explicit Room target means no approval surface.
+      if (!namedTarget) return 'reject';
+    }
+    const repository =
+      namedTarget?.id ?? (turn.boundRepo ? this.repoId(turn.boundRepo) : undefined);
+    if (!repository) return 'reject';
     turn.permissionHandled = true;
     const permissionId = randomUUID();
     const tool = this.permissionToolLabel(permission);
     await postControlMessage(
       tlcChannelId,
       this.agentIdentity,
-      `${this.agentIdentity.name || 'Agent'} wants to start editing files — allow?`,
+      `${this.agentIdentity.name || 'Agent'} requests an edit corner on ${repository} — allow?`,
       [
         ['t', WRITE_PERMISSION_REQUEST_TAG],
         ['permission', permissionId],
@@ -1423,6 +1660,7 @@ export class Body {
         ['agent', this.agentIdentity.publicKey],
         ['p', this.agentIdentity.publicKey],
         ['tool', tool],
+        ['repo', repository],
         ['status', 'pending'],
       ],
     );
@@ -1431,6 +1669,7 @@ export class Body {
       tlcChannelId,
       permissionId,
       turn.request.eventId,
+      repository,
     );
     if (decision === 'allow') {
       await this.postWritePermissionStatus(
@@ -1438,13 +1677,17 @@ export class Body {
         permissionId,
         turn.request.eventId,
         tool,
+        repository,
         'allowed',
-        'Editing allowed. Opening an isolated corner and worktree.',
+        `Editing ${repository} was allowed. Opening an isolated corner and worktree.`,
       );
       try {
+        const boundRepo =
+          turn.boundRepo ?? (await this.resolveApprovedNamedRepository(namedTarget));
+        if (namedTarget) await this.assertRepositorySafety(tlcChannelId, boundRepo);
         const info = await this.openSubchannel(
           tlcChannelId,
-          turn.boundRepo,
+          boundRepo,
           turn.request.content,
           turn.request,
         );
@@ -1454,23 +1697,25 @@ export class Body {
           permissionId,
           turn.request.eventId,
           tool,
+          repository,
           'allowed',
-          'Editing is isolated in the new corner. Open it to follow the work.',
+          `Editing ${repository} is isolated in the new corner. Open it to follow the work.`,
           info.subchannelId,
         ).catch((statusError) =>
           console.error('[body] failed to publish direct corner navigation:', statusError),
         );
         this.startAgentTask(info, turn.request.content);
       } catch (error) {
+        const detail = this.safePermissionFailure(error);
         await this.postWritePermissionStatus(
           tlcChannelId,
           permissionId,
           turn.request.eventId,
           tool,
+          repository,
           'failed',
-          'Editing was allowed, but the isolated corner could not be opened.',
+          `Could not open an edit corner on ${repository}: ${detail}`,
         ).catch(() => undefined);
-        throw error;
       }
     } else if (decision === 'deny') {
       await this.postWritePermissionStatus(
@@ -1478,8 +1723,9 @@ export class Body {
         permissionId,
         turn.request.eventId,
         tool,
+        repository,
         'denied',
-        'Editing denied. The Agent remains read-only.',
+        `Editing ${repository} was denied. The Agent remains read-only.`,
       );
     } else if (decision === 'timeout') {
       await this.postWritePermissionStatus(
@@ -1487,8 +1733,9 @@ export class Body {
         permissionId,
         turn.request.eventId,
         tool,
+        repository,
         'expired',
-        'Editing request expired. The Agent remains read-only.',
+        `The edit request for ${repository} expired. The Agent remains read-only.`,
       );
     }
     return 'reject';
@@ -1500,11 +1747,38 @@ export class Body {
     return (title || kind || 'edit files').replace(/\s+/g, ' ').slice(0, 120);
   }
 
+  private async resolveApprovedNamedRepository(
+    target: NamedRepositoryTarget | undefined,
+  ): Promise<BoundRepo> {
+    if (!target) throw new Error('the approved repository target is missing');
+    if (!this.resolveNamedRepository) {
+      throw new Error('the agent runtime cannot clone named repositories');
+    }
+    const resolved = await this.resolveNamedRepository(target);
+    if (this.repoId(resolved) !== target.id) {
+      throw new Error('the cloned repository did not match the approved target');
+    }
+    return resolved;
+  }
+
+  private safePermissionFailure(error: unknown): string {
+    const detail = error instanceof Error ? error.message : String(error);
+    return (
+      detail
+        .replace(/https?:\/\/\S+/gi, 'the configured remote')
+        .replace(/(?:[A-Za-z0-9._~+/=-]+):(?:[A-Za-z0-9._~+/=-]+)@/g, '[credentials]@')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 240) || 'the repository could not be cloned or accessed'
+    );
+  }
+
   private postWritePermissionStatus(
     tlcChannelId: string,
     permissionId: string,
     requestId: string,
     tool: string,
+    repository: string,
     status: 'allowed' | 'denied' | 'expired' | 'failed',
     message: string,
     subchannelId?: string,
@@ -1515,6 +1789,7 @@ export class Body {
       ['request', requestId],
       ['agent', this.agentIdentity.publicKey],
       ['tool', tool],
+      ['repo', repository],
       ['status', status],
       ...(subchannelId ? [['subchannel', subchannelId]] : []),
     ]);
@@ -1524,39 +1799,47 @@ export class Body {
     tlcChannelId: string,
     permissionId: string,
     requestId: string,
+    repository: string,
     timeoutMs = 10 * 60_000,
   ): Promise<'allow' | 'deny' | 'timeout'> {
     const startedAt = Math.floor(Date.now() / 1000) - 1;
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const events = await this.agentRelay.queryEvents([
-        {
-          kinds: [9],
-          '#h': [tlcChannelId],
-          '#t': [WRITE_PERMISSION_RESPONSE_TAG],
-          since: startedAt,
-          limit: 100,
-        },
-      ]);
-      const candidates = events
-        .filter(
-          (event) =>
-            event.pubkey !== this.agentIdentity.publicKey &&
-            tagValue(event, 'permission') === permissionId &&
-            tagValue(event, 'request') === requestId &&
-            tagValue(event, 'p') === this.agentIdentity.publicKey,
-        )
-        .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
-      for (const event of candidates) {
-        const members = new Set(
-          (await listMembers(this.agentClientContext(), tlcChannelId)).map(
-            (member) => member.pubkey,
-          ),
-        );
-        if (!members.has(event.pubkey)) continue;
-        if (await isRegisteredAgentIdentity(event.pubkey, this.agentRelay)) continue;
-        const decision = tagValue(event, 'decision');
-        if (decision === 'allow' || decision === 'deny') return decision;
+      try {
+        const events = await this.agentRelay.queryEvents([
+          {
+            kinds: [9],
+            '#h': [tlcChannelId],
+            '#t': [WRITE_PERMISSION_RESPONSE_TAG],
+            since: startedAt,
+            limit: 100,
+          },
+        ]);
+        const candidates = events
+          .filter(
+            (event) =>
+              event.pubkey !== this.agentIdentity.publicKey &&
+              tagValue(event, 'permission') === permissionId &&
+              tagValue(event, 'request') === requestId &&
+              tagValue(event, 'p') === this.agentIdentity.publicKey &&
+              tagValue(event, 'repo') === repository,
+          )
+          .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
+        for (const event of candidates) {
+          const members = new Set(
+            (await listMembers(this.agentClientContext(), tlcChannelId)).map(
+              (member) => member.pubkey,
+            ),
+          );
+          if (!members.has(event.pubkey)) continue;
+          if (await isRegisteredAgentIdentity(event.pubkey, this.agentRelay)) continue;
+          const decision = tagValue(event, 'decision');
+          if (decision === 'allow' || decision === 'deny') return decision;
+        }
+      } catch (error) {
+        if (!isTransientPermissionPollError(error)) throw error;
+        await new Promise((resolveWait) => setTimeout(resolveWait, 1_000));
+        continue;
       }
       await new Promise((resolveWait) => setTimeout(resolveWait, 500));
     }
@@ -1943,6 +2226,39 @@ export class Body {
       }
     } finally {
       this.presenceGenerations.delete(tlcChannelId);
+      await stopPresence();
+    }
+  }
+
+  /** Durable loop for DMs and ordinary Rooms that have no repository binding. */
+  async runConversationRoomLoop(
+    channelId: string,
+    editPolicy: Exclude<RoomEditPolicy, 'repository'>,
+    opts: { pollMs?: number; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    const stopPresence = startAgentPresence(channelId, this.agentIdentity);
+    this.presenceGenerations.set(channelId, stopPresence.generationId);
+    try {
+      const pollMs = opts.pollMs ?? 3_000;
+      await this.provision(channelId, undefined, editPolicy);
+      // A DM must not revive historical borrowed-repository corners. A normal
+      // repo-less Room may resume only its already-approved named-repo corners.
+      if (editPolicy === 'named-repository') await this.restoreSubchannels(channelId);
+      while (!opts.signal?.aborted) {
+        try {
+          await this.pollChannelRequests(channelId, undefined, editPolicy);
+        } catch (error) {
+          console.error('[body] read-only Room request poll failed:', error);
+        }
+        await Promise.all(
+          [...this.subchannels.keys()].map((subchannelId) => this.pollMembers(subchannelId)),
+        );
+        await this.pollDirectRemoteApprovals();
+        await this.pollMergeCompletions();
+        await this.waitForPoll(pollMs, opts.signal);
+      }
+    } finally {
+      this.presenceGenerations.delete(channelId);
       await stopPresence();
     }
   }
@@ -2506,9 +2822,12 @@ export class Body {
   }
 
   private repoId(boundRepo: BoundRepo): string {
-    return boundRepo.ownerHex
-      ? `${boundRepo.ownerHex}/${boundRepo.repo}`
-      : `${boundRepo.localOnly ? 'local' : 'remote'}/${boundRepo.repositoryKey ?? boundRepo.repo}`;
+    return (
+      boundRepo.repositoryId ??
+      (boundRepo.ownerHex
+        ? `${boundRepo.ownerHex}/${boundRepo.repo}`
+        : `${boundRepo.localOnly ? 'local' : 'remote'}/${boundRepo.repositoryKey ?? boundRepo.repo}`)
+    );
   }
 
   private async requestAlreadyOpened(channelId: string, requestId: string): Promise<boolean> {

@@ -274,9 +274,13 @@ into the process environment.
   opens an isolated worktree and replays the request in a new edit session.
   Explicit open-a-corner commands bypass that extra prompt by authorizing the
   isolated worktree directly. Information-only turns reject any model-requested
-  mutation without projecting ALLOW. Agent completion can publish only the
-  feature ref and `merge-ready`; target landing and archive cleanup require an
-  independently verified, exact-tip approval from a device-held human admin.
+  mutation without projecting ALLOW. DMs are permanently read-only and cannot
+  request or open a corner. A repo-less normal Room may request a corner only by
+  naming an exact `owner/repo`; the signed human prompt displays and binds that
+  target, and clone/access failures leave the Room read-only. Agent completion
+  can publish only the feature ref and `merge-ready`; target landing and archive
+  cleanup require an independently verified, exact-tip approval from a
+  device-held human admin.
 - **Permission intent is authority-free:** any current human Room member may
   answer the prompt. The signed response is bound to the agent, permission UUID,
   and original request event; it changes no Room role and grants no merge power.

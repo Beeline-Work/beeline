@@ -176,6 +176,7 @@ export type ChatDisplayMessage = {
     requestId: string;
     agentPubkey: string;
     tool: string;
+    repository?: string;
     status: 'pending' | 'allowed' | 'denied' | 'expired' | 'failed';
     subchannelId?: string;
   };
@@ -339,6 +340,7 @@ export function projectChatEvent(
           requestId: permissionRequestId,
           agentPubkey: permissionAgent,
           tool: eventTagValue(event, 'tool') ?? 'edit files',
+          ...(repo ? { repository: repo } : {}),
           status,
           ...(subchannelId ? { subchannelId } : {}),
         },

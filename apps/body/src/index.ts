@@ -10,6 +10,7 @@ export {
   isChannelTaskRequest,
   ReadOnlyToolsUnavailableError,
   readOnlyMcpServer,
+  roomEditPolicyInstructions,
   AGENT_REQUEST_TAG,
   AGENT_CANCEL_TAG,
   MERGE_READY_TAG,
@@ -17,8 +18,15 @@ export {
   type SubchannelInfo,
   type BoundRepo,
   type ChannelTaskRequest,
+  type RoomEditPolicy,
 } from './body.js';
 export { WorkspaceSupervisor, boundRepoFromRoom } from './supervisor.js';
+export {
+  NAMED_REPOSITORY_PERMISSION_COMMAND,
+  namedRepositoryTargetFromPermission,
+  parseNamedRepositoryTarget,
+  type NamedRepositoryTarget,
+} from './repository-target.js';
 export { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 export { DurableBodyState, type EventCursor, type ConversationEntry } from './durable-state.js';
 export {

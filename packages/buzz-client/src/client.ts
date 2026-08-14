@@ -447,11 +447,14 @@ export class BuzzClient {
     requestId: string,
     agentPubkey: string,
     decision: WritePermissionDecision,
+    repository: string,
   ): Promise<NostrEvent> {
     return sendMessage(
       this.ctx,
       channelId,
-      decision === 'allow' ? 'Allowed editing.' : 'Editing denied.',
+      decision === 'allow'
+        ? `Allowed editing on ${repository}.`
+        : `Editing denied for ${repository}.`,
       {
         mentionAgent: agentPubkey,
         extraTags: [
@@ -459,6 +462,7 @@ export class BuzzClient {
           ['permission', permissionId],
           ['request', requestId],
           ['decision', decision],
+          ['repo', repository],
         ],
       },
     );

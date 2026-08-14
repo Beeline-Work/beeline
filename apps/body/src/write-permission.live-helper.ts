@@ -17,9 +17,8 @@ export async function waitForWritePermissionPrompt(
     const events = await client.sessionEventsBackfill(channelId, { limit: 500 });
     const request = events.find(
       (event) =>
-        event.event.tags.some(
-          (tag) => tag[0] === 't' && tag[1] === WRITE_PERMISSION_REQUEST_TAG,
-        ) && tagValue(event.event, 'request') === requestId,
+        event.event.tags.some((tag) => tag[0] === 't' && tag[1] === WRITE_PERMISSION_REQUEST_TAG) &&
+        tagValue(event.event, 'request') === requestId,
     );
     if (request) return request;
     await new Promise((resolveWait) => setTimeout(resolveWait, 500));
@@ -37,13 +36,15 @@ export async function respondToWritePermission(
   const prompt = await waitForWritePermissionPrompt(client, channelId, requestId);
   const permissionId = tagValue(prompt.event, 'permission');
   if (!permissionId) throw new Error('write permission prompt missing permission id');
+  const repository = tagValue(prompt.event, 'repo');
+  if (!repository) throw new Error('write permission prompt missing repository target');
   await client.respondToWritePermission(
     channelId,
     permissionId,
     requestId,
     agentPubkey,
     decision,
+    repository,
   );
   return prompt;
 }
-

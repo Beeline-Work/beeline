@@ -39,7 +39,12 @@ describe('RegisteredEventPoller', () => {
       responses: [{ success: true, messageId: 'capture-only' }],
     }));
     const metadata = {
-      resolve: async () => ({ roomName: 'Roadmap', senderName: 'Ada' }),
+      resolve: async () => ({
+        roomName: 'Roadmap',
+        senderName: 'Ada',
+        workspaceName: 'Product Engineering',
+        persistentWorkspaceRoom: true,
+      }),
       invalidate: () => undefined,
     } as never;
 
@@ -77,7 +82,12 @@ describe('RegisteredEventPoller', () => {
     await registry.register(PUBKEY_A, TOKEN_A);
     const sendEachForMulticast = vi.fn().mockRejectedValueOnce(new Error('FCM timeout'));
     const metadata = {
-      resolve: async () => ({ roomName: 'Roadmap', senderName: 'Ada' }),
+      resolve: async () => ({
+        roomName: 'Roadmap',
+        senderName: 'Ada',
+        workspaceName: 'Product Engineering',
+        persistentWorkspaceRoom: true,
+      }),
       invalidate: () => undefined,
     } as never;
     const first = new PushGateway(
@@ -167,6 +177,29 @@ describe('RegisteredEventPoller', () => {
 });
 
 describe('PushGateway', () => {
+  it('sends zero FCM requests for a fixture-named persistent Room', async () => {
+    const registry = await TokenRegistry.load();
+    await registry.register(PUBKEY_A, TOKEN_A);
+    const sendEachForMulticast = vi.fn();
+    const gateway = new PushGateway(
+      registry,
+      { sendEachForMulticast } as unknown as Messaging,
+      await DeliveryState.load(),
+      {
+        resolve: async () => ({
+          roomName: 'research-no-findings-xyz',
+          workspaceName: 'Product Engineering',
+          persistentWorkspaceRoom: true,
+        }),
+        invalidate: () => undefined,
+      } as never,
+    );
+
+    await gateway.handleRelayEvent(event('0'), PUBKEY_A, reader);
+
+    expect(sendEachForMulticast).not.toHaveBeenCalled();
+  });
+
   it('sends only to the ACL-scoped recipient and never to the author', async () => {
     const registry = await TokenRegistry.load();
     await registry.register(PUBKEY_A, TOKEN_A);
@@ -181,7 +214,12 @@ describe('PushGateway', () => {
       { sendEachForMulticast } as unknown as Messaging,
       await DeliveryState.load(),
       {
-        resolve: async () => ({ roomName: 'Roadmap', senderName: 'Ada' }),
+        resolve: async () => ({
+          roomName: 'Roadmap',
+          senderName: 'Ada',
+          workspaceName: 'Product Engineering',
+          persistentWorkspaceRoom: true,
+        }),
         invalidate: () => undefined,
       } as never,
     );
@@ -218,7 +256,12 @@ describe('PushGateway', () => {
       {
         resolve: async (relayEvent: NostrEvent) => {
           const roomId = relayEvent.tags.find((tag) => tag[0] === 'h')?.[1];
-          return { roomName: roomId === 'room-5678' ? 'Design' : 'Roadmap', senderName: 'Ada' };
+          return {
+            roomName: roomId === 'room-5678' ? 'Design' : 'Roadmap',
+            senderName: 'Ada',
+            workspaceName: 'Product Engineering',
+            persistentWorkspaceRoom: true,
+          };
         },
         invalidate: () => undefined,
       } as never,
@@ -269,6 +312,26 @@ describe('PushGateway', () => {
       ],
       content: '',
     };
+    const roomCreate: NostrEvent = {
+      ...event('5', human.publicKey, roomId),
+      kind: 9007,
+      tags: [
+        ['h', roomId],
+        ['name', 'Launch room'],
+        ['community', communityId],
+      ],
+      content: '',
+    };
+    const workspaceCreate: NostrEvent = {
+      ...event('4', human.publicKey, communityId),
+      kind: 9007,
+      tags: [
+        ['h', communityId],
+        ['name', 'Product Engineering'],
+        ['community', communityId],
+      ],
+      content: '',
+    };
     const memberProjection: NostrEvent = {
       ...event('7', human.publicKey, communityId),
       kind: 39002,
@@ -314,16 +377,24 @@ describe('PushGateway', () => {
     );
     let senderEvents: NostrEvent[] = [agentRecord, memberProjection];
     const authorizedReader: RelayEventReader = {
-      query: async (filters) =>
-        filters.some((filter) => (filter.kinds as number[]).includes(39000))
-          ? [roomMetadata]
-          : senderEvents,
+      query: async (filters) => {
+        if (!filters.some((filter) => (filter.kinds as number[]).includes(39000))) {
+          return senderEvents;
+        }
+        return JSON.stringify(filters).includes(communityId)
+          ? [workspaceCreate]
+          : [roomMetadata, roomCreate];
+      },
       disconnect: () => undefined,
     };
     const resolver = new NotificationMetadataResolver();
     const firstMessage = event('8', agent.publicKey, roomId);
     await expect(resolver.resolve(firstMessage, authorizedReader)).resolves.toEqual({
       roomName: 'Launch room',
+      persistentWorkspaceRoom: true,
+      workspaceName: 'Product Engineering',
+      fixtureCandidates: ['Launch room', 'Product Engineering'],
+      fixtureMarkers: [],
       senderName: 'Rhea',
     });
     const gateway = new PushGateway(registry, messaging, await DeliveryState.load(), resolver);

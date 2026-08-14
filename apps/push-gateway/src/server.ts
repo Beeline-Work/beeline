@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { TokenRegistry } from './registry.js';
 
 const MAX_BODY_BYTES = 32 * 1024;
+const NON_PRODUCTION_ENVIRONMENTS = new Set(['test', 'emulator', 'simulator']);
 
 function json(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, { 'content-type': 'application/json' });
@@ -35,12 +36,26 @@ export function createRegistrationServer(registry: TokenRegistry) {
       if (request.method === 'POST' && request.url === '/registrations') {
         const body = await readJson(request);
         if (!body || typeof body !== 'object') throw new Error('expected JSON object');
-        const { pubkey, token, platform } = body as Record<string, unknown>;
+        const { pubkey, token, platform, environment } = body as Record<string, unknown>;
         if (platform !== 'android') throw new Error('only android registrations are supported');
-        if (typeof pubkey !== 'string' || !TokenRegistry.validPubkey(pubkey)) throw new Error('invalid pubkey');
-        if (typeof token !== 'string' || !TokenRegistry.validToken(token)) throw new Error('invalid FCM token');
+        if (typeof pubkey !== 'string' || !TokenRegistry.validPubkey(pubkey))
+          throw new Error('invalid pubkey');
+        if (typeof token !== 'string' || !TokenRegistry.validToken(token))
+          throw new Error('invalid FCM token');
+        if (environment !== undefined && typeof environment !== 'string') {
+          throw new Error('invalid device environment');
+        }
+        if (environment && NON_PRODUCTION_ENVIRONMENTS.has(environment.toLowerCase())) {
+          console.log(
+            `[push] ignored non-production device pubkey=${pubkey.slice(0, 12)}… environment=${environment.toLowerCase()}`,
+          );
+          json(response, 202, { registered: false, ignored: 'non-production-device' });
+          return;
+        }
         await registry.register(pubkey, token);
-        console.log(`[push] device registered pubkey=${pubkey.slice(0, 12)}… devices=${registry.tokenCount}`);
+        console.log(
+          `[push] device registered pubkey=${pubkey.slice(0, 12)}… devices=${registry.tokenCount}`,
+        );
         json(response, 201, { registered: true });
         return;
       }

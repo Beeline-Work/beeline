@@ -298,6 +298,8 @@ export interface BuzzClientConfig {
    * Choice: prefer the platform global — no `ws` package dependency in core.
    */
   WebSocketImpl?: WebSocketConstructor;
+  /** Test-only/advanced tuning for automatic live-subscription recovery. */
+  reconnectDelayMs?: number;
   /** Skip waiting for NIP-42 AUTH when the relay never challenges (rare). */
   skipAuth?: boolean;
   /** Connect timeout for the first WS open + AUTH, ms. */

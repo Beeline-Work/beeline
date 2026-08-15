@@ -212,14 +212,28 @@ function getDevWebQueryCredentials(): AuthCredentials | null {
 
 export default function RootLayout() {
     React.useEffect(() => {
+        let flushTimer: ReturnType<typeof setTimeout> | undefined;
         const subscription = AppState.addEventListener('change', (state) => {
             // MMKV is synchronous and a warm-cache snapshot may be large. The
-            // cache must never compete with an active composer or navigation.
+            // cache must never run inside the AppState transition itself. It
+            // is optional, so skip it when a background hop turns into an
+            // immediate foreground return.
             if (state === 'background') {
-                flushBuzzLocalCacheForBackground();
+                if (flushTimer) clearTimeout(flushTimer);
+                flushTimer = setTimeout(() => {
+                    if (AppState.currentState === 'background') {
+                        flushBuzzLocalCacheForBackground();
+                    }
+                }, 1_000);
+            } else if (state === 'active') {
+                if (flushTimer) clearTimeout(flushTimer);
+                flushTimer = undefined;
             }
         });
-        return () => subscription.remove();
+        return () => {
+            if (flushTimer) clearTimeout(flushTimer);
+            subscription.remove();
+        };
     }, []);
 
     React.useEffect(() => {

@@ -69,4 +69,8 @@ maestro test --device "$DEVICE" \
   --env "SMOKE_LATEST_MESSAGE_ID=$SMOKE_LATEST_MESSAGE_ID" \
   "$MOBILE_DIR/e2e/smoke.yaml"
 
+# The fixture queries relay history after the actual device mention arrives.
+# Waiting makes duplicate-event detection part of this on-device check.
+wait "$reply_fixture_pid"
+
 echo "Maestro smoke passed on $DEVICE."

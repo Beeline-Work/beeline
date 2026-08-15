@@ -27,6 +27,21 @@ async function waitForMessage(
   throw new Error(`timed out waiting for ${needle}`);
 }
 
+/** The device event is the proof: retries must preserve one relay event id. */
+async function requireExactlyOneMessage(
+  client: ReturnType<typeof createBuzzClient>,
+  channelId: string,
+  content: string,
+): Promise<void> {
+  // Give an accidental second tap or resume flush enough time to arrive.
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
+  const events = await client.sessionEventsBackfill(channelId, { limit: 100 });
+  const matches = events.filter((event) => event.content === content);
+  if (matches.length !== 1) {
+    throw new Error(`expected exactly one ${JSON.stringify(content)} event, found ${matches.length}`);
+  }
+}
+
 async function main() {
   const client = createBuzzClient({
     baseUrl: RELAY,
@@ -35,6 +50,11 @@ async function main() {
   await client.connect();
   await waitForMessage(client, roomId, 'SMOKE ROOM SEND');
   await client.messageSubmit(roomId, 'SMOKE AGENT ROOM REPLY — delivered live');
+  await waitForMessage(client, roomId, "@beebee what's up");
+  await requireExactlyOneMessage(client, roomId, "@beebee what's up");
+  await client.messageSubmit(roomId, "SMOKE AGENT MENTION REPLY — @beebee what's up");
+  await waitForMessage(client, roomId, 'SMOKE KEYBOARD PIN TRIGGER');
+  await client.messageSubmit(roomId, 'SMOKE AGENT KEYBOARD REPLY — newest above keyboard');
   await waitForMessage(client, cornerId, 'SMOKE CORNER STEER');
   await client.messageSubmit(cornerId, 'SMOKE AGENT CORNER REPLY — steering delivered live');
   client.disconnect();

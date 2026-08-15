@@ -467,6 +467,32 @@ export async function waitUntilMember(
   );
 }
 
+/**
+ * Poll until the relay's role projections show the requested role.
+ *
+ * Membership and authority project independently: a member → admin command
+ * leaves 39002 true throughout, so waitUntilMember cannot prove a promotion
+ * or demotion took effect.
+ */
+export async function waitUntilMemberRole(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  pubkey: string,
+  role: ChannelRole,
+  opts?: { timeoutMs?: number; intervalMs?: number },
+): Promise<void> {
+  const timeoutMs = opts?.timeoutMs ?? 15_000;
+  const intervalMs = opts?.intervalMs ?? 300;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if ((await getChannelRole(ctx, channelId, pubkey)) === role) return;
+    await new Promise((resolveWait) => setTimeout(resolveWait, intervalMs));
+  }
+  throw new Error(
+    `role ${role} was not visible for ${pubkey.slice(0, 12)}… in ${channelId} after ${timeoutMs}ms (assert on 39001/39002, not publish ack)`,
+  );
+}
+
 /** Poll until the current 39001/39002 projections no longer list a member. */
 export async function waitUntilNotMember(
   ctx: ChannelOpsContext,
@@ -526,9 +552,14 @@ export async function getChannelMetadata(
       ctx.identity.publicKey,
     );
     if (alt.length === 0) return null;
-    return parseMetadataEvent(alt[0]!);
+    return parseMetadataEvent(latestMetadataEvent(alt)!);
   }
-  return parseMetadataEvent(events[0]!);
+  return parseMetadataEvent(latestMetadataEvent(events)!);
+}
+
+/** Relay query ordering is not a replaceable-event ordering guarantee. */
+function latestMetadataEvent(events: NostrEvent[]): NostrEvent | undefined {
+  return [...events].sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))[0];
 }
 
 /**

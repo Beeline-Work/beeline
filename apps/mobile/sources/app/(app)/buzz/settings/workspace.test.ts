@@ -15,6 +15,8 @@ const client = vi.hoisted(() => ({
   listPersonProfiles: vi.fn(async () => []),
   listCommunityInvites: vi.fn(async () => []),
   query: vi.fn(async () => []),
+  addMember: vi.fn(async () => undefined),
+  waitUntilMemberRole: vi.fn(async () => undefined),
 }));
 
 vi.mock('expo-router', () => ({
@@ -126,5 +128,21 @@ describe('Workspace Settings authority', () => {
   it('accepts hex and npub inputs but rejects arbitrary member text', () => {
     expect(normalizeMemberPubkey('A'.repeat(64))).toBe('a'.repeat(64));
     expect(normalizeMemberPubkey('not-a-key')).toBeNull();
+  });
+
+  it('waits for the role projection before showing a member promotion as applied', async () => {
+    const member = 'b'.repeat(64);
+    client.communityMembers.mockResolvedValue([
+      { pubkey: 'a'.repeat(64), role: 'owner' },
+      { pubkey: member, role: 'member' },
+    ]);
+    const renderer = await render();
+
+    await act(async () => {
+      await renderer.root.findByProps({ testID: `workspace-member-${member}-admin` }).props.onPress();
+    });
+
+    expect(client.addMember).toHaveBeenCalledWith('workspace-1', member, 'admin');
+    expect(client.waitUntilMemberRole).toHaveBeenCalledWith('workspace-1', member, 'admin');
   });
 });

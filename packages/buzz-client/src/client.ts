@@ -39,6 +39,7 @@ import {
   sendMessage,
   setMemberRole,
   waitUntilMember,
+  waitUntilMemberRole,
   waitUntilNotMember,
   type ChannelRole,
   type ChannelOpsContext,
@@ -278,6 +279,16 @@ export class BuzzClient {
     opts?: { timeoutMs?: number; intervalMs?: number },
   ): Promise<void> {
     return waitUntilMember(this.ctx, channelId, pubkey, opts);
+  }
+
+  /** Assert the current 39001/39002 projections expose this exact role. */
+  waitUntilMemberRole(
+    channelId: string,
+    pubkey: string,
+    role: ChannelRole,
+    opts?: { timeoutMs?: number; intervalMs?: number },
+  ): Promise<void> {
+    return waitUntilMemberRole(this.ctx, channelId, pubkey, role, opts);
   }
 
   /** Assert 39001/39002 no longer list the member. */

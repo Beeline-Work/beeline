@@ -318,7 +318,7 @@ export default function WorkspaceSettings() {
       setError(null);
       try {
         await client.addMember(communityId, pubkey, role);
-        await client.waitUntilMember(communityId, pubkey);
+        await client.waitUntilMemberRole(communityId, pubkey, role);
         await reloadMembers(client, communityId);
       } catch (caught) {
         setError(`Could not change member role: ${String(caught)}`);

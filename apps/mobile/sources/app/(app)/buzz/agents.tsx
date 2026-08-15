@@ -294,7 +294,9 @@ export default function BuzzAgents() {
       onAdd={() => router.push('/buzz/community' as Href)}
       onSettings={() => router.push('/buzz/settings/identity' as Href)}
       onWorkspaceSettings={(id) =>
-        router.push({ pathname: '/buzz/settings/workspace', params: { communityId: id } } as Href)
+        router.push(
+          { pathname: '/buzz/settings/workspace', params: { communityId: id } } as unknown as Href,
+        )
       }
       canManageActiveCommunity={canManageWorkspace}
       viewerPubkey={identity?.publicKey}

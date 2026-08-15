@@ -674,7 +674,9 @@ export default function BuzzChannels() {
       onAdd={() => router.push('/buzz/community' as Href)}
       onSettings={() => router.push('/buzz/settings/identity' as Href)}
       onWorkspaceSettings={(communityId) =>
-        router.push({ pathname: '/buzz/settings/workspace', params: { communityId } } as Href)
+        router.push(
+          { pathname: '/buzz/settings/workspace', params: { communityId } } as unknown as Href,
+        )
       }
       canManageActiveCommunity={canEditWorkspaceAvatar}
       viewerPubkey={identity?.publicKey}

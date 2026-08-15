@@ -166,6 +166,7 @@ async function main() {
     '--platform=node',
     '--format=esm',
     '--target=node20',
+    "--banner:js=import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);",
     '--define:import.meta.url="beeline:bundle"',
     `--outfile=${resolve(staging, 'lib', 'beeline', 'beeline-cli.mjs')}`,
   ]);

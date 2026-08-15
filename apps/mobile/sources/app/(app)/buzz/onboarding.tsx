@@ -371,6 +371,7 @@ export default function BuzzOnboarding() {
             label="Enter Workspace"
             loading={loadingAction === 'name'}
             onPress={() => void handleNameContinue()}
+            testID="onboarding-enter-workspace"
           />
         </PixelGateReveal>
       </View>
@@ -411,6 +412,7 @@ export default function BuzzOnboarding() {
             autoCapitalize="none"
             autoCorrect={false}
             secureTextEntry={Platform.OS !== 'web'}
+            testID="onboarding-secret-key"
             editable={!loading}
             onSubmitEditing={() => void handleImport()}
           />
@@ -421,6 +423,7 @@ export default function BuzzOnboarding() {
               variant="secondary"
               onPress={() => void handleImport()}
               disabled={loading}
+              testID="onboarding-import-key"
             />
           </View>
         </PixelGateReveal>
@@ -452,6 +455,7 @@ export default function BuzzOnboarding() {
             setNotice(Platform.OS === 'web' ? WEB_NOTICE : null);
           }}
           disabled={loading}
+          testID="onboarding-advanced"
         />
       </View>
 

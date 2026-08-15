@@ -1,0 +1,12 @@
+# TODO: Enable after the corner-session redesign lands. This file deliberately
+# has no appId/front matter, so `maestro test e2e` cannot accidentally execute
+# assertions coupled to the transitional corner UI.
+#
+# Intended fixture: ../../scripts/ui-demo-provision.ts
+# Intended assertions:
+# - the corner feed shows user-facing output and never raw ACP/tool chunks;
+# - agent presence transitions through working, idle, and done;
+# - a human steer message is published and reaches the attached live agent.
+#
+# Keep the final selectors testID-based, and promote this to an executable flow
+# only with a stable corner-session contract.

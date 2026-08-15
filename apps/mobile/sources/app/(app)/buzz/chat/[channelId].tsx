@@ -1870,8 +1870,7 @@ export default function BuzzChat() {
 
         {!isArchived &&
           !parentChannelId &&
-          !agentsOffline &&
-          (activeCorner?.corner || activeAgentTurn?.agentTurn) && (
+          (activeAgentTurn?.agentTurn || (!agentsOffline && activeCorner?.corner)) && (
             <View style={styles.agentLiveStatus} testID="agent-live-status">
               <PixelLoader compact />
               <Text style={styles.agentLiveStatusText}>

@@ -95,6 +95,12 @@ describe('mobile agent presence projection', () => {
     ).toBe(false);
   });
 
+  it('shows a signed working turn while its presence lease is still unknown', () => {
+    expect(
+      isAgentTurnActive({ requestId: 'fresh-turn', agentPubkey: agent, status: 'working' }, undefined),
+    ).toBe(true);
+  });
+
   it('keeps explicit offline when online and offline share a relay second', () => {
     expect(presenceMapFromSessionEvents([presence('online', 4), presence('offline', 4)])).toEqual({
       [agent]: { agentPubkey: agent, status: 'offline', observedAt: 4_000 },

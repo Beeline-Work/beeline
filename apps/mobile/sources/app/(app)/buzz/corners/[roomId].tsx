@@ -203,10 +203,12 @@ export default function BuzzCorners() {
               (candidate) => candidate.pubkey === item.openerPubkey,
             );
             const display = resolveAgentDisplayIdentity(item.openerPubkey, agent);
+            const agentPresence = agentPresences[item.openerPubkey];
             const displayStatus =
               agent &&
+              agentPresence &&
               (item.status === 'live' || item.status === 'open') &&
-              !isAgentPresenceOnline(agentPresences[item.openerPubkey], presenceNow)
+              !isAgentPresenceOnline(agentPresence, presenceNow)
                 ? { glyph: '□', label: 'OFFLINE' }
                 : status;
             return (

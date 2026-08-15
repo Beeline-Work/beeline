@@ -39,10 +39,12 @@ function presence(
 }
 
 describe('mobile agent presence projection', () => {
-  it('does not call an unresolved initial presence snapshot offline', () => {
-    expect(isAgentOfflineAfterPresenceResolved(false, true, 0)).toBe(false);
-    expect(isAgentOfflineAfterPresenceResolved(true, true, 0)).toBe(true);
-    expect(isAgentOfflineAfterPresenceResolved(true, true, 1)).toBe(false);
+  it('does not call an unknown presence snapshot offline', () => {
+    expect(isAgentOfflineAfterPresenceResolved(false, 1, 0, 0)).toBe(false);
+    expect(isAgentOfflineAfterPresenceResolved(true, 1, 0, 0)).toBe(false);
+    expect(isAgentOfflineAfterPresenceResolved(true, 2, 1, 0)).toBe(false);
+    expect(isAgentOfflineAfterPresenceResolved(true, 1, 1, 0)).toBe(true);
+    expect(isAgentOfflineAfterPresenceResolved(true, 1, 1, 1)).toBe(false);
   });
 
   it('projects self-signed seconds timestamps into millisecond leases', () => {

@@ -46,8 +46,12 @@ async function performMessageRevalidation(
   channelId: string,
 ): Promise<MessageSyncResult> {
   const cached = getCachedChannel(viewerPubkey, channelId);
+  // An empty initial read is not a durable history cursor: relay membership
+  // projections can make that first authorized read race the messages already
+  // in the Room. Keep requesting a bounded full snapshot until at least one
+  // message has actually been observed.
   const warm =
-    cached?.messages !== undefined && cached.cursor !== undefined && cached.backfilled === true;
+    (cached?.messages?.length ?? 0) > 0 && cached?.cursor !== undefined && cached.backfilled === true;
   const fetchStartedAt = Math.floor(Date.now() / 1000);
   const events = await transport.sessionEventsBackfill(
     channelId,

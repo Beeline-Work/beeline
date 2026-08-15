@@ -22,14 +22,21 @@ export function isAgentPresenceOnlineWithReconnectGrace(
 
 /**
  * An empty presence map during bootstrap is unknown, not an offline verdict.
- * Only a completed presence snapshot may mark a steer as deferred.
+ * Only a completed snapshot with a real lease for every Room agent may mark a
+ * steer as deferred.
  */
 export function isAgentOfflineAfterPresenceResolved(
   presenceResolved: boolean,
-  hasRoomAgent: boolean,
+  roomAgentCount: number,
+  knownAgentPresenceCount: number,
   onlineAgentCount: number,
 ): boolean {
-  return presenceResolved && hasRoomAgent && onlineAgentCount === 0;
+  return (
+    presenceResolved &&
+    roomAgentCount > 0 &&
+    knownAgentPresenceCount === roomAgentCount &&
+    onlineAgentCount === 0
+  );
 }
 
 function rawPayload(event: SessionEvent): UnknownRecord | undefined {

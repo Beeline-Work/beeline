@@ -189,6 +189,7 @@ export default function BuzzChat() {
   const composerRef = useRef<TextInput>(null);
   const followsLatestMessageRef = useRef(true);
   const hasPositionedInitialMessagesRef = useRef(false);
+  const initialMessageScrollPendingRef = useRef(true);
   const keyboardFollowPendingRef = useRef(false);
   const previousKeyboardHeightRef = useRef(0);
   const keyboardHeight = useKeyboardState((state) => (state.isVisible ? state.height : 0));
@@ -341,24 +342,24 @@ export default function BuzzChat() {
       presenceReconnectGrace[agent.pubkey],
     ),
   ).length;
+  const knownAgentPresenceCount = roomAgents.filter((agent) => agentPresences[agent.pubkey]).length;
   const hasRoomAgent = roomAgents.length > 0;
   const agentsOffline = isAgentOfflineAfterPresenceResolved(
     presenceResolved,
-    hasRoomAgent,
+    roomAgents.length,
+    knownAgentPresenceCount,
     onlineAgentCount,
   );
-  const presenceSummary = hasRoomAgent
-    ? !presenceResolved
-      ? roomAgents.length === 1
-        ? 'AGENT CONNECTING'
-        : 'AGENTS CONNECTING'
-      : agentsOffline
+  const presenceSummary = hasRoomAgent && knownAgentPresenceCount > 0
+    ? agentsOffline
       ? roomAgents.length === 1
         ? 'AGENT OFFLINE'
         : 'AGENTS OFFLINE'
-      : roomAgents.length === 1
+      : onlineAgentCount > 0 && roomAgents.length === 1
         ? 'AGENT READY'
-        : `${onlineAgentCount}/${roomAgents.length} AGENTS ONLINE`
+        : onlineAgentCount > 0
+          ? `${onlineAgentCount}/${roomAgents.length} AGENTS ONLINE`
+          : undefined
     : undefined;
   const roomMemberByPubkey = useMemo(
     () => new Map(roomMembers.map((member) => [member.pubkey, member])),
@@ -492,7 +493,7 @@ export default function BuzzChat() {
   }, []);
 
   const handleMessageListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    if (keyboardFollowPendingRef.current) return;
+    if (initialMessageScrollPendingRef.current || keyboardFollowPendingRef.current) return;
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
     followsLatestMessageRef.current = isNearChatBottom({
       contentHeight: contentSize.height,
@@ -506,6 +507,11 @@ export default function BuzzChat() {
       hasPositionedInitialMessagesRef.current = true;
       followsLatestMessageRef.current = true;
       scrollToLatestMessage(false);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          initialMessageScrollPendingRef.current = false;
+        });
+      });
       return;
     }
     if (followsLatestMessageRef.current || keyboardFollowPendingRef.current) {
@@ -564,6 +570,7 @@ export default function BuzzChat() {
     let foregroundReconnectGeneration = 0;
     hasPositionedInitialMessagesRef.current = false;
     followsLatestMessageRef.current = true;
+    initialMessageScrollPendingRef.current = true;
     agentPresencesRef.current = {};
     presenceReconnectGraceRef.current = {};
     setAgentPresences({});
@@ -644,6 +651,14 @@ export default function BuzzChat() {
           client.getDirectMessage(decodedId),
           client.getChannelRole(decodedId),
         ]);
+        // A freshly invited member can receive a successful but empty first
+        // relay snapshot while the direct-membership projection converges.
+        // Keep the live subscription installed and take one short retry so an
+        // opened Room cannot remain a permanently empty transcript.
+        if ((messageSync.entry.messages?.length ?? 0) === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 750));
+          await revalidateCachedMessages(t, identity.publicKey, decodedId);
+        }
         // Corners inherit their Workspace from the parent Room. Their create event
         // predates the redundant community tag, so resolve through the parent when
         // needed before loading cosmetic agent overlays.
@@ -993,7 +1008,11 @@ export default function BuzzChat() {
       const nextSelection = { start: inserted.cursor, end: inserted.cursor };
       const completedMention = activeMentionAtCursor(inserted.text, inserted.cursor);
       setInputText(inserted.text);
-      setInputSelection(nextSelection);
+      setInputSelection((current) =>
+        current.start === nextSelection.start && current.end === nextSelection.end
+          ? current
+          : nextSelection,
+      );
       setDismissedMentionKey(
         completedMention
           ? `${inserted.text}:${completedMention.start}:${completedMention.end}`
@@ -1305,6 +1324,10 @@ export default function BuzzChat() {
     });
   }, []);
 
+  const openCorner = useCallback((subchannelId: string) => {
+    router.push(`/buzz/chat/${encodeURIComponent(subchannelId)}` as Href);
+  }, []);
+
   const renderItem = useCallback(
     ({ item }: { item: ChatDisplayMessage }) => {
       if (item.writePermission) {
@@ -1318,9 +1341,7 @@ export default function BuzzChat() {
             <WritePermissionOutcome
               status={permission.status}
               subchannelId={permission.subchannelId}
-              onOpenCorner={(subchannelId) =>
-                router.push(`/buzz/chat/${encodeURIComponent(subchannelId)}` as Href)
-              }
+              onOpenCorner={openCorner}
             />
           );
         }
@@ -1385,9 +1406,7 @@ export default function BuzzChat() {
                 status={permission.status}
                 subchannelId={permission.subchannelId}
                 awaitingPerson={viewerIsAgent && pending}
-                onOpenCorner={(subchannelId) =>
-                  router.push(`/buzz/chat/${encodeURIComponent(subchannelId)}` as Href)
-                }
+                onOpenCorner={openCorner}
               />
             )}
           </HullSurface>
@@ -1402,23 +1421,24 @@ export default function BuzzChat() {
         const display = item.corner.agentPubkey
           ? resolveAgentDisplayIdentity(item.corner.agentPubkey, cornerAgent)
           : undefined;
-        const cornerOnline = item.corner.agentPubkey
+        const cornerPresence = item.corner.agentPubkey
+          ? agentPresences[item.corner.agentPubkey]
+          : undefined;
+        const cornerOnline = cornerPresence
           ? isAgentPresenceOnlineWithReconnectGrace(
-              agentPresences[item.corner.agentPubkey],
+              cornerPresence,
               presenceNow,
-              presenceReconnectGrace[item.corner.agentPubkey],
+              presenceReconnectGrace[item.corner.agentPubkey!],
             )
           : false;
         const statusLabel =
-          item.corner.status !== 'failed' && !cornerOnline
+          cornerPresence && item.corner.status !== 'failed' && !cornerOnline
             ? 'OFFLINE'
             : item.corner.status.replace('-', ' ').toUpperCase();
         return (
           <TouchableOpacity
             accessibilityLabel={`${display?.name ?? 'Agent'} work ${statusLabel.toLowerCase()}. View corner`}
-            onPress={() =>
-              router.push(`/buzz/chat/${encodeURIComponent(item.corner!.subchannelId)}` as Href)
-            }
+            onPress={() => openCorner(item.corner!.subchannelId)}
             style={styles.cornerStatusCard}
             testID={`corner-status-${statusLabel.toLowerCase().replace(' ', '-')}`}
           >
@@ -1527,7 +1547,10 @@ export default function BuzzChat() {
 
       return (
         <NewMessageMaterialize enabled={Boolean(item.isNew)}>
-          <View style={[styles.roomMessageRow, isOwn && styles.roomMessageRowOwn]}>
+          <View
+            style={[styles.roomMessageRow, isOwn && styles.roomMessageRowOwn]}
+            testID={`chat-message-${item.id}`}
+          >
             <View style={[styles.messageBubble, isOwn ? styles.ownBubble : styles.otherBubble]}>
               <View style={styles.authorRow}>
                 {display ? (
@@ -1629,7 +1652,11 @@ export default function BuzzChat() {
             <Text style={[styles.backText, isCorner && styles.cornerBackText]}>‹</Text>
           </TouchableOpacity>
           {isCorner ? (
-            <View accessibilityLabel={`${cornerAgentDisplay?.name ?? 'Agent'} edit session ${sessionState}`} style={styles.headerCenter}>
+            <View
+              accessibilityLabel={`${cornerAgentDisplay?.name ?? 'Agent'} edit session ${sessionState}`}
+              style={styles.headerCenter}
+              testID="corner-session-header"
+            >
               <Text style={[styles.channelName, styles.cornerChannelName]} numberOfLines={1}>
                 {cornerAgentDisplay?.name ?? 'Agent'}
               </Text>
@@ -1703,6 +1730,7 @@ export default function BuzzChat() {
           keyExtractor={(item: ChatDisplayMessage) => item.id}
           style={styles.messageList}
           contentContainerStyle={styles.messageListContent}
+          keyboardShouldPersistTaps="handled"
           renderItem={renderItem}
           ListEmptyComponent={
             <View style={styles.emptyState}>
@@ -1778,6 +1806,9 @@ export default function BuzzChat() {
             ) : null
           }
           onContentSizeChange={handleMessageListContentSizeChange}
+          onLayout={() => {
+            if (initialMessageScrollPendingRef.current) scrollToLatestMessage(false);
+          }}
           onScroll={handleMessageListScroll}
           scrollEventThrottle={16}
         />
@@ -1953,7 +1984,14 @@ export default function BuzzChat() {
                     setDismissedMentionKey(mentionMenuKey);
                   }
                 }}
-                onSelectionChange={(event) => setInputSelection(event.nativeEvent.selection)}
+                onSelectionChange={(event) => {
+                  const nextSelection = event.nativeEvent.selection;
+                  setInputSelection((current) =>
+                    current.start === nextSelection.start && current.end === nextSelection.end
+                      ? current
+                      : nextSelection,
+                  );
+                }}
                 placeholder={parentChannelId ? 'Steer' : 'Message'}
                 placeholderTextColor={groknight.dim}
                 multiline
@@ -2111,15 +2149,17 @@ export default function BuzzChat() {
                           <View style={styles.rosterActions}>
                             <Text style={styles.rosterKind}>
                               {participant.kind === 'agent'
-                                ? `AGENT · ${
-                                    isAgentPresenceOnlineWithReconnectGrace(
-                                      agentPresences[participant.pubkey],
-                                      presenceNow,
-                                      presenceReconnectGrace[participant.pubkey],
-                                    )
-                                      ? 'ONLINE'
-                                      : 'OFFLINE'
-                                  }`
+                                ? agentPresences[participant.pubkey]
+                                  ? `AGENT · ${
+                                      isAgentPresenceOnlineWithReconnectGrace(
+                                        agentPresences[participant.pubkey],
+                                        presenceNow,
+                                        presenceReconnectGrace[participant.pubkey],
+                                      )
+                                        ? 'ONLINE'
+                                        : 'OFFLINE'
+                                    }`
+                                  : 'AGENT'
                                 : 'PERSON'}
                               {targetRole && targetRole !== 'member'
                                 ? ` · ${targetRole.toUpperCase()}`

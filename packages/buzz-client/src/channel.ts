@@ -561,6 +561,20 @@ export async function listSubchannels(
   return ids;
 }
 
+/** Build one stable kind:9 channel message. Callers may safely republish this exact event. */
+export function buildMessage(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  text: string,
+  opts?: MessageSubmitOpts & { agentActivity?: boolean },
+): NostrEvent {
+  const tags: string[][] = [['h', channelId]];
+  if (opts?.mentionAgent) tags.push(['p', opts.mentionAgent]);
+  if (opts?.agentActivity) tags.push(['t', TAG_AGENT_ACTIVITY]);
+  if (opts?.extraTags) tags.push(...opts.extraTags);
+  return sign(ctx.identity, KIND_STREAM_MESSAGE, tags, text);
+}
+
 /** Build + publish a kind:9 channel message. */
 export async function sendMessage(
   ctx: ChannelOpsContext,
@@ -568,11 +582,7 @@ export async function sendMessage(
   text: string,
   opts?: MessageSubmitOpts & { agentActivity?: boolean },
 ): Promise<NostrEvent> {
-  const tags: string[][] = [['h', channelId]];
-  if (opts?.mentionAgent) tags.push(['p', opts.mentionAgent]);
-  if (opts?.agentActivity) tags.push(['t', TAG_AGENT_ACTIVITY]);
-  if (opts?.extraTags) tags.push(...opts.extraTags);
-  const event = sign(ctx.identity, KIND_STREAM_MESSAGE, tags, text);
+  const event = buildMessage(ctx, channelId, text, opts);
   await publishEvent(ctx.http, event);
   return event;
 }

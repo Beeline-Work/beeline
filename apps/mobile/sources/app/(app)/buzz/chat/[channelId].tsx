@@ -84,14 +84,12 @@ import {
 import { isNearChatBottom } from '@/buzz/chat-scroll';
 import { describeWriteRequest } from '@/buzz/write-request-copy';
 import { cornerSessionState, latestCornerTurnSummary } from '@/buzz/corner-session';
-import { isOfflineRoomDelivery } from '@/buzz/corner-steer';
 import {
   isAgentPresenceOnlineWithReconnectGrace,
   isAgentOfflineAfterPresenceResolved,
   isAgentTurnActive,
   mergeAgentPresence,
   presenceMapFromSessionEvents,
-  reconnectPresenceAfterForeground,
   type RoomAgentPresence,
 } from '@/buzz/agent-presence';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
@@ -121,7 +119,7 @@ type RoomMemberOption = {
 const BODY_PUBKEYS = new Set<string>();
 const COMPOSER_MIN_HEIGHT = 40;
 const COMPOSER_MAX_HEIGHT = 120;
-const FOREGROUND_RECONNECT_SETTLE_MS = 750;
+const MESSAGE_LIST_PADDING = 12;
 // This deliberately remains the sole color seam for the human merge decision.
 // If the product ever approves a non-monochrome exception, change only this value.
 const MERGE_APPROVAL_ACCENT = groknight.accent;
@@ -134,6 +132,23 @@ function CornerActivity({ message, active }: { message: ChatDisplayMessage; acti
     <View style={styles.activityGroup} testID="corner-activity">
       <ActivityTimeline active={active} items={activity} testID="corner-activity-timeline" />
     </View>
+  );
+}
+
+function AgentPresenceLight({
+  online,
+  testID,
+}: {
+  online: boolean;
+  testID?: string;
+}) {
+  return (
+    <View
+      accessibilityLabel={online ? 'Agent online' : 'Agent offline'}
+      accessibilityRole="image"
+      style={[styles.agentPresenceLight, online ? styles.agentPresenceOnline : styles.agentPresenceOffline]}
+      testID={testID}
+    />
   );
 }
 
@@ -191,6 +206,11 @@ export default function BuzzChat() {
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList<ChatDisplayMessage>>(null);
   const composerRef = useRef<TextInput>(null);
+  // React state can lag the final Android native text event when the user
+  // immediately taps send. Keep the authoritative in-flight draft beside the
+  // native TextInput so an @mention never drops trailing text.
+  const inputTextRef = useRef('');
+  const sendInFlightRef = useRef(false);
   const followsLatestMessageRef = useRef(true);
   const hasPositionedInitialMessagesRef = useRef(false);
   const initialMessageScrollPendingRef = useRef(true);
@@ -247,7 +267,6 @@ export default function BuzzChat() {
   const [presenceResolved, setPresenceResolved] = useState(false);
   const [presenceReconnectGrace, setPresenceReconnectGrace] = useState<Record<string, number>>({});
   const [presenceNow, setPresenceNow] = useState(Date.now());
-  const [offlineQueuedIds, setOfflineQueuedIds] = useState<Set<string>>(new Set());
   const agentPresencesRef = useRef(agentPresences);
   const presenceReconnectGraceRef = useRef(presenceReconnectGrace);
   agentPresencesRef.current = agentPresences;
@@ -347,24 +366,12 @@ export default function BuzzChat() {
     ),
   ).length;
   const knownAgentPresenceCount = roomAgents.filter((agent) => agentPresences[agent.pubkey]).length;
-  const hasRoomAgent = roomAgents.length > 0;
   const agentsOffline = isAgentOfflineAfterPresenceResolved(
     presenceResolved,
     roomAgents.length,
     knownAgentPresenceCount,
     onlineAgentCount,
   );
-  const presenceSummary = hasRoomAgent && knownAgentPresenceCount > 0
-    ? agentsOffline
-      ? roomAgents.length === 1
-        ? 'AGENT OFFLINE'
-        : 'AGENTS OFFLINE'
-      : onlineAgentCount > 0 && roomAgents.length === 1
-        ? 'AGENT READY'
-        : onlineAgentCount > 0
-          ? `${onlineAgentCount}/${roomAgents.length} AGENTS ONLINE`
-          : undefined
-    : undefined;
   const roomMemberByPubkey = useMemo(
     () => new Map(roomMembers.map((member) => [member.pubkey, member])),
     [roomMembers],
@@ -531,15 +538,22 @@ export default function BuzzChat() {
     keyboardFollowPendingRef.current = followsLatestMessageRef.current;
     if (!keyboardFollowPendingRef.current) return;
 
+    // The Android IME and KeyboardAvoidingView settle across multiple layout
+    // frames. Follow through the animation so the tail stays above—not behind—
+    // the keyboard, including if a subscribed message arrives mid-animation.
     scrollToLatestMessage(false);
-    const settleTimer = setTimeout(() => {
-      scrollToLatestMessage(false);
-      requestAnimationFrame(() => {
-        keyboardFollowPendingRef.current = false;
-      });
-    }, 350);
+    const settleTimers = [80, 260, 520].map((delay, index) =>
+      setTimeout(() => {
+        scrollToLatestMessage(false);
+        if (index === 2) {
+          requestAnimationFrame(() => {
+            keyboardFollowPendingRef.current = false;
+          });
+        }
+      }, delay),
+    );
 
-    return () => clearTimeout(settleTimer);
+    return () => settleTimers.forEach(clearTimeout);
   }, [keyboardHeight, scrollToLatestMessage]);
 
   useLayoutEffect(() => {
@@ -571,7 +585,6 @@ export default function BuzzChat() {
     let unsubscribe: (() => void) | undefined;
     let unsubscribePresence: (() => void) | undefined;
     let appStateSubscription: ReturnType<typeof AppState.addEventListener> | undefined;
-    let foregroundReconnectGeneration = 0;
     hasPositionedInitialMessagesRef.current = false;
     followsLatestMessageRef.current = true;
     initialMessageScrollPendingRef.current = true;
@@ -741,7 +754,6 @@ export default function BuzzChat() {
 
           if (nextAppState !== 'active') {
             if (previousAppState === 'active') {
-              foregroundReconnectGeneration += 1;
               const now = Date.now();
               onlineBeforeBackground = new Set(
                 Object.entries(agentPresencesRef.current)
@@ -764,7 +776,6 @@ export default function BuzzChat() {
           }
           if (previousAppState === 'active' || cancelled) return;
 
-          const reconnectGeneration = ++foregroundReconnectGeneration;
           const now = Date.now();
           const graceUntil = now + AGENT_PRESENCE_STALE_MS;
           const foregroundGrace = Object.fromEntries(
@@ -774,47 +785,10 @@ export default function BuzzChat() {
           setPresenceReconnectGrace(foregroundGrace);
           setPresenceNow(now);
 
-          void (async () => {
-            // Android can report AppState=active just before its network path
-            // has thawed. A socket opened in that sliver can authenticate and
-            // then die without a subscription error, so let the path settle
-            // while last-known-online grace keeps the header honest.
-            await new Promise((resolve) => setTimeout(resolve, FOREGROUND_RECONNECT_SETTLE_MS));
-            if (
-              cancelled ||
-              reconnectGeneration !== foregroundReconnectGeneration ||
-              AppState.currentState !== 'active'
-            ) {
-              return;
-            }
-            // React Native can leave a backgrounded socket looking OPEN even
-            // after the network path has died. Force one clean authenticated
-            // connection before reinstalling both Room subscriptions.
-            t.disconnect();
-            await installLiveMessages();
-            if (cancelled || reconnectGeneration !== foregroundReconnectGeneration) return;
-            void revalidateCachedMessages(t, identity.publicKey, decodedId).catch((error) => {
-              console.warn(`Failed to refresh messages after foregrounding ${decodedId}:`, error);
-            });
-            try {
-              const refreshedPresence = await reconnectPresenceAfterForeground(
-                installLivePresence,
-                () => t.agentPresenceBackfill(presenceChannelId),
-              );
-              if (cancelled || reconnectGeneration !== foregroundReconnectGeneration) return;
-              setAgentPresences((current) => {
-                const next = Object.values(refreshedPresence).reduce(mergeAgentPresence, current);
-                agentPresencesRef.current = next;
-                return next;
-              });
-              setPresenceNow(Date.now());
-            } catch (error) {
-              console.warn(
-                `Failed to refresh agent presence after foregrounding ${presenceChannelId}:`,
-                error,
-              );
-            }
-          })();
+          // RelayWs owns reconnect and the session subscription resumes from
+          // its last-seen cursor. Do not duplicate that work in the AppState
+          // callback: disconnecting, backfilling, and cache projection here
+          // previously starved the resumed composer.
         });
 
         const [communityAgents, communityMembers, archived, mergeInfo] = await Promise.all([
@@ -872,7 +846,6 @@ export default function BuzzChat() {
 
     return () => {
       cancelled = true;
-      foregroundReconnectGeneration += 1;
       appStateSubscription?.remove();
       if (unsubscribe) unsubscribe();
       if (unsubscribePresence) unsubscribePresence();
@@ -880,27 +853,25 @@ export default function BuzzChat() {
   }, [decodedId, notificationResponseId, addMessages, applyAgentPresence]);
 
   const handleSend = useCallback(async () => {
-    const text = inputText.trim();
-    if ((!text && !pendingAttachment) || !transport || isArchived) return;
+    const text = inputTextRef.current.trim();
+    // State updates are committed asynchronously. A ref closes the short
+    // double-tap window before `sending` can disable the native control.
+    if (sendInFlightRef.current || (!text && !pendingAttachment) || !transport || isArchived) return;
 
+    sendInFlightRef.current = true;
     setSending(true);
     followsLatestMessageRef.current = true;
-    // A corner's composer always steers its durable edit session. Presence is
-    // never used to defer or annotate that delivery path.
-    const sentWhileOffline = isOfflineRoomDelivery(isCorner, agentsOffline);
 
     try {
       const attachments = pendingAttachment
         ? [await uploadChatAttachment(await transport.ensureClient(), pendingAttachment)]
         : [];
+      inputTextRef.current = '';
       setInputText('');
       setComposerHeight(COMPOSER_MIN_HEIGHT);
       setInputSelection({ start: 0, end: 0 });
       setPendingAttachment(null);
       const optimisticId = `optimistic-${Date.now()}`;
-      if (sentWhileOffline) {
-        setOfflineQueuedIds((current) => new Set(current).add(optimisticId));
-      }
       addMessages([
         {
           id: optimisticId,
@@ -918,34 +889,27 @@ export default function BuzzChat() {
       const mentionedAgent = parentChannelId
         ? undefined
         : mentionedAgentPubkey(text, mentionableAgents);
-      const eventId = mentionedAgent
-        ? await transport.messageSubmitMentioningAgent(decodedId, text, mentionedAgent, attachments)
-        : await transport.messageSubmitWithEventId({
-            sessionId: decodedId,
-            text,
-            attachments,
-          });
+      // Build and sign exactly once. publishPreparedMessage retries the same
+      // id on a transient failure, so the relay can dedupe an ambiguous send.
+      const messageInput = { sessionId: decodedId, text, attachments };
+      const event = await transport.composeMessage(
+        messageInput,
+        mentionedAgent ? { mentionAgent: mentionedAgent } : undefined,
+      );
+      const eventId = await transport.messageSubmitWithEventId(messageInput, { event });
       useBuzzLocalCache
         .getState()
         .updateMessages(cacheViewerPubkey, decodedId, (current) =>
           reconcileOptimisticMessage(current, optimisticId, eventId),
         );
-      if (sentWhileOffline) {
-        setOfflineQueuedIds((current) => {
-          const next = new Set(current);
-          next.delete(optimisticId);
-          next.add(eventId);
-          return next;
-        });
-      }
     } catch (err) {
       console.warn('Send failed:', err);
       Alert.alert('Attachment not sent', err instanceof Error ? err.message : String(err));
     } finally {
+      sendInFlightRef.current = false;
       setSending(false);
     }
   }, [
-    inputText,
     pendingAttachment,
     transport,
     decodedId,
@@ -954,8 +918,6 @@ export default function BuzzChat() {
     userPubkey,
     parentChannelId,
     mentionableAgents,
-    agentsOffline,
-    isCorner,
     cacheViewerPubkey,
   ]);
 
@@ -1012,9 +974,10 @@ export default function BuzzChat() {
   const selectMention = useCallback(
     (participant: RoomMemberOption) => {
       if (!activeMention) return;
-      const inserted = replaceActiveMention(inputText, activeMention, participant.handle);
+      const inserted = replaceActiveMention(inputTextRef.current, activeMention, participant.handle);
       const nextSelection = { start: inserted.cursor, end: inserted.cursor };
       const completedMention = activeMentionAtCursor(inserted.text, inserted.cursor);
+      inputTextRef.current = inserted.text;
       setInputText(inserted.text);
       setInputSelection((current) =>
         current.start === nextSelection.start && current.end === nextSelection.end
@@ -1027,10 +990,15 @@ export default function BuzzChat() {
           : null,
       );
       setHighlightedMentionIndex(0);
-      requestAnimationFrame(() => composerRef.current?.focus());
+      requestAnimationFrame(() => {
+        composerRef.current?.focus();
+        // Normal Android typing owns its cursor. Set selection only for this
+        // explicit replacement, after React has applied the new text.
+        composerRef.current?.setNativeProps({ selection: nextSelection });
+      });
       void Haptics.selectionAsync();
     },
-    [activeMention, inputText],
+    [activeMention],
   );
 
   const handleWritePermission = useCallback(
@@ -1431,20 +1399,14 @@ export default function BuzzChat() {
         const display = item.corner.agentPubkey
           ? resolveAgentDisplayIdentity(item.corner.agentPubkey, cornerAgent)
           : undefined;
-        const cornerPresence = item.corner.agentPubkey
-          ? agentPresences[item.corner.agentPubkey]
-          : undefined;
-        const cornerOnline = cornerPresence
+        const cornerOnline = item.corner.agentPubkey
           ? isAgentPresenceOnlineWithReconnectGrace(
-              cornerPresence,
+              agentPresences[item.corner.agentPubkey],
               presenceNow,
-              presenceReconnectGrace[item.corner.agentPubkey!],
+              presenceReconnectGrace[item.corner.agentPubkey],
             )
           : false;
-        const statusLabel =
-          cornerPresence && item.corner.status !== 'failed' && !cornerOnline
-            ? 'OFFLINE'
-            : item.corner.status.replace('-', ' ').toUpperCase();
+        const statusLabel = item.corner.status.replace('-', ' ').toUpperCase();
         return (
           <TouchableOpacity
             accessibilityLabel={`${display?.name ?? 'Agent'} work ${statusLabel.toLowerCase()}. View corner`}
@@ -1462,7 +1424,15 @@ export default function BuzzChat() {
               />
             )}
             <View style={styles.cornerStatusCopy}>
-              <Text style={styles.cornerStatusAgent}>{display?.name ?? 'Agent'}</Text>
+              <View style={styles.cornerStatusAgentRow}>
+                {item.corner.agentPubkey ? (
+                  <AgentPresenceLight
+                    online={cornerOnline}
+                    testID={`agent-presence-light-${item.corner.agentPubkey}`}
+                  />
+                ) : null}
+                <Text style={styles.cornerStatusAgent}>{display?.name ?? 'Agent'}</Text>
+              </View>
               <Text style={styles.cornerStatusLabel}>{statusLabel}</Text>
             </View>
             <View style={styles.openCornerAction}>
@@ -1513,6 +1483,15 @@ export default function BuzzChat() {
       const display = isAgent
         ? resolveAgentDisplayIdentity(item.pubkey ?? 'unknown-agent', knownAgent)
         : null;
+      const agentOnline = Boolean(
+        knownAgent &&
+          item.pubkey &&
+          isAgentPresenceOnlineWithReconnectGrace(
+            agentPresences[item.pubkey],
+            presenceNow,
+            presenceReconnectGrace[item.pubkey],
+          ),
+      );
       const personName = item.pubkey ? personProfileByPubkey.get(item.pubkey)?.name : undefined;
 
       if (parentChannelId) {
@@ -1544,9 +1523,6 @@ export default function BuzzChat() {
                   </Text>
                 )
               ) : null}
-              {isOwn && offlineQueuedIds.has(item.id) && (
-                <Text style={styles.offlineDeliveryNote}>SENT TO ROOM · AGENT OFFLINE</Text>
-              )}
               {item.attachments?.map((attachment) => (
                 <AttachmentCard attachment={attachment} key={`${item.id}-${attachment.url}`} />
               ))}
@@ -1579,6 +1555,12 @@ export default function BuzzChat() {
                     size={22}
                   />
                 ) : null}
+                {knownAgent && item.pubkey ? (
+                  <AgentPresenceLight
+                    online={agentOnline}
+                    testID={`agent-presence-light-${item.pubkey}`}
+                  />
+                ) : null}
                 <Text style={[styles.roleLabel, isAgent ? styles.roleAgent : styles.roleUser]}>
                   {isOwn
                     ? 'YOU'
@@ -1588,9 +1570,6 @@ export default function BuzzChat() {
                 </Text>
               </View>
               {item.text ? <Text style={styles.messageText}>{item.text}</Text> : null}
-              {isOwn && offlineQueuedIds.has(item.id) && (
-                <Text style={styles.offlineDeliveryNote}>SENT TO ROOM · AGENT OFFLINE</Text>
-              )}
               {item.attachments?.map((attachment) => (
                 <AttachmentCard attachment={attachment} key={`${item.id}-${attachment.url}`} />
               ))}
@@ -1613,7 +1592,6 @@ export default function BuzzChat() {
       agentPresences,
       presenceNow,
       presenceReconnectGrace,
-      offlineQueuedIds,
       openedCornerIds,
     ],
   );
@@ -1688,7 +1666,7 @@ export default function BuzzChat() {
               </Text>
               <Text style={styles.headerMeta} numberOfLines={1}>
                 {participantsHydrated
-                  ? `${presenceSummary ? `${presenceSummary}  ·  ` : ''}${formatRoomParticipantTotal(roomParticipantTotal)}  ·  IN THIS ROOM  ›`
+                  ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ·  IN THIS ROOM  ›`
                   : 'LOADING MEMBERS'}
               </Text>
             </TouchableOpacity>
@@ -1739,7 +1717,10 @@ export default function BuzzChat() {
           data={visibleMessages}
           keyExtractor={(item: ChatDisplayMessage) => item.id}
           style={styles.messageList}
-          contentContainerStyle={styles.messageListContent}
+          contentContainerStyle={[
+            styles.messageListContent,
+            keyboardHeight > 0 && { paddingBottom: MESSAGE_LIST_PADDING + keyboardHeight },
+          ]}
           keyboardShouldPersistTaps="handled"
           renderItem={renderItem}
           ListEmptyComponent={
@@ -1835,25 +1816,17 @@ export default function BuzzChat() {
           </View>
         ) : (
           <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-            {!parentChannelId && (activeCorner?.corner || activeAgentTurn?.agentTurn) && (
+            {!parentChannelId &&
+              !agentsOffline &&
+              (activeCorner?.corner || activeAgentTurn?.agentTurn) && (
               <View style={styles.agentLiveStatus} testID="agent-live-status">
-                {!agentsOffline && <PixelLoader compact />}
+                <PixelLoader compact />
                 <Text style={styles.agentLiveStatusText}>
-                  {agentsOffline
-                    ? 'OFFLINE'
-                    : activeAgentTurn?.agentTurn
-                      ? 'thinking…'
-                      : activeCorner?.corner?.status === 'starting'
-                        ? 'opening corner…'
-                        : 'working in corner…'}
-                </Text>
-              </View>
-            )}
-            {!isCorner && agentsOffline && (
-              <View style={styles.agentOfflineHint} testID="agent-offline-hint">
-                <Text style={styles.agentOfflineHintTitle}>□ AGENT OFFLINE</Text>
-                <Text style={styles.agentOfflineHintText}>
-                  Messages stay in this Room and will be answered when the Agent is back.
+                  {activeAgentTurn?.agentTurn
+                    ? 'thinking…'
+                    : activeCorner?.corner?.status === 'starting'
+                      ? 'opening corner…'
+                      : 'working in corner…'}
                 </Text>
               </View>
             )}
@@ -1969,7 +1942,10 @@ export default function BuzzChat() {
                 ref={composerRef}
                 style={[styles.input, { height: composerHeight }, isCorner && styles.cornerInput]}
                 value={inputText}
-                onChangeText={setInputText}
+                onChangeText={(value) => {
+                  inputTextRef.current = value;
+                  setInputText(value);
+                }}
                 onContentSizeChange={(event) => {
                   const contentHeight = Math.ceil(event.nativeEvent.contentSize.height);
                   setComposerHeight(
@@ -2011,7 +1987,6 @@ export default function BuzzChat() {
                 numberOfLines={1}
                 returnKeyType="default"
                 scrollEnabled={composerHeight >= COMPOSER_MAX_HEIGHT}
-                selection={inputSelection}
                 submitBehavior="newline"
                 testID="chat-input"
               />
@@ -2128,9 +2103,22 @@ export default function BuzzChat() {
                           participant.pubkey === userPubkey,
                         );
                       const removing = membershipActionPubkey === participant.pubkey;
+                      const agentOnline =
+                        participant.kind === 'agent' &&
+                        isAgentPresenceOnlineWithReconnectGrace(
+                          agentPresences[participant.pubkey],
+                          presenceNow,
+                          presenceReconnectGrace[participant.pubkey],
+                        );
                       return (
                         <View
-                          accessibilityLabel={`${displayName}, ${participant.kind}, at ${handle}`}
+                          accessibilityLabel={`${displayName}, ${participant.kind}${
+                            participant.kind === 'agent'
+                              ? agentOnline
+                                ? ', online'
+                                : ', offline'
+                              : ''
+                          }, at ${handle}`}
                           key={participant.pubkey}
                           style={styles.rosterRow}
                           testID={`room-roster-${participant.kind}-${participant.pubkey}`}
@@ -2152,28 +2140,24 @@ export default function BuzzChat() {
                             />
                           )}
                           <View style={styles.rosterIdentity}>
-                            <Text numberOfLines={1} style={styles.rosterName}>
-                              {displayName}
-                            </Text>
+                            <View style={styles.rosterNameRow}>
+                              {participant.kind === 'agent' ? (
+                                <AgentPresenceLight
+                                  online={agentOnline}
+                                  testID={`agent-presence-light-${participant.pubkey}`}
+                                />
+                              ) : null}
+                              <Text numberOfLines={1} style={styles.rosterName}>
+                                {displayName}
+                              </Text>
+                            </View>
                             <Text numberOfLines={1} style={styles.rosterHandle}>
                               @{handle}
                             </Text>
                           </View>
                           <View style={styles.rosterActions}>
                             <Text style={styles.rosterKind}>
-                              {participant.kind === 'agent'
-                                ? agentPresences[participant.pubkey]
-                                  ? `AGENT · ${
-                                      isAgentPresenceOnlineWithReconnectGrace(
-                                        agentPresences[participant.pubkey],
-                                        presenceNow,
-                                        presenceReconnectGrace[participant.pubkey],
-                                      )
-                                        ? 'ONLINE'
-                                        : 'OFFLINE'
-                                    }`
-                                  : 'AGENT'
-                                : 'PERSON'}
+                              {participant.kind === 'agent' ? 'AGENT' : 'PERSON'}
                               {targetRole && targetRole !== 'member'
                                 ? ` · ${targetRole.toUpperCase()}`
                                 : ''}
@@ -2675,6 +2659,7 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgBase,
   },
   rosterIdentity: { flex: 1, minWidth: 0 },
+  rosterNameRow: { minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
   rosterName: {
     ...Typography.default('semiBold'),
     color: groknight.textPrimary,
@@ -3051,14 +3036,6 @@ const styles = StyleSheet.create({
     color: groknight.textMuted,
     marginTop: 4,
   },
-  offlineDeliveryNote: {
-    ...Typography.mono('semiBold'),
-    marginTop: 7,
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 13,
-    letterSpacing: 0.4,
-  },
   attachmentCard: {
     minWidth: 0,
     width: '100%',
@@ -3183,12 +3160,22 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgRaised,
   },
   cornerStatusCopy: { flex: 1, minWidth: 0 },
+  cornerStatusAgentRow: { minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
   cornerStatusAgent: {
     ...Typography.default('semiBold'),
     color: groknight.textPrimary,
     fontSize: 12,
     lineHeight: 16,
   },
+  agentPresenceLight: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: groknight.textSecondary,
+  },
+  agentPresenceOnline: { backgroundColor: groknight.textSecondary },
+  agentPresenceOffline: { backgroundColor: 'transparent' },
   cornerStatusLabel: {
     ...Typography.mono('semiBold'),
     color: groknight.textSecondary,
@@ -3381,29 +3368,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     lineHeight: 14,
     letterSpacing: 0.35,
-  },
-  agentOfflineHint: {
-    minWidth: 0,
-    marginBottom: 7,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgBase,
-  },
-  agentOfflineHintTitle: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 10,
-    lineHeight: 14,
-    letterSpacing: 0.55,
-  },
-  agentOfflineHintText: {
-    ...Typography.default(),
-    marginTop: 3,
-    color: groknight.textMuted,
-    fontSize: 11,
-    lineHeight: 15,
   },
   cancelTurnButton: {
     minHeight: 36,

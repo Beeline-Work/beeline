@@ -19,6 +19,7 @@ export interface RelayWsOptions {
   WebSocketImpl?: WebSocketConstructor;
   skipAuth?: boolean;
   connectTimeoutMs?: number;
+  reconnectDelayMs?: number;
 }
 
 function defaultWebSocket(): WebSocketConstructor {
@@ -56,6 +57,13 @@ export class RelayWs {
   private closed = false;
   private challenge: string | null = null;
   private connectPromise: Promise<void> | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempts = 0;
+  private successfulConnections = 0;
+  private readonly subscriptions = new Map<
+    string,
+    { filters: Filter[]; reconnectFilters?: () => Filter[] }
+  >();
 
   constructor(private readonly opts: RelayWsOptions) {}
 
@@ -65,9 +73,19 @@ export class RelayWs {
 
   /** Open socket and complete NIP-42 AUTH when challenged. */
   connect(): Promise<void> {
+    if (this.connected) return Promise.resolve();
     if (this.connectPromise) return this.connectPromise;
-    this.connectPromise = this.doConnect();
-    return this.connectPromise;
+    this.closed = false;
+    const pending = this.doConnect();
+    this.connectPromise = pending;
+    void pending
+      .catch(() => {
+        if (!this.closed) this.scheduleReconnect();
+      })
+      .finally(() => {
+        if (!this.connected) this.connectPromise = null;
+      });
+    return pending;
   }
 
   private doConnect(): Promise<void> {
@@ -76,11 +94,12 @@ export class RelayWs {
       const timeoutMs = this.opts.connectTimeoutMs ?? 15_000;
       let settled = false;
 
+      let socket: WebSocketLike | null = null;
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
         try {
-          this.ws?.close();
+          socket?.close();
         } catch {
           /* ignore */
         }
@@ -91,12 +110,20 @@ export class RelayWs {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        if (err) reject(err);
-        else resolve();
+        if (err) {
+          reject(err);
+        } else {
+          this.reconnectAttempts = 0;
+          const reconnected = this.successfulConnections > 0;
+          this.successfulConnections += 1;
+          resolve();
+          if (reconnected) this.resubscribeLiveRequests();
+        }
       };
 
       try {
-        this.ws = new WS(this.opts.wsUrl);
+        socket = new WS(this.opts.wsUrl);
+        this.ws = socket;
       } catch (e) {
         finish(e instanceof Error ? e : new Error(String(e)));
         return;
@@ -173,14 +200,18 @@ export class RelayWs {
       };
 
       const onClose = () => {
+        if (this.ws !== socket) return;
         this.authed = false;
+        this.connectPromise = null;
+        this.ws = null;
         if (!settled) finish(new Error('RelayWs closed before ready'));
+        if (!this.closed) this.scheduleReconnect();
       };
 
-      this.ws.addEventListener('open', onOpen);
-      this.ws.addEventListener('message', onMessage);
-      this.ws.addEventListener('error', onError);
-      this.ws.addEventListener('close', onClose);
+      socket.addEventListener('open', onOpen);
+      socket.addEventListener('message', onMessage);
+      socket.addEventListener('error', onError);
+      socket.addEventListener('close', onClose);
     });
   }
 
@@ -262,7 +293,7 @@ export class RelayWs {
   subscribe(
     filters: Filter[],
     onEvent: (event: NostrEvent, subId: string) => void,
-    opts?: { subId?: string; onEose?: () => void },
+    opts?: { subId?: string; onEose?: () => void; reconnectFilters?: () => Filter[] },
   ): () => void {
     const subId = opts?.subId ?? `sub-${Math.random().toString(36).slice(2, 10)}`;
     const off = this.onMessage((msg) => {
@@ -272,9 +303,11 @@ export class RelayWs {
         opts?.onEose?.();
       }
     });
+    this.subscriptions.set(subId, { filters, reconnectFilters: opts?.reconnectFilters });
     this.send(['REQ', subId, ...filters]);
     return () => {
       off();
+      this.subscriptions.delete(subId);
       try {
         this.send(['CLOSE', subId]);
       } catch {
@@ -287,6 +320,8 @@ export class RelayWs {
     this.closed = true;
     this.authed = false;
     this.connectPromise = null;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
     try {
       this.ws?.close();
     } catch {
@@ -294,6 +329,31 @@ export class RelayWs {
     }
     this.ws = null;
     this.handlers.clear();
+    this.subscriptions.clear();
+  }
+
+  private scheduleReconnect(): void {
+    if (this.closed || this.reconnectTimer) return;
+    const baseDelay = this.opts.reconnectDelayMs ?? 500;
+    const delay = Math.min(baseDelay * 2 ** this.reconnectAttempts, 10_000);
+    this.reconnectAttempts += 1;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.connect().catch(() => {
+        this.scheduleReconnect();
+      });
+    }, delay);
+  }
+
+  /** Reissue every live REQ after authentication on a replacement socket. */
+  private resubscribeLiveRequests(): void {
+    for (const [subId, subscription] of this.subscriptions) {
+      try {
+        this.send(['REQ', subId, ...(subscription.reconnectFilters?.() ?? subscription.filters)]);
+      } catch {
+        // A concurrent close will schedule another recovery attempt.
+      }
+    }
   }
 }
 

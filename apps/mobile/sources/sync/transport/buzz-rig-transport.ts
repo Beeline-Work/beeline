@@ -42,6 +42,7 @@ import {
   type WritePermissionDecision,
   type AttachmentReference,
 } from '@beeline/buzz-client';
+import type { NostrEvent } from '@beeline/nostr';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { cornerName, type CornerSummary } from '@/buzz/corners';
 import { toRigEvent } from './buzz-event-projection';
@@ -68,6 +69,8 @@ export class BuzzRigTransport implements RigTransport {
   private baseUrl: string;
   /** Track open subscriptions for cleanup. */
   private subscriptions = new Map<SessionId, () => void>();
+  /** A second caller publishing the same prepared event joins the first publish. */
+  private outgoingPublishes = new Map<string, Promise<string>>();
 
   constructor(identity: Identity, baseUrl: string = getBuzzRuntimeConfig().relayUrl) {
     this.identity = identity;
@@ -147,16 +150,47 @@ export class BuzzRigTransport implements RigTransport {
     await this.messageSubmitWithEventId(input);
   }
 
-  /** Submit a message and return the signed event id for optimistic UI reconciliation. */
-  async messageSubmitWithEventId(input: MessageSubmitInput): Promise<string> {
+  /** Compose one signed message. Retries must publish this returned event unchanged. */
+  async composeMessage(
+    input: MessageSubmitInput,
+    opts?: { mentionAgent?: string },
+  ): Promise<NostrEvent> {
     const client = await this.getClient();
     const attachmentTags = buildAttachmentTags(input.attachments ?? []);
-    const event = await client.messageSubmit(
+    return client.buildMessage(
       input.sessionId,
       input.text,
-      attachmentTags.length ? { extraTags: attachmentTags } : undefined,
+      {
+        ...(opts?.mentionAgent ? { mentionAgent: opts.mentionAgent } : {}),
+        ...(attachmentTags.length ? { extraTags: attachmentTags } : {}),
+      },
     );
-    return event.id;
+  }
+
+  /** Publish a prepared message at most once while it is in flight. */
+  async publishPreparedMessage(event: NostrEvent): Promise<string> {
+    const existing = this.outgoingPublishes.get(event.id);
+    if (existing) return existing;
+
+    const publish = this.getClient()
+      .then((client) => client.publish(event))
+      .then(() => event.id)
+      .finally(() => {
+        if (this.outgoingPublishes.get(event.id) === publish) {
+          this.outgoingPublishes.delete(event.id);
+        }
+      });
+    this.outgoingPublishes.set(event.id, publish);
+    return publish;
+  }
+
+  /** Submit a message and return the stable signed event id for optimistic UI reconciliation. */
+  async messageSubmitWithEventId(
+    input: MessageSubmitInput,
+    opts?: { mentionAgent?: string; event?: NostrEvent },
+  ): Promise<string> {
+    const event = opts?.event ?? (await this.composeMessage(input, opts));
+    return this.publishPreparedMessage(event);
   }
 
   /** Send an ordinary Room message addressed to one @-mentioned agent. */
@@ -166,13 +200,10 @@ export class BuzzRigTransport implements RigTransport {
     agentPubkey: string,
     attachments: AttachmentReference[] = [],
   ): Promise<string> {
-    const client = await this.getClient();
-    const attachmentTags = buildAttachmentTags(attachments);
-    const event = await client.messageSubmit(channelId, text, {
-      mentionAgent: agentPubkey,
-      ...(attachmentTags.length ? { extraTags: attachmentTags } : {}),
-    });
-    return event.id;
+    return this.messageSubmitWithEventId(
+      { sessionId: channelId, text, attachments },
+      { mentionAgent: agentPubkey },
+    );
   }
 
   /** Respond to the agent's first mutating-tool request in a Room. */

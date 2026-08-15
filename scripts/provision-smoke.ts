@@ -2,7 +2,15 @@
 /**
  * Provision a Buzz identity + Workspace-linked Room + long transcript for the emulator smoke test.
  */
-import { createBuzzClient, createIdentity, identityNsec, identityNpub } from '@beeline/buzz-client';
+import {
+  createBuzzClient,
+  createIdentity,
+  identityNsec,
+  identityNpub,
+  KIND_AGENT_PRESENCE,
+  TAG_AGENT_PRESENCE,
+} from '@beeline/buzz-client';
+import { signEvent } from '@beeline/nostr';
 
 const RELAY = process.env.RELAY_URL || 'https://relay.buzzrouter.com';
 
@@ -30,15 +38,20 @@ async function main() {
   console.log('Workspace created:', workspaceId);
   console.log('Room created:', channelId);
 
-  // A genuine registered agent participant gives the UI flow both a mention
-  // target and an unknown-presence state. Deliberately do not publish a
-  // presence lease: the mobile UI must omit a status until one exists.
+  // A genuine registered agent participant gives the UI flow a mention target
+  // and a current presence lease.
   const agentIdentity = createIdentity('buzzy-smoke-agent');
   const agentClient = createBuzzClient({ baseUrl: RELAY, identity: agentIdentity });
   await agentClient.connect();
   await client.addMember(workspaceId, agentIdentity.publicKey, 'member');
   await agentClient.waitUntilMember(workspaceId, agentIdentity.publicKey);
   await agentClient.createAgent(workspaceId, { displayName: 'Beebee' });
+  await client.setAgentSoul(workspaceId, agentIdentity.publicKey, {
+    name: 'Beebee',
+    personality: 'Relay fixture',
+    intent: 'Verify mobile message delivery.',
+    avatarSeed: 'smoke-beebee',
+  });
   await client.addMember(channelId, agentIdentity.publicKey, 'member');
   await agentClient.waitUntilMember(channelId, agentIdentity.publicKey);
   const cornerId = await agentClient.createSubchannel(channelId, 'Smoke agent corner', {
@@ -55,6 +68,60 @@ async function main() {
     ],
   });
   await agentClient.messageSubmit(cornerId, 'I am ready for a steering message.');
+  // Beebee's current lease renders a filled presence light. Add a separate
+  // offline Agent so the device fixture also proves the hollow state without
+  // relying on an unknown/not-yet-loaded presence record.
+  const offlineAgentIdentity = createIdentity('buzzy-smoke-offline-agent');
+  const offlineAgentClient = createBuzzClient({ baseUrl: RELAY, identity: offlineAgentIdentity });
+  await offlineAgentClient.connect();
+  await client.addMember(workspaceId, offlineAgentIdentity.publicKey, 'member');
+  await offlineAgentClient.waitUntilMember(workspaceId, offlineAgentIdentity.publicKey);
+  await offlineAgentClient.createAgent(workspaceId, { displayName: 'Milo' });
+  await client.setAgentSoul(workspaceId, offlineAgentIdentity.publicKey, {
+    name: 'Milo',
+    personality: 'Offline relay fixture',
+    intent: 'Verify offline presence rendering.',
+    avatarSeed: 'smoke-milo',
+  });
+  await client.addMember(channelId, offlineAgentIdentity.publicKey, 'member');
+  await offlineAgentClient.waitUntilMember(channelId, offlineAgentIdentity.publicKey);
+  const presenceAt = Math.floor(Date.now() / 1_000);
+  await agentClient.publish(
+    signEvent(
+      {
+        pubkey: agentIdentity.publicKey,
+        created_at: presenceAt,
+        kind: KIND_AGENT_PRESENCE,
+        tags: [
+          ['d', `${TAG_AGENT_PRESENCE}:${channelId}`],
+          ['h', channelId],
+          ['t', TAG_AGENT_PRESENCE],
+          ['agent', agentIdentity.publicKey],
+          ['status', 'online'],
+        ],
+        content: '',
+      },
+      agentIdentity.secretKey,
+    ),
+  );
+  await offlineAgentClient.publish(
+    signEvent(
+      {
+        pubkey: offlineAgentIdentity.publicKey,
+        created_at: presenceAt,
+        kind: KIND_AGENT_PRESENCE,
+        tags: [
+          ['d', `${TAG_AGENT_PRESENCE}:${channelId}`],
+          ['h', channelId],
+          ['t', TAG_AGENT_PRESENCE],
+          ['agent', offlineAgentIdentity.publicKey],
+          ['status', 'offline'],
+        ],
+        content: '',
+      },
+      offlineAgentIdentity.secretKey,
+    ),
+  );
   console.log('Agent and corner created:', cornerId);
 
   // 4. Post enough messages to overflow the compact emulator. This makes the
@@ -96,6 +163,7 @@ async function main() {
   console.log(`MAESTRO_SMOKE_LATEST_MESSAGE_ID=${latestMessage.id}`);
 
   client.disconnect();
+  offlineAgentClient.disconnect();
   agentClient.disconnect();
 }
 

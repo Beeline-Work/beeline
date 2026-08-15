@@ -55,6 +55,23 @@ env:
 - assertNotVisible:
     id: agent-offline-hint
 
+# The device must restore touch handling before foreground reconnect work runs.
+# This is intentionally a real Android HOME/resume transition, not a mocked
+# AppState callback.
+- pressKey: HOME
+- launchApp:
+    clearState: false
+- extendedWaitUntil:
+    visible:
+      id: room-list
+    timeout: 5000
+- tapOn:
+    id: room-${SMOKE_ROOM_ID}
+- extendedWaitUntil:
+    visible:
+      id: chat-input
+    timeout: 5000
+
 # A Room send must reach the remote participant, whose fixture reply is only
 # published after the signed device event appears on the relay.
 - tapOn:
@@ -117,6 +134,50 @@ env:
 - extendedWaitUntil:
     visible: ".*still accepting input"
     timeout: 1000
+
+# Selecting Beebee then appending text used to race Android's controlled
+# selection and publish only the prefix. The remote agent waits for the exact
+# full payload, proving the relay stored every trailing character.
+- tapOn:
+    id: chat-input
+- eraseText
+- inputText: "@"
+- extendedWaitUntil:
+    visible:
+      id: mention-suggestions
+    timeout: 3000
+- tapOn:
+    id: mention-suggestion-beebee
+- inputText: " what's up"
+- tapOn:
+    id: chat-send
+- extendedWaitUntil:
+    visible: "SMOKE AGENT MENTION REPLY — @beebee what's up"
+    timeout: 30000
+
+# Keep the IME open while a real relay reply arrives. The reply must become the
+# visible tail rather than landing behind Android's keyboard.
+- tapOn:
+    id: chat-input
+- inputText: "SMOKE KEYBOARD PIN TRIGGER"
+- tapOn:
+    id: chat-send
+- extendedWaitUntil:
+    visible: "SMOKE AGENT KEYBOARD REPLY — newest above keyboard"
+    timeout: 30000
+
+# Presence is only a compact per-agent light now: no room-wide offline copy.
+- pressKey: back
+- tapOn:
+    id: room-participant-roster-trigger
+- extendedWaitUntil:
+    visible:
+      id: room-roster-sheet
+    timeout: 3000
+- assertVisible: "Beebee, agent, online.*"
+- assertVisible: "Milo, agent, offline.*"
+- assertNotVisible: "AGENT OFFLINE"
+- tapOn: "×"
 
 # Scroll to the linked corner, steer it, and receive the relay-backed agent
 # fixture reply. A real Body/ACP daemon is separately required to prove model

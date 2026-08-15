@@ -316,28 +316,39 @@ describe('Room-scoped agent presence transport', () => {
 });
 
 describe('Room-scoped Workspace membership', () => {
-  it('sends @-mentioned Room messages with an address and no private request marker', async () => {
+  it('composes an @-mentioned Room message once and coalesces duplicate publishes by event id', async () => {
     const identity = {
       publicKey: 'a'.repeat(64),
       secretKey: new Uint8Array(32).fill(1),
       name: 'operator',
     } as Identity;
+    const event = { id: 'event-1' };
+    let releasePublish: (() => void) | undefined;
     const client = {
-      messageSubmit: vi.fn(async () => ({ id: 'event-1' })),
+      buildMessage: vi.fn(() => event),
+      publish: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            releasePublish = resolve;
+          }),
+      ),
     };
     const transport = new BuzzRigTransport(identity, 'https://relay.test');
     (transport as unknown as { client: typeof client }).client = client;
 
-    await expect(
-      transport.messageSubmitMentioningAgent(
-        'room-1',
-        '@Brisk Pilot fix the build',
-        'agent-pubkey',
-      ),
-    ).resolves.toBe('event-1');
-    expect(client.messageSubmit).toHaveBeenCalledWith('room-1', '@Brisk Pilot fix the build', {
+    const prepared = await transport.composeMessage(
+      { sessionId: 'room-1', text: '@Brisk Pilot fix the build' },
+      { mentionAgent: 'agent-pubkey' },
+    );
+    expect(client.buildMessage).toHaveBeenCalledWith('room-1', '@Brisk Pilot fix the build', {
       mentionAgent: 'agent-pubkey',
     });
+
+    const first = transport.publishPreparedMessage(prepared as never);
+    const duplicate = transport.publishPreparedMessage(prepared as never);
+    await vi.waitFor(() => expect(client.publish).toHaveBeenCalledOnce());
+    releasePublish?.();
+    await expect(Promise.all([first, duplicate])).resolves.toEqual(['event-1', 'event-1']);
   });
 
   it('binds a write-permission response to the agent and original request', async () => {

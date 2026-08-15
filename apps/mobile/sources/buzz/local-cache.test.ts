@@ -285,4 +285,17 @@ describe('Buzz local cache', () => {
       useBuzzLocalCache.getState().channels[channelCacheKey(viewer, 'room')]?.latestMessage,
     ).toBe('live');
   });
+
+  it('retries an empty initial snapshot with a full history read', async () => {
+    const sessionEventsBackfill = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([event('late-history', 10)]);
+
+    await revalidateCachedMessages({ sessionEventsBackfill } as never, viewer, 'room');
+    await revalidateCachedMessages({ sessionEventsBackfill } as never, viewer, 'room');
+
+    expect(sessionEventsBackfill).toHaveBeenNthCalledWith(1, 'room', { limit: 50 });
+    expect(sessionEventsBackfill).toHaveBeenNthCalledWith(2, 'room', { limit: 50 });
+  });
 });

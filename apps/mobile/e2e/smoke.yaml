@@ -3,6 +3,7 @@ name: Workspace and chat smoke
 env:
   SMOKE_NSEC: ${SMOKE_NSEC}
   SMOKE_ROOM_ID: ${SMOKE_ROOM_ID}
+  SMOKE_LATEST_MESSAGE_ID: ${SMOKE_LATEST_MESSAGE_ID}
 ---
 # A clean app is installed by scripts/maestro-e2e.sh. Importing the generated
 # identity is the stable, device-held identity path — no OIDC browser or agent
@@ -42,9 +43,37 @@ env:
     visible:
       id: chat-input
     timeout: 10000
+- extendedWaitUntil:
+    # The unique message row proves the actual newest seeded event is visible,
+    # instead of merely asserting that some wrapped text is in Android's tree.
+    visible:
+      id: chat-message-${SMOKE_LATEST_MESSAGE_ID}
+    timeout: 20000
+- assertNotVisible:
+    id: agent-offline-hint
 
-# The one-second return assertion is the regression guard for the Room
-# back-button freeze. It uses Android's native back dispatch, not a UI tap.
+# A Room send must reach the remote participant, whose fixture reply is only
+# published after the signed device event appears on the relay.
+- tapOn:
+    id: chat-input
+- inputText: SMOKE ROOM SEND
+- tapOn:
+    id: chat-send
+- assertVisible: SMOKE ROOM SEND
+- extendedWaitUntil:
+    # Maestro's text matcher is whole-string regex matching; accept the
+    # delivery annotation while still requiring the live reply prefix.
+    visible: SMOKE AGENT ROOM REPLY.*
+    timeout: 30000
+
+# Android first dispatches back to the focused composer. The second dispatch
+# must immediately leave the Room; together these guard keyboard and route
+# back handling without treating a normal keyboard dismissal as a freeze.
+- pressKey: back
+- extendedWaitUntil:
+    visible:
+      id: chat-input
+    timeout: 1000
 - pressKey: back
 - extendedWaitUntil:
     visible:
@@ -57,9 +86,61 @@ env:
     visible:
       id: chat-input
     timeout: 10000
+- assertVisible: SMOKE AGENT ROOM REPLY.*
+- assertNotVisible:
+    id: agent-offline-hint
 - tapOn:
     id: chat-input
-- inputText: Maestro on-device smoke message
+- inputText: "@"
+- extendedWaitUntil:
+    visible:
+      id: mention-suggestions
+    timeout: 3000
+- tapOn:
+    # Handles are deterministic from a fresh test identity, so select the
+    # first rendered participant control rather than hard-coding its handle.
+    id: mention-suggestion-.*
+- assertNotVisible:
+    id: mention-suggestions
+- inputText: " mention picker stayed responsive"
 - tapOn:
     id: chat-send
-- assertVisible: Maestro on-device smoke message
+- assertVisible: .*mention picker stayed responsive
+
+# Scroll to the linked corner, steer it, and receive the relay-backed agent
+# fixture reply. A real Body/ACP daemon is separately required to prove model
+# reasoning; this flow proves mobile delivery and live response rendering.
+- scrollUntilVisible:
+    element:
+      id: corner-status-working
+    direction: UP
+    timeout: 10000
+- tapOn:
+    id: corner-status-working
+- extendedWaitUntil:
+    visible:
+      id: corner-session-header
+    timeout: 10000
+- assertVisible: I am ready for a steering message.
+- tapOn:
+    id: chat-input
+- inputText: SMOKE CORNER STEER
+- tapOn:
+    id: chat-send
+- assertVisible: SMOKE CORNER STEER
+- extendedWaitUntil:
+    visible: SMOKE AGENT CORNER REPLY.*
+    timeout: 30000
+
+# Back first dismisses the focused composer, then returns from the pushed corner
+# route to its parent Room immediately, without blocking native or JS navigation.
+- pressKey: back
+- extendedWaitUntil:
+    visible:
+      id: chat-input
+    timeout: 1000
+- pressKey: back
+- extendedWaitUntil:
+    visible:
+      id: chat-input
+    timeout: 1000

@@ -41,6 +41,9 @@ read_seed_value() {
 readonly SMOKE_NSEC="$(read_seed_value MAESTRO_SMOKE_NSEC)"
 readonly SMOKE_WORKSPACE_ID="$(read_seed_value MAESTRO_SMOKE_WORKSPACE_ID)"
 readonly SMOKE_ROOM_ID="$(read_seed_value MAESTRO_SMOKE_ROOM_ID)"
+readonly SMOKE_AGENT_NSEC="$(read_seed_value MAESTRO_SMOKE_AGENT_NSEC)"
+readonly SMOKE_CORNER_ID="$(read_seed_value MAESTRO_SMOKE_CORNER_ID)"
+readonly SMOKE_LATEST_MESSAGE_ID="$(read_seed_value MAESTRO_SMOKE_LATEST_MESSAGE_ID)"
 
 # This intentionally clears only the named app on the named disposable
 # emulator, ensuring the identity creation/import flow is exercised each run.
@@ -51,10 +54,19 @@ adb -s "$DEVICE" install "$APK" >/dev/null
 adb -s "$DEVICE" shell pm grant "$APP_ID" android.permission.POST_NOTIFICATIONS >/dev/null 2>&1 || true
 adb -s "$DEVICE" shell monkey -p "$APP_ID" 1 >/dev/null
 
+# A separate registered agent waits for the device's actual Room and corner
+# messages, then responds. This verifies live relay delivery without requiring
+# a local Body daemon in the emulator fixture.
+(cd "$REPO_DIR" && npx tsx scripts/publish-smoke-replies.ts "$SMOKE_AGENT_NSEC" "$SMOKE_ROOM_ID" "$SMOKE_CORNER_ID") &
+reply_fixture_pid=$!
+trap 'kill "$reply_fixture_pid" 2>/dev/null || true' EXIT
+
 maestro test --device "$DEVICE" \
   --env "SMOKE_NSEC=$SMOKE_NSEC" \
   --env "SMOKE_WORKSPACE_ID=$SMOKE_WORKSPACE_ID" \
   --env "SMOKE_ROOM_ID=$SMOKE_ROOM_ID" \
+  --env "SMOKE_CORNER_ID=$SMOKE_CORNER_ID" \
+  --env "SMOKE_LATEST_MESSAGE_ID=$SMOKE_LATEST_MESSAGE_ID" \
   "$MOBILE_DIR/e2e/smoke.yaml"
 
 echo "Maestro smoke passed on $DEVICE."

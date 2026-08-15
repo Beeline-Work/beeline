@@ -374,8 +374,31 @@ export default function BuzzChannels() {
           return;
         }
         setActiveBuzzCacheViewer(currentIdentity.publicKey);
+
+        // Publish the identity before touching the relay. The cache selector is
+        // keyed by this pubkey, so holding it back behind ensureClient() made a
+        // perfectly good persisted Room list look empty whenever launch raced a
+        // slow or unavailable connection.
+        const cached = selectChannelList(
+          useBuzzLocalCache.getState(),
+          currentIdentity.publicKey,
+          requestedCommunity,
+        );
+        if (isCurrent()) {
+          setIdentity(currentIdentity);
+          setCommunities(cached?.communities ?? []);
+          setActiveCommunityId(cached?.communityId ?? null);
+          setPersonalWorkspaceId(cached?.personalWorkspaceId ?? null);
+          setViewerIsAgent(cached?.viewerIsAgent ?? false);
+          setViewerAvatarUrl(cached?.viewerAvatarUrl);
+          setCanEditWorkspaceAvatar(cached?.canEditWorkspaceAvatar ?? false);
+        }
         const url = await getEffectiveRelayUrl();
         const nextTransport = new BuzzRigTransport(currentIdentity, url);
+        if (isCurrent()) {
+          setRelayUrl(url);
+          setTransport(nextTransport);
+        }
         const client = await nextTransport.ensureClient();
         const [workspaceContext, identityIsAgent] = await Promise.all([
           prepareWorkspaceContext(client, currentIdentity.publicKey, requestedCommunity),
@@ -389,9 +412,6 @@ export default function BuzzChannels() {
         await ensurePersonNameForWorkspace(client, active, currentIdentity.publicKey);
         const channels = await loadDisplayChannelBasics(nextTransport, active, available);
         if (isCurrent()) {
-          setIdentity(currentIdentity);
-          setRelayUrl(url);
-          setTransport(nextTransport);
           setCommunities(available);
           setActiveCommunityId(active);
           setPersonalWorkspaceId(personal);

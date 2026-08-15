@@ -79,13 +79,18 @@ export function isAgentTurnActive(
   now = Date.now(),
   reconnectGraceUntil = 0,
 ): boolean {
-  if (
-    turn.status !== 'working' ||
-    !isAgentPresenceOnlineWithReconnectGrace(presence, now, reconnectGraceUntil)
-  ) {
-    return false;
-  }
-  return !presence?.generationId || turn.generationId === presence.generationId;
+  void now;
+  void reconnectGraceUntil;
+  if (turn.status !== 'working') return false;
+
+  // Turn lifecycle and liveness are independent relay streams. A signed
+  // working event is enough to render the Room progress row while the
+  // replaceable presence lease is still loading or briefly quota-delayed.
+  // An explicit offline marker, or a different current daemon generation,
+  // is the only evidence that may close it before complete/failed arrives.
+  if (presence?.status === 'offline') return false;
+  if (presence?.generationId) return turn.generationId === presence.generationId;
+  return true;
 }
 
 export function mergeAgentPresence(

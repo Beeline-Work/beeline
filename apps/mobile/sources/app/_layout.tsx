@@ -212,26 +212,17 @@ function getDevWebQueryCredentials(): AuthCredentials | null {
 
 export default function RootLayout() {
     React.useEffect(() => {
-        let flushTimer: ReturnType<typeof setTimeout> | undefined;
         const subscription = AppState.addEventListener('change', (state) => {
-            // MMKV is synchronous and a warm-cache snapshot may be large. The
-            // cache must never run inside the AppState transition itself. It
-            // is optional, so skip it when a background hop turns into an
-            // immediate foreground return.
+            // MMKV is synchronous and a warm-cache snapshot may be large, so
+            // this is deliberately the only write point: after Android has
+            // already transitioned away from the foreground. A deferred JS
+            // timer cannot be used here—Android suspends that timer before it
+            // fires, leaving a cold launch with no persisted transcript.
             if (state === 'background') {
-                if (flushTimer) clearTimeout(flushTimer);
-                flushTimer = setTimeout(() => {
-                    if (AppState.currentState === 'background') {
-                        flushBuzzLocalCacheForBackground();
-                    }
-                }, 1_000);
-            } else if (state === 'active') {
-                if (flushTimer) clearTimeout(flushTimer);
-                flushTimer = undefined;
+                flushBuzzLocalCacheForBackground();
             }
         });
         return () => {
-            if (flushTimer) clearTimeout(flushTimer);
             subscription.remove();
         };
     }, []);

@@ -20,8 +20,20 @@ function preferredPersonNameKey(pubkey: string): string {
 }
 
 export async function loadPreferredPersonName(pubkey: string): Promise<string | null> {
-  const stored = await AsyncStorage.getItem(preferredPersonNameKey(pubkey));
-  return stored ? normalizePersonName(stored) : null;
+  try {
+    const stored = await AsyncStorage.getItem(preferredPersonNameKey(pubkey));
+    return stored ? normalizePersonName(stored) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function rememberPreferredPersonName(pubkey: string, name: string): Promise<void> {
+  try {
+    await savePreferredPersonName(pubkey, name);
+  } catch {
+    // Device-local migration hints are optional; relay-backed identity remains authoritative.
+  }
 }
 
 export async function savePreferredPersonName(pubkey: string, name: string): Promise<string> {
@@ -40,7 +52,11 @@ export async function clearPersonNameOnboardingPending(): Promise<void> {
 }
 
 export async function isPersonNameOnboardingPending(): Promise<boolean> {
-  return (await AsyncStorage.getItem(PERSON_NAME_ONBOARDING_PENDING_KEY)) === '1';
+  try {
+    return (await AsyncStorage.getItem(PERSON_NAME_ONBOARDING_PENDING_KEY)) === '1';
+  } catch {
+    return false;
+  }
 }
 
 export type OnboardingPersonName = {
@@ -59,41 +75,56 @@ export async function resolveOnboardingPersonName(
   let globalProfile: PersonProfile | null;
   try {
     globalProfile = await client.getGlobalPersonProfile(pubkey);
-  } catch (error) {
+  } catch {
     if (stored) return { name: stored, communityId: null, needsPrompt: false };
-    throw error;
+    globalProfile = null;
   }
   if (globalProfile?.name) {
-    const name = stored ?? (await savePreferredPersonName(pubkey, globalProfile.name));
+    const name = stored ?? globalProfile.name;
+    if (!stored) await rememberPreferredPersonName(pubkey, name);
     return { name, communityId: null, profile: globalProfile, needsPrompt: false };
   }
   let communities: Awaited<ReturnType<PersonNameClient['listCommunities']>>;
   try {
     communities = await client.listCommunities();
-  } catch (error) {
+  } catch {
     if (stored) return { name: stored, communityId: null, needsPrompt: false };
-    throw error;
+    return { name: fallbackPersonName(pubkey), communityId: null, needsPrompt: true };
   }
 
   for (const community of communities) {
-    const profile = await client.getPersonProfile(community.communityId, pubkey);
+    let profile: PersonProfile | null = null;
+    try {
+      profile = await client.getPersonProfile(community.communityId, pubkey);
+    } catch {
+      continue;
+    }
     if (profile?.name) {
-      const name = await savePreferredPersonName(pubkey, profile.name);
-      const migrated = await client.setGlobalPersonProfile({
-        name,
-        handle: profile.handle ?? personHandle(name, pubkey),
-        avatar: profile.avatar,
-      });
-      return { name, communityId: community.communityId, profile: migrated, needsPrompt: false };
+      const name = profile.name;
+      await rememberPreferredPersonName(pubkey, name);
+      try {
+        const migrated = await client.setGlobalPersonProfile({
+          name,
+          handle: profile.handle ?? personHandle(name, pubkey),
+          avatar: profile.avatar,
+        });
+        return { name, communityId: community.communityId, profile: migrated, needsPrompt: false };
+      } catch {
+        return { name, communityId: community.communityId, profile, needsPrompt: false };
+      }
     }
   }
 
   if (stored) {
-    const profile = await client.setGlobalPersonProfile({
-      name: stored,
-      handle: personHandle(stored, pubkey),
-    });
-    return { name: stored, communityId: null, profile, needsPrompt: false };
+    try {
+      const profile = await client.setGlobalPersonProfile({
+        name: stored,
+        handle: personHandle(stored, pubkey),
+      });
+      return { name: stored, communityId: null, profile, needsPrompt: false };
+    } catch {
+      return { name: stored, communityId: null, needsPrompt: false };
+    }
   }
 
   return {
@@ -131,20 +162,35 @@ export async function ensurePersonNameForWorkspace(
   pubkey: string,
 ): Promise<PersonProfile> {
   const preferred = await loadPreferredPersonName(pubkey);
-  const global = await client.getGlobalPersonProfile(pubkey);
+  let global: PersonProfile | null = null;
+  try {
+    global = await client.getGlobalPersonProfile(pubkey);
+  } catch {
+    // A failed global lookup must not discard an otherwise valid legacy profile.
+  }
   if (global?.name) {
-    if (!preferred) await savePreferredPersonName(pubkey, global.name);
+    if (!preferred) await rememberPreferredPersonName(pubkey, global.name);
     return global;
   }
-  const current = await client.getPersonProfile(communityId, pubkey);
+  let current: PersonProfile | null = null;
+  try {
+    current = await client.getPersonProfile(communityId, pubkey);
+  } catch {
+    // The normal publish path below preserves the previous behavior for a new identity.
+  }
   if (current?.name) {
     const name = current.name;
-    await savePreferredPersonName(pubkey, name);
-    return client.setGlobalPersonProfile({
-      name,
-      handle: current.handle ?? personHandle(name, pubkey),
-      avatar: current.avatar,
-    });
+    await rememberPreferredPersonName(pubkey, name);
+    try {
+      return await client.setGlobalPersonProfile({
+        name,
+        handle: current.handle ?? personHandle(name, pubkey),
+        avatar: current.avatar,
+      });
+    } catch {
+      // Keep the usable Workspace-scoped record when its one-time global migration cannot publish.
+      return current;
+    }
   }
   return publishPreferredPersonName(
     client,

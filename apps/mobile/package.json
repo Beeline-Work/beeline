@@ -1,7 +1,7 @@
 {
   "name": "@beeline/mobile",
   "main": "index.ts",
-  "version": "1.0.0",
+  "version": "0.2.18-preview.1",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
@@ -10,9 +10,10 @@
     "submit": "eas submit --platform ios",
     "web": "expo start --web",
     "test": "vitest",
-    "apk:release": "APP_ENV=production ANDROID_HOME=/home/lunchbox/android-sdk npx expo prebuild --platform android --clean 2>&1 && bash scripts/patch-android-signing.sh && cd android && ANDROID_HOME=/home/lunchbox/android-sdk GRADLE_OPTS='-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g' ./gradlew assembleRelease 2>&1 && echo '=== APK built ===' && ls -lh app/build/outputs/apk/release/app-release.apk",
+    "apk:release": "node scripts/check-release-version.cjs && bash scripts/android-build.sh",
     "e2e": "bash scripts/maestro-e2e.sh",
-    "e2e:build": "APP_ENV=production ANDROID_HOME=/home/lunchbox/android-sdk npx expo prebuild --platform android --clean 2>&1 && bash scripts/patch-android-signing.sh && cd android && ANDROID_HOME=/home/lunchbox/android-sdk GRADLE_OPTS='-Dorg.gradle.jvmargs=-Xmx8g -XX:MaxMetaspaceSize=1g' ./gradlew assembleRelease 2>&1 && echo '=== E2E APK built ===' && ls -lh app/build/outputs/apk/release/app-release.apk",
+    "e2e:build": "node scripts/check-release-version.cjs && BEELINE_ANDROID_KEEP_DEVICE=1 bash scripts/android-build.sh",
+    "version:check": "node scripts/check-release-version.cjs",
     "release": "node ./release.cjs",
     "release:build:developer": "eas build --profile development --platform ios --no-wait --non-interactive && eas build --profile development --platform android --no-wait --non-interactive && eas build --profile preview --platform ios --no-wait --non-interactive && eas build --profile preview --platform android --no-wait --non-interactive && eas build --profile development-store --platform ios --auto-submit-with-profile=production --no-wait --non-interactive && eas build --profile preview-store --platform ios --auto-submit-with-profile=production --no-wait --non-interactive",
     "release:build:developer:interactive": "eas build --profile development --platform ios --no-wait && eas build --profile development --platform android --no-wait && eas build --profile preview --platform ios --no-wait && eas build --profile preview --platform android --no-wait && eas build --profile development-store --platform ios --auto-submit-with-profile=production --no-wait && eas build --profile preview-store --platform ios --auto-submit-with-profile=production --no-wait",

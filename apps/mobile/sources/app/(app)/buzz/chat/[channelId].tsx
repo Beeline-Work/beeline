@@ -1620,7 +1620,12 @@ export default function BuzzChat() {
           strength="quiet"
           style={[styles.header, { minHeight: insets.top + 60, paddingTop: insets.top + 8 }]}
         >
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <TouchableOpacity
+            accessibilityLabel="Back to Rooms"
+            onPress={() => router.back()}
+            style={styles.backButton}
+            testID="chat-back"
+          >
             <Text style={[styles.backText, isCorner && styles.cornerBackText]}>‹</Text>
           </TouchableOpacity>
           {isCorner ? (
@@ -1692,6 +1697,7 @@ export default function BuzzChat() {
         </HullSurface>
 
         <FlatList
+          testID="chat-messages"
           ref={flatListRef}
           data={visibleMessages}
           keyExtractor={(item: ChatDisplayMessage) => item.id}
@@ -1956,6 +1962,7 @@ export default function BuzzChat() {
                 scrollEnabled={composerHeight >= COMPOSER_MAX_HEIGHT}
                 selection={inputSelection}
                 submitBehavior="newline"
+                testID="chat-input"
               />
               <TouchableOpacity
                 style={[
@@ -1965,6 +1972,7 @@ export default function BuzzChat() {
                 ]}
                 onPress={handleSend}
                 disabled={(!inputText.trim() && !pendingAttachment) || sending}
+                testID="chat-send"
               >
                 <Text
                   style={[

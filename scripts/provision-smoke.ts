@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Provision a Buzz identity + channel + marker message for the emulator smoke test.
+ * Provision a Buzz identity + Workspace-linked Room + marker message for the emulator smoke test.
  */
 import { createBuzzClient, createIdentity, identityNsec, identityNpub } from '@beeline/buzz-client';
 
@@ -20,9 +20,15 @@ async function main() {
   await client.connect();
   console.log('Connected to relay:', RELAY);
 
-  // 3. Create a channel
-  const channelId = await client.createChannel('Buzzy Smoke Test');
-  console.log('Channel created:', channelId);
+  // 3. Create the same Workspace → Room shape that the mobile list renders.
+  // A fresh identity owns both records, so this remains self-contained and does
+  // not need a running agent or a pre-existing relay fixture.
+  const workspaceId = await client.createCommunity('Buzzy Maestro Smoke Workspace');
+  const channelId = await client.createChannel('Buzzy Maestro Smoke Room', {
+    communityId: workspaceId,
+  });
+  console.log('Workspace created:', workspaceId);
+  console.log('Room created:', channelId);
 
   // 4. Post a marker message
   await client.messageSubmit(channelId, '🚀 Buzzy v0.1.0 APK smoke test — marker message');
@@ -40,6 +46,12 @@ async function main() {
   console.log(identityNsec(identity));
   console.log('');
   console.log('Set relay URL to:', RELAY);
+  console.log('');
+  // Keep the human-friendly transcript above while giving the Maestro runner
+  // stable values to pass through without parsing prose.
+  console.log(`MAESTRO_SMOKE_NSEC=${identityNsec(identity)}`);
+  console.log(`MAESTRO_SMOKE_WORKSPACE_ID=${workspaceId}`);
+  console.log(`MAESTRO_SMOKE_ROOM_ID=${channelId}`);
 
   client.disconnect();
 }

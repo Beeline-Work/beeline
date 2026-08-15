@@ -75,6 +75,45 @@ The release keystore is at [`android-signing/release.keystore`](./android-signin
 Credentials are committed alongside it because this repo is private. **Rotate the
 keystore before any public distribution.**
 
+## On-device Maestro smoke tests
+
+The mobile harness uses [Maestro](https://maestro.mobile.dev/) against the existing
+`emulator-5554` Android emulator. It is intentionally a separate CLI rather than a
+JavaScript test dependency: Maestro drives the installed release APK through Android
+accessibility/test IDs, so it exercises the actual device bridge and relay transport.
+
+Install Maestro once if it is not already on `PATH`:
+
+```sh
+curl -Ls "https://get.maestro.mobile.dev" | bash
+```
+
+Then, from this directory, run:
+
+```sh
+npm run e2e
+```
+
+`e2e` keeps using `emulator-5554`; it does not create another emulator. The command
+builds a production APK with an 8 GiB Gradle heap, provisions a fresh relay-backed
+Workspace and Room with [`../../scripts/provision-smoke.ts`](../../scripts/provision-smoke.ts),
+installs the APK, and passes the ephemeral identity/Room IDs to
+[`e2e/smoke.yaml`](./e2e/smoke.yaml). The flow imports that identity, enters its
+Workspace, opens the Room, verifies Android back returns to the list within one
+second, then sends and observes a real relay message.
+
+For a source-only flow iteration after a successful build, reuse the current APK:
+
+```sh
+MAESTRO_SKIP_BUILD=1 npm run e2e
+```
+
+The stable smoke flow deliberately does not cover the transitional Corner UI. The
+planned contract is recorded in [`e2e/corner-session.todo.yaml`](./e2e/corner-session.todo.yaml):
+use [`../../scripts/ui-demo-provision.ts`](../../scripts/ui-demo-provision.ts) to seed
+the real corner/review fixture, then assert the redesigned feed, presence states, and
+live-agent steer delivery once those selectors are settled.
+
 ## Expo web (headless-verifiable surface)
 
 ```sh

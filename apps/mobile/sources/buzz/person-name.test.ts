@@ -73,6 +73,24 @@ describe('person name persistence', () => {
     );
   });
 
+  it('keeps a legacy Workspace identity when global migration and local cache writes fail', async () => {
+    asyncStorage.setItem.mockRejectedValue(new Error('legacy storage unavailable'));
+    const legacy = { name: 'Grace', communityId: 'workspace-old' };
+    const client = {
+      getGlobalPersonProfile: vi.fn().mockRejectedValue(new Error('global profile unavailable')),
+      listCommunities: vi.fn().mockResolvedValue([{ communityId: 'workspace-old' }]),
+      getPersonProfile: vi.fn().mockResolvedValue(legacy),
+      setGlobalPersonProfile: vi.fn().mockRejectedValue(new Error('migration publish failed')),
+    } as any;
+
+    await expect(resolveOnboardingPersonName(client, 'person')).resolves.toEqual({
+      name: 'Grace',
+      communityId: 'workspace-old',
+      profile: legacy,
+      needsPrompt: false,
+    });
+  });
+
   it('publishes Settings edits without erasing the avatar', async () => {
     const client = {
       getGlobalPersonProfile: vi
@@ -129,6 +147,23 @@ describe('person name persistence', () => {
       handle: 'grace',
       avatar: undefined,
     });
+  });
+
+  it('keeps a legacy Workspace profile when the one-time global migration cannot publish', async () => {
+    const existing = { name: 'Grace', communityId: 'workspace-old' };
+    const client = {
+      getGlobalPersonProfile: vi.fn().mockRejectedValue(new Error('legacy global profile unavailable')),
+      getPersonProfile: vi.fn().mockResolvedValue(existing),
+      setGlobalPersonProfile: vi.fn().mockRejectedValue(new Error('migration publish failed')),
+    } as any;
+
+    await expect(
+      ensurePersonNameForWorkspace(client, 'workspace-old', 'person'),
+    ).resolves.toBe(existing);
+    expect(asyncStorage.setItem).toHaveBeenCalledWith(
+      '@beeline/person-name/preferred/person',
+      'Grace',
+    );
   });
 
   it('reads the same global name and picture in every Workspace', async () => {

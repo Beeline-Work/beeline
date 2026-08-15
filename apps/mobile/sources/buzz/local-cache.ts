@@ -136,6 +136,57 @@ const emptyCache = (): PersistedBuzzCache => ({
   profiles: {},
 });
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function recordOfEntries(value: unknown): Record<string, Record<string, unknown>> {
+  if (!isRecord(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => isRecord(entry)),
+  ) as Record<string, Record<string, unknown>>;
+}
+
+function recordOfArrays(value: unknown): Record<string, unknown[]> {
+  if (!isRecord(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => Array.isArray(entry)),
+  ) as Record<string, unknown[]>;
+}
+
+function restoreChannelLists(value: unknown): Record<string, ChannelListCacheEntry> {
+  return Object.fromEntries(
+    Object.entries(recordOfEntries(value)).map(([key, entry]) => [
+      key,
+      {
+        ...entry,
+        channels: Array.isArray(entry.channels) ? entry.channels : [],
+        directMessages: Array.isArray(entry.directMessages) ? entry.directMessages : [],
+        workspaceMembers: Array.isArray(entry.workspaceMembers) ? entry.workspaceMembers : [],
+        communities: Array.isArray(entry.communities) ? entry.communities : [],
+      } as ChannelListCacheEntry,
+    ]),
+  );
+}
+
+function restoreChannels(value: unknown): Record<string, ChannelCacheEntry> {
+  return Object.fromEntries(
+    Object.entries(recordOfEntries(value)).map(([key, entry]) => {
+      const { messages, roomMembers, availablePeople, availableAgents, ...rest } = entry;
+      return [
+        key,
+        {
+          ...rest,
+          ...(Array.isArray(messages) ? { messages } : {}),
+          ...(Array.isArray(roomMembers) ? { roomMembers } : {}),
+          ...(Array.isArray(availablePeople) ? { availablePeople } : {}),
+          ...(Array.isArray(availableAgents) ? { availableAgents } : {}),
+        } as ChannelCacheEntry,
+      ];
+    }),
+  );
+}
+
 export function channelListCacheKey(viewerPubkey: string, communityId: string | null): string {
   return `${viewerPubkey}:${communityId ?? 'standalone'}`;
 }
@@ -160,19 +211,28 @@ function trimRecord<T extends { lastAccessedAt: number }>(
 }
 
 function loadCache(): PersistedBuzzCache {
-  const serialized = storage.getString(CACHE_KEY);
-  if (!serialized) return emptyCache();
   try {
-    const parsed = JSON.parse(serialized) as Partial<PersistedBuzzCache>;
+    const serialized = storage.getString(CACHE_KEY);
+    if (!serialized) return emptyCache();
+    const parsed: unknown = JSON.parse(serialized);
+    if (!isRecord(parsed)) throw new Error('Invalid Buzz local cache');
     return {
-      activeViewerPubkey: parsed.activeViewerPubkey ?? null,
-      activeListKeyByViewer: parsed.activeListKeyByViewer ?? {},
-      channelLists: parsed.channelLists ?? {},
-      channels: parsed.channels ?? {},
-      profiles: parsed.profiles ?? {},
+      activeViewerPubkey: typeof parsed.activeViewerPubkey === 'string' ? parsed.activeViewerPubkey : null,
+      activeListKeyByViewer: Object.fromEntries(
+        Object.entries(parsed.activeListKeyByViewer ?? {}).filter(
+          ([, value]) => typeof value === 'string',
+        ),
+      ),
+      channelLists: restoreChannelLists(parsed.channelLists),
+      channels: restoreChannels(parsed.channels),
+      profiles: recordOfArrays(parsed.profiles) as Record<string, PersonProfile[]>,
     };
   } catch {
-    storage.delete(CACHE_KEY);
+    try {
+      storage.delete(CACHE_KEY);
+    } catch {
+      // A damaged or unavailable cache must never prevent the app from booting.
+    }
     return emptyCache();
   }
 }

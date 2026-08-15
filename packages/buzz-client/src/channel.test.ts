@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import {
   isMember,
+  getChannelMetadata,
   listChannelsForPubkey,
   listMembers,
   renameChannel,
@@ -262,6 +263,31 @@ describe('renameChannel', () => {
       'only a Room owner or admin can rename it',
     );
     expect(published).toHaveLength(0);
+  });
+});
+
+describe('getChannelMetadata', () => {
+  it('chooses the newest metadata projection when relay query order is stale-first', async () => {
+    const channelId = 'metadata-order-room';
+    const metadata = (name: string, createdAt: number) =>
+      signEvent(
+        {
+          pubkey: identity.publicKey,
+          created_at: createdAt,
+          kind: KIND_CHANNEL_METADATA,
+          tags: [['d', channelId], ['name', name]],
+          content: '',
+        },
+        identity.secretKey,
+      );
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify([metadata('Old name', 1_700_000_000), metadata('New name', 1_700_000_001)])),
+      ),
+    );
+
+    await expect(getChannelMetadata(ctx, channelId)).resolves.toMatchObject({ name: 'New name' });
   });
 });
 

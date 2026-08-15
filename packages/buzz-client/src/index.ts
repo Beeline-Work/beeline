@@ -147,6 +147,7 @@ export {
   isMember,
   getChannelRole,
   waitUntilMember,
+  waitUntilMemberRole,
   waitUntilNotMember,
   waitUntilRoomArchived,
   archiveRoom,

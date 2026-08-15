@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mmkvValues = vi.hoisted(() => new Map<string, string>());
+const mmkvWrites = vi.hoisted(() => vi.fn());
 
 vi.mock('react-native-mmkv', () => ({
   MMKV: class {
@@ -8,6 +9,7 @@ vi.mock('react-native-mmkv', () => ({
       return mmkvValues.get(key);
     }
     set(key: string, value: string) {
+      mmkvWrites(key, value);
       mmkvValues.set(key, value);
     }
     delete(key: string) {
@@ -46,9 +48,33 @@ function event(id: string, createdAt: number, content = id): SessionEvent {
 beforeEach(() => {
   clearBuzzLocalCache();
   mmkvValues.clear();
+  mmkvWrites.mockClear();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('Buzz local cache', () => {
+  it('defers and coalesces full-cache MMKV serialization outside the caller turn', () => {
+    vi.useFakeTimers();
+    const store = useBuzzLocalCache.getState();
+    store.patchChannel(viewer, 'room', { roomName: 'First update' });
+    store.patchChannel(viewer, 'room', { roomName: 'Final update' });
+
+    // Cache mutations run from Room live handlers and the list's focus refresh.
+    // Writing here would block Android's back-navigation event on a large cache.
+    expect(mmkvWrites).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(500);
+
+    expect(mmkvWrites).toHaveBeenCalledTimes(1);
+    expect(
+      JSON.parse(mmkvValues.get('buzz-local-cache-v1') ?? '{}').channels[`${viewer}:room`]
+        .roomName,
+    ).toBe('Final update');
+  });
+
   it('keeps warm previews while refreshed channel basics are revalidated', () => {
     expect(
       mergeChannelBasicsWithCache(
@@ -117,6 +143,7 @@ describe('Buzz local cache', () => {
   });
 
   it('restores lists, messages, rosters, and profiles from MMKV on a warm start', async () => {
+    vi.useFakeTimers();
     const now = Date.now();
     const store = useBuzzLocalCache.getState();
     store.setChannelList({
@@ -143,6 +170,8 @@ describe('Buzz local cache', () => {
         raw: {} as never,
       },
     ]);
+
+    vi.advanceTimersByTime(500);
 
     vi.resetModules();
     const warm = await import('./local-cache');

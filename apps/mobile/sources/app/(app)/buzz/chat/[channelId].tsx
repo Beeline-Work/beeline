@@ -210,6 +210,11 @@ export default function BuzzChat() {
   // immediately taps send. Keep the authoritative in-flight draft beside the
   // native TextInput so an @mention never drops trailing text.
   const inputTextRef = useRef('');
+  // The picker knows the exact agent key, whereas text-only lookup is a
+  // fallback for manually typed mentions. Keep that identity through trailing
+  // typing so an async roster refresh cannot turn a selected agent into an
+  // unaddressed plain Room message.
+  const selectedAgentMentionsRef = useRef(new Map<string, string>());
   const sendInFlightRef = useRef(false);
   const followsLatestMessageRef = useRef(true);
   const hasPositionedInitialMessagesRef = useRef(false);
@@ -931,9 +936,19 @@ export default function BuzzChat() {
       // one native frame to commit the cleared composer and optimistic row
       // before that CPU work begins; the network publish itself remains async.
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const normalizedText = text.normalize('NFKC').toLocaleLowerCase();
+      const selectedMentionedAgent = [...selectedAgentMentionsRef.current.entries()]
+        .sort(([left], [right]) => right.length - left.length)
+        .find(([handle]) => {
+          const mention = `@${handle.normalize('NFKC').toLocaleLowerCase()}`;
+          const offset = normalizedText.indexOf(mention);
+          if (offset < 0) return false;
+          const trailing = normalizedText[offset + mention.length];
+          return trailing === undefined || /[\s,.:;!?)}\]]/.test(trailing);
+        })?.[1];
       const mentionedAgent = parentChannelId
         ? undefined
-        : mentionedAgentPubkey(text, mentionableAgents);
+        : (selectedMentionedAgent ?? mentionedAgentPubkey(text, mentionableAgents));
       // Build and sign exactly once. publishPreparedMessage retries the same
       // id on a transient failure, so the relay can dedupe an ambiguous send.
       const messageInput = { sessionId: decodedId, text, attachments };
@@ -1020,6 +1035,9 @@ export default function BuzzChat() {
     (participant: RoomMemberOption) => {
       if (!activeMention) return;
       const inserted = replaceActiveMention(inputTextRef.current, activeMention, participant.handle);
+      if (participant.kind === 'agent') {
+        selectedAgentMentionsRef.current.set(participant.handle, participant.pubkey);
+      }
       const nextSelection = { start: inserted.cursor, end: inserted.cursor };
       const completedMention = activeMentionAtCursor(inserted.text, inserted.cursor);
       inputTextRef.current = inserted.text;

@@ -88,4 +88,20 @@ describe('buildActivityTimeline', () => {
       { kind: 'action', title: 'Completed a project task', count: 1 },
     ]);
   });
+
+  it('folds a repeated action into its first row even across other actions between them', () => {
+    expect(
+      buildActivityTimeline([
+        { kind: 'tool', title: 'bash: git status', status: 'completed' },
+        { kind: 'tool', title: 'grep "foo"', status: 'completed' },
+        { kind: 'tool', title: 'bash: git status', status: 'completed' },
+        { kind: 'tool', title: 'Read /a.tsx', status: 'completed' },
+        { kind: 'tool', title: 'bash: git status', status: 'completed' },
+      ]),
+    ).toEqual([
+      { kind: 'action', title: 'Reviewed the current changes', count: 3 },
+      { kind: 'action', title: 'Searched the code for foo', count: 1 },
+      { kind: 'action', title: 'Reviewed a.tsx', count: 1 },
+    ]);
+  });
 });

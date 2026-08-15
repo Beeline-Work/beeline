@@ -138,7 +138,7 @@ export function ChangeReviewPanel({
     return (
       <HullSurface strength="raised" style={styles.loading} testID="change-review-loading">
         <PixelLoader compact />
-        <Text style={styles.mutedText}>LOADING FILE DIFFS</Text>
+        <Text style={styles.mutedText}>LOADING CHANGES</Text>
       </HullSurface>
     );
   }
@@ -146,9 +146,9 @@ export function ChangeReviewPanel({
   if (filesError) {
     return (
       <HullSurface strength="raised" style={styles.errorState} testID="change-review-error">
-        <Text style={styles.errorTitle}>! ERROR · FILE DIFFS UNAVAILABLE</Text>
+        <Text style={styles.errorTitle}>! CHANGES UNAVAILABLE</Text>
         <Text style={styles.mutedText} numberOfLines={2}>
-          {filesError}
+          We couldn’t load these changes. Try again.
         </Text>
         <TouchableOpacity
           onPress={loadFiles}
@@ -186,19 +186,19 @@ export function ChangeReviewPanel({
         {loadingPatch ? (
           <View style={styles.diffLoading}>
             <PixelLoader compact />
-            <Text style={styles.mutedText}>LOADING DIFF</Text>
+            <Text style={styles.mutedText}>LOADING CHANGE</Text>
           </View>
         ) : patchError ? (
           <View style={styles.diffLoading}>
-            <Text style={styles.errorTitle}>! ERROR · DIFF UNAVAILABLE</Text>
+            <Text style={styles.errorTitle}>! CHANGE UNAVAILABLE</Text>
             <Text style={styles.mutedText} numberOfLines={2}>
-              {patchError}
+              We couldn’t load this file change. Try again from the file list.
             </Text>
           </View>
         ) : isBinary ? (
           <View style={styles.diffLoading}>
             <Text style={styles.binaryTitle}>Binary file updated</Text>
-            <Text style={styles.mutedText}>A text diff is not available.</Text>
+            <Text style={styles.mutedText}>This file can’t be shown as text.</Text>
           </View>
         ) : (
           <FlatList
@@ -246,7 +246,7 @@ export function ChangeReviewPanel({
               contentStyle={styles.fileRow}
               onPress={() => void openFile(item)}
               testID={`change-review-file-${item.path}`}
-              accessibilityLabel={`Review diff for ${item.path}`}
+              accessibilityLabel={`View changes to ${item.path}`}
             >
               <Text style={styles.statusBadge}>{statusLetter(item.status)}</Text>
               <View style={styles.pathColumn}>

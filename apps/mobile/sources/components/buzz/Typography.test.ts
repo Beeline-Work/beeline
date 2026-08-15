@@ -107,7 +107,6 @@ const monoStyles = new Set([
   'approvalStateText',
   'approvalSentText',
   'cancelTurnText',
-  'cornerComposerPrefix',
   'cornerInput',
   'cornerSendButtonText',
   'cornerFooter',

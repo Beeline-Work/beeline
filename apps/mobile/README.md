@@ -64,10 +64,28 @@ This runs the full chain:
 
 1. `APP_ENV=production npx expo prebuild --platform android --clean` — generates the production Android project
 2. `scripts/patch-android-signing.sh` — applies release signing and permits operator-provided HTTP LAN relays
-3. `cd android && ./gradlew assembleRelease` — builds the signed release APK
-4. Prints the APK path and file size
+3. Gradle builds the signed release APK with its build cache enabled
+4. `scripts/android-teardown.sh` stops the named emulator, adb server, and Gradle daemon
+5. Prints the APK path and file size
 
 Output: `android/app/build/outputs/apk/release/app-release.apk`
+
+### Fast throwaway-worktree builds
+
+`expo prebuild --clean` correctly removes the generated Android project, including
+per-worktree `.cxx` output. React Native's supported CMake setup automatically
+uses `ccache` when it is on `PATH`; the release wrapper sets a shared
+`~/.cache/beeline-android-ccache` namespace and normalizes paths relative to the
+repository, so unchanged NDK objects are reused safely across equivalent worktrees.
+Install `ccache` on build hosts before the first build; without it the build remains
+correct but native objects must be compiled again. Gradle's shared user-home cache
+is independently enabled for cacheable Android tasks. Expo 55/React Native 0.83
+currently starts Node processes during Gradle configuration, so configuration cache
+is deliberately not enabled; Gradle reports those processes as incompatible.
+
+The mobile package version is the release source of truth. `npm run version:check`
+prints it and rejects a build from a release-tagged commit unless the tag is exactly
+`v<package version>`; Expo uses it for Android `versionName`.
 
 ### Signing
 

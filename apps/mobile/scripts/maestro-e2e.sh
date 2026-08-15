@@ -10,6 +10,13 @@ readonly MOBILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly REPO_DIR="$(cd "$MOBILE_DIR/../.." && pwd -P)"
 readonly APK="$MOBILE_DIR/android/app/build/outputs/apk/release/app-release.apk"
 
+cleanup() {
+  local status=$?
+  "$MOBILE_DIR/scripts/android-teardown.sh" "$MOBILE_DIR/android" || true
+  exit "$status"
+}
+trap cleanup EXIT INT TERM
+
 if ! adb devices | awk 'NR > 1 { print $1 }' | grep -Fxq "$DEVICE"; then
   echo "Maestro requires the existing Android emulator $DEVICE." >&2
   exit 1

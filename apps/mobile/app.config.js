@@ -1,4 +1,5 @@
 const { execFileSync } = require('node:child_process');
+const { version: releaseVersion } = require('./package.json');
 
 const variant = process.env.APP_ENV || 'development';
 // Buzzy fork of Happy (slopus/happy). Minimal rebrand — see README.md.
@@ -62,7 +63,10 @@ export default {
     expo: {
         name,
         slug: "buzzy",
-        version: "1.7.0",
+        // Android versionName and iOS CFBundleShortVersionString both derive
+        // from this package's release version. `version:check` rejects a tag
+        // that does not match it before a release build starts.
+        version: releaseVersion,
         runtimeVersion: "21",
         orientation: "default",
         icon: "./sources/assets/images/icon.png",
@@ -159,6 +163,7 @@ export default {
         },
         plugins: [
             require("./plugins/withEinkCompatibility.js"),
+            require("./plugins/withAndroidBuildTooling.js"),
             [
                 "expo-router",
                 {

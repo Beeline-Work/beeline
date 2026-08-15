@@ -16,15 +16,15 @@ describe('Buzz keyboard avoidance', () => {
       "behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}",
     );
     expect(chatSource).not.toContain("Platform.OS === 'ios' ? 'padding' : 'height'");
-    expect(chatSource).toContain('const MESSAGE_LIST_PADDING = 12;');
-    expect(chatSource).toContain('contentContainerStyle={[');
-    expect(chatSource).toContain(
-      'keyboardHeight > 0 && { paddingBottom: MESSAGE_LIST_PADDING + keyboardHeight }',
-    );
-    expect(chatSource).toContain('[80, 260, 520].map((delay, index)');
-    expect(chatSource).toContain('const handleMessageListLayout = useCallback(() =>');
-    expect(chatSource).toContain('onLayout={handleMessageListLayout}');
-    expect(chatSource).toContain('scrollToLatestMessage(false);');
+    // The list is inverted (newest message at offset 0), so keyboard/composer
+    // growth never needs a manual keyboardHeight content-padding hack or a
+    // scrollToEnd simulation to keep the tail visible.
+    expect(chatSource).toContain('inverted');
+    expect(chatSource).toContain('maintainVisibleContentPosition={{ minIndexForVisible: 0 }}');
+    expect(chatSource).not.toContain('MESSAGE_LIST_PADDING');
+    expect(chatSource).not.toContain('scrollToLatestMessage');
+    expect(chatSource).not.toContain('handleMessageListLayout');
+    expect(chatSource).not.toContain('handleMessageListContentSizeChange');
   });
 
   it('keeps active work outside a growing multiline composer', () => {

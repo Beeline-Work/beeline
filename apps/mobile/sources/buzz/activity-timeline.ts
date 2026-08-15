@@ -139,12 +139,16 @@ function appendDistinctDetail(
 
 /**
  * Turns ACP telemetry into the deliberately sparse rows used by the corner UI.
- * Only adjacent updates coalesce, so tool/reasoning order remains visible.
+ * Adjacent updates coalesce in place, so tool/reasoning order remains visible.
+ * An identical action title recurring later in the same turn (e.g. the agent
+ * re-reads the same file after an edit) folds into its first row instead of
+ * printing a new one, so a long turn still reads like a summary, not a log.
  */
 export function buildActivityTimeline(
   items: readonly AgentActivityItem[],
 ): ActivityTimelineEntry[] {
   const entries: ActivityTimelineEntry[] = [];
+  const actionsByTitle = new Map<string, Extract<ActivityTimelineEntry, { kind: 'action' }>>();
 
   for (const item of items) {
     if (item.kind === 'thinking') {
@@ -166,23 +170,22 @@ export function buildActivityTimeline(
 
     const title = actionTitle(item);
     if (!title) continue;
-    const previous = entries.at(-1);
     const isFileReview = /^Reviewed (?!the current changes)/.test(title);
-    if (
-      previous?.kind === 'action' &&
-      (previous.title.toLowerCase() === title.toLowerCase() ||
-        (isFileReview && /^Reviewed (?!the current changes)/.test(previous.title)))
-    ) {
-      previous.count += 1;
-      if (isFileReview) previous.title = `Reviewed ${previous.count} files`;
+    const dedupeKey = isFileReview ? 'Reviewed' : title.toLowerCase();
+    const existing = actionsByTitle.get(dedupeKey);
+    if (existing) {
+      existing.count += 1;
+      if (isFileReview) existing.title = `Reviewed ${existing.count} files`;
       continue;
     }
 
-    entries.push({
+    const entry: Extract<ActivityTimelineEntry, { kind: 'action' }> = {
       kind: 'action',
       title,
       count: 1,
-    });
+    };
+    entries.push(entry);
+    actionsByTitle.set(dedupeKey, entry);
   }
 
   return entries;

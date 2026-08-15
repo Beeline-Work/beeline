@@ -196,11 +196,12 @@ export function startAgentPresence(
   owner: Identity,
   intervalMs = AGENT_PRESENCE_HEARTBEAT_MS,
   onPublished?: (status: AgentPresenceStatus) => void,
+  initialStatus: AgentPresenceStatus = 'online',
 ): AgentPresenceController {
   let stopped = false;
   let lastCreatedAt = 0;
   let chain = Promise.resolve();
-  let status: AgentPresenceStatus = 'online';
+  let status: AgentPresenceStatus = initialStatus;
   const generationId = randomUUID();
   const enqueue = (nextStatus: AgentPresenceStatus) => {
     const createdAt = Math.max(Math.floor(Date.now() / 1_000), lastCreatedAt + 1);

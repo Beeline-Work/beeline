@@ -13,6 +13,9 @@ env:
 - tapOn:
     id: onboarding-secret-key
 - inputText: ${SMOKE_NSEC}
+# On a compact Android viewport the IME can cover the import control. Dismiss
+# only the keyboard before tapping; this keeps the identity import user-visible.
+- pressKey: back
 - tapOn:
     id: onboarding-import-key
 - extendedWaitUntil:

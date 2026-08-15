@@ -98,7 +98,7 @@ describe('Buzz branch-loop event projection', () => {
       type: 'assistant_delta',
       text: 'First\nEdit file · completed',
       activity: [
-        { kind: 'output', title: 'Output', text: 'First' },
+        { kind: 'thinking', title: 'Thinking', text: 'First' },
         { kind: 'tool', title: 'Edit file', status: 'completed' },
       ],
     });
@@ -446,15 +446,9 @@ describe('Buzz change review metadata', () => {
   function transportWith(events: ReturnType<typeof rawEvent>[]) {
     const query = vi.fn(async (filters: Record<string, unknown>[]) => {
       const marker = (filters[0]?.['#t'] as string[] | undefined)?.[0];
-      return events.filter((event) =>
-        event.tags.some((tag) => tag[0] === 't' && tag[1] === marker),
-      );
-    });
-    const client = {
-      sessionEventsBackfill: vi.fn(async () => [
-        {
-          kind: 'message',
-          event: rawEvent(
+      if (marker === 'body-control') {
+        return [
+          rawEvent(
             [
               ['t', 'body-control'],
               ['t', 'merge-ready'],
@@ -465,8 +459,13 @@ describe('Buzz change review metadata', () => {
             'ready',
             'merge-ready',
           ),
-        },
-      ]),
+        ];
+      }
+      return events.filter((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === marker),
+      );
+    });
+    const client = {
       query,
     };
     const transport = new BuzzRigTransport(identity, 'https://relay.test');
@@ -508,13 +507,82 @@ describe('Buzz change review metadata', () => {
     await expect(transport.workspaceFilesRead(channel)).resolves.toEqual([
       { path, status: 'modified', linesAdded: 3, linesRemoved: 1 },
     ]);
-    expect(query).toHaveBeenCalledOnce();
-    expect(query.mock.calls[0]?.[0]?.[0]).toMatchObject({
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(query.mock.calls[1]?.[0]?.[0]).toMatchObject({
       kinds: [CHANGE_REVIEW_EVENT_KIND],
       authors: ['d'.repeat(64)],
       '#t': [CHANGE_REVIEW_MANIFEST_TAG],
       '#r': [tip],
     });
+  });
+
+  it('queries body controls directly so activity bursts cannot hide merge-ready', async () => {
+    const { transport, query } = transportWith([]);
+
+    await transport.getSubchannelMergeTarget(channel);
+
+    expect(query).toHaveBeenCalledWith([
+      { kinds: [9], '#h': [channel], '#t': ['body-control'], limit: 100 },
+    ]);
+  });
+
+  it('does not expose a stale approval target after Body withdraws it for uncommitted work', async () => {
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: { query: ReturnType<typeof vi.fn> } }).client = {
+      query: vi.fn(async () => [
+        rawEvent(
+          [
+            ['t', 'body-control'],
+            ['t', 'merge-ready'],
+            ['repo', `${identity.publicKey}/demo`],
+            ['branch', 'refs/heads/main'],
+            ['tip', tip],
+          ],
+          'ready',
+          'a-ready',
+        ),
+        rawEvent(
+          [
+            ['t', 'body-control'],
+            ['t', 'merge-not-ready'],
+            ['status', 'needs-attention'],
+          ],
+          'nothing ready',
+          'z-not-ready',
+        ),
+      ]),
+    };
+
+    await expect(transport.getSubchannelMergeTarget(channel)).resolves.toBeNull();
+  });
+
+  it('does not submit a second approval for the same committed corner target', async () => {
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    const submitMergeApproval = vi.fn();
+    (transport as unknown as { client: { query: ReturnType<typeof vi.fn>; submitMergeApproval: typeof submitMergeApproval } }).client = {
+      query: vi.fn(async () => [
+        rawEvent(
+          [
+            ['t', 'buzz-merge-approval'],
+            ['repo', `${identity.publicKey}/demo`],
+            ['branch', 'refs/heads/main'],
+            ['tip', tip],
+          ],
+          'already approved',
+          'approval',
+        ),
+      ]),
+      submitMergeApproval,
+    };
+
+    await expect(
+      transport.submitMergeApproval(channel, {
+        repo: `${identity.publicKey}/demo`,
+        branch: 'refs/heads/main',
+        tip,
+      }),
+    ).resolves.toMatchObject({ success: true, message: 'Approval already sent for this change' });
+    expect(submitMergeApproval).not.toHaveBeenCalled();
   });
 
   it('fetches and reassembles only the selected file patch', async () => {
@@ -547,7 +615,7 @@ describe('Buzz change review metadata', () => {
     await expect(transport.changedFileRead(channel, path)).resolves.toEqual({
       content: 'diff --git a/src/example.ts b/src/example.ts\n-old\n+new\n',
     });
-    expect(query.mock.calls[0]?.[0]?.[0]).toMatchObject({
+    expect(query.mock.calls[1]?.[0]?.[0]).toMatchObject({
       kinds: [CHANGE_REVIEW_EVENT_KIND],
       '#t': [CHANGE_REVIEW_FILE_TAG],
       '#r': [tip],

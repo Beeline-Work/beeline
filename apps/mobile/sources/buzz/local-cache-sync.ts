@@ -11,7 +11,7 @@ import {
 
 export type MessageSyncResult = {
   entry: ChannelCacheEntry;
-  mergeTarget?: MergeTarget;
+  mergeTarget?: MergeTarget | null;
   archiveChannel: boolean;
 };
 
@@ -27,11 +27,12 @@ export function sessionEventCursor(event: SessionEvent): number | undefined {
 
 function projectEvents(events: SessionEvent[], viewerPubkey: string, isNew: boolean) {
   let messages: ChatDisplayMessage[] = [];
-  let mergeTarget: MergeTarget | undefined;
+  let mergeTarget: MergeTarget | null | undefined;
   let archiveChannel = false;
   for (const event of events) {
     const projected = projectChatEvent(event, viewerPubkey, isNew);
     if (projected.mergeTarget) mergeTarget = projected.mergeTarget;
+    if (projected.clearMergeTarget) mergeTarget = null;
     if (projected.archiveChannel) archiveChannel = true;
     if (projected.message) messages = upsertChatMessages(messages, [projected.message]);
   }
@@ -84,10 +85,10 @@ async function performMessageRevalidation(
       },
     );
   }
-  if (projected.archiveChannel || projected.mergeTarget) {
+  if (projected.archiveChannel || projected.mergeTarget !== undefined) {
     store.patchChannel(viewerPubkey, channelId, {
       ...(projected.archiveChannel ? { archived: true } : {}),
-      ...(projected.mergeTarget ? { mergeTarget: projected.mergeTarget } : {}),
+      ...(projected.mergeTarget !== undefined ? { mergeTarget: projected.mergeTarget } : {}),
     });
   }
   return {
@@ -130,7 +131,7 @@ export function cacheLiveSessionEvent(
         ...(latestMessage ? { latestMessage } : {}),
         ...(cursor ? { latestEventAt: cursor } : {}),
       });
-  } else if (cursor || projected.archiveChannel || projected.mergeTarget) {
+  } else if (cursor || projected.archiveChannel || projected.mergeTarget || projected.clearMergeTarget) {
     const cached = getCachedChannel(viewerPubkey, channelId);
     useBuzzLocalCache.getState().patchChannel(viewerPubkey, channelId, {
       ...(cursor
@@ -142,6 +143,7 @@ export function cacheLiveSessionEvent(
       ...(latestMessage ? { latestMessage } : {}),
       ...(projected.archiveChannel ? { archived: true } : {}),
       ...(projected.mergeTarget ? { mergeTarget: projected.mergeTarget } : {}),
+      ...(projected.clearMergeTarget ? { mergeTarget: null } : {}),
     });
   }
   return projected;

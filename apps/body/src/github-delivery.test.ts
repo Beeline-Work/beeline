@@ -108,6 +108,23 @@ afterEach(async () => {
 });
 
 describe('GitHub-origin delivery', () => {
+  it('refuses merge-ready when the agent worktree still has uncommitted changes', async () => {
+    const { worktree, info, body } = await repository();
+    const events = captureEvents();
+    await writeFile(resolve(worktree, 'UNCOMMITTED.txt'), 'must be committed first\n');
+
+    await expect(publish(body, info)).resolves.toBe(false);
+    expect(info.mergeTarget).toBeUndefined();
+    expect(
+      events.some((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready')),
+    ).toBe(false);
+    expect(
+      events.find((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
+      )?.content,
+    ).toContain('Nothing ready to merge yet');
+  });
+
   it('publishes review-ready work without autonomously landing or archiving it', async () => {
     const { remote, worktree, info, body } = await repository();
     const events = captureEvents();

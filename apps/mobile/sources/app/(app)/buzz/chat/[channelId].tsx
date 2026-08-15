@@ -82,8 +82,11 @@ import {
   type PickedChatAttachment,
 } from '@/buzz/chat-attachment';
 import { isNearChatBottom } from '@/buzz/chat-scroll';
+import { cornerSessionState, latestCornerTurnSummary } from '@/buzz/corner-session';
+import { isOfflineRoomDelivery } from '@/buzz/corner-steer';
 import {
   isAgentPresenceOnlineWithReconnectGrace,
+  isAgentOfflineAfterPresenceResolved,
   isAgentTurnActive,
   mergeAgentPresence,
   presenceMapFromSessionEvents,
@@ -206,6 +209,8 @@ export default function BuzzChat() {
   const [approvalState, setApprovalState] = useState<'none' | 'sending' | 'sent' | 'merged'>(
     'none',
   );
+  const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [reviewFileCount, setReviewFileCount] = useState<number | null>(null);
   const [parentChannelId, setParentChannelId] = useState<string | undefined>(
     initialChannelCache?.parentChannelId,
   );
@@ -234,6 +239,7 @@ export default function BuzzChat() {
   const [composerFocused, setComposerFocused] = useState(false);
   const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
   const [agentPresences, setAgentPresences] = useState<Record<string, RoomAgentPresence>>({});
+  const [presenceResolved, setPresenceResolved] = useState(false);
   const [presenceReconnectGrace, setPresenceReconnectGrace] = useState<Record<string, number>>({});
   const [presenceNow, setPresenceNow] = useState(Date.now());
   const [offlineQueuedIds, setOfflineQueuedIds] = useState<Set<string>>(new Set());
@@ -336,9 +342,17 @@ export default function BuzzChat() {
     ),
   ).length;
   const hasRoomAgent = roomAgents.length > 0;
-  const agentsOffline = hasRoomAgent && onlineAgentCount === 0;
+  const agentsOffline = isAgentOfflineAfterPresenceResolved(
+    presenceResolved,
+    hasRoomAgent,
+    onlineAgentCount,
+  );
   const presenceSummary = hasRoomAgent
-    ? agentsOffline
+    ? !presenceResolved
+      ? roomAgents.length === 1
+        ? 'AGENT CONNECTING'
+        : 'AGENTS CONNECTING'
+      : agentsOffline
       ? roomAgents.length === 1
         ? 'AGENT OFFLINE'
         : 'AGENTS OFFLINE'
@@ -384,6 +398,21 @@ export default function BuzzChat() {
   );
   const isCorner = Boolean(parentChannelId);
   const isDirectMessage = Boolean(directMessage);
+  const sessionState = isCorner ? cornerSessionState(messages) : 'idle';
+  const cornerAgentPubkey = useMemo(
+    () =>
+      [...messages]
+        .reverse()
+        .find((message) => message.agentTurn)?.agentTurn?.agentPubkey ??
+      [...messages]
+        .reverse()
+        .find((message) => message.pubkey && agentByPubkey.has(message.pubkey))?.pubkey,
+    [agentByPubkey, messages],
+  );
+  const turnSummary = isCorner ? latestCornerTurnSummary(messages, cornerAgentPubkey) : undefined;
+  const cornerAgentDisplay = cornerAgentPubkey
+    ? resolveAgentDisplayIdentity(cornerAgentPubkey, agentByPubkey.get(cornerAgentPubkey))
+    : undefined;
   const visibleMessages = useMemo(
     () => transcriptMessages(messages, isCorner),
     [isCorner, messages],
@@ -426,10 +455,15 @@ export default function BuzzChat() {
     [agentPresences, messages, presenceNow, presenceReconnectGrace],
   );
   const activeActivityId = useMemo(() => {
-    if (!activeAgentTurn) return undefined;
+    if (isCorner ? sessionState !== 'working' : !activeAgentTurn) return undefined;
     const latest = visibleMessages.at(-1);
     return isCorner && !isArchived && latest?.isAgentActivity ? latest.id : undefined;
-  }, [activeAgentTurn, isArchived, isCorner, visibleMessages]);
+  }, [activeAgentTurn, isArchived, isCorner, sessionState, visibleMessages]);
+
+  useEffect(() => {
+    setReviewFileCount(null);
+    setApprovalError(null);
+  }, [mergeTarget?.tip]);
 
   useEffect(() => {
     const timer = setInterval(() => setPresenceNow(Date.now()), 5_000);
@@ -534,6 +568,7 @@ export default function BuzzChat() {
     presenceReconnectGraceRef.current = {};
     setAgentPresences({});
     setPresenceReconnectGrace({});
+    setPresenceResolved(false);
 
     (async () => {
       try {
@@ -554,6 +589,7 @@ export default function BuzzChat() {
           if (cancelled) return;
           const projected = cacheLiveSessionEvent(identity.publicKey, decodedId, event);
           if (projected.mergeTarget) setMergeTarget(projected.mergeTarget);
+          if (projected.clearMergeTarget) setMergeTarget(null);
           if (projected.archiveChannel) {
             setIsArchived(true);
             setApprovalState('merged');
@@ -657,9 +693,10 @@ export default function BuzzChat() {
           const initialPresences = presenceMapFromSessionEvents(presenceEvents);
           agentPresencesRef.current = initialPresences;
           setAgentPresences(initialPresences);
+          setPresenceResolved(true);
           setPresenceNow(Date.now());
           if (parentId) setParentChannelId(parentId);
-          if (messageSync.mergeTarget) setMergeTarget(messageSync.mergeTarget);
+          if (messageSync.mergeTarget !== undefined) setMergeTarget(messageSync.mergeTarget);
           if (messageSync.archiveChannel) setIsArchived(true);
           useBuzzLocalCache.getState().patchChannel(identity.publicKey, decodedId, {
             roomMembers,
@@ -829,7 +866,9 @@ export default function BuzzChat() {
 
     setSending(true);
     followsLatestMessageRef.current = true;
-    const sentWhileOffline = agentsOffline;
+    // A corner's composer always steers its durable edit session. Presence is
+    // never used to defer or annotate that delivery path.
+    const sentWhileOffline = isOfflineRoomDelivery(isCorner, agentsOffline);
 
     try {
       const attachments = pendingAttachment
@@ -893,6 +932,7 @@ export default function BuzzChat() {
     parentChannelId,
     mentionableAgents,
     agentsOffline,
+    isCorner,
     cacheViewerPubkey,
   ]);
 
@@ -1240,16 +1280,22 @@ export default function BuzzChat() {
   const handleApprove = useCallback(async () => {
     if (!transport || !mergeTarget) return;
     setApprovalState('sending');
+    setApprovalError(null);
     try {
       const result = await transport.submitMergeApproval(decodedId, mergeTarget);
-      if (result.success) {
-        setApprovalState('sent');
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
+      if (!result.success) throw new Error(result.message ?? 'Approval was not accepted by the relay');
+      setApprovalState('sent');
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
       console.warn('Approval failed:', err);
+      setApprovalState('none');
+      setApprovalError(err instanceof Error ? err.message : String(err));
     }
   }, [transport, mergeTarget, decodedId]);
+
+  const handleReviewFilesLoaded = useCallback((files: readonly unknown[]) => {
+    setReviewFileCount(files.length);
+  }, []);
 
   const handleCommunitySelect = useCallback((communityId: string | null) => {
     if (!communityId) return;
@@ -1446,7 +1492,7 @@ export default function BuzzChat() {
               <View style={styles.terminalTurnHeading}>
                 <Text style={styles.terminalTurnGlyph}>{isOwn || isAgent ? '›' : '·'}</Text>
                 <Text style={styles.terminalTurnLabel}>
-                  {isOwn ? 'USER' : isAgent ? 'FINAL' : 'MESSAGE'}
+                  {isOwn ? 'YOU' : isAgent ? 'TURN SUMMARY' : 'MESSAGE'}
                 </Text>
                 {!isOwn && display && (
                   <Text numberOfLines={1} style={styles.terminalTurnAuthor}>
@@ -1577,29 +1623,34 @@ export default function BuzzChat() {
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
             <Text style={[styles.backText, isCorner && styles.cornerBackText]}>‹</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)} in this ${ROOM_LABEL}`}
-            accessibilityRole="button"
-            disabled={!participantsHydrated}
-            onPress={() => setRosterVisible(true)}
-            style={styles.headerCenter}
-            testID="room-participant-roster-trigger"
-          >
-            <Text
-              style={[styles.channelName, isCorner && styles.cornerChannelName]}
-              numberOfLines={1}
+          {isCorner ? (
+            <View accessibilityLabel={`${cornerAgentDisplay?.name ?? 'Agent'} edit session ${sessionState}`} style={styles.headerCenter}>
+              <Text style={[styles.channelName, styles.cornerChannelName]} numberOfLines={1}>
+                {cornerAgentDisplay?.name ?? 'Agent'}
+              </Text>
+              <Text style={[styles.headerMeta, styles.cornerHeaderMeta]} numberOfLines={1}>
+                EDIT SESSION · {sessionState.toUpperCase()}
+              </Text>
+            </View>
+          ) : (
+            <TouchableOpacity
+              accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)} in this ${ROOM_LABEL}`}
+              accessibilityRole="button"
+              disabled={!participantsHydrated}
+              onPress={() => setRosterVisible(true)}
+              style={styles.headerCenter}
+              testID="room-participant-roster-trigger"
             >
-              {roomName}
-            </Text>
-            <Text
-              style={[styles.headerMeta, isCorner && styles.cornerHeaderMeta]}
-              numberOfLines={1}
-            >
-              {participantsHydrated
-                ? `${presenceSummary ? `${presenceSummary}  ·  ` : ''}${formatRoomParticipantTotal(roomParticipantTotal)}  ·  IN THIS ROOM  ›`
-                : 'LOADING MEMBERS'}
-            </Text>
-          </TouchableOpacity>
+              <Text style={styles.channelName} numberOfLines={1}>
+                {roomName}
+              </Text>
+              <Text style={styles.headerMeta} numberOfLines={1}>
+                {participantsHydrated
+                  ? `${presenceSummary ? `${presenceSummary}  ·  ` : ''}${formatRoomParticipantTotal(roomParticipantTotal)}  ·  IN THIS ROOM  ›`
+                  : 'LOADING MEMBERS'}
+              </Text>
+            </TouchableOpacity>
+          )}
           {!parentChannelId && !isDirectMessage && !viewerIsAgent && !isArchived && (
             <TouchableOpacity
               accessibilityLabel={`Add people or Agents to this ${ROOM_LABEL}`}
@@ -1640,48 +1691,6 @@ export default function BuzzChat() {
           )}
         </HullSurface>
 
-        {/* The one human gate: collapsing a corner into the protected line. */}
-        {mergeTarget && !isArchived && (
-          <HullSurface strength="raised" style={styles.approvalBar}>
-            <View style={styles.approvalInfo}>
-              <Text style={styles.prChip}>Review</Text>
-              <Text style={styles.approvalBarText}>
-                {mergeTarget.repo} · {mergeTarget.tip.slice(0, 8)}
-              </Text>
-            </View>
-            {transport && (
-              <ChangeReviewPanel
-                transport={transport}
-                sessionId={decodedId}
-                tip={mergeTarget.tip}
-              />
-            )}
-            {viewerIsAgent ? (
-              <View style={styles.approvalSent}>
-                <Text style={styles.approvalSentText}>NOT ALLOWED</Text>
-              </View>
-            ) : approvalState === 'none' ? (
-              <TouchableOpacity
-                accessibilityRole="button"
-                onPress={handleApprove}
-                style={styles.approveButton}
-                testID="approve-corner"
-              >
-                <Text style={styles.approveButtonText}>Approve</Text>
-              </TouchableOpacity>
-            ) : approvalState === 'sending' ? (
-              <View style={styles.approvalPending}>
-                <PixelLoader compact />
-                <Text style={styles.approvalStateText}>SENDING</Text>
-              </View>
-            ) : (
-              <View style={styles.approvalSent}>
-                <Text style={styles.approvalSentText}>✓ APPROVED</Text>
-              </View>
-            )}
-          </HullSurface>
-        )}
-
         <FlatList
           ref={flatListRef}
           data={visibleMessages}
@@ -1695,6 +1704,72 @@ export default function BuzzChat() {
                 No messages yet
               </Text>
             </View>
+          }
+          ListFooterComponent={
+            isCorner && !isArchived && sessionState === 'done' ? (
+              <View style={styles.cornerReviewFooter}>
+                {mergeTarget ? (
+                  <HullSurface strength="raised" style={styles.approvalBar}>
+                    <View style={styles.approvalInfo}>
+                      <Text style={styles.prChip}>COMMITTED CHANGE</Text>
+                      <Text style={styles.approvalBarText} numberOfLines={2}>
+                        {turnSummary ?? `${cornerAgentDisplay?.name ?? 'The agent'} completed this turn.`}
+                      </Text>
+                      <Text style={styles.approvalStateText}>
+                        {reviewFileCount === null
+                          ? 'PREPARING FILES'
+                          : `${reviewFileCount} ${reviewFileCount === 1 ? 'FILE' : 'FILES'} · ${mergeTarget.branch.replace(/^refs\/heads\//, '')}`}
+                      </Text>
+                    </View>
+                    {transport && (
+                      <ChangeReviewPanel
+                        transport={transport}
+                        sessionId={decodedId}
+                        tip={mergeTarget.tip}
+                        onFilesLoaded={handleReviewFilesLoaded}
+                      />
+                    )}
+                    {viewerIsAgent ? (
+                      <View style={styles.approvalSent}>
+                        <Text style={styles.approvalSentText}>NOT ALLOWED</Text>
+                      </View>
+                    ) : approvalState === 'none' ? (
+                      <TouchableOpacity
+                        accessibilityRole="button"
+                        onPress={handleApprove}
+                        style={styles.approveButton}
+                        testID="approve-corner"
+                      >
+                        <Text style={styles.approveButtonText}>
+                          APPROVE & MERGE {cornerAgentDisplay?.name ?? 'AGENT'}’S CHANGE
+                        </Text>
+                      </TouchableOpacity>
+                    ) : approvalState === 'sending' ? (
+                      <View style={styles.approvalPending}>
+                        <PixelLoader compact />
+                        <Text style={styles.approvalStateText}>SENDING APPROVAL</Text>
+                      </View>
+                    ) : (
+                      <View style={styles.approvalSent}>
+                        <Text style={styles.approvalSentText}>✓ APPROVAL SENT</Text>
+                      </View>
+                    )}
+                    {approvalError ? (
+                      <Text style={styles.approvalStateText} testID="approve-corner-error">
+                        APPROVAL FAILED · {approvalError}
+                      </Text>
+                    ) : null}
+                  </HullSurface>
+                ) : (
+                  <HullSurface strength="quiet" style={styles.nothingReady}>
+                    <Text style={styles.nothingReadyTitle}>NOTHING READY TO MERGE YET</Text>
+                    <Text style={styles.nothingReadyText}>
+                      A change appears here only after {cornerAgentDisplay?.name ?? 'the agent'} commits real work for review.
+                    </Text>
+                  </HullSurface>
+                )}
+              </View>
+            ) : null
           }
           onContentSizeChange={handleMessageListContentSizeChange}
           onScroll={handleMessageListScroll}
@@ -1724,7 +1799,7 @@ export default function BuzzChat() {
                 </Text>
               </View>
             )}
-            {agentsOffline && (
+            {!isCorner && agentsOffline && (
               <View style={styles.agentOfflineHint} testID="agent-offline-hint">
                 <Text style={styles.agentOfflineHintTitle}>□ AGENT OFFLINE</Text>
                 <Text style={styles.agentOfflineHintText}>
@@ -1734,11 +1809,11 @@ export default function BuzzChat() {
             )}
             {parentChannelId && !viewerIsAgent && (
               <TouchableOpacity
-                accessibilityLabel="Cancel active Agent turn"
+                accessibilityLabel={`Stop ${cornerAgentDisplay?.name ?? 'agent'}`}
                 style={styles.cancelTurnButton}
                 onPress={() => void handleCancel()}
               >
-                <Text style={styles.cancelTurnText}>■ CANCEL</Text>
+                <Text style={styles.cancelTurnText}>■ STOP {cornerAgentDisplay?.name ?? 'AGENT'}</Text>
               </TouchableOpacity>
             )}
             {mentionMenuVisible && (
@@ -1905,18 +1980,18 @@ export default function BuzzChat() {
             {isCorner && (
               <Text style={styles.cornerFooter} numberOfLines={1}>
                 <Text style={styles.cornerFooterRule}>╰─ </Text>
-                <Text style={styles.cornerFooterValue}>Agent</Text>
-                <Text style={styles.cornerFooterSeparator}> · edit · </Text>
+                <Text style={styles.cornerFooterValue}>{cornerAgentDisplay?.name ?? 'Agent'}</Text>
+                <Text style={styles.cornerFooterSeparator}> · edit session · </Text>
                 <Text
                   style={
-                    agentsOffline
-                      ? styles.cornerFooterState
-                      : mergeTarget
+                    sessionState === 'done'
                         ? styles.cornerFooterState
-                        : styles.cornerFooterActive
+                        : sessionState === 'working'
+                          ? styles.cornerFooterActive
+                          : styles.cornerFooterState
                   }
                 >
-                  {agentsOffline ? 'offline' : 'active'}
+                  {sessionState}
                 </Text>
                 <Text style={styles.cornerFooterRule}> ─╯</Text>
               </Text>
@@ -3129,9 +3204,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   approvalInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    gap: 4,
   },
   prChip: {
     ...Typography.mono(),
@@ -3140,10 +3213,9 @@ const styles = StyleSheet.create({
   },
   approvalBarText: {
     ...Typography.mono(),
-    flex: 1,
     fontSize: 11,
     lineHeight: 16,
-    color: groknight.textMuted,
+    color: groknight.textSecondary,
   },
   approveButton: {
     minHeight: 44,
@@ -3180,6 +3252,26 @@ const styles = StyleSheet.create({
     ...Typography.mono(),
     color: groknight.textPrimary,
     fontSize: 12,
+  },
+  cornerReviewFooter: {
+    paddingTop: 12,
+  },
+  nothingReady: {
+    marginHorizontal: 16,
+    padding: 14,
+    gap: 4,
+  },
+  nothingReadyTitle: {
+    ...Typography.default('semiBold'),
+    color: groknight.textSecondary,
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  nothingReadyText: {
+    ...Typography.default(),
+    color: groknight.textMuted,
+    fontSize: 11,
+    lineHeight: 16,
   },
 
   // ── Composer ────────────────────────────────────────────────────

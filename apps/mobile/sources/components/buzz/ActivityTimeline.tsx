@@ -25,10 +25,15 @@ function ReasoningRow({
       <View accessibilityLabel="Working" style={styles.row} testID="activity-reasoning-row">
         <View style={[styles.node, active && styles.activeNode]} />
         <Text numberOfLines={1} style={styles.reasoningTitle}>
-          Working
+          {entry.title}
         </Text>
         {active ? <HullActivityTip /> : null}
       </View>
+      {entry.detail ? (
+        <View style={styles.reasoningDetail} testID="activity-reasoning-detail">
+          <MonoMarkdown markdown={entry.detail} tone="reasoning" />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -81,15 +86,12 @@ function ActionRow({
 export function ActivityTimeline({ active = false, items, testID }: ActivityTimelineProps) {
   const entries = useMemo(() => buildActivityTimeline(items), [items]);
   if (!entries.length) return null;
-  const actions = entries.filter((entry) => entry.kind === 'action');
-  const displayEntries = actions.length > 0 ? actions : active ? entries.slice(-1) : [];
-  if (!displayEntries.length) return null;
 
   return (
     <View style={styles.timeline} testID={testID}>
       <View pointerEvents="none" style={styles.rule} />
-      {displayEntries.map((entry, index) => {
-        const isActiveTip = active && index === displayEntries.length - 1;
+      {entries.map((entry, index) => {
+        const isActiveTip = active && index === entries.length - 1;
         return entry.kind === 'reasoning' ? (
           <ReasoningRow
             active={isActiveTip}
@@ -150,6 +152,12 @@ const styles = StyleSheet.create({
     color: groknight.textMuted,
     fontSize: 11,
     lineHeight: 15,
+  },
+  reasoningDetail: {
+    minWidth: 0,
+    marginLeft: 28,
+    marginRight: 12,
+    paddingBottom: 8,
   },
   actionGlyph: {
     ...Typography.mono(),

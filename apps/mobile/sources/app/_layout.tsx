@@ -31,6 +31,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { AsyncLock } from '@/utils/lock';
 import {
     getSessionRouteFromNotificationResponse,
+    getBuzzChannelIdFromNotificationData,
     navigateToBuzzChannelFromNotification,
 } from '@/utils/notificationRouting';
 import { navigateToSession } from '@/hooks/useNavigateToSession';
@@ -322,9 +323,7 @@ export default function RootLayout() {
                 stringifyNotificationPayload(response.notification.request.content.data)
             );
             const notificationData = response.notification.request.content.data;
-            const buzzChannelId = typeof notificationData?.channelId === 'string'
-                ? notificationData.channelId
-                : null;
+            const buzzChannelId = getBuzzChannelIdFromNotificationData(notificationData);
             if (buzzChannelId) {
                 console.log(`[PUSH ROUTING] Navigating to Buzz channel: ${buzzChannelId}`);
                 navigateToBuzzChannelFromNotification(router, buzzChannelId, responseId);

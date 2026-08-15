@@ -22,6 +22,21 @@ function normalizeNotificationData(data: unknown): unknown {
     return data;
 }
 
+/** Merge-approval pushes name the child explicitly, so they cannot fall back to its parent Room. */
+export function getBuzzChannelIdFromNotificationData(data: unknown): string | null {
+    const normalizedData = normalizeNotificationData(data);
+    if (!normalizedData || typeof normalizedData !== 'object' || Array.isArray(normalizedData)) {
+        return null;
+    }
+    const type = getObjectValue(normalizedData, 'type');
+    const cornerId = getObjectValue(normalizedData, 'cornerId');
+    if (type === 'merge-approval-request' && typeof cornerId === 'string' && cornerId.trim()) {
+        return cornerId;
+    }
+    const channelId = getObjectValue(normalizedData, 'channelId');
+    return typeof channelId === 'string' && channelId.trim() ? channelId : null;
+}
+
 function getSessionRouteFromUrl(url: string): `/session/${string}` | null {
     const trimmedUrl = url.trim();
     if (!trimmedUrl) {

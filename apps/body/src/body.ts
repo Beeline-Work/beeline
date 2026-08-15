@@ -2405,8 +2405,18 @@ export class Body {
   /** Start the requested work without blocking discovery/UI updates. */
   private startAgentTask(info: SubchannelInfo, prompt: string): void {
     const task = (async () => {
+      const requestId = info.request?.eventId ?? `corner-${info.subchannelId}`;
+      const sessionId = info.session.logicalSessionId ?? info.session.sessionId;
       try {
         await this.postParentCornerStatus(info, 'working', `Agent is working on: ${prompt}`);
+        await postAgentTurnStatus(
+          info.subchannelId,
+          this.agentIdentity,
+          requestId,
+          sessionId,
+          'working',
+          this.presenceGenerations.get(info.subchannelId),
+        );
         await this.durableState.appendConversation(info.subchannelId, {
           role: 'user',
           text: prompt,
@@ -2435,7 +2445,23 @@ export class Body {
           at: new Date().toISOString(),
         });
         await this.publishMergeReady(info);
+        await postAgentTurnStatus(
+          info.subchannelId,
+          this.agentIdentity,
+          requestId,
+          sessionId,
+          'complete',
+          this.presenceGenerations.get(info.subchannelId),
+        );
       } catch (error) {
+        await postAgentTurnStatus(
+          info.subchannelId,
+          this.agentIdentity,
+          requestId,
+          sessionId,
+          'failed',
+          this.presenceGenerations.get(info.subchannelId),
+        ).catch(() => undefined);
         await postControlMessage(
           info.subchannelId,
           this.agentIdentity,
@@ -2486,6 +2512,35 @@ export class Body {
     const tip = git(info.worktreePath, ['rev-parse', 'HEAD']).stdout.trim();
     if (!/^[0-9a-f]{40}$/.test(tip)) return false;
 
+    const target = {
+      repo: this.repoId(boundRepo),
+      branch: boundRepo.targetBranch ?? 'refs/heads/main',
+      tip,
+    };
+    const base = resolveReviewBaseTip(info.worktreePath, target.branch);
+    const files = listChangeReviewFiles(info.worktreePath, base, tip);
+    const dirty = git(info.worktreePath, ['status', '--porcelain=v1', '--untracked-files=all'])
+      .stdout.trim();
+    if (dirty || files.length === 0) {
+      // Never advertise HEAD as reviewable when the agent's actual work is
+      // uncommitted, or when it made no committed change. An older ready tip
+      // must be withdrawn too, otherwise a human could approve stale work.
+      info.mergeTarget = undefined;
+      const detail = dirty
+        ? 'The agent has uncommitted work. It must commit the change before it can be reviewed.'
+        : 'The agent completed this turn without a committed change.';
+      await postControlMessage(info.subchannelId, this.agentIdentity, `Nothing ready to merge yet. ${detail}`, [
+        ['t', 'merge-not-ready'],
+        ['status', 'needs-attention'],
+        ['repo', target.repo],
+        ['branch', target.branch],
+        ['agent', this.agentIdentity.publicKey],
+      ]);
+      await this.postParentCornerStatus(info, 'needs-attention', 'Nothing committed is ready for review.');
+      return false;
+    }
+    if (info.mergeTarget?.tip === tip) return true;
+
     const push = boundRepo.ownerHex
       ? gitAuthed(info.worktreePath, this.agentIdentity, boundRepo.ownerHex, boundRepo.repo, [
           'push',
@@ -2514,17 +2569,8 @@ export class Body {
       return false;
     }
 
-    const target = {
-      repo: this.repoId(boundRepo),
-      branch: boundRepo.targetBranch ?? 'refs/heads/main',
-      tip,
-    };
-    if (info.mergeTarget?.tip === tip) return true;
-
     // Publish review data before advertising merge readiness. The manifest is
     // small and eager; patches are separate, bounded events fetched per file.
-    const base = resolveReviewBaseTip(info.worktreePath, target.branch);
-    const files = listChangeReviewFiles(info.worktreePath, base, tip);
     for (const [fileIndex, file] of files.entries()) {
       const patch = readChangeReviewPatch(info.worktreePath, base, tip, file);
       const chunks = chunkChangeReviewPatch(patch);
@@ -3073,6 +3119,19 @@ export class Body {
         try {
           let agentReply = '';
           let agentResult: PromptResult | undefined;
+          const promptNewTurn = async (): Promise<PromptResult> => {
+            await postAgentTurnStatus(
+              subchannelId,
+              this.agentIdentity,
+              evt.id,
+              session.logicalSessionId ?? session.sessionId,
+              'working',
+              this.presenceGenerations.get(subchannelId),
+            );
+            return this.runOnSession(session, () =>
+              session.client.sessionPrompt(session.sessionId, prompt, 60_000),
+            );
+          };
           const runningTask = this.runningAgentTasks.get(subchannelId);
           if (runningTask || session.client.activeRunId(session.sessionId)) {
             try {
@@ -3080,14 +3139,10 @@ export class Body {
             } catch (error) {
               if (!runningTask) throw error;
               await runningTask;
-              agentResult = await this.runOnSession(session, () =>
-                session.client.sessionPrompt(session.sessionId, prompt, 60_000),
-              );
+              agentResult = await promptNewTurn();
             }
           } else {
-            agentResult = await this.runOnSession(session, () =>
-              session.client.sessionPrompt(session.sessionId, prompt, 60_000),
-            );
+            agentResult = await promptNewTurn();
           }
           await this.durableState.appendConversation(subchannelId, {
             role: 'user',
@@ -3109,11 +3164,27 @@ export class Body {
               at: new Date().toISOString(),
             });
             await this.publishMergeReady(info);
+            await postAgentTurnStatus(
+              subchannelId,
+              this.agentIdentity,
+              evt.id,
+              session.logicalSessionId ?? session.sessionId,
+              'complete',
+              this.presenceGenerations.get(subchannelId),
+            );
           }
           processed.add(evt.id);
           await this.durableState.delivered(subchannelId, evt.id);
           count++;
         } catch (err) {
+          await postAgentTurnStatus(
+            subchannelId,
+            this.agentIdentity,
+            evt.id,
+            session.logicalSessionId ?? session.sessionId,
+            'failed',
+            this.presenceGenerations.get(subchannelId),
+          ).catch(() => undefined);
           retryFrom = Math.min(retryFrom ?? evt.created_at, evt.created_at);
           await this.durableState.failed(subchannelId, evt.id, err);
           console.error(`[body] pollMembers: forwarding failed for event ${evt.id}:`, err);

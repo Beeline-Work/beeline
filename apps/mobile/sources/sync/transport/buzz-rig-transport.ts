@@ -34,6 +34,7 @@ import {
   CHANGE_REVIEW_EVENT_KIND,
   CHANGE_REVIEW_FILE_TAG,
   CHANGE_REVIEW_MANIFEST_TAG,
+  APPROVAL_MARKER,
   parseChangeReviewManifest,
   type BuzzClient,
   type Identity,
@@ -525,22 +526,25 @@ export class BuzzRigTransport implements RigTransport {
     authorPubkey: string;
   } | null> {
     const client = await this.getClient();
-    // Backfill messages to find the body's control message with merge target.
-    const events = await client.sessionEventsBackfill(subchannelId, { limit: 20 });
-    for (const ev of [...events].reverse()) {
-      if (ev.kind !== 'other' && ev.kind !== 'message') continue;
-      const tTags = (ev.event.tags ?? []).filter((t: string[]) => t[0] === 't');
-      const isControl = tTags.some((t: string[]) => t[1] === 'body-control');
-      if (!isControl) continue;
-      const repo = tagValue(ev.event, 'repo');
-      const branch = tagValue(ev.event, 'branch');
-      const tip = tagValue(ev.event, 'tip');
-      const parent = tagValue(ev.event, 'parent');
+    // Activity frames can push merge-ready outside the short transcript
+    // backfill window. Fetch body controls directly so review and approval
+    // always bind to the current exact merge target.
+    const events = await client.query([
+      { kinds: [9], '#h': [subchannelId], '#t': ['body-control'], limit: 100 },
+    ]);
+    for (const event of [...events].sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id)).reverse()) {
+      if ((event.tags ?? []).some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready')) {
+        return null;
+      }
+      const repo = tagValue(event, 'repo');
+      const branch = tagValue(event, 'branch');
+      const tip = tagValue(event, 'tip');
+      const parent = tagValue(event, 'parent');
       if (repo && branch && tip) {
         return {
           target: { repo, branch, tip },
           channelId: parent ?? '',
-          authorPubkey: ev.event.pubkey,
+          authorPubkey: event.pubkey,
         };
       }
     }
@@ -557,6 +561,25 @@ export class BuzzRigTransport implements RigTransport {
   ): Promise<{ success: boolean; message?: string }> {
     try {
       const client = await this.getClient();
+      const existing = await client.query([
+        {
+          kinds: [9],
+          authors: [this.identity.publicKey],
+          '#h': [subchannelId],
+          '#t': [APPROVAL_MARKER],
+          limit: 10,
+        },
+      ]);
+      if (
+        existing.some(
+          (event) =>
+            tagValue(event, 'repo') === target.repo &&
+            tagValue(event, 'branch') === target.branch &&
+            tagValue(event, 'tip') === target.tip,
+        )
+      ) {
+        return { success: true, message: 'Approval already sent for this change' };
+      }
       await client.submitMergeApproval(subchannelId, target);
       return { success: true, message: 'Approval sent for merge' };
     } catch (err) {

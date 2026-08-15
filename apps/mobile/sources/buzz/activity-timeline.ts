@@ -90,7 +90,7 @@ function failureTitle(item: AgentActivityItem): string {
   }
   if (source.includes('read') || source.includes('file')) return 'Could not read file';
   if (source.includes('git') || source.includes('bash') || source.includes('shell')) {
-    return 'Command failed';
+    return 'Project task failed';
   }
   return 'Action failed';
 }
@@ -101,22 +101,24 @@ function actionTitle(item: AgentActivityItem): string | undefined {
   const source = `${title}\n${text}`;
   const normalized = title.toLowerCase();
   if (isFailure(item)) return failureTitle(item);
-  if (/^(?:tool|result|action|output)$/i.test(title) && !text.trim()) return undefined;
+  if (/^(?:result|action|output)$/i.test(title) && !text.trim()) return undefined;
+  if (/^tool$/i.test(title)) return text.trim() ? 'Completed an action' : undefined;
   if (/\b(read|open|cat)\b/i.test(source)) {
     const count = fileCount(source);
-    if (count && count > 1) return `Read ${count} files`;
+    if (count && count > 1) return `Reviewed ${count} files`;
     const file = firstFileName(source);
-    return file ? `Read ${file}` : 'Read a file';
+    return file ? `Reviewed ${file}` : 'Reviewed a file';
   }
   if (/\b(search|grep|\brg\b|find)\b/i.test(source)) {
     const terms = searchTerms(title) ?? searchTerms(text);
-    return terms ? `Searched for ${terms}` : 'Searched code';
+    return terms ? `Searched the code for ${terms}` : 'Searched the code';
   }
-  const command = source.match(
-    /\bgit\s+(?:status|diff|log|show|branch|add|commit|checkout)\b[^\n]*/i,
-  )?.[0];
-  if (command) return `Ran ${clamp(redactPaths(command), 48)}`;
-  if (/\b(bash|shell|execute|run)\b/i.test(source)) return 'Ran a command';
+  if (/\bgit\s+(?:status|diff|log|show)\b/i.test(source)) return 'Reviewed the current changes';
+  if (/\bgit\s+(?:branch|add|commit|checkout)\b/i.test(source)) return 'Prepared the change';
+  if (/\b(?:npm|pnpm|yarn|bun|node|npx|python|cargo|make|gradle|docker|kubectl|curl|wget|chmod|rm|cp|mv)\b/i.test(source)) {
+    return 'Completed a project task';
+  }
+  if (/\b(bash|shell|execute|run)\b/i.test(source)) return 'Completed a project task';
   if (/\b(edit|write|replace|patch|create)\b/i.test(source)) {
     const file = firstFileName(source);
     return file ? `Updated ${file}` : 'Updated a file';
@@ -165,15 +167,14 @@ export function buildActivityTimeline(
     const title = actionTitle(item);
     if (!title) continue;
     const previous = entries.at(-1);
-    const isRead = title.startsWith('Read ');
+    const isFileReview = /^Reviewed (?!the current changes)/.test(title);
     if (
       previous?.kind === 'action' &&
       (previous.title.toLowerCase() === title.toLowerCase() ||
-        (isRead && previous.title.startsWith('Read ')))
+        (isFileReview && /^Reviewed (?!the current changes)/.test(previous.title)))
     ) {
       previous.count += 1;
-      if (isRead) previous.title = `Read ${previous.count} files`;
-      previous.detail = appendDistinctDetail(previous.detail, item.text);
+      if (isFileReview) previous.title = `Reviewed ${previous.count} files`;
       continue;
     }
 
@@ -181,7 +182,6 @@ export function buildActivityTimeline(
       kind: 'action',
       title,
       count: 1,
-      ...(item.text ? { detail: redactPaths(item.text) } : {}),
     });
   }
 

@@ -42,19 +42,17 @@ describe('buildActivityTimeline', () => {
     ).toEqual([
       {
         kind: 'action',
-        title: 'Searched for isChannelWorkIntent',
-        detail: '12 matches',
+        title: 'Searched the code for isChannelWorkIntent',
         count: 1,
       },
       {
         kind: 'action',
-        title: 'Read 2 files',
+        title: 'Reviewed 2 files',
         count: 2,
       },
       {
         kind: 'action',
-        title: 'Ran git status',
-        detail: 'exited with code 0',
+        title: 'Reviewed the current changes',
         count: 1,
       },
     ]);
@@ -74,9 +72,20 @@ describe('buildActivityTimeline', () => {
       {
         kind: 'action',
         title: 'Code search unavailable',
-        detail: 'Code search unavailable at index.db',
         count: 1,
       },
+    ]);
+  });
+
+  it('never surfaces a bare tool label or raw command output', () => {
+    expect(
+      buildActivityTimeline([
+        { kind: 'tool', title: 'Tool', status: 'completed', text: 'npm install --ignore-scripts' },
+        { kind: 'tool', title: 'bash: pnpm lint', status: 'completed', text: 'All checks passed.' },
+      ]),
+    ).toEqual([
+      { kind: 'action', title: 'Completed an action', count: 1 },
+      { kind: 'action', title: 'Completed a project task', count: 1 },
     ]);
   });
 });

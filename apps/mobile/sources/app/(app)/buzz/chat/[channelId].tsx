@@ -383,7 +383,11 @@ export default function BuzzChat() {
     () =>
       roomParticipants
         .filter((participant) => participant.kind === 'agent')
-        .map((participant) => ({ pubkey: participant.pubkey, name: participant.name })),
+        .map((participant) => ({
+          pubkey: participant.pubkey,
+          name: participant.name,
+          handle: participant.handle,
+        })),
     [roomParticipants],
   );
   const activeMention = useMemo(

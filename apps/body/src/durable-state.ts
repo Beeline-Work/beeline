@@ -12,6 +12,8 @@ interface InboxItem {
   state: 'pending' | 'delivered';
   attempts: number;
   lastError?: string;
+  /** A completed response is persisted before publication so retries reuse its relay id. */
+  reply?: NostrEvent;
 }
 
 export interface ConversationEntry {
@@ -96,6 +98,24 @@ export class DurableBodyState {
       inbox.cursor = cursor;
     }
     await this.save();
+  }
+
+  async reply(channelId: string, eventId: string): Promise<NostrEvent | undefined> {
+    await this.load();
+    return this.inbox(channelId).items[eventId]?.reply;
+  }
+
+  async reserveReply(channelId: string, eventId: string, reply: NostrEvent): Promise<NostrEvent> {
+    await this.load();
+    const item = this.inbox(channelId).items[eventId];
+    // Direct Body library callers can publish a one-off reply without first
+    // entering the polling inbox. The polling path always has an item and is
+    // therefore durably idempotent; keep this diagnostic/library path usable.
+    if (!item) return reply;
+    if (item.reply) return item.reply;
+    item.reply = reply;
+    await this.save();
+    return reply;
   }
 
   async failed(channelId: string, eventId: string, error: unknown): Promise<void> {

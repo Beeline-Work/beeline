@@ -39,6 +39,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 ## Release APK build (@beeline/mobile)
 
 - `npm run apk:release` in `apps/mobile` builds a signed release APK (expo prebuild → patch signing config → gradle assembleRelease).
+- Release/E2E builds flow through `apps/mobile/scripts/android-build.sh`: generated `gradle.properties` enables the shared Gradle build cache with the 8 GiB heap, React Native uses the shared ccache namespace when `ccache` is installed, and the exit trap runs `android-teardown.sh` (named emulator, adb, Gradle). `apps/mobile/package.json` is the versionName source; `npm run version:check` enforces matching `v<version>` tags.
 - On-device smoke harness: `cd apps/mobile && npm run e2e` builds/installs a release APK on the existing `emulator-5554`, provisions the live-relay Workspace/Room fixture through `scripts/provision-smoke.ts`, and runs `e2e/smoke.yaml`. Use `MAESTRO_SKIP_BUILD=1` only after a successful local APK build; the future corner-session contract is intentionally parked in `e2e/corner-session.todo.yaml` until that UI lands.
 - Release keystore: `apps/mobile/android-signing/release.keystore` (stored pass in sibling README, rotate before public distribution).
 - Configurable relay URL: persisted per-device via `buzz-identity-storage.ts`, default `https://relay.buzzrouter.com`.

@@ -82,6 +82,7 @@ import {
   type PickedChatAttachment,
 } from '@/buzz/chat-attachment';
 import { isNearChatBottom } from '@/buzz/chat-scroll';
+import { describeWriteRequest } from '@/buzz/write-request-copy';
 import { cornerSessionState, latestCornerTurnSummary } from '@/buzz/corner-session';
 import { isOfflineRoomDelivery } from '@/buzz/corner-steer';
 import {
@@ -121,6 +122,9 @@ const BODY_PUBKEYS = new Set<string>();
 const COMPOSER_MIN_HEIGHT = 40;
 const COMPOSER_MAX_HEIGHT = 120;
 const FOREGROUND_RECONNECT_SETTLE_MS = 750;
+// This deliberately remains the sole color seam for the human merge decision.
+// If the product ever approves a non-monochrome exception, change only this value.
+const MERGE_APPROVAL_ACCENT = groknight.accent;
 
 function CornerActivity({ message, active }: { message: ChatDisplayMessage; active: boolean }) {
   const activity = message.activity?.length
@@ -1365,8 +1369,8 @@ export default function BuzzChat() {
                     ? `${display.name} requests a new edit corner`
                     : `${display.name} needs to change repository files`}
                 </Text>
-                <Text style={styles.writePermissionTool} numberOfLines={2}>
-                  WRITE REQUEST · {permission.tool}
+                <Text style={styles.writePermissionIntent} numberOfLines={2}>
+                  {describeWriteRequest(permission.tool)}
                 </Text>
               </View>
             </View>
@@ -1381,7 +1385,9 @@ export default function BuzzChat() {
                 : 'This write request is missing its repository target and cannot be allowed.'}
             </Text>
             {permission.status === 'failed' && (
-              <Text style={styles.writePermissionFailure}>{item.text}</Text>
+              <Text style={styles.writePermissionFailure}>
+                The requested edit could not start. This Room remains read-only.
+              </Text>
             )}
             {pending && !viewerIsAgent && permission.repository ? (
               <View style={styles.writePermissionActions}>
@@ -1745,14 +1751,14 @@ export default function BuzzChat() {
                 {mergeTarget ? (
                   <HullSurface strength="raised" style={styles.approvalBar}>
                     <View style={styles.approvalInfo}>
-                      <Text style={styles.prChip}>COMMITTED CHANGE</Text>
+                      <Text style={styles.prChip}>CHANGE READY FOR REVIEW</Text>
                       <Text style={styles.approvalBarText} numberOfLines={2}>
                         {turnSummary ?? `${cornerAgentDisplay?.name ?? 'The agent'} completed this turn.`}
                       </Text>
                       <Text style={styles.approvalStateText}>
                         {reviewFileCount === null
-                          ? 'PREPARING FILES'
-                          : `${reviewFileCount} ${reviewFileCount === 1 ? 'FILE' : 'FILES'} · ${mergeTarget.branch.replace(/^refs\/heads\//, '')}`}
+                          ? 'PREPARING YOUR REVIEW'
+                          : `${reviewFileCount} ${reviewFileCount === 1 ? 'FILE' : 'FILES'} READY TO REVIEW`}
                       </Text>
                     </View>
                     {transport && (
@@ -1776,6 +1782,9 @@ export default function BuzzChat() {
                       >
                         <Text style={styles.approveButtonText}>
                           APPROVE & MERGE {cornerAgentDisplay?.name ?? 'AGENT'}’S CHANGE
+                        </Text>
+                        <Text style={styles.approveButtonSupport}>
+                          APPROVAL APPLIES ONLY TO THIS REVIEWED CHANGE
                         </Text>
                       </TouchableOpacity>
                     ) : approvalState === 'sending' ? (
@@ -3266,19 +3275,31 @@ const styles = StyleSheet.create({
     color: groknight.textSecondary,
   },
   approveButton: {
-    minHeight: 44,
+    minHeight: 64,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: groknight.accent,
-    borderRadius: 7,
-    backgroundColor: groknight.bgTerminal,
+    gap: 3,
+    paddingHorizontal: 14,
+    borderWidth: 2,
+    borderColor: MERGE_APPROVAL_ACCENT,
+    borderRadius: 8,
+    backgroundColor: MERGE_APPROVAL_ACCENT,
   },
   approveButtonText: {
-    ...Typography.mono(),
-    color: groknight.accent,
-    fontSize: 12,
-    lineHeight: 16,
+    ...Typography.mono('semiBold'),
+    color: groknight.textInverted,
+    fontSize: 13,
+    lineHeight: 18,
+    letterSpacing: 0.3,
+    textAlign: 'center',
+  },
+  approveButtonSupport: {
+    ...Typography.default('semiBold'),
+    color: groknight.textInverted,
+    fontSize: 8,
+    lineHeight: 12,
+    letterSpacing: 0.45,
+    textAlign: 'center',
   },
   approvalPending: {
     flexDirection: 'row',
@@ -3416,12 +3437,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
   },
-  writePermissionTool: {
-    ...Typography.mono('semiBold'),
+  writePermissionIntent: {
+    ...Typography.default(),
     color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 13,
-    letterSpacing: 0.4,
+    fontSize: 11,
+    lineHeight: 15,
     marginTop: 2,
   },
   writePermissionRepository: {

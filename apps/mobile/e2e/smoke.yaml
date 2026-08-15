@@ -1,0 +1,65 @@
+appId: app.buzzy.mobile
+name: Workspace and chat smoke
+env:
+  SMOKE_NSEC: ${SMOKE_NSEC}
+  SMOKE_ROOM_ID: ${SMOKE_ROOM_ID}
+---
+# A clean app is installed by scripts/maestro-e2e.sh. Importing the generated
+# identity is the stable, device-held identity path — no OIDC browser or agent
+# runtime is required for this smoke suite.
+- tapOn:
+    id: onboarding-advanced
+- tapOn:
+    id: onboarding-secret-key
+- inputText: ${SMOKE_NSEC}
+- tapOn:
+    id: onboarding-import-key
+- extendedWaitUntil:
+    visible:
+      id: onboarding-person-name-step
+    timeout: 15000
+- tapOn:
+    id: onboarding-person-name-input
+- eraseText
+- inputText: Maestro Smoke
+# Android's soft keyboard covers the primary action on compact emulator
+# windows; this back only dismisses that keyboard because the input is focused.
+- pressKey: back
+- tapOn:
+    id: onboarding-enter-workspace
+- extendedWaitUntil:
+    visible:
+      id: room-list
+    timeout: 20000
+- assertVisible: Buzzy Maestro Smoke Workspace
+- extendedWaitUntil:
+    visible:
+      id: room-${SMOKE_ROOM_ID}
+    timeout: 20000
+- tapOn:
+    id: room-${SMOKE_ROOM_ID}
+- extendedWaitUntil:
+    visible:
+      id: chat-input
+    timeout: 10000
+
+# The one-second return assertion is the regression guard for the Room
+# back-button freeze. It uses Android's native back dispatch, not a UI tap.
+- pressKey: back
+- extendedWaitUntil:
+    visible:
+      id: room-list
+    timeout: 1000
+
+- tapOn:
+    id: room-${SMOKE_ROOM_ID}
+- extendedWaitUntil:
+    visible:
+      id: chat-input
+    timeout: 10000
+- tapOn:
+    id: chat-input
+- inputText: Maestro on-device smoke message
+- tapOn:
+    id: chat-send
+- assertVisible: Maestro on-device smoke message

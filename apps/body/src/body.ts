@@ -27,6 +27,7 @@ import {
 } from './acp.js';
 import {
   projectActivity,
+  buildAgentMessage,
   postAgentMessage,
   startAgentPresence,
   postAgentTurnStatus,
@@ -38,6 +39,7 @@ import {
   setMemberRole,
   newIdentity,
   createRelayClient,
+  publishEvent,
   archiveChannel,
   assertAgentNotPushAllowed,
   DurableMergeGate,
@@ -1015,14 +1017,30 @@ export class Body {
     if (uploaded.errors.length)
       reply = `${reply}\n\nAttachment unavailable: ${uploaded.errors.join('; ')}`;
     if (!reply) throw new Error('agent returned an empty reply');
-    await postAgentMessage(
-      channelId,
-      this.agentIdentity,
-      reply,
-      replyTo,
-      uploaded.attachments,
-      extraTags,
-    );
+    if (replyTo) {
+      const event = await this.durableState.reserveReply(
+        channelId,
+        replyTo,
+        buildAgentMessage(
+          channelId,
+          this.agentIdentity,
+          reply,
+          replyTo,
+          uploaded.attachments,
+          extraTags,
+        ),
+      );
+      await publishEvent(event, this.agentIdentity);
+    } else {
+      await postAgentMessage(
+        channelId,
+        this.agentIdentity,
+        reply,
+        replyTo,
+        uploaded.attachments,
+        extraTags,
+      );
+    }
     return reply;
   }
 
@@ -1761,6 +1779,13 @@ export class Body {
         await this.durableState.delivered(tlcChannelId, event.id);
         continue;
       }
+      const reservedReply = await this.durableState.reply(tlcChannelId, event.id);
+      if (reservedReply) {
+        await publishEvent(reservedReply, this.agentIdentity);
+        this.processedRequestIds.add(event.id);
+        await this.durableState.delivered(tlcChannelId, event.id);
+        continue;
+      }
       if (event.tags.some((tag) => tag[0] === 't' && tag[1] === WRITE_PERMISSION_RESPONSE_TAG)) {
         this.processedRequestIds.add(event.id);
         await this.durableState.delivered(tlcChannelId, event.id);
@@ -2108,6 +2133,10 @@ export class Body {
         agentExchange ? agentExchangeTags(agentExchange, 1, agentExchange.peerPubkey) : undefined,
       );
       if (!reply) throw new Error('agent returned an empty Room reply');
+      // From this point a retry must replay the persisted event, never prompt
+      // the model again. Lifecycle cosmetics cannot reopen the inbox item.
+      this.processedRequestIds.add(request.eventId);
+      await this.durableState.delivered(tlcChannelId, request.eventId);
       await this.durableState.appendConversation(tlcChannelId, {
         role: 'agent',
         text: attachmentPrompt(this.agentIdentity.publicKey, reply, [], this.ownRoomAttribution()),
@@ -2120,6 +2149,8 @@ export class Body {
         session.logicalSessionId ?? session.sessionId,
         'complete',
         this.presenceGenerations.get(tlcChannelId),
+      ).catch((statusError) =>
+        console.error('[body] failed to publish Room turn completion status:', statusError),
       );
       return false;
     } catch (error) {

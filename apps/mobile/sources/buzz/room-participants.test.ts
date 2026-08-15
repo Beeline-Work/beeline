@@ -68,11 +68,12 @@ describe('Room participant presentation', () => {
 
   it('maps a visible @Agent name to its pubkey without partial-name matches', () => {
     const agents = [
-      { pubkey: 'agent-a', name: 'Brisk Pilot' },
-      { pubkey: 'agent-b', name: 'Brisk' },
+      { pubkey: 'agent-a', name: 'Brisk Pilot', handle: 'brisk-pilot' },
+      { pubkey: 'agent-b', name: 'Brisk', handle: 'brisk' },
     ];
     expect(mentionedAgentPubkey('please ask @Brisk Pilot to inspect this', agents)).toBe('agent-a');
     expect(mentionedAgentPubkey('hello @brisk!', agents)).toBe('agent-b');
+    expect(mentionedAgentPubkey('hello @brisk-pilot!', agents)).toBe('agent-a');
     expect(mentionedAgentPubkey('email @briskness later', agents)).toBeUndefined();
   });
 

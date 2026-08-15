@@ -104,15 +104,15 @@ export function projectActivity(
 }
 
 /** Publish a completed assistant turn as durable conversation, not telemetry. */
-export async function postAgentMessage(
+export function buildAgentMessage(
   channelId: string,
   owner: Identity,
   message: string,
   replyTo?: string,
   attachments: readonly AttachmentReference[] = [],
   extraTags: readonly string[][] = [],
-): Promise<void> {
-  const event: NostrEvent = signEvent(
+): NostrEvent {
+  return signEvent(
     {
       pubkey: owner.publicKey,
       created_at: Math.floor(Date.now() / 1000),
@@ -128,8 +128,20 @@ export async function postAgentMessage(
     },
     owner.secretKey,
   );
+}
 
-  await publishEvent(event, owner);
+export async function postAgentMessage(
+  channelId: string,
+  owner: Identity,
+  message: string,
+  replyTo?: string,
+  attachments: readonly AttachmentReference[] = [],
+  extraTags: readonly string[][] = [],
+): Promise<void> {
+  await publishEvent(
+    buildAgentMessage(channelId, owner, message, replyTo, attachments, extraTags),
+    owner,
+  );
 }
 
 /** Publish the read-only Room turn lifecycle used by the thinking indicator. */

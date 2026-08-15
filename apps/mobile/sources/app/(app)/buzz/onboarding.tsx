@@ -33,6 +33,7 @@ import {
   type GoogleOnboardingNotice,
   type GoogleOnboardingStatus,
 } from '@/auth/google-onboarding-state';
+import { googleAuthSessionOptions } from '@/auth/google-auth-session';
 import {
   clearPersonNameOnboardingPending,
   isPersonNameOnboardingPending,
@@ -217,9 +218,11 @@ export default function BuzzOnboarding() {
       const callbackUrl = await waitForGoogleAuthCallback({
         redirectUri: start.redirectUri,
         openAuthSession: () =>
-          WebBrowser.openAuthSessionAsync(start.authorizationUrl, start.redirectUri, {
-            preferUniversalLinks: start.redirectUri.startsWith('https://'),
-          }),
+          WebBrowser.openAuthSessionAsync(
+            start.authorizationUrl,
+            start.redirectUri,
+            googleAuthSessionOptions(Platform.OS, start.redirectUri),
+          ),
         subscribeToUrls: (listener) => Linking.addEventListener('url', ({ url }) => listener(url)),
       });
       setStatus(nextGoogleOnboardingStatus('opening_browser', 'callback_received'));

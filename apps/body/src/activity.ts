@@ -26,6 +26,140 @@ export const ACTIVITY_TAG = 'agent-activity';
 export const AGENT_MESSAGE_TAG = 'agent-message';
 export const AGENT_TURN_TAG = 'agent-turn';
 
+/**
+ * ACP tool-call kinds that are always load-bearing: they change the worktree
+ * (or a PR/branch derived from it) regardless of what command produced them.
+ */
+const LOAD_BEARING_TOOL_KINDS = new Set(['edit', 'delete', 'move']);
+/** ACP tool-call kinds that are inherently background inspection, never surfaced alone. */
+const LOW_SIGNAL_TOOL_KINDS = new Set(['read', 'search', 'think', 'fetch', 'other']);
+/** `session/update` kinds that are reasoning/planning/metadata noise, never projected. */
+const SUPPRESSED_SESSION_UPDATE_KINDS = new Set([
+  'agent_thought_chunk',
+  'agent_thought',
+  'plan',
+  'user_message_chunk',
+  'available_commands_update',
+  'current_mode_update',
+]);
+/** Shell commands that stay inspection-only even when routed through an 'execute' tool call. */
+const INSPECTION_COMMAND =
+  /^\s*(?:grep|rg|ag|find|sed\s+-n|cat|head|tail|ls|pwd|wc|file|which|type)\b|^\s*git\s+(?:status|diff|log|show|branch)\b/i;
+const MAX_SUMMARY_ACTIONS = 6;
+const MAX_SUMMARY_LENGTH = 500;
+
+interface ToolCallInfo {
+  kind?: string;
+  title?: string;
+  command?: string;
+}
+
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function commandText(rawInput: unknown): string | undefined {
+  const record = objectValue(rawInput);
+  const command = record?.command ?? record?.cmd;
+  return typeof command === 'string' ? command : undefined;
+}
+
+function toolCallInfo(update: Record<string, unknown>): ToolCallInfo {
+  return {
+    kind: typeof update.kind === 'string' ? update.kind : undefined,
+    title: typeof update.title === 'string' ? update.title : undefined,
+    command: commandText(update.rawInput),
+  };
+}
+
+/** True once a tool call is load-bearing enough to show as its own transcript line. */
+function isLoadBearingToolCall(info: ToolCallInfo): boolean {
+  if (info.kind && LOAD_BEARING_TOOL_KINDS.has(info.kind)) return true;
+  if (info.kind && LOW_SIGNAL_TOOL_KINDS.has(info.kind)) return false;
+  // 'execute' (and any kind an older agent omits) covers everything from a
+  // grep to a test-suite run or `gh pr create` — only the former is noise.
+  return !INSPECTION_COMMAND.test(info.command ?? info.title ?? '');
+}
+
+/** Remember the kind/title/command a toolCallId announced, since a terminal
+ *  `tool_call_update` delta often omits everything except id + status. */
+function trackToolCall(
+  update: Record<string, unknown>,
+  toolCallKinds: Map<string, ToolCallInfo>,
+): void {
+  const toolCallId = typeof update.toolCallId === 'string' ? update.toolCallId : undefined;
+  if (!toolCallId) return;
+  const info = toolCallInfo(update);
+  if (!info.kind && !info.title && !info.command) return;
+  const existing = toolCallKinds.get(toolCallId);
+  toolCallKinds.set(toolCallId, {
+    kind: info.kind ?? existing?.kind,
+    title: info.title ?? existing?.title,
+    command: info.command ?? existing?.command,
+  });
+}
+
+/**
+ * True only for a *terminal* update the captain cares about: a completed
+ * load-bearing tool call (an edit, a test run, a commit, a PR) or any failed
+ * tool call (a blocker). Pending/in-progress tool chatter, reasoning, and
+ * planning steps never qualify — they stay background telemetry.
+ */
+function isMajorUpdate(
+  update: Record<string, unknown>,
+  toolCallKinds: Map<string, ToolCallInfo>,
+): boolean {
+  const sessionUpdate = typeof update.sessionUpdate === 'string' ? update.sessionUpdate : undefined;
+  if (!sessionUpdate || SUPPRESSED_SESSION_UPDATE_KINDS.has(sessionUpdate)) return false;
+  if (
+    sessionUpdate !== 'tool_call' &&
+    sessionUpdate !== 'tool_call_update' &&
+    sessionUpdate !== 'tool_result'
+  ) {
+    return false;
+  }
+  const status =
+    typeof update.status === 'string'
+      ? update.status
+      : sessionUpdate === 'tool_result'
+        ? 'completed'
+        : undefined;
+  if (status !== 'completed' && status !== 'failed') return false;
+  if (status === 'failed') return true;
+  const toolCallId = typeof update.toolCallId === 'string' ? update.toolCallId : undefined;
+  const known = toolCallId ? toolCallKinds.get(toolCallId) : undefined;
+  const info = toolCallInfo(update);
+  return isLoadBearingToolCall({
+    kind: info.kind ?? known?.kind,
+    title: info.title ?? known?.title,
+    command: info.command ?? known?.command,
+  });
+}
+
+/** Short "Edited x.ts" / "Failed: npm test" label for the turn's summary line. */
+function describeMajorUpdate(
+  update: Record<string, unknown>,
+  toolCallKinds: Map<string, ToolCallInfo>,
+): string {
+  const toolCallId = typeof update.toolCallId === 'string' ? update.toolCallId : undefined;
+  const known = toolCallId ? toolCallKinds.get(toolCallId) : undefined;
+  const info = toolCallInfo(update);
+  const label = info.title ?? known?.title ?? info.command ?? known?.command ?? 'tool call';
+  return update.status === 'failed' ? `Failed: ${label}` : label;
+}
+
+/** Concise summary line appended after a batch's major actions. */
+function summarizeMajorActions(labels: readonly string[]): string {
+  const shown = labels.slice(0, MAX_SUMMARY_ACTIONS);
+  const omitted = labels.length - shown.length;
+  const summary = `${shown.join('; ')}${omitted > 0 ? ` (+${omitted} more)` : ''}`;
+  return summary.length > MAX_SUMMARY_LENGTH
+    ? `${summary.slice(0, MAX_SUMMARY_LENGTH - 1)}…`
+    : summary;
+}
+
 export type AgentPresenceController = (() => Promise<void>) & {
   generationId: string;
   /** Immediately publish a new availability state and use it for later heartbeats. */
@@ -75,13 +209,39 @@ export function projectActivity(
 ): () => void {
   let pending: SessionUpdate[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const toolCallKinds = new Map<string, ToolCallInfo>();
   const flush = () => {
     if (timer) clearTimeout(timer);
     timer = undefined;
     const events = pending;
     pending = [];
-    if (events.length)
-      void emitActivityEvent(channelId, channelOwner, { sessionId, channelId, events });
+    if (!events.length) return;
+    // Batch first, then keep only the major load-bearing actions — an edit, a
+    // completed test/build/PR command, or a failure — so the projected
+    // transcript reads like a clean assistant log, not raw tool telemetry.
+    const major: SessionUpdate[] = [];
+    const labels: string[] = [];
+    for (const event of events) {
+      if (!isMajorUpdate(event.update, toolCallKinds)) continue;
+      major.push(event);
+      labels.push(describeMajorUpdate(event.update, toolCallKinds));
+      const toolCallId =
+        typeof event.update.toolCallId === 'string' ? event.update.toolCallId : undefined;
+      if (toolCallId) toolCallKinds.delete(toolCallId);
+    }
+    if (!major.length) return;
+    const summary: SessionUpdate = {
+      sessionId,
+      update: {
+        sessionUpdate: 'activity_summary',
+        content: { type: 'text', text: summarizeMajorActions(labels) },
+      },
+    };
+    void emitActivityEvent(channelId, channelOwner, {
+      sessionId,
+      channelId,
+      events: [...major, summary],
+    });
   };
   const onUpdate = (u: SessionUpdate) => {
     if (u.sessionId !== sessionId) return;
@@ -89,7 +249,9 @@ export function projectActivity(
     // after sessionPrompt completes. Keep the activity stream for thought/tool
     // telemetry so conversation copy cannot be duplicated or lost in a batch.
     if (u.update.sessionUpdate === 'agent_message_chunk') return;
-    pending.push({ ...u, update: sanitizeActivityUpdate(u.update) });
+    const sanitized = sanitizeActivityUpdate(u.update);
+    trackToolCall(sanitized, toolCallKinds);
+    pending.push({ ...u, update: sanitized });
     // One paired identity can serve several Rooms. A five-second batch keeps
     // shared live visibility while staying below per-pubkey relay quotas under
     // concurrent tool-call bursts.

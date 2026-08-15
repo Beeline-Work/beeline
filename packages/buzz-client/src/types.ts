@@ -285,6 +285,8 @@ export interface BuzzClientConfig {
    * WS URL is derived by swapping the scheme (http→ws, https→wss).
    */
   baseUrl: string;
+  /** Optional explicit WebSocket endpoint. Defaults to the endpoint derived from baseUrl. */
+  wsUrl?: string;
   /**
    * Host header authority the relay bound its deployment community under.
    * Defaults to the host:port of `baseUrl`. Must match NIP-98 `u` in production.

@@ -153,6 +153,53 @@ describe('Buzz local cache', () => {
     expect(restored.profiles[`${viewer}:workspace`]?.[0]?.name).toBe('Alice');
   });
 
+  it('repairs legacy and malformed persisted values before they reach startup rendering', async () => {
+    mmkvValues.set(
+      'buzz-local-cache-v1',
+      JSON.stringify({
+        activeViewerPubkey: viewer,
+        activeListKeyByViewer: { [viewer]: `${viewer}:workspace`, broken: 9 },
+        channelLists: {
+          [`${viewer}:workspace`]: {
+            viewerPubkey: viewer,
+            communityId: 'workspace',
+            channels: null,
+            directMessages: { stale: true },
+            workspaceMembers: 'old-format',
+            communities: [{ communityId: 'workspace', name: 'Workspace' }],
+          },
+          corrupt: null,
+        },
+        channels: {
+          [`${viewer}:room`]: { viewerPubkey: viewer, channelId: 'room', messages: 'not-an-array' },
+          corrupt: null,
+        },
+        profiles: {
+          [`${viewer}:workspace`]: [{ pubkey: 'alice', name: 'Alice' }],
+          corrupt: { name: 'not-an-array' },
+        },
+      }),
+    );
+
+    vi.resetModules();
+    const warm = await import('./local-cache');
+    const restored = warm.useBuzzLocalCache.getState();
+
+    expect(restored.activeListKeyByViewer).toEqual({ [viewer]: `${viewer}:workspace` });
+    expect(restored.channelLists[`${viewer}:workspace`]).toMatchObject({
+      viewerPubkey: viewer,
+      communities: [{ communityId: 'workspace', name: 'Workspace' }],
+    });
+    expect(restored.channelLists[`${viewer}:workspace`]?.channels).toEqual([]);
+    expect(restored.channelLists[`${viewer}:workspace`]?.directMessages).toEqual([]);
+    expect(restored.channelLists[`${viewer}:workspace`]?.workspaceMembers).toEqual([]);
+    expect(restored.channels[`${viewer}:room`]?.messages).toBeUndefined();
+    expect(restored.profiles[`${viewer}:workspace`]).toEqual([{ pubkey: 'alice', name: 'Alice' }]);
+    expect(restored.channelLists.corrupt).toBeUndefined();
+    expect(restored.channels.corrupt).toBeUndefined();
+    expect(restored.profiles.corrupt).toBeUndefined();
+  });
+
   it('uses a persisted cursor for delta revalidation and writes live events to the same cache', async () => {
     const now = Date.now();
     useBuzzLocalCache.getState().setChannelList({

@@ -216,6 +216,7 @@ export default function BuzzChat() {
   const initialMessageScrollPendingRef = useRef(true);
   const keyboardFollowPendingRef = useRef(false);
   const previousKeyboardHeightRef = useRef(0);
+  const scheduledScrollFrameRef = useRef<number | null>(null);
   const keyboardHeight = useKeyboardState((state) => (state.isVisible ? state.height : 0));
 
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
@@ -478,9 +479,21 @@ export default function BuzzChat() {
   }, [mergeTarget?.tip]);
 
   useEffect(() => {
-    const timer = setInterval(() => setPresenceNow(Date.now()), 5_000);
-    return () => clearInterval(timer);
-  }, []);
+    // Presence only changes at a lease/grace deadline. A five-second clock here
+    // recreated FlatList's renderItem (and every visible message) while someone
+    // was typing, which made the foreground intermittently unresponsive.
+    const now = Date.now();
+    const deadlines = [
+      ...Object.values(agentPresences).map((presence) =>
+        presence.observedAt + AGENT_PRESENCE_STALE_MS,
+      ),
+      ...Object.values(presenceReconnectGrace),
+    ].filter((deadline) => Number.isFinite(deadline) && deadline > now);
+    if (deadlines.length === 0) return;
+    const delay = Math.max(1, Math.min(...deadlines) - now + 1);
+    const timer = setTimeout(() => setPresenceNow(Date.now()), delay);
+    return () => clearTimeout(timer);
+  }, [agentPresences, presenceReconnectGrace]);
 
   const applyAgentPresence = useCallback((presence: RoomAgentPresence | undefined) => {
     if (!presence) return;
@@ -500,8 +513,24 @@ export default function BuzzChat() {
   }, []);
 
   const scrollToLatestMessage = useCallback((animated: boolean) => {
-    requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated }));
+    // Content-size notifications can arrive in a burst while an activity card,
+    // keyboard, or multiline composer settles. Coalesce them into one native
+    // operation instead of queuing animated scrolls on the UI thread.
+    if (scheduledScrollFrameRef.current !== null) return;
+    scheduledScrollFrameRef.current = requestAnimationFrame(() => {
+      scheduledScrollFrameRef.current = null;
+      flatListRef.current?.scrollToEnd({ animated });
+    });
   }, []);
+
+  useEffect(
+    () => () => {
+      if (scheduledScrollFrameRef.current !== null) {
+        cancelAnimationFrame(scheduledScrollFrameRef.current);
+      }
+    },
+    [],
+  );
 
   const handleMessageListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     if (initialMessageScrollPendingRef.current || keyboardFollowPendingRef.current) return;
@@ -526,7 +555,19 @@ export default function BuzzChat() {
       return;
     }
     if (followsLatestMessageRef.current || keyboardFollowPendingRef.current) {
-      scrollToLatestMessage(true);
+      scrollToLatestMessage(false);
+    }
+  }, [scrollToLatestMessage]);
+
+  const handleMessageListLayout = useCallback(() => {
+    if (initialMessageScrollPendingRef.current) {
+      scrollToLatestMessage(false);
+      return;
+    }
+    // A multiline composer changes the viewport, not the transcript content.
+    // Follow the tail after that layout pass whenever the reader was at it.
+    if (followsLatestMessageRef.current || keyboardFollowPendingRef.current) {
+      scrollToLatestMessage(false);
     }
   }, [scrollToLatestMessage]);
 
@@ -1800,12 +1841,26 @@ export default function BuzzChat() {
             ) : null
           }
           onContentSizeChange={handleMessageListContentSizeChange}
-          onLayout={() => {
-            if (initialMessageScrollPendingRef.current) scrollToLatestMessage(false);
-          }}
+          onLayout={handleMessageListLayout}
           onScroll={handleMessageListScroll}
           scrollEventThrottle={16}
         />
+
+        {!isArchived &&
+          !parentChannelId &&
+          !agentsOffline &&
+          (activeCorner?.corner || activeAgentTurn?.agentTurn) && (
+            <View style={styles.agentLiveStatus} testID="agent-live-status">
+              <PixelLoader compact />
+              <Text style={styles.agentLiveStatusText}>
+                {activeAgentTurn?.agentTurn
+                  ? 'thinking…'
+                  : activeCorner?.corner?.status === 'starting'
+                    ? 'opening corner…'
+                    : 'working in corner…'}
+              </Text>
+            </View>
+          )}
 
         {/* P2: Archived channels are read-only */}
         {isArchived ? (
@@ -1816,20 +1871,6 @@ export default function BuzzChat() {
           </View>
         ) : (
           <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-            {!parentChannelId &&
-              !agentsOffline &&
-              (activeCorner?.corner || activeAgentTurn?.agentTurn) && (
-              <View style={styles.agentLiveStatus} testID="agent-live-status">
-                <PixelLoader compact />
-                <Text style={styles.agentLiveStatusText}>
-                  {activeAgentTurn?.agentTurn
-                    ? 'thinking…'
-                    : activeCorner?.corner?.status === 'starting'
-                      ? 'opening corner…'
-                      : 'working in corner…'}
-                </Text>
-              </View>
-            )}
             {parentChannelId && !viewerIsAgent && (
               <TouchableOpacity
                 accessibilityLabel={`Stop ${cornerAgentDisplay?.name ?? 'agent'}`}

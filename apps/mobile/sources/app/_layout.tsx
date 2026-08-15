@@ -14,7 +14,7 @@ import { initialWindowMetrics, SafeAreaProvider, useSafeAreaInsets } from 'react
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SidebarNavigator } from '@/components/SidebarNavigator';
 import sodium from '@/encryption/libsodium.lib';
-import { View, Platform } from 'react-native';
+import { AppState, View, Platform } from 'react-native';
 import { ModalProvider } from '@/modal';
 import { PostHogProvider } from 'posthog-react-native';
 import { tracking } from '@/track/tracking';
@@ -41,6 +41,7 @@ import { useTauriDrag } from '@/hooks/useTauriDrag';
 import { BrowserNavigationShortcuts } from '@/hooks/useBrowserNavigationShortcuts';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
+import { flushBuzzLocalCacheForBackground } from '@/buzz/local-cache';
 
 // Keep remote notifications visible while the app is foregrounded. The sender
 // may be writing in a different Room than the one currently on screen.
@@ -210,6 +211,17 @@ function getDevWebQueryCredentials(): AuthCredentials | null {
 }
 
 export default function RootLayout() {
+    React.useEffect(() => {
+        const subscription = AppState.addEventListener('change', (state) => {
+            // MMKV is synchronous and a warm-cache snapshot may be large. The
+            // cache must never compete with an active composer or navigation.
+            if (state === 'background') {
+                flushBuzzLocalCacheForBackground();
+            }
+        });
+        return () => subscription.remove();
+    }, []);
+
     React.useEffect(() => {
         // Refresh the FCM binding on every cold start. Firebase can rotate the
         // device token long after onboarding, so registration cannot be a

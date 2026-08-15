@@ -23,6 +23,7 @@ import {
   MAX_CACHED_MESSAGES_PER_CHANNEL,
   channelCacheKey,
   clearBuzzLocalCache,
+  flushBuzzLocalCacheForBackground,
   mergeChannelBasicsWithCache,
   profileCacheKey,
   useBuzzLocalCache,
@@ -56,23 +57,47 @@ afterEach(() => {
 });
 
 describe('Buzz local cache', () => {
-  it('defers and coalesces full-cache MMKV serialization outside the caller turn', () => {
-    vi.useFakeTimers();
+  it('never serializes the full MMKV cache from a foreground caller turn', () => {
     const store = useBuzzLocalCache.getState();
     store.patchChannel(viewer, 'room', { roomName: 'First update' });
     store.patchChannel(viewer, 'room', { roomName: 'Final update' });
 
-    // Cache mutations run from Room live handlers and the list's focus refresh.
-    // Writing here would block Android's back-navigation event on a large cache.
+    // Cache mutations run from Room live handlers, the composer, and the
+    // list's focus refresh. Writing here would block those UI interactions.
     expect(mmkvWrites).not.toHaveBeenCalled();
 
-    vi.advanceTimersByTime(500);
+    flushBuzzLocalCacheForBackground();
 
     expect(mmkvWrites).toHaveBeenCalledTimes(1);
     expect(
       JSON.parse(mmkvValues.get('buzz-local-cache-v1') ?? '{}').channels[`${viewer}:room`]
         .roomName,
     ).toBe('Final update');
+  });
+
+  it('keeps a max-size transcript cache out of the mention/send UI turn', () => {
+    const store = useBuzzLocalCache.getState();
+    for (let room = 0; room < MAX_CACHED_CHANNELS; room += 1) {
+      store.replaceMessages(
+        viewer,
+        `room-${room}`,
+        Array.from({ length: MAX_CACHED_MESSAGES_PER_CHANNEL }, (_, index) =>
+          message(`room-${room}-message-${index}`, index),
+        ),
+        MAX_CACHED_MESSAGES_PER_CHANNEL,
+      );
+    }
+    flushBuzzLocalCacheForBackground();
+    mmkvWrites.mockClear();
+
+    // This is the same cache mutation made by the optimistic message in the
+    // composer. It must not stringify 6,000 messages or enter synchronous
+    // MMKV before the UI receives the next interaction.
+    store.upsertMessages(viewer, 'room-0', [message('mention-send', Date.now())]);
+    expect(mmkvWrites).not.toHaveBeenCalled();
+
+    flushBuzzLocalCacheForBackground();
+    expect(mmkvWrites).toHaveBeenCalledTimes(1);
   });
 
   it('keeps warm previews while refreshed channel basics are revalidated', () => {
@@ -143,7 +168,6 @@ describe('Buzz local cache', () => {
   });
 
   it('restores lists, messages, rosters, and profiles from MMKV on a warm start', async () => {
-    vi.useFakeTimers();
     const now = Date.now();
     const store = useBuzzLocalCache.getState();
     store.setChannelList({
@@ -171,7 +195,7 @@ describe('Buzz local cache', () => {
       },
     ]);
 
-    vi.advanceTimersByTime(500);
+    flushBuzzLocalCacheForBackground();
 
     vi.resetModules();
     const warm = await import('./local-cache');

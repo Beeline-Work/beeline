@@ -106,6 +106,14 @@ env:
 - tapOn:
     id: chat-send
 - assertVisible: .*mention picker stayed responsive
+# This must run while the signed mention publish is still in flight. It catches
+# a foreground JS/MMKV stall rather than merely proving the eventual relay ACK.
+- tapOn:
+    id: chat-input
+- inputText: " still accepting input"
+- extendedWaitUntil:
+    visible: ".*still accepting input"
+    timeout: 1000
 
 # Scroll to the linked corner, steer it, and receive the relay-backed agent
 # fixture reply. A real Body/ACP daemon is separately required to prove model

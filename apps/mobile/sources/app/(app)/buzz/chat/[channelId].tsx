@@ -911,6 +911,10 @@ export default function BuzzChat() {
           ...(attachments.length ? { attachments } : {}),
         },
       ]);
+      // `@noble/curves` signs the Nostr event synchronously. Give React Native
+      // one native frame to commit the cleared composer and optimistic row
+      // before that CPU work begins; the network publish itself remains async.
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       const mentionedAgent = parentChannelId
         ? undefined
         : mentionedAgentPubkey(text, mentionableAgents);

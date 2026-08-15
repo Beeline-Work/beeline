@@ -20,9 +20,9 @@ export const MAX_CACHED_MESSAGES_PER_CHANNEL = 200;
 export const MAX_CACHED_CHANNELS = 30;
 const MAX_CACHED_LISTS = 12;
 const MAX_CACHED_PROFILE_SCOPES = 12;
-// MMKV is synchronous. Coalesce serialization so a list-focus refresh or Room
-// teardown never blocks the navigation event with the whole cache snapshot.
-const CACHE_WRITE_DEBOUNCE_MS = 500;
+// MMKV is synchronous. A full snapshot can contain 30 Room transcripts, so it
+// must never be serialized from a foreground interaction (send, mention, back,
+// or list focus). We only flush the dirty snapshot once the app is backgrounded.
 
 const storage = new MMKV({ id: 'buzz-local-cache' });
 
@@ -455,27 +455,26 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
   clear: () => set(emptyCache()),
 }));
 
-let pendingCacheWrite: ReturnType<typeof setTimeout> | undefined;
+let cacheDirty = false;
 
-function persistCacheWhenIdle(): void {
-  if (pendingCacheWrite) return;
-  pendingCacheWrite = setTimeout(() => {
-    pendingCacheWrite = undefined;
-    storage.set(CACHE_KEY, JSON.stringify(persisted(useBuzzLocalCache.getState())));
-  }, CACHE_WRITE_DEBOUNCE_MS);
-}
-
-function cancelPendingCacheWrite(): void {
-  if (!pendingCacheWrite) return;
-  clearTimeout(pendingCacheWrite);
-  pendingCacheWrite = undefined;
+/**
+ * Write the warm-start cache only after the app leaves the foreground.
+ *
+ * This is intentionally exported for the root AppState owner instead of
+ * subscribing to AppState here: cache mutations stay synchronous in-memory,
+ * while the costly JSON/MMKV boundary is kept out of every UI turn.
+ */
+export function flushBuzzLocalCacheForBackground(): void {
+  if (!cacheDirty) return;
+  cacheDirty = false;
+  storage.set(CACHE_KEY, JSON.stringify(persisted(useBuzzLocalCache.getState())));
 }
 
 useBuzzLocalCache.subscribe((state) => {
   // Deliberately don't serialize `state` here. It can contain thousands of
-  // messages, and this subscription runs inside the caller's navigation turn.
+  // messages, and this subscription runs inside the caller's UI turn.
   void state;
-  persistCacheWhenIdle();
+  cacheDirty = true;
 });
 
 export function selectChannelList(
@@ -504,6 +503,6 @@ export function setActiveBuzzCacheViewer(viewerPubkey: string): void {
 
 export function clearBuzzLocalCache(): void {
   useBuzzLocalCache.getState().clear();
-  cancelPendingCacheWrite();
+  cacheDirty = false;
   storage.delete(CACHE_KEY);
 }

@@ -3,7 +3,7 @@
  *
  * Grok Mono Hull design: neutral metal surfaces with redundant state encoding.
  */
-import React, { useEffect, useState, useRef, useCallback, useLayoutEffect, useMemo } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import {
   Alert,
   AppState,
@@ -19,13 +19,11 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-import { KeyboardAvoidingView, useKeyboardState } from 'react-native-keyboard-controller';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router, type Href } from 'expo-router';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
@@ -43,6 +41,7 @@ import {
 import {
   projectChatEvent,
   transcriptMessages,
+  upsertChatMessages,
   type ChatDisplayMessage,
 } from '@/sync/transport/buzz-event-projection';
 import {
@@ -53,7 +52,11 @@ import {
   setActiveBuzzCacheViewer,
   useBuzzLocalCache,
 } from '@/buzz/local-cache';
-import { cacheLiveSessionEvent, revalidateCachedMessages } from '@/buzz/local-cache-sync';
+import {
+  cacheLiveSessionEvent,
+  loadOlderMessages,
+  revalidateCachedMessages,
+} from '@/buzz/local-cache-sync';
 import { groknight } from '@/buzz/groknight';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
@@ -81,7 +84,6 @@ import {
   uploadChatAttachment,
   type PickedChatAttachment,
 } from '@/buzz/chat-attachment';
-import { isNearChatBottom } from '@/buzz/chat-scroll';
 import { describeWriteRequest } from '@/buzz/write-request-copy';
 import { cornerSessionState, latestCornerTurnSummary } from '@/buzz/corner-session';
 import {
@@ -119,7 +121,10 @@ type RoomMemberOption = {
 const BODY_PUBKEYS = new Set<string>();
 const COMPOSER_MIN_HEIGHT = 40;
 const COMPOSER_MAX_HEIGHT = 120;
-const MESSAGE_LIST_PADDING = 12;
+// Open on the tail of a long transcript instead of the full history, then
+// page older messages in as the reader scrolls up.
+const INITIAL_MESSAGE_WINDOW = 30;
+const OLDER_MESSAGES_PAGE_SIZE = 30;
 // This deliberately remains the sole color seam for the human merge decision.
 // If the product ever approves a non-monochrome exception, change only this value.
 const MERGE_APPROVAL_ACCENT = groknight.accent;
@@ -216,13 +221,6 @@ export default function BuzzChat() {
   // unaddressed plain Room message.
   const selectedAgentMentionsRef = useRef(new Map<string, string>());
   const sendInFlightRef = useRef(false);
-  const followsLatestMessageRef = useRef(true);
-  const hasPositionedInitialMessagesRef = useRef(false);
-  const initialMessageScrollPendingRef = useRef(true);
-  const keyboardFollowPendingRef = useRef(false);
-  const previousKeyboardHeightRef = useRef(0);
-  const scheduledScrollFrameRef = useRef<number | null>(null);
-  const keyboardHeight = useKeyboardState((state) => (state.isVisible ? state.height : 0));
 
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
   const [inputText, setInputText] = useState('');
@@ -282,7 +280,59 @@ export default function BuzzChat() {
   const channelCache = useBuzzLocalCache((state) =>
     cacheViewerPubkey ? state.channels[channelCacheKey(cacheViewerPubkey, decodedId)] : undefined,
   );
-  const messages = channelCache?.messages ?? [];
+  // Seeded synchronously from the local cache so history is on screen on
+  // first paint, before the async identity load resolves the live channelCache.
+  const cachedMessages = channelCache?.messages ?? initialChannelCache?.messages ?? [];
+  // Older pages loaded on demand via "scroll up" pagination. Kept out of the
+  // shared cache (which bounds to the recent tail) and merged in only here.
+  const [olderMessages, setOlderMessages] = useState<ChatDisplayMessage[]>([]);
+  const [visibleMessageCount, setVisibleMessageCount] = useState(INITIAL_MESSAGE_WINDOW);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const hasMoreHistoryRef = useRef(true);
+  const combinedMessages = useMemo(
+    () => upsertChatMessages(olderMessages, cachedMessages),
+    [olderMessages, cachedMessages],
+  );
+  // Open on the tail; older history reveals from what's already resident here
+  // first, then pages in from the relay once that's exhausted.
+  const messages = useMemo(
+    () => combinedMessages.slice(-visibleMessageCount),
+    [combinedMessages, visibleMessageCount],
+  );
+
+  const loadOlderTranscriptMessages = useCallback(() => {
+    if (loadingOlderMessages) return;
+    if (visibleMessageCount < combinedMessages.length) {
+      setVisibleMessageCount((count) => Math.min(combinedMessages.length, count + OLDER_MESSAGES_PAGE_SIZE));
+      return;
+    }
+    const oldest = combinedMessages[0];
+    if (!hasMoreHistoryRef.current || !transport || !oldest) return;
+    setLoadingOlderMessages(true);
+    void loadOlderMessages(
+      transport,
+      cacheViewerPubkey,
+      decodedId,
+      oldest.timestamp,
+      OLDER_MESSAGES_PAGE_SIZE,
+    )
+      .then((older) => {
+        const fresh = older.filter((message) => message.id !== oldest.id);
+        if (fresh.length < OLDER_MESSAGES_PAGE_SIZE - 1) hasMoreHistoryRef.current = false;
+        if (fresh.length === 0) return;
+        setOlderMessages((current) => upsertChatMessages(current, fresh));
+        setVisibleMessageCount((count) => count + fresh.length);
+      })
+      .catch((err) => console.warn('Failed to load older messages:', err))
+      .finally(() => setLoadingOlderMessages(false));
+  }, [
+    cacheViewerPubkey,
+    combinedMessages,
+    decodedId,
+    loadingOlderMessages,
+    transport,
+    visibleMessageCount,
+  ]);
   const availableAgents = channelCache?.availableAgents ?? [];
   const availablePeople = channelCache?.availablePeople ?? [];
   const roomMembers = channelCache?.roomMembers ?? [];
@@ -439,6 +489,9 @@ export default function BuzzChat() {
     () => transcriptMessages(messages, isCorner),
     [isCorner, messages],
   );
+  // Newest-first for the inverted FlatList; chronological visibleMessages
+  // above stays the source of truth for everything else that reads order.
+  const invertedMessages = useMemo(() => [...visibleMessages].reverse(), [visibleMessages]);
   const openedCornerIds = useMemo(
     () =>
       new Set(
@@ -521,95 +574,6 @@ export default function BuzzChat() {
     setPresenceNow(Date.now());
   }, []);
 
-  const scrollToLatestMessage = useCallback((animated: boolean) => {
-    // Content-size notifications can arrive in a burst while an activity card,
-    // keyboard, or multiline composer settles. Coalesce them into one native
-    // operation instead of queuing animated scrolls on the UI thread.
-    if (scheduledScrollFrameRef.current !== null) return;
-    scheduledScrollFrameRef.current = requestAnimationFrame(() => {
-      scheduledScrollFrameRef.current = null;
-      flatListRef.current?.scrollToEnd({ animated });
-    });
-  }, []);
-
-  useEffect(
-    () => () => {
-      if (scheduledScrollFrameRef.current !== null) {
-        cancelAnimationFrame(scheduledScrollFrameRef.current);
-      }
-    },
-    [],
-  );
-
-  const handleMessageListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    if (initialMessageScrollPendingRef.current || keyboardFollowPendingRef.current) return;
-    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    followsLatestMessageRef.current = isNearChatBottom({
-      contentHeight: contentSize.height,
-      viewportHeight: layoutMeasurement.height,
-      offsetY: contentOffset.y,
-    });
-  }, []);
-
-  const handleMessageListContentSizeChange = useCallback(() => {
-    if (!hasPositionedInitialMessagesRef.current) {
-      hasPositionedInitialMessagesRef.current = true;
-      followsLatestMessageRef.current = true;
-      scrollToLatestMessage(false);
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          initialMessageScrollPendingRef.current = false;
-        });
-      });
-      return;
-    }
-    if (followsLatestMessageRef.current || keyboardFollowPendingRef.current) {
-      scrollToLatestMessage(false);
-    }
-  }, [scrollToLatestMessage]);
-
-  const handleMessageListLayout = useCallback(() => {
-    if (initialMessageScrollPendingRef.current) {
-      scrollToLatestMessage(false);
-      return;
-    }
-    // A multiline composer changes the viewport, not the transcript content.
-    // Follow the tail after that layout pass whenever the reader was at it.
-    if (followsLatestMessageRef.current || keyboardFollowPendingRef.current) {
-      scrollToLatestMessage(false);
-    }
-  }, [scrollToLatestMessage]);
-
-  useLayoutEffect(() => {
-    const keyboardIsOpening = keyboardHeight > 0 && previousKeyboardHeightRef.current <= 0;
-    previousKeyboardHeightRef.current = keyboardHeight;
-    if (!keyboardIsOpening) return;
-
-    keyboardFollowPendingRef.current = followsLatestMessageRef.current;
-    if (!keyboardFollowPendingRef.current) return;
-
-    // The Android IME and KeyboardAvoidingView settle across multiple layout
-    // frames. Follow through the animation so the tail stays above—not behind—
-    // the keyboard, including if a subscribed message arrives mid-animation.
-    scrollToLatestMessage(false);
-    const settleTimers = [80, 260, 520].map((delay, index) =>
-      setTimeout(() => {
-        scrollToLatestMessage(false);
-        if (index === 2) {
-          requestAnimationFrame(() => {
-            keyboardFollowPendingRef.current = false;
-          });
-        }
-      }, delay),
-    );
-
-    return () => settleTimers.forEach(clearTimeout);
-  }, [keyboardHeight, scrollToLatestMessage]);
-
-  useLayoutEffect(() => {
-    if (followsLatestMessageRef.current) scrollToLatestMessage(false);
-  }, [composerHeight, scrollToLatestMessage]);
-
   useEffect(() => {
     setHighlightedMentionIndex(0);
   }, [mentionMenuKey]);
@@ -635,14 +599,14 @@ export default function BuzzChat() {
     let unsubscribe: (() => void) | undefined;
     let unsubscribePresence: (() => void) | undefined;
     let appStateSubscription: ReturnType<typeof AppState.addEventListener> | undefined;
-    hasPositionedInitialMessagesRef.current = false;
-    followsLatestMessageRef.current = true;
-    initialMessageScrollPendingRef.current = true;
     agentPresencesRef.current = {};
     presenceReconnectGraceRef.current = {};
     setAgentPresences({});
     setPresenceReconnectGrace({});
     setPresenceResolved(false);
+    hasMoreHistoryRef.current = true;
+    setOlderMessages([]);
+    setVisibleMessageCount(INITIAL_MESSAGE_WINDOW);
 
     (async () => {
       try {
@@ -910,7 +874,6 @@ export default function BuzzChat() {
 
     sendInFlightRef.current = true;
     setSending(true);
-    followsLatestMessageRef.current = true;
 
     try {
       const attachments = pendingAttachment
@@ -1659,7 +1622,7 @@ export default function BuzzChat() {
     ],
   );
 
-  if (channelCache?.messages === undefined) {
+  if (channelCache?.messages === undefined && initialChannelCache?.messages === undefined) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <PixelLoader />
@@ -1777,15 +1740,16 @@ export default function BuzzChat() {
         <FlatList
           testID="chat-messages"
           ref={flatListRef}
-          data={visibleMessages}
+          inverted
+          data={invertedMessages}
           keyExtractor={(item: ChatDisplayMessage) => item.id}
           style={styles.messageList}
-          contentContainerStyle={[
-            styles.messageListContent,
-            keyboardHeight > 0 && { paddingBottom: MESSAGE_LIST_PADDING + keyboardHeight },
-          ]}
+          contentContainerStyle={styles.messageListContent}
+          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
           keyboardShouldPersistTaps="handled"
           renderItem={renderItem}
+          onEndReached={loadOlderTranscriptMessages}
+          onEndReachedThreshold={0.5}
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <Text style={[styles.emptyText, isCorner && styles.cornerEmptyText]}>
@@ -1794,6 +1758,13 @@ export default function BuzzChat() {
             </View>
           }
           ListFooterComponent={
+            loadingOlderMessages ? (
+              <View style={styles.olderMessagesLoading} testID="older-messages-loading">
+                <PixelLoader compact />
+              </View>
+            ) : null
+          }
+          ListHeaderComponent={
             isCorner && !isArchived && sessionState === 'done' ? (
               <View style={styles.cornerReviewFooter}>
                 {mergeTarget ? (
@@ -1862,10 +1833,6 @@ export default function BuzzChat() {
               </View>
             ) : null
           }
-          onContentSizeChange={handleMessageListContentSizeChange}
-          onLayout={handleMessageListLayout}
-          onScroll={handleMessageListScroll}
-          scrollEventThrottle={16}
         />
 
         {!isArchived &&
@@ -3406,6 +3373,10 @@ const styles = StyleSheet.create({
     color: groknight.muted,
   },
   cornerEmptyText: { ...Typography.mono(), color: groknight.textMuted },
+  olderMessagesLoading: {
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
   inputBar: {
     paddingHorizontal: 8,
     paddingTop: 8,

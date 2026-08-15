@@ -102,6 +102,22 @@ async function performMessageRevalidation(
   };
 }
 
+/**
+ * One page of history strictly at-or-before `before`, for on-demand "load
+ * older" pagination. Callers hold the result in local component state; this
+ * never writes to the persisted cache, which stays bounded to the recent tail.
+ */
+export async function loadOlderMessages(
+  transport: BuzzRigTransport,
+  viewerPubkey: string,
+  channelId: string,
+  before: number,
+  limit: number,
+): Promise<ChatDisplayMessage[]> {
+  const events = await transport.sessionEventsBackfill(channelId, { beforeSeq: before, limit });
+  return projectEvents(events, viewerPubkey, false).messages;
+}
+
 export function revalidateCachedMessages(
   transport: BuzzRigTransport,
   viewerPubkey: string,

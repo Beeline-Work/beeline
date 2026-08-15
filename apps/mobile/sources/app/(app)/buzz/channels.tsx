@@ -768,6 +768,7 @@ export default function BuzzChannels() {
         )}
 
         <FlatList
+          testID="room-list"
           data={orderedChannels}
           keyExtractor={(item) => item.id}
           contentContainerStyle={hasConversations ? styles.listContent : styles.emptyContainer}
@@ -886,6 +887,7 @@ export default function BuzzChannels() {
                     }
                     onPress={() => void handleRoomPress(item)}
                     style={styles.roomPrimary}
+                    testID={`room-${item.id}`}
                   >
                     <Text style={styles.channelIcon}>{item.archived ? '□' : '#'}</Text>
                     <View style={styles.channelInfo}>

@@ -20,6 +20,18 @@ export function isAgentPresenceOnlineWithReconnectGrace(
   return isAgentPresenceOnline(presence, now) || now <= reconnectGraceUntil;
 }
 
+/**
+ * An empty presence map during bootstrap is unknown, not an offline verdict.
+ * Only a completed presence snapshot may mark a steer as deferred.
+ */
+export function isAgentOfflineAfterPresenceResolved(
+  presenceResolved: boolean,
+  hasRoomAgent: boolean,
+  onlineAgentCount: number,
+): boolean {
+  return presenceResolved && hasRoomAgent && onlineAgentCount === 0;
+}
+
 function rawPayload(event: SessionEvent): UnknownRecord | undefined {
   return event.type === 'raw' && event.payload && typeof event.payload === 'object'
     ? (event.payload as UnknownRecord)

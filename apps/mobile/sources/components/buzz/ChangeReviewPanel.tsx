@@ -17,6 +17,23 @@ interface ChangeReviewPanelProps {
   transport: ChangeReviewReader;
   sessionId: string;
   tip: string;
+  onFilesLoaded?: (files: ChangedFile[]) => void;
+}
+
+export const CHANGE_REVIEW_LOAD_TIMEOUT_MS = 12_000;
+
+/** A relay/read failure must turn into a retry state, never an eternal spinner. */
+export function withChangeReviewTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs = CHANGE_REVIEW_LOAD_TIMEOUT_MS,
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error('Timed out while loading file diffs.')), timeoutMs);
+  });
+  return Promise.race([operation, deadline]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
 }
 
 function statusLetter(status?: string): string {
@@ -51,7 +68,12 @@ function lineTone(line: string) {
   return styles.diffContextLine;
 }
 
-export function ChangeReviewPanel({ transport, sessionId, tip }: ChangeReviewPanelProps) {
+export function ChangeReviewPanel({
+  transport,
+  sessionId,
+  tip,
+  onFilesLoaded,
+}: ChangeReviewPanelProps) {
   const [files, setFiles] = useState<ChangedFile[]>([]);
   const [loadingFiles, setLoadingFiles] = useState(true);
   const [filesError, setFilesError] = useState<string | null>(null);
@@ -61,20 +83,25 @@ export function ChangeReviewPanel({ transport, sessionId, tip }: ChangeReviewPan
   const [loadingPatch, setLoadingPatch] = useState(false);
   const [patchError, setPatchError] = useState<string | null>(null);
   const requestNumber = useRef(0);
+  const filesRequestNumber = useRef(0);
 
   const loadFiles = useCallback(async () => {
+    const request = ++filesRequestNumber.current;
     setLoadingFiles(true);
     setFilesError(null);
     setSelected(null);
     setPatch(null);
     try {
-      setFiles(await transport.workspaceFilesRead(sessionId));
+      const nextFiles = await withChangeReviewTimeout(transport.workspaceFilesRead(sessionId));
+      if (request !== filesRequestNumber.current) return;
+      setFiles(nextFiles);
+      onFilesLoaded?.(nextFiles);
     } catch (error) {
-      setFilesError(String(error));
+      if (request === filesRequestNumber.current) setFilesError(String(error));
     } finally {
-      setLoadingFiles(false);
+      if (request === filesRequestNumber.current) setLoadingFiles(false);
     }
-  }, [transport, sessionId, tip]);
+  }, [onFilesLoaded, sessionId, tip, transport]);
 
   useEffect(() => {
     void loadFiles();

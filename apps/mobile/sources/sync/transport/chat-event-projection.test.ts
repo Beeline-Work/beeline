@@ -27,6 +27,24 @@ function displaySequence(events: SessionEvent[]): ChatDisplayMessage[] {
 }
 
 describe('Buzz Room screen event projection', () => {
+  it('withdraws a stale merge target when Body reports uncommitted work', () => {
+    expect(
+      projectChatEvent(
+        raw(
+          'merge-not-ready',
+          'Nothing ready to merge yet.',
+          [
+            ['t', 'body-control'],
+            ['t', 'merge-not-ready'],
+            ['status', 'needs-attention'],
+          ],
+          1,
+        ),
+        viewer,
+      ),
+    ).toMatchObject({ clearMergeTarget: true });
+  });
+
   it('renders a first-class assistant answer while hiding ordinary body controls', () => {
     const events = [
       raw(

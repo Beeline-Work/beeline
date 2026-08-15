@@ -81,7 +81,11 @@ export function agentActivityDetails(content: string): AgentActivityItem[] {
         ? toolCall.status
         : undefined;
 
-  if (sessionUpdate.includes('thought') || sessionUpdate.includes('thinking')) {
+  if (
+    sessionUpdate.includes('thought') ||
+    sessionUpdate.includes('thinking') ||
+    sessionUpdate === 'agent_message_chunk'
+  ) {
     return text ? [{ kind: 'thinking', title: 'Thinking', text }] : [];
   }
   if (
@@ -98,7 +102,9 @@ export function agentActivityDetails(content: string): AgentActivityItem[] {
       },
     ];
   }
-  if (text) return [{ kind: 'output', title: 'Output', text }];
+  // Only explicit tool updates are tool output. Other ACP prose is agent
+  // narration and belongs directly in the readable activity feed.
+  if (text) return [{ kind: 'thinking', title: 'Thinking', text }];
 
   // Metadata-only session updates should not become empty JSON chat bubbles.
   return [];
@@ -185,6 +191,7 @@ export type ChatDisplayMessage = {
 export type ChatEventProjection = {
   message?: ChatDisplayMessage;
   mergeTarget?: MergeTarget;
+  clearMergeTarget?: boolean;
   archiveChannel?: boolean;
   agentPresence?: AgentPresence;
 };
@@ -372,9 +379,11 @@ export function projectChatEvent(
   }
 
   if (bodyControl) {
+    const clearMergeTarget = eventHasTag(event, 't', 'merge-not-ready');
     if (subchannelId && status) {
       return {
         ...(mergeTarget ? { mergeTarget } : {}),
+        ...(clearMergeTarget ? { clearMergeTarget: true } : {}),
         message: {
           id: `corner-${subchannelId}`,
           text,
@@ -406,6 +415,7 @@ export function projectChatEvent(
     }
     return {
       ...(mergeTarget ? { mergeTarget } : {}),
+      ...(clearMergeTarget ? { clearMergeTarget: true } : {}),
       ...(isArchived && !subchannelId ? { archiveChannel: true } : {}),
     };
   }

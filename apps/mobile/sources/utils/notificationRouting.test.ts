@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     getSessionRouteFromNotificationData,
     getSessionRouteFromNotificationResponse,
+    getBuzzChannelIdFromNotificationData,
     navigateToBuzzChannelFromNotification,
 } from './notificationRouting';
 
@@ -54,6 +55,23 @@ describe('getSessionRouteFromNotificationResponse', () => {
                 }
             }
         })).toBeNull();
+    });
+});
+
+describe('getBuzzChannelIdFromNotificationData', () => {
+    it('routes merge approval notifications to their corner instead of a parent Room', () => {
+        expect(getBuzzChannelIdFromNotificationData({
+            channelId: 'parent-room',
+            cornerId: 'review-corner',
+            type: 'merge-approval-request',
+        })).toBe('review-corner');
+    });
+
+    it('keeps ordinary channel activity on its channel', () => {
+        expect(getBuzzChannelIdFromNotificationData({
+            channelId: 'room-123',
+            type: 'channel-activity',
+        })).toBe('room-123');
     });
 });
 

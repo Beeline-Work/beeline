@@ -13,9 +13,9 @@
  */
 import { randomUUID } from 'node:crypto';
 import { mkdir, rm, writeFile, readFile, realpath, stat } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   AcpClient,
   isMutatingPermissionRequest,
@@ -296,6 +296,24 @@ export function readOnlyMcpServer(config: BodyConfig, cwd: string): McpServerWir
     command: config.readonlyMcpCommand,
     args: [...(config.readonlyMcpArgs ?? [])],
     env: [{ name: 'BUZZ_READONLY_ROOT', value: resolve(cwd) }],
+  };
+}
+
+export const CODEGRAPH_MCP_SERVER_NAME = 'codegraph';
+
+/**
+ * Optional code-intelligence MCP for edit-mode corner sessions. Unlike
+ * buzz-dev-mcp and the read-only MCP, codegraph is best-effort: when the
+ * binary isn't resolvable this returns undefined instead of throwing, so a
+ * missing or broken codegraph install never blocks a corner from opening.
+ */
+export function codegraphMcpServer(config: BodyConfig): McpServerWire | undefined {
+  if (!config.codegraphCommand) return undefined;
+  return {
+    name: CODEGRAPH_MCP_SERVER_NAME,
+    command: config.codegraphCommand,
+    args: ['serve', '--mcp'],
+    env: [],
   };
 }
 
@@ -1100,17 +1118,25 @@ export class Body {
           ).catch(() => undefined);
           continue;
         }
+        this.primeCodegraphIndex(worktreePath);
+        const restoredMcpServers: McpServerWire[] = [
+          { name: 'buzz-dev-mcp', command: this.config.mcpBinary, args: [], env: [] },
+        ];
+        const restoredCodegraphServer = codegraphMcpServer(this.config);
+        if (restoredCodegraphServer) restoredMcpServers.push(restoredCodegraphServer);
         const session = await this.createManagedSession({
           channelId: subchannelId,
           mode: 'edit',
           cwd: worktreePath,
-          mcpServers: [{ name: 'buzz-dev-mcp', command: this.config.mcpBinary, args: [], env: [] }],
+          mcpServers: restoredMcpServers,
           systemPrompt: [
             'You are a coding agent resuming one durable corner after a supervisor restart.',
             `You are working in a git worktree: ${worktreePath}`,
             `Your feature branch is: ${featureBranch}`,
             'Continue the restored transcript on this branch. Never start a second context.',
             'Never merge, push or change the target branch, or archive this corner; only a signed human approval may authorize those effects.',
+            'A tool or skill can be unavailable or fail to initialize (for example codegraph before its index is ready). Treat that as a normal recoverable error for that one call and continue the task with what you have; never abort the task because a single tool or skill is missing.',
+            'You may call any skill available to you, but only when the current task explicitly calls for it or names it directly. Never auto-trigger a skill (e.g. a design/UX review skill) on routine or trivial work.',
           ].join('\n'),
           autoApprovePermissions: true,
           parentChannelId,
@@ -1293,6 +1319,11 @@ export class Body {
     const featureBranch = `feature/${subchannelId.slice(0, 8)}`;
     await this.createWorktree(boundRepo, worktreePath, featureBranch);
 
+    // Best-effort, non-blocking: build the codegraph index for this fresh
+    // worktree so codegraph MCP tools have something to query as soon as
+    // they're ready. Never blocks or fails corner creation.
+    this.primeCodegraphIndex(worktreePath);
+
     // 5. Start edit-mode ACP session.
     const mcpServers: McpServerWire[] = [
       {
@@ -1302,6 +1333,8 @@ export class Body {
         env: [],
       },
     ];
+    const codegraphServer = codegraphMcpServer(this.config);
+    if (codegraphServer) mcpServers.push(codegraphServer);
 
     const session = await this.createManagedSession({
       channelId: subchannelId,
@@ -1316,6 +1349,8 @@ export class Body {
         'You CAN create, edit, and delete files in this worktree.',
         'Commit your changes to the feature branch when appropriate.',
         'Never merge, push or change the target branch, or archive this corner. Stop after committing the feature branch; only a signed human approval may authorize landing and archive cleanup.',
+        'A tool or skill can be unavailable or fail to initialize (for example codegraph before its index is ready). Treat that as a normal recoverable error for that one call and continue the task with what you have; never abort the task because a single tool or skill is missing.',
+        'You may call any skill available to you, but only when the current task explicitly calls for it or names it directly. Never auto-trigger a skill (e.g. a design/UX review skill) on routine or trivial work.',
         `Repo: ${this.repoId(boundRepo)}`,
         ...(intent ? [`User intent: ${intent}`] : []),
       ].join('\n'),
@@ -3389,6 +3424,67 @@ export class Body {
   }
 
   /**
+   * Best-effort: keep codegraph's index out of `git status` for a corner's
+   * worktree. The target repo (arbitrary user content) never asked for
+   * `.codegraph/`, so this writes to the worktree's own private git-dir
+   * (`info/exclude`) rather than the tracked `.gitignore` — it never touches
+   * repo content, so it can't show up as a dirty-worktree file or get
+   * committed. Never throws; a failure just leaves `.codegraph/` visible to
+   * `git status`, which is a hygiene issue, not a functional one.
+   */
+  private excludeCodegraphFromWorktreeStatus(worktreePath: string): void {
+    try {
+      const gitPath = spawnSync('git', ['rev-parse', '--git-path', 'info/exclude'], {
+        cwd: worktreePath,
+        encoding: 'utf8',
+      });
+      if (gitPath.status !== 0) return;
+      const excludeFile = gitPath.stdout.trim();
+      if (!excludeFile) return;
+      const absolute = isAbsolute(excludeFile) ? excludeFile : resolve(worktreePath, excludeFile);
+      mkdirSync(resolve(absolute, '..'), { recursive: true });
+      const existing = existsSync(absolute) ? readFileSync(absolute, 'utf8') : '';
+      if (existing.split('\n').includes('.codegraph/')) return;
+      const separator = existing && !existing.endsWith('\n') ? '\n' : '';
+      writeFileSync(absolute, `${existing}${separator}.codegraph/\n`);
+    } catch {
+      // Best-effort git-status hygiene; never block worktree creation.
+    }
+  }
+
+  /**
+   * Best-effort: build or refresh the codegraph index for a corner's
+   * worktree so its mounted codegraph MCP tools have something to query.
+   *
+   * codegraph's index lives in `<project>/.codegraph/`, so a fresh git
+   * worktree (a new directory) starts with no index and codegraph_status
+   * reports "Not initialized" until this runs. Fire-and-forget by design:
+   * indexing a large repo can take a while, and this must never block corner
+   * creation or throw — a missing binary or a failed build just means the
+   * codegraph tools return their own "not initialized" error until it's
+   * retried, the same as any other unavailable tool.
+   */
+  private primeCodegraphIndex(worktreePath: string): void {
+    const command = this.config.codegraphCommand;
+    if (!command) return;
+    try {
+      const hasIndex = existsSync(resolve(worktreePath, '.codegraph', 'codegraph.db'));
+      const args = hasIndex ? ['sync', worktreePath] : ['init', '-i', worktreePath];
+      const child = spawn(command, args, { stdio: 'ignore' });
+      child.on('error', (error) => {
+        console.warn(`[body] codegraph ${args[0]} failed to start for ${worktreePath}:`, error);
+      });
+      child.on('exit', (code) => {
+        if (code !== 0) {
+          console.warn(`[body] codegraph ${args[0]} exited ${code} for ${worktreePath}`);
+        }
+      });
+    } catch (error) {
+      console.warn('[body] codegraph index priming failed (continuing without it):', error);
+    }
+  }
+
+  /**
    * Create a git worktree from the bound repo.
    * Fetches from relay, creates a feature branch, and adds the worktree.
    */
@@ -3432,6 +3528,7 @@ export class Body {
       if (!worktreeAdd.ok) throw new Error(`git worktree add failed: ${worktreeAdd.stderr}`);
       git(worktreePath, ['config', 'user.name', this.agentIdentity.name || 'buzzy-agent']);
       git(worktreePath, ['config', 'user.email', 'agent@buzzy.local']);
+      this.excludeCodegraphFromWorktreeStatus(worktreePath);
       return;
     }
 
@@ -3499,6 +3596,7 @@ export class Body {
       env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' },
       encoding: 'utf8',
     });
+    this.excludeCodegraphFromWorktreeStatus(worktreePath);
   }
 
   /** Remove a git worktree and clean up. */

@@ -196,6 +196,10 @@ export class OidcClient {
     url.searchParams.set('client_id', this.config.clientId);
     url.searchParams.set('redirect_uri', input.redirectUri);
     url.searchParams.set('scope', 'openid');
+    // Android authentication runs in Chrome Custom Tabs, which retains the browser's
+    // cookies. Start account selection explicitly so a new device bind never resumes
+    // a prior account's in-browser continuation.
+    url.searchParams.set('prompt', 'select_account');
     url.searchParams.set('state', input.state);
     url.searchParams.set('nonce', input.nonce);
     url.searchParams.set('code_challenge', input.codeChallenge);

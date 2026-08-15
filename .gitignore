@@ -48,6 +48,7 @@ coverage/
 .DS_Store
 
 # Local agent/build scratch (not committed)
+.codegraph/
 .scratch/
 .scratch-target/
 .beeline-tools/

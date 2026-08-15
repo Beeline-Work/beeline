@@ -27,6 +27,7 @@ import {
   ROOM_AGENT_PROMPT_TIMEOUT_MS,
   ROOM_POLL_FAILURE_BACKOFF_CAP_MS,
   RoomPollBackoff,
+  codegraphMcpServer,
   readOnlyMcpServer,
   roomEditPolicyInstructions,
   roomTurnPrompt,
@@ -108,6 +109,44 @@ describe('mcp-inventory', () => {
         '/paired/repository',
       ),
     ).toThrow('read-only tools unavailable');
+  });
+
+  it('mounts codegraph as an MCP server when the binary is configured', () => {
+    expect(
+      codegraphMcpServer({
+        agentBinary: '/agent',
+        mcpBinary: '/buzz-dev-mcp',
+        codegraphCommand: '/usr/local/bin/codegraph',
+        agentEnv: {},
+        workspaceRoot: '/workspace',
+        relayBaseUrl: 'http://relay.test',
+        relayHost: 'relay.test',
+        relayScheme: 'http',
+        relayWsUrl: 'ws://relay.test',
+        autoApprovePermissions: true,
+      }),
+    ).toEqual({
+      name: 'codegraph',
+      command: '/usr/local/bin/codegraph',
+      args: ['serve', '--mcp'],
+      env: [],
+    });
+  });
+
+  it('omits codegraph rather than throwing when the binary is not configured', () => {
+    expect(
+      codegraphMcpServer({
+        agentBinary: '/agent',
+        mcpBinary: '/buzz-dev-mcp',
+        agentEnv: {},
+        workspaceRoot: '/workspace',
+        relayBaseUrl: 'http://relay.test',
+        relayHost: 'relay.test',
+        relayScheme: 'http',
+        relayWsUrl: 'ws://relay.test',
+        autoApprovePermissions: true,
+      }),
+    ).toBeUndefined();
   });
 });
 

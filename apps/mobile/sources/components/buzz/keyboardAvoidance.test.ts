@@ -22,6 +22,23 @@ describe('Buzz keyboard avoidance', () => {
       'keyboardHeight > 0 && { paddingBottom: MESSAGE_LIST_PADDING + keyboardHeight }',
     );
     expect(chatSource).toContain('[80, 260, 520].map((delay, index)');
+    expect(chatSource).toContain('const handleMessageListLayout = useCallback(() =>');
+    expect(chatSource).toContain('onLayout={handleMessageListLayout}');
+    expect(chatSource).toContain('scrollToLatestMessage(false);');
+  });
+
+  it('keeps active work outside a growing multiline composer', () => {
+    const listEnd = chatSource.indexOf('        />\n\n        {!isArchived');
+    const inputBar = chatSource.indexOf('<View style={[styles.inputBar');
+    expect(listEnd).toBeGreaterThanOrEqual(0);
+    expect(inputBar).toBeGreaterThan(listEnd);
+    expect(chatSource.indexOf('testID="agent-live-status"')).toBeGreaterThan(listEnd);
+    expect(chatSource.indexOf('testID="agent-live-status"')).toBeLessThan(inputBar);
+  });
+
+  it('does not rerender the transcript on a fixed presence clock', () => {
+    expect(chatSource).not.toContain('setInterval(() => setPresenceNow(Date.now()), 5_000)');
+    expect(chatSource).toContain('Presence only changes at a lease/grace deadline');
   });
 
   it('keeps focused Agent fields visible in keyboard-aware scroll content', () => {

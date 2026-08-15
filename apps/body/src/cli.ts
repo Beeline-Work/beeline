@@ -42,7 +42,7 @@ import {
   type AgentRuntimeRecord,
 } from './runtime.js';
 
-function usage(): void {
+function usage(exitCode = 1): void {
   console.error(`
 Buzzy Body — agent session manager.
 
@@ -62,7 +62,7 @@ Options:
 
 All other config via env vars (see config.ts).
 `);
-  process.exit(1);
+  process.exit(exitCode);
 }
 
 function pairUsage(): void {
@@ -201,6 +201,7 @@ async function main(): Promise<void> {
   if (args.length === 0) usage();
 
   const command = args[0];
+  if (command === '--help' || command === '-h') usage(0);
 
   // Parse optional flags.
   const llmEnvFile = process.env.BUZZY_BODY_LLM_FILE;

@@ -50,6 +50,14 @@ function event(id: string, createdAt: number, content = id): SessionEvent {
   };
 }
 
+function controlEvent(id: string, createdAt: number, tags: string[][], content = id): SessionEvent {
+  return {
+    type: 'raw',
+    sessionId: 'room',
+    payload: { id, createdAt, content, pubkey: 'agent', tags },
+  };
+}
+
 beforeEach(() => {
   clearBuzzLocalCache();
   mmkvValues.clear();
@@ -308,6 +316,69 @@ describe('Buzz local cache', () => {
     expect(
       useBuzzLocalCache.getState().channelLists[`${viewer}:workspace`]?.channels[0],
     ).toMatchObject({ latestMessage: 'live', updatedAt: 12 });
+  });
+
+  it('flips a stale cached archived=false corner to archived once a fresh archive event lands', async () => {
+    useBuzzLocalCache.getState().patchChannel(viewer, 'corner', {
+      archived: false,
+      cursor: 10,
+      backfilled: true,
+      messages: [message('open-status', 10)],
+    });
+    const sessionEventsBackfill = vi
+      .fn()
+      .mockResolvedValue([
+        controlEvent('archived-status', 11, [
+          ['t', 'body-control'],
+          ['status', 'archived'],
+        ]),
+      ]);
+
+    const result = await revalidateCachedMessages(
+      { sessionEventsBackfill } as never,
+      viewer,
+      'corner',
+    );
+
+    expect(sessionEventsBackfill).toHaveBeenCalledWith('corner', { afterSeq: 10 });
+    expect(result.archiveChannel).toBe(true);
+    expect(useBuzzLocalCache.getState().channels[channelCacheKey(viewer, 'corner')]?.archived).toBe(
+      true,
+    );
+  });
+
+  it('replaces a cached OPEN room-chat corner card with ARCHIVED once the close status card lands', async () => {
+    useBuzzLocalCache.getState().patchChannel(viewer, 'room', {
+      cursor: 10,
+      backfilled: true,
+      messages: [
+        {
+          id: 'corner-corner-1',
+          text: 'starting',
+          isUser: false,
+          timestamp: 10,
+          corner: { subchannelId: 'corner-1', agentPubkey: 'agent', status: 'live' },
+        },
+      ],
+    });
+    const sessionEventsBackfill = vi
+      .fn()
+      .mockResolvedValue([
+        controlEvent('archived-status', 11, [
+          ['t', 'body-control'],
+          ['subchannel', 'corner-1'],
+          ['status', 'archived'],
+        ]),
+      ]);
+
+    await revalidateCachedMessages({ sessionEventsBackfill } as never, viewer, 'room');
+
+    const cached = useBuzzLocalCache.getState().channels[channelCacheKey(viewer, 'room')];
+    expect(cached?.messages).toHaveLength(1);
+    expect(cached?.messages?.[0]).toMatchObject({
+      id: 'corner-corner-1',
+      corner: { subchannelId: 'corner-1', status: 'archived' },
+    });
   });
 
   it('replaces an old preview when a newer message shares the stream cursor second', async () => {

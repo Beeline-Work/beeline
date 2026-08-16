@@ -37,14 +37,20 @@ const LOW_SIGNAL_TOOL_KINDS = new Set(['read', 'search', 'think', 'fetch', 'othe
 const SUPPRESSED_SESSION_UPDATE_KINDS = new Set([
   'agent_thought_chunk',
   'agent_thought',
+  'reasoning',
+  'reasoning_chunk',
+  'thinking',
+  'thinking_chunk',
+  'analysis',
+  'analysis_chunk',
   'plan',
   'user_message_chunk',
   'available_commands_update',
   'current_mode_update',
 ]);
-/** Shell commands that stay inspection-only even when routed through an 'execute' tool call. */
-const INSPECTION_COMMAND =
-  /^\s*(?:grep|rg|ag|find|sed\s+-n|cat|head|tail|ls|pwd|wc|file|which|type)\b|^\s*git\s+(?:status|diff|log|show|branch)\b/i;
+/** Only these shell actions are useful as a standalone, user-facing milestone. */
+const MAJOR_COMMAND =
+  /(?:\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|typecheck|check|build|e2e|verify)\b|\b(?:vitest|jest|mocha|ava|playwright|tsc|eslint)\b|\bgit\s+commit\b|\b(?:gh|gh-axi)\s+pr\s+(?:create|open)\b|\b(?:open(?:ed)?|create(?:d)?)\s+(?:a\s+)?pull\s+request\b|\b(?:run|ran)\s+(?:the\s+)?(?:test|build|lint|typecheck|check|e2e|verification)\b)/i;
 const MAX_SUMMARY_ACTIONS = 6;
 const MAX_SUMMARY_LENGTH = 500;
 
@@ -52,6 +58,8 @@ interface ToolCallInfo {
   kind?: string;
   title?: string;
   command?: string;
+  path?: string;
+  isMcp: boolean;
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {
@@ -66,21 +74,40 @@ function commandText(rawInput: unknown): string | undefined {
   return typeof command === 'string' ? command : undefined;
 }
 
+function pathText(rawInput: unknown): string | undefined {
+  const path = objectValue(rawInput)?.path;
+  return typeof path === 'string' ? path : undefined;
+}
+
+/** MCP calls are implementation detail, never transcript activity. */
+function isMcpToolCall(update: Record<string, unknown>): boolean {
+  const title = typeof update.title === 'string' ? update.title : '';
+  if (/^\s*mcp\.[^.\s]+\.[^.\s]+/i.test(title)) return true;
+  const rawInput = objectValue(update.rawInput);
+  return (
+    (typeof rawInput?.server === 'string' && typeof rawInput?.tool === 'string') ||
+    typeof rawInput?.mcpServer === 'string'
+  );
+}
+
 function toolCallInfo(update: Record<string, unknown>): ToolCallInfo {
   return {
     kind: typeof update.kind === 'string' ? update.kind : undefined,
     title: typeof update.title === 'string' ? update.title : undefined,
     command: commandText(update.rawInput),
+    path: pathText(update.rawInput),
+    isMcp: isMcpToolCall(update),
   };
 }
 
 /** True once a tool call is load-bearing enough to show as its own transcript line. */
 function isLoadBearingToolCall(info: ToolCallInfo): boolean {
+  if (info.isMcp) return false;
   if (info.kind && LOAD_BEARING_TOOL_KINDS.has(info.kind)) return true;
   if (info.kind && LOW_SIGNAL_TOOL_KINDS.has(info.kind)) return false;
-  // 'execute' (and any kind an older agent omits) covers everything from a
-  // grep to a test-suite run or `gh pr create` — only the former is noise.
-  return !INSPECTION_COMMAND.test(info.command ?? info.title ?? '');
+  // Shell work is noisy by default. Keep only explicit test/build/commit/PR
+  // milestones; arbitrary commands and their output must never reach a Room.
+  return MAJOR_COMMAND.test(info.command ?? info.title ?? '');
 }
 
 /** Remember the kind/title/command a toolCallId announced, since a terminal
@@ -98,14 +125,16 @@ function trackToolCall(
     kind: info.kind ?? existing?.kind,
     title: info.title ?? existing?.title,
     command: info.command ?? existing?.command,
+    path: info.path ?? existing?.path,
+    isMcp: info.isMcp || existing?.isMcp || false,
   });
 }
 
 /**
  * True only for a *terminal* update the captain cares about: a completed
- * load-bearing tool call (an edit, a test run, a commit, a PR) or any failed
- * tool call (a blocker). Pending/in-progress tool chatter, reasoning, and
- * planning steps never qualify — they stay background telemetry.
+ * load-bearing tool call (an edit, a test run, a commit, a PR). A failure is
+ * visible only when that call was itself a user-facing milestone. Pending/
+ * in-progress tool chatter, MCP, reasoning, and planning never qualify.
  */
 function isMajorUpdate(
   update: Record<string, unknown>,
@@ -127,7 +156,6 @@ function isMajorUpdate(
         ? 'completed'
         : undefined;
   if (status !== 'completed' && status !== 'failed') return false;
-  if (status === 'failed') return true;
   const toolCallId = typeof update.toolCallId === 'string' ? update.toolCallId : undefined;
   const known = toolCallId ? toolCallKinds.get(toolCallId) : undefined;
   const info = toolCallInfo(update);
@@ -135,19 +163,38 @@ function isMajorUpdate(
     kind: info.kind ?? known?.kind,
     title: info.title ?? known?.title,
     command: info.command ?? known?.command,
+    path: info.path ?? known?.path,
+    isMcp: info.isMcp || known?.isMcp || false,
   });
 }
 
-/** Short "Edited x.ts" / "Failed: npm test" label for the turn's summary line. */
+/** A deliberately non-raw label for a visible milestone. */
 function describeMajorUpdate(
   update: Record<string, unknown>,
   toolCallKinds: Map<string, ToolCallInfo>,
 ): string {
   const toolCallId = typeof update.toolCallId === 'string' ? update.toolCallId : undefined;
   const known = toolCallId ? toolCallKinds.get(toolCallId) : undefined;
-  const info = toolCallInfo(update);
-  const label = info.title ?? known?.title ?? info.command ?? known?.command ?? 'tool call';
-  return update.status === 'failed' ? `Failed: ${label}` : label;
+  const current = toolCallInfo(update);
+  const info = {
+    kind: current.kind ?? known?.kind,
+    title: current.title ?? known?.title,
+    command: current.command ?? known?.command,
+    path: current.path ?? known?.path,
+    isMcp: current.isMcp || known?.isMcp || false,
+  };
+  let label: string;
+  if (info.kind === 'edit') label = info.path ? `Edited ${info.path}` : 'Edited a file';
+  else if (info.kind === 'delete') label = info.path ? `Deleted ${info.path}` : 'Deleted a file';
+  else if (info.kind === 'move') label = info.path ? `Moved ${info.path}` : 'Moved a file';
+  else if (/\bgit\s+commit\b/i.test(info.command ?? info.title ?? '')) label = 'Committed changes';
+  else if (/\b(?:gh|gh-axi)\s+pr\s+(?:create|open)\b|\bpull\s+request\b/i.test(info.command ?? info.title ?? ''))
+    label = 'Opened a pull request';
+  else if (/\b(?:build)\b/i.test(info.command ?? info.title ?? '')) label = 'Ran a build';
+  else if (/\b(?:lint)\b/i.test(info.command ?? info.title ?? '')) label = 'Ran lint checks';
+  else if (/\b(?:typecheck|tsc)\b/i.test(info.command ?? info.title ?? '')) label = 'Ran type checks';
+  else label = 'Ran the test suite';
+  return update.status === 'failed' ? `${label} failed` : label;
 }
 
 /** Concise summary line appended after a batch's major actions. */
@@ -223,8 +270,19 @@ export function projectActivity(
     const labels: string[] = [];
     for (const event of events) {
       if (!isMajorUpdate(event.update, toolCallKinds)) continue;
-      major.push(event);
-      labels.push(describeMajorUpdate(event.update, toolCallKinds));
+      const label = describeMajorUpdate(event.update, toolCallKinds);
+      // Never forward the ACP tool object: it may carry raw commands, MCP
+      // names, outputs, or reasoning. The compact label is the entire public
+      // projection for a major action.
+      major.push({
+        sessionId,
+        update: {
+          sessionUpdate: 'tool_call_update',
+          title: label,
+          status: event.update.status === 'failed' ? 'failed' : 'completed',
+        },
+      });
+      labels.push(label);
       const toolCallId =
         typeof event.update.toolCallId === 'string' ? event.update.toolCallId : undefined;
       if (toolCallId) toolCallKinds.delete(toolCallId);

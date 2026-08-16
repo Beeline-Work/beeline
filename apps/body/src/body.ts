@@ -1073,7 +1073,7 @@ export class Body {
     session: AgentSession,
     prompt: string,
     stream?: { channelId: string; requestId: string; narrate?: boolean },
-  ): Promise<PromptResult> {
+  ): Promise<PromptResult & { narrativeFloor?: number }> {
     const draft = stream
       ? createDraftStreamer(
           stream.channelId,
@@ -1085,8 +1085,9 @@ export class Body {
     const narrator = stream?.narrate
       ? createNarrativeCommitter(stream.channelId, this.agentIdentity)
       : undefined;
+    let result: PromptResult;
     try {
-      return await this.runOnSession(session, () =>
+      result = await this.runOnSession(session, () =>
         session.client.sessionPrompt(
           session.sessionId,
           prompt,
@@ -1108,6 +1109,10 @@ export class Body {
       await draft?.finish();
       await narrator?.finish();
     }
+    // narrator.finish() (above) has already flushed the last segment by the
+    // time we read this, so lastCreatedAt() reflects the true final segment.
+    const narrativeFloor = narrator?.lastCreatedAt();
+    return { ...result, ...(narrativeFloor ? { narrativeFloor } : {}) };
   }
 
   private async candidateBytes(
@@ -1195,6 +1200,11 @@ export class Body {
       replyRootId?: string;
       extraTags?: readonly string[][];
       concise?: boolean;
+      /** Strictly-after floor for this publish's `created_at` — pass a
+       *  narrator's `lastCreatedAt()` so a corner's trailing summary always
+       *  sorts after its own narrative segments, even when both land in the
+       *  same wall-clock second. */
+      minCreatedAt?: number;
     } = {},
   ): Promise<string> {
     const uploaded = await this.uploadAgentOutputs(session, result);
@@ -1208,6 +1218,10 @@ export class Body {
     // completed turn as a failure to report.
     if (options.concise) reply = conciseCornerTurnSummary(reply) || fallback;
     if (!reply) throw new Error('agent returned an empty reply');
+    const createdAt =
+      options.minCreatedAt !== undefined
+        ? Math.max(Math.floor(Date.now() / 1_000), options.minCreatedAt + 1)
+        : undefined;
     if (options.replyTo) {
       const event = await this.durableState.reserveReply(
         channelId,
@@ -1220,6 +1234,7 @@ export class Body {
           uploaded.attachments,
           options.extraTags,
           options.replyRootId,
+          createdAt,
         ),
       );
       await publishEvent(event, this.agentIdentity);
@@ -1231,6 +1246,8 @@ export class Body {
         options.replyTo,
         uploaded.attachments,
         options.extraTags,
+        undefined,
+        createdAt,
       );
     }
     return reply;
@@ -2758,7 +2775,7 @@ export class Body {
           info.session,
           result,
           `Completed: ${prompt}`,
-          { concise: true },
+          { concise: true, minCreatedAt: result.narrativeFloor },
         );
         await this.durableState.appendConversation(info.subchannelId, {
           role: 'agent',
@@ -3523,8 +3540,8 @@ export class Body {
         const prompt = attachmentPrompt(evt.pubkey, evt.content, attachments);
         try {
           let agentReply = '';
-          let agentResult: PromptResult | undefined;
-          const promptNewTurn = async (): Promise<PromptResult> => {
+          let agentResult: (PromptResult & { narrativeFloor?: number }) | undefined;
+          const promptNewTurn = async (): Promise<PromptResult & { narrativeFloor?: number }> => {
             await postAgentTurnStatus(
               subchannelId,
               this.agentIdentity,
@@ -3567,7 +3584,7 @@ export class Body {
               session,
               agentResult,
               'Completed the requested follow-up.',
-              { concise: true },
+              { concise: true, minCreatedAt: agentResult.narrativeFloor },
             );
             info.mergeSummary = agentReply || info.mergeSummary;
             await this.durableState.appendConversation(subchannelId, {

@@ -374,6 +374,38 @@ describe('Buzz Room screen event projection', () => {
     });
   });
 
+  it('replaces the parent Room card with an archived completion summary', () => {
+    const messages = displaySequence([
+      raw(
+        'ready',
+        'Work is ready for review.',
+        [
+          ['t', 'body-control'],
+          ['subchannel', cornerId],
+          ['status', 'ready'],
+        ],
+        5,
+      ),
+      raw(
+        'archived',
+        'Implemented the fix and added regression tests.',
+        [
+          ['t', 'body-control'],
+          ['subchannel', cornerId],
+          ['status', 'archived'],
+        ],
+        6,
+      ),
+    ]);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      id: `corner-${cornerId}`,
+      text: 'Implemented the fix and added regression tests.',
+      corner: { subchannelId: cornerId, status: 'archived' },
+    });
+  });
+
   it('uses the same display classification for backfill and live delivery', () => {
     const event = raw(
       'live-working',

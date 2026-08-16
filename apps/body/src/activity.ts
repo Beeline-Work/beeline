@@ -31,6 +31,15 @@ export const AGENT_TURN_TAG = 'agent-turn';
  *  regardless of ACP chunk frequency (mirrors the activity batch's quota concern). */
 export const AGENT_DRAFT_FLUSH_MS = 250;
 
+/** Resolve the NIP-10 root that a reply to this event must preserve. */
+export function replyRootIdForEvent(event: NostrEvent): string {
+  return (
+    event.tags.find((tag) => tag[0] === 'e' && tag[1] && tag[3] === 'root')?.[1] ??
+    event.tags.find((tag) => tag[0] === 'e' && tag[1] && tag[3] === 'reply')?.[1] ??
+    event.id
+  );
+}
+
 /**
  * ACP tool-call kinds that are always load-bearing: they change the worktree
  * (or a PR/branch derived from it) regardless of what command produced them.
@@ -588,6 +597,7 @@ export function buildAgentMessage(
   replyTo?: string,
   attachments: readonly AttachmentReference[] = [],
   extraTags: readonly string[][] = [],
+  replyRootId?: string,
   createdAt = Math.floor(Date.now() / 1000),
 ): NostrEvent {
   return signEvent(
@@ -598,6 +608,9 @@ export function buildAgentMessage(
       tags: [
         ['h', channelId],
         ['t', AGENT_MESSAGE_TAG],
+        ...(replyTo && replyRootId && replyRootId !== replyTo
+          ? [['e', replyRootId, '', 'root']]
+          : []),
         ...(replyTo ? [['e', replyTo, '', 'reply']] : []),
         ...buildAttachmentTags(attachments),
         ...extraTags,
@@ -615,10 +628,20 @@ export async function postAgentMessage(
   replyTo?: string,
   attachments: readonly AttachmentReference[] = [],
   extraTags: readonly string[][] = [],
+  replyRootId?: string,
   createdAt?: number,
 ): Promise<void> {
   await publishEvent(
-    buildAgentMessage(channelId, owner, message, replyTo, attachments, extraTags, createdAt),
+    buildAgentMessage(
+      channelId,
+      owner,
+      message,
+      replyTo,
+      attachments,
+      extraTags,
+      replyRootId,
+      createdAt,
+    ),
     owner,
   );
 }
@@ -808,7 +831,9 @@ export function createNarrativeCommitter(
     const createdAt = Math.max(Math.floor(Date.now() / 1_000), lastCreatedAt + 1);
     lastCreatedAt = createdAt;
     inflight = inflight
-      .then(() => postAgentMessage(channelId, owner, text, undefined, [], extraTags, createdAt))
+      .then(() =>
+        postAgentMessage(channelId, owner, text, undefined, [], extraTags, undefined, createdAt),
+      )
       .catch((error) => console.error('[body] narrative segment publish failed:', error));
   };
   return {

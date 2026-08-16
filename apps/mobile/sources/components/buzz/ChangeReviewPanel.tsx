@@ -1,9 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { FlatList, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import type { ChangedFile } from '@/sync/transport';
 import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
 import { BrittlePress, HullSurface, PixelLoader } from '@/components/buzz/MonoHull';
+import { darkTheme } from '@/theme';
+
+/** Buzz UI is a fixed dark theme (groknight), so the diff pulls the dark
+ * variant of the legacy diff colors directly rather than through the
+ * light/dark-aware unistyles theme hook. */
+const diffColors = darkTheme.colors.diff;
 
 export interface ChangeReviewReader {
   workspaceFilesRead(sessionId: string): Promise<ChangedFile[]>;
@@ -55,18 +61,38 @@ function statusLetter(status?: string): string {
   }
 }
 
-function lineTone(line: string) {
+type DiffLineKind = 'header' | 'added' | 'removed' | 'context';
+
+function diffLineKind(line: string): DiffLineKind {
   const isHeader =
     line.startsWith('@@') ||
     line.startsWith('diff ') ||
     line.startsWith('---') ||
     line.startsWith('+++') ||
     line.startsWith('index ');
-  if (isHeader) return styles.diffHeaderLine;
-  if (line.startsWith('+')) return styles.diffAddedLine;
-  if (line.startsWith('-')) return styles.diffRemovedLine;
-  return styles.diffContextLine;
+  if (isHeader) return 'header';
+  if (line.startsWith('+')) return 'added';
+  if (line.startsWith('-')) return 'removed';
+  return 'context';
 }
+
+function diffLineStyle(kind: DiffLineKind) {
+  switch (kind) {
+    case 'header':
+      return styles.diffHeaderLine;
+    case 'added':
+      return styles.diffAddedLine;
+    case 'removed':
+      return styles.diffRemovedLine;
+    case 'context':
+      return styles.diffContextLine;
+  }
+}
+
+/** Monospace glyph width estimate at diffLine's 11px font, used to size the
+ * horizontally-scrollable diff row so long lines never wrap or clip. */
+const DIFF_CHAR_WIDTH_PX = 6.6;
+const DIFF_MIN_CONTENT_WIDTH_PX = 320;
 
 export function ChangeReviewPanel({
   transport,
@@ -131,6 +157,10 @@ export function ChangeReviewPanel({
   );
 
   const lines = useMemo(() => patch?.split('\n') ?? [], [patch]);
+  const diffContentWidth = useMemo(() => {
+    const longest = lines.reduce((max, line) => Math.max(max, line.length), 0);
+    return Math.max(DIFF_MIN_CONTENT_WIDTH_PX, longest * DIFF_CHAR_WIDTH_PX + 18);
+  }, [lines]);
   const totalAdded = files.reduce((sum, file) => sum + (file.linesAdded ?? 0), 0);
   const totalRemoved = files.reduce((sum, file) => sum + (file.linesRemoved ?? 0), 0);
 
@@ -201,23 +231,37 @@ export function ChangeReviewPanel({
             <Text style={styles.mutedText}>This file can’t be shown as text.</Text>
           </View>
         ) : (
-          <FlatList
-            data={lines}
-            keyExtractor={(_, index) => `${selected.path}-${index}`}
-            style={styles.diffList}
-            initialNumToRender={30}
-            maxToRenderPerBatch={40}
-            windowSize={7}
-            renderItem={({ item, index }) => (
-              <Text
-                style={[styles.diffLine, lineTone(item)]}
-                selectable
-                testID={`change-review-line-${index}`}
-              >
-                {item || ' '}
-              </Text>
-            )}
-          />
+          <ScrollView
+            horizontal
+            nestedScrollEnabled
+            showsHorizontalScrollIndicator
+            style={styles.diffScrollHorizontal}
+            contentContainerStyle={{ minWidth: diffContentWidth }}
+            testID="change-review-diff-scroll"
+          >
+            <FlatList
+              data={lines}
+              keyExtractor={(_, index) => `${selected.path}-${index}`}
+              style={[styles.diffList, { width: diffContentWidth }]}
+              nestedScrollEnabled
+              initialNumToRender={30}
+              maxToRenderPerBatch={40}
+              windowSize={7}
+              renderItem={({ item, index }) => {
+                const kind = diffLineKind(item);
+                return (
+                  <Text
+                    style={[styles.diffLine, diffLineStyle(kind), { width: diffContentWidth }]}
+                    numberOfLines={1}
+                    selectable
+                    testID={`change-review-line-${index}`}
+                  >
+                    {item || ' '}
+                  </Text>
+                );
+              }}
+            />
+          </ScrollView>
         )}
       </HullSurface>
     );
@@ -408,6 +452,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     flex: 1,
   },
+  diffScrollHorizontal: { height: 300, backgroundColor: groknight.bgTerminal },
   diffList: { height: 300, backgroundColor: groknight.bgTerminal },
   diffLine: {
     ...Typography.mono(),
@@ -415,9 +460,24 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 17,
   },
-  diffHeaderLine: { color: groknight.textPrimary, backgroundColor: groknight.bgTerminal },
-  diffAddedLine: { color: groknight.textPrimary, backgroundColor: groknight.bgTerminal },
-  diffRemovedLine: { color: groknight.textMuted, backgroundColor: groknight.bgTerminal },
+  // Diffs are a deliberate color exception to Grok Mono Hull's zero-chroma
+  // rule (captain override) — conventional green additions / red deletions,
+  // reusing the legacy diff renderer's dark-theme tokens. Hunk headers and
+  // context lines stay on the neutral grayscale palette.
+  diffHeaderLine: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textMuted,
+    backgroundColor: groknight.bgHover,
+  },
+  diffAddedLine: {
+    ...Typography.mono('semiBold'),
+    color: diffColors.addedBorder,
+    backgroundColor: diffColors.addedBg,
+  },
+  diffRemovedLine: {
+    color: diffColors.removedBorder,
+    backgroundColor: diffColors.removedBg,
+  },
   diffContextLine: { color: groknight.textSecondary, backgroundColor: groknight.bgTerminal },
   diffLoading: {
     height: 180,

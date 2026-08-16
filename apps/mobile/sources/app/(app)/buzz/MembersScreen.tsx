@@ -35,6 +35,20 @@ function roleLabel(role: CommunityRole): string {
   return role.toUpperCase();
 }
 
+/** Owner and admin each carry a distinct accent; member stays neutral. */
+function roleAccentColor(role: CommunityRole): string {
+  if (role === 'owner') return groknight.accent;
+  if (role === 'admin') return groknight.chrome;
+  return groknight.textMuted;
+}
+
+/** NIP-05 handle wins, then the display name, then a truncated npub as a last resort. */
+function personIdentityLabel(profile: PersonProfile | undefined, pubkey: string): string {
+  if (profile?.handle) return `@${profile.handle}`;
+  if (profile?.name) return profile.name;
+  return shortMemberNpub(pubkey);
+}
+
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
@@ -51,7 +65,6 @@ export default function BuzzAgents() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [people, setPeople] = useState<CommunityMember[]>([]);
   const [profiles, setProfiles] = useState<PersonProfile[]>([]);
-  const [agentRoles, setAgentRoles] = useState<Map<string, CommunityRole>>(new Map());
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,6 +76,7 @@ export default function BuzzAgents() {
   const [personality, setPersonality] = useState('');
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>();
   const [confirmingRemoval, setConfirmingRemoval] = useState(false);
+  const [roleEditorPubkey, setRoleEditorPubkey] = useState<string | null>(null);
   const [viewerAvatarUrl, setViewerAvatarUrl] = useState<string | undefined>();
   const [canManageWorkspace, setCanManageWorkspace] = useState(false);
   const pairingBaseline = useRef<Set<string>>(new Set());
@@ -119,13 +133,6 @@ export default function BuzzAgents() {
     );
     setPeople(nextPeople);
     setProfiles(nextProfiles);
-    setAgentRoles(
-      new Map(
-        allMembers
-          .filter((member) => agentPubkeys.has(member.pubkey))
-          .map((member) => [member.pubkey, member.role]),
-      ),
-    );
     if (viewerPubkey) {
       const viewerRole = allMembers.find((member) => member.pubkey === viewerPubkey)?.role;
       setCanManageWorkspace(viewerRole === 'owner' || viewerRole === 'admin');
@@ -504,42 +511,62 @@ export default function BuzzAgents() {
                         size={44}
                       />
                       <View style={styles.personCopy}>
-                        <Text numberOfLines={1} style={styles.personName}>
-                          {profile?.name ?? shortMemberNpub(person.pubkey)}
+                        <Text
+                          numberOfLines={1}
+                          style={styles.personName}
+                          testID={`member-${person.pubkey}-identity`}
+                        >
+                          {personIdentityLabel(profile, person.pubkey)}
                           {isSelf ? ' (you)' : ''}
-                        </Text>
-                        <Text numberOfLines={1} style={styles.personHandle}>
-                          {profile?.handle ? `@${profile.handle}` : shortMemberNpub(person.pubkey)}
                         </Text>
                       </View>
                       <View style={styles.personTrailing}>
-                        <View style={styles.roleSegment}>
-                          {(['owner', 'admin', 'member'] as const).map((role, index) => {
-                            const selectedRole = person.role === role;
-                            const allowed =
-                              actorCanChange &&
-                              (activeCommunity?.viewerRole === 'owner' || role !== 'owner');
-                            return (
-                              <TouchableOpacity
-                                accessibilityState={{ selected: selectedRole, disabled: !allowed }}
-                                disabled={!allowed || selectedRole || working}
-                                key={role}
-                                onPress={() => void setPersonRole(person.pubkey, role)}
-                                style={[styles.roleSegmentButton, index > 0 && styles.roleSegmentDivider]}
-                                testID={`member-${person.pubkey}-${role}`}
-                              >
-                                <Text
-                                  style={[
-                                    styles.roleText,
-                                    selectedRole && styles.roleTextSelected,
-                                  ]}
+                        {roleEditorPubkey === person.pubkey ? (
+                          <View style={styles.roleSegment}>
+                            {(['owner', 'admin', 'member'] as const).map((role, index) => {
+                              const selectedRole = person.role === role;
+                              const allowed =
+                                actorCanChange &&
+                                (activeCommunity?.viewerRole === 'owner' || role !== 'owner');
+                              return (
+                                <TouchableOpacity
+                                  accessibilityState={{ selected: selectedRole, disabled: !allowed }}
+                                  disabled={!allowed || selectedRole || working}
+                                  key={role}
+                                  onPress={() => {
+                                    setRoleEditorPubkey(null);
+                                    void setPersonRole(person.pubkey, role);
+                                  }}
+                                  style={[styles.roleSegmentButton, index > 0 && styles.roleSegmentDivider]}
+                                  testID={`member-${person.pubkey}-${role}`}
                                 >
-                                  {roleLabel(role)}
-                                </Text>
-                              </TouchableOpacity>
-                            );
-                          })}
-                        </View>
+                                  <Text
+                                    style={[
+                                      styles.roleText,
+                                      selectedRole && styles.roleTextSelected,
+                                    ]}
+                                  >
+                                    {roleLabel(role)}
+                                  </Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </View>
+                        ) : (
+                          <TouchableOpacity
+                            accessibilityLabel={`${profile?.name ?? shortMemberNpub(person.pubkey)} role: ${roleLabel(person.role)}${actorCanChange ? '. Tap to change role.' : ''}`}
+                            disabled={!actorCanChange}
+                            onPress={() => setRoleEditorPubkey(person.pubkey)}
+                            style={styles.roleLabelButton}
+                            testID={`member-${person.pubkey}-role-label`}
+                          >
+                            <Text
+                              style={[styles.roleLabelText, { color: roleAccentColor(person.role) }]}
+                            >
+                              {roleLabel(person.role)}
+                            </Text>
+                          </TouchableOpacity>
+                        )}
                         {actorCanChange && (
                           <TouchableOpacity
                             accessibilityLabel={`Remove ${profile?.name ?? shortMemberNpub(person.pubkey)}`}
@@ -604,12 +631,12 @@ export default function BuzzAgents() {
                     size={44}
                   />
                   <View style={styles.agentCopy}>
-                    <Text style={styles.agentName} numberOfLines={1}>
+                    <Text
+                      style={styles.agentName}
+                      numberOfLines={1}
+                      testID={`agent-${agent.pubkey}-identity`}
+                    >
                       {display.name}
-                    </Text>
-                    <Text style={styles.agentHandle}>@{display.handle}</Text>
-                    <Text style={styles.agentRole}>
-                      {roleLabel(agentRoles.get(agent.pubkey) ?? 'member')}
                     </Text>
                     <Text style={styles.personality} numberOfLines={2}>
                       {display.personality}
@@ -883,8 +910,19 @@ const styles = StyleSheet.create({
   },
   personCopy: { flex: 1, minWidth: 0 },
   personName: { ...Typography.default('semiBold'), color: groknight.textPrimary, fontSize: 15 },
-  personHandle: { ...Typography.mono(), marginTop: 2, color: groknight.textMuted, fontSize: 10 },
   personTrailing: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  roleLabelButton: {
+    minHeight: 28,
+    minWidth: 44,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  roleLabelText: {
+    ...Typography.mono('semiBold'),
+    fontSize: 10,
+    letterSpacing: 0.5,
+  },
   roleSegment: {
     flexDirection: 'row',
     borderWidth: 1,
@@ -955,14 +993,6 @@ const styles = StyleSheet.create({
     ...Typography.default('semiBold'),
     color: groknight.textPrimary,
     fontSize: 15,
-  },
-  agentHandle: { ...Typography.mono(), marginTop: 2, color: groknight.textMuted, fontSize: 10 },
-  agentRole: {
-    ...Typography.mono('semiBold'),
-    marginTop: 5,
-    color: groknight.textMuted,
-    fontSize: 9,
-    letterSpacing: 0.6,
   },
   personality: {
     ...Typography.default(),

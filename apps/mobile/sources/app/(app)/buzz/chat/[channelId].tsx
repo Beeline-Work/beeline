@@ -77,6 +77,7 @@ import { resolveAgentDisplayIdentity, resolveCornerCardAgentPubkey } from '@/buz
 import {
   cornerStatusPresentation,
   isCornerActive,
+  resolveCornerLifecycleStatus,
   selectMostRecentActiveCornerId,
   type CornerStatus,
 } from '@/buzz/corners';
@@ -603,6 +604,15 @@ export default function BuzzChat() {
             .find((message) => message.corner?.subchannelId === mostRecentActiveCornerId)
         : undefined,
     [messages, mostRecentActiveCornerId],
+  );
+  // cornerLifecycleStatus is a one-time snapshot fetched at mount; isArchived
+  // is kept live by several independent update paths (live archive signal,
+  // revalidated cache, fresh isChannelArchived check). A confirmed archive
+  // that resolves after mount must never leave this badge showing a stale
+  // non-terminal status.
+  const displayedCornerStatus = useMemo(
+    () => resolveCornerLifecycleStatus(cornerLifecycleStatus, isArchived),
+    [cornerLifecycleStatus, isArchived],
   );
   // Only route the ambient status strip when the resolved id is genuinely
   // the active corner — never send a tap to a stale/unrelated corner that
@@ -1950,10 +1960,10 @@ export default function BuzzChat() {
               numberOfLines={1}
               testID={isCorner ? 'corner-view-status' : undefined}
             >
-              {isCorner && cornerLifecycleStatus
+              {isCorner && displayedCornerStatus
                 ? // Same canonical status word as the Room-list dropdown, the
                   // Room chat card, and the standalone Corners list.
-                  `${cornerStatusPresentation(cornerLifecycleStatus).glyph} ${cornerStatusPresentation(cornerLifecycleStatus).label}  ·  ${
+                  `${cornerStatusPresentation(displayedCornerStatus).glyph} ${cornerStatusPresentation(displayedCornerStatus).label}  ·  ${
                     participantsHydrated
                       ? formatRoomParticipantTotal(roomParticipantTotal)
                       : 'LOADING MEMBERS'

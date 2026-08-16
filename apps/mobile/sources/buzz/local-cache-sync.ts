@@ -65,6 +65,27 @@ function projectEvents(events: SessionEvent[], viewerPubkey: string, isNew: bool
   return { messages, mergeTarget, archiveChannel };
 }
 
+/**
+ * A `.corner`-tagged control message (posted to a Room when one of its
+ * corners changes lifecycle status, e.g. on archive) keeps that Room's own
+ * transcript current for free via the precedence-guarded message cache. The
+ * Room-list sidebar's corner array is a separate, once-fetched snapshot
+ * (`listSubchannelLifecycle`) that never sees these messages on its own —
+ * mirror the same signal into it so an archive that lands while the sidebar
+ * snapshot is still resident does not keep showing a stale status.
+ */
+function applyCornerStatusSignals(
+  viewerPubkey: string,
+  roomId: string,
+  messages: ChatDisplayMessage[],
+): void {
+  for (const message of messages) {
+    if (message.corner) {
+      useBuzzLocalCache.getState().patchCornerStatus(viewerPubkey, roomId, message.corner);
+    }
+  }
+}
+
 /** Revalidate only events at/after the persisted cursor; stable ids absorb the inclusive edge. */
 async function performMessageRevalidation(
   transport: BuzzRigTransport,
@@ -117,6 +138,7 @@ async function performMessageRevalidation(
       ...(projected.mergeTarget !== undefined ? { mergeTarget: projected.mergeTarget } : {}),
     });
   }
+  applyCornerStatusSignals(viewerPubkey, channelId, projected.messages);
   return {
     entry: getCachedChannel(viewerPubkey, channelId)!,
     mergeTarget: projected.mergeTarget,
@@ -197,6 +219,7 @@ export function cacheLiveSessionEvents(
       ...summary,
       ...(cursor ? { latestEventAt: cursor } : {}),
     });
+    applyCornerStatusSignals(viewerPubkey, channelId, messages);
   }
   // Rare (archive/merge-target/cursor-only signals): applied per event, in
   // order, same as before batching — this path never touches the message

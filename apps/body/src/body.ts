@@ -810,6 +810,17 @@ export class Body {
   private agentIdentity: Identity;
   private mergeWorkerIdentity?: Identity;
   private processedRequestIds = new Set<string>();
+  /**
+   * Event ids currently mid-processing in `processChannelRequestEvents`. The
+   * instant WS-push delivery and the HTTP backstop poll fired right after
+   * subscribe (`runRoomPushLoop`) can both hand this method the same relay
+   * event before either has finished — `requestAlreadyOpened`'s relay
+   * round-trip alone has a race window. Claimed synchronously (no `await`
+   * between check and add) so a concurrent call for the identical event id
+   * skips it outright instead of racing to open a second corner; released in
+   * a `finally` so a failed attempt can still be retried on a later poll.
+   */
+  private inFlightRequestIds = new Set<string>();
   private requestCursors = new Map<string, number>();
   private runningAgentTasks = new Map<string, Promise<void>>();
   private scheduler: SessionScheduler;
@@ -1972,135 +1983,144 @@ export class Body {
         await this.durableState.delivered(tlcChannelId, event.id);
         continue;
       }
-      const reservedReply = await this.durableState.reply(tlcChannelId, event.id);
-      if (reservedReply) {
-        await publishEvent(reservedReply, this.agentIdentity);
-        this.processedRequestIds.add(event.id);
-        await this.durableState.delivered(tlcChannelId, event.id);
-        continue;
-      }
-      if (event.tags.some((tag) => tag[0] === 't' && tag[1] === WRITE_PERMISSION_RESPONSE_TAG)) {
-        this.processedRequestIds.add(event.id);
-        await this.durableState.delivered(tlcChannelId, event.id);
-        continue;
-      }
-      const authorAttribution = authorAttributions.get(event.pubkey);
-      const addressed = isChannelAddressedMessage(
-        event,
-        this.agentIdentity.publicKey,
-        roomParticipants,
-      );
-      if (!addressed) {
-        if (event.pubkey !== this.agentIdentity.publicKey && isRoomConversationMessage(event)) {
-          await this.appendRoomConversationEvent(tlcChannelId, event, authorAttribution);
-        }
-        await this.durableState.delivered(tlcChannelId, event.id);
-        continue;
-      }
-      if (await this.requestAlreadyOpened(tlcChannelId, event.id)) {
-        if (event.pubkey !== this.agentIdentity.publicKey && isRoomConversationMessage(event)) {
-          await this.appendRoomConversationEvent(tlcChannelId, event, authorAttribution);
-        }
-        this.processedRequestIds.add(event.id);
-        await this.durableState.delivered(tlcChannelId, event.id);
-        continue;
-      }
-
+      if (this.inFlightRequestIds.has(event.id)) continue;
+      this.inFlightRequestIds.add(event.id);
       try {
-        // Fail closed: a registered agent can never task another body through the
-        // human request affordance, regardless of any channel role it holds.
-        if (await isRegisteredAgentIdentity(event.pubkey, this.agentRelay)) {
-          if (isRoomConversationMessage(event)) {
-            await this.appendRoomConversationEvent(tlcChannelId, event, authorAttribution);
-          }
-          const exchange = await this.validateAgentExchangeEnvelope(
-            tlcChannelId,
-            event,
-            roomParticipants,
-            authorAttributions,
-          );
-          if (exchange) {
-            if (exchange.shouldReply) {
-              await this.replyToAuthorizedAgentExchange(
-                tlcChannelId,
-                boundRepo,
-                editPolicy,
-                {
-                  eventId: event.id,
-                  authorPubkey: event.pubkey,
-                  ...(authorAttribution ? { authorAttribution } : {}),
-                  content: event.content.trim(),
-                  attachments: parseAttachmentTags(event.tags),
-                  createdAt: event.created_at,
-                },
-                exchange.envelope,
-              );
-            }
-          } else {
-            await postControlMessage(
-              tlcChannelId,
-              this.agentIdentity,
-              'Agent-authored Room prompt refused.',
-              [
-                ['request', event.id],
-                ['status', 'refused'],
-              ],
-            );
-          }
+        const reservedReply = await this.durableState.reply(tlcChannelId, event.id);
+        if (reservedReply) {
+          await publishEvent(reservedReply, this.agentIdentity);
           this.processedRequestIds.add(event.id);
           await this.durableState.delivered(tlcChannelId, event.id);
           continue;
         }
-
-        const request: ChannelTaskRequest = {
-          eventId: event.id,
-          authorPubkey: event.pubkey,
-          ...(authorAttribution ? { authorAttribution } : {}),
-          content: event.content.trim(),
-          attachments: parseAttachmentTags(event.tags),
-          createdAt: event.created_at,
-        };
-        const exchangeRequest = humanAgentExchangeRequest(
+        if (event.tags.some((tag) => tag[0] === 't' && tag[1] === WRITE_PERMISSION_RESPONSE_TAG)) {
+          this.processedRequestIds.add(event.id);
+          await this.durableState.delivered(tlcChannelId, event.id);
+          continue;
+        }
+        const authorAttribution = authorAttributions.get(event.pubkey);
+        const addressed = isChannelAddressedMessage(
           event,
           this.agentIdentity.publicKey,
           roomParticipants,
-          authorAttributions,
         );
-        if (exchangeRequest?.kind === 'invalid') {
-          await this.postUnavailableExchangeReply(tlcChannelId, request);
+        if (!addressed) {
+          if (event.pubkey !== this.agentIdentity.publicKey && isRoomConversationMessage(event)) {
+            await this.appendRoomConversationEvent(tlcChannelId, event, authorAttribution);
+          }
+          await this.durableState.delivered(tlcChannelId, event.id);
+          continue;
+        }
+        if (await this.requestAlreadyOpened(tlcChannelId, event.id)) {
+          if (event.pubkey !== this.agentIdentity.publicKey && isRoomConversationMessage(event)) {
+            await this.appendRoomConversationEvent(tlcChannelId, event, authorAttribution);
+          }
           this.processedRequestIds.add(event.id);
           await this.durableState.delivered(tlcChannelId, event.id);
           continue;
         }
-        if (exchangeRequest?.kind === 'authorized') {
-          const peer = authorAttributions.get(exchangeRequest.authorization.peerPubkey);
-          if (
-            !(await this.isRoomAgentOnline(tlcChannelId, exchangeRequest.authorization.peerPubkey))
-          ) {
-            await this.postUnavailableExchangeReply(tlcChannelId, request, peer);
+
+        try {
+          // Fail closed: a registered agent can never task another body through the
+          // human request affordance, regardless of any channel role it holds.
+          if (await isRegisteredAgentIdentity(event.pubkey, this.agentRelay)) {
+            if (isRoomConversationMessage(event)) {
+              await this.appendRoomConversationEvent(tlcChannelId, event, authorAttribution);
+            }
+            const exchange = await this.validateAgentExchangeEnvelope(
+              tlcChannelId,
+              event,
+              roomParticipants,
+              authorAttributions,
+            );
+            if (exchange) {
+              if (exchange.shouldReply) {
+                await this.replyToAuthorizedAgentExchange(
+                  tlcChannelId,
+                  boundRepo,
+                  editPolicy,
+                  {
+                    eventId: event.id,
+                    authorPubkey: event.pubkey,
+                    ...(authorAttribution ? { authorAttribution } : {}),
+                    content: event.content.trim(),
+                    attachments: parseAttachmentTags(event.tags),
+                    createdAt: event.created_at,
+                  },
+                  exchange.envelope,
+                );
+              }
+            } else {
+              await postControlMessage(
+                tlcChannelId,
+                this.agentIdentity,
+                'Agent-authored Room prompt refused.',
+                [
+                  ['request', event.id],
+                  ['status', 'refused'],
+                ],
+              );
+            }
             this.processedRequestIds.add(event.id);
             await this.durableState.delivered(tlcChannelId, event.id);
             continue;
           }
+
+          const request: ChannelTaskRequest = {
+            eventId: event.id,
+            authorPubkey: event.pubkey,
+            ...(authorAttribution ? { authorAttribution } : {}),
+            content: event.content.trim(),
+            attachments: parseAttachmentTags(event.tags),
+            createdAt: event.created_at,
+          };
+          const exchangeRequest = humanAgentExchangeRequest(
+            event,
+            this.agentIdentity.publicKey,
+            roomParticipants,
+            authorAttributions,
+          );
+          if (exchangeRequest?.kind === 'invalid') {
+            await this.postUnavailableExchangeReply(tlcChannelId, request);
+            this.processedRequestIds.add(event.id);
+            await this.durableState.delivered(tlcChannelId, event.id);
+            continue;
+          }
+          if (exchangeRequest?.kind === 'authorized') {
+            const peer = authorAttributions.get(exchangeRequest.authorization.peerPubkey);
+            if (
+              !(await this.isRoomAgentOnline(
+                tlcChannelId,
+                exchangeRequest.authorization.peerPubkey,
+              ))
+            ) {
+              await this.postUnavailableExchangeReply(tlcChannelId, request, peer);
+              this.processedRequestIds.add(event.id);
+              await this.durableState.delivered(tlcChannelId, event.id);
+              continue;
+            }
+          }
+          if (
+            await this.replyInRoom(
+              tlcChannelId,
+              boundRepo,
+              request,
+              editPolicy === 'repository' &&
+                isChannelWorkIntent(event, this.agentIdentity.publicKey, roomParticipants),
+              editPolicy,
+              exchangeRequest?.kind === 'authorized' ? exchangeRequest.authorization : undefined,
+            )
+          ) {
+            opened++;
+          }
+          this.processedRequestIds.add(event.id);
+          await this.durableState.delivered(tlcChannelId, event.id);
+        } catch (error) {
+          await this.durableState.failed(tlcChannelId, event.id, error);
+          throw error;
         }
-        if (
-          await this.replyInRoom(
-            tlcChannelId,
-            boundRepo,
-            request,
-            editPolicy === 'repository' &&
-              isChannelWorkIntent(event, this.agentIdentity.publicKey, roomParticipants),
-            editPolicy,
-            exchangeRequest?.kind === 'authorized' ? exchangeRequest.authorization : undefined,
-          )
-        ) {
-          opened++;
-        }
-        this.processedRequestIds.add(event.id);
-        await this.durableState.delivered(tlcChannelId, event.id);
-      } catch (error) {
-        await this.durableState.failed(tlcChannelId, event.id, error);
-        throw error;
+      } finally {
+        this.inFlightRequestIds.delete(event.id);
       }
     }
 

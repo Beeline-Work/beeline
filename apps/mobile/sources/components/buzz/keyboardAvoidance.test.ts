@@ -20,7 +20,13 @@ describe('Buzz keyboard avoidance', () => {
     // growth never needs a manual keyboardHeight content-padding hack or a
     // scrollToEnd simulation to keep the tail visible.
     expect(chatSource).toContain('inverted');
-    expect(chatSource).toContain('maintainVisibleContentPosition={{ minIndexForVisible: 0 }}');
+    // minIndexForVisible: 1 (not 0) — the newest slot is volatile (a fresh
+    // send, then its optimistic-id -> real-id swap; an agent stream token),
+    // so anchoring there instead of the row below it fights the reveal of
+    // a just-sent message. autoscrollToTopThreshold makes offset 0 (visual
+    // bottom, inverted) sticky instead, matching sources/components/ChatList.tsx.
+    expect(chatSource).toContain('minIndexForVisible: 1');
+    expect(chatSource).toContain('autoscrollToTopThreshold: 50');
     expect(chatSource).not.toContain('MESSAGE_LIST_PADDING');
     expect(chatSource).not.toContain('scrollToLatestMessage');
     expect(chatSource).not.toContain('handleMessageListLayout');

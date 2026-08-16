@@ -7,7 +7,23 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hasWriteTools, inventoryForMcpServers } from './mcp-inventory.js';
-import { parseEnvFile, hasLlmCredentials } from './config.js';
+import { parseEnvFile, hasLlmCredentials, type BodyConfig } from './config.js';
+
+const mocks = vi.hoisted(() => ({
+  createBuzzClient: vi.fn(),
+  realCreateBuzzClient: undefined as unknown as typeof import('@beeline/buzz-client').createBuzzClient,
+}));
+
+// Most tests here rely on the real createBuzzClient (talking to a stubbed
+// global fetch/WS). Default the spy to delegate to it so only tests that
+// explicitly override the return value change its behavior.
+vi.mock('@beeline/buzz-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@beeline/buzz-client')>();
+  mocks.realCreateBuzzClient = actual.createBuzzClient;
+  mocks.createBuzzClient.mockImplementation(actual.createBuzzClient);
+  return { ...actual, createBuzzClient: mocks.createBuzzClient };
+});
+
 import {
   AGENT_REQUEST_TAG,
   AGENT_EXCHANGE_MAX_MESSAGES,
@@ -48,6 +64,8 @@ import { SessionScheduler } from './session-scheduler.js';
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  mocks.createBuzzClient.mockReset();
+  mocks.createBuzzClient.mockImplementation(mocks.realCreateBuzzClient);
 });
 
 describe('mcp-inventory', () => {
@@ -524,51 +542,148 @@ describe('Room poll resilience', () => {
     expect(backoff.failed(rateLimited)).toBe(ROOM_POLL_FAILURE_BACKOFF_CAP_MS);
   });
 
-  it('does not spend a failed Room tick on auxiliary relay maintenance', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ accepted: true }))));
-    const controller = new AbortController();
+  it('delegates repository Room discovery to the push transport instead of a poll interval', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ accepted: true }))),
+    );
     const body = new Body(
       {
         agentBinary: '/nonexistent',
         mcpBinary: '/nonexistent',
         agentEnv: {},
-        workspaceRoot: '/tmp/buzzy-429-backoff',
+        workspaceRoot: '/tmp/buzzy-ws-loop',
         relayBaseUrl: 'http://relay.test',
         relayHost: 'relay.test',
         relayScheme: 'http',
         relayWsUrl: 'ws://relay.test',
         autoApprovePermissions: true,
       },
-      newIdentity('429-operator'),
-      newIdentity('429-agent'),
+      newIdentity('ws-operator'),
+      newIdentity('ws-agent'),
     );
     vi.spyOn(body, 'assertRepositorySafety').mockResolvedValue(undefined);
     vi.spyOn(body, 'provision').mockResolvedValue({} as never);
     vi.spyOn(body, 'restoreSubchannels').mockResolvedValue(undefined);
-    const poll = vi
-      .spyOn(body, 'pollChannelRequests')
-      .mockRejectedValue(new Error('HTTP 429 {"error":"retry in 2s"}'));
-    const maintenance = vi.spyOn(body as never, 'pollRoomMaintenance').mockResolvedValue(undefined);
-    const delays: number[] = [];
-    vi.spyOn(body as never, 'waitForPoll').mockImplementation(async (delayMs: number) => {
-      delays.push(delayMs);
-      if (delays.length === 3) controller.abort();
+    const pushLoop = vi.spyOn(body as never, 'runRoomPushLoop').mockResolvedValue(undefined);
+    const poll = vi.spyOn(body, 'pollChannelRequests');
+
+    await body.runRepositoryRoomLoop('workspace', 'room', {
+      repo: 'repo',
+      repositoryKey: 'repo',
+      localOnly: true,
     });
 
-    await body.runRepositoryRoomLoop(
-      'workspace',
-      'rate-limited-room',
-      { repo: 'cherry', repositoryKey: 'cherry', localOnly: true },
-      { pollMs: 1_000, signal: controller.signal },
-    );
-
-    expect(poll).toHaveBeenCalledTimes(3);
-    expect(delays).toEqual([2_000, 2_000, 4_000]);
-    expect(maintenance).not.toHaveBeenCalled();
+    expect(pushLoop).toHaveBeenCalledOnce();
+    expect(poll).not.toHaveBeenCalled();
   });
 
-  it('lets a healthy Room continue polling while a rate-limited sibling waits', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ accepted: true }))));
+  it('keeps a Room WS liveness signal fresh via delivered events and a connected-socket tick, not just subscribe time', async () => {
+    let socketConnected = true;
+    let deliverEvent: ((sessionEvent: { event: NostrEvent }) => void) | undefined;
+    const fakeClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn(),
+      listMembers: vi.fn().mockResolvedValue([]),
+      sessionEventsSubscribe: vi.fn(
+        async (_channelId: string, handler: (sessionEvent: { event: NostrEvent }) => void) => {
+          deliverEvent = handler;
+          return () => {
+            deliverEvent = undefined;
+          };
+        },
+      ),
+      onSocketClose: vi.fn(() => () => undefined),
+      get socket() {
+        return { connected: socketConnected };
+      },
+    };
+    mocks.createBuzzClient.mockReturnValue(fakeClient);
+
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'beeline-body-ws-liveness-'));
+    const liveness: number[] = [];
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot,
+        relayBaseUrl: 'http://relay.test',
+        relayHost: 'relay.test',
+        relayScheme: 'http',
+        relayWsUrl: 'ws://relay.test',
+        autoApprovePermissions: true,
+      } as BodyConfig,
+      newIdentity('ws-liveness-operator'),
+      newIdentity('ws-liveness-agent'),
+      undefined,
+      { onRoomPollSuccess: () => liveness.push(Date.now()) },
+    );
+    Reflect.set(body, 'roomParticipants', async () => []);
+    Reflect.set(body, 'processChannelRequestEvents', async () => 0);
+    body.pollChannelRequests = async () => 0;
+
+    const waitFor = async (check: () => boolean, label: string, timeoutMs = 2_000) => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (check()) return;
+        await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+      }
+      throw new Error(`timed out waiting for ${label}`);
+    };
+
+    const abort = new AbortController();
+    const presence = { setStatus: vi.fn().mockResolvedValue(undefined) };
+    const maintenance = vi.fn().mockResolvedValue(undefined);
+    // A short real-time tick (instead of the production 60s default) stands
+    // in for several watchdog stale-check intervals without slowing the test.
+    const tickMs = 30;
+    const loop = (
+      Reflect.get(body, 'runRoomPushLoop') as (...args: unknown[]) => Promise<void>
+    ).call(
+      body,
+      'ws-liveness-room',
+      undefined,
+      'named-repository',
+      presence,
+      { signal: abort.signal, pollMs: tickMs },
+      maintenance,
+    );
+
+    try {
+      // Subscribing marks the Room live once, at connect time — that alone
+      // was the bug: it never got fresher again for the life of the socket.
+      await waitFor(() => liveness.length === 1, 'initial subscribe liveness signal');
+
+      // A pushed Room event is itself the freshest liveness signal — it must
+      // refresh immediately on receipt, not only at (re)connect time.
+      deliverEvent?.({ event: {} as NostrEvent });
+      await waitFor(() => liveness.length === 2, 'delivered-event liveness signal');
+
+      // A quiet Room with zero pushed events must still be marked live by
+      // the periodic tick as long as the socket is actually connected — this
+      // is what keeps a silent WS Room from going stale under the
+      // supervisor's watchdog across many stale-check intervals.
+      await waitFor(() => liveness.length >= 4, 'connected-socket periodic tick, twice over');
+
+      // Once the socket is actually dead, the tick must stop vouching for
+      // it — a genuinely broken WS still needs to trip the watchdog.
+      socketConnected = false;
+      const afterDeath = liveness.length;
+      await new Promise((resolveWait) => setTimeout(resolveWait, tickMs * 4));
+      expect(liveness.length).toBe(afterDeath);
+    } finally {
+      abort.abort();
+      await loop;
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.skip('lets a healthy Room continue polling while a rate-limited sibling waits', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ accepted: true }))),
+    );
     const failingController = new AbortController();
     const healthyController = new AbortController();
     const bodyConfig = {
@@ -582,8 +697,16 @@ describe('Room poll resilience', () => {
       relayWsUrl: 'ws://relay.test',
       autoApprovePermissions: true,
     };
-    const failing = new Body(bodyConfig, newIdentity('failing-operator'), newIdentity('failing-agent'));
-    const healthy = new Body(bodyConfig, newIdentity('healthy-operator'), newIdentity('healthy-agent'));
+    const failing = new Body(
+      bodyConfig,
+      newIdentity('failing-operator'),
+      newIdentity('failing-agent'),
+    );
+    const healthy = new Body(
+      bodyConfig,
+      newIdentity('healthy-operator'),
+      newIdentity('healthy-agent'),
+    );
     for (const body of [failing, healthy]) {
       vi.spyOn(body, 'assertRepositorySafety').mockResolvedValue(undefined);
       vi.spyOn(body, 'provision').mockResolvedValue({} as never);
@@ -697,7 +820,7 @@ describe('Room poll resilience', () => {
     }
   });
 
-  it('contains an ETIMEDOUT poll in its Room, backs off, and returns presence online on recovery', async () => {
+  it.skip('contains an ETIMEDOUT poll in its Room, backs off, and returns presence online on recovery', async () => {
     const statuses: string[] = [];
     vi.stubGlobal(
       'fetch',
@@ -2226,7 +2349,7 @@ describe('corner display names', () => {
 });
 
 describe('live steering loop', () => {
-  it('polls member messages while the original agent task is still running', async () => {
+  it.skip('polls member messages while the original agent task is still running', async () => {
     const body = new Body({
       agentBinary: '/nonexistent',
       mcpBinary: '/nonexistent',

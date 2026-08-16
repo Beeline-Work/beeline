@@ -1,7 +1,7 @@
 /**
  * Activity projection: subscribe to the edit session's ACP `session/update`
- * stream and project tool_call/message chunks as channel events every member
- * can see (kind:9 + #t=agent-activity tag).
+ * stream and project compact, inspectable turn details as channel events every
+ * member can see (kind:9 + #t=agent-activity tag).
  *
  * This is what makes "watch the agent work, together" real — the body bridges
  * the stdio-local ACP stream into the relay channel so all members receive live
@@ -246,7 +246,252 @@ export function stripAgentReplyPreamble(message: string): string {
 export interface ActivityBatch {
   sessionId: string;
   channelId: string;
-  events: SessionUpdate[];
+  events: Record<string, unknown>[];
+}
+
+export interface CompactActivityFile {
+  path: string;
+  status?: string;
+  diff?: string;
+}
+
+export interface CompactActivityPlanItem {
+  step: string;
+  status: 'pending' | 'in_progress' | 'completed';
+}
+
+export interface CompactActivityPlan {
+  objective?: string;
+  items: CompactActivityPlanItem[];
+}
+
+const MAX_ACTIVITY_DETAIL_CHARS = 12_000;
+const MAX_ACTIVITY_INPUT_CHARS = 4_000;
+const SENSITIVE_ACTIVITY_KEY = /(?:authorization|cookie|password|passwd|secret|token|api[_-]?key)/i;
+
+function compactText(
+  value: unknown,
+  limit = MAX_ACTIVITY_DETAIL_CHARS,
+  depth = 0,
+): string | undefined {
+  if (depth > 5 || value === undefined || value === null) return undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    return trimmed.length > limit ? `${trimmed.slice(0, limit)}\n… output truncated` : trimmed;
+  }
+  if (Array.isArray(value)) {
+    const joined = value
+      .map((item) => compactText(item, limit, depth + 1))
+      .filter((item): item is string => Boolean(item))
+      .join('\n');
+    return compactText(joined, limit, depth + 1);
+  }
+  const record = objectValue(value);
+  if (!record) return compactText(String(value), limit, depth + 1);
+  if (typeof record.text === 'string') return compactText(record.text, limit, depth + 1);
+  if ('content' in record) return compactText(record.content, limit, depth + 1);
+  try {
+    return compactText(JSON.stringify(record), limit, depth + 1);
+  } catch {
+    return undefined;
+  }
+}
+
+function redactedInput(value: unknown, depth = 0): unknown {
+  if (depth > 5) return '[nested value omitted]';
+  if (Array.isArray(value)) return value.map((item) => redactedInput(item, depth + 1));
+  const record = objectValue(value);
+  if (!record) return value;
+  return Object.fromEntries(
+    Object.entries(record).map(([key, item]) => [
+      key,
+      SENSITIVE_ACTIVITY_KEY.test(key) ? '[redacted]' : redactedInput(item, depth + 1),
+    ]),
+  );
+}
+
+function compactInput(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  try {
+    return compactText(JSON.stringify(redactedInput(value), null, 2), MAX_ACTIVITY_INPUT_CHARS);
+  } catch {
+    return undefined;
+  }
+}
+
+function planStatus(value: unknown): CompactActivityPlanItem['status'] {
+  if (value === 'completed' || value === 'complete' || value === 'done') return 'completed';
+  if (value === 'in_progress' || value === 'active' || value === 'working') return 'in_progress';
+  return 'pending';
+}
+
+function activityPlan(...sources: unknown[]): CompactActivityPlan | undefined {
+  for (const source of sources) {
+    const record = objectValue(source);
+    if (!record) continue;
+    const planValue = record.plan;
+    const rawItems = Array.isArray(planValue)
+      ? planValue
+      : Array.isArray(objectValue(planValue)?.items)
+        ? (objectValue(planValue)!.items as unknown[])
+        : Array.isArray(record.items)
+          ? record.items
+          : [];
+    const items = rawItems
+      .map((item) => {
+        const entry = objectValue(item);
+        const step = compactText(entry?.step ?? entry?.text ?? entry?.title, 240);
+        return step ? { step, status: planStatus(entry?.status) } : undefined;
+      })
+      .filter((item): item is CompactActivityPlanItem => Boolean(item));
+    const planRecord = objectValue(planValue);
+    const objective = compactText(record.objective ?? planRecord?.objective, 320);
+    if (items.length || objective) return { ...(objective ? { objective } : {}), items };
+  }
+  return undefined;
+}
+
+function activityFiles(...sources: unknown[]): CompactActivityFile[] {
+  const files = new Map<string, CompactActivityFile>();
+  const addPatchFiles = (value: string) => {
+    const matches = [
+      ...value.matchAll(
+        /^(?:diff --git a\/(.+?) b\/(.+)|\*\*\* (Update|Add|Delete) File: (.+))\s*$/gm,
+      ),
+    ];
+    matches.forEach((match, index) => {
+      const path = match[2] ?? match[4];
+      if (!path) return;
+      const diff = compactText(
+        value.slice(match.index, matches[index + 1]?.index ?? value.length),
+        MAX_ACTIVITY_DETAIL_CHARS,
+      );
+      const operation = match[3]?.toLowerCase();
+      files.set(path, {
+        path,
+        ...(operation
+          ? {
+              status:
+                operation === 'add' ? 'added' : operation === 'delete' ? 'deleted' : 'modified',
+            }
+          : {}),
+        ...(diff ? { diff } : {}),
+      });
+    });
+  };
+  const visit = (value: unknown, depth = 0) => {
+    if (depth > 5) return;
+    if (typeof value === 'string') {
+      addPatchFiles(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((item) => visit(item, depth + 1));
+      return;
+    }
+    const record = objectValue(value);
+    if (!record) return;
+    const path = compactText(record.path ?? record.filePath ?? record.file ?? record.filename, 500);
+    if (path) {
+      const existing = files.get(path);
+      const oldText = compactText(record.oldText ?? record.old_string, MAX_ACTIVITY_DETAIL_CHARS);
+      const newText = compactText(record.newText ?? record.new_string, MAX_ACTIVITY_DETAIL_CHARS);
+      const replacementDiff =
+        oldText !== undefined || newText !== undefined
+          ? [
+              `--- ${path}`,
+              `+++ ${path}`,
+              ...(oldText ?? '').split('\n').map((line) => `-${line}`),
+              ...(newText ?? '').split('\n').map((line) => `+${line}`),
+            ].join('\n')
+          : undefined;
+      const diff = compactText(
+        record.diff ?? record.patch ?? replacementDiff,
+        MAX_ACTIVITY_DETAIL_CHARS,
+      );
+      const status = compactText(record.status ?? record.operation, 40);
+      files.set(path, {
+        path,
+        ...(existing?.status || status ? { status: status ?? existing?.status } : {}),
+        ...(existing?.diff || diff ? { diff: diff ?? existing?.diff } : {}),
+      });
+    }
+    for (const key of [
+      'files',
+      'edits',
+      'changes',
+      'locations',
+      'content',
+      'rawOutput',
+      'result',
+    ]) {
+      if (key in record) visit(record[key], depth + 1);
+    }
+  };
+  sources.forEach((source) => visit(source));
+  return [...files.values()].slice(0, 32);
+}
+
+/** Convert an ACP update into the small, durable record needed by the corner drill-down. */
+export function compactActivityUpdate(
+  update: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const sessionUpdate = typeof update.sessionUpdate === 'string' ? update.sessionUpdate : '';
+  if (
+    !sessionUpdate ||
+    sessionUpdate === 'agent_message_chunk' ||
+    sessionUpdate.includes('thought') ||
+    sessionUpdate.includes('thinking') ||
+    sessionUpdate.includes('reasoning')
+  ) {
+    return undefined;
+  }
+
+  const toolCall = objectValue(update.toolCall);
+  const rawInput = update.rawInput ?? toolCall?.rawInput;
+  const title = compactText(update.title ?? toolCall?.title, 240);
+  const kind = compactText(update.kind ?? toolCall?.kind, 80);
+  const status = compactText(update.status ?? toolCall?.status, 80);
+  const toolCallId = compactText(update.toolCallId ?? toolCall?.toolCallId ?? update.id, 160);
+  const plan = activityPlan(update, rawInput, toolCall);
+
+  if (
+    sessionUpdate === 'tool_call' ||
+    sessionUpdate === 'tool_call_update' ||
+    sessionUpdate === 'tool_result' ||
+    plan
+  ) {
+    const inputRecord = objectValue(rawInput);
+    const command = compactText(
+      inputRecord?.command ?? inputRecord?.cmd ?? inputRecord?.script ?? update.command,
+      MAX_ACTIVITY_INPUT_CHARS,
+    );
+    const output = compactText(
+      update.output ?? update.rawOutput ?? update.result ?? update.content ?? toolCall?.output,
+    );
+    const files = activityFiles(rawInput, update, toolCall);
+    if (files.length === 1 && !files[0]!.diff && output?.startsWith('diff --git ')) {
+      files[0] = { ...files[0]!, diff: output };
+    }
+    return {
+      sessionUpdate: 'tool_activity',
+      ...(toolCallId ? { toolCallId } : {}),
+      ...(title ? { title } : {}),
+      ...(kind ? { kind } : {}),
+      ...(status ? { status } : {}),
+      ...(command ? { command } : {}),
+      ...(rawInput !== undefined ? { input: compactInput(rawInput) } : {}),
+      ...(output ? { output } : {}),
+      ...(files.length ? { files } : {}),
+      ...(plan ? { plan } : {}),
+    };
+  }
+
+  const text = stripAgentReplyPreamble(
+    compactText(update.content ?? update.message ?? update.output, 2_000) ?? '',
+  ).trim();
+  return text ? { sessionUpdate: 'progress_update', text } : undefined;
 }
 
 /**
@@ -259,9 +504,16 @@ export function projectActivity(
   channelOwner: Identity,
   sessionId: string,
 ): () => void {
-  let pending: SessionUpdate[] = [];
+  let pending: Record<string, unknown>[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   const toolCallKinds = new Map<string, ToolCallInfo>();
+  // Shallow-merged raw update per toolCallId: an ACP tool call typically
+  // arrives as a `tool_call` creation event (kind/title/rawInput) followed by
+  // a `tool_call_update`/`tool_result` terminal event (status/output) that
+  // omits the earlier fields. Merging lets compactActivityUpdate see the
+  // whole picture — files/diff/command from creation, output from the
+  // terminal — from a single record.
+  const toolCallRaw = new Map<string, Record<string, unknown>>();
   const flush = () => {
     if (timer) clearTimeout(timer);
     timer = undefined;
@@ -271,34 +523,32 @@ export function projectActivity(
     // Batch first, then keep only the major load-bearing actions — an edit, a
     // completed test/build/PR command, or a failure — so the projected
     // transcript reads like a clean assistant log, not raw tool telemetry.
-    const major: SessionUpdate[] = [];
+    // Each surviving action still carries its full compact detail (files,
+    // diffs, command, output) so the corner drill-down can inspect it.
+    const major: Record<string, unknown>[] = [];
     const labels: string[] = [];
     for (const event of events) {
-      if (!isMajorUpdate(event.update, toolCallKinds)) continue;
-      const label = describeMajorUpdate(event.update, toolCallKinds);
-      // Never forward the ACP tool object: it may carry raw commands, MCP
-      // names, outputs, or reasoning. The compact label is the entire public
-      // projection for a major action.
+      if (!isMajorUpdate(event, toolCallKinds)) continue;
+      const label = describeMajorUpdate(event, toolCallKinds);
+      const toolCallId = typeof event.toolCallId === 'string' ? event.toolCallId : undefined;
+      const merged = toolCallId ? (toolCallRaw.get(toolCallId) ?? event) : event;
+      const detail = compactActivityUpdate(merged) ?? {};
       major.push({
-        sessionId,
-        update: {
-          sessionUpdate: 'tool_call_update',
-          title: label,
-          status: event.update.status === 'failed' ? 'failed' : 'completed',
-        },
+        ...detail,
+        sessionUpdate: 'tool_activity',
+        title: label,
+        status: event.status === 'failed' ? 'failed' : 'completed',
       });
       labels.push(label);
-      const toolCallId =
-        typeof event.update.toolCallId === 'string' ? event.update.toolCallId : undefined;
-      if (toolCallId) toolCallKinds.delete(toolCallId);
+      if (toolCallId) {
+        toolCallKinds.delete(toolCallId);
+        toolCallRaw.delete(toolCallId);
+      }
     }
     if (!major.length) return;
-    const summary: SessionUpdate = {
-      sessionId,
-      update: {
-        sessionUpdate: 'activity_summary',
-        content: { type: 'text', text: summarizeMajorActions(labels) },
-      },
+    const summary: Record<string, unknown> = {
+      sessionUpdate: 'activity_summary',
+      content: { type: 'text', text: summarizeMajorActions(labels) },
     };
     void emitActivityEvent(channelId, channelOwner, {
       sessionId,
@@ -314,7 +564,9 @@ export function projectActivity(
     if (u.update.sessionUpdate === 'agent_message_chunk') return;
     const sanitized = sanitizeActivityUpdate(u.update);
     trackToolCall(sanitized, toolCallKinds);
-    pending.push({ ...u, update: sanitized });
+    const toolCallId = typeof sanitized.toolCallId === 'string' ? sanitized.toolCallId : undefined;
+    if (toolCallId) toolCallRaw.set(toolCallId, { ...toolCallRaw.get(toolCallId), ...sanitized });
+    pending.push(sanitized);
     // One paired identity can serve several Rooms. A five-second batch keeps
     // shared live visibility while staying below per-pubkey relay quotas under
     // concurrent tool-call bursts.
@@ -570,7 +822,7 @@ async function emitActivityEvent(
       sessionId: batch.sessionId,
       update: {
         sessionUpdate: 'activity_batch',
-        updates: batch.events.map((event) => event.update),
+        updates: batch.events,
       },
       projected: true,
     });

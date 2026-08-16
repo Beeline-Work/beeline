@@ -104,6 +104,51 @@ describe('Buzz branch-loop event projection', () => {
     });
   });
 
+  it('preserves compact turn details for file and tool drill-downs', () => {
+    const projected = toRigEvent({
+      kind: 'agent-activity',
+      event: {} as BuzzSessionEvent['event'],
+      channelId: 'channel',
+      content: JSON.stringify({
+        sessionId: 'ses_123',
+        update: {
+          sessionUpdate: 'activity_batch',
+          updates: [
+            {
+              sessionUpdate: 'tool_activity',
+              toolCallId: 'call-1',
+              title: 'Apply patch',
+              kind: 'edit',
+              status: 'completed',
+              command: 'git diff -- chat.tsx',
+              output: 'Patch applied',
+              files: [{ path: 'chat.tsx', diff: '+render summary' }],
+              plan: { items: [{ step: 'Render summary', status: 'completed' }] },
+            },
+          ],
+        },
+      }),
+      pubkey: 'a'.repeat(64),
+      createdAt: 42,
+      id: 'activity-detail',
+    });
+
+    expect(projected).toMatchObject({
+      type: 'assistant_delta',
+      activity: [
+        {
+          kind: 'tool',
+          id: 'call-1',
+          toolKind: 'edit',
+          command: 'git diff -- chat.tsx',
+          output: 'Patch applied',
+          files: [{ path: 'chat.tsx', diff: '+render summary' }],
+          plan: { items: [{ step: 'Render summary', status: 'completed' }] },
+        },
+      ],
+    });
+  });
+
   it('extracts nested ACP tool output and keeps same-second events uniquely keyed', () => {
     const content = JSON.stringify({
       sessionId: 'ses_123',

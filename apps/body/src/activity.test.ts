@@ -16,7 +16,12 @@ vi.mock('@beeline/gate', async (importOriginal) => ({
   }),
 }));
 
-import { projectActivity, createDraftStreamer, AGENT_DRAFT_FLUSH_MS } from './activity.js';
+import {
+  projectActivity,
+  createDraftStreamer,
+  compactActivityUpdate,
+  AGENT_DRAFT_FLUSH_MS,
+} from './activity.js';
 import { KIND_AGENT_DRAFT, TAG_AGENT_DRAFT } from '@beeline/buzz-client';
 
 const published = mocks.published;
@@ -56,7 +61,7 @@ describe('projectActivity granularity', () => {
     client.emit('session/update', { sessionId, update } satisfies SessionUpdate);
   }
 
-  it('suppresses MCP, shell output, and reasoning while projecting a sanitized edit milestone', async () => {
+  it('suppresses MCP, shell output, and reasoning while projecting an inspectable edit milestone', async () => {
     const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
 
     // Reasoning / planning noise, including the bare ACP names sent by some agents.
@@ -110,13 +115,19 @@ describe('projectActivity granularity', () => {
     };
     const updates = content.update.updates;
 
-    // Only a sanitized edit milestone plus a synthesized summary line. No ACP
-    // object or label may expose the tool/command/reasoning details above.
+    // Only an inspectable edit milestone plus a synthesized summary line —
+    // the non-major MCP/search/shell noise above never reaches the wire, but
+    // the surviving edit's own detail (files, redacted input) is present so
+    // the corner drill-down can inspect it.
     expect(updates).toHaveLength(2);
     expect(updates[0]).toEqual({
-      sessionUpdate: 'tool_call_update',
+      sessionUpdate: 'tool_activity',
+      toolCallId: 'edit-1',
       title: 'Edited src/activity.ts',
+      kind: 'edit',
       status: 'completed',
+      input: expect.stringContaining('"path": "src/activity.ts"'),
+      files: [{ path: 'src/activity.ts' }],
     });
     expect(updates[1]).toMatchObject({ sessionUpdate: 'activity_summary' });
     const summaryText = (updates[1] as { content: { text: string } }).content.text;
@@ -134,7 +145,7 @@ describe('projectActivity granularity', () => {
     }
   });
 
-  it('surfaces a failed test suite as a sanitized blocker', async () => {
+  it('surfaces a failed test suite as an inspectable blocker with its command and output', async () => {
     const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
 
     emit(
@@ -154,13 +165,21 @@ describe('projectActivity granularity', () => {
       update: { updates: Array<Record<string, unknown>> };
     };
     expect(content.update.updates).toEqual([
-      { sessionUpdate: 'tool_call_update', title: 'Ran the test suite failed', status: 'failed' },
+      {
+        sessionUpdate: 'tool_activity',
+        toolCallId: 'test-err',
+        title: 'Ran the test suite failed',
+        kind: 'execute',
+        status: 'failed',
+        command: 'npm test -- --run activity.test.ts',
+        input: expect.stringContaining('"command": "npm test -- --run activity.test.ts"'),
+        output: 'raw test failure output',
+      },
       {
         sessionUpdate: 'activity_summary',
         content: { type: 'text', text: 'Ran the test suite failed' },
       },
     ]);
-    expect(published[0]!.content).not.toContain('raw test failure output');
   });
 
   it('publishes nothing when a batch has no major action', async () => {
@@ -174,6 +193,97 @@ describe('projectActivity granularity', () => {
     unsubscribe();
 
     expect(published).toHaveLength(0);
+  });
+});
+
+describe('compactActivityUpdate', () => {
+  it('drops reasoning and startup-only telemetry from the Room projection', () => {
+    expect(
+      compactActivityUpdate({
+        sessionUpdate: 'agent_thought_chunk',
+        content: { type: 'text', text: 'private chain of thought' },
+      }),
+    ).toBeUndefined();
+    expect(
+      compactActivityUpdate({ sessionUpdate: 'session_info_update', model: 'codex' }),
+    ).toBeUndefined();
+  });
+
+  it('projects commands, output, edited files, and plans without sensitive input', () => {
+    expect(
+      compactActivityUpdate({
+        sessionUpdate: 'tool_call',
+        toolCallId: 'call-1',
+        title: 'Apply patch',
+        kind: 'edit',
+        status: 'completed',
+        rawInput: {
+          command: 'npm test',
+          token: 'do-not-project-me',
+          changes: [{ path: 'apps/mobile/chat.tsx', patch: 'diff --git a/chat b/chat' }],
+          plan: [
+            { step: 'Implement projection', status: 'completed' },
+            { step: 'Run tests', status: 'in_progress' },
+          ],
+        },
+        rawOutput: '12 tests passed',
+      }),
+    ).toEqual({
+      sessionUpdate: 'tool_activity',
+      toolCallId: 'call-1',
+      title: 'Apply patch',
+      kind: 'edit',
+      status: 'completed',
+      command: 'npm test',
+      input: expect.stringContaining('"token": "[redacted]"'),
+      output: '12 tests passed',
+      files: [
+        {
+          path: 'apps/mobile/chat.tsx',
+          diff: 'diff --git a/chat b/chat',
+        },
+      ],
+      plan: {
+        items: [
+          { step: 'Implement projection', status: 'completed' },
+          { step: 'Run tests', status: 'in_progress' },
+        ],
+      },
+    });
+  });
+
+  it('keeps concise natural-language progress while stripping a leading harness notice', () => {
+    expect(
+      compactActivityUpdate({
+        sessionUpdate: 'status_update',
+        content:
+          'Warning: tool descriptions exceed the context budget limit\n\nFound the rendering boundary.',
+      }),
+    ).toEqual({
+      sessionUpdate: 'progress_update',
+      text: 'Found the rendering boundary.',
+    });
+  });
+
+  it('extracts real per-file patches from apply_patch input', () => {
+    expect(
+      compactActivityUpdate({
+        sessionUpdate: 'tool_call',
+        toolCallId: 'patch-1',
+        title: 'apply_patch',
+        kind: 'edit',
+        rawInput:
+          '*** Begin Patch\n*** Update File: apps/mobile/chat.tsx\n@@\n-old\n+new\n*** End Patch',
+      }),
+    ).toMatchObject({
+      files: [
+        {
+          path: 'apps/mobile/chat.tsx',
+          status: 'modified',
+          diff: expect.stringContaining('@@\n-old\n+new'),
+        },
+      ],
+    });
   });
 });
 

@@ -58,11 +58,19 @@ describe.runIf(reachable)('Body Room WebSocket push', () => {
       relayWsUrl: baseUrl.replace(/^http/, 'ws'),
       autoApprovePermissions: true,
     };
+    // onRoomPollSuccess now fires on every delivered WS event (and on a
+    // periodic connected-socket tick), not only once per subscribe — that's
+    // the watchdog-liveness fix under test elsewhere. Track WS (re)connect
+    // count independently via the once-per-successful-subscribe presence
+    // transition instead.
     let connections = 0;
     const presence: string[] = [];
     const body = new Body(config, newIdentity('ws-push-operator'), agent, undefined, {
-      onRoomPollSuccess: () => connections++,
-      onRoomPresence: (_channelId, status) => presence.push(status),
+      onRoomPollSuccess: () => {},
+      onRoomPresence: (_channelId, status) => {
+        presence.push(status);
+        if (status === 'online') connections++;
+      },
     });
     vi.spyOn(body, 'provision').mockResolvedValue({} as never);
     const received: string[] = [];

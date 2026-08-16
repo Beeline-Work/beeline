@@ -1,9 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
-  Modal,
-  Pressable,
-  ScrollView,
   Share,
   StyleSheet,
   Text,
@@ -38,7 +35,7 @@ import { roomParticipantPubkeys } from '@/buzz/room-participants';
 import { shortMemberNpub } from '@/buzz/member-display';
 import { ensurePersonNameForWorkspace } from '@/buzz/person-name';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
-import { cornerStatusPresentation, sortCorners } from '@/buzz/corners';
+import { cornerStatusPresentation, isCornerActive, sortCorners } from '@/buzz/corners';
 import {
   CHANGES_LABEL,
   CORNER_LABEL,
@@ -62,7 +59,7 @@ import {
   type DirectMessageDisplayItem,
   type WorkspaceMemberDisplayItem,
 } from '@/buzz/local-cache';
-import { revalidateCachedMessages } from '@/buzz/local-cache-sync';
+import { cacheLiveSessionEvent, revalidateCachedMessages } from '@/buzz/local-cache-sync';
 import {
   BrittlePress,
   HullSurface,
@@ -306,8 +303,6 @@ export default function BuzzChannels() {
   const [personalWorkspaceId, setPersonalWorkspaceId] = useState<string | null>(
     initialListCache?.personalWorkspaceId ?? null,
   );
-  const [memberPickerVisible, setMemberPickerVisible] = useState(false);
-  const [messagingPubkey, setMessagingPubkey] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_URL);
@@ -332,12 +327,15 @@ export default function BuzzChannels() {
   );
   const displayChannels = cachedListEntry?.channels ?? [];
   const directMessages = cachedListEntry?.directMessages ?? [];
-  const workspaceMembers = cachedListEntry?.workspaceMembers ?? [];
+  const roomIdsKey = useMemo(
+    () => displayChannels.map((channel) => channel.id).sort().join(','),
+    [displayChannels],
+  );
   const orderedChannels = useMemo(
     () =>
       [...displayChannels].sort((a, b) => {
-        const aActive = a.corners?.some((corner) => corner.status === 'live') ? 1 : 0;
-        const bActive = b.corners?.some((corner) => corner.status === 'live') ? 1 : 0;
+        const aActive = a.corners?.some((corner) => isCornerActive(corner.status)) ? 1 : 0;
+        const bActive = b.corners?.some((corner) => isCornerActive(corner.status)) ? 1 : 0;
         return (
           bActive - aActive ||
           (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0) ||
@@ -374,8 +372,31 @@ export default function BuzzChannels() {
           return;
         }
         setActiveBuzzCacheViewer(currentIdentity.publicKey);
+
+        // Publish the identity before touching the relay. The cache selector is
+        // keyed by this pubkey, so holding it back behind ensureClient() made a
+        // perfectly good persisted Room list look empty whenever launch raced a
+        // slow or unavailable connection.
+        const cached = selectChannelList(
+          useBuzzLocalCache.getState(),
+          currentIdentity.publicKey,
+          requestedCommunity,
+        );
+        if (isCurrent()) {
+          setIdentity(currentIdentity);
+          setCommunities(cached?.communities ?? []);
+          setActiveCommunityId(cached?.communityId ?? null);
+          setPersonalWorkspaceId(cached?.personalWorkspaceId ?? null);
+          setViewerIsAgent(cached?.viewerIsAgent ?? false);
+          setViewerAvatarUrl(cached?.viewerAvatarUrl);
+          setCanEditWorkspaceAvatar(cached?.canEditWorkspaceAvatar ?? false);
+        }
         const url = await getEffectiveRelayUrl();
         const nextTransport = new BuzzRigTransport(currentIdentity, url);
+        if (isCurrent()) {
+          setRelayUrl(url);
+          setTransport(nextTransport);
+        }
         const client = await nextTransport.ensureClient();
         const [workspaceContext, identityIsAgent] = await Promise.all([
           prepareWorkspaceContext(client, currentIdentity.publicKey, requestedCommunity),
@@ -389,9 +410,6 @@ export default function BuzzChannels() {
         await ensurePersonNameForWorkspace(client, active, currentIdentity.publicKey);
         const channels = await loadDisplayChannelBasics(nextTransport, active, available);
         if (isCurrent()) {
-          setIdentity(currentIdentity);
-          setRelayUrl(url);
-          setTransport(nextTransport);
           setCommunities(available);
           setActiveCommunityId(active);
           setPersonalWorkspaceId(personal);
@@ -571,6 +589,21 @@ export default function BuzzChannels() {
     }, [handleRefresh, identity, transport]),
   );
 
+  // Room previews are a live projection, not a creation-time cache field.
+  // Keep the list current while it is visible; cacheLiveSessionEvent also
+  // writes the same fresh summary to MMKV on the next background transition.
+  useFocusEffect(
+    useCallback(() => {
+      if (!transport || !identity || !roomIdsKey) return;
+      const unsubscribes = roomIdsKey.split(',').map((channelId) =>
+        transport.sessionEventsSubscribe(channelId, (event) => {
+          cacheLiveSessionEvent(identity.publicKey, channelId, event);
+        }),
+      );
+      return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+    }, [identity, roomIdsKey, transport]),
+  );
+
   const handleRoomPress = useCallback(
     (channel: ChannelDisplayItem) => {
       if (identity) {
@@ -587,24 +620,6 @@ export default function BuzzChannels() {
       router.push(`/buzz/chat/${encodeURIComponent(channelId)}` as Href);
     },
     [activeCommunityId, identity],
-  );
-
-  const handleStartDirectMessage = useCallback(
-    async (member: WorkspaceMemberDisplayItem) => {
-      if (!transport || !activeCommunityId || messagingPubkey) return;
-      setMessagingPubkey(member.peerPubkey);
-      setError(null);
-      try {
-        const result = await transport.resolveDirectMessage(activeCommunityId, member.peerPubkey);
-        setMemberPickerVisible(false);
-        handleDirectMessagePress(result.channelId);
-      } catch (err) {
-        setError(`Could not message ${member.peerName}: ${String(err)}`);
-      } finally {
-        setMessagingPubkey(null);
-      }
-    },
-    [activeCommunityId, handleDirectMessagePress, messagingPubkey, transport],
   );
 
   const handleCreateChannel = useCallback(async () => {
@@ -694,24 +709,15 @@ export default function BuzzChannels() {
             {activeCommunityId && (
               <TouchableOpacity
                 accessibilityLabel={`${WORKSPACE_LABEL} members`}
-                onPress={() => setMemberPickerVisible(true)}
+                onPress={() =>
+                  router.push(
+                    `/buzz/members?communityId=${encodeURIComponent(activeCommunityId)}` as Href,
+                  )
+                }
                 style={styles.iconButton}
                 testID="workspace-members"
               >
                 <Text style={styles.iconButtonText}>◇</Text>
-              </TouchableOpacity>
-            )}
-            {activeCommunityId && (
-              <TouchableOpacity
-                accessibilityLabel={`${WORKSPACE_LABEL} Agents`}
-                onPress={() =>
-                  router.push(
-                    `/buzz/agents?communityId=${encodeURIComponent(activeCommunityId)}` as Href,
-                  )
-                }
-                style={styles.iconButton}
-              >
-                <Text style={styles.iconButtonText}>⌬</Text>
               </TouchableOpacity>
             )}
             {!viewerIsAgent && (
@@ -856,7 +862,7 @@ export default function BuzzChannels() {
                   onManageAgents={() =>
                     activeCommunityId &&
                     router.push(
-                      `/buzz/agents?communityId=${encodeURIComponent(activeCommunityId)}` as Href,
+                      `/buzz/members?communityId=${encodeURIComponent(activeCommunityId)}` as Href,
                     )
                   }
                 />
@@ -866,7 +872,7 @@ export default function BuzzChannels() {
           renderItem={({ item }) => {
             const corners = item.corners ?? [];
             const canExpand = corners.length > 0;
-            const hasLiveCorner = corners.some((corner) => corner.status === 'live');
+            const hasLiveCorner = corners.some((corner) => isCornerActive(corner.status));
             const title = item.title ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`;
             const expanded = canExpand && expandedRoomId === item.id;
             return (
@@ -889,14 +895,13 @@ export default function BuzzChannels() {
                     style={styles.roomPrimary}
                     testID={`room-${item.id}`}
                   >
-                    <Text style={styles.channelIcon}>{item.archived ? '□' : '#'}</Text>
                     <View style={styles.channelInfo}>
                       <View style={styles.channelTitleRow}>
                         <Text
                           numberOfLines={1}
                           style={[styles.channelTitle, item.archived && styles.archivedTitle]}
                         >
-                          {title}
+                          #{title}
                         </Text>
                         {item.archived && <Text style={styles.metaTag}>archived</Text>}
                       </View>
@@ -960,90 +965,6 @@ export default function BuzzChannels() {
         />
       </View>
 
-      <Modal
-        animationType="fade"
-        onRequestClose={() => setMemberPickerVisible(false)}
-        transparent
-        visible={memberPickerVisible}
-      >
-        <View style={styles.memberModalRoot}>
-          <Pressable
-            accessibilityLabel={`Close ${WORKSPACE_LABEL} member list`}
-            onPress={() => setMemberPickerVisible(false)}
-            style={StyleSheet.absoluteFill}
-          />
-          <HullSurface strength="raised" style={styles.memberModal}>
-            <View style={styles.memberModalHeading}>
-              <View style={styles.memberModalHeadingCopy}>
-                <Text style={styles.memberModalTitle}>{WORKSPACE_LABEL} members</Text>
-                <Text style={styles.memberModalHint}>Start a private conversation.</Text>
-              </View>
-              <TouchableOpacity
-                accessibilityLabel={`Close ${WORKSPACE_LABEL} member list`}
-                onPress={() => setMemberPickerVisible(false)}
-                style={styles.memberModalClose}
-              >
-                <Text style={styles.memberModalCloseText}>×</Text>
-              </TouchableOpacity>
-            </View>
-            <ScrollView
-              contentContainerStyle={styles.memberList}
-              showsVerticalScrollIndicator={false}
-            >
-              <CommunityInviteEntry
-                community={activeCommunity}
-                creatingInvite={creatingInvite}
-                allowPeopleInvites={activeCommunityId !== personalWorkspaceId}
-                onInvitePeople={() => void handleInvitePeople()}
-              />
-              {workspaceMembers.map((member) => {
-                const display = member.peerAgent
-                  ? resolveAgentDisplayIdentity(member.peerPubkey, member.peerAgent)
-                  : undefined;
-                const busy = messagingPubkey === member.peerPubkey;
-                return (
-                  <View key={member.peerPubkey} style={styles.memberRow}>
-                    {display ? (
-                      <AgentAvatar
-                        pubkey={member.peerPubkey}
-                        avatarSeed={display.avatarSeed}
-                        avatarUrl={display.avatarUrl}
-                        name={display.name}
-                        size={36}
-                      />
-                    ) : (
-                      <PersonAvatar
-                        pubkey={member.peerPubkey}
-                        avatarUrl={member.avatarUrl}
-                        name={member.peerName}
-                        size={36}
-                      />
-                    )}
-                    <View style={styles.memberCopy}>
-                      <Text numberOfLines={1} style={styles.memberName}>
-                        {member.peerName}
-                      </Text>
-                      <Text style={styles.memberKind}>{member.peerKind.toUpperCase()}</Text>
-                    </View>
-                    <TouchableOpacity
-                      accessibilityLabel={`Message ${member.peerName}`}
-                      disabled={Boolean(messagingPubkey)}
-                      onPress={() => void handleStartDirectMessage(member)}
-                      style={styles.messageButton}
-                      testID={`message-workspace-member-${member.peerPubkey}`}
-                    >
-                      <Text style={styles.messageButtonText}>{busy ? 'OPENING…' : 'MESSAGE'}</Text>
-                    </TouchableOpacity>
-                  </View>
-                );
-              })}
-              {workspaceMembers.length === 0 && (
-                <Text style={styles.memberEmpty}>No other members yet</Text>
-              )}
-            </ScrollView>
-          </HullSurface>
-        </View>
-      </Modal>
     </BuzzCommunityShell>
   );
 }
@@ -1186,77 +1107,6 @@ const styles = StyleSheet.create({
     color: groknight.textPrimary,
     fontSize: 14,
   },
-  memberModalRoot: {
-    flex: 1,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(5, 5, 6, 0.84)',
-  },
-  memberModal: {
-    width: '100%',
-    maxWidth: 460,
-    maxHeight: '78%',
-    padding: 16,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgRaised,
-  },
-  memberModalHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  memberModalHeadingCopy: { flex: 1, minWidth: 0 },
-  memberModalTitle: {
-    ...Typography.default('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 17,
-  },
-  memberModalHint: {
-    ...Typography.default(),
-    marginTop: 3,
-    color: groknight.textMuted,
-    fontSize: 12,
-  },
-  memberModalClose: {
-    width: 44,
-    height: 44,
-    marginTop: -10,
-    marginRight: -10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  memberModalCloseText: { ...Typography.default(), color: groknight.steel, fontSize: 24 },
-  memberList: { paddingTop: 16, paddingBottom: 4 },
-  memberRow: {
-    minHeight: 60,
-    paddingHorizontal: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 9,
-    borderTopWidth: 1,
-    borderTopColor: groknight.border,
-    backgroundColor: groknight.bgBase,
-  },
-  memberCopy: { flex: 1, minWidth: 0 },
-  memberName: { ...Typography.default('semiBold'), color: groknight.textSecondary, fontSize: 13 },
-  memberKind: { ...Typography.mono(), marginTop: 2, color: groknight.textMuted, fontSize: 9 },
-  messageButton: {
-    minHeight: 44,
-    paddingHorizontal: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  messageButtonText: {
-    ...Typography.mono('semiBold'),
-    color: groknight.chrome,
-    fontSize: 9,
-    letterSpacing: 0.3,
-  },
-  memberEmpty: {
-    ...Typography.default(),
-    paddingVertical: 24,
-    color: groknight.textMuted,
-    textAlign: 'center',
-    fontSize: 12,
-  },
   roomCell: {
     borderBottomWidth: 1,
     borderBottomColor: groknight.border,
@@ -1271,12 +1121,6 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  channelIcon: {
-    ...Typography.default('semiBold'),
-    width: 25,
-    color: groknight.steel,
-    fontSize: 15,
   },
   channelInfo: { flex: 1, minWidth: 0 },
   channelTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },

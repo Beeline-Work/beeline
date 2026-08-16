@@ -177,6 +177,48 @@ describe('RegisteredEventPoller', () => {
 });
 
 describe('PushGateway', () => {
+  it('coalesces retried merge-ready events for one exact corner target', async () => {
+    const registry = await TokenRegistry.load();
+    await registry.register(PUBKEY_A, TOKEN_A);
+    const sendEachForMulticast = vi.fn(async () => ({
+      successCount: 1,
+      failureCount: 0,
+      responses: [{ success: true, messageId: 'approval' }],
+    }));
+    const gateway = new PushGateway(
+      registry,
+      { sendEachForMulticast } as unknown as Messaging,
+      await DeliveryState.load(),
+      {
+        resolve: async () => ({
+          roomName: 'Corner',
+          workspaceName: 'Product Engineering',
+          persistentWorkspaceRoom: true,
+        }),
+        invalidate: () => undefined,
+      } as never,
+    );
+    const mergeReady = (id: string): NostrEvent => ({
+      ...event(id, AUTHOR, 'corner-1234'),
+      tags: [
+        ['h', 'corner-1234'],
+        ['t', 'body-control'],
+        ['t', 'merge-ready'],
+        ['repo', 'owner/repo'],
+        ['branch', 'refs/heads/main'],
+        ['tip', 'a'.repeat(40)],
+      ],
+    });
+
+    await gateway.handleRelayEvent(mergeReady('1'), PUBKEY_A, reader);
+    await gateway.handleRelayEvent(mergeReady('2'), PUBKEY_A, reader);
+
+    expect(sendEachForMulticast).toHaveBeenCalledOnce();
+    expect(sendEachForMulticast.mock.calls[0]?.[0]).toMatchObject({
+      data: { channelId: 'corner-1234', cornerId: 'corner-1234', type: 'merge-approval-request' },
+    });
+  });
+
   it('sends zero FCM requests for a fixture-named persistent Room', async () => {
     const registry = await TokenRegistry.load();
     await registry.register(PUBKEY_A, TOKEN_A);

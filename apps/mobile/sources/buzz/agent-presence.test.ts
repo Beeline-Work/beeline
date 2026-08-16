@@ -4,6 +4,7 @@ import type { SessionEvent } from '@/sync/transport';
 import {
   agentPresenceFromSessionEvent,
   isAgentPresenceOnlineWithReconnectGrace,
+  isAgentOfflineAfterPresenceResolved,
   isAgentTurnActive,
   presenceMapFromSessionEvents,
   reconnectPresenceAfterForeground,
@@ -38,6 +39,14 @@ function presence(
 }
 
 describe('mobile agent presence projection', () => {
+  it('does not call an unknown presence snapshot offline', () => {
+    expect(isAgentOfflineAfterPresenceResolved(false, 1, 0, 0)).toBe(false);
+    expect(isAgentOfflineAfterPresenceResolved(true, 1, 0, 0)).toBe(false);
+    expect(isAgentOfflineAfterPresenceResolved(true, 2, 1, 0)).toBe(false);
+    expect(isAgentOfflineAfterPresenceResolved(true, 1, 1, 0)).toBe(true);
+    expect(isAgentOfflineAfterPresenceResolved(true, 1, 1, 1)).toBe(false);
+  });
+
   it('projects self-signed seconds timestamps into millisecond leases', () => {
     expect(agentPresenceFromSessionEvent(presence('online', 1_700_000_000))).toEqual({
       agentPubkey: agent,
@@ -84,6 +93,12 @@ describe('mobile agent presence projection', () => {
         11_000,
       ),
     ).toBe(false);
+  });
+
+  it('shows a signed working turn while its presence lease is still unknown', () => {
+    expect(
+      isAgentTurnActive({ requestId: 'fresh-turn', agentPubkey: agent, status: 'working' }, undefined),
+    ).toBe(true);
   });
 
   it('keeps explicit offline when online and offline share a relay second', () => {

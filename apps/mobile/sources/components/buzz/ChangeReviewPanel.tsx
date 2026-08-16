@@ -17,6 +17,23 @@ interface ChangeReviewPanelProps {
   transport: ChangeReviewReader;
   sessionId: string;
   tip: string;
+  onFilesLoaded?: (files: ChangedFile[]) => void;
+}
+
+export const CHANGE_REVIEW_LOAD_TIMEOUT_MS = 12_000;
+
+/** A relay/read failure must turn into a retry state, never an eternal spinner. */
+export function withChangeReviewTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs = CHANGE_REVIEW_LOAD_TIMEOUT_MS,
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error('Timed out while loading file diffs.')), timeoutMs);
+  });
+  return Promise.race([operation, deadline]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
 }
 
 function statusLetter(status?: string): string {
@@ -51,7 +68,12 @@ function lineTone(line: string) {
   return styles.diffContextLine;
 }
 
-export function ChangeReviewPanel({ transport, sessionId, tip }: ChangeReviewPanelProps) {
+export function ChangeReviewPanel({
+  transport,
+  sessionId,
+  tip,
+  onFilesLoaded,
+}: ChangeReviewPanelProps) {
   const [files, setFiles] = useState<ChangedFile[]>([]);
   const [loadingFiles, setLoadingFiles] = useState(true);
   const [filesError, setFilesError] = useState<string | null>(null);
@@ -61,20 +83,25 @@ export function ChangeReviewPanel({ transport, sessionId, tip }: ChangeReviewPan
   const [loadingPatch, setLoadingPatch] = useState(false);
   const [patchError, setPatchError] = useState<string | null>(null);
   const requestNumber = useRef(0);
+  const filesRequestNumber = useRef(0);
 
   const loadFiles = useCallback(async () => {
+    const request = ++filesRequestNumber.current;
     setLoadingFiles(true);
     setFilesError(null);
     setSelected(null);
     setPatch(null);
     try {
-      setFiles(await transport.workspaceFilesRead(sessionId));
+      const nextFiles = await withChangeReviewTimeout(transport.workspaceFilesRead(sessionId));
+      if (request !== filesRequestNumber.current) return;
+      setFiles(nextFiles);
+      onFilesLoaded?.(nextFiles);
     } catch (error) {
-      setFilesError(String(error));
+      if (request === filesRequestNumber.current) setFilesError(String(error));
     } finally {
-      setLoadingFiles(false);
+      if (request === filesRequestNumber.current) setLoadingFiles(false);
     }
-  }, [transport, sessionId, tip]);
+  }, [onFilesLoaded, sessionId, tip, transport]);
 
   useEffect(() => {
     void loadFiles();
@@ -111,7 +138,7 @@ export function ChangeReviewPanel({ transport, sessionId, tip }: ChangeReviewPan
     return (
       <HullSurface strength="raised" style={styles.loading} testID="change-review-loading">
         <PixelLoader compact />
-        <Text style={styles.mutedText}>LOADING FILE DIFFS</Text>
+        <Text style={styles.mutedText}>LOADING CHANGES</Text>
       </HullSurface>
     );
   }
@@ -119,9 +146,9 @@ export function ChangeReviewPanel({ transport, sessionId, tip }: ChangeReviewPan
   if (filesError) {
     return (
       <HullSurface strength="raised" style={styles.errorState} testID="change-review-error">
-        <Text style={styles.errorTitle}>! ERROR · FILE DIFFS UNAVAILABLE</Text>
+        <Text style={styles.errorTitle}>! CHANGES UNAVAILABLE</Text>
         <Text style={styles.mutedText} numberOfLines={2}>
-          {filesError}
+          We couldn’t load these changes. Try again.
         </Text>
         <TouchableOpacity
           onPress={loadFiles}
@@ -159,19 +186,19 @@ export function ChangeReviewPanel({ transport, sessionId, tip }: ChangeReviewPan
         {loadingPatch ? (
           <View style={styles.diffLoading}>
             <PixelLoader compact />
-            <Text style={styles.mutedText}>LOADING DIFF</Text>
+            <Text style={styles.mutedText}>LOADING CHANGE</Text>
           </View>
         ) : patchError ? (
           <View style={styles.diffLoading}>
-            <Text style={styles.errorTitle}>! ERROR · DIFF UNAVAILABLE</Text>
+            <Text style={styles.errorTitle}>! CHANGE UNAVAILABLE</Text>
             <Text style={styles.mutedText} numberOfLines={2}>
-              {patchError}
+              We couldn’t load this file change. Try again from the file list.
             </Text>
           </View>
         ) : isBinary ? (
           <View style={styles.diffLoading}>
             <Text style={styles.binaryTitle}>Binary file updated</Text>
-            <Text style={styles.mutedText}>A text diff is not available.</Text>
+            <Text style={styles.mutedText}>This file can’t be shown as text.</Text>
           </View>
         ) : (
           <FlatList
@@ -219,7 +246,7 @@ export function ChangeReviewPanel({ transport, sessionId, tip }: ChangeReviewPan
               contentStyle={styles.fileRow}
               onPress={() => void openFile(item)}
               testID={`change-review-file-${item.path}`}
-              accessibilityLabel={`Review diff for ${item.path}`}
+              accessibilityLabel={`View changes to ${item.path}`}
             >
               <Text style={styles.statusBadge}>{statusLetter(item.status)}</Text>
               <View style={styles.pathColumn}>

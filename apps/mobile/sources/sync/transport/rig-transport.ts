@@ -39,8 +39,25 @@ export type SessionDetail = SessionSummary & {
 export type AgentActivityItem = {
   kind: 'thinking' | 'tool' | 'output';
   title: string;
+  id?: string;
+  toolKind?: string;
   text?: string;
   status?: string;
+  command?: string;
+  input?: string;
+  output?: string;
+  files?: Array<{
+    path: string;
+    status?: string;
+    diff?: string;
+  }>;
+  plan?: {
+    objective?: string;
+    items: Array<{
+      step: string;
+      status: 'pending' | 'in_progress' | 'completed';
+    }>;
+  };
 };
 
 export type SessionEvent =

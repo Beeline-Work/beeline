@@ -110,6 +110,7 @@ class DemoOidcProvider {
       expect(url.searchParams.get('response_type')).toBe('code');
       expect(url.searchParams.get('client_id')).toBe(this.clientId);
       expect(url.searchParams.get('scope')).toBe('openid');
+      expect(url.searchParams.get('prompt')).toBe('select_account');
       expect(url.searchParams.get('code_challenge_method')).toBe('S256');
       const state = url.searchParams.get('state');
       const nonce = url.searchParams.get('nonce');

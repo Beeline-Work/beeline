@@ -13,6 +13,13 @@ const bundleId = {
     preview: "app.buzzy.mobile.preview",
     production: "app.buzzy.mobile"
 }[variant];
+// Keep locally-built APKs aligned with their EAS profile: a preview install
+// must ask the preview branch for OTA updates, never production.
+const updatesChannel = {
+    development: "development",
+    preview: "preview",
+    production: "production",
+}[variant];
 // const stagingElevenLabsAgentId = 'agent_7801k2c0r5hjfraa1kdbytpvs6yt';
 const productionElevenLabsAgentId = 'agent_6701k211syvvegba4kt7m68nxjmw';
 const elevenLabsAgentId = {
@@ -121,7 +128,11 @@ export default {
                 "android.permission.READ_MEDIA_VIDEO",
             ],
             package: bundleId,
-            googleServicesFile: "./google-services.json",
+            // The checked-in Firebase project provisions production and
+            // development package IDs. Preview is an OTA dogfood channel, so
+            // omit the Android service config instead of binding its distinct
+            // package ID to the wrong Firebase client.
+            ...(variant === 'preview' ? {} : { googleServicesFile: "./google-services.json" }),
             intentFilters: [
                 {
                     "action": "VIEW",
@@ -249,7 +260,7 @@ export default {
         updates: {
             url: "https://u.expo.dev/58f1e94e-5ce5-475e-9dde-3eaa9e36699c",
             requestHeaders: {
-                "expo-channel-name": "production"
+                "expo-channel-name": updatesChannel
             }
         },
         extra: {

@@ -14,7 +14,7 @@ import { initialWindowMetrics, SafeAreaProvider, useSafeAreaInsets } from 'react
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SidebarNavigator } from '@/components/SidebarNavigator';
 import sodium from '@/encryption/libsodium.lib';
-import { View, Platform } from 'react-native';
+import { AppState, View, Platform } from 'react-native';
 import { ModalProvider } from '@/modal';
 import { PostHogProvider } from 'posthog-react-native';
 import { tracking } from '@/track/tracking';
@@ -31,6 +31,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { AsyncLock } from '@/utils/lock';
 import {
     getSessionRouteFromNotificationResponse,
+    getBuzzChannelIdFromNotificationData,
     navigateToBuzzChannelFromNotification,
 } from '@/utils/notificationRouting';
 import { navigateToSession } from '@/hooks/useNavigateToSession';
@@ -40,6 +41,7 @@ import { useTauriDrag } from '@/hooks/useTauriDrag';
 import { BrowserNavigationShortcuts } from '@/hooks/useBrowserNavigationShortcuts';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
+import { flushBuzzLocalCacheForBackground } from '@/buzz/local-cache';
 
 // Keep remote notifications visible while the app is foregrounded. The sender
 // may be writing in a different Room than the one currently on screen.
@@ -210,6 +212,22 @@ function getDevWebQueryCredentials(): AuthCredentials | null {
 
 export default function RootLayout() {
     React.useEffect(() => {
+        const subscription = AppState.addEventListener('change', (state) => {
+            // MMKV is synchronous and a warm-cache snapshot may be large, so
+            // this is deliberately the only write point: after Android has
+            // already transitioned away from the foreground. A deferred JS
+            // timer cannot be used here—Android suspends that timer before it
+            // fires, leaving a cold launch with no persisted transcript.
+            if (state === 'background') {
+                flushBuzzLocalCacheForBackground();
+            }
+        });
+        return () => {
+            subscription.remove();
+        };
+    }, []);
+
+    React.useEffect(() => {
         // Refresh the FCM binding on every cold start. Firebase can rotate the
         // device token long after onboarding, so registration cannot be a
         // one-time side effect of importing or creating an identity.
@@ -322,9 +340,7 @@ export default function RootLayout() {
                 stringifyNotificationPayload(response.notification.request.content.data)
             );
             const notificationData = response.notification.request.content.data;
-            const buzzChannelId = typeof notificationData?.channelId === 'string'
-                ? notificationData.channelId
-                : null;
+            const buzzChannelId = getBuzzChannelIdFromNotificationData(notificationData);
             if (buzzChannelId) {
                 console.log(`[PUSH ROUTING] Navigating to Buzz channel: ${buzzChannelId}`);
                 navigateToBuzzChannelFromNotification(router, buzzChannelId, responseId);

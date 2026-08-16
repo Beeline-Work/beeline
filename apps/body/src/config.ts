@@ -48,6 +48,12 @@ export interface BodyConfig {
   /** Built-in inspection MCP command mounted only in read-only Room sessions. */
   readonlyMcpCommand?: string;
   readonlyMcpArgs?: string[];
+  /**
+   * Optional codegraph CLI, mounted as an MCP for edit-mode corner sessions
+   * when resolvable. Unlike mcpBinary/readonlyMcpCommand this is best-effort:
+   * a missing codegraph install never blocks a corner from opening.
+   */
+  codegraphCommand?: string;
   /** Env vars inherited by the selected ACP agent process. */
   agentEnv: Record<string, string>;
   /** Base directory for TLC workspaces and git worktrees. */
@@ -143,6 +149,24 @@ export function resolveReadonlyMcpCommand(env: NodeJS.ProcessEnv = process.env):
   throw new Error(
     'read-only tools unavailable: buzz-readonly-mcp was not found. Reinstall Beeline or set BUZZ_READONLY_MCP_BIN / BUZZ_READONLY_MCP_SCRIPT',
   );
+}
+
+/**
+ * Resolve the optional codegraph binary. Returns undefined (never throws)
+ * when it isn't installed or configured — codegraph is a best-effort
+ * capability for corner sessions, not a required one.
+ */
+export function resolveCodegraphCommand(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const configured = env.BUZZ_CODEGRAPH_BIN;
+  if (configured) {
+    try {
+      accessSync(configured, constants.X_OK);
+      return resolve(configured);
+    } catch {
+      return undefined;
+    }
+  }
+  return executableOnPath('codegraph', env);
 }
 
 /**
@@ -265,6 +289,7 @@ export function loadBodyConfig(opts: {
     mcpBinary,
     readonlyMcpCommand: readonlyMcp.command,
     readonlyMcpArgs: readonlyMcp.args,
+    codegraphCommand: resolveCodegraphCommand(env),
     agentEnv,
     workspaceRoot: resolve(opts.workspaceRoot),
     relayBaseUrl: base,

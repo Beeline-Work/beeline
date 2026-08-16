@@ -1504,6 +1504,67 @@ describe('Room conversation and permission-gated work intent', () => {
     await rm('/tmp/buzzy-explicit-corner-context-unit', { recursive: true, force: true });
   });
 
+  it('creates exactly one corner when the same mention event is processed concurrently (WS-push + backstop-poll race)', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-corner-dedup-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    // Every relay-backed idempotency check (requestAlreadyOpened, author
+    // attribution lookups, registered-agent lookup) sees no prior state, the
+    // worst case for a real relay round-trip that hasn't converged yet.
+    Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
+    const editClient = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    const info = {
+      subchannelId: 'corner-id',
+      worktreePath: '/tmp/worktree',
+      featureBranch: 'feature/corner',
+      role: body.agent,
+      session: {
+        channelId: 'corner-id',
+        sessionId: 'edit-session',
+        client: editClient,
+        mode: 'edit' as const,
+      },
+      lastPolledAt: 1,
+      archived: false,
+    };
+    const open = vi.spyOn(body, 'openSubchannel').mockResolvedValue(info);
+    const start = vi
+      .spyOn(body as never, 'startAgentTask' as never)
+      .mockImplementation(() => undefined as never);
+
+    const event = requestEvent(
+      [['p', body.agent.publicKey]],
+      human,
+      'open a new corner to do work: add a FEATURE.md',
+    );
+    const processChannelRequestEvents = (
+      Reflect.get(body, 'processChannelRequestEvents') as (...args: unknown[]) => Promise<number>
+    ).bind(body);
+    const roomParticipants = [human.publicKey, body.agent.publicKey];
+
+    // The same relay event, handed to the same processing method twice at
+    // once: this is exactly what happens when the instant WS-push delivery
+    // and the HTTP backstop poll fired right after subscribe (runRoomPushLoop)
+    // both observe the mention before either has finished handling it.
+    await Promise.all([
+      processChannelRequestEvents('parent-channel', { repo: 'repo' }, 'repository', [event], roomParticipants),
+      processChannelRequestEvents('parent-channel', { repo: 'repo' }, 'repository', [event], roomParticipants),
+    ]);
+
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(start).toHaveBeenCalledTimes(1);
+
+    await rm('/tmp/buzzy-corner-dedup-unit', { recursive: true, force: true });
+  });
+
   it('opens an edit corner only after a human allows the first mutating request', async () => {
     const body = new Body({
       agentBinary: '/nonexistent',

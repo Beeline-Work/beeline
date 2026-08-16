@@ -66,6 +66,8 @@ export type SessionEvent =
 export type MessageSubmitInput = {
   sessionId: SessionId;
   text: string;
+  /** NIP-10 event id for the message this one replies to. */
+  replyToId?: string;
   /** Optional display text / attachments — Happy's SendMessageOptions shape. */
   displayText?: string;
   source?: string;

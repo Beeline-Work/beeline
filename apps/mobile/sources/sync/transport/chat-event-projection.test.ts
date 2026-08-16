@@ -55,6 +55,24 @@ describe('Buzz Room screen event projection', () => {
     ]);
   });
 
+  it('projects durable NIP-10 reply context and Agent authorship', () => {
+    const event = raw(
+      'assistant-reply',
+      'The answer is in the scheduler.',
+      [
+        ['t', 'agent-message'],
+        ['e', 'question-event', '', 'reply'],
+      ],
+      3,
+    );
+
+    expect(projectChatEvent(event, viewer).message).toMatchObject({
+      id: 'assistant-reply',
+      replyToId: 'question-event',
+      isAgentMessage: true,
+    });
+  });
+
   it('projects an attachment as URL metadata without inline file content', () => {
     const event = raw(
       'attachment',

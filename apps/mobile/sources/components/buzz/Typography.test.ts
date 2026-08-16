@@ -99,6 +99,8 @@ const monoStyles = new Set([
   'agentLiveStatusText',
   'agentOfflineHintTitle',
   'offlineDeliveryNote',
+  'replySwipeLabel',
+  'composerReplyLabel',
   'cornerBackText',
   'cornerChannelName',
   'cornerHeaderMeta',

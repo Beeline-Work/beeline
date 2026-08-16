@@ -154,6 +154,10 @@ export type ChatDisplayMessage = {
   isUser: boolean;
   timestamp: number;
   pubkey?: string;
+  /** NIP-10 reply target, resolved against the local transcript by the screen. */
+  replyToId?: string;
+  /** Signed by an Agent body as a durable, final conversation message. */
+  isAgentMessage?: boolean;
   isMergeSummary?: boolean;
   isArchivedNotice?: boolean;
   isAgentActivity?: boolean;
@@ -280,6 +284,10 @@ export function projectChatEvent(
   const isPermissionRequest = eventHasTag(event, 't', 'buzz-write-permission-request');
   const isPermissionResponse = eventHasTag(event, 't', 'buzz-write-permission-response');
   const isAgentTurn = eventHasTag(event, 't', 'agent-turn');
+  const isAgentMessage = eventHasTag(event, 't', 'agent-message');
+  const replyToId = eventTags(event).find(
+    (tag) => tag[0] === 'e' && tag[1] && tag[3] === 'reply',
+  )?.[1];
   const attachments = parseAttachmentTags(eventTags(event));
 
   if (isAgentTurn) {
@@ -418,6 +426,8 @@ export function projectChatEvent(
       isUser: pubkey === viewerPubkey,
       timestamp: eventTimestamp(event),
       ...(pubkey ? { pubkey } : {}),
+      ...(replyToId ? { replyToId } : {}),
+      ...(isAgentMessage ? { isAgentMessage: true } : {}),
       ...(event.type === 'assistant_delta' ? { isAgentActivity: true } : {}),
       ...(eventActivity(event)?.length ? { activity: eventActivity(event) } : {}),
       ...(attachments.length ? { attachments } : {}),

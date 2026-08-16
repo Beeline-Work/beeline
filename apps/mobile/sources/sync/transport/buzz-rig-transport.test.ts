@@ -333,10 +333,37 @@ describe('Room-scoped Workspace membership', () => {
         'room-1',
         '@Brisk Pilot fix the build',
         'agent-pubkey',
+        [],
+        'original-event',
       ),
     ).resolves.toBe('event-1');
     expect(client.messageSubmit).toHaveBeenCalledWith('room-1', '@Brisk Pilot fix the build', {
       mentionAgent: 'agent-pubkey',
+      extraTags: [['e', 'original-event', '', 'reply']],
+    });
+  });
+
+  it('submits ordinary replies with a NIP-10 reply marker', async () => {
+    const identity = {
+      publicKey: 'a'.repeat(64),
+      secretKey: new Uint8Array(32).fill(1),
+      name: 'operator',
+    } as Identity;
+    const client = {
+      messageSubmit: vi.fn(async () => ({ id: 'reply-event' })),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(
+      transport.messageSubmitWithEventId({
+        sessionId: 'room-1',
+        text: 'Following up',
+        replyToId: 'original-event',
+      }),
+    ).resolves.toBe('reply-event');
+    expect(client.messageSubmit).toHaveBeenCalledWith('room-1', 'Following up', {
+      extraTags: [['e', 'original-event', '', 'reply']],
     });
   });
 

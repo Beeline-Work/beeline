@@ -149,11 +149,14 @@ export class BuzzRigTransport implements RigTransport {
   /** Submit a message and return the signed event id for optimistic UI reconciliation. */
   async messageSubmitWithEventId(input: MessageSubmitInput): Promise<string> {
     const client = await this.getClient();
-    const attachmentTags = buildAttachmentTags(input.attachments ?? []);
+    const extraTags = [
+      ...buildAttachmentTags(input.attachments ?? []),
+      ...(input.replyToId ? [['e', input.replyToId, '', 'reply']] : []),
+    ];
     const event = await client.messageSubmit(
       input.sessionId,
       input.text,
-      attachmentTags.length ? { extraTags: attachmentTags } : undefined,
+      extraTags.length ? { extraTags } : undefined,
     );
     return event.id;
   }
@@ -164,12 +167,16 @@ export class BuzzRigTransport implements RigTransport {
     text: string,
     agentPubkey: string,
     attachments: AttachmentReference[] = [],
+    replyToId?: string,
   ): Promise<string> {
     const client = await this.getClient();
-    const attachmentTags = buildAttachmentTags(attachments);
+    const extraTags = [
+      ...buildAttachmentTags(attachments),
+      ...(replyToId ? [['e', replyToId, '', 'reply']] : []),
+    ];
     const event = await client.messageSubmit(channelId, text, {
       mentionAgent: agentPubkey,
-      ...(attachmentTags.length ? { extraTags: attachmentTags } : {}),
+      ...(extraTags.length ? { extraTags } : {}),
     });
     return event.id;
   }

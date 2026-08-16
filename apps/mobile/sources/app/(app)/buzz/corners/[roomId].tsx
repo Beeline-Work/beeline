@@ -10,7 +10,12 @@ import {
   type PersonProfile,
 } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import { cornerStatusPresentation, sortCorners, type CornerSummary } from '@/buzz/corners';
+import {
+  cornerStatusPresentation,
+  isCornerActive,
+  sortCorners,
+  type CornerSummary,
+} from '@/buzz/corners';
 import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { groknight } from '@/buzz/groknight';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
@@ -206,17 +211,17 @@ export default function BuzzCorners() {
               (candidate) => candidate.pubkey === item.openerPubkey,
             );
             const display = resolveAgentDisplayIdentity(item.openerPubkey, agent);
-            const agentPresence = agentPresences[item.openerPubkey];
-            const displayStatus =
-              agent &&
-              agentPresence &&
-              (item.status === 'live' || item.status === 'open') &&
-              !isAgentPresenceOnline(agentPresence, presenceNow)
-                ? { glyph: '□', label: 'OFFLINE' }
-                : status;
+            // Presence is a separate dot, never a replacement for the
+            // lifecycle status word shown here — the same word the Room-list
+            // dropdown and the in-Room corner card show for this corner.
+            const showsPresence = Boolean(agent) && isCornerActive(item.status);
+            const online =
+              showsPresence && isAgentPresenceOnline(agentPresences[item.openerPubkey], presenceNow);
             return (
               <TouchableOpacity
-                accessibilityLabel={`View corner ${item.name}, ${displayStatus.label.toLowerCase()}`}
+                accessibilityLabel={`View corner ${item.name}, ${status.label.toLowerCase()}${
+                  showsPresence ? (online ? ', agent online' : ', agent offline') : ''
+                }`}
                 style={styles.cornerRow}
                 onPress={() => router.push(`/buzz/chat/${encodeURIComponent(item.id)}`)}
               >
@@ -248,8 +253,20 @@ export default function BuzzCorners() {
                   </Text>
                 </View>
                 <View style={styles.statusBlock}>
-                  <Text style={styles.statusGlyph}>{displayStatus.glyph}</Text>
-                  <Text style={styles.statusLabel}>{displayStatus.label}</Text>
+                  <View style={styles.statusGlyphRow}>
+                    <Text style={styles.statusGlyph}>{status.glyph}</Text>
+                    {showsPresence && (
+                      <Text
+                        style={[
+                          styles.presenceDot,
+                          online ? styles.presenceOnline : styles.presenceOffline,
+                        ]}
+                      >
+                        {online ? '●' : '○'}
+                      </Text>
+                    )}
+                  </View>
+                  <Text style={styles.statusLabel}>{status.label}</Text>
                 </View>
                 <Text style={styles.chevron}>›</Text>
               </TouchableOpacity>
@@ -363,7 +380,11 @@ const styles = StyleSheet.create({
     lineHeight: 14,
   },
   statusBlock: { minWidth: 70, marginLeft: 8, alignItems: 'flex-end' },
+  statusGlyphRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   statusGlyph: { ...Typography.default('semiBold'), color: groknight.steel, fontSize: 13 },
+  presenceDot: { ...Typography.default(), fontSize: 8 },
+  presenceOnline: { color: groknight.accent },
+  presenceOffline: { color: groknight.textMuted },
   statusLabel: {
     ...Typography.mono('semiBold'),
     marginTop: 2,

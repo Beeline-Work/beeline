@@ -72,7 +72,13 @@ import {
   sectionRoomParticipants,
   sectionRoomRoster,
 } from '@/buzz/room-participants';
-import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
+import { resolveAgentDisplayIdentity, resolveCornerCardAgentPubkey } from '@/buzz/agent-display';
+import {
+  cornerStatusPresentation,
+  isCornerActive,
+  selectMostRecentActiveCornerId,
+  type CornerStatus,
+} from '@/buzz/corners';
 import { directMessagePeer, shortMemberNpub } from '@/buzz/member-display';
 import {
   canRenameRoom,
@@ -246,6 +252,11 @@ export default function BuzzChat() {
   const [parentChannelId, setParentChannelId] = useState<string | undefined>(
     initialChannelCache?.parentChannelId,
   );
+  // The corner view's own status badge, sourced from the exact same
+  // canonical CornerStatus (via listSubchannelLifecycle) that the Room-list
+  // dropdown and the standalone Corners list already read, so all three
+  // surfaces show identical primary status words for this corner.
+  const [cornerLifecycleStatus, setCornerLifecycleStatus] = useState<CornerStatus | null>(null);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(
     initialChannelCache?.communityId ?? null,
@@ -506,16 +517,42 @@ export default function BuzzChat() {
       ),
     [messages],
   );
-  const activeCorner = useMemo(
+  // "Most recent active corner" is resolved once, from the same signal used
+  // to pick which corner a tap on the ambient status strip opens, so the
+  // status text and the destination it navigates to can never disagree.
+  const mostRecentActiveCornerId = useMemo(
     () =>
-      [...messages]
-        .reverse()
-        .find(
-          (message) =>
-            message.corner?.status === 'starting' || message.corner?.status === 'working',
+      selectMostRecentActiveCornerId(
+        messages.flatMap((message) =>
+          message.corner
+            ? [
+                {
+                  subchannelId: message.corner.subchannelId,
+                  status: message.corner.status,
+                  timestamp: message.timestamp,
+                },
+              ]
+            : [],
         ),
+      ),
     [messages],
   );
+  const activeCorner = useMemo(
+    () =>
+      mostRecentActiveCornerId
+        ? [...messages]
+            .reverse()
+            .find((message) => message.corner?.subchannelId === mostRecentActiveCornerId)
+        : undefined,
+    [messages, mostRecentActiveCornerId],
+  );
+  // Only route the ambient status strip when the resolved id is genuinely
+  // the active corner — never send a tap to a stale/unrelated corner that
+  // merely happens to be the most recent one on record.
+  const tappableCornerId =
+    activeCorner?.corner && isCornerActive(activeCorner.corner.status)
+      ? mostRecentActiveCornerId
+      : undefined;
   const activeAgentTurn = useMemo(
     () =>
       [...messages]
@@ -830,12 +867,19 @@ export default function BuzzChat() {
           // previously starved the resumed composer.
         });
 
-        const [communityAgents, communityMembers, archived, mergeInfo] = await Promise.all([
-          channelCommunityId ? client.listAgents(channelCommunityId) : Promise.resolve([]),
-          channelCommunityId ? client.communityMembers(channelCommunityId) : Promise.resolve([]),
-          t.isChannelArchived(decodedId),
-          parentId ? t.getSubchannelMergeTarget(decodedId) : Promise.resolve(null),
-        ]);
+        const [communityAgents, communityMembers, archived, mergeInfo, siblingCorners] =
+          await Promise.all([
+            channelCommunityId ? client.listAgents(channelCommunityId) : Promise.resolve([]),
+            channelCommunityId ? client.communityMembers(channelCommunityId) : Promise.resolve([]),
+            t.isChannelArchived(decodedId),
+            parentId ? t.getSubchannelMergeTarget(decodedId) : Promise.resolve(null),
+            parentId ? t.listSubchannelLifecycle(parentId) : Promise.resolve([]),
+          ]);
+        if (!cancelled) {
+          setCornerLifecycleStatus(
+            siblingCorners.find((corner) => corner.id === decodedId)?.status ?? null,
+          );
+        }
         const agentPubkeys = new Set(communityAgents.map((agent) => agent.pubkey));
         const humanMembers = communityMembers.filter((member) => !agentPubkeys.has(member.pubkey));
         const humanProfiles = channelCommunityId
@@ -1447,30 +1491,46 @@ export default function BuzzChat() {
 
       if (item.corner) {
         if (openedCornerIds.has(item.corner.subchannelId)) return null;
-        const cornerAgent = item.corner.agentPubkey
-          ? agentByPubkey.get(item.corner.agentPubkey)
+        // Prefer whichever pubkey is actually a registered agent: the
+        // declared `agent` tag, or (if that misses) the event's own signer —
+        // the same source the per-message transcript below resolves by, so
+        // the card can never show a different identity than the view.
+        const resolvedAgentPubkey = resolveCornerCardAgentPubkey(
+          item.corner.agentPubkey,
+          item.pubkey,
+          (pubkey) => agentByPubkey.has(pubkey),
+        );
+        const cornerAgent = resolvedAgentPubkey ? agentByPubkey.get(resolvedAgentPubkey) : undefined;
+        const display = resolvedAgentPubkey
+          ? resolveAgentDisplayIdentity(resolvedAgentPubkey, cornerAgent)
           : undefined;
-        const display = item.corner.agentPubkey
-          ? resolveAgentDisplayIdentity(item.corner.agentPubkey, cornerAgent)
-          : undefined;
-        const cornerOnline = item.corner.agentPubkey
+        const cornerOnline = resolvedAgentPubkey
           ? isAgentPresenceOnlineWithReconnectGrace(
-              agentPresences[item.corner.agentPubkey],
+              agentPresences[resolvedAgentPubkey],
               presenceNow,
-              presenceReconnectGrace[item.corner.agentPubkey],
+              presenceReconnectGrace[resolvedAgentPubkey],
             )
           : false;
-        const statusLabel = item.corner.status.replace('-', ' ').toUpperCase();
+        // The status WORD is always the corner lifecycle — identical to the
+        // Room-list dropdown and the Corners list, since all three read
+        // `cornerStatusPresentation` over the same canonical CornerStatus.
+        // Presence is a separate dot; it never replaces the lifecycle word.
+        const presentation = cornerStatusPresentation(item.corner.status);
+        const showsPresenceDot = Boolean(resolvedAgentPubkey) && isCornerActive(item.corner.status);
         return (
           <TouchableOpacity
-            accessibilityLabel={`${display?.name ?? 'Agent'} work ${statusLabel.toLowerCase()}. View corner`}
-            onPress={() => openCorner(item.corner!.subchannelId)}
+            accessibilityLabel={`${display?.name ?? 'Agent'} corner ${presentation.label.toLowerCase()}${
+              showsPresenceDot ? (cornerOnline ? ', agent online' : ', agent offline') : ''
+            }. View corner`}
+            onPress={() =>
+              router.push(`/buzz/chat/${encodeURIComponent(item.corner!.subchannelId)}` as Href)
+            }
             style={styles.cornerStatusCard}
-            testID={`corner-status-${statusLabel.toLowerCase().replace(' ', '-')}`}
+            testID={`corner-status-${item.corner.status}`}
           >
-            {item.corner.agentPubkey && (
+            {resolvedAgentPubkey && (
               <AgentAvatar
-                pubkey={item.corner.agentPubkey}
+                pubkey={resolvedAgentPubkey}
                 avatarSeed={display?.avatarSeed}
                 avatarUrl={display?.avatarUrl}
                 name={display?.name ?? 'Agent'}
@@ -1478,16 +1538,23 @@ export default function BuzzChat() {
               />
             )}
             <View style={styles.cornerStatusCopy}>
-              <View style={styles.cornerStatusAgentRow}>
-                {item.corner.agentPubkey ? (
-                  <AgentPresenceLight
-                    online={cornerOnline}
-                    testID={`agent-presence-light-${item.corner.agentPubkey}`}
-                  />
-                ) : null}
-                <Text style={styles.cornerStatusAgent}>{display?.name ?? 'Agent'}</Text>
+              <Text style={styles.cornerStatusAgent}>{display?.name ?? 'Agent'}</Text>
+              <View style={styles.cornerStatusRow}>
+                <Text style={styles.cornerStatusLabel}>
+                  {presentation.glyph} {presentation.label}
+                </Text>
+                {showsPresenceDot && (
+                  <Text
+                    style={[
+                      styles.cornerPresenceDot,
+                      cornerOnline ? styles.cornerPresenceOnline : styles.cornerPresenceOffline,
+                    ]}
+                    testID={`corner-presence-${cornerOnline ? 'online' : 'offline'}`}
+                  >
+                    {cornerOnline ? '●' : '○'}
+                  </Text>
+                )}
               </View>
-              <Text style={styles.cornerStatusLabel}>{statusLabel}</Text>
             </View>
             <View style={styles.openCornerAction}>
               <Text style={styles.openCornerText}>VIEW {CORNER_LABEL.toUpperCase()}</Text>
@@ -1701,41 +1768,38 @@ export default function BuzzChat() {
           >
             <Text style={[styles.backText, isCorner && styles.cornerBackText]}>‹</Text>
           </TouchableOpacity>
-          {isCorner ? (
-            <View
-              accessibilityLabel={`${cornerAgentDisplay?.name ?? 'Agent'} edit session ${sessionState}`}
-              style={styles.headerCenter}
-              testID="corner-session-header"
+          <TouchableOpacity
+            accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)} in this ${ROOM_LABEL}`}
+            accessibilityRole="button"
+            disabled={!participantsHydrated}
+            onPress={() => setRosterVisible(true)}
+            style={styles.headerCenter}
+            testID="room-participant-roster-trigger"
+          >
+            <Text
+              style={[styles.channelName, isCorner && styles.cornerChannelName]}
+              numberOfLines={1}
             >
-              <Text style={[styles.channelName, styles.cornerChannelName]} numberOfLines={1}>
-                {cornerAgentDisplay?.name ?? 'Agent'}
-              </Text>
-              <View style={styles.cornerHeaderStatusRow}>
-                {sessionState === 'working' && <PixelLoader compact />}
-                <Text style={[styles.headerMeta, styles.cornerHeaderMeta]} numberOfLines={1}>
-                  EDIT SESSION · {sessionState.toUpperCase()}
-                </Text>
-              </View>
-            </View>
-          ) : (
-            <TouchableOpacity
-              accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)} in this ${ROOM_LABEL}`}
-              accessibilityRole="button"
-              disabled={!participantsHydrated}
-              onPress={() => setRosterVisible(true)}
-              style={styles.headerCenter}
-              testID="room-participant-roster-trigger"
+              {roomName}
+            </Text>
+            <Text
+              style={[styles.headerMeta, isCorner && styles.cornerHeaderMeta]}
+              numberOfLines={1}
+              testID={isCorner ? 'corner-view-status' : undefined}
             >
-              <Text style={styles.channelName} numberOfLines={1}>
-                {roomName}
-              </Text>
-              <Text style={styles.headerMeta} numberOfLines={1}>
-                {participantsHydrated
-                  ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ·  IN THIS ROOM  ›`
+              {isCorner && cornerLifecycleStatus
+                ? // Same canonical status word as the Room-list dropdown, the
+                  // Room chat card, and the standalone Corners list.
+                  `${cornerStatusPresentation(cornerLifecycleStatus).glyph} ${cornerStatusPresentation(cornerLifecycleStatus).label}  ·  ${
+                    participantsHydrated
+                      ? formatRoomParticipantTotal(roomParticipantTotal)
+                      : 'LOADING MEMBERS'
+                  }`
+                : participantsHydrated
+                  ? `${presenceSummary ? `${presenceSummary}  ·  ` : ''}${formatRoomParticipantTotal(roomParticipantTotal)}  ·  IN THIS ROOM  ›`
                   : 'LOADING MEMBERS'}
-              </Text>
-            </TouchableOpacity>
-          )}
+            </Text>
+          </TouchableOpacity>
           {!parentChannelId && !isDirectMessage && !viewerIsAgent && !isArchived && (
             <TouchableOpacity
               accessibilityLabel={`Add people or Agents to this ${ROOM_LABEL}`}
@@ -1927,6 +1991,39 @@ export default function BuzzChat() {
           </View>
         ) : (
           <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+            {!parentChannelId &&
+              ((activeCorner?.corner && isCornerActive(activeCorner.corner.status)) ||
+                activeAgentTurn?.agentTurn) && (
+                <TouchableOpacity
+                  accessibilityLabel={tappableCornerId ? 'View active corner' : 'Agent activity'}
+                  accessibilityRole={tappableCornerId ? 'button' : undefined}
+                  disabled={!tappableCornerId}
+                  onPress={() =>
+                    tappableCornerId &&
+                    router.push(`/buzz/chat/${encodeURIComponent(tappableCornerId)}` as Href)
+                  }
+                  style={styles.agentLiveStatus}
+                  testID="agent-live-status"
+                >
+                  {!agentsOffline && <PixelLoader compact />}
+                  <Text style={styles.agentLiveStatusText}>
+                    {agentsOffline
+                      ? 'OFFLINE'
+                      : activeAgentTurn?.agentTurn
+                        ? 'thinking…'
+                        : 'working in corner…'}
+                  </Text>
+                  {tappableCornerId && <Text style={styles.agentLiveStatusGlyph}>›</Text>}
+                </TouchableOpacity>
+              )}
+            {agentsOffline && (
+              <View style={styles.agentOfflineHint} testID="agent-offline-hint">
+                <Text style={styles.agentOfflineHintTitle}>□ AGENT OFFLINE</Text>
+                <Text style={styles.agentOfflineHintText}>
+                  Messages stay in this Room and will be answered when the Agent is back.
+                </Text>
+              </View>
+            )}
             {parentChannelId && !viewerIsAgent && (
               <TouchableOpacity
                 accessibilityLabel={`Close ${CORNER_LABEL}`}
@@ -3293,6 +3390,15 @@ const styles = StyleSheet.create({
     lineHeight: 14,
     letterSpacing: 0.6,
   },
+  cornerStatusRow: {
+    marginTop: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  cornerPresenceDot: { ...Typography.default(), fontSize: 8 },
+  cornerPresenceOnline: { color: groknight.accent },
+  cornerPresenceOffline: { color: groknight.textMuted },
   openCornerAction: {
     flexShrink: 0,
     flexDirection: 'row',
@@ -3483,6 +3589,11 @@ const styles = StyleSheet.create({
     lineHeight: 14,
     letterSpacing: 0.35,
   },
+  agentLiveStatusGlyph: {
+    ...Typography.default(),
+    color: groknight.gutter,
+    fontSize: 15,
+  },
   agentDraftBanner: {
     marginBottom: 6,
     paddingHorizontal: 12,
@@ -3490,6 +3601,29 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: groknight.border,
     backgroundColor: groknight.bgRaised,
+  },
+  agentOfflineHint: {
+    minWidth: 0,
+    marginBottom: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgBase,
+  },
+  agentOfflineHintTitle: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 10,
+    lineHeight: 14,
+    letterSpacing: 0.55,
+  },
+  agentOfflineHintText: {
+    ...Typography.default(),
+    marginTop: 3,
+    color: groknight.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
   },
   cancelTurnButton: {
     minHeight: 36,

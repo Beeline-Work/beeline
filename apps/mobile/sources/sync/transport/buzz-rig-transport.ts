@@ -42,7 +42,7 @@ import {
   type AttachmentReference,
 } from '@beeline/buzz-client';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
-import { cornerName, type CornerSummary } from '@/buzz/corners';
+import { cornerName, mapRawCornerStatusTag, type CornerSummary } from '@/buzz/corners';
 import { toRigEvent } from './buzz-event-projection';
 
 let sharedClientEntry: { key: string; client: BuzzClient } | undefined;
@@ -628,15 +628,30 @@ export class BuzzRigTransport implements RigTransport {
           client.sessionEventsBackfill(id, { limit: 50 }),
         ]);
         const create = [...creates].sort((a, b) => a.created_at - b.created_at)[0];
-        const statuses = events
-          .map((event) => tagValue(event.event, 'status'))
-          .filter((status): status is string => Boolean(status));
-        const archived = Boolean(metadata?.archived) || statuses.includes('archived');
+        // Read the same tag precedence (display-status, then the coarser wire
+        // status) and the same canonical mapping the live Room card uses, so
+        // this snapshot can never disagree with real-time projection about
+        // what a corner's status word is.
+        const statusEntries = events
+          .map((event) => ({
+            raw: tagValue(event.event, 'display-status') ?? tagValue(event.event, 'status'),
+            createdAt: event.createdAt,
+          }))
+          .filter((entry): entry is { raw: string; createdAt: number } => Boolean(entry.raw));
+        const latestRawStatus = [...statusEntries].sort((a, b) => b.createdAt - a.createdAt)[0]
+          ?.raw;
+        const latestStatus = mapRawCornerStatusTag(latestRawStatus);
+        const archived =
+          Boolean(metadata?.archived) || statusEntries.some((entry) => entry.raw === 'archived');
         const reviewReady =
-          statuses.includes('ready') ||
+          latestStatus === 'open' ||
           events.some((event) =>
             event.event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
           );
+        const lastActivityAt = Math.max(
+          create?.created_at ?? 0,
+          ...events.map((event) => event.createdAt),
+        );
         return {
           id,
           name: cornerName(create ? tagValue(create, 'name') : undefined, id),
@@ -647,8 +662,9 @@ export class BuzzRigTransport implements RigTransport {
               ? 'archived'
               : reviewReady
                 ? 'open'
-                : 'live',
+                : (latestStatus ?? 'live'),
           createdAt: create?.created_at,
+          ...(lastActivityAt > 0 ? { lastActivityAt } : {}),
         };
       }),
     );

@@ -33,3 +33,22 @@ export function resolveAgentDisplayIdentity(
     hasSoul: Boolean(overlay && resolveAgentName(overlay.name, pubkey) === overlay.name.trim()),
   };
 }
+
+/**
+ * A corner-status card's `agentPubkey` is declared data (an `agent` tag on
+ * the body-control event) and can miss the registered-agent roster even when
+ * the event's own signer is a known agent — e.g. a stale/legacy tag. Prefer
+ * whichever candidate actually resolves to a registered agent, so the card
+ * never falls back to a generated placeholder name when the corner's own
+ * transcript (which always resolves messages by their signer pubkey) knows
+ * exactly who this is.
+ */
+export function resolveCornerCardAgentPubkey(
+  declaredAgentPubkey: string | undefined,
+  messageSignerPubkey: string | undefined,
+  isRegisteredAgent: (pubkey: string) => boolean,
+): string | undefined {
+  if (declaredAgentPubkey && isRegisteredAgent(declaredAgentPubkey)) return declaredAgentPubkey;
+  if (messageSignerPubkey && isRegisteredAgent(messageSignerPubkey)) return messageSignerPubkey;
+  return declaredAgentPubkey ?? messageSignerPubkey;
+}

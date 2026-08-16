@@ -301,7 +301,7 @@ describe('Buzz Room screen event projection', () => {
     expect(backfill[0]).toMatchObject({
       id: `corner-${cornerId}`,
       text: 'Work is ready for review.',
-      corner: { subchannelId: cornerId, agentPubkey: agent, status: 'ready' },
+      corner: { subchannelId: cornerId, agentPubkey: agent, status: 'open' },
     });
     expect(sameSecondReplay).toEqual(backfill);
     expect(backfill[0]!.text).not.toContain(cornerId);
@@ -469,7 +469,7 @@ describe('Buzz Room screen event projection', () => {
       text: 'Agent is working.',
       isUser: false,
       timestamp: 5,
-      corner: { subchannelId: 'corner-1', status: 'working' },
+      corner: { subchannelId: 'corner-1', status: 'live' },
     };
 
     expect(transcriptMessages([conversation, activity, merge, lifecycle, corner], false)).toEqual([

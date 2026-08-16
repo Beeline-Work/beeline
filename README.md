@@ -29,9 +29,7 @@ spec.md       Authoritative product spec.
 
 ## Status
 
-Scaffolding only — this prepares Phase 3's home ("Fork Happy + the
-`RigTransport` adapter") per `spec.md`'s build sequence. Phases 0–2 (the
-merge gate itself, proven headless) are not built here.
+This project is in active development.
 
 ## Building from source
 

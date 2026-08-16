@@ -1564,7 +1564,7 @@ export default function BuzzChat() {
         return (
           <SwipeToReply messageId={item.id} onReply={() => beginReply(item)}>
             <NewMessageMaterialize enabled={Boolean(item.isNew)}>
-              <View style={styles.terminalTurn}>
+              <View style={[styles.terminalTurn, isAgent && styles.terminalAgentTurn]}>
                 <View style={styles.terminalTurnHeading}>
                   <Text style={styles.terminalTurnGlyph}>{isOwn || isAgent ? '›' : '·'}</Text>
                   <Text style={styles.terminalTurnLabel}>
@@ -3194,14 +3194,19 @@ const styles = StyleSheet.create({
   terminalTurn: {
     width: '100%',
     minWidth: 0,
-    marginTop: 7,
-    marginBottom: 3,
+    marginTop: 8,
+    marginBottom: 5,
     paddingHorizontal: 14,
     paddingVertical: 13,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: groknight.border,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    borderRadius: 5,
     backgroundColor: groknight.bgTerminal,
+  },
+  terminalAgentTurn: {
+    borderLeftWidth: 3,
+    borderLeftColor: groknight.agentAccent,
+    backgroundColor: groknight.bgHover,
   },
   terminalTurnHeading: {
     minWidth: 0,

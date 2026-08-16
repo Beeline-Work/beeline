@@ -15,6 +15,7 @@ import {
   assertSubchannelArchiveTarget,
   Body,
   cornerNameForIntent,
+  cornerOpenTaskPrompt,
   isChannelAddressedMessage,
   isRoomConversationMessage,
   isChannelTaskRequest,
@@ -950,6 +951,34 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(prompt).toContain('Never claim that an action or agent exchange happened');
   });
 
+  it('seeds a corner task prompt with the Room discussion, not just the open command', () => {
+    const prompt = cornerOpenTaskPrompt(
+      [
+        {
+          role: 'user',
+          text: '[Person Milo (@milo) · def456]: can we add retry logic to the sync loop?',
+          eventId: 'discussion-message',
+          at: new Date(0).toISOString(),
+        },
+        {
+          role: 'user',
+          text: '[Person Milo (@milo) · def456]: open a corner',
+          eventId: 'current',
+          at: new Date(1_000).toISOString(),
+        },
+      ],
+      '[Person Milo (@milo) · def456]: open a corner',
+      'current',
+    );
+
+    expect(prompt).toContain('add retry logic to the sync loop');
+    expect(prompt).toContain('Message that opened this corner:');
+    expect(prompt).toContain('open a corner');
+    // The addressed open-corner event is excluded from the quoted history —
+    // it only appears once, as the current message.
+    expect(prompt.split('open a corner')).toHaveLength(2);
+  });
+
   it('recognizes only a human-addressed conversation command with one known peer agent', () => {
     const joy = newIdentity('Joy');
     const participants = [human.publicKey, agent.publicKey, joy.publicKey];
@@ -1261,8 +1290,86 @@ describe('Room conversation and permission-gated work intent', () => {
     ).resolves.toBe(true);
 
     expect(open).toHaveBeenCalledWith('parent-channel', { repo: 'repo' }, request.content, request);
-    expect(start).toHaveBeenCalledWith(info, request.content);
+    expect(start).toHaveBeenCalledWith(
+      info,
+      request.content,
+      cornerOpenTaskPrompt([], request.content, request.eventId),
+    );
     expect(prompt).not.toHaveBeenCalled();
+  });
+
+  it('seeds an explicitly opened corner with the preceding Room discussion', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-explicit-corner-context-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    body.registerSession({
+      channelId: 'parent-channel',
+      sessionId: 'readonly-session',
+      client,
+      mode: 'readonly',
+    });
+    const durableState = Reflect.get(body, 'durableState') as {
+      appendConversation: (channelId: string, entry: unknown) => Promise<void>;
+      conversation: (channelId: string) => Promise<unknown[]>;
+    };
+    await durableState.appendConversation('parent-channel', {
+      role: 'user',
+      text: '[Person Milo (@milo) · def456]: can we add retry logic to the sync loop?',
+      eventId: 'discussion-message',
+      at: new Date(0).toISOString(),
+    });
+    const request = {
+      eventId: 'explicit-corner-request',
+      authorPubkey: human.publicKey,
+      content: 'open a corner',
+      createdAt: 1,
+    };
+    const editClient = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    const info = {
+      subchannelId: 'corner-id',
+      worktreePath: '/tmp/worktree',
+      featureBranch: 'feature/corner',
+      role: body.agent,
+      session: {
+        channelId: 'corner-id',
+        sessionId: 'edit-session',
+        client: editClient,
+        mode: 'edit' as const,
+      },
+      lastPolledAt: 1,
+      archived: false,
+    };
+    vi.spyOn(body, 'openSubchannel').mockResolvedValue(info);
+    const start = vi
+      .spyOn(body as never, 'startAgentTask' as never)
+      .mockImplementation(() => undefined as never);
+
+    await expect(
+      Reflect.get(body, 'replyInRoom').call(
+        body,
+        'parent-channel',
+        { repo: 'repo' },
+        request,
+        true,
+      ),
+    ).resolves.toBe(true);
+
+    expect(start).toHaveBeenCalledOnce();
+    const taskInstructions = (start.mock.calls[0] as unknown[])[2] as string;
+    expect(taskInstructions).toContain('add retry logic to the sync loop');
+    expect(taskInstructions).toContain('Message that opened this corner:');
+    expect(taskInstructions).toContain(request.content);
+
+    await rm('/tmp/buzzy-explicit-corner-context-unit', { recursive: true, force: true });
   });
 
   it('opens an edit corner only after a human allows the first mutating request', async () => {

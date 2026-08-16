@@ -261,64 +261,6 @@ export function conciseCornerTurnSummary(message: string): string {
   return shortenSummaryItem(summary, CORNER_TURN_SUMMARY_MAX_CHARS);
 }
 
-/** Corner completions are status updates, not transcripts of the agent's process. */
-export const CORNER_TURN_SUMMARY_MAX_CHARS = 480;
-export const CORNER_TURN_SUMMARY_MAX_ITEMS = 3;
-export const CORNER_TURN_SUMMARY_INSTRUCTION =
-  'Finish with only a concise user-facing summary: one sentence or up to three short bullets saying what changed and which checks passed. Do not narrate your process, restate the request, or include multi-paragraph detail.';
-
-function shortenSummaryItem(value: string, maxChars = 144): string {
-  const compact = value.replace(/\s+/g, ' ').trim();
-  if (compact.length <= maxChars) return compact;
-  const prefix = compact.slice(0, maxChars - 1);
-  const wordBoundary = prefix.lastIndexOf(' ');
-  const end = wordBoundary > maxChars / 2 ? wordBoundary : prefix.length;
-  return `${prefix.slice(0, end).trimEnd()}…`;
-}
-
-/**
- * Enforce the corner wire contract even when an ACP agent ignores the prompt.
- * Prefer authored bullets, otherwise retain only the leading outcome sentences.
- */
-export function conciseCornerTurnSummary(message: string): string {
-  const normalized = message
-    .replace(/\r/g, '')
-    .replace(/```[\s\S]*?```/g, ' ')
-    .trim();
-  if (!normalized) return '';
-
-  const lines = normalized
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const bullets = lines
-    .map((line) => line.match(/^(?:[-*•]|\d+[.)])\s+(.+)$/)?.[1])
-    .filter((line): line is string => Boolean(line));
-
-  let items = bullets;
-  if (!items.length) {
-    const proseLines = lines
-      .map((line) => line.replace(/^#{1,6}\s+/, ''))
-      .filter((line) => !/^(?:summary|changes|completed|tests?):?$/i.test(line));
-    const prose = proseLines.join(' ').replace(/\s+/g, ' ').trim();
-    const sentences = prose.split(/(?<=[.!?])\s+(?=[A-Z0-9`])/).filter(Boolean);
-    items = sentences.length > 1 ? sentences : proseLines;
-  }
-
-  const conciseItems = items
-    .map((item) => shortenSummaryItem(item))
-    .filter(Boolean)
-    .slice(0, CORNER_TURN_SUMMARY_MAX_ITEMS);
-  if (!conciseItems.length) return shortenSummaryItem(normalized, CORNER_TURN_SUMMARY_MAX_CHARS);
-
-  const summary =
-    conciseItems.length === 1
-      ? conciseItems[0]!
-      : conciseItems.map((item) => `- ${item}`).join('\n');
-  if (summary.length <= CORNER_TURN_SUMMARY_MAX_CHARS) return summary;
-  return shortenSummaryItem(summary, CORNER_TURN_SUMMARY_MAX_CHARS);
-}
-
 function relayRetryAfterMs(error: unknown): number {
   const seconds = [...String(error).matchAll(/retry in\s+(\d+(?:\.\d+)?)s/gi)].map((match) =>
     Number(match[1]),

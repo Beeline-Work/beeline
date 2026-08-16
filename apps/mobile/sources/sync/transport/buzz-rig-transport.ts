@@ -223,23 +223,6 @@ export class BuzzRigTransport implements RigTransport {
     return event.id;
   }
 
-  /** Publish a NIP-10 reply, optionally addressing the original Agent explicitly. */
-  async messageSubmitReply(
-    channelId: string,
-    text: string,
-    replyToId: string,
-    mentionAgent?: string,
-    attachments: AttachmentReference[] = [],
-  ): Promise<string> {
-    const client = await this.getClient();
-    const attachmentTags = buildAttachmentTags(attachments);
-    const event = await client.messageSubmit(channelId, text, {
-      ...(mentionAgent ? { mentionAgent } : {}),
-      extraTags: [['e', replyToId, '', 'reply'], ...attachmentTags],
-    });
-    return event.id;
-  }
-
   /** Respond to the agent's first mutating-tool request in a Room. */
   async respondToWritePermission(
     channelId: string,

@@ -1623,7 +1623,15 @@ export default function BuzzChat() {
       }
 
       if (item.corner) {
-        if (openedCornerIds.has(item.corner.subchannelId)) return null;
+        // The permission prompt is the live card while a corner is open. Once
+        // archived, always show the durable lifecycle card so its completion
+        // summary remains discoverable in the Room transcript.
+        if (
+          openedCornerIds.has(item.corner.subchannelId) &&
+          item.corner.status !== 'archived'
+        ) {
+          return null;
+        }
         // Prefer whichever pubkey is actually a registered agent: the
         // declared `agent` tag, or (if that misses) the event's own signer —
         // the same source the per-message transcript below resolves by, so
@@ -1688,6 +1696,9 @@ export default function BuzzChat() {
                   </Text>
                 )}
               </View>
+              {item.corner.status === 'archived' && Boolean(item.text.trim()) && (
+                <Text style={styles.cornerArchiveSummary}>{item.text.trim()}</Text>
+              )}
             </View>
             <View style={styles.openCornerAction}>
               <Text style={styles.openCornerText}>VIEW {CORNER_LABEL.toUpperCase()}</Text>
@@ -3653,6 +3664,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+  },
+  cornerArchiveSummary: {
+    ...Typography.default(),
+    marginTop: 7,
+    color: groknight.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
   },
   cornerPresenceDot: { ...Typography.default(), fontSize: 8 },
   cornerPresenceOnline: { color: groknight.accent },

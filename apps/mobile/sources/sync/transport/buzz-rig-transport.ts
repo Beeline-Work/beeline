@@ -147,13 +147,17 @@ export class BuzzRigTransport implements RigTransport {
   }
 
   /** Submit a message and return the signed event id for optimistic UI reconciliation. */
-  async messageSubmitWithEventId(input: MessageSubmitInput): Promise<string> {
+  async messageSubmitWithEventId(
+    input: MessageSubmitInput & { replyToEventId?: string },
+  ): Promise<string> {
     const client = await this.getClient();
     const attachmentTags = buildAttachmentTags(input.attachments ?? []);
+    const replyTags = input.replyToEventId ? [['e', input.replyToEventId, '', 'reply']] : [];
+    const extraTags = [...replyTags, ...attachmentTags];
     const event = await client.messageSubmit(
       input.sessionId,
       input.text,
-      attachmentTags.length ? { extraTags: attachmentTags } : undefined,
+      extraTags.length ? { extraTags } : undefined,
     );
     return event.id;
   }
@@ -164,12 +168,15 @@ export class BuzzRigTransport implements RigTransport {
     text: string,
     agentPubkey: string,
     attachments: AttachmentReference[] = [],
+    replyToEventId?: string,
   ): Promise<string> {
     const client = await this.getClient();
     const attachmentTags = buildAttachmentTags(attachments);
+    const replyTags = replyToEventId ? [['e', replyToEventId, '', 'reply']] : [];
+    const extraTags = [...replyTags, ...attachmentTags];
     const event = await client.messageSubmit(channelId, text, {
       mentionAgent: agentPubkey,
-      ...(attachmentTags.length ? { extraTags: attachmentTags } : {}),
+      ...(extraTags.length ? { extraTags } : {}),
     });
     return event.id;
   }

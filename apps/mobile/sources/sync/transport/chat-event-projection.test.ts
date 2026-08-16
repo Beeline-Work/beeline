@@ -92,6 +92,24 @@ describe('Buzz Room screen event projection', () => {
     expect(JSON.stringify(event.payload)).not.toContain('base64');
   });
 
+  it('projects a durable reply reference from its marked event tag', () => {
+    const event = raw(
+      'reply',
+      '@brisk-pilot I will fix that.',
+      [
+        ['p', agent],
+        ['e', 'original-event', '', 'reply'],
+      ],
+      3,
+    );
+
+    expect(projectChatEvent(event, viewer).message).toMatchObject({
+      id: 'reply',
+      replyToId: 'original-event',
+      text: '@brisk-pilot I will fix that.',
+    });
+  });
+
   it('drives and clears the Room thinking indicator from read-only agent turns', () => {
     const working = raw(
       'turn-working',

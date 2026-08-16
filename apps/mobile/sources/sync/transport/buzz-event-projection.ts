@@ -154,6 +154,7 @@ export type ChatDisplayMessage = {
   isUser: boolean;
   timestamp: number;
   pubkey?: string;
+  replyToId?: string;
   isMergeSummary?: boolean;
   isArchivedNotice?: boolean;
   isAgentActivity?: boolean;
@@ -281,6 +282,9 @@ export function projectChatEvent(
   const isPermissionResponse = eventHasTag(event, 't', 'buzz-write-permission-response');
   const isAgentTurn = eventHasTag(event, 't', 'agent-turn');
   const attachments = parseAttachmentTags(eventTags(event));
+  const replyToId = eventTags(event).find(
+    (tag) => tag[0] === 'e' && tag[1] && tag[3] === 'reply',
+  )?.[1];
 
   if (isAgentTurn) {
     const requestId = eventTagValue(event, 'request');
@@ -418,6 +422,7 @@ export function projectChatEvent(
       isUser: pubkey === viewerPubkey,
       timestamp: eventTimestamp(event),
       ...(pubkey ? { pubkey } : {}),
+      ...(replyToId ? { replyToId } : {}),
       ...(event.type === 'assistant_delta' ? { isAgentActivity: true } : {}),
       ...(eventActivity(event)?.length ? { activity: eventActivity(event) } : {}),
       ...(attachments.length ? { attachments } : {}),

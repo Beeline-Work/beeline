@@ -316,6 +316,30 @@ describe('Room-scoped agent presence transport', () => {
 });
 
 describe('Room-scoped Workspace membership', () => {
+  it('submits an ordinary reply with a marked event reference', async () => {
+    const identity = {
+      publicKey: 'a'.repeat(64),
+      secretKey: new Uint8Array(32).fill(1),
+      name: 'operator',
+    } as Identity;
+    const client = {
+      messageSubmit: vi.fn(async () => ({ id: 'event-1' })),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(
+      transport.messageSubmitWithEventId({
+        sessionId: 'room-1',
+        text: 'Thanks',
+        replyToEventId: 'original-event',
+      }),
+    ).resolves.toBe('event-1');
+    expect(client.messageSubmit).toHaveBeenCalledWith('room-1', 'Thanks', {
+      extraTags: [['e', 'original-event', '', 'reply']],
+    });
+  });
+
   it('sends @-mentioned Room messages with an address and no private request marker', async () => {
     const identity = {
       publicKey: 'a'.repeat(64),
@@ -333,10 +357,13 @@ describe('Room-scoped Workspace membership', () => {
         'room-1',
         '@Brisk Pilot fix the build',
         'agent-pubkey',
+        [],
+        'original-event',
       ),
     ).resolves.toBe('event-1');
     expect(client.messageSubmit).toHaveBeenCalledWith('room-1', '@Brisk Pilot fix the build', {
       mentionAgent: 'agent-pubkey',
+      extraTags: [['e', 'original-event', '', 'reply']],
     });
   });
 

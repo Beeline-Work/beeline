@@ -20,6 +20,8 @@ export interface RelayWsOptions {
   skipAuth?: boolean;
   connectTimeoutMs?: number;
   reconnectDelayMs?: number;
+  /** Idle-traffic keepalive cadence while connected (default 35s). */
+  keepaliveIntervalMs?: number;
 }
 
 function defaultWebSocket(): WebSocketConstructor {
@@ -49,6 +51,7 @@ function messageData(ev: unknown): string {
 export class RelayWs {
   private ws: WebSocketLike | null = null;
   private readonly handlers = new Set<MessageHandler>();
+  private readonly closeHandlers = new Set<() => void>();
   private readonly pendingAuth = new Map<
     string,
     { resolve: () => void; reject: (e: Error) => void }
@@ -58,6 +61,7 @@ export class RelayWs {
   private challenge: string | null = null;
   private connectPromise: Promise<void> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectAttempts = 0;
   private successfulConnections = 0;
   private readonly subscriptions = new Map<
@@ -68,7 +72,20 @@ export class RelayWs {
   constructor(private readonly opts: RelayWsOptions) {}
 
   get connected(): boolean {
-    return this.ws !== null && this.ws.readyState === 1 /* OPEN */ && (this.opts.skipAuth || this.authed);
+    return (
+      this.ws !== null && this.ws.readyState === 1 /* OPEN */ && (this.opts.skipAuth || this.authed)
+    );
+  }
+
+  private notifyClose(): void {
+    for (const handler of this.closeHandlers) {
+      try {
+        handler();
+      } catch {
+        /* close observers must not tear the socket */
+      }
+    }
+    this.closeHandlers.clear();
   }
 
   /** Open socket and complete NIP-42 AUTH when challenged. */
@@ -116,6 +133,7 @@ export class RelayWs {
           this.reconnectAttempts = 0;
           const reconnected = this.successfulConnections > 0;
           this.successfulConnections += 1;
+          this.startKeepalive();
           resolve();
           if (reconnected) this.resubscribeLiveRequests();
         }
@@ -204,6 +222,8 @@ export class RelayWs {
         this.authed = false;
         this.connectPromise = null;
         this.ws = null;
+        this.stopKeepalive();
+        this.notifyClose();
         if (!settled) finish(new Error('RelayWs closed before ready'));
         if (!this.closed) this.scheduleReconnect();
       };
@@ -257,6 +277,12 @@ export class RelayWs {
   onMessage(handler: MessageHandler): () => void {
     this.handlers.add(handler);
     return () => this.handlers.delete(handler);
+  }
+
+  /** Observe transport loss so long-lived clients can reconnect and re-subscribe. */
+  onClose(handler: () => void): () => void {
+    this.closeHandlers.add(handler);
+    return () => this.closeHandlers.delete(handler);
   }
 
   /** Publish an event over WS (`["EVENT", event]`). Resolves on OK true. */
@@ -322,6 +348,8 @@ export class RelayWs {
     this.connectPromise = null;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+    this.stopKeepalive();
+    this.notifyClose();
     try {
       this.ws?.close();
     } catch {
@@ -343,6 +371,35 @@ export class RelayWs {
         this.scheduleReconnect();
       });
     }, delay);
+  }
+
+  private startKeepalive(): void {
+    this.stopKeepalive();
+    const intervalMs = this.opts.keepaliveIntervalMs ?? 35_000;
+    this.keepaliveTimer = setInterval(() => this.sendKeepalive(), intervalMs);
+    this.keepaliveTimer.unref?.();
+  }
+
+  private stopKeepalive(): void {
+    if (this.keepaliveTimer) clearInterval(this.keepaliveTimer);
+    this.keepaliveTimer = null;
+  }
+
+  /**
+   * A no-op NIP-01 REQ/CLOSE round trip. Cloudflare's edge is documented to
+   * close a WS with no traffic in either direction for ~100s, independent of
+   * origin-side timeouts — this keeps bytes flowing on an otherwise-quiet
+   * subscription so a healthy Room doesn't get closed out from under it.
+   */
+  private sendKeepalive(): void {
+    if (!this.connected) return;
+    const subId = `keepalive-${Math.random().toString(36).slice(2, 10)}`;
+    try {
+      this.send(['REQ', subId, { kinds: [0], limit: 0 }]);
+      this.send(['CLOSE', subId]);
+    } catch {
+      /* a dead socket is already on its way to reconnecting */
+    }
   }
 
   /** Reissue every live REQ after authentication on a replacement socket. */

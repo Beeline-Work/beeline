@@ -16,6 +16,7 @@ import { mkdir, rm, writeFile, readFile, realpath, stat } from 'node:fs/promises
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
+import WebSocket from 'ws';
 import {
   AcpClient,
   isMutatingPermissionRequest,
@@ -187,6 +188,14 @@ export const ROOM_POLL_FAILURE_BACKOFF_CAP_MS = 5 * 60_000;
 
 /** A wedged ACP process must not occupy an interactive session for ten minutes. */
 export const ROOM_AGENT_PROMPT_TIMEOUT_MS = 60_000;
+
+/**
+ * Default cadence for the WS-push loop's low-rate maintenance/liveness tick
+ * (child steering, merge closure, and — for a Room with zero pushed events —
+ * the periodic connected-socket liveness refresh). Overridable per loop via
+ * `opts.pollMs`, which the push loop no longer uses for actual polling.
+ */
+export const ROOM_WS_MAINTENANCE_TICK_MS = 60_000;
 
 function relayRetryAfterMs(error: unknown): number {
   const seconds = [...String(error).matchAll(/retry in\s+(\d+(?:\.\d+)?)s/gi)].map((match) =>
@@ -745,6 +754,9 @@ export class Body {
   private agentRelay: RelayClient;
   private mergeWorkerRelay?: RelayClient;
   private pendingRoomTurns = new Map<string, PendingRoomTurn>();
+  /** Live authenticated Room sockets, retained only for teardown and recovery. */
+  private roomSockets = new Map<string, ReturnType<typeof createBuzzClient>>();
+  private disposed = false;
   private presenceGenerations = new Map<string, string>();
   private activeExchangeReplies = new Set<string>();
   private resolveNamedRepository?: (target: NamedRepositoryTarget) => Promise<BoundRepo>;
@@ -807,6 +819,7 @@ export class Body {
    * changes Room membership, gate authority, or repository state.
    */
   async forceRecoverRoom(channelId: string): Promise<void> {
+    this.roomSockets.get(channelId)?.disconnect();
     const affected = [...this.sessions.values()].filter(
       (session) => session.channelId === channelId || session.parentChannelId === channelId,
     );
@@ -1831,19 +1844,7 @@ export class Body {
   ): Promise<number> {
     const durableCursor = await this.durableState.cursor(tlcChannelId);
     const since = Math.max(this.requestCursors.get(tlcChannelId) ?? 0, durableCursor.createdAt);
-    const client = createBuzzClient({
-      baseUrl: this.config.relayBaseUrl,
-      ...(this.config.relayHost ? { host: this.config.relayHost } : {}),
-      identity: this.agentIdentity,
-    });
-    let roomParticipants: string[];
-    try {
-      roomParticipants = (await client.listMembers(tlcChannelId))
-        .map((member) => member.pubkey)
-        .filter((pubkey) => pubkey !== this.mergeWorkerIdentity?.publicKey);
-    } finally {
-      client.disconnect();
-    }
+    const roomParticipants = await this.roomParticipants(tlcChannelId);
     const events = await queryEventBacklog(
       {
         kinds: [9],
@@ -1852,6 +1853,40 @@ export class Body {
       },
       { query: this.agentRelay.queryEvents },
     );
+    return this.processChannelRequestEvents(
+      tlcChannelId,
+      boundRepo,
+      editPolicy,
+      events,
+      roomParticipants,
+      since,
+    );
+  }
+
+  private async roomParticipants(channelId: string): Promise<string[]> {
+    const client = createBuzzClient({
+      baseUrl: this.config.relayBaseUrl,
+      ...(this.config.relayHost ? { host: this.config.relayHost } : {}),
+      identity: this.agentIdentity,
+    });
+    try {
+      return (await client.listMembers(channelId))
+        .map((member) => member.pubkey)
+        .filter((pubkey) => pubkey !== this.mergeWorkerIdentity?.publicKey);
+    } finally {
+      client.disconnect();
+    }
+  }
+
+  /** Process HTTP backfill or a pushed WS event through the canonical Room handlers. */
+  private async processChannelRequestEvents(
+    tlcChannelId: string,
+    boundRepo: BoundRepo | undefined,
+    editPolicy: RoomEditPolicy,
+    events: NostrEvent[],
+    roomParticipants: string[],
+    since?: number,
+  ): Promise<number> {
     await this.durableState.enqueue(tlcChannelId, events);
     const pendingEvents = await this.durableState.pending(tlcChannelId);
     const authorAttributions = await this.roomAuthorAttributions(tlcChannelId, [
@@ -1859,7 +1894,7 @@ export class Body {
       ...pendingEvents.map((event) => event.pubkey),
     ]);
     let opened = 0;
-    let maxCreatedAt = since;
+    let maxCreatedAt = since ?? Math.max(this.requestCursors.get(tlcChannelId) ?? 0, 0);
 
     for (const event of pendingEvents) {
       maxCreatedAt = Math.max(maxCreatedAt, event.created_at);
@@ -2936,42 +2971,142 @@ export class Body {
     return merged;
   }
 
+  /**
+   * Keep a Room's request stream on one authenticated WS. HTTP is deliberately
+   * only a slow backstop: the subscription is the delivery path and reconnects
+   * from the durable per-Room cursor so a dropped socket cannot lose a turn.
+   */
+  private async runRoomPushLoop(
+    channelId: string,
+    boundRepo: BoundRepo | undefined,
+    editPolicy: RoomEditPolicy,
+    presence: ReturnType<typeof startAgentPresence>,
+    opts: { pollMs?: number; signal?: AbortSignal },
+    maintenance: () => Promise<void>,
+  ): Promise<void> {
+    const reconnectBackoff = new RoomPollBackoff(1_000);
+    while (!opts.signal?.aborted && !this.disposed) {
+      let client: ReturnType<typeof createBuzzClient> | undefined;
+      let unsubscribe: (() => void) | undefined;
+      let offClose: (() => void) | undefined;
+      let maintenanceTimer: ReturnType<typeof setInterval> | undefined;
+      try {
+        client = createBuzzClient({
+          baseUrl: this.config.relayBaseUrl,
+          ...(this.config.relayHost ? { host: this.config.relayHost } : {}),
+          wsUrl: this.config.relayWsUrl,
+          identity: this.agentIdentity,
+          WebSocketImpl: WebSocket,
+        });
+        await client.connect();
+        this.roomSockets.set(channelId, client);
+        const roomParticipants = await this.roomParticipants(channelId);
+        const durableCursor = await this.durableState.cursor(channelId);
+        const since = Math.max(this.requestCursors.get(channelId) ?? 0, durableCursor.createdAt);
+        let delivery = Promise.resolve();
+        unsubscribe = await client.sessionEventsSubscribe(
+          channelId,
+          (sessionEvent) => {
+            // A delivered event is itself the freshest possible liveness
+            // signal for this WS session — refresh immediately on receipt,
+            // not only once at subscribe time, so the supervisor's watchdog
+            // sees a continuously-delivering socket as continuously healthy
+            // instead of judging it stale purely by connect-time age.
+            this.onRoomPollSuccess?.(channelId);
+            delivery = delivery
+              .then(async () => {
+                await this.processChannelRequestEvents(
+                  channelId,
+                  boundRepo,
+                  editPolicy,
+                  [sessionEvent.event],
+                  roomParticipants,
+                );
+              })
+              .catch((error) =>
+                console.error(`[body] Room ${channelId} pushed event failed:`, error),
+              );
+          },
+          { since },
+        );
+        this.onRoomPollSuccess?.(channelId);
+        if (reconnectBackoff.recovered()) {
+          console.log(`[body] Room ${channelId} WS reconnected`);
+        }
+        await presence.setStatus('online');
+
+        // This is a belt-and-suspenders read, not the request loop. Starting
+        // it after the REQ is active keeps event delivery independent of HTTP.
+        void this.pollChannelRequests(channelId, boundRepo, editPolicy).catch((error) =>
+          console.error(`[body] Room ${channelId} WS backstop query failed:`, error),
+        );
+
+        // Child steering and merge closure stay as a low-rate maintenance
+        // safety net. Room request delivery above never waits for this timer.
+        // A quiet Room (no pushed events at all) still needs its liveness
+        // refreshed periodically here, gated on the socket actually being
+        // open, so the watchdog never mistakes silence for staleness while
+        // a genuinely dead socket still ages out and gets recovered.
+        void maintenance();
+        maintenanceTimer = setInterval(() => {
+          if (client?.socket?.connected) this.onRoomPollSuccess?.(channelId);
+          void maintenance();
+        }, opts.pollMs ?? ROOM_WS_MAINTENANCE_TICK_MS);
+        maintenanceTimer.unref?.();
+
+        await new Promise<void>((resolveWait) => {
+          // The signal can already be aborted by the time we get here (a slow
+          // connect/subscribe racing a supervisor-issued abort); an 'abort'
+          // listener added after the event already fired never runs, which
+          // would hang this Room's teardown forever.
+          if (opts.signal?.aborted) {
+            resolveWait();
+            return;
+          }
+          const finish = () => resolveWait();
+          offClose = client!.onSocketClose(finish);
+          opts.signal?.addEventListener('abort', finish, { once: true });
+        });
+        await delivery;
+        if (!opts.signal?.aborted) throw new Error('Room WebSocket closed');
+      } catch (error) {
+        if (opts.signal?.aborted || this.disposed) break;
+        const delayMs = reconnectBackoff.failed(error);
+        this.onRoomPollFailure?.(channelId, delayMs);
+        await presence.setStatus('offline');
+        console.error(`[body] Room WebSocket failed; reconnecting in ${delayMs}ms:`, error);
+        await this.waitForPoll(delayMs, opts.signal);
+      } finally {
+        if (maintenanceTimer) clearInterval(maintenanceTimer);
+        offClose?.();
+        unsubscribe?.();
+        client?.disconnect();
+        if (this.roomSockets.get(channelId) === client) this.roomSockets.delete(channelId);
+      }
+    }
+  }
+
   /** One long-running body loop owns request discovery, steering, and merge closure. */
   async runChannelLoop(
     tlcChannelId: string,
     boundRepo: BoundRepo,
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<void> {
-    const stopPresence = startAgentPresence(tlcChannelId, this.agentIdentity, undefined, (status) =>
-      this.onRoomPresence?.(tlcChannelId, status),
+    const stopPresence = startAgentPresence(
+      tlcChannelId,
+      this.agentIdentity,
+      undefined,
+      (status) => this.onRoomPresence?.(tlcChannelId, status),
+      'offline',
     );
     this.presenceGenerations.set(tlcChannelId, stopPresence.generationId);
     try {
       await this.assertRepositorySafety(tlcChannelId, boundRepo);
       await this.provision(tlcChannelId, boundRepo);
       if (boundRepo.repositoryKey) await this.restoreSubchannels(tlcChannelId, boundRepo);
-      const pollMs = opts.pollMs ?? 1_000;
-      const backoff = new RoomPollBackoff(pollMs);
-      while (!opts.signal?.aborted) {
-        let delayMs = pollMs;
-        let pollSucceeded = false;
-        try {
-          await this.pollChannelRequests(tlcChannelId, boundRepo);
-          pollSucceeded = true;
-          this.onRoomPollSuccess?.(tlcChannelId);
-          if (backoff.recovered()) await stopPresence.setStatus('online');
-        } catch (error) {
-          delayMs = backoff.failed(error);
-          this.onRoomPollFailure?.(tlcChannelId, delayMs);
-          await stopPresence.setStatus('offline');
-          console.error(
-            `[body] repository Room request poll failed; retrying in ${delayMs}ms:`,
-            error,
-          );
-        }
-        if (pollSucceeded) await this.pollRoomMaintenance(tlcChannelId);
-        await this.waitForPoll(delayMs, opts.signal);
-      }
+      await this.runRoomPushLoop(tlcChannelId, boundRepo, 'repository', stopPresence, opts, () =>
+        this.pollRoomMaintenance(tlcChannelId),
+      );
     } finally {
       this.presenceGenerations.delete(tlcChannelId);
       await stopPresence();
@@ -2984,37 +3119,22 @@ export class Body {
     editPolicy: Exclude<RoomEditPolicy, 'repository'>,
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<void> {
-    const stopPresence = startAgentPresence(channelId, this.agentIdentity, undefined, (status) =>
-      this.onRoomPresence?.(channelId, status),
+    const stopPresence = startAgentPresence(
+      channelId,
+      this.agentIdentity,
+      undefined,
+      (status) => this.onRoomPresence?.(channelId, status),
+      'offline',
     );
     this.presenceGenerations.set(channelId, stopPresence.generationId);
     try {
-      const pollMs = opts.pollMs ?? 3_000;
       await this.provision(channelId, undefined, editPolicy);
       // A DM must not revive historical borrowed-repository corners. A normal
       // repo-less Room may resume only its already-approved named-repo corners.
       if (editPolicy === 'named-repository') await this.restoreSubchannels(channelId);
-      const backoff = new RoomPollBackoff(pollMs);
-      while (!opts.signal?.aborted) {
-        let delayMs = pollMs;
-        let pollSucceeded = false;
-        try {
-          await this.pollChannelRequests(channelId, undefined, editPolicy);
-          pollSucceeded = true;
-          this.onRoomPollSuccess?.(channelId);
-          if (backoff.recovered()) await stopPresence.setStatus('online');
-        } catch (error) {
-          delayMs = backoff.failed(error);
-          this.onRoomPollFailure?.(channelId, delayMs);
-          await stopPresence.setStatus('offline');
-          console.error(
-            `[body] read-only Room request poll failed; retrying in ${delayMs}ms:`,
-            error,
-          );
-        }
-        if (pollSucceeded) await this.pollRoomMaintenance(channelId);
-        await this.waitForPoll(delayMs, opts.signal);
-      }
+      await this.runRoomPushLoop(channelId, undefined, editPolicy, stopPresence, opts, () =>
+        this.pollRoomMaintenance(channelId),
+      );
     } finally {
       this.presenceGenerations.delete(channelId);
       await stopPresence();
@@ -3029,8 +3149,12 @@ export class Body {
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<void> {
     if (!boundRepo.repositoryKey) throw new Error('paired Room is missing its repository key');
-    const stopPresence = startAgentPresence(channelId, this.agentIdentity, undefined, (status) =>
-      this.onRoomPresence?.(channelId, status),
+    const stopPresence = startAgentPresence(
+      channelId,
+      this.agentIdentity,
+      undefined,
+      (status) => this.onRoomPresence?.(channelId, status),
+      'offline',
     );
     this.presenceGenerations.set(channelId, stopPresence.generationId);
     try {
@@ -3048,33 +3172,13 @@ export class Body {
             })
           : undefined;
 
-      const pollMs = opts.pollMs ?? 3_000;
       await this.provision(channelId, boundRepo);
       await this.restoreSubchannels(channelId, boundRepo);
-      const backoff = new RoomPollBackoff(pollMs);
-      while (!opts.signal?.aborted) {
-        // The Workspace supervisor owns current-role discovery. It aborts this
-        // loop when the Room disappears from the agent's member/admin projection,
-        // then waits for accepted turns to drain before disposing the Body.
-        let delayMs = pollMs;
-        let pollSucceeded = false;
-        try {
-          await this.pollChannelRequests(channelId, boundRepo);
-          pollSucceeded = true;
-          this.onRoomPollSuccess?.(channelId);
-          if (backoff.recovered()) await stopPresence.setStatus('online');
-        } catch (error) {
-          delayMs = backoff.failed(error);
-          this.onRoomPollFailure?.(channelId, delayMs);
-          await stopPresence.setStatus('offline');
-          console.error(
-            `[body] repository Room request poll failed; retrying in ${delayMs}ms:`,
-            error,
-          );
-        }
-        if (pollSucceeded) await this.pollRoomMaintenance(channelId, mergeGate);
-        await this.waitForPoll(delayMs, opts.signal);
-      }
+      // The Workspace supervisor owns current-role discovery. It aborts this
+      // loop when the Room disappears from the agent's member/admin projection.
+      await this.runRoomPushLoop(channelId, boundRepo, 'repository', stopPresence, opts, () =>
+        this.pollRoomMaintenance(channelId, mergeGate),
+      );
     } finally {
       this.presenceGenerations.delete(channelId);
       await stopPresence();
@@ -3754,6 +3858,9 @@ export class Body {
 
   /** Dispose all sessions. */
   async dispose(): Promise<void> {
+    this.disposed = true;
+    for (const socket of this.roomSockets.values()) socket.disconnect();
+    this.roomSockets.clear();
     await this.waitForAgentTasks();
     for (const [, session] of this.sessions) {
       if (session.unsubscribeActivity) session.unsubscribeActivity();

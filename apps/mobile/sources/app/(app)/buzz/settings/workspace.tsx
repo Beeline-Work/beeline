@@ -1,7 +1,6 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   ScrollView,
-  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -15,26 +14,17 @@ import {
   TAG_COMMUNITY,
   TAG_DIRECT_MESSAGE,
   TAG_PARENT,
-  decodeNpub,
   tagValue,
   tagValues,
   type BuzzClient,
   type Community,
-  type CommunityInviteRecord,
-  type CommunityMember,
-  type CommunityRole,
-  type Identity,
-  type PersonProfile,
 } from '@beeline/buzz-client';
 
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
-import { buildCommunityInviteUrl } from '@/buzz/community-invite';
 import { groknight } from '@/buzz/groknight';
-import { shortMemberNpub } from '@/buzz/member-display';
 import { ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { HullSurface, MonoButton, PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
-import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { WorkspaceAvatar } from '@/components/buzz/WorkspaceAvatar';
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
@@ -48,17 +38,6 @@ type WorkspaceRoomSetting = {
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
-}
-
-export function normalizeMemberPubkey(value: string): string | null {
-  const candidate = value.trim();
-  if (/^[0-9a-f]{64}$/i.test(candidate)) return candidate.toLowerCase();
-  if (!candidate.toLowerCase().startsWith('npub1')) return null;
-  try {
-    return decodeNpub(candidate.toLowerCase());
-  } catch {
-    return null;
-  }
 }
 
 async function loadWorkspaceRooms(
@@ -98,74 +77,26 @@ async function loadWorkspaceRooms(
   return rooms.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function roleLabel(role: CommunityRole): string {
-  return role.toUpperCase();
-}
-
 export default function WorkspaceSettings() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ communityId?: string | string[] }>();
   const communityId = firstParam(params.communityId);
-  const [identity, setIdentity] = useState<Identity | null>(null);
   const [client, setClient] = useState<BuzzClient | null>(null);
-  const [relayUrl, setRelayUrl] = useState('');
   const [community, setCommunity] = useState<Community | null>(null);
-  const [members, setMembers] = useState<CommunityMember[]>([]);
-  const [profiles, setProfiles] = useState<PersonProfile[]>([]);
-  const [invites, setInvites] = useState<CommunityInviteRecord[]>([]);
   const [rooms, setRooms] = useState<WorkspaceRoomSetting[]>([]);
   const [workspaceName, setWorkspaceName] = useState('');
-  const [newMember, setNewMember] = useState('');
-  const [readyInviteUrls, setReadyInviteUrls] = useState<Record<string, string>>({});
   const [workingKey, setWorkingKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const actorRole = useMemo(
-    () => members.find((member) => member.pubkey === identity?.publicKey)?.role ?? null,
-    [identity?.publicKey, members],
-  );
-  const canManageWorkspace = actorRole === 'owner' || actorRole === 'admin';
-  const profileByPubkey = useMemo(
-    () => new Map(profiles.map((profile) => [profile.pubkey, profile])),
-    [profiles],
-  );
-
-  const reloadMembers = useCallback(
-    async (activeClient: BuzzClient, activeCommunityId: string) => {
-      const [allMembers, agents] = await Promise.all([
-        activeClient.communityMembers(activeCommunityId),
-        activeClient.listAgents(activeCommunityId),
-      ]);
-      const agentPubkeys = new Set(agents.map((agent) => agent.pubkey));
-      const nextMembers = allMembers.filter((member) => !agentPubkeys.has(member.pubkey));
-      const nextProfiles = await activeClient.listPersonProfiles(
-        activeCommunityId,
-        nextMembers.map((member) => member.pubkey),
-      );
-      setMembers(nextMembers);
-      setProfiles(nextProfiles);
-    },
-    [],
-  );
-
-  const reloadInvites = useCallback(
-    async (activeClient: BuzzClient, activeCommunityId: string) => {
-      setInvites(await activeClient.listCommunityInvites(activeCommunityId));
-    },
-    [],
-  );
+  const canManageWorkspace = community?.viewerRole === 'owner' || community?.viewerRole === 'admin';
 
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
       setLoading(true);
-      setIdentity(null);
       setClient(null);
       setCommunity(null);
-      setMembers([]);
-      setProfiles([]);
-      setInvites([]);
       setRooms([]);
       setError(null);
       void (async () => {
@@ -183,37 +114,23 @@ export default function WorkspaceSettings() {
           const currentRelayUrl = await getEffectiveRelayUrl();
           const transport = new BuzzRigTransport(currentIdentity, currentRelayUrl);
           const currentClient = await transport.ensureClient();
-          const [nextCommunity, allMembers, agents] = await Promise.all([
+          const [nextCommunity, allMembers] = await Promise.all([
             currentClient.getCommunity(communityId),
             currentClient.communityMembers(communityId),
-            currentClient.listAgents(communityId),
           ]);
           if (!nextCommunity) throw new Error('Workspace not found.');
-          const nextActorRole = allMembers.find(
+          const viewerRole = allMembers.find(
             (member) => member.pubkey === currentIdentity.publicKey,
           )?.role;
-          const agentPubkeys = new Set(agents.map((agent) => agent.pubkey));
-          const nextMembers = allMembers.filter((member) => !agentPubkeys.has(member.pubkey));
+          const scopedCommunity = { ...nextCommunity, ...(viewerRole ? { viewerRole } : {}) };
           if (cancelled) return;
-          setIdentity(currentIdentity);
           setClient(currentClient);
-          setRelayUrl(currentRelayUrl);
-          setCommunity(nextCommunity);
-          setWorkspaceName(nextCommunity.name);
-          setMembers(nextMembers);
-          if (nextActorRole !== 'owner' && nextActorRole !== 'admin') return;
+          setCommunity(scopedCommunity);
+          setWorkspaceName(scopedCommunity.name);
+          if (viewerRole !== 'owner' && viewerRole !== 'admin') return;
 
-          const [nextProfiles, nextInvites, nextRooms] = await Promise.all([
-            currentClient.listPersonProfiles(
-              communityId,
-              nextMembers.map((member) => member.pubkey),
-            ),
-            currentClient.listCommunityInvites(communityId),
-            loadWorkspaceRooms(currentClient, communityId, currentIdentity.publicKey),
-          ]);
+          const nextRooms = await loadWorkspaceRooms(currentClient, communityId, currentIdentity.publicKey);
           if (!cancelled) {
-            setProfiles(nextProfiles);
-            setInvites(nextInvites);
             setRooms(nextRooms);
           }
         } catch (caught) {
@@ -234,7 +151,7 @@ export default function WorkspaceSettings() {
     setError(null);
     try {
       const updated = await client.renameCommunity(communityId, workspaceName);
-      setCommunity(updated);
+      setCommunity((current) => ({ ...updated, ...(current?.viewerRole ? { viewerRole: current.viewerRole } : {}) }));
       setWorkspaceName(updated.name);
     } catch (caught) {
       setError(`Could not rename ${WORKSPACE_LABEL}: ${String(caught)}`);
@@ -250,7 +167,8 @@ export default function WorkspaceSettings() {
     try {
       const avatar = await pickAndUploadAvatar(client);
       if (!avatar) return;
-      setCommunity(await client.setCommunityAvatar(communityId, avatar));
+      const updated = await client.setCommunityAvatar(communityId, avatar);
+      setCommunity((current) => ({ ...updated, ...(current?.viewerRole ? { viewerRole: current.viewerRole } : {}) }));
     } catch (caught) {
       setError(`Could not set ${WORKSPACE_LABEL} picture: ${String(caught)}`);
     } finally {
@@ -263,7 +181,8 @@ export default function WorkspaceSettings() {
     setWorkingKey('picture');
     setError(null);
     try {
-      setCommunity(await client.setCommunityAvatar(communityId, ''));
+      const updated = await client.setCommunityAvatar(communityId, '');
+      setCommunity((current) => ({ ...updated, ...(current?.viewerRole ? { viewerRole: current.viewerRole } : {}) }));
     } catch (caught) {
       setError(`Could not reset ${WORKSPACE_LABEL} picture: ${String(caught)}`);
     } finally {
@@ -277,7 +196,8 @@ export default function WorkspaceSettings() {
       setWorkingKey('visibility');
       setError(null);
       try {
-        setCommunity(await client.setCommunityVisibility(communityId, visibility));
+        const updated = await client.setCommunityVisibility(communityId, visibility);
+        setCommunity((current) => ({ ...updated, ...(current?.viewerRole ? { viewerRole: current.viewerRole } : {}) }));
       } catch (caught) {
         setError(`Could not change ${WORKSPACE_LABEL} visibility: ${String(caught)}`);
       } finally {
@@ -285,105 +205,6 @@ export default function WorkspaceSettings() {
       }
     },
     [client, community?.visibility, communityId],
-  );
-
-  const addWorkspaceMember = useCallback(async () => {
-    if (!client || !communityId) return;
-    const pubkey = normalizeMemberPubkey(newMember);
-    if (!pubkey) {
-      setError('Enter a valid npub or 64-character public key.');
-      return;
-    }
-    setWorkingKey(`member-${pubkey}`);
-    setError(null);
-    try {
-      if (await client.isAgentIdentity(pubkey)) {
-        throw new Error('Use Manage Agents for agent identities.');
-      }
-      await client.addMember(communityId, pubkey, 'member');
-      await client.waitUntilMember(communityId, pubkey);
-      setNewMember('');
-      await reloadMembers(client, communityId);
-    } catch (caught) {
-      setError(`Could not add member: ${String(caught)}`);
-    } finally {
-      setWorkingKey(null);
-    }
-  }, [client, communityId, newMember, reloadMembers]);
-
-  const setWorkspaceMemberRole = useCallback(
-    async (pubkey: string, role: CommunityRole) => {
-      if (!client || !communityId) return;
-      setWorkingKey(`member-${pubkey}`);
-      setError(null);
-      try {
-        await client.addMember(communityId, pubkey, role);
-        await client.waitUntilMemberRole(communityId, pubkey, role);
-        await reloadMembers(client, communityId);
-      } catch (caught) {
-        setError(`Could not change member role: ${String(caught)}`);
-      } finally {
-        setWorkingKey(null);
-      }
-    },
-    [client, communityId, reloadMembers],
-  );
-
-  const removeWorkspaceMember = useCallback(
-    async (pubkey: string) => {
-      if (!client || !communityId) return;
-      setWorkingKey(`member-${pubkey}`);
-      setError(null);
-      try {
-        await client.removeMember(communityId, pubkey);
-        await client.waitUntilNotMember(communityId, pubkey);
-        await reloadMembers(client, communityId);
-      } catch (caught) {
-        setError(`Could not remove member: ${String(caught)}`);
-      } finally {
-        setWorkingKey(null);
-      }
-    },
-    [client, communityId, reloadMembers],
-  );
-
-  const createWorkspaceInvite = useCallback(async () => {
-    if (!client || !communityId || !relayUrl) return;
-    setWorkingKey('invite-new');
-    setError(null);
-    try {
-      const invite = await client.createInvite(communityId);
-      const url = buildCommunityInviteUrl(invite.token, relayUrl);
-      setReadyInviteUrls((current) => ({ ...current, [invite.tokenHash]: url }));
-      await reloadInvites(client, communityId);
-      await Share.share({ message: url });
-    } catch (caught) {
-      setError(`Could not create invite: ${String(caught)}`);
-    } finally {
-      setWorkingKey(null);
-    }
-  }, [client, communityId, relayUrl, reloadInvites]);
-
-  const revokeWorkspaceInvite = useCallback(
-    async (tokenHash: string) => {
-      if (!client || !communityId) return;
-      setWorkingKey(`invite-${tokenHash}`);
-      setError(null);
-      try {
-        await client.revokeCommunityInvite(communityId, tokenHash);
-        setReadyInviteUrls((current) => {
-          const next = { ...current };
-          delete next[tokenHash];
-          return next;
-        });
-        await reloadInvites(client, communityId);
-      } catch (caught) {
-        setError(`Could not revoke invite: ${String(caught)}`);
-      } finally {
-        setWorkingKey(null);
-      }
-    },
-    [client, communityId, reloadInvites],
   );
 
   const changeRoomVisibility = useCallback(
@@ -518,128 +339,21 @@ export default function WorkspaceSettings() {
             </View>
           </View>
 
-          <View style={styles.section} testID="workspace-members-settings">
-            <Text style={styles.sectionLabel}>MEMBERS & ROLES</Text>
-            <View style={styles.addMemberRow}>
-              <TextInput
-                autoCapitalize="none"
-                autoCorrect={false}
-                onChangeText={setNewMember}
-                onSubmitEditing={() => void addWorkspaceMember()}
-                placeholder="npub1… or public key"
-                placeholderTextColor={groknight.dim}
-                style={[styles.input, styles.memberInput]}
-                value={newMember}
-              />
-              <TouchableOpacity
-                disabled={!newMember.trim() || workingKey?.startsWith('member-')}
-                onPress={() => void addWorkspaceMember()}
-                style={styles.compactAction}
-                testID="workspace-member-add"
-              >
-                <Text style={styles.compactActionText}>ADD</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.memberList}>
-              {members.map((member) => {
-                const profile = profileByPubkey.get(member.pubkey);
-                const immutableOwner = member.pubkey === community?.ownerPubkey;
-                const isSelf = member.pubkey === identity?.publicKey;
-                const actorCanChange =
-                  !immutableOwner &&
-                  !isSelf &&
-                  (actorRole === 'owner' || (actorRole === 'admin' && member.role === 'member'));
-                return (
-                  <View key={member.pubkey} style={styles.memberRow}>
-                    <PersonAvatar
-                      avatarUrl={profile?.avatar}
-                      name={profile?.name ?? shortMemberNpub(member.pubkey)}
-                      pubkey={member.pubkey}
-                      size={38}
-                    />
-                    <View style={styles.memberCopy}>
-                      <Text numberOfLines={1} style={styles.memberName}>
-                        {profile?.name ?? shortMemberNpub(member.pubkey)}
-                        {isSelf ? ' (you)' : ''}
-                      </Text>
-                      <Text numberOfLines={1} style={styles.memberHandle}>
-                        {profile?.handle ? `@${profile.handle}` : shortMemberNpub(member.pubkey)}
-                      </Text>
-                      <View style={styles.roleRow}>
-                        {(['owner', 'admin', 'member'] as const).map((role) => {
-                          const selected = member.role === role;
-                          const allowed = actorCanChange && (actorRole === 'owner' || role !== 'owner');
-                          return (
-                            <TouchableOpacity
-                              accessibilityState={{ selected, disabled: !allowed }}
-                              disabled={!allowed || selected || workingKey === `member-${member.pubkey}`}
-                              key={role}
-                              onPress={() => void setWorkspaceMemberRole(member.pubkey, role)}
-                              style={[styles.roleButton, selected && styles.roleButtonSelected]}
-                              testID={`workspace-member-${member.pubkey}-${role}`}
-                            >
-                              <Text style={[styles.roleText, selected && styles.roleTextSelected]}>
-                                {roleLabel(role)}
-                              </Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </View>
-                    </View>
-                    {actorCanChange && (
-                      <TouchableOpacity
-                        accessibilityLabel={`Remove ${profile?.name ?? shortMemberNpub(member.pubkey)}`}
-                        disabled={workingKey === `member-${member.pubkey}`}
-                        onPress={() => void removeWorkspaceMember(member.pubkey)}
-                        style={styles.removeButton}
-                        testID={`workspace-member-${member.pubkey}-remove`}
-                      >
-                        <Text style={styles.removeText}>×</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                );
-              })}
-            </View>
-          </View>
-
-          <View style={styles.section} testID="workspace-invites-settings">
-            <Text style={styles.sectionLabel}>INVITES</Text>
+          <View style={styles.section} testID="workspace-members-link">
+            <Text style={styles.sectionLabel}>MEMBERS</Text>
             <Text style={styles.sectionBody}>
-              Links are one-purpose credentials. Revoke a link when it should stop working.
+              Invite people, connect agents, and manage member roles in one place.
             </Text>
             <MonoButton
-              label="Create invite link"
-              loading={workingKey === 'invite-new'}
-              onPress={() => void createWorkspaceInvite()}
+              label="Open members"
+              onPress={() =>
+                router.push(
+                  { pathname: '/buzz/members', params: { communityId } } as unknown as Href,
+                )
+              }
               style={styles.primaryAction}
+              testID="open-members"
             />
-            {invites.map((invite) => (
-              <View key={invite.tokenHash} style={styles.inviteRow}>
-                <View style={styles.settingCopy}>
-                  <Text style={styles.inviteTitle}>INVITE · {invite.tokenHash.slice(0, 10)}</Text>
-                  <Text style={styles.inviteMeta}>
-                    Expires {new Date(invite.expiresAt * 1000).toLocaleDateString()}
-                  </Text>
-                </View>
-                {readyInviteUrls[invite.tokenHash] && (
-                  <TouchableOpacity
-                    onPress={() => void Share.share({ message: readyInviteUrls[invite.tokenHash]! })}
-                    style={styles.textButton}
-                  >
-                    <Text style={styles.textButtonLabel}>SHARE</Text>
-                  </TouchableOpacity>
-                )}
-                <TouchableOpacity
-                  disabled={workingKey === `invite-${invite.tokenHash}`}
-                  onPress={() => void revokeWorkspaceInvite(invite.tokenHash)}
-                  style={styles.textButton}
-                  testID={`workspace-invite-${invite.tokenHash}-revoke`}
-                >
-                  <Text style={styles.textButtonLabel}>REVOKE</Text>
-                </TouchableOpacity>
-              </View>
-            ))}
           </View>
 
           <View style={styles.section} testID="channel-visibility-settings">
@@ -655,14 +369,6 @@ export default function WorkspaceSettings() {
                 style={styles.textButton}
               >
                 <Text style={styles.textButtonLabel}>OPEN ROOMS</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() =>
-                  router.push({ pathname: '/buzz/agents', params: { communityId } } as Href)
-                }
-                style={styles.textButton}
-              >
-                <Text style={styles.textButtonLabel}>MANAGE AGENTS</Text>
               </TouchableOpacity>
             </View>
             {rooms.map((room) => (

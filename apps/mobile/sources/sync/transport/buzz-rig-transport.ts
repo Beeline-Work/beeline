@@ -288,6 +288,14 @@ export class BuzzRigTransport implements RigTransport {
     });
   }
 
+  /** Close a corner outright: the body archives the subchannel (also cancels any active turn). */
+  async closeCorner(subchannelId: ChannelId): Promise<void> {
+    const client = await this.getClient();
+    await client.messageSubmit(subchannelId, 'Close this corner.', {
+      extraTags: [['t', 'buzz-corner-close']],
+    });
+  }
+
   // ── Realtime + permissions (P1: subscribe + backfill) ──────────────────
 
   /** Resolve only once relay delivery is installed, so callers can backfill without a race gap. */
@@ -393,6 +401,62 @@ export class BuzzRigTransport implements RigTransport {
       })
       .catch((error) => {
         console.warn(`BuzzRigTransport: agentPresenceSubscribe(${channelId}) failed:`, error);
+      });
+
+    const unsubscribe = () => {
+      cancelled = true;
+      stopReadySubscription?.();
+    };
+    this.subscriptions.set(subscriptionKey, unsubscribe);
+    return unsubscribe;
+  }
+
+  /** Read the current live agent reply draft (parameterized-replaceable), if any. */
+  async agentDraftBackfill(channelId: string): Promise<SessionEvent[]> {
+    const client = await this.getClient();
+    const buzzEvents = await client.agentDraftBackfill(channelId);
+    return buzzEvents.map(toRigEvent);
+  }
+
+  /** Subscribe only to this Room's live agent reply draft, isolated from chat backfill. */
+  async agentDraftSubscribeReady(
+    channelId: string,
+    handler: (event: SessionEvent) => void,
+  ): Promise<() => void> {
+    const subscriptionKey = `draft:${channelId}`;
+    const client = await this.getClient();
+    const relayUnsubscribe = await client.agentDraftSubscribe(channelId, (event) => {
+      handler(toRigEvent(event));
+    });
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      relayUnsubscribe();
+      if (this.subscriptions.get(subscriptionKey) === stop) {
+        this.subscriptions.delete(subscriptionKey);
+      }
+    };
+    this.subscriptions.set(subscriptionKey, stop);
+    return stop;
+  }
+
+  /** Subscribe only to this Room's live agent reply draft, isolated from chat backfill. */
+  agentDraftSubscribe(channelId: string, handler: (event: SessionEvent) => void): () => void {
+    const subscriptionKey = `draft:${channelId}`;
+    let stopReadySubscription: (() => void) | undefined;
+    let cancelled = false;
+
+    this.agentDraftSubscribeReady(channelId, handler)
+      .then((stop) => {
+        if (cancelled) {
+          stop();
+          return;
+        }
+        stopReadySubscription = stop;
+      })
+      .catch((error) => {
+        console.warn(`BuzzRigTransport: agentDraftSubscribe(${channelId}) failed:`, error);
       });
 
     const unsubscribe = () => {

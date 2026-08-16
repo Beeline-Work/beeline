@@ -106,6 +106,59 @@ describe('HTTP bridge NIP-98 auth', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('retries transient HTTP failures on queryEvents before succeeding', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('bad gateway', { status: 502 }))
+      .mockResolvedValueOnce(new Response('unavailable', { status: 503 }))
+      .mockResolvedValueOnce(new Response('[]', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const querying = queryEvents(opts, [{ kinds: [1] }], identity.publicKey);
+    const result = expect(querying).resolves.toEqual([]);
+    await vi.runAllTimersAsync();
+    await result;
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('retries queryEvents network errors and attempt timeouts before succeeding', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockImplementationOnce(
+        async (_input: string | URL | Request, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              'abort',
+              () => reject(new DOMException('timed out', 'AbortError')),
+              { once: true },
+            );
+          }),
+      )
+      .mockResolvedValueOnce(new Response('[]', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const querying = queryEvents(opts, [{ kinds: [1] }], identity.publicKey);
+    const result = expect(querying).resolves.toEqual([]);
+    await vi.runAllTimersAsync();
+    await result;
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry a non-transient queryEvents rejection', async () => {
+    const fetchMock = vi.fn(async () => new Response('unauthorized', { status: 401 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(queryEvents(opts, [{ kinds: [1] }], identity.publicKey)).rejects.toThrow(
+      'HTTP 401',
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('authenticates query and publish against their exact request URLs', async () => {
     const requests: Array<{ input: string; init?: RequestInit }> = [];
     vi.stubGlobal(

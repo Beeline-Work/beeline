@@ -14,7 +14,9 @@ import { publishEvent } from '@beeline/gate';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import {
   AGENT_PRESENCE_HEARTBEAT_MS,
+  KIND_AGENT_DRAFT,
   KIND_AGENT_PRESENCE,
+  TAG_AGENT_DRAFT,
   TAG_AGENT_PRESENCE,
   buildAttachmentTags,
   type AgentPresenceStatus,
@@ -25,6 +27,9 @@ import { sanitizeActivityUpdate } from './attachments.js';
 export const ACTIVITY_TAG = 'agent-activity';
 export const AGENT_MESSAGE_TAG = 'agent-message';
 export const AGENT_TURN_TAG = 'agent-turn';
+/** Coalescing window for live draft-text publishes — bounds relay write rate
+ *  regardless of ACP chunk frequency (mirrors the activity batch's quota concern). */
+export const AGENT_DRAFT_FLUSH_MS = 250;
 
 /**
  * ACP tool-call kinds that are always load-bearing: they change the worktree
@@ -304,6 +309,91 @@ export async function postAgentMessage(
     buildAgentMessage(channelId, owner, message, replyTo, attachments, extraTags),
     owner,
   );
+}
+
+/**
+ * Publish the live, growing text of an in-flight assistant reply. Parameterized
+ * -replaceable (same convention as `#t=agent-presence`) so relay storage and
+ * write volume stay bounded to one current record per channel no matter how
+ * long the reply grows or how many deltas the ACP session emits.
+ */
+export async function postAgentDraft(
+  channelId: string,
+  owner: Identity,
+  sessionId: string,
+  requestId: string,
+  text: string,
+  createdAt = Math.floor(Date.now() / 1000),
+): Promise<void> {
+  const event: NostrEvent = signEvent(
+    {
+      pubkey: owner.publicKey,
+      created_at: createdAt,
+      kind: KIND_AGENT_DRAFT,
+      tags: [
+        ['d', `${TAG_AGENT_DRAFT}:${channelId}`],
+        ['h', channelId],
+        ['t', TAG_AGENT_DRAFT],
+        ['agent', owner.publicKey],
+        ['session', sessionId],
+        ['request', requestId],
+      ],
+      content: text,
+    },
+    owner.secretKey,
+  );
+  await publishEvent(event, owner);
+}
+
+export interface DraftStreamer {
+  /** Feed the latest accumulated text as it grows. Safe to call at any rate. */
+  onChunk(fullTextSoFar: string): void;
+  /** Flush any buffered text once the turn settles (success, failure, or timeout). */
+  finish(): Promise<void>;
+}
+
+/**
+ * Coalesce `AcpClient.sessionPrompt`'s per-delta callback into a bounded-rate
+ * replaceable publish, so a long or fast-streaming reply cannot flood the
+ * per-pubkey relay quota the way a naive per-token write would.
+ */
+export function createDraftStreamer(
+  channelId: string,
+  owner: Identity,
+  sessionId: string,
+  requestId: string,
+  flushMs = AGENT_DRAFT_FLUSH_MS,
+): DraftStreamer {
+  let latest = '';
+  let published = '';
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let inflight = Promise.resolve();
+  // A relay's NIP-33 tie-break is by `created_at` (then implementation-defined
+  // for exact ties); streaming can easily flush several times inside one wall
+  // -clock second, so bump strictly rather than reusing `Date.now()` — the
+  // same fix `startAgentPresence` uses for its heartbeat.
+  let lastCreatedAt = 0;
+  const flush = () => {
+    timer = undefined;
+    if (latest === published) return;
+    published = latest;
+    const createdAt = Math.max(Math.floor(Date.now() / 1_000), lastCreatedAt + 1);
+    lastCreatedAt = createdAt;
+    inflight = inflight
+      .then(() => postAgentDraft(channelId, owner, sessionId, requestId, published, createdAt))
+      .catch((error) => console.error('[body] agent draft publish failed:', error));
+  };
+  return {
+    onChunk(fullTextSoFar) {
+      latest = fullTextSoFar;
+      timer ??= setTimeout(flush, flushMs);
+    },
+    async finish() {
+      if (timer) clearTimeout(timer);
+      flush();
+      await inflight;
+    },
+  };
 }
 
 /** Publish the read-only Room turn lifecycle used by the thinking indicator. */

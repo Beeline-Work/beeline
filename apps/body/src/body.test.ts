@@ -682,7 +682,12 @@ describe('Room poll resilience', () => {
       await vi.advanceTimersByTimeAsync(1);
       await rejection;
 
-      expect(sessionPrompt).toHaveBeenCalledWith('hung-session', 'hello', ROOM_AGENT_PROMPT_TIMEOUT_MS);
+      expect(sessionPrompt).toHaveBeenCalledWith(
+        'hung-session',
+        'hello',
+        ROOM_AGENT_PROMPT_TIMEOUT_MS,
+        undefined,
+      );
       expect(sessionCancel).toHaveBeenCalledWith('hung-session');
       expect(suspend).toHaveBeenCalledOnce();
       expect(scheduler.snapshot().busy).toBe(0);
@@ -1101,6 +1106,7 @@ describe('Room conversation and permission-gated work intent', () => {
       'readonly-session',
       expect.stringContaining("Hey, what's up?"),
       ROOM_AGENT_PROMPT_TIMEOUT_MS,
+      expect.any(Function),
     );
     expect(body.listSessions()).toHaveLength(1);
     expect(published).toHaveLength(3);

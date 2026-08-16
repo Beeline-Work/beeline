@@ -61,7 +61,13 @@ import {
   setCommunityVisibility,
 } from './community.js';
 import { publishEvent, queryEvents, type HttpBridgeOptions } from './http.js';
-import { KIND_AGENT_PRESENCE, KIND_STREAM_MESSAGE, TAG_AGENT_PRESENCE } from './kinds.js';
+import {
+  KIND_AGENT_DRAFT,
+  KIND_AGENT_PRESENCE,
+  KIND_STREAM_MESSAGE,
+  TAG_AGENT_DRAFT,
+  TAG_AGENT_PRESENCE,
+} from './kinds.js';
 import {
   getGlobalPersonProfile,
   getPersonProfile,
@@ -639,6 +645,48 @@ export class BuzzClient {
         {
           kinds: [KIND_AGENT_PRESENCE],
           '#d': [`${TAG_AGENT_PRESENCE}:${channelId}`],
+        },
+      ],
+      (event) => {
+        const sessionEvent = toSessionEvent(event);
+        if (sessionEvent?.channelId === channelId) handler(sessionEvent);
+      },
+    );
+  }
+
+  /** Read this Room's current live agent reply draft (parameterized-replaceable). */
+  agentDraftBackfill(channelId: string): Promise<SessionEvent[]> {
+    return queryEvents(
+      this.http,
+      [
+        {
+          kinds: [KIND_AGENT_DRAFT],
+          '#d': [`${TAG_AGENT_DRAFT}:${channelId}`],
+          limit: 5,
+        },
+      ],
+      this.identity.publicKey,
+    ).then((events) =>
+      events
+        .map(toSessionEvent)
+        .filter((event): event is SessionEvent => event !== null && event.channelId === channelId),
+    );
+  }
+
+  /** Subscribe only to this Room's live agent reply draft record. */
+  async agentDraftSubscribe(
+    channelId: string,
+    handler: SessionEventHandler,
+  ): Promise<Unsubscribe> {
+    if (!this.ws?.connected) {
+      await this.connect();
+    }
+    const ws = this.ws!;
+    return ws.subscribe(
+      [
+        {
+          kinds: [KIND_AGENT_DRAFT],
+          '#d': [`${TAG_AGENT_DRAFT}:${channelId}`],
         },
       ],
       (event) => {

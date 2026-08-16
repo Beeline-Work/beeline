@@ -95,7 +95,11 @@ import {
   type PickedChatAttachment,
 } from '@/buzz/chat-attachment';
 import { describeWriteRequest } from '@/buzz/write-request-copy';
-import { cornerSessionState, latestCornerTurnSummary } from '@/buzz/corner-session';
+import {
+  cornerSessionState,
+  latestCornerTurnSummary,
+  resolveCornerViewAgentPubkey,
+} from '@/buzz/corner-session';
 import { isNearChatBottom } from '@/buzz/chat-scroll';
 import { buildTurnActivity } from '@/buzz/activity-timeline';
 import { replyMessageText, type MessageReplyTarget } from '@/buzz/message-reply';
@@ -541,13 +545,7 @@ export default function BuzzChat() {
   const isDirectMessage = Boolean(directMessage);
   const sessionState = isCorner ? cornerSessionState(messages) : 'idle';
   const cornerAgentPubkey = useMemo(
-    () =>
-      [...messages]
-        .reverse()
-        .find((message) => message.agentTurn)?.agentTurn?.agentPubkey ??
-      [...messages]
-        .reverse()
-        .find((message) => message.pubkey && agentByPubkey.has(message.pubkey))?.pubkey,
+    () => resolveCornerViewAgentPubkey(messages, (pubkey) => agentByPubkey.has(pubkey)),
     [agentByPubkey, messages],
   );
   const turnSummary = isCorner ? latestCornerTurnSummary(messages, cornerAgentPubkey) : undefined;

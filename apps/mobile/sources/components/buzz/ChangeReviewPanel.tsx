@@ -4,6 +4,12 @@ import type { ChangedFile } from '@/sync/transport';
 import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
 import { BrittlePress, HullSurface, PixelLoader } from '@/components/buzz/MonoHull';
+import { darkTheme } from '@/theme';
+
+/** Buzz UI is a fixed dark theme (groknight), so the diff pulls the dark
+ * variant of the legacy diff colors directly rather than through the
+ * light/dark-aware unistyles theme hook. */
+const diffColors = darkTheme.colors.diff;
 
 export interface ChangeReviewReader {
   workspaceFilesRead(sessionId: string): Promise<ChangedFile[]>;
@@ -454,10 +460,10 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 17,
   },
-  // Line kind is signalled without chromatic color (Grok Mono Hull forbids
-  // it — see groknight.ts, where even `danger`/`success` share one gray) via
-  // background luminance banding, weight, and the raw +/- glyph already in
-  // the text; removed lines additionally get a strike-through.
+  // Diffs are a deliberate color exception to Grok Mono Hull's zero-chroma
+  // rule (captain override) — conventional green additions / red deletions,
+  // reusing the legacy diff renderer's dark-theme tokens. Hunk headers and
+  // context lines stay on the neutral grayscale palette.
   diffHeaderLine: {
     ...Typography.mono('semiBold'),
     color: groknight.textMuted,
@@ -465,13 +471,12 @@ const styles = StyleSheet.create({
   },
   diffAddedLine: {
     ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    backgroundColor: groknight.bgPressed,
+    color: diffColors.addedBorder,
+    backgroundColor: diffColors.addedBg,
   },
   diffRemovedLine: {
-    color: groknight.textDisabled,
-    backgroundColor: groknight.bgTerminal,
-    textDecorationLine: 'line-through',
+    color: diffColors.removedBorder,
+    backgroundColor: diffColors.removedBg,
   },
   diffContextLine: { color: groknight.textSecondary, backgroundColor: groknight.bgTerminal },
   diffLoading: {

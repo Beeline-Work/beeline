@@ -22,7 +22,11 @@ vi.mock('react-native', async () => {
   return {
     ActivityIndicator: host('ActivityIndicator'),
     FlatList,
-    Platform: { OS: 'android' },
+    Platform: {
+      OS: 'android',
+      select: (opts: Record<string, unknown>) =>
+        opts.android ?? opts.default ?? opts.ios ?? opts.web,
+    },
     ScrollView: host('ScrollView'),
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
     Text: host('Text'),
@@ -43,6 +47,9 @@ vi.mock('./MonoHull', async () => {
 });
 
 import { ChangeReviewPanel, withChangeReviewTimeout } from './ChangeReviewPanel';
+import { darkTheme } from '@/theme';
+
+const diffColors = darkTheme.colors.diff;
 
 const originalConsoleError = console.error;
 
@@ -125,9 +132,9 @@ describe('ChangeReviewPanel', () => {
     expect(flattenedListStyle.width).toBe(scroller.props.contentContainerStyle.minWidth);
 
     // Parsed into visually distinct add/remove/header/context lines — never
-    // identical, and never relying on chromatic color (this app's Buzz UI is
-    // grayscale-only; distinction comes from background luminance, weight,
-    // and a strike-through on removed lines).
+    // identical. Diffs are a deliberate color exception to the app's
+    // otherwise-grayscale Buzz UI: added lines render green, removed lines
+    // render red, distinct from each other and from the neutral header line.
     const headerLine = renderer.root.findByProps({ testID: 'change-review-line-0' });
     const removedLine = renderer.root.findByProps({ testID: 'change-review-line-2' });
     const addedLine = renderer.root.findByProps({ testID: 'change-review-line-3' });
@@ -136,10 +143,12 @@ describe('ChangeReviewPanel', () => {
     const headerStyle = flatten(headerLine);
     const removedStyle = flatten(removedLine);
     const addedStyle = flatten(addedLine);
-    expect(removedStyle.textDecorationLine).toBe('line-through');
-    expect(addedStyle.textDecorationLine).not.toBe('line-through');
+    expect(addedStyle.color).toBe(diffColors.addedBorder);
+    expect(removedStyle.color).toBe(diffColors.removedBorder);
+    expect(addedStyle.color).not.toBe(removedStyle.color);
+    expect(addedStyle.backgroundColor).toBe(diffColors.addedBg);
+    expect(removedStyle.backgroundColor).toBe(diffColors.removedBg);
     expect(new Set([headerStyle.backgroundColor, removedStyle.backgroundColor, addedStyle.backgroundColor]).size)
       .toBeGreaterThan(1);
-    expect(addedStyle.color).not.toBe(removedStyle.color);
   });
 });

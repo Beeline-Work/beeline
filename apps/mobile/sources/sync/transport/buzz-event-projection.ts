@@ -156,9 +156,13 @@ export type ChatDisplayMessage = {
   pubkey?: string;
   isMergeSummary?: boolean;
   isArchivedNotice?: boolean;
+  /** True when the relay message is explicitly projected as an Agent answer. */
+  isAgentAuthor?: boolean;
   isAgentActivity?: boolean;
   activity?: AgentActivityItem[];
   attachments?: AttachmentReference[];
+  /** NIP-10 event id of the message this conversational message replies to. */
+  replyToId?: string;
   isNew?: boolean;
   corner?: {
     subchannelId: string;
@@ -281,6 +285,9 @@ export function projectChatEvent(
   const isPermissionResponse = eventHasTag(event, 't', 'buzz-write-permission-response');
   const isAgentTurn = eventHasTag(event, 't', 'agent-turn');
   const attachments = parseAttachmentTags(eventTags(event));
+  const replyToId = eventTags(event).find(
+    (tag) => tag[0] === 'e' && tag[1] && tag[3] === 'reply',
+  )?.[1];
 
   if (isAgentTurn) {
     const requestId = eventTagValue(event, 'request');
@@ -418,9 +425,11 @@ export function projectChatEvent(
       isUser: pubkey === viewerPubkey,
       timestamp: eventTimestamp(event),
       ...(pubkey ? { pubkey } : {}),
+      ...(eventHasTag(event, 't', 'agent-message') ? { isAgentAuthor: true } : {}),
       ...(event.type === 'assistant_delta' ? { isAgentActivity: true } : {}),
       ...(eventActivity(event)?.length ? { activity: eventActivity(event) } : {}),
       ...(attachments.length ? { attachments } : {}),
+      ...(replyToId ? { replyToId } : {}),
       ...(isNew ? { isNew: true } : {}),
     },
   };

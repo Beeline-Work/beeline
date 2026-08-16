@@ -99,6 +99,7 @@ const monoStyles = new Set([
   'terminalTurnAuthor',
   'terminalTurnText',
   'agentLiveStatusText',
+  'agentOfflineHintTitle',
   'cornerBackText',
   'cornerChannelName',
   'cornerHeaderMeta',

@@ -1953,6 +1953,41 @@ export default function BuzzChat() {
           }
         />
 
+        {!isArchived &&
+          !parentChannelId &&
+          ((activeCorner?.corner && isCornerActive(activeCorner.corner.status)) ||
+            activeAgentTurn?.agentTurn) && (
+            <TouchableOpacity
+              accessibilityLabel={tappableCornerId ? 'View active corner' : 'Agent activity'}
+              accessibilityRole={tappableCornerId ? 'button' : undefined}
+              disabled={!tappableCornerId}
+              onPress={() =>
+                tappableCornerId &&
+                router.push(`/buzz/chat/${encodeURIComponent(tappableCornerId)}` as Href)
+              }
+              style={styles.agentLiveStatus}
+              testID="agent-live-status"
+            >
+              {!agentsOffline && <PixelLoader compact />}
+              <Text style={styles.agentLiveStatusText}>
+                {agentsOffline
+                  ? 'OFFLINE'
+                  : activeAgentTurn?.agentTurn
+                    ? 'thinking…'
+                    : 'working in corner…'}
+              </Text>
+              {tappableCornerId && <Text style={styles.agentLiveStatusGlyph}>›</Text>}
+            </TouchableOpacity>
+          )}
+        {!isArchived && agentsOffline && (
+          <View style={styles.agentOfflineHint} testID="agent-offline-hint">
+            <Text style={styles.agentOfflineHintTitle}>□ AGENT OFFLINE</Text>
+            <Text style={styles.agentOfflineHintText}>
+              Messages stay in this Room and will be answered when the Agent is back.
+            </Text>
+          </View>
+        )}
+
         {/* Live "alien typewriter" reveal: materializes as the agent generates
             it, isolated in its own leaf subscription so it never touches
             `messages`/`invertedMessages` or re-renders the transcript list. */}
@@ -1976,39 +2011,6 @@ export default function BuzzChat() {
           </View>
         ) : (
           <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-            {!parentChannelId &&
-              ((activeCorner?.corner && isCornerActive(activeCorner.corner.status)) ||
-                activeAgentTurn?.agentTurn) && (
-                <TouchableOpacity
-                  accessibilityLabel={tappableCornerId ? 'View active corner' : 'Agent activity'}
-                  accessibilityRole={tappableCornerId ? 'button' : undefined}
-                  disabled={!tappableCornerId}
-                  onPress={() =>
-                    tappableCornerId &&
-                    router.push(`/buzz/chat/${encodeURIComponent(tappableCornerId)}` as Href)
-                  }
-                  style={styles.agentLiveStatus}
-                  testID="agent-live-status"
-                >
-                  {!agentsOffline && <PixelLoader compact />}
-                  <Text style={styles.agentLiveStatusText}>
-                    {agentsOffline
-                      ? 'OFFLINE'
-                      : activeAgentTurn?.agentTurn
-                        ? 'thinking…'
-                        : 'working in corner…'}
-                  </Text>
-                  {tappableCornerId && <Text style={styles.agentLiveStatusGlyph}>›</Text>}
-                </TouchableOpacity>
-              )}
-            {agentsOffline && (
-              <View style={styles.agentOfflineHint} testID="agent-offline-hint">
-                <Text style={styles.agentOfflineHintTitle}>□ AGENT OFFLINE</Text>
-                <Text style={styles.agentOfflineHintText}>
-                  Messages stay in this Room and will be answered when the Agent is back.
-                </Text>
-              </View>
-            )}
             {parentChannelId && !viewerIsAgent && (
               <TouchableOpacity
                 accessibilityLabel={`Close ${CORNER_LABEL}`}

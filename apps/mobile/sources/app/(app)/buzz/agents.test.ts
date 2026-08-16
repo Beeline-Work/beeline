@@ -65,7 +65,7 @@ vi.mock('react-native', async () => {
   };
 });
 
-import BuzzAgents from './agents';
+import MembersScreen from './MembersScreen';
 
 const originalConsoleError = console.error;
 
@@ -85,7 +85,7 @@ beforeEach(() => {
 async function render(): Promise<ReactTestRenderer> {
   let renderer!: ReactTestRenderer;
   await act(async () => {
-    renderer = create(React.createElement(BuzzAgents));
+    renderer = create(React.createElement(MembersScreen));
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();

@@ -1,9 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
-  Modal,
-  Pressable,
-  ScrollView,
   Share,
   StyleSheet,
   Text,
@@ -306,8 +303,6 @@ export default function BuzzChannels() {
   const [personalWorkspaceId, setPersonalWorkspaceId] = useState<string | null>(
     initialListCache?.personalWorkspaceId ?? null,
   );
-  const [memberPickerVisible, setMemberPickerVisible] = useState(false);
-  const [messagingPubkey, setMessagingPubkey] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_URL);
@@ -332,7 +327,6 @@ export default function BuzzChannels() {
   );
   const displayChannels = cachedListEntry?.channels ?? [];
   const directMessages = cachedListEntry?.directMessages ?? [];
-  const workspaceMembers = cachedListEntry?.workspaceMembers ?? [];
   const roomIdsKey = useMemo(
     () => displayChannels.map((channel) => channel.id).sort().join(','),
     [displayChannels],
@@ -628,24 +622,6 @@ export default function BuzzChannels() {
     [activeCommunityId, identity],
   );
 
-  const handleStartDirectMessage = useCallback(
-    async (member: WorkspaceMemberDisplayItem) => {
-      if (!transport || !activeCommunityId || messagingPubkey) return;
-      setMessagingPubkey(member.peerPubkey);
-      setError(null);
-      try {
-        const result = await transport.resolveDirectMessage(activeCommunityId, member.peerPubkey);
-        setMemberPickerVisible(false);
-        handleDirectMessagePress(result.channelId);
-      } catch (err) {
-        setError(`Could not message ${member.peerName}: ${String(err)}`);
-      } finally {
-        setMessagingPubkey(null);
-      }
-    },
-    [activeCommunityId, handleDirectMessagePress, messagingPubkey, transport],
-  );
-
   const handleCreateChannel = useCallback(async () => {
     const name = channelName.trim();
     if (!name || !transport || !identity || viewerIsAgent) return;
@@ -733,24 +709,15 @@ export default function BuzzChannels() {
             {activeCommunityId && (
               <TouchableOpacity
                 accessibilityLabel={`${WORKSPACE_LABEL} members`}
-                onPress={() => setMemberPickerVisible(true)}
+                onPress={() =>
+                  router.push(
+                    `/buzz/members?communityId=${encodeURIComponent(activeCommunityId)}` as Href,
+                  )
+                }
                 style={styles.iconButton}
                 testID="workspace-members"
               >
                 <Text style={styles.iconButtonText}>◇</Text>
-              </TouchableOpacity>
-            )}
-            {activeCommunityId && (
-              <TouchableOpacity
-                accessibilityLabel={`${WORKSPACE_LABEL} Agents`}
-                onPress={() =>
-                  router.push(
-                    `/buzz/agents?communityId=${encodeURIComponent(activeCommunityId)}` as Href,
-                  )
-                }
-                style={styles.iconButton}
-              >
-                <Text style={styles.iconButtonText}>⌬</Text>
               </TouchableOpacity>
             )}
             {!viewerIsAgent && (
@@ -895,7 +862,7 @@ export default function BuzzChannels() {
                   onManageAgents={() =>
                     activeCommunityId &&
                     router.push(
-                      `/buzz/agents?communityId=${encodeURIComponent(activeCommunityId)}` as Href,
+                      `/buzz/members?communityId=${encodeURIComponent(activeCommunityId)}` as Href,
                     )
                   }
                 />
@@ -998,90 +965,6 @@ export default function BuzzChannels() {
         />
       </View>
 
-      <Modal
-        animationType="fade"
-        onRequestClose={() => setMemberPickerVisible(false)}
-        transparent
-        visible={memberPickerVisible}
-      >
-        <View style={styles.memberModalRoot}>
-          <Pressable
-            accessibilityLabel={`Close ${WORKSPACE_LABEL} member list`}
-            onPress={() => setMemberPickerVisible(false)}
-            style={StyleSheet.absoluteFill}
-          />
-          <HullSurface strength="raised" style={styles.memberModal}>
-            <View style={styles.memberModalHeading}>
-              <View style={styles.memberModalHeadingCopy}>
-                <Text style={styles.memberModalTitle}>{WORKSPACE_LABEL} members</Text>
-                <Text style={styles.memberModalHint}>Start a private conversation.</Text>
-              </View>
-              <TouchableOpacity
-                accessibilityLabel={`Close ${WORKSPACE_LABEL} member list`}
-                onPress={() => setMemberPickerVisible(false)}
-                style={styles.memberModalClose}
-              >
-                <Text style={styles.memberModalCloseText}>×</Text>
-              </TouchableOpacity>
-            </View>
-            <ScrollView
-              contentContainerStyle={styles.memberList}
-              showsVerticalScrollIndicator={false}
-            >
-              <CommunityInviteEntry
-                community={activeCommunity}
-                creatingInvite={creatingInvite}
-                allowPeopleInvites={activeCommunityId !== personalWorkspaceId}
-                onInvitePeople={() => void handleInvitePeople()}
-              />
-              {workspaceMembers.map((member) => {
-                const display = member.peerAgent
-                  ? resolveAgentDisplayIdentity(member.peerPubkey, member.peerAgent)
-                  : undefined;
-                const busy = messagingPubkey === member.peerPubkey;
-                return (
-                  <View key={member.peerPubkey} style={styles.memberRow}>
-                    {display ? (
-                      <AgentAvatar
-                        pubkey={member.peerPubkey}
-                        avatarSeed={display.avatarSeed}
-                        avatarUrl={display.avatarUrl}
-                        name={display.name}
-                        size={36}
-                      />
-                    ) : (
-                      <PersonAvatar
-                        pubkey={member.peerPubkey}
-                        avatarUrl={member.avatarUrl}
-                        name={member.peerName}
-                        size={36}
-                      />
-                    )}
-                    <View style={styles.memberCopy}>
-                      <Text numberOfLines={1} style={styles.memberName}>
-                        {member.peerName}
-                      </Text>
-                      <Text style={styles.memberKind}>{member.peerKind.toUpperCase()}</Text>
-                    </View>
-                    <TouchableOpacity
-                      accessibilityLabel={`Message ${member.peerName}`}
-                      disabled={Boolean(messagingPubkey)}
-                      onPress={() => void handleStartDirectMessage(member)}
-                      style={styles.messageButton}
-                      testID={`message-workspace-member-${member.peerPubkey}`}
-                    >
-                      <Text style={styles.messageButtonText}>{busy ? 'OPENING…' : 'MESSAGE'}</Text>
-                    </TouchableOpacity>
-                  </View>
-                );
-              })}
-              {workspaceMembers.length === 0 && (
-                <Text style={styles.memberEmpty}>No other members yet</Text>
-              )}
-            </ScrollView>
-          </HullSurface>
-        </View>
-      </Modal>
     </BuzzCommunityShell>
   );
 }
@@ -1223,77 +1106,6 @@ const styles = StyleSheet.create({
     ...Typography.default('semiBold'),
     color: groknight.textPrimary,
     fontSize: 14,
-  },
-  memberModalRoot: {
-    flex: 1,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(5, 5, 6, 0.84)',
-  },
-  memberModal: {
-    width: '100%',
-    maxWidth: 460,
-    maxHeight: '78%',
-    padding: 16,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgRaised,
-  },
-  memberModalHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  memberModalHeadingCopy: { flex: 1, minWidth: 0 },
-  memberModalTitle: {
-    ...Typography.default('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 17,
-  },
-  memberModalHint: {
-    ...Typography.default(),
-    marginTop: 3,
-    color: groknight.textMuted,
-    fontSize: 12,
-  },
-  memberModalClose: {
-    width: 44,
-    height: 44,
-    marginTop: -10,
-    marginRight: -10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  memberModalCloseText: { ...Typography.default(), color: groknight.steel, fontSize: 24 },
-  memberList: { paddingTop: 16, paddingBottom: 4 },
-  memberRow: {
-    minHeight: 60,
-    paddingHorizontal: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 9,
-    borderTopWidth: 1,
-    borderTopColor: groknight.border,
-    backgroundColor: groknight.bgBase,
-  },
-  memberCopy: { flex: 1, minWidth: 0 },
-  memberName: { ...Typography.default('semiBold'), color: groknight.textSecondary, fontSize: 13 },
-  memberKind: { ...Typography.mono(), marginTop: 2, color: groknight.textMuted, fontSize: 9 },
-  messageButton: {
-    minHeight: 44,
-    paddingHorizontal: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  messageButtonText: {
-    ...Typography.mono('semiBold'),
-    color: groknight.chrome,
-    fontSize: 9,
-    letterSpacing: 0.3,
-  },
-  memberEmpty: {
-    ...Typography.default(),
-    paddingVertical: 24,
-    color: groknight.textMuted,
-    textAlign: 'center',
-    fontSize: 12,
   },
   roomCell: {
     borderBottomWidth: 1,

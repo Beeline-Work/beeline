@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const sources = [
-  '../../app/(app)/buzz/agents.tsx',
+  '../../app/(app)/buzz/MembersScreen.tsx',
   '../../app/(app)/buzz/channels.tsx',
   '../../app/(app)/buzz/chat/[channelId].tsx',
   '../../app/(app)/buzz/corners/[roomId].tsx',

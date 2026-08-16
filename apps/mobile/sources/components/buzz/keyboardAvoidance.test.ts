@@ -5,8 +5,8 @@ const chatSource = readFileSync(
   new URL('../../app/(app)/buzz/chat/[channelId].tsx', import.meta.url),
   'utf8',
 );
-const agentsSource = readFileSync(
-  new URL('../../app/(app)/buzz/agents.tsx', import.meta.url),
+const membersSource = readFileSync(
+  new URL('../../app/(app)/buzz/MembersScreen.tsx', import.meta.url),
   'utf8',
 );
 
@@ -48,11 +48,11 @@ describe('Buzz keyboard avoidance', () => {
   });
 
   it('keeps focused Agent fields visible in keyboard-aware scroll content', () => {
-    expect(agentsSource).toContain(
+    expect(membersSource).toContain(
       "import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';",
     );
-    expect(agentsSource).toContain('<KeyboardAwareScrollView');
-    expect(agentsSource).toContain('bottomOffset={16}');
-    expect(agentsSource).toContain('</KeyboardAwareScrollView>');
+    expect(membersSource).toContain('<KeyboardAwareScrollView');
+    expect(membersSource).toContain('bottomOffset={16}');
+    expect(membersSource).toContain('</KeyboardAwareScrollView>');
   });
 });

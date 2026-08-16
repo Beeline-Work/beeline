@@ -39,6 +39,9 @@ export const KIND_COMMUNITY_INVITE = 30078;
 /** NIP-33 parameterized replaceable application data (live in-flight agent reply draft). */
 export const KIND_AGENT_DRAFT = 30078;
 
+/** NIP-33 parameterized replaceable application data (corner objective + live plan checklist). */
+export const KIND_CORNER_OBJECTIVE = 30078;
+
 /** NIP-42 AUTH challenge response. */
 export const KIND_AUTH = 22242;
 
@@ -50,6 +53,9 @@ export const TAG_AGENT_PRESENCE = 'agent-presence';
 
 /** Marker tag value for a Room-scoped live in-flight agent reply draft (streaming text). */
 export const TAG_AGENT_DRAFT = 'agent-draft';
+
+/** Marker tag value for a corner-scoped objective + live plan checklist record. */
+export const TAG_CORNER_OBJECTIVE = 'corner-objective';
 
 /** Marker tag value for a self-signed first-class agent record. */
 export const TAG_AGENT = 'buzz-agent';

@@ -470,6 +470,65 @@ export class BuzzRigTransport implements RigTransport {
     return unsubscribe;
   }
 
+  /** Read a corner's current objective + plan checklist (parameterized-replaceable). */
+  async cornerObjectiveBackfill(channelId: string): Promise<SessionEvent[]> {
+    const client = await this.getClient();
+    const buzzEvents = await client.cornerObjectiveBackfill(channelId);
+    return buzzEvents.map(toRigEvent);
+  }
+
+  /** Subscribe only to a corner's live objective + plan checklist record. */
+  async cornerObjectiveSubscribeReady(
+    channelId: string,
+    handler: (event: SessionEvent) => void,
+  ): Promise<() => void> {
+    const subscriptionKey = `objective:${channelId}`;
+    const client = await this.getClient();
+    const relayUnsubscribe = await client.cornerObjectiveSubscribe(channelId, (event) => {
+      handler(toRigEvent(event));
+    });
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      relayUnsubscribe();
+      if (this.subscriptions.get(subscriptionKey) === stop) {
+        this.subscriptions.delete(subscriptionKey);
+      }
+    };
+    this.subscriptions.set(subscriptionKey, stop);
+    return stop;
+  }
+
+  /** Subscribe only to a corner's live objective + plan checklist record. */
+  cornerObjectiveSubscribe(channelId: string, handler: (event: SessionEvent) => void): () => void {
+    const subscriptionKey = `objective:${channelId}`;
+    let stopReadySubscription: (() => void) | undefined;
+    let cancelled = false;
+
+    this.cornerObjectiveSubscribeReady(channelId, handler)
+      .then((stop) => {
+        if (cancelled) {
+          stop();
+          return;
+        }
+        stopReadySubscription = stop;
+      })
+      .catch((error) => {
+        console.warn(`BuzzRigTransport: cornerObjectiveSubscribe(${channelId}) failed:`, error);
+      });
+
+    const unsubscribe = () => {
+      cancelled = true;
+      stopReadySubscription?.();
+      if (this.subscriptions.get(subscriptionKey) === unsubscribe) {
+        this.subscriptions.delete(subscriptionKey);
+      }
+    };
+    this.subscriptions.set(subscriptionKey, unsubscribe);
+    return unsubscribe;
+  }
+
   async permissionRespond(
     _sessionId: SessionId,
     _requestId: string,

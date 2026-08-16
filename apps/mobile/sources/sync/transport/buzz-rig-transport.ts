@@ -759,8 +759,11 @@ export class BuzzRigTransport implements RigTransport {
         const latestRawStatus = [...statusEntries].sort((a, b) => b.createdAt - a.createdAt)[0]
           ?.raw;
         const latestStatus = mapRawCornerStatusTag(latestRawStatus);
+        // `closed` on a kind:39000 projection is NIP-29 invite-only access,
+        // not a lifecycle state. Only an explicit archived boolean or a
+        // corner-scoped archived status removes a corner from the live list.
         const archived =
-          Boolean(metadata?.archived) || statusEntries.some((entry) => entry.raw === 'archived');
+          metadata?.archived === true || statusEntries.some((entry) => entry.raw === 'archived');
         const reviewReady =
           latestStatus === 'open' ||
           events.some((event) =>

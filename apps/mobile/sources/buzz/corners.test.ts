@@ -4,6 +4,7 @@ import {
   cornerStatusPresentation,
   isCornerActive,
   mapRawCornerStatusTag,
+  resolveCornerLifecycleStatus,
   selectMostRecentActiveCornerId,
   sortCorners,
   type CornerSummary,
@@ -129,6 +130,32 @@ describe('corner navigation model', () => {
 
     it('returns undefined for no corners', () => {
       expect(selectMostRecentActiveCornerId([])).toBeUndefined();
+    });
+  });
+
+  describe('resolveCornerLifecycleStatus', () => {
+    it('keeps the last known status while archival is unconfirmed', () => {
+      expect(resolveCornerLifecycleStatus('live', false)).toBe('live');
+      expect(resolveCornerLifecycleStatus(null, false)).toBeNull();
+    });
+
+    // This is the corner view badge's exact staleness bug: the badge's known
+    // status is a one-time snapshot fetched at mount, but confirmed-archived
+    // can resolve later (via a live signal, on an already-mounted screen).
+    // The stale snapshot must never keep outranking a confirmed archive.
+    it('overrides a stale non-terminal snapshot once archival is confirmed', () => {
+      expect(resolveCornerLifecycleStatus('live', true)).toBe('archived');
+      expect(resolveCornerLifecycleStatus('open', true)).toBe('archived');
+      expect(resolveCornerLifecycleStatus('needs-attention', true)).toBe('archived');
+      expect(resolveCornerLifecycleStatus('failed', true)).toBe('archived');
+      expect(resolveCornerLifecycleStatus(null, true)).toBe('archived');
+    });
+
+    it('does not downgrade an already-terminal snapshot below archived precedence', () => {
+      // 'merged' still yields to a confirmed archive (archived outranks merged
+      // in cornerStatusPrecedence), matching the monotonic guard used elsewhere.
+      expect(resolveCornerLifecycleStatus('merged', true)).toBe('archived');
+      expect(resolveCornerLifecycleStatus('archived', true)).toBe('archived');
     });
   });
 });

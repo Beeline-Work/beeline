@@ -55,4 +55,4 @@ cd apps/mobile/android
 
 ## License
 
-To be decided.
+This code is currently unlicensed.

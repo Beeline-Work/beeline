@@ -73,6 +73,7 @@ const monoStyles = new Set([
   'replySwipeLabel',
   'replyReferenceAuthor',
   'replyComposerLabel',
+  'offlineDeliveryNote',
   'memberSectionLabel',
   'rosterModalEyebrow',
   'rosterSectionLabel',

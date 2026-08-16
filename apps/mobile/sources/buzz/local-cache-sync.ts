@@ -1,5 +1,5 @@
 import type { MergeTarget } from '@beeline/buzz-client';
-import { latestRoomMessage } from '@/buzz/room-list-summary';
+import { latestRoomMessageSummary, type RoomMessageSummary } from '@/buzz/room-list-summary';
 import { getCachedChannel, useBuzzLocalCache, type ChannelCacheEntry } from '@/buzz/local-cache';
 import type { BuzzRigTransport } from '@/sync/transport';
 import type { SessionEvent } from '@/sync/transport';
@@ -16,6 +16,32 @@ export type MessageSyncResult = {
 };
 
 const inFlightRevalidations = new Map<string, Promise<MessageSyncResult>>();
+
+function isNewerRoomMessage(
+  candidate: RoomMessageSummary,
+  cached?: ChannelCacheEntry,
+): boolean {
+  const cachedTimestamp = cached?.latestMessageAt;
+  if (cachedTimestamp === undefined) return true;
+  if (candidate.timestamp !== cachedTimestamp) return candidate.timestamp > cachedTimestamp;
+  return candidate.id.localeCompare(cached?.latestMessageId ?? '') > 0;
+}
+
+function messageSummaryPatch(
+  candidate: RoomMessageSummary | null,
+  cached?: ChannelCacheEntry,
+): {
+  latestMessage?: string;
+  latestMessageAt?: number;
+  latestMessageId?: string;
+} {
+  if (!candidate || !isNewerRoomMessage(candidate, cached)) return {};
+  return {
+    latestMessage: candidate.text,
+    latestMessageAt: candidate.timestamp,
+    latestMessageId: candidate.id,
+  };
+}
 
 export function sessionEventCursor(event: SessionEvent): number | undefined {
   if (event.type === 'assistant_delta') return event.seq;
@@ -65,16 +91,12 @@ async function performMessageRevalidation(
   // An empty Room is still warm after its first successful relay read. Keep one
   // overlap second so an event racing the HTTP query is picked up next time.
   const cursor = Math.max(cached?.cursor ?? 0, eventCursor || Math.max(0, fetchStartedAt - 1));
-  const fetchedLatestMessage = latestRoomMessage(events) ?? undefined;
-  const latestMessage =
-    cached?.latestMessage && (cached.latestEventAt ?? 0) >= eventCursor
-      ? cached.latestMessage
-      : fetchedLatestMessage;
+  const summary = messageSummaryPatch(latestRoomMessageSummary(events), cached);
   const latestEventAt = Math.max(cached?.latestEventAt ?? 0, eventCursor) || undefined;
   const store = useBuzzLocalCache.getState();
   if (warm) {
     store.upsertMessages(viewerPubkey, channelId, projected.messages, cursor, {
-      ...(latestMessage ? { latestMessage } : {}),
+      ...summary,
       ...(latestEventAt ? { latestEventAt } : {}),
     });
   } else {
@@ -84,7 +106,7 @@ async function performMessageRevalidation(
       upsertChatMessages(projected.messages, cached?.messages ?? []),
       cursor,
       {
-        ...(latestMessage ? { latestMessage } : {}),
+        ...summary,
         ...(latestEventAt ? { latestEventAt } : {}),
       },
     );
@@ -150,7 +172,8 @@ export function cacheLiveSessionEvents(
   events: SessionEvent[],
 ): ReturnType<typeof projectChatEvent>[] {
   const projections = events.map((event) => projectChatEvent(event, viewerPubkey, true));
-  const latestMessage = latestRoomMessage(events) ?? undefined;
+  const cached = getCachedChannel(viewerPubkey, channelId);
+  const summary = messageSummaryPatch(latestRoomMessageSummary(events), cached);
   const messages: ChatDisplayMessage[] = [];
   const patchOnly: { event: SessionEvent; projected: ReturnType<typeof projectChatEvent> }[] = [];
   let cursor: number | undefined;
@@ -171,7 +194,7 @@ export function cacheLiveSessionEvents(
   }
   if (messages.length) {
     useBuzzLocalCache.getState().upsertMessages(viewerPubkey, channelId, messages, cursor, {
-      ...(latestMessage ? { latestMessage } : {}),
+      ...summary,
       ...(cursor ? { latestEventAt: cursor } : {}),
     });
   }
@@ -188,7 +211,7 @@ export function cacheLiveSessionEvents(
             latestEventAt: Math.max(cached?.latestEventAt ?? 0, eventCursor),
           }
         : {}),
-      ...(latestMessage ? { latestMessage } : {}),
+      ...summary,
       ...(projected.archiveChannel ? { archived: true } : {}),
       ...(projected.mergeTarget ? { mergeTarget: projected.mergeTarget } : {}),
       ...(projected.clearMergeTarget ? { mergeTarget: null } : {}),

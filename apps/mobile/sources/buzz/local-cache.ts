@@ -14,7 +14,9 @@ import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection'
 import { upsertChatMessages } from '@/sync/transport/buzz-event-projection';
 import type { SessionSummary } from '@/sync/transport';
 
-const CACHE_VERSION = 1;
+// v1 treated any stream event as if it were a conversational message. Its
+// cursor can therefore outrun the preview and permanently retain old text.
+const CACHE_VERSION = 2;
 const CACHE_KEY = `buzz-local-cache-v${CACHE_VERSION}`;
 export const MAX_CACHED_MESSAGES_PER_CHANNEL = 200;
 export const MAX_CACHED_CHANNELS = 30;
@@ -73,6 +75,9 @@ export type ChannelCacheEntry = {
   /** True only after a complete initial history read, not merely a live event. */
   backfilled?: boolean;
   latestMessage?: string;
+  /** Timestamp/id of the displayed conversational message, never a control event. */
+  latestMessageAt?: number;
+  latestMessageId?: string;
   latestEventAt?: number;
   roomMembers?: ChannelMember[];
   availablePeople?: CommunityMember[];
@@ -113,14 +118,24 @@ type BuzzCacheState = PersistedBuzzCache & {
     channelId: string,
     messages: ChatDisplayMessage[],
     cursor: number | undefined,
-    summary?: { latestMessage?: string; latestEventAt?: number },
+    summary?: {
+      latestMessage?: string;
+      latestMessageAt?: number;
+      latestMessageId?: string;
+      latestEventAt?: number;
+    },
   ) => void;
   upsertMessages: (
     viewerPubkey: string,
     channelId: string,
     messages: ChatDisplayMessage[],
     cursor?: number,
-    summary?: { latestMessage?: string; latestEventAt?: number },
+    summary?: {
+      latestMessage?: string;
+      latestMessageAt?: number;
+      latestMessageId?: string;
+      latestEventAt?: number;
+    },
   ) => void;
   updateMessages: (
     viewerPubkey: string,
@@ -291,7 +306,12 @@ function updateListSummaries(
   lists: Record<string, ChannelListCacheEntry>,
   viewerPubkey: string,
   channelId: string,
-  summary?: { latestMessage?: string; latestEventAt?: number },
+  summary?: {
+    latestMessage?: string;
+    latestMessageAt?: number;
+    latestMessageId?: string;
+    latestEventAt?: number;
+  },
 ): Record<string, ChannelListCacheEntry> {
   if (!summary?.latestMessage) return lists;
   const updatedAt = summary.latestEventAt ?? 0;

@@ -470,17 +470,18 @@ export default function BuzzAgents() {
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>People</Text>
               <Text style={styles.count}>{people.length}</Text>
+              {canManageWorkspace && (
+                <MonoButton
+                  label={working ? 'Creating invite' : 'Invite person'}
+                  loading={working}
+                  disabled={working}
+                  onPress={() => void invitePerson()}
+                  variant="secondary"
+                  style={styles.sectionAction}
+                  testID="invite-person"
+                />
+              )}
             </View>
-            {canManageWorkspace && (
-              <MonoButton
-                label={working ? 'Creating invite' : 'Invite person'}
-                loading={working}
-                disabled={working}
-                onPress={() => void invitePerson()}
-                style={styles.sectionAction}
-                testID="invite-person"
-              />
-            )}
             {people.length === 0 ? (
               <Text style={styles.sectionEmpty}>No people in this Workspace yet.</Text>
             ) : (
@@ -500,7 +501,7 @@ export default function BuzzAgents() {
                         avatarUrl={profile?.avatar}
                         name={profile?.name ?? shortMemberNpub(person.pubkey)}
                         pubkey={person.pubkey}
-                        size={38}
+                        size={44}
                       />
                       <View style={styles.personCopy}>
                         <Text numberOfLines={1} style={styles.personName}>
@@ -510,8 +511,10 @@ export default function BuzzAgents() {
                         <Text numberOfLines={1} style={styles.personHandle}>
                           {profile?.handle ? `@${profile.handle}` : shortMemberNpub(person.pubkey)}
                         </Text>
-                        <View style={styles.roleRow}>
-                          {(['owner', 'admin', 'member'] as const).map((role) => {
+                      </View>
+                      <View style={styles.personTrailing}>
+                        <View style={styles.roleSegment}>
+                          {(['owner', 'admin', 'member'] as const).map((role, index) => {
                             const selectedRole = person.role === role;
                             const allowed =
                               actorCanChange &&
@@ -522,28 +525,33 @@ export default function BuzzAgents() {
                                 disabled={!allowed || selectedRole || working}
                                 key={role}
                                 onPress={() => void setPersonRole(person.pubkey, role)}
-                                style={[styles.roleButton, selectedRole && styles.roleButtonSelected]}
+                                style={[styles.roleSegmentButton, index > 0 && styles.roleSegmentDivider]}
                                 testID={`member-${person.pubkey}-${role}`}
                               >
-                                <Text style={[styles.roleText, selectedRole && styles.roleTextSelected]}>
+                                <Text
+                                  style={[
+                                    styles.roleText,
+                                    selectedRole && styles.roleTextSelected,
+                                  ]}
+                                >
                                   {roleLabel(role)}
                                 </Text>
                               </TouchableOpacity>
                             );
                           })}
                         </View>
+                        {actorCanChange && (
+                          <TouchableOpacity
+                            accessibilityLabel={`Remove ${profile?.name ?? shortMemberNpub(person.pubkey)}`}
+                            disabled={working}
+                            onPress={() => void removePerson(person.pubkey)}
+                            style={styles.removePersonButton}
+                            testID={`member-${person.pubkey}-remove`}
+                          >
+                            <Text style={styles.removePersonText}>×</Text>
+                          </TouchableOpacity>
+                        )}
                       </View>
-                      {actorCanChange && (
-                        <TouchableOpacity
-                          accessibilityLabel={`Remove ${profile?.name ?? shortMemberNpub(person.pubkey)}`}
-                          disabled={working}
-                          onPress={() => void removePerson(person.pubkey)}
-                          style={styles.removePersonButton}
-                          testID={`member-${person.pubkey}-remove`}
-                        >
-                          <Text style={styles.removePersonText}>×</Text>
-                        </TouchableOpacity>
-                      )}
                     </View>
                   );
                 })}
@@ -555,17 +563,18 @@ export default function BuzzAgents() {
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>Agents</Text>
               <Text style={styles.count}>{agents.length}</Text>
+              {canManageWorkspace && (
+                <MonoButton
+                  label={working ? 'Adding agent' : 'Add agent'}
+                  loading={working}
+                  disabled={working}
+                  onPress={() => void handleAdd()}
+                  variant="secondary"
+                  style={styles.sectionAction}
+                  testID="add-agent"
+                />
+              )}
             </View>
-            {canManageWorkspace && (
-              <MonoButton
-                label={working ? 'Adding agent' : 'Add agent'}
-                loading={working}
-                disabled={working}
-                onPress={() => void handleAdd()}
-                style={styles.sectionAction}
-                testID="add-agent"
-              />
-            )}
             {agents.length === 0 ? (
             <View style={styles.empty}>
               <Text style={styles.emptyGlyph}>⌬</Text>
@@ -592,6 +601,7 @@ export default function BuzzAgents() {
                     avatarSeed={display.avatarSeed}
                     avatarUrl={display.avatarUrl}
                     name={display.name}
+                    size={44}
                   />
                   <View style={styles.agentCopy}>
                     <Text style={styles.agentName} numberOfLines={1}>
@@ -846,7 +856,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   memberSection: { marginBottom: 32 },
-  sectionHeader: { marginBottom: 8, flexDirection: 'row', alignItems: 'center' },
+  sectionHeader: { marginBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 10 },
   sectionTitle: {
     ...Typography.default('semiBold'),
     flex: 1,
@@ -854,40 +864,47 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   count: { ...Typography.default(), color: groknight.muted, fontSize: 12 },
-  sectionAction: { marginBottom: 12 },
+  sectionAction: { alignSelf: 'center' },
   sectionEmpty: {
     ...Typography.default(),
     paddingVertical: 18,
     color: groknight.textMuted,
     fontSize: 13,
   },
-  peopleList: { borderBottomWidth: 1, borderBottomColor: groknight.border },
+  peopleList: {},
   personRow: {
-    minHeight: 94,
-    paddingHorizontal: 10,
-    paddingVertical: 10,
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    borderTopWidth: 1,
-    borderTopColor: groknight.border,
-    backgroundColor: groknight.bgBase,
+    gap: 12,
+    paddingVertical: 13,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.border,
   },
   personCopy: { flex: 1, minWidth: 0 },
-  personName: { ...Typography.default('semiBold'), color: groknight.textPrimary, fontSize: 13 },
-  personHandle: { ...Typography.mono(), marginTop: 2, color: groknight.textMuted, fontSize: 9 },
-  roleRow: { marginTop: 7, flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
-  roleButton: {
-    minHeight: 30,
-    paddingHorizontal: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
+  personName: { ...Typography.default('semiBold'), color: groknight.textPrimary, fontSize: 15 },
+  personHandle: { ...Typography.mono(), marginTop: 2, color: groknight.textMuted, fontSize: 10 },
+  personTrailing: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  roleSegment: {
+    flexDirection: 'row',
     borderWidth: 1,
     borderColor: groknight.border,
-    borderRadius: 3,
+    borderRadius: 4,
+    overflow: 'hidden',
   },
-  roleButtonSelected: { borderColor: groknight.selectedBorder, backgroundColor: groknight.bgHighlight },
-  roleText: { ...Typography.mono('semiBold'), color: groknight.textMuted, fontSize: 8 },
+  roleSegmentButton: {
+    minHeight: 28,
+    paddingHorizontal: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  roleSegmentDivider: { borderLeftWidth: 1, borderLeftColor: groknight.border },
+  roleText: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textMuted,
+    fontSize: 8,
+    letterSpacing: 0.4,
+  },
   roleTextSelected: { color: groknight.textPrimary },
   removePersonButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   removePersonText: { ...Typography.default(), color: groknight.steel, fontSize: 22 },

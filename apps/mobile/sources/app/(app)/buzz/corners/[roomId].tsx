@@ -62,7 +62,10 @@ export default function BuzzCorners() {
             client.getChannelCommunityId(decodedId),
             t.agentPresenceBackfill(decodedId),
           ]);
-        setCorners(sortCorners(nextCorners));
+        // NIP-29's `closed` metadata flag means invite-only, not archived.
+        // `listSubchannelLifecycle` only marks an explicit archive as archived,
+        // so keep every live/open corner visible here.
+        setCorners(sortCorners(nextCorners.filter((corner) => corner.status !== 'archived')));
         setRoomName(metadata?.name?.trim() || ROOM_LABEL);
         setCommunities(nextCommunities);
         setActiveCommunityId(communityId);

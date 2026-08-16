@@ -685,7 +685,10 @@ export class BuzzRigTransport implements RigTransport {
         const statuses = events
           .map((event) => tagValue(event.event, 'status'))
           .filter((status): status is string => Boolean(status));
-        const archived = Boolean(metadata?.archived) || statuses.includes('archived');
+        // `closed` on a kind:39000 projection is NIP-29 invite-only access,
+        // not a lifecycle state. Only an explicit archived boolean or a
+        // corner-scoped archived status removes a corner from the live list.
+        const archived = metadata?.archived === true || statuses.includes('archived');
         const reviewReady =
           statuses.includes('ready') ||
           events.some((event) =>

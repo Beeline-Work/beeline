@@ -1544,7 +1544,7 @@ export default function BuzzChat() {
       if (parentChannelId) {
         return (
           <NewMessageMaterialize enabled={Boolean(item.isNew)}>
-            <View style={styles.terminalTurn}>
+            <View style={[styles.terminalTurn, isOwn && !isAgent && styles.terminalTurnUser]}>
               <View style={styles.terminalTurnHeading}>
                 <Text style={styles.terminalTurnGlyph}>{isOwn || isAgent ? '›' : '·'}</Text>
                 <Text style={styles.terminalTurnLabel}>
@@ -3185,6 +3185,20 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: groknight.border,
     backgroundColor: groknight.bgTerminal,
+  },
+  // Agent turns keep the uninterrupted terminal-width treatment. A human
+  // steer is the conversational exception: compact, inset, and clearly
+  // bounded without changing ordinary Room bubbles.
+  terminalTurnUser: {
+    alignSelf: 'flex-end',
+    width: 'auto',
+    maxWidth: '84%',
+    marginLeft: 44,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderRadius: 14,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgRaised,
   },
   terminalTurnHeading: {
     minWidth: 0,

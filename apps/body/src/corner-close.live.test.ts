@@ -121,6 +121,101 @@ describe.runIf(live)('live corner close (archive) contract', () => {
       await rm(testDir, { recursive: true, force: true });
     }
   }, 30_000);
+
+  it('aborts an in-flight turn on close and publishes nothing further for that corner', async () => {
+    const human = newIdentity('corner-close-race-human');
+    const agent = newIdentity('corner-close-race-agent');
+    const parentChannelId = await createChannel(human, `corner-close-race-${Date.now()}`);
+    await setMemberRole(human, parentChannelId, agent.publicKey, 'member');
+
+    const testDir = await mkdtemp(resolve(tmpdir(), 'beeline-corner-close-race-'));
+    const body = new Body(loadBodyConfig({ workspaceRoot: testDir }), human, agent);
+
+    try {
+      const subchannelId = await createAgentSubchannel(
+        agent,
+        parentChannelId,
+        `corner-close-race-sub-${Date.now()}`,
+      );
+      await setMemberRole(human, subchannelId, human.publicKey, 'member');
+
+      const publishSpy = vi.spyOn(body as never, 'publishAgentResult' as never);
+
+      const sessionCancel = vi.fn();
+      // Simulates the maintenance-tick race (`ROOM_WS_MAINTENANCE_TICK_MS`
+      // overlap): a `#t=buzz-corner-close` seen by another poll archives the
+      // corner while this turn is still resolving. The turn then completes
+      // normally — the guard is what must stop its reply from publishing.
+      const sessionPrompt = vi.fn(async () => {
+        await body.archiveSubchannel(subchannelId);
+        return {
+          stopReason: 'end_turn',
+          updates: [],
+          agentText: 'TRAILING SUMMARY MUST NOT PUBLISH',
+          toolCalls: [],
+        };
+      });
+      const info: SubchannelInfo = {
+        subchannelId,
+        worktreePath: resolve(testDir, 'nonexistent-worktree'),
+        featureBranch: 'feature/corner-close-race-test',
+        role: agent,
+        session: {
+          channelId: subchannelId,
+          parentChannelId,
+          sessionId: 'corner-close-race-session',
+          mode: 'edit',
+          archived: false,
+          lastPolledAt: 0,
+          client: {
+            sessionCancel,
+            stop: vi.fn(async () => undefined),
+            activeRunId: vi.fn(() => undefined),
+            sessionPrompt,
+          } as never,
+        } as never,
+        lastPolledAt: 0,
+        archived: false,
+      };
+      body.registerSubchannel(info);
+
+      const humanClient = createBuzzClient({ baseUrl: BASE_URL, identity: human });
+      await humanClient.messageSubmit(subchannelId, 'Please also fix the retry logic.');
+
+      const processed = await body.pollMembers(subchannelId);
+      expect(processed).toBe(1);
+
+      // The turn ran and resolved normally, but archival won the race — the
+      // corner is closed and nothing further was ever published for it.
+      expect(sessionPrompt).toHaveBeenCalled();
+      expect(sessionCancel).toHaveBeenCalledWith('corner-close-race-session');
+      expect(publishSpy).not.toHaveBeenCalled();
+      expect(info.archived).toBe(true);
+
+      await waitUntil(async () => {
+        const metadata = await queryEvents(
+          [{ kinds: [39000], '#d': [subchannelId], limit: 5 }],
+          human,
+        );
+        return metadata.some((event) =>
+          event.tags.some((tag) => tag[0] === 'archived' && tag[1] === 'true'),
+        );
+      });
+
+      const subchannelEvents = await queryEvents(
+        [{ kinds: [9], '#h': [subchannelId], limit: 50 }],
+        human,
+      );
+      expect(
+        subchannelEvents.some((event) => event.content.includes('TRAILING SUMMARY')),
+      ).toBe(false);
+
+      humanClient.disconnect();
+    } finally {
+      await body.dispose();
+      await rm(testDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
 
 if (!live) {

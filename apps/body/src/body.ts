@@ -2601,6 +2601,11 @@ export class Body {
           ].join('\n'),
           { channelId: info.subchannelId, requestId },
         );
+        // The corner may have been closed (archived) while this turn was
+        // in flight — closing kills the ACP session but cannot interrupt a
+        // response that had already resolved. Never publish anything for an
+        // archived corner: closing must be terminal, not just fast.
+        if (info.archived) return;
         info.mergeSummary = await this.publishAgentResult(
           info.subchannelId,
           info.session,
@@ -2622,6 +2627,10 @@ export class Body {
           this.presenceGenerations.get(info.subchannelId),
         );
       } catch (error) {
+        // A closed corner's session gets killed to abort the turn, which
+        // routinely surfaces here as a rejected prompt — that is the close
+        // working as intended, not a failure to report.
+        if (info.archived) return;
         await postAgentTurnStatus(
           info.subchannelId,
           this.agentIdentity,
@@ -3398,7 +3407,11 @@ export class Body {
             eventId: evt.id,
             at: new Date().toISOString(),
           });
-          if (agentResult) {
+          // A concurrent close (a later `#t=buzz-corner-close` event, possibly
+          // seen by an overlapping poll tick while this turn was still
+          // running) archives the corner out of band. Never publish a turn
+          // that resolved after that — closing must be terminal.
+          if (agentResult && !info.archived) {
             agentReply = await this.publishAgentResult(
               subchannelId,
               session,
@@ -3425,6 +3438,15 @@ export class Body {
           await this.durableState.delivered(subchannelId, evt.id);
           count++;
         } catch (err) {
+          // The close path kills the ACP session to abort the turn, which
+          // routinely surfaces here as a rejected prompt — that is close
+          // working as intended, not a delivery failure to retry.
+          if (info.archived) {
+            processed.add(evt.id);
+            await this.durableState.delivered(subchannelId, evt.id);
+            count++;
+            continue;
+          }
           await postAgentTurnStatus(
             subchannelId,
             this.agentIdentity,

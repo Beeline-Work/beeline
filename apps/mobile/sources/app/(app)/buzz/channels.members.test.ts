@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const source = readFileSync(new URL('./channels.tsx', import.meta.url), 'utf8');
-const legacyAgentsSource = readFileSync(new URL('./agents.tsx', import.meta.url), 'utf8');
+const source = readFileSync(path.join(__dirname, 'channels.tsx'), 'utf8');
+const legacyAgentsSource = readFileSync(path.join(__dirname, 'agents.tsx'), 'utf8');
 
 describe('Workspace Members entry point', () => {
   it('offers one header entry that opens the unified Members page', () => {

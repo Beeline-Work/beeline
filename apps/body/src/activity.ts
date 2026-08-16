@@ -789,14 +789,26 @@ export function createNarrativeCommitter(
   // render out of the order they were actually written, same fix
   // createDraftStreamer and startAgentPresence use for their own replays.
   let lastCreatedAt = 0;
+  // Adjacent-only guard: a harness can resend an already-seen delta (e.g. a
+  // duplicate `agent_message_chunk` notification), which re-presents the same
+  // paragraph as a "new" segment right after it was already committed. Only
+  // compare against the immediately prior publish — never a broader
+  // history — so a legitimately repeated short line later in a long turn
+  // (e.g. two separate "Done." updates) still publishes each time.
+  let lastPublishedText: string | undefined;
   const commit = (segment: NarrativeSegment) => {
     committed = segment.consumed;
+    // stripAgentReplyPreamble is a no-op for any segment that doesn't open
+    // with the known Codex startup notice, so this is safe to apply
+    // unconditionally rather than only to the first segment — a harness can
+    // interleave its own boilerplate with real narration mid-stream too.
+    const text = stripAgentReplyPreamble(segment.text).trim();
+    if (!text || text === lastPublishedText) return;
+    lastPublishedText = text;
     const createdAt = Math.max(Math.floor(Date.now() / 1_000), lastCreatedAt + 1);
     lastCreatedAt = createdAt;
     inflight = inflight
-      .then(() =>
-        postAgentMessage(channelId, owner, segment.text, undefined, [], extraTags, createdAt),
-      )
+      .then(() => postAgentMessage(channelId, owner, text, undefined, [], extraTags, createdAt))
       .catch((error) => console.error('[body] narrative segment publish failed:', error));
   };
   return {

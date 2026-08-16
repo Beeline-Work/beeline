@@ -456,6 +456,87 @@ describe('createNarrativeCommitter', () => {
     expect(published[2]!.content).toBe('Fixed and tests pass.');
   });
 
+  it('never publishes a leading harness/system boilerplate segment (Codex skill-budget warning)', async () => {
+    const narrator = createNarrativeCommitter(channelId, owner);
+    const warning =
+      'Warning: Skill descriptions were shortened to fit the 2% skills context budget. Codex can still see every skill by reading its SKILL.md.';
+
+    narrator.onChunk(`${warning}\n\n`);
+    await flush();
+    expect(published).toHaveLength(0); // pure boilerplate — never surfaces as narration
+
+    narrator.onChunk(
+      `${warning}\n\nI'm adding the requested one-line description, then I'll verify the build.`,
+    );
+    await narrator.finish();
+
+    expect(published).toHaveLength(1);
+    expect(published[0]!.content).toBe(
+      "I'm adding the requested one-line description, then I'll verify the build.",
+    );
+    expect(published[0]!.content).not.toContain('skills context budget');
+  });
+
+  it('strips a leading boilerplate notice even when the first real paragraph lands in the same chunk', async () => {
+    // The whole "boilerplate\n\nreal text" blob can arrive as one delta
+    // rather than two separate onChunk calls — the filter must still only
+    // remove the boilerplate line, not the real narration after it.
+    const narrator = createNarrativeCommitter(channelId, owner);
+    const warning = 'Notice: Tool descriptions were shortened because of the context budget limit.';
+    narrator.onChunk(`${warning}\nCodex can still access every tool.\n\nReproducing the bug now.\n\n`);
+    await narrator.finish();
+
+    expect(published).toHaveLength(1);
+    expect(published[0]!.content).toBe('Reproducing the bug now.');
+  });
+
+  it('does not double-publish a segment when finish() runs right after a boundary already committed it', async () => {
+    const narrator = createNarrativeCommitter(channelId, owner);
+    narrator.onChunk('Reproducing the bug now.\n\n');
+    await flush();
+    await narrator.finish();
+
+    expect(published).toHaveLength(1);
+    expect(published[0]!.content).toBe('Reproducing the bug now.');
+  });
+
+  it('does not re-publish a segment when the harness resends an already-committed delta', async () => {
+    // Reproduces the on-device defect: two distinct kind:9 events carried
+    // identical content at an identical created_at because the ACP layer
+    // replayed the same agent_message_chunk delta, re-presenting an
+    // already-committed paragraph as if it were new growth.
+    const narrator = createNarrativeCommitter(channelId, owner);
+    narrator.onChunk('Reproducing the bug now.\n\n');
+    await flush();
+    expect(published).toHaveLength(1);
+
+    // The harness resent the same paragraph; the accumulated text now
+    // contains it twice in a row.
+    narrator.onChunk('Reproducing the bug now.\n\nReproducing the bug now.\n\n');
+    await narrator.finish();
+
+    expect(published).toHaveLength(1);
+    expect(published[0]!.content).toBe('Reproducing the bug now.');
+  });
+
+  it('still publishes a legitimately repeated short line later in a long turn', async () => {
+    // The dedup guard is adjacent-only — it must not suppress a real,
+    // separately-written recurrence of the same short text later on.
+    const narrator = createNarrativeCommitter(channelId, owner);
+    narrator.onChunk('Done.\n\n');
+    await flush();
+    narrator.onChunk('Done.\n\nChecked the diff once more.\n\n');
+    await flush();
+    narrator.onChunk('Done.\n\nChecked the diff once more.\n\nDone.');
+    await narrator.finish();
+
+    expect(published.map((event) => event.content)).toEqual([
+      'Done.',
+      'Checked the diff once more.',
+      'Done.',
+    ]);
+  });
+
   it('finish() flushes a still-growing tail even without a paragraph break', async () => {
     const narrator = createNarrativeCommitter(channelId, owner);
     narrator.onChunk('Wrapping up the change now.');

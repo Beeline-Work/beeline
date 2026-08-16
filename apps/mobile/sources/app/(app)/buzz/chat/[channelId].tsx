@@ -23,7 +23,8 @@ import {
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { KeyboardAvoidingView, useKeyboardState } from 'react-native-keyboard-controller';
+import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router, type Href } from 'expo-router';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
@@ -94,6 +95,8 @@ import {
 } from '@/buzz/chat-attachment';
 import { describeWriteRequest } from '@/buzz/write-request-copy';
 import { cornerSessionState, latestCornerTurnSummary } from '@/buzz/corner-session';
+import { isNearChatBottom } from '@/buzz/chat-scroll';
+import { replyMessageText, type MessageReplyTarget } from '@/buzz/message-reply';
 import {
   isAgentPresenceOnlineWithReconnectGrace,
   isAgentOfflineAfterPresenceResolved,
@@ -206,6 +209,47 @@ function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
   );
 }
 
+function SwipeToReply({
+  children,
+  messageId,
+  onReply,
+}: {
+  children: React.ReactNode;
+  messageId: string;
+  onReply: () => void;
+}) {
+  const swipeableRef = useRef<Swipeable | null>(null);
+
+  if (Platform.OS === 'web') return <>{children}</>;
+
+  return (
+    <Swipeable
+      ref={swipeableRef}
+      dragOffsetFromRightEdge={18}
+      friction={1.35}
+      onSwipeableOpen={(direction) => {
+        if (direction !== 'right') return;
+        swipeableRef.current?.close();
+        onReply();
+      }}
+      overshootRight={false}
+      renderRightActions={() => (
+        <View
+          accessibilityLabel="Reply to message"
+          style={styles.replySwipeAction}
+          testID={`reply-swipe-action-${messageId}`}
+        >
+          <Text style={styles.replySwipeGlyph}>↩</Text>
+          <Text style={styles.replySwipeLabel}>REPLY</Text>
+        </View>
+      )}
+      testID={`swipe-reply-${messageId}`}
+    >
+      {children}
+    </Swipeable>
+  );
+}
+
 export default function BuzzChat() {
   const { channelId, notificationResponseId } = useLocalSearchParams<{
     channelId: string;
@@ -233,6 +277,7 @@ export default function BuzzChat() {
 
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
   const [inputText, setInputText] = useState('');
+  const [replyTarget, setReplyTarget] = useState<MessageReplyTarget | null>(null);
   const [composerHeight, setComposerHeight] = useState(COMPOSER_MIN_HEIGHT);
   const [inputSelection, setInputSelection] = useState({ start: 0, end: 0 });
   const [highlightedMentionIndex, setHighlightedMentionIndex] = useState(0);
@@ -506,6 +551,10 @@ export default function BuzzChat() {
   // Newest-first for the inverted FlatList; chronological visibleMessages
   // above stays the source of truth for everything else that reads order.
   const invertedMessages = useMemo(() => [...visibleMessages].reverse(), [visibleMessages]);
+  const visibleMessageById = useMemo(
+    () => new Map(visibleMessages.map((message) => [message.id, message])),
+    [visibleMessages],
+  );
   const openedCornerIds = useMemo(
     () =>
       new Set(
@@ -935,11 +984,52 @@ export default function BuzzChat() {
     };
   }, [decodedId, notificationResponseId, addMessages, applyAgentPresence]);
 
+  const replyTargetForMessage = useCallback(
+    (message: ChatDisplayMessage): MessageReplyTarget => {
+      const knownAgent = message.pubkey ? agentByPubkey.get(message.pubkey) : undefined;
+      const isAgent = Boolean(
+        message.pubkey &&
+        (message.isAgentAuthor ||
+          message.isAgentActivity ||
+          BODY_PUBKEYS.has(message.pubkey) ||
+          knownAgent),
+      );
+      const agentDisplay = isAgent
+        ? resolveAgentDisplayIdentity(message.pubkey ?? 'unknown-agent', knownAgent)
+        : undefined;
+      const personName = message.pubkey
+        ? personProfileByPubkey.get(message.pubkey)?.name
+        : undefined;
+      const attachmentPreview = message.attachments?.[0]?.name;
+      return {
+        messageId: message.id,
+        authorName: message.isUser
+          ? 'You'
+          : (agentDisplay?.name ?? personName ?? shortMemberNpub(message.pubkey ?? '')),
+        ...(message.pubkey ? { authorPubkey: message.pubkey } : {}),
+        isAgent,
+        preview: message.text.trim() || attachmentPreview || 'Attachment',
+      };
+    },
+    [agentByPubkey, personProfileByPubkey],
+  );
+
+  const beginReply = useCallback(
+    (message: ChatDisplayMessage) => {
+      setReplyTarget(replyTargetForMessage(message));
+      setDismissedMentionKey(null);
+      void Haptics.selectionAsync();
+      requestAnimationFrame(() => composerRef.current?.focus());
+    },
+    [replyTargetForMessage],
+  );
+
   const handleSend = useCallback(async () => {
-    const text = inputTextRef.current.trim();
+    const rawText = inputTextRef.current.trim();
     // State updates are committed asynchronously. A ref closes the short
     // double-tap window before `sending` can disable the native control.
-    if (sendInFlightRef.current || (!text && !pendingAttachment) || !transport || isArchived) return;
+    if (sendInFlightRef.current || (!rawText && !pendingAttachment) || !transport || isArchived) return;
+    const text = replyTarget ? replyMessageText(rawText, replyTarget) : rawText;
 
     sendInFlightRef.current = true;
     setSending(true);
@@ -953,6 +1043,7 @@ export default function BuzzChat() {
       setComposerHeight(COMPOSER_MIN_HEIGHT);
       setInputSelection({ start: 0, end: 0 });
       setPendingAttachment(null);
+      setReplyTarget(null);
       const optimisticId = `optimistic-${Date.now()}`;
       addMessages([
         {
@@ -961,6 +1052,7 @@ export default function BuzzChat() {
           isUser: true,
           timestamp: Date.now(),
           pubkey: userPubkey,
+          ...(replyTarget ? { replyToId: replyTarget.messageId } : {}),
           ...(attachments.length ? { attachments } : {}),
         },
       ]);
@@ -978,17 +1070,25 @@ export default function BuzzChat() {
           const trailing = normalizedText[offset + mention.length];
           return trailing === undefined || /[\s,.:;!?)}\]]/.test(trailing);
         })?.[1];
-      const mentionedAgent = parentChannelId
-        ? undefined
-        : (selectedMentionedAgent ?? mentionedAgentPubkey(text, mentionableAgents));
+      const mentionedAgent = replyTarget?.isAgent
+        ? replyTarget.authorPubkey
+        : parentChannelId
+          ? undefined
+          : (selectedMentionedAgent ?? mentionedAgentPubkey(text, mentionableAgents));
       // Build and sign exactly once. publishPreparedMessage retries the same
       // id on a transient failure, so the relay can dedupe an ambiguous send.
-      const messageInput = { sessionId: decodedId, text, attachments };
-      const event = await transport.composeMessage(
-        messageInput,
-        mentionedAgent ? { mentionAgent: mentionedAgent } : undefined,
-      );
-      const eventId = await transport.messageSubmitWithEventId(messageInput, { event });
+      const eventId = replyTarget
+        ? await transport.messageSubmitReply(
+            decodedId,
+            text,
+            replyTarget.messageId,
+            mentionedAgent,
+            attachments,
+          )
+        : await transport.messageSubmitWithEventId(
+            { sessionId: decodedId, text, attachments },
+            mentionedAgent ? { mentionAgent: mentionedAgent } : undefined,
+          );
       useBuzzLocalCache
         .getState()
         .updateMessages(cacheViewerPubkey, decodedId, (current) =>
@@ -1011,6 +1111,7 @@ export default function BuzzChat() {
     parentChannelId,
     mentionableAgents,
     cacheViewerPubkey,
+    replyTarget,
   ]);
 
   const pickPhoto = useCallback(async () => {
@@ -1600,7 +1701,7 @@ export default function BuzzChat() {
       const isBody = item.pubkey && BODY_PUBKEYS.has(item.pubkey);
       const isOwn = item.isUser;
       const knownAgent = item.pubkey ? agentByPubkey.get(item.pubkey) : undefined;
-      const isAgent = item.isAgentActivity || isBody || Boolean(knownAgent);
+      const isAgent = item.isAgentAuthor || item.isAgentActivity || isBody || Boolean(knownAgent);
       const display = isAgent
         ? resolveAgentDisplayIdentity(item.pubkey ?? 'unknown-agent', knownAgent)
         : null;
@@ -1614,100 +1715,124 @@ export default function BuzzChat() {
           ),
       );
       const personName = item.pubkey ? personProfileByPubkey.get(item.pubkey)?.name : undefined;
+      const referencedMessage = item.replyToId ? visibleMessageById.get(item.replyToId) : undefined;
+      const referencedTarget = referencedMessage
+        ? replyTargetForMessage(referencedMessage)
+        : undefined;
+      const replyReference = item.replyToId ? (
+        <View style={styles.replyReference} testID={`reply-reference-${item.id}`}>
+          <Text numberOfLines={1} style={styles.replyReferenceAuthor}>
+            ↳ {referencedTarget?.authorName ?? 'ORIGINAL MESSAGE'}
+          </Text>
+          <Text numberOfLines={2} style={styles.replyReferenceText}>
+            {referencedTarget?.preview ?? 'Message not loaded'}
+          </Text>
+        </View>
+      ) : null;
 
       if (parentChannelId) {
         return (
-          <NewMessageMaterialize enabled={Boolean(item.isNew)}>
-            <View style={[styles.terminalTurn, isOwn && !isAgent && styles.terminalTurnUser]}>
-              <View style={styles.terminalTurnHeading}>
-                <Text style={styles.terminalTurnGlyph}>{isOwn || isAgent ? '›' : '·'}</Text>
-                <Text style={styles.terminalTurnLabel}>
-                  {isOwn ? 'YOU' : isAgent ? 'TURN SUMMARY' : 'MESSAGE'}
-                </Text>
-                {!isOwn && display && (
-                  <Text numberOfLines={1} style={styles.terminalTurnAuthor}>
-                    {display.name}
+          <SwipeToReply messageId={item.id} onReply={() => beginReply(item)}>
+            <NewMessageMaterialize enabled={Boolean(item.isNew)}>
+              <View style={[styles.terminalTurn, isOwn && !isAgent && styles.terminalTurnUser]}>
+                <View style={styles.terminalTurnHeading}>
+                  <Text style={styles.terminalTurnGlyph}>{isOwn || isAgent ? '›' : '·'}</Text>
+                  <Text style={styles.terminalTurnLabel}>
+                    {isOwn ? 'YOU' : isAgent ? 'TURN SUMMARY' : 'MESSAGE'}
                   </Text>
-                )}
-                {!isOwn && !display && personName && (
-                  <Text numberOfLines={1} style={styles.terminalTurnAuthor}>
-                    {personName}
-                  </Text>
-                )}
+                  {!isOwn && display && (
+                    <Text numberOfLines={1} style={styles.terminalTurnAuthor}>
+                      {display.name}
+                    </Text>
+                  )}
+                  {!isOwn && !display && personName && (
+                    <Text numberOfLines={1} style={styles.terminalTurnAuthor}>
+                      {personName}
+                    </Text>
+                  )}
+                </View>
+                {replyReference}
+                {item.text ? (
+                  !isOwn && isAgent ? (
+                    <MonoMarkdown
+                      markdown={item.text}
+                      tone="final"
+                      testID="corner-final-markdown"
+                    />
+                  ) : (
+                    <MonoMarkdown
+                      markdown={item.text}
+                      textStyle={styles.terminalTurnText}
+                      testID="corner-own-markdown"
+                    />
+                  )
+                ) : null}
+                {item.attachments?.map((attachment) => (
+                  <AttachmentCard attachment={attachment} key={`${item.id}-${attachment.url}`} />
+                ))}
               </View>
-              {item.text ? (
-                !isOwn && isAgent ? (
-                  <MonoMarkdown markdown={item.text} tone="final" testID="corner-final-markdown" />
-                ) : (
-                  <MonoMarkdown
-                    markdown={item.text}
-                    textStyle={styles.terminalTurnText}
-                    testID="corner-own-markdown"
-                  />
-                )
-              ) : null}
-              {item.attachments?.map((attachment) => (
-                <AttachmentCard attachment={attachment} key={`${item.id}-${attachment.url}`} />
-              ))}
-            </View>
-          </NewMessageMaterialize>
+            </NewMessageMaterialize>
+          </SwipeToReply>
         );
       }
 
       return (
-        <NewMessageMaterialize enabled={Boolean(item.isNew)}>
-          <View
-            style={[styles.roomMessageRow, isOwn && styles.roomMessageRowOwn]}
-            testID={`chat-message-${item.id}`}
-          >
-            <View style={[styles.messageBubble, isOwn ? styles.ownBubble : styles.otherBubble]}>
-              <View style={styles.authorRow}>
-                {display ? (
-                  <AgentAvatar
-                    pubkey={item.pubkey ?? 'unknown-agent'}
-                    avatarSeed={display.avatarSeed}
-                    avatarUrl={display.avatarUrl}
-                    name={display.name}
-                    size={22}
-                  />
-                ) : item.pubkey && !isOwn ? (
-                  <PersonAvatar
-                    pubkey={item.pubkey}
-                    avatarUrl={personProfileByPubkey.get(item.pubkey)?.avatar}
-                    name={personName ?? shortMemberNpub(item.pubkey)}
-                    size={22}
+        <SwipeToReply messageId={item.id} onReply={() => beginReply(item)}>
+          <NewMessageMaterialize enabled={Boolean(item.isNew)}>
+            <View
+              style={[styles.roomMessageRow, isOwn && styles.roomMessageRowOwn]}
+              testID={`chat-message-${item.id}`}
+            >
+              <View style={[styles.messageBubble, isOwn ? styles.ownBubble : styles.otherBubble]}>
+                <View style={styles.authorRow}>
+                  {display ? (
+                    <AgentAvatar
+                      pubkey={item.pubkey ?? 'unknown-agent'}
+                      avatarSeed={display.avatarSeed}
+                      avatarUrl={display.avatarUrl}
+                      name={display.name}
+                      size={22}
+                    />
+                  ) : item.pubkey && !isOwn ? (
+                    <PersonAvatar
+                      pubkey={item.pubkey}
+                      avatarUrl={personProfileByPubkey.get(item.pubkey)?.avatar}
+                      name={personName ?? shortMemberNpub(item.pubkey)}
+                      size={22}
+                    />
+                  ) : null}
+                  {knownAgent && item.pubkey ? (
+                    <AgentPresenceLight
+                      online={agentOnline}
+                      testID={`agent-presence-light-${item.pubkey}`}
+                    />
+                  ) : null}
+                  <Text style={[styles.roleLabel, isAgent ? styles.roleAgent : styles.roleUser]}>
+                    {isOwn
+                      ? 'YOU'
+                      : display
+                        ? display.name
+                        : (personName ?? shortMemberNpub(item.pubkey ?? ''))}
+                  </Text>
+                </View>
+                {replyReference}
+                {item.text ? (
+                  <MonoMarkdown
+                    markdown={item.text}
+                    textStyle={styles.messageText}
+                    testID={`chat-message-text-${item.id}`}
                   />
                 ) : null}
-                {knownAgent && item.pubkey ? (
-                  <AgentPresenceLight
-                    online={agentOnline}
-                    testID={`agent-presence-light-${item.pubkey}`}
-                  />
-                ) : null}
-                <Text style={[styles.roleLabel, isAgent ? styles.roleAgent : styles.roleUser]}>
-                  {isOwn
-                    ? 'YOU'
-                    : display
-                      ? display.name
-                      : (personName ?? shortMemberNpub(item.pubkey ?? ''))}
-                </Text>
+                {item.attachments?.map((attachment) => (
+                  <AttachmentCard attachment={attachment} key={`${item.id}-${attachment.url}`} />
+                ))}
+                {item.pubkey && !isOwn && !isAgent && (
+                  <Text style={styles.provenanceText}>{shortMemberNpub(item.pubkey)}</Text>
+                )}
               </View>
-              {item.text ? (
-                <MonoMarkdown
-                  markdown={item.text}
-                  textStyle={styles.messageText}
-                  testID={`chat-message-text-${item.id}`}
-                />
-              ) : null}
-              {item.attachments?.map((attachment) => (
-                <AttachmentCard attachment={attachment} key={`${item.id}-${attachment.url}`} />
-              ))}
-              {item.pubkey && !isOwn && !isAgent && (
-                <Text style={styles.provenanceText}>{shortMemberNpub(item.pubkey)}</Text>
-              )}
             </View>
-          </View>
-        </NewMessageMaterialize>
+          </NewMessageMaterialize>
+        </SwipeToReply>
       );
     },
     [
@@ -1722,6 +1847,9 @@ export default function BuzzChat() {
       presenceNow,
       presenceReconnectGrace,
       openedCornerIds,
+      beginReply,
+      replyTargetForMessage,
+      visibleMessageById,
     ],
   );
 
@@ -1742,9 +1870,10 @@ export default function BuzzChat() {
       onAdd={() => router.push('/buzz/community' as Href)}
       onSettings={() => router.push('/buzz/settings/identity' as Href)}
       onWorkspaceSettings={(communityId) =>
-        router.push(
-          { pathname: '/buzz/settings/workspace', params: { communityId } } as unknown as Href,
-        )
+        router.push({
+          pathname: '/buzz/settings/workspace',
+          params: { communityId },
+        } as unknown as Href)
       }
       canManageActiveCommunity={canManageWorkspace}
       viewerPubkey={userPubkey || undefined}
@@ -2077,6 +2206,28 @@ export default function BuzzChat() {
                     AND {mentionSuggestions.overflow} OTHERS
                   </Text>
                 )}
+              </View>
+            )}
+            {replyTarget && (
+              <View style={styles.replyComposerBanner} testID="reply-composer-banner">
+                <View style={styles.replyComposerCopy}>
+                  <Text numberOfLines={1} style={styles.replyComposerLabel}>
+                    ↩ REPLYING TO {replyTarget.authorName.toUpperCase()}
+                    {replyTarget.isAgent ? ' · AGENT WILL BE TAGGED' : ''}
+                  </Text>
+                  <Text numberOfLines={2} style={styles.replyComposerPreview}>
+                    {replyTarget.preview}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  accessibilityLabel="Cancel reply"
+                  accessibilityRole="button"
+                  onPress={() => setReplyTarget(null)}
+                  style={styles.replyComposerCancel}
+                  testID="reply-composer-cancel"
+                >
+                  <Text style={styles.replyComposerCancelText}>×</Text>
+                </TouchableOpacity>
               </View>
             )}
             {pendingAttachment && (
@@ -3164,6 +3315,29 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   roomMessageRowOwn: { alignItems: 'flex-end' },
+  replySwipeAction: {
+    width: 78,
+    marginBottom: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderLeftWidth: 1,
+    borderLeftColor: groknight.borderStrong,
+    backgroundColor: groknight.bgHighlight,
+  },
+  replySwipeGlyph: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 17,
+    lineHeight: 20,
+  },
+  replySwipeLabel: {
+    ...Typography.mono('semiBold'),
+    marginTop: 2,
+    color: groknight.textMuted,
+    fontSize: 8,
+    lineHeight: 11,
+    letterSpacing: 0.6,
+  },
   messageBubble: {
     minWidth: 92,
     maxWidth: '84%',
@@ -3208,6 +3382,28 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: groknight.textSecondary,
     lineHeight: 20,
+  },
+  replyReference: {
+    minWidth: 0,
+    marginBottom: 7,
+    paddingLeft: 8,
+    paddingVertical: 3,
+    borderLeftWidth: 2,
+    borderLeftColor: groknight.borderStrong,
+  },
+  replyReferenceAuthor: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 9,
+    lineHeight: 12,
+    letterSpacing: 0.35,
+  },
+  replyReferenceText: {
+    ...Typography.default(),
+    marginTop: 1,
+    color: groknight.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
   },
   provenanceText: {
     ...Typography.mono(),
@@ -3745,6 +3941,44 @@ const styles = StyleSheet.create({
     fontSize: 9,
     lineHeight: 12,
     letterSpacing: 0.4,
+  },
+  replyComposerBanner: {
+    minWidth: 0,
+    minHeight: 48,
+    marginBottom: 6,
+    paddingLeft: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderLeftWidth: 3,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgHighlight,
+  },
+  replyComposerCopy: { flex: 1, minWidth: 0, paddingVertical: 7 },
+  replyComposerLabel: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 9,
+    lineHeight: 13,
+    letterSpacing: 0.35,
+  },
+  replyComposerPreview: {
+    ...Typography.default(),
+    marginTop: 2,
+    color: groknight.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  replyComposerCancel: {
+    width: 44,
+    minHeight: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  replyComposerCancelText: {
+    ...Typography.default(),
+    color: groknight.textSecondary,
+    fontSize: 20,
   },
   pendingAttachment: {
     minWidth: 0,

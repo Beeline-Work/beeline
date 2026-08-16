@@ -223,6 +223,45 @@ lines.on('line', (line) => {
   return binary;
 }
 
+async function fakeStreamingAgent(): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-stream-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'fake-streaming-agent.mjs');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+
+const lines = createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+const chunk = (text) =>
+  send({
+    jsonrpc: '2.0',
+    method: 'session/update',
+    params: { sessionId: 'stream-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } } },
+  });
+
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'stream-session' } });
+  } else if (message.method === 'session/prompt') {
+    chunk('Hel');
+    chunk('lo ');
+    chunk('world');
+    send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
 describe('AcpClient live steering', () => {
   it('lets the host intercept and reject a mutating permission request', async () => {
     const requests: unknown[] = [];
@@ -285,6 +324,38 @@ describe('AcpClient live steering', () => {
       expect(second).toEqual({ runId: 'run-original', messageId: 'steer-2' });
       expect(result.agentText).toBe('incorporated:first redirect|second redirect');
       expect(client.activeRunId(sessionId)).toBeUndefined();
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('streams agent_message_chunk deltas to onChunk as they arrive, harness-agnostic at the ACP boundary', async () => {
+    const client = new AcpClient({ agentBinary: await fakeStreamingAgent(), agentEnv: {} });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const seen: Array<{ delta: string; fullText: string }> = [];
+      const result = await client.sessionPrompt(sessionId, 'go', 5_000, (delta, fullText) => {
+        seen.push({ delta, fullText });
+      });
+      expect(seen).toEqual([
+        { delta: 'Hel', fullText: 'Hel' },
+        { delta: 'lo ', fullText: 'Hel' + 'lo ' },
+        { delta: 'world', fullText: 'Hello world' },
+      ]);
+      expect(result.agentText).toBe('Hello world');
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('omitting onChunk changes nothing about the final result (opt-in, no side effect)', async () => {
+    const client = new AcpClient({ agentBinary: await fakeStreamingAgent(), agentEnv: {} });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const result = await client.sessionPrompt(sessionId, 'go', 5_000);
+      expect(result.agentText).toBe('Hello world');
     } finally {
       await client.stop();
     }

@@ -103,6 +103,7 @@ import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome';
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
+import { StreamingAgentText } from '@/components/buzz/StreamingAgentText';
 import {
   HullSurface,
   MonoButton,
@@ -535,6 +536,8 @@ export default function BuzzChat() {
     const latest = visibleMessages.at(-1);
     return isCorner && !isArchived && latest?.isAgentActivity ? latest.id : undefined;
   }, [activeAgentTurn, isArchived, isCorner, sessionState, visibleMessages]);
+  const workingAgentTurn =
+    activeAgentTurn?.agentTurn?.status === 'working' ? activeAgentTurn.agentTurn : undefined;
 
   useEffect(() => {
     setReviewFileCount(null);
@@ -1309,13 +1312,14 @@ export default function BuzzChat() {
     [activeCommunityId, transport, userPubkey],
   );
 
-  const handleCancel = useCallback(async () => {
+  const handleCloseCorner = useCallback(async () => {
     if (!transport) return;
     try {
-      await transport.runAbort(decodedId);
+      await transport.closeCorner(decodedId);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      router.back();
     } catch (err) {
-      console.warn('Cancel failed:', err);
+      console.warn('Close corner failed:', err);
     }
   }, [decodedId, transport]);
 
@@ -1897,6 +1901,20 @@ export default function BuzzChat() {
             </View>
           )}
 
+        {/* Live "alien typewriter" reveal: materializes as the agent generates
+            it, isolated in its own leaf subscription so it never touches
+            `messages`/`invertedMessages` or re-renders the transcript list. */}
+        {!isArchived && workingAgentTurn && transport && (
+          <View style={styles.agentDraftBanner} testID="agent-draft-banner">
+            <StreamingAgentText
+              key={workingAgentTurn.requestId}
+              transport={transport}
+              channelId={decodedId}
+              requestId={workingAgentTurn.requestId}
+            />
+          </View>
+        )}
+
         {/* P2: Archived channels are read-only */}
         {isArchived ? (
           <View style={[styles.archivedInputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
@@ -1910,7 +1928,7 @@ export default function BuzzChat() {
               <TouchableOpacity
                 accessibilityLabel={`Close ${CORNER_LABEL}`}
                 style={styles.cancelTurnButton}
-                onPress={() => void handleCancel()}
+                onPress={() => void handleCloseCorner()}
               >
                 <Text style={styles.cancelTurnText}>■ CLOSE {CORNER_LABEL.toUpperCase()}</Text>
               </TouchableOpacity>
@@ -3461,6 +3479,14 @@ const styles = StyleSheet.create({
     fontSize: 10,
     lineHeight: 14,
     letterSpacing: 0.35,
+  },
+  agentDraftBanner: {
+    marginBottom: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: groknight.border,
+    backgroundColor: groknight.bgRaised,
   },
   cancelTurnButton: {
     minHeight: 36,

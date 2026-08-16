@@ -77,6 +77,18 @@ export type AcpPermissionHandler = (
   request: AcpPermissionRequest,
 ) => Promise<AcpPermissionDecision>;
 
+/** Invoked once per incremental `agent_message_chunk` delta during a live prompt. */
+export type AcpTextChunkHandler = (delta: string, fullTextSoFar: string) => void;
+
+/** Extract the text delta of an `agent_message_chunk` update, harness-agnostic. */
+function agentMessageChunkText(update: Record<string, unknown>): string {
+  if (update.sessionUpdate !== 'agent_message_chunk') return '';
+  const content = update.content as { type?: string; text?: string } | undefined;
+  if (content?.type === 'text') return content.text ?? '';
+  if (typeof update.content === 'string') return update.content;
+  return '';
+}
+
 /**
  * ACP tool kinds are intentionally portable and runtimes sometimes put the
  * concrete tool name in the title or raw input. Treat shell/execute as
@@ -261,13 +273,33 @@ export class AcpClient extends EventEmitter {
     await this.request('session/set_mode', { sessionId, modeId: target });
   }
 
-  async sessionPrompt(sessionId: string, text: string, timeoutMs = 120_000): Promise<PromptResult> {
+  /**
+   * Run one prompt turn. `onChunk` is the ACP-boundary streaming hook: called
+   * for every incremental `agent_message_chunk` delta as it arrives, so a
+   * caller can project live text without waiting for the turn to finish. A
+   * harness that only emits a final message (never chunks) simply never
+   * invokes it — `agentText` is unaffected either way.
+   */
+  async sessionPrompt(
+    sessionId: string,
+    text: string,
+    timeoutMs = 120_000,
+    onChunk?: AcpTextChunkHandler,
+  ): Promise<PromptResult> {
     const updates: SessionUpdate[] = [];
     let promptRunId: string | undefined;
+    let streamedText = '';
     const onUpdate = (u: SessionUpdate) => {
       if (u.sessionId !== sessionId) return;
       updates.push(u);
       promptRunId ??= this.activeRunIdFromUpdate(u.update);
+      if (onChunk) {
+        const delta = agentMessageChunkText(u.update);
+        if (delta) {
+          streamedText += delta;
+          onChunk(delta, streamedText);
+        }
+      }
     };
     this.on('session/update', onUpdate);
     this.activePromptSessions.add(sessionId);
@@ -282,19 +314,7 @@ export class AcpClient extends EventEmitter {
         timeoutMs,
       )) as { stopReason?: string };
 
-      const agentText = updates
-        .map((u) => {
-          const up = u.update;
-          // sessionUpdate can be "agent_message_chunk" or similar
-          const sessionUpdate = up.sessionUpdate as string | undefined;
-          if (sessionUpdate !== 'agent_message_chunk') return '';
-          const content = up.content as { type?: string; text?: string } | undefined;
-          if (content?.type === 'text') return content.text ?? '';
-          // Also support direct content text
-          if (typeof up.content === 'string') return up.content;
-          return '';
-        })
-        .join('');
+      const agentText = updates.map((u) => agentMessageChunkText(u.update)).join('');
 
       const toolCalls: ToolCallEntry[] = updates
         .filter((u) => {

@@ -315,6 +315,108 @@ describe('Room-scoped agent presence transport', () => {
   });
 });
 
+describe('Room-scoped live agent draft transport', () => {
+  const identity = {
+    publicKey: 'd'.repeat(64),
+    secretKey: new Uint8Array(32).fill(4),
+    name: 'operator',
+  } as Identity;
+
+  it('backfills only the replaceable draft kind', async () => {
+    const event = {
+      kind: 'other' as const,
+      event: {
+        id: 'draft',
+        pubkey: 'a'.repeat(64),
+        created_at: 42,
+        kind: 30078,
+        tags: [['h', 'room']],
+        content: 'Hello wor',
+        sig: 'b'.repeat(128),
+      },
+      channelId: 'room',
+      content: 'Hello wor',
+      pubkey: 'a'.repeat(64),
+      createdAt: 42,
+      id: 'draft',
+    } satisfies BuzzSessionEvent;
+    const client = { agentDraftBackfill: vi.fn(async () => [event]) };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(transport.agentDraftBackfill('room')).resolves.toHaveLength(1);
+    expect(client.agentDraftBackfill).toHaveBeenCalledWith('room');
+  });
+
+  it('subscribes only to the draft record and releases the live subscription', async () => {
+    const relayUnsubscribe = vi.fn();
+    let relayHandler: ((event: BuzzSessionEvent) => void) | undefined;
+    const client = {
+      agentDraftSubscribe: vi.fn(
+        async (_room: string, handler: (event: BuzzSessionEvent) => void) => {
+          relayHandler = handler;
+          return relayUnsubscribe;
+        },
+      ),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+    const handler = vi.fn();
+
+    const stop = transport.agentDraftSubscribe('room', handler);
+    await vi.waitFor(() => expect(client.agentDraftSubscribe).toHaveBeenCalled());
+    expect(client.agentDraftSubscribe).toHaveBeenCalledWith('room', expect.any(Function));
+    relayHandler?.({
+      kind: 'other',
+      event: {
+        id: 'draft',
+        pubkey: 'a'.repeat(64),
+        created_at: 42,
+        kind: 30078,
+        tags: [['h', 'room']],
+        content: 'Hello wor',
+        sig: 'b'.repeat(128),
+      },
+      channelId: 'room',
+      content: 'Hello wor',
+      pubkey: 'a'.repeat(64),
+      createdAt: 42,
+      id: 'draft',
+    });
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'raw', sessionId: 'room' }),
+    );
+    stop();
+    expect(relayUnsubscribe).toHaveBeenCalledOnce();
+  });
+});
+
+describe('Corner close', () => {
+  it('publishes a buzz-corner-close tagged message to the corner channel, distinct from runAbort', async () => {
+    const identity = {
+      publicKey: 'd'.repeat(64),
+      secretKey: new Uint8Array(32).fill(4),
+      name: 'operator',
+    } as Identity;
+    const messageSubmit = vi.fn(async () => ({}));
+    const client = { messageSubmit };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await transport.closeCorner('corner-1');
+
+    expect(messageSubmit).toHaveBeenCalledWith(
+      'corner-1',
+      expect.any(String),
+      expect.objectContaining({ extraTags: [['t', 'buzz-corner-close']] }),
+    );
+    expect(messageSubmit.mock.calls[0]?.[2]?.extraTags).not.toContainEqual([
+      't',
+      'buzz-agent-cancel',
+    ]);
+  });
+});
+
 describe('Room-scoped Workspace membership', () => {
   it('composes an @-mentioned Room message once and coalesces duplicate publishes by event id', async () => {
     const identity = {

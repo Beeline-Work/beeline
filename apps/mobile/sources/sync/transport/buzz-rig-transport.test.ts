@@ -154,6 +154,32 @@ describe('Buzz branch-loop event projection', () => {
 });
 
 describe('Buzz transport bootstrap', () => {
+  it('publishes replies with NIP-10 linkage and an explicit Agent address', async () => {
+    const identity = {
+      publicKey: 'd'.repeat(64),
+      secretKey: new Uint8Array(32).fill(4),
+      name: 'operator',
+    } as Identity;
+    const client = {
+      messageSubmit: vi.fn().mockResolvedValue({ id: 'reply-event' }),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(
+      transport.messageSubmitReply(
+        'room',
+        '@Brisk Pilot Can you expand?',
+        'original-message',
+        'agent-pubkey',
+      ),
+    ).resolves.toBe('reply-event');
+    expect(client.messageSubmit).toHaveBeenCalledWith('room', '@Brisk Pilot Can you expand?', {
+      mentionAgent: 'agent-pubkey',
+      extraTags: [['e', 'original-message', '', 'reply']],
+    });
+  });
+
   it('does not open a WebSocket for HTTP-only screen reads', async () => {
     const identity = {
       publicKey: 'f'.repeat(64),

@@ -69,6 +69,7 @@ describe('Buzz Room screen event projection', () => {
         id: 'assistant-answer',
         text: 'The scheduler uses a bounded LRU of ACP sessions.',
         isUser: false,
+        isAgentAuthor: true,
       },
     ]);
   });
@@ -108,6 +109,23 @@ describe('Buzz Room screen event projection', () => {
       ],
     });
     expect(JSON.stringify(event.payload)).not.toContain('base64');
+  });
+
+  it('preserves a NIP-10 reply target for conversational rendering', () => {
+    const event = raw(
+      'reply',
+      '@Agent Can you expand on that?',
+      [
+        ['p', agent],
+        ['e', 'original-agent-message', '', 'reply'],
+      ],
+      3,
+    );
+
+    expect(projectChatEvent(event, viewer).message).toMatchObject({
+      id: 'reply',
+      replyToId: 'original-agent-message',
+    });
   });
 
   it('drives and clears the Room thinking indicator from read-only agent turns', () => {

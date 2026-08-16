@@ -564,32 +564,44 @@ function latestMetadataEvent(events: NostrEvent[]): NostrEvent | undefined {
 
 /**
  * Discover child/subchannels of a parent by scanning kind:9007 create events
- * that carry a `parent` tag matching `parentChannelId`.
+ * that carry a `parent` tag matching `parentChannelId`, plus the parent Room's
+ * durable Body-control links.
  *
  * Parent linkage lives on the 9007 create event, NOT on kind:39000 metadata
  * (though some stacks may mirror it there).
  *
  * The relay does NOT index multi-character tags (`#parent`), so we query
  * all recent 9007 events and filter client-side by the `parent` tag value.
+ * A closed NIP-29 child can omit its create event from that broad query even
+ * for a parent member. Body also writes a parent-scoped control event with the
+ * child `subchannel` tag; merge those links so invite-only corners remain
+ * discoverable. `closed` is an access flag, never a lifecycle/archive signal.
  */
 export async function listSubchannels(
   ctx: ChannelOpsContext,
   parentChannelId: string,
   limit = 500,
 ): Promise<string[]> {
-  const events = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_CREATE_GROUP], limit }],
-    ctx.identity.publicKey,
-  );
-  const ids: string[] = [];
+  const [events, controlEvents] = await Promise.all([
+    queryEvents(ctx.http, [{ kinds: [KIND_CREATE_GROUP], limit }], ctx.identity.publicKey),
+    queryEvents(
+      ctx.http,
+      [{ kinds: [KIND_STREAM_MESSAGE], '#h': [parentChannelId], '#t': ['body-control'], limit }],
+      ctx.identity.publicKey,
+    ),
+  ]);
+  const ids = new Set<string>();
   for (const ev of events) {
     const parent = tagValue(ev, 'parent');
     if (parent !== parentChannelId) continue;
     const id = tagValue(ev, 'h') ?? tagValue(ev, 'd');
-    if (id && id !== parentChannelId) ids.push(id);
+    if (id && id !== parentChannelId) ids.add(id);
   }
-  return ids;
+  for (const ev of controlEvents) {
+    const id = tagValue(ev, 'subchannel');
+    if (id && id !== parentChannelId) ids.add(id);
+  }
+  return [...ids];
 }
 
 /** Build one stable kind:9 channel message. Callers may safely republish this exact event. */

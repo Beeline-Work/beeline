@@ -722,7 +722,7 @@ describe('Buzz corner lifecycle projection', () => {
   }
 
   it('distinguishes live, review-open, merged, and archived corners', async () => {
-    const ids = ['live', 'open', 'merged', 'archived'];
+    const ids = ['live', 'open', 'merged', 'archived', 'invite-only'];
     const client = {
       listSubchannels: vi.fn(async () => ids),
       query: vi.fn(async (filters: Array<Record<string, unknown>>) => {
@@ -750,7 +750,13 @@ describe('Buzz corner lifecycle projection', () => {
           },
         ];
       }),
-      getChannelMetadata: vi.fn(async (id: string) => ({ archived: id === 'archived' })),
+      getChannelMetadata: vi.fn(async (id: string) =>
+        id === 'invite-only'
+          ? // Relay projections use `closed` for NIP-29 invite-only access;
+            // it must not become the corner's lifecycle archived flag.
+            ({ archived: 'closed' } as unknown as { archived?: boolean })
+          : { archived: id === 'archived' },
+      ),
       sessionEventsBackfill: vi.fn(async (id: string) => {
         if (id === 'open')
           return [
@@ -771,6 +777,7 @@ describe('Buzz corner lifecycle projection', () => {
       { id: 'open', name: 'open-corner', status: 'open' },
       { id: 'merged', name: 'merged-corner', status: 'merged' },
       { id: 'archived', name: 'archived-corner', status: 'archived' },
+      { id: 'invite-only', name: 'invite-only-corner', status: 'live' },
     ]);
     expect(client.query).toHaveBeenCalledWith([
       expect.objectContaining({ '#h': ['room'], '#t': ['merge-summary'], limit: 500 }),

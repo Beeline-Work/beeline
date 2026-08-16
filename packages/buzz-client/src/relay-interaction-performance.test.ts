@@ -116,7 +116,10 @@ describe('relay interaction latency probe', () => {
 
     console.info('relay-interaction-measurements', measurements);
     expect(measurements).toMatchObject({
-      'workspace-home-4-rooms-including-dm-discovery': { requests: 9 },
+      // Child creates and parent Body-control links coalesce into the same
+      // authenticated batch, preserving invite-only corner discovery without
+      // adding a Room-list round trip.
+      'workspace-home-4-rooms-including-dm-discovery': { requests: 8 },
       'room-or-dm-chat': { requests: 5 },
       agents: { requests: 3 },
     });

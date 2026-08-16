@@ -155,7 +155,7 @@ export class BuzzClient {
       return;
     }
     this.ws = new RelayWs({
-      wsUrl: wsUrlFromHttp(this.baseUrl),
+      wsUrl: this.config.wsUrl ?? wsUrlFromHttp(this.baseUrl),
       identity: this.identity,
       ...(this.config.WebSocketImpl ? { WebSocketImpl: this.config.WebSocketImpl } : {}),
       ...(this.config.skipAuth !== undefined ? { skipAuth: this.config.skipAuth } : {}),
@@ -178,6 +178,11 @@ export class BuzzClient {
   /** Underlying WS (after connect). */
   get socket(): RelayWs | null {
     return this.ws;
+  }
+
+  /** Observe an unexpected socket close. Reconnect callers own re-subscription. */
+  onSocketClose(handler: () => void): Unsubscribe {
+    return this.ws?.onClose(handler) ?? (() => undefined);
   }
 
   // ── Channel ops ─────────────────────────────────────────────────────────
@@ -597,14 +602,14 @@ export class BuzzClient {
   async sessionEventsSubscribe(
     channelId: string,
     handler: SessionEventHandler,
-    opts?: { kinds?: number[] },
+    opts?: { kinds?: number[]; since?: number },
   ): Promise<Unsubscribe> {
     if (!this.ws?.connected) {
       await this.connect();
     }
     const ws = this.ws!;
     const kinds = opts?.kinds ?? [KIND_STREAM_MESSAGE];
-    let lastSeenCreatedAt: number | undefined;
+    let lastSeenCreatedAt: number | undefined = opts?.since;
     const deliveredIds = new Set<string>();
     const deliver = (event: NostrEvent) => {
       const se = toSessionEvent(event);
@@ -617,7 +622,7 @@ export class BuzzClient {
       handler(se);
     };
     return ws.subscribe(
-      [{ kinds, '#h': [channelId] }],
+      [{ kinds, '#h': [channelId], ...(opts?.since === undefined ? {} : { since: opts.since }) }],
       deliver,
       {
         reconnectFilters: () => [

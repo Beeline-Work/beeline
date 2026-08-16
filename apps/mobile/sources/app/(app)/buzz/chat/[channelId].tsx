@@ -1796,7 +1796,7 @@ export default function BuzzChat() {
                       : 'LOADING MEMBERS'
                   }`
                 : participantsHydrated
-                  ? `${presenceSummary ? `${presenceSummary}  ·  ` : ''}${formatRoomParticipantTotal(roomParticipantTotal)}  ·  IN THIS ROOM  ›`
+                  ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ·  IN THIS ROOM  ›`
                   : 'LOADING MEMBERS'}
             </Text>
           </TouchableOpacity>
@@ -1952,21 +1952,6 @@ export default function BuzzChat() {
             ) : null
           }
         />
-
-        {!isArchived &&
-          !parentChannelId &&
-          (activeAgentTurn?.agentTurn || (!agentsOffline && activeCorner?.corner)) && (
-            <View style={styles.agentLiveStatus} testID="agent-live-status">
-              <PixelLoader compact />
-              <Text style={styles.agentLiveStatusText}>
-                {activeAgentTurn?.agentTurn
-                  ? 'thinking…'
-                  : activeCorner?.corner?.status === 'starting'
-                    ? 'opening corner…'
-                    : 'working in corner…'}
-              </Text>
-            </View>
-          )}
 
         {/* Live "alien typewriter" reveal: materializes as the agent generates
             it, isolated in its own leaf subscription so it never touches

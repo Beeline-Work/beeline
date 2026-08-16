@@ -64,6 +64,8 @@ const monoStyles = new Set([
   'segmentText',
   'compactActionText',
   'memberHandle',
+  'personHandle',
+  'agentRole',
   'roleText',
   'inviteTitle',
   'visibilityButtonText',

@@ -87,17 +87,16 @@ export function MonoMarkdown({ markdown, tone = 'output', textStyle, testID }: M
           return (
             <View key={index} style={[styles.list, blockStyle]}>
               {block.items.map((item, itemIndex) => (
-                <View
+                <Text
                   key={itemIndex}
-                  style={[styles.listRow, { paddingLeft: Math.max(0, item.depth) * 12 }]}
+                  selectable
+                  style={[base, styles.listItem, { paddingLeft: Math.max(0, item.depth) * 12 }]}
                 >
-                  <Text style={[base, styles.listGlyph]}>
-                    {'number' in item ? `${item.number}.` : '·'}
+                  <Text style={styles.listGlyph}>
+                    {'number' in item ? `${item.number}. ` : '· '}
                   </Text>
-                  <Text selectable style={[base, styles.listText]}>
-                    <InlineMarkdown spans={item.spans} base={base} onLink={onLink} />
-                  </Text>
-                </View>
+                  <InlineMarkdown spans={item.spans} base={base} onLink={onLink} />
+                </Text>
               ))}
             </View>
           );
@@ -194,9 +193,8 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
   list: { width: '100%', gap: 3 },
-  listRow: { minWidth: 0, flexDirection: 'row', alignItems: 'flex-start' },
-  listGlyph: { width: 18, color: groknight.textMuted },
-  listText: { flex: 1, minWidth: 0 },
+  listItem: { width: '100%' },
+  listGlyph: { color: groknight.textMuted },
   codeFrame: {
     maxWidth: '100%',
     borderWidth: 1,

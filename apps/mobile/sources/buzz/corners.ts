@@ -120,6 +120,12 @@ export function sortCorners(corners: CornerSummary[]): CornerSummary[] {
   });
 }
 
+/** The Room-list dropdown is a live-work shortcut. Archived corners remain
+ * reachable from their durable cards in the parent Room transcript. */
+export function roomListCorners(corners: readonly CornerSummary[]): CornerSummary[] {
+  return corners.filter((corner) => corner.status !== 'archived');
+}
+
 export type CornerActivitySignal = {
   subchannelId: string;
   status: CornerStatus;

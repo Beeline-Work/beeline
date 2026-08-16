@@ -7,6 +7,7 @@ import {
   type SessionEvent as BuzzSessionEvent,
 } from '@beeline/buzz-client';
 import { agentPresenceFromSessionEvent } from '@/buzz/agent-presence';
+import { cornerStatusPrecedence, mapRawCornerStatusTag, type CornerStatus } from '@/buzz/corners';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -151,7 +152,6 @@ export function toRigEvent(ev: BuzzSessionEvent): SessionEvent {
   };
 }
 
-export type CornerCardStatus = 'starting' | 'working' | 'needs-attention' | 'ready' | 'failed';
 export type AgentTurnStatus = 'working' | 'complete' | 'failed';
 
 export type ChatDisplayMessage = {
@@ -169,7 +169,7 @@ export type ChatDisplayMessage = {
   corner?: {
     subchannelId: string;
     agentPubkey?: string;
-    status: CornerCardStatus;
+    status: CornerStatus;
   };
   agentTurn?: {
     requestId: string;
@@ -249,14 +249,8 @@ function eventId(event: SessionEvent): string {
   return `${event.type}-${eventTimestamp(event)}-${eventText(event).slice(0, 32)}`;
 }
 
-function cornerStatus(event: SessionEvent): CornerCardStatus | undefined {
-  const status = eventTagValue(event, 'display-status') ?? eventTagValue(event, 'status');
-  if (status === 'starting') return 'starting';
-  if (status === 'working' || status === 'open' || status === 'live') return 'working';
-  if (status === 'needs-attention') return 'needs-attention';
-  if (status === 'ready') return 'ready';
-  if (status === 'failed') return 'failed';
-  return undefined;
+function cornerStatus(event: SessionEvent): CornerStatus | undefined {
+  return mapRawCornerStatusTag(eventTagValue(event, 'display-status') ?? eventTagValue(event, 'status'));
 }
 
 /** One display projection for both initial backfill and live subscription events. */
@@ -485,14 +479,6 @@ export function transcriptMessages(
   );
 }
 
-const CORNER_STATUS_ORDER: Record<CornerCardStatus, number> = {
-  starting: 0,
-  working: 1,
-  'needs-attention': 2,
-  ready: 3,
-  failed: 4,
-};
-
 const AGENT_TURN_STATUS_ORDER: Record<AgentTurnStatus, number> = {
   working: 0,
   complete: 1,
@@ -521,7 +507,7 @@ export function upsertChatMessages(
     if (
       existing?.corner &&
       message.corner &&
-      CORNER_STATUS_ORDER[message.corner.status] < CORNER_STATUS_ORDER[existing.corner.status]
+      cornerStatusPrecedence(message.corner.status) < cornerStatusPrecedence(existing.corner.status)
     ) {
       continue;
     }

@@ -49,6 +49,7 @@ function messageData(ev: unknown): string {
 export class RelayWs {
   private ws: WebSocketLike | null = null;
   private readonly handlers = new Set<MessageHandler>();
+  private readonly closeHandlers = new Set<() => void>();
   private readonly pendingAuth = new Map<
     string,
     { resolve: () => void; reject: (e: Error) => void }
@@ -68,7 +69,20 @@ export class RelayWs {
   constructor(private readonly opts: RelayWsOptions) {}
 
   get connected(): boolean {
-    return this.ws !== null && this.ws.readyState === 1 /* OPEN */ && (this.opts.skipAuth || this.authed);
+    return (
+      this.ws !== null && this.ws.readyState === 1 /* OPEN */ && (this.opts.skipAuth || this.authed)
+    );
+  }
+
+  private notifyClose(): void {
+    for (const handler of this.closeHandlers) {
+      try {
+        handler();
+      } catch {
+        /* close observers must not tear the socket */
+      }
+    }
+    this.closeHandlers.clear();
   }
 
   /** Open socket and complete NIP-42 AUTH when challenged. */
@@ -204,6 +218,7 @@ export class RelayWs {
         this.authed = false;
         this.connectPromise = null;
         this.ws = null;
+        this.notifyClose();
         if (!settled) finish(new Error('RelayWs closed before ready'));
         if (!this.closed) this.scheduleReconnect();
       };
@@ -257,6 +272,12 @@ export class RelayWs {
   onMessage(handler: MessageHandler): () => void {
     this.handlers.add(handler);
     return () => this.handlers.delete(handler);
+  }
+
+  /** Observe transport loss so long-lived clients can reconnect and re-subscribe. */
+  onClose(handler: () => void): () => void {
+    this.closeHandlers.add(handler);
+    return () => this.closeHandlers.delete(handler);
   }
 
   /** Publish an event over WS (`["EVENT", event]`). Resolves on OK true. */
@@ -322,6 +343,7 @@ export class RelayWs {
     this.connectPromise = null;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+    this.notifyClose();
     try {
       this.ws?.close();
     } catch {

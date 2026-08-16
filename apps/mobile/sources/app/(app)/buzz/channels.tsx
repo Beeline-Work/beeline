@@ -38,7 +38,7 @@ import { roomParticipantPubkeys } from '@/buzz/room-participants';
 import { shortMemberNpub } from '@/buzz/member-display';
 import { ensurePersonNameForWorkspace } from '@/buzz/person-name';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
-import { cornerStatusPresentation, sortCorners } from '@/buzz/corners';
+import { cornerStatusPresentation, isCornerActive, sortCorners } from '@/buzz/corners';
 import {
   CHANGES_LABEL,
   CORNER_LABEL,
@@ -336,8 +336,8 @@ export default function BuzzChannels() {
   const orderedChannels = useMemo(
     () =>
       [...displayChannels].sort((a, b) => {
-        const aActive = a.corners?.some((corner) => corner.status === 'live') ? 1 : 0;
-        const bActive = b.corners?.some((corner) => corner.status === 'live') ? 1 : 0;
+        const aActive = a.corners?.some((corner) => isCornerActive(corner.status)) ? 1 : 0;
+        const bActive = b.corners?.some((corner) => isCornerActive(corner.status)) ? 1 : 0;
         return (
           bActive - aActive ||
           (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0) ||
@@ -866,7 +866,7 @@ export default function BuzzChannels() {
           renderItem={({ item }) => {
             const corners = item.corners ?? [];
             const canExpand = corners.length > 0;
-            const hasLiveCorner = corners.some((corner) => corner.status === 'live');
+            const hasLiveCorner = corners.some((corner) => isCornerActive(corner.status));
             const title = item.title ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`;
             const expanded = canExpand && expandedRoomId === item.id;
             return (

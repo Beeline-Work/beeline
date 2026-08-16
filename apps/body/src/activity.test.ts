@@ -16,7 +16,8 @@ vi.mock('@beeline/gate', async (importOriginal) => ({
   }),
 }));
 
-import { projectActivity } from './activity.js';
+import { projectActivity, createDraftStreamer, AGENT_DRAFT_FLUSH_MS } from './activity.js';
+import { KIND_AGENT_DRAFT, TAG_AGENT_DRAFT } from '@beeline/buzz-client';
 
 const published = mocks.published;
 
@@ -127,5 +128,75 @@ describe('projectActivity granularity', () => {
     unsubscribe();
 
     expect(published).toHaveLength(0);
+  });
+});
+
+describe('createDraftStreamer', () => {
+  const channelId = 'channel-1';
+  const sessionId = 'session-1';
+  const requestId = 'request-1';
+  let owner: ReturnType<typeof newIdentity>;
+
+  beforeEach(() => {
+    published.length = 0;
+    owner = newIdentity('agent');
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('coalesces bursts of chunks into one replaceable publish per flush window', async () => {
+    const streamer = createDraftStreamer(channelId, owner, sessionId, requestId);
+
+    streamer.onChunk('Hel');
+    streamer.onChunk('Hello');
+    streamer.onChunk('Hello wor');
+    await vi.advanceTimersByTimeAsync(AGENT_DRAFT_FLUSH_MS);
+
+    expect(published).toHaveLength(1);
+    const event = published[0]!;
+    expect(event.kind).toBe(KIND_AGENT_DRAFT);
+    expect(event.content).toBe('Hello wor');
+    expect(event.tags).toEqual(
+      expect.arrayContaining([
+        ['d', `${TAG_AGENT_DRAFT}:${channelId}`],
+        ['h', channelId],
+        ['t', TAG_AGENT_DRAFT],
+        ['session', sessionId],
+        ['request', requestId],
+      ]),
+    );
+
+    streamer.onChunk('Hello world');
+    await streamer.finish();
+    expect(published).toHaveLength(2);
+    expect(published[1]!.content).toBe('Hello world');
+  });
+
+  it('finish() flushes trailing text even before the coalescing window elapses', async () => {
+    const streamer = createDraftStreamer(channelId, owner, sessionId, requestId);
+    streamer.onChunk('done');
+    await streamer.finish();
+    expect(published).toHaveLength(1);
+    expect(published[0]!.content).toBe('done');
+  });
+
+  it('publishes nothing when no chunk ever arrives (non-streaming harness degrades silently)', async () => {
+    const streamer = createDraftStreamer(channelId, owner, sessionId, requestId);
+    await streamer.finish();
+    expect(published).toHaveLength(0);
+  });
+
+  it('skips a flush when the text has not changed since the last publish', async () => {
+    const streamer = createDraftStreamer(channelId, owner, sessionId, requestId);
+    streamer.onChunk('same');
+    await vi.advanceTimersByTimeAsync(AGENT_DRAFT_FLUSH_MS);
+    expect(published).toHaveLength(1);
+
+    streamer.onChunk('same');
+    await streamer.finish();
+    expect(published).toHaveLength(1);
   });
 });

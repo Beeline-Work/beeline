@@ -36,6 +36,9 @@ export const KIND_AGENT_PRESENCE = 30078;
 /** NIP-33 parameterized replaceable application data (community invite lookup). */
 export const KIND_COMMUNITY_INVITE = 30078;
 
+/** NIP-33 parameterized replaceable application data (live in-flight agent reply draft). */
+export const KIND_AGENT_DRAFT = 30078;
+
 /** NIP-42 AUTH challenge response. */
 export const KIND_AUTH = 22242;
 
@@ -44,6 +47,9 @@ export const TAG_AGENT_ACTIVITY = 'agent-activity';
 
 /** Marker tag value for a Room-scoped agent daemon heartbeat. */
 export const TAG_AGENT_PRESENCE = 'agent-presence';
+
+/** Marker tag value for a Room-scoped live in-flight agent reply draft (streaming text). */
+export const TAG_AGENT_DRAFT = 'agent-draft';
 
 /** Marker tag value for a self-signed first-class agent record. */
 export const TAG_AGENT = 'buzz-agent';

@@ -33,6 +33,7 @@ import {
   postAgentTurnStatus,
   postControlMessage,
   stripAgentReplyPreamble,
+  createDraftStreamer,
 } from './activity.js';
 import {
   createChannel,
@@ -387,6 +388,8 @@ export const AGENT_REQUEST_TAG = 'buzz-agent-request';
 export const MERGE_READY_TAG = 'merge-ready';
 export const LANDED_TAG = 'landed';
 export const AGENT_CANCEL_TAG = 'buzz-agent-cancel';
+/** Human-triggered corner close: archives the subchannel (not just the active turn). */
+export const CORNER_CLOSE_TAG = 'buzz-corner-close';
 
 const NON_CONVERSATION_ROOM_TAGS = new Set([
   'agent-activity',
@@ -395,6 +398,7 @@ const NON_CONVERSATION_ROOM_TAGS = new Set([
   TAG_AGENT,
   TAG_MERGE_APPROVAL,
   AGENT_CANCEL_TAG,
+  CORNER_CLOSE_TAG,
 ]);
 
 /** True only for participant prose/attachments that belongs in shared context. */
@@ -952,11 +956,34 @@ export class Body {
    * Prompt deadlines are process-health boundaries, not merely UI timeouts.
    * Retire a non-returning ACP generation so the next Room turn gets a fresh
    * process instead of reusing one that has already stopped answering.
+   *
+   * `stream`, when given, projects the agent's reply live as it's generated —
+   * see `createDraftStreamer` — instead of only after the whole turn resolves.
+   * Harness-agnostic: an ACP agent that never emits `agent_message_chunk`
+   * deltas simply never triggers a publish, and the final message is
+   * unaffected either way.
    */
-  private async promptAgent(session: AgentSession, prompt: string): Promise<PromptResult> {
+  private async promptAgent(
+    session: AgentSession,
+    prompt: string,
+    stream?: { channelId: string; requestId: string },
+  ): Promise<PromptResult> {
+    const draft = stream
+      ? createDraftStreamer(
+          stream.channelId,
+          this.agentIdentity,
+          session.logicalSessionId ?? session.sessionId,
+          stream.requestId,
+        )
+      : undefined;
     try {
       return await this.runOnSession(session, () =>
-        session.client.sessionPrompt(session.sessionId, prompt, ROOM_AGENT_PROMPT_TIMEOUT_MS),
+        session.client.sessionPrompt(
+          session.sessionId,
+          prompt,
+          ROOM_AGENT_PROMPT_TIMEOUT_MS,
+          draft && ((_delta, fullText) => draft.onChunk(fullText)),
+        ),
       );
     } catch (error) {
       if (/ACP session\/prompt timed out after \d+ms/.test(String(error))) {
@@ -964,6 +991,8 @@ export class Body {
         await this.scheduler.forceSuspend(session.channelId);
       }
       throw error;
+    } finally {
+      await draft?.finish();
     }
   }
 
@@ -1748,7 +1777,10 @@ export class Body {
         this.presenceGenerations.get(channelId),
       );
       try {
-        const result = await this.promptAgent(session, prompt);
+        const result = await this.promptAgent(session, prompt, {
+          channelId,
+          requestId: request.eventId,
+        });
         const reply = await this.publishAgentResult(
           channelId,
           session,
@@ -2168,7 +2200,10 @@ export class Body {
         'working',
         this.presenceGenerations.get(tlcChannelId),
       );
-      const result = await this.promptAgent(session, prompt);
+      const result = await this.promptAgent(session, prompt, {
+        channelId: tlcChannelId,
+        requestId: request.eventId,
+      });
       if (turn.transitionedToCorner) {
         await this.appendRoomPermissionOutcome(tlcChannelId, turn);
         await postAgentTurnStatus(
@@ -2529,6 +2564,7 @@ export class Body {
             '',
             taskInstructions,
           ].join('\n'),
+          { channelId: info.subchannelId, requestId },
         );
         info.mergeSummary = await this.publishAgentResult(
           info.subchannelId,
@@ -3207,6 +3243,17 @@ export class Body {
           await this.durableState.delivered(subchannelId, evt.id);
           count++;
           continue;
+        }
+
+        // Close-corner archives the subchannel outright (it also cancels any
+        // active turn as part of that teardown) — distinct from a plain
+        // cancel, which only stops the current turn and leaves the corner open.
+        if (evt.tags.some((t) => t[0] === 't' && t[1] === CORNER_CLOSE_TAG)) {
+          processed.add(evt.id);
+          await this.durableState.delivered(subchannelId, evt.id);
+          count++;
+          await this.archiveSubchannel(subchannelId);
+          return count;
         }
 
         // Forward the member's message into the active run when possible. If

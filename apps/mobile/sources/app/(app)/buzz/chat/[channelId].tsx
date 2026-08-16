@@ -12,7 +12,7 @@ import {
   Image,
   FlatList,
   Linking,
-  Modal,
+  Modal as RNModal,
   Pressable,
   ScrollView,
   TextInput,
@@ -27,6 +27,7 @@ import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router, type Href } from 'expo-router';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
+import { Modal } from '@/modal';
 import { BuzzRigTransport } from '@/sync/transport';
 import {
   type Agent,
@@ -1320,6 +1321,8 @@ export default function BuzzChat() {
       router.back();
     } catch (err) {
       console.warn('Close corner failed:', err);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Modal.alert('Could not close corner', err instanceof Error ? err.message : String(err));
     }
   }, [decodedId, transport]);
 
@@ -2125,7 +2128,7 @@ export default function BuzzChat() {
         )}
       </KeyboardAvoidingView>
 
-      <Modal
+      <RNModal
         animationType="fade"
         onRequestClose={() => setRosterVisible(false)}
         transparent
@@ -2285,9 +2288,9 @@ export default function BuzzChat() {
             )}
           </HullSurface>
         </View>
-      </Modal>
+      </RNModal>
 
-      <Modal
+      <RNModal
         animationType="fade"
         onRequestClose={() => {
           if (renameBusy) return;
@@ -2446,9 +2449,9 @@ export default function BuzzChat() {
             )}
           </HullSurface>
         </KeyboardAvoidingView>
-      </Modal>
+      </RNModal>
 
-      <Modal
+      <RNModal
         animationType="fade"
         onRequestClose={() => setParticipantPickerVisible(false)}
         transparent
@@ -2579,7 +2582,7 @@ export default function BuzzChat() {
             )}
           </HullSurface>
         </View>
-      </Modal>
+      </RNModal>
     </BuzzCommunityShell>
   );
 }

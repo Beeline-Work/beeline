@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { newIdentity } from '@beeline/gate';
+import { newIdentity, publishEvent } from '@beeline/gate';
 import type { NostrEvent } from '@beeline/nostr';
 import type { AcpClient, SessionUpdate } from './acp.js';
 
@@ -21,6 +21,10 @@ import {
   createDraftStreamer,
   compactActivityUpdate,
   AGENT_DRAFT_FLUSH_MS,
+  nextNarrativeSegment,
+  createNarrativeCommitter,
+  NARRATIVE_SEGMENT_MAX_CHARS,
+  AGENT_MESSAGE_TAG,
 } from './activity.js';
 import { KIND_AGENT_DRAFT, TAG_AGENT_DRAFT } from '@beeline/buzz-client';
 
@@ -354,5 +358,156 @@ describe('createDraftStreamer', () => {
     streamer.onChunk('same');
     await streamer.finish();
     expect(published).toHaveLength(1);
+  });
+});
+
+describe('nextNarrativeSegment', () => {
+  it('returns undefined for an empty or already-fully-committed tail', () => {
+    expect(nextNarrativeSegment('', 0)).toBeUndefined();
+    expect(nextNarrativeSegment('done', 4)).toBeUndefined();
+  });
+
+  it('returns undefined while a short paragraph is still growing', () => {
+    expect(nextNarrativeSegment('Looking at the failing test', 0)).toBeUndefined();
+  });
+
+  it('cuts at the last paragraph break, leaving the growing tail uncommitted', () => {
+    const fullText = "I'll start by reproducing the bug.\n\nFound it in the parser, fixing now.";
+    const segment = nextNarrativeSegment(fullText, 0);
+    expect(segment?.text).toBe("I'll start by reproducing the bug.");
+    expect(segment?.consumed).toBe(fullText.indexOf('Found it'));
+
+    // The remaining tail has no paragraph break yet, so nothing new commits.
+    expect(nextNarrativeSegment(fullText, segment!.consumed)).toBeUndefined();
+  });
+
+  it('advances from an already-committed offset as each new paragraph completes', () => {
+    // Mirrors how text actually arrives: one paragraph break exists at a
+    // time when nextNarrativeSegment is called against the growing text.
+    const afterFirst = 'First paragraph.\n\nstill typing the second';
+    const first = nextNarrativeSegment(afterFirst, 0)!;
+    expect(first.text).toBe('First paragraph.');
+    expect(nextNarrativeSegment(afterFirst, first.consumed)).toBeUndefined();
+
+    const afterSecond = 'First paragraph.\n\nSecond paragraph.\n\nstill typing the third';
+    const second = nextNarrativeSegment(afterSecond, first.consumed)!;
+    expect(second.text).toBe('Second paragraph.');
+    expect(nextNarrativeSegment(afterSecond, second.consumed)).toBeUndefined();
+  });
+
+  it('batches every already-complete paragraph when called against text that grew all at once', () => {
+    // A single nextNarrativeSegment call cuts at the LAST paragraph break in
+    // the uncommitted tail, so paragraphs that arrived together (rather than
+    // being observed one at a time) land as one segment, not several.
+    const fullText = 'First paragraph.\n\nSecond paragraph.\n\nThird paragraph is still typing';
+    const segment = nextNarrativeSegment(fullText, 0)!;
+    expect(segment.text).toBe('First paragraph.\n\nSecond paragraph.');
+  });
+
+  it('falls back to a sentence boundary once a single paragraph runs past the ceiling', () => {
+    const sentence = 'This keeps going without a paragraph break. ';
+    const fullText = sentence.repeat(Math.ceil((NARRATIVE_SEGMENT_MAX_CHARS + 20) / sentence.length));
+    const segment = nextNarrativeSegment(fullText, 0);
+    expect(segment).toBeDefined();
+    expect(segment!.consumed).toBeLessThanOrEqual(NARRATIVE_SEGMENT_MAX_CHARS);
+    expect(segment!.text.endsWith('.')).toBe(true);
+    expect(segment!.text).not.toContain('\n');
+  });
+});
+
+describe('createNarrativeCommitter', () => {
+  const channelId = 'channel-1';
+  let owner: ReturnType<typeof newIdentity>;
+
+  beforeEach(() => {
+    published.length = 0;
+    owner = newIdentity('agent');
+  });
+
+  /** Flush every queued microtask (the inflight publish chain), not just one tick. */
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('durably commits each paragraph as its own message while the turn is still running', async () => {
+    const narrator = createNarrativeCommitter(channelId, owner);
+
+    narrator.onChunk("I'll start by reproducing the bug.");
+    await flush();
+    expect(published).toHaveLength(0); // still one growing paragraph, nothing to commit yet
+
+    narrator.onChunk(
+      "I'll start by reproducing the bug.\n\nFound it in the parser, fixing now.",
+    );
+    await flush();
+    expect(published).toHaveLength(1);
+    expect(published[0]!.content).toBe("I'll start by reproducing the bug.");
+    expect(published[0]!.kind).toBe(9);
+    expect(published[0]!.tags).toContainEqual(['t', AGENT_MESSAGE_TAG]);
+    expect(published[0]!.tags.some((tag) => tag[0] === 'e')).toBe(false);
+
+    narrator.onChunk(
+      "I'll start by reproducing the bug.\n\nFound it in the parser, fixing now.\n\nFixed and tests pass.",
+    );
+    await flush();
+    expect(published).toHaveLength(2);
+    expect(published[1]!.content).toBe('Found it in the parser, fixing now.');
+
+    await narrator.finish();
+    expect(published).toHaveLength(3);
+    expect(published[2]!.content).toBe('Fixed and tests pass.');
+  });
+
+  it('finish() flushes a still-growing tail even without a paragraph break', async () => {
+    const narrator = createNarrativeCommitter(channelId, owner);
+    narrator.onChunk('Wrapping up the change now.');
+    await narrator.finish();
+    expect(published).toHaveLength(1);
+    expect(published[0]!.content).toBe('Wrapping up the change now.');
+  });
+
+  it('publishes nothing when the turn never produced narrative text', async () => {
+    const narrator = createNarrativeCommitter(channelId, owner);
+    await narrator.finish();
+    expect(published).toHaveLength(0);
+  });
+
+  it('publishes segments in order even when the first relay write is slow', async () => {
+    // The in-order `inflight` chain (not raw promise resolution order)
+    // must determine what lands where, mirroring createDraftStreamer.
+    vi.mocked(publishEvent).mockImplementationOnce(async (event: NostrEvent) => {
+      await new Promise((r) => setTimeout(r, 20));
+      mocks.published.push(event);
+      return { ok: true } as never;
+    });
+
+    const narrator = createNarrativeCommitter(channelId, owner);
+    narrator.onChunk('First paragraph.\n\nstill typing');
+    narrator.onChunk('First paragraph.\n\nSecond paragraph.\n\nstill typing');
+    await narrator.finish();
+
+    expect(published.map((event) => event.content)).toEqual([
+      'First paragraph.',
+      'Second paragraph.',
+      'still typing',
+    ]);
+  });
+
+  it('bumps created_at strictly past the prior segment even within the same wall-clock second', async () => {
+    // Mobile's transcript sorts by created_at with an id-hash tie-break on an
+    // exact tie — same-second segments must still land in written order.
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+      const narrator = createNarrativeCommitter(channelId, owner);
+      narrator.onChunk('First paragraph.\n\nstill typing');
+      narrator.onChunk('First paragraph.\n\nSecond paragraph.\n\nstill typing');
+      await narrator.finish();
+
+      expect(published).toHaveLength(3);
+      const timestamps = published.map((event) => event.created_at);
+      expect(timestamps).toEqual([...timestamps].sort((a, b) => a - b));
+      expect(new Set(timestamps).size).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -2546,3 +2546,200 @@ describe('live steering loop', () => {
     expect(memberPolls).toBe(1);
   });
 });
+
+describe('corner narrative persistence', () => {
+  function newBody(agent: ReturnType<typeof newIdentity>, workspaceRoot = '/workspace') {
+    return new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot,
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+    );
+  }
+
+  function stubPublishing(): NostrEvent[] {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    return published;
+  }
+
+  function agentMessages(published: NostrEvent[]): NostrEvent[] {
+    return published.filter(
+      (event) =>
+        event.kind === 9 && event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message'),
+    );
+  }
+
+  /** Fake ACP client that streams `agent_message_chunk`-style deltas like a real corner turn. */
+  function fakeMultiParagraphSessionPrompt(paragraphs: readonly string[]) {
+    return vi.fn(
+      async (
+        _sessionId: string,
+        _prompt: string,
+        _timeoutMs: number,
+        onChunk?: (delta: string, fullText: string) => void,
+      ) => {
+        let text = '';
+        for (const paragraph of paragraphs) {
+          const delta = text ? `\n\n${paragraph}` : paragraph;
+          text += delta;
+          onChunk?.(delta, text);
+        }
+        return { stopReason: 'end_turn', updates: [], agentText: text, toolCalls: [] };
+      },
+    );
+  }
+
+  it('BEFORE (reproduction): a long corner turn commits no durable narrative while it runs', async () => {
+    // projectActivity deliberately drops `agent_message_chunk` (activity.ts:
+    // "assistant prose is published once... after sessionPrompt completes"),
+    // and without `narrate`, promptAgent only ever live-drafts it — nothing
+    // durable lands until the caller's own end-of-turn publish.
+    const published = stubPublishing();
+    const body = newBody(newIdentity('reproduction-agent'));
+    const sessionPrompt = fakeMultiParagraphSessionPrompt([
+      'Looked at the failing test and reproduced it locally.',
+      'Found the root cause in the retry loop and pushed a fix.',
+    ]);
+    const session = {
+      channelId: 'corner-1',
+      sessionId: 'session-1',
+      client: { sessionPrompt, sessionCancel: vi.fn() },
+    } as never;
+
+    await Reflect.get(body, 'promptAgent').call(body, session, 'do the work', {
+      channelId: 'corner-1',
+      requestId: 'req-1',
+    });
+
+    expect(agentMessages(published)).toHaveLength(0);
+  });
+
+  it('AFTER: commits the growing narrative in durable, readable segments as a long corner turn runs', async () => {
+    const published = stubPublishing();
+    const body = newBody(newIdentity('narration-agent'));
+    const sessionPrompt = fakeMultiParagraphSessionPrompt([
+      'Looked at the failing test and reproduced it locally.',
+      'Found the root cause in the retry loop and pushed a fix.',
+      'Ran the suite again; all green.',
+    ]);
+    const session = {
+      channelId: 'corner-1',
+      sessionId: 'session-1',
+      client: { sessionPrompt, sessionCancel: vi.fn() },
+    } as never;
+
+    await Reflect.get(body, 'promptAgent').call(body, session, 'do the work', {
+      channelId: 'corner-1',
+      requestId: 'req-1',
+      narrate: true,
+    });
+
+    const messages = agentMessages(published);
+    expect(messages.map((event) => event.content)).toEqual([
+      'Looked at the failing test and reproduced it locally.',
+      'Found the root cause in the retry loop and pushed a fix.',
+      'Ran the suite again; all green.',
+    ]);
+    for (const event of messages) {
+      expect(event.tags).toContainEqual(['h', 'corner-1']);
+    }
+  });
+
+  it('falls back to the caller-provided summary instead of throwing when concise reduction empties an otherwise real reply', async () => {
+    const published = stubPublishing();
+    const body = newBody(newIdentity('empty-concise-agent'));
+
+    const reply = await Reflect.get(body, 'publishAgentResult').call(
+      body,
+      'corner-empty',
+      { cwd: '/workspace' },
+      {
+        agentText: '```\nconsole.log("fixed");\n```',
+        updates: [],
+      },
+      'Completed the requested follow-up.',
+      { concise: true },
+    );
+
+    expect(reply).toBe('Completed the requested follow-up.');
+    expect(published).toHaveLength(1);
+    expect(published[0]!.content).toBe('Completed the requested follow-up.');
+  });
+
+  it('conciseCornerTurnSummary alone empties a code-block-only reply (root cause of the throw this fixes)', () => {
+    expect(conciseCornerTurnSummary('```\nconsole.log("fixed");\n```')).toBe('');
+  });
+
+  it('narrates a follow-up corner turn started fresh (no active run) the same as the primary turn', async () => {
+    const published = stubPublishing();
+    const agent = newIdentity('steer-narration-agent');
+    const human = newIdentity('steer-human');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-corner-narrative-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      const sessionPrompt = fakeMultiParagraphSessionPrompt([
+        'Applied the requested follow-up tweak.',
+        'Ran the suite again; still green.',
+      ]);
+      const session = {
+        channelId: 'corner-steer',
+        sessionId: 'session-steer',
+        client: { sessionPrompt, sessionCancel: vi.fn(), activeRunId: () => undefined },
+      } as never;
+
+      body.registerSubchannel({
+        subchannelId: 'corner-steer',
+        worktreePath: '/tmp/nonexistent-corner-steer',
+        featureBranch: 'feature/steer',
+        role: agent,
+        session,
+        lastPolledAt: 0,
+        archived: false,
+      });
+
+      const followUp = signEvent(
+        {
+          pubkey: human.publicKey,
+          created_at: Math.floor(Date.now() / 1000),
+          kind: 9,
+          tags: [['h', 'corner-steer']],
+          content: 'One more tweak please.',
+        },
+        human.secretKey,
+      );
+      (Reflect.get(body, 'agentRelay') as { queryEvents: unknown }).queryEvents = vi
+        .fn()
+        .mockResolvedValue([followUp]);
+
+      const count = await body.pollMembers('corner-steer');
+
+      expect(count).toBe(1);
+      expect(sessionPrompt).toHaveBeenCalledOnce();
+      const messages = agentMessages(published);
+      expect(
+        messages.some((event) => event.content === 'Applied the requested follow-up tweak.'),
+      ).toBe(true);
+      expect(messages.some((event) => event.content === 'Ran the suite again; still green.')).toBe(
+        true,
+      );
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+});

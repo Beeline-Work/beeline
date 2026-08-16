@@ -588,11 +588,12 @@ export function buildAgentMessage(
   replyTo?: string,
   attachments: readonly AttachmentReference[] = [],
   extraTags: readonly string[][] = [],
+  createdAt = Math.floor(Date.now() / 1000),
 ): NostrEvent {
   return signEvent(
     {
       pubkey: owner.publicKey,
-      created_at: Math.floor(Date.now() / 1000),
+      created_at: createdAt,
       kind: 9,
       tags: [
         ['h', channelId],
@@ -614,9 +615,10 @@ export async function postAgentMessage(
   replyTo?: string,
   attachments: readonly AttachmentReference[] = [],
   extraTags: readonly string[][] = [],
+  createdAt?: number,
 ): Promise<void> {
   await publishEvent(
-    buildAgentMessage(channelId, owner, message, replyTo, attachments, extraTags),
+    buildAgentMessage(channelId, owner, message, replyTo, attachments, extraTags, createdAt),
     owner,
   );
 }
@@ -701,6 +703,123 @@ export function createDraftStreamer(
     async finish() {
       if (timer) clearTimeout(timer);
       flush();
+      await inflight;
+    },
+  };
+}
+
+/** Hard ceiling for one narrative segment: once the uncommitted tail passes
+ *  this without a paragraph break, cut at the nearest sentence/line boundary
+ *  so a single run-on paragraph still lands as more than one durable message. */
+export const NARRATIVE_SEGMENT_MAX_CHARS = 1_200;
+
+export interface NarrativeSegment {
+  /** Trimmed, durable-worthy text for this segment. */
+  text: string;
+  /** Length of the full accumulated text now covered by this and prior segments. */
+  consumed: number;
+}
+
+/**
+ * Find the next durable-worthy chunk of a growing agent narrative, given how
+ * much of `fullText` is already committed. Cuts at the last paragraph break in
+ * the uncommitted tail — text is stable once the agent has moved on to a new
+ * paragraph (or to a tool call, which never adds to `fullText`). Falls back to
+ * a sentence/line boundary once the tail grows past NARRATIVE_SEGMENT_MAX_CHARS
+ * without one, so a single long paragraph still gets flushed. Returns
+ * undefined when nothing is safe to commit yet.
+ */
+export function nextNarrativeSegment(
+  fullText: string,
+  committed: number,
+): NarrativeSegment | undefined {
+  const tail = fullText.slice(committed);
+  if (!tail) return undefined;
+
+  const paragraphBreak = /\n{2,}/g;
+  let lastBreakEnd: number | undefined;
+  let match: RegExpExecArray | null;
+  while ((match = paragraphBreak.exec(tail))) {
+    lastBreakEnd = match.index + match[0].length;
+  }
+  if (lastBreakEnd !== undefined) {
+    const segment = tail.slice(0, lastBreakEnd).trim();
+    if (segment) return { text: segment, consumed: committed + lastBreakEnd };
+  }
+
+  if (tail.length < NARRATIVE_SEGMENT_MAX_CHARS) return undefined;
+  const window = tail.slice(0, NARRATIVE_SEGMENT_MAX_CHARS);
+  const boundary = Math.max(
+    window.lastIndexOf('. '),
+    window.lastIndexOf('! '),
+    window.lastIndexOf('? '),
+    window.lastIndexOf('\n'),
+  );
+  const cut = boundary > NARRATIVE_SEGMENT_MAX_CHARS / 2 ? boundary + 1 : window.length;
+  const segment = tail.slice(0, cut).trim();
+  return segment ? { text: segment, consumed: committed + cut } : undefined;
+}
+
+export interface NarrativeCommitter {
+  /** Feed the latest accumulated text as it grows. Safe to call at any rate. */
+  onChunk(fullTextSoFar: string): void;
+  /** Durably commit any remaining uncommitted tail once the turn settles. */
+  finish(): Promise<void>;
+}
+
+/**
+ * Commit an agent's growing colloquial narrative into the durable transcript
+ * as it happens, in readable paragraph-sized segments, instead of only a
+ * vanishing live draft plus one compressed end-of-turn summary. Each segment
+ * publishes as an ordinary first-class `#t=agent-message` — the same wire
+ * shape a completed turn already uses — so it appears and stays in the
+ * transcript like any other assistant message, in the order it was written.
+ */
+export function createNarrativeCommitter(
+  channelId: string,
+  owner: Identity,
+  extraTags: readonly string[][] = [],
+): NarrativeCommitter {
+  let committed = 0;
+  let latest = '';
+  let inflight = Promise.resolve();
+  // Segments can land within the same wall-clock second (paragraph breaks in
+  // a fast-streaming turn), and the transcript sorts by created_at with an
+  // id-hash tie-break — bump strictly past the last one so segments never
+  // render out of the order they were actually written, same fix
+  // createDraftStreamer and startAgentPresence use for their own replays.
+  let lastCreatedAt = 0;
+  // Adjacent-only guard: a harness can resend an already-seen delta (e.g. a
+  // duplicate `agent_message_chunk` notification), which re-presents the same
+  // paragraph as a "new" segment right after it was already committed. Only
+  // compare against the immediately prior publish — never a broader
+  // history — so a legitimately repeated short line later in a long turn
+  // (e.g. two separate "Done." updates) still publishes each time.
+  let lastPublishedText: string | undefined;
+  const commit = (segment: NarrativeSegment) => {
+    committed = segment.consumed;
+    // stripAgentReplyPreamble is a no-op for any segment that doesn't open
+    // with the known Codex startup notice, so this is safe to apply
+    // unconditionally rather than only to the first segment — a harness can
+    // interleave its own boilerplate with real narration mid-stream too.
+    const text = stripAgentReplyPreamble(segment.text).trim();
+    if (!text || text === lastPublishedText) return;
+    lastPublishedText = text;
+    const createdAt = Math.max(Math.floor(Date.now() / 1_000), lastCreatedAt + 1);
+    lastCreatedAt = createdAt;
+    inflight = inflight
+      .then(() => postAgentMessage(channelId, owner, text, undefined, [], extraTags, createdAt))
+      .catch((error) => console.error('[body] narrative segment publish failed:', error));
+  };
+  return {
+    onChunk(fullTextSoFar) {
+      latest = fullTextSoFar;
+      const segment = nextNarrativeSegment(latest, committed);
+      if (segment) commit(segment);
+    },
+    async finish() {
+      const tail = latest.slice(committed).trim();
+      if (tail) commit({ text: tail, consumed: latest.length });
       await inflight;
     },
   };

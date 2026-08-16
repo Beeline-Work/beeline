@@ -788,6 +788,13 @@ export interface NarrativeCommitter {
   onChunk(fullTextSoFar: string): void;
   /** Durably commit any remaining uncommitted tail once the turn settles. */
   finish(): Promise<void>;
+  /** The `created_at` used for the most recently committed segment, or 0 if
+   *  none has been committed yet. Callers that publish a trailing message
+   *  after this turn (e.g. the corner's concise end-of-turn summary) should
+   *  call this only after `finish()` resolves, and use it as a floor so their
+   *  publish always sorts strictly after the last narrative segment even when
+   *  both land within the same wall-clock second. */
+  lastCreatedAt(): number;
 }
 
 /**
@@ -846,6 +853,9 @@ export function createNarrativeCommitter(
       const tail = latest.slice(committed).trim();
       if (tail) commit({ text: tail, consumed: latest.length });
       await inflight;
+    },
+    lastCreatedAt() {
+      return lastCreatedAt;
     },
   };
 }

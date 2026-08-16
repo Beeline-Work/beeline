@@ -35,6 +35,44 @@ function readTextContent(value: unknown, depth = 0): string | undefined {
   return undefined;
 }
 
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function compactFiles(value: unknown): NonNullable<AgentActivityItem['files']> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const files = value.flatMap((item) => {
+    const record = asRecord(item);
+    const path = stringValue(record?.path);
+    return path
+      ? [
+          {
+            path,
+            ...(stringValue(record?.status) ? { status: stringValue(record?.status) } : {}),
+            ...(stringValue(record?.diff) ? { diff: stringValue(record?.diff) } : {}),
+          },
+        ]
+      : [];
+  });
+  return files.length ? files : undefined;
+}
+
+function compactPlan(value: unknown): AgentActivityItem['plan'] | undefined {
+  const plan = asRecord(value);
+  if (!plan || !Array.isArray(plan.items)) return undefined;
+  const items = plan.items.flatMap((item) => {
+    const record = asRecord(item);
+    const step = stringValue(record?.step);
+    const status = record?.status;
+    if (!step || (status !== 'pending' && status !== 'in_progress' && status !== 'completed')) {
+      return [];
+    }
+    return [{ step, status }] satisfies NonNullable<AgentActivityItem['plan']>['items'];
+  });
+  const objective = stringValue(plan.objective);
+  return items.length || objective ? { ...(objective ? { objective } : {}), items } : undefined;
+}
+
 /**
  * Body activity is a JSON-encoded ACP `session/update` envelope. Project the
  * user-facing content, not that transport envelope. Plain-text activity from
@@ -64,6 +102,32 @@ export function agentActivityDetails(content: string): AgentActivityItem[] {
   }
 
   const sessionUpdate = typeof update.sessionUpdate === 'string' ? update.sessionUpdate : '';
+  if (sessionUpdate === 'tool_activity') {
+    const title = stringValue(update.title) ?? 'Tool';
+    const command = stringValue(update.command);
+    const input = stringValue(update.input);
+    const output = stringValue(update.output);
+    const files = compactFiles(update.files);
+    const plan = compactPlan(update.plan);
+    return [
+      {
+        kind: 'tool',
+        title,
+        ...(stringValue(update.toolCallId) ? { id: stringValue(update.toolCallId) } : {}),
+        ...(stringValue(update.kind) ? { toolKind: stringValue(update.kind) } : {}),
+        ...(stringValue(update.status) ? { status: stringValue(update.status) } : {}),
+        ...(command ? { command } : {}),
+        ...(input ? { input } : {}),
+        ...(output ? { output, text: output } : {}),
+        ...(files ? { files } : {}),
+        ...(plan ? { plan } : {}),
+      },
+    ];
+  }
+  if (sessionUpdate === 'progress_update') {
+    const text = stringValue(update.text);
+    return text ? [{ kind: 'output', title: 'Update', text }] : [];
+  }
   const text =
     readTextContent(update.content) ??
     readTextContent(update.message) ??

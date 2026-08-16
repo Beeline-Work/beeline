@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildActivityTimeline } from './activity-timeline';
+import { buildActivityTimeline, buildTurnActivity } from './activity-timeline';
 
 describe('buildActivityTimeline', () => {
   it('keeps a thinking firehose as one quiet progress item', () => {
@@ -103,5 +103,74 @@ describe('buildActivityTimeline', () => {
       { kind: 'action', title: 'Searched the code for foo', count: 1 },
       { kind: 'action', title: 'Reviewed a.tsx', count: 1 },
     ]);
+  });
+});
+
+describe('buildTurnActivity', () => {
+  it('omits reasoning, collapses duplicate tool updates, and exposes file/tool drill-downs', () => {
+    expect(
+      buildTurnActivity([
+        { kind: 'thinking', title: 'Thinking', text: 'Internal narration' },
+        {
+          kind: 'tool',
+          id: 'edit-1',
+          title: 'Edit files',
+          toolKind: 'edit',
+          status: 'in_progress',
+          files: [{ path: 'apps/mobile/chat.tsx' }],
+        },
+        {
+          kind: 'tool',
+          id: 'edit-1',
+          title: 'Edit files',
+          toolKind: 'edit',
+          status: 'completed',
+          output: 'Applied patch',
+          files: [{ path: 'apps/mobile/chat.tsx', diff: '+new line' }],
+        },
+        {
+          kind: 'tool',
+          id: 'test-1',
+          title: 'Run tests',
+          command: 'npm test',
+          output: '12 passed',
+        },
+      ]),
+    ).toMatchObject({
+      summary: 'Edited 1 file, ran tests.',
+      updates: [],
+      actions: [
+        { kind: 'file', path: 'apps/mobile/chat.tsx', diff: '+new line' },
+        { kind: 'tool', id: 'edit-1', output: 'Applied patch' },
+        { kind: 'tool', id: 'test-1', command: 'npm test', output: '12 passed' },
+      ],
+    });
+  });
+
+  it('keeps only natural-language progress in the transcript and a stable checklist', () => {
+    expect(
+      buildTurnActivity([
+        { kind: 'output', title: 'Update', text: 'Found the projection boundary.' },
+        {
+          kind: 'tool',
+          id: 'plan-1',
+          title: 'Update plan',
+          plan: {
+            items: [
+              { step: 'Trace projection', status: 'completed' },
+              { step: 'Build drill-down', status: 'in_progress' },
+            ],
+          },
+        },
+      ]),
+    ).toMatchObject({
+      updates: ['Found the projection boundary.'],
+      plan: {
+        items: [
+          { step: 'Trace projection', status: 'completed' },
+          { step: 'Build drill-down', status: 'in_progress' },
+        ],
+      },
+    });
   });
 });

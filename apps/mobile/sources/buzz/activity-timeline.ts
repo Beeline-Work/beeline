@@ -14,6 +14,25 @@ export type ActivityTimelineEntry =
       count: number;
     };
 
+export type TurnActivityAction = {
+  id: string;
+  kind: 'file' | 'tool';
+  title: string;
+  status?: string;
+  path?: string;
+  command?: string;
+  input?: string;
+  output?: string;
+  diff?: string;
+};
+
+export type TurnActivity = {
+  summary: string;
+  updates: string[];
+  actions: TurnActivityAction[];
+  plan?: NonNullable<AgentActivityItem['plan']>;
+};
+
 const MAX_ACTION_TITLE = 72;
 
 function oneLine(value: string): string {
@@ -189,4 +208,96 @@ export function buildActivityTimeline(
   }
 
   return entries;
+}
+
+function mergeToolActivity(
+  current: AgentActivityItem | undefined,
+  next: AgentActivityItem,
+): AgentActivityItem {
+  if (!current) return { ...next, files: next.files ? [...next.files] : undefined };
+  const files = new Map((current.files ?? []).map((file) => [file.path, file]));
+  for (const file of next.files ?? []) {
+    files.set(file.path, { ...files.get(file.path), ...file });
+  }
+  return {
+    ...current,
+    ...next,
+    ...(files.size ? { files: [...files.values()] } : {}),
+    ...(next.output || current.output ? { output: next.output ?? current.output } : {}),
+    ...(next.text || current.text ? { text: next.text ?? current.text } : {}),
+  };
+}
+
+function summaryText(files: number, tests: number, otherTools: number, hasPlan: boolean): string {
+  const parts: string[] = [];
+  if (files) parts.push(`Edited ${files} ${files === 1 ? 'file' : 'files'}`);
+  if (tests) parts.push(tests === 1 ? 'ran tests' : `ran ${tests} test commands`);
+  if (otherTools) parts.push(`${otherTools === 1 ? 'used 1 tool' : `used ${otherTools} tools`}`);
+  if (hasPlan && !parts.length) parts.push('Updated the checklist');
+  return parts.length ? `${parts.join(', ')}.` : 'Turn details.';
+}
+
+/** Build the three-depth corner model: prose, one summary, then inspectable actions. */
+export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActivity {
+  const updates: string[] = [];
+  const tools = new Map<string, AgentActivityItem>();
+  let plan: AgentActivityItem['plan'];
+  let anonymousIndex = 0;
+
+  for (const item of items) {
+    if (item.plan) plan = item.plan;
+    if (item.kind === 'output') {
+      const update = item.text?.trim();
+      if (update && updates.at(-1) !== update) updates.push(update);
+      continue;
+    }
+    if (item.kind !== 'tool') continue;
+    const key = item.id ?? `anonymous-${anonymousIndex++}`;
+    tools.set(key, mergeToolActivity(tools.get(key), item));
+  }
+
+  const actions: TurnActivityAction[] = [];
+  const seenFiles = new Set<string>();
+  let testCommands = 0;
+  let otherTools = 0;
+  for (const [id, tool] of tools) {
+    for (const file of tool.files ?? []) {
+      const existingIndex = actions.findIndex(
+        (action) => action.kind === 'file' && action.path === file.path,
+      );
+      const action: TurnActivityAction = {
+        id: `${id}:file:${file.path}`,
+        kind: 'file',
+        title: file.path.split('/').filter(Boolean).at(-1) ?? file.path,
+        path: file.path,
+        ...(file.status ? { status: file.status } : {}),
+        ...(file.diff ? { diff: file.diff } : {}),
+      };
+      if (existingIndex >= 0) actions[existingIndex] = { ...actions[existingIndex], ...action };
+      else actions.push(action);
+      seenFiles.add(file.path);
+    }
+    const title = actionTitle(tool) ?? cleanTitle(tool.title) ?? 'Tool';
+    const isTest = /(?:^|\s)(?:test|tests|vitest|jest|pytest|cargo test|gradle)(?:\s|$)/i.test(
+      `${title} ${tool.command ?? ''}`,
+    );
+    if (isTest) testCommands += 1;
+    else if (!tool.files?.length && !tool.plan) otherTools += 1;
+    actions.push({
+      id,
+      kind: 'tool',
+      title,
+      ...(tool.status ? { status: tool.status } : {}),
+      ...(tool.command ? { command: tool.command } : {}),
+      ...(tool.input ? { input: tool.input } : {}),
+      ...((tool.output ?? tool.text) ? { output: tool.output ?? tool.text } : {}),
+    });
+  }
+
+  return {
+    summary: summaryText(seenFiles.size, testCommands, otherTools, Boolean(plan)),
+    updates,
+    actions,
+    ...(plan ? { plan } : {}),
+  };
 }

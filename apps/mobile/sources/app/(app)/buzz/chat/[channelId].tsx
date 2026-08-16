@@ -96,6 +96,7 @@ import {
 import { describeWriteRequest } from '@/buzz/write-request-copy';
 import { cornerSessionState, latestCornerTurnSummary } from '@/buzz/corner-session';
 import { isNearChatBottom } from '@/buzz/chat-scroll';
+import { buildTurnActivity } from '@/buzz/activity-timeline';
 import { replyMessageText, type MessageReplyTarget } from '@/buzz/message-reply';
 import {
   isAgentPresenceOnlineWithReconnectGrace,
@@ -145,8 +146,15 @@ function CornerActivity({ message, active }: { message: ChatDisplayMessage; acti
   const activity = message.activity?.length
     ? message.activity
     : [{ kind: 'output' as const, title: 'Output', text: message.text }];
+  const turn = useMemo(() => buildTurnActivity(activity), [activity]);
   return (
     <View style={styles.activityGroup} testID="corner-activity">
+      {turn.updates.map((update, index) => (
+        <View key={`${message.id}-update-${index}`} style={styles.activityUpdate}>
+          <Text style={styles.activityUpdateLabel}>UPDATE</Text>
+          <MonoMarkdown markdown={update} tone="output" />
+        </View>
+      ))}
       <ActivityTimeline active={active} items={activity} testID="corner-activity-timeline" />
     </View>
   );
@@ -3480,6 +3488,21 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: groknight.border,
     backgroundColor: groknight.bgTerminal,
+  },
+  activityUpdate: {
+    marginHorizontal: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    borderLeftWidth: 2,
+    borderLeftColor: groknight.agentAccent,
+  },
+  activityUpdateLabel: {
+    ...Typography.default(),
+    color: groknight.textMuted,
+    fontSize: 8,
+    lineHeight: 11,
+    letterSpacing: 0.8,
+    marginBottom: 4,
   },
   terminalTurn: {
     width: '100%',

@@ -289,3 +289,97 @@ describe('WorkspaceSupervisor Room watchdog', () => {
     expect(disconnect).toHaveBeenCalledOnce();
   });
 });
+
+describe('WorkspaceSupervisor transient relay resilience', () => {
+  function runtimeMinimal(name: string): AgentRuntimeRecord {
+    const agent = storedIdentity(name);
+    const body = storedIdentity(`${name}-body`);
+    return {
+      version: 2,
+      communityId: '11111111-1111-4111-8111-111111111111',
+      pairedBy: 'a'.repeat(64),
+      agent: agent.stored,
+      body: body.stored,
+      rooms: [],
+      supervisorRoot: '/tmp/beeline-transient-test',
+      relayBaseUrl: 'http://relay.test',
+      agentBinary: '/bin/true',
+      mcpBinary: '/bin/true',
+      createdAt: new Date(0).toISOString(),
+    };
+  }
+
+  function transient502(): Error {
+    // Mirrors what packages/buzz-client's requestQueryEvents throws once it
+    // exhausts its own 5xx retry budget for a member/role-projection read.
+    return new Error('queryEvents failed after 3 attempts: HTTP 502 Bad Gateway');
+  }
+
+  it('backs off and retries reconcile after a transient relay 502 instead of crash-looping', async () => {
+    const runtime = runtimeMinimal('resilience-agent');
+    const disconnect = vi.fn();
+    const isMember = vi
+      .fn()
+      .mockRejectedValueOnce(transient502())
+      .mockRejectedValueOnce(transient502())
+      .mockResolvedValue(true);
+    mocks.createBuzzClient.mockReturnValue({
+      isMember,
+      listMyChannels: vi.fn().mockResolvedValue([]),
+      disconnect,
+    });
+    const supervisor = new WorkspaceSupervisor(
+      runtime,
+      `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+    );
+    const controller = new AbortController();
+
+    // A crash-looping supervisor would throw out of run() (or exit the
+    // process) on the very first transient failure; assert instead that it
+    // keeps polling and eventually recovers once the relay does.
+    const runPromise = supervisor.run({ pollMs: 1, signal: controller.signal });
+    while (isMember.mock.calls.length < 3) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+    }
+    controller.abort();
+
+    await expect(runPromise).resolves.toBe('aborted');
+    // Recovers past both transient failures and keeps polling (a crash-loop
+    // would have thrown out of run() on the first rejection instead).
+    expect(isMember.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(disconnect).toHaveBeenCalledTimes(isMember.mock.calls.length);
+  });
+
+  it('keeps an active corner Room running across a transient reconcile failure', async () => {
+    const runtime = runtimeMinimal('corner-agent');
+    mocks.createBuzzClient.mockReturnValue({
+      isMember: vi.fn().mockRejectedValue(transient502()),
+      disconnect: vi.fn(),
+    });
+    const supervisor = new WorkspaceSupervisor(
+      runtime,
+      `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+    );
+    const cornerController = new AbortController();
+    const running = (supervisor as never).running as Map<string, unknown>;
+    running.set('active-corner', {
+      body: { forceRecoverRoom: vi.fn() },
+      controller: cornerController,
+      promise: Promise.resolve(),
+      lastPollAt: Date.now(),
+      lastPresenceAt: Date.now(),
+      presence: 'online',
+      backoffUntil: 0,
+      recovering: false,
+    });
+
+    // reconcile() itself still surfaces the failure (run() is what applies
+    // the backoff/retry); the corner must be untouched by the failed attempt.
+    await expect(supervisor.reconcile()).rejects.toThrow(/502/);
+
+    expect(supervisor.activeRoomIds()).toEqual(['active-corner']);
+    expect(cornerController.signal.aborted).toBe(false);
+  });
+});

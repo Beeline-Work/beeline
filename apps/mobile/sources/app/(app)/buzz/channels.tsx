@@ -35,7 +35,12 @@ import { roomParticipantPubkeys } from '@/buzz/room-participants';
 import { shortMemberNpub } from '@/buzz/member-display';
 import { ensurePersonNameForWorkspace } from '@/buzz/person-name';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
-import { cornerStatusPresentation, isCornerActive, sortCorners } from '@/buzz/corners';
+import {
+  cornerStatusPresentation,
+  isCornerActive,
+  roomListCorners,
+  sortCorners,
+} from '@/buzz/corners';
 import {
   CHANGES_LABEL,
   CORNER_LABEL,
@@ -870,7 +875,7 @@ export default function BuzzChannels() {
             ) : null
           }
           renderItem={({ item }) => {
-            const corners = item.corners ?? [];
+            const corners = roomListCorners(item.corners ?? []);
             const canExpand = corners.length > 0;
             const hasLiveCorner = corners.some((corner) => isCornerActive(corner.status));
             const title = item.title ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`;

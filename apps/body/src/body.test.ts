@@ -31,6 +31,7 @@ import {
   assertSubchannelArchiveTarget,
   Body,
   conciseCornerTurnSummary,
+  cornerArchiveSummary,
   CORNER_TURN_SUMMARY_INSTRUCTION,
   CORNER_TURN_SUMMARY_MAX_CHARS,
   cornerNameForIntent,
@@ -2295,6 +2296,21 @@ describe('first-class assistant messages', () => {
     expect(summary).toMatch(/…$/);
     expect(summary).not.toMatch(/caref…$/);
     expect(CORNER_TURN_SUMMARY_INSTRUCTION).toContain('one sentence or up to three short bullets');
+  });
+
+  it('uses durable completion copy for an archived card after restart with an honest fallback', () => {
+    expect(
+      cornerArchiveSummary(undefined, 'Implemented the change and added regression tests.'),
+    ).toBe('Implemented the change and added regression tests.');
+    expect(cornerArchiveSummary('Current process summary.', 'Older durable summary.')).toBe(
+      'Current process summary.',
+    );
+    expect(cornerArchiveSummary('   ', 'Recovered durable summary.')).toBe(
+      'Recovered durable summary.',
+    );
+    expect(cornerArchiveSummary(undefined, undefined)).toBe(
+      'Corner closed without a completed summary.',
+    );
   });
 
   it('publishes the bounded summary instead of the full ACP corner response', async () => {

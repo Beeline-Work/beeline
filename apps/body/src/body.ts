@@ -206,6 +206,7 @@ export const ROOM_WS_MAINTENANCE_TICK_MS = 60_000;
 /** Corner completions are status updates, not transcripts of the agent's process. */
 export const CORNER_TURN_SUMMARY_MAX_CHARS = 480;
 export const CORNER_TURN_SUMMARY_MAX_ITEMS = 3;
+export const CORNER_ARCHIVE_FALLBACK_SUMMARY = 'Corner closed without a completed summary.';
 export const CORNER_TURN_SUMMARY_INSTRUCTION =
   'Finish with only a concise user-facing summary: one sentence or up to three short bullets saying what changed and which checks passed. Do not narrate your process, restate the request, or include multi-paragraph detail.';
 
@@ -259,6 +260,16 @@ export function conciseCornerTurnSummary(message: string): string {
       : conciseItems.map((item) => `- ${item}`).join('\n');
   if (summary.length <= CORNER_TURN_SUMMARY_MAX_CHARS) return summary;
   return shortenSummaryItem(summary, CORNER_TURN_SUMMARY_MAX_CHARS);
+}
+
+/** Resolve the card copy at close time, preferring current process state but
+ * falling back to the durable completion recovered after a daemon restart. */
+export function cornerArchiveSummary(
+  inMemorySummary: string | undefined,
+  durableSummary: string | undefined,
+): string {
+  const candidate = inMemorySummary?.trim() ? inMemorySummary : durableSummary;
+  return conciseCornerTurnSummary(candidate ?? '') || CORNER_ARCHIVE_FALLBACK_SUMMARY;
 }
 
 function relayRetryAfterMs(error: unknown): number {
@@ -3609,10 +3620,16 @@ export class Body {
     // Post status messages BEFORE archiving (relay rejects events on archived channels).
     const parentId = session.parentChannelId;
     if (parentId) {
+      // `mergeSummary` is process-local. Recover the last completed response
+      // from durable conversation state when a restarted daemon closes the
+      // corner, and keep old/verbose stored replies within the current compact
+      // card contract.
+      const durableSummary = await this.durableState.latestAgentMessage(scId);
+      const archiveSummary = cornerArchiveSummary(info.mergeSummary, durableSummary);
       await postControlMessage(
         parentId,
         this.agentIdentity,
-        `📦 Edit session archived — subchannel=${subchannelId}`,
+        archiveSummary,
         [
           ['subchannel', subchannelId],
           ['status', 'archived'],

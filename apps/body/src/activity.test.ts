@@ -25,6 +25,7 @@ import {
   createNarrativeCommitter,
   NARRATIVE_SEGMENT_MAX_CHARS,
   AGENT_MESSAGE_TAG,
+  postAgentMessage,
 } from './activity.js';
 import { KIND_AGENT_DRAFT, TAG_AGENT_DRAFT } from '@beeline/buzz-client';
 
@@ -549,6 +550,7 @@ describe('createNarrativeCommitter', () => {
     const narrator = createNarrativeCommitter(channelId, owner);
     await narrator.finish();
     expect(published).toHaveLength(0);
+    expect(narrator.lastCreatedAt()).toBe(0);
   });
 
   it('publishes segments in order even when the first relay write is slow', async () => {
@@ -587,6 +589,55 @@ describe('createNarrativeCommitter', () => {
       const timestamps = published.map((event) => event.created_at);
       expect(timestamps).toEqual([...timestamps].sort((a, b) => a - b));
       expect(new Set(timestamps).size).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('exposes lastCreatedAt() so a trailing publish (the corner end-of-turn summary) can be threaded strictly after the final segment, even in the same wall-clock second', async () => {
+    // Reproduces the on-relay defect: a fast corner turn's narrative
+    // segments and its separate trailing `publishAgentResult` summary landed
+    // at the identical integer created_at (1786919814 in the field report),
+    // so the completion line sorted before the intro line. The fix threads
+    // the narrator's monotonic counter (lastCreatedAt(), read only after
+    // finish() resolves) into the trailing publish's own createdAt, the same
+    // technique used between narrative segments themselves.
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+      const narrator = createNarrativeCommitter(channelId, owner);
+      narrator.onChunk("I'll add the requested description.\n\nstill working");
+      narrator.onChunk(
+        "I'll add the requested description.\n\nRunning the build now.\n\nstill working",
+      );
+      await narrator.finish();
+
+      expect(published.map((event) => event.content)).toEqual([
+        "I'll add the requested description.",
+        'Running the build now.',
+        'still working',
+      ]);
+      const floor = narrator.lastCreatedAt();
+      expect(floor).toBeGreaterThan(0);
+
+      const trailingCreatedAt = Math.max(Math.floor(Date.now() / 1_000), floor + 1);
+      await postAgentMessage(
+        channelId,
+        owner,
+        'Completed: added the requested description.',
+        undefined,
+        [],
+        [],
+        undefined,
+        trailingCreatedAt,
+      );
+
+      expect(published).toHaveLength(4);
+      expect(published[3]!.content).toBe('Completed: added the requested description.');
+      const timestamps = published.map((event) => event.created_at);
+      expect(timestamps).toEqual([...timestamps].sort((a, b) => a - b));
+      expect(new Set(timestamps).size).toBe(4);
+      expect(timestamps[3]).toBeGreaterThan(timestamps[2]!);
     } finally {
       vi.useRealTimers();
     }

@@ -57,10 +57,12 @@ import { AcpClient, isMutatingPermissionRequest } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import {
+  buildAgentMessage,
   postAgentMessage,
   postAgentPresence,
   startAgentPresence,
   stripAgentReplyPreamble,
+  replyRootIdForEvent,
 } from './activity.js';
 import { isReadOnlyMcpPermissionRequest } from './read-only-policy.js';
 import { SessionScheduler } from './session-scheduler.js';
@@ -2396,6 +2398,36 @@ describe('first-class assistant messages', () => {
 
     expect(published[0]!.tags).toContainEqual(['h', 'child-corner']);
     expect(published[0]!.tags.some((tag) => tag[0] === 'e')).toBe(false);
+  });
+
+  it('preserves the original NIP-10 root for nested Room replies', () => {
+    const agent = newIdentity('threaded-agent-message');
+    const incoming = signEvent(
+      {
+        pubkey: agent.publicKey,
+        created_at: 1,
+        kind: 9,
+        tags: [
+          ['h', 'room-id'],
+          ['e', 'root-message', '', 'root'],
+          ['e', 'member-reply', '', 'reply'],
+        ],
+        content: 'Nested question',
+      },
+      agent.secretKey,
+    );
+    const reply = buildAgentMessage(
+      'room-id',
+      agent,
+      'Nested answer',
+      incoming.id,
+      [],
+      [],
+      replyRootIdForEvent(incoming),
+    );
+
+    expect(reply.tags).toContainEqual(['e', 'root-message', '', 'root']);
+    expect(reply.tags).toContainEqual(['e', incoming.id, '', 'reply']);
   });
 
   it('publishes agent outputs as the shared link-only attachment format', async () => {

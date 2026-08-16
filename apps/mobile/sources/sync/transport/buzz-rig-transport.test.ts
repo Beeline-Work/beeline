@@ -206,6 +206,12 @@ describe('Buzz transport bootstrap', () => {
       name: 'operator',
     } as Identity;
     const client = {
+      query: vi.fn().mockResolvedValue([
+        {
+          id: 'original-message',
+          tags: [['h', 'room']],
+        },
+      ]),
       messageSubmit: vi.fn().mockResolvedValue({ id: 'reply-event' }),
     };
     const transport = new BuzzRigTransport(identity, 'https://relay.test');
@@ -222,6 +228,36 @@ describe('Buzz transport bootstrap', () => {
     expect(client.messageSubmit).toHaveBeenCalledWith('room', '@Brisk Pilot Can you expand?', {
       mentionAgent: 'agent-pubkey',
       extraTags: [['e', 'original-message', '', 'reply']],
+    });
+  });
+
+  it('preserves the thread root when replying to an existing reply', async () => {
+    const identity = {
+      publicKey: 'd'.repeat(64),
+      secretKey: new Uint8Array(32).fill(4),
+      name: 'operator',
+    } as Identity;
+    const client = {
+      query: vi.fn().mockResolvedValue([
+        {
+          id: 'agent-reply',
+          tags: [['e', 'root-message', '', 'reply']],
+        },
+      ]),
+      messageSubmit: vi.fn().mockResolvedValue({ id: 'nested-reply' }),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(transport.messageSubmitReply('room', 'Following up', 'agent-reply')).resolves.toBe(
+      'nested-reply',
+    );
+    expect(client.query).toHaveBeenCalledWith([{ ids: ['agent-reply'], limit: 1 }]);
+    expect(client.messageSubmit).toHaveBeenCalledWith('room', 'Following up', {
+      extraTags: [
+        ['e', 'root-message', '', 'root'],
+        ['e', 'agent-reply', '', 'reply'],
+      ],
     });
   });
 

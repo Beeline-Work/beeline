@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { KIND_AGENT_SOUL, TAG_AGENT_SOUL } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
 import type { BatchResponse, Messaging } from 'firebase-admin/messaging';
@@ -29,6 +30,22 @@ function registeredEventFilters(since: number): Record<string, unknown>[] {
 function retryAfterMs(error: unknown): number | null {
   const match = String(error).match(/retry in\s+(\d+)s/i);
   return match ? (Number(match[1]) + 1) * 1_000 : null;
+}
+
+/** One pending approval is identified by the immutable corner and exact merge target, not a retry event. */
+function deliveryKey(event: NostrEvent, type: string): string {
+  if (type !== 'merge-approval-request') return event.id;
+  return createHash('sha256')
+    .update(
+      [
+        'merge-approval-request',
+        event.tags.find((tag) => tag[0] === 'h')?.[1] ?? '',
+        event.tags.find((tag) => tag[0] === 'repo')?.[1] ?? '',
+        event.tags.find((tag) => tag[0] === 'branch')?.[1] ?? '',
+        event.tags.find((tag) => tag[0] === 'tip')?.[1] ?? '',
+      ].join('\u0000'),
+    )
+    .digest('hex');
 }
 
 /**
@@ -125,7 +142,8 @@ export class PushGateway {
 
     // Claim durably before FCM. An ambiguous network result is never retried:
     // at-most-once delivery is more important than risking a duplicate alert.
-    if (!(await this.deliveryState.reserveAttempt(event.id, event.created_at, recipientPubkey))) {
+    const dedupeKey = deliveryKey(event, plan.data.type ?? 'channel-activity');
+    if (!(await this.deliveryState.reserveAttempt(dedupeKey, event.created_at, recipientPubkey))) {
       return;
     }
 
@@ -140,7 +158,7 @@ export class PushGateway {
       },
     });
 
-    await this.deliveryState.markDelivered(event.id, recipientPubkey);
+    await this.deliveryState.markDelivered(dedupeKey, recipientPubkey);
     await this.removePermanentFailures(tokens, result);
     console.log(
       `[push] FCM sent event=${event.id.slice(0, 12)} channel=${channelId} recipient=${recipientPubkey.slice(0, 12)} devices=${tokens.length} success=${result.successCount} failure=${result.failureCount}`,

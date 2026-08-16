@@ -7,7 +7,23 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hasWriteTools, inventoryForMcpServers } from './mcp-inventory.js';
-import { parseEnvFile, hasLlmCredentials } from './config.js';
+import { parseEnvFile, hasLlmCredentials, type BodyConfig } from './config.js';
+
+const mocks = vi.hoisted(() => ({
+  createBuzzClient: vi.fn(),
+  realCreateBuzzClient: undefined as unknown as typeof import('@beeline/buzz-client').createBuzzClient,
+}));
+
+// Most tests here rely on the real createBuzzClient (talking to a stubbed
+// global fetch/WS). Default the spy to delegate to it so only tests that
+// explicitly override the return value change its behavior.
+vi.mock('@beeline/buzz-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@beeline/buzz-client')>();
+  mocks.realCreateBuzzClient = actual.createBuzzClient;
+  mocks.createBuzzClient.mockImplementation(actual.createBuzzClient);
+  return { ...actual, createBuzzClient: mocks.createBuzzClient };
+});
+
 import {
   AGENT_REQUEST_TAG,
   AGENT_EXCHANGE_MAX_MESSAGES,
@@ -18,6 +34,7 @@ import {
   CORNER_TURN_SUMMARY_INSTRUCTION,
   CORNER_TURN_SUMMARY_MAX_CHARS,
   cornerNameForIntent,
+  cornerOpenTaskPrompt,
   isChannelAddressedMessage,
   isRoomConversationMessage,
   isChannelTaskRequest,
@@ -30,6 +47,7 @@ import {
   ROOM_AGENT_PROMPT_TIMEOUT_MS,
   ROOM_POLL_FAILURE_BACKOFF_CAP_MS,
   RoomPollBackoff,
+  codegraphMcpServer,
   readOnlyMcpServer,
   roomEditPolicyInstructions,
   roomTurnPrompt,
@@ -49,6 +67,8 @@ import { SessionScheduler } from './session-scheduler.js';
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  mocks.createBuzzClient.mockReset();
+  mocks.createBuzzClient.mockImplementation(mocks.realCreateBuzzClient);
 });
 
 describe('mcp-inventory', () => {
@@ -111,6 +131,44 @@ describe('mcp-inventory', () => {
         '/paired/repository',
       ),
     ).toThrow('read-only tools unavailable');
+  });
+
+  it('mounts codegraph as an MCP server when the binary is configured', () => {
+    expect(
+      codegraphMcpServer({
+        agentBinary: '/agent',
+        mcpBinary: '/buzz-dev-mcp',
+        codegraphCommand: '/usr/local/bin/codegraph',
+        agentEnv: {},
+        workspaceRoot: '/workspace',
+        relayBaseUrl: 'http://relay.test',
+        relayHost: 'relay.test',
+        relayScheme: 'http',
+        relayWsUrl: 'ws://relay.test',
+        autoApprovePermissions: true,
+      }),
+    ).toEqual({
+      name: 'codegraph',
+      command: '/usr/local/bin/codegraph',
+      args: ['serve', '--mcp'],
+      env: [],
+    });
+  });
+
+  it('omits codegraph rather than throwing when the binary is not configured', () => {
+    expect(
+      codegraphMcpServer({
+        agentBinary: '/agent',
+        mcpBinary: '/buzz-dev-mcp',
+        agentEnv: {},
+        workspaceRoot: '/workspace',
+        relayBaseUrl: 'http://relay.test',
+        relayHost: 'relay.test',
+        relayScheme: 'http',
+        relayWsUrl: 'ws://relay.test',
+        autoApprovePermissions: true,
+      }),
+    ).toBeUndefined();
   });
 });
 
@@ -523,6 +581,107 @@ describe('Room poll resilience', () => {
     expect(poll).not.toHaveBeenCalled();
   });
 
+  it('keeps a Room WS liveness signal fresh via delivered events and a connected-socket tick, not just subscribe time', async () => {
+    let socketConnected = true;
+    let deliverEvent: ((sessionEvent: { event: NostrEvent }) => void) | undefined;
+    const fakeClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn(),
+      listMembers: vi.fn().mockResolvedValue([]),
+      sessionEventsSubscribe: vi.fn(
+        async (_channelId: string, handler: (sessionEvent: { event: NostrEvent }) => void) => {
+          deliverEvent = handler;
+          return () => {
+            deliverEvent = undefined;
+          };
+        },
+      ),
+      onSocketClose: vi.fn(() => () => undefined),
+      get socket() {
+        return { connected: socketConnected };
+      },
+    };
+    mocks.createBuzzClient.mockReturnValue(fakeClient);
+
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'beeline-body-ws-liveness-'));
+    const liveness: number[] = [];
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot,
+        relayBaseUrl: 'http://relay.test',
+        relayHost: 'relay.test',
+        relayScheme: 'http',
+        relayWsUrl: 'ws://relay.test',
+        autoApprovePermissions: true,
+      } as BodyConfig,
+      newIdentity('ws-liveness-operator'),
+      newIdentity('ws-liveness-agent'),
+      undefined,
+      { onRoomPollSuccess: () => liveness.push(Date.now()) },
+    );
+    Reflect.set(body, 'roomParticipants', async () => []);
+    Reflect.set(body, 'processChannelRequestEvents', async () => 0);
+    body.pollChannelRequests = async () => 0;
+
+    const waitFor = async (check: () => boolean, label: string, timeoutMs = 2_000) => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (check()) return;
+        await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+      }
+      throw new Error(`timed out waiting for ${label}`);
+    };
+
+    const abort = new AbortController();
+    const presence = { setStatus: vi.fn().mockResolvedValue(undefined) };
+    const maintenance = vi.fn().mockResolvedValue(undefined);
+    // A short real-time tick (instead of the production 60s default) stands
+    // in for several watchdog stale-check intervals without slowing the test.
+    const tickMs = 30;
+    const loop = (
+      Reflect.get(body, 'runRoomPushLoop') as (...args: unknown[]) => Promise<void>
+    ).call(
+      body,
+      'ws-liveness-room',
+      undefined,
+      'named-repository',
+      presence,
+      { signal: abort.signal, pollMs: tickMs },
+      maintenance,
+    );
+
+    try {
+      // Subscribing marks the Room live once, at connect time — that alone
+      // was the bug: it never got fresher again for the life of the socket.
+      await waitFor(() => liveness.length === 1, 'initial subscribe liveness signal');
+
+      // A pushed Room event is itself the freshest liveness signal — it must
+      // refresh immediately on receipt, not only at (re)connect time.
+      deliverEvent?.({ event: {} as NostrEvent });
+      await waitFor(() => liveness.length === 2, 'delivered-event liveness signal');
+
+      // A quiet Room with zero pushed events must still be marked live by
+      // the periodic tick as long as the socket is actually connected — this
+      // is what keeps a silent WS Room from going stale under the
+      // supervisor's watchdog across many stale-check intervals.
+      await waitFor(() => liveness.length >= 4, 'connected-socket periodic tick, twice over');
+
+      // Once the socket is actually dead, the tick must stop vouching for
+      // it — a genuinely broken WS still needs to trip the watchdog.
+      socketConnected = false;
+      const afterDeath = liveness.length;
+      await new Promise((resolveWait) => setTimeout(resolveWait, tickMs * 4));
+      expect(liveness.length).toBe(afterDeath);
+    } finally {
+      abort.abort();
+      await loop;
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   it.skip('lets a healthy Room continue polling while a rate-limited sibling waits', async () => {
     vi.stubGlobal(
       'fetch',
@@ -653,6 +812,7 @@ describe('Room poll resilience', () => {
         'hung-session',
         'hello',
         ROOM_AGENT_PROMPT_TIMEOUT_MS,
+        undefined,
       );
       expect(sessionCancel).toHaveBeenCalledWith('hung-session');
       expect(suspend).toHaveBeenCalledOnce();
@@ -922,6 +1082,34 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(prompt).toContain('Never claim that an action or agent exchange happened');
   });
 
+  it('seeds a corner task prompt with the Room discussion, not just the open command', () => {
+    const prompt = cornerOpenTaskPrompt(
+      [
+        {
+          role: 'user',
+          text: '[Person Milo (@milo) · def456]: can we add retry logic to the sync loop?',
+          eventId: 'discussion-message',
+          at: new Date(0).toISOString(),
+        },
+        {
+          role: 'user',
+          text: '[Person Milo (@milo) · def456]: open a corner',
+          eventId: 'current',
+          at: new Date(1_000).toISOString(),
+        },
+      ],
+      '[Person Milo (@milo) · def456]: open a corner',
+      'current',
+    );
+
+    expect(prompt).toContain('add retry logic to the sync loop');
+    expect(prompt).toContain('Message that opened this corner:');
+    expect(prompt).toContain('open a corner');
+    // The addressed open-corner event is excluded from the quoted history —
+    // it only appears once, as the current message.
+    expect(prompt.split('open a corner')).toHaveLength(2);
+  });
+
   it('recognizes only a human-addressed conversation command with one known peer agent', () => {
     const joy = newIdentity('Joy');
     const participants = [human.publicKey, agent.publicKey, joy.publicKey];
@@ -1044,6 +1232,7 @@ describe('Room conversation and permission-gated work intent', () => {
       'readonly-session',
       expect.stringContaining("Hey, what's up?"),
       ROOM_AGENT_PROMPT_TIMEOUT_MS,
+      expect.any(Function),
     );
     expect(body.listSessions()).toHaveLength(1);
     expect(published).toHaveLength(3);
@@ -1233,8 +1422,86 @@ describe('Room conversation and permission-gated work intent', () => {
     ).resolves.toBe(true);
 
     expect(open).toHaveBeenCalledWith('parent-channel', { repo: 'repo' }, request.content, request);
-    expect(start).toHaveBeenCalledWith(info, request.content);
+    expect(start).toHaveBeenCalledWith(
+      info,
+      request.content,
+      cornerOpenTaskPrompt([], request.content, request.eventId),
+    );
     expect(prompt).not.toHaveBeenCalled();
+  });
+
+  it('seeds an explicitly opened corner with the preceding Room discussion', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-explicit-corner-context-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    body.registerSession({
+      channelId: 'parent-channel',
+      sessionId: 'readonly-session',
+      client,
+      mode: 'readonly',
+    });
+    const durableState = Reflect.get(body, 'durableState') as {
+      appendConversation: (channelId: string, entry: unknown) => Promise<void>;
+      conversation: (channelId: string) => Promise<unknown[]>;
+    };
+    await durableState.appendConversation('parent-channel', {
+      role: 'user',
+      text: '[Person Milo (@milo) · def456]: can we add retry logic to the sync loop?',
+      eventId: 'discussion-message',
+      at: new Date(0).toISOString(),
+    });
+    const request = {
+      eventId: 'explicit-corner-request',
+      authorPubkey: human.publicKey,
+      content: 'open a corner',
+      createdAt: 1,
+    };
+    const editClient = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    const info = {
+      subchannelId: 'corner-id',
+      worktreePath: '/tmp/worktree',
+      featureBranch: 'feature/corner',
+      role: body.agent,
+      session: {
+        channelId: 'corner-id',
+        sessionId: 'edit-session',
+        client: editClient,
+        mode: 'edit' as const,
+      },
+      lastPolledAt: 1,
+      archived: false,
+    };
+    vi.spyOn(body, 'openSubchannel').mockResolvedValue(info);
+    const start = vi
+      .spyOn(body as never, 'startAgentTask' as never)
+      .mockImplementation(() => undefined as never);
+
+    await expect(
+      Reflect.get(body, 'replyInRoom').call(
+        body,
+        'parent-channel',
+        { repo: 'repo' },
+        request,
+        true,
+      ),
+    ).resolves.toBe(true);
+
+    expect(start).toHaveBeenCalledOnce();
+    const taskInstructions = (start.mock.calls[0] as unknown[])[2] as string;
+    expect(taskInstructions).toContain('add retry logic to the sync loop');
+    expect(taskInstructions).toContain('Message that opened this corner:');
+    expect(taskInstructions).toContain(request.content);
+
+    await rm('/tmp/buzzy-explicit-corner-context-unit', { recursive: true, force: true });
   });
 
   it('opens an edit corner only after a human allows the first mutating request', async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { loadBodyConfig, resolveReadonlyMcpCommand } from './config.js';
+import { loadBodyConfig, resolveCodegraphCommand, resolveReadonlyMcpCommand } from './config.js';
 
 const binaryEnv = {
   BUZZ_AGENT_BIN: process.execPath,
@@ -55,5 +55,30 @@ describe('resolveReadonlyMcpCommand', () => {
         BUZZ_READONLY_MCP_BIN: '/definitely/missing/buzz-readonly-mcp',
       }),
     ).toThrow('read-only tools unavailable');
+  });
+});
+
+describe('resolveCodegraphCommand', () => {
+  it('resolves an explicit, executable override', () => {
+    expect(resolveCodegraphCommand({ PATH: '', BUZZ_CODEGRAPH_BIN: process.execPath })).toBe(
+      process.execPath,
+    );
+  });
+
+  it('is best-effort: an unusable override returns undefined instead of throwing', () => {
+    expect(() =>
+      resolveCodegraphCommand({
+        PATH: '',
+        BUZZ_CODEGRAPH_BIN: '/definitely/missing/codegraph',
+      }),
+    ).not.toThrow();
+    expect(
+      resolveCodegraphCommand({ PATH: '', BUZZ_CODEGRAPH_BIN: '/definitely/missing/codegraph' }),
+    ).toBeUndefined();
+  });
+
+  it('is best-effort: no override and nothing on PATH returns undefined instead of throwing', () => {
+    expect(() => resolveCodegraphCommand({ PATH: '' })).not.toThrow();
+    expect(resolveCodegraphCommand({ PATH: '' })).toBeUndefined();
   });
 });

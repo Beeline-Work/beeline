@@ -154,6 +154,7 @@ export function mapEventToNotification(
       channelId,
       roomName,
       type: isMergeRequest ? 'merge-approval-request' : 'channel-activity',
+      ...(isMergeRequest ? { cornerId: channelId } : {}),
     },
   };
 }

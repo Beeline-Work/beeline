@@ -15,7 +15,13 @@ function hasTag(payload: Record<string, unknown>, name: string, value?: string):
   });
 }
 
-function roomMessage(event: SessionEvent): { text: string; timestamp: number } | null {
+export type RoomMessageSummary = {
+  id: string;
+  text: string;
+  timestamp: number;
+};
+
+function roomMessage(event: SessionEvent): RoomMessageSummary | null {
   const payload = rawPayload(event);
   if (!payload || typeof payload.content !== 'string') return null;
   if (hasTag(payload, 't', 'body-control') || hasTag(payload, 'subchannel')) return null;
@@ -23,16 +29,21 @@ function roomMessage(event: SessionEvent): { text: string; timestamp: number } |
   const text = payload.content.trim();
   if (!text || CONTROL_TEXT.test(text)) return null;
   return {
+    id: typeof payload.id === 'string' ? payload.id : '',
     text,
     timestamp: typeof payload.createdAt === 'number' ? payload.createdAt : 0,
   };
 }
 
 /** Latest person-facing Room message, excluding Corner control and activity events. */
-export function latestRoomMessage(events: SessionEvent[]): string | null {
+export function latestRoomMessageSummary(events: SessionEvent[]): RoomMessageSummary | null {
   const messages = events
     .map(roomMessage)
-    .filter((message): message is { text: string; timestamp: number } => Boolean(message))
-    .sort((a, b) => b.timestamp - a.timestamp);
-  return messages[0]?.text ?? null;
+    .filter((message): message is RoomMessageSummary => Boolean(message))
+    .sort((a, b) => b.timestamp - a.timestamp || b.id.localeCompare(a.id));
+  return messages[0] ?? null;
+}
+
+export function latestRoomMessage(events: SessionEvent[]): string | null {
+  return latestRoomMessageSummary(events)?.text ?? null;
 }

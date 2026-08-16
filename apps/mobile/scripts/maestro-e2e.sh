@@ -10,8 +10,12 @@ readonly MOBILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly REPO_DIR="$(cd "$MOBILE_DIR/../.." && pwd -P)"
 readonly APK="$MOBILE_DIR/android/app/build/outputs/apk/release/app-release.apk"
 
+reply_fixture_pid=""
 cleanup() {
   local status=$?
+  if [[ -n "$reply_fixture_pid" ]]; then
+    kill "$reply_fixture_pid" 2>/dev/null || true
+  fi
   "$MOBILE_DIR/scripts/android-teardown.sh" "$MOBILE_DIR/android" || true
   exit "$status"
 }
@@ -48,6 +52,9 @@ read_seed_value() {
 readonly SMOKE_NSEC="$(read_seed_value MAESTRO_SMOKE_NSEC)"
 readonly SMOKE_WORKSPACE_ID="$(read_seed_value MAESTRO_SMOKE_WORKSPACE_ID)"
 readonly SMOKE_ROOM_ID="$(read_seed_value MAESTRO_SMOKE_ROOM_ID)"
+readonly SMOKE_AGENT_NSEC="$(read_seed_value MAESTRO_SMOKE_AGENT_NSEC)"
+readonly SMOKE_CORNER_ID="$(read_seed_value MAESTRO_SMOKE_CORNER_ID)"
+readonly SMOKE_LATEST_MESSAGE_ID="$(read_seed_value MAESTRO_SMOKE_LATEST_MESSAGE_ID)"
 
 # This intentionally clears only the named app on the named disposable
 # emulator, ensuring the identity creation/import flow is exercised each run.
@@ -58,10 +65,22 @@ adb -s "$DEVICE" install "$APK" >/dev/null
 adb -s "$DEVICE" shell pm grant "$APP_ID" android.permission.POST_NOTIFICATIONS >/dev/null 2>&1 || true
 adb -s "$DEVICE" shell monkey -p "$APP_ID" 1 >/dev/null
 
+# A separate registered agent waits for the device's actual Room and corner
+# messages, then responds. This verifies live relay delivery without requiring
+# a local Body daemon in the emulator fixture.
+(cd "$REPO_DIR" && npx tsx scripts/publish-smoke-replies.ts "$SMOKE_AGENT_NSEC" "$SMOKE_ROOM_ID" "$SMOKE_CORNER_ID") &
+reply_fixture_pid=$!
+
 maestro test --device "$DEVICE" \
   --env "SMOKE_NSEC=$SMOKE_NSEC" \
   --env "SMOKE_WORKSPACE_ID=$SMOKE_WORKSPACE_ID" \
   --env "SMOKE_ROOM_ID=$SMOKE_ROOM_ID" \
+  --env "SMOKE_CORNER_ID=$SMOKE_CORNER_ID" \
+  --env "SMOKE_LATEST_MESSAGE_ID=$SMOKE_LATEST_MESSAGE_ID" \
   "$MOBILE_DIR/e2e/smoke.yaml"
+
+# The fixture queries relay history after the actual device mention arrives.
+# Waiting makes duplicate-event detection part of this on-device check.
+wait "$reply_fixture_pid"
 
 echo "Maestro smoke passed on $DEVICE."

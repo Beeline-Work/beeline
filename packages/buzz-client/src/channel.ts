@@ -467,6 +467,32 @@ export async function waitUntilMember(
   );
 }
 
+/**
+ * Poll until the relay's role projections show the requested role.
+ *
+ * Membership and authority project independently: a member → admin command
+ * leaves 39002 true throughout, so waitUntilMember cannot prove a promotion
+ * or demotion took effect.
+ */
+export async function waitUntilMemberRole(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  pubkey: string,
+  role: ChannelRole,
+  opts?: { timeoutMs?: number; intervalMs?: number },
+): Promise<void> {
+  const timeoutMs = opts?.timeoutMs ?? 15_000;
+  const intervalMs = opts?.intervalMs ?? 300;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if ((await getChannelRole(ctx, channelId, pubkey)) === role) return;
+    await new Promise((resolveWait) => setTimeout(resolveWait, intervalMs));
+  }
+  throw new Error(
+    `role ${role} was not visible for ${pubkey.slice(0, 12)}… in ${channelId} after ${timeoutMs}ms (assert on 39001/39002, not publish ack)`,
+  );
+}
+
 /** Poll until the current 39001/39002 projections no longer list a member. */
 export async function waitUntilNotMember(
   ctx: ChannelOpsContext,
@@ -526,39 +552,70 @@ export async function getChannelMetadata(
       ctx.identity.publicKey,
     );
     if (alt.length === 0) return null;
-    return parseMetadataEvent(alt[0]!);
+    return parseMetadataEvent(latestMetadataEvent(alt)!);
   }
-  return parseMetadataEvent(events[0]!);
+  return parseMetadataEvent(latestMetadataEvent(events)!);
+}
+
+/** Relay query ordering is not a replaceable-event ordering guarantee. */
+function latestMetadataEvent(events: NostrEvent[]): NostrEvent | undefined {
+  return [...events].sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))[0];
 }
 
 /**
  * Discover child/subchannels of a parent by scanning kind:9007 create events
- * that carry a `parent` tag matching `parentChannelId`.
+ * that carry a `parent` tag matching `parentChannelId`, plus the parent Room's
+ * durable Body-control links.
  *
  * Parent linkage lives on the 9007 create event, NOT on kind:39000 metadata
  * (though some stacks may mirror it there).
  *
  * The relay does NOT index multi-character tags (`#parent`), so we query
  * all recent 9007 events and filter client-side by the `parent` tag value.
+ * A closed NIP-29 child can omit its create event from that broad query even
+ * for a parent member. Body also writes a parent-scoped control event with the
+ * child `subchannel` tag; merge those links so invite-only corners remain
+ * discoverable. `closed` is an access flag, never a lifecycle/archive signal.
  */
 export async function listSubchannels(
   ctx: ChannelOpsContext,
   parentChannelId: string,
   limit = 500,
 ): Promise<string[]> {
-  const events = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_CREATE_GROUP], limit }],
-    ctx.identity.publicKey,
-  );
-  const ids: string[] = [];
+  const [events, controlEvents] = await Promise.all([
+    queryEvents(ctx.http, [{ kinds: [KIND_CREATE_GROUP], limit }], ctx.identity.publicKey),
+    queryEvents(
+      ctx.http,
+      [{ kinds: [KIND_STREAM_MESSAGE], '#h': [parentChannelId], '#t': ['body-control'], limit }],
+      ctx.identity.publicKey,
+    ),
+  ]);
+  const ids = new Set<string>();
   for (const ev of events) {
     const parent = tagValue(ev, 'parent');
     if (parent !== parentChannelId) continue;
     const id = tagValue(ev, 'h') ?? tagValue(ev, 'd');
-    if (id && id !== parentChannelId) ids.push(id);
+    if (id && id !== parentChannelId) ids.add(id);
   }
-  return ids;
+  for (const ev of controlEvents) {
+    const id = tagValue(ev, 'subchannel');
+    if (id && id !== parentChannelId) ids.add(id);
+  }
+  return [...ids];
+}
+
+/** Build one stable kind:9 channel message. Callers may safely republish this exact event. */
+export function buildMessage(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  text: string,
+  opts?: MessageSubmitOpts & { agentActivity?: boolean },
+): NostrEvent {
+  const tags: string[][] = [['h', channelId]];
+  if (opts?.mentionAgent) tags.push(['p', opts.mentionAgent]);
+  if (opts?.agentActivity) tags.push(['t', TAG_AGENT_ACTIVITY]);
+  if (opts?.extraTags) tags.push(...opts.extraTags);
+  return sign(ctx.identity, KIND_STREAM_MESSAGE, tags, text);
 }
 
 /** Build + publish a kind:9 channel message. */
@@ -568,11 +625,7 @@ export async function sendMessage(
   text: string,
   opts?: MessageSubmitOpts & { agentActivity?: boolean },
 ): Promise<NostrEvent> {
-  const tags: string[][] = [['h', channelId]];
-  if (opts?.mentionAgent) tags.push(['p', opts.mentionAgent]);
-  if (opts?.agentActivity) tags.push(['t', TAG_AGENT_ACTIVITY]);
-  if (opts?.extraTags) tags.push(...opts.extraTags);
-  const event = sign(ctx.identity, KIND_STREAM_MESSAGE, tags, text);
+  const event = buildMessage(ctx, channelId, text, opts);
   await publishEvent(ctx.http, event);
   return event;
 }

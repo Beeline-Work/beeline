@@ -33,6 +33,7 @@ import {
   startAgentPresence,
   postAgentTurnStatus,
   postControlMessage,
+  replyRootIdForEvent,
   stripAgentReplyPreamble,
   createDraftStreamer,
   createNarrativeCommitter,
@@ -207,6 +208,7 @@ export const ROOM_WS_MAINTENANCE_TICK_MS = 60_000;
 /** Corner completions are status updates, not transcripts of the agent's process. */
 export const CORNER_TURN_SUMMARY_MAX_CHARS = 480;
 export const CORNER_TURN_SUMMARY_MAX_ITEMS = 3;
+export const CORNER_ARCHIVE_FALLBACK_SUMMARY = 'Corner closed without a completed summary.';
 export const CORNER_TURN_SUMMARY_INSTRUCTION =
   'Finish with only a concise user-facing summary: one sentence or up to three short bullets saying what changed and which checks passed. Do not narrate your process, restate the request, or include multi-paragraph detail.';
 
@@ -260,6 +262,16 @@ export function conciseCornerTurnSummary(message: string): string {
       : conciseItems.map((item) => `- ${item}`).join('\n');
   if (summary.length <= CORNER_TURN_SUMMARY_MAX_CHARS) return summary;
   return shortenSummaryItem(summary, CORNER_TURN_SUMMARY_MAX_CHARS);
+}
+
+/** Resolve the card copy at close time, preferring current process state but
+ * falling back to the durable completion recovered after a daemon restart. */
+export function cornerArchiveSummary(
+  inMemorySummary: string | undefined,
+  durableSummary: string | undefined,
+): string {
+  const candidate = inMemorySummary?.trim() ? inMemorySummary : durableSummary;
+  return conciseCornerTurnSummary(candidate ?? '') || CORNER_ARCHIVE_FALLBACK_SUMMARY;
 }
 
 function relayRetryAfterMs(error: unknown): number {
@@ -424,6 +436,8 @@ export interface ChannelTaskRequest {
   content: string;
   attachments?: AttachmentReference[];
   createdAt: number;
+  /** NIP-10 root to preserve when the Agent replies to this event. */
+  replyRootId?: string;
 }
 
 interface PendingRoomTurn {
@@ -1178,6 +1192,7 @@ export class Body {
     fallback: string,
     options: {
       replyTo?: string;
+      replyRootId?: string;
       extraTags?: readonly string[][];
       concise?: boolean;
     } = {},
@@ -1204,6 +1219,7 @@ export class Body {
           options.replyTo,
           uploaded.attachments,
           options.extraTags,
+          options.replyRootId,
         ),
       );
       await publishEvent(event, this.agentIdentity);
@@ -1809,7 +1825,15 @@ export class Body {
       eventId: request.eventId,
       at: new Date(request.createdAt * 1_000).toISOString(),
     });
-    await postAgentMessage(channelId, this.agentIdentity, reply, request.eventId);
+    await postAgentMessage(
+      channelId,
+      this.agentIdentity,
+      reply,
+      request.eventId,
+      [],
+      [],
+      request.replyRootId,
+    );
     await this.durableState.appendConversation(channelId, {
       role: 'agent',
       text: attachmentPrompt(this.agentIdentity.publicKey, reply, [], this.ownRoomAttribution()),
@@ -2089,6 +2113,7 @@ export class Body {
             content: event.content.trim(),
             attachments: parseAttachmentTags(event.tags),
             createdAt: event.created_at,
+            replyRootId: replyRootIdForEvent(event),
           };
           const exchangeRequest = humanAgentExchangeRequest(
             event,
@@ -2198,7 +2223,15 @@ export class Body {
       });
       const reply =
         'I cannot make that change from a direct message. DMs are strictly read-only and cannot request or open edit corners.';
-      await postAgentMessage(tlcChannelId, this.agentIdentity, reply, request.eventId);
+      await postAgentMessage(
+        tlcChannelId,
+        this.agentIdentity,
+        reply,
+        request.eventId,
+        [],
+        [],
+        request.replyRootId,
+      );
       await this.durableState.appendConversation(tlcChannelId, {
         role: 'agent',
         text: attachmentPrompt(this.agentIdentity.publicKey, reply, [], this.ownRoomAttribution()),
@@ -2283,7 +2316,15 @@ export class Body {
       });
       const reply =
         'Read-only tools unavailable. I cannot safely inspect this repository until the Beeline read-only helper is restored.';
-      await postAgentMessage(tlcChannelId, this.agentIdentity, reply, request.eventId);
+      await postAgentMessage(
+        tlcChannelId,
+        this.agentIdentity,
+        reply,
+        request.eventId,
+        [],
+        [],
+        request.replyRootId,
+      );
       await this.durableState.appendConversation(tlcChannelId, {
         role: 'agent',
         text: attachmentPrompt(this.agentIdentity.publicKey, reply, [], this.ownRoomAttribution()),
@@ -2364,6 +2405,7 @@ export class Body {
           : 'No repository findings to report.';
       const reply = await this.publishAgentResult(tlcChannelId, session, result, fallback, {
         replyTo: request.eventId,
+        replyRootId: request.replyRootId,
         extraTags: agentExchange
           ? agentExchangeTags(agentExchange, 1, agentExchange.peerPubkey)
           : undefined,
@@ -3623,10 +3665,16 @@ export class Body {
     // Post status messages BEFORE archiving (relay rejects events on archived channels).
     const parentId = session.parentChannelId;
     if (parentId) {
+      // `mergeSummary` is process-local. Recover the last completed response
+      // from durable conversation state when a restarted daemon closes the
+      // corner, and keep old/verbose stored replies within the current compact
+      // card contract.
+      const durableSummary = await this.durableState.latestAgentMessage(scId);
+      const archiveSummary = cornerArchiveSummary(info.mergeSummary, durableSummary);
       await postControlMessage(
         parentId,
         this.agentIdentity,
-        `📦 Edit session archived — subchannel=${subchannelId}`,
+        archiveSummary,
         [
           ['subchannel', subchannelId],
           ['status', 'archived'],

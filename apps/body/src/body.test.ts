@@ -31,6 +31,7 @@ import {
   assertSubchannelArchiveTarget,
   Body,
   conciseCornerTurnSummary,
+  cornerArchiveSummary,
   CORNER_TURN_SUMMARY_INSTRUCTION,
   CORNER_TURN_SUMMARY_MAX_CHARS,
   cornerNameForIntent,
@@ -56,10 +57,12 @@ import { AcpClient, isMutatingPermissionRequest } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import {
+  buildAgentMessage,
   postAgentMessage,
   postAgentPresence,
   startAgentPresence,
   stripAgentReplyPreamble,
+  replyRootIdForEvent,
 } from './activity.js';
 import { isReadOnlyMcpPermissionRequest } from './read-only-policy.js';
 import { SessionScheduler } from './session-scheduler.js';
@@ -2297,6 +2300,21 @@ describe('first-class assistant messages', () => {
     expect(CORNER_TURN_SUMMARY_INSTRUCTION).toContain('one sentence or up to three short bullets');
   });
 
+  it('uses durable completion copy for an archived card after restart with an honest fallback', () => {
+    expect(
+      cornerArchiveSummary(undefined, 'Implemented the change and added regression tests.'),
+    ).toBe('Implemented the change and added regression tests.');
+    expect(cornerArchiveSummary('Current process summary.', 'Older durable summary.')).toBe(
+      'Current process summary.',
+    );
+    expect(cornerArchiveSummary('   ', 'Recovered durable summary.')).toBe(
+      'Recovered durable summary.',
+    );
+    expect(cornerArchiveSummary(undefined, undefined)).toBe(
+      'Corner closed without a completed summary.',
+    );
+  });
+
   it('publishes the bounded summary instead of the full ACP corner response', async () => {
     const agent = newIdentity('concise-corner-agent-message');
     const published: NostrEvent[] = [];
@@ -2380,6 +2398,36 @@ describe('first-class assistant messages', () => {
 
     expect(published[0]!.tags).toContainEqual(['h', 'child-corner']);
     expect(published[0]!.tags.some((tag) => tag[0] === 'e')).toBe(false);
+  });
+
+  it('preserves the original NIP-10 root for nested Room replies', () => {
+    const agent = newIdentity('threaded-agent-message');
+    const incoming = signEvent(
+      {
+        pubkey: agent.publicKey,
+        created_at: 1,
+        kind: 9,
+        tags: [
+          ['h', 'room-id'],
+          ['e', 'root-message', '', 'root'],
+          ['e', 'member-reply', '', 'reply'],
+        ],
+        content: 'Nested question',
+      },
+      agent.secretKey,
+    );
+    const reply = buildAgentMessage(
+      'room-id',
+      agent,
+      'Nested answer',
+      incoming.id,
+      [],
+      [],
+      replyRootIdForEvent(incoming),
+    );
+
+    expect(reply.tags).toContainEqual(['e', 'root-message', '', 'root']);
+    expect(reply.tags).toContainEqual(['e', incoming.id, '', 'reply']);
   });
 
   it('publishes agent outputs as the shared link-only attachment format', async () => {

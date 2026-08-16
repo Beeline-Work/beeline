@@ -146,6 +146,15 @@ export class DurableBodyState {
     return [...(this.data.conversations[channelId] ?? [])];
   }
 
+  /** Latest durable agent response for lifecycle surfaces that outlive a process. */
+  async latestAgentMessage(channelId: string): Promise<string | undefined> {
+    const entries = await this.conversation(channelId);
+    return [...entries]
+      .reverse()
+      .find((entry) => entry.role === 'agent' && entry.text.trim())
+      ?.text.trim();
+  }
+
   private inbox(channelId: string): DurableBodyData['inboxes'][string] {
     return (this.data.inboxes[channelId] ??= {
       cursor: { createdAt: 0, eventId: '' },

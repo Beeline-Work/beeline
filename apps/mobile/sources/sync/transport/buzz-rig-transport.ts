@@ -216,9 +216,18 @@ export class BuzzRigTransport implements RigTransport {
   ): Promise<string> {
     const client = await this.getClient();
     const attachmentTags = buildAttachmentTags(attachments);
+    const [replyTarget] = await client.query([{ ids: [replyToId], limit: 1 }]);
+    const replyRootId =
+      replyTarget?.tags.find((tag) => tag[0] === 'e' && tag[1] && tag[3] === 'root')?.[1] ??
+      replyTarget?.tags.find((tag) => tag[0] === 'e' && tag[1] && tag[3] === 'reply')?.[1] ??
+      replyToId;
     const event = await client.messageSubmit(channelId, text, {
       ...(mentionAgent ? { mentionAgent } : {}),
-      extraTags: [['e', replyToId, '', 'reply'], ...attachmentTags],
+      extraTags: [
+        ...(replyRootId !== replyToId ? [['e', replyRootId, '', 'root']] : []),
+        ['e', replyToId, '', 'reply'],
+        ...attachmentTags,
+      ],
     });
     return event.id;
   }

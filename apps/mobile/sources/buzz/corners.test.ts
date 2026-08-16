@@ -5,6 +5,7 @@ import {
   isCornerActive,
   mapRawCornerStatusTag,
   resolveCornerLifecycleStatus,
+  roomListCorners,
   selectMostRecentActiveCornerId,
   sortCorners,
   type CornerSummary,
@@ -29,6 +30,17 @@ describe('corner navigation model', () => {
       'broken',
       'archived',
     ]);
+  });
+
+  it('hides archived corners only from the Room-list dropdown', () => {
+    expect(roomListCorners(corners).map((corner) => corner.id)).toEqual([
+      'open',
+      'live-new',
+      'live-old',
+      'stuck',
+      'broken',
+    ]);
+    expect(corners.some((corner) => corner.id === 'archived')).toBe(true);
   });
 
   it('breaks ties by most recent activity, not just creation time', () => {

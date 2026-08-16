@@ -80,4 +80,32 @@ describe('durable input inbox', () => {
     );
     expect((await restarted.reserveReply('room', request.id, differentReply)).id).toBe(reply.id);
   });
+
+  it('recovers the latest completed agent summary after restart', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-corner-summary-'));
+    cleanup.push(root);
+    const path = resolve(root, 'state.json');
+    const first = new DurableBodyState(path);
+    await first.appendConversation('corner', {
+      role: 'agent',
+      text: 'Implemented the first change.',
+      at: new Date(1).toISOString(),
+    });
+    await first.appendConversation('corner', {
+      role: 'user',
+      text: 'Please also add tests.',
+      at: new Date(2).toISOString(),
+    });
+    await first.appendConversation('corner', {
+      role: 'agent',
+      text: 'Implemented the change and added regression tests.',
+      at: new Date(3).toISOString(),
+    });
+
+    const restarted = new DurableBodyState(path);
+    expect(await restarted.latestAgentMessage('corner')).toBe(
+      'Implemented the change and added regression tests.',
+    );
+    expect(await restarted.latestAgentMessage('empty-corner')).toBeUndefined();
+  });
 });

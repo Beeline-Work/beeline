@@ -186,8 +186,14 @@ export async function queryEventBacklog(
 /** Long enough to make a persistently failing Room a negligible relay consumer. */
 export const ROOM_POLL_FAILURE_BACKOFF_CAP_MS = 5 * 60_000;
 
-/** A wedged ACP process must not occupy an interactive session for ten minutes. */
-export const ROOM_AGENT_PROMPT_TIMEOUT_MS = 60_000;
+/**
+ * Idle window for an agent turn, not a hard cap on turn length: it resets on
+ * every ACP activity signal (`AcpClient.sessionPrompt`'s per-update reset in
+ * `acp.ts`), so an actively-working turn can run as long as it keeps making
+ * progress. Only a genuinely wedged process — zero activity for this long —
+ * gets cancelled and force-suspended.
+ */
+export const ROOM_AGENT_PROMPT_TIMEOUT_MS = 3 * 60_000;
 
 /**
  * Default cadence for the WS-push loop's low-rate maintenance/liveness tick

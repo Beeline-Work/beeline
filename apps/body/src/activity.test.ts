@@ -16,8 +16,13 @@ vi.mock('@beeline/gate', async (importOriginal) => ({
   }),
 }));
 
-import { projectActivity, createDraftStreamer, AGENT_DRAFT_FLUSH_MS } from './activity.js';
-import { KIND_AGENT_DRAFT, TAG_AGENT_DRAFT } from '@beeline/buzz-client';
+import {
+  projectActivity,
+  createDraftStreamer,
+  planEntriesToSteps,
+  AGENT_DRAFT_FLUSH_MS,
+} from './activity.js';
+import { KIND_AGENT_DRAFT, TAG_AGENT_DRAFT, KIND_CORNER_OBJECTIVE, TAG_CORNER_OBJECTIVE } from '@beeline/buzz-client';
 
 const published = mocks.published;
 
@@ -170,6 +175,125 @@ describe('projectActivity granularity', () => {
     emit(toolCall('search-only', { kind: 'search', title: 'search_text' }));
     emit(toolCallUpdate('search-only', { status: 'completed' }));
 
+    await vi.advanceTimersByTimeAsync(5_000);
+    unsubscribe();
+
+    expect(published).toHaveLength(0);
+  });
+});
+
+describe('planEntriesToSteps', () => {
+  it('maps ACP plan entries into the corner-objective wire shape', () => {
+    expect(
+      planEntriesToSteps([
+        { content: 'inspect the repo', status: 'completed', priority: 'high' },
+        { content: 'write the fix', status: 'in_progress' },
+        { content: 'add tests' },
+      ]),
+    ).toEqual([
+      { content: 'inspect the repo', status: 'completed' },
+      { content: 'write the fix', status: 'in_progress' },
+      { content: 'add tests', status: 'pending' },
+    ]);
+  });
+
+  it('drops entries missing usable content and tolerates non-array input', () => {
+    expect(planEntriesToSteps([{ status: 'completed' }, { content: '  ' }, 'not-an-entry'])).toEqual([]);
+    expect(planEntriesToSteps(undefined)).toEqual([]);
+  });
+});
+
+describe('projectActivity corner objective', () => {
+  const channelId = 'channel-1';
+  const sessionId = 'session-1';
+  let owner: ReturnType<typeof newIdentity>;
+  let client: EventEmitter;
+
+  beforeEach(() => {
+    published.length = 0;
+    owner = newIdentity('agent');
+    client = new EventEmitter();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function emit(update: Record<string, unknown>): void {
+    client.emit('session/update', { sessionId, update } satisfies SessionUpdate);
+  }
+
+  it('publishes a live checklist update immediately, not on the activity batch timer', async () => {
+    const unsubscribe = projectActivity(
+      client as unknown as AcpClient,
+      channelId,
+      owner,
+      sessionId,
+      'Fix the flaky test',
+    );
+
+    emit({
+      sessionUpdate: 'plan',
+      entries: [
+        { content: 'inspect the repo', status: 'completed' },
+        { content: 'write the fix', status: 'in_progress' },
+        { content: 'add tests', status: 'pending' },
+      ],
+    });
+    // No `vi.advanceTimersByTimeAsync(5_000)` — the checklist must not wait
+    // on the 5s activity-batch coalescing window.
+    await vi.advanceTimersByTimeAsync(0);
+    unsubscribe();
+
+    expect(published).toHaveLength(1);
+    const event = published[0]!;
+    expect(event.kind).toBe(KIND_CORNER_OBJECTIVE);
+    expect(event.tags).toEqual(
+      expect.arrayContaining([
+        ['d', `${TAG_CORNER_OBJECTIVE}:${channelId}`],
+        ['h', channelId],
+        ['t', TAG_CORNER_OBJECTIVE],
+        ['agent', owner.publicKey],
+      ]),
+    );
+    const content = JSON.parse(event.content) as {
+      objective: string;
+      steps: Array<{ content: string; status: string }>;
+    };
+    expect(content.objective).toBe('Fix the flaky test');
+    // The completed step must carry `status: 'completed'` — the field the
+    // mobile checklist reads to decide whether a row renders struck through.
+    expect(content.steps).toEqual([
+      { content: 'inspect the repo', status: 'completed' },
+      { content: 'write the fix', status: 'in_progress' },
+      { content: 'add tests', status: 'pending' },
+    ]);
+  });
+
+  it('never lets a plan update reach the transcript activity batch', async () => {
+    const unsubscribe = projectActivity(
+      client as unknown as AcpClient,
+      channelId,
+      owner,
+      sessionId,
+      'Fix the flaky test',
+    );
+
+    emit({ sessionUpdate: 'plan', entries: [{ content: 'inspect the repo', status: 'pending' }] });
+    await vi.advanceTimersByTimeAsync(5_000);
+    unsubscribe();
+
+    // Only the corner-objective publish, never an agent-activity transcript line.
+    expect(published).toHaveLength(1);
+    expect(published[0]!.kind).toBe(KIND_CORNER_OBJECTIVE);
+  });
+
+  it('skips the corner-objective wire entirely for a read-only Room session', async () => {
+    // No objective argument — mirrors how `provision()` calls projectActivity for a Room.
+    const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+
+    emit({ sessionUpdate: 'plan', entries: [{ content: 'inspect the repo', status: 'pending' }] });
     await vi.advanceTimersByTimeAsync(5_000);
     unsubscribe();
 

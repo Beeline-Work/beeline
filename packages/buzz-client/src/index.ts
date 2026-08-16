@@ -78,10 +78,12 @@ export {
   KIND_PERSON_PROFILE,
   KIND_AGENT_PRESENCE,
   KIND_AGENT_DRAFT,
+  KIND_CORNER_OBJECTIVE,
   KIND_AUTH,
   TAG_AGENT_ACTIVITY,
   TAG_AGENT_PRESENCE,
   TAG_AGENT_DRAFT,
+  TAG_CORNER_OBJECTIVE,
   TAG_AGENT,
   TAG_AGENT_PAIRING,
   TAG_AGENT_SOUL,
@@ -101,6 +103,12 @@ export {
   newerAgentPresence,
 } from './agent-presence.js';
 export type { AgentPresence, AgentPresenceStatus } from './agent-presence.js';
+
+export type {
+  CornerObjective,
+  CornerObjectiveStep,
+  CornerObjectiveStepStatus,
+} from './corner-objective.js';
 
 export {
   tagValue,

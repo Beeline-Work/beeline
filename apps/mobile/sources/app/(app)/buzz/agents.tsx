@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import * as Clipboard from 'expo-clipboard';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
@@ -8,22 +8,32 @@ import {
   isSingleWordAgentName,
   type Agent,
   type Community,
+  type CommunityMember,
+  type CommunityRole,
   type Identity,
+  type PersonProfile,
 } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { groknight } from '@/buzz/groknight';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
+import { buildCommunityInviteUrl } from '@/buzz/community-invite';
+import { shortMemberNpub } from '@/buzz/member-display';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { AgentAvatar } from '@/components/buzz/AgentAvatar';
+import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
 import { HullSurface, HullWaveSignal, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
 
 const INSTALL_COMMAND = 'curl -fsSL https://relay.buzzrouter.com/install | sh';
+
+function roleLabel(role: CommunityRole): string {
+  return role.toUpperCase();
+}
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -39,6 +49,9 @@ export default function BuzzAgents() {
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [people, setPeople] = useState<CommunityMember[]>([]);
+  const [profiles, setProfiles] = useState<PersonProfile[]>([]);
+  const [agentRoles, setAgentRoles] = useState<Map<string, CommunityRole>>(new Map());
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,6 +76,10 @@ export default function BuzzAgents() {
     () => agents.find((agent) => agent.pubkey === selectedPubkey) ?? null,
     [agents, selectedPubkey],
   );
+  const profileByPubkey = useMemo(
+    () => new Map(profiles.map((profile) => [profile.pubkey, profile])),
+    [profiles],
+  );
 
   const refreshAgents = useCallback(async (currentTransport: BuzzRigTransport, id: string) => {
     const client = await currentTransport.ensureClient();
@@ -84,6 +101,37 @@ export default function BuzzAgents() {
     }
   }, []);
 
+  const refreshPeople = useCallback(async (
+    currentTransport: BuzzRigTransport,
+    id: string,
+    viewerPubkey?: string,
+  ) => {
+    const client = await currentTransport.ensureClient();
+    const [allMembers, knownAgents] = await Promise.all([
+      client.communityMembers(id),
+      client.listAgents(id),
+    ]);
+    const agentPubkeys = new Set(knownAgents.map((agent) => agent.pubkey));
+    const nextPeople = allMembers.filter((member) => !agentPubkeys.has(member.pubkey));
+    const nextProfiles = await client.listPersonProfiles(
+      id,
+      nextPeople.map((member) => member.pubkey),
+    );
+    setPeople(nextPeople);
+    setProfiles(nextProfiles);
+    setAgentRoles(
+      new Map(
+        allMembers
+          .filter((member) => agentPubkeys.has(member.pubkey))
+          .map((member) => [member.pubkey, member.role]),
+      ),
+    );
+    if (viewerPubkey) {
+      const viewerRole = allMembers.find((member) => member.pubkey === viewerPubkey)?.role;
+      setCanManageWorkspace(viewerRole === 'owner' || viewerRole === 'admin');
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     let interval: ReturnType<typeof setInterval> | undefined;
@@ -101,9 +149,10 @@ export default function BuzzAgents() {
           currentIdentity.publicKey,
           requestedCommunityId,
         );
-        const [listed, viewerProfile] = await Promise.all([
+        const [listed, viewerProfile, allMembers] = await Promise.all([
           client.listAgents(activeWorkspaceId),
           client.getPersonProfile(activeWorkspaceId, currentIdentity.publicKey),
+          client.communityMembers(activeWorkspaceId),
         ]);
         if (cancelled) return;
         setIdentity(currentIdentity);
@@ -112,10 +161,9 @@ export default function BuzzAgents() {
         setCommunityId(activeWorkspaceId);
         setAgents(listed);
         setViewerAvatarUrl(viewerProfile?.avatar);
-        const role = available.find(
-          (workspace) => workspace.communityId === activeWorkspaceId,
-        )?.viewerRole;
+        const role = allMembers.find((member) => member.pubkey === currentIdentity.publicKey)?.role;
         setCanManageWorkspace(role === 'owner' || role === 'admin');
+        await refreshPeople(nextTransport, activeWorkspaceId, currentIdentity.publicKey);
         interval = setInterval(() => {
           if (!pairingPending.current) return;
           void refreshAgents(nextTransport, activeWorkspaceId).catch(() => undefined);
@@ -130,10 +178,10 @@ export default function BuzzAgents() {
       cancelled = true;
       if (interval) clearInterval(interval);
     };
-  }, [refreshAgents, requestedCommunityId]);
+  }, [refreshAgents, refreshPeople, requestedCommunityId]);
 
   const handleAdd = useCallback(async () => {
-    if (!transport || !communityId) return;
+    if (!transport || !communityId || !canManageWorkspace) return;
     setWorking(true);
     setError(null);
     try {
@@ -149,7 +197,61 @@ export default function BuzzAgents() {
     } finally {
       setWorking(false);
     }
-  }, [agents, communityId, transport]);
+  }, [agents, canManageWorkspace, communityId, transport]);
+
+  const invitePerson = useCallback(async () => {
+    if (!transport || !communityId || !canManageWorkspace) return;
+    setWorking(true);
+    setError(null);
+    try {
+      const client = await transport.ensureClient();
+      const invite = await client.createInvite(communityId);
+      const url = buildCommunityInviteUrl(invite.token, await getEffectiveRelayUrl());
+      await Share.share({ message: url });
+    } catch (caught) {
+      setError(`Could not create person invite: ${String(caught)}`);
+    } finally {
+      setWorking(false);
+    }
+  }, [canManageWorkspace, communityId, transport]);
+
+  const setPersonRole = useCallback(
+    async (pubkey: string, role: CommunityRole) => {
+      if (!transport || !communityId || !canManageWorkspace) return;
+      setWorking(true);
+      setError(null);
+      try {
+        const client = await transport.ensureClient();
+        await client.addMember(communityId, pubkey, role);
+        await client.waitUntilMemberRole(communityId, pubkey, role);
+        await refreshPeople(transport, communityId, identity?.publicKey);
+      } catch (caught) {
+        setError(`Could not change person role: ${String(caught)}`);
+      } finally {
+        setWorking(false);
+      }
+    },
+    [canManageWorkspace, communityId, identity?.publicKey, refreshPeople, transport],
+  );
+
+  const removePerson = useCallback(
+    async (pubkey: string) => {
+      if (!transport || !communityId || !canManageWorkspace) return;
+      setWorking(true);
+      setError(null);
+      try {
+        const client = await transport.ensureClient();
+        await client.removeMember(communityId, pubkey);
+        await client.waitUntilNotMember(communityId, pubkey);
+        await refreshPeople(transport, communityId, identity?.publicKey);
+      } catch (caught) {
+        setError(`Could not remove person: ${String(caught)}`);
+      } finally {
+        setWorking(false);
+      }
+    },
+    [canManageWorkspace, communityId, identity?.publicKey, refreshPeople, transport],
+  );
 
   const chooseAgent = useCallback((agent: Agent) => {
     setSelectedPubkey(agent.pubkey);
@@ -164,7 +266,7 @@ export default function BuzzAgents() {
 
   const saveSoul = useCallback(
     async (nextName = name, nextPersonality = personality) => {
-      if (!transport || !communityId || !selected) return;
+      if (!transport || !communityId || !selected || !canManageWorkspace) return;
       setWorking(true);
       setError(null);
       try {
@@ -185,11 +287,11 @@ export default function BuzzAgents() {
         setWorking(false);
       }
     },
-    [avatarUrl, communityId, intent, name, personality, refreshAgents, selected, transport],
+    [avatarUrl, canManageWorkspace, communityId, intent, name, personality, refreshAgents, selected, transport],
   );
 
   const changeAvatar = useCallback(async () => {
-    if (!transport || !communityId || !selected) return;
+    if (!transport || !communityId || !selected || !canManageWorkspace) return;
     setWorking(true);
     setError(null);
     try {
@@ -210,10 +312,10 @@ export default function BuzzAgents() {
     } finally {
       setWorking(false);
     }
-  }, [communityId, intent, name, personality, refreshAgents, selected, transport]);
+  }, [canManageWorkspace, communityId, intent, name, personality, refreshAgents, selected, transport]);
 
   const resetAvatar = useCallback(async () => {
-    if (!transport || !communityId || !selected) return;
+    if (!transport || !communityId || !selected || !canManageWorkspace) return;
     setWorking(true);
     setError(null);
     try {
@@ -231,7 +333,7 @@ export default function BuzzAgents() {
     } finally {
       setWorking(false);
     }
-  }, [communityId, intent, name, personality, refreshAgents, selected, transport]);
+  }, [canManageWorkspace, communityId, intent, name, personality, refreshAgents, selected, transport]);
 
   const handleUseDefault = useCallback(() => {
     if (!selected) return;
@@ -241,7 +343,7 @@ export default function BuzzAgents() {
   }, [selected]);
 
   const removeSelectedAgent = useCallback(async () => {
-    if (!transport || !communityId || !selected) return;
+    if (!transport || !communityId || !selected || !canManageWorkspace) return;
     setWorking(true);
     setError(null);
     try {
@@ -259,7 +361,7 @@ export default function BuzzAgents() {
     } finally {
       setWorking(false);
     }
-  }, [communityId, refreshAgents, selected, transport]);
+  }, [canManageWorkspace, communityId, refreshAgents, selected, transport]);
 
   const messageSelectedAgent = useCallback(async () => {
     if (!transport || !communityId || !selected) return;
@@ -312,17 +414,9 @@ export default function BuzzAgents() {
             <Text style={styles.backText}>‹</Text>
           </TouchableOpacity>
           <View style={styles.headerCopy}>
-            <Text style={styles.title}>Agents</Text>
+            <Text style={styles.title}>Members</Text>
             {activeCommunity && <Text style={styles.headerMeta}>{activeCommunity.name}</Text>}
           </View>
-          <TouchableOpacity
-            accessibilityLabel="Add an agent"
-            style={styles.addButton}
-            disabled={working}
-            onPress={() => void handleAdd()}
-          >
-            <Text style={styles.addButtonText}>＋</Text>
-          </TouchableOpacity>
         </HullSurface>
 
         <KeyboardAwareScrollView
@@ -372,28 +466,113 @@ export default function BuzzAgents() {
             </View>
           )}
 
-          {agents.length > 0 && (
+          <View style={styles.memberSection} testID="members-people-section">
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Registered</Text>
+              <Text style={styles.sectionTitle}>People</Text>
+              <Text style={styles.count}>{people.length}</Text>
+            </View>
+            {canManageWorkspace && (
+              <MonoButton
+                label={working ? 'Creating invite' : 'Invite person'}
+                loading={working}
+                disabled={working}
+                onPress={() => void invitePerson()}
+                style={styles.sectionAction}
+                testID="invite-person"
+              />
+            )}
+            {people.length === 0 ? (
+              <Text style={styles.sectionEmpty}>No people in this Workspace yet.</Text>
+            ) : (
+              <View style={styles.peopleList}>
+                {people.map((person) => {
+                  const profile = profileByPubkey.get(person.pubkey);
+                  const immutableOwner = person.pubkey === activeCommunity?.ownerPubkey;
+                  const isSelf = person.pubkey === identity?.publicKey;
+                  const actorCanChange =
+                    !immutableOwner &&
+                    !isSelf &&
+                    (canManageWorkspace &&
+                      (activeCommunity?.viewerRole === 'owner' || person.role === 'member'));
+                  return (
+                    <View key={person.pubkey} style={styles.personRow}>
+                      <PersonAvatar
+                        avatarUrl={profile?.avatar}
+                        name={profile?.name ?? shortMemberNpub(person.pubkey)}
+                        pubkey={person.pubkey}
+                        size={38}
+                      />
+                      <View style={styles.personCopy}>
+                        <Text numberOfLines={1} style={styles.personName}>
+                          {profile?.name ?? shortMemberNpub(person.pubkey)}
+                          {isSelf ? ' (you)' : ''}
+                        </Text>
+                        <Text numberOfLines={1} style={styles.personHandle}>
+                          {profile?.handle ? `@${profile.handle}` : shortMemberNpub(person.pubkey)}
+                        </Text>
+                        <View style={styles.roleRow}>
+                          {(['owner', 'admin', 'member'] as const).map((role) => {
+                            const selectedRole = person.role === role;
+                            const allowed =
+                              actorCanChange &&
+                              (activeCommunity?.viewerRole === 'owner' || role !== 'owner');
+                            return (
+                              <TouchableOpacity
+                                accessibilityState={{ selected: selectedRole, disabled: !allowed }}
+                                disabled={!allowed || selectedRole || working}
+                                key={role}
+                                onPress={() => void setPersonRole(person.pubkey, role)}
+                                style={[styles.roleButton, selectedRole && styles.roleButtonSelected]}
+                                testID={`member-${person.pubkey}-${role}`}
+                              >
+                                <Text style={[styles.roleText, selectedRole && styles.roleTextSelected]}>
+                                  {roleLabel(role)}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      </View>
+                      {actorCanChange && (
+                        <TouchableOpacity
+                          accessibilityLabel={`Remove ${profile?.name ?? shortMemberNpub(person.pubkey)}`}
+                          disabled={working}
+                          onPress={() => void removePerson(person.pubkey)}
+                          style={styles.removePersonButton}
+                          testID={`member-${person.pubkey}-remove`}
+                        >
+                          <Text style={styles.removePersonText}>×</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+
+          <View style={styles.memberSection} testID="members-agents-section">
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Agents</Text>
               <Text style={styles.count}>{agents.length}</Text>
             </View>
-          )}
-          {agents.length === 0 ? (
+            {canManageWorkspace && (
+              <MonoButton
+                label={working ? 'Adding agent' : 'Add agent'}
+                loading={working}
+                disabled={working}
+                onPress={() => void handleAdd()}
+                style={styles.sectionAction}
+                testID="add-agent"
+              />
+            )}
+            {agents.length === 0 ? (
             <View style={styles.empty}>
               <Text style={styles.emptyGlyph}>⌬</Text>
               <Text style={styles.emptyTitle}>No agents yet</Text>
               <Text style={styles.emptyCopy}>
                 Connect once, then use the Agent in every {ROOM_LABEL}.
               </Text>
-              {!pairCommand && (
-                <MonoButton
-                  label={working ? 'Connecting Agent' : 'Connect an Agent'}
-                  loading={working}
-                  style={styles.primaryButton}
-                  disabled={working}
-                  onPress={() => void handleAdd()}
-                />
-              )}
             </View>
           ) : (
             agents.map((agent) => {
@@ -419,6 +598,9 @@ export default function BuzzAgents() {
                       {display.name}
                     </Text>
                     <Text style={styles.agentHandle}>@{display.handle}</Text>
+                    <Text style={styles.agentRole}>
+                      {roleLabel(agentRoles.get(agent.pubkey) ?? 'member')}
+                    </Text>
                     <Text style={styles.personality} numberOfLines={2}>
                       {display.personality}
                     </Text>
@@ -428,8 +610,9 @@ export default function BuzzAgents() {
               );
             })
           )}
+          </View>
 
-          {selected && (
+          {selected && canManageWorkspace && (
             <View style={styles.editor}>
               <View style={styles.editorTitleRow}>
                 <AgentAvatar
@@ -600,18 +783,6 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   headerMeta: { ...Typography.default(), marginTop: 2, color: groknight.muted, fontSize: 11 },
-  addButton: {
-    width: 44,
-    height: 44,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  addButtonText: {
-    ...Typography.default(),
-    color: groknight.steel,
-    fontSize: 21,
-    fontWeight: '500',
-  },
   scrollContent: { paddingHorizontal: 18, paddingTop: 20, paddingBottom: 56 },
   pairPanel: {
     paddingBottom: 24,
@@ -674,6 +845,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
+  memberSection: { marginBottom: 32 },
   sectionHeader: { marginBottom: 8, flexDirection: 'row', alignItems: 'center' },
   sectionTitle: {
     ...Typography.default('semiBold'),
@@ -682,6 +854,43 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   count: { ...Typography.default(), color: groknight.muted, fontSize: 12 },
+  sectionAction: { marginBottom: 12 },
+  sectionEmpty: {
+    ...Typography.default(),
+    paddingVertical: 18,
+    color: groknight.textMuted,
+    fontSize: 13,
+  },
+  peopleList: { borderBottomWidth: 1, borderBottomColor: groknight.border },
+  personRow: {
+    minHeight: 94,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderTopWidth: 1,
+    borderTopColor: groknight.border,
+    backgroundColor: groknight.bgBase,
+  },
+  personCopy: { flex: 1, minWidth: 0 },
+  personName: { ...Typography.default('semiBold'), color: groknight.textPrimary, fontSize: 13 },
+  personHandle: { ...Typography.mono(), marginTop: 2, color: groknight.textMuted, fontSize: 9 },
+  roleRow: { marginTop: 7, flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
+  roleButton: {
+    minHeight: 30,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: groknight.border,
+    borderRadius: 3,
+  },
+  roleButtonSelected: { borderColor: groknight.selectedBorder, backgroundColor: groknight.bgHighlight },
+  roleText: { ...Typography.mono('semiBold'), color: groknight.textMuted, fontSize: 8 },
+  roleTextSelected: { color: groknight.textPrimary },
+  removePersonButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  removePersonText: { ...Typography.default(), color: groknight.steel, fontSize: 22 },
   empty: {
     alignItems: 'center',
     paddingTop: 46,
@@ -731,6 +940,13 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   agentHandle: { ...Typography.mono(), marginTop: 2, color: groknight.textMuted, fontSize: 10 },
+  agentRole: {
+    ...Typography.mono('semiBold'),
+    marginTop: 5,
+    color: groknight.textMuted,
+    fontSize: 9,
+    letterSpacing: 0.6,
+  },
   personality: {
     ...Typography.default(),
     marginTop: 3,

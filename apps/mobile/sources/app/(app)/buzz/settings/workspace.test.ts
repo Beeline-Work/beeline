@@ -69,7 +69,7 @@ vi.mock('react-native', async () => {
   };
 });
 
-import WorkspaceSettings, { normalizeMemberPubkey } from './workspace';
+import WorkspaceSettings from './workspace';
 
 const originalConsoleError = console.error;
 
@@ -120,29 +120,18 @@ describe('Workspace Settings authority', () => {
 
     expect(renderer.root.findByProps({ testID: 'workspace-overview-settings' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'workspace-visibility-setting' })).toBeDefined();
-    expect(renderer.root.findByProps({ testID: 'workspace-members-settings' })).toBeDefined();
-    expect(renderer.root.findByProps({ testID: 'workspace-invites-settings' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'workspace-members-link' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'channel-visibility-settings' })).toBeDefined();
   });
 
-  it('accepts hex and npub inputs but rejects arbitrary member text', () => {
-    expect(normalizeMemberPubkey('A'.repeat(64))).toBe('a'.repeat(64));
-    expect(normalizeMemberPubkey('not-a-key')).toBeNull();
-  });
-
-  it('waits for the role projection before showing a member promotion as applied', async () => {
-    const member = 'b'.repeat(64);
-    client.communityMembers.mockResolvedValue([
-      { pubkey: 'a'.repeat(64), role: 'owner' },
-      { pubkey: member, role: 'member' },
-    ]);
+  it('opens the unified Members page', async () => {
+    client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'owner' }]);
     const renderer = await render();
 
     await act(async () => {
-      await renderer.root.findByProps({ testID: `workspace-member-${member}-admin` }).props.onPress();
+      await renderer.root.findByProps({ testID: 'open-members' }).props.onPress();
     });
 
-    expect(client.addMember).toHaveBeenCalledWith('workspace-1', member, 'admin');
-    expect(client.waitUntilMemberRole).toHaveBeenCalledWith('workspace-1', member, 'admin');
+    expect(navigation.push).toHaveBeenCalledWith({ pathname: '/buzz/members', params: { communityId: 'workspace-1' } });
   });
 });

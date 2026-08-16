@@ -111,6 +111,7 @@ import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
 import { StreamingAgentText } from '@/components/buzz/StreamingAgentText';
+import { CornerObjectiveBanner } from '@/components/buzz/CornerObjectiveBanner';
 import {
   HullSurface,
   MonoButton,
@@ -1839,6 +1840,10 @@ export default function BuzzChat() {
             </View>
           )}
         </HullSurface>
+
+        {isCorner && transport && (
+          <CornerObjectiveBanner transport={transport} channelId={decodedId} />
+        )}
 
         <FlatList
           testID="chat-messages"

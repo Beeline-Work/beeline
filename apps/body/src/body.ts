@@ -35,6 +35,7 @@ import {
   postControlMessage,
   stripAgentReplyPreamble,
   createDraftStreamer,
+  createNarrativeCommitter,
 } from './activity.js';
 import {
   createChannel,
@@ -1049,12 +1050,15 @@ export class Body {
    * see `createDraftStreamer` — instead of only after the whole turn resolves.
    * Harness-agnostic: an ACP agent that never emits `agent_message_chunk`
    * deltas simply never triggers a publish, and the final message is
-   * unaffected either way.
+   * unaffected either way. `stream.narrate` additionally commits the growing
+   * reply into the durable transcript in readable paragraph-sized segments as
+   * the turn progresses — see `createNarrativeCommitter` — so a corner's
+   * running colloquial narrative persists instead of only a vanishing draft.
    */
   private async promptAgent(
     session: AgentSession,
     prompt: string,
-    stream?: { channelId: string; requestId: string },
+    stream?: { channelId: string; requestId: string; narrate?: boolean },
   ): Promise<PromptResult> {
     const draft = stream
       ? createDraftStreamer(
@@ -1064,13 +1068,20 @@ export class Body {
           stream.requestId,
         )
       : undefined;
+    const narrator = stream?.narrate
+      ? createNarrativeCommitter(stream.channelId, this.agentIdentity)
+      : undefined;
     try {
       return await this.runOnSession(session, () =>
         session.client.sessionPrompt(
           session.sessionId,
           prompt,
           ROOM_AGENT_PROMPT_TIMEOUT_MS,
-          draft && ((_delta, fullText) => draft.onChunk(fullText)),
+          (draft || narrator) &&
+            ((_delta, fullText) => {
+              draft?.onChunk(fullText);
+              narrator?.onChunk(fullText);
+            }),
         ),
       );
     } catch (error) {
@@ -1081,6 +1092,7 @@ export class Body {
       throw error;
     } finally {
       await draft?.finish();
+      await narrator?.finish();
     }
   }
 
@@ -1175,7 +1187,11 @@ export class Body {
     if (!reply) reply = uploaded.attachments.length ? 'Shared an attachment.' : fallback;
     if (uploaded.errors.length)
       reply = `${reply}\n\nAttachment unavailable: ${uploaded.errors.join('; ')}`;
-    if (options.concise) reply = conciseCornerTurnSummary(reply);
+    // Concise reduction can legitimately empty out an otherwise real reply
+    // (e.g. one that is entirely a fenced code block, which the summary
+    // strips before checking for content) — fall back rather than treating a
+    // completed turn as a failure to report.
+    if (options.concise) reply = conciseCornerTurnSummary(reply) || fallback;
     if (!reply) throw new Error('agent returned an empty reply');
     if (options.replyTo) {
       const event = await this.durableState.reserveReply(
@@ -2688,7 +2704,7 @@ export class Body {
             '',
             taskInstructions,
           ].join('\n'),
-          { channelId: info.subchannelId, requestId },
+          { channelId: info.subchannelId, requestId, narrate: true },
         );
         // The corner may have been closed (archived) while this turn was
         // in flight — closing kills the ACP session but cannot interrupt a
@@ -3475,12 +3491,10 @@ export class Body {
               'working',
               this.presenceGenerations.get(subchannelId),
             );
-            return this.runOnSession(session, () =>
-              session.client.sessionPrompt(
-                session.sessionId,
-                `${prompt}\n\n${CORNER_TURN_SUMMARY_INSTRUCTION}`,
-                60_000,
-              ),
+            return this.promptAgent(
+              session,
+              `${prompt}\n\n${CORNER_TURN_SUMMARY_INSTRUCTION}`,
+              { channelId: subchannelId, requestId: evt.id, narrate: true },
             );
           };
           const runningTask = this.runningAgentTasks.get(subchannelId);

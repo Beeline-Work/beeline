@@ -9,6 +9,8 @@ const client = vi.hoisted(() => ({
   communityMembers: vi.fn(),
   getPersonProfile: vi.fn(async () => undefined),
   listPersonProfiles: vi.fn(async () => []),
+  addMember: vi.fn(async () => undefined),
+  waitUntilMemberRole: vi.fn(async () => undefined),
 }));
 
 vi.mock('expo-router', () => ({
@@ -65,6 +67,7 @@ vi.mock('react-native', async () => {
   };
 });
 
+import { shortMemberNpub } from '@/buzz/member-display';
 import MembersScreen from './MembersScreen';
 
 const originalConsoleError = console.error;
@@ -101,5 +104,62 @@ describe('Members screen', () => {
     expect(renderer.root.findByProps({ testID: 'members-agents-section' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'invite-person' }).props.label).toBe('Invite person');
     expect(renderer.root.findByProps({ testID: 'add-agent' }).props.label).toBe('Add agent');
+  });
+
+  it('shows a single identity line: handle over name over a truncated npub', async () => {
+    const withHandle = 'b'.repeat(64);
+    const withNameOnly = 'c'.repeat(64);
+    const withNeither = 'd'.repeat(64);
+    client.communityMembers.mockResolvedValue([
+      { pubkey: 'a'.repeat(64), role: 'owner' },
+      { pubkey: withHandle, role: 'member' },
+      { pubkey: withNameOnly, role: 'member' },
+      { pubkey: withNeither, role: 'member' },
+    ]);
+    client.listPersonProfiles.mockResolvedValue([
+      { pubkey: withHandle, name: 'Bob Test', handle: 'bobby', updatedAt: 0, raw: {} },
+      { pubkey: withNameOnly, name: 'Carol', updatedAt: 0, raw: {} },
+    ]);
+    const renderer = await render();
+
+    const handleText = renderer.root.findByProps({ testID: `member-${withHandle}-identity` });
+    expect(handleText.props.children).toEqual(['@bobby', '']);
+
+    const nameText = renderer.root.findByProps({ testID: `member-${withNameOnly}-identity` });
+    expect(nameText.props.children).toEqual(['Carol', '']);
+
+    const npubText = renderer.root.findByProps({ testID: `member-${withNeither}-identity` });
+    expect(npubText.props.children).toEqual([shortMemberNpub(withNeither), '']);
+  });
+
+  it('keeps the role switcher hidden until the compact label is tapped, then collapses it after a choice', async () => {
+    const target = 'e'.repeat(64);
+    client.communityMembers.mockResolvedValue([
+      { pubkey: 'a'.repeat(64), role: 'owner' },
+      { pubkey: target, role: 'member' },
+    ]);
+    client.listPersonProfiles.mockResolvedValue([
+      { pubkey: target, name: 'Eve', updatedAt: 0, raw: {} },
+    ]);
+    const renderer = await render();
+
+    expect(renderer.root.findByProps({ testID: `member-${target}-role-label` }).props.children)
+      .toBeDefined();
+    expect(renderer.root.findAllByProps({ testID: `member-${target}-admin` })).toHaveLength(0);
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: `member-${target}-role-label` }).props.onPress();
+    });
+
+    expect(renderer.root.findAllByProps({ testID: `member-${target}-role-label` })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: `member-${target}-admin` })).toBeDefined();
+
+    await act(async () => {
+      await renderer.root.findByProps({ testID: `member-${target}-admin` }).props.onPress();
+    });
+
+    expect(client.addMember).toHaveBeenCalledWith('workspace-1', target, 'admin');
+    expect(renderer.root.findAllByProps({ testID: `member-${target}-admin` })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: `member-${target}-role-label` })).toBeDefined();
   });
 });

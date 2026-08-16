@@ -33,6 +33,14 @@ Scaffolding only — this prepares Phase 3's home ("Fork Happy + the
 `RigTransport` adapter") per `spec.md`'s build sequence. Phases 0–2 (the
 merge gate itself, proven headless) are not built here.
 
+## Running
+
+Start the development services from the repository root:
+
+```sh
+npm run dev
+```
+
 ## Building from source
 
 ```sh

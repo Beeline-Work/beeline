@@ -28,6 +28,9 @@ config.resolver.assetExts.push('wasm');
 
 config.resolver.blockList = [
   /[/\\]src-tauri[/\\]target[/\\].*/,
+  // Tests are Node/Vitest-only source and must never be considered by an OTA bundle.
+  // Cover both colocated test/spec files and conventional __tests__ directories.
+  /(?:^|[/\\])(?:__tests__[/\\].*|[^/\\]+\.(?:test|spec)\.[cm]?[jt]sx?)$/,
 ];
 
 // preact ESM/CJS dedup

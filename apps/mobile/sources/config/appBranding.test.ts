@@ -31,4 +31,11 @@ describe('Beeline display branding', () => {
     expect(appConfig).toContain('production: "app.buzzy.mobile"');
     expect(easConfig).toContain('"appName": "Buzzy"');
   });
+
+  it('binds each native variant to its matching EAS Updates channel', () => {
+    expect(appConfig).toContain('preview: "preview"');
+    expect(appConfig).toContain('"expo-channel-name": updatesChannel');
+    expect(appConfig).toContain('runtimeVersion: "21"');
+    expect(appConfig).toContain("variant === 'preview' ? {} : { googleServicesFile");
+  });
 });

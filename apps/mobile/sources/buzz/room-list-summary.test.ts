@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { SessionEvent } from '@/sync/transport';
-import { latestRoomMessage } from './room-list-summary';
+import { latestRoomMessage, latestRoomMessageSummary } from './room-list-summary';
 
 function message(content: string, createdAt: number, tags: string[][] = []): SessionEvent {
   return {
@@ -16,6 +16,18 @@ describe('Room list summary', () => {
     expect(latestRoomMessage([message('first', 1), message('latest room note', 3)])).toBe(
       'latest room note',
     );
+  });
+
+  it('breaks same-second ties by event id so cache refreshes are deterministic', () => {
+    expect(
+      latestRoomMessageSummary([
+        message('first in second', 3),
+        {
+          ...message('second in second', 3),
+          payload: { id: 'event-z', content: 'second in second', createdAt: 3, tags: [] },
+        },
+      ]),
+    ).toMatchObject({ id: 'event-z', text: 'second in second', timestamp: 3 });
   });
 
   it('ignores Corner control records and agent activity', () => {

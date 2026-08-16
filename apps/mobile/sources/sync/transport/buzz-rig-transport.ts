@@ -34,6 +34,7 @@ import {
   CHANGE_REVIEW_EVENT_KIND,
   CHANGE_REVIEW_FILE_TAG,
   CHANGE_REVIEW_MANIFEST_TAG,
+  APPROVAL_MARKER,
   parseChangeReviewManifest,
   type BuzzClient,
   type Identity,
@@ -41,8 +42,9 @@ import {
   type WritePermissionDecision,
   type AttachmentReference,
 } from '@beeline/buzz-client';
+import type { NostrEvent } from '@beeline/nostr';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
-import { cornerName, type CornerSummary } from '@/buzz/corners';
+import { cornerName, mapRawCornerStatusTag, type CornerSummary } from '@/buzz/corners';
 import { toRigEvent } from './buzz-event-projection';
 
 let sharedClientEntry: { key: string; client: BuzzClient } | undefined;
@@ -67,6 +69,8 @@ export class BuzzRigTransport implements RigTransport {
   private baseUrl: string;
   /** Track open subscriptions for cleanup. */
   private subscriptions = new Map<SessionId, () => void>();
+  /** A second caller publishing the same prepared event joins the first publish. */
+  private outgoingPublishes = new Map<string, Promise<string>>();
 
   constructor(identity: Identity, baseUrl: string = getBuzzRuntimeConfig().relayUrl) {
     this.identity = identity;
@@ -146,16 +150,47 @@ export class BuzzRigTransport implements RigTransport {
     await this.messageSubmitWithEventId(input);
   }
 
-  /** Submit a message and return the signed event id for optimistic UI reconciliation. */
-  async messageSubmitWithEventId(input: MessageSubmitInput): Promise<string> {
+  /** Compose one signed message. Retries must publish this returned event unchanged. */
+  async composeMessage(
+    input: MessageSubmitInput,
+    opts?: { mentionAgent?: string },
+  ): Promise<NostrEvent> {
     const client = await this.getClient();
     const attachmentTags = buildAttachmentTags(input.attachments ?? []);
-    const event = await client.messageSubmit(
+    return client.buildMessage(
       input.sessionId,
       input.text,
-      attachmentTags.length ? { extraTags: attachmentTags } : undefined,
+      {
+        ...(opts?.mentionAgent ? { mentionAgent: opts.mentionAgent } : {}),
+        ...(attachmentTags.length ? { extraTags: attachmentTags } : {}),
+      },
     );
-    return event.id;
+  }
+
+  /** Publish a prepared message at most once while it is in flight. */
+  async publishPreparedMessage(event: NostrEvent): Promise<string> {
+    const existing = this.outgoingPublishes.get(event.id);
+    if (existing) return existing;
+
+    const publish = this.getClient()
+      .then((client) => client.publish(event))
+      .then(() => event.id)
+      .finally(() => {
+        if (this.outgoingPublishes.get(event.id) === publish) {
+          this.outgoingPublishes.delete(event.id);
+        }
+      });
+    this.outgoingPublishes.set(event.id, publish);
+    return publish;
+  }
+
+  /** Submit a message and return the stable signed event id for optimistic UI reconciliation. */
+  async messageSubmitWithEventId(
+    input: MessageSubmitInput,
+    opts?: { mentionAgent?: string; event?: NostrEvent },
+  ): Promise<string> {
+    const event = opts?.event ?? (await this.composeMessage(input, opts));
+    return this.publishPreparedMessage(event);
   }
 
   /** Send an ordinary Room message addressed to one @-mentioned agent. */
@@ -165,11 +200,25 @@ export class BuzzRigTransport implements RigTransport {
     agentPubkey: string,
     attachments: AttachmentReference[] = [],
   ): Promise<string> {
+    return this.messageSubmitWithEventId(
+      { sessionId: channelId, text, attachments },
+      { mentionAgent: agentPubkey },
+    );
+  }
+
+  /** Publish a NIP-10 reply, optionally addressing the original Agent explicitly. */
+  async messageSubmitReply(
+    channelId: string,
+    text: string,
+    replyToId: string,
+    mentionAgent?: string,
+    attachments: AttachmentReference[] = [],
+  ): Promise<string> {
     const client = await this.getClient();
     const attachmentTags = buildAttachmentTags(attachments);
     const event = await client.messageSubmit(channelId, text, {
-      mentionAgent: agentPubkey,
-      ...(attachmentTags.length ? { extraTags: attachmentTags } : {}),
+      ...(mentionAgent ? { mentionAgent } : {}),
+      extraTags: [['e', replyToId, '', 'reply'], ...attachmentTags],
     });
     return event.id;
   }
@@ -270,6 +319,14 @@ export class BuzzRigTransport implements RigTransport {
     const client = await this.getClient();
     await client.messageSubmit(sessionId, 'Cancel the active Agent turn.', {
       extraTags: [['t', 'buzz-agent-cancel']],
+    });
+  }
+
+  /** Close a corner outright: the body archives the subchannel (also cancels any active turn). */
+  async closeCorner(subchannelId: ChannelId): Promise<void> {
+    const client = await this.getClient();
+    await client.messageSubmit(subchannelId, 'Close this corner.', {
+      extraTags: [['t', 'buzz-corner-close']],
     });
   }
 
@@ -378,6 +435,62 @@ export class BuzzRigTransport implements RigTransport {
       })
       .catch((error) => {
         console.warn(`BuzzRigTransport: agentPresenceSubscribe(${channelId}) failed:`, error);
+      });
+
+    const unsubscribe = () => {
+      cancelled = true;
+      stopReadySubscription?.();
+    };
+    this.subscriptions.set(subscriptionKey, unsubscribe);
+    return unsubscribe;
+  }
+
+  /** Read the current live agent reply draft (parameterized-replaceable), if any. */
+  async agentDraftBackfill(channelId: string): Promise<SessionEvent[]> {
+    const client = await this.getClient();
+    const buzzEvents = await client.agentDraftBackfill(channelId);
+    return buzzEvents.map(toRigEvent);
+  }
+
+  /** Subscribe only to this Room's live agent reply draft, isolated from chat backfill. */
+  async agentDraftSubscribeReady(
+    channelId: string,
+    handler: (event: SessionEvent) => void,
+  ): Promise<() => void> {
+    const subscriptionKey = `draft:${channelId}`;
+    const client = await this.getClient();
+    const relayUnsubscribe = await client.agentDraftSubscribe(channelId, (event) => {
+      handler(toRigEvent(event));
+    });
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      relayUnsubscribe();
+      if (this.subscriptions.get(subscriptionKey) === stop) {
+        this.subscriptions.delete(subscriptionKey);
+      }
+    };
+    this.subscriptions.set(subscriptionKey, stop);
+    return stop;
+  }
+
+  /** Subscribe only to this Room's live agent reply draft, isolated from chat backfill. */
+  agentDraftSubscribe(channelId: string, handler: (event: SessionEvent) => void): () => void {
+    const subscriptionKey = `draft:${channelId}`;
+    let stopReadySubscription: (() => void) | undefined;
+    let cancelled = false;
+
+    this.agentDraftSubscribeReady(channelId, handler)
+      .then((stop) => {
+        if (cancelled) {
+          stop();
+          return;
+        }
+        stopReadySubscription = stop;
+      })
+      .catch((error) => {
+        console.warn(`BuzzRigTransport: agentDraftSubscribe(${channelId}) failed:`, error);
       });
 
     const unsubscribe = () => {
@@ -542,22 +655,25 @@ export class BuzzRigTransport implements RigTransport {
     authorPubkey: string;
   } | null> {
     const client = await this.getClient();
-    // Backfill messages to find the body's control message with merge target.
-    const events = await client.sessionEventsBackfill(subchannelId, { limit: 20 });
-    for (const ev of [...events].reverse()) {
-      if (ev.kind !== 'other' && ev.kind !== 'message') continue;
-      const tTags = (ev.event.tags ?? []).filter((t: string[]) => t[0] === 't');
-      const isControl = tTags.some((t: string[]) => t[1] === 'body-control');
-      if (!isControl) continue;
-      const repo = tagValue(ev.event, 'repo');
-      const branch = tagValue(ev.event, 'branch');
-      const tip = tagValue(ev.event, 'tip');
-      const parent = tagValue(ev.event, 'parent');
+    // Activity frames can push merge-ready outside the short transcript
+    // backfill window. Fetch body controls directly so review and approval
+    // always bind to the current exact merge target.
+    const events = await client.query([
+      { kinds: [9], '#h': [subchannelId], '#t': ['body-control'], limit: 100 },
+    ]);
+    for (const event of [...events].sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id)).reverse()) {
+      if ((event.tags ?? []).some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready')) {
+        return null;
+      }
+      const repo = tagValue(event, 'repo');
+      const branch = tagValue(event, 'branch');
+      const tip = tagValue(event, 'tip');
+      const parent = tagValue(event, 'parent');
       if (repo && branch && tip) {
         return {
           target: { repo, branch, tip },
           channelId: parent ?? '',
-          authorPubkey: ev.event.pubkey,
+          authorPubkey: event.pubkey,
         };
       }
     }
@@ -574,6 +690,25 @@ export class BuzzRigTransport implements RigTransport {
   ): Promise<{ success: boolean; message?: string }> {
     try {
       const client = await this.getClient();
+      const existing = await client.query([
+        {
+          kinds: [9],
+          authors: [this.identity.publicKey],
+          '#h': [subchannelId],
+          '#t': [APPROVAL_MARKER],
+          limit: 10,
+        },
+      ]);
+      if (
+        existing.some(
+          (event) =>
+            tagValue(event, 'repo') === target.repo &&
+            tagValue(event, 'branch') === target.branch &&
+            tagValue(event, 'tip') === target.tip,
+        )
+      ) {
+        return { success: true, message: 'Approval already sent for this change' };
+      }
       await client.submitMergeApproval(subchannelId, target);
       return { success: true, message: 'Approval sent for merge' };
     } catch (err) {
@@ -645,15 +780,33 @@ export class BuzzRigTransport implements RigTransport {
           client.sessionEventsBackfill(id, { limit: 50 }),
         ]);
         const create = [...creates].sort((a, b) => a.created_at - b.created_at)[0];
-        const statuses = events
-          .map((event) => tagValue(event.event, 'status'))
-          .filter((status): status is string => Boolean(status));
-        const archived = Boolean(metadata?.archived) || statuses.includes('archived');
+        // Read the same tag precedence (display-status, then the coarser wire
+        // status) and the same canonical mapping the live Room card uses, so
+        // this snapshot can never disagree with real-time projection about
+        // what a corner's status word is.
+        const statusEntries = events
+          .map((event) => ({
+            raw: tagValue(event.event, 'display-status') ?? tagValue(event.event, 'status'),
+            createdAt: event.createdAt,
+          }))
+          .filter((entry): entry is { raw: string; createdAt: number } => Boolean(entry.raw));
+        const latestRawStatus = [...statusEntries].sort((a, b) => b.createdAt - a.createdAt)[0]
+          ?.raw;
+        const latestStatus = mapRawCornerStatusTag(latestRawStatus);
+        // `closed` on a kind:39000 projection is NIP-29 invite-only access,
+        // not a lifecycle state. Only an explicit archived boolean or a
+        // corner-scoped archived status removes a corner from the live list.
+        const archived =
+          metadata?.archived === true || statusEntries.some((entry) => entry.raw === 'archived');
         const reviewReady =
-          statuses.includes('ready') ||
+          latestStatus === 'open' ||
           events.some((event) =>
             event.event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
           );
+        const lastActivityAt = Math.max(
+          create?.created_at ?? 0,
+          ...events.map((event) => event.createdAt),
+        );
         return {
           id,
           name: cornerName(create ? tagValue(create, 'name') : undefined, id),
@@ -664,8 +817,9 @@ export class BuzzRigTransport implements RigTransport {
               ? 'archived'
               : reviewReady
                 ? 'open'
-                : 'live',
+                : (latestStatus ?? 'live'),
           createdAt: create?.created_at,
+          ...(lastActivityAt > 0 ? { lastActivityAt } : {}),
         };
       }),
     );

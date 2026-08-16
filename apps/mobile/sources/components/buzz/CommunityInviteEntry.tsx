@@ -26,19 +26,18 @@ export function CommunityInviteEntry({
 
   return (
     <View style={styles.communityEntry} testID="community-invite-entry">
-      {showManageAgents && onManageAgents && (
+      {showManageAgents && onManageAgents ? (
         <TouchableOpacity
-          accessibilityLabel={`Connect an Agent to ${community.name}`}
+          accessibilityLabel={`Open members for ${community.name}`}
           accessibilityRole="button"
           onPress={onManageAgents}
           style={styles.action}
-          testID="manage-agents-action"
+          testID="members-action"
         >
           <Text style={styles.actionIcon}>⌬</Text>
-          <Text style={styles.actionText}>Connect an Agent</Text>
+          <Text style={styles.actionText}>Members</Text>
         </TouchableOpacity>
-      )}
-      {allowPeopleInvites && (
+      ) : allowPeopleInvites ? (
         <TouchableOpacity
           accessibilityLabel={`Invite people to ${community.name}`}
           accessibilityRole="button"
@@ -52,7 +51,7 @@ export function CommunityInviteEntry({
             {creatingInvite ? 'Opening share…' : 'Invite people'}
           </Text>
         </TouchableOpacity>
-      )}
+      ) : null}
     </View>
   );
 }

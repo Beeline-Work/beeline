@@ -3,7 +3,66 @@ import { createBuzzClient } from './client.js';
 import { createIdentity } from './identity.js';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 
-afterEach(() => vi.unstubAllGlobals());
+class ReconnectingTestWebSocket {
+  static instances: ReconnectingTestWebSocket[] = [];
+  readyState = 0;
+  readonly sent: unknown[][] = [];
+  private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+  constructor(_url: string) {
+    ReconnectingTestWebSocket.instances.push(this);
+    queueMicrotask(() => {
+      this.readyState = 1;
+      this.emit('open', {});
+    });
+  }
+
+  addEventListener(type: string, listener: (event: unknown) => void): void {
+    const listeners = this.listeners.get(type) ?? new Set();
+    listeners.add(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  removeEventListener(type: string, listener: (event: unknown) => void): void {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  send(data: string): void {
+    this.sent.push(JSON.parse(data) as unknown[]);
+  }
+
+  close(): void {
+    if (this.readyState === 3) return;
+    this.readyState = 3;
+    this.emit('close', {});
+  }
+
+  receive(message: unknown[]): void {
+    this.emit('message', { data: JSON.stringify(message) });
+  }
+
+  private emit(type: string, event: unknown): void {
+    for (const listener of this.listeners.get(type) ?? []) listener(event);
+  }
+}
+
+function streamEvent(id: string, createdAt: number, content: string): NostrEvent {
+  return {
+    id,
+    pubkey: 'a'.repeat(64),
+    created_at: createdAt,
+    kind: 9,
+    tags: [['h', 'room-reconnect']],
+    content,
+    sig: 'b'.repeat(128),
+  };
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+  ReconnectingTestWebSocket.instances = [];
+});
 
 describe('Agent write permission', () => {
   it('signs a response bound to the permission, request, and agent', async () => {
@@ -80,5 +139,49 @@ describe('Agent presence', () => {
         limit: 20,
       },
     ]);
+  });
+});
+
+describe('live Room subscriptions', () => {
+  it('reissues its REQ from the last event cursor after a dropped socket', async () => {
+    vi.useFakeTimers();
+    const identity = createIdentity('reconnect-reader');
+    const client = createBuzzClient({
+      baseUrl: 'https://relay.test',
+      identity,
+      skipAuth: true,
+      reconnectDelayMs: 1,
+      WebSocketImpl: ReconnectingTestWebSocket,
+    });
+    const received: string[] = [];
+    const unsubscribe = await client.sessionEventsSubscribe('room-reconnect', (event) => {
+      received.push(event.content);
+    });
+    const firstSocket = ReconnectingTestWebSocket.instances[0]!;
+    const initialReq = firstSocket.sent.find((frame) => frame[0] === 'REQ')!;
+    const subId = initialReq[1] as string;
+
+    firstSocket.receive(['EVENT', subId, streamEvent('first', 100, 'before drop')]);
+    firstSocket.close();
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.runAllTicks();
+
+    const reconnectedSocket = ReconnectingTestWebSocket.instances[1]!;
+    const resumedReq = reconnectedSocket.sent.find((frame) => frame[0] === 'REQ')!;
+    expect(resumedReq).toEqual([
+      'REQ',
+      subId,
+      { kinds: [9], '#h': ['room-reconnect'], since: 100 },
+    ]);
+
+    // This was published during the disconnect. The resumed request delivers
+    // it without reopening the Room, and the cursor replay does not duplicate
+    // the event from the last completed second.
+    reconnectedSocket.receive(['EVENT', subId, streamEvent('gap', 101, 'during drop')]);
+    reconnectedSocket.receive(['EVENT', subId, streamEvent('first', 100, 'before drop')]);
+    expect(received).toEqual(['before drop', 'during drop']);
+
+    unsubscribe();
+    client.disconnect();
   });
 });

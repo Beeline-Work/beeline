@@ -9,6 +9,8 @@ type MonoMarkdownTone = 'reasoning' | 'output' | 'final';
 type MonoMarkdownProps = {
   markdown: string;
   tone?: MonoMarkdownTone;
+  /** Overrides the tone's canned text style — for callers embedding markdown into an existing bubble/text style instead of one of the fixed tones. */
+  textStyle?: TextStyle;
   testID?: string;
 };
 
@@ -54,9 +56,9 @@ function toneTextStyle(tone: MonoMarkdownTone): TextStyle {
 }
 
 /** Compact markdown for the Mono Hull transcript, with real hierarchy and no raw syntax. */
-export function MonoMarkdown({ markdown, tone = 'output', testID }: MonoMarkdownProps) {
+export function MonoMarkdown({ markdown, tone = 'output', textStyle, testID }: MonoMarkdownProps) {
   const blocks = useMemo(() => parseMarkdown(markdown), [markdown]);
-  const base = toneTextStyle(tone);
+  const base = textStyle ?? toneTextStyle(tone);
   const onLink = useCallback((url: string) => {
     if (/^https?:\/\//i.test(url)) void Linking.openURL(url);
   }, []);

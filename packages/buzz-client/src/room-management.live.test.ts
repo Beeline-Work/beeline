@@ -25,6 +25,18 @@ describe.runIf(reachable)('live Room membership management', () => {
       identity: member,
     });
 
+    const permissionsRoom = await ownerClient.createChannel(`permissions-${runId}`);
+    await ownerClient.addMember(permissionsRoom, member.publicKey, 'member');
+    await ownerClient.waitUntilMemberRole(permissionsRoom, member.publicKey, 'member');
+    await ownerClient.addMember(permissionsRoom, member.publicKey, 'admin');
+    await ownerClient.waitUntilMemberRole(permissionsRoom, member.publicKey, 'admin');
+    expect(await ownerClient.getChannelRole(permissionsRoom, member.publicKey)).toBe('admin');
+
+    const renamedRoomName = `renamed-${runId}`;
+    await expect(ownerClient.renameChannel(permissionsRoom, renamedRoomName)).resolves.toMatchObject({
+      name: renamedRoomName,
+    });
+
     const removalRoom = await ownerClient.createChannel(`remove-${runId}`);
     await ownerClient.addMember(removalRoom, member.publicKey);
     await ownerClient.waitUntilMember(removalRoom, member.publicKey);

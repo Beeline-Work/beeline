@@ -98,8 +98,53 @@ describe('Buzz branch-loop event projection', () => {
       type: 'assistant_delta',
       text: 'First\nEdit file · completed',
       activity: [
-        { kind: 'output', title: 'Output', text: 'First' },
+        { kind: 'thinking', title: 'Thinking', text: 'First' },
         { kind: 'tool', title: 'Edit file', status: 'completed' },
+      ],
+    });
+  });
+
+  it('preserves compact turn details for file and tool drill-downs', () => {
+    const projected = toRigEvent({
+      kind: 'agent-activity',
+      event: {} as BuzzSessionEvent['event'],
+      channelId: 'channel',
+      content: JSON.stringify({
+        sessionId: 'ses_123',
+        update: {
+          sessionUpdate: 'activity_batch',
+          updates: [
+            {
+              sessionUpdate: 'tool_activity',
+              toolCallId: 'call-1',
+              title: 'Apply patch',
+              kind: 'edit',
+              status: 'completed',
+              command: 'git diff -- chat.tsx',
+              output: 'Patch applied',
+              files: [{ path: 'chat.tsx', diff: '+render summary' }],
+              plan: { items: [{ step: 'Render summary', status: 'completed' }] },
+            },
+          ],
+        },
+      }),
+      pubkey: 'a'.repeat(64),
+      createdAt: 42,
+      id: 'activity-detail',
+    });
+
+    expect(projected).toMatchObject({
+      type: 'assistant_delta',
+      activity: [
+        {
+          kind: 'tool',
+          id: 'call-1',
+          toolKind: 'edit',
+          command: 'git diff -- chat.tsx',
+          output: 'Patch applied',
+          files: [{ path: 'chat.tsx', diff: '+render summary' }],
+          plan: { items: [{ step: 'Render summary', status: 'completed' }] },
+        },
       ],
     });
   });
@@ -341,29 +386,142 @@ describe('Room-scoped agent presence transport', () => {
   });
 });
 
+describe('Room-scoped live agent draft transport', () => {
+  const identity = {
+    publicKey: 'd'.repeat(64),
+    secretKey: new Uint8Array(32).fill(4),
+    name: 'operator',
+  } as Identity;
+
+  it('backfills only the replaceable draft kind', async () => {
+    const event = {
+      kind: 'other' as const,
+      event: {
+        id: 'draft',
+        pubkey: 'a'.repeat(64),
+        created_at: 42,
+        kind: 30078,
+        tags: [['h', 'room']],
+        content: 'Hello wor',
+        sig: 'b'.repeat(128),
+      },
+      channelId: 'room',
+      content: 'Hello wor',
+      pubkey: 'a'.repeat(64),
+      createdAt: 42,
+      id: 'draft',
+    } satisfies BuzzSessionEvent;
+    const client = { agentDraftBackfill: vi.fn(async () => [event]) };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(transport.agentDraftBackfill('room')).resolves.toHaveLength(1);
+    expect(client.agentDraftBackfill).toHaveBeenCalledWith('room');
+  });
+
+  it('subscribes only to the draft record and releases the live subscription', async () => {
+    const relayUnsubscribe = vi.fn();
+    let relayHandler: ((event: BuzzSessionEvent) => void) | undefined;
+    const client = {
+      agentDraftSubscribe: vi.fn(
+        async (_room: string, handler: (event: BuzzSessionEvent) => void) => {
+          relayHandler = handler;
+          return relayUnsubscribe;
+        },
+      ),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+    const handler = vi.fn();
+
+    const stop = transport.agentDraftSubscribe('room', handler);
+    await vi.waitFor(() => expect(client.agentDraftSubscribe).toHaveBeenCalled());
+    expect(client.agentDraftSubscribe).toHaveBeenCalledWith('room', expect.any(Function));
+    relayHandler?.({
+      kind: 'other',
+      event: {
+        id: 'draft',
+        pubkey: 'a'.repeat(64),
+        created_at: 42,
+        kind: 30078,
+        tags: [['h', 'room']],
+        content: 'Hello wor',
+        sig: 'b'.repeat(128),
+      },
+      channelId: 'room',
+      content: 'Hello wor',
+      pubkey: 'a'.repeat(64),
+      createdAt: 42,
+      id: 'draft',
+    });
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'raw', sessionId: 'room' }),
+    );
+    stop();
+    expect(relayUnsubscribe).toHaveBeenCalledOnce();
+  });
+});
+
+describe('Corner close', () => {
+  it('publishes a buzz-corner-close tagged message to the corner channel, distinct from runAbort', async () => {
+    const identity = {
+      publicKey: 'd'.repeat(64),
+      secretKey: new Uint8Array(32).fill(4),
+      name: 'operator',
+    } as Identity;
+    const messageSubmit = vi.fn(async () => ({}));
+    const client = { messageSubmit };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await transport.closeCorner('corner-1');
+
+    expect(messageSubmit).toHaveBeenCalledWith(
+      'corner-1',
+      expect.any(String),
+      expect.objectContaining({ extraTags: [['t', 'buzz-corner-close']] }),
+    );
+    expect(messageSubmit.mock.calls[0]?.[2]?.extraTags).not.toContainEqual([
+      't',
+      'buzz-agent-cancel',
+    ]);
+  });
+});
+
 describe('Room-scoped Workspace membership', () => {
-  it('sends @-mentioned Room messages with an address and no private request marker', async () => {
+  it('composes an @-mentioned Room message once and coalesces duplicate publishes by event id', async () => {
     const identity = {
       publicKey: 'a'.repeat(64),
       secretKey: new Uint8Array(32).fill(1),
       name: 'operator',
     } as Identity;
+    const event = { id: 'event-1' };
+    let releasePublish: (() => void) | undefined;
     const client = {
-      messageSubmit: vi.fn(async () => ({ id: 'event-1' })),
+      buildMessage: vi.fn(() => event),
+      publish: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            releasePublish = resolve;
+          }),
+      ),
     };
     const transport = new BuzzRigTransport(identity, 'https://relay.test');
     (transport as unknown as { client: typeof client }).client = client;
 
-    await expect(
-      transport.messageSubmitMentioningAgent(
-        'room-1',
-        '@Brisk Pilot fix the build',
-        'agent-pubkey',
-      ),
-    ).resolves.toBe('event-1');
-    expect(client.messageSubmit).toHaveBeenCalledWith('room-1', '@Brisk Pilot fix the build', {
+    const prepared = await transport.composeMessage(
+      { sessionId: 'room-1', text: '@Brisk Pilot fix the build' },
+      { mentionAgent: 'agent-pubkey' },
+    );
+    expect(client.buildMessage).toHaveBeenCalledWith('room-1', '@Brisk Pilot fix the build', {
       mentionAgent: 'agent-pubkey',
     });
+
+    const first = transport.publishPreparedMessage(prepared as never);
+    const duplicate = transport.publishPreparedMessage(prepared as never);
+    await vi.waitFor(() => expect(client.publish).toHaveBeenCalledOnce());
+    releasePublish?.();
+    await expect(Promise.all([first, duplicate])).resolves.toEqual(['event-1', 'event-1']);
   });
 
   it('binds a write-permission response to the agent and original request', async () => {
@@ -472,15 +630,9 @@ describe('Buzz change review metadata', () => {
   function transportWith(events: ReturnType<typeof rawEvent>[]) {
     const query = vi.fn(async (filters: Record<string, unknown>[]) => {
       const marker = (filters[0]?.['#t'] as string[] | undefined)?.[0];
-      return events.filter((event) =>
-        event.tags.some((tag) => tag[0] === 't' && tag[1] === marker),
-      );
-    });
-    const client = {
-      sessionEventsBackfill: vi.fn(async () => [
-        {
-          kind: 'message',
-          event: rawEvent(
+      if (marker === 'body-control') {
+        return [
+          rawEvent(
             [
               ['t', 'body-control'],
               ['t', 'merge-ready'],
@@ -491,8 +643,13 @@ describe('Buzz change review metadata', () => {
             'ready',
             'merge-ready',
           ),
-        },
-      ]),
+        ];
+      }
+      return events.filter((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === marker),
+      );
+    });
+    const client = {
       query,
     };
     const transport = new BuzzRigTransport(identity, 'https://relay.test');
@@ -534,13 +691,82 @@ describe('Buzz change review metadata', () => {
     await expect(transport.workspaceFilesRead(channel)).resolves.toEqual([
       { path, status: 'modified', linesAdded: 3, linesRemoved: 1 },
     ]);
-    expect(query).toHaveBeenCalledOnce();
-    expect(query.mock.calls[0]?.[0]?.[0]).toMatchObject({
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(query.mock.calls[1]?.[0]?.[0]).toMatchObject({
       kinds: [CHANGE_REVIEW_EVENT_KIND],
       authors: ['d'.repeat(64)],
       '#t': [CHANGE_REVIEW_MANIFEST_TAG],
       '#r': [tip],
     });
+  });
+
+  it('queries body controls directly so activity bursts cannot hide merge-ready', async () => {
+    const { transport, query } = transportWith([]);
+
+    await transport.getSubchannelMergeTarget(channel);
+
+    expect(query).toHaveBeenCalledWith([
+      { kinds: [9], '#h': [channel], '#t': ['body-control'], limit: 100 },
+    ]);
+  });
+
+  it('does not expose a stale approval target after Body withdraws it for uncommitted work', async () => {
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: { query: ReturnType<typeof vi.fn> } }).client = {
+      query: vi.fn(async () => [
+        rawEvent(
+          [
+            ['t', 'body-control'],
+            ['t', 'merge-ready'],
+            ['repo', `${identity.publicKey}/demo`],
+            ['branch', 'refs/heads/main'],
+            ['tip', tip],
+          ],
+          'ready',
+          'a-ready',
+        ),
+        rawEvent(
+          [
+            ['t', 'body-control'],
+            ['t', 'merge-not-ready'],
+            ['status', 'needs-attention'],
+          ],
+          'nothing ready',
+          'z-not-ready',
+        ),
+      ]),
+    };
+
+    await expect(transport.getSubchannelMergeTarget(channel)).resolves.toBeNull();
+  });
+
+  it('does not submit a second approval for the same committed corner target', async () => {
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    const submitMergeApproval = vi.fn();
+    (transport as unknown as { client: { query: ReturnType<typeof vi.fn>; submitMergeApproval: typeof submitMergeApproval } }).client = {
+      query: vi.fn(async () => [
+        rawEvent(
+          [
+            ['t', 'buzz-merge-approval'],
+            ['repo', `${identity.publicKey}/demo`],
+            ['branch', 'refs/heads/main'],
+            ['tip', tip],
+          ],
+          'already approved',
+          'approval',
+        ),
+      ]),
+      submitMergeApproval,
+    };
+
+    await expect(
+      transport.submitMergeApproval(channel, {
+        repo: `${identity.publicKey}/demo`,
+        branch: 'refs/heads/main',
+        tip,
+      }),
+    ).resolves.toMatchObject({ success: true, message: 'Approval already sent for this change' });
+    expect(submitMergeApproval).not.toHaveBeenCalled();
   });
 
   it('fetches and reassembles only the selected file patch', async () => {
@@ -573,7 +799,7 @@ describe('Buzz change review metadata', () => {
     await expect(transport.changedFileRead(channel, path)).resolves.toEqual({
       content: 'diff --git a/src/example.ts b/src/example.ts\n-old\n+new\n',
     });
-    expect(query.mock.calls[0]?.[0]?.[0]).toMatchObject({
+    expect(query.mock.calls[1]?.[0]?.[0]).toMatchObject({
       kinds: [CHANGE_REVIEW_EVENT_KIND],
       '#t': [CHANGE_REVIEW_FILE_TAG],
       '#r': [tip],
@@ -669,7 +895,7 @@ describe('Buzz corner lifecycle projection', () => {
   }
 
   it('distinguishes live, review-open, merged, and archived corners', async () => {
-    const ids = ['live', 'open', 'merged', 'archived'];
+    const ids = ['live', 'open', 'merged', 'archived', 'invite-only'];
     const client = {
       listSubchannels: vi.fn(async () => ids),
       query: vi.fn(async (filters: Array<Record<string, unknown>>) => {
@@ -697,7 +923,13 @@ describe('Buzz corner lifecycle projection', () => {
           },
         ];
       }),
-      getChannelMetadata: vi.fn(async (id: string) => ({ archived: id === 'archived' })),
+      getChannelMetadata: vi.fn(async (id: string) =>
+        id === 'invite-only'
+          ? // Relay projections use `closed` for NIP-29 invite-only access;
+            // it must not become the corner's lifecycle archived flag.
+            ({ archived: 'closed' } as unknown as { archived?: boolean })
+          : { archived: id === 'archived' },
+      ),
       sessionEventsBackfill: vi.fn(async (id: string) => {
         if (id === 'open')
           return [
@@ -718,6 +950,7 @@ describe('Buzz corner lifecycle projection', () => {
       { id: 'open', name: 'open-corner', status: 'open' },
       { id: 'merged', name: 'merged-corner', status: 'merged' },
       { id: 'archived', name: 'archived-corner', status: 'archived' },
+      { id: 'invite-only', name: 'invite-only-corner', status: 'live' },
     ]);
     expect(client.query).toHaveBeenCalledWith([
       expect.objectContaining({ '#h': ['room'], '#t': ['merge-summary'], limit: 500 }),

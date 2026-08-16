@@ -33,6 +33,7 @@ import {
   type GoogleOnboardingNotice,
   type GoogleOnboardingStatus,
 } from '@/auth/google-onboarding-state';
+import { googleAuthSessionOptions } from '@/auth/google-auth-session';
 import {
   clearPersonNameOnboardingPending,
   isPersonNameOnboardingPending,
@@ -217,9 +218,11 @@ export default function BuzzOnboarding() {
       const callbackUrl = await waitForGoogleAuthCallback({
         redirectUri: start.redirectUri,
         openAuthSession: () =>
-          WebBrowser.openAuthSessionAsync(start.authorizationUrl, start.redirectUri, {
-            preferUniversalLinks: start.redirectUri.startsWith('https://'),
-          }),
+          WebBrowser.openAuthSessionAsync(
+            start.authorizationUrl,
+            start.redirectUri,
+            googleAuthSessionOptions(Platform.OS, start.redirectUri),
+          ),
         subscribeToUrls: (listener) => Linking.addEventListener('url', ({ url }) => listener(url)),
       });
       setStatus(nextGoogleOnboardingStatus('opening_browser', 'callback_received'));
@@ -397,7 +400,7 @@ export default function BuzzOnboarding() {
         <PixelGateReveal style={styles.importPanel}>
           <Text style={styles.sectionLabel}>ADVANCED · EXISTING NOSTR KEY</Text>
           <Text style={styles.keyGuide}>
-            Import bypasses Google. Your nsec stays on this device.
+            Your nostr key stays on this device and does not go to Google.
           </Text>
           <TextInput
             nativeID="buzz-secret-key"
@@ -430,14 +433,14 @@ export default function BuzzOnboarding() {
       )}
 
       <View style={styles.actions}>
-        {canRetryBind ? (
+        {!showAdvanced && canRetryBind ? (
           <MonoButton
             label="Retry device bind"
             loading={loadingAction === 'bind'}
             onPress={() => pendingBind.current && void finishPendingBind(pendingBind.current)}
             disabled={loading}
           />
-        ) : Platform.OS !== 'web' ? (
+        ) : !showAdvanced && Platform.OS !== 'web' ? (
           <MonoButton
             label={googleLabel}
             loading={
@@ -459,9 +462,6 @@ export default function BuzzOnboarding() {
         />
       </View>
 
-      <Text style={styles.custodyNote}>
-        Google cannot sign messages, join Rooms, grant roles, or approve merges.
-      </Text>
     </View>
   );
 }

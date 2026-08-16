@@ -1,0 +1,22 @@
+appId: app.buzzy.mobile
+name: Foreground mention delivery continuation
+---
+# Run after smoke.yaml has backgrounded/resumed a real Room and re-entered it.
+# The attached fixture queries relay history and fails unless this exact device
+# message is represented by one signed event.
+- tapOn:
+    id: chat-input
+- eraseText
+- inputText: "@"
+- extendedWaitUntil:
+    visible:
+      id: mention-suggestion-beebee
+    timeout: 3000
+- tapOn:
+    id: mention-suggestion-beebee
+- inputText: " what's up"
+- tapOn:
+    id: chat-send
+- extendedWaitUntil:
+    visible: "SMOKE AGENT MENTION REPLY — @beebee what's up"
+    timeout: 30000

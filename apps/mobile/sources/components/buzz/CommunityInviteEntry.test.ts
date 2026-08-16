@@ -55,10 +55,10 @@ describe('community invite entry', () => {
     expect(renderer.root.findByProps({ testID: 'community-invite-entry' })).toBeDefined();
     act(() => renderer.root.findByProps({ testID: 'invite-people-action' }).props.onPress());
     expect(onInvitePeople).toHaveBeenCalledOnce();
-    expect(renderer.root.findAllByProps({ testID: 'manage-agents-action' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'members-action' })).toHaveLength(0);
   });
 
-  it('shows both activation actions on a no-Rooms Workspace', () => {
+  it('consolidates a no-Rooms Workspace into one Members action', () => {
     const onInvitePeople = vi.fn();
     const onManageAgents = vi.fn();
     const renderer = render(
@@ -71,10 +71,9 @@ describe('community invite entry', () => {
       }),
     );
 
-    act(() => renderer.root.findByProps({ testID: 'manage-agents-action' }).props.onPress());
-    act(() => renderer.root.findByProps({ testID: 'invite-people-action' }).props.onPress());
+    act(() => renderer.root.findByProps({ testID: 'members-action' }).props.onPress());
     expect(onManageAgents).toHaveBeenCalledOnce();
-    expect(onInvitePeople).toHaveBeenCalledOnce();
+    expect(onInvitePeople).not.toHaveBeenCalled();
   });
 
   it('renders no body action in a Personal Workspace', () => {

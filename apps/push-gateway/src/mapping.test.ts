@@ -178,6 +178,7 @@ describe('mapEventToNotification', () => {
     expect(result?.title).toBe('Merge approval requested');
     expect(result?.body).toBe('Review requested in Push work');
     expect(result?.data.type).toBe('merge-approval-request');
+    expect(result?.data.cornerId).toBe('channel-123');
   });
 
   it('ignores activity frames, approval grants, and non-request control events', () => {

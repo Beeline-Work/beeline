@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import {
   isMember,
+  getChannelMetadata,
   listChannelsForPubkey,
   listMembers,
+  listSubchannels,
   renameChannel,
   setChannelVisibility,
   type ChannelOpsContext,
@@ -15,6 +17,7 @@ import {
   KIND_CHANNEL_METADATA,
   KIND_CREATE_GROUP,
   KIND_EDIT_METADATA,
+  KIND_STREAM_MESSAGE,
 } from './kinds.js';
 import { tagValue } from './parse.js';
 
@@ -92,6 +95,50 @@ describe('listChannelsForPubkey', () => {
       { pubkey: identity.publicKey, role: 'owner' },
     ]);
     await expect(isMember(ctx, channelId, identity.publicKey)).resolves.toBe(true);
+  });
+});
+
+describe('listSubchannels', () => {
+  it('keeps an invite-only corner discoverable through its parent control link', async () => {
+    const parentChannelId = 'parent-room';
+    const closedCornerId = 'closed-corner';
+    const control = signEvent(
+      {
+        pubkey: identity.publicKey,
+        created_at: 1_700_000_000,
+        kind: KIND_STREAM_MESSAGE,
+        tags: [
+          ['h', parentChannelId],
+          ['t', 'body-control'],
+          ['subchannel', closedCornerId],
+          ['status', 'working'],
+        ],
+        content: 'Agent is working.',
+      },
+      identity.secretKey,
+    );
+    const filterRequests: Record<string, unknown>[][] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        filterRequests.push(JSON.parse(String(init?.body)) as Record<string, unknown>[]);
+        // The kind:9007 create can be omitted by a closed NIP-29 child query;
+        // its parent-scoped control link must still surface the corner.
+        return new Response(JSON.stringify([control]), { status: 200 });
+      }),
+    );
+
+    await expect(listSubchannels(ctx, parentChannelId)).resolves.toEqual([closedCornerId]);
+    expect(filterRequests.flat()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kinds: [KIND_CREATE_GROUP] }),
+        expect.objectContaining({
+          kinds: [KIND_STREAM_MESSAGE],
+          '#h': [parentChannelId],
+          '#t': ['body-control'],
+        }),
+      ]),
+    );
   });
 });
 
@@ -262,6 +309,31 @@ describe('renameChannel', () => {
       'only a Room owner or admin can rename it',
     );
     expect(published).toHaveLength(0);
+  });
+});
+
+describe('getChannelMetadata', () => {
+  it('chooses the newest metadata projection when relay query order is stale-first', async () => {
+    const channelId = 'metadata-order-room';
+    const metadata = (name: string, createdAt: number) =>
+      signEvent(
+        {
+          pubkey: identity.publicKey,
+          created_at: createdAt,
+          kind: KIND_CHANNEL_METADATA,
+          tags: [['d', channelId], ['name', name]],
+          content: '',
+        },
+        identity.secretKey,
+      );
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify([metadata('Old name', 1_700_000_000), metadata('New name', 1_700_000_001)])),
+      ),
+    );
+
+    await expect(getChannelMetadata(ctx, channelId)).resolves.toMatchObject({ name: 'New name' });
   });
 });
 

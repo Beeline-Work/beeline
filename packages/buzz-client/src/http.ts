@@ -31,6 +31,12 @@ const PUBLISH_MAX_ATTEMPTS = 4;
 const PUBLISH_ATTEMPT_TIMEOUT_MS = 5_000;
 const PUBLISH_RETRY_BASE_MS = 200;
 const PUBLISH_RETRY_MAX_MS = 1_000;
+// Same policy as apps/gate/src/relay.ts's createRelayClient().queryEvents,
+// already proven in production: 5xx and transport/timeout errors are
+// transient and retried; 4xx and explicit relay rejections fail fast.
+const QUERY_MAX_ATTEMPTS = 3;
+const QUERY_ATTEMPT_TIMEOUT_MS = 10_000;
+const QUERY_RETRY_BASE_MS = 250;
 const BATCHABLE_FILTER_KEYS = new Set([
   'ids',
   'authors',
@@ -136,6 +142,15 @@ function selectQueryEvents(
   return selected;
 }
 
+function isNonRetryableQueryError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'nonRetryable' in error &&
+    (error as { nonRetryable?: unknown }).nonRetryable === true
+  );
+}
+
 async function requestQueryEvents(
   opts: HttpBridgeOptions,
   filters: Record<string, unknown>[],
@@ -143,20 +158,43 @@ async function requestQueryEvents(
 ): Promise<readonly NostrEvent[]> {
   const url = `${opts.baseUrl}/query`;
   const method = 'POST';
-  const res = await fetch(url, {
-    method,
-    headers: bridgeHeaders(opts, queryPubkey, url, method),
-    body: JSON.stringify(filters),
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`queryEvents failed: HTTP ${res.status} ${text}`);
+  for (let attempt = 1; attempt <= QUERY_MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), QUERY_ATTEMPT_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: bridgeHeaders(opts, queryPubkey, url, method),
+        body: JSON.stringify(filters),
+        signal: controller.signal,
+      });
+      const text = await res.text();
+      if (res.ok) {
+        const parsed = JSON.parse(text) as unknown;
+        if (!Array.isArray(parsed)) {
+          throw new Error(`queryEvents: expected array, got ${text.slice(0, 200)}`);
+        }
+        return parsed as NostrEvent[];
+      }
+      if (res.status >= 500 && res.status <= 599 && attempt < QUERY_MAX_ATTEMPTS) {
+        await sleep(QUERY_RETRY_BASE_MS * attempt);
+        continue;
+      }
+      throw Object.assign(new Error(`queryEvents failed: HTTP ${res.status} ${text}`), {
+        nonRetryable: true,
+      });
+    } catch (error) {
+      if (isNonRetryableQueryError(error)) throw error;
+      if (attempt === QUERY_MAX_ATTEMPTS) {
+        throw new Error(`queryEvents failed after ${attempt} attempts: ${errorMessage(error)}`);
+      }
+      await sleep(QUERY_RETRY_BASE_MS * attempt);
+      continue;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
-  const parsed = JSON.parse(text) as unknown;
-  if (!Array.isArray(parsed)) {
-    throw new Error(`queryEvents: expected array, got ${text.slice(0, 200)}`);
-  }
-  return parsed as NostrEvent[];
+  throw new Error(`queryEvents exhausted ${QUERY_MAX_ATTEMPTS} attempts`);
 }
 
 async function flushQueryBatch(batchKey: string, batch: PendingQuery[]): Promise<void> {

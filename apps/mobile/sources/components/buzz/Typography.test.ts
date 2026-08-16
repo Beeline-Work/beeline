@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const sources = [
-  '../../app/(app)/buzz/agents.tsx',
+  '../../app/(app)/buzz/MembersScreen.tsx',
   '../../app/(app)/buzz/channels.tsx',
   '../../app/(app)/buzz/chat/[channelId].tsx',
   '../../app/(app)/buzz/corners/[roomId].tsx',
@@ -27,7 +27,6 @@ const monoStyles = new Set([
   'inviteInput',
   'inviteUrl',
   'agent',
-  'agentHandle',
   'fieldHint',
   'lifecycleAgent',
   'lifecycleBranch',
@@ -65,6 +64,7 @@ const monoStyles = new Set([
   'compactActionText',
   'memberHandle',
   'roleText',
+  'roleLabelText',
   'inviteTitle',
   'visibilityButtonText',
   'mentionKind',
@@ -73,6 +73,7 @@ const monoStyles = new Set([
   'replySwipeLabel',
   'replyReferenceAuthor',
   'replyComposerLabel',
+  'offlineDeliveryNote',
   'memberSectionLabel',
   'rosterModalEyebrow',
   'rosterSectionLabel',
@@ -101,7 +102,6 @@ const monoStyles = new Set([
   'terminalTurnText',
   'agentLiveStatusText',
   'agentOfflineHintTitle',
-  'offlineDeliveryNote',
   'cornerBackText',
   'cornerChannelName',
   'cornerHeaderMeta',
@@ -112,7 +112,6 @@ const monoStyles = new Set([
   'approvalStateText',
   'approvalSentText',
   'cancelTurnText',
-  'cornerComposerPrefix',
   'cornerInput',
   'cornerSendButtonText',
   'cornerFooter',

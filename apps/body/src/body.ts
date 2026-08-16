@@ -30,6 +30,7 @@ import {
   projectActivity,
   buildAgentMessage,
   postAgentMessage,
+  postCornerObjective,
   startAgentPresence,
   postAgentTurnStatus,
   postControlMessage,
@@ -878,6 +879,9 @@ export class Body {
     worktreePath?: string;
     featureBranch?: string;
     communityId?: string;
+    /** Corner objective text for the persistent banner. Undefined skips it
+     *  entirely (a read-only Room session never gets one). */
+    objective?: string;
   }): Promise<AgentSession> {
     let client = new AcpClient({
       agentCommand: this.config.agentCommand ?? this.config.agentBinary,
@@ -943,6 +947,7 @@ export class Body {
           input.channelId,
           this.agentIdentity,
           created.sessionId,
+          input.objective,
         );
         return created.sessionId;
       },
@@ -1193,27 +1198,6 @@ export class Body {
         ];
         const restoredCodegraphServer = codegraphMcpServer(this.config);
         if (restoredCodegraphServer) restoredMcpServers.push(restoredCodegraphServer);
-        const session = await this.createManagedSession({
-          channelId: subchannelId,
-          mode: 'edit',
-          cwd: worktreePath,
-          mcpServers: restoredMcpServers,
-          systemPrompt: [
-            'You are a coding agent resuming one durable corner after a supervisor restart.',
-            `You are working in a git worktree: ${worktreePath}`,
-            `Your feature branch is: ${featureBranch}`,
-            'Continue the restored transcript on this branch. Never start a second context.',
-            'Never merge, push or change the target branch, or archive this corner; only a signed human approval may authorize those effects.',
-            'A tool or skill can be unavailable or fail to initialize (for example codegraph before its index is ready). Treat that as a normal recoverable error for that one call and continue the task with what you have; never abort the task because a single tool or skill is missing.',
-            'You may call any skill available to you, but only when the current task explicitly calls for it or names it directly. Never auto-trigger a skill (e.g. a design/UX review skill) on routine or trivial work.',
-          ].join('\n'),
-          autoApprovePermissions: true,
-          parentChannelId,
-          worktreePath,
-          featureBranch,
-          ...(communityId ? { communityId } : {}),
-        });
-        const cursor = await this.durableState.cursor(subchannelId);
         const requestId = control ? tagValue(control, 'request') : undefined;
         const requestEvent = requestId
           ? parentEvents.find((event) => event.id === requestId)
@@ -1227,6 +1211,27 @@ export class Body {
               createdAt: requestEvent.created_at,
             }
           : undefined;
+        const session = await this.createManagedSession({
+          channelId: subchannelId,
+          mode: 'edit',
+          cwd: worktreePath,
+          mcpServers: restoredMcpServers,
+          systemPrompt: [
+            'You are a coding agent resuming one durable corner after a supervisor restart.',
+            `You are working in a git worktree: ${worktreePath}`,
+            `Your feature branch is: ${featureBranch}`,
+            'Continue the restored transcript on this branch. Never start a second context.',
+            'Never merge, push or change the target branch, or archive this corner; only a signed human approval may authorize those effects.',
+            'A tool or skill can be unavailable or fail to initialize (for example codegraph before its index is ready). Treat that as a normal recoverable error for that one call and continue the task with what you have; never abort the task because a single tool or skill is missing.',
+          ].join('\n'),
+          autoApprovePermissions: true,
+          parentChannelId,
+          worktreePath,
+          featureBranch,
+          objective: request?.content?.trim() || 'Working on this corner.',
+          ...(communityId ? { communityId } : {}),
+        });
+        const cursor = await this.durableState.cursor(subchannelId);
         const ready = [...events]
           .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))
           .find((event) =>
@@ -1405,6 +1410,10 @@ export class Body {
     const codegraphServer = codegraphMcpServer(this.config);
     if (codegraphServer) mcpServers.push(codegraphServer);
 
+    // The objective banner's text: the message that opened this corner, since
+    // the intro control message below never carries free-text intent.
+    const objective = intent?.trim() || request?.content?.trim() || 'Working on this corner.';
+
     const session = await this.createManagedSession({
       channelId: subchannelId,
       mode: 'edit',
@@ -1429,6 +1438,7 @@ export class Body {
       parentChannelId: tlcChannelId,
       worktreePath,
       featureBranch,
+      objective,
       ...(communityId ? { communityId } : {}),
     });
 
@@ -1437,6 +1447,14 @@ export class Body {
     session.archived = false;
 
     this.sessions.set(subchannelId, session);
+
+    // The banner must be visible the moment the corner goes live, not only
+    // once the (lazily activated) edit session's first ACP turn produces a
+    // plan update — publish the objective-only record now; a later `plan`
+    // update republishes the same replaceable record with checklist steps.
+    await postCornerObjective(subchannelId, agentId, objective, []).catch((error) =>
+      console.error('[body] initial corner objective publish failed:', error),
+    );
 
     const info: SubchannelInfo = {
       subchannelId,

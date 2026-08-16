@@ -16,11 +16,15 @@ import {
   AGENT_PRESENCE_HEARTBEAT_MS,
   KIND_AGENT_DRAFT,
   KIND_AGENT_PRESENCE,
+  KIND_CORNER_OBJECTIVE,
   TAG_AGENT_DRAFT,
   TAG_AGENT_PRESENCE,
+  TAG_CORNER_OBJECTIVE,
   buildAttachmentTags,
   type AgentPresenceStatus,
   type AttachmentReference,
+  type CornerObjectiveStep,
+  type CornerObjectiveStepStatus,
 } from '@beeline/buzz-client';
 import { sanitizeActivityUpdate } from './attachments.js';
 
@@ -258,10 +262,14 @@ export function projectActivity(
   channelId: string,
   channelOwner: Identity,
   sessionId: string,
+  /** Corner objective text. Undefined (e.g. a read-only Room session) skips
+   *  the corner-objective wire entirely — only a corner gets the banner. */
+  objective?: string,
 ): () => void {
   let pending: SessionUpdate[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   const toolCallKinds = new Map<string, ToolCallInfo>();
+  let lastObjectiveCreatedAt = 0;
   const flush = () => {
     if (timer) clearTimeout(timer);
     timer = undefined;
@@ -312,6 +320,21 @@ export function projectActivity(
     // after sessionPrompt completes. Keep the activity stream for thought/tool
     // telemetry so conversation copy cannot be duplicated or lost in a batch.
     if (u.update.sessionUpdate === 'agent_message_chunk') return;
+    // A plan update never becomes transcript activity (it's reasoning noise
+    // there), but a corner projects it live as its objective checklist —
+    // published immediately, not on the 5s activity batch timer, so
+    // strikethrough tracks the agent's progress in near real time.
+    if (u.update.sessionUpdate === 'plan') {
+      if (objective !== undefined) {
+        const steps = planEntriesToSteps((u.update as Record<string, unknown>).entries);
+        const createdAt = Math.max(Math.floor(Date.now() / 1000), lastObjectiveCreatedAt + 1);
+        lastObjectiveCreatedAt = createdAt;
+        void postCornerObjective(channelId, channelOwner, objective, steps, createdAt).catch(
+          (error) => console.error('[body] corner objective publish failed:', error),
+        );
+      }
+      return;
+    }
     const sanitized = sanitizeActivityUpdate(u.update);
     trackToolCall(sanitized, toolCallKinds);
     pending.push({ ...u, update: sanitized });
@@ -397,6 +420,55 @@ export async function postAgentDraft(
         ['request', requestId],
       ],
       content: text,
+    },
+    owner.secretKey,
+  );
+  await publishEvent(event, owner);
+}
+
+/** Coerce a raw ACP plan entry's status into the three-state checklist status. */
+function planEntryStatus(value: unknown): CornerObjectiveStepStatus {
+  return value === 'in_progress' || value === 'completed' ? value : 'pending';
+}
+
+/** Map raw ACP `plan` entries into the corner-objective wire shape, dropping malformed entries. */
+export function planEntriesToSteps(entries: unknown): CornerObjectiveStep[] {
+  if (!Array.isArray(entries)) return [];
+  const steps: CornerObjectiveStep[] = [];
+  for (const entry of entries) {
+    const record = objectValue(entry);
+    const content = typeof record?.content === 'string' ? record.content.trim() : '';
+    if (!content) continue;
+    steps.push({ content, status: planEntryStatus(record?.status) });
+  }
+  return steps;
+}
+
+/**
+ * Publish a corner's current objective + plan checklist. Parameterized
+ * -replaceable (same convention as `#t=agent-presence`/`#t=agent-draft`) so
+ * relay storage holds one current record per corner no matter how many times
+ * the agent's plan changes over the life of the turn.
+ */
+export async function postCornerObjective(
+  channelId: string,
+  owner: Identity,
+  objective: string,
+  steps: readonly CornerObjectiveStep[],
+  createdAt = Math.floor(Date.now() / 1000),
+): Promise<void> {
+  const event: NostrEvent = signEvent(
+    {
+      pubkey: owner.publicKey,
+      created_at: createdAt,
+      kind: KIND_CORNER_OBJECTIVE,
+      tags: [
+        ['d', `${TAG_CORNER_OBJECTIVE}:${channelId}`],
+        ['h', channelId],
+        ['t', TAG_CORNER_OBJECTIVE],
+        ['agent', owner.publicKey],
+      ],
+      content: JSON.stringify({ objective, steps }),
     },
     owner.secretKey,
   );

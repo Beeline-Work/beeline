@@ -64,9 +64,11 @@ import { publishEvent, queryEvents, type HttpBridgeOptions } from './http.js';
 import {
   KIND_AGENT_DRAFT,
   KIND_AGENT_PRESENCE,
+  KIND_CORNER_OBJECTIVE,
   KIND_STREAM_MESSAGE,
   TAG_AGENT_DRAFT,
   TAG_AGENT_PRESENCE,
+  TAG_CORNER_OBJECTIVE,
 } from './kinds.js';
 import {
   getGlobalPersonProfile,
@@ -692,6 +694,48 @@ export class BuzzClient {
         {
           kinds: [KIND_AGENT_DRAFT],
           '#d': [`${TAG_AGENT_DRAFT}:${channelId}`],
+        },
+      ],
+      (event) => {
+        const sessionEvent = toSessionEvent(event);
+        if (sessionEvent?.channelId === channelId) handler(sessionEvent);
+      },
+    );
+  }
+
+  /** Read this corner's current objective + plan checklist (parameterized-replaceable). */
+  cornerObjectiveBackfill(channelId: string): Promise<SessionEvent[]> {
+    return queryEvents(
+      this.http,
+      [
+        {
+          kinds: [KIND_CORNER_OBJECTIVE],
+          '#d': [`${TAG_CORNER_OBJECTIVE}:${channelId}`],
+          limit: 5,
+        },
+      ],
+      this.identity.publicKey,
+    ).then((events) =>
+      events
+        .map(toSessionEvent)
+        .filter((event): event is SessionEvent => event !== null && event.channelId === channelId),
+    );
+  }
+
+  /** Subscribe only to this corner's live objective + plan checklist record. */
+  async cornerObjectiveSubscribe(
+    channelId: string,
+    handler: SessionEventHandler,
+  ): Promise<Unsubscribe> {
+    if (!this.ws?.connected) {
+      await this.connect();
+    }
+    const ws = this.ws!;
+    return ws.subscribe(
+      [
+        {
+          kinds: [KIND_CORNER_OBJECTIVE],
+          '#d': [`${TAG_CORNER_OBJECTIVE}:${channelId}`],
         },
       ],
       (event) => {

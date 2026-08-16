@@ -28,7 +28,11 @@ import {
   profileCacheKey,
   useBuzzLocalCache,
 } from './local-cache';
-import { cacheLiveSessionEvent, revalidateCachedMessages } from './local-cache-sync';
+import {
+  cacheLiveSessionEvent,
+  cacheLiveSessionEvents,
+  revalidateCachedMessages,
+} from './local-cache-sync';
 import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection';
 import type { SessionEvent } from '@/sync/transport';
 
@@ -321,5 +325,24 @@ describe('Buzz local cache', () => {
 
     expect(sessionEventsBackfill).toHaveBeenNthCalledWith(1, 'room', { limit: 50 });
     expect(sessionEventsBackfill).toHaveBeenNthCalledWith(2, 'room', { limit: 50 });
+  });
+
+  it('cacheLiveSessionEvents writes a whole burst of live events in one store update, same result as one at a time', () => {
+    const burst = [event('one', 1), event('two', 2), event('three', 3)];
+
+    cacheLiveSessionEvents(viewer, 'room', burst);
+
+    const batched = useBuzzLocalCache.getState().channels[channelCacheKey(viewer, 'room')];
+    expect(batched?.messages?.map((item) => item.id)).toEqual(['one', 'two', 'three']);
+    expect(batched?.cursor).toBe(3);
+    expect(batched?.latestMessage).toBe('three');
+
+    clearBuzzLocalCache();
+    for (const single of burst) cacheLiveSessionEvent(viewer, 'room', single);
+    const sequential = useBuzzLocalCache.getState().channels[channelCacheKey(viewer, 'room')];
+    expect(sequential?.messages?.map((item) => item.id)).toEqual(
+      batched?.messages?.map((item) => item.id),
+    );
+    expect(sequential?.cursor).toBe(batched?.cursor);
   });
 });

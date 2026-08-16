@@ -9,7 +9,7 @@ import type {
   MergeTarget,
   PersonProfile,
 } from '@beeline/buzz-client';
-import type { CornerSummary } from '@/buzz/corners';
+import { cornerStatusPrecedence, type CornerStatus, type CornerSummary } from '@/buzz/corners';
 import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection';
 import { upsertChatMessages } from '@/sync/transport/buzz-event-projection';
 import type { SessionSummary } from '@/sync/transport';
@@ -141,6 +141,14 @@ type BuzzCacheState = PersistedBuzzCache & {
     viewerPubkey: string,
     channelId: string,
     update: (messages: ChatDisplayMessage[]) => ChatDisplayMessage[],
+  ) => void;
+  /** Keep an already-listed room-list corner card current as archive/merge
+   * signals arrive live, without waiting for a full list reload. Never
+   * fabricates a new corner entry and never walks status backwards. */
+  patchCornerStatus: (
+    viewerPubkey: string,
+    roomId: string,
+    corner: { subchannelId: string; status: CornerStatus },
   ) => void;
   replaceProfiles: (viewerPubkey: string, communityId: string, profiles: PersonProfile[]) => void;
   clear: () => void;
@@ -335,6 +343,44 @@ function updateListSummaries(
   );
 }
 
+/**
+ * The room-list corner array (`ChannelDisplayItem.corners`) is fetched once
+ * per `channels.tsx` load/focus via `listSubchannelLifecycle`; a corner that
+ * gets archived while that snapshot is still resident (e.g. the app stays
+ * foregrounded) would otherwise keep showing its pre-archive status until the
+ * next full reload. Only ever updates an already-listed corner in place —
+ * never fabricates one from a bare status signal — and never walks its
+ * status backwards (same precedence guard used for chat message cards).
+ */
+function updateListCornerStatus(
+  lists: Record<string, ChannelListCacheEntry>,
+  viewerPubkey: string,
+  roomId: string,
+  corner: { subchannelId: string; status: CornerStatus },
+): Record<string, ChannelListCacheEntry> {
+  return Object.fromEntries(
+    Object.entries(lists).map(([key, entry]) => {
+      if (entry.viewerPubkey !== viewerPubkey) return [key, entry];
+      const channels = entry.channels.map((channel) => {
+        if (channel.id !== roomId || !channel.corners) return channel;
+        let changed = false;
+        const corners = channel.corners.map((existing) => {
+          if (
+            existing.id !== corner.subchannelId ||
+            cornerStatusPrecedence(corner.status) < cornerStatusPrecedence(existing.status)
+          ) {
+            return existing;
+          }
+          changed = true;
+          return { ...existing, status: corner.status };
+        });
+        return changed ? { ...channel, corners } : channel;
+      });
+      return [key, { ...entry, channels }];
+    }),
+  );
+}
+
 const initial = loadCache();
 
 export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
@@ -362,6 +408,10 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
         },
       };
     }),
+  patchCornerStatus: (viewerPubkey, roomId, corner) =>
+    set((state) => ({
+      channelLists: updateListCornerStatus(state.channelLists, viewerPubkey, roomId, corner),
+    })),
   patchChannel: (viewerPubkey, channelId, patch) =>
     set((state) => {
       const key = channelCacheKey(viewerPubkey, channelId);

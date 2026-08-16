@@ -381,6 +381,134 @@ describe('Buzz local cache', () => {
     });
   });
 
+  it('walks a room-chat inline corner card forward to ARCHIVED from a live event, not just revalidation', () => {
+    useBuzzLocalCache.getState().patchChannel(viewer, 'room', {
+      cursor: 10,
+      backfilled: true,
+      messages: [
+        {
+          id: 'corner-corner-1',
+          text: 'starting',
+          isUser: false,
+          timestamp: 10,
+          corner: { subchannelId: 'corner-1', agentPubkey: 'agent', status: 'live' },
+        },
+      ],
+    });
+
+    cacheLiveSessionEvent(
+      viewer,
+      'room',
+      controlEvent('archived-status', 11, [
+        ['t', 'body-control'],
+        ['subchannel', 'corner-1'],
+        ['status', 'archived'],
+      ]),
+    );
+
+    const cached = useBuzzLocalCache.getState().channels[channelCacheKey(viewer, 'room')];
+    expect(cached?.messages?.[0]).toMatchObject({
+      id: 'corner-corner-1',
+      corner: { subchannelId: 'corner-1', status: 'archived' },
+    });
+  });
+
+  it('keeps the Room-list sidebar corner card current when a corner is archived after the list snapshot was fetched', () => {
+    const now = Date.now();
+    useBuzzLocalCache.getState().setChannelList({
+      viewerPubkey: viewer,
+      communityId: 'workspace',
+      channels: [
+        {
+          id: 'room',
+          active: true,
+          title: 'Room',
+          corners: [
+            { id: 'corner-1', name: 'implement-this', openerPubkey: 'agent', status: 'live' },
+          ],
+        },
+      ],
+      directMessages: [],
+      workspaceMembers: [],
+      communities: [],
+      personalWorkspaceId: null,
+      viewerIsAgent: false,
+      canEditWorkspaceAvatar: false,
+      updatedAt: now,
+      lastAccessedAt: now,
+    });
+
+    // The corner-close control event is delivered to the PARENT Room's live
+    // subscription (channels.tsx subscribes per-room, not per-corner) — this
+    // is the exact live path the Room-list sidebar's own subscription uses.
+    cacheLiveSessionEvent(
+      viewer,
+      'room',
+      controlEvent('archived-status', 11, [
+        ['t', 'body-control'],
+        ['subchannel', 'corner-1'],
+        ['status', 'archived'],
+      ]),
+    );
+
+    expect(
+      useBuzzLocalCache.getState().channelLists[`${viewer}:workspace`]?.channels[0]?.corners,
+    ).toEqual([{ id: 'corner-1', name: 'implement-this', openerPubkey: 'agent', status: 'archived' }]);
+  });
+
+  it('never regresses or fabricates a sidebar corner card from an out-of-order or unlisted signal', () => {
+    const now = Date.now();
+    useBuzzLocalCache.getState().setChannelList({
+      viewerPubkey: viewer,
+      communityId: 'workspace',
+      channels: [
+        {
+          id: 'room',
+          active: true,
+          title: 'Room',
+          corners: [
+            { id: 'corner-1', name: 'implement-this', openerPubkey: 'agent', status: 'archived' },
+          ],
+        },
+      ],
+      directMessages: [],
+      workspaceMembers: [],
+      communities: [],
+      personalWorkspaceId: null,
+      viewerIsAgent: false,
+      canEditWorkspaceAvatar: false,
+      updatedAt: now,
+      lastAccessedAt: now,
+    });
+
+    // A stale reorder replay of an earlier 'live' status must not walk the
+    // already-archived corner backwards.
+    cacheLiveSessionEvent(
+      viewer,
+      'room',
+      controlEvent('stale-status', 5, [
+        ['t', 'body-control'],
+        ['subchannel', 'corner-1'],
+        ['status', 'live'],
+      ]),
+    );
+    // A signal for a corner not yet in the sidebar snapshot must not
+    // fabricate a new, under-specified entry.
+    cacheLiveSessionEvent(
+      viewer,
+      'room',
+      controlEvent('unlisted-status', 12, [
+        ['t', 'body-control'],
+        ['subchannel', 'corner-2'],
+        ['status', 'archived'],
+      ]),
+    );
+
+    expect(
+      useBuzzLocalCache.getState().channelLists[`${viewer}:workspace`]?.channels[0]?.corners,
+    ).toEqual([{ id: 'corner-1', name: 'implement-this', openerPubkey: 'agent', status: 'archived' }]);
+  });
+
   it('replaces an old preview when a newer message shares the stream cursor second', async () => {
     const store = useBuzzLocalCache.getState();
     store.setChannelList({

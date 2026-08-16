@@ -33,6 +33,7 @@ import {
   startAgentPresence,
   postAgentTurnStatus,
   postControlMessage,
+  replyRootIdForEvent,
   stripAgentReplyPreamble,
   createDraftStreamer,
   createNarrativeCommitter,
@@ -435,6 +436,8 @@ export interface ChannelTaskRequest {
   content: string;
   attachments?: AttachmentReference[];
   createdAt: number;
+  /** NIP-10 root to preserve when the Agent replies to this event. */
+  replyRootId?: string;
 }
 
 interface PendingRoomTurn {
@@ -1189,6 +1192,7 @@ export class Body {
     fallback: string,
     options: {
       replyTo?: string;
+      replyRootId?: string;
       extraTags?: readonly string[][];
       concise?: boolean;
     } = {},
@@ -1215,6 +1219,7 @@ export class Body {
           options.replyTo,
           uploaded.attachments,
           options.extraTags,
+          options.replyRootId,
         ),
       );
       await publishEvent(event, this.agentIdentity);
@@ -1820,7 +1825,15 @@ export class Body {
       eventId: request.eventId,
       at: new Date(request.createdAt * 1_000).toISOString(),
     });
-    await postAgentMessage(channelId, this.agentIdentity, reply, request.eventId);
+    await postAgentMessage(
+      channelId,
+      this.agentIdentity,
+      reply,
+      request.eventId,
+      [],
+      [],
+      request.replyRootId,
+    );
     await this.durableState.appendConversation(channelId, {
       role: 'agent',
       text: attachmentPrompt(this.agentIdentity.publicKey, reply, [], this.ownRoomAttribution()),
@@ -2100,6 +2113,7 @@ export class Body {
             content: event.content.trim(),
             attachments: parseAttachmentTags(event.tags),
             createdAt: event.created_at,
+            replyRootId: replyRootIdForEvent(event),
           };
           const exchangeRequest = humanAgentExchangeRequest(
             event,
@@ -2209,7 +2223,15 @@ export class Body {
       });
       const reply =
         'I cannot make that change from a direct message. DMs are strictly read-only and cannot request or open edit corners.';
-      await postAgentMessage(tlcChannelId, this.agentIdentity, reply, request.eventId);
+      await postAgentMessage(
+        tlcChannelId,
+        this.agentIdentity,
+        reply,
+        request.eventId,
+        [],
+        [],
+        request.replyRootId,
+      );
       await this.durableState.appendConversation(tlcChannelId, {
         role: 'agent',
         text: attachmentPrompt(this.agentIdentity.publicKey, reply, [], this.ownRoomAttribution()),
@@ -2294,7 +2316,15 @@ export class Body {
       });
       const reply =
         'Read-only tools unavailable. I cannot safely inspect this repository until the Beeline read-only helper is restored.';
-      await postAgentMessage(tlcChannelId, this.agentIdentity, reply, request.eventId);
+      await postAgentMessage(
+        tlcChannelId,
+        this.agentIdentity,
+        reply,
+        request.eventId,
+        [],
+        [],
+        request.replyRootId,
+      );
       await this.durableState.appendConversation(tlcChannelId, {
         role: 'agent',
         text: attachmentPrompt(this.agentIdentity.publicKey, reply, [], this.ownRoomAttribution()),
@@ -2375,6 +2405,7 @@ export class Body {
           : 'No repository findings to report.';
       const reply = await this.publishAgentResult(tlcChannelId, session, result, fallback, {
         replyTo: request.eventId,
+        replyRootId: request.replyRootId,
         extraTags: agentExchange
           ? agentExchangeTags(agentExchange, 1, agentExchange.peerPubkey)
           : undefined,

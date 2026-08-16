@@ -30,6 +30,9 @@ import {
   agentExchangeTurnPrompt,
   assertSubchannelArchiveTarget,
   Body,
+  conciseCornerTurnSummary,
+  CORNER_TURN_SUMMARY_INSTRUCTION,
+  CORNER_TURN_SUMMARY_MAX_CHARS,
   cornerNameForIntent,
   cornerOpenTaskPrompt,
   isChannelAddressedMessage,
@@ -2201,6 +2204,84 @@ describe('Room conversation and permission-gated work intent', () => {
 });
 
 describe('first-class assistant messages', () => {
+  it('reduces verbose corner completions to a few short outcome bullets', () => {
+    const verbose = [
+      'Summary',
+      '- Added a daemon-side turn summary boundary so completion messages remain easy to scan.',
+      '- Updated corner message cards so consecutive agent replies have their own visual frame.',
+      '- Added focused regression coverage and ran the relevant typechecks and tests.',
+      '- This fourth detail should not be included in the published corner summary.',
+      '',
+      'Then I inspected every intermediate step and could continue narrating the implementation for several paragraphs.',
+    ].join('\n');
+
+    const summary = conciseCornerTurnSummary(verbose);
+
+    expect(summary).toBe(
+      [
+        '- Added a daemon-side turn summary boundary so completion messages remain easy to scan.',
+        '- Updated corner message cards so consecutive agent replies have their own visual frame.',
+        '- Added focused regression coverage and ran the relevant typechecks and tests.',
+      ].join('\n'),
+    );
+    expect(summary.length).toBeLessThanOrEqual(CORNER_TURN_SUMMARY_MAX_CHARS);
+  });
+
+  it('bounds a single run-on corner completion without cutting through a word', () => {
+    const summary = conciseCornerTurnSummary(`Implemented ${'carefully '.repeat(100)}`);
+
+    expect(summary.length).toBeLessThanOrEqual(CORNER_TURN_SUMMARY_MAX_CHARS);
+    expect(summary).toMatch(/…$/);
+    expect(summary).not.toMatch(/caref…$/);
+    expect(CORNER_TURN_SUMMARY_INSTRUCTION).toContain('one sentence or up to three short bullets');
+  });
+
+  it('publishes the bounded summary instead of the full ACP corner response', async () => {
+    const agent = newIdentity('concise-corner-agent-message');
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: '/workspace',
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+    );
+
+    await Reflect.get(body, 'publishAgentResult').call(
+      body,
+      'corner-id',
+      { cwd: '/workspace' },
+      {
+        agentText: `Implemented the fix. ${'This is unnecessary process narration. '.repeat(80)}`,
+        updates: [],
+      },
+      'Done.',
+      { concise: true },
+    );
+
+    expect(published[0]!.content).toContain('Implemented the fix.');
+    expect(published[0]!.content).not.toContain(
+      'This is unnecessary process narration. '.repeat(4),
+    );
+    expect(published[0]!.content.split('\n')).toHaveLength(3);
+    expect(published[0]!.content.length).toBeLessThanOrEqual(CORNER_TURN_SUMMARY_MAX_CHARS);
+  });
+
   it('strips only a leading Codex skill-budget warning', () => {
     const warning =
       'Warning: Skill descriptions were shortened to fit the 2% skills context budget. Codex can still see every skill by reading its SKILL.md.';

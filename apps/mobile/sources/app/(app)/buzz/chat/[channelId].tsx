@@ -54,6 +54,7 @@ import {
 } from '@/buzz/local-cache';
 import {
   cacheLiveSessionEvent,
+  cacheLiveSessionEvents,
   loadOlderMessages,
   revalidateCachedMessages,
 } from '@/buzz/local-cache-sync';
@@ -623,16 +624,36 @@ export default function BuzzChat() {
         setUserPubkey(identity.publicKey);
 
         const client = await t.ensureClient();
+        // A corner's live agent-activity stream can deliver one raw event per
+        // streamed token. Reprojecting + re-sorting the cache on every single
+        // one saturates the JS thread and reads as a UI freeze during a send
+        // or while the agent is actively working. Coalesce whatever arrives
+        // within one animation frame into a single cache write instead.
+        let pendingLiveEvents: Parameters<typeof cacheLiveSessionEvent>[2][] = [];
+        let liveFlushScheduled = false;
+        const flushLiveEvents = () => {
+          liveFlushScheduled = false;
+          if (cancelled || pendingLiveEvents.length === 0) return;
+          const batch = pendingLiveEvents;
+          pendingLiveEvents = [];
+          const projections = cacheLiveSessionEvents(identity.publicKey, decodedId, batch);
+          for (const projected of projections) {
+            if (projected.mergeTarget) setMergeTarget(projected.mergeTarget);
+            if (projected.clearMergeTarget) setMergeTarget(null);
+            if (projected.archiveChannel) {
+              setIsArchived(true);
+              setApprovalState('merged');
+            }
+            applyAgentPresence(projected.agentPresence);
+          }
+        };
         const handleLiveMessage = (event: Parameters<typeof cacheLiveSessionEvent>[2]) => {
           if (cancelled) return;
-          const projected = cacheLiveSessionEvent(identity.publicKey, decodedId, event);
-          if (projected.mergeTarget) setMergeTarget(projected.mergeTarget);
-          if (projected.clearMergeTarget) setMergeTarget(null);
-          if (projected.archiveChannel) {
-            setIsArchived(true);
-            setApprovalState('merged');
+          pendingLiveEvents.push(event);
+          if (!liveFlushScheduled) {
+            liveFlushScheduled = true;
+            requestAnimationFrame(flushLiveEvents);
           }
-          applyAgentPresence(projected.agentPresence);
         };
         const installLiveMessages = async () => {
           const previousSubscription = unsubscribe;
@@ -1544,9 +1565,11 @@ export default function BuzzChat() {
                 !isOwn && isAgent ? (
                   <MonoMarkdown markdown={item.text} tone="final" testID="corner-final-markdown" />
                 ) : (
-                  <Text selectable style={styles.terminalTurnText}>
-                    {item.text}
-                  </Text>
+                  <MonoMarkdown
+                    markdown={item.text}
+                    textStyle={styles.terminalTurnText}
+                    testID="corner-own-markdown"
+                  />
                 )
               ) : null}
               {item.attachments?.map((attachment) => (
@@ -1595,7 +1618,13 @@ export default function BuzzChat() {
                       : (personName ?? shortMemberNpub(item.pubkey ?? ''))}
                 </Text>
               </View>
-              {item.text ? <Text style={styles.messageText}>{item.text}</Text> : null}
+              {item.text ? (
+                <MonoMarkdown
+                  markdown={item.text}
+                  textStyle={styles.messageText}
+                  testID={`chat-message-text-${item.id}`}
+                />
+              ) : null}
               {item.attachments?.map((attachment) => (
                 <AttachmentCard attachment={attachment} key={`${item.id}-${attachment.url}`} />
               ))}
@@ -1674,9 +1703,12 @@ export default function BuzzChat() {
               <Text style={[styles.channelName, styles.cornerChannelName]} numberOfLines={1}>
                 {cornerAgentDisplay?.name ?? 'Agent'}
               </Text>
-              <Text style={[styles.headerMeta, styles.cornerHeaderMeta]} numberOfLines={1}>
-                EDIT SESSION · {sessionState.toUpperCase()}
-              </Text>
+              <View style={styles.cornerHeaderStatusRow}>
+                {sessionState === 'working' && <PixelLoader compact />}
+                <Text style={[styles.headerMeta, styles.cornerHeaderMeta]} numberOfLines={1}>
+                  EDIT SESSION · {sessionState.toUpperCase()}
+                </Text>
+              </View>
             </View>
           ) : (
             <TouchableOpacity
@@ -1745,7 +1777,22 @@ export default function BuzzChat() {
           keyExtractor={(item: ChatDisplayMessage) => item.id}
           style={styles.messageList}
           contentContainerStyle={styles.messageListContent}
-          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+          maintainVisibleContentPosition={{
+            // Anchor on the second-newest row (index 1), not the newest.
+            // The newest slot gets replaced on every send (optimistic id ->
+            // real event id) and on every agent stream token, which would
+            // otherwise destabilize the anchor. Mirrors sources/components/ChatList.tsx.
+            //
+            // autoscrollToTopThreshold: for an INVERTED list this is the
+            // auto-stick-to-visual-bottom threshold — contentOffset 0 is the
+            // visual bottom here, and this prop sticks the viewport to
+            // offset 0 (revealing new content, including a taller multi-line
+            // send) whenever the user is already within N units of it. Do
+            // NOT pair this with a JS-side scrollToOffset call — the two
+            // fight and drag the viewport while reading older messages.
+            minIndexForVisible: 1,
+            autoscrollToTopThreshold: 50,
+          }}
           keyboardShouldPersistTaps="handled"
           renderItem={renderItem}
           onEndReached={loadOlderTranscriptMessages}
@@ -1861,11 +1908,11 @@ export default function BuzzChat() {
           <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
             {parentChannelId && !viewerIsAgent && (
               <TouchableOpacity
-                accessibilityLabel={`Stop ${cornerAgentDisplay?.name ?? 'agent'}`}
+                accessibilityLabel={`Close ${CORNER_LABEL}`}
                 style={styles.cancelTurnButton}
                 onPress={() => void handleCancel()}
               >
-                <Text style={styles.cancelTurnText}>■ STOP {cornerAgentDisplay?.name ?? 'AGENT'}</Text>
+                <Text style={styles.cancelTurnText}>■ CLOSE {CORNER_LABEL.toUpperCase()}</Text>
               </TouchableOpacity>
             )}
             {mentionMenuVisible && (
@@ -2233,7 +2280,8 @@ export default function BuzzChat() {
         transparent
         visible={roomActionsVisible}
       >
-        <View
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
           style={[
             styles.roomActionsModalRoot,
             { paddingBottom: Math.max(insets.bottom, 18) },
@@ -2379,7 +2427,7 @@ export default function BuzzChat() {
               </View>
             )}
           </HullSurface>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       <Modal
@@ -2583,6 +2631,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   cornerHeaderMeta: { ...Typography.mono(), color: groknight.textMuted },
+  cornerHeaderStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 },
   addMembersButton: {
     width: 44,
     minHeight: 44,

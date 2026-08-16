@@ -135,29 +135,57 @@ export function revalidateCachedMessages(
   return revalidation;
 }
 
-/** Project one live event into the same persisted cache used by backfill and navigation. */
-export function cacheLiveSessionEvent(
+/**
+ * Project a batch of live events into the same persisted cache used by backfill
+ * and navigation, in one store write. `upsertMessages` rebuilds and re-sorts the
+ * full message array on every call, so during a burst of per-token agent
+ * activity events (one raw event per streamed token), calling it once per event
+ * is O(events * n log n) on the JS thread and can visibly stall the UI. Batching
+ * callers should queue events (e.g. across one requestAnimationFrame) and pass
+ * them here together instead of calling this once per event.
+ */
+export function cacheLiveSessionEvents(
   viewerPubkey: string,
   channelId: string,
-  event: SessionEvent,
-): ReturnType<typeof projectChatEvent> {
-  const projected = projectChatEvent(event, viewerPubkey, true);
-  const cursor = sessionEventCursor(event);
-  const latestMessage = latestRoomMessage([event]) ?? undefined;
-  if (projected.message) {
-    useBuzzLocalCache
-      .getState()
-      .upsertMessages(viewerPubkey, channelId, [projected.message], cursor, {
-        ...(latestMessage ? { latestMessage } : {}),
-        ...(cursor ? { latestEventAt: cursor } : {}),
-      });
-  } else if (cursor || projected.archiveChannel || projected.mergeTarget || projected.clearMergeTarget) {
+  events: SessionEvent[],
+): ReturnType<typeof projectChatEvent>[] {
+  const projections = events.map((event) => projectChatEvent(event, viewerPubkey, true));
+  const latestMessage = latestRoomMessage(events) ?? undefined;
+  const messages: ChatDisplayMessage[] = [];
+  const patchOnly: { event: SessionEvent; projected: ReturnType<typeof projectChatEvent> }[] = [];
+  let cursor: number | undefined;
+  for (let i = 0; i < events.length; i++) {
+    const projected = projections[i];
+    const eventCursor = sessionEventCursor(events[i]);
+    if (eventCursor !== undefined) cursor = Math.max(cursor ?? 0, eventCursor);
+    if (projected.message) {
+      messages.push(projected.message);
+    } else if (
+      eventCursor ||
+      projected.archiveChannel ||
+      projected.mergeTarget ||
+      projected.clearMergeTarget
+    ) {
+      patchOnly.push({ event: events[i], projected });
+    }
+  }
+  if (messages.length) {
+    useBuzzLocalCache.getState().upsertMessages(viewerPubkey, channelId, messages, cursor, {
+      ...(latestMessage ? { latestMessage } : {}),
+      ...(cursor ? { latestEventAt: cursor } : {}),
+    });
+  }
+  // Rare (archive/merge-target/cursor-only signals): applied per event, in
+  // order, same as before batching — this path never touches the message
+  // array so it stays cheap even called once per event.
+  for (const { event, projected } of patchOnly) {
+    const eventCursor = sessionEventCursor(event);
     const cached = getCachedChannel(viewerPubkey, channelId);
     useBuzzLocalCache.getState().patchChannel(viewerPubkey, channelId, {
-      ...(cursor
+      ...(eventCursor
         ? {
-            cursor: Math.max(cached?.cursor ?? 0, cursor),
-            latestEventAt: Math.max(cached?.latestEventAt ?? 0, cursor),
+            cursor: Math.max(cached?.cursor ?? 0, eventCursor),
+            latestEventAt: Math.max(cached?.latestEventAt ?? 0, eventCursor),
           }
         : {}),
       ...(latestMessage ? { latestMessage } : {}),
@@ -166,5 +194,14 @@ export function cacheLiveSessionEvent(
       ...(projected.clearMergeTarget ? { mergeTarget: null } : {}),
     });
   }
-  return projected;
+  return projections;
+}
+
+/** Project one live event into the same persisted cache used by backfill and navigation. */
+export function cacheLiveSessionEvent(
+  viewerPubkey: string,
+  channelId: string,
+  event: SessionEvent,
+): ReturnType<typeof projectChatEvent> {
+  return cacheLiveSessionEvents(viewerPubkey, channelId, [event])[0];
 }

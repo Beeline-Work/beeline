@@ -62,7 +62,7 @@ import {
   type DirectMessageDisplayItem,
   type WorkspaceMemberDisplayItem,
 } from '@/buzz/local-cache';
-import { revalidateCachedMessages } from '@/buzz/local-cache-sync';
+import { cacheLiveSessionEvent, revalidateCachedMessages } from '@/buzz/local-cache-sync';
 import {
   BrittlePress,
   HullSurface,
@@ -333,6 +333,10 @@ export default function BuzzChannels() {
   const displayChannels = cachedListEntry?.channels ?? [];
   const directMessages = cachedListEntry?.directMessages ?? [];
   const workspaceMembers = cachedListEntry?.workspaceMembers ?? [];
+  const roomIdsKey = useMemo(
+    () => displayChannels.map((channel) => channel.id).sort().join(','),
+    [displayChannels],
+  );
   const orderedChannels = useMemo(
     () =>
       [...displayChannels].sort((a, b) => {
@@ -589,6 +593,21 @@ export default function BuzzChannels() {
       }
       void handleRefresh(false);
     }, [handleRefresh, identity, transport]),
+  );
+
+  // Room previews are a live projection, not a creation-time cache field.
+  // Keep the list current while it is visible; cacheLiveSessionEvent also
+  // writes the same fresh summary to MMKV on the next background transition.
+  useFocusEffect(
+    useCallback(() => {
+      if (!transport || !identity || !roomIdsKey) return;
+      const unsubscribes = roomIdsKey.split(',').map((channelId) =>
+        transport.sessionEventsSubscribe(channelId, (event) => {
+          cacheLiveSessionEvent(identity.publicKey, channelId, event);
+        }),
+      );
+      return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+    }, [identity, roomIdsKey, transport]),
   );
 
   const handleRoomPress = useCallback(
@@ -909,14 +928,13 @@ export default function BuzzChannels() {
                     style={styles.roomPrimary}
                     testID={`room-${item.id}`}
                   >
-                    <Text style={styles.channelIcon}>{item.archived ? '□' : '#'}</Text>
                     <View style={styles.channelInfo}>
                       <View style={styles.channelTitleRow}>
                         <Text
                           numberOfLines={1}
                           style={[styles.channelTitle, item.archived && styles.archivedTitle]}
                         >
-                          {title}
+                          #{title}
                         </Text>
                         {item.archived && <Text style={styles.metaTag}>archived</Text>}
                       </View>
@@ -1291,12 +1309,6 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  channelIcon: {
-    ...Typography.default('semiBold'),
-    width: 25,
-    color: groknight.steel,
-    fontSize: 15,
   },
   channelInfo: { flex: 1, minWidth: 0 },
   channelTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },

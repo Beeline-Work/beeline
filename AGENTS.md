@@ -4,6 +4,11 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 - Add durable project-specific notes here as they are discovered through real work.
 
+## Branch conventions
+
+- `fm/*` feature branches often stack on each other (PR base is another `fm/*` branch, not always `main`) — check `gh pr list --json baseRefName,headRefName` before assuming a task's target file exists on `main`.
+- The local-only `fm-integration-verify` branch (many `fm/*` branches merged together for cross-branch verification) has a pushed origin counterpart: `fm/buzzy-integrated`. If a task references a file that doesn't exist on `main`, check `fm-integration-verify`/`origin/fm/buzzy-integrated` before concluding the task's premise is wrong; find the originating single `fm/*` branch with `git branch -a --contains <commit>` to pick the correct PR base rather than opening against `main`.
+
 ## Gate / live security tests
 
 - Product authority: `spec.md` (esp. **Failure modes → Agent in push-rights**).

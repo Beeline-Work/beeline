@@ -112,6 +112,9 @@ interface Pending {
   resolve: (v: unknown) => void;
   reject: (e: Error) => void;
   timer?: ReturnType<typeof setTimeout>;
+  /** Idle window used to re-arm `timer` on activity; undefined for non-resettable requests. */
+  idleTimeoutMs?: number;
+  method?: string;
 }
 
 export class AcpClient extends EventEmitter {
@@ -274,11 +277,16 @@ export class AcpClient extends EventEmitter {
   }
 
   /**
-   * Run one prompt turn. `onChunk` is the ACP-boundary streaming hook: called
-   * for every incremental `agent_message_chunk` delta as it arrives, so a
-   * caller can project live text without waiting for the turn to finish. A
-   * harness that only emits a final message (never chunks) simply never
-   * invokes it — `agentText` is unaffected either way.
+   * Run one prompt turn. `timeoutMs` is an idle window, not a hard cap on
+   * turn length: every `session/update` for this session (message chunk,
+   * tool call, or otherwise) re-arms it, so an actively-working agent can
+   * run indefinitely while a genuinely wedged one (zero activity for
+   * `timeoutMs`) still gets cancelled. `onChunk` is the ACP-boundary
+   * streaming hook: called for every incremental `agent_message_chunk`
+   * delta as it arrives, so a caller can project live text without waiting
+   * for the turn to finish. A harness that only emits a final message
+   * (never chunks) simply never invokes it — `agentText` is unaffected
+   * either way.
    */
   async sessionPrompt(
     sessionId: string,
@@ -289,10 +297,12 @@ export class AcpClient extends EventEmitter {
     const updates: SessionUpdate[] = [];
     let promptRunId: string | undefined;
     let streamedText = '';
+    let requestId: number | undefined;
     const onUpdate = (u: SessionUpdate) => {
       if (u.sessionId !== sessionId) return;
       updates.push(u);
       promptRunId ??= this.activeRunIdFromUpdate(u.update);
+      if (requestId !== undefined) this.resetPendingIdleTimeout(requestId);
       if (onChunk) {
         const delta = agentMessageChunkText(u.update);
         if (delta) {
@@ -312,6 +322,9 @@ export class AcpClient extends EventEmitter {
           prompt: [{ type: 'text', text }],
         },
         timeoutMs,
+        (id) => {
+          requestId = id;
+        },
       )) as { stopReason?: string };
 
       const agentText = updates.map((u) => agentMessageChunkText(u.update)).join('');
@@ -399,6 +412,25 @@ export class AcpClient extends EventEmitter {
       clearTimeout(p.timer);
       p.timer = undefined;
     }
+  }
+
+  /**
+   * Re-arm a pending request's idle timer from its full `idleTimeoutMs`,
+   * called on every ACP activity signal for that request (streamed text
+   * delta, session/update, tool call). A request only times out after this
+   * much wall-clock time with zero activity, not after a fixed deadline —
+   * so an actively-working turn can run indefinitely while a genuinely
+   * wedged one still gets caught.
+   */
+  private resetPendingIdleTimeout(id: number): void {
+    const p = this.pending.get(id);
+    if (!p || p.idleTimeoutMs === undefined) return;
+    this.clearTimer(p);
+    const { idleTimeoutMs, method, reject } = p;
+    p.timer = setTimeout(() => {
+      this.pending.delete(id);
+      reject(new Error(`ACP ${method} timed out after ${idleTimeoutMs}ms of inactivity`));
+    }, idleTimeoutMs);
   }
 
   private onData(chunk: string): void {
@@ -570,18 +602,37 @@ export class AcpClient extends EventEmitter {
     });
   }
 
-  private request(method: string, params: unknown, timeoutMs = 60_000): Promise<unknown> {
+  /**
+   * `onStart`, when given, receives the assigned request id synchronously
+   * and marks the request as idle-resettable at `timeoutMs`: callers can
+   * then call `resetPendingIdleTimeout(id)` on activity to defer the
+   * timeout instead of it firing at a fixed deadline.
+   */
+  private request(
+    method: string,
+    params: unknown,
+    timeoutMs = 60_000,
+    onStart?: (id: number) => void,
+  ): Promise<unknown> {
     if (!this.child || !this.alive) {
       return Promise.reject(new Error('AcpClient not started'));
     }
     const id = this.nextId++;
     const payload = { jsonrpc: '2.0', id, method, params };
+    const suffix = onStart ? ' of inactivity' : '';
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`ACP ${method} timed out after ${timeoutMs}ms`));
+        reject(new Error(`ACP ${method} timed out after ${timeoutMs}ms${suffix}`));
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, {
+        resolve,
+        reject,
+        timer,
+        method,
+        ...(onStart ? { idleTimeoutMs: timeoutMs } : {}),
+      });
+      onStart?.(id);
       this.write(payload);
     });
   }

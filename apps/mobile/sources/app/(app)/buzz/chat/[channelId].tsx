@@ -1833,9 +1833,6 @@ export default function BuzzChat() {
                 composerFocused && styles.composerFocused,
               ]}
             >
-              <Text style={[styles.composerPrefix, isCorner && styles.cornerComposerPrefix]}>
-                ›
-              </Text>
               <TouchableOpacity
                 accessibilityLabel="Attach photo or document"
                 accessibilityRole="button"
@@ -3435,13 +3432,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: groknight.bgTerminal,
   },
-  composerPrefix: {
-    ...Typography.default('semiBold'),
-    fontSize: 14,
-    color: groknight.steel,
-    marginRight: 8,
-  },
-  cornerComposerPrefix: { ...Typography.mono(), color: groknight.textSecondary },
   attachButton: {
     width: 40,
     height: 40,

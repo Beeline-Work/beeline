@@ -20,6 +20,11 @@ describe('Buzz keyboard avoidance', () => {
     expect(chatSource).not.toContain('{ paddingBottom: 12 + keyboardHeight }');
   });
 
+  it('does not render a decorative prefix inside the room composer', () => {
+    expect(chatSource).not.toContain('styles.composerPrefix');
+    expect(chatSource).not.toContain('styles.cornerComposerPrefix');
+  });
+
   it('keeps focused Agent fields visible in keyboard-aware scroll content', () => {
     expect(agentsSource).toContain(
       "import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';",

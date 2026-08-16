@@ -189,6 +189,14 @@ export const ROOM_POLL_FAILURE_BACKOFF_CAP_MS = 5 * 60_000;
 /** A wedged ACP process must not occupy an interactive session for ten minutes. */
 export const ROOM_AGENT_PROMPT_TIMEOUT_MS = 60_000;
 
+/**
+ * Default cadence for the WS-push loop's low-rate maintenance/liveness tick
+ * (child steering, merge closure, and — for a Room with zero pushed events —
+ * the periodic connected-socket liveness refresh). Overridable per loop via
+ * `opts.pollMs`, which the push loop no longer uses for actual polling.
+ */
+export const ROOM_WS_MAINTENANCE_TICK_MS = 60_000;
+
 function relayRetryAfterMs(error: unknown): number {
   const seconds = [...String(error).matchAll(/retry in\s+(\d+(?:\.\d+)?)s/gi)].map((match) =>
     Number(match[1]),
@@ -2973,7 +2981,7 @@ export class Body {
     boundRepo: BoundRepo | undefined,
     editPolicy: RoomEditPolicy,
     presence: ReturnType<typeof startAgentPresence>,
-    opts: { signal?: AbortSignal },
+    opts: { pollMs?: number; signal?: AbortSignal },
     maintenance: () => Promise<void>,
   ): Promise<void> {
     const reconnectBackoff = new RoomPollBackoff(1_000);
@@ -2999,6 +3007,12 @@ export class Body {
         unsubscribe = await client.sessionEventsSubscribe(
           channelId,
           (sessionEvent) => {
+            // A delivered event is itself the freshest possible liveness
+            // signal for this WS session — refresh immediately on receipt,
+            // not only once at subscribe time, so the supervisor's watchdog
+            // sees a continuously-delivering socket as continuously healthy
+            // instead of judging it stale purely by connect-time age.
+            this.onRoomPollSuccess?.(channelId);
             delivery = delivery
               .then(async () => {
                 await this.processChannelRequestEvents(
@@ -3029,11 +3043,26 @@ export class Body {
 
         // Child steering and merge closure stay as a low-rate maintenance
         // safety net. Room request delivery above never waits for this timer.
+        // A quiet Room (no pushed events at all) still needs its liveness
+        // refreshed periodically here, gated on the socket actually being
+        // open, so the watchdog never mistakes silence for staleness while
+        // a genuinely dead socket still ages out and gets recovered.
         void maintenance();
-        maintenanceTimer = setInterval(() => void maintenance(), 60_000);
+        maintenanceTimer = setInterval(() => {
+          if (client?.socket?.connected) this.onRoomPollSuccess?.(channelId);
+          void maintenance();
+        }, opts.pollMs ?? ROOM_WS_MAINTENANCE_TICK_MS);
         maintenanceTimer.unref?.();
 
         await new Promise<void>((resolveWait) => {
+          // The signal can already be aborted by the time we get here (a slow
+          // connect/subscribe racing a supervisor-issued abort); an 'abort'
+          // listener added after the event already fired never runs, which
+          // would hang this Room's teardown forever.
+          if (opts.signal?.aborted) {
+            resolveWait();
+            return;
+          }
           const finish = () => resolveWait();
           offClose = client!.onSocketClose(finish);
           opts.signal?.addEventListener('abort', finish, { once: true });

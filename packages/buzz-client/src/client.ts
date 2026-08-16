@@ -18,6 +18,7 @@ import {
 import { WRITE_PERMISSION_RESPONSE_TAG, type WritePermissionDecision } from './write-permission.js';
 import {
   backfillMessages,
+  buildMessage,
   createChannel,
   createSubchannel,
   getChannelCommunityId as getChannelCommunityIdFn,
@@ -38,6 +39,7 @@ import {
   sendMessage,
   setMemberRole,
   waitUntilMember,
+  waitUntilMemberRole,
   waitUntilNotMember,
   type ChannelRole,
   type ChannelOpsContext,
@@ -59,7 +61,13 @@ import {
   setCommunityVisibility,
 } from './community.js';
 import { publishEvent, queryEvents, type HttpBridgeOptions } from './http.js';
-import { KIND_AGENT_PRESENCE, KIND_STREAM_MESSAGE, TAG_AGENT_PRESENCE } from './kinds.js';
+import {
+  KIND_AGENT_DRAFT,
+  KIND_AGENT_PRESENCE,
+  KIND_STREAM_MESSAGE,
+  TAG_AGENT_DRAFT,
+  TAG_AGENT_PRESENCE,
+} from './kinds.js';
 import {
   getGlobalPersonProfile,
   getPersonProfile,
@@ -140,7 +148,12 @@ export class BuzzClient {
   /** Open a NIP-42-authenticated WS (idempotent). */
   async connect(): Promise<void> {
     if (this.ws?.connected) return;
-    this.ws?.close();
+    // Keep the same RelayWs instance after a transient close: it owns the
+    // registered live REQs and their reconnect cursors.
+    if (this.ws) {
+      await this.ws.connect();
+      return;
+    }
     this.ws = new RelayWs({
       wsUrl: this.config.wsUrl ?? wsUrlFromHttp(this.baseUrl),
       identity: this.identity,
@@ -148,6 +161,9 @@ export class BuzzClient {
       ...(this.config.skipAuth !== undefined ? { skipAuth: this.config.skipAuth } : {}),
       ...(this.config.connectTimeoutMs !== undefined
         ? { connectTimeoutMs: this.config.connectTimeoutMs }
+        : {}),
+      ...(this.config.reconnectDelayMs !== undefined
+        ? { reconnectDelayMs: this.config.reconnectDelayMs }
         : {}),
     });
     await this.ws.connect();
@@ -274,6 +290,16 @@ export class BuzzClient {
     opts?: { timeoutMs?: number; intervalMs?: number },
   ): Promise<void> {
     return waitUntilMember(this.ctx, channelId, pubkey, opts);
+  }
+
+  /** Assert the current 39001/39002 projections expose this exact role. */
+  waitUntilMemberRole(
+    channelId: string,
+    pubkey: string,
+    role: ChannelRole,
+    opts?: { timeoutMs?: number; intervalMs?: number },
+  ): Promise<void> {
+    return waitUntilMemberRole(this.ctx, channelId, pubkey, role, opts);
   }
 
   /** Assert 39001/39002 no longer list the member. */
@@ -489,6 +515,14 @@ export class BuzzClient {
     return sendMessage(this.ctx, channelId, text, opts);
   }
 
+  /**
+   * Build a message once so a caller can safely retry publishing the exact
+   * same signed event. A relay deduplicates identical event ids.
+   */
+  buildMessage(channelId: string, text: string, opts?: MessageSubmitOpts): NostrEvent {
+    return buildMessage(this.ctx, channelId, text, opts);
+  }
+
   /** @deprecated Work now starts from an agent-originated write permission request. */
   startAgentWork(channelId: string, text: string, agentPubkey: string): Promise<NostrEvent> {
     return sendMessage(this.ctx, channelId, text, {
@@ -575,11 +609,29 @@ export class BuzzClient {
     }
     const ws = this.ws!;
     const kinds = opts?.kinds ?? [KIND_STREAM_MESSAGE];
+    let lastSeenCreatedAt: number | undefined = opts?.since;
+    const deliveredIds = new Set<string>();
+    const deliver = (event: NostrEvent) => {
+      const se = toSessionEvent(event);
+      if (!se || deliveredIds.has(se.id)) return;
+      deliveredIds.add(se.id);
+      // Keep bounded id memory while the timestamp cursor handles reconnect
+      // replay. Retain enough ids for a busy second returned by `since`.
+      if (deliveredIds.size > 2_048) deliveredIds.delete(deliveredIds.values().next().value!);
+      lastSeenCreatedAt = Math.max(lastSeenCreatedAt ?? 0, se.createdAt);
+      handler(se);
+    };
     return ws.subscribe(
       [{ kinds, '#h': [channelId], ...(opts?.since === undefined ? {} : { since: opts.since }) }],
-      (event) => {
-        const se = toSessionEvent(event);
-        if (se) handler(se);
+      deliver,
+      {
+        reconnectFilters: () => [
+          {
+            kinds,
+            '#h': [channelId],
+            ...(lastSeenCreatedAt === undefined ? {} : { since: lastSeenCreatedAt }),
+          },
+        ],
       },
     );
   }
@@ -598,6 +650,48 @@ export class BuzzClient {
         {
           kinds: [KIND_AGENT_PRESENCE],
           '#d': [`${TAG_AGENT_PRESENCE}:${channelId}`],
+        },
+      ],
+      (event) => {
+        const sessionEvent = toSessionEvent(event);
+        if (sessionEvent?.channelId === channelId) handler(sessionEvent);
+      },
+    );
+  }
+
+  /** Read this Room's current live agent reply draft (parameterized-replaceable). */
+  agentDraftBackfill(channelId: string): Promise<SessionEvent[]> {
+    return queryEvents(
+      this.http,
+      [
+        {
+          kinds: [KIND_AGENT_DRAFT],
+          '#d': [`${TAG_AGENT_DRAFT}:${channelId}`],
+          limit: 5,
+        },
+      ],
+      this.identity.publicKey,
+    ).then((events) =>
+      events
+        .map(toSessionEvent)
+        .filter((event): event is SessionEvent => event !== null && event.channelId === channelId),
+    );
+  }
+
+  /** Subscribe only to this Room's live agent reply draft record. */
+  async agentDraftSubscribe(
+    channelId: string,
+    handler: SessionEventHandler,
+  ): Promise<Unsubscribe> {
+    if (!this.ws?.connected) {
+      await this.connect();
+    }
+    const ws = this.ws!;
+    return ws.subscribe(
+      [
+        {
+          kinds: [KIND_AGENT_DRAFT],
+          '#d': [`${TAG_AGENT_DRAFT}:${channelId}`],
         },
       ],
       (event) => {

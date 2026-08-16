@@ -7,6 +7,7 @@ import {
   type SessionEvent as BuzzSessionEvent,
 } from '@beeline/buzz-client';
 import { agentPresenceFromSessionEvent } from '@/buzz/agent-presence';
+import { cornerStatusPrecedence, mapRawCornerStatusTag, type CornerStatus } from '@/buzz/corners';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -32,6 +33,44 @@ function readTextContent(value: unknown, depth = 0): string | undefined {
   if (typeof record.text === 'string' && record.text) return record.text;
   if ('content' in record) return readTextContent(record.content, depth + 1);
   return undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function compactFiles(value: unknown): NonNullable<AgentActivityItem['files']> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const files = value.flatMap((item) => {
+    const record = asRecord(item);
+    const path = stringValue(record?.path);
+    return path
+      ? [
+          {
+            path,
+            ...(stringValue(record?.status) ? { status: stringValue(record?.status) } : {}),
+            ...(stringValue(record?.diff) ? { diff: stringValue(record?.diff) } : {}),
+          },
+        ]
+      : [];
+  });
+  return files.length ? files : undefined;
+}
+
+function compactPlan(value: unknown): AgentActivityItem['plan'] | undefined {
+  const plan = asRecord(value);
+  if (!plan || !Array.isArray(plan.items)) return undefined;
+  const items = plan.items.flatMap((item) => {
+    const record = asRecord(item);
+    const step = stringValue(record?.step);
+    const status = record?.status;
+    if (!step || (status !== 'pending' && status !== 'in_progress' && status !== 'completed')) {
+      return [];
+    }
+    return [{ step, status }] satisfies NonNullable<AgentActivityItem['plan']>['items'];
+  });
+  const objective = stringValue(plan.objective);
+  return items.length || objective ? { ...(objective ? { objective } : {}), items } : undefined;
 }
 
 /**
@@ -63,6 +102,32 @@ export function agentActivityDetails(content: string): AgentActivityItem[] {
   }
 
   const sessionUpdate = typeof update.sessionUpdate === 'string' ? update.sessionUpdate : '';
+  if (sessionUpdate === 'tool_activity') {
+    const title = stringValue(update.title) ?? 'Tool';
+    const command = stringValue(update.command);
+    const input = stringValue(update.input);
+    const output = stringValue(update.output);
+    const files = compactFiles(update.files);
+    const plan = compactPlan(update.plan);
+    return [
+      {
+        kind: 'tool',
+        title,
+        ...(stringValue(update.toolCallId) ? { id: stringValue(update.toolCallId) } : {}),
+        ...(stringValue(update.kind) ? { toolKind: stringValue(update.kind) } : {}),
+        ...(stringValue(update.status) ? { status: stringValue(update.status) } : {}),
+        ...(command ? { command } : {}),
+        ...(input ? { input } : {}),
+        ...(output ? { output, text: output } : {}),
+        ...(files ? { files } : {}),
+        ...(plan ? { plan } : {}),
+      },
+    ];
+  }
+  if (sessionUpdate === 'progress_update') {
+    const text = stringValue(update.text);
+    return text ? [{ kind: 'output', title: 'Update', text }] : [];
+  }
   const text =
     readTextContent(update.content) ??
     readTextContent(update.message) ??
@@ -81,7 +146,11 @@ export function agentActivityDetails(content: string): AgentActivityItem[] {
         ? toolCall.status
         : undefined;
 
-  if (sessionUpdate.includes('thought') || sessionUpdate.includes('thinking')) {
+  if (
+    sessionUpdate.includes('thought') ||
+    sessionUpdate.includes('thinking') ||
+    sessionUpdate === 'agent_message_chunk'
+  ) {
     return text ? [{ kind: 'thinking', title: 'Thinking', text }] : [];
   }
   if (
@@ -98,7 +167,9 @@ export function agentActivityDetails(content: string): AgentActivityItem[] {
       },
     ];
   }
-  if (text) return [{ kind: 'output', title: 'Output', text }];
+  // Only explicit tool updates are tool output. Other ACP prose is agent
+  // narration and belongs directly in the readable activity feed.
+  if (text) return [{ kind: 'thinking', title: 'Thinking', text }];
 
   // Metadata-only session updates should not become empty JSON chat bubbles.
   return [];
@@ -145,7 +216,6 @@ export function toRigEvent(ev: BuzzSessionEvent): SessionEvent {
   };
 }
 
-export type CornerCardStatus = 'starting' | 'working' | 'needs-attention' | 'ready' | 'failed';
 export type AgentTurnStatus = 'working' | 'complete' | 'failed';
 
 export type ChatDisplayMessage = {
@@ -167,7 +237,7 @@ export type ChatDisplayMessage = {
   corner?: {
     subchannelId: string;
     agentPubkey?: string;
-    status: CornerCardStatus;
+    status: CornerStatus;
   };
   agentTurn?: {
     requestId: string;
@@ -189,6 +259,7 @@ export type ChatDisplayMessage = {
 export type ChatEventProjection = {
   message?: ChatDisplayMessage;
   mergeTarget?: MergeTarget;
+  clearMergeTarget?: boolean;
   archiveChannel?: boolean;
   agentPresence?: AgentPresence;
 };
@@ -246,14 +317,8 @@ function eventId(event: SessionEvent): string {
   return `${event.type}-${eventTimestamp(event)}-${eventText(event).slice(0, 32)}`;
 }
 
-function cornerStatus(event: SessionEvent): CornerCardStatus | undefined {
-  const status = eventTagValue(event, 'display-status') ?? eventTagValue(event, 'status');
-  if (status === 'starting') return 'starting';
-  if (status === 'working' || status === 'open' || status === 'live') return 'working';
-  if (status === 'needs-attention') return 'needs-attention';
-  if (status === 'ready') return 'ready';
-  if (status === 'failed') return 'failed';
-  return undefined;
+function cornerStatus(event: SessionEvent): CornerStatus | undefined {
+  return mapRawCornerStatusTag(eventTagValue(event, 'display-status') ?? eventTagValue(event, 'status'));
 }
 
 /** One display projection for both initial backfill and live subscription events. */
@@ -379,9 +444,11 @@ export function projectChatEvent(
   }
 
   if (bodyControl) {
+    const clearMergeTarget = eventHasTag(event, 't', 'merge-not-ready');
     if (subchannelId && status) {
       return {
         ...(mergeTarget ? { mergeTarget } : {}),
+        ...(clearMergeTarget ? { clearMergeTarget: true } : {}),
         message: {
           id: `corner-${subchannelId}`,
           text,
@@ -413,6 +480,7 @@ export function projectChatEvent(
     }
     return {
       ...(mergeTarget ? { mergeTarget } : {}),
+      ...(clearMergeTarget ? { clearMergeTarget: true } : {}),
       ...(isArchived && !subchannelId ? { archiveChannel: true } : {}),
     };
   }
@@ -484,14 +552,6 @@ export function transcriptMessages(
   );
 }
 
-const CORNER_STATUS_ORDER: Record<CornerCardStatus, number> = {
-  starting: 0,
-  working: 1,
-  'needs-attention': 2,
-  ready: 3,
-  failed: 4,
-};
-
 const AGENT_TURN_STATUS_ORDER: Record<AgentTurnStatus, number> = {
   working: 0,
   complete: 1,
@@ -520,7 +580,7 @@ export function upsertChatMessages(
     if (
       existing?.corner &&
       message.corner &&
-      CORNER_STATUS_ORDER[message.corner.status] < CORNER_STATUS_ORDER[existing.corner.status]
+      cornerStatusPrecedence(message.corner.status) < cornerStatusPrecedence(existing.corner.status)
     ) {
       continue;
     }

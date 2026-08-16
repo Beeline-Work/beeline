@@ -1,0 +1,67 @@
+appId: app.buzzy.mobile.preview
+name: Live chat stays pinned above a multiline composer
+env:
+  LIVE_NSEC: ${LIVE_NSEC}
+  LIVE_ROOM_ID: ${LIVE_ROOM_ID}
+  LIVE_AGENT_HANDLE: ${LIVE_AGENT_HANDLE}
+  LIVE_LAYOUT_PROMPT: ${LIVE_LAYOUT_PROMPT}
+  LIVE_LAYOUT_REPLY: ${LIVE_LAYOUT_REPLY}
+---
+# This intentionally reuses the already-imported throwaway identity and its
+# real Body/ACP Room. It is not a relay fixture: the agent publishes the reply.
+- launchApp:
+    clearState: true
+- tapOn:
+    id: onboarding-advanced
+- tapOn:
+    id: onboarding-secret-key
+- inputText: ${LIVE_NSEC}
+- pressKey: back
+- tapOn:
+    id: onboarding-import-key
+- runFlow:
+    when:
+      visible:
+        id: onboarding-person-name-step
+    commands:
+      - tapOn:
+          id: onboarding-person-name-input
+      - inputText: Layout device
+      - pressKey: back
+      - tapOn:
+          id: onboarding-enter-workspace
+- extendedWaitUntil:
+    visible:
+      id: room-${LIVE_ROOM_ID}
+    timeout: 15000
+- tapOn:
+    id: room-${LIVE_ROOM_ID}
+- extendedWaitUntil:
+    visible:
+      id: chat-input
+    timeout: 15000
+- tapOn:
+    id: chat-input
+- inputText: "@"
+- extendedWaitUntil:
+    visible:
+      id: mention-suggestions
+    timeout: 5000
+- tapOn:
+    id: mention-suggestion-${LIVE_AGENT_HANDLE}
+- inputText: " ${LIVE_LAYOUT_PROMPT}"
+- tapOn:
+    id: chat-send
+- extendedWaitUntil:
+    visible:
+      id: agent-live-status
+    timeout: 20000
+# Leave the IME open and grow the composer while the real turn is active. The
+# status row must remain outside the composer, and the subscribed reply must
+# materialize at the visible tail rather than behind it.
+- tapOn:
+    id: chat-input
+- inputText: "draft line one\\ndraft line two\\ndraft line three\\ndraft line four"
+- assertVisible:
+    id: agent-live-status
+- takeScreenshot: live-working-multiline-composer

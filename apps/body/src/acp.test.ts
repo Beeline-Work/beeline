@@ -223,6 +223,120 @@ lines.on('line', (line) => {
   return binary;
 }
 
+async function fakeStreamingAgent(): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-stream-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'fake-streaming-agent.mjs');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+
+const lines = createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+const chunk = (text) =>
+  send({
+    jsonrpc: '2.0',
+    method: 'session/update',
+    params: { sessionId: 'stream-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } } },
+  });
+
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'stream-session' } });
+  } else if (message.method === 'session/prompt') {
+    chunk('Hel');
+    chunk('lo ');
+    chunk('world');
+    send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
+async function fakeSlowStreamingAgent(chunkDelayMs: number, chunkCount: number): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-slow-stream-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'fake-slow-streaming-agent.mjs');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+
+const lines = createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+const chunk = (text) =>
+  send({
+    jsonrpc: '2.0',
+    method: 'session/update',
+    params: { sessionId: 'slow-stream-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } } },
+  });
+
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'slow-stream-session' } });
+  } else if (message.method === 'session/prompt') {
+    let sent = 0;
+    const timer = setInterval(() => {
+      sent += 1;
+      chunk('chunk' + sent + ' ');
+      if (sent >= ${chunkCount}) {
+        clearInterval(timer);
+        send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+      }
+    }, ${chunkDelayMs});
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
+async function fakeWedgedAgent(): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-wedged-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'fake-wedged-agent.mjs');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+
+const lines = createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'wedged-session' } });
+  } else if (message.method === 'session/prompt') {
+    // Deliberately never replies and never sends a session/update: simulates
+    // a wedged ACP process with zero activity for the whole turn.
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
 describe('AcpClient live steering', () => {
   it('lets the host intercept and reject a mutating permission request', async () => {
     const requests: unknown[] = [];
@@ -285,6 +399,75 @@ describe('AcpClient live steering', () => {
       expect(second).toEqual({ runId: 'run-original', messageId: 'steer-2' });
       expect(result.agentText).toBe('incorporated:first redirect|second redirect');
       expect(client.activeRunId(sessionId)).toBeUndefined();
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('streams agent_message_chunk deltas to onChunk as they arrive, harness-agnostic at the ACP boundary', async () => {
+    const client = new AcpClient({ agentBinary: await fakeStreamingAgent(), agentEnv: {} });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const seen: Array<{ delta: string; fullText: string }> = [];
+      const result = await client.sessionPrompt(sessionId, 'go', 5_000, (delta, fullText) => {
+        seen.push({ delta, fullText });
+      });
+      expect(seen).toEqual([
+        { delta: 'Hel', fullText: 'Hel' },
+        { delta: 'lo ', fullText: 'Hel' + 'lo ' },
+        { delta: 'world', fullText: 'Hello world' },
+      ]);
+      expect(result.agentText).toBe('Hello world');
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('omitting onChunk changes nothing about the final result (opt-in, no side effect)', async () => {
+    const client = new AcpClient({ agentBinary: await fakeStreamingAgent(), agentEnv: {} });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const result = await client.sessionPrompt(sessionId, 'go', 5_000);
+      expect(result.agentText).toBe('Hello world');
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('does not time out a turn that keeps streaming activity past the idle window, and resolves once it finishes', async () => {
+    // 8 chunks every 80ms = ~640ms of total turn time, well past the 200ms
+    // idle timeout — each chunk must re-arm the timer or this turn dies.
+    const client = new AcpClient({
+      agentBinary: await fakeSlowStreamingAgent(80, 8),
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const started = Date.now();
+      const result = await client.sessionPrompt(sessionId, 'go', 200);
+      expect(Date.now() - started).toBeGreaterThan(200);
+      expect(result.agentText).toBe('chunk1 chunk2 chunk3 chunk4 chunk5 chunk6 chunk7 chunk8 ');
+      expect(result.stopReason).toBe('end_turn');
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('cancels a turn that goes fully idle (zero ACP activity) for the timeout window', async () => {
+    const client = new AcpClient({ agentBinary: await fakeWedgedAgent(), agentEnv: {} });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const started = Date.now();
+      await expect(client.sessionPrompt(sessionId, 'go', 200)).rejects.toThrow(
+        'ACP session/prompt timed out after 200ms of inactivity',
+      );
+      const elapsed = Date.now() - started;
+      expect(elapsed).toBeGreaterThanOrEqual(200);
+      expect(elapsed).toBeLessThan(1_000);
     } finally {
       await client.stop();
     }

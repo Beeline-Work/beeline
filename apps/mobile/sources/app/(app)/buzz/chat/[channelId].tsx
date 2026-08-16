@@ -3,7 +3,7 @@
  *
  * Grok Mono Hull design: neutral metal surfaces with redundant state encoding.
  */
-import React, { useEffect, useState, useRef, useCallback, useLayoutEffect, useMemo } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import {
   Alert,
   AppState,
@@ -12,15 +12,13 @@ import {
   Image,
   FlatList,
   Linking,
-  Modal,
+  Modal as RNModal,
   Pressable,
   ScrollView,
   TextInput,
   TouchableOpacity,
   StyleSheet,
   Platform,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
@@ -30,6 +28,7 @@ import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router, type Href } from 'expo-router';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
+import { Modal } from '@/modal';
 import { BuzzRigTransport } from '@/sync/transport';
 import {
   type Agent,
@@ -44,6 +43,7 @@ import {
 import {
   projectChatEvent,
   transcriptMessages,
+  upsertChatMessages,
   type ChatDisplayMessage,
 } from '@/sync/transport/buzz-event-projection';
 import {
@@ -54,7 +54,12 @@ import {
   setActiveBuzzCacheViewer,
   useBuzzLocalCache,
 } from '@/buzz/local-cache';
-import { cacheLiveSessionEvent, revalidateCachedMessages } from '@/buzz/local-cache-sync';
+import {
+  cacheLiveSessionEvent,
+  cacheLiveSessionEvents,
+  loadOlderMessages,
+  revalidateCachedMessages,
+} from '@/buzz/local-cache-sync';
 import { groknight } from '@/buzz/groknight';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
@@ -68,7 +73,13 @@ import {
   sectionRoomParticipants,
   sectionRoomRoster,
 } from '@/buzz/room-participants';
-import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
+import { resolveAgentDisplayIdentity, resolveCornerCardAgentPubkey } from '@/buzz/agent-display';
+import {
+  cornerStatusPresentation,
+  isCornerActive,
+  selectMostRecentActiveCornerId,
+  type CornerStatus,
+} from '@/buzz/corners';
 import { directMessagePeer, shortMemberNpub } from '@/buzz/member-display';
 import {
   canRenameRoom,
@@ -82,14 +93,17 @@ import {
   uploadChatAttachment,
   type PickedChatAttachment,
 } from '@/buzz/chat-attachment';
+import { describeWriteRequest } from '@/buzz/write-request-copy';
+import { cornerSessionState, latestCornerTurnSummary } from '@/buzz/corner-session';
 import { isNearChatBottom } from '@/buzz/chat-scroll';
+import { buildTurnActivity } from '@/buzz/activity-timeline';
 import { replyMessageText, type MessageReplyTarget } from '@/buzz/message-reply';
 import {
   isAgentPresenceOnlineWithReconnectGrace,
+  isAgentOfflineAfterPresenceResolved,
   isAgentTurnActive,
   mergeAgentPresence,
   presenceMapFromSessionEvents,
-  reconnectPresenceAfterForeground,
   type RoomAgentPresence,
 } from '@/buzz/agent-presence';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
@@ -100,6 +114,7 @@ import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome';
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
+import { StreamingAgentText } from '@/components/buzz/StreamingAgentText';
 import {
   HullSurface,
   MonoButton,
@@ -119,16 +134,46 @@ type RoomMemberOption = {
 const BODY_PUBKEYS = new Set<string>();
 const COMPOSER_MIN_HEIGHT = 40;
 const COMPOSER_MAX_HEIGHT = 120;
-const FOREGROUND_RECONNECT_SETTLE_MS = 750;
+// Open on the tail of a long transcript instead of the full history, then
+// page older messages in as the reader scrolls up.
+const INITIAL_MESSAGE_WINDOW = 30;
+const OLDER_MESSAGES_PAGE_SIZE = 30;
+// This deliberately remains the sole color seam for the human merge decision.
+// If the product ever approves a non-monochrome exception, change only this value.
+const MERGE_APPROVAL_ACCENT = groknight.accent;
 
 function CornerActivity({ message, active }: { message: ChatDisplayMessage; active: boolean }) {
   const activity = message.activity?.length
     ? message.activity
     : [{ kind: 'output' as const, title: 'Output', text: message.text }];
+  const turn = useMemo(() => buildTurnActivity(activity), [activity]);
   return (
     <View style={styles.activityGroup} testID="corner-activity">
+      {turn.updates.map((update, index) => (
+        <View key={`${message.id}-update-${index}`} style={styles.activityUpdate}>
+          <Text style={styles.activityUpdateLabel}>UPDATE</Text>
+          <MonoMarkdown markdown={update} tone="output" />
+        </View>
+      ))}
       <ActivityTimeline active={active} items={activity} testID="corner-activity-timeline" />
     </View>
+  );
+}
+
+function AgentPresenceLight({
+  online,
+  testID,
+}: {
+  online: boolean;
+  testID?: string;
+}) {
+  return (
+    <View
+      accessibilityLabel={online ? 'Agent online' : 'Agent offline'}
+      accessibilityRole="image"
+      style={[styles.agentPresenceLight, online ? styles.agentPresenceOnline : styles.agentPresenceOffline]}
+      testID={testID}
+    />
   );
 }
 
@@ -227,11 +272,16 @@ export default function BuzzChat() {
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList<ChatDisplayMessage>>(null);
   const composerRef = useRef<TextInput>(null);
-  const followsLatestMessageRef = useRef(true);
-  const hasPositionedInitialMessagesRef = useRef(false);
-  const keyboardFollowPendingRef = useRef(false);
-  const previousKeyboardHeightRef = useRef(0);
-  const keyboardHeight = useKeyboardState((state) => (state.isVisible ? state.height : 0));
+  // React state can lag the final Android native text event when the user
+  // immediately taps send. Keep the authoritative in-flight draft beside the
+  // native TextInput so an @mention never drops trailing text.
+  const inputTextRef = useRef('');
+  // The picker knows the exact agent key, whereas text-only lookup is a
+  // fallback for manually typed mentions. Keep that identity through trailing
+  // typing so an async roster refresh cannot turn a selected agent into an
+  // unaddressed plain Room message.
+  const selectedAgentMentionsRef = useRef(new Map<string, string>());
+  const sendInFlightRef = useRef(false);
 
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
   const [inputText, setInputText] = useState('');
@@ -242,6 +292,7 @@ export default function BuzzChat() {
   const [dismissedMentionKey, setDismissedMentionKey] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [pendingAttachment, setPendingAttachment] = useState<PickedChatAttachment | null>(null);
+  const [offlineQueuedIds, setOfflineQueuedIds] = useState<Set<string>>(new Set());
   const [isArchived, setIsArchived] = useState(initialChannelCache?.archived ?? false);
   const [userPubkey, setUserPubkey] = useState<string>('');
   const [mergeTarget, setMergeTarget] = useState<MergeTarget | null>(
@@ -250,9 +301,16 @@ export default function BuzzChat() {
   const [approvalState, setApprovalState] = useState<'none' | 'sending' | 'sent' | 'merged'>(
     'none',
   );
+  const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [reviewFileCount, setReviewFileCount] = useState<number | null>(null);
   const [parentChannelId, setParentChannelId] = useState<string | undefined>(
     initialChannelCache?.parentChannelId,
   );
+  // The corner view's own status badge, sourced from the exact same
+  // canonical CornerStatus (via listSubchannelLifecycle) that the Room-list
+  // dropdown and the standalone Corners list already read, so all three
+  // surfaces show identical primary status words for this corner.
+  const [cornerLifecycleStatus, setCornerLifecycleStatus] = useState<CornerStatus | null>(null);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(
     initialChannelCache?.communityId ?? null,
@@ -278,9 +336,9 @@ export default function BuzzChat() {
   const [composerFocused, setComposerFocused] = useState(false);
   const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
   const [agentPresences, setAgentPresences] = useState<Record<string, RoomAgentPresence>>({});
+  const [presenceResolved, setPresenceResolved] = useState(false);
   const [presenceReconnectGrace, setPresenceReconnectGrace] = useState<Record<string, number>>({});
   const [presenceNow, setPresenceNow] = useState(Date.now());
-  const [offlineQueuedIds, setOfflineQueuedIds] = useState<Set<string>>(new Set());
   const agentPresencesRef = useRef(agentPresences);
   const presenceReconnectGraceRef = useRef(presenceReconnectGrace);
   agentPresencesRef.current = agentPresences;
@@ -290,7 +348,59 @@ export default function BuzzChat() {
   const channelCache = useBuzzLocalCache((state) =>
     cacheViewerPubkey ? state.channels[channelCacheKey(cacheViewerPubkey, decodedId)] : undefined,
   );
-  const messages = channelCache?.messages ?? [];
+  // Seeded synchronously from the local cache so history is on screen on
+  // first paint, before the async identity load resolves the live channelCache.
+  const cachedMessages = channelCache?.messages ?? initialChannelCache?.messages ?? [];
+  // Older pages loaded on demand via "scroll up" pagination. Kept out of the
+  // shared cache (which bounds to the recent tail) and merged in only here.
+  const [olderMessages, setOlderMessages] = useState<ChatDisplayMessage[]>([]);
+  const [visibleMessageCount, setVisibleMessageCount] = useState(INITIAL_MESSAGE_WINDOW);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const hasMoreHistoryRef = useRef(true);
+  const combinedMessages = useMemo(
+    () => upsertChatMessages(olderMessages, cachedMessages),
+    [olderMessages, cachedMessages],
+  );
+  // Open on the tail; older history reveals from what's already resident here
+  // first, then pages in from the relay once that's exhausted.
+  const messages = useMemo(
+    () => combinedMessages.slice(-visibleMessageCount),
+    [combinedMessages, visibleMessageCount],
+  );
+
+  const loadOlderTranscriptMessages = useCallback(() => {
+    if (loadingOlderMessages) return;
+    if (visibleMessageCount < combinedMessages.length) {
+      setVisibleMessageCount((count) => Math.min(combinedMessages.length, count + OLDER_MESSAGES_PAGE_SIZE));
+      return;
+    }
+    const oldest = combinedMessages[0];
+    if (!hasMoreHistoryRef.current || !transport || !oldest) return;
+    setLoadingOlderMessages(true);
+    void loadOlderMessages(
+      transport,
+      cacheViewerPubkey,
+      decodedId,
+      oldest.timestamp,
+      OLDER_MESSAGES_PAGE_SIZE,
+    )
+      .then((older) => {
+        const fresh = older.filter((message) => message.id !== oldest.id);
+        if (fresh.length < OLDER_MESSAGES_PAGE_SIZE - 1) hasMoreHistoryRef.current = false;
+        if (fresh.length === 0) return;
+        setOlderMessages((current) => upsertChatMessages(current, fresh));
+        setVisibleMessageCount((count) => count + fresh.length);
+      })
+      .catch((err) => console.warn('Failed to load older messages:', err))
+      .finally(() => setLoadingOlderMessages(false));
+  }, [
+    cacheViewerPubkey,
+    combinedMessages,
+    decodedId,
+    loadingOlderMessages,
+    transport,
+    visibleMessageCount,
+  ]);
   const availableAgents = channelCache?.availableAgents ?? [];
   const availablePeople = channelCache?.availablePeople ?? [];
   const roomMembers = channelCache?.roomMembers ?? [];
@@ -379,17 +489,13 @@ export default function BuzzChat() {
       presenceReconnectGrace[agent.pubkey],
     ),
   ).length;
-  const hasRoomAgent = roomAgents.length > 0;
-  const agentsOffline = hasRoomAgent && onlineAgentCount === 0;
-  const presenceSummary = hasRoomAgent
-    ? agentsOffline
-      ? roomAgents.length === 1
-        ? 'AGENT OFFLINE'
-        : 'AGENTS OFFLINE'
-      : roomAgents.length === 1
-        ? 'AGENT READY'
-        : `${onlineAgentCount}/${roomAgents.length} AGENTS ONLINE`
-    : undefined;
+  const knownAgentPresenceCount = roomAgents.filter((agent) => agentPresences[agent.pubkey]).length;
+  const agentsOffline = isAgentOfflineAfterPresenceResolved(
+    presenceResolved,
+    roomAgents.length,
+    knownAgentPresenceCount,
+    onlineAgentCount,
+  );
   const roomMemberByPubkey = useMemo(
     () => new Map(roomMembers.map((member) => [member.pubkey, member])),
     [roomMembers],
@@ -400,7 +506,11 @@ export default function BuzzChat() {
     () =>
       roomParticipants
         .filter((participant) => participant.kind === 'agent')
-        .map((participant) => ({ pubkey: participant.pubkey, name: participant.name })),
+        .map((participant) => ({
+          pubkey: participant.pubkey,
+          name: participant.name,
+          handle: participant.handle,
+        })),
     [roomParticipants],
   );
   const activeMention = useMemo(
@@ -428,10 +538,28 @@ export default function BuzzChat() {
   );
   const isCorner = Boolean(parentChannelId);
   const isDirectMessage = Boolean(directMessage);
+  const sessionState = isCorner ? cornerSessionState(messages) : 'idle';
+  const cornerAgentPubkey = useMemo(
+    () =>
+      [...messages]
+        .reverse()
+        .find((message) => message.agentTurn)?.agentTurn?.agentPubkey ??
+      [...messages]
+        .reverse()
+        .find((message) => message.pubkey && agentByPubkey.has(message.pubkey))?.pubkey,
+    [agentByPubkey, messages],
+  );
+  const turnSummary = isCorner ? latestCornerTurnSummary(messages, cornerAgentPubkey) : undefined;
+  const cornerAgentDisplay = cornerAgentPubkey
+    ? resolveAgentDisplayIdentity(cornerAgentPubkey, agentByPubkey.get(cornerAgentPubkey))
+    : undefined;
   const visibleMessages = useMemo(
     () => transcriptMessages(messages, isCorner),
     [isCorner, messages],
   );
+  // Newest-first for the inverted FlatList; chronological visibleMessages
+  // above stays the source of truth for everything else that reads order.
+  const invertedMessages = useMemo(() => [...visibleMessages].reverse(), [visibleMessages]);
   const visibleMessageById = useMemo(
     () => new Map(visibleMessages.map((message) => [message.id, message])),
     [visibleMessages],
@@ -447,16 +575,42 @@ export default function BuzzChat() {
       ),
     [messages],
   );
-  const activeCorner = useMemo(
+  // "Most recent active corner" is resolved once, from the same signal used
+  // to pick which corner a tap on the ambient status strip opens, so the
+  // status text and the destination it navigates to can never disagree.
+  const mostRecentActiveCornerId = useMemo(
     () =>
-      [...messages]
-        .reverse()
-        .find(
-          (message) =>
-            message.corner?.status === 'starting' || message.corner?.status === 'working',
+      selectMostRecentActiveCornerId(
+        messages.flatMap((message) =>
+          message.corner
+            ? [
+                {
+                  subchannelId: message.corner.subchannelId,
+                  status: message.corner.status,
+                  timestamp: message.timestamp,
+                },
+              ]
+            : [],
         ),
+      ),
     [messages],
   );
+  const activeCorner = useMemo(
+    () =>
+      mostRecentActiveCornerId
+        ? [...messages]
+            .reverse()
+            .find((message) => message.corner?.subchannelId === mostRecentActiveCornerId)
+        : undefined,
+    [messages, mostRecentActiveCornerId],
+  );
+  // Only route the ambient status strip when the resolved id is genuinely
+  // the active corner — never send a tap to a stale/unrelated corner that
+  // merely happens to be the most recent one on record.
+  const tappableCornerId =
+    activeCorner?.corner && isCornerActive(activeCorner.corner.status)
+      ? mostRecentActiveCornerId
+      : undefined;
   const activeAgentTurn = useMemo(
     () =>
       [...messages]
@@ -474,15 +628,34 @@ export default function BuzzChat() {
     [agentPresences, messages, presenceNow, presenceReconnectGrace],
   );
   const activeActivityId = useMemo(() => {
-    if (!activeAgentTurn) return undefined;
+    if (isCorner ? sessionState !== 'working' : !activeAgentTurn) return undefined;
     const latest = visibleMessages.at(-1);
     return isCorner && !isArchived && latest?.isAgentActivity ? latest.id : undefined;
-  }, [activeAgentTurn, isArchived, isCorner, visibleMessages]);
+  }, [activeAgentTurn, isArchived, isCorner, sessionState, visibleMessages]);
+  const workingAgentTurn =
+    activeAgentTurn?.agentTurn?.status === 'working' ? activeAgentTurn.agentTurn : undefined;
 
   useEffect(() => {
-    const timer = setInterval(() => setPresenceNow(Date.now()), 5_000);
-    return () => clearInterval(timer);
-  }, []);
+    setReviewFileCount(null);
+    setApprovalError(null);
+  }, [mergeTarget?.tip]);
+
+  useEffect(() => {
+    // Presence only changes at a lease/grace deadline. A five-second clock here
+    // recreated FlatList's renderItem (and every visible message) while someone
+    // was typing, which made the foreground intermittently unresponsive.
+    const now = Date.now();
+    const deadlines = [
+      ...Object.values(agentPresences).map((presence) =>
+        presence.observedAt + AGENT_PRESENCE_STALE_MS,
+      ),
+      ...Object.values(presenceReconnectGrace),
+    ].filter((deadline) => Number.isFinite(deadline) && deadline > now);
+    if (deadlines.length === 0) return;
+    const delay = Math.max(1, Math.min(...deadlines) - now + 1);
+    const timer = setTimeout(() => setPresenceNow(Date.now()), delay);
+    return () => clearTimeout(timer);
+  }, [agentPresences, presenceReconnectGrace]);
 
   const applyAgentPresence = useCallback((presence: RoomAgentPresence | undefined) => {
     if (!presence) return;
@@ -500,55 +673,6 @@ export default function BuzzChat() {
     });
     setPresenceNow(Date.now());
   }, []);
-
-  const scrollToLatestMessage = useCallback((animated: boolean) => {
-    requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated }));
-  }, []);
-
-  const handleMessageListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    if (keyboardFollowPendingRef.current) return;
-    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    followsLatestMessageRef.current = isNearChatBottom({
-      contentHeight: contentSize.height,
-      viewportHeight: layoutMeasurement.height,
-      offsetY: contentOffset.y,
-    });
-  }, []);
-
-  const handleMessageListContentSizeChange = useCallback(() => {
-    if (!hasPositionedInitialMessagesRef.current) {
-      hasPositionedInitialMessagesRef.current = true;
-      followsLatestMessageRef.current = true;
-      scrollToLatestMessage(false);
-      return;
-    }
-    if (followsLatestMessageRef.current || keyboardFollowPendingRef.current) {
-      scrollToLatestMessage(true);
-    }
-  }, [scrollToLatestMessage]);
-
-  useLayoutEffect(() => {
-    const keyboardIsOpening = keyboardHeight > 0 && previousKeyboardHeightRef.current <= 0;
-    previousKeyboardHeightRef.current = keyboardHeight;
-    if (!keyboardIsOpening) return;
-
-    keyboardFollowPendingRef.current = followsLatestMessageRef.current;
-    if (!keyboardFollowPendingRef.current) return;
-
-    scrollToLatestMessage(false);
-    const settleTimer = setTimeout(() => {
-      scrollToLatestMessage(false);
-      requestAnimationFrame(() => {
-        keyboardFollowPendingRef.current = false;
-      });
-    }, 350);
-
-    return () => clearTimeout(settleTimer);
-  }, [keyboardHeight, scrollToLatestMessage]);
-
-  useLayoutEffect(() => {
-    if (followsLatestMessageRef.current) scrollToLatestMessage(false);
-  }, [composerHeight, scrollToLatestMessage]);
 
   useEffect(() => {
     setHighlightedMentionIndex(0);
@@ -575,13 +699,14 @@ export default function BuzzChat() {
     let unsubscribe: (() => void) | undefined;
     let unsubscribePresence: (() => void) | undefined;
     let appStateSubscription: ReturnType<typeof AppState.addEventListener> | undefined;
-    let foregroundReconnectGeneration = 0;
-    hasPositionedInitialMessagesRef.current = false;
-    followsLatestMessageRef.current = true;
     agentPresencesRef.current = {};
     presenceReconnectGraceRef.current = {};
     setAgentPresences({});
     setPresenceReconnectGrace({});
+    setPresenceResolved(false);
+    hasMoreHistoryRef.current = true;
+    setOlderMessages([]);
+    setVisibleMessageCount(INITIAL_MESSAGE_WINDOW);
 
     (async () => {
       try {
@@ -598,15 +723,36 @@ export default function BuzzChat() {
         setUserPubkey(identity.publicKey);
 
         const client = await t.ensureClient();
+        // A corner's live agent-activity stream can deliver one raw event per
+        // streamed token. Reprojecting + re-sorting the cache on every single
+        // one saturates the JS thread and reads as a UI freeze during a send
+        // or while the agent is actively working. Coalesce whatever arrives
+        // within one animation frame into a single cache write instead.
+        let pendingLiveEvents: Parameters<typeof cacheLiveSessionEvent>[2][] = [];
+        let liveFlushScheduled = false;
+        const flushLiveEvents = () => {
+          liveFlushScheduled = false;
+          if (cancelled || pendingLiveEvents.length === 0) return;
+          const batch = pendingLiveEvents;
+          pendingLiveEvents = [];
+          const projections = cacheLiveSessionEvents(identity.publicKey, decodedId, batch);
+          for (const projected of projections) {
+            if (projected.mergeTarget) setMergeTarget(projected.mergeTarget);
+            if (projected.clearMergeTarget) setMergeTarget(null);
+            if (projected.archiveChannel) {
+              setIsArchived(true);
+              setApprovalState('merged');
+            }
+            applyAgentPresence(projected.agentPresence);
+          }
+        };
         const handleLiveMessage = (event: Parameters<typeof cacheLiveSessionEvent>[2]) => {
           if (cancelled) return;
-          const projected = cacheLiveSessionEvent(identity.publicKey, decodedId, event);
-          if (projected.mergeTarget) setMergeTarget(projected.mergeTarget);
-          if (projected.archiveChannel) {
-            setIsArchived(true);
-            setApprovalState('merged');
+          pendingLiveEvents.push(event);
+          if (!liveFlushScheduled) {
+            liveFlushScheduled = true;
+            requestAnimationFrame(flushLiveEvents);
           }
-          applyAgentPresence(projected.agentPresence);
         };
         const installLiveMessages = async () => {
           const previousSubscription = unsubscribe;
@@ -656,6 +802,14 @@ export default function BuzzChat() {
           client.getDirectMessage(decodedId),
           client.getChannelRole(decodedId),
         ]);
+        // A freshly invited member can receive a successful but empty first
+        // relay snapshot while the direct-membership projection converges.
+        // Keep the live subscription installed and take one short retry so an
+        // opened Room cannot remain a permanently empty transcript.
+        if ((messageSync.entry.messages?.length ?? 0) === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 750));
+          await revalidateCachedMessages(t, identity.publicKey, decodedId);
+        }
         // Corners inherit their Workspace from the parent Room. Their create event
         // predates the redundant community tag, so resolve through the parent when
         // needed before loading cosmetic agent overlays.
@@ -705,9 +859,10 @@ export default function BuzzChat() {
           const initialPresences = presenceMapFromSessionEvents(presenceEvents);
           agentPresencesRef.current = initialPresences;
           setAgentPresences(initialPresences);
+          setPresenceResolved(true);
           setPresenceNow(Date.now());
           if (parentId) setParentChannelId(parentId);
-          if (messageSync.mergeTarget) setMergeTarget(messageSync.mergeTarget);
+          if (messageSync.mergeTarget !== undefined) setMergeTarget(messageSync.mergeTarget);
           if (messageSync.archiveChannel) setIsArchived(true);
           useBuzzLocalCache.getState().patchChannel(identity.publicKey, decodedId, {
             roomMembers,
@@ -733,7 +888,6 @@ export default function BuzzChat() {
 
           if (nextAppState !== 'active') {
             if (previousAppState === 'active') {
-              foregroundReconnectGeneration += 1;
               const now = Date.now();
               onlineBeforeBackground = new Set(
                 Object.entries(agentPresencesRef.current)
@@ -756,7 +910,6 @@ export default function BuzzChat() {
           }
           if (previousAppState === 'active' || cancelled) return;
 
-          const reconnectGeneration = ++foregroundReconnectGeneration;
           const now = Date.now();
           const graceUntil = now + AGENT_PRESENCE_STALE_MS;
           const foregroundGrace = Object.fromEntries(
@@ -766,55 +919,25 @@ export default function BuzzChat() {
           setPresenceReconnectGrace(foregroundGrace);
           setPresenceNow(now);
 
-          void (async () => {
-            // Android can report AppState=active just before its network path
-            // has thawed. A socket opened in that sliver can authenticate and
-            // then die without a subscription error, so let the path settle
-            // while last-known-online grace keeps the header honest.
-            await new Promise((resolve) => setTimeout(resolve, FOREGROUND_RECONNECT_SETTLE_MS));
-            if (
-              cancelled ||
-              reconnectGeneration !== foregroundReconnectGeneration ||
-              AppState.currentState !== 'active'
-            ) {
-              return;
-            }
-            // React Native can leave a backgrounded socket looking OPEN even
-            // after the network path has died. Force one clean authenticated
-            // connection before reinstalling both Room subscriptions.
-            t.disconnect();
-            await installLiveMessages();
-            if (cancelled || reconnectGeneration !== foregroundReconnectGeneration) return;
-            void revalidateCachedMessages(t, identity.publicKey, decodedId).catch((error) => {
-              console.warn(`Failed to refresh messages after foregrounding ${decodedId}:`, error);
-            });
-            try {
-              const refreshedPresence = await reconnectPresenceAfterForeground(
-                installLivePresence,
-                () => t.agentPresenceBackfill(presenceChannelId),
-              );
-              if (cancelled || reconnectGeneration !== foregroundReconnectGeneration) return;
-              setAgentPresences((current) => {
-                const next = Object.values(refreshedPresence).reduce(mergeAgentPresence, current);
-                agentPresencesRef.current = next;
-                return next;
-              });
-              setPresenceNow(Date.now());
-            } catch (error) {
-              console.warn(
-                `Failed to refresh agent presence after foregrounding ${presenceChannelId}:`,
-                error,
-              );
-            }
-          })();
+          // RelayWs owns reconnect and the session subscription resumes from
+          // its last-seen cursor. Do not duplicate that work in the AppState
+          // callback: disconnecting, backfilling, and cache projection here
+          // previously starved the resumed composer.
         });
 
-        const [communityAgents, communityMembers, archived, mergeInfo] = await Promise.all([
-          channelCommunityId ? client.listAgents(channelCommunityId) : Promise.resolve([]),
-          channelCommunityId ? client.communityMembers(channelCommunityId) : Promise.resolve([]),
-          t.isChannelArchived(decodedId),
-          parentId ? t.getSubchannelMergeTarget(decodedId) : Promise.resolve(null),
-        ]);
+        const [communityAgents, communityMembers, archived, mergeInfo, siblingCorners] =
+          await Promise.all([
+            channelCommunityId ? client.listAgents(channelCommunityId) : Promise.resolve([]),
+            channelCommunityId ? client.communityMembers(channelCommunityId) : Promise.resolve([]),
+            t.isChannelArchived(decodedId),
+            parentId ? t.getSubchannelMergeTarget(decodedId) : Promise.resolve(null),
+            parentId ? t.listSubchannelLifecycle(parentId) : Promise.resolve([]),
+          ]);
+        if (!cancelled) {
+          setCornerLifecycleStatus(
+            siblingCorners.find((corner) => corner.id === decodedId)?.status ?? null,
+          );
+        }
         const agentPubkeys = new Set(communityAgents.map((agent) => agent.pubkey));
         const humanMembers = communityMembers.filter((member) => !agentPubkeys.has(member.pubkey));
         const humanProfiles = channelCommunityId
@@ -864,7 +987,6 @@ export default function BuzzChat() {
 
     return () => {
       cancelled = true;
-      foregroundReconnectGeneration += 1;
       appStateSubscription?.remove();
       if (unsubscribe) unsubscribe();
       if (unsubscribePresence) unsubscribePresence();
@@ -912,18 +1034,21 @@ export default function BuzzChat() {
   );
 
   const handleSend = useCallback(async () => {
-    const body = inputText.trim();
-    if ((!body && !pendingAttachment) || !transport || isArchived) return;
-    const text = replyTarget ? replyMessageText(body, replyTarget) : body;
+    const rawText = inputTextRef.current.trim();
+    // State updates are committed asynchronously. A ref closes the short
+    // double-tap window before `sending` can disable the native control.
+    if (sendInFlightRef.current || (!rawText && !pendingAttachment) || !transport || isArchived) return;
+    const text = replyTarget ? replyMessageText(rawText, replyTarget) : rawText;
 
+    sendInFlightRef.current = true;
     setSending(true);
-    followsLatestMessageRef.current = true;
     const sentWhileOffline = agentsOffline;
 
     try {
       const attachments = pendingAttachment
         ? [await uploadChatAttachment(await transport.ensureClient(), pendingAttachment)]
         : [];
+      inputTextRef.current = '';
       setInputText('');
       setComposerHeight(COMPOSER_MIN_HEIGHT);
       setInputSelection({ start: 0, end: 0 });
@@ -944,11 +1069,27 @@ export default function BuzzChat() {
           ...(attachments.length ? { attachments } : {}),
         },
       ]);
+      // `@noble/curves` signs the Nostr event synchronously. Give React Native
+      // one native frame to commit the cleared composer and optimistic row
+      // before that CPU work begins; the network publish itself remains async.
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const normalizedText = text.normalize('NFKC').toLocaleLowerCase();
+      const selectedMentionedAgent = [...selectedAgentMentionsRef.current.entries()]
+        .sort(([left], [right]) => right.length - left.length)
+        .find(([handle]) => {
+          const mention = `@${handle.normalize('NFKC').toLocaleLowerCase()}`;
+          const offset = normalizedText.indexOf(mention);
+          if (offset < 0) return false;
+          const trailing = normalizedText[offset + mention.length];
+          return trailing === undefined || /[\s,.:;!?)}\]]/.test(trailing);
+        })?.[1];
       const mentionedAgent = replyTarget?.isAgent
         ? replyTarget.authorPubkey
         : parentChannelId
           ? undefined
-          : mentionedAgentPubkey(text, mentionableAgents);
+          : (selectedMentionedAgent ?? mentionedAgentPubkey(text, mentionableAgents));
+      // Build and sign exactly once. publishPreparedMessage retries the same
+      // id on a transient failure, so the relay can dedupe an ambiguous send.
       const eventId = replyTarget
         ? await transport.messageSubmitReply(
             decodedId,
@@ -957,18 +1098,10 @@ export default function BuzzChat() {
             mentionedAgent,
             attachments,
           )
-        : mentionedAgent
-          ? await transport.messageSubmitMentioningAgent(
-              decodedId,
-              text,
-              mentionedAgent,
-              attachments,
-            )
-          : await transport.messageSubmitWithEventId({
-              sessionId: decodedId,
-              text,
-              attachments,
-            });
+        : await transport.messageSubmitWithEventId(
+            { sessionId: decodedId, text, attachments },
+            mentionedAgent ? { mentionAgent: mentionedAgent } : undefined,
+          );
       useBuzzLocalCache
         .getState()
         .updateMessages(cacheViewerPubkey, decodedId, (current) =>
@@ -986,10 +1119,10 @@ export default function BuzzChat() {
       console.warn('Send failed:', err);
       Alert.alert('Attachment not sent', err instanceof Error ? err.message : String(err));
     } finally {
+      sendInFlightRef.current = false;
       setSending(false);
     }
   }, [
-    inputText,
     pendingAttachment,
     transport,
     decodedId,
@@ -998,9 +1131,9 @@ export default function BuzzChat() {
     userPubkey,
     parentChannelId,
     mentionableAgents,
-    agentsOffline,
     cacheViewerPubkey,
     replyTarget,
+    agentsOffline,
   ]);
 
   const pickPhoto = useCallback(async () => {
@@ -1056,21 +1189,34 @@ export default function BuzzChat() {
   const selectMention = useCallback(
     (participant: RoomMemberOption) => {
       if (!activeMention) return;
-      const inserted = replaceActiveMention(inputText, activeMention, participant.handle);
+      const inserted = replaceActiveMention(inputTextRef.current, activeMention, participant.handle);
+      if (participant.kind === 'agent') {
+        selectedAgentMentionsRef.current.set(participant.handle, participant.pubkey);
+      }
       const nextSelection = { start: inserted.cursor, end: inserted.cursor };
       const completedMention = activeMentionAtCursor(inserted.text, inserted.cursor);
+      inputTextRef.current = inserted.text;
       setInputText(inserted.text);
-      setInputSelection(nextSelection);
+      setInputSelection((current) =>
+        current.start === nextSelection.start && current.end === nextSelection.end
+          ? current
+          : nextSelection,
+      );
       setDismissedMentionKey(
         completedMention
           ? `${inserted.text}:${completedMention.start}:${completedMention.end}`
           : null,
       );
       setHighlightedMentionIndex(0);
-      requestAnimationFrame(() => composerRef.current?.focus());
+      requestAnimationFrame(() => {
+        composerRef.current?.focus();
+        // Normal Android typing owns its cursor. Set selection only for this
+        // explicit replacement, after React has applied the new text.
+        composerRef.current?.setNativeProps({ selection: nextSelection });
+      });
       void Haptics.selectionAsync();
     },
-    [activeMention, inputText],
+    [activeMention],
   );
 
   const handleWritePermission = useCallback(
@@ -1334,29 +1480,38 @@ export default function BuzzChat() {
     [activeCommunityId, transport, userPubkey],
   );
 
-  const handleCancel = useCallback(async () => {
+  const handleCloseCorner = useCallback(async () => {
     if (!transport) return;
     try {
-      await transport.runAbort(decodedId);
+      await transport.closeCorner(decodedId);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      router.back();
     } catch (err) {
-      console.warn('Cancel failed:', err);
+      console.warn('Close corner failed:', err);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Modal.alert('Could not close corner', err instanceof Error ? err.message : String(err));
     }
   }, [decodedId, transport]);
 
   const handleApprove = useCallback(async () => {
     if (!transport || !mergeTarget) return;
     setApprovalState('sending');
+    setApprovalError(null);
     try {
       const result = await transport.submitMergeApproval(decodedId, mergeTarget);
-      if (result.success) {
-        setApprovalState('sent');
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
+      if (!result.success) throw new Error(result.message ?? 'Approval was not accepted by the relay');
+      setApprovalState('sent');
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
       console.warn('Approval failed:', err);
+      setApprovalState('none');
+      setApprovalError(err instanceof Error ? err.message : String(err));
     }
   }, [transport, mergeTarget, decodedId]);
+
+  const handleReviewFilesLoaded = useCallback((files: readonly unknown[]) => {
+    setReviewFileCount(files.length);
+  }, []);
 
   const handleCommunitySelect = useCallback((communityId: string | null) => {
     if (!communityId) return;
@@ -1364,6 +1519,10 @@ export default function BuzzChat() {
       pathname: '/buzz/channels',
       params: { communityId },
     });
+  }, []);
+
+  const openCorner = useCallback((subchannelId: string) => {
+    router.push(`/buzz/chat/${encodeURIComponent(subchannelId)}` as Href);
   }, []);
 
   const renderItem = useCallback(
@@ -1379,9 +1538,7 @@ export default function BuzzChat() {
             <WritePermissionOutcome
               status={permission.status}
               subchannelId={permission.subchannelId}
-              onOpenCorner={(subchannelId) =>
-                router.push(`/buzz/chat/${encodeURIComponent(subchannelId)}` as Href)
-              }
+              onOpenCorner={openCorner}
             />
           );
         }
@@ -1405,8 +1562,8 @@ export default function BuzzChat() {
                     ? `${display.name} requests a new edit corner`
                     : `${display.name} needs to change repository files`}
                 </Text>
-                <Text style={styles.writePermissionTool} numberOfLines={2}>
-                  WRITE REQUEST · {permission.tool}
+                <Text style={styles.writePermissionIntent} numberOfLines={2}>
+                  {describeWriteRequest(permission.tool)}
                 </Text>
               </View>
             </View>
@@ -1421,7 +1578,9 @@ export default function BuzzChat() {
                 : 'This write request is missing its repository target and cannot be allowed.'}
             </Text>
             {permission.status === 'failed' && (
-              <Text style={styles.writePermissionFailure}>{item.text}</Text>
+              <Text style={styles.writePermissionFailure}>
+                The requested edit could not start. This Room remains read-only.
+              </Text>
             )}
             {pending && !viewerIsAgent && permission.repository ? (
               <View style={styles.writePermissionActions}>
@@ -1446,9 +1605,7 @@ export default function BuzzChat() {
                 status={permission.status}
                 subchannelId={permission.subchannelId}
                 awaitingPerson={viewerIsAgent && pending}
-                onOpenCorner={(subchannelId) =>
-                  router.push(`/buzz/chat/${encodeURIComponent(subchannelId)}` as Href)
-                }
+                onOpenCorner={openCorner}
               />
             )}
           </HullSurface>
@@ -1457,35 +1614,46 @@ export default function BuzzChat() {
 
       if (item.corner) {
         if (openedCornerIds.has(item.corner.subchannelId)) return null;
-        const cornerAgent = item.corner.agentPubkey
-          ? agentByPubkey.get(item.corner.agentPubkey)
+        // Prefer whichever pubkey is actually a registered agent: the
+        // declared `agent` tag, or (if that misses) the event's own signer —
+        // the same source the per-message transcript below resolves by, so
+        // the card can never show a different identity than the view.
+        const resolvedAgentPubkey = resolveCornerCardAgentPubkey(
+          item.corner.agentPubkey,
+          item.pubkey,
+          (pubkey) => agentByPubkey.has(pubkey),
+        );
+        const cornerAgent = resolvedAgentPubkey ? agentByPubkey.get(resolvedAgentPubkey) : undefined;
+        const display = resolvedAgentPubkey
+          ? resolveAgentDisplayIdentity(resolvedAgentPubkey, cornerAgent)
           : undefined;
-        const display = item.corner.agentPubkey
-          ? resolveAgentDisplayIdentity(item.corner.agentPubkey, cornerAgent)
-          : undefined;
-        const cornerOnline = item.corner.agentPubkey
+        const cornerOnline = resolvedAgentPubkey
           ? isAgentPresenceOnlineWithReconnectGrace(
-              agentPresences[item.corner.agentPubkey],
+              agentPresences[resolvedAgentPubkey],
               presenceNow,
-              presenceReconnectGrace[item.corner.agentPubkey],
+              presenceReconnectGrace[resolvedAgentPubkey],
             )
           : false;
-        const statusLabel =
-          item.corner.status !== 'failed' && !cornerOnline
-            ? 'OFFLINE'
-            : item.corner.status.replace('-', ' ').toUpperCase();
+        // The status WORD is always the corner lifecycle — identical to the
+        // Room-list dropdown and the Corners list, since all three read
+        // `cornerStatusPresentation` over the same canonical CornerStatus.
+        // Presence is a separate dot; it never replaces the lifecycle word.
+        const presentation = cornerStatusPresentation(item.corner.status);
+        const showsPresenceDot = Boolean(resolvedAgentPubkey) && isCornerActive(item.corner.status);
         return (
           <TouchableOpacity
-            accessibilityLabel={`${display?.name ?? 'Agent'} work ${statusLabel.toLowerCase()}. View corner`}
+            accessibilityLabel={`${display?.name ?? 'Agent'} corner ${presentation.label.toLowerCase()}${
+              showsPresenceDot ? (cornerOnline ? ', agent online' : ', agent offline') : ''
+            }. View corner`}
             onPress={() =>
               router.push(`/buzz/chat/${encodeURIComponent(item.corner!.subchannelId)}` as Href)
             }
             style={styles.cornerStatusCard}
-            testID={`corner-status-${statusLabel.toLowerCase().replace(' ', '-')}`}
+            testID={`corner-status-${item.corner.status}`}
           >
-            {item.corner.agentPubkey && (
+            {resolvedAgentPubkey && (
               <AgentAvatar
-                pubkey={item.corner.agentPubkey}
+                pubkey={resolvedAgentPubkey}
                 avatarSeed={display?.avatarSeed}
                 avatarUrl={display?.avatarUrl}
                 name={display?.name ?? 'Agent'}
@@ -1494,7 +1662,22 @@ export default function BuzzChat() {
             )}
             <View style={styles.cornerStatusCopy}>
               <Text style={styles.cornerStatusAgent}>{display?.name ?? 'Agent'}</Text>
-              <Text style={styles.cornerStatusLabel}>{statusLabel}</Text>
+              <View style={styles.cornerStatusRow}>
+                <Text style={styles.cornerStatusLabel}>
+                  {presentation.glyph} {presentation.label}
+                </Text>
+                {showsPresenceDot && (
+                  <Text
+                    style={[
+                      styles.cornerPresenceDot,
+                      cornerOnline ? styles.cornerPresenceOnline : styles.cornerPresenceOffline,
+                    ]}
+                    testID={`corner-presence-${cornerOnline ? 'online' : 'offline'}`}
+                  >
+                    {cornerOnline ? '●' : '○'}
+                  </Text>
+                )}
+              </View>
             </View>
             <View style={styles.openCornerAction}>
               <Text style={styles.openCornerText}>VIEW {CORNER_LABEL.toUpperCase()}</Text>
@@ -1544,6 +1727,15 @@ export default function BuzzChat() {
       const display = isAgent
         ? resolveAgentDisplayIdentity(item.pubkey ?? 'unknown-agent', knownAgent)
         : null;
+      const agentOnline = Boolean(
+        knownAgent &&
+          item.pubkey &&
+          isAgentPresenceOnlineWithReconnectGrace(
+            agentPresences[item.pubkey],
+            presenceNow,
+            presenceReconnectGrace[item.pubkey],
+          ),
+      );
       const personName = item.pubkey ? personProfileByPubkey.get(item.pubkey)?.name : undefined;
       const referencedMessage = item.replyToId ? visibleMessageById.get(item.replyToId) : undefined;
       const referencedTarget = referencedMessage
@@ -1564,11 +1756,17 @@ export default function BuzzChat() {
         return (
           <SwipeToReply messageId={item.id} onReply={() => beginReply(item)}>
             <NewMessageMaterialize enabled={Boolean(item.isNew)}>
-              <View style={[styles.terminalTurn, isAgent && styles.terminalAgentTurn]}>
+              <View
+                style={[
+                  styles.terminalTurn,
+                  isOwn && !isAgent && styles.terminalTurnUser,
+                  isAgent && styles.terminalAgentTurn,
+                ]}
+              >
                 <View style={styles.terminalTurnHeading}>
                   <Text style={styles.terminalTurnGlyph}>{isOwn || isAgent ? '›' : '·'}</Text>
                   <Text style={styles.terminalTurnLabel}>
-                    {isOwn ? 'USER' : isAgent ? 'FINAL' : 'MESSAGE'}
+                    {isOwn ? 'YOU' : isAgent ? 'TURN SUMMARY' : 'MESSAGE'}
                   </Text>
                   {!isOwn && display && (
                     <Text numberOfLines={1} style={styles.terminalTurnAuthor}>
@@ -1590,9 +1788,11 @@ export default function BuzzChat() {
                       testID="corner-final-markdown"
                     />
                   ) : (
-                    <Text selectable style={styles.terminalTurnText}>
-                      {item.text}
-                    </Text>
+                    <MonoMarkdown
+                      markdown={item.text}
+                      textStyle={styles.terminalTurnText}
+                      testID="corner-own-markdown"
+                    />
                   )
                 ) : null}
                 {isOwn && offlineQueuedIds.has(item.id) && (
@@ -1610,7 +1810,10 @@ export default function BuzzChat() {
       return (
         <SwipeToReply messageId={item.id} onReply={() => beginReply(item)}>
           <NewMessageMaterialize enabled={Boolean(item.isNew)}>
-            <View style={[styles.roomMessageRow, isOwn && styles.roomMessageRowOwn]}>
+            <View
+              style={[styles.roomMessageRow, isOwn && styles.roomMessageRowOwn]}
+              testID={`chat-message-${item.id}`}
+            >
               <View style={[styles.messageBubble, isOwn ? styles.ownBubble : styles.otherBubble]}>
                 <View style={styles.authorRow}>
                   {display ? (
@@ -1629,6 +1832,12 @@ export default function BuzzChat() {
                       size={22}
                     />
                   ) : null}
+                  {knownAgent && item.pubkey ? (
+                    <AgentPresenceLight
+                      online={agentOnline}
+                      testID={`agent-presence-light-${item.pubkey}`}
+                    />
+                  ) : null}
                   <Text style={[styles.roleLabel, isAgent ? styles.roleAgent : styles.roleUser]}>
                     {isOwn
                       ? 'YOU'
@@ -1638,7 +1847,13 @@ export default function BuzzChat() {
                   </Text>
                 </View>
                 {replyReference}
-                {item.text ? <Text style={styles.messageText}>{item.text}</Text> : null}
+                {item.text ? (
+                  <MonoMarkdown
+                    markdown={item.text}
+                    textStyle={styles.messageText}
+                    testID={`chat-message-text-${item.id}`}
+                  />
+                ) : null}
                 {isOwn && offlineQueuedIds.has(item.id) && (
                   <Text style={styles.offlineDeliveryNote}>SENT TO ROOM · AGENT OFFLINE</Text>
                 )}
@@ -1665,7 +1880,6 @@ export default function BuzzChat() {
       agentPresences,
       presenceNow,
       presenceReconnectGrace,
-      offlineQueuedIds,
       openedCornerIds,
       beginReply,
       replyTargetForMessage,
@@ -1673,7 +1887,7 @@ export default function BuzzChat() {
     ],
   );
 
-  if (channelCache?.messages === undefined) {
+  if (channelCache?.messages === undefined && initialChannelCache?.messages === undefined) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <PixelLoader />
@@ -1734,10 +1948,19 @@ export default function BuzzChat() {
             <Text
               style={[styles.headerMeta, isCorner && styles.cornerHeaderMeta]}
               numberOfLines={1}
+              testID={isCorner ? 'corner-view-status' : undefined}
             >
-              {participantsHydrated
-                ? `${presenceSummary ? `${presenceSummary}  ·  ` : ''}${formatRoomParticipantTotal(roomParticipantTotal)}  ·  IN THIS ROOM  ›`
-                : 'LOADING MEMBERS'}
+              {isCorner && cornerLifecycleStatus
+                ? // Same canonical status word as the Room-list dropdown, the
+                  // Room chat card, and the standalone Corners list.
+                  `${cornerStatusPresentation(cornerLifecycleStatus).glyph} ${cornerStatusPresentation(cornerLifecycleStatus).label}  ·  ${
+                    participantsHydrated
+                      ? formatRoomParticipantTotal(roomParticipantTotal)
+                      : 'LOADING MEMBERS'
+                  }`
+                : participantsHydrated
+                  ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ·  IN THIS ROOM  ›`
+                  : 'LOADING MEMBERS'}
             </Text>
           </TouchableOpacity>
           {!parentChannelId && !isDirectMessage && !viewerIsAgent && !isArchived && (
@@ -1780,56 +2003,34 @@ export default function BuzzChat() {
           )}
         </HullSurface>
 
-        {/* The one human gate: collapsing a corner into the protected line. */}
-        {mergeTarget && !isArchived && (
-          <HullSurface strength="raised" style={styles.approvalBar}>
-            <View style={styles.approvalInfo}>
-              <Text style={styles.prChip}>Review</Text>
-              <Text style={styles.approvalBarText}>
-                {mergeTarget.repo} · {mergeTarget.tip.slice(0, 8)}
-              </Text>
-            </View>
-            {transport && (
-              <ChangeReviewPanel
-                transport={transport}
-                sessionId={decodedId}
-                tip={mergeTarget.tip}
-              />
-            )}
-            {viewerIsAgent ? (
-              <View style={styles.approvalSent}>
-                <Text style={styles.approvalSentText}>NOT ALLOWED</Text>
-              </View>
-            ) : approvalState === 'none' ? (
-              <TouchableOpacity
-                accessibilityRole="button"
-                onPress={handleApprove}
-                style={styles.approveButton}
-                testID="approve-corner"
-              >
-                <Text style={styles.approveButtonText}>Approve</Text>
-              </TouchableOpacity>
-            ) : approvalState === 'sending' ? (
-              <View style={styles.approvalPending}>
-                <PixelLoader compact />
-                <Text style={styles.approvalStateText}>SENDING</Text>
-              </View>
-            ) : (
-              <View style={styles.approvalSent}>
-                <Text style={styles.approvalSentText}>✓ APPROVED</Text>
-              </View>
-            )}
-          </HullSurface>
-        )}
-
         <FlatList
           testID="chat-messages"
           ref={flatListRef}
-          data={visibleMessages}
+          inverted
+          data={invertedMessages}
           keyExtractor={(item: ChatDisplayMessage) => item.id}
           style={styles.messageList}
           contentContainerStyle={styles.messageListContent}
+          maintainVisibleContentPosition={{
+            // Anchor on the second-newest row (index 1), not the newest.
+            // The newest slot gets replaced on every send (optimistic id ->
+            // real event id) and on every agent stream token, which would
+            // otherwise destabilize the anchor. Mirrors sources/components/ChatList.tsx.
+            //
+            // autoscrollToTopThreshold: for an INVERTED list this is the
+            // auto-stick-to-visual-bottom threshold — contentOffset 0 is the
+            // visual bottom here, and this prop sticks the viewport to
+            // offset 0 (revealing new content, including a taller multi-line
+            // send) whenever the user is already within N units of it. Do
+            // NOT pair this with a JS-side scrollToOffset call — the two
+            // fight and drag the viewport while reading older messages.
+            minIndexForVisible: 1,
+            autoscrollToTopThreshold: 50,
+          }}
+          keyboardShouldPersistTaps="handled"
           renderItem={renderItem}
+          onEndReached={loadOlderTranscriptMessages}
+          onEndReachedThreshold={0.5}
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <Text style={[styles.emptyText, isCorner && styles.cornerEmptyText]}>
@@ -1837,10 +2038,132 @@ export default function BuzzChat() {
               </Text>
             </View>
           }
-          onContentSizeChange={handleMessageListContentSizeChange}
-          onScroll={handleMessageListScroll}
-          scrollEventThrottle={16}
+          ListFooterComponent={
+            loadingOlderMessages ? (
+              <View style={styles.olderMessagesLoading} testID="older-messages-loading">
+                <PixelLoader compact />
+              </View>
+            ) : null
+          }
+          ListHeaderComponent={
+            isCorner && !isArchived && sessionState === 'done' ? (
+              <View style={styles.cornerReviewFooter}>
+                {mergeTarget ? (
+                  <HullSurface strength="raised" style={styles.approvalBar}>
+                    <View style={styles.approvalInfo}>
+                      <Text style={styles.prChip}>CHANGE READY FOR REVIEW</Text>
+                      <Text style={styles.approvalBarText} numberOfLines={2}>
+                        {turnSummary ?? `${cornerAgentDisplay?.name ?? 'The agent'} completed this turn.`}
+                      </Text>
+                      <Text style={styles.approvalStateText}>
+                        {reviewFileCount === null
+                          ? 'PREPARING YOUR REVIEW'
+                          : `${reviewFileCount} ${reviewFileCount === 1 ? 'FILE' : 'FILES'} READY TO REVIEW`}
+                      </Text>
+                    </View>
+                    {transport && (
+                      <ChangeReviewPanel
+                        transport={transport}
+                        sessionId={decodedId}
+                        tip={mergeTarget.tip}
+                        onFilesLoaded={handleReviewFilesLoaded}
+                      />
+                    )}
+                    {viewerIsAgent ? (
+                      <View style={styles.approvalSent}>
+                        <Text style={styles.approvalSentText}>NOT ALLOWED</Text>
+                      </View>
+                    ) : approvalState === 'none' ? (
+                      <TouchableOpacity
+                        accessibilityRole="button"
+                        onPress={handleApprove}
+                        style={styles.approveButton}
+                        testID="approve-corner"
+                      >
+                        <Text style={styles.approveButtonText}>
+                          APPROVE & MERGE {cornerAgentDisplay?.name ?? 'AGENT'}’S CHANGE
+                        </Text>
+                        <Text style={styles.approveButtonSupport}>
+                          APPROVAL APPLIES ONLY TO THIS REVIEWED CHANGE
+                        </Text>
+                      </TouchableOpacity>
+                    ) : approvalState === 'sending' ? (
+                      <View style={styles.approvalPending}>
+                        <PixelLoader compact />
+                        <Text style={styles.approvalStateText}>SENDING APPROVAL</Text>
+                      </View>
+                    ) : (
+                      <View style={styles.approvalSent}>
+                        <Text style={styles.approvalSentText}>✓ APPROVAL SENT</Text>
+                      </View>
+                    )}
+                    {approvalError ? (
+                      <Text style={styles.approvalStateText} testID="approve-corner-error">
+                        APPROVAL FAILED · {approvalError}
+                      </Text>
+                    ) : null}
+                  </HullSurface>
+                ) : (
+                  <HullSurface strength="quiet" style={styles.nothingReady}>
+                    <Text style={styles.nothingReadyTitle}>NOTHING READY TO MERGE YET</Text>
+                    <Text style={styles.nothingReadyText}>
+                      A change appears here only after {cornerAgentDisplay?.name ?? 'the agent'} commits real work for review.
+                    </Text>
+                  </HullSurface>
+                )}
+              </View>
+            ) : null
+          }
         />
+
+        {!isArchived &&
+          !parentChannelId &&
+          ((activeCorner?.corner && isCornerActive(activeCorner.corner.status)) ||
+            activeAgentTurn?.agentTurn) && (
+            <TouchableOpacity
+              accessibilityLabel={tappableCornerId ? 'View active corner' : 'Agent activity'}
+              accessibilityRole={tappableCornerId ? 'button' : undefined}
+              disabled={!tappableCornerId}
+              onPress={() =>
+                tappableCornerId &&
+                router.push(`/buzz/chat/${encodeURIComponent(tappableCornerId)}` as Href)
+              }
+              style={styles.agentLiveStatus}
+              testID="agent-live-status"
+            >
+              {!agentsOffline && <PixelLoader compact />}
+              <Text style={styles.agentLiveStatusText}>
+                {agentsOffline
+                  ? 'OFFLINE'
+                  : activeAgentTurn?.agentTurn
+                    ? 'thinking…'
+                    : 'working in corner…'}
+              </Text>
+              {tappableCornerId && <Text style={styles.agentLiveStatusGlyph}>›</Text>}
+            </TouchableOpacity>
+          )}
+        {!isArchived && agentsOffline && (
+          <View style={styles.agentOfflineHint} testID="agent-offline-hint">
+            <Text style={styles.agentOfflineHintTitle}>□ AGENT OFFLINE</Text>
+            <Text style={styles.agentOfflineHintText}>
+              Messages stay in this Room and will be answered when the Agent is back.
+            </Text>
+          </View>
+        )}
+
+        {/* Live "alien typewriter" reveal: materializes as the agent generates
+            it, isolated in its own leaf subscription so it never touches
+            `messages`/`invertedMessages` or re-renders the transcript list. */}
+        {!isArchived && workingAgentTurn && transport && (
+          <View style={styles.agentDraftBanner} testID="agent-draft-banner">
+            <StreamingAgentText
+              key={workingAgentTurn.requestId}
+              transport={transport}
+              channelId={decodedId}
+              requestId={workingAgentTurn.requestId}
+            />
+          </View>
+        )}
 
         {/* P2: Archived channels are read-only */}
         {isArchived ? (
@@ -1851,35 +2174,13 @@ export default function BuzzChat() {
           </View>
         ) : (
           <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-            {!parentChannelId && (activeCorner?.corner || activeAgentTurn?.agentTurn) && (
-              <View style={styles.agentLiveStatus} testID="agent-live-status">
-                {!agentsOffline && <PixelLoader compact />}
-                <Text style={styles.agentLiveStatusText}>
-                  {agentsOffline
-                    ? 'OFFLINE'
-                    : activeAgentTurn?.agentTurn
-                      ? 'thinking…'
-                      : activeCorner?.corner?.status === 'starting'
-                        ? 'opening corner…'
-                        : 'working in corner…'}
-                </Text>
-              </View>
-            )}
-            {agentsOffline && (
-              <View style={styles.agentOfflineHint} testID="agent-offline-hint">
-                <Text style={styles.agentOfflineHintTitle}>□ AGENT OFFLINE</Text>
-                <Text style={styles.agentOfflineHintText}>
-                  Messages stay in this Room and will be answered when the Agent is back.
-                </Text>
-              </View>
-            )}
             {parentChannelId && !viewerIsAgent && (
               <TouchableOpacity
-                accessibilityLabel="Cancel active Agent turn"
+                accessibilityLabel={`Close ${CORNER_LABEL}`}
                 style={styles.cancelTurnButton}
-                onPress={() => void handleCancel()}
+                onPress={() => void handleCloseCorner()}
               >
-                <Text style={styles.cancelTurnText}>■ CANCEL</Text>
+                <Text style={styles.cancelTurnText}>■ CLOSE {CORNER_LABEL.toUpperCase()}</Text>
               </TouchableOpacity>
             )}
             {mentionMenuVisible && (
@@ -1990,9 +2291,6 @@ export default function BuzzChat() {
                 composerFocused && styles.composerFocused,
               ]}
             >
-              <Text style={[styles.composerPrefix, isCorner && styles.cornerComposerPrefix]}>
-                ›
-              </Text>
               <TouchableOpacity
                 accessibilityLabel="Attach photo or document"
                 accessibilityRole="button"
@@ -2007,7 +2305,10 @@ export default function BuzzChat() {
                 ref={composerRef}
                 style={[styles.input, { height: composerHeight }, isCorner && styles.cornerInput]}
                 value={inputText}
-                onChangeText={setInputText}
+                onChangeText={(value) => {
+                  inputTextRef.current = value;
+                  setInputText(value);
+                }}
                 onContentSizeChange={(event) => {
                   const contentHeight = Math.ceil(event.nativeEvent.contentSize.height);
                   setComposerHeight(
@@ -2035,14 +2336,20 @@ export default function BuzzChat() {
                     setDismissedMentionKey(mentionMenuKey);
                   }
                 }}
-                onSelectionChange={(event) => setInputSelection(event.nativeEvent.selection)}
+                onSelectionChange={(event) => {
+                  const nextSelection = event.nativeEvent.selection;
+                  setInputSelection((current) =>
+                    current.start === nextSelection.start && current.end === nextSelection.end
+                      ? current
+                      : nextSelection,
+                  );
+                }}
                 placeholder={parentChannelId ? 'Steer' : 'Message'}
                 placeholderTextColor={groknight.dim}
                 multiline
                 numberOfLines={1}
                 returnKeyType="default"
                 scrollEnabled={composerHeight >= COMPOSER_MAX_HEIGHT}
-                selection={inputSelection}
                 submitBehavior="newline"
                 testID="chat-input"
               />
@@ -2070,18 +2377,18 @@ export default function BuzzChat() {
             {isCorner && (
               <Text style={styles.cornerFooter} numberOfLines={1}>
                 <Text style={styles.cornerFooterRule}>╰─ </Text>
-                <Text style={styles.cornerFooterValue}>Agent</Text>
-                <Text style={styles.cornerFooterSeparator}> · edit · </Text>
+                <Text style={styles.cornerFooterValue}>{cornerAgentDisplay?.name ?? 'Agent'}</Text>
+                <Text style={styles.cornerFooterSeparator}> · edit session · </Text>
                 <Text
                   style={
-                    agentsOffline
-                      ? styles.cornerFooterState
-                      : mergeTarget
+                    sessionState === 'done'
                         ? styles.cornerFooterState
-                        : styles.cornerFooterActive
+                        : sessionState === 'working'
+                          ? styles.cornerFooterActive
+                          : styles.cornerFooterState
                   }
                 >
-                  {agentsOffline ? 'offline' : 'active'}
+                  {sessionState}
                 </Text>
                 <Text style={styles.cornerFooterRule}> ─╯</Text>
               </Text>
@@ -2090,7 +2397,7 @@ export default function BuzzChat() {
         )}
       </KeyboardAvoidingView>
 
-      <Modal
+      <RNModal
         animationType="fade"
         onRequestClose={() => setRosterVisible(false)}
         transparent
@@ -2159,9 +2466,22 @@ export default function BuzzChat() {
                           participant.pubkey === userPubkey,
                         );
                       const removing = membershipActionPubkey === participant.pubkey;
+                      const agentOnline =
+                        participant.kind === 'agent' &&
+                        isAgentPresenceOnlineWithReconnectGrace(
+                          agentPresences[participant.pubkey],
+                          presenceNow,
+                          presenceReconnectGrace[participant.pubkey],
+                        );
                       return (
                         <View
-                          accessibilityLabel={`${displayName}, ${participant.kind}, at ${handle}`}
+                          accessibilityLabel={`${displayName}, ${participant.kind}${
+                            participant.kind === 'agent'
+                              ? agentOnline
+                                ? ', online'
+                                : ', offline'
+                              : ''
+                          }, at ${handle}`}
                           key={participant.pubkey}
                           style={styles.rosterRow}
                           testID={`room-roster-${participant.kind}-${participant.pubkey}`}
@@ -2183,26 +2503,24 @@ export default function BuzzChat() {
                             />
                           )}
                           <View style={styles.rosterIdentity}>
-                            <Text numberOfLines={1} style={styles.rosterName}>
-                              {displayName}
-                            </Text>
+                            <View style={styles.rosterNameRow}>
+                              {participant.kind === 'agent' ? (
+                                <AgentPresenceLight
+                                  online={agentOnline}
+                                  testID={`agent-presence-light-${participant.pubkey}`}
+                                />
+                              ) : null}
+                              <Text numberOfLines={1} style={styles.rosterName}>
+                                {displayName}
+                              </Text>
+                            </View>
                             <Text numberOfLines={1} style={styles.rosterHandle}>
                               @{handle}
                             </Text>
                           </View>
                           <View style={styles.rosterActions}>
                             <Text style={styles.rosterKind}>
-                              {participant.kind === 'agent'
-                                ? `AGENT · ${
-                                    isAgentPresenceOnlineWithReconnectGrace(
-                                      agentPresences[participant.pubkey],
-                                      presenceNow,
-                                      presenceReconnectGrace[participant.pubkey],
-                                    )
-                                      ? 'ONLINE'
-                                      : 'OFFLINE'
-                                  }`
-                                : 'PERSON'}
+                              {participant.kind === 'agent' ? 'AGENT' : 'PERSON'}
                               {targetRole && targetRole !== 'member'
                                 ? ` · ${targetRole.toUpperCase()}`
                                 : ''}
@@ -2239,9 +2557,9 @@ export default function BuzzChat() {
             )}
           </HullSurface>
         </View>
-      </Modal>
+      </RNModal>
 
-      <Modal
+      <RNModal
         animationType="fade"
         onRequestClose={() => {
           if (renameBusy) return;
@@ -2252,7 +2570,13 @@ export default function BuzzChat() {
         transparent
         visible={roomActionsVisible}
       >
-        <View style={[styles.roomActionsModalRoot, { paddingBottom: Math.max(insets.bottom, 18) }]}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
+          style={[
+            styles.roomActionsModalRoot,
+            { paddingBottom: Math.max(insets.bottom, 18) },
+          ]}
+        >
           <Pressable
             accessibilityLabel={`Close ${ROOM_LABEL} actions`}
             disabled={renameBusy}
@@ -2393,10 +2717,10 @@ export default function BuzzChat() {
               </View>
             )}
           </HullSurface>
-        </View>
-      </Modal>
+        </KeyboardAvoidingView>
+      </RNModal>
 
-      <Modal
+      <RNModal
         animationType="fade"
         onRequestClose={() => setParticipantPickerVisible(false)}
         transparent
@@ -2527,7 +2851,7 @@ export default function BuzzChat() {
             )}
           </HullSurface>
         </View>
-      </Modal>
+      </RNModal>
     </BuzzCommunityShell>
   );
 }
@@ -2597,6 +2921,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   cornerHeaderMeta: { ...Typography.mono(), color: groknight.textMuted },
+  cornerHeaderStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 },
   addMembersButton: {
     width: 44,
     minHeight: 44,
@@ -2699,6 +3024,7 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgBase,
   },
   rosterIdentity: { flex: 1, minWidth: 0 },
+  rosterNameRow: { minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
   rosterName: {
     ...Typography.default('semiBold'),
     color: groknight.textPrimary,
@@ -3120,14 +3446,6 @@ const styles = StyleSheet.create({
     color: groknight.textMuted,
     marginTop: 4,
   },
-  offlineDeliveryNote: {
-    ...Typography.mono('semiBold'),
-    marginTop: 7,
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 13,
-    letterSpacing: 0.4,
-  },
   attachmentCard: {
     minWidth: 0,
     width: '100%',
@@ -3191,6 +3509,21 @@ const styles = StyleSheet.create({
     borderTopColor: groknight.border,
     backgroundColor: groknight.bgTerminal,
   },
+  activityUpdate: {
+    marginHorizontal: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    borderLeftWidth: 2,
+    borderLeftColor: groknight.agentAccent,
+  },
+  activityUpdateLabel: {
+    ...Typography.default(),
+    color: groknight.textMuted,
+    fontSize: 8,
+    lineHeight: 11,
+    letterSpacing: 0.8,
+    marginBottom: 4,
+  },
   terminalTurn: {
     width: '100%',
     minWidth: 0,
@@ -3203,6 +3536,31 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     backgroundColor: groknight.bgTerminal,
   },
+  // Agent turns keep the uninterrupted terminal-width treatment. A human
+  // steer is the conversational exception: compact, inset, and clearly
+  // bounded without changing ordinary Room bubbles.
+  terminalTurnUser: {
+    alignSelf: 'flex-end',
+    width: 'auto',
+    maxWidth: '84%',
+    marginLeft: 44,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderRadius: 14,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgRaised,
+  },
+  offlineDeliveryNote: {
+    ...Typography.mono('semiBold'),
+    marginTop: 7,
+    color: groknight.textMuted,
+    fontSize: 9,
+    lineHeight: 13,
+    letterSpacing: 0.4,
+  },
+  // A left accent bar visually separates consecutive agent turns from
+  // surrounding human messages so a long run of summaries doesn't read
+  // as one undifferentiated wall of text.
   terminalAgentTurn: {
     borderLeftWidth: 3,
     borderLeftColor: groknight.agentAccent,
@@ -3257,12 +3615,22 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgRaised,
   },
   cornerStatusCopy: { flex: 1, minWidth: 0 },
+  cornerStatusAgentRow: { minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
   cornerStatusAgent: {
     ...Typography.default('semiBold'),
     color: groknight.textPrimary,
     fontSize: 12,
     lineHeight: 16,
   },
+  agentPresenceLight: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: groknight.textSecondary,
+  },
+  agentPresenceOnline: { backgroundColor: groknight.textSecondary },
+  agentPresenceOffline: { backgroundColor: 'transparent' },
   cornerStatusLabel: {
     ...Typography.mono('semiBold'),
     color: groknight.textSecondary,
@@ -3270,6 +3638,15 @@ const styles = StyleSheet.create({
     lineHeight: 14,
     letterSpacing: 0.6,
   },
+  cornerStatusRow: {
+    marginTop: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  cornerPresenceDot: { ...Typography.default(), fontSize: 8 },
+  cornerPresenceOnline: { color: groknight.accent },
+  cornerPresenceOffline: { color: groknight.textMuted },
   openCornerAction: {
     flexShrink: 0,
     flexDirection: 'row',
@@ -3339,9 +3716,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   approvalInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    gap: 4,
   },
   prChip: {
     ...Typography.mono(),
@@ -3350,25 +3725,36 @@ const styles = StyleSheet.create({
   },
   approvalBarText: {
     ...Typography.mono(),
-    flex: 1,
     fontSize: 11,
     lineHeight: 16,
-    color: groknight.textMuted,
+    color: groknight.textSecondary,
   },
   approveButton: {
-    minHeight: 44,
+    minHeight: 64,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: groknight.accent,
-    borderRadius: 7,
-    backgroundColor: groknight.bgTerminal,
+    gap: 3,
+    paddingHorizontal: 14,
+    borderWidth: 2,
+    borderColor: MERGE_APPROVAL_ACCENT,
+    borderRadius: 8,
+    backgroundColor: MERGE_APPROVAL_ACCENT,
   },
   approveButtonText: {
-    ...Typography.mono(),
-    color: groknight.accent,
-    fontSize: 12,
-    lineHeight: 16,
+    ...Typography.mono('semiBold'),
+    color: groknight.textInverted,
+    fontSize: 13,
+    lineHeight: 18,
+    letterSpacing: 0.3,
+    textAlign: 'center',
+  },
+  approveButtonSupport: {
+    ...Typography.default('semiBold'),
+    color: groknight.textInverted,
+    fontSize: 8,
+    lineHeight: 12,
+    letterSpacing: 0.45,
+    textAlign: 'center',
   },
   approvalPending: {
     flexDirection: 'row',
@@ -3391,6 +3777,26 @@ const styles = StyleSheet.create({
     color: groknight.textPrimary,
     fontSize: 12,
   },
+  cornerReviewFooter: {
+    paddingTop: 12,
+  },
+  nothingReady: {
+    marginHorizontal: 16,
+    padding: 14,
+    gap: 4,
+  },
+  nothingReadyTitle: {
+    ...Typography.default('semiBold'),
+    color: groknight.textSecondary,
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  nothingReadyText: {
+    ...Typography.default(),
+    color: groknight.textMuted,
+    fontSize: 11,
+    lineHeight: 16,
+  },
 
   // ── Composer ────────────────────────────────────────────────────
   emptyState: {
@@ -3405,6 +3811,10 @@ const styles = StyleSheet.create({
     color: groknight.muted,
   },
   cornerEmptyText: { ...Typography.mono(), color: groknight.textMuted },
+  olderMessagesLoading: {
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
   inputBar: {
     paddingHorizontal: 8,
     paddingTop: 8,
@@ -3426,6 +3836,19 @@ const styles = StyleSheet.create({
     fontSize: 10,
     lineHeight: 14,
     letterSpacing: 0.35,
+  },
+  agentLiveStatusGlyph: {
+    ...Typography.default(),
+    color: groknight.gutter,
+    fontSize: 15,
+  },
+  agentDraftBanner: {
+    marginBottom: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: groknight.border,
+    backgroundColor: groknight.bgRaised,
   },
   agentOfflineHint: {
     minWidth: 0,
@@ -3486,12 +3909,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
   },
-  writePermissionTool: {
-    ...Typography.mono('semiBold'),
+  writePermissionIntent: {
+    ...Typography.default(),
     color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 13,
-    letterSpacing: 0.4,
+    fontSize: 11,
+    lineHeight: 15,
     marginTop: 2,
   },
   writePermissionRepository: {
@@ -3675,13 +4097,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: groknight.bgTerminal,
   },
-  composerPrefix: {
-    ...Typography.default('semiBold'),
-    fontSize: 14,
-    color: groknight.steel,
-    marginRight: 8,
-  },
-  cornerComposerPrefix: { ...Typography.mono(), color: groknight.textSecondary },
   attachButton: {
     width: 40,
     height: 40,

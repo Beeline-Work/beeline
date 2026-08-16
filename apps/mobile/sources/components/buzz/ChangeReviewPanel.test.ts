@@ -41,7 +41,7 @@ vi.mock('./MonoHull', async () => {
   };
 });
 
-import { ChangeReviewPanel } from './ChangeReviewPanel';
+import { ChangeReviewPanel, withChangeReviewTimeout } from './ChangeReviewPanel';
 
 const originalConsoleError = console.error;
 
@@ -66,6 +66,12 @@ async function settle() {
 }
 
 describe('ChangeReviewPanel', () => {
+  it('turns a stalled file manifest read into a retryable timeout', async () => {
+    await expect(withChangeReviewTimeout(new Promise<never>(() => undefined), 1)).rejects.toThrow(
+      'Timed out while loading file diffs.',
+    );
+  });
+
   it('renders changed files and lazy-loads the selected per-file diff', async () => {
     const transport = {
       workspaceFilesRead: vi.fn(async () => [

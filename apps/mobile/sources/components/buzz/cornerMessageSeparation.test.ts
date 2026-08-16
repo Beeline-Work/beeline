@@ -21,8 +21,8 @@ function styleDefinition(name: string): string {
 
 describe('corner message separation', () => {
   it('renders every agent completion in a distinct framed turn', () => {
-    expect(chatSource).toContain(
-      '<View style={[styles.terminalTurn, isAgent && styles.terminalAgentTurn]}>',
+    expect(chatSource).toMatch(
+      /<View\s+style={\[\s*styles\.terminalTurn,[\s\S]*?isAgent && styles\.terminalAgentTurn,[\s\S]*?\]}\s*>/,
     );
 
     expect(styleDefinition('terminalTurn')).toMatch(/borderWidth:\s*1/);

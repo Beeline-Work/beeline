@@ -42,10 +42,17 @@ describe('Metro monorepo paths', () => {
     });
 
     const config = module.exports as {
-      resolver: { nodeModulesPaths: string[] };
+      resolver: { blockList: RegExp[]; nodeModulesPaths: string[] };
       watchFolders: string[];
     };
     expect(config.watchFolders).toEqual([packagesDir]);
     expect(config.resolver.nodeModulesPaths).toEqual([mobileNodeModules]);
+    const [tauriBuilds, testSources] = config.resolver.blockList;
+    expect(tauriBuilds.test('/project/apps/mobile/src-tauri/target/debug/app')).toBe(true);
+    expect(testSources.test('/project/apps/mobile/sources/foo.test.ts')).toBe(true);
+    expect(testSources.test('/project/apps/mobile/sources/foo.test.tsx')).toBe(true);
+    expect(testSources.test('/project/apps/mobile/sources/foo.spec.ts')).toBe(true);
+    expect(testSources.test('/project/apps/mobile/sources/__tests__/foo.ts')).toBe(true);
+    expect(testSources.test('/project/apps/mobile/sources/foo.ts')).toBe(false);
   });
 });

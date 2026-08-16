@@ -1,4 +1,4 @@
-type MentionableAgent = { pubkey: string; name: string };
+type MentionableAgent = { pubkey: string; name: string; handle?: string };
 type RoomRosterMember = { pubkey: string };
 type RoomParticipant = RoomRosterMember & { kind: 'person' | 'agent' };
 
@@ -132,13 +132,19 @@ export function formatRoomParticipantTotal(total: number): string {
 /** Resolve the first visible @Agent name into the member pubkey written to the Nostr p-tag. */
 export function mentionedAgentPubkey(text: string, agents: MentionableAgent[]): string | undefined {
   const normalized = text.normalize('NFKC').toLocaleLowerCase();
-  const candidates = [...agents].sort((a, b) => b.name.length - a.name.length);
+  const candidates = [...agents]
+    .flatMap((agent) =>
+      [agent.name, agent.handle]
+        .filter((value): value is string => Boolean(value))
+        .map((mention) => ({ agent, mention })),
+    )
+    .sort((a, b) => b.mention.length - a.mention.length);
   for (const agent of candidates) {
-    const mention = `@${agent.name.normalize('NFKC').toLocaleLowerCase()}`;
+    const mention = `@${agent.mention.normalize('NFKC').toLocaleLowerCase()}`;
     let offset = normalized.indexOf(mention);
     while (offset >= 0) {
       const trailing = normalized[offset + mention.length];
-      if (trailing === undefined || /[\s,.:;!?)}\]]/.test(trailing)) return agent.pubkey;
+      if (trailing === undefined || /[\s,.:;!?)}\]]/.test(trailing)) return agent.agent.pubkey;
       offset = normalized.indexOf(mention, offset + mention.length);
     }
   }

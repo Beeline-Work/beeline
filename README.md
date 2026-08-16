@@ -1,3 +1,5 @@
+<!-- Beeline is a mobile-first workspace for collaborating with coding agents under human control. -->
+
 # Buzzy
 
 The merge you hold from your phone. See [`spec.md`](./spec.md) for the full

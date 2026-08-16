@@ -41,6 +41,23 @@ export function isCornerActive(status: CornerStatus): boolean {
   return status === 'live' || status === 'needs-attention';
 }
 
+/**
+ * A corner view's own archived confirmation (`isChannelArchived` / a live
+ * archive signal) is fetched independently of, and can resolve after, its
+ * last known lifecycle-status snapshot (`listSubchannelLifecycle`, fetched
+ * once at mount). Once the channel is confirmed archived, never keep
+ * displaying a stale non-terminal snapshot — apply the same precedence used
+ * to keep a corner's displayed status from walking backwards elsewhere.
+ */
+export function resolveCornerLifecycleStatus(
+  known: CornerStatus | null,
+  confirmedArchived: boolean,
+): CornerStatus | null {
+  if (!confirmedArchived) return known;
+  if (!known || cornerStatusPrecedence('archived') >= cornerStatusPrecedence(known)) return 'archived';
+  return known;
+}
+
 /** Translate a raw `display-status`/`status` wire tag value into the one
  * canonical status. This is the single place that vocabulary conversion
  * happens — nothing downstream should re-derive status from raw tags. */

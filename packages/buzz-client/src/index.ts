@@ -114,7 +114,7 @@ export {
   sortEventsChronological,
 } from './parse.js';
 
-export { publishEvent, queryEvents, relayReachable } from './http.js';
+export { publishEvent, queryEvents, requestQueryEvents, relayReachable } from './http.js';
 export type { AuthenticatedHttpBridgeOptions, HttpBridgeOptions } from './http.js';
 
 export {

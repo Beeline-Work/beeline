@@ -35,6 +35,7 @@ import {
   getChannelMetadata,
   isMember,
   setMemberRole,
+  waitForRelayProjection,
   waitUntilMember,
   type ChannelOpsContext,
 } from './channel.js';
@@ -386,12 +387,18 @@ export async function setCommunityVisibility(
     tags.push(['purpose', `${COMMUNITY_AVATAR_PURPOSE_PREFIX}${community.avatar}`]);
   }
   await publishEvent(ctx.http, sign(ctx, KIND_EDIT_METADATA, tags));
-  const timeoutAt = Date.now() + 15_000;
-  while (Date.now() < timeoutAt) {
-    const projected = await getCommunity(ctx, communityId);
-    if (projected?.visibility === visibility) return projected;
-    await new Promise((resolveWait) => setTimeout(resolveWait, 300));
-  }
+  let projected: Community | null = null;
+  const ok = await waitForRelayProjection(
+    ctx,
+    communityId,
+    [KIND_CHANNEL_METADATA],
+    async () => {
+      projected = await getCommunity(ctx, communityId);
+      return projected?.visibility === visibility;
+    },
+    { timeoutMs: 15_000, intervalMs: 300 },
+  );
+  if (ok && projected) return projected;
   throw new Error('Workspace visibility was not projected after 15000ms');
 }
 

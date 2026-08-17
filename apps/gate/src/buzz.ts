@@ -17,16 +17,17 @@
  */
 import { randomUUID } from 'node:crypto';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
+import {
+  KIND_CREATE_GROUP,
+  KIND_EDIT_METADATA,
+  KIND_PUT_USER,
+  KIND_STREAM_MESSAGE,
+} from '@beeline/buzz-client';
 import { publishEvent, queryEvents } from './relay.js';
 import type { Identity } from './identity.js';
 
-export const KIND_PUT_USER = 9000;
-export const KIND_CREATE_GROUP = 9007;
-export const KIND_STREAM_MESSAGE = 9;
+export { KIND_CREATE_GROUP, KIND_EDIT_METADATA, KIND_PUT_USER, KIND_STREAM_MESSAGE };
 export const TAG_COMMUNITY = 'community';
-
-/** NIP-29: edit group metadata (name, about, archived, visibility, etc.). */
-export const KIND_EDIT_METADATA = 9002;
 export const KIND_REPO_ANNOUNCEMENT = 30617;
 
 function sign(identity: Identity, kind: number, tags: string[][], content = ''): NostrEvent {

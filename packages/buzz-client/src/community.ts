@@ -406,7 +406,7 @@ function projectedCommunityRole(
     events.filter((event) => event.kind === KIND_CHANNEL_ADMINS && forCommunity(event)),
   );
   const admin = admins?.tags.find((tag) => tag[0] === 'p' && tag[1] === pubkey);
-  if (admin) return admin[2] === 'owner' ? 'owner' : 'admin';
+  if (admin) return admin[3] === 'owner' || admin[2] === 'owner' ? 'owner' : 'admin';
   const members = latestEvent(
     events.filter((event) => event.kind === KIND_CHANNEL_MEMBERS && forCommunity(event)),
   );

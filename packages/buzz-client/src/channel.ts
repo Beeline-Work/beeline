@@ -356,7 +356,7 @@ export const RELAY_PROJECTION_BACKSTOP_POLL_MS = 5_000;
  * noticed on the next backstop tick instead of stalling. Same technique as
  * apps/body's waitForWritePermissionDecision.
  */
-async function waitForRelayProjection(
+export async function waitForRelayProjection(
   ctx: ChannelOpsContext,
   channelId: string,
   kinds: number[],
@@ -490,12 +490,18 @@ export async function renameChannel(
   if (current?.communityId) tags.push([TAG_COMMUNITY, current.communityId]);
 
   await publishEvent(ctx.http, sign(ctx.identity, KIND_EDIT_METADATA, tags));
-  const timeoutAt = Date.now() + 15_000;
-  while (Date.now() < timeoutAt) {
-    const projected = await getChannelMetadata(ctx, channelId);
-    if (projected?.name === name) return projected;
-    await new Promise((resolveWait) => setTimeout(resolveWait, 300));
-  }
+  let projected: ChannelMetadata | null = null;
+  const ok = await waitForRelayProjection(
+    ctx,
+    channelId,
+    [KIND_CHANNEL_METADATA],
+    async () => {
+      projected = await getChannelMetadata(ctx, channelId);
+      return projected?.name === name;
+    },
+    { timeoutMs: 15_000, intervalMs: 300 },
+  );
+  if (ok && projected) return projected;
   throw new Error(`Room name was not projected after 15000ms`);
 }
 
@@ -525,12 +531,18 @@ export async function setChannelVisibility(
   if (current?.communityId) tags.push([TAG_COMMUNITY, current.communityId]);
 
   await publishEvent(ctx.http, sign(ctx.identity, KIND_EDIT_METADATA, tags));
-  const timeoutAt = Date.now() + 15_000;
-  while (Date.now() < timeoutAt) {
-    const projected = await getChannelMetadata(ctx, channelId);
-    if (projected?.visibility === visibility) return projected;
-    await new Promise((resolveWait) => setTimeout(resolveWait, 300));
-  }
+  let projected: ChannelMetadata | null = null;
+  const ok = await waitForRelayProjection(
+    ctx,
+    channelId,
+    [KIND_CHANNEL_METADATA],
+    async () => {
+      projected = await getChannelMetadata(ctx, channelId);
+      return projected?.visibility === visibility;
+    },
+    { timeoutMs: 15_000, intervalMs: 300 },
+  );
+  if (ok && projected) return projected;
   throw new Error('Room visibility was not projected after 15000ms');
 }
 
@@ -796,8 +808,4 @@ export async function getChannelRepositoryBinding(
     };
   }
   return null;
-}
-
-export function eventIsAgentActivity(event: NostrEvent): boolean {
-  return tagValues(event, 't').includes(TAG_AGENT_ACTIVITY);
 }

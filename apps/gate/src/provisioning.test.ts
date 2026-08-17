@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
+import * as buzzClientKinds from '@beeline/buzz-client';
 import { newIdentity } from './identity.js';
-import { KIND_PUT_USER } from './buzz.js';
+import { KIND_CREATE_GROUP, KIND_EDIT_METADATA, KIND_PUT_USER, KIND_STREAM_MESSAGE } from './buzz.js';
 import { resolveChannelRole } from './provisioning.js';
 import { createRelayClient } from './relay.js';
+import { KIND_CHANNEL_ADMINS, KIND_CHANNEL_MEMBERS } from '@beeline/buzz-client';
 
-const KIND_CHANNEL_ADMINS = 39001;
-const KIND_CHANNEL_MEMBERS = 39002;
 const channelId = '11111111-1111-4111-8111-111111111111';
 const owner = newIdentity('owner');
 const member = newIdentity('member');
@@ -104,5 +104,20 @@ describe('resolveChannelRole', () => {
     await expect(resolveChannelRole(channelId, member.publicKey, createRelayClient(owner))).resolves.toBe(
       null,
     );
+  });
+});
+
+describe('gate kind constants', () => {
+  it('buzz.ts and provisioning.ts source their nostr kind numbers from @beeline/buzz-client, not a hand-copied duplicate', () => {
+    // Regression: apps/gate/src/buzz.ts and provisioning.ts used to
+    // re-declare these as local literals instead of importing the shared
+    // constants @beeline/buzz-client/src/kinds.ts already exports — kept in
+    // sync only by coincidence, with nothing to catch future drift.
+    expect(KIND_PUT_USER).toBe(buzzClientKinds.KIND_PUT_USER);
+    expect(KIND_CREATE_GROUP).toBe(buzzClientKinds.KIND_CREATE_GROUP);
+    expect(KIND_STREAM_MESSAGE).toBe(buzzClientKinds.KIND_STREAM_MESSAGE);
+    expect(KIND_EDIT_METADATA).toBe(buzzClientKinds.KIND_EDIT_METADATA);
+    expect(KIND_CHANNEL_ADMINS).toBe(buzzClientKinds.KIND_CHANNEL_ADMINS);
+    expect(KIND_CHANNEL_MEMBERS).toBe(buzzClientKinds.KIND_CHANNEL_MEMBERS);
   });
 });

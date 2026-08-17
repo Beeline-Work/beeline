@@ -4,7 +4,10 @@ import type { AgentActivityItem } from '@/sync/transport/rig-transport';
 import { buildTurnActivity, type TurnActivityAction } from '@/buzz/activity-timeline';
 import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
+import { darkTheme } from '@/theme';
 import { HullActivityTip } from './MonoHull';
+
+const diffColors = darkTheme.colors.diff;
 
 type ActivityTimelineProps = {
   active?: boolean;
@@ -348,9 +351,13 @@ const styles = StyleSheet.create({
     lineHeight: 14,
     paddingHorizontal: 8,
   },
-  diffAdded: { backgroundColor: '#17351f', color: '#b8e7c0' },
-  diffRemoved: { backgroundColor: '#3a1b1b', color: '#f0b8b8' },
-  diffHeader: { backgroundColor: '#1c2637', color: '#b9d4ff' },
+  // Diffs are a deliberate color exception to Grok Mono Hull's zero-chroma
+  // rule (captain override), same as ChangeReviewPanel.tsx's diff viewer —
+  // share its tokens rather than hand-picking a second, slightly different
+  // green/red pair. Hunk headers stay on the neutral grayscale palette.
+  diffAdded: { backgroundColor: diffColors.addedBg, color: diffColors.addedBorder },
+  diffRemoved: { backgroundColor: diffColors.removedBg, color: diffColors.removedBorder },
+  diffHeader: { backgroundColor: groknight.bgHover, color: groknight.textMuted },
   emptyDetail: {
     ...Typography.default(),
     color: groknight.textMuted,

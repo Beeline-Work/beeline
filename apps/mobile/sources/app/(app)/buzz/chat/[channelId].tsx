@@ -104,6 +104,7 @@ import {
 import { isNearChatBottom } from '@/buzz/chat-scroll';
 import { buildTurnActivity } from '@/buzz/activity-timeline';
 import { replyMessageText, type MessageReplyTarget } from '@/buzz/message-reply';
+import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
   isAgentPresenceOnlineWithReconnectGrace,
   isAgentOfflineAfterPresenceResolved,
@@ -1068,7 +1069,7 @@ export default function BuzzChat() {
           const workspaceRole = communityMembers.find(
             (member) => member.pubkey === identity.publicKey,
           )?.role;
-          setCanManageWorkspace(workspaceRole === 'owner' || workspaceRole === 'admin');
+          setCanManageWorkspace(isWorkspaceManagerRole(workspaceRole));
           let resolvedRoomName = channelMetadata?.name?.trim() || ROOM_LABEL;
           if (dm) {
             const peerPubkey = directMessagePeer(dm, identity.publicKey);

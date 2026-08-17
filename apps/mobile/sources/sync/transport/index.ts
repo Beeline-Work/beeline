@@ -16,9 +16,4 @@ export {
     RigTransportNotImplementedError,
     RigTransportStubbedError,
 } from './rig-transport';
-export {
-    HappyRigTransport,
-    getRigTransport,
-    setRigTransport,
-} from './happy-rig-transport';
 export { BuzzRigTransport } from './buzz-rig-transport';

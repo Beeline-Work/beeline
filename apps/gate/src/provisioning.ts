@@ -20,10 +20,8 @@
  */
 import { createRelayClient, type RelayReader } from './relay.js';
 import { KIND_CREATE_GROUP, KIND_PUT_USER, KIND_REPO_ANNOUNCEMENT } from './buzz.js';
+import { KIND_CHANNEL_ADMINS, KIND_CHANNEL_MEMBERS } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
-
-const KIND_CHANNEL_ADMINS = 39001;
-const KIND_CHANNEL_MEMBERS = 39002;
 
 export type ChannelRole = 'owner' | 'admin' | 'member' | 'guest' | 'bot';
 

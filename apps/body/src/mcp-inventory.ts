@@ -11,6 +11,7 @@
  * tool protocol layer, not by guessing from prompts.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { WRITE_TOOL_NAMES } from './config.js';
 
 export interface McpServerSpec {
   name: string;
@@ -291,19 +292,7 @@ export async function callMcpTool(
 /** True if any write-class tool name appears in the inventory. */
 export function hasWriteTools(
   toolNames: string[],
-  writeNames: readonly string[] = [
-    'shell',
-    'execute',
-    'str_replace',
-    'write',
-    'write_file',
-    'apply_patch',
-    'git_commit',
-    'git_checkout',
-    'git_branch',
-    'git_config',
-    'git_push',
-  ],
+  writeNames: readonly string[] = WRITE_TOOL_NAMES,
 ): boolean {
   const lower = new Set(toolNames.map((n) => n.toLowerCase()));
   return writeNames.some((w) => lower.has(w.toLowerCase()));

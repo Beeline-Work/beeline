@@ -513,6 +513,39 @@ describe('community model', () => {
     );
   });
 
+  it('resolves a non-creator owner marked at admin-tag index 3, not just index 2', async () => {
+    // Regression: `channel.ts`'s listMembers and `repo-room.ts`'s
+    // projectedRoomRole both accept the owner marker at tag[3] OR tag[2];
+    // projectedCommunityRole previously only checked tag[2], so an owner
+    // whose admin projection used the 4-element shape silently resolved as
+    // 'admin'. `admin` (not the create-event signer) carries the owner
+    // marker here so the `community.ownerPubkey === pubkey` shortcut in
+    // listCommunities can't mask the bug.
+    const create = communityCreate();
+    const members = memberState();
+    const admins = signed(owner, KIND_CHANNEL_ADMINS, [
+      ['d', communityId],
+      ['p', admin.publicKey, 'admin', 'owner'],
+    ]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const filter = filterFrom(init);
+        const kinds = (filter.kinds ?? []) as number[];
+        if (kinds.includes(KIND_CHANNEL_MEMBERS) && kinds.includes(KIND_CHANNEL_ADMINS)) {
+          return jsonResponse([members, admins]);
+        }
+        if (kinds[0] === KIND_CHANNEL_ADMINS) return jsonResponse([admins]);
+        if (kinds[0] === KIND_CHANNEL_MEMBERS) return jsonResponse([members]);
+        if (kinds[0] === KIND_CREATE_GROUP) return jsonResponse([create]);
+        return jsonResponse([]);
+      }),
+    );
+
+    const listed = await listCommunities(ctx(admin), admin.publicKey);
+    expect(listed).toMatchObject([{ communityId, viewerRole: 'owner', ownerPubkey: owner.publicKey }]);
+  });
+
   it('keeps communities visible when membership projections also contain channel IDs', async () => {
     const create = communityCreate();
     const channelCreate = signed(owner, KIND_CREATE_GROUP, [

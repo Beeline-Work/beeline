@@ -5,7 +5,10 @@ This document maps every MVP method from `spec.md` Appendix ("Happy
 **file:line** cut-over points for the Buzz adapter lane.
 
 **Interface (TypeScript):** `sources/sync/transport/rig-transport.ts`  
-**Happy-backed scaffold:** `sources/sync/transport/happy-rig-transport.ts`  
+**Implementation:** `sources/sync/transport/buzz-rig-transport.ts` (every Buzz screen imports
+`BuzzRigTransport` directly; the `happy-rig-transport.ts` scaffold and its
+`getRigTransport()`/`setRigTransport()` cutover seam described below were never adopted and
+have been removed)  
 **Flags:** `sources/constants/buzzyFlags.ts` (terminals + friends social hidden)
 
 No Buzz networking is wired in this PR. Happy's backend remains the runtime.

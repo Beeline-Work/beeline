@@ -31,6 +31,7 @@ import { groknight } from '@/buzz/groknight';
 import { saveLastViewedChannel } from '@/buzz/community-storage';
 import { createCommunityInviteUrl } from '@/buzz/community-invite';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
+import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { roomParticipantPubkeys } from '@/buzz/room-participants';
 import { shortMemberNpub } from '@/buzz/member-display';
 import { ensurePersonNameForWorkspace } from '@/buzz/person-name';
@@ -198,7 +199,7 @@ async function loadWorkspaceRoster(
   return {
     members,
     profiles,
-    canEditAvatar: viewerRole === 'owner' || viewerRole === 'admin',
+    canEditAvatar: isWorkspaceManagerRole(viewerRole),
   };
 }
 

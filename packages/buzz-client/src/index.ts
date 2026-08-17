@@ -246,6 +246,13 @@ export {
   setPersonProfile,
 } from './person-profile.js';
 
+export {
+  parseNip05Identifier,
+  normalizeNip05Identifier,
+  verifyNip05,
+} from './nip05.js';
+export type { ParsedNip05, Nip05VerificationStatus, Nip05VerificationResult } from './nip05.js';
+
 export { buildMediaUploadAuthorization, uploadMedia } from './media.js';
 
 export {

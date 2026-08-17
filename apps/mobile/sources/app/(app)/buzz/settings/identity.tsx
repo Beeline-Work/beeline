@@ -20,6 +20,7 @@ import Svg, { Path, Rect } from 'react-native-svg';
 import {
   fallbackPersonName,
   lookupRecovery,
+  normalizeNip05Identifier,
   normalizePersonHandle,
   normalizePersonName,
   personHandle,
@@ -34,6 +35,7 @@ import {
 import { groknight } from '@/buzz/groknight';
 import { loadActiveCommunityId } from '@/buzz/community-storage';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
+import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
 import {
   ensurePersonNameForWorkspace,
   loadPreferredPersonName,
@@ -113,6 +115,9 @@ export default function BuzzIdentitySettings() {
   const [savedProfileName, setSavedProfileName] = useState('');
   const [profileHandle, setProfileHandle] = useState('');
   const [savedProfileHandle, setSavedProfileHandle] = useState('');
+  const [profileNip05, setProfileNip05] = useState('');
+  const [savedProfileNip05, setSavedProfileNip05] = useState('');
+  const [nip05Focused, setNip05Focused] = useState(false);
   const [nameWorking, setNameWorking] = useState(false);
   const [nameFocused, setNameFocused] = useState(false);
   const [handleFocused, setHandleFocused] = useState(false);
@@ -123,6 +128,7 @@ export default function BuzzIdentitySettings() {
   const [linkedGoogle, setLinkedGoogle] = useState<
     'checking' | 'connected' | 'not-linked' | 'unavailable'
   >('checking');
+  const nip05Status = useVerifiedNip05Status(profilePubkey ?? '', { nip05: savedProfileNip05 });
 
   useEffect(() => {
     let cancelled = false;
@@ -160,6 +166,8 @@ export default function BuzzIdentitySettings() {
           setSavedProfileName(nextName);
           setProfileHandle(nextHandle);
           setSavedProfileHandle(nextHandle);
+          setProfileNip05(profile?.nip05 ?? '');
+          setSavedProfileNip05(profile?.nip05 ?? '');
           setPushEnabledState(enabled);
           setPushPermission(permission);
         }
@@ -221,12 +229,18 @@ export default function BuzzIdentitySettings() {
     if (!profileClient || !profilePubkey) return;
     const normalized = normalizePersonName(profileName);
     const normalizedHandle = normalizePersonHandle(profileHandle);
+    const trimmedNip05 = profileNip05.trim();
+    const normalizedNip05 = trimmedNip05 ? (normalizeNip05Identifier(trimmedNip05) ?? '') : '';
     if (!normalized) {
       setError('Choose a name between 1 and 60 characters.');
       return;
     }
     if (!normalizedHandle) {
       setError('Choose a handle using 1-30 letters, numbers, dots, dashes, or underscores.');
+      return;
+    }
+    if (trimmedNip05 && !normalizedNip05) {
+      setError('Your NIP-05 identifier must look like name@domain.');
       return;
     }
     setNameWorking(true);
@@ -237,12 +251,15 @@ export default function BuzzIdentitySettings() {
         name: normalized,
         handle: normalizedHandle,
         avatar: avatarUrl,
+        nip05: normalizedNip05,
       });
       await savePreferredPersonName(profilePubkey, normalized);
       setProfileName(normalized);
       setSavedProfileName(normalized);
       setProfileHandle(normalizedHandle);
       setSavedProfileHandle(normalizedHandle);
+      setProfileNip05(normalizedNip05);
+      setSavedProfileNip05(normalizedNip05);
       setNameSaved(true);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (caught) {
@@ -250,7 +267,7 @@ export default function BuzzIdentitySettings() {
     } finally {
       setNameWorking(false);
     }
-  }, [avatarUrl, profileClient, profileHandle, profileName, profilePubkey]);
+  }, [avatarUrl, profileClient, profileHandle, profileName, profileNip05, profilePubkey]);
 
   const togglePush = useCallback(
     async (enabled: boolean) => {
@@ -462,8 +479,39 @@ export default function BuzzIdentitySettings() {
                   value={profileHandle}
                 />
               </View>
+              <TextInput
+                accessibilityLabel="Your NIP-05 identifier"
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!nameWorking}
+                keyboardType="email-address"
+                maxLength={255}
+                onBlur={() => setNip05Focused(false)}
+                onChangeText={(value) => {
+                  setProfileNip05(value);
+                  setNameSaved(false);
+                }}
+                onFocus={() => setNip05Focused(true)}
+                onSubmitEditing={() => void saveName()}
+                placeholder="name@your-domain.com (optional)"
+                placeholderTextColor={groknight.dim}
+                returnKeyType="done"
+                style={[styles.nameInput, nip05Focused && styles.nameInputFocused]}
+                testID="identity-person-nip05-input"
+                value={profileNip05}
+              />
               <View style={styles.nameMetaRow}>
-                <Text style={styles.nameHandle}>ONE PROFILE · ALL WORKSPACES</Text>
+                <Text style={styles.nameHandle} testID="identity-person-nip05-status">
+                  {savedProfileNip05
+                    ? nip05Status === 'verified'
+                      ? '✓ NIP-05 VERIFIED'
+                      : nip05Status === 'checking'
+                        ? 'NIP-05 CHECKING…'
+                        : nip05Status === 'mismatch'
+                          ? 'NIP-05 DOES NOT MATCH THIS KEY'
+                          : 'NIP-05 COULD NOT BE VERIFIED'
+                    : 'ONE PROFILE · ALL WORKSPACES'}
+                </Text>
                 {nameSaved && <Text style={styles.nameSaved}>✓ SAVED</Text>}
               </View>
               <MonoButton
@@ -471,8 +519,10 @@ export default function BuzzIdentitySettings() {
                   nameWorking ||
                   !normalizePersonName(profileName) ||
                   !normalizePersonHandle(profileHandle) ||
+                  (profileNip05.trim() !== '' && !normalizeNip05Identifier(profileNip05)) ||
                   (normalizePersonName(profileName) === savedProfileName &&
-                    normalizePersonHandle(profileHandle) === savedProfileHandle)
+                    normalizePersonHandle(profileHandle) === savedProfileHandle &&
+                    (normalizeNip05Identifier(profileNip05) ?? '') === savedProfileNip05)
                 }
                 label="Save identity"
                 loading={nameWorking}

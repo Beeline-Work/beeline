@@ -19,6 +19,7 @@ describe('corner navigation model', () => {
     { id: 'live-old', name: 'older', openerPubkey: 'a', status: 'live', createdAt: 1 },
     { id: 'stuck', name: 'stuck', openerPubkey: 'a', status: 'needs-attention', createdAt: 5 },
     { id: 'broken', name: 'broken', openerPubkey: 'a', status: 'failed', createdAt: 6 },
+    { id: 'merged', name: 'merged', openerPubkey: 'a', status: 'merged', createdAt: 7 },
   ];
 
   it('keeps active corners first in the room-scoped corner list', () => {
@@ -28,19 +29,21 @@ describe('corner navigation model', () => {
       'stuck',
       'open',
       'broken',
+      'merged',
       'archived',
     ]);
   });
 
-  it('hides archived corners only from the Room-list dropdown', () => {
+  it('shows only open corners in the Room-list dropdown', () => {
     expect(roomListCorners(corners).map((corner) => corner.id)).toEqual([
       'open',
       'live-new',
       'live-old',
       'stuck',
-      'broken',
     ]);
-    expect(corners.some((corner) => corner.id === 'archived')).toBe(true);
+    expect(
+      corners.filter((corner) => ['failed', 'merged', 'archived'].includes(corner.status)),
+    ).toHaveLength(3);
   });
 
   it('breaks ties by most recent activity, not just creation time', () => {

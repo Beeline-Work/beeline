@@ -36,6 +36,36 @@ export function resolveAgentDisplayIdentity(
 }
 
 /**
+ * Which Workspace's agent roster the transcript reads.
+ *
+ * Every agent name on screen comes from that roster: `listAgents` is what
+ * hydrates `Agent.soulProfile` (the human-authored overlay) and
+ * `Agent.displayName`, and `resolveAgentDisplayIdentity` falls back to the
+ * seed-derived placeholder for any pubkey the roster does not contain.
+ *
+ * The transcript used to read strictly the channel's own community, which a
+ * channel can genuinely fail to resolve: a Room whose kind:9007 predates the
+ * redundant `community` tag, a deliberately local-only Room, or a corner
+ * beneath either. With no community there is no roster, so *every* agent in
+ * that transcript rendered its seed placeholder ("Alden") while the Members
+ * screen — which reads the viewer's selected Workspace — showed the real soul
+ * name ("Beebee") for the same key.
+ *
+ * Falling back to the viewer's selection closes that. It can only ever add
+ * matches: a roster entry is used only when its pubkey equals the message
+ * signer's, so a roster from a different Workspace cannot rename anyone; it can
+ * only supply the overlay the app already had and the transcript was missing.
+ * Membership, roles, and every authority read stay on the channel's own
+ * community — this is presentation, and presentation only.
+ */
+export function agentRosterCommunityId(
+  channelCommunityId: string | null | undefined,
+  viewerActiveCommunityId: string | null | undefined,
+): string | null {
+  return channelCommunityId || viewerActiveCommunityId || null;
+}
+
+/**
  * A corner-status card's `agentPubkey` is declared data (an `agent` tag on
  * the body-control event) and can miss the registered-agent roster even when
  * the event's own signer is a known agent — e.g. a stale/legacy tag. Prefer

@@ -12,8 +12,25 @@ type MonoMarkdownProps = {
    * longer carries canned tones of its own.
    */
   textStyle: TextStyle;
+  /**
+   * A node set as the very first inline child of the first text block — the
+   * ledger's speaker handle, so an entry reads as one log line (handle, then
+   * the words, wrapping beneath) instead of a name on its own row.
+   *
+   * It is nested *inside* the paragraph's `Text` rather than placed beside it,
+   * which is both what makes it wrap as part of the sentence and what keeps it
+   * clear of the Android bug where a `flex: 1` `Text` holding only other `Text`
+   * inside a row `View` lays out at zero height.
+   *
+   * When the first block cannot host an inline child (a fence, a rule, a table
+   * opening the message), it falls back to its own line above the content.
+   */
+  leadingInline?: React.ReactNode;
   testID?: string;
 };
+
+/** Block kinds whose renderer starts with a `Text` that can host the handle. */
+const INLINE_HOSTS = new Set(['text', 'header', 'list', 'numbered-list']);
 
 function spanStyle(span: MarkdownSpan, base: TextStyle) {
   return [
@@ -63,6 +80,7 @@ function InlineMarkdown({
 export const MonoMarkdown = React.memo(function MonoMarkdown({
   markdown,
   textStyle,
+  leadingInline,
   testID,
 }: MonoMarkdownProps) {
   const blocks = useMemo(() => parseMarkdown(markdown), [markdown]);
@@ -70,16 +88,29 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
   const onLink = useCallback((url: string) => {
     if (/^https?:\/\//i.test(url)) void Linking.openURL(url);
   }, []);
+  const first = blocks[0];
+  const inlineHosted =
+    Boolean(leadingInline) &&
+    Boolean(first) &&
+    INLINE_HOSTS.has(first.type) &&
+    !('items' in first && first.items.length === 0);
 
   return (
     <View style={styles.root} testID={testID}>
+      {leadingInline && !inlineHosted ? (
+        <Text selectable style={[base, styles.block]}>
+          {leadingInline}
+        </Text>
+      ) : null}
       {blocks.map((block, index) => {
         const last = index === blocks.length - 1;
         const blockStyle = [styles.block, last && styles.lastBlock];
+        const lead = inlineHosted && index === 0 ? leadingInline : null;
 
         if (block.type === 'text') {
           return (
             <Text key={index} selectable style={[base, blockStyle]}>
+              {lead}
               <InlineMarkdown spans={block.content} base={base} onLink={onLink} />
             </Text>
           );
@@ -87,6 +118,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
         if (block.type === 'header') {
           return (
             <Text key={index} selectable style={[base, styles.heading, blockStyle]}>
+              {lead}
               <InlineMarkdown spans={block.content} base={base} onLink={onLink} />
             </Text>
           );
@@ -100,6 +132,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
                   selectable
                   style={[base, styles.listItem, { paddingLeft: Math.max(0, item.depth) * 12 }]}
                 >
+                  {itemIndex === 0 ? lead : null}
                   <Text style={styles.listGlyph}>
                     {'number' in item ? `${item.number}. ` : '· '}
                   </Text>
@@ -172,19 +205,27 @@ const styles = StyleSheet.create({
   root: { width: '100%', minWidth: 0 },
   block: { marginBottom: 7 },
   lastBlock: { marginBottom: 0 },
-  bold: { ...Typography.default('semiBold'), fontWeight: '700', color: groknight.textPrimary },
+  /**
+   * Emphasis is a luminance step, never a heavier cut.
+   *
+   * Bold fought the inscribed feel — on a black slab a fat stroke reads as a
+   * smear, not as importance. `**strong**` therefore climbs to the top of the
+   * ledger's ladder instead: a no-op on agent output (already the brightest
+   * tier) and one real step up on everything else. Same for a heading, which
+   * additionally gets air and tracking rather than mass.
+   */
+  bold: { color: groknight.ledgerBright },
   italic: { fontStyle: 'italic' },
-  inlineCode: { ...Typography.mono(), color: groknight.textSecondary, fontSize: 12 },
+  inlineCode: { color: groknight.ledgerQuiet },
   link: { textDecorationLine: 'underline' },
   heading: {
-    ...Typography.default('semiBold'),
-    color: groknight.textPrimary,
-    fontWeight: '700',
+    color: groknight.ledgerBright,
+    letterSpacing: 0.6,
     marginTop: 3,
   },
   list: { width: '100%', gap: 3 },
   listItem: { width: '100%' },
-  listGlyph: { color: groknight.textMuted },
+  listGlyph: { color: groknight.ledgerQuiet },
   /**
    * A fenced block is code, not a card. It marks itself with one hairline
    * gutter and an indent — the same boxless vocabulary the rest of the
@@ -200,16 +241,16 @@ const styles = StyleSheet.create({
   },
   codeLanguage: {
     ...Typography.mono(),
-    color: groknight.textMuted,
+    color: groknight.ledgerGhost,
     fontSize: 9,
     lineHeight: 12,
     marginBottom: 5,
   },
   codeBlock: {
     ...Typography.mono(),
-    color: groknight.textSecondary,
-    fontSize: 11,
-    lineHeight: 16,
+    color: groknight.ledgerQuiet,
+    fontSize: 12,
+    lineHeight: 18,
   },
   rule: { height: 1, backgroundColor: groknight.borderQuiet, marginVertical: 3 },
 });

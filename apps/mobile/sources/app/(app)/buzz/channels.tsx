@@ -1297,22 +1297,28 @@ const styles = StyleSheet.create({
   rowAge: {
     ...Typography.mono(),
     marginLeft: 'auto',
-    color: groknight.textDisabled,
+    color: groknight.ledgerGhost,
     fontSize: 10,
     lineHeight: 14,
   },
-  rowAgeUnread: { ...Typography.mono('semiBold'), color: groknight.textSecondary },
+  /* The index keeps weight as an unread signal — it is a scanning surface, not
+   * the inscription. The ledger's no-weight rule governs the transcript. */
+  rowAgeUnread: { ...Typography.mono('semiBold'), color: groknight.ledgerBody },
+  /* The index speaks the ledger's luminance ladder, so a preview reads as the
+   * same voice the transcript will show when the row is opened: the author
+   * handle sits on `ledgerQuiet` exactly as an inline handle does, and unread
+   * lifts the preview one step rather than thickening it. */
   rowPreview: {
     ...Typography.default(),
     marginTop: 3,
-    color: groknight.textMuted,
+    color: groknight.ledgerQuiet,
     fontSize: 12,
     lineHeight: 16,
   },
-  rowPreviewUnread: { color: groknight.textSecondary },
+  rowPreviewUnread: { color: groknight.ledgerBody },
   rowPreviewAuthor: {
-    ...Typography.mono('semiBold'),
-    color: groknight.steel,
+    ...Typography.mono(),
+    color: groknight.ledgerQuiet,
     fontSize: 10,
     lineHeight: 16,
     letterSpacing: 0.5,

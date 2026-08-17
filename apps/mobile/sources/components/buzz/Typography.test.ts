@@ -71,7 +71,7 @@ const monoStyles = new Set([
   'mentionMenuLabel',
   'mentionOverflow',
   'replySwipeLabel',
-  'replyReferenceAuthor',
+  'replyReferenceText',
   'replyComposerLabel',
   'memberSectionLabel',
   'rosterModalEyebrow',
@@ -132,10 +132,14 @@ const monoStyles = new Set([
   'roomRenameCancelText',
   'roomRenameApplyText',
   'roomLifecycleTitle',
-  'attributionDetail',
-  'attributionName',
+  'marginaliaStamp',
+  'marginaliaDetail',
   'steerNote',
-  'steerSignature',
+  'ghostLine',
+  'ghostAffordance',
+  'ghostBody',
+  'summaryHandle',
+  'summaryAffordance',
 ]);
 
 function styleDefinition(source: string, name: string): string {
@@ -162,7 +166,7 @@ describe('Buzz typography', () => {
         expect(primaryStyle, `${relativePath} has text without a named primary style`).toBeTruthy();
         const definition = styleDefinition(source, primaryStyle!);
         expect(definition, `${relativePath} styles.${primaryStyle} has no app font`).toMatch(
-          /Typography\.(?:default|mono|logo)\(/,
+          /Typography\.(?:default|mono|ledger|logo)\(/,
         );
       }
 

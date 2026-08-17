@@ -12,6 +12,12 @@ const diffColors = darkTheme.colors.diff;
 type ActivityTimelineProps = {
   active?: boolean;
   items: readonly AgentActivityItem[];
+  /**
+   * The speaking agent's handle, set inline at the head of the ghost line so a
+   * Room's collapsed tool run still says whose it is without taking a row of
+   * its own. A Corner passes nothing: its one agent is named in the top bar.
+   */
+  handle?: string;
   testID?: string;
 };
 
@@ -121,18 +127,20 @@ function ActionDetail({ action, onBack }: { action: TurnActivityAction; onBack: 
 export const ActivityTimeline = React.memo(function ActivityTimeline({
   active = false,
   items,
+  handle,
   testID,
 }: ActivityTimelineProps) {
   const turn = useMemo(() => buildTurnActivity(items), [items]);
   const [expanded, setExpanded] = useState(false);
   const [selected, setSelected] = useState<TurnActivityAction | null>(null);
-  const inspectable = turn.actions.length > 0 || turn.updates.length > 0;
+  // The objective checklist is telemetry too, so it lives behind the same
+  // disclosure as everything else — the collapsed state is one line, always.
+  const inspectable = turn.actions.length > 0 || turn.updates.length > 0 || Boolean(turn.plan);
 
-  if (!inspectable && !turn.plan) return null;
+  if (!inspectable) return null;
 
   return (
     <View style={styles.timeline} testID={testID}>
-      {turn.plan ? <ObjectiveChecklist plan={turn.plan} /> : null}
       {selected ? (
         <ActionDetail action={selected} onBack={() => setSelected(null)} />
       ) : expanded ? (
@@ -146,6 +154,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
             <Text style={styles.listHeadingText}>TURN ACTIVITY</Text>
             <Text style={styles.disclosure}>⌃</Text>
           </Pressable>
+          {turn.plan ? <ObjectiveChecklist plan={turn.plan} /> : null}
           {turn.updates.map((update, index) => (
             <View key={`update-${index}`} style={styles.updateRow} testID={`activity-update-${index}`}>
               <Text selectable style={styles.updateText}>
@@ -184,15 +193,16 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
           style={styles.summaryRow}
           testID="activity-turn-summary"
         >
-          <View style={[styles.node, active && styles.activeNode]} />
+          {/* One ghost line, dimmest tier — never a wall of output down the
+              slab, and never a bordered node standing beside it. The summary
+              truncates; the disclosure copy beside it never does, because the
+              affordance is the reason the line exists. */}
           <Text numberOfLines={1} style={styles.summaryText}>
+            ⋯ {handle ? <Text style={styles.summaryHandle}>{handle.toUpperCase()} · </Text> : null}
             {turn.summary}
           </Text>
-          {active ? (
-            <HullActivityTip />
-          ) : inspectable ? (
-            <Text style={styles.disclosure}>⌄</Text>
-          ) : null}
+          <Text style={styles.summaryAffordance}> · tap to expand</Text>
+          {active ? <HullActivityTip /> : null}
         </Pressable>
       )}
     </View>
@@ -245,30 +255,30 @@ const styles = StyleSheet.create({
     lineHeight: 15,
   },
   checklistDone: { color: groknight.textMuted, textDecorationLine: 'line-through' },
-  // One line, no box: a turn's tool run is a repeating unit of the ledger,
-  // and the whole point is that it stays quiet until asked.
+  // One ghost line, no box and no node: a turn's tool run is a repeating unit
+  // of the ledger, and the whole point is that it stays quiet until asked.
   summaryRow: {
-    minHeight: 34,
+    minHeight: 30,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 9,
   },
-  node: {
-    width: 7,
-    height: 7,
-    borderWidth: 1,
-    borderColor: groknight.borderQuiet,
-    backgroundColor: groknight.bgTerminal,
-  },
-  activeNode: { borderColor: groknight.accent, backgroundColor: groknight.accent },
   summaryText: {
     ...Typography.mono(),
-    flex: 1,
+    flexShrink: 1,
     minWidth: 0,
-    color: groknight.textSecondary,
-    fontSize: 10,
-    lineHeight: 14,
+    color: groknight.ledgerGhost,
+    fontSize: 11,
+    lineHeight: 20,
   },
+  summaryAffordance: {
+    ...Typography.mono(),
+    flexShrink: 0,
+    color: groknight.ledgerGhost,
+    fontSize: 11,
+    lineHeight: 20,
+  },
+  summaryHandle: { color: groknight.ledgerGhost, letterSpacing: 0.5 },
   disclosure: {
     ...Typography.mono(),
     flexShrink: 0,

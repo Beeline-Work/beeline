@@ -120,16 +120,28 @@ describe('ChangeReviewPanel', () => {
       '+new',
     );
 
-    // Scrollable, both axes: horizontal ScrollView (isolated from the parent
-    // transcript list on Android via nestedScrollEnabled) wrapping a vertical
-    // FlatList that is itself nestedScrollEnabled.
+    // Scrollable, both axes, vertical as the OUTER/primary scroller (the
+    // Android-supported nesting direction): change-review-diff-scroll is a
+    // vertical ScrollView, not a FlatList trapped inside a horizontal
+    // ScrollView (the shape that broke vertical drag on-device).
     const scroller = renderer.root.findByProps({ testID: 'change-review-diff-scroll' });
-    expect(scroller.props.horizontal).toBe(true);
+    expect(scroller.props.horizontal).not.toBe(true);
     expect(scroller.props.nestedScrollEnabled).toBe(true);
-    const diffList = renderer.root.findByType('FlatList');
-    expect(diffList.props.nestedScrollEnabled).toBe(true);
-    const flattenedListStyle = Object.assign({}, ...[diffList.props.style].flat());
-    expect(flattenedListStyle.width).toBe(scroller.props.contentContainerStyle.minWidth);
+    expect(scroller.props.showsVerticalScrollIndicator).toBe(true);
+    expect(renderer.root.findAllByType('FlatList').length).toBe(0);
+
+    const horizontalScrollers = renderer.root
+      .findAllByType('ScrollView')
+      .filter((node: { props: { horizontal?: boolean } }) => node.props.horizontal === true);
+    expect(horizontalScrollers.length).toBe(1);
+    const innerScroller = horizontalScrollers[0];
+    expect(innerScroller.props.nestedScrollEnabled).toBe(true);
+
+    const lineStyle = Object.assign(
+      {},
+      ...[renderer.root.findByProps({ testID: 'change-review-line-2' }).props.style].flat(),
+    );
+    expect(lineStyle.width).toBe(innerScroller.props.contentContainerStyle.minWidth);
 
     // Parsed into visually distinct add/remove/header/context lines — never
     // identical. Diffs are a deliberate color exception to the app's
@@ -150,5 +162,42 @@ describe('ChangeReviewPanel', () => {
     expect(removedStyle.backgroundColor).toBe(diffColors.removedBg);
     expect(new Set([headerStyle.backgroundColor, removedStyle.backgroundColor, addedStyle.backgroundColor]).size)
       .toBeGreaterThan(1);
+  });
+
+  it('caps rendered diff lines and shows a truncation footer for a huge diff', async () => {
+    const hugePatch = Array.from({ length: 2000 }, (_, i) => `+line ${i}`).join('\n');
+    const transport = {
+      workspaceFilesRead: vi.fn(async () => [
+        { path: 'big.ts', status: 'modified', linesAdded: 2000, linesRemoved: 0 },
+      ]),
+      changedFileRead: vi.fn(async () => ({ content: hugePatch })),
+    };
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(ChangeReviewPanel, {
+          transport,
+          sessionId: 'change-2',
+          tip: 'd'.repeat(40),
+        }),
+      );
+    });
+    await settle();
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'change-review-file-big.ts' }).props.onPress();
+      await Promise.resolve();
+    });
+    await settle();
+
+    expect(renderer.root.findByProps({ testID: 'change-review-line-1499' })).toBeDefined();
+    expect(() => renderer.root.findByProps({ testID: 'change-review-line-1500' })).toThrow();
+
+    const texts = renderer.root
+      .findAllByType('Text')
+      .map((node: { props: { children?: unknown } }) =>
+        Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children,
+      );
+    expect(texts).toContain('diff truncated — showing 1500 of 2000 lines');
   });
 });

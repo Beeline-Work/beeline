@@ -69,6 +69,8 @@ describe('buildAgentEnv passthrough boundary', () => {
     CLAUDE_CONFIG_DIR: '/home/operator/.claude',
     GITHUB_TOKEN: 'gh-token',
     BUZZ_DEV_MCP_BIN: '/usr/bin/buzz-dev-mcp',
+    JAVA_HOME: '/usr/lib/jvm/default',
+    CARGO_HOME: '/home/operator/.cargo',
     UNRELATED_DEPLOY_SECRET: 'do-not-leak',
     STRIPE_SECRET_KEY: 'do-not-leak',
   };
@@ -88,6 +90,10 @@ describe('buildAgentEnv passthrough boundary', () => {
       CLAUDE_CONFIG_DIR: '/home/operator/.claude',
       GITHUB_TOKEN: 'gh-token',
       BUZZ_DEV_MCP_BIN: '/usr/bin/buzz-dev-mcp',
+      // A corner agent builds the user's project inside its worktree, so the
+      // toolchain environment has to survive the boundary.
+      JAVA_HOME: '/usr/lib/jvm/default',
+      CARGO_HOME: '/home/operator/.cargo',
     });
     expect(agentEnv.TMPDIR).toBeTruthy();
   });

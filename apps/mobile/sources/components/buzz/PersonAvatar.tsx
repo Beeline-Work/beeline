@@ -35,7 +35,8 @@ function shardPoints(cy: number, halfWidth: number, halfLength: number): string 
 
 export function PersonAvatar({ pubkey, avatarUrl, name = 'Person', size = 52 }: PersonAvatarProps) {
   const [failedAvatar, setFailedAvatar] = useState<string | null>(null);
-  const showRelayAvatar = Boolean(avatarUrl && failedAvatar !== avatarUrl);
+  const showRelayAvatar =
+    groknight.photoIdentityMarksEnabled && Boolean(avatarUrl && failedAvatar !== avatarUrl);
   const geometry = personAvatarGeometry(pubkey);
   const shards = Array.from({ length: geometry.petalCount }, (_, index) => index);
   const shardTone = [groknight.avatarInk, groknight.avatarSoft][geometry.petalTone]!;

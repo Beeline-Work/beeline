@@ -286,12 +286,12 @@ export type ChatEventProjection = {
   agentPresence?: AgentPresence;
 };
 
-function eventPayload(event: SessionEvent): UnknownRecord | undefined {
+export function sessionEventPayload(event: SessionEvent): UnknownRecord | undefined {
   return event.type === 'raw' ? asRecord(event.payload) : undefined;
 }
 
-function eventTags(event: SessionEvent): string[][] {
-  const tags = eventPayload(event)?.tags;
+export function sessionEventTags(event: SessionEvent): string[][] {
+  const tags = sessionEventPayload(event)?.tags;
   return Array.isArray(tags)
     ? tags.filter(
         (tag): tag is string[] =>
@@ -300,25 +300,25 @@ function eventTags(event: SessionEvent): string[][] {
     : [];
 }
 
-function eventTagValue(event: SessionEvent, name: string): string | undefined {
-  return eventTags(event).find((tag) => tag[0] === name)?.[1];
+export function sessionEventTagValue(event: SessionEvent, name: string): string | undefined {
+  return sessionEventTags(event).find((tag) => tag[0] === name)?.[1];
 }
 
-function eventHasTag(event: SessionEvent, name: string, value?: string): boolean {
-  return eventTags(event).some(
+export function sessionEventHasTag(event: SessionEvent, name: string, value?: string): boolean {
+  return sessionEventTags(event).some(
     (tag) => tag[0] === name && (value === undefined || tag[1] === value),
   );
 }
 
 function eventText(event: SessionEvent): string {
   if (event.type === 'assistant_delta') return event.text;
-  const content = eventPayload(event)?.content;
+  const content = sessionEventPayload(event)?.content;
   return typeof content === 'string' ? content : '';
 }
 
 function eventPubkey(event: SessionEvent): string | undefined {
   if (event.type === 'assistant_delta') return event.pubkey;
-  const pubkey = eventPayload(event)?.pubkey;
+  const pubkey = sessionEventPayload(event)?.pubkey;
   return typeof pubkey === 'string' ? pubkey : undefined;
 }
 
@@ -328,19 +328,19 @@ function eventActivity(event: SessionEvent): AgentActivityItem[] | undefined {
 
 function eventTimestamp(event: SessionEvent): number {
   if (event.type === 'assistant_delta' && event.seq) return event.seq;
-  const createdAt = eventPayload(event)?.createdAt;
+  const createdAt = sessionEventPayload(event)?.createdAt;
   return typeof createdAt === 'number' ? createdAt : Date.now();
 }
 
 function eventId(event: SessionEvent): string {
   if (event.type === 'assistant_delta' && event.id) return event.id;
-  const id = eventPayload(event)?.id;
+  const id = sessionEventPayload(event)?.id;
   if (typeof id === 'string') return id;
   return `${event.type}-${eventTimestamp(event)}-${eventText(event).slice(0, 32)}`;
 }
 
 function cornerStatus(event: SessionEvent): CornerStatus | undefined {
-  return mapRawCornerStatusTag(eventTagValue(event, 'display-status') ?? eventTagValue(event, 'status'));
+  return mapRawCornerStatusTag(sessionEventTagValue(event, 'display-status') ?? sessionEventTagValue(event, 'status'));
 }
 
 /** One display projection for both initial backfill and live subscription events. */
@@ -372,39 +372,39 @@ export function projectChatEvent(
   }
   const text = eventText(event);
   const pubkey = eventPubkey(event);
-  const subchannelId = eventTagValue(event, 'subchannel');
-  const bodyControl = eventHasTag(event, 't', 'body-control') || Boolean(subchannelId);
+  const subchannelId = sessionEventTagValue(event, 'subchannel');
+  const bodyControl = sessionEventHasTag(event, 't', 'body-control') || Boolean(subchannelId);
   const status = cornerStatus(event);
-  const isMergeSummary = eventHasTag(event, 't', 'merge-summary');
-  const isArchived = eventHasTag(event, 'status', 'archived');
+  const isMergeSummary = sessionEventHasTag(event, 't', 'merge-summary');
+  const isArchived = sessionEventHasTag(event, 'status', 'archived');
   // A corner's own delivery-failure notices (push/land/merge-gate failures)
   // are posted directly on the corner's own channel with no `subchannel`
   // tag — distinct from a `subchannel && status` parent-Room status card
   // (checked first below) and from the archive notice above.
-  const isDeliveryFailure = bodyControl && !subchannelId && eventHasTag(event, 'status', 'failed');
-  const repo = eventTagValue(event, 'repo');
-  const branch = eventTagValue(event, 'branch');
-  const tip = eventTagValue(event, 'tip');
+  const isDeliveryFailure = bodyControl && !subchannelId && sessionEventHasTag(event, 'status', 'failed');
+  const repo = sessionEventTagValue(event, 'repo');
+  const branch = sessionEventTagValue(event, 'branch');
+  const tip = sessionEventTagValue(event, 'tip');
   const mergeTarget =
-    eventHasTag(event, 't', 'merge-ready') && repo && branch && tip
+    sessionEventHasTag(event, 't', 'merge-ready') && repo && branch && tip
       ? { repo, branch, tip }
       : undefined;
-  const permissionId = eventTagValue(event, 'permission');
-  const permissionRequestId = eventTagValue(event, 'request');
-  const permissionAgent = eventTagValue(event, 'agent') ?? eventTagValue(event, 'p');
-  const isPermissionRequest = eventHasTag(event, 't', 'buzz-write-permission-request');
-  const isPermissionResponse = eventHasTag(event, 't', 'buzz-write-permission-response');
-  const isAgentTurn = eventHasTag(event, 't', 'agent-turn');
-  const attachments = parseAttachmentTags(eventTags(event));
-  const replyToId = eventTags(event).find(
+  const permissionId = sessionEventTagValue(event, 'permission');
+  const permissionRequestId = sessionEventTagValue(event, 'request');
+  const permissionAgent = sessionEventTagValue(event, 'agent') ?? sessionEventTagValue(event, 'p');
+  const isPermissionRequest = sessionEventHasTag(event, 't', 'buzz-write-permission-request');
+  const isPermissionResponse = sessionEventHasTag(event, 't', 'buzz-write-permission-response');
+  const isAgentTurn = sessionEventHasTag(event, 't', 'agent-turn');
+  const attachments = parseAttachmentTags(sessionEventTags(event));
+  const replyToId = sessionEventTags(event).find(
     (tag) => tag[0] === 'e' && tag[1] && tag[3] === 'reply',
   )?.[1];
 
   if (isAgentTurn) {
-    const requestId = eventTagValue(event, 'request');
-    const agentPubkey = eventTagValue(event, 'agent') ?? pubkey;
-    const turnStatus = eventTagValue(event, 'status');
-    const generationId = eventTagValue(event, 'generation');
+    const requestId = sessionEventTagValue(event, 'request');
+    const agentPubkey = sessionEventTagValue(event, 'agent') ?? pubkey;
+    const turnStatus = sessionEventTagValue(event, 'status');
+    const generationId = sessionEventTagValue(event, 'generation');
     if (
       requestId &&
       agentPubkey &&
@@ -435,7 +435,7 @@ export function projectChatEvent(
   if (isPermissionResponse) return {};
 
   if (permissionId && permissionRequestId && permissionAgent && isPermissionRequest) {
-    const wireStatus = eventTagValue(event, 'status');
+    const wireStatus = sessionEventTagValue(event, 'status');
     const status =
       wireStatus === 'allowed'
         ? 'allowed'
@@ -457,7 +457,7 @@ export function projectChatEvent(
           permissionId,
           requestId: permissionRequestId,
           agentPubkey: permissionAgent,
-          tool: eventTagValue(event, 'tool') ?? 'edit files',
+          tool: sessionEventTagValue(event, 'tool') ?? 'edit files',
           ...(repo ? { repository: repo } : {}),
           status,
           ...(subchannelId ? { subchannelId } : {}),
@@ -467,8 +467,8 @@ export function projectChatEvent(
     };
   }
   if (
-    eventHasTag(event, 't', 'change-review-manifest') ||
-    eventHasTag(event, 't', 'change-review-file')
+    sessionEventHasTag(event, 't', 'change-review-manifest') ||
+    sessionEventHasTag(event, 't', 'change-review-file')
   ) {
     return {};
   }
@@ -490,7 +490,7 @@ export function projectChatEvent(
   }
 
   if (bodyControl) {
-    const clearMergeTarget = eventHasTag(event, 't', 'merge-not-ready');
+    const clearMergeTarget = sessionEventHasTag(event, 't', 'merge-not-ready');
     if (subchannelId && status) {
       return {
         ...(mergeTarget ? { mergeTarget } : {}),
@@ -503,7 +503,7 @@ export function projectChatEvent(
           ...(pubkey ? { pubkey } : {}),
           corner: {
             subchannelId,
-            agentPubkey: eventTagValue(event, 'agent') ?? pubkey,
+            agentPubkey: sessionEventTagValue(event, 'agent') ?? pubkey,
             status,
           },
           ...(isNew ? { isNew: true } : {}),
@@ -554,7 +554,7 @@ export function projectChatEvent(
   // updates the SAME on-screen bubble in place rather than appending a new
   // one — the raw relay event id survives in `relayId` so reply-threading
   // (which must reference a real signed event) keeps working.
-  const isAgentMessage = eventHasTag(event, 't', 'agent-message');
+  const isAgentMessage = sessionEventHasTag(event, 't', 'agent-message');
   const relayId = eventId(event);
   const reconciledId = isAgentMessage && replyToId ? `agent-draft-${replyToId}` : undefined;
 

@@ -45,7 +45,10 @@ import {
   isTransientPermissionPollError,
   humanAgentExchangeRequest,
   ReadOnlyToolsUnavailableError,
+  isAcpPromptStallError,
   ROOM_AGENT_PROMPT_TIMEOUT_MS,
+  ROOM_AGENT_STALL_NOTICE_MS,
+  ROOM_AGENT_STALL_MAX_ATTEMPTS,
   ROOM_POLL_FAILURE_BACKOFF_CAP_MS,
   RoomPollBackoff,
   codegraphMcpServer,
@@ -882,10 +885,173 @@ describe('Room poll resilience', () => {
         'hello',
         ROOM_AGENT_PROMPT_TIMEOUT_MS,
         undefined,
+        expect.any(Function),
       );
       expect(sessionCancel).toHaveBeenCalledWith('hung-session');
       expect(suspend).toHaveBeenCalledOnce();
       expect(scheduler.snapshot().busy).toBe(0);
+      await scheduler.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('surfaces an honest stall notice well before the full idle-cancel window on a fully wedged backend', async () => {
+    vi.useFakeTimers();
+    try {
+      const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
+      const body = new Body(
+        {
+          agentBinary: '/nonexistent',
+          mcpBinary: '/nonexistent',
+          agentEnv: {},
+          workspaceRoot: '/tmp/buzzy-stall-notice',
+          relayBaseUrl: 'http://relay.test',
+          relayHost: 'relay.test',
+          relayScheme: 'http',
+          relayWsUrl: 'ws://relay.test',
+          autoApprovePermissions: true,
+        },
+        newIdentity('stall-operator'),
+        newIdentity('stall-agent'),
+        undefined,
+        { scheduler },
+      );
+      const published: NostrEvent[] = [];
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+        }),
+      );
+
+      // A backend producing literally zero ACP activity for the whole turn.
+      const sessionCancel = vi.fn();
+      const sessionPrompt = vi.fn(
+        (_sessionId: string, _prompt: string, timeoutMs: number) =>
+          new Promise<never>((_resolve, reject) =>
+            setTimeout(
+              () =>
+                reject(new Error(`ACP session/prompt timed out after ${timeoutMs}ms of inactivity`)),
+              timeoutMs,
+            ),
+          ),
+      );
+      const session = {
+        channelId: 'stall-room',
+        sessionId: 'stall-session',
+        mode: 'readonly',
+        client: { sessionPrompt, sessionCancel },
+        lifecycle: {
+          activate: vi.fn().mockResolvedValue('stall-session'),
+          suspend: vi.fn().mockResolvedValue(undefined),
+        },
+      } as never;
+
+      const prompt = Reflect.get(body, 'promptAgent').call(body, session, 'hello', {
+        channelId: 'stall-room',
+        requestId: 'stall-request',
+      });
+      const rejection = expect(prompt).rejects.toThrow('timed out after');
+
+      // Still under the (much shorter) notice threshold: no notice yet.
+      await vi.advanceTimersByTimeAsync(ROOM_AGENT_STALL_NOTICE_MS - 1);
+      expect(
+        published.some((event) => event.content.includes('taking longer than usual')),
+      ).toBe(false);
+
+      // Crossing the notice threshold surfaces the stall well before the
+      // full ROOM_AGENT_PROMPT_TIMEOUT_MS idle-cancel window elapses.
+      expect(ROOM_AGENT_STALL_NOTICE_MS).toBeLessThan(ROOM_AGENT_PROMPT_TIMEOUT_MS);
+      await vi.advanceTimersByTimeAsync(2);
+      expect(
+        published.some((event) => event.content.includes('taking longer than usual')),
+      ).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(ROOM_AGENT_PROMPT_TIMEOUT_MS);
+      await rejection;
+      await scheduler.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never surfaces a stall notice for a turn that keeps producing genuine ACP activity past the notice threshold', async () => {
+    vi.useFakeTimers();
+    try {
+      const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
+      const body = new Body(
+        {
+          agentBinary: '/nonexistent',
+          mcpBinary: '/nonexistent',
+          agentEnv: {},
+          workspaceRoot: '/tmp/buzzy-active-turn',
+          relayBaseUrl: 'http://relay.test',
+          relayHost: 'relay.test',
+          relayScheme: 'http',
+          relayWsUrl: 'ws://relay.test',
+          autoApprovePermissions: true,
+        },
+        newIdentity('active-operator'),
+        newIdentity('active-agent'),
+        undefined,
+        { scheduler },
+      );
+      const published: NostrEvent[] = [];
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+        }),
+      );
+
+      // Genuine ACP activity every 15s (under the 20s notice window) for 5
+      // ticks — 75s of real elapsed time, well past the notice threshold in
+      // aggregate, but each individual gap stays short enough that neither
+      // the notice nor the idle-cancel ever trips.
+      const sessionPrompt = vi.fn(
+        (
+          _sessionId: string,
+          _prompt: string,
+          _timeoutMs: number,
+          _onChunk: unknown,
+          onActivity?: () => void,
+        ) =>
+          new Promise((resolve) => {
+            const tick = (remaining: number) => {
+              if (remaining <= 0) {
+                resolve({ stopReason: 'end_turn', updates: [], agentText: 'done', toolCalls: [] });
+                return;
+              }
+              onActivity?.();
+              setTimeout(() => tick(remaining - 1), 15_000);
+            };
+            tick(5);
+          }),
+      );
+      const session = {
+        channelId: 'active-room',
+        sessionId: 'active-session',
+        mode: 'readonly',
+        client: { sessionPrompt, sessionCancel: vi.fn() },
+        lifecycle: {
+          activate: vi.fn().mockResolvedValue('active-session'),
+          suspend: vi.fn().mockResolvedValue(undefined),
+        },
+      } as never;
+
+      const prompt = Reflect.get(body, 'promptAgent').call(body, session, 'hello', {
+        channelId: 'active-room',
+        requestId: 'active-request',
+      });
+      await vi.advanceTimersByTimeAsync(15_000 * 5 + 5);
+      const result = (await prompt) as { agentText: string };
+      expect(result.agentText).toBe('done');
+      expect(
+        published.some((event) => event.content?.includes('taking longer than usual')),
+      ).toBe(false);
       await scheduler.dispose();
     } finally {
       vi.useRealTimers();
@@ -1302,6 +1468,7 @@ describe('Room conversation and permission-gated work intent', () => {
       expect.stringContaining("Hey, what's up?"),
       ROOM_AGENT_PROMPT_TIMEOUT_MS,
       expect.any(Function),
+      expect.any(Function),
     );
     expect(body.listSessions()).toHaveLength(1);
     expect(published).toHaveLength(3);
@@ -1632,6 +1799,95 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(start).toHaveBeenCalledTimes(1);
 
     await rm('/tmp/buzzy-corner-dedup-unit', { recursive: true, force: true });
+  });
+
+  it("bounds a stalled backend's blind retry loop and fails cleanly instead of retrying forever", async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-stall-retry-cap-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    // Every relay-backed idempotency check sees no prior state, matching the
+    // worst case for a real relay round-trip that hasn't converged yet.
+    Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
+    const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    const sessionPromptSpy = vi
+      .spyOn(client, 'sessionPrompt')
+      .mockRejectedValue(
+        new Error(`ACP session/prompt timed out after ${ROOM_AGENT_PROMPT_TIMEOUT_MS}ms of inactivity`),
+      );
+    body.registerSession({
+      channelId: 'parent-channel',
+      sessionId: 'readonly-session',
+      client,
+      mode: 'readonly',
+    });
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const event = requestEvent([['p', body.agent.publicKey]], human, 'What does this repo do?');
+    const roomParticipants = [human.publicKey, body.agent.publicKey];
+    const processChannelRequestEvents = (
+      Reflect.get(body, 'processChannelRequestEvents') as (...args: unknown[]) => Promise<number>
+    ).bind(body);
+
+    // Every attempt short of the cap still throws (so it stays pending and
+    // is retried on the next poll), exactly like the pre-existing behavior.
+    for (let attempt = 1; attempt < ROOM_AGENT_STALL_MAX_ATTEMPTS; attempt++) {
+      await expect(
+        processChannelRequestEvents(
+          'parent-channel',
+          { repo: 'repo' },
+          'repository',
+          [event],
+          roomParticipants,
+        ),
+      ).rejects.toThrow('timed out after');
+    }
+    expect(sessionPromptSpy).toHaveBeenCalledTimes(ROOM_AGENT_STALL_MAX_ATTEMPTS - 1);
+
+    // The attempt that hits the cap resolves cleanly instead of throwing,
+    // and publishes an honest terminal failure instead of retrying again.
+    await expect(
+      processChannelRequestEvents(
+        'parent-channel',
+        { repo: 'repo' },
+        'repository',
+        [event],
+        roomParticipants,
+      ),
+    ).resolves.toBe(0);
+    expect(sessionPromptSpy).toHaveBeenCalledTimes(ROOM_AGENT_STALL_MAX_ATTEMPTS);
+    expect(
+      published.some((item) =>
+        item.content.includes("couldn't get a response from my coding backend"),
+      ),
+    ).toBe(true);
+
+    // A later poll must not re-drive the backend a further time — the event
+    // is terminally delivered, not endlessly retried.
+    sessionPromptSpy.mockClear();
+    await processChannelRequestEvents(
+      'parent-channel',
+      { repo: 'repo' },
+      'repository',
+      [event],
+      roomParticipants,
+    );
+    expect(sessionPromptSpy).not.toHaveBeenCalled();
+
+    await rm('/tmp/buzzy-stall-retry-cap-unit', { recursive: true, force: true });
   });
 
   it('opens an edit corner only after a human allows the first mutating request', async () => {

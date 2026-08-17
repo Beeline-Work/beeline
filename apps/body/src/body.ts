@@ -32,6 +32,7 @@ import {
   postAgentMessage,
   startAgentPresence,
   postAgentTurnStatus,
+  postAgentStallNotice,
   postControlMessage,
   replyRootIdForEvent,
   stripAgentReplyPreamble,
@@ -197,6 +198,32 @@ export const ROOM_POLL_FAILURE_BACKOFF_CAP_MS = 5 * 60_000;
  * gets cancelled and force-suspended.
  */
 export const ROOM_AGENT_PROMPT_TIMEOUT_MS = 3 * 60_000;
+
+/**
+ * Idle window — driven by the exact same per-update activity signal as
+ * `ROOM_AGENT_PROMPT_TIMEOUT_MS` above, just shorter — before a stalled turn
+ * gets an honest one-time "still working, taking longer than usual" notice in
+ * the Room/corner. This never cancels or retries anything by itself: it only
+ * surfaces the stall to the user well before the full idle-cancel window
+ * elapses, so a wedged backend doesn't look silently idle or offline. An
+ * actively-working turn (any session/update, not just text) keeps resetting
+ * this exactly like the real idle-cancel timer, so it never fires on a
+ * legitimately slow-but-active (e.g. reasoning) turn.
+ */
+export const ROOM_AGENT_STALL_NOTICE_MS = 20_000;
+
+/**
+ * A turn that fails from genuine ACP backend inactivity (`isAcpPromptStallError`)
+ * may be retried from scratch at most this many times (including the first
+ * attempt) before the caller stops retrying and surfaces a clean failure
+ * instead of silently re-driving a wedged backend forever.
+ */
+export const ROOM_AGENT_STALL_MAX_ATTEMPTS = 3;
+
+/** True only for the exact idle-inactivity timeout `AcpClient.sessionPrompt` raises. */
+export function isAcpPromptStallError(error: unknown): boolean {
+  return /ACP session\/prompt timed out after \d+ms/.test(String(error));
+}
 
 /**
  * Default cadence for the WS-push loop's low-rate maintenance/liveness tick
@@ -1110,6 +1137,28 @@ export class Body {
     const narrator = stream?.narrate
       ? createNarrativeCommitter(stream.channelId, this.agentIdentity)
       : undefined;
+    // Surface a stall well before ROOM_AGENT_PROMPT_TIMEOUT_MS elapses. Armed
+    // on every ACP activity signal (`onActivity` below fires on every
+    // session/update, the same trigger `AcpClient` uses to reset its own idle
+    // timer), so this only ever fires on genuine zero-output inactivity, never
+    // on a slow-but-active turn.
+    let stallTimer: ReturnType<typeof setTimeout> | undefined;
+    let stallNotified = false;
+    const clearStallTimer = () => {
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = undefined;
+    };
+    const armStallTimer = () => {
+      clearStallTimer();
+      if (!stream || stallNotified) return;
+      stallTimer = setTimeout(() => {
+        stallNotified = true;
+        postAgentStallNotice(stream.channelId, this.agentIdentity, stream.requestId).catch(
+          (error) => console.error('[body] failed to publish agent stall notice:', error),
+        );
+      }, ROOM_AGENT_STALL_NOTICE_MS);
+    };
+    armStallTimer();
     let result: PromptResult;
     try {
       result = await this.runOnSession(session, () =>
@@ -1122,15 +1171,17 @@ export class Body {
               draft?.onChunk(fullText);
               narrator?.onChunk(fullText);
             }),
+          armStallTimer,
         ),
       );
     } catch (error) {
-      if (/ACP session\/prompt timed out after \d+ms/.test(String(error))) {
+      if (isAcpPromptStallError(error)) {
         session.client.sessionCancel(session.sessionId);
         await this.scheduler.forceSuspend(session.channelId);
       }
       throw error;
     } finally {
+      clearStallTimer();
       await draft?.finish();
       await narrator?.finish();
     }
@@ -2245,7 +2296,22 @@ export class Body {
           this.processedRequestIds.add(event.id);
           await this.durableState.delivered(tlcChannelId, event.id);
         } catch (error) {
-          await this.durableState.failed(tlcChannelId, event.id, error);
+          const attempts = await this.durableState.failed(tlcChannelId, event.id, error);
+          // A genuinely wedged backend: stop blindly re-driving it from
+          // scratch on every later poll and surface a clean failure instead.
+          if (isAcpPromptStallError(error) && attempts >= ROOM_AGENT_STALL_MAX_ATTEMPTS) {
+            await postAgentMessage(
+              tlcChannelId,
+              this.agentIdentity,
+              "I couldn't get a response from my coding backend after several attempts — it looks unresponsive right now. Please try again later.",
+              event.id,
+            ).catch((publishError) =>
+              console.error('[body] failed to publish stalled-turn failure notice:', publishError),
+            );
+            this.processedRequestIds.add(event.id);
+            await this.durableState.delivered(tlcChannelId, event.id);
+            continue;
+          }
           throw error;
         }
       } finally {
@@ -3774,9 +3840,25 @@ export class Body {
             'failed',
             this.presenceGenerations.get(subchannelId),
           ).catch(() => undefined);
-          retryFrom = Math.min(retryFrom ?? evt.created_at, evt.created_at);
-          await this.durableState.failed(subchannelId, evt.id, err);
+          const attempts = await this.durableState.failed(subchannelId, evt.id, err);
           console.error(`[body] pollMembers: forwarding failed for event ${evt.id}:`, err);
+          // A genuinely wedged backend: stop blindly re-driving it from
+          // scratch on every later poll and surface a clean failure instead.
+          if (isAcpPromptStallError(err) && attempts >= ROOM_AGENT_STALL_MAX_ATTEMPTS) {
+            await postAgentMessage(
+              subchannelId,
+              this.agentIdentity,
+              "I couldn't get a response from my coding backend after several attempts — it looks unresponsive right now. Please try again later.",
+              evt.id,
+            ).catch((publishError) =>
+              console.error('[body] failed to publish stalled-turn failure notice:', publishError),
+            );
+            processed.add(evt.id);
+            await this.durableState.delivered(subchannelId, evt.id);
+            count++;
+            continue;
+          }
+          retryFrom = Math.min(retryFrom ?? evt.created_at, evt.created_at);
         }
       }
 

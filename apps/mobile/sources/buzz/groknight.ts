@@ -49,6 +49,14 @@ export const groknight = {
   /** The single corner-radius value. No other radius ships. */
   radius: 3,
 
+  /**
+   * The transcript's luminous quality: agent output reads as lit from within
+   * against the obsidian rather than printed on it. `textPrimary` at low
+   * alpha, used only as a zero-offset text shadow — a luminance value, not a
+   * new hue, so it stays inside the zero-chroma rule.
+   */
+  ledgerGlow: 'rgba(228, 228, 228, 0.18)',
+
   /** Deterministic identity marks */
   avatarGround: '#121212',
   avatarInk: '#e4e4e4',

@@ -4,13 +4,14 @@ import { parseMarkdown, type MarkdownSpan } from '@/components/markdown/parseMar
 import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
 
-type MonoMarkdownTone = 'reasoning' | 'output' | 'final';
-
 type MonoMarkdownProps = {
   markdown: string;
-  tone?: MonoMarkdownTone;
-  /** Overrides the tone's canned text style — for callers embedding markdown into an existing bubble/text style instead of one of the fixed tones. */
-  textStyle?: TextStyle;
+  /**
+   * The caller's own body style. Required in practice: the ledger owns every
+   * transcript text tone (`components/buzz/Ledger.tsx`), so this component no
+   * longer carries canned tones of its own.
+   */
+  textStyle: TextStyle;
   testID?: string;
 };
 
@@ -49,12 +50,6 @@ function InlineMarkdown({
   );
 }
 
-function toneTextStyle(tone: MonoMarkdownTone): TextStyle {
-  if (tone === 'reasoning') return styles.reasoningText;
-  if (tone === 'final') return styles.finalText;
-  return styles.outputText;
-}
-
 /**
  * Compact markdown for the Mono Hull transcript, with real hierarchy and no raw syntax.
  *
@@ -67,12 +62,11 @@ function toneTextStyle(tone: MonoMarkdownTone): TextStyle {
  */
 export const MonoMarkdown = React.memo(function MonoMarkdown({
   markdown,
-  tone = 'output',
   textStyle,
   testID,
 }: MonoMarkdownProps) {
   const blocks = useMemo(() => parseMarkdown(markdown), [markdown]);
-  const base = textStyle ?? toneTextStyle(tone);
+  const base = textStyle;
   const onLink = useCallback((url: string) => {
     if (/^https?:\/\//i.test(url)) void Linking.openURL(url);
   }, []);
@@ -178,24 +172,6 @@ const styles = StyleSheet.create({
   root: { width: '100%', minWidth: 0 },
   block: { marginBottom: 7 },
   lastBlock: { marginBottom: 0 },
-  reasoningText: {
-    ...Typography.default(),
-    color: groknight.textMuted,
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  outputText: {
-    ...Typography.default(),
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  finalText: {
-    ...Typography.default(),
-    color: groknight.textPrimary,
-    fontSize: 14,
-    lineHeight: 21,
-  },
   bold: { ...Typography.default('semiBold'), fontWeight: '700', color: groknight.textPrimary },
   italic: { fontStyle: 'italic' },
   inlineCode: { ...Typography.mono(), color: groknight.textSecondary, fontSize: 12 },
@@ -209,13 +185,18 @@ const styles = StyleSheet.create({
   list: { width: '100%', gap: 3 },
   listItem: { width: '100%' },
   listGlyph: { color: groknight.textMuted },
+  /**
+   * A fenced block is code, not a card. It marks itself with one hairline
+   * gutter and an indent — the same boxless vocabulary the rest of the
+   * transcript uses — so a long snippet never lands on the slab as a lit
+   * panel (DESIGN.md, "The ledger").
+   */
   codeFrame: {
     maxWidth: '100%',
-    borderWidth: 1,
-    borderColor: groknight.borderQuiet,
-    backgroundColor: groknight.bgHover,
-    paddingHorizontal: 9,
-    paddingVertical: 8,
+    paddingLeft: 10,
+    paddingVertical: 2,
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderLeftColor: groknight.border,
   },
   codeLanguage: {
     ...Typography.mono(),

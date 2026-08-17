@@ -61,6 +61,7 @@ import {
   revalidateCachedMessages,
 } from '@/buzz/local-cache-sync';
 import { groknight } from '@/buzz/groknight';
+import { continuedSpeakerIds } from '@/buzz/ledger-attribution';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
 import {
@@ -128,8 +129,7 @@ import { AgentAvatar } from '@/components/buzz/AgentAvatar';
 import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome';
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
-import { CornerLedgerEntry, CornerSteer } from '@/components/buzz/CornerLedger';
-import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
+import { LedgerAttribution, LedgerEntry, LedgerSteer } from '@/components/buzz/Ledger';
 import {
   HullSurface,
   HullWaveSignal,
@@ -159,11 +159,50 @@ const OLDER_MESSAGES_PAGE_SIZE = 30;
 const MERGE_APPROVAL_ACCENT = groknight.accent;
 
 /**
- * Everything the agent's tools did in one turn, folded into a single ledger
- * line. Tool prose, commands, and outputs stay behind that line's own
- * disclosure (ActivityTimeline) — a corner never prints a wall of output.
+ * The voice a transcript entry belongs to, or `null` for anything that is not
+ * one. People and agents both count: consecutive entries from the same voice
+ * fold into one block. A system row (corner card, merge summary, archive
+ * notice, permission card) belongs to nobody, so each of those ends the run and
+ * makes the next entry re-announce itself.
+ *
+ * The agent test runs before the person test on purpose, so this agrees with
+ * `renderItem`'s own `isAgent ? LedgerEntry : LedgerSteer` choice for the one case
+ * where a message is both: an agent viewing its own Room messages, where
+ * `isUser` and `isAgentAuthor` are true together. Deriving the two differently
+ * would fold a run the renderer draws as two voices.
  */
-function CornerActivity({ message, active }: { message: ChatDisplayMessage; active: boolean }) {
+function ledgerSpeakerKey(
+  message: ChatDisplayMessage,
+  agentByPubkey: Map<string, unknown>,
+): string | null {
+  if (message.corner || message.isMergeSummary || message.isArchivedNotice) return null;
+  if (message.writePermission) return null;
+  const isAgent =
+    message.isAgentAuthor ||
+    message.isAgentActivity ||
+    Boolean(message.pubkey && (BODY_PUBKEYS.has(message.pubkey) || agentByPubkey.has(message.pubkey)));
+  if (isAgent) return `agent:${message.pubkey ?? 'unknown-agent'}`;
+  // An optimistic own message has no pubkey until it reconciles, so it keys on
+  // the viewer rather than on a shared "unknown" bucket.
+  return `person:${message.pubkey ?? (message.isUser ? 'self' : 'unknown-person')}`;
+}
+
+/**
+ * Everything the agent's tools did in one turn, folded into a single dim line.
+ * Tool prose, commands, and outputs stay behind that line's own disclosure
+ * (ActivityTimeline) — neither a Room nor a Corner ever prints a wall of
+ * output across the slab. A Room passes `attribution` because several agents
+ * can be working there; a Corner names its one agent in the top bar instead.
+ */
+function LedgerActivity({
+  message,
+  active,
+  attribution,
+}: {
+  message: ChatDisplayMessage;
+  active: boolean;
+  attribution?: React.ReactNode;
+}) {
   // A fresh fallback array literal on every render would defeat
   // ActivityTimeline's memoization below (its `items` prop would never be
   // reference-stable), so this stays memoized on the same inputs.
@@ -176,6 +215,7 @@ function CornerActivity({ message, active }: { message: ChatDisplayMessage; acti
   );
   return (
     <View style={styles.activityGroup} testID="corner-activity">
+      {attribution}
       <ActivityTimeline active={active} items={activity} testID="corner-activity-timeline" />
     </View>
   );
@@ -283,69 +323,6 @@ function SwipeToReply({
     >
       {children}
     </Swipeable>
-  );
-}
-
-/**
- * The one transcript row Rooms and Corners both render: a small avatar, a
- * ›/· glyph, an uppercase mono label naming who, and body text — no
- * bubble, no per-row box. A human's own short message is the only layout
- * exception (right-aligned, inset), carried by alignment, not a box.
- */
-function TranscriptRow({
-  itemId,
-  isOwn,
-  isAgent,
-  avatar,
-  presenceLight,
-  label,
-  replyReference,
-  bodyText,
-  bodyTestID,
-  offlineQueued,
-  attachments,
-  provenance,
-}: {
-  itemId: string;
-  isOwn: boolean;
-  isAgent: boolean;
-  avatar: React.ReactNode;
-  presenceLight: React.ReactNode;
-  label: string;
-  replyReference: React.ReactNode;
-  bodyText: string | undefined;
-  bodyTestID: string;
-  offlineQueued: boolean;
-  attachments: React.ReactNode;
-  provenance: string | null;
-}) {
-  return (
-    <View
-      style={[styles.terminalTurn, isOwn && !isAgent && styles.terminalTurnUser]}
-      testID={`chat-message-${itemId}`}
-    >
-      <View style={styles.terminalTurnHeading}>
-        {avatar}
-        {presenceLight}
-        <Text style={styles.terminalTurnGlyph}>{isOwn || isAgent ? '›' : '·'}</Text>
-        <Text numberOfLines={1} style={styles.terminalTurnLabel}>
-          {label}
-        </Text>
-      </View>
-      {replyReference}
-      {bodyText ? (
-        !isOwn && isAgent ? (
-          <MonoMarkdown markdown={bodyText} tone="final" testID={bodyTestID} />
-        ) : (
-          <MonoMarkdown markdown={bodyText} textStyle={styles.terminalTurnText} testID={bodyTestID} />
-        )
-      ) : null}
-      {offlineQueued && (
-        <Text style={styles.offlineDeliveryNote}>SENT TO ROOM · AGENT OFFLINE</Text>
-      )}
-      {attachments}
-      {provenance && <Text style={styles.provenanceText}>{provenance}</Text>}
-    </View>
   );
 }
 
@@ -686,6 +663,21 @@ export default function BuzzChat() {
   const visibleMessages = useMemo(
     () => transcriptMessages(messages, isCorner),
     [isCorner, messages],
+  );
+  // Attribution is per run, not per entry: only the first entry of a voice's
+  // run carries its mark and name (see `buzz/ledger-attribution.ts`). A corner
+  // never attributes at all, so it never needs the set.
+  const continuedAttributionIds = useMemo(
+    () =>
+      isCorner
+        ? new Set<string>()
+        : continuedSpeakerIds(
+            visibleMessages.map((message) => ({
+              id: message.id,
+              speaker: ledgerSpeakerKey(message, agentByPubkey),
+            })),
+          ),
+    [agentByPubkey, isCorner, visibleMessages],
   );
   // Newest-first for the inverted FlatList; chronological visibleMessages
   // above stays the source of truth for everything else that reads order.
@@ -1924,10 +1916,6 @@ export default function BuzzChat() {
         );
       }
 
-      if (item.isAgentActivity && parentChannelId) {
-        return <CornerActivity active={item.id === activeActivityId} message={item} />;
-      }
-
       // ── Merge summary ────────────────────────────────────────────
       if (item.isMergeSummary) {
         const mergeAgent = item.pubkey ? agentByPubkey.get(item.pubkey) : undefined;
@@ -1993,76 +1981,80 @@ export default function BuzzChat() {
         <AttachmentCard attachment={attachment} key={`${item.id}-${attachment.url}`} />
       ));
 
-      // ── Corner ledger (§ DESIGN.md "Rooms and Corners") ──────────
-      // A corner is single-agent, so the agent is named once in the top bar
-      // and its turns render here as plain flowing text — no avatar, no label,
-      // no glyph. A human's steer breaks that flow deliberately.
-      if (isCorner) {
-        const steerSignature = isOwn
-          ? 'YOU'
-          : item.pubkey
-            ? (personName ?? shortMemberNpub(item.pubkey))
-            : 'SOMEONE';
+      // ── The ledger (§ DESIGN.md "The ledger") ────────────────────
+      // One primitive, both surfaces. The only difference is attribution, and
+      // it tracks a real difference between them: a Room holds several voices,
+      // so each one is marked and named before it speaks; a Corner is one
+      // agent (named once in the top bar) plus the occasional human
+      // interruption, so its turns are pure flowing text and its steers sign
+      // off at the end instead. Either way a voice announces itself once per
+      // run, not once per entry.
+      const attributionContinued = continuedAttributionIds.has(item.id);
+      const agentAttribution =
+        !isCorner && isAgent && !attributionContinued ? (
+          <LedgerAttribution
+            mark={
+              display ? (
+                <AgentAvatar
+                  pubkey={item.pubkey ?? 'unknown-agent'}
+                  avatarSeed={display.avatarSeed}
+                  avatarUrl={display.avatarUrl}
+                  name={display.name}
+                  size={16}
+                />
+              ) : null
+            }
+            name={display ? display.name : (personName ?? shortMemberNpub(item.pubkey ?? ''))}
+            presence={
+              knownAgent && item.pubkey ? (
+                <AgentPresenceLight
+                  online={agentOnline}
+                  testID={`agent-presence-light-${item.pubkey}`}
+                />
+              ) : null
+            }
+            testID={`chat-attribution-${item.id}`}
+          />
+        ) : null;
+
+      // Machine noise collapses the same way on both surfaces: one dim line,
+      // expandable, never a wall of output down the slab.
+      if (item.isAgentActivity) {
         return (
-          <SwipeToReply
-            messageId={item.id}
-            onReply={item.isAgentDraft ? () => undefined : () => beginReply(item)}
-          >
-            <NewMessageMaterialize enabled={Boolean(item.isNew)}>
-              {isAgent ? (
-                <CornerLedgerEntry
-                  itemId={item.id}
-                  bodyText={item.text}
-                  bodyTestID={`chat-message-text-${item.id}`}
-                  replyReference={replyReference}
-                  attachments={attachmentElements}
-                />
-              ) : (
-                <CornerSteer
-                  itemId={item.id}
-                  signature={steerSignature.toUpperCase()}
-                  bodyText={item.text}
-                  bodyTestID={`chat-message-text-${item.id}`}
-                  replyReference={replyReference}
-                  attachments={attachmentElements}
-                  offlineQueued={isOwn && offlineQueuedIds.has(item.id)}
-                />
-              )}
-            </NewMessageMaterialize>
-          </SwipeToReply>
+          <LedgerActivity
+            active={item.id === activeActivityId}
+            attribution={agentAttribution}
+            message={item}
+          />
         );
       }
 
-      // Rooms keep the unified row: many participants, so every message names
-      // and marks its author.
-      const avatarElement = !isOwn ? (
-        display ? (
-          <AgentAvatar
-            pubkey={item.pubkey ?? 'unknown-agent'}
-            avatarSeed={display.avatarSeed}
-            avatarUrl={display.avatarUrl}
-            name={display.name}
-            size={18}
-          />
-        ) : item.pubkey ? (
-          <PersonAvatar
-            pubkey={item.pubkey}
-            avatarUrl={personProfileByPubkey.get(item.pubkey)?.avatar}
-            name={personName ?? shortMemberNpub(item.pubkey)}
-            size={18}
-          />
-        ) : null
-      ) : null;
-      const presenceLightElement =
-        knownAgent && item.pubkey ? (
-          <AgentPresenceLight online={agentOnline} testID={`agent-presence-light-${item.pubkey}`} />
-        ) : null;
-      const label = isOwn
+      const steerSignature = isOwn
         ? 'YOU'
-        : display
-          ? display.name
-          : (personName ?? shortMemberNpub(item.pubkey ?? ''));
-      const provenance = item.pubkey && !isOwn && !isAgent ? shortMemberNpub(item.pubkey) : null;
+        : item.pubkey
+          ? (personName ?? shortMemberNpub(item.pubkey))
+          : 'SOMEONE';
+      // In a Room the name arrives before the words, and carries the author's
+      // npub with it — display names are not unique, and a Room's people are
+      // strangers to each other more often than a Corner's are.
+      const steerAttribution =
+        !isCorner && !attributionContinued ? (
+          <LedgerAttribution
+            mark={
+              !isOwn && item.pubkey ? (
+                <PersonAvatar
+                  pubkey={item.pubkey}
+                  avatarUrl={personProfileByPubkey.get(item.pubkey)?.avatar}
+                  name={personName ?? shortMemberNpub(item.pubkey)}
+                  size={16}
+                />
+              ) : null
+            }
+            name={steerSignature}
+            detail={item.pubkey && !isOwn ? shortMemberNpub(item.pubkey) : null}
+            testID={`chat-attribution-${item.id}`}
+          />
+        ) : null;
 
       return (
         <SwipeToReply
@@ -2070,20 +2062,28 @@ export default function BuzzChat() {
           onReply={item.isAgentDraft ? () => undefined : () => beginReply(item)}
         >
           <NewMessageMaterialize enabled={Boolean(item.isNew)}>
-            <TranscriptRow
-              itemId={item.id}
-              isOwn={isOwn}
-              isAgent={isAgent}
-              avatar={avatarElement}
-              presenceLight={presenceLightElement}
-              label={label}
-              replyReference={replyReference}
-              bodyText={item.text}
-              bodyTestID={`chat-message-text-${item.id}`}
-              offlineQueued={isOwn && offlineQueuedIds.has(item.id)}
-              attachments={attachmentElements}
-              provenance={provenance}
-            />
+            {isAgent ? (
+              <LedgerEntry
+                itemId={item.id}
+                attribution={agentAttribution}
+                bodyText={item.text}
+                bodyTestID={`chat-message-text-${item.id}`}
+                replyReference={replyReference}
+                attachments={attachmentElements}
+              />
+            ) : (
+              <LedgerSteer
+                itemId={item.id}
+                signature={steerSignature.toUpperCase()}
+                attribution={steerAttribution}
+                continued={attributionContinued}
+                bodyText={item.text}
+                bodyTestID={`chat-message-text-${item.id}`}
+                replyReference={replyReference}
+                attachments={attachmentElements}
+                offlineQueued={isOwn && offlineQueuedIds.has(item.id)}
+              />
+            )}
           </NewMessageMaterialize>
         </SwipeToReply>
       );
@@ -2091,6 +2091,7 @@ export default function BuzzChat() {
     [
       agentByPubkey,
       activeActivityId,
+      continuedAttributionIds,
       handleWritePermission,
       isCorner,
       offlineQueuedIds,
@@ -2139,9 +2140,9 @@ export default function BuzzChat() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
-        {/* Header */}
-        <HullSurface
-          strength="quiet"
+        {/* Header. No surface of its own — the chrome sits on the same
+            obsidian as the transcript, parted only by a hairline. */}
+        <View
           style={[styles.header, { minHeight: insets.top + 60, paddingTop: insets.top + 8 }]}
         >
           <TouchableOpacity
@@ -2269,7 +2270,7 @@ export default function BuzzChat() {
               <Text style={styles.archivedBadgeText}>□ ARCHIVED</Text>
             </View>
           )}
-        </HullSurface>
+        </View>
 
         <FlatList
           testID="chat-messages"
@@ -3694,25 +3695,16 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 15,
   },
-  provenanceText: {
-    ...Typography.mono(),
-    fontSize: 11,
-    lineHeight: 15,
-    color: groknight.textMuted,
-    marginTop: 4,
-  },
+  /* An attachment hangs off the message that carries it: a row, not a card. */
   attachmentCard: {
     minWidth: 0,
     width: '100%',
     minHeight: 58,
     marginTop: 8,
-    padding: 6,
+    paddingVertical: 6,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 9,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgBase,
   },
   attachmentThumbnail: {
     width: 46,
@@ -3724,9 +3716,6 @@ const styles = StyleSheet.create({
     height: 46,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: groknight.border,
-    backgroundColor: groknight.bgHighlight,
   },
   attachmentFileGlyphText: {
     ...Typography.default(),
@@ -3755,79 +3744,31 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
-  // ── Corner ledger ──────────────────────────────────────────────
+  // ── The ledger ─────────────────────────────────────────────────
   // A turn's whole tool run folds into one line here; the group itself is
   // pure rhythm, with no rule or fill separating it from the prose around it.
+  // Every other transcript shape lives in components/buzz/Ledger.tsx, which
+  // Rooms and Corners share.
   activityGroup: {
     width: '100%',
     minWidth: 0,
     marginBottom: 20,
   },
-  // The Room transcript row. No border, fill,
-  // or radius — a repeating content unit never earns a box (DESIGN.md).
-  // Vertical rhythm alone separates one row from the next.
-  terminalTurn: {
-    width: '100%',
-    minWidth: 0,
-    marginBottom: 18,
-  },
-  // A human's own short message is the one layout exception: right-aligned
-  // and inset, carried by alignment/width, never by a border, radius, or
-  // fill.
-  terminalTurnUser: {
-    alignSelf: 'flex-end',
-    width: 'auto',
-    maxWidth: '84%',
-    marginLeft: 44,
-  },
-  offlineDeliveryNote: {
-    ...Typography.mono('semiBold'),
-    marginTop: 7,
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 13,
-    letterSpacing: 0.4,
-  },
-  terminalTurnHeading: {
-    minWidth: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-    marginBottom: 6,
-  },
-  terminalTurnGlyph: {
-    ...Typography.mono(),
-    color: groknight.textMuted,
-    fontSize: 11,
-  },
-  terminalTurnLabel: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 10,
-    letterSpacing: 0.7,
-    flexShrink: 1,
-  },
-  terminalTurnText: {
-    ...Typography.mono(),
-    width: '100%',
-    minWidth: 0,
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
-  },
 
   // ── Parent Room corner status ──────────────────────────────────
+  /* A corner card is a system row interleaved into the ledger, so it takes the
+   * ledger's own interruption device — one hairline rule above it — rather than
+   * a bordered card laid on the slab. */
   cornerStatusCard: {
     minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    marginBottom: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgRaised,
+    marginBottom: 16,
+    paddingTop: 14,
+    paddingBottom: 2,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: groknight.border,
   },
   cornerStatusCopy: { flex: 1, minWidth: 0 },
   cornerStatusAgentRow: { minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -3913,9 +3854,7 @@ const styles = StyleSheet.create({
 
   // ── Archived notice ─────────────────────────────────────────────
   archivedBubble: {
-    backgroundColor: groknight.bgHighlight,
-    borderRadius: 3,
-    padding: 8,
+    paddingVertical: 10,
     marginBottom: 6,
     alignSelf: 'center',
     maxWidth: '90%',

@@ -89,6 +89,8 @@ export interface PersonProfile {
   name?: string;
   handle?: string;
   avatar?: string;
+  /** Self-authored NIP-05 identifier (name@domain). Unverified until resolved against the domain. */
+  nip05?: string;
   updatedAt: number;
   raw: NostrEvent;
 }
@@ -100,6 +102,8 @@ export interface PersonProfileInput {
   handle?: string;
   /** Empty removes the custom image. Absent preserves the current image. */
   avatar?: string;
+  /** Empty removes the NIP-05 identifier. Absent preserves the current one. */
+  nip05?: string;
 }
 
 /** Relay media upload response (Blossom blob descriptor). */

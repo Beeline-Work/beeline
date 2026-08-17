@@ -269,7 +269,14 @@ function isNonRetryableQueryError(error: unknown): boolean {
   );
 }
 
-async function requestQueryEvents(
+/**
+ * One `/query` POST with the retry/timeout policy above — no caching, no
+ * same-tick batching (that's what the public `queryEvents()` adds on top).
+ * Exported so a deliberately caching-free HTTP-only consumer (apps/gate's
+ * `createRelayClient`) can share this exact policy instead of re-implementing
+ * it, the same way it already delegates publishes to `publishEvent` below.
+ */
+export async function requestQueryEvents(
   opts: HttpBridgeOptions,
   filters: Record<string, unknown>[],
   queryPubkey: string,

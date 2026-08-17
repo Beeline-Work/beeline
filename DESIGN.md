@@ -103,8 +103,13 @@ announcement, and anything else (another person, a corner card) ends the run
 
 The two surfaces differ here, and only here, because they genuinely differ:
 
-- **A Corner is one agent, so its agent turns carry no handle at all** — pure
-  flowing prophecy. The identity is already in the top bar.
+- **A Corner carries no handle at all** — pure flowing prophecy. Its identity is
+  already in the top bar. This is derived from the surface, never from a lookup:
+  a Corner is one administering agent plus you, so *anything that is not your own
+  steer is that agent*. Deriving it any other way is a real bug, not a style
+  choice — `isAgent` depends on the roster, and a Corner that trusted it printed
+  the signer's bare npub as a handle and dropped the agent's own words to the
+  ordinary grey tier the moment the roster was empty or still loading.
 - **A Room holds several voices, so each keeps one whisper-dim inline handle**,
   quiet enough to recede and legible enough to tell agents apart.
 
@@ -119,10 +124,23 @@ expand`, dimmest tier, on both surfaces. Two things feed it: a turn's tool run
 (`ActivityTimeline` — commands, inputs, raw output, objective checklists, all of
 it behind that one disclosure), and any wall of git/CLI output an agent pasted
 into its own narration, which `buzz/ledger-text.ts` lifts out of the prose
-around it. A `git push` rejection dump never prints down the slab. The summary
-truncates; the disclosure copy beside it never does, because the affordance is
-the reason the line exists. A fenced code block marks itself with one hairline
-gutter and an indent, never a panel.
+around it. A `git push` rejection dump never prints down the slab.
+
+The unit there is a **run of consecutive machine lines**, not a
+blank-line-delimited block — a dump is usually written directly under the
+sentence introducing it, and a block rule would either swallow that sentence or
+miss the dump. The summary truncates; the disclosure copy beside it never does,
+because the affordance is the reason the line exists. A fenced code block marks
+itself with one hairline gutter and an indent, never a panel.
+
+**A status is inscribed, never framed.** A status is not something the reader
+must find and act on, so it earns no box: one dim line in `ledgerQuiet`, at the
+same left margin as the prose above it. Only its affordance lifts — `view →`
+hangs in the same right gutter the timestamps do, one tonal step brighter, with
+a faint tonal flash on press and no border at any point. `◇` means corner (the
+lifecycle glyph family) and `→` means enterable, and that pairing is the one
+"enter this corner" vocabulary the transcript has: `WritePermissionOutcome` and
+the Room's own corner card both use it.
 
 **There is no reply echo under an agent turn.** Body threads every Room/DM reply
 to the request that triggered it, so the quoted block was always the message
@@ -196,12 +214,18 @@ Buzz surface means live corner work, never people.
 An agent's *name* is human-authored and never guessed twice. Every surface
 resolves it through `resolveAgentDisplayIdentity` — validated soul overlay, then
 the agent's own registered `displayName`, then the seed-derived placeholder —
-and that resolution is only as good as the roster it is handed. The roster is
-`listAgents(communityId)`, which is what hydrates the overlay, so the transcript
-reads it for the channel's own Workspace *or*, when a channel resolves none, the
-viewer's selected one (`agentRosterCommunityId`). A Room and the Members screen
-must never name the same key differently; if they do, one of them is reading an
-empty roster, not a different name.
+and that resolution is only as good as the roster it is handed. An empty or
+wrong-Workspace roster does not degrade the name; it replaces it with a
+confident fake.
+
+Both halves of an agent's registration are community-scoped: the identity record
+is published into the community channel (`#h`) and the soul overlay is keyed
+`communityId:agentPubkey`. So the transcript reads **every** Workspace the viewer
+belongs to, channel's own first, then the viewer's selection, then the rest
+(`agentRosterCommunityIds` + `mergeAgentRosters`) — because reading exactly one
+and guessing wrong shows a placeholder rather than nothing. A Room and the
+Members screen must never name the same key differently; if they do, one of them
+is reading an empty roster, not a different name.
 
 Vocabulary: "Room," never "Channel." "Members," never "People." No `#` prefix on
 names — that's someone else's product's convention.

@@ -41,25 +41,41 @@ export function decodePercentEncoding(text: string): string {
 /**
  * Lines that are a machine talking to a machine.
  *
- * Deliberately narrow — every pattern here is a literal prefix or a shape no
- * ordinary sentence takes. Prose that merely *mentions* git is not matched;
- * only output git itself produced is.
+ * Deliberately literal — every pattern is a fixed prefix or a shape no ordinary
+ * sentence takes. Prose that merely *mentions* git is never matched; only output
+ * git, npm, or a runtime actually produced is. Widening this list is the right
+ * way to catch a new tool's wall; loosening it into "looks technical" is not.
  */
 const MACHINE_LINE_PATTERNS: readonly RegExp[] = [
-  /^(?:hint|error|fatal|warning|remote|usage|note):/i,
-  /^\s*!\s*\[[a-z ]+\]/i,
-  /^\s*\*\s*\[new (?:branch|tag)\]/i,
-  /^To (?:https?:\/\/|git@|ssh:\/\/|\/)/,
+  // Tool-prefixed diagnostics.
+  /^(?:hint|error|fatal|warning|remote|usage|note|debug|trace|info):/i,
+  /^npm (?:ERR|WARN|notice)!?/,
+  /^(?:yarn|pnpm) (?:ERR|WARN)/i,
+  /^[A-Za-z][A-Za-z0-9_]*(?:Error|Exception):\s/,
+  // git push / fetch refspec reporting.
+  /^\s*[!*+=-]\s*\[[a-z ._-]+\]/i,
+  /^To (?:https?:\/\/|git@|ssh:\/\/|\/|[\w.-]+:)/,
+  /^From (?:https?:\/\/|git@|ssh:\/\/|[\w.-]+[:/])/,
   /^\s*[0-9a-f]{7,40}\.\.\.?[0-9a-f]{7,40}\b/,
   /\brefs\/(?:heads|remotes|tags)\//,
-  /^(?:Everything up-to-date|Already up to date|Updates were rejected)/i,
-  /^(?:Enumerating|Counting|Compressing|Writing|Resolving) (?:objects|deltas)\b/,
+  /\S\s+->\s+\S+\s*(?:\([^)]*\))?\s*$/,
+  /\((?:fetch first|non-fast-forward|forced update|unpacked|new branch|new tag)\)\s*$/i,
+  // git progress and porcelain.
+  /^(?:Enumerating|Counting|Compressing|Writing|Resolving|Receiving) (?:objects|deltas)\b/,
   /^Total \d+ \(delta \d+\)/,
-  /^npm (?:ERR|WARN)!/,
+  /^(?:Everything up-to-date|Already up to date|Updates were rejected|Aborting)/i,
+  /^(?:On branch|Your branch|Switched to|nothing to commit|Auto-merging|CONFLICT|Merge branch)\b/,
+  /^\s*\d+ files? changed(?:,|$)/,
+  /^\s*(?:create|delete) mode \d{6}\b/,
+  // Stack frames and compiler carets.
   /^\s*at\s+\S+\s*\(.+:\d+:\d+\)\s*$/,
-  /^\s*\$\s+\S/,
-  /^[A-Za-z]*Error:\s/,
+  /^\s*at\s+.+:\d+:\d+\s*$/,
   /^\s*\d+\s*\|\s/,
+  /^\s*\^+\s*$/,
+  /^\s*File "[^"]+", line \d+/,
+  // A shell echo of the command itself.
+  /^\s*[$#>]\s+\S/,
+  /^\s*(?:git|npm|npx|yarn|pnpm|node|docker|kubectl|cargo|go|python3?|pip3?)\s+[a-z-]/,
 ];
 
 /** A trailing progress readout: `remote: Counting objects: 100% (5/5), done.` */
@@ -72,18 +88,22 @@ function isMachineLine(line: string): boolean {
   return PROGRESS_LINE.test(trimmed) && /^[a-z]+:/i.test(trimmed);
 }
 
-/** Minimum lines before a run is even considered a wall rather than a remark. */
-const MACHINE_BLOCK_MIN_LINES = 3;
+/**
+ * Minimum consecutive machine lines before a run counts as a wall.
+ *
+ * Two would catch an agent quoting a single `error:` line mid-sentence, which
+ * is prose about the error and belongs on the slab. Three is a dump.
+ */
+const MACHINE_RUN_MIN_LINES = 3;
 /** Same, inside a fence — a fence already declares itself as machine text. */
 const MACHINE_FENCE_MIN_LINES = 2;
-/** How much of a block must be machine output before the whole block is. */
-const MACHINE_BLOCK_RATIO = 0.5;
+/** How much of a fenced block must be machine output before the whole block is. */
+const MACHINE_FENCE_RATIO = 0.5;
 
-function isMachineBlock(block: string, minLines: number): boolean {
-  const lines = block.split('\n').filter((line) => line.trim());
-  if (lines.length < minLines) return false;
-  const machine = lines.filter(isMachineLine).length;
-  return machine / lines.length >= MACHINE_BLOCK_RATIO;
+function isMachineFence(body: string): boolean {
+  const lines = body.split('\n').filter((line) => line.trim());
+  if (lines.length < MACHINE_FENCE_MIN_LINES) return false;
+  return lines.filter(isMachineLine).length / lines.length >= MACHINE_FENCE_RATIO;
 }
 
 export type LedgerText = {
@@ -109,8 +129,16 @@ const FENCE = /^```/;
  * (`DESIGN.md`, "Machine noise"), while the sentences around them stay exactly
  * as written.
  *
- * Blank lines and fences are the block boundaries, so a paragraph of real prose
- * is never partially eaten: a block is collapsed whole or kept whole.
+ * The unit is a **run of consecutive machine lines**, not a blank-line-delimited
+ * block. That distinction is the whole reason this works on real agent prose: a
+ * dump is very often written directly under the sentence introducing it with no
+ * blank line between them, and a block-level rule would either swallow that
+ * sentence along with the dump or, if it demanded a majority, miss the dump
+ * entirely. A run is bounded by the first line that is not machine output, so
+ * the prose on either side is untouched by construction.
+ *
+ * Blank lines *inside* a run are kept — tool output is full of them, and ending
+ * a run on one would split a single dump into fragments too short to qualify.
  */
 export function splitLedgerText(text: string): LedgerText {
   if (!text.includes('\n')) return { prose: text, machineLines: 0 };
@@ -119,47 +147,57 @@ export function splitLedgerText(text: string): LedgerText {
   const machine: string[] = [];
   const lines = text.split('\n');
 
-  let block: string[] = [];
-  /** The verbatim opening fence (```ts and friends), or null outside a fence. */
-  let openFence: string | null = null;
+  /** The run being accumulated, and the trailing blanks not yet claimed by it. */
+  let run: string[] = [];
+  let pendingBlanks: string[] = [];
+  let fence: { open: string; body: string[] } | null = null;
 
-  const flushProse = () => {
-    if (!block.length) return;
-    const joined = block.join('\n');
-    if (isMachineBlock(joined, MACHINE_BLOCK_MIN_LINES)) machine.push(joined.trim());
-    else prose.push(joined);
-    block = [];
-  };
-
-  /** A fence body is judged on its own, then either collapsed or re-fenced. */
-  const flushFence = (fence: string) => {
-    const body = block.join('\n');
-    if (isMachineBlock(body, MACHINE_FENCE_MIN_LINES)) machine.push(body.trim());
-    else prose.push([fence, ...block, '```'].join('\n'));
-    block = [];
+  const flushRun = () => {
+    if (run.length >= MACHINE_RUN_MIN_LINES) machine.push(run.join('\n').trim());
+    else prose.push(...run);
+    run = [];
   };
 
   for (const line of lines) {
     if (FENCE.test(line.trim())) {
-      if (openFence !== null) {
-        flushFence(openFence);
-        openFence = null;
+      if (fence) {
+        const body = fence.body.join('\n');
+        if (isMachineFence(body)) machine.push(body.trim());
+        else prose.push([fence.open, ...fence.body, '```'].join('\n'));
+        fence = null;
         continue;
       }
-      flushProse();
-      openFence = line;
+      flushRun();
+      prose.push(...pendingBlanks);
+      pendingBlanks = [];
+      fence = { open: line, body: [] };
       continue;
     }
-    if (openFence === null && !line.trim()) {
-      flushProse();
-      prose.push('');
+    if (fence) {
+      fence.body.push(line);
       continue;
     }
-    block.push(line);
+    if (isMachineLine(line)) {
+      // A blank line only belongs to the run once the run continues past it.
+      run.push(...pendingBlanks, line);
+      pendingBlanks = [];
+      continue;
+    }
+    if (!line.trim() && run.length) {
+      pendingBlanks.push(line);
+      continue;
+    }
+    flushRun();
+    prose.push(...pendingBlanks, line);
+    pendingBlanks = [];
   }
-  // An unterminated fence is still a fence's worth of evidence.
-  if (openFence !== null) flushFence(openFence);
-  else flushProse();
+  if (fence) {
+    const body = fence.body.join('\n');
+    if (isMachineFence(body)) machine.push(body.trim());
+    else prose.push([fence.open, ...fence.body].join('\n'));
+  }
+  flushRun();
+  prose.push(...pendingBlanks);
 
   if (!machine.length) return { prose: text, machineLines: 0 };
   const collapsed = machine.join('\n\n');

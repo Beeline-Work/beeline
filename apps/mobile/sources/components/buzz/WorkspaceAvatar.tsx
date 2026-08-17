@@ -37,7 +37,8 @@ export function WorkspaceAvatar({
 }: WorkspaceAvatarProps) {
   const avatar = community?.avatar?.trim();
   const [failedAvatar, setFailedAvatar] = useState<string | null>(null);
-  const showRelayAvatar = Boolean(avatar && failedAvatar !== avatar);
+  const showRelayAvatar =
+    groknight.photoIdentityMarksEnabled && Boolean(avatar && failedAvatar !== avatar);
   const geometry = workspaceAvatarGeometry(community?.communityId ?? 'workspace-loading');
   const frameStyle = {
     width: size,

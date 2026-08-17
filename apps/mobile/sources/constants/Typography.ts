@@ -52,7 +52,6 @@ export const FontFamilies = {
   
   // Legacy fonts (keep for backward compatibility)
   legacy: {
-    spaceMono: 'SpaceMono',
     systemMono: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   }
 };
@@ -106,9 +105,6 @@ export const Typography = {
   
   // Legacy font styles (for backward compatibility)
   legacy: {
-    spaceMono: () => ({
-      fontFamily: FontFamilies.legacy.spaceMono,
-    }),
     systemMono: () => ({
       fontFamily: FontFamilies.legacy.systemMono,
     }),

@@ -8,7 +8,6 @@ import {
   waitUntilMember,
   type ChannelOpsContext,
 } from './channel.js';
-import { queryEvents } from './http.js';
 import {
   KIND_CHANNEL_ADMINS,
   KIND_CHANNEL_MEMBERS,
@@ -17,6 +16,7 @@ import {
   TAG_COMMUNITY,
 } from './kinds.js';
 import { tagValue } from './parse.js';
+import { query } from './query.js';
 import type { CommunityRole, RepositoryBinding } from './types.js';
 
 function roomUuid(communityId: string, repositoryKey: string): string {
@@ -62,11 +62,9 @@ async function waitUntilRole(
     if (current === role) return;
     await new Promise((resolveWait) => setTimeout(resolveWait, 300));
   }
-  const lastEvents: NostrEvent[] = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_PUT_USER], '#h': [channelId], '#p': [pubkey], limit: 20 }],
-    ctx.identity.publicKey,
-  );
+  const lastEvents: NostrEvent[] = await query(ctx, [
+    { kinds: [KIND_PUT_USER], '#h': [channelId], '#p': [pubkey], limit: 20 },
+  ]);
   console.error(
     `[repo-room] role wait timeout: ${JSON.stringify({
       channelId,
@@ -88,17 +86,9 @@ async function queryRoomProjection(
   channelId: string,
   kind: number,
 ): Promise<NostrEvent[]> {
-  const byD = await queryEvents(
-    ctx.http,
-    [{ kinds: [kind], '#d': [channelId], limit: 5 }],
-    ctx.identity.publicKey,
-  );
+  const byD = await query(ctx, [{ kinds: [kind], '#d': [channelId], limit: 5 }]);
   if (byD.length > 0) return byD;
-  return queryEvents(
-    ctx.http,
-    [{ kinds: [kind], '#h': [channelId], limit: 5 }],
-    ctx.identity.publicKey,
-  );
+  return query(ctx, [{ kinds: [kind], '#h': [channelId], limit: 5 }]);
 }
 
 function latestProjection(events: NostrEvent[]): NostrEvent | undefined {
@@ -148,18 +138,14 @@ export async function findRepositoryRoom(
   communityId: string,
   repositoryKey: string,
 ): Promise<string | null> {
-  const events = await queryEvents(
-    ctx.http,
-    [
-      {
-        kinds: [KIND_CREATE_GROUP],
-        '#community': [communityId],
-        '#repo-key': [repositoryKey],
-        limit: 50,
-      },
-    ],
-    ctx.identity.publicKey,
-  );
+  const events = await query(ctx, [
+    {
+      kinds: [KIND_CREATE_GROUP],
+      '#community': [communityId],
+      '#repo-key': [repositoryKey],
+      limit: 50,
+    },
+  ]);
   const match = events
     .filter(
       (event) =>

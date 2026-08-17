@@ -1,9 +1,10 @@
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { isAgentIdentity } from './agent.js';
-import { publishEvent, queryEvents } from './http.js';
+import { publishEvent } from './http.js';
 import { KIND_PERSON_PROFILE, TAG_COMMUNITY, TAG_PERSON_PROFILE } from './kinds.js';
 import { tagValue, tagValues } from './parse.js';
 import { normalizePersonHandle, normalizePersonName } from './display-name.js';
+import { query } from './query.js';
 import type { PersonProfile, PersonProfileInput } from './types.js';
 import type { ChannelOpsContext } from './channel.js';
 
@@ -105,11 +106,7 @@ async function latestGlobalProfileEvent(
   ctx: ChannelOpsContext,
   pubkey: string,
 ): Promise<NostrEvent | undefined> {
-  const events = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_NOSTR_PROFILE], authors: [pubkey], limit: 20 }],
-    ctx.identity.publicKey,
-  );
+  const events = await query(ctx, [{ kinds: [KIND_NOSTR_PROFILE], authors: [pubkey], limit: 20 }]);
   return events
     .filter((event) => event.pubkey === pubkey && event.kind === KIND_NOSTR_PROFILE)
     .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))[0];
@@ -132,18 +129,14 @@ export async function getPersonProfile(
   communityId: string,
   pubkey: string,
 ): Promise<PersonProfile | null> {
-  const events = await queryEvents(
-    ctx.http,
-    [
-      { kinds: [KIND_NOSTR_PROFILE], authors: [pubkey], limit: 20 },
-      {
-        kinds: [KIND_PERSON_PROFILE],
-        '#d': [legacyProfileKey(communityId, pubkey)],
-        limit: 20,
-      },
-    ],
-    ctx.identity.publicKey,
-  );
+  const events = await query(ctx, [
+    { kinds: [KIND_NOSTR_PROFILE], authors: [pubkey], limit: 20 },
+    {
+      kinds: [KIND_PERSON_PROFILE],
+      '#d': [legacyProfileKey(communityId, pubkey)],
+      limit: 20,
+    },
+  ]);
   const globalEvent = events
     .filter((event) => event.pubkey === pubkey && event.kind === KIND_NOSTR_PROFILE)
     .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))[0];

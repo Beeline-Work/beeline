@@ -22,7 +22,7 @@ import {
   TAG_PARENT,
   TAG_ROOM_LIFECYCLE,
 } from './kinds.js';
-import { publishEvent, queryEvents, type AuthenticatedHttpBridgeOptions } from './http.js';
+import { publishEvent, type AuthenticatedHttpBridgeOptions } from './http.js';
 import {
   parseMembersEvent,
   parseMetadataEvent,
@@ -30,6 +30,7 @@ import {
   tagValue,
   tagValues,
 } from './parse.js';
+import { query } from './query.js';
 import type {
   ChannelFilterOpts,
   ChannelMember,
@@ -72,11 +73,9 @@ function sign(identity: Identity, kind: number, tags: string[][], content = ''):
 }
 
 async function isRegisteredAgentKey(ctx: ChannelOpsContext, pubkey: string): Promise<boolean> {
-  const events = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_STREAM_MESSAGE], authors: [pubkey], '#t': [TAG_AGENT], limit: 20 }],
-    ctx.identity.publicKey,
-  );
+  const events = await query(ctx, [
+    { kinds: [KIND_STREAM_MESSAGE], authors: [pubkey], '#t': [TAG_AGENT], limit: 20 },
+  ]);
   return events.some(
     (event) =>
       event.pubkey === pubkey &&
@@ -222,17 +221,9 @@ async function latestRoleProjection(
   channelId: string,
   kind: number,
 ): Promise<NostrEvent | undefined> {
-  let events = await queryEvents(
-    ctx.http,
-    [{ kinds: [kind], '#d': [channelId], limit: 5 }],
-    ctx.identity.publicKey,
-  );
+  let events = await query(ctx, [{ kinds: [kind], '#d': [channelId], limit: 5 }]);
   if (events.length === 0) {
-    events = await queryEvents(
-      ctx.http,
-      [{ kinds: [kind], '#h': [channelId], limit: 5 }],
-      ctx.identity.publicKey,
-    );
+    events = await query(ctx, [{ kinds: [kind], '#h': [channelId], limit: 5 }]);
   }
   return [...events].sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))[0];
 }
@@ -284,11 +275,7 @@ function canManageRole(role: ChannelRole | null): role is 'owner' | 'admin' {
 }
 
 async function assertTopLevelRoom(ctx: ChannelOpsContext, channelId: string): Promise<void> {
-  const creates = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_CREATE_GROUP], '#h': [channelId], limit: 20 }],
-    ctx.identity.publicKey,
-  );
+  const creates = await query(ctx, [{ kinds: [KIND_CREATE_GROUP], '#h': [channelId], limit: 20 }]);
   const create = [...creates]
     .filter((event) => tagValue(event, 'h') === channelId)
     .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))[0];
@@ -629,11 +616,9 @@ export async function listChannelsForPubkey(
   pubkey: string,
   limit = 50,
 ): Promise<{ channelId: string; event: NostrEvent }[]> {
-  const events = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS], '#p': [pubkey], limit }],
-    ctx.identity.publicKey,
-  );
+  const events = await query(ctx, [
+    { kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS], '#p': [pubkey], limit },
+  ]);
   const out: { channelId: string; event: NostrEvent }[] = [];
   const seen = new Set<string>();
   for (const ev of events) {
@@ -651,17 +636,11 @@ export async function getChannelMetadata(
   ctx: ChannelOpsContext,
   channelId: string,
 ): Promise<ChannelMetadata | null> {
-  const events = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_CHANNEL_METADATA], '#d': [channelId], limit: 5 }],
-    ctx.identity.publicKey,
-  );
+  const events = await query(ctx, [
+    { kinds: [KIND_CHANNEL_METADATA], '#d': [channelId], limit: 5 },
+  ]);
   if (events.length === 0) {
-    const alt = await queryEvents(
-      ctx.http,
-      [{ kinds: [KIND_CHANNEL_METADATA], '#h': [channelId], limit: 5 }],
-      ctx.identity.publicKey,
-    );
+    const alt = await query(ctx, [{ kinds: [KIND_CHANNEL_METADATA], '#h': [channelId], limit: 5 }]);
     if (alt.length === 0) return null;
     return parseMetadataEvent(latestMetadataEvent(alt)!);
   }
@@ -694,12 +673,10 @@ export async function listSubchannels(
   limit = 500,
 ): Promise<string[]> {
   const [events, controlEvents] = await Promise.all([
-    queryEvents(ctx.http, [{ kinds: [KIND_CREATE_GROUP], limit }], ctx.identity.publicKey),
-    queryEvents(
-      ctx.http,
-      [{ kinds: [KIND_STREAM_MESSAGE], '#h': [parentChannelId], '#t': ['body-control'], limit }],
-      ctx.identity.publicKey,
-    ),
+    query(ctx, [{ kinds: [KIND_CREATE_GROUP], limit }]),
+    query(ctx, [
+      { kinds: [KIND_STREAM_MESSAGE], '#h': [parentChannelId], '#t': ['body-control'], limit },
+    ]),
   ]);
   const ids = new Set<string>();
   for (const ev of events) {
@@ -756,7 +733,7 @@ export async function backfillMessages(
   if (opts?.since !== undefined) filter.since = opts.since;
   if (opts?.until !== undefined) filter.until = opts.until;
 
-  const events = await queryEvents(ctx.http, [filter], ctx.identity.publicKey);
+  const events = await query(ctx, [filter]);
   return sortEventsChronological(events);
 }
 
@@ -773,11 +750,7 @@ export async function getParentChannelId(
   ctx: ChannelOpsContext,
   channelId: string,
 ): Promise<string | null> {
-  const events = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_CREATE_GROUP], '#h': [channelId], limit: 5 }],
-    ctx.identity.publicKey,
-  );
+  const events = await query(ctx, [{ kinds: [KIND_CREATE_GROUP], '#h': [channelId], limit: 5 }]);
   for (const ev of events) {
     const parent = tagValue(ev, TAG_PARENT);
     if (parent) return parent;
@@ -793,11 +766,7 @@ export async function getChannelCommunityId(
   ctx: ChannelOpsContext,
   channelId: string,
 ): Promise<string | null> {
-  const events = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_CREATE_GROUP], '#h': [channelId], limit: 5 }],
-    ctx.identity.publicKey,
-  );
+  const events = await query(ctx, [{ kinds: [KIND_CREATE_GROUP], '#h': [channelId], limit: 5 }]);
   for (const event of events) {
     const communityId = tagValue(event, TAG_COMMUNITY);
     if (communityId) return communityId;
@@ -811,11 +780,7 @@ export async function getChannelRepositoryBinding(
   ctx: ChannelOpsContext,
   channelId: string,
 ): Promise<RepositoryBinding | null> {
-  const events = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_CREATE_GROUP], '#h': [channelId], limit: 20 }],
-    ctx.identity.publicKey,
-  );
+  const events = await query(ctx, [{ kinds: [KIND_CREATE_GROUP], '#h': [channelId], limit: 20 }]);
   for (const event of events.sort((a, b) => a.created_at - b.created_at)) {
     const key = tagValue(event, 'repo-key');
     const name = tagValue(event, 'repo-name');

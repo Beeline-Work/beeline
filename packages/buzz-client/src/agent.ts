@@ -8,7 +8,7 @@
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { communityChannels, communityMembers, getCommunity, inviteTokenHash } from './community.js';
-import { publishEvent, queryEvents } from './http.js';
+import { publishEvent } from './http.js';
 import {
   KIND_AGENT_SOUL,
   KIND_STREAM_MESSAGE,
@@ -18,6 +18,7 @@ import {
   TAG_COMMUNITY,
 } from './kinds.js';
 import { tagValue, tagValues } from './parse.js';
+import { query } from './query.js';
 import { fallbackAgentName, isSingleWordAgentName, resolveAgentName } from './display-name.js';
 import { getDirectMessage } from './direct-message.js';
 import type {
@@ -247,11 +248,9 @@ export async function redeemAgentPairingCode(
     throw new Error('invalid agent pairing code');
   }
   const tokenHash = inviteTokenHash(code);
-  const events = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_STREAM_MESSAGE], '#d': [tokenHash], '#t': [TAG_AGENT_PAIRING], limit: 20 }],
-    ctx.identity.publicKey,
-  );
+  const events = await query(ctx, [
+    { kinds: [KIND_STREAM_MESSAGE], '#d': [tokenHash], '#t': [TAG_AGENT_PAIRING], limit: 20 },
+  ]);
   const pairing = events.find((event) => {
     if (!verifyEvent(event) || event.kind !== KIND_STREAM_MESSAGE) return false;
     const communityId = tagValue(event, 'h');
@@ -272,11 +271,9 @@ export async function redeemAgentPairingCode(
   if (!members.some((member) => member.pubkey === pairing.pubkey)) {
     throw new Error('pairing code minter is not a community member');
   }
-  const alreadyPaired = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_STREAM_MESSAGE], '#pairing': [tokenHash], '#t': [TAG_AGENT], limit: 5 }],
-    ctx.identity.publicKey,
-  );
+  const alreadyPaired = await query(ctx, [
+    { kinds: [KIND_STREAM_MESSAGE], '#pairing': [tokenHash], '#t': [TAG_AGENT], limit: 5 },
+  ]);
   const matchingRedemptions = alreadyPaired.filter(
     (event) => tagValue(event, 'pairing') === tokenHash,
   );
@@ -403,11 +400,9 @@ async function listAgentIdentities(
   communityId: string,
   limit = 200,
 ): Promise<Agent[]> {
-  const events = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_STREAM_MESSAGE], '#h': [communityId], '#t': [TAG_AGENT], limit }],
-    ctx.identity.publicKey,
-  );
+  const events = await query(ctx, [
+    { kinds: [KIND_STREAM_MESSAGE], '#h': [communityId], '#t': [TAG_AGENT], limit },
+  ]);
   const latest = new Map<string, Agent>();
   for (const event of events) {
     const agent = parseAgent(event);
@@ -433,11 +428,9 @@ export async function listAgents(
   const soulEvents = (
     await Promise.all(
       agents.map((agent) =>
-        queryEvents(
-          ctx.http,
-          [{ kinds: [KIND_AGENT_SOUL], '#d': [soulKey(communityId, agent.pubkey)], limit: 20 }],
-          ctx.identity.publicKey,
-        ),
+        query(ctx, [
+          { kinds: [KIND_AGENT_SOUL], '#d': [soulKey(communityId, agent.pubkey)], limit: 20 },
+        ]),
       ),
     )
   ).flat();
@@ -559,10 +552,8 @@ export async function attachAgentToChannel(
 
 /** True when the pubkey has ever self-signed a valid first-class agent record. */
 export async function isAgentIdentity(ctx: ChannelOpsContext, pubkey: string): Promise<boolean> {
-  const events = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_STREAM_MESSAGE], authors: [pubkey], '#t': [TAG_AGENT], limit: 50 }],
-    ctx.identity.publicKey,
-  );
+  const events = await query(ctx, [
+    { kinds: [KIND_STREAM_MESSAGE], authors: [pubkey], '#t': [TAG_AGENT], limit: 50 },
+  ]);
   return events.some((event) => event.pubkey === pubkey && hasAgentIdentityMarker(event));
 }

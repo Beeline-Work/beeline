@@ -15,6 +15,7 @@
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import type { SessionMode } from './config.js';
 
 export interface McpServerWire {
   name: string;
@@ -232,7 +233,7 @@ export class AcpClient extends EventEmitter {
     mcpServers?: McpServerWire[];
     systemPrompt?: string;
     /** Ask agents with ACP modes to enforce the Body session boundary. */
-    mode?: 'readonly' | 'edit';
+    mode?: SessionMode;
   }): Promise<{ sessionId: string; raw: unknown }> {
     const params: Record<string, unknown> = {
       cwd: opts.cwd,
@@ -254,7 +255,7 @@ export class AcpClient extends EventEmitter {
   private async applySessionMode(
     sessionId: string,
     raw: Record<string, unknown>,
-    mode: 'readonly' | 'edit' | undefined,
+    mode: SessionMode | undefined,
   ): Promise<void> {
     if (!mode) return;
     const modes = raw.modes as

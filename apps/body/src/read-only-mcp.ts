@@ -151,6 +151,23 @@ const TOOLS: ToolDefinition[] = [
   },
 ];
 
+// Nothing else ties TOOLS' names to READ_ONLY_TOOL_NAMES (the auto-allow
+// permission check's canonical list) — assert they match so the two can't
+// silently drift apart the way they did before this check existed.
+{
+  const declaredNames = new Set(TOOLS.map((tool) => tool.name));
+  const policyNames = new Set<string>(READ_ONLY_TOOL_NAMES);
+  const mismatched =
+    declaredNames.size !== policyNames.size ||
+    [...declaredNames].some((name) => !policyNames.has(name));
+  if (mismatched) {
+    throw new Error(
+      `read-only-mcp TOOLS [${[...declaredNames].join(', ')}] has drifted from ` +
+        `read-only-policy.ts READ_ONLY_TOOL_NAMES [${READ_ONLY_TOOL_NAMES.join(', ')}]`,
+    );
+  }
+}
+
 function configuredRoot(): string {
   const candidate = process.env.BUZZ_READONLY_ROOT?.trim() || process.cwd();
   return realpathSync(candidate);

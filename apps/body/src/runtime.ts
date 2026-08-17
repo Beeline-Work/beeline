@@ -235,12 +235,16 @@ export function runtimeIdentity(identity: StoredIdentity): Identity {
   return { name: identity.name, secretKey, publicKey: identity.publicKey };
 }
 
-export function runtimeDirectory(repo: LocalRepositoryBinding, agentPubkey: string): string {
-  return resolve(repo.gitCommonDir, 'beeline', 'agents', agentPubkey);
+function agentsDirectory(supervisorRoot: string): string {
+  return resolve(supervisorRoot, 'beeline', 'agents');
+}
+
+export function runtimeDirectory(supervisorRoot: string, agentPubkey: string): string {
+  return resolve(agentsDirectory(supervisorRoot), agentPubkey);
 }
 
 export async function writeRuntimeRecord(record: AgentRuntimeRecord): Promise<string> {
-  const directory = resolve(record.supervisorRoot, 'beeline', 'agents', record.agent.publicKey);
+  const directory = runtimeDirectory(record.supervisorRoot, record.agent.publicKey);
   const path = resolve(directory, 'runtime.json');
   const temporary = resolve(directory, `runtime-${process.pid}.tmp`);
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -323,7 +327,7 @@ export async function findRuntimeConfigPaths(cwd: string): Promise<string[]> {
   const gitCommonDir = common
     ? resolve(root, common)
     : resolve(root, git(root, ['rev-parse', '--git-common-dir']) ?? '.git');
-  const agentsDir = resolve(gitCommonDir, 'beeline', 'agents');
+  const agentsDir = agentsDirectory(gitCommonDir);
   let entries: string[];
   try {
     entries = await readdir(agentsDir);

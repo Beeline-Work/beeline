@@ -765,6 +765,20 @@ export async function postAgentDraft(
   await publishEvent(event, owner);
 }
 
+/**
+ * `created_at` (unix seconds) strictly greater than the last value `lastRef`
+ * produced, floored at the current wall clock. Several call sites in this
+ * file can publish more than once within the same wall-clock second
+ * (streaming flushes, back-to-back narrative segments, a presence heartbeat
+ * plus its offline marker) — a relay's same-second NIP-33 tie-break isn't
+ * guaranteed to pick the newest event, so `Date.now()` alone isn't enough.
+ */
+function nextMonotonicSecond(lastRef: { value: number }): number {
+  const createdAt = Math.max(Math.floor(Date.now() / 1_000), lastRef.value + 1);
+  lastRef.value = createdAt;
+  return createdAt;
+}
+
 export interface DraftStreamer {
   /** Feed the latest accumulated text as it grows. Safe to call at any rate. */
   onChunk(fullTextSoFar: string): void;
@@ -788,17 +802,12 @@ export function createDraftStreamer(
   let published = '';
   let timer: ReturnType<typeof setTimeout> | undefined;
   let inflight = Promise.resolve();
-  // A relay's NIP-33 tie-break is by `created_at` (then implementation-defined
-  // for exact ties); streaming can easily flush several times inside one wall
-  // -clock second, so bump strictly rather than reusing `Date.now()` — the
-  // same fix `startAgentPresence` uses for its heartbeat.
-  let lastCreatedAt = 0;
+  const lastCreatedAt = { value: 0 };
   const flush = () => {
     timer = undefined;
     if (latest === published) return;
     published = latest;
-    const createdAt = Math.max(Math.floor(Date.now() / 1_000), lastCreatedAt + 1);
-    lastCreatedAt = createdAt;
+    const createdAt = nextMonotonicSecond(lastCreatedAt);
     inflight = inflight
       .then(() => postAgentDraft(channelId, owner, sessionId, requestId, published, createdAt))
       .catch((error) => console.error('[body] agent draft publish failed:', error));
@@ -898,12 +907,7 @@ export function createNarrativeCommitter(
   let committed = 0;
   let latest = '';
   let inflight = Promise.resolve();
-  // Segments can land within the same wall-clock second (paragraph breaks in
-  // a fast-streaming turn), and the transcript sorts by created_at with an
-  // id-hash tie-break — bump strictly past the last one so segments never
-  // render out of the order they were actually written, same fix
-  // createDraftStreamer and startAgentPresence use for their own replays.
-  let lastCreatedAt = 0;
+  const lastCreatedAt = { value: 0 };
   // Adjacent-only guard: a harness can resend an already-seen delta (e.g. a
   // duplicate `agent_message_chunk` notification), which re-presents the same
   // paragraph as a "new" segment right after it was already committed. Only
@@ -920,8 +924,7 @@ export function createNarrativeCommitter(
     const text = stripAgentReplyPreamble(segment.text).trim();
     if (!text || text === lastPublishedText) return;
     lastPublishedText = text;
-    const createdAt = Math.max(Math.floor(Date.now() / 1_000), lastCreatedAt + 1);
-    lastCreatedAt = createdAt;
+    const createdAt = nextMonotonicSecond(lastCreatedAt);
     inflight = inflight
       .then(() =>
         postAgentMessage(channelId, owner, text, undefined, [], extraTags, undefined, createdAt),
@@ -940,7 +943,7 @@ export function createNarrativeCommitter(
       await inflight;
     },
     lastCreatedAt() {
-      return lastCreatedAt;
+      return lastCreatedAt.value;
     },
   };
 }
@@ -1033,13 +1036,12 @@ export function startAgentPresence(
   initialStatus: AgentPresenceStatus = 'online',
 ): AgentPresenceController {
   let stopped = false;
-  let lastCreatedAt = 0;
+  const lastCreatedAt = { value: 0 };
   let chain = Promise.resolve();
   let status: AgentPresenceStatus = initialStatus;
   const generationId = randomUUID();
   const enqueue = (nextStatus: AgentPresenceStatus) => {
-    const createdAt = Math.max(Math.floor(Date.now() / 1_000), lastCreatedAt + 1);
-    lastCreatedAt = createdAt;
+    const createdAt = nextMonotonicSecond(lastCreatedAt);
     chain = chain
       .then(() => postAgentPresence(channelId, owner, nextStatus, createdAt, generationId))
       .then(() => onPublished?.(nextStatus))
@@ -1063,7 +1065,7 @@ export function startAgentPresence(
     stopped = true;
     clearInterval(timer);
     await chain;
-    const createdAt = Math.max(Math.floor(Date.now() / 1_000), lastCreatedAt + 1);
+    const createdAt = nextMonotonicSecond(lastCreatedAt);
     await postAgentPresence(channelId, owner, 'offline', createdAt, generationId)
       .then(() => onPublished?.('offline'))
       .catch((error) => console.error('[body] agent presence offline failed:', error));

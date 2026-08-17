@@ -119,7 +119,6 @@ import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome';
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
-import { StreamingAgentText } from '@/components/buzz/StreamingAgentText';
 import {
   HullSurface,
   MonoButton,
@@ -559,10 +558,17 @@ export default function BuzzChat() {
   // Newest-first for the inverted FlatList; chronological visibleMessages
   // above stays the source of truth for everything else that reads order.
   const invertedMessages = useMemo(() => [...visibleMessages].reverse(), [visibleMessages]);
-  const visibleMessageById = useMemo(
-    () => new Map(visibleMessages.map((message) => [message.id, message])),
-    [visibleMessages],
-  );
+  // A reconciled draft/final bubble keeps a stable display `id` across the
+  // turn, so it also needs to resolve by its real relay event id — the id
+  // any NIP-10 reply on another client actually references.
+  const visibleMessageById = useMemo(() => {
+    const map = new Map<string, ChatDisplayMessage>();
+    for (const message of visibleMessages) {
+      map.set(message.id, message);
+      if (message.relayId) map.set(message.relayId, message);
+    }
+    return map;
+  }, [visibleMessages]);
   const openedCornerIds = useMemo(
     () =>
       new Set(
@@ -640,8 +646,6 @@ export default function BuzzChat() {
     const latest = visibleMessages.at(-1);
     return isCorner && !isArchived && latest?.isAgentActivity ? latest.id : undefined;
   }, [activeAgentTurn, isArchived, isCorner, sessionState, visibleMessages]);
-  const workingAgentTurn =
-    activeAgentTurn?.agentTurn?.status === 'working' ? activeAgentTurn.agentTurn : undefined;
 
   useEffect(() => {
     setReviewFileCount(null);
@@ -706,6 +710,7 @@ export default function BuzzChat() {
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
     let unsubscribePresence: (() => void) | undefined;
+    let unsubscribeDraft: (() => void) | undefined;
     let appStateSubscription: ReturnType<typeof AppState.addEventListener> | undefined;
     agentPresencesRef.current = {};
     presenceReconnectGraceRef.current = {};
@@ -856,6 +861,33 @@ export default function BuzzChat() {
         };
         await installLivePresence();
         if (cancelled) return;
+        // Corners already stream their own reply text as durable, in-place
+        // narrative bubbles (see openSubchannel/startAgentTask). Only a Room
+        // or DM's own turn draft needs to flow into the transcript — the
+        // draft/final reconciliation in buzz-event-projection.ts relies on
+        // the final reply's NIP-10 reply-to, which corners never set.
+        if (!parentId) {
+          const installLiveDraft = async () => {
+            const previousSubscription = unsubscribeDraft;
+            unsubscribeDraft = undefined;
+            previousSubscription?.();
+            try {
+              const stopLiveDraft = await t.agentDraftSubscribeReady(decodedId, handleLiveMessage);
+              if (cancelled) {
+                stopLiveDraft();
+                return;
+              }
+              unsubscribeDraft = stopLiveDraft;
+            } catch (error) {
+              console.warn(`Failed to establish live agent draft subscription for ${decodedId}:`, error);
+              if (!cancelled) unsubscribeDraft = t.agentDraftSubscribe(decodedId, handleLiveMessage);
+            }
+          };
+          await installLiveDraft();
+          if (cancelled) return;
+          const draftEvents = await t.agentDraftBackfill(decodedId);
+          if (!cancelled) draftEvents.forEach(handleLiveMessage);
+        }
         const presenceEvents = await t.agentPresenceBackfill(presenceChannelId);
         if (!cancelled) {
           setCommunities(availableCommunities);
@@ -998,6 +1030,7 @@ export default function BuzzChat() {
       appStateSubscription?.remove();
       if (unsubscribe) unsubscribe();
       if (unsubscribePresence) unsubscribePresence();
+      if (unsubscribeDraft) unsubscribeDraft();
     };
   }, [decodedId, notificationResponseId, addMessages, applyAgentPresence]);
 
@@ -1019,7 +1052,10 @@ export default function BuzzChat() {
         : undefined;
       const attachmentPreview = message.attachments?.[0]?.name;
       return {
-        messageId: message.id,
+        // Reply threading is a NIP-10 `e` tag lookup by real relay event id;
+        // a reconciled draft/final bubble's display `id` is a synthetic
+        // per-turn key, so prefer the real event id when one is recorded.
+        messageId: message.relayId ?? message.id,
         authorName: message.isUser
           ? 'You'
           : (agentDisplay?.name ?? personName ?? shortMemberNpub(message.pubkey ?? '')),
@@ -1827,7 +1863,10 @@ export default function BuzzChat() {
       }
 
       return (
-        <SwipeToReply messageId={item.id} onReply={() => beginReply(item)}>
+        <SwipeToReply
+          messageId={item.id}
+          onReply={item.isAgentDraft ? () => undefined : () => beginReply(item)}
+        >
           <NewMessageMaterialize enabled={Boolean(item.isNew)}>
             <View
               style={[styles.roomMessageRow, isOwn && styles.roomMessageRowOwn]}
@@ -2167,20 +2206,6 @@ export default function BuzzChat() {
             <Text style={styles.agentOfflineHintText}>
               Messages stay in this Room and will be answered when the Agent is back.
             </Text>
-          </View>
-        )}
-
-        {/* Live "alien typewriter" reveal: materializes as the agent generates
-            it, isolated in its own leaf subscription so it never touches
-            `messages`/`invertedMessages` or re-renders the transcript list. */}
-        {!isArchived && workingAgentTurn && transport && (
-          <View style={styles.agentDraftBanner} testID="agent-draft-banner">
-            <StreamingAgentText
-              key={workingAgentTurn.requestId}
-              transport={transport}
-              channelId={decodedId}
-              requestId={workingAgentTurn.requestId}
-            />
           </View>
         )}
 
@@ -3867,14 +3892,6 @@ const styles = StyleSheet.create({
     ...Typography.default(),
     color: groknight.gutter,
     fontSize: 15,
-  },
-  agentDraftBanner: {
-    marginBottom: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: groknight.border,
-    backgroundColor: groknight.bgRaised,
   },
   agentOfflineHint: {
     minWidth: 0,

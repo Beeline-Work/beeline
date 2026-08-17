@@ -6,6 +6,7 @@ import {
   type MergeTarget,
   type SessionEvent as BuzzSessionEvent,
 } from '@beeline/buzz-client';
+import { agentDraftFromSessionEvent } from '@/buzz/agent-draft';
 import { agentPresenceFromSessionEvent } from '@/buzz/agent-presence';
 import { cornerStatusPrecedence, mapRawCornerStatusTag, type CornerStatus } from '@/buzz/corners';
 
@@ -229,6 +230,19 @@ export type ChatDisplayMessage = {
   /** True when the relay message is explicitly projected as an Agent answer. */
   isAgentAuthor?: boolean;
   isAgentActivity?: boolean;
+  /**
+   * True only while this bubble holds an in-flight `#t=agent-draft` stream,
+   * not yet reconciled with the turn's final `agent-message`. Cleared the
+   * moment the final reply lands (same `id`, see `agent-draft-${requestId}`).
+   */
+  isAgentDraft?: boolean;
+  /**
+   * The real relay event id, when it differs from `id`. A reconciled draft
+   * bubble keeps a stable `agent-draft-${requestId}` display id across the
+   * provisional → final transition, so reply-threading (which must target a
+   * real signed event) reads this instead of `id`.
+   */
+  relayId?: string;
   activity?: AgentActivityItem[];
   attachments?: AttachmentReference[];
   /** NIP-10 event id of the message this conversational message replies to. */
@@ -329,6 +343,25 @@ export function projectChatEvent(
 ): ChatEventProjection {
   const agentPresence = agentPresenceFromSessionEvent(event);
   if (agentPresence) return { agentPresence };
+  // The streaming reply draft projects straight into the transcript as a
+  // provisional bubble at the turn's stable id, so it fills in place and the
+  // eventual final `agent-message` (matched by NIP-10 reply-to below) can
+  // reconcile onto that same id instead of appearing as a second bubble.
+  const agentDraft = agentDraftFromSessionEvent(event);
+  if (agentDraft) {
+    if (!agentDraft.text.trim()) return {};
+    return {
+      message: {
+        id: `agent-draft-${agentDraft.requestId}`,
+        text: agentDraft.text,
+        isUser: false,
+        timestamp: Math.floor(agentDraft.observedAt / 1_000),
+        pubkey: agentDraft.agentPubkey,
+        isAgentAuthor: true,
+        isAgentDraft: true,
+      },
+    };
+  }
   const text = eventText(event);
   const pubkey = eventPubkey(event);
   const subchannelId = eventTagValue(event, 'subchannel');
@@ -485,15 +518,26 @@ export function projectChatEvent(
     };
   }
 
+  // A Room/DM turn's final reply always answers the human's own request
+  // event (`replyTo`), the same id Body threads as the draft/turn `request`
+  // tag. Reconcile onto the draft's stable bubble id so the final text
+  // updates the SAME on-screen bubble in place rather than appending a new
+  // one — the raw relay event id survives in `relayId` so reply-threading
+  // (which must reference a real signed event) keeps working.
+  const isAgentMessage = eventHasTag(event, 't', 'agent-message');
+  const relayId = eventId(event);
+  const reconciledId = isAgentMessage && replyToId ? `agent-draft-${replyToId}` : undefined;
+
   return {
     ...(mergeTarget ? { mergeTarget } : {}),
     message: {
-      id: eventId(event),
+      id: reconciledId ?? relayId,
+      ...(reconciledId ? { relayId } : {}),
       text,
       isUser: pubkey === viewerPubkey,
       timestamp: eventTimestamp(event),
       ...(pubkey ? { pubkey } : {}),
-      ...(eventHasTag(event, 't', 'agent-message') ? { isAgentAuthor: true } : {}),
+      ...(isAgentMessage ? { isAgentAuthor: true } : {}),
       ...(event.type === 'assistant_delta' ? { isAgentActivity: true } : {}),
       ...(eventActivity(event)?.length ? { activity: eventActivity(event) } : {}),
       ...(attachments.length ? { attachments } : {}),
@@ -577,6 +621,13 @@ export function upsertChatMessages(
   const byId = new Map(current.map((message) => [message.id, message]));
   for (let message of incoming) {
     const existing = byId.get(message.id);
+    // The draft stream and the final `agent-message` arrive over independent
+    // relay subscriptions with no ordering guarantee between them. Once a
+    // bubble has been finalized, a late-delivered draft flush for the same
+    // request must never regress it back to provisional streaming text.
+    if (existing && !existing.isAgentDraft && message.isAgentDraft) {
+      continue;
+    }
     if (
       existing?.corner &&
       message.corner &&

@@ -24,6 +24,7 @@ import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-sto
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { groknight } from '@/buzz/groknight';
 import { ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
+import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { HullSurface, MonoButton, PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
 import { WorkspaceAvatar } from '@/components/buzz/WorkspaceAvatar';
 import { Typography } from '@/constants/Typography';
@@ -70,7 +71,7 @@ async function loadWorkspaceRooms(
           (createdVisibility === 'private' || createdVisibility === 'invite-only'
             ? 'invite-only'
             : 'public'),
-        canManage: role === 'owner' || role === 'admin',
+        canManage: isWorkspaceManagerRole(role),
       } satisfies WorkspaceRoomSetting;
     }),
   );
@@ -89,7 +90,7 @@ export default function WorkspaceSettings() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const canManageWorkspace = community?.viewerRole === 'owner' || community?.viewerRole === 'admin';
+  const canManageWorkspace = isWorkspaceManagerRole(community?.viewerRole);
 
   useFocusEffect(
     useCallback(() => {
@@ -127,7 +128,7 @@ export default function WorkspaceSettings() {
           setClient(currentClient);
           setCommunity(scopedCommunity);
           setWorkspaceName(scopedCommunity.name);
-          if (viewerRole !== 'owner' && viewerRole !== 'admin') return;
+          if (!isWorkspaceManagerRole(viewerRole)) return;
 
           const nextRooms = await loadWorkspaceRooms(currentClient, communityId, currentIdentity.publicKey);
           if (!cancelled) {

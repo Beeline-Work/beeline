@@ -69,6 +69,45 @@ describe('agent display identity', () => {
   it('produces different names across representative keys', () => {
     expect(fallbackAgentName('agent-a')).not.toBe(fallbackAgentName('agent-b'));
   });
+
+  it('uses the agent record displayName when there is no soul overlay', () => {
+    const pubkey = 'beebee-pubkey';
+    const display = resolveAgentDisplayIdentity(pubkey, {
+      pubkey,
+      displayName: 'Beebee',
+    });
+
+    expect(display.name).toBe('Beebee');
+    expect(display.handle).toBe('beebee');
+    expect(display.hasSoul).toBe(false);
+  });
+
+  it('prefers a validated soul overlay name over the agent record displayName', () => {
+    const pubkey = 'beebee-pubkey';
+    const display = resolveAgentDisplayIdentity(pubkey, {
+      pubkey,
+      displayName: 'Beebee',
+      soulProfile: {
+        communityId: 'workspace',
+        agentPubkey: pubkey,
+        authoredBy: 'human-public-key',
+        name: 'Ada',
+        personality: 'Keeps the suite green.',
+        avatarSeed: 'chrome-warden-soul',
+        updatedAt: 1,
+        raw: {} as never,
+      },
+    });
+
+    expect(display.name).toBe('Ada');
+  });
+
+  it('falls back to the pubkey-derived name only when neither an overlay nor a displayName is known', () => {
+    const pubkey = 'no-name-known-pubkey';
+    const display = resolveAgentDisplayIdentity(pubkey, { pubkey });
+
+    expect(display.name).toBe(fallbackAgentName(pubkey));
+  });
 });
 
 describe('corner card agent identity resolution', () => {

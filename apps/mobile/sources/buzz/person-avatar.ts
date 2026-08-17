@@ -17,7 +17,7 @@ function hash32(value: string): number {
   return hash;
 }
 
-/** Stable soft flower geometry for human identities. */
+/** Stable faceted human-mark geometry for human identities. */
 export function personAvatarGeometry(pubkey: string): PersonAvatarGeometry {
   const hash = hash32(pubkey || 'unknown-person');
   const byte = (shift: number) => (hash >>> shift) & 0xff;

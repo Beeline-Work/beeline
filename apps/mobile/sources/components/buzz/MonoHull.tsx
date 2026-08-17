@@ -35,6 +35,16 @@ export const motionTokens = {
   liveCycle: 1120,
 } as const;
 
+/**
+ * The one separator a repeating list row is allowed: a single hairline,
+ * never a border+fill+radius box. Spread into a row's own style alongside
+ * that screen's background.
+ */
+export const hairlineDivider: ViewStyle = {
+  borderBottomWidth: 1,
+  borderBottomColor: groknight.border,
+};
+
 const easeOutQuint = Easing.out(Easing.poly(5));
 
 type HullSurfaceProps = Omit<ViewProps, 'children' | 'style'> & {

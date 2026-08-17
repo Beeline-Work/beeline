@@ -942,7 +942,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     borderColor: groknight.border,
-    borderRadius: 4,
+    borderRadius: 3,
     backgroundColor: groknight.bgBase,
   },
   claimInput: {

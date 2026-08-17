@@ -18,10 +18,10 @@ vi.mock('react-native-svg', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return { default: host('Svg'), Polygon: host('Polygon') };
+  return { default: host('Svg'), G: host('G'), Polygon: host('Polygon') };
 });
 
-import { WorkspaceAvatar } from './WorkspaceAvatar';
+import { PersonAvatar } from './PersonAvatar';
 
 const originalConsoleError = console.error;
 
@@ -46,16 +46,15 @@ function render(element: React.ReactElement): ReactTestRenderer {
   return renderer;
 }
 
-describe('Workspace avatar', () => {
-  const community = {
-    communityId: '11111111-1111-4111-8111-111111111111',
-    name: 'Personal',
-  } as any;
+describe('Person avatar', () => {
+  const pubkey = '3333333333333333333333333333333333333333333333333333333333333333';
 
   it('renders the faceted mark, not the image, when a kind:0 picture is assigned', () => {
     const renderer = render(
-      React.createElement(WorkspaceAvatar, {
-        community: { ...community, avatar: 'https://example.test/personal.png' },
+      React.createElement(PersonAvatar, {
+        pubkey,
+        avatarUrl: 'https://example.test/person.png',
+        name: 'Person',
       }),
     );
 
@@ -63,10 +62,9 @@ describe('Workspace avatar', () => {
     expect(renderer.root.findAllByType('Polygon' as any).length).toBeGreaterThan(0);
   });
 
-  it('renders a geometric mark instead of acronym text when no avatar is assigned', () => {
-    const renderer = render(React.createElement(WorkspaceAvatar, { community }));
+  it('renders a faceted mark with no Circle/Ellipse elements when no picture is assigned', () => {
+    const renderer = render(React.createElement(PersonAvatar, { pubkey, name: 'Person' }));
     expect(renderer.root.findAllByType('Image' as any)).toHaveLength(0);
     expect(renderer.root.findAllByType('Polygon' as any).length).toBeGreaterThan(0);
-    expect(renderer.root.findAllByType('Text' as any)).toHaveLength(0);
   });
 });

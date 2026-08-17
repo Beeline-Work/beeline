@@ -135,8 +135,11 @@ export type {
   OidcIdentityLink,
 } from './oidc-bind.js';
 
-export { RelayWs, wsUrlFromHttp } from './ws.js';
+export { RelayWs, wsUrlFromHttp, wsQueryEvents } from './ws.js';
 export type { Filter, RelayWsOptions } from './ws.js';
+
+export { query } from './query.js';
+export type { QueryFunnelContext } from './query.js';
 
 export {
   createChannel,

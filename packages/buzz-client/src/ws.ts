@@ -414,6 +414,54 @@ export class RelayWs {
   }
 }
 
+/**
+ * One-shot NIP-01 query over an already-open, already-authenticated socket:
+ * REQ → collect EVENTs → resolve on EOSE. Mirrors HTTP `/query`'s semantics
+ * (a bounded read, not a live subscription) but pays no per-request NIP-98
+ * signing cost since the socket is already authed.
+ *
+ * `timeoutMs` mirrors `http.ts`'s `QUERY_ATTEMPT_TIMEOUT_MS`. A socket close
+ * before EOSE is treated as an immediate failure — callers fall back to HTTP
+ * rather than trying to resume the query across a reconnect.
+ *
+ * CRITICAL: every exit path (resolve, timeout, close) calls the `subscribe()`
+ * unsubscribe so the one-shot REQ's subId is never left in
+ * `RelayWs.subscriptions` — otherwise a later reconnect's
+ * `resubscribeLiveRequests()` would incorrectly replay it as a live REQ.
+ */
+export function wsQueryEvents(
+  ws: RelayWs,
+  filters: Filter[],
+  timeoutMs = 10_000,
+): Promise<NostrEvent[]> {
+  return new Promise((resolve, reject) => {
+    const events: NostrEvent[] = [];
+    let settled = false;
+    let unsubscribe: (() => void) | undefined;
+    let offClose: (() => void) | undefined;
+
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      offClose?.();
+      unsubscribe?.();
+      fn();
+    };
+
+    const timer = setTimeout(
+      () => finish(() => reject(new Error(`wsQueryEvents timeout after ${timeoutMs}ms`))),
+      timeoutMs,
+    );
+
+    offClose = ws.onClose(() => finish(() => reject(new Error('wsQueryEvents: socket closed'))));
+
+    unsubscribe = ws.subscribe(filters, (event) => events.push(event), {
+      onEose: () => finish(() => resolve(events)),
+    });
+  });
+}
+
 /** Derive ws(s) URL from an http(s) base URL. */
 export function wsUrlFromHttp(baseUrl: string): string {
   const u = new URL(baseUrl);

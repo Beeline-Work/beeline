@@ -487,11 +487,11 @@ const styles = StyleSheet.create({
   },
   diffAddedLine: {
     ...Typography.mono('semiBold'),
-    color: diffColors.addedBorder,
+    color: groknight.diffAdded,
     backgroundColor: diffColors.addedBg,
   },
   diffRemovedLine: {
-    color: diffColors.removedBorder,
+    color: groknight.diffRemoved,
     backgroundColor: diffColors.removedBg,
   },
   diffContextLine: { color: groknight.textSecondary, backgroundColor: groknight.bgTerminal },

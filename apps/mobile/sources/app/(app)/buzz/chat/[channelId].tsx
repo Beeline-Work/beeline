@@ -263,6 +263,71 @@ function SwipeToReply({
   );
 }
 
+/**
+ * The one transcript row Rooms and Corners both render: a small avatar, a
+ * ›/· glyph, an uppercase mono label naming who, and body text — no
+ * bubble, no per-row box. A human's own short message is the only layout
+ * exception (right-aligned, inset), carried by alignment, not a box.
+ */
+function TranscriptRow({
+  itemId,
+  isOwn,
+  isAgent,
+  avatar,
+  presenceLight,
+  label,
+  replyReference,
+  bodyText,
+  bodyTestID,
+  offlineQueued,
+  attachments,
+  provenance,
+}: {
+  itemId: string;
+  isOwn: boolean;
+  isAgent: boolean;
+  avatar: React.ReactNode;
+  presenceLight: React.ReactNode;
+  label: string;
+  replyReference: React.ReactNode;
+  bodyText: string | undefined;
+  bodyTestID: string;
+  offlineQueued: boolean;
+  attachments: AttachmentReference[] | undefined;
+  provenance: string | null;
+}) {
+  return (
+    <View
+      style={[styles.terminalTurn, isOwn && !isAgent && styles.terminalTurnUser]}
+      testID={`chat-message-${itemId}`}
+    >
+      <View style={styles.terminalTurnHeading}>
+        {avatar}
+        {presenceLight}
+        <Text style={styles.terminalTurnGlyph}>{isOwn || isAgent ? '›' : '·'}</Text>
+        <Text numberOfLines={1} style={styles.terminalTurnLabel}>
+          {label}
+        </Text>
+      </View>
+      {replyReference}
+      {bodyText ? (
+        !isOwn && isAgent ? (
+          <MonoMarkdown markdown={bodyText} tone="final" testID={bodyTestID} />
+        ) : (
+          <MonoMarkdown markdown={bodyText} textStyle={styles.terminalTurnText} testID={bodyTestID} />
+        )
+      ) : null}
+      {offlineQueued && (
+        <Text style={styles.offlineDeliveryNote}>SENT TO ROOM · AGENT OFFLINE</Text>
+      )}
+      {attachments?.map((attachment) => (
+        <AttachmentCard attachment={attachment} key={`${itemId}-${attachment.url}`} />
+      ))}
+      {provenance && <Text style={styles.provenanceText}>{provenance}</Text>}
+    </View>
+  );
+}
+
 export default function BuzzChat() {
   const { channelId, notificationResponseId } = useLocalSearchParams<{
     channelId: string;
@@ -1825,60 +1890,38 @@ export default function BuzzChat() {
         </View>
       ) : null;
 
-      if (parentChannelId) {
-        return (
-          <SwipeToReply messageId={item.id} onReply={() => beginReply(item)}>
-            <NewMessageMaterialize enabled={Boolean(item.isNew)}>
-              <View
-                style={[
-                  styles.terminalTurn,
-                  isOwn && !isAgent && styles.terminalTurnUser,
-                  isAgent && styles.terminalAgentTurn,
-                ]}
-              >
-                <View style={styles.terminalTurnHeading}>
-                  <Text style={styles.terminalTurnGlyph}>{isOwn || isAgent ? '›' : '·'}</Text>
-                  <Text style={styles.terminalTurnLabel}>
-                    {isOwn ? 'YOU' : isAgent ? 'TURN SUMMARY' : 'MESSAGE'}
-                  </Text>
-                  {!isOwn && display && (
-                    <Text numberOfLines={1} style={styles.terminalTurnAuthor}>
-                      {display.name}
-                    </Text>
-                  )}
-                  {!isOwn && !display && personName && (
-                    <Text numberOfLines={1} style={styles.terminalTurnAuthor}>
-                      {personName}
-                    </Text>
-                  )}
-                </View>
-                {replyReference}
-                {item.text ? (
-                  !isOwn && isAgent ? (
-                    <MonoMarkdown
-                      markdown={item.text}
-                      tone="final"
-                      testID="corner-final-markdown"
-                    />
-                  ) : (
-                    <MonoMarkdown
-                      markdown={item.text}
-                      textStyle={styles.terminalTurnText}
-                      testID="corner-own-markdown"
-                    />
-                  )
-                ) : null}
-                {isOwn && offlineQueuedIds.has(item.id) && (
-                  <Text style={styles.offlineDeliveryNote}>SENT TO ROOM · AGENT OFFLINE</Text>
-                )}
-                {item.attachments?.map((attachment) => (
-                  <AttachmentCard attachment={attachment} key={`${item.id}-${attachment.url}`} />
-                ))}
-              </View>
-            </NewMessageMaterialize>
-          </SwipeToReply>
-        );
-      }
+      // Rooms and Corners render the identical row (§ DESIGN.md "Rooms and
+      // Corners are one system") — only the human-own layout differs, and
+      // that's carried by TranscriptRow's own isOwn/isAgent alignment, not a
+      // per-branch component.
+      const avatarElement = !isOwn ? (
+        display ? (
+          <AgentAvatar
+            pubkey={item.pubkey ?? 'unknown-agent'}
+            avatarSeed={display.avatarSeed}
+            avatarUrl={display.avatarUrl}
+            name={display.name}
+            size={18}
+          />
+        ) : item.pubkey ? (
+          <PersonAvatar
+            pubkey={item.pubkey}
+            avatarUrl={personProfileByPubkey.get(item.pubkey)?.avatar}
+            name={personName ?? shortMemberNpub(item.pubkey)}
+            size={18}
+          />
+        ) : null
+      ) : null;
+      const presenceLightElement =
+        knownAgent && item.pubkey ? (
+          <AgentPresenceLight online={agentOnline} testID={`agent-presence-light-${item.pubkey}`} />
+        ) : null;
+      const label = isOwn
+        ? 'YOU'
+        : display
+          ? display.name
+          : (personName ?? shortMemberNpub(item.pubkey ?? ''));
+      const provenance = item.pubkey && !isOwn && !isAgent ? shortMemberNpub(item.pubkey) : null;
 
       return (
         <SwipeToReply
@@ -1886,61 +1929,20 @@ export default function BuzzChat() {
           onReply={item.isAgentDraft ? () => undefined : () => beginReply(item)}
         >
           <NewMessageMaterialize enabled={Boolean(item.isNew)}>
-            <View
-              style={[styles.roomMessageRow, isOwn && styles.roomMessageRowOwn]}
-              testID={`chat-message-${item.id}`}
-            >
-              <View style={[styles.messageBubble, isOwn ? styles.ownBubble : styles.otherBubble]}>
-                <View style={styles.authorRow}>
-                  {display ? (
-                    <AgentAvatar
-                      pubkey={item.pubkey ?? 'unknown-agent'}
-                      avatarSeed={display.avatarSeed}
-                      avatarUrl={display.avatarUrl}
-                      name={display.name}
-                      size={22}
-                    />
-                  ) : item.pubkey && !isOwn ? (
-                    <PersonAvatar
-                      pubkey={item.pubkey}
-                      avatarUrl={personProfileByPubkey.get(item.pubkey)?.avatar}
-                      name={personName ?? shortMemberNpub(item.pubkey)}
-                      size={22}
-                    />
-                  ) : null}
-                  {knownAgent && item.pubkey ? (
-                    <AgentPresenceLight
-                      online={agentOnline}
-                      testID={`agent-presence-light-${item.pubkey}`}
-                    />
-                  ) : null}
-                  <Text style={[styles.roleLabel, isAgent ? styles.roleAgent : styles.roleUser]}>
-                    {isOwn
-                      ? 'YOU'
-                      : display
-                        ? display.name
-                        : (personName ?? shortMemberNpub(item.pubkey ?? ''))}
-                  </Text>
-                </View>
-                {replyReference}
-                {item.text ? (
-                  <MonoMarkdown
-                    markdown={item.text}
-                    textStyle={styles.messageText}
-                    testID={`chat-message-text-${item.id}`}
-                  />
-                ) : null}
-                {isOwn && offlineQueuedIds.has(item.id) && (
-                  <Text style={styles.offlineDeliveryNote}>SENT TO ROOM · AGENT OFFLINE</Text>
-                )}
-                {item.attachments?.map((attachment) => (
-                  <AttachmentCard attachment={attachment} key={`${item.id}-${attachment.url}`} />
-                ))}
-                {item.pubkey && !isOwn && !isAgent && (
-                  <Text style={styles.provenanceText}>{shortMemberNpub(item.pubkey)}</Text>
-                )}
-              </View>
-            </View>
+            <TranscriptRow
+              itemId={item.id}
+              isOwn={isOwn}
+              isAgent={isAgent}
+              avatar={avatarElement}
+              presenceLight={presenceLightElement}
+              label={label}
+              replyReference={replyReference}
+              bodyText={item.text}
+              bodyTestID={`chat-message-text-${item.id}`}
+              offlineQueued={isOwn && offlineQueuedIds.has(item.id)}
+              attachments={item.attachments}
+              provenance={provenance}
+            />
           </NewMessageMaterialize>
         </SwipeToReply>
       );
@@ -3420,12 +3422,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 12,
   },
-  roomMessageRow: {
-    width: '100%',
-    minWidth: 0,
-    alignItems: 'flex-start',
-  },
-  roomMessageRowOwn: { alignItems: 'flex-end' },
   replySwipeAction: {
     width: 78,
     marginBottom: 8,
@@ -3448,51 +3444,6 @@ const styles = StyleSheet.create({
     fontSize: 8,
     lineHeight: 11,
     letterSpacing: 0.6,
-  },
-  messageBubble: {
-    minWidth: 92,
-    maxWidth: '84%',
-    paddingVertical: 8,
-    paddingHorizontal: 11,
-    marginBottom: 8,
-    borderRadius: 12,
-  },
-  otherBubble: {
-    backgroundColor: groknight.bgRaised,
-    borderWidth: 1,
-    borderColor: groknight.borderQuiet,
-  },
-  ownBubble: {
-    backgroundColor: groknight.bgHighlight,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-  },
-  authorRow: {
-    minWidth: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-    marginBottom: 4,
-  },
-  roleLabel: {
-    ...Typography.default('semiBold'),
-    ...Typography.mono('semiBold'),
-    fontSize: 11,
-    lineHeight: 15,
-    flexShrink: 1,
-  },
-  roleAgent: {
-    color: groknight.textPrimary,
-  },
-  roleUser: {
-    color: groknight.textMuted,
-  },
-  messageText: {
-    ...Typography.default(),
-    flexShrink: 1,
-    fontSize: 14,
-    color: groknight.textSecondary,
-    lineHeight: 20,
   },
   replyReference: {
     minWidth: 0,
@@ -3601,31 +3552,22 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     marginBottom: 4,
   },
+  // The one transcript row Rooms and Corners both render. No border, fill,
+  // or radius — a repeating content unit never earns a box (DESIGN.md).
+  // Vertical rhythm alone separates one row from the next.
   terminalTurn: {
     width: '100%',
     minWidth: 0,
-    marginTop: 8,
-    marginBottom: 5,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    borderRadius: 5,
-    backgroundColor: groknight.bgTerminal,
+    marginBottom: 18,
   },
-  // Agent turns keep the uninterrupted terminal-width treatment. A human
-  // steer is the conversational exception: compact, inset, and clearly
-  // bounded without changing ordinary Room bubbles.
+  // A human's own short message is the one layout exception: right-aligned
+  // and inset, carried by alignment/width, never by a border, radius, or
+  // fill.
   terminalTurnUser: {
     alignSelf: 'flex-end',
     width: 'auto',
     maxWidth: '84%',
     marginLeft: 44,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderRadius: 14,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgRaised,
   },
   offlineDeliveryNote: {
     ...Typography.mono('semiBold'),
@@ -3635,20 +3577,12 @@ const styles = StyleSheet.create({
     lineHeight: 13,
     letterSpacing: 0.4,
   },
-  // A left accent bar visually separates consecutive agent turns from
-  // surrounding human messages so a long run of summaries doesn't read
-  // as one undifferentiated wall of text.
-  terminalAgentTurn: {
-    borderLeftWidth: 3,
-    borderLeftColor: groknight.agentAccent,
-    backgroundColor: groknight.bgHover,
-  },
   terminalTurnHeading: {
     minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 7,
-    marginBottom: 7,
+    marginBottom: 6,
   },
   terminalTurnGlyph: {
     ...Typography.mono(),
@@ -3660,14 +3594,7 @@ const styles = StyleSheet.create({
     color: groknight.textPrimary,
     fontSize: 10,
     letterSpacing: 0.7,
-  },
-  terminalTurnAuthor: {
-    ...Typography.mono(),
-    flex: 1,
-    minWidth: 0,
-    color: groknight.textMuted,
-    fontSize: 10,
-    textAlign: 'right',
+    flexShrink: 1,
   },
   terminalTurnText: {
     ...Typography.mono(),
@@ -3776,7 +3703,7 @@ const styles = StyleSheet.create({
   // ── Archived notice ─────────────────────────────────────────────
   archivedBubble: {
     backgroundColor: groknight.bgHighlight,
-    borderRadius: 4,
+    borderRadius: 3,
     padding: 8,
     marginBottom: 6,
     alignSelf: 'center',
@@ -3821,7 +3748,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderWidth: 2,
     borderColor: MERGE_APPROVAL_ACCENT,
-    borderRadius: 8,
+    borderRadius: 3,
     backgroundColor: MERGE_APPROVAL_ACCENT,
   },
   approveButtonText: {
@@ -4163,14 +4090,13 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     paddingVertical: 3,
     paddingHorizontal: 10,
-    borderRadius: 4,
+    borderRadius: 3,
     borderWidth: 1,
     borderColor: groknight.border,
     backgroundColor: groknight.bgBase,
   },
   composerFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 9 },
   cornerComposer: {
-    borderRadius: 8,
     backgroundColor: groknight.bgTerminal,
   },
   attachButton: {

@@ -40,6 +40,15 @@ export const groknight = {
   accent: '#d7af5f',
   brandMark: brand.mark,
 
+  /** Diff view — the one sanctioned chroma exception to the zero-chroma
+   * rule (captain override), reused from the legacy diff renderer's
+   * dark-theme tokens so this file owns its own colors. */
+  diffAdded: '#3FB950',
+  diffRemoved: '#F85149',
+
+  /** The single corner-radius value. No other radius ships. */
+  radius: 3,
+
   /** Deterministic identity marks */
   avatarGround: '#121212',
   avatarInk: '#e4e4e4',

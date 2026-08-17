@@ -10,7 +10,8 @@ function rawPayload(event: SessionEvent): Record<string, unknown> | undefined {
 function hasTag(payload: Record<string, unknown>, name: string, value?: string): boolean {
   if (!Array.isArray(payload.tags)) return false;
   return payload.tags.some((candidate) => {
-    if (!Array.isArray(candidate) || candidate[0] !== name) return false;
+    if (!Array.isArray(candidate) || !candidate.every((v) => typeof v === 'string')) return false;
+    if (candidate[0] !== name) return false;
     return value === undefined || candidate[1] === value;
   });
 }

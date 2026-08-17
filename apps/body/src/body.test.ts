@@ -3490,6 +3490,13 @@ describe('graceful relay-failure confirmation', () => {
       mergeTarget,
     });
 
+    const gitRejectionDump = [
+      'ff merge failed:',
+      '! [rejected]        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -> main (fetch first)',
+      "error: failed to push some refs to 'https://relay.example/git/ownerhex/project'",
+      'hint: Updates were rejected because the remote contains work that you do',
+      "hint: not have locally. See the 'Note about fast-forwards' in 'git push --help'.",
+    ].join('\n');
     const fakeMergeGate = {
       poll: vi.fn().mockResolvedValue([
         {
@@ -3503,7 +3510,7 @@ describe('graceful relay-failure confirmation', () => {
           outcome: {
             merged: false,
             terminal: false,
-            reason: 'worker push refused by relay: connection refused',
+            reason: gitRejectionDump,
           },
         },
       ]),
@@ -3517,7 +3524,12 @@ describe('graceful relay-failure confirmation', () => {
         event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'failed'),
     );
     expect(cornerFailure).toBeDefined();
-    expect(cornerFailure!.content).toContain('worker push refused by relay');
+    // The raw git rejection dump (the plumbing a human should never see) must
+    // never reach the corner transcript — only a plain human summary does.
+    expect(cornerFailure!.content).not.toMatch(/git|hint:|\[rejected\]|fetch first/i);
+    expect(cornerFailure!.content).toContain(
+      'The target branch has moved on since this change was prepared',
+    );
     expect(cornerFailure!.tags).toContainEqual(['repo', mergeTarget.repo]);
     expect(cornerFailure!.tags).toContainEqual(['branch', mergeTarget.branch]);
     expect(cornerFailure!.tags).toContainEqual(['tip', mergeTarget.tip]);
@@ -3529,5 +3541,68 @@ describe('graceful relay-failure confirmation', () => {
         event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'failed'),
     );
     expect(parentStatus).toBeDefined();
+  });
+});
+
+describe('user-facing failure text stays free of git/tool plumbing', () => {
+  it('safePermissionFailure turns a raw git rejection dump into a plain summary', () => {
+    const agent = newIdentity('plumbing-agent');
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: '/workspace',
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+    );
+    const gitRejectionDump = [
+      'git worktree add failed:',
+      '! [rejected]        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -> main (fetch first)',
+      "error: failed to push some refs to 'https://relay.example/git/ownerhex/project'",
+      "hint: Updates were rejected because the remote contains work that you do",
+      "hint: not have locally. See the 'Note about fast-forwards' in 'git push --help'.",
+    ].join('\n');
+
+    const detail = Reflect.get(body, 'safePermissionFailure').call(
+      body,
+      new Error(gitRejectionDump),
+    ) as string;
+
+    expect(detail).not.toMatch(/git|hint:|\[rejected\]|fetch first/i);
+    expect(detail).toContain('The target branch has moved on since this change was prepared');
+  });
+
+  it('safePermissionFailure still redacts credentials/URLs for non-git-plumbing errors', () => {
+    const agent = newIdentity('plumbing-agent-2');
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: '/workspace',
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+    );
+
+    const detail = Reflect.get(body, 'safePermissionFailure').call(
+      body,
+      new Error('unable to reach configured endpoint user:secret@relay.example for owner/repo'),
+    ) as string;
+
+    expect(detail).not.toContain('secret');
+    expect(detail).toContain('[credentials]@');
   });
 });

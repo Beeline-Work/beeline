@@ -25,7 +25,12 @@ export interface AuthenticatedHttpBridgeOptions extends HttpBridgeOptions {
 }
 
 const IMMUTABLE_CREATE_CACHE_TTL_MS = 5 * 60_000;
-const CREATE_SCAN_CACHE_TTL_MS = 500;
+// A genuinely-unscoped discovery scan (no #h/#d to narrow by) is exactly the
+// read that benefits most from caching, since it's the most expensive shape
+// on the relay. 500ms only dedupes same-tick callers; raised to smooth out
+// repeated scans across a normal navigation burst while staying well short of
+// the 5-minute immutable-data TTL above.
+const CREATE_SCAN_CACHE_TTL_MS = 10_000;
 const QUERY_CACHE_MAX_ENTRIES = 200;
 const PUBLISH_MAX_ATTEMPTS = 4;
 const PUBLISH_ATTEMPT_TIMEOUT_MS = 5_000;
@@ -142,6 +147,119 @@ function selectQueryEvents(
   return selected;
 }
 
+// ── Phase 0 instrumentation ──────────────────────────────────────────────
+// Attributes live /query volume to call sites so the fetch-frequency work
+// this enables (batching, caching, dedup) can be prioritized and measured
+// with exact numbers instead of code-reading estimates. Off by default and
+// zero-cost when disabled (a single boolean check); enable with
+// `setQueryInstrumentationEnabled(true)` or `BUZZ_QUERY_INSTRUMENT=1` in a
+// Node process. No behavior change — this only records counters.
+
+export interface QueryCallSiteStat {
+  /** `${kinds}|${tagKeys}|${callerLabel}`, stable across repeated calls. */
+  fingerprint: string;
+  kinds: number[];
+  tagKeys: string[];
+  callerLabel: string;
+  /** Every `queryEvents()` invocation with this shape, cache hits included. */
+  calls: number;
+  lastSeenAt: number;
+}
+
+const callSiteStats = new Map<string, QueryCallSiteStat>();
+let networkRequestCount = 0;
+let queryInstrumentationEnabled =
+  typeof process !== 'undefined' && process?.env?.BUZZ_QUERY_INSTRUMENT === '1';
+
+/** Enable/disable call-site attribution. Off by default; see module doc above. */
+export function setQueryInstrumentationEnabled(enabled: boolean): void {
+  queryInstrumentationEnabled = enabled;
+}
+
+export function isQueryInstrumentationEnabled(): boolean {
+  return queryInstrumentationEnabled;
+}
+
+function filterShape(filters: Record<string, unknown>[]): { kinds: number[]; tagKeys: string[] } {
+  const kinds = new Set<number>();
+  const tagKeys = new Set<string>();
+  for (const filter of filters) {
+    if (Array.isArray(filter.kinds)) {
+      for (const kind of filter.kinds) if (typeof kind === 'number') kinds.add(kind);
+    }
+    for (const key of Object.keys(filter)) {
+      if (key.startsWith('#')) tagKeys.add(key);
+    }
+  }
+  return { kinds: [...kinds].sort((a, b) => a - b), tagKeys: [...tagKeys].sort() };
+}
+
+/** Best-effort: the first stack frame outside this module. Never throws. */
+function callerLabelFromStack(): string {
+  const stack = new Error().stack;
+  if (!stack) return 'unknown';
+  const lines = stack.split('\n');
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line || line.includes('/http.ts') || line.includes('\\http.ts')) continue;
+    const match = /at\s+(?:async\s+)?([^\s(]+)/.exec(line);
+    if (match?.[1]) return match[1];
+  }
+  return 'unknown';
+}
+
+function recordQueryCall(filters: Record<string, unknown>[]): void {
+  if (!queryInstrumentationEnabled) return;
+  const { kinds, tagKeys } = filterShape(filters);
+  const callerLabel = callerLabelFromStack();
+  const fingerprint = `${kinds.join(',')}|${tagKeys.join(',')}|${callerLabel}`;
+  const existing = callSiteStats.get(fingerprint);
+  if (existing) {
+    existing.calls += 1;
+    existing.lastSeenAt = Date.now();
+  } else {
+    callSiteStats.set(fingerprint, {
+      fingerprint,
+      kinds,
+      tagKeys,
+      callerLabel,
+      calls: 1,
+      lastSeenAt: Date.now(),
+    });
+  }
+}
+
+function recordNetworkRequest(): void {
+  if (!queryInstrumentationEnabled) return;
+  networkRequestCount += 1;
+}
+
+/**
+ * Snapshot of instrumented query volume. `networkRequests` counts actual
+ * `/query` POSTs (one per `requestQueryEvents` attempt) and should sum to
+ * approximately the relay's observed `POST /query` rate. `callSites` counts
+ * logical `queryEvents()` calls (cache hits included), which is always >=
+ * `networkRequests` since caching/batching collapse many logical calls into
+ * fewer, or zero, actual requests — this is what attributes volume to a
+ * source, not what predicts network cost directly.
+ */
+export function getQueryInstrumentation(): {
+  enabled: boolean;
+  networkRequests: number;
+  callSites: QueryCallSiteStat[];
+} {
+  return {
+    enabled: queryInstrumentationEnabled,
+    networkRequests: networkRequestCount,
+    callSites: [...callSiteStats.values()].sort((a, b) => b.calls - a.calls),
+  };
+}
+
+export function resetQueryInstrumentation(): void {
+  callSiteStats.clear();
+  networkRequestCount = 0;
+}
+
 function isNonRetryableQueryError(error: unknown): boolean {
   return (
     typeof error === 'object' &&
@@ -162,6 +280,7 @@ async function requestQueryEvents(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), QUERY_ATTEMPT_TIMEOUT_MS);
     try {
+      recordNetworkRequest();
       const res = await fetch(url, {
         method,
         headers: bridgeHeaders(opts, queryPubkey, url, method),
@@ -233,10 +352,25 @@ function queryCacheTtl(filters: Record<string, unknown>[], events: readonly Nost
   if (filters.length !== 1) return 0;
   const filter = filters[0]!;
   const kinds = Array.isArray(filter.kinds) ? filter.kinds : [];
-  if (kinds.length !== 1 || kinds[0] !== 9_007) return 0;
-  const channelIds = Array.isArray(filter['#h']) ? filter['#h'] : [];
-  if (channelIds.length === 1 && events.length > 0) return IMMUTABLE_CREATE_CACHE_TTL_MS;
-  return CREATE_SCAN_CACHE_TTL_MS;
+  if (kinds.length !== 1) return 0;
+  if (kinds[0] === 9_007) {
+    const channelIds = Array.isArray(filter['#h']) ? filter['#h'] : [];
+    if (channelIds.length === 1 && events.length > 0) return IMMUTABLE_CREATE_CACHE_TTL_MS;
+    return CREATE_SCAN_CACHE_TTL_MS;
+  }
+  if (kinds[0] === 39_000) {
+    // Channel metadata (name/archived/visibility) is mutable but changes
+    // rarely, and callers that need to react to a change already do so via
+    // live signals (corner-status control messages, archive events) rather
+    // than by re-polling this read — safe to give it the same scoped-and-seen
+    // treatment as an immutable create event once a channel is known non-empty.
+    const dIds = Array.isArray(filter['#d']) ? filter['#d'] : [];
+    const hIds = Array.isArray(filter['#h']) ? filter['#h'] : [];
+    if ((dIds.length === 1 || hIds.length === 1) && events.length > 0) {
+      return IMMUTABLE_CREATE_CACHE_TTL_MS;
+    }
+  }
+  return 0;
 }
 
 function bridgeHeaders(
@@ -366,6 +500,7 @@ export async function queryEvents(
   filters: Record<string, unknown>[],
   queryPubkey: string,
 ): Promise<NostrEvent[]> {
+  recordQueryCall(filters);
   const cacheKey = `${queryCachePrefix(opts, queryPubkey)}${currentFetchId()}\u0000${JSON.stringify(filters)}`;
   const cached = queryCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {

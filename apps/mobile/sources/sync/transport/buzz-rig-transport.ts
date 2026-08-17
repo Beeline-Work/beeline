@@ -37,8 +37,10 @@ import {
   APPROVAL_MARKER,
   parseChangeReviewManifest,
   type BuzzClient,
+  type ChannelMetadata,
   type Identity,
   type MergeTarget,
+  type SessionEvent as BuzzSessionEvent,
   type WritePermissionDecision,
   type AttachmentReference,
 } from '@beeline/buzz-client';
@@ -46,14 +48,73 @@ import type { NostrEvent } from '@beeline/nostr';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { cornerName, mapRawCornerStatusTag, type CornerSummary } from '@/buzz/corners';
 import { toRigEvent } from './buzz-event-projection';
+import {
+  clearCornerLifecycleCache,
+  getCachedCornerLifecycle,
+  setCachedCornerLifecycle,
+} from './corner-lifecycle-cache';
+
+export { invalidateCornerLifecycleCache } from './corner-lifecycle-cache';
 
 let sharedClientEntry: { key: string; client: BuzzClient } | undefined;
+
+/** Pure projection shared by the single-Room and cross-Room lifecycle fetchers. */
+function cornerSummaryFromEvents(
+  id: string,
+  creates: NostrEvent[],
+  metadata: ChannelMetadata | null,
+  events: BuzzSessionEvent[],
+  merged: boolean,
+): CornerSummary {
+  const create = [...creates].sort((a, b) => a.created_at - b.created_at)[0];
+  // Read the same tag precedence (display-status, then the coarser wire
+  // status) and the same canonical mapping the live Room card uses, so this
+  // snapshot can never disagree with real-time projection about what a
+  // corner's status word is.
+  const statusEntries = events
+    .map((event) => ({
+      raw: tagValue(event.event, 'display-status') ?? tagValue(event.event, 'status'),
+      createdAt: event.createdAt,
+    }))
+    .filter((entry): entry is { raw: string; createdAt: number } => Boolean(entry.raw));
+  const latestRawStatus = [...statusEntries].sort((a, b) => b.createdAt - a.createdAt)[0]?.raw;
+  const latestStatus = mapRawCornerStatusTag(latestRawStatus);
+  // `closed` on a kind:39000 projection is NIP-29 invite-only access, not a
+  // lifecycle state. Only an explicit archived boolean or a corner-scoped
+  // archived status removes a corner from the live list.
+  const archived =
+    metadata?.archived === true || statusEntries.some((entry) => entry.raw === 'archived');
+  const reviewReady =
+    latestStatus === 'open' ||
+    events.some((event) =>
+      event.event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+    );
+  const lastActivityAt = Math.max(
+    create?.created_at ?? 0,
+    ...events.map((event) => event.createdAt),
+  );
+  return {
+    id,
+    name: cornerName(create ? tagValue(create, 'name') : undefined, id),
+    openerPubkey: create?.pubkey ?? '',
+    status: merged
+      ? 'merged'
+      : archived
+        ? 'archived'
+        : reviewReady
+          ? 'open'
+          : (latestStatus ?? 'live'),
+    createdAt: create?.created_at,
+    ...(lastActivityAt > 0 ? { lastActivityAt } : {}),
+  };
+}
 
 function sharedClient(identity: Identity, baseUrl: string): BuzzClient {
   const normalizedBaseUrl = baseUrl.replace(/\/$/, '');
   const key = `${normalizedBaseUrl}\u0000${identity.publicKey}`;
   if (sharedClientEntry?.key === key) return sharedClientEntry.client;
   sharedClientEntry?.client.disconnect();
+  clearCornerLifecycleCache();
   const client = createBuzzClient({
     baseUrl: normalizedBaseUrl,
     identity,
@@ -746,8 +807,20 @@ export class BuzzRigTransport implements RigTransport {
     return client.listSubchannels(parentChannelId);
   }
 
-  /** Person-facing corner projection used by navigation and the full browse view. */
+  /**
+   * Person-facing corner projection used by navigation and the full browse
+   * view. Cached for a few seconds per parent Room across all 3 call sites;
+   * see `invalidateCornerLifecycleCache`.
+   */
   async listSubchannelLifecycle(parentChannelId: string): Promise<CornerSummary[]> {
+    const cached = getCachedCornerLifecycle(parentChannelId);
+    if (cached) return cached;
+    const promise = this.fetchOneRoomLifecycle(parentChannelId);
+    setCachedCornerLifecycle(parentChannelId, promise);
+    return promise;
+  }
+
+  private async fetchOneRoomLifecycle(parentChannelId: string): Promise<CornerSummary[]> {
     const client = await this.getClient();
     const ids = await client.listSubchannels(parentChannelId);
     const parentEvents = await client.query([
@@ -771,50 +844,113 @@ export class BuzzRigTransport implements RigTransport {
           client.getChannelMetadata(id),
           client.sessionEventsBackfill(id, { limit: 50 }),
         ]);
-        const create = [...creates].sort((a, b) => a.created_at - b.created_at)[0];
-        // Read the same tag precedence (display-status, then the coarser wire
-        // status) and the same canonical mapping the live Room card uses, so
-        // this snapshot can never disagree with real-time projection about
-        // what a corner's status word is.
-        const statusEntries = events
-          .map((event) => ({
-            raw: tagValue(event.event, 'display-status') ?? tagValue(event.event, 'status'),
-            createdAt: event.createdAt,
-          }))
-          .filter((entry): entry is { raw: string; createdAt: number } => Boolean(entry.raw));
-        const latestRawStatus = [...statusEntries].sort((a, b) => b.createdAt - a.createdAt)[0]
-          ?.raw;
-        const latestStatus = mapRawCornerStatusTag(latestRawStatus);
-        // `closed` on a kind:39000 projection is NIP-29 invite-only access,
-        // not a lifecycle state. Only an explicit archived boolean or a
-        // corner-scoped archived status removes a corner from the live list.
-        const archived =
-          metadata?.archived === true || statusEntries.some((entry) => entry.raw === 'archived');
-        const reviewReady =
-          latestStatus === 'open' ||
-          events.some((event) =>
-            event.event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
-          );
-        const lastActivityAt = Math.max(
-          create?.created_at ?? 0,
-          ...events.map((event) => event.createdAt),
-        );
-        return {
-          id,
-          name: cornerName(create ? tagValue(create, 'name') : undefined, id),
-          openerPubkey: create?.pubkey ?? '',
-          status: mergedIds.has(id)
-            ? 'merged'
-            : archived
-              ? 'archived'
-              : reviewReady
-                ? 'open'
-                : (latestStatus ?? 'live'),
-          createdAt: create?.created_at,
-          ...(lastActivityAt > 0 ? { lastActivityAt } : {}),
-        };
+        return cornerSummaryFromEvents(id, creates, metadata, events, mergedIds.has(id));
       }),
     );
+  }
+
+  /**
+   * Cross-Room batched corner lifecycle projection: one multi-`#h` round trip
+   * for every corner's create event and one multi-`#h` round trip for
+   * merge-summary events, regardless of how many parent Rooms are requested —
+   * instead of one call graph per Room. Reads and populates the same cache as
+   * `listSubchannelLifecycle`, so a Room already warmed by an earlier call
+   * (either direction) is a cache hit here too.
+   */
+  async listSubchannelLifecycleForRooms(
+    parentChannelIds: string[],
+  ): Promise<Map<string, CornerSummary[]>> {
+    const result = new Map<string, CornerSummary[]>();
+    const toFetch: string[] = [];
+    for (const parentChannelId of parentChannelIds) {
+      const cached = getCachedCornerLifecycle(parentChannelId);
+      if (cached) {
+        result.set(parentChannelId, await cached);
+      } else {
+        toFetch.push(parentChannelId);
+      }
+    }
+    if (toFetch.length > 0) {
+      const fetchPromise = this.fetchManyRoomsLifecycle(toFetch);
+      for (const parentChannelId of toFetch) {
+        setCachedCornerLifecycle(
+          parentChannelId,
+          fetchPromise.then((byRoom) => byRoom.get(parentChannelId) ?? []),
+        );
+      }
+      const fetched = await fetchPromise;
+      for (const [parentChannelId, corners] of fetched) result.set(parentChannelId, corners);
+    }
+    return result;
+  }
+
+  private async fetchManyRoomsLifecycle(
+    parentChannelIds: string[],
+  ): Promise<Map<string, CornerSummary[]>> {
+    const result = new Map<string, CornerSummary[]>();
+    if (parentChannelIds.length === 0) return result;
+    const client = await this.getClient();
+
+    const idsByRoom = await Promise.all(
+      parentChannelIds.map(async (parentChannelId) => ({
+        parentChannelId,
+        ids: await client.listSubchannels(parentChannelId),
+      })),
+    );
+    const allCornerIds = [...new Set(idsByRoom.flatMap((entry) => entry.ids))];
+
+    const [createEvents, mergeSummaryEvents] = await Promise.all([
+      allCornerIds.length > 0
+        ? client.query([
+            { kinds: [9007], '#h': allCornerIds, limit: Math.max(500, allCornerIds.length * 5) },
+          ])
+        : Promise.resolve([]),
+      client.query([
+        { kinds: [9], '#h': parentChannelIds, '#t': ['merge-summary'], limit: 500 },
+      ]),
+    ]);
+
+    const createsById = new Map<string, NostrEvent[]>();
+    for (const event of createEvents) {
+      const id = tagValue(event, 'h');
+      if (!id) continue;
+      const list = createsById.get(id) ?? [];
+      list.push(event);
+      createsById.set(id, list);
+    }
+
+    const mergedIdsByRoom = new Map<string, Set<string>>();
+    for (const event of mergeSummaryEvents) {
+      const parentChannelId = tagValue(event, 'h');
+      const subchannelId = tagValue(event, 'subchannel');
+      if (!parentChannelId || !subchannelId) continue;
+      const set = mergedIdsByRoom.get(parentChannelId) ?? new Set<string>();
+      set.add(subchannelId);
+      mergedIdsByRoom.set(parentChannelId, set);
+    }
+
+    await Promise.all(
+      idsByRoom.map(async ({ parentChannelId, ids }) => {
+        const mergedIds = mergedIdsByRoom.get(parentChannelId) ?? new Set<string>();
+        const corners = await Promise.all(
+          ids.map(async (id) => {
+            const [metadata, events] = await Promise.all([
+              client.getChannelMetadata(id),
+              client.sessionEventsBackfill(id, { limit: 50 }),
+            ]);
+            return cornerSummaryFromEvents(
+              id,
+              createsById.get(id) ?? [],
+              metadata,
+              events,
+              mergedIds.has(id),
+            );
+          }),
+        );
+        result.set(parentChannelId, corners);
+      }),
+    );
+    return result;
   }
 
   async getChannelCreator(channelId: string): Promise<string | null> {

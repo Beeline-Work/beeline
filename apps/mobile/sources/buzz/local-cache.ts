@@ -33,6 +33,11 @@ export type ChannelDisplayItem = SessionSummary & {
   parentChannelId?: string;
   corners?: CornerSummary[];
   latestMessage?: string;
+  /** Timestamp/author of the previewed conversational message. `updatedAt`
+   * tracks *any* event, so only this can drive an honest unread mark or an
+   * attributed preview line. */
+  latestMessageAt?: number;
+  latestMessageAuthor?: string;
   participantCount?: number;
 };
 
@@ -44,13 +49,24 @@ export type DirectMessageDisplayItem = {
   peerAgent?: Agent;
   avatarUrl?: string;
   latestMessage?: string;
+  latestMessageAt?: number;
   updatedAt: number;
 };
 
 export type WorkspaceMemberDisplayItem = Omit<
   DirectMessageDisplayItem,
-  'id' | 'latestMessage' | 'updatedAt'
+  'id' | 'latestMessage' | 'latestMessageAt' | 'updatedAt'
 >;
+
+/** The conversational-preview fields a message sync contributes to a channel
+ * entry and to every list that shows that channel as a row. */
+export type RoomSummaryPatch = {
+  latestMessage?: string;
+  latestMessageAt?: number;
+  latestMessageId?: string;
+  latestMessageAuthor?: string;
+  latestEventAt?: number;
+};
 
 export type ChannelListCacheEntry = {
   viewerPubkey: string;
@@ -75,9 +91,10 @@ export type ChannelCacheEntry = {
   /** True only after a complete initial history read, not merely a live event. */
   backfilled?: boolean;
   latestMessage?: string;
-  /** Timestamp/id of the displayed conversational message, never a control event. */
+  /** Timestamp/id/author of the displayed conversational message, never a control event. */
   latestMessageAt?: number;
   latestMessageId?: string;
+  latestMessageAuthor?: string;
   latestEventAt?: number;
   roomMembers?: ChannelMember[];
   availablePeople?: CommunityMember[];
@@ -118,24 +135,14 @@ type BuzzCacheState = PersistedBuzzCache & {
     channelId: string,
     messages: ChatDisplayMessage[],
     cursor: number | undefined,
-    summary?: {
-      latestMessage?: string;
-      latestMessageAt?: number;
-      latestMessageId?: string;
-      latestEventAt?: number;
-    },
+    summary?: RoomSummaryPatch,
   ) => void;
   upsertMessages: (
     viewerPubkey: string,
     channelId: string,
     messages: ChatDisplayMessage[],
     cursor?: number,
-    summary?: {
-      latestMessage?: string;
-      latestMessageAt?: number;
-      latestMessageId?: string;
-      latestEventAt?: number;
-    },
+    summary?: RoomSummaryPatch,
   ) => void;
   updateMessages: (
     viewerPubkey: string,
@@ -302,6 +309,12 @@ export function mergeChannelBasicsWithCache(
       ...channel,
       ...(existing.corners !== undefined ? { corners: existing.corners } : {}),
       ...(existing.latestMessage !== undefined ? { latestMessage: existing.latestMessage } : {}),
+      ...(existing.latestMessageAt !== undefined
+        ? { latestMessageAt: existing.latestMessageAt }
+        : {}),
+      ...(existing.latestMessageAuthor !== undefined
+        ? { latestMessageAuthor: existing.latestMessageAuthor }
+        : {}),
       ...(existing.participantCount !== undefined
         ? { participantCount: existing.participantCount }
         : {}),
@@ -314,29 +327,27 @@ function updateListSummaries(
   lists: Record<string, ChannelListCacheEntry>,
   viewerPubkey: string,
   channelId: string,
-  summary?: {
-    latestMessage?: string;
-    latestMessageAt?: number;
-    latestMessageId?: string;
-    latestEventAt?: number;
-  },
+  summary?: RoomSummaryPatch,
 ): Record<string, ChannelListCacheEntry> {
   if (!summary?.latestMessage) return lists;
   const updatedAt = summary.latestEventAt ?? 0;
+  const preview = {
+    latestMessage: summary.latestMessage,
+    latestMessageAt: summary.latestMessageAt,
+    updatedAt,
+  };
   return Object.fromEntries(
     Object.entries(lists).map(([key, entry]) => {
       if (entry.viewerPubkey !== viewerPubkey) return [key, entry];
       const channels = entry.channels
         .map((channel) =>
           channel.id === channelId
-            ? { ...channel, latestMessage: summary.latestMessage, updatedAt }
+            ? { ...channel, ...preview, latestMessageAuthor: summary.latestMessageAuthor }
             : channel,
         )
         .sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0));
       const directMessages = entry.directMessages
-        .map((dm) =>
-          dm.id === channelId ? { ...dm, latestMessage: summary.latestMessage, updatedAt } : dm,
-        )
+        .map((dm) => (dm.id === channelId ? { ...dm, ...preview } : dm))
         .sort((a, b) => b.updatedAt - a.updatedAt || a.peerName.localeCompare(b.peerName));
       return [key, { ...entry, channels, directMessages }];
     }),

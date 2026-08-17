@@ -9,6 +9,7 @@ import { loadActiveCommunityId, saveActiveCommunityId } from '@/buzz/community-s
 import { ensurePersonNameForWorkspace } from '@/buzz/person-name';
 import { groknight } from '@/buzz/groknight';
 import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
+import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
@@ -61,7 +62,7 @@ export default function BuzzCommunityCreateOrJoin() {
         const role = available.find(
           (workspace) => workspace.communityId === selectedCommunityId,
         )?.viewerRole;
-        setCanManageWorkspace(role === 'owner' || role === 'admin');
+        setCanManageWorkspace(isWorkspaceManagerRole(role));
       } catch (err) {
         if (!cancelled) setError(String(err));
       }

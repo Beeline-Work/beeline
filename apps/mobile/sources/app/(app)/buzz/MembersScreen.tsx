@@ -23,6 +23,7 @@ import { buildCommunityInviteUrl } from '@/buzz/community-invite';
 import { personIdentityLabel, shortMemberNpub } from '@/buzz/member-display';
 import { resolveNip05StatusMap } from '@/buzz/nip05-verification';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
+import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { AgentAvatar } from '@/components/buzz/AgentAvatar';
@@ -145,7 +146,7 @@ export default function BuzzAgents() {
     setProfiles(nextProfiles);
     if (viewerPubkey) {
       const viewerRole = allMembers.find((member) => member.pubkey === viewerPubkey)?.role;
-      setCanManageWorkspace(viewerRole === 'owner' || viewerRole === 'admin');
+      setCanManageWorkspace(isWorkspaceManagerRole(viewerRole));
     }
   }, []);
 
@@ -179,7 +180,7 @@ export default function BuzzAgents() {
         setAgents(listed);
         setViewerAvatarUrl(viewerProfile?.avatar);
         const role = allMembers.find((member) => member.pubkey === currentIdentity.publicKey)?.role;
-        setCanManageWorkspace(role === 'owner' || role === 'admin');
+        setCanManageWorkspace(isWorkspaceManagerRole(role));
         await refreshPeople(nextTransport, activeWorkspaceId, currentIdentity.publicKey);
         interval = setInterval(() => {
           if (!pairingPending.current) return;

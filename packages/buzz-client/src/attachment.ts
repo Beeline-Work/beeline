@@ -1,5 +1,3 @@
-import type { NostrEvent } from '@beeline/nostr';
-
 export const ATTACHMENT_MARKER = 'buzz-attachment';
 export const ATTACHMENT_METADATA_TAG = 'imeta';
 export const ATTACHMENT_FILENAME_TAG = 'attachment';
@@ -141,8 +139,4 @@ export function parseAttachmentTags(tags: readonly string[][]): AttachmentRefere
     });
     return normalized ? [normalized] : [];
   });
-}
-
-export function eventAttachments(event: Pick<NostrEvent, 'tags'>): AttachmentReference[] {
-  return parseAttachmentTags(event.tags);
 }

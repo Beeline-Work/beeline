@@ -12,7 +12,7 @@
  *   - Activity projection bridges ACP session/update → relay channel events.
  */
 import { randomUUID } from 'node:crypto';
-import { mkdir, rm, writeFile, readFile, realpath, stat } from 'node:fs/promises';
+import { mkdir, rm, readFile, realpath, stat } from 'node:fs/promises';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -91,8 +91,8 @@ import {
   type ChannelOpsContext,
   type AttachmentReference,
 } from '@beeline/buzz-client';
-import { signEvent, type NostrEvent } from '@beeline/nostr';
-import type { BodyConfig } from './config.js';
+import type { NostrEvent } from '@beeline/nostr';
+import type { BodyConfig, SessionMode } from './config.js';
 import { DurableBodyState } from './durable-state.js';
 import {
   NAMED_REPOSITORY_PERMISSION_COMMAND,
@@ -111,6 +111,7 @@ import {
   resolveReviewBaseTip,
 } from './change-review.js';
 import {
+  AGENT_ATTACHMENT_DIRECTIVE,
   MAX_AGENT_ATTACHMENT_BYTES,
   attachmentPrompt,
   mimeTypeForName,
@@ -130,7 +131,7 @@ export interface AgentSession {
   /** AcpClient instance managing the agent. */
   client: AcpClient;
   /** Session mode. */
-  mode: 'readonly' | 'edit';
+  mode: SessionMode;
   /** Git worktree path (edit mode only). */
   worktreePath?: string;
   /** Filesystem boundary used to resolve agent-authored attachment paths. */
@@ -1021,7 +1022,7 @@ export class Body {
 
   private async createManagedSession(input: {
     channelId: string;
-    mode: 'readonly' | 'edit';
+    mode: SessionMode;
     cwd: string;
     mcpServers: McpServerWire[];
     systemPrompt: string;
@@ -1082,7 +1083,7 @@ export class Body {
           systemPrompt: [
             appendPersonaSessionInstructions(input.systemPrompt, profile),
             '',
-            'To share an image or file with the Room, include [[buzz-attachment:path]] in your final response.',
+            `To share an image or file with the Room, include [[${AGENT_ATTACHMENT_DIRECTIVE}:path]] in your final response.`,
             'The host removes that directive, uploads the file, and sends a link-only attachment card.',
             'Never inline base64 or file bytes in the response. Generated ACP image outputs are attached automatically.',
             restored,

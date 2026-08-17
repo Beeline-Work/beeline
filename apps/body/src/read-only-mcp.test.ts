@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { callMcpTool, hasWriteTools, listMcpToolNames } from './mcp-inventory.js';
+import { WRITE_TOOL_NAMES } from './config.js';
 
 const expectedToolNames = [
   'list_files',
@@ -72,6 +73,24 @@ beforeAll(async () => {
 afterAll(async () => {
   if (repository) await rm(repository, { recursive: true, force: true });
   if (outside) await rm(outside, { recursive: true, force: true });
+});
+
+describe('hasWriteTools', () => {
+  it('shares one source of truth with config.ts WRITE_TOOL_NAMES, including Bash', () => {
+    // Regression: hasWriteTools() used to fall back to its own hand-copied
+    // 11-entry default list that had drifted from config.ts's 13-entry
+    // WRITE_TOOL_NAMES (missing 'Bash'), so a session whose only write-shaped
+    // tool was named 'Bash' silently read as read-only-safe.
+    expect(hasWriteTools(['Bash'])).toBe(true);
+    expect(hasWriteTools(['bash'])).toBe(true);
+    for (const name of WRITE_TOOL_NAMES) {
+      expect(hasWriteTools([name])).toBe(true);
+    }
+  });
+
+  it('reports no write tools for the fixed read-only inventory', () => {
+    expect(hasWriteTools(['list_files', 'read_file', 'search_text'])).toBe(false);
+  });
 });
 
 describe('buzz-readonly-mcp', () => {

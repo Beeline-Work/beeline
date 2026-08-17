@@ -30,6 +30,23 @@ describe('Room list summary', () => {
     ).toMatchObject({ id: 'event-z', text: 'second in second', timestamp: 3 });
   });
 
+  it('does not let a malformed tag (non-string element) masquerade as a real subchannel/control tag', () => {
+    // Regression: hasTag() previously only checked candidate[0]/candidate[1],
+    // unlike the 3 sibling tag-shape validators (buzz-event-projection.ts,
+    // agent-presence.ts, agent-draft.ts) which reject any tag containing a
+    // non-string element outright. A corrupted tag like this used to be
+    // silently tolerated as a genuine `subchannel` marker and hid a real
+    // message from the Room list summary.
+    expect(
+      latestRoomMessage([
+        message('keep me', 1),
+        message('looks like a corner-open message but is not', 2, [
+          ['subchannel', 'corner-1', 42 as unknown as string],
+        ]),
+      ]),
+    ).toBe('looks like a corner-open message but is not');
+  });
+
   it('ignores Corner control records and agent activity', () => {
     const activity: SessionEvent = {
       type: 'assistant_delta',

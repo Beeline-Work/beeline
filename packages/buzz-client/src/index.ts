@@ -114,7 +114,7 @@ export {
   sortEventsChronological,
 } from './parse.js';
 
-export { publishEvent, queryEvents, relayReachable } from './http.js';
+export { publishEvent, queryEvents, requestQueryEvents, relayReachable } from './http.js';
 export type { AuthenticatedHttpBridgeOptions, HttpBridgeOptions } from './http.js';
 
 export {
@@ -166,7 +166,6 @@ export {
   getChannelRepositoryBinding,
   sendMessage,
   backfillMessages,
-  eventIsAgentActivity,
 } from './channel.js';
 export type { ChannelOpsContext, ChannelRole } from './channel.js';
 
@@ -270,7 +269,6 @@ export {
   buildAttachmentTag,
   buildAttachmentTags,
   parseAttachmentTags,
-  eventAttachments,
 } from './attachment.js';
 
 export { buildMergeApproval, verifyMergeApproval, APPROVAL_MARKER } from './approval.js';

@@ -478,10 +478,16 @@ describe('community model', () => {
         const kind = kinds[0];
         if (kind === KIND_CHANNEL_MEMBERS) return jsonResponse([members]);
         if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([admins]);
-        if (kinds.includes(KIND_CREATE_GROUP) && kinds.includes(KIND_CHANNEL_METADATA)) {
-          return jsonResponse([create, metadata]);
+        if (kind === KIND_CREATE_GROUP) {
+          // Real relay semantics: create events and metadata events can be
+          // requested as two separate filters in one query; the response is
+          // the union of whichever filters they match, not just the first.
+          const allFilters = JSON.parse(String(init?.body)) as Record<string, unknown>[];
+          const wantsMetadata = allFilters.some((f) =>
+            (f.kinds as number[] | undefined)?.includes(KIND_CHANNEL_METADATA),
+          );
+          return jsonResponse(wantsMetadata ? [create, metadata] : [create]);
         }
-        if (kind === KIND_CREATE_GROUP) return jsonResponse([create]);
         return jsonResponse([]);
       }),
     );

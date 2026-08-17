@@ -1,3 +1,6 @@
+import { nip98AuthHeader } from '@beeline/nostr';
+import type { Identity } from './types.js';
+
 const NIP05_LOCAL_RE = /^[a-z0-9_.-]+$/i;
 const NIP05_DOMAIN_RE =
   /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/i;
@@ -88,4 +91,94 @@ export async function verifyNip05(
     identifier,
     status: resolved.toLowerCase() === expectedPubkey.toLowerCase() ? 'verified' : 'mismatch',
   };
+}
+
+export class Nip05ClaimError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly status?: number,
+  ) {
+    super(message);
+    this.name = 'Nip05ClaimError';
+  }
+}
+
+export interface Nip05ClaimResult {
+  claimed: true;
+  idempotent: boolean;
+  name: string;
+  pubkey: string;
+}
+
+async function claimResponseBody(response: Response): Promise<Record<string, unknown>> {
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    body = null;
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new Nip05ClaimError(
+      'invalid_response',
+      'auth service returned an invalid response',
+      response.status,
+    );
+  }
+  return body as Record<string, unknown>;
+}
+
+/**
+ * Claim `<name>@buzzrouter.com` first-come-first-served against the deployed auth service.
+ * Does not touch the person profile — the caller writes `nip05` on success.
+ */
+export async function claimNip05Handle(
+  baseUrl: string,
+  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
+  name: string,
+): Promise<Nip05ClaimResult> {
+  if (!HEX_PUBKEY_RE.test(identity.publicKey)) {
+    throw new Nip05ClaimError('invalid_identity', 'invalid public key');
+  }
+  const url = new URL('/nip05/claim', baseUrl).toString();
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'POST'),
+      },
+      body: JSON.stringify({ name }),
+    });
+  } catch (error) {
+    throw new Nip05ClaimError(
+      'offline',
+      error instanceof Error ? error.message : 'auth service unavailable',
+    );
+  }
+  const body = await claimResponseBody(response);
+  if (!response.ok) {
+    const code = typeof body.error === 'string' ? body.error : 'auth_service_error';
+    const message =
+      typeof body.message === 'string'
+        ? body.message
+        : `auth service returned HTTP ${response.status}`;
+    throw new Nip05ClaimError(code, message, response.status);
+  }
+  if (
+    body.claimed !== true ||
+    typeof body.idempotent !== 'boolean' ||
+    typeof body.name !== 'string' ||
+    typeof body.pubkey !== 'string' ||
+    !HEX_PUBKEY_RE.test(body.pubkey) ||
+    body.pubkey !== identity.publicKey
+  ) {
+    throw new Nip05ClaimError(
+      'invalid_response',
+      'auth service returned an invalid claim result',
+      response.status,
+    );
+  }
+  return body as unknown as Nip05ClaimResult;
 }

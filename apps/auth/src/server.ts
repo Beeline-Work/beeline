@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { AuthStore } from './store.js';
 import { OidcClient } from './oidc.js';
 import {
+  isValidNip05Name,
   normalizeHost,
   OIDC_BIND_KIND,
   OIDC_BIND_MARKER,
@@ -152,6 +153,18 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
   });
 
   app.get('/health', async () => ({ ok: true }));
+
+  app.get('/.well-known/nostr.json', async (request, reply) => {
+    const query = request.query as Record<string, unknown>;
+    const name = typeof query.name === 'string' ? query.name : null;
+    const names: Record<string, string> = {};
+    if (name && isValidNip05Name(name)) {
+      const pubkey = await options.store.resolveNip05Name(name);
+      if (pubkey) names[name] = pubkey;
+    }
+    reply.header('access-control-allow-origin', '*');
+    return reply.type('application/json').send({ names });
+  });
 
   app.get('/auth/oidc/start', async (request, reply) => {
     const tenant = tenantFor(request);
@@ -420,6 +433,46 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
         pubkey: link.pubkey,
         created_at: link.createdAt.toISOString(),
       })),
+    });
+  });
+
+  app.post('/nip05/claim', async (request, reply) => {
+    const tenant = tenantFor(request);
+    if (!request.body || typeof request.body !== 'object') {
+      throw new ProtocolError(400, 'invalid_request', 'expected claim request object');
+    }
+    const body = request.body as Record<string, unknown>;
+    const name = body.name;
+    if (typeof name !== 'string' || !isValidNip05Name(name)) {
+      throw new ProtocolError(
+        400,
+        'invalid_name',
+        'handle must be 1-30 lowercase letters, numbers, dashes, or underscores, and not reserved',
+      );
+    }
+    const auth = verifyNip98Header(
+      request.headers.authorization,
+      publicUrl(tenant, request),
+      'POST',
+      now(),
+    );
+    if (!auth.ok) throw new ProtocolError(401, 'unauthorized', auth.reason);
+    const authNow = now();
+    const claimed = await options.store.claimNip98Event(
+      auth.eventId,
+      new Date(authNow.getTime() + 2 * 60_000),
+      authNow,
+    );
+    if (!claimed)
+      throw new ProtocolError(401, 'replayed_auth', 'NIP-98 authentication was already used');
+    const outcome = await options.store.claimNip05Name(name, auth.pubkey, authNow);
+    if (outcome === 'taken') throw new ProtocolError(409, 'name_taken', 'handle is already claimed');
+    noStore(reply);
+    return reply.status(outcome === 'claimed' ? 201 : 200).send({
+      claimed: true,
+      idempotent: outcome === 'idempotent',
+      name,
+      pubkey: auth.pubkey,
     });
   });
 

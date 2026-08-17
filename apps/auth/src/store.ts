@@ -95,9 +95,16 @@ const MIGRATIONS = [
     event_id CHAR(64) PRIMARY KEY,
     expires_at TIMESTAMPTZ NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS beeline_nip05_names (
+    name TEXT PRIMARY KEY,
+    pubkey CHAR(64) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    CHECK (pubkey ~ '^[0-9a-f]{64}$')
+  )`,
   `CREATE INDEX IF NOT EXISTS beeline_oidc_flows_expiry_idx ON beeline_oidc_flows (expires_at)`,
   `CREATE INDEX IF NOT EXISTS beeline_bind_tickets_expiry_idx ON beeline_bind_tickets (expires_at)`,
   `CREATE INDEX IF NOT EXISTS beeline_nip98_replays_expiry_idx ON beeline_nip98_replays (expires_at)`,
+  `CREATE INDEX IF NOT EXISTS beeline_nip05_names_pubkey_idx ON beeline_nip05_names (pubkey)`,
 ] as const;
 
 function asDate(value: unknown): Date {
@@ -387,6 +394,35 @@ export class AuthStore {
       pubkey: row.pubkey,
       createdAt: asDate(row.created_at),
     }));
+  }
+
+  /** First-come-first-served claim: inserts, or reports the existing owner on conflict. */
+  async claimNip05Name(
+    name: string,
+    pubkey: string,
+    now: Date,
+  ): Promise<'claimed' | 'idempotent' | 'taken'> {
+    const inserted = await this.database.query<QueryResultRow>(
+      `INSERT INTO beeline_nip05_names (name, pubkey, created_at)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (name) DO NOTHING
+       RETURNING name`,
+      [name, pubkey, now],
+    );
+    if (inserted.rowCount === 1) return 'claimed';
+    const existing = await this.database.query<QueryResultRow & { pubkey: string }>(
+      `SELECT pubkey FROM beeline_nip05_names WHERE name = $1`,
+      [name],
+    );
+    return existing.rows[0]?.pubkey === pubkey ? 'idempotent' : 'taken';
+  }
+
+  async resolveNip05Name(name: string): Promise<string | null> {
+    const result = await this.database.query<QueryResultRow & { pubkey: string }>(
+      `SELECT pubkey FROM beeline_nip05_names WHERE name = $1`,
+      [name],
+    );
+    return result.rows[0]?.pubkey ?? null;
   }
 
   async close(): Promise<void> {

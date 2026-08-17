@@ -68,6 +68,7 @@ import {
 import { cacheLiveSessionEvent, revalidateCachedMessages } from '@/buzz/local-cache-sync';
 import {
   BrittlePress,
+  hairlineDivider,
   HullSurface,
   PixelGateReveal,
   PixelLoader,
@@ -789,7 +790,7 @@ export default function BuzzChannels() {
           ListHeaderComponent={
             orderedChannels.length > 0 ? (
               <View style={styles.sectionHeading}>
-                <Text style={styles.sectionTitle}>Channels</Text>
+                <Text style={styles.sectionTitle}>{ROOMS_LABEL}</Text>
                 <Text style={styles.dmSectionCount}>{orderedChannels.length}</Text>
               </View>
             ) : null
@@ -909,7 +910,7 @@ export default function BuzzChannels() {
                           numberOfLines={1}
                           style={[styles.channelTitle, item.archived && styles.archivedTitle]}
                         >
-                          #{title}
+                          {title}
                         </Text>
                         {item.archived && <Text style={styles.metaTag}>archived</Text>}
                       </View>
@@ -996,8 +997,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: groknight.bgBase,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
+    ...hairlineDivider,
   },
   headerIdentity: { flex: 1, minWidth: 0 },
   headerTitle: {
@@ -1018,8 +1018,7 @@ const styles = StyleSheet.create({
   actionPanel: {
     paddingHorizontal: 16,
     paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
+    ...hairlineDivider,
     backgroundColor: groknight.bgTerminal,
   },
   panelTitle: {
@@ -1036,7 +1035,7 @@ const styles = StyleSheet.create({
     minHeight: 44,
     paddingHorizontal: 10,
     paddingVertical: 8,
-    borderRadius: 4,
+    borderRadius: 3,
     borderWidth: 1,
     borderColor: groknight.border,
     color: groknight.textPrimary,
@@ -1047,7 +1046,7 @@ const styles = StyleSheet.create({
   primarySmallButton: {
     minHeight: 44,
     paddingHorizontal: 14,
-    borderRadius: 4,
+    borderRadius: 3,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: groknight.actionFill,
@@ -1116,8 +1115,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   roomCell: {
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
+    ...hairlineDivider,
     backgroundColor: groknight.bgTerminal,
   },
   roomCellExpanded: { backgroundColor: groknight.bgBase },
@@ -1228,7 +1226,7 @@ const styles = StyleSheet.create({
     height: 44,
     borderWidth: 1,
     borderColor: groknight.borderStrong,
-    borderRadius: 12,
+    borderRadius: 3,
     color: groknight.steel,
     fontSize: 26,
     lineHeight: 42,
@@ -1253,7 +1251,7 @@ const styles = StyleSheet.create({
     marginTop: 18,
     minHeight: 46,
     paddingHorizontal: 18,
-    borderRadius: 4,
+    borderRadius: 3,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: groknight.actionFill,

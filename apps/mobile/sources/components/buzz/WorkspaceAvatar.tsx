@@ -42,7 +42,7 @@ export function WorkspaceAvatar({
   const frameStyle = {
     width: size,
     height: size,
-    borderRadius: Math.round(size * 0.29),
+    borderRadius: Math.round(size * 0.08),
     borderWidth: active ? 2 : 1,
     borderColor: active ? groknight.selectedBorder : groknight.border,
   };

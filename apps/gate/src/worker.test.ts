@@ -80,10 +80,11 @@ describe('trusted reviewer security invariants', () => {
     });
     expect(result.authorized).toBe(false);
     expect(result.reason).toMatch(/registered agent identity/);
+    expect(result.terminal).toBe(true);
     expect(calls).toEqual(['agent']);
   });
 
-  it('fails closed on agent-registry outage without consulting roles', async () => {
+  it('fails closed on agent-registry outage without consulting roles, but leaves it retryable', async () => {
     const calls: string[] = [];
     const result = await authorizeReviewer(input, {
       isRegisteredAgent: async () => {
@@ -97,6 +98,10 @@ describe('trusted reviewer security invariants', () => {
     });
     expect(result.authorized).toBe(false);
     expect(result.reason).toMatch(/cannot prove approval signer is human/);
+    // A relay/registry outage is transient — it must not be classified the
+    // same as a genuine authorization refusal, or DurableMergeGate would give
+    // up retrying an approval that was never actually rejected.
+    expect(result.terminal).toBe(false);
     expect(calls).toEqual(['agent']);
   });
 
@@ -119,9 +124,32 @@ describe('trusted reviewer security invariants', () => {
       );
       expect(result.authorized).toBe(false);
       expect(result.reason).toMatch(/custody must be device-held/);
+      expect(result.terminal).toBe(true);
       expect(calls).toEqual(['agent']);
     },
   );
+
+  it('refuses a non-admin signer role, terminally', async () => {
+    const result = await authorizeReviewer(input, {
+      isRegisteredAgent: async () => false,
+      resolveRole: async () => 'member',
+    });
+    expect(result.authorized).toBe(false);
+    expect(result.reason).toMatch(/human admin role required/);
+    expect(result.terminal).toBe(true);
+  });
+
+  it('fails closed on a role-lookup outage, but leaves it retryable', async () => {
+    const result = await authorizeReviewer(input, {
+      isRegisteredAgent: async () => false,
+      resolveRole: async () => {
+        throw new Error('relay unreachable');
+      },
+    });
+    expect(result.authorized).toBe(false);
+    expect(result.reason).toMatch(/role lookup failed/);
+    expect(result.terminal).toBe(false);
+  });
 
   it('accepts only a device-held non-agent with a current admin role', async () => {
     const calls: string[] = [];
@@ -135,7 +163,11 @@ describe('trusted reviewer security invariants', () => {
         return 'admin';
       },
     });
-    expect(result).toEqual({ authorized: true, reason: 'authorized device-held human admin' });
+    expect(result).toEqual({
+      authorized: true,
+      terminal: false,
+      reason: 'authorized device-held human admin',
+    });
     expect(calls).toEqual(['agent', 'role']);
   });
 });

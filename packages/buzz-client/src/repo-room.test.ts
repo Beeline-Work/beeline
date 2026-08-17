@@ -212,6 +212,87 @@ describe('repository Room identity', () => {
     expect(published).toEqual([]);
   });
 
+  it('resumes interrupted gate provisioning on an already-existing Room instead of treating it as done', async () => {
+    // Simulates a crash between the two provisioning steps of an earlier
+    // resolveRepositoryRoom call: the Room exists and the human is already
+    // admin, but the agent is still the owner (never demoted) and the merge
+    // worker was never elevated. The old short-circuit ("Room exists" ⇒
+    // "fully provisioned") would silently skip both remaining steps forever.
+    const channelId = repositoryRoomId(communityId, binding);
+    const roomCreate = signed(human, KIND_CREATE_GROUP, [
+      ['h', channelId],
+      ['repo-key', binding.key],
+      [TAG_COMMUNITY, communityId],
+    ]);
+    const roles = new Map<string, 'owner' | 'admin' | 'member'>([
+      [human.publicKey, 'admin'],
+      [agent.publicKey, 'owner'],
+    ]);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          const event = JSON.parse(String(init?.body)) as NostrEvent;
+          published.push(event);
+          if (event.kind === KIND_PUT_USER && tagValue(event, 'h') === channelId) {
+            roles.set(
+              tagValue(event, 'p')!,
+              tagValue(event, 'role') as 'owner' | 'admin' | 'member',
+            );
+          }
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([roomCreate]);
+        if (kind === KIND_CHANNEL_ADMINS) {
+          return jsonResponse([
+            signed(human, KIND_CHANNEL_ADMINS, [
+              ['d', channelId],
+              ...[...roles]
+                .filter(([, role]) => role === 'owner' || role === 'admin')
+                .map(([pubkey, role]) => ['p', pubkey, role]),
+            ]),
+          ]);
+        }
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          return jsonResponse([
+            signed(human, KIND_CHANNEL_MEMBERS, [
+              ['d', channelId],
+              ...[...roles].map(([pubkey, role]) => ['p', pubkey, '', role]),
+            ]),
+          ]);
+        }
+        return jsonResponse([]);
+      }),
+    );
+
+    await expect(
+      resolveRepositoryRoom(ctx(), communityId, binding, human.publicKey, mergeWorker.publicKey),
+    ).resolves.toEqual({
+      channelId,
+      created: false,
+      joined: true,
+      // Existing Rooms already have their dedicated gate identity — this
+      // pairing must not persist/run a second one, even though it repaired
+      // the interrupted provisioning steps above.
+      mergeWorkerProvisioned: false,
+    });
+
+    const mutations = published.filter(
+      (event) => event.kind === KIND_PUT_USER && tagValue(event, 'h') === channelId,
+    );
+    expect(
+      mutations.find((event) => tagValue(event, 'p') === mergeWorker.publicKey)?.tags,
+    ).toContainEqual(['role', 'admin']);
+    expect(
+      mutations.find((event) => tagValue(event, 'p') === agent.publicKey)?.tags,
+    ).toContainEqual(['role', 'member']);
+    expect(roles.get(mergeWorker.publicKey)).toBe('admin');
+    expect(roles.get(agent.publicKey)).toBe('member');
+  });
+
   it('fails fast when an existing admin is missing and the caller cannot grant it', async () => {
     const channelId = repositoryRoomId(communityId, binding);
     const roomCreate = signed(human, KIND_CREATE_GROUP, [

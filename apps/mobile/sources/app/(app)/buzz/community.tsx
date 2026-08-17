@@ -307,7 +307,7 @@ const styles = StyleSheet.create({
     marginTop: 22,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    borderRadius: 4,
+    borderRadius: 3,
     borderWidth: 1,
     borderColor: groknight.border,
     color: groknight.textPrimary,

@@ -3629,7 +3629,7 @@ const styles = StyleSheet.create({
   agentPresenceLight: {
     width: 9,
     height: 9,
-    borderRadius: 5,
+    borderRadius: 3,
     borderWidth: 1,
     borderColor: groknight.textSecondary,
   },
@@ -3952,7 +3952,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: groknight.borderStrong,
-    borderRadius: 4,
+    borderRadius: 3,
     backgroundColor: groknight.bgBase,
   },
   mentionMenuLabel: {

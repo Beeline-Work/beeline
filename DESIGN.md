@@ -72,6 +72,33 @@ is still resolving, a skeleton stands in rather than a guess.
 Vocabulary: "Room," never "Channel." No `#` prefix on names — that's someone
 else's product's convention.
 
+## Index rows
+
+The Room list is the screen the product opens on, and it is an index: one
+leading column, one right edge, no boxes. Every row on it — Room or DM — hangs
+its copy off the same 30px leading unit and reserves the same trailing
+disclosure column, so the age stamps read down a single straight edge whether
+or not a row has corners.
+
+The leading unit reports the row's kind: a Room shows one state glyph (`◆` live
+corner, `▲` needs attention, `›` spoken in, `·` quiet); a DM shows its peer's
+faceted mark. Line one is the name, then any flag, then the age in mono. Line
+two is one human-readable line: an uppercase mono author label — the same "who"
+label the transcript row carries — and the preview. Preview text is sanitized
+where it is stored, not where it is drawn: fenced code, markdown syntax, git
+and tool plumbing, and bare 40-hex shas never reach a row
+(`roomPreviewText`, `apps/mobile/sources/buzz/room-list-summary.ts`).
+
+Unread is weight plus one luminance step, in two places, plus a `NEW` mono
+label. It is deliberately not gold — see the accent rule below.
+
+A Room's corner count and its expanded dropdown are the same set: only `live`,
+`needs-attention`, and `open` corners (`roomListCorners`). `merged`,
+`archived`, and `failed` corners are excluded outright rather than dimmed, so
+the count always equals what expanding reveals; they stay reachable through the
+Room transcript's durable cards and the `ALL CORNERS` link the dropdown ends
+with. Expanded corners hang off a 1px rail, not a nested container.
+
 ## Motion
 
 Primitives live in `apps/mobile/sources/components/buzz/MonoHull.tsx`:
@@ -90,6 +117,9 @@ more than two of those run on-screen at once.
    of these — each is redundantly encoded by shape, glyph, or copy. Do not
    add a second hue; do not let a fifth meaning attach to gold without
    checking whether it still needs to be redundant with something else first.
+   Unread and needs-attention were checked against that rule and deliberately
+   left off gold: neither had anything to stay redundant against, so the
+   brightest gray (`textPrimary`) carries them instead.
 2. **Diff green/red** (`#3FB950`/`#F85149`, `groknight.diffAdded`/
    `diffRemoved`) exist only inside diff/change-review views, redundant with
    `+`/`−` prefixes and `A`/`M`/`D` status letters. This was a deliberate

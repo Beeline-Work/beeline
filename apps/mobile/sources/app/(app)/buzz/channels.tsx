@@ -36,9 +36,13 @@ import { roomParticipantPubkeys } from '@/buzz/room-participants';
 import { shortMemberNpub } from '@/buzz/member-display';
 import { ensurePersonNameForWorkspace } from '@/buzz/person-name';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
+import { compactRelativeTime } from '@/buzz/relative-time';
+import { previewAuthorLabel } from '@/buzz/room-list-summary';
+import { isRoomUnread, roomReadAt, useRoomReadState } from '@/buzz/room-read-state';
 import {
   cornerStatusPresentation,
   isCornerActive,
+  roomCornerSignal,
   roomListCorners,
   sortCorners,
   type CornerSummary,
@@ -72,9 +76,23 @@ import {
   BrittlePress,
   hairlineDivider,
   HullSurface,
+  HullWaveSignal,
+  MonoButton,
   PixelGateReveal,
   PixelLoader,
 } from '@/components/buzz/MonoHull';
+
+/** Relative ages only change on the minute, so the index re-derives them on a
+ * one-minute tick while it is the focused screen and never on a render loop. */
+const AGE_TICK_MS = 60_000;
+
+/** The one row-leading glyph vocabulary of the index: corner state when a Room
+ * has reportable corner work, otherwise whether the Room has been spoken in.
+ * `cornerStatusPresentation` stays the single source for the corner glyphs. */
+function roomRowGlyph(signal: ReturnType<typeof roomCornerSignal>, hasMessage: boolean): string {
+  if (signal) return cornerStatusPresentation(signal).glyph;
+  return hasMessage ? '›' : '·';
+}
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -224,6 +242,7 @@ async function loadDirectMessageDisplays(
         id: dm.channelId,
         ...member,
         latestMessage: synced.entry.latestMessage,
+        latestMessageAt: synced.entry.latestMessageAt,
         updatedAt: synced.entry.latestEventAt ?? dm.createdAt,
       };
     }),
@@ -259,6 +278,10 @@ async function enrichDisplayChannels(
         ...room,
         corners: sortCorners(cornersByRoom.get(room.id) ?? []),
         latestMessage: synced.status === 'fulfilled' ? synced.value.entry.latestMessage : undefined,
+        latestMessageAt:
+          synced.status === 'fulfilled' ? synced.value.entry.latestMessageAt : undefined,
+        latestMessageAuthor:
+          synced.status === 'fulfilled' ? synced.value.entry.latestMessageAuthor : undefined,
         updatedAt:
           synced.status === 'fulfilled'
             ? (synced.value.entry.latestEventAt ?? room.createdAt ?? room.updatedAt)
@@ -330,9 +353,16 @@ export default function BuzzChannels() {
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [readyInviteUrl, setReadyInviteUrl] = useState<string | undefined>(inviteUrl);
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
+  const [ageNow, setAgeNow] = useState(() => Date.now());
   const skipInitialFocusRefresh = useRef(true);
   const loadGeneration = useRef(0);
   const visibleRefreshGeneration = useRef<number | null>(null);
+  const readAt = useRoomReadState((state) => state.readAt);
+  const markRoomRead = useRoomReadState((state) => state.markRoomRead);
+  // The Room the reader just left. Marking read on the way *back* — not on the
+  // way in — is what keeps a message you sent, or one that arrived while you
+  // were looking at it, from lighting the row up as unread on return.
+  const returningFromChannelId = useRef<string | null>(null);
   const cachedListEntry = useBuzzLocalCache((state) =>
     selectChannelList(state, identity?.publicKey ?? state.activeViewerPubkey, requestedCommunity),
   );
@@ -363,11 +393,25 @@ export default function BuzzChannels() {
     [directMessages],
   );
   const hasConversations = orderedChannels.length > 0 || orderedDirectMessages.length > 0;
+  const liveRoomCount = orderedChannels.filter((channel) =>
+    roomCornerSignal(channel.corners ?? []),
+  ).length;
 
   const activeCommunity = useMemo(
     () => communities.find((community) => community.communityId === activeCommunityId) ?? null,
     [communities, activeCommunityId],
   );
+
+  /** Pubkey → display name for the preview attribution, off the same roster the
+   * list already caches. Unknown authors stay unattributed by design. */
+  const authorNames = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const member of cachedListEntry?.workspaceMembers ?? []) {
+      names.set(member.peerPubkey, member.peerName);
+    }
+    if (identity?.publicKey) names.set(identity.publicKey, 'You');
+    return names;
+  }, [cachedListEntry?.workspaceMembers, identity?.publicKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -615,18 +659,37 @@ export default function BuzzChannels() {
     }, [identity, roomIdsKey, transport]),
   );
 
-  const handleRoomPress = useCallback(
-    (channel: ChannelDisplayItem) => {
-      if (identity) {
-        void saveLastViewedChannel(identity.publicKey, activeCommunityId, channel.id);
-      }
-      router.push(`/buzz/chat/${encodeURIComponent(channel.id)}` as Href);
-    },
-    [activeCommunityId, identity],
+  useFocusEffect(
+    useCallback(() => {
+      setAgeNow(Date.now());
+      const timer = setInterval(() => setAgeNow(Date.now()), AGE_TICK_MS);
+      return () => clearInterval(timer);
+    }, []),
   );
 
-  const handleDirectMessagePress = useCallback(
+  // Clear the unread mark for the Room the reader has just come back from. The
+  // mark takes wall-clock now over the last message we know about, so a message
+  // that landed while they were inside is covered even if this list's cache has
+  // not caught up with it yet.
+  useFocusEffect(
+    useCallback(() => {
+      const channelId = returningFromChannelId.current;
+      if (!channelId || !identity) return;
+      returningFromChannelId.current = null;
+      const known = [...displayChannels, ...directMessages].find(
+        (candidate) => candidate.id === channelId,
+      )?.latestMessageAt;
+      markRoomRead(
+        identity.publicKey,
+        channelId,
+        Math.max(Math.floor(Date.now() / 1000), known ?? 0),
+      );
+    }, [directMessages, displayChannels, identity, markRoomRead]),
+  );
+
+  const openChannel = useCallback(
     (channelId: string) => {
+      returningFromChannelId.current = channelId;
       if (identity) void saveLastViewedChannel(identity.publicKey, activeCommunityId, channelId);
       router.push(`/buzz/chat/${encodeURIComponent(channelId)}` as Href);
     },
@@ -711,36 +774,37 @@ export default function BuzzChannels() {
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <HullSurface strength="quiet" style={styles.header}>
           <CommunityDrawerTrigger community={activeCommunity} />
-          <View style={styles.headerIdentity}>
-            <Text style={styles.headerTitle} numberOfLines={1}>
-              {activeCommunity?.name ?? WORKSPACE_LABEL}
-            </Text>
-          </View>
-          <View style={styles.headerActions}>
-            {activeCommunityId && (
-              <TouchableOpacity
-                accessibilityLabel={`${WORKSPACE_LABEL} members`}
-                onPress={() =>
-                  router.push(
-                    `/buzz/members?communityId=${encodeURIComponent(activeCommunityId)}` as Href,
-                  )
-                }
-                style={styles.iconButton}
-                testID="workspace-members"
-              >
-                <Text style={styles.iconButtonText}>◇</Text>
-              </TouchableOpacity>
-            )}
-            {!viewerIsAgent && (
-              <TouchableOpacity
-                accessibilityLabel={`Create ${ROOM_LABEL}`}
-                onPress={() => setShowCreateChannel((value) => !value)}
-                style={styles.iconButton}
-              >
-                <Text style={styles.iconButtonText}>＋</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+          {activeCommunityId && (
+            <TouchableOpacity
+              accessibilityLabel={`${WORKSPACE_LABEL} members`}
+              accessibilityRole="button"
+              onPress={() =>
+                router.push(
+                  `/buzz/members?communityId=${encodeURIComponent(activeCommunityId)}` as Href,
+                )
+              }
+              style={styles.headerAction}
+              testID="workspace-members"
+            >
+              <Text style={styles.headerActionText}>PEOPLE</Text>
+            </TouchableOpacity>
+          )}
+          {!viewerIsAgent && (
+            <TouchableOpacity
+              accessibilityLabel={
+                showCreateChannel ? `Cancel new ${ROOM_LABEL}` : `Create ${ROOM_LABEL}`
+              }
+              accessibilityRole="button"
+              accessibilityState={{ expanded: showCreateChannel }}
+              onPress={() => setShowCreateChannel((value) => !value)}
+              style={styles.headerAction}
+              testID="create-room"
+            >
+              <Text style={styles.headerActionText}>
+                {showCreateChannel ? '✕ CLOSE' : `＋ ${ROOM_LABEL.toUpperCase()}`}
+              </Text>
+            </TouchableOpacity>
+          )}
         </HullSurface>
 
         {showCreateChannel && !viewerIsAgent && (
@@ -759,15 +823,12 @@ export default function BuzzChannels() {
                 placeholderTextColor={groknight.dim}
                 editable={!creatingChannel}
               />
-              <TouchableOpacity
-                style={[styles.primarySmallButton, !channelName.trim() && styles.disabled]}
-                disabled={!channelName.trim() || creatingChannel}
+              <MonoButton
+                disabled={!channelName.trim()}
+                label={creatingChannel ? 'CREATING' : 'CREATE'}
+                loading={creatingChannel}
                 onPress={() => void handleCreateChannel()}
-              >
-                <Text style={styles.primarySmallButtonText}>
-                  {creatingChannel ? 'Creating…' : `Create ${ROOM_LABEL}`}
-                </Text>
-              </TouchableOpacity>
+              />
             </View>
           </PixelGateReveal>
         )}
@@ -778,9 +839,12 @@ export default function BuzzChannels() {
             <Text accessibilityRole="alert" style={styles.errorText}>
               {error}
             </Text>
-            <TouchableOpacity onPress={() => void handleRefresh(true)}>
-              <Text style={styles.retryText}>Retry</Text>
-            </TouchableOpacity>
+            <MonoButton
+              label="RETRY"
+              onPress={() => void handleRefresh(true)}
+              style={styles.errorRetry}
+              variant="secondary"
+            />
           </View>
         )}
 
@@ -791,53 +855,82 @@ export default function BuzzChannels() {
           contentContainerStyle={hasConversations ? styles.listContent : styles.emptyContainer}
           ListHeaderComponent={
             orderedChannels.length > 0 ? (
-              <View style={styles.sectionHeading}>
-                <Text style={styles.sectionTitle}>{ROOMS_LABEL}</Text>
-                <Text style={styles.dmSectionCount}>{orderedChannels.length}</Text>
+              <View style={styles.indexHeader}>
+                <Text style={styles.indexLabel}>
+                  {ROOMS_LABEL.toUpperCase()} · {orderedChannels.length}
+                </Text>
+                {liveRoomCount > 0 && (
+                  <View style={styles.indexSignal}>
+                    <HullWaveSignal compact label="LIVE" />
+                    <Text style={styles.indexSignalCount}>{liveRoomCount}</Text>
+                  </View>
+                )}
               </View>
             ) : null
           }
           ListFooterComponent={
             orderedDirectMessages.length > 0 ? (
               <View style={styles.dmSection}>
-                <View style={styles.sectionHeading}>
-                  <Text style={styles.sectionTitle}>Direct messages</Text>
-                  <Text style={styles.dmSectionCount}>{orderedDirectMessages.length}</Text>
+                <View style={styles.indexHeader}>
+                  <Text style={styles.indexLabel}>
+                    DIRECT · {orderedDirectMessages.length}
+                  </Text>
                 </View>
                 {orderedDirectMessages.map((dm) => {
                   const display = dm.peerAgent
                     ? resolveAgentDisplayIdentity(dm.peerPubkey, dm.peerAgent)
                     : undefined;
+                  const unread = isRoomUnread(
+                    roomReadAt(readAt, identity?.publicKey, dm.id),
+                    dm.latestMessageAt,
+                  );
+                  const age = compactRelativeTime(dm.latestMessageAt ?? dm.updatedAt, ageNow);
                   return (
                     <TouchableOpacity
-                      accessibilityLabel={`Open direct message with ${dm.peerName}`}
+                      accessibilityLabel={`Open direct message with ${dm.peerName}${
+                        unread ? ', unread' : ''
+                      }`}
                       key={dm.id}
-                      onPress={() => handleDirectMessagePress(dm.id)}
-                      style={styles.dmRow}
+                      onPress={() => openChannel(dm.id)}
+                      style={[styles.indexRow, styles.rowTrailingReserve]}
                       testID={`direct-message-${dm.peerPubkey}`}
                     >
-                      {display ? (
-                        <AgentAvatar
-                          pubkey={dm.peerPubkey}
-                          avatarSeed={display.avatarSeed}
-                          avatarUrl={display.avatarUrl}
-                          name={display.name}
-                          size={38}
-                        />
-                      ) : (
-                        <PersonAvatar
-                          pubkey={dm.peerPubkey}
-                          avatarUrl={dm.avatarUrl}
-                          name={dm.peerName}
-                          size={38}
-                        />
-                      )}
-                      <View style={styles.dmCopy}>
-                        <Text numberOfLines={1} style={styles.dmName}>
-                          {dm.peerName}
-                        </Text>
-                        <Text numberOfLines={1} style={styles.latestMessage}>
-                          {dm.latestMessage ?? 'No messages yet'}
+                      <View style={styles.rowMark}>
+                        {display ? (
+                          <AgentAvatar
+                            pubkey={dm.peerPubkey}
+                            avatarSeed={display.avatarSeed}
+                            avatarUrl={display.avatarUrl}
+                            name={display.name}
+                            size={30}
+                          />
+                        ) : (
+                          <PersonAvatar
+                            pubkey={dm.peerPubkey}
+                            avatarUrl={dm.avatarUrl}
+                            name={dm.peerName}
+                            size={30}
+                          />
+                        )}
+                      </View>
+                      <View style={styles.rowCopy}>
+                        <View style={styles.rowTitleLine}>
+                          <Text
+                            numberOfLines={1}
+                            style={[styles.rowTitle, unread && styles.rowTitleUnread]}
+                          >
+                            {dm.peerName}
+                          </Text>
+                          {unread && <Text style={styles.rowUnread}>NEW</Text>}
+                          {age !== '' && (
+                            <Text style={[styles.rowAge, unread && styles.rowAgeUnread]}>{age}</Text>
+                          )}
+                        </View>
+                        <Text
+                          numberOfLines={1}
+                          style={[styles.rowPreview, unread && styles.rowPreviewUnread]}
+                        >
+                          {dm.latestMessage ?? 'Nothing said yet'}
                         </Text>
                       </View>
                     </TouchableOpacity>
@@ -853,16 +946,16 @@ export default function BuzzChannels() {
                 <Text style={styles.emptyTitle}>No {ROOMS_LABEL.toLowerCase()} yet</Text>
                 <Text style={styles.emptySubtitle}>
                   {activeCommunity
-                    ? `Start a focused place for steering and review.`
+                    ? `A ${ROOM_LABEL} is where you and your Agents talk about the work. ` +
+                      `${CHANGES_LABEL.charAt(0).toUpperCase()}${CHANGES_LABEL.slice(1)} branch off a ${ROOM_LABEL} for isolated edits, and only a person can land them.`
                     : `${WORKSPACE_LABEL} setup is still finishing.`}
                 </Text>
                 {!viewerIsAgent && !showCreateChannel && (
-                  <TouchableOpacity
-                    style={styles.primaryButton}
+                  <MonoButton
+                    label={`＋ ${ROOM_LABEL.toUpperCase()}`}
                     onPress={() => setShowCreateChannel(true)}
-                  >
-                    <Text style={styles.primaryButtonText}>New {ROOM_LABEL.toLowerCase()}</Text>
-                  </TouchableOpacity>
+                    style={styles.emptyAction}
+                  />
                 )}
                 <CommunityInviteEntry
                   community={activeCommunity}
@@ -882,19 +975,31 @@ export default function BuzzChannels() {
           }
           renderItem={({ item }) => {
             const corners = roomListCorners(item.corners ?? []);
+            const cornerSignal = roomCornerSignal(item.corners ?? []);
             const canExpand = corners.length > 0;
-            const hasLiveCorner = corners.some((corner) => isCornerActive(corner.status));
             const title = item.title ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`;
             const expanded = canExpand && expandedRoomId === item.id;
+            const unread = isRoomUnread(
+              roomReadAt(readAt, identity?.publicKey, item.id),
+              item.latestMessageAt,
+            );
+            const author = previewAuthorLabel(
+              item.latestMessageAuthor ? authorNames.get(item.latestMessageAuthor) : undefined,
+            );
+            const age = compactRelativeTime(item.latestMessageAt ?? item.updatedAt, ageNow);
             return (
-              <View style={[styles.roomCell, expanded && styles.roomCellExpanded]}>
+              <View style={styles.roomCell}>
                 <View style={styles.roomRow}>
                   <BrittlePress
                     accessibilityHint={
                       canExpand ? `Long press to reveal ${CORNER_LABEL.toLowerCase()}s` : undefined
                     }
-                    accessibilityLabel={`Open ${title} chat`}
-                    contentStyle={styles.channelItem}
+                    accessibilityLabel={`Open ${title}${unread ? ', unread' : ''}, ${
+                      item.participantCount ?? 0
+                    } participants${canExpand ? `, ${corners.length} open ${CHANGES_LABEL}` : ''}`}
+                    contentStyle={
+                      canExpand ? styles.indexRow : [styles.indexRow, styles.rowTrailingReserve]
+                    }
                     delayLongPress={350}
                     onLongPress={
                       canExpand
@@ -902,68 +1007,105 @@ export default function BuzzChannels() {
                             setExpandedRoomId((current) => (current === item.id ? null : item.id))
                         : undefined
                     }
-                    onPress={() => void handleRoomPress(item)}
+                    onPress={() => openChannel(item.id)}
                     style={styles.roomPrimary}
                     testID={`room-${item.id}`}
                   >
-                    <View style={styles.channelInfo}>
-                      <View style={styles.channelTitleRow}>
+                    <View style={styles.rowMark}>
+                      <Text
+                        style={[
+                          styles.roomGlyph,
+                          cornerSignal === 'needs-attention' && styles.roomGlyphAttention,
+                          cornerSignal === 'live' && styles.roomGlyphLive,
+                        ]}
+                      >
+                        {roomRowGlyph(cornerSignal, Boolean(item.latestMessage))}
+                      </Text>
+                    </View>
+                    <View style={styles.rowCopy}>
+                      <View style={styles.rowTitleLine}>
                         <Text
                           numberOfLines={1}
-                          style={[styles.channelTitle, item.archived && styles.archivedTitle]}
+                          style={[
+                            styles.rowTitle,
+                            unread && styles.rowTitleUnread,
+                            item.archived && styles.rowTitleArchived,
+                          ]}
                         >
                           {title}
                         </Text>
-                        {item.archived && <Text style={styles.metaTag}>archived</Text>}
+                        {item.archived && <Text style={styles.rowFlag}>ARCHIVED</Text>}
+                        {unread && <Text style={styles.rowUnread}>NEW</Text>}
+                        {age !== '' && (
+                          <Text style={[styles.rowAge, unread && styles.rowAgeUnread]}>{age}</Text>
+                        )}
                       </View>
-                      <View style={styles.roomMetaRow}>
-                        <Text numberOfLines={1} style={styles.latestMessage}>
-                          {item.latestMessage ?? 'No messages yet'}
-                        </Text>
-                        <Text style={styles.participantCount}>◇ {item.participantCount ?? 0}</Text>
-                      </View>
+                      <Text
+                        numberOfLines={1}
+                        style={[styles.rowPreview, unread && styles.rowPreviewUnread]}
+                      >
+                        {author !== '' && <Text style={styles.rowPreviewAuthor}>{author} </Text>}
+                        {item.latestMessage ?? 'Nothing said yet'}
+                      </Text>
                     </View>
                   </BrittlePress>
                   {canExpand && (
                     <TouchableOpacity
-                      accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${corners.length} ${
+                      accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${corners.length} open ${
                         corners.length === 1 ? CORNER_LABEL : CHANGES_LABEL
-                      } in ${title}${hasLiveCorner ? ', live corner present' : ''}`}
+                      } in ${title}`}
                       accessibilityRole="button"
                       accessibilityState={{ expanded }}
                       onPress={() =>
                         setExpandedRoomId((current) => (current === item.id ? null : item.id))
                       }
-                      style={styles.cornerPeekButton}
+                      style={styles.cornerPeek}
                       testID={`room-corners-toggle-${item.id}`}
                     >
-                      <Text style={[styles.cornerPeekCount, hasLiveCorner && styles.liveMarker]}>
-                        {hasLiveCorner ? '◆' : '◇'} {corners.length}
-                      </Text>
-                      <Text style={styles.cornerPeekChevron}>{expanded ? '⌃' : '⌄'}</Text>
+                      <Text style={styles.cornerPeekCount}>{corners.length}</Text>
+                      <Text style={styles.cornerPeekCaret}>{expanded ? '⌃' : '⌄'}</Text>
                     </TouchableOpacity>
                   )}
                 </View>
                 {expanded && (
                   <PixelGateReveal style={styles.cornerDropdown}>
+                    <View style={styles.cornerRail} />
                     {corners.map((corner) => {
                       const status = cornerStatusPresentation(corner.status);
                       return (
                         <TouchableOpacity
-                          accessibilityLabel={`Open #${corner.name}, ${status.label}`}
+                          accessibilityLabel={`Open ${corner.name} ${CORNER_LABEL}, ${status.label}`}
                           key={corner.id}
                           onPress={() => router.push(cornerHref(corner.id, item.id, corner.name))}
                           style={styles.cornerRow}
                         >
+                          <Text
+                            style={[
+                              styles.cornerGlyph,
+                              corner.status === 'live' && styles.cornerGlyphLive,
+                            ]}
+                          >
+                            {status.glyph}
+                          </Text>
                           <Text numberOfLines={1} style={styles.cornerName}>
-                            └ #{corner.name}
+                            {corner.name}
                           </Text>
-                          <Text style={styles.cornerStatus}>
-                            {status.glyph} {status.label}
-                          </Text>
+                          <Text style={styles.cornerStatus}>{status.label}</Text>
                         </TouchableOpacity>
                       );
                     })}
+                    <TouchableOpacity
+                      accessibilityLabel={`All ${CHANGES_LABEL} in ${title}`}
+                      accessibilityRole="button"
+                      onPress={() =>
+                        router.push(`/buzz/corners/${encodeURIComponent(item.id)}` as Href)
+                      }
+                      style={styles.cornerRow}
+                      testID={`room-all-corners-${item.id}`}
+                    >
+                      <Text style={styles.cornerAllText}>ALL {CHANGES_LABEL.toUpperCase()}</Text>
+                      <Text style={styles.cornerAllCaret}>›</Text>
+                    </TouchableOpacity>
                   </PixelGateReveal>
                 )}
               </View>
@@ -978,6 +1120,23 @@ export default function BuzzChannels() {
   );
 }
 
+/**
+ * The index's one leading column. Every row on this screen — Room or DM —
+ * hangs its copy off the same left edge, so the whole screen scans as a single
+ * list even where the leading unit differs (a Room reports state with a glyph,
+ * a DM reports identity with its faceted mark).
+ */
+const ROW_MARK_WIDTH = 30;
+const ROW_GAP = 10;
+const SCREEN_INSET = 16;
+/**
+ * The trailing disclosure column, reserved on *every* row whether or not it has
+ * corners. Letting the column collapse on a corner-less row moved that row's
+ * age stamp 46px right of its neighbours', which ragged the one right edge the
+ * index reads down.
+ */
+const ROW_TRAILING_WIDTH = 46;
+
 const styles = StyleSheet.create({
   container: { flex: 1, minWidth: 0, backgroundColor: groknight.bgTerminal },
   center: { alignItems: 'center', justifyContent: 'center' },
@@ -990,40 +1149,38 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   header: {
-    minHeight: 58,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    minHeight: 56,
+    paddingLeft: SCREEN_INSET,
+    paddingRight: 6,
+    paddingVertical: 6,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     backgroundColor: groknight.bgBase,
     ...hairlineDivider,
   },
-  headerIdentity: { flex: 1, minWidth: 0 },
-  headerTitle: {
-    ...Typography.default('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 20,
-    lineHeight: 24,
-  },
-  headerActions: { flexDirection: 'row', gap: 2, marginLeft: 8 },
-  iconButton: {
+  headerAction: {
     minWidth: 44,
-    height: 44,
-    paddingHorizontal: 6,
+    minHeight: 44,
+    paddingHorizontal: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  iconButtonText: { ...Typography.default(), color: groknight.steel, fontSize: 17 },
+  headerActionText: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textSecondary,
+    fontSize: 10,
+    lineHeight: 14,
+    letterSpacing: 0.8,
+  },
   actionPanel: {
-    paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingHorizontal: SCREEN_INSET,
+    paddingVertical: 14,
     ...hairlineDivider,
     backgroundColor: groknight.bgTerminal,
   },
   panelTitle: {
     ...Typography.default('semiBold'),
-    marginBottom: 9,
+    marginBottom: 10,
     color: groknight.textPrimary,
     fontSize: 15,
   },
@@ -1032,7 +1189,7 @@ const styles = StyleSheet.create({
     ...Typography.default(),
     flex: 1,
     minWidth: 0,
-    minHeight: 44,
+    minHeight: 46,
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 3,
@@ -1042,223 +1199,243 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgBase,
     fontSize: 13,
   },
-  panelActions: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 9 },
-  primarySmallButton: {
-    minHeight: 44,
-    paddingHorizontal: 14,
-    borderRadius: 3,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: groknight.actionFill,
-  },
-  primarySmallButtonText: {
-    ...Typography.default('semiBold'),
-    color: groknight.textInverted,
-    fontSize: 13,
-  },
-  disabled: { backgroundColor: groknight.bgBase, borderWidth: 1, borderColor: groknight.border },
   errorPanel: {
-    paddingHorizontal: 14,
+    marginHorizontal: SCREEN_INSET,
+    marginTop: 10,
+    paddingHorizontal: 12,
     paddingVertical: 10,
-    backgroundColor: groknight.bgHighlight,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.borderStrong,
+    borderRadius: 3,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgRaised,
   },
   errorLabel: {
     ...Typography.mono('semiBold'),
     color: groknight.textPrimary,
-    fontSize: 11,
-    lineHeight: 15,
+    fontSize: 10,
+    lineHeight: 14,
     letterSpacing: 0.8,
   },
-  errorText: { ...Typography.default(), color: groknight.chrome, fontSize: 11, lineHeight: 16 },
-  retryText: {
-    ...Typography.default('semiBold'),
-    marginTop: 5,
+  errorText: {
+    ...Typography.default(),
+    marginTop: 4,
     color: groknight.textSecondary,
-    fontSize: 11,
+    fontSize: 12,
+    lineHeight: 17,
   },
-  listContent: { paddingVertical: 4 },
-  dmSection: {
-    paddingTop: 8,
-    paddingBottom: 4,
-    borderTopWidth: 1,
-    borderTopColor: groknight.borderStrong,
-  },
-  sectionHeading: {
-    minHeight: 32,
-    paddingHorizontal: 16,
+  errorRetry: { marginTop: 10, alignSelf: 'flex-start' },
+  listContent: { paddingBottom: 24 },
+
+  /* ── the index: manifest headings, then boxless rows ─────────────────── */
+  indexHeader: {
+    minHeight: 34,
+    paddingHorizontal: SCREEN_INSET,
+    paddingTop: 14,
+    paddingBottom: 6,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  sectionTitle: {
-    ...Typography.default('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 12,
+  indexLabel: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textMuted,
+    fontSize: 10,
+    lineHeight: 14,
+    letterSpacing: 1.1,
   },
-  dmSectionCount: { ...Typography.mono(), color: groknight.textMuted, fontSize: 10 },
-  dmRow: {
-    minHeight: 62,
-    paddingHorizontal: 16,
-    paddingVertical: 9,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 11,
-    borderTopWidth: 1,
-    borderTopColor: groknight.border,
-  },
-  dmCopy: { flex: 1, minWidth: 0 },
-  dmName: {
-    ...Typography.default('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 14,
-  },
-  roomCell: {
-    ...hairlineDivider,
-    backgroundColor: groknight.bgTerminal,
-  },
-  roomCellExpanded: { backgroundColor: groknight.bgBase },
-  roomRow: { minWidth: 0, flexDirection: 'row', alignItems: 'stretch' },
-  roomPrimary: { flex: 1, minWidth: 0 },
-  channelItem: {
-    minHeight: 68,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  channelInfo: { flex: 1, minWidth: 0 },
-  channelTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  channelTitle: {
-    ...Typography.default('semiBold'),
-    flexShrink: 1,
-    color: groknight.textPrimary,
-    fontSize: 14,
-  },
-  archivedTitle: { color: groknight.muted },
-  metaTag: {
-    ...Typography.default(),
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    color: groknight.steel,
-    backgroundColor: groknight.bgHighlight,
-    borderRadius: 3,
+  indexSignal: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  indexSignalCount: {
+    ...Typography.mono('semiBold'),
+    color: groknight.accent,
     fontSize: 11,
     lineHeight: 15,
   },
-  roomMetaRow: {
-    marginTop: 4,
+  dmSection: { marginTop: 4 },
+  indexRow: {
+    minWidth: 0,
+    minHeight: 62,
+    paddingHorizontal: SCREEN_INSET,
+    paddingVertical: 11,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: ROW_GAP,
   },
-  latestMessage: {
+  rowMark: { width: ROW_MARK_WIDTH, alignItems: 'center', justifyContent: 'center' },
+  rowTrailingReserve: { paddingRight: SCREEN_INSET + ROW_TRAILING_WIDTH },
+  rowCopy: { flex: 1, minWidth: 0 },
+  rowTitleLine: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  rowTitle: {
+    ...Typography.default('semiBold'),
+    flexShrink: 1,
+    color: groknight.textSecondary,
+    fontSize: 15,
+    lineHeight: 20,
+  },
+  /* Unread is weight plus one luminance step, in two places (the name and its
+   * age) plus a named mono flag — never gold. DESIGN.md fixes gold to agent
+   * identity, live presence, owner role, and merge approval; unread would be a
+   * fifth meaning with nothing to stay redundant against. */
+  rowTitleUnread: { color: groknight.textPrimary },
+  rowTitleArchived: { color: groknight.textMuted },
+  rowUnread: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 9,
+    lineHeight: 12,
+    letterSpacing: 0.8,
+  },
+  rowFlag: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textMuted,
+    fontSize: 9,
+    lineHeight: 12,
+    letterSpacing: 0.8,
+  },
+  rowAge: {
+    ...Typography.mono(),
+    marginLeft: 'auto',
+    color: groknight.textDisabled,
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  rowAgeUnread: { ...Typography.mono('semiBold'), color: groknight.textSecondary },
+  rowPreview: {
     ...Typography.default(),
-    flex: 1,
-    minWidth: 0,
+    marginTop: 3,
     color: groknight.textMuted,
     fontSize: 12,
     lineHeight: 16,
   },
-  participantCount: {
+  rowPreviewUnread: { color: groknight.textSecondary },
+  rowPreviewAuthor: {
     ...Typography.mono('semiBold'),
     color: groknight.steel,
     fontSize: 10,
-    lineHeight: 14,
+    lineHeight: 16,
+    letterSpacing: 0.5,
   },
-  liveMarker: {
-    color: groknight.signalMid,
+  roomCell: { ...hairlineDivider, backgroundColor: groknight.bgTerminal },
+  roomRow: { minWidth: 0, flexDirection: 'row', alignItems: 'stretch' },
+  roomPrimary: { flex: 1, minWidth: 0 },
+  roomGlyph: {
+    ...Typography.default('semiBold'),
+    color: groknight.steel,
+    fontSize: 15,
+    lineHeight: 20,
+    textAlign: 'center',
   },
-  cornerPeekButton: {
-    width: 58,
-    minHeight: 68,
+  /* The one accent on this screen, and only for genuinely live corner work —
+   * redundant with the ◆ glyph it colors and with the LIVE wave in the heading. */
+  roomGlyphLive: { color: groknight.accent },
+  /* Attention is the most action-worthy state here, so it takes the brightest
+   * gray rather than gold — gold stays exclusive to live work. */
+  roomGlyphAttention: { color: groknight.textPrimary },
+  cornerPeek: {
+    width: ROW_TRAILING_WIDTH,
+    minHeight: 62,
     alignItems: 'center',
     justifyContent: 'center',
-    borderLeftWidth: 1,
-    borderLeftColor: groknight.border,
   },
   cornerPeekCount: {
     ...Typography.mono('semiBold'),
-    color: groknight.textMuted,
-    fontSize: 10,
+    color: groknight.textSecondary,
+    fontSize: 12,
     lineHeight: 14,
   },
-  cornerPeekChevron: {
+  /* Count and caret read as one disclosure control, so the caret carries real
+   * weight instead of trailing off as a stray mark under a number. */
+  cornerPeekCaret: {
     ...Typography.default('semiBold'),
-    marginTop: 1,
-    color: groknight.steel,
+    color: groknight.textSecondary,
     fontSize: 15,
-    lineHeight: 18,
+    lineHeight: 15,
   },
+
+  /* ── expanded corners: a hairline rail, not a nested container ────────── */
   cornerDropdown: {
-    paddingLeft: 40,
-    paddingRight: 12,
-    paddingBottom: 7,
-    borderTopWidth: 1,
-    borderTopColor: groknight.border,
-    backgroundColor: groknight.bgBase,
+    position: 'relative',
+    paddingLeft: SCREEN_INSET + ROW_MARK_WIDTH + ROW_GAP,
+    paddingRight: SCREEN_INSET,
+    paddingBottom: 8,
+  },
+  cornerRail: {
+    position: 'absolute',
+    top: 0,
+    bottom: 18,
+    left: SCREEN_INSET + ROW_MARK_WIDTH / 2,
+    width: 1,
+    backgroundColor: groknight.border,
   },
   cornerRow: {
-    minHeight: 42,
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
+  cornerGlyph: {
+    ...Typography.default('semiBold'),
+    width: 12,
+    color: groknight.steel,
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  cornerGlyphLive: { color: groknight.accent },
   cornerName: {
     ...Typography.default('semiBold'),
     flex: 1,
     minWidth: 0,
     color: groknight.textSecondary,
-    fontSize: 12,
+    fontSize: 13,
+    lineHeight: 17,
   },
   cornerStatus: {
     ...Typography.mono('semiBold'),
     color: groknight.textMuted,
     fontSize: 9,
-    letterSpacing: 0.4,
+    lineHeight: 12,
+    letterSpacing: 0.6,
   },
+  cornerAllText: {
+    ...Typography.mono('semiBold'),
+    flex: 1,
+    minWidth: 0,
+    marginLeft: 20,
+    color: groknight.textMuted,
+    fontSize: 9,
+    lineHeight: 12,
+    letterSpacing: 0.8,
+  },
+  cornerAllCaret: {
+    ...Typography.default('semiBold'),
+    color: groknight.steel,
+    fontSize: 14,
+    lineHeight: 16,
+  },
+
+  /* ── empty state ─────────────────────────────────────────────────────── */
   emptyContainer: { flexGrow: 1 },
-  emptyState: { flex: 1, paddingHorizontal: 22, alignItems: 'center', justifyContent: 'center' },
+  emptyState: { flex: 1, paddingHorizontal: 26, alignItems: 'center', justifyContent: 'center' },
   emptyGlyph: {
     ...Typography.default(),
-    width: 44,
-    height: 44,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    borderRadius: 3,
     color: groknight.steel,
-    fontSize: 26,
-    lineHeight: 42,
+    fontSize: 30,
+    lineHeight: 36,
     textAlign: 'center',
   },
   emptyTitle: {
     ...Typography.default('semiBold'),
-    marginTop: 12,
+    marginTop: 14,
     color: groknight.textPrimary,
-    fontSize: 16,
+    fontSize: 17,
     textAlign: 'center',
   },
   emptySubtitle: {
     ...Typography.default(),
-    marginTop: 7,
-    color: groknight.muted,
+    marginTop: 8,
+    color: groknight.textMuted,
     fontSize: 12,
-    lineHeight: 18,
+    lineHeight: 19,
     textAlign: 'center',
   },
-  primaryButton: {
-    marginTop: 18,
-    minHeight: 46,
-    paddingHorizontal: 18,
-    borderRadius: 3,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: groknight.actionFill,
-  },
-  primaryButtonText: {
-    ...Typography.default('semiBold'),
-    color: groknight.textInverted,
-    fontSize: 13,
-  },
+  emptyAction: { marginTop: 20 },
 });

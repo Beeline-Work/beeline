@@ -120,10 +120,42 @@ export function sortCorners(corners: CornerSummary[]): CornerSummary[] {
   });
 }
 
-/** The Room-list dropdown is a live-work shortcut. Archived corners remain
- * reachable from their durable cards in the parent Room transcript. */
+/**
+ * The Room-list dropdown is a live-work shortcut, so it lists *only* corners
+ * still open or actively being worked. Terminal corners — `merged`,
+ * `archived` — and `failed` ones are excluded outright rather than shown
+ * dimmed: a Room row's corner count must equal what the dropdown reveals, and
+ * a count that includes rows a person cannot act on turns the index into a
+ * to-do list of dead work.
+ *
+ * Excluded corners stay reachable through their durable cards in the parent
+ * Room transcript and through the full `buzz/corners/[roomId]` list, which the
+ * expanded dropdown links to. The allowlist is written out per status on
+ * purpose: adding a new `CornerStatus` should force a decision here rather
+ * than silently leaking into the index.
+ */
+const ROOM_LIST_STATUSES: ReadonlySet<CornerStatus> = new Set<CornerStatus>([
+  'live',
+  'needs-attention',
+  'open',
+]);
+
 export function roomListCorners(corners: readonly CornerSummary[]): CornerSummary[] {
-  return corners.filter((corner) => corner.status !== 'archived');
+  return corners.filter((corner) => ROOM_LIST_STATUSES.has(corner.status));
+}
+
+/**
+ * The single status a Room row's leading glyph reports, or `null` when no
+ * corner needs reporting. Derived from the same set the dropdown shows, so the
+ * glyph can never advertise work the row's own count and dropdown hide.
+ */
+export function roomCornerSignal(corners: readonly CornerSummary[]): CornerStatus | null {
+  const listed = roomListCorners(corners);
+  if (listed.length === 0) return null;
+  const leading = listed.reduce((best, corner) =>
+    cornerStatusPrecedence(corner.status) < cornerStatusPrecedence(best.status) ? corner : best,
+  );
+  return isCornerActive(leading.status) ? leading.status : null;
 }
 
 export type CornerActivitySignal = {

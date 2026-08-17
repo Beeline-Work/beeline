@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Image, StyleSheet, View } from 'react-native';
-import Svg, { Circle, Ellipse, G } from 'react-native-svg';
+import Svg, { G, Polygon } from 'react-native-svg';
 import { personAvatarGeometry } from '@/buzz/person-avatar';
 import { groknight } from '@/buzz/groknight';
 
@@ -11,19 +11,41 @@ type PersonAvatarProps = {
   size?: number;
 };
 
+/** Twelve-sided plate frame — more faceted than the Agent's octagon, still all straight edges. */
+const FRAME_POINTS =
+  '37.8,4.6 62.2,4.6 83.2,16.8 95.4,37.8 95.4,62.2 83.2,83.2 62.2,95.4 37.8,95.4 16.8,83.2 4.6,62.2 4.6,37.8 16.8,16.8';
+
+/** Faceted hex core the shards radiate around. */
+function corePoints(radius: number): string {
+  return Array.from({ length: 6 }, (_, index) => {
+    const angle = ((-90 + 60 * index) * Math.PI) / 180;
+    const x = 50 + radius * Math.cos(angle);
+    const y = 50 + radius * Math.sin(angle);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+}
+
+/** Angular shard standing in for a petal: a tapered kite, all straight edges. */
+function shardPoints(cy: number, halfWidth: number, halfLength: number): string {
+  const tip = cy - halfLength;
+  const base = cy + halfLength;
+  const wide = cy - halfLength * 0.2;
+  return `50,${tip.toFixed(1)} ${(50 + halfWidth).toFixed(1)},${wide.toFixed(1)} 50,${base.toFixed(1)} ${(50 - halfWidth).toFixed(1)},${wide.toFixed(1)}`;
+}
+
 export function PersonAvatar({ pubkey, avatarUrl, name = 'Person', size = 52 }: PersonAvatarProps) {
   const [failedAvatar, setFailedAvatar] = useState<string | null>(null);
   const showRelayAvatar = Boolean(avatarUrl && failedAvatar !== avatarUrl);
   const geometry = personAvatarGeometry(pubkey);
-  const petals = Array.from({ length: geometry.petalCount }, (_, index) => index);
-  const petalTone = [groknight.avatarInk, groknight.avatarSoft][geometry.petalTone]!;
+  const shards = Array.from({ length: geometry.petalCount }, (_, index) => index);
+  const shardTone = [groknight.avatarInk, groknight.avatarSoft][geometry.petalTone]!;
 
   useEffect(() => setFailedAvatar(null), [avatarUrl]);
 
   return (
     <View
       accessibilityLabel={`${name}, person`}
-      style={[styles.frame, { width: size, height: size, borderRadius: size / 2 }]}
+      style={[styles.frame, { width: size, height: size, borderRadius: Math.max(2, size * 0.08) }]}
     >
       {showRelayAvatar ? (
         <Image
@@ -34,17 +56,16 @@ export function PersonAvatar({ pubkey, avatarUrl, name = 'Person', size = 52 }: 
         />
       ) : (
         <Svg width="100%" height="100%" viewBox="0 0 100 100">
-          <Circle
-            cx="50"
-            cy="50"
-            r="48"
+          <Polygon
+            points={FRAME_POINTS}
             fill={groknight.avatarGround}
             stroke={groknight.avatarDim}
             strokeWidth="3"
           />
-          {petals.map((index) => {
+          {shards.map((index) => {
             const alternateScale = geometry.arrangement === 1 && index % 2 === 1 ? 0.84 : 1;
             const petalLength = geometry.petalLength * alternateScale;
+            const petalWidth = geometry.petalWidth * alternateScale;
             const petalCenter = 50 - geometry.centerRadius - petalLength * 0.34;
             return (
               <G
@@ -52,25 +73,22 @@ export function PersonAvatar({ pubkey, avatarUrl, name = 'Person', size = 52 }: 
                 rotation={geometry.rotation + (360 / geometry.petalCount) * index}
                 origin="50, 50"
               >
-                <Ellipse
-                  cx="50"
-                  cy={petalCenter}
-                  rx={(geometry.petalWidth * alternateScale) / 2}
-                  ry={petalLength / 2}
-                  fill={petalTone}
+                <Polygon
+                  points={shardPoints(petalCenter, petalWidth / 2, petalLength / 2)}
+                  fill={shardTone}
                   stroke={groknight.avatarInk}
                   strokeWidth="2"
+                  strokeLinejoin="miter"
                 />
               </G>
             );
           })}
-          <Circle
-            cx="50"
-            cy="50"
-            r={geometry.centerRadius}
+          <Polygon
+            points={corePoints(geometry.centerRadius)}
             fill={geometry.petalTone === 0 ? groknight.avatarSoft : groknight.avatarDim}
             stroke={groknight.avatarInk}
             strokeWidth="2.5"
+            strokeLinejoin="miter"
           />
         </Svg>
       )}

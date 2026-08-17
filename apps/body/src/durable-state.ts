@@ -118,13 +118,15 @@ export class DurableBodyState {
     return reply;
   }
 
-  async failed(channelId: string, eventId: string, error: unknown): Promise<void> {
+  /** Returns the item's total attempt count after recording this failure. */
+  async failed(channelId: string, eventId: string, error: unknown): Promise<number> {
     await this.load();
     const item = this.inbox(channelId).items[eventId];
-    if (!item) return;
+    if (!item) return 0;
     item.attempts++;
     item.lastError = String(error).slice(0, 1_000);
     await this.save();
+    return item.attempts;
   }
 
   async cursor(channelId: string): Promise<EventCursor> {

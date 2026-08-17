@@ -125,7 +125,6 @@ async function provisionFresh(prefix: string): Promise<Provisioned> {
  */
 async function pushFeatureBranch(
   agent: Identity,
-  worker: Identity,
   owner: string,
   repo: string,
   url: string,
@@ -160,7 +159,7 @@ const reachable = await relayReachable();
       const branch = 'feature/fm1-agent-approval';
 
       const { featureTip } = await pushFeatureBranch(
-        p.agent, p.worker, p.owner, p.repo, p.url, branch,
+        p.agent, p.owner, p.repo, p.url, branch,
       );
 
       const target = {
@@ -200,7 +199,7 @@ const reachable = await relayReachable();
       const branch = 'feature/fm1b-reviewer-approval';
 
       const { featureTip } = await pushFeatureBranch(
-        p.agent, p.worker, p.owner, p.repo, p.url, branch,
+        p.agent, p.owner, p.repo, p.url, branch,
       );
 
       const target = {
@@ -241,9 +240,7 @@ const reachable = await relayReachable();
       const p = await provisionFresh('fm2a');
       const branch = 'feature/fm2a-no-approval';
 
-      const { featureTip } = await pushFeatureBranch(
-        p.agent, p.worker, p.owner, p.repo, p.url, branch,
-      );
+      await pushFeatureBranch(p.agent, p.owner, p.repo, p.url, branch);
 
       // No approval published — worker must refuse.
       const outcome = await attemptMerge({
@@ -271,7 +268,7 @@ const reachable = await relayReachable();
       const branch = 'feature/fm2b-late-approval';
 
       const { featureTip } = await pushFeatureBranch(
-        p.agent, p.worker, p.owner, p.repo, p.url, branch,
+        p.agent, p.owner, p.repo, p.url, branch,
       );
 
       const target = {
@@ -327,7 +324,7 @@ const reachable = await relayReachable();
       const branch = 'feature/fm3a-wrong-repo';
 
       const { featureTip } = await pushFeatureBranch(
-        p.agent, p.worker, p.owner, p.repo, p.url, branch,
+        p.agent, p.owner, p.repo, p.url, branch,
       );
 
       // Target with a DIFFERENT repo (same owner, wrong repo name).
@@ -367,7 +364,7 @@ const reachable = await relayReachable();
       const branch = 'feature/fm3b-stale-tip';
 
       const { featureTip: firstTip } = await pushFeatureBranch(
-        p.agent, p.worker, p.owner, p.repo, p.url, branch,
+        p.agent, p.owner, p.repo, p.url, branch,
       );
 
       // Build approval for the first tip.
@@ -423,7 +420,7 @@ const reachable = await relayReachable();
 
       // First merge: push feature 1, approve, land it.
       const { featureTip: tip1 } = await pushFeatureBranch(
-        p.agent, p.worker, p.owner, p.repo, p.url, branch1,
+        p.agent, p.owner, p.repo, p.url, branch1,
       );
 
       const target1 = {
@@ -451,7 +448,7 @@ const reachable = await relayReachable();
 
       // Now push feature 2 (new branch from updated main).
       const { featureTip: tip2 } = await pushFeatureBranch(
-        p.agent, p.worker, p.owner, p.repo, p.url, branch2,
+        p.agent, p.owner, p.repo, p.url, branch2,
       );
 
       // Try to use the OLD approval (approval1) for the new feature branch.

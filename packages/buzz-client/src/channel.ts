@@ -797,7 +797,3 @@ export async function getChannelRepositoryBinding(
   }
   return null;
 }
-
-export function eventIsAgentActivity(event: NostrEvent): boolean {
-  return tagValues(event, 't').includes(TAG_AGENT_ACTIVITY);
-}

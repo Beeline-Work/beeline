@@ -310,6 +310,15 @@ export function mergeChannelBasicsWithCache(
   });
 }
 
+/**
+ * Room-list previews, updated in place.
+ *
+ * Every returned object is identity-preserved when its content did not
+ * actually change. A live agent turn writes one of these per delivered batch,
+ * and the room list stays subscribed to this store even while it is covered
+ * by a Room — unconditionally rebuilding the map made every one of those
+ * writes re-render and re-sort the whole list for no visible difference.
+ */
 function updateListSummaries(
   lists: Record<string, ChannelListCacheEntry>,
   viewerPubkey: string,
@@ -323,24 +332,48 @@ function updateListSummaries(
 ): Record<string, ChannelListCacheEntry> {
   if (!summary?.latestMessage) return lists;
   const updatedAt = summary.latestEventAt ?? 0;
-  return Object.fromEntries(
+  let listsChanged = false;
+  const next = Object.fromEntries(
     Object.entries(lists).map(([key, entry]) => {
       if (entry.viewerPubkey !== viewerPubkey) return [key, entry];
-      const channels = entry.channels
-        .map((channel) =>
-          channel.id === channelId
-            ? { ...channel, latestMessage: summary.latestMessage, updatedAt }
-            : channel,
-        )
-        .sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0));
-      const directMessages = entry.directMessages
-        .map((dm) =>
-          dm.id === channelId ? { ...dm, latestMessage: summary.latestMessage, updatedAt } : dm,
-        )
-        .sort((a, b) => b.updatedAt - a.updatedAt || a.peerName.localeCompare(b.peerName));
-      return [key, { ...entry, channels, directMessages }];
+      let entryChanged = false;
+      const channels = entry.channels.map((channel) => {
+        if (
+          channel.id !== channelId ||
+          (channel.latestMessage === summary.latestMessage && channel.updatedAt === updatedAt)
+        ) {
+          return channel;
+        }
+        entryChanged = true;
+        return { ...channel, latestMessage: summary.latestMessage, updatedAt };
+      });
+      const directMessages = entry.directMessages.map((dm) => {
+        if (
+          dm.id !== channelId ||
+          (dm.latestMessage === summary.latestMessage && dm.updatedAt === updatedAt)
+        ) {
+          return dm;
+        }
+        entryChanged = true;
+        return { ...dm, latestMessage: summary.latestMessage, updatedAt };
+      });
+      if (!entryChanged) return [key, entry];
+      listsChanged = true;
+      return [
+        key,
+        {
+          ...entry,
+          channels: [...channels].sort(
+            (a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0),
+          ),
+          directMessages: [...directMessages].sort(
+            (a, b) => b.updatedAt - a.updatedAt || a.peerName.localeCompare(b.peerName),
+          ),
+        },
+      ];
     }),
   );
+  return listsChanged ? next : lists;
 }
 
 /**
@@ -358,15 +391,18 @@ function updateListCornerStatus(
   roomId: string,
   corner: { subchannelId: string; status: CornerStatus },
 ): Record<string, ChannelListCacheEntry> {
-  return Object.fromEntries(
+  let listsChanged = false;
+  const next = Object.fromEntries(
     Object.entries(lists).map(([key, entry]) => {
       if (entry.viewerPubkey !== viewerPubkey) return [key, entry];
+      let entryChanged = false;
       const channels = entry.channels.map((channel) => {
         if (channel.id !== roomId || !channel.corners) return channel;
         let changed = false;
         const corners = channel.corners.map((existing) => {
           if (
             existing.id !== corner.subchannelId ||
+            existing.status === corner.status ||
             cornerStatusPrecedence(corner.status) < cornerStatusPrecedence(existing.status)
           ) {
             return existing;
@@ -374,11 +410,19 @@ function updateListCornerStatus(
           changed = true;
           return { ...existing, status: corner.status };
         });
-        return changed ? { ...channel, corners } : channel;
+        if (!changed) return channel;
+        entryChanged = true;
+        return { ...channel, corners };
       });
+      if (!entryChanged) return [key, entry];
+      listsChanged = true;
       return [key, { ...entry, channels }];
     }),
   );
+  // Identity-preserved when nothing moved: this runs once per `.corner`
+  // signal on every live batch and every revalidation, and a new map object
+  // re-renders the room list whether or not a status actually changed.
+  return listsChanged ? next : lists;
 }
 
 const initial = loadCache();
@@ -409,9 +453,17 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
       };
     }),
   patchCornerStatus: (viewerPubkey, roomId, corner) =>
-    set((state) => ({
-      channelLists: updateListCornerStatus(state.channelLists, viewerPubkey, roomId, corner),
-    })),
+    set((state) => {
+      const channelLists = updateListCornerStatus(
+        state.channelLists,
+        viewerPubkey,
+        roomId,
+        corner,
+      );
+      // No status moved: skip the write entirely rather than notifying every
+      // subscriber with an identical snapshot.
+      return channelLists === state.channelLists ? state : { channelLists };
+    }),
   patchChannel: (viewerPubkey, channelId, patch) =>
     set((state) => {
       const key = channelCacheKey(viewerPubkey, channelId);

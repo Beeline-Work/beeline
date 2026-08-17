@@ -18,8 +18,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as QRCode from 'qrcode';
 import Svg, { Path, Rect } from 'react-native-svg';
 import {
+  claimNip05Handle,
   fallbackPersonName,
   lookupRecovery,
+  Nip05ClaimError,
   normalizeNip05Identifier,
   normalizePersonHandle,
   normalizePersonName,
@@ -118,6 +120,11 @@ export default function BuzzIdentitySettings() {
   const [profileNip05, setProfileNip05] = useState('');
   const [savedProfileNip05, setSavedProfileNip05] = useState('');
   const [nip05Focused, setNip05Focused] = useState(false);
+  const [claimName, setClaimName] = useState('');
+  const [claimWorking, setClaimWorking] = useState(false);
+  const [claimStatus, setClaimStatus] = useState<'idle' | 'claimed' | 'taken' | 'invalid' | 'error'>(
+    'idle',
+  );
   const [nameWorking, setNameWorking] = useState(false);
   const [nameFocused, setNameFocused] = useState(false);
   const [handleFocused, setHandleFocused] = useState(false);
@@ -269,6 +276,51 @@ export default function BuzzIdentitySettings() {
     }
   }, [avatarUrl, profileClient, profileHandle, profileName, profileNip05, profilePubkey]);
 
+  const claimHandle = useCallback(async () => {
+    if (!profileClient || !profileIdentity || claimWorking) return;
+    const requested = claimName.trim().toLowerCase();
+    if (!requested) return;
+    setClaimWorking(true);
+    setClaimStatus('idle');
+    try {
+      const result = await claimNip05Handle(
+        getBuzzRuntimeConfig().relayUrl,
+        profileIdentity,
+        requested,
+      );
+      const identifier = `${result.name}@buzzrouter.com`;
+      await profileClient.setGlobalPersonProfile({
+        name: normalizePersonName(savedProfileName) ?? undefined,
+        handle: normalizePersonHandle(savedProfileHandle) ?? undefined,
+        avatar: avatarUrl,
+        nip05: identifier,
+      });
+      setProfileNip05(identifier);
+      setSavedProfileNip05(identifier);
+      setClaimName('');
+      setClaimStatus('claimed');
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (caught) {
+      if (caught instanceof Nip05ClaimError && caught.code === 'name_taken') {
+        setClaimStatus('taken');
+      } else if (caught instanceof Nip05ClaimError && caught.code === 'invalid_name') {
+        setClaimStatus('invalid');
+      } else {
+        setClaimStatus('error');
+      }
+    } finally {
+      setClaimWorking(false);
+    }
+  }, [
+    avatarUrl,
+    claimName,
+    claimWorking,
+    profileClient,
+    profileIdentity,
+    savedProfileHandle,
+    savedProfileName,
+  ]);
+
   const togglePush = useCallback(
     async (enabled: boolean) => {
       if (!profileIdentity || pushWorking) return;
@@ -411,6 +463,16 @@ export default function BuzzIdentitySettings() {
         : linkedGoogle === 'unavailable'
           ? 'Google link unavailable while offline'
           : 'Checking linked account';
+  const claimStatusLabel =
+    claimStatus === 'claimed'
+      ? '✓ CLAIMED'
+      : claimStatus === 'taken'
+        ? 'ALREADY TAKEN'
+        : claimStatus === 'invalid'
+          ? 'USE 1-30 LOWERCASE LETTERS, NUMBERS, DASHES, OR UNDERSCORES'
+          : claimStatus === 'error'
+            ? 'COULD NOT CLAIM HANDLE'
+            : 'FIRST COME, FIRST SERVED';
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
@@ -566,6 +628,45 @@ export default function BuzzIdentitySettings() {
             </View>
           </View>
         )}
+        <View style={styles.settingsSection} testID="claim-handle-setting">
+          <Text style={styles.sectionLabel}>BEELINE HANDLE</Text>
+          <Text style={styles.body}>Claim a free handle at buzzrouter.com, first come first served.</Text>
+          <View style={styles.claimRow}>
+            <TextInput
+              accessibilityLabel="Desired Beeline handle"
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!claimWorking}
+              maxLength={30}
+              onChangeText={(value) => {
+                setClaimName(value);
+                setClaimStatus('idle');
+              }}
+              onSubmitEditing={() => void claimHandle()}
+              placeholder="yourname"
+              placeholderTextColor={groknight.dim}
+              returnKeyType="done"
+              style={styles.claimInput}
+              testID="identity-claim-handle-input"
+              value={claimName}
+            />
+            <Text style={styles.claimSuffix}>@buzzrouter.com</Text>
+          </View>
+          <View style={styles.nameMetaRow}>
+            <Text style={styles.nameHandle} testID="identity-claim-handle-status">
+              {claimStatusLabel}
+            </Text>
+          </View>
+          <MonoButton
+            disabled={claimWorking || !claimName.trim()}
+            label="Claim handle"
+            loading={claimWorking}
+            onPress={() => void claimHandle()}
+            style={styles.nameButton}
+            testID="identity-claim-handle-button"
+          />
+        </View>
+
         <View style={styles.settingsSection} testID="notifications-setting">
           <Text style={styles.sectionLabel}>NOTIFICATIONS</Text>
           <View style={styles.settingLine}>
@@ -833,6 +934,31 @@ const styles = StyleSheet.create({
     letterSpacing: 0.7,
   },
   nameButton: { marginTop: 8 },
+  claimRow: {
+    minHeight: 48,
+    marginTop: 16,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: groknight.border,
+    borderRadius: 4,
+    backgroundColor: groknight.bgBase,
+  },
+  claimInput: {
+    ...Typography.mono('semiBold'),
+    flex: 1,
+    minWidth: 0,
+    minHeight: 44,
+    color: groknight.textPrimary,
+    fontSize: 15,
+  },
+  claimSuffix: {
+    ...Typography.mono('semiBold'),
+    marginLeft: 2,
+    color: groknight.textMuted,
+    fontSize: 15,
+  },
   settingsSection: {
     paddingBottom: 24,
     marginBottom: 28,

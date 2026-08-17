@@ -116,7 +116,7 @@ function ActionDetail({ action, onBack }: { action: TurnActivityAction; onBack: 
  * is recreated on every presence tick — without this, every activity row's
  * (already non-trivial) render re-executes on updates unrelated to that row's
  * own activity. `items` must stay reference-stable across unrelated re-renders
- * for this to pay off (see CornerActivity).
+ * for this to pay off (see LedgerActivity).
  */
 export const ActivityTimeline = React.memo(function ActivityTimeline({
   active = false,

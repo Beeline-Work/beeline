@@ -27,13 +27,13 @@ import { personIdentityLabel, shortMemberNpub } from '@/buzz/member-display';
 import { resolveNip05StatusMap } from '@/buzz/nip05-verification';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
-import { ROOM_LABEL } from '@/buzz/vocabulary';
+import { MEMBERS_GLYPH, MEMBERS_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { AgentAvatar } from '@/components/buzz/AgentAvatar';
 import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
-import { HullSurface, HullWaveSignal, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
+import { hairlineDivider, HullWaveSignal, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
 
 const INSTALL_COMMAND = 'curl -fsSL https://relay.buzzrouter.com/install | sh';
 /** Under the 45s daemon heartbeat so a just-started agent reads online promptly. */
@@ -457,7 +457,8 @@ export default function BuzzAgents() {
       viewerAvatarUrl={viewerAvatarUrl}
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
-        <HullSurface strength="quiet" style={styles.header}>
+        {/* Chrome sits on the same obsidian as the list below it. */}
+        <View style={styles.header}>
           <TouchableOpacity
             accessibilityLabel={`Back to ${ROOM_LABEL}s`}
             style={styles.backButton}
@@ -466,10 +467,12 @@ export default function BuzzAgents() {
             <Text style={styles.backText}>‹</Text>
           </TouchableOpacity>
           <View style={styles.headerCopy}>
-            <Text style={styles.title}>Members</Text>
+            <Text style={styles.title}>
+              {MEMBERS_GLYPH} {MEMBERS_LABEL}
+            </Text>
             {activeCommunity && <Text style={styles.headerMeta}>{activeCommunity.name}</Text>}
           </View>
-        </HullSurface>
+        </View>
 
         <KeyboardAwareScrollView
           bottomOffset={16}
@@ -649,7 +652,7 @@ export default function BuzzAgents() {
             </View>
             {agents.length === 0 ? (
             <View style={styles.empty}>
-              <Text style={styles.emptyGlyph}>⌬</Text>
+              <Text style={styles.emptyGlyph}>{MEMBERS_GLYPH}</Text>
               <Text style={styles.emptyTitle}>No agents yet</Text>
               <Text style={styles.emptyCopy}>
                 Connect once, then use the Agent in every {ROOM_LABEL}.
@@ -876,9 +879,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: groknight.bgBase,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
+    backgroundColor: groknight.bgTerminal,
+    ...hairlineDivider,
   },
   backButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   backText: { ...Typography.default(), color: groknight.chrome, fontSize: 30, fontWeight: '300' },

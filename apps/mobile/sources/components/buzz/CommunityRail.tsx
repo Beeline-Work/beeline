@@ -16,7 +16,6 @@ import { groknight } from '@/buzz/groknight';
 import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { WorkspaceAvatar } from '@/components/buzz/WorkspaceAvatar';
-import { HullSurface } from '@/components/buzz/MonoHull';
 import { Typography } from '@/constants/Typography';
 
 const DRAWER_WIDTH = 72;
@@ -120,8 +119,9 @@ export function CommunityRail({
     activeCommunity && canManageActiveCommunity && onWorkspaceSettings,
   );
   return (
-    <HullSurface
-      strength="quiet"
+    // No surface of its own: the rail is the same obsidian as the screen it
+    // slides over, held apart by one hairline edge.
+    <View
       accessibilityLabel={`${WORKSPACE_LABEL} switcher`}
       style={[styles.rail, { paddingTop: Math.max(insets.top, 10) }]}
     >
@@ -183,7 +183,7 @@ export function CommunityRail({
         ) : null}
       </RailCommand>
       <View style={{ height: Math.max(insets.bottom, 8) }} />
-    </HullSurface>
+    </View>
   );
 }
 
@@ -361,8 +361,8 @@ const styles = StyleSheet.create({
     flex: 1,
     width: DRAWER_WIDTH,
     alignItems: 'center',
-    backgroundColor: groknight.bgBase,
-    borderRightWidth: 1,
+    backgroundColor: groknight.bgTerminal,
+    borderRightWidth: StyleSheet.hairlineWidth,
     borderRightColor: groknight.border,
   },
   communityScroll: {

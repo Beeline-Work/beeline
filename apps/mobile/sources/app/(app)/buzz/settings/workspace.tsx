@@ -23,7 +23,7 @@ import {
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { groknight } from '@/buzz/groknight';
-import { ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
+import { MEMBERS_GLYPH, MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { HullSurface, MonoButton, PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
 import { WorkspaceAvatar } from '@/components/buzz/WorkspaceAvatar';
@@ -341,12 +341,14 @@ export default function WorkspaceSettings() {
           </View>
 
           <View style={styles.section} testID="workspace-members-link">
-            <Text style={styles.sectionLabel}>MEMBERS</Text>
+            <Text style={styles.sectionLabel}>
+              {MEMBERS_GLYPH} {MEMBERS_LABEL.toUpperCase()}
+            </Text>
             <Text style={styles.sectionBody}>
               Invite people, connect agents, and manage member roles in one place.
             </Text>
             <MonoButton
-              label="Open members"
+              label={`${MEMBERS_GLYPH} OPEN ${MEMBERS_LABEL.toUpperCase()}`}
               onPress={() =>
                 router.push(
                   { pathname: '/buzz/members', params: { communityId } } as unknown as Href,

@@ -577,53 +577,59 @@ export function projectChatEvent(
   };
 }
 
-/** Rooms show conversation plus one compact Corner card; telemetry stays in Corners. */
+/**
+ * The messages a transcript actually renders, for either surface.
+ *
+ * Both surfaces run one loop, because tool telemetry is now collapsed the same
+ * way on both: consecutive activity events fold into one entry, which the UI
+ * renders as a single dim, expandable line rather than a wall of output
+ * (DESIGN.md, "Machine noise"). An activity event carrying no projected
+ * activity is still dropped outright on both — there is nothing to disclose.
+ *
+ * A Room additionally hides Corner-scoped lifecycle cards (merge summaries,
+ * archive notices, turn lifecycle) that belong to a Corner's own transcript,
+ * keeping its own compact Corner card instead.
+ */
 export function transcriptMessages(
   messages: ChatDisplayMessage[],
   isCorner: boolean,
 ): ChatDisplayMessage[] {
-  if (isCorner) {
-    const transcript: ChatDisplayMessage[] = [];
-    let activityRunOpen = false;
-    for (const message of messages) {
-      // Lifecycle is presentation state, not a blank conversational message,
-      // but it remains a hard turn boundary for the activity on either side.
-      if (message.agentTurn) {
+  const transcript: ChatDisplayMessage[] = [];
+  let activityRunOpen = false;
+  for (const message of messages) {
+    // Lifecycle is presentation state, not a blank conversational message,
+    // but it remains a hard turn boundary for the activity on either side.
+    if (message.agentTurn) {
+      activityRunOpen = false;
+      continue;
+    }
+    if (!isCorner && !message.corner && (message.isMergeSummary || message.isArchivedNotice)) {
+      activityRunOpen = false;
+      continue;
+    }
+
+    if (message.isAgentActivity) {
+      if (!message.activity?.length) {
         activityRunOpen = false;
         continue;
       }
-
-      if (message.isAgentActivity) {
-        if (!message.activity?.length) {
-          activityRunOpen = false;
-          continue;
-        }
-        const previous = transcript.at(-1);
-        if (activityRunOpen && previous?.isAgentActivity) {
-          previous.activity = [...(previous.activity ?? []), ...message.activity];
-          // Keep the first event id stable while the live run grows. Never join
-          // prose here: final messages and user messages remain hard boundaries.
-          continue;
-        }
-        activityRunOpen = true;
-      } else {
-        activityRunOpen = false;
+      const previous = transcript.at(-1);
+      if (activityRunOpen && previous?.isAgentActivity) {
+        previous.activity = [...(previous.activity ?? []), ...message.activity];
+        // Keep the first event id stable while the live run grows. Never join
+        // prose here: final messages and user messages remain hard boundaries.
+        continue;
       }
-      transcript.push({
-        ...message,
-        ...(message.activity ? { activity: [...message.activity] } : {}),
-      });
+      activityRunOpen = true;
+    } else {
+      activityRunOpen = false;
     }
-    return transcript;
+    transcript.push({
+      ...message,
+      ...(message.activity ? { activity: [...message.activity] } : {}),
+    });
   }
-  return messages.filter(
-    (message) =>
-      Boolean(message.corner) ||
-      (!message.agentTurn &&
-        !message.isAgentActivity &&
-        !message.isMergeSummary &&
-        !message.isArchivedNotice),
-  );
+  return transcript;
 }
 
 const AGENT_TURN_STATUS_ORDER: Record<AgentTurnStatus, number> = {

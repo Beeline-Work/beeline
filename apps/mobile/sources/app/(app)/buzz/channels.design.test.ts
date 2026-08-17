@@ -60,7 +60,6 @@ describe('Room list — Grok Mono Hull invariants', () => {
   it('routes buttons, reveal, press, and the live signal through shared MonoHull primitives', () => {
     for (const primitive of [
       'BrittlePress',
-      'HullSurface',
       'HullWaveSignal',
       'MonoButton',
       'PixelGateReveal',
@@ -71,6 +70,26 @@ describe('Room list — Grok Mono Hull invariants', () => {
     }
     // No screen-local button styles competing with MonoButton.
     expect(source).not.toMatch(/ {2}primary(?:Small)?Button: \{/);
+  });
+
+  it('gives the persistent chrome no surface of its own', () => {
+    // The obsidian slab is unbroken: a header or rail that carried its own
+    // textured HullSurface read as a plate laid on top of the screen. Both are
+    // now the same bare surface as the list, parted by one hairline. A
+    // genuinely lifted, non-repeating region (a modal, the merge-approval
+    // panel) still earns HullSurface — persistent chrome does not.
+    for (const [name, text] of [
+      ['channels.tsx', source],
+      ['CommunityRail.tsx', railSource],
+    ] as const) {
+      expect(text, `${name} chrome should not mount HullSurface`).not.toContain('<HullSurface');
+    }
+    expect(styleBlock(source, 'header')).toMatch(/hairlineDivider/);
+    expect(styleBlock(railSource, 'rail')).toMatch(
+      /borderRightWidth: StyleSheet\.hairlineWidth/,
+    );
+    // A row declares no surface of its own either — the slab shows through.
+    expect(styleBlock(source, 'roomCell')).not.toMatch(/backgroundColor/);
   });
 
   it('sources every color from the groknight token file', () => {

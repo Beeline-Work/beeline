@@ -51,6 +51,8 @@ import { cornerHref } from '@/buzz/corner-navigation';
 import {
   CHANGES_LABEL,
   CORNER_LABEL,
+  MEMBERS_GLYPH,
+  MEMBERS_LABEL,
   ROOM_LABEL,
   ROOMS_LABEL,
   WORKSPACE_LABEL,
@@ -75,7 +77,6 @@ import { cacheLiveSessionEvent, revalidateCachedMessages } from '@/buzz/local-ca
 import {
   BrittlePress,
   hairlineDivider,
-  HullSurface,
   HullWaveSignal,
   MonoButton,
   PixelGateReveal,
@@ -772,7 +773,9 @@ export default function BuzzChannels() {
       viewerAvatarUrl={viewerAvatarUrl}
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
-        <HullSurface strength="quiet" style={styles.header}>
+        {/* Chrome carries no surface of its own: the index and its header are
+            the same slab, parted by one hairline. */}
+        <View style={styles.header}>
           <CommunityDrawerTrigger community={activeCommunity} />
           {activeCommunityId && (
             <TouchableOpacity
@@ -786,7 +789,9 @@ export default function BuzzChannels() {
               style={styles.headerAction}
               testID="workspace-members"
             >
-              <Text style={styles.headerActionText}>PEOPLE</Text>
+              <Text style={styles.headerActionText}>
+                {MEMBERS_GLYPH} {MEMBERS_LABEL.toUpperCase()}
+              </Text>
             </TouchableOpacity>
           )}
           {!viewerIsAgent && (
@@ -805,7 +810,7 @@ export default function BuzzChannels() {
               </Text>
             </TouchableOpacity>
           )}
-        </HullSurface>
+        </View>
 
         {showCreateChannel && !viewerIsAgent && (
           <PixelGateReveal style={styles.actionPanel}>
@@ -1155,7 +1160,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: groknight.bgBase,
+    backgroundColor: groknight.bgTerminal,
     ...hairlineDivider,
   },
   headerAction: {
@@ -1199,15 +1204,13 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgBase,
     fontSize: 13,
   },
+  /* A transient failure is a notice on the slab, not a panel laid over it: one
+   * hairline, the `! ERROR` label, and its own retry button carry it. */
   errorPanel: {
-    marginHorizontal: SCREEN_INSET,
-    marginTop: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 3,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgRaised,
+    paddingHorizontal: SCREEN_INSET,
+    paddingTop: 12,
+    paddingBottom: 14,
+    ...hairlineDivider,
   },
   errorLabel: {
     ...Typography.mono('semiBold'),
@@ -1314,7 +1317,7 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     letterSpacing: 0.5,
   },
-  roomCell: { ...hairlineDivider, backgroundColor: groknight.bgTerminal },
+  roomCell: { ...hairlineDivider },
   roomRow: { minWidth: 0, flexDirection: 'row', alignItems: 'stretch' },
   roomPrimary: { flex: 1, minWidth: 0 },
   roomGlyph: {

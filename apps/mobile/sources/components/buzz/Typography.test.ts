@@ -13,7 +13,7 @@ const sources = [
   '../../app/(app)/buzz/settings/workspace.tsx',
   './CommunityInviteEntry.tsx',
   './CommunityRail.tsx',
-  './CornerLedger.tsx',
+  './Ledger.tsx',
 ];
 
 const monoStyles = new Set([
@@ -36,7 +36,6 @@ const monoStyles = new Set([
   'modelTitle',
   'loadingText',
   'pathTag',
-  'provenanceText',
   'pubkey',
   'sectionLabel',
   'statusLabel',
@@ -74,7 +73,6 @@ const monoStyles = new Set([
   'replySwipeLabel',
   'replyReferenceAuthor',
   'replyComposerLabel',
-  'offlineDeliveryNote',
   'memberSectionLabel',
   'rosterModalEyebrow',
   'rosterSectionLabel',
@@ -106,9 +104,6 @@ const monoStyles = new Set([
   'activityOutput',
   'attachmentMeta',
   'pendingAttachmentMeta',
-  'terminalTurnGlyph',
-  'terminalTurnLabel',
-  'terminalTurnText',
   'agentLiveStatusText',
   'agentOfflineHintTitle',
   'agentOfflineNoticeTitle',
@@ -137,6 +132,8 @@ const monoStyles = new Set([
   'roomRenameCancelText',
   'roomRenameApplyText',
   'roomLifecycleTitle',
+  'attributionDetail',
+  'attributionName',
   'steerNote',
   'steerSignature',
 ]);

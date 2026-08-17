@@ -886,6 +886,27 @@ export function postAgentTurnStatus(
   ]);
 }
 
+/**
+ * One-time, honest "still working" notice for a turn that has gone quiet for
+ * longer than a short idle window, published as an ordinary visible message
+ * (same wire shape as any other agent reply) so it renders in the transcript
+ * without any client-side changes. This never itself cancels or retries the
+ * turn — it only tells the user their agent isn't dead, well before the full
+ * idle-cancel timeout would otherwise leave them looking at silence.
+ */
+export function postAgentStallNotice(
+  channelId: string,
+  owner: Identity,
+  requestId: string,
+): Promise<void> {
+  return postAgentMessage(
+    channelId,
+    owner,
+    "Still working on this — my coding backend is taking longer than usual to respond.",
+    requestId,
+  );
+}
+
 /** Publish one signed, replaceable Room-scoped daemon presence marker. */
 export async function postAgentPresence(
   channelId: string,

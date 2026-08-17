@@ -286,13 +286,17 @@ export class AcpClient extends EventEmitter {
    * delta as it arrives, so a caller can project live text without waiting
    * for the turn to finish. A harness that only emits a final message
    * (never chunks) simply never invokes it — `agentText` is unaffected
-   * either way.
+   * either way. `onActivity`, when given, fires on every `session/update`
+   * regardless of kind (the same trigger that re-arms the idle timer above),
+   * so a caller can drive its own shorter "still working" notice off the
+   * identical genuine-activity signal without duplicating the timeout logic.
    */
   async sessionPrompt(
     sessionId: string,
     text: string,
     timeoutMs = 120_000,
     onChunk?: AcpTextChunkHandler,
+    onActivity?: () => void,
   ): Promise<PromptResult> {
     const updates: SessionUpdate[] = [];
     let promptRunId: string | undefined;
@@ -303,6 +307,7 @@ export class AcpClient extends EventEmitter {
       updates.push(u);
       promptRunId ??= this.activeRunIdFromUpdate(u.update);
       if (requestId !== undefined) this.resetPendingIdleTimeout(requestId);
+      onActivity?.();
       if (onChunk) {
         const delta = agentMessageChunkText(u.update);
         if (delta) {

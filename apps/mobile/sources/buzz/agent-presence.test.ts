@@ -132,6 +132,18 @@ describe('mobile agent presence projection', () => {
     ).toBe(true);
   });
 
+  it('does not show the AGENT OFFLINE banner when the daemon clock runs ahead of the reader', () => {
+    // Regression: an actively-replying agent whose heartbeat `observedAt` lands
+    // a few seconds ahead of the mobile device's own clock (ordinary skew, not
+    // staleness) must not make the Room banner claim the agent is offline.
+    const now = 1_700_000_000_000;
+    const skewedOnline = agentPresenceFromSessionEvent(
+      presence('online', Math.floor(now / 1_000) + 5),
+    )!;
+    expect(isAgentPresenceOnlineWithReconnectGrace(skewedOnline, now)).toBe(true);
+    expect(isAgentOfflineAfterPresenceResolved(true, 1, 1, 1)).toBe(false);
+  });
+
   it('reinstalls foreground delivery before backfilling the missed heartbeat', async () => {
     const order: string[] = [];
     const installSubscription = vi.fn(async () => {

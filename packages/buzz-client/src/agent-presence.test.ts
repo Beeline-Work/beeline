@@ -20,6 +20,15 @@ describe('agent presence lease', () => {
     expect(isAgentPresenceOnline(undefined, 1_000)).toBe(false);
   });
 
+  it('tolerates the daemon clock running ahead of the reader (ordinary clock skew)', () => {
+    // A live agent whose observedAt lands after the reader's own `now` must
+    // still read online — this is the bug: a stale-forever "AGENT OFFLINE"
+    // banner for a genuinely online, actively-replying agent.
+    expect(isAgentPresenceOnline(online, 999)).toBe(true);
+    expect(isAgentPresenceOnline(online, 1_000 - AGENT_PRESENCE_STALE_MS)).toBe(true);
+    expect(isAgentPresenceOnline(online, 999 - AGENT_PRESENCE_STALE_MS)).toBe(false);
+  });
+
   it('lets an explicit offline marker win a same-second timestamp tie', () => {
     expect(newerAgentPresence(online, { ...online, status: 'offline' }).status).toBe('offline');
     expect(newerAgentPresence({ ...online, status: 'offline' }, online).status).toBe('offline');

@@ -1,20 +1,7 @@
 import type { SessionEvent } from '@/sync/transport';
+import { sessionEventHasTag, sessionEventPayload } from '@/sync/transport/buzz-event-projection';
 
 const CONTROL_TEXT = /^Agent opened(?: #| a work branch for:)/;
-
-function rawPayload(event: SessionEvent): Record<string, unknown> | undefined {
-  if (event.type !== 'raw' || !event.payload || typeof event.payload !== 'object') return undefined;
-  return event.payload as Record<string, unknown>;
-}
-
-function hasTag(payload: Record<string, unknown>, name: string, value?: string): boolean {
-  if (!Array.isArray(payload.tags)) return false;
-  return payload.tags.some((candidate) => {
-    if (!Array.isArray(candidate) || !candidate.every((v) => typeof v === 'string')) return false;
-    if (candidate[0] !== name) return false;
-    return value === undefined || candidate[1] === value;
-  });
-}
 
 export type RoomMessageSummary = {
   id: string;
@@ -23,9 +10,11 @@ export type RoomMessageSummary = {
 };
 
 function roomMessage(event: SessionEvent): RoomMessageSummary | null {
-  const payload = rawPayload(event);
+  const payload = sessionEventPayload(event);
   if (!payload || typeof payload.content !== 'string') return null;
-  if (hasTag(payload, 't', 'body-control') || hasTag(payload, 'subchannel')) return null;
+  if (sessionEventHasTag(event, 't', 'body-control') || sessionEventHasTag(event, 'subchannel')) {
+    return null;
+  }
 
   const text = payload.content.trim();
   if (!text || CONTROL_TEXT.test(text)) return null;

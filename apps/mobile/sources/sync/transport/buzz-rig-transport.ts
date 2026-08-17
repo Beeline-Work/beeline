@@ -31,10 +31,12 @@ import {
   buildAttachmentTags,
   tagValue,
   classifySessionEvent,
+  toSessionEvent,
   CHANGE_REVIEW_EVENT_KIND,
   CHANGE_REVIEW_FILE_TAG,
   CHANGE_REVIEW_MANIFEST_TAG,
   APPROVAL_MARKER,
+  KIND_AGENT_PRESENCE,
   parseChangeReviewManifest,
   type BuzzClient,
   type ChannelMetadata,
@@ -447,6 +449,29 @@ export class BuzzRigTransport implements RigTransport {
     const client = await this.getClient();
     const buzzEvents = await client.agentPresenceBackfill(channelId);
     return buzzEvents.map(toRigEvent);
+  }
+
+  /**
+   * Read presence across every Room in a Workspace, not just one — the Agents
+   * directory has no single Room context, unlike a Corner list or Room roster.
+   * Presence is published per (agent, Room) with no workspace-wide record, so
+   * this fans a single multi-`#h` query (same proven pattern as
+   * `fetchManyRoomsLifecycle`'s cross-Room corner reads) across every Room the
+   * Workspace has, and callers merge to newest-per-agent via
+   * `presenceMapFromSessionEvents`. An agent with no live daemon anywhere in
+   * the Workspace correctly yields no record, i.e. offline.
+   */
+  async agentPresenceBackfillForWorkspace(communityId: string): Promise<SessionEvent[]> {
+    const client = await this.getClient();
+    const roomIds = await client.communityChannels(communityId);
+    if (roomIds.length === 0) return [];
+    const buzzEvents = await client.query([
+      { kinds: [KIND_AGENT_PRESENCE], '#h': roomIds, limit: Math.max(200, roomIds.length * 10) },
+    ]);
+    return buzzEvents
+      .map(toSessionEvent)
+      .filter((event): event is BuzzSessionEvent => event !== null)
+      .map(toRigEvent);
   }
 
   /** Subscribe only to Room presence, keeping telemetry out of chat backfill. */

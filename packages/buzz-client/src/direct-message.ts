@@ -10,9 +10,9 @@ import {
   waitUntilMember,
   type ChannelOpsContext,
 } from './channel.js';
-import { queryEvents } from './http.js';
 import { KIND_CREATE_GROUP, TAG_COMMUNITY, TAG_DIRECT_MESSAGE, TAG_PARENT } from './kinds.js';
 import { tagValue, tagValues } from './parse.js';
+import { query } from './query.js';
 import type { DirectMessage } from './types.js';
 
 const PUBKEY_PATTERN = /^[0-9a-f]{64}$/;
@@ -80,11 +80,7 @@ export async function getDirectMessage(
   ctx: ChannelOpsContext,
   channelId: string,
 ): Promise<DirectMessage | null> {
-  const events = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_CREATE_GROUP], '#h': [channelId], limit: 20 }],
-    ctx.identity.publicKey,
-  );
+  const events = await query(ctx, [{ kinds: [KIND_CREATE_GROUP], '#h': [channelId], limit: 20 }]);
   return (
     events
       .map(parseDirectMessage)

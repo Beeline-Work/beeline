@@ -60,7 +60,7 @@ import {
   setCommunityAvatar,
   setCommunityVisibility,
 } from './community.js';
-import { publishEvent, queryEvents, type HttpBridgeOptions } from './http.js';
+import { publishEvent, type HttpBridgeOptions } from './http.js';
 import {
   KIND_AGENT_DRAFT,
   KIND_AGENT_PRESENCE,
@@ -68,6 +68,7 @@ import {
   TAG_AGENT_DRAFT,
   TAG_AGENT_PRESENCE,
 } from './kinds.js';
+import { query } from './query.js';
 import {
   getGlobalPersonProfile,
   getPersonProfile,
@@ -576,17 +577,13 @@ export class BuzzClient {
 
   /** Read this Room's parameterized-replaceable agent presence records. */
   agentPresenceBackfill(channelId: string): Promise<SessionEvent[]> {
-    return queryEvents(
-      this.http,
-      [
-        {
-          kinds: [KIND_AGENT_PRESENCE],
-          '#d': [`${TAG_AGENT_PRESENCE}:${channelId}`],
-          limit: 20,
-        },
-      ],
-      this.identity.publicKey,
-    ).then((events) =>
+    return query(this.ctx, [
+      {
+        kinds: [KIND_AGENT_PRESENCE],
+        '#d': [`${TAG_AGENT_PRESENCE}:${channelId}`],
+        limit: 20,
+      },
+    ]).then((events) =>
       events
         .map(toSessionEvent)
         .filter((event): event is SessionEvent => event !== null && event.channelId === channelId),
@@ -661,17 +658,13 @@ export class BuzzClient {
 
   /** Read this Room's current live agent reply draft (parameterized-replaceable). */
   agentDraftBackfill(channelId: string): Promise<SessionEvent[]> {
-    return queryEvents(
-      this.http,
-      [
-        {
-          kinds: [KIND_AGENT_DRAFT],
-          '#d': [`${TAG_AGENT_DRAFT}:${channelId}`],
-          limit: 5,
-        },
-      ],
-      this.identity.publicKey,
-    ).then((events) =>
+    return query(this.ctx, [
+      {
+        kinds: [KIND_AGENT_DRAFT],
+        '#d': [`${TAG_AGENT_DRAFT}:${channelId}`],
+        limit: 5,
+      },
+    ]).then((events) =>
       events
         .map(toSessionEvent)
         .filter((event): event is SessionEvent => event !== null && event.channelId === channelId),
@@ -706,9 +699,9 @@ export class BuzzClient {
     return publishEvent(this.http, event);
   }
 
-  /** Low-level query via HTTP. */
+  /** Low-level query, WS-primary with HTTP fallback. */
   query(filters: Record<string, unknown>[]): Promise<NostrEvent[]> {
-    return queryEvents(this.http, filters, this.identity.publicKey);
+    return query(this.ctx, filters);
   }
 
   // ── Merge approval ──────────────────────────────────────────────────────

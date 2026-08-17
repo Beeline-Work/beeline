@@ -14,6 +14,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { publishEvent, queryEvents, type HttpBridgeOptions } from './http.js';
 import { getDirectMessage } from './direct-message.js';
+import { query } from './query.js';
 import {
   KIND_CHANNEL_ADMINS,
   KIND_CHANNEL_METADATA,
@@ -187,17 +188,13 @@ async function getCommunityMetadata(
   ctx: ChannelOpsContext,
   communityId: string,
 ): Promise<NostrEvent | undefined> {
-  const events = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_CHANNEL_METADATA], '#d': [communityId], limit: 5 }],
-    ctx.identity.publicKey,
-  );
+  const events = await query(ctx, [
+    { kinds: [KIND_CHANNEL_METADATA], '#d': [communityId], limit: 5 },
+  ]);
   if (events.length > 0) return latestEvent(events);
-  const fallback = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_CHANNEL_METADATA], '#h': [communityId], limit: 5 }],
-    ctx.identity.publicKey,
-  );
+  const fallback = await query(ctx, [
+    { kinds: [KIND_CHANNEL_METADATA], '#h': [communityId], limit: 5 },
+  ]);
   return latestEvent(fallback);
 }
 
@@ -205,11 +202,7 @@ async function getCommunityCreateEvents(
   ctx: ChannelOpsContext,
   communityId: string,
 ): Promise<NostrEvent[]> {
-  const events = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_CREATE_GROUP], '#h': [communityId], limit: 20 }],
-    ctx.identity.publicKey,
-  );
+  const events = await query(ctx, [{ kinds: [KIND_CREATE_GROUP], '#h': [communityId], limit: 20 }]);
   return events.filter((event) => tagValue(event, 'h') === communityId);
 }
 
@@ -238,17 +231,9 @@ async function queryGroupState(
   kind: number,
   communityId: string,
 ): Promise<NostrEvent[]> {
-  const events = await queryEvents(
-    ctx.http,
-    [{ kinds: [kind], '#d': [communityId], limit: 5 }],
-    ctx.identity.publicKey,
-  );
+  const events = await query(ctx, [{ kinds: [kind], '#d': [communityId], limit: 5 }]);
   if (events.length > 0) return events;
-  return queryEvents(
-    ctx.http,
-    [{ kinds: [kind], '#h': [communityId], limit: 5 }],
-    ctx.identity.publicKey,
-  );
+  return query(ctx, [{ kinds: [kind], '#h': [communityId], limit: 5 }]);
 }
 
 /** Hex SHA-256 used as the relay-safe lookup handle for an opaque invite token. */
@@ -434,11 +419,9 @@ export async function listCommunities(
   pubkey: string,
   limit = 50,
 ): Promise<Community[]> {
-  const memberEvents = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS], '#p': [pubkey], limit }],
-    ctx.identity.publicKey,
-  );
+  const memberEvents = await query(ctx, [
+    { kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS], '#p': [pubkey], limit },
+  ]);
   const ids = [
     ...new Set(
       memberEvents
@@ -455,14 +438,10 @@ export async function listCommunities(
   // getCommunityMetadata's fallback below), so any metadata event that only
   // ever carried the older `#h` convention falls through to the existing
   // per-id `getCommunity` recovery path further down, same as before.
-  const communityEvents = await queryEvents(
-    ctx.http,
-    [
-      { kinds: [KIND_CREATE_GROUP], '#h': ids, limit: Math.max(500, ids.length * 20) },
-      { kinds: [KIND_CHANNEL_METADATA], '#d': ids, limit: Math.max(500, ids.length * 5) },
-    ],
-    ctx.identity.publicKey,
-  );
+  const communityEvents = await query(ctx, [
+    { kinds: [KIND_CREATE_GROUP], '#h': ids, limit: Math.max(500, ids.length * 20) },
+    { kinds: [KIND_CHANNEL_METADATA], '#d': ids, limit: Math.max(500, ids.length * 5) },
+  ]);
   const createEvents = communityEvents.filter((event) => event.kind === KIND_CREATE_GROUP);
   const metadataEvents = communityEvents.filter((event) => event.kind === KIND_CHANNEL_METADATA);
 
@@ -525,11 +504,7 @@ async function communityChannelCreates(
   communityId: string,
   limit = 500,
 ): Promise<NostrEvent[]> {
-  const events = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_CREATE_GROUP], limit }],
-    ctx.identity.publicKey,
-  );
+  const events = await query(ctx, [{ kinds: [KIND_CREATE_GROUP], limit }]);
   return events.filter(
     (event) =>
       tagValue(event, TAG_COMMUNITY) === communityId &&
@@ -594,11 +569,9 @@ async function assertCommunityMemberInChannels(
 }
 
 async function isRegisteredAgentIdentity(ctx: ChannelOpsContext, pubkey: string): Promise<boolean> {
-  const events = await queryEvents(
-    ctx.http,
-    [{ kinds: [KIND_STREAM_MESSAGE], authors: [pubkey], '#t': [TAG_AGENT], limit: 50 }],
-    ctx.identity.publicKey,
-  );
+  const events = await query(ctx, [
+    { kinds: [KIND_STREAM_MESSAGE], authors: [pubkey], '#t': [TAG_AGENT], limit: 50 },
+  ]);
   return events.some(
     (event) =>
       event.pubkey === pubkey && verifyEvent(event) && tagValues(event, 't').includes(TAG_AGENT),
@@ -769,18 +742,14 @@ export async function listCommunityInvites(
   ctx: ChannelOpsContext,
   communityId: string,
 ): Promise<CommunityInviteRecord[]> {
-  const events = await queryEvents(
-    ctx.http,
-    [
-      {
-        kinds: [KIND_COMMUNITY_INVITE],
-        authors: [ctx.identity.publicKey],
-        '#t': [TAG_COMMUNITY_INVITE],
-        limit: 500,
-      },
-    ],
-    ctx.identity.publicKey,
-  );
+  const events = await query(ctx, [
+    {
+      kinds: [KIND_COMMUNITY_INVITE],
+      authors: [ctx.identity.publicKey],
+      '#t': [TAG_COMMUNITY_INVITE],
+      limit: 500,
+    },
+  ]);
   const latestByToken = new Map<string, CommunityInviteRecord>();
   for (const event of events) {
     const record = parseCommunityInvite(event);

@@ -125,3 +125,43 @@ describe('MonoMarkdown lists', () => {
     );
   });
 });
+
+/**
+ * Regression guard for the enter-room/live-update freeze: MonoMarkdown
+ * renders once per transcript row inside FlatList's renderItem, which the
+ * chat screen recreates on every presence tick (room-enter and live
+ * updates). Without memoization every visible row's markdown-to-JSX tree
+ * was rebuilt on updates that had nothing to do with that row's own text.
+ * A `React.memo`-wrapped component exposes the wrapped function as `.type`;
+ * replacing it with a spy directly counts actual invocations (unlike
+ * `React.Profiler.onRender`, which fires on every commit that reaches this
+ * position regardless of a memo bailout).
+ */
+describe('MonoMarkdown memoization', () => {
+  it('does not re-render when its own props are unchanged', () => {
+    const original = (MonoMarkdown as unknown as { type: typeof MonoMarkdown }).type;
+    const spy = vi.fn(original);
+    (MonoMarkdown as unknown as { type: typeof MonoMarkdown }).type = spy as any;
+    try {
+      function Parent({ tick }: { tick: number }) {
+        void tick;
+        return React.createElement(MonoMarkdown, { markdown: 'hello **world**' });
+      }
+
+      let renderer!: ReactTestRenderer;
+      act(() => {
+        renderer = create(React.createElement(Parent, { tick: 0 }));
+      });
+      expect(spy).toHaveBeenCalledTimes(1);
+
+      // Parent re-renders with an unrelated prop change; MonoMarkdown's own
+      // props are identical, so a memoized component must bail out entirely.
+      act(() => {
+        renderer.update(React.createElement(Parent, { tick: 1 }));
+      });
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      (MonoMarkdown as unknown as { type: typeof MonoMarkdown }).type = original;
+    }
+  });
+});

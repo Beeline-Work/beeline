@@ -212,6 +212,23 @@ describe('the transcript’s agent roster', () => {
     expect(resolveAgentDisplayIdentity(beebee, merged.get(beebee)).name).toBe('Beebee');
   });
 
+  it('lets a later Workspace’s soul override an earlier Workspace’s unsouled pairing registration', () => {
+    // `redeemAgentPairingCode` registers every fresh agent with
+    // `displayName: fallbackAgentName(pubkey)` — never an empty string. An
+    // agent paired into a second Workspace (or attached there some other way)
+    // carries exactly that placeholder displayName in that Workspace's
+    // roster, with no soul overlay. This regressed the transcript ("Alden")
+    // while the Members screen, scoped to the one Workspace that actually
+    // authored the soul, kept showing the real name ("Beebee") for the
+    // identical pubkey.
+    const unsouledPairingRegistration = [
+      { pubkey: beebee, displayName: fallbackAgentName(beebee), soulProfile: undefined },
+    ];
+    const souledWorkspace = [rosterEntry];
+    const merged = mergeAgentRosters([unsouledPairingRegistration, souledWorkspace]);
+    expect(resolveAgentDisplayIdentity(beebee, merged.get(beebee)).name).toBe('Beebee');
+  });
+
   it('ignores roster rows with no pubkey rather than keying on undefined', () => {
     const merged = mergeAgentRosters([[{ pubkey: '', displayName: 'x' }], [rosterEntry]]);
     expect(merged.size).toBe(1);

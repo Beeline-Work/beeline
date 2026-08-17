@@ -105,13 +105,18 @@ function ActionDetail({ action, onBack }: { action: TurnActivityAction; onBack: 
 }
 
 /**
- * One summary per turn, with secondary action list and tertiary inspectable detail.
+ * A turn's whole tool run as one collapsed ledger line.
  *
- * Memoized: rendered once per corner activity row inside FlatList's
- * renderItem, which is recreated on every presence tick — without this,
- * every activity row's (already non-trivial) render re-executes on updates
- * unrelated to that row's own activity. `items` must stay reference-stable
- * across unrelated re-renders for this to pay off (see CornerActivity).
+ * Everything the tools said — the agent's own mid-run notes, commands, inputs,
+ * and raw output — stays behind this line's disclosure. The transcript never
+ * prints a wall of output: one line, expandable to the action list, then to a
+ * single action's detail.
+ *
+ * Memoized: rendered once per activity row inside FlatList's renderItem, which
+ * is recreated on every presence tick — without this, every activity row's
+ * (already non-trivial) render re-executes on updates unrelated to that row's
+ * own activity. `items` must stay reference-stable across unrelated re-renders
+ * for this to pay off (see CornerActivity).
  */
 export const ActivityTimeline = React.memo(function ActivityTimeline({
   active = false,
@@ -121,7 +126,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
   const turn = useMemo(() => buildTurnActivity(items), [items]);
   const [expanded, setExpanded] = useState(false);
   const [selected, setSelected] = useState<TurnActivityAction | null>(null);
-  const inspectable = turn.actions.length > 0;
+  const inspectable = turn.actions.length > 0 || turn.updates.length > 0;
 
   if (!inspectable && !turn.plan) return null;
 
@@ -141,6 +146,13 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
             <Text style={styles.listHeadingText}>TURN ACTIVITY</Text>
             <Text style={styles.disclosure}>⌃</Text>
           </Pressable>
+          {turn.updates.map((update, index) => (
+            <View key={`update-${index}`} style={styles.updateRow} testID={`activity-update-${index}`}>
+              <Text selectable style={styles.updateText}>
+                {update}
+              </Text>
+            </View>
+          ))}
           {turn.actions.map((action) => (
             <Pressable
               accessibilityLabel={`Inspect ${action.kind} ${action.path ?? action.title}`}
@@ -173,13 +185,13 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
           testID="activity-turn-summary"
         >
           <View style={[styles.node, active && styles.activeNode]} />
-          <Text numberOfLines={2} style={styles.summaryText}>
+          <Text numberOfLines={1} style={styles.summaryText}>
             {turn.summary}
           </Text>
           {active ? (
             <HullActivityTip />
           ) : inspectable ? (
-            <Text style={styles.disclosure}>›</Text>
+            <Text style={styles.disclosure}>⌄</Text>
           ) : null}
         </Pressable>
       )}
@@ -195,7 +207,6 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgTerminal,
   },
   objective: {
-    marginHorizontal: 12,
     marginBottom: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -234,15 +245,13 @@ const styles = StyleSheet.create({
     lineHeight: 15,
   },
   checklistDone: { color: groknight.textMuted, textDecorationLine: 'line-through' },
+  // One line, no box: a turn's tool run is a repeating unit of the ledger,
+  // and the whole point is that it stays quiet until asked.
   summaryRow: {
-    minHeight: 38,
-    marginHorizontal: 12,
-    paddingHorizontal: 10,
+    minHeight: 34,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    borderWidth: 1,
-    borderColor: groknight.borderQuiet,
+    gap: 9,
   },
   node: {
     width: 7,
@@ -267,7 +276,21 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 15,
   },
-  actionList: { marginHorizontal: 12, borderWidth: 1, borderColor: groknight.borderQuiet },
+  // The expanded drill-down is a transient, non-repeating region the reader
+  // asked for, so it does earn a bounded surface.
+  actionList: { borderWidth: 1, borderColor: groknight.borderQuiet },
+  updateRow: {
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: groknight.borderQuiet,
+  },
+  updateText: {
+    ...Typography.default(),
+    color: groknight.textSecondary,
+    fontSize: 11,
+    lineHeight: 17,
+  },
   listHeading: {
     minHeight: 34,
     paddingHorizontal: 10,
@@ -314,7 +337,7 @@ const styles = StyleSheet.create({
     lineHeight: 11,
     marginTop: 2,
   },
-  detailView: { marginHorizontal: 12, borderWidth: 1, borderColor: groknight.borderQuiet },
+  detailView: { borderWidth: 1, borderColor: groknight.borderQuiet },
   backRow: {
     minHeight: 34,
     justifyContent: 'center',

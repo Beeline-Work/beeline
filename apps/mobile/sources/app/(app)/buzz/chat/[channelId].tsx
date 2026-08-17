@@ -26,7 +26,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { KeyboardAvoidingView, useKeyboardState } from 'react-native-keyboard-controller';
 import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useLocalSearchParams, router, type Href } from 'expo-router';
+import { useLocalSearchParams, useNavigation, router, type Href } from 'expo-router';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
 import { Modal } from '@/modal';
 import { BuzzRigTransport } from '@/sync/transport';
@@ -97,12 +97,20 @@ import {
 } from '@/buzz/chat-attachment';
 import { describeWriteRequest } from '@/buzz/write-request-copy';
 import {
+  cachedChannelKind,
+  channelHeaderTitle,
   cornerSessionState,
   latestCornerTurnSummary,
   resolveCornerViewAgentPubkey,
+  type ChannelKind,
 } from '@/buzz/corner-session';
+import {
+  chatBackAction,
+  cornerHref,
+  roomHref,
+  type ChatStackRoute,
+} from '@/buzz/corner-navigation';
 import { isNearChatBottom } from '@/buzz/chat-scroll';
-import { buildTurnActivity } from '@/buzz/activity-timeline';
 import { replyMessageText, type MessageReplyTarget } from '@/buzz/message-reply';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
@@ -120,6 +128,7 @@ import { AgentAvatar } from '@/components/buzz/AgentAvatar';
 import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome';
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
+import { CornerLedgerEntry, CornerSteer } from '@/components/buzz/CornerLedger';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
 import {
   HullSurface,
@@ -149,6 +158,11 @@ const OLDER_MESSAGES_PAGE_SIZE = 30;
 // If the product ever approves a non-monochrome exception, change only this value.
 const MERGE_APPROVAL_ACCENT = groknight.accent;
 
+/**
+ * Everything the agent's tools did in one turn, folded into a single ledger
+ * line. Tool prose, commands, and outputs stay behind that line's own
+ * disclosure (ActivityTimeline) — a corner never prints a wall of output.
+ */
 function CornerActivity({ message, active }: { message: ChatDisplayMessage; active: boolean }) {
   // A fresh fallback array literal on every render would defeat
   // ActivityTimeline's memoization below (its `items` prop would never be
@@ -160,15 +174,8 @@ function CornerActivity({ message, active }: { message: ChatDisplayMessage; acti
         : [{ kind: 'output' as const, title: 'Output', text: message.text }],
     [message.activity, message.text],
   );
-  const turn = useMemo(() => buildTurnActivity(activity), [activity]);
   return (
     <View style={styles.activityGroup} testID="corner-activity">
-      {turn.updates.map((update, index) => (
-        <View key={`${message.id}-update-${index}`} style={styles.activityUpdate}>
-          <Text style={styles.activityUpdateLabel}>UPDATE</Text>
-          <MonoMarkdown markdown={update} tone="output" />
-        </View>
-      ))}
       <ActivityTimeline active={active} items={activity} testID="corner-activity-timeline" />
     </View>
   );
@@ -309,7 +316,7 @@ function TranscriptRow({
   bodyText: string | undefined;
   bodyTestID: string;
   offlineQueued: boolean;
-  attachments: AttachmentReference[] | undefined;
+  attachments: React.ReactNode;
   provenance: string | null;
 }) {
   return (
@@ -336,18 +343,22 @@ function TranscriptRow({
       {offlineQueued && (
         <Text style={styles.offlineDeliveryNote}>SENT TO ROOM · AGENT OFFLINE</Text>
       )}
-      {attachments?.map((attachment) => (
-        <AttachmentCard attachment={attachment} key={`${itemId}-${attachment.url}`} />
-      ))}
+      {attachments}
       {provenance && <Text style={styles.provenanceText}>{provenance}</Text>}
     </View>
   );
 }
 
 export default function BuzzChat() {
-  const { channelId, notificationResponseId } = useLocalSearchParams<{
+  // `parent`/`title` are hints, not authority: every surface that opens a
+  // corner already knows both, so passing them makes the header correct on the
+  // first frame instead of one relay round trip later. The screen's own reads
+  // still run and still win.
+  const { channelId, notificationResponseId, parent, title } = useLocalSearchParams<{
     channelId: string;
     notificationResponseId?: string;
+    parent?: string;
+    title?: string;
   }>();
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
   const initialCacheState = useBuzzLocalCache.getState();
@@ -355,7 +366,10 @@ export default function BuzzChat() {
   const initialChannelCache = initialViewerPubkey
     ? getCachedChannel(initialViewerPubkey, decodedId)
     : undefined;
+  const routeParentChannelId = parent?.trim() || undefined;
+  const routeChannelTitle = title?.trim() || undefined;
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
   const flatListRef = useRef<FlatList<ChatDisplayMessage>>(null);
   const composerRef = useRef<TextInput>(null);
   // React state can lag the final Android native text event when the user
@@ -396,7 +410,14 @@ export default function BuzzChat() {
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [reviewFileCount, setReviewFileCount] = useState<number | null>(null);
   const [parentChannelId, setParentChannelId] = useState<string | undefined>(
-    initialChannelCache?.parentChannelId,
+    initialChannelCache?.parentChannelId ?? routeParentChannelId,
+  );
+  // Whether this transcript is a Room or a Corner, tracked separately from
+  // `parentChannelId` because an absent parent means "room" only after the
+  // channel's own read has landed — before that it means "not known yet", and
+  // the header must not name either surface on a guess.
+  const [channelKind, setChannelKind] = useState<ChannelKind>(() =>
+    routeParentChannelId ? 'corner' : cachedChannelKind(initialChannelCache),
   );
   // The corner view's own status badge, sourced from the exact same
   // canonical CornerStatus (via listSubchannelLifecycle) that the Room-list
@@ -410,7 +431,11 @@ export default function BuzzChat() {
   const [canManageWorkspace, setCanManageWorkspace] = useState(false);
   const [addingMemberPubkey, setAddingMemberPubkey] = useState<string | null>(null);
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
-  const [roomName, setRoomName] = useState(initialChannelCache?.roomName ?? ROOM_LABEL);
+  // `null` while the channel's own metadata read is still in flight; `''` once
+  // it has landed and the channel genuinely carries no name.
+  const [resolvedChannelName, setResolvedChannelName] = useState<string | null>(
+    initialChannelCache?.roomName ?? routeChannelTitle ?? null,
+  );
   const [viewerChannelRole, setViewerChannelRole] = useState<ChannelRole | null>(null);
   const [rosterVisible, setRosterVisible] = useState(false);
   const [roomActionsVisible, setRoomActionsVisible] = useState(false);
@@ -629,6 +654,17 @@ export default function BuzzChat() {
     mentionSuggestions.matches.length > 0,
   );
   const isCorner = Boolean(parentChannelId);
+  // `null` means "show a skeleton": the channel kind or its name is still
+  // resolving and no honest word exists yet. A corner never renders the Room
+  // label as a stand-in for its own slug.
+  const headerTitle = channelHeaderTitle(
+    resolvedChannelName,
+    isCorner ? 'corner' : channelKind,
+    decodedId,
+  );
+  // Room-lifecycle copy ("Delete <name>?") only ever runs on a Room, which by
+  // then has a resolved name; the label is the safe fallback for the sentence.
+  const roomName = headerTitle ?? ROOM_LABEL;
   const isDirectMessage = Boolean(directMessage);
   const sessionState = isCorner ? cornerSessionState(messages) : 'idle';
   const cornerAgentPubkey = useMemo(
@@ -639,6 +675,14 @@ export default function BuzzChat() {
   const cornerAgentDisplay = cornerAgentPubkey
     ? resolveAgentDisplayIdentity(cornerAgentPubkey, agentByPubkey.get(cornerAgentPubkey))
     : undefined;
+  const cornerAgentOnline = Boolean(
+    cornerAgentPubkey &&
+      isAgentPresenceOnlineWithReconnectGrace(
+        agentPresences[cornerAgentPubkey],
+        presenceNow,
+        presenceReconnectGrace[cornerAgentPubkey],
+      ),
+  );
   const visibleMessages = useMemo(
     () => transcriptMessages(messages, isCorner),
     [isCorner, messages],
@@ -824,6 +868,25 @@ export default function BuzzChat() {
         setUserPubkey(identity.publicKey);
 
         const client = await t.ensureClient();
+        // The header identity — is this a Room or a Corner, and what is it
+        // called — is two cheap scoped reads, but it used to be committed to
+        // state only after the transcript backfill, a possible 750ms empty-room
+        // retry, the presence subscribe, and the presence backfill had all
+        // resolved, because it shared a `Promise.all` with them. Start it here
+        // and commit each result the moment it lands; the rest of the load
+        // still awaits the same promise, so nothing is read twice.
+        const channelIdentity = Promise.all([
+          client.getChannelMetadata(decodedId),
+          t.getParentChannelId(decodedId),
+        ]);
+        void channelIdentity
+          .then(([metadata, parentId]) => {
+            if (cancelled) return;
+            if (parentId) setParentChannelId(parentId);
+            setChannelKind(parentId ? 'corner' : 'room');
+            setResolvedChannelName(metadata?.name?.trim() ?? '');
+          })
+          .catch(() => undefined);
         // A corner's live agent-activity stream can deliver one raw event per
         // streamed token. Reprojecting + re-sorting the cache on every single
         // one saturates the JS thread and reads as a UI freeze during a send
@@ -891,19 +954,17 @@ export default function BuzzChat() {
         // so a notification deep-link cannot race into an empty transcript.
         const availableCommunities = await client.listCommunities();
         const [
+          [channelMetadata, parentId],
           directCommunityId,
-          channelMetadata,
           roomMembers,
-          parentId,
           messageSync,
           identityIsAgent,
           dm,
           channelRole,
         ] = await Promise.all([
+          channelIdentity,
           client.getChannelCommunityId(decodedId),
-          client.getChannelMetadata(decodedId),
           client.listMembers(decodedId),
-          t.getParentChannelId(decodedId),
           revalidateCachedMessages(t, identity.publicKey, decodedId),
           client.isAgentIdentity(identity.publicKey),
           client.getDirectMessage(decodedId),
@@ -989,13 +1050,11 @@ export default function BuzzChat() {
           setViewerIsAgent(identityIsAgent);
           setViewerChannelRole(channelRole);
           setDirectMessage(dm);
-          setRoomName(channelMetadata?.name?.trim() || ROOM_LABEL);
           const initialPresences = presenceMapFromSessionEvents(presenceEvents);
           agentPresencesRef.current = initialPresences;
           setAgentPresences(initialPresences);
           setPresenceResolved(true);
           setPresenceNow(Date.now());
-          if (parentId) setParentChannelId(parentId);
           if (messageSync.mergeTarget !== undefined) setMergeTarget(messageSync.mergeTarget);
           if (messageSync.archiveChannel) setIsArchived(true);
           useBuzzLocalCache.getState().patchChannel(identity.publicKey, decodedId, {
@@ -1003,7 +1062,9 @@ export default function BuzzChat() {
             communityId: channelCommunityId,
             parentChannelId: parentId ?? undefined,
             directMessage: dm,
-            roomName: channelMetadata?.name?.trim() || ROOM_LABEL,
+            // Cache the channel's own name, never the generic Room label — a
+            // cached label re-seeds the wrong header on the next cold open.
+            roomName: channelMetadata?.name?.trim() ?? '',
             archived: messageSync.entry.archived,
             mergeTarget: messageSync.entry.mergeTarget,
           });
@@ -1085,7 +1146,7 @@ export default function BuzzChat() {
             (member) => member.pubkey === identity.publicKey,
           )?.role;
           setCanManageWorkspace(isWorkspaceManagerRole(workspaceRole));
-          let resolvedRoomName = channelMetadata?.name?.trim() || ROOM_LABEL;
+          let resolvedRoomName = channelMetadata?.name?.trim() ?? '';
           if (dm) {
             const peerPubkey = directMessagePeer(dm, identity.publicKey);
             const peerAgent = communityAgents.find((agent) => agent.pubkey === peerPubkey);
@@ -1098,7 +1159,7 @@ export default function BuzzChat() {
             resolvedRoomName = peerAgent
               ? resolveAgentDisplayIdentity(peerPubkey, peerAgent).name
               : (verifiedPeerNip05 ?? peerProfile?.name ?? shortMemberNpub(peerPubkey));
-            setRoomName(resolvedRoomName);
+            setResolvedChannelName(resolvedRoomName);
           }
           useBuzzLocalCache.getState().patchChannel(identity.publicKey, decodedId, {
             availableAgents: communityAgents,
@@ -1574,10 +1635,10 @@ export default function BuzzChat() {
     }
     if (!transport || !canRenameRoom(viewerChannelRole) || renameBusy) return;
 
-    const previousName = roomName;
+    const previousName = resolvedChannelName;
     setRenameBusy(true);
     setRenameError(null);
-    setRoomName(name);
+    setResolvedChannelName(name);
     patchCachedRoomName(name);
     try {
       const client = await transport.ensureClient();
@@ -1586,8 +1647,8 @@ export default function BuzzChat() {
       setRoomActionsVisible(false);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
-      setRoomName(previousName);
-      patchCachedRoomName(previousName);
+      setResolvedChannelName(previousName);
+      patchCachedRoomName(previousName ?? '');
       setRenameError(`Could not rename ${ROOM_LABEL}: ${String(err)}`);
     } finally {
       setRenameBusy(false);
@@ -1597,7 +1658,7 @@ export default function BuzzChat() {
     patchCachedRoomName,
     renameBusy,
     renameDraft,
-    roomName,
+    resolvedChannelName,
     transport,
     viewerChannelRole,
   ]);
@@ -1623,18 +1684,37 @@ export default function BuzzChat() {
     [activeCommunityId, transport, userPubkey],
   );
 
+  /**
+   * Leave this transcript. A corner returns to its parent Room by id — see
+   * `corner-navigation.ts` for why the route directly underneath cannot be
+   * trusted to be that Room — and a transcript that is the only route on the
+   * stack replaces itself with the Room list instead of calling a
+   * `router.back()` that silently does nothing.
+   */
+  const handleBack = useCallback(() => {
+    const routes = (navigation.getState()?.routes ?? []) as ChatStackRoute[];
+    const action = chatBackAction(routes, parentChannelId);
+    if (action.type === 'pop') router.dismiss(action.count);
+    // The parent Room was never on this stack (the corner was opened straight
+    // from the Room list, or from a notification cold start). Open it here
+    // rather than popping into whatever happens to be underneath.
+    else if (action.type === 'open-room') router.replace(roomHref(action.channelId));
+    else if (action.type === 'back') router.back();
+    else router.replace('/buzz/channels');
+  }, [navigation, parentChannelId]);
+
   const handleCloseCorner = useCallback(async () => {
     if (!transport) return;
     try {
       await transport.closeCorner(decodedId);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-      router.back();
+      handleBack();
     } catch (err) {
       console.warn('Close corner failed:', err);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Modal.alert('Could not close corner', err instanceof Error ? err.message : String(err));
     }
-  }, [decodedId, transport]);
+  }, [decodedId, handleBack, transport]);
 
   const handleApprove = useCallback(async () => {
     if (!transport || !mergeTarget) return;
@@ -1664,9 +1744,14 @@ export default function BuzzChat() {
     });
   }, []);
 
-  const openCorner = useCallback((subchannelId: string) => {
-    router.push(`/buzz/chat/${encodeURIComponent(subchannelId)}` as Href);
-  }, []);
+  const openCorner = useCallback(
+    (subchannelId: string) => {
+      if (subchannelId === decodedId) return;
+      router.push(cornerHref(subchannelId, decodedId));
+    },
+    [decodedId],
+  );
+
 
   const renderItem = useCallback(
     ({ item }: { item: ChatDisplayMessage }) => {
@@ -1796,9 +1881,7 @@ export default function BuzzChat() {
             accessibilityLabel={`${display?.name ?? 'Agent'} corner ${presentation.label.toLowerCase()}${
               showsPresenceDot ? (cornerOnline ? ', agent online' : ', agent offline') : ''
             }. View corner`}
-            onPress={() =>
-              router.push(`/buzz/chat/${encodeURIComponent(item.corner!.subchannelId)}` as Href)
-            }
+            onPress={() => openCorner(item.corner!.subchannelId)}
             style={styles.cornerStatusCard}
             testID={`corner-status-${item.corner.status}`}
           >
@@ -1873,7 +1956,7 @@ export default function BuzzChat() {
         );
       }
 
-      // ── Regular message bubble ───────────────────────────────────
+      // ── Ordinary message ─────────────────────────────────────────
       const isBody = item.pubkey && BODY_PUBKEYS.has(item.pubkey);
       const isOwn = item.isUser;
       const knownAgent = item.pubkey ? agentByPubkey.get(item.pubkey) : undefined;
@@ -1906,10 +1989,52 @@ export default function BuzzChat() {
         </View>
       ) : null;
 
-      // Rooms and Corners render the identical row (§ DESIGN.md "Rooms and
-      // Corners are one system") — only the human-own layout differs, and
-      // that's carried by TranscriptRow's own isOwn/isAgent alignment, not a
-      // per-branch component.
+      const attachmentElements = item.attachments?.map((attachment) => (
+        <AttachmentCard attachment={attachment} key={`${item.id}-${attachment.url}`} />
+      ));
+
+      // ── Corner ledger (§ DESIGN.md "Rooms and Corners") ──────────
+      // A corner is single-agent, so the agent is named once in the top bar
+      // and its turns render here as plain flowing text — no avatar, no label,
+      // no glyph. A human's steer breaks that flow deliberately.
+      if (isCorner) {
+        const steerSignature = isOwn
+          ? 'YOU'
+          : item.pubkey
+            ? (personName ?? shortMemberNpub(item.pubkey))
+            : 'SOMEONE';
+        return (
+          <SwipeToReply
+            messageId={item.id}
+            onReply={item.isAgentDraft ? () => undefined : () => beginReply(item)}
+          >
+            <NewMessageMaterialize enabled={Boolean(item.isNew)}>
+              {isAgent ? (
+                <CornerLedgerEntry
+                  itemId={item.id}
+                  bodyText={item.text}
+                  bodyTestID={`chat-message-text-${item.id}`}
+                  replyReference={replyReference}
+                  attachments={attachmentElements}
+                />
+              ) : (
+                <CornerSteer
+                  itemId={item.id}
+                  signature={steerSignature.toUpperCase()}
+                  bodyText={item.text}
+                  bodyTestID={`chat-message-text-${item.id}`}
+                  replyReference={replyReference}
+                  attachments={attachmentElements}
+                  offlineQueued={isOwn && offlineQueuedIds.has(item.id)}
+                />
+              )}
+            </NewMessageMaterialize>
+          </SwipeToReply>
+        );
+      }
+
+      // Rooms keep the unified row: many participants, so every message names
+      // and marks its author.
       const avatarElement = !isOwn ? (
         display ? (
           <AgentAvatar
@@ -1956,7 +2081,7 @@ export default function BuzzChat() {
               bodyText={item.text}
               bodyTestID={`chat-message-text-${item.id}`}
               offlineQueued={isOwn && offlineQueuedIds.has(item.id)}
-              attachments={item.attachments}
+              attachments={attachmentElements}
               provenance={provenance}
             />
           </NewMessageMaterialize>
@@ -1967,6 +2092,8 @@ export default function BuzzChat() {
       agentByPubkey,
       activeActivityId,
       handleWritePermission,
+      isCorner,
+      offlineQueuedIds,
       parentChannelId,
       permissionActionId,
       personProfileByPubkey,
@@ -2018,44 +2145,91 @@ export default function BuzzChat() {
           style={[styles.header, { minHeight: insets.top + 60, paddingTop: insets.top + 8 }]}
         >
           <TouchableOpacity
-            accessibilityLabel="Back to Rooms"
-            onPress={() => router.back()}
+            accessibilityLabel={isCorner ? `Back to this ${CORNER_LABEL}’s ${ROOM_LABEL}` : 'Back to Rooms'}
+            onPress={handleBack}
             style={styles.backButton}
             testID="chat-back"
           >
             <Text style={[styles.backText, isCorner && styles.cornerBackText]}>‹</Text>
           </TouchableOpacity>
+          {/*
+            A corner has exactly one administering agent, so its identity is
+            stated here once and never repeated on a message. The ledger below
+            renders the agent's turns as unattributed flowing text precisely
+            because this mark and name are always on screen above them.
+          */}
+          {isCorner && cornerAgentPubkey && (
+            <View style={styles.cornerHeaderMark} testID="corner-header-agent">
+              <AgentAvatar
+                pubkey={cornerAgentPubkey}
+                avatarSeed={cornerAgentDisplay?.avatarSeed}
+                avatarUrl={cornerAgentDisplay?.avatarUrl}
+                name={cornerAgentDisplay?.name ?? 'Agent'}
+                size={26}
+              />
+            </View>
+          )}
           <TouchableOpacity
-            accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)} in this ${ROOM_LABEL}`}
+            accessibilityLabel={
+              isCorner
+                ? `${cornerAgentDisplay?.name ?? 'Agent'}’s ${CORNER_LABEL}. View ${formatRoomParticipantTotal(roomParticipantTotal)}`
+                : `View ${formatRoomParticipantTotal(roomParticipantTotal)} in this ${ROOM_LABEL}`
+            }
             accessibilityRole="button"
             disabled={!participantsHydrated}
             onPress={() => setRosterVisible(true)}
             style={styles.headerCenter}
             testID="room-participant-roster-trigger"
           >
-            <Text
-              style={[styles.channelName, isCorner && styles.cornerChannelName]}
-              numberOfLines={1}
-            >
-              {roomName}
-            </Text>
-            <Text
-              style={[styles.headerMeta, isCorner && styles.cornerHeaderMeta]}
-              numberOfLines={1}
-              testID={isCorner ? 'corner-view-status' : undefined}
-            >
-              {isCorner && displayedCornerStatus
-                ? // Same canonical status word as the Room-list dropdown, the
-                  // Room chat card, and the standalone Corners list.
-                  `${cornerStatusPresentation(displayedCornerStatus).glyph} ${cornerStatusPresentation(displayedCornerStatus).label}  ·  ${
-                    participantsHydrated
-                      ? formatRoomParticipantTotal(roomParticipantTotal)
-                      : 'LOADING MEMBERS'
-                  }`
-                : participantsHydrated
+            {headerTitle === null ? (
+              // The channel's own name has not landed yet. Neither "Room" nor
+              // a corner slug would be true, so show neither.
+              <View
+                accessibilityLabel="Loading name"
+                style={[styles.channelNameSkeleton, isCorner && styles.cornerChannelNameSkeleton]}
+                testID="chat-title-skeleton"
+              />
+            ) : (
+              <Text
+                style={[styles.channelName, isCorner && styles.cornerChannelName]}
+                numberOfLines={1}
+              >
+                {headerTitle}
+              </Text>
+            )}
+            {isCorner ? (
+              <View style={styles.cornerHeaderStatusRow}>
+                <Text numberOfLines={1} style={styles.cornerHeaderAgent}>
+                  {(cornerAgentDisplay?.name ?? 'AGENT').toUpperCase()}
+                </Text>
+                {cornerAgentPubkey && (
+                  <AgentPresenceLight
+                    online={cornerAgentOnline}
+                    testID="corner-header-presence"
+                  />
+                )}
+                <Text
+                  numberOfLines={1}
+                  style={styles.cornerHeaderMeta}
+                  testID="corner-view-status"
+                >
+                  {/*
+                    Same canonical status word as the Room-list dropdown, the
+                    Room chat card, and the standalone Corners list.
+                  */}
+                  {displayedCornerStatus
+                    ? `·  ${cornerStatusPresentation(displayedCornerStatus).glyph} ${cornerStatusPresentation(displayedCornerStatus).label}`
+                    : '·  …'}
+                  {participantsHydrated ? `  ·  ${formatRoomParticipantTotal(roomParticipantTotal)}` : ''}
+                </Text>
+              </View>
+            ) : (
+              <Text style={styles.headerMeta} numberOfLines={1}>
+                {participantsHydrated
                   ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ·  IN THIS ROOM  ›`
                   : 'LOADING MEMBERS'}
-            </Text>
+              </Text>
+            )}
           </TouchableOpacity>
           {!parentChannelId && !isDirectMessage && !viewerIsAgent && !isArchived && (
             <TouchableOpacity
@@ -2233,10 +2407,7 @@ export default function BuzzChat() {
               accessibilityLabel={tappableCornerId ? 'View active corner' : 'Agent activity'}
               accessibilityRole={tappableCornerId ? 'button' : undefined}
               disabled={!tappableCornerId}
-              onPress={() =>
-                tappableCornerId &&
-                router.push(`/buzz/chat/${encodeURIComponent(tappableCornerId)}` as Href)
-              }
+              onPress={() => tappableCornerId && openCorner(tappableCornerId)}
               style={styles.agentLiveStatus}
               testID="agent-live-status"
             >
@@ -2991,6 +3162,12 @@ const styles = StyleSheet.create({
     color: groknight.muted,
   },
   cornerBackText: { ...Typography.mono(), color: groknight.textMuted },
+  // The single agent's faceted mark, stated once for the whole corner.
+  cornerHeaderMark: {
+    marginRight: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   headerCenter: {
     flex: 1,
     minHeight: 44,
@@ -3003,10 +3180,25 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     color: groknight.textPrimary,
   },
+  // A corner's name is a slug, not a title — set it at label scale so it
+  // reads as an identifier beside the agent's mark rather than a headline.
   cornerChannelName: {
     ...Typography.mono('semiBold'),
+    fontSize: 15,
+    lineHeight: 19,
+    letterSpacing: 0.2,
     color: groknight.textPrimary,
   },
+  // Stands in for the name until the channel's own read lands, so the header
+  // never has to guess between "Room" and a corner slug.
+  channelNameSkeleton: {
+    width: 132,
+    height: 13,
+    marginVertical: 5,
+    backgroundColor: groknight.bgHover,
+    borderRadius: groknight.radius,
+  },
+  cornerChannelNameSkeleton: { width: 108 },
   headerMeta: {
     ...Typography.default(),
     fontSize: 11,
@@ -3014,8 +3206,28 @@ const styles = StyleSheet.create({
     color: groknight.textMuted,
     marginTop: 2,
   },
-  cornerHeaderMeta: { ...Typography.mono(), color: groknight.textMuted },
-  cornerHeaderStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 },
+  cornerHeaderAgent: {
+    ...Typography.mono('semiBold'),
+    flexShrink: 0,
+    color: groknight.textSecondary,
+    fontSize: 10,
+    lineHeight: 14,
+    letterSpacing: 0.7,
+  },
+  cornerHeaderMeta: {
+    ...Typography.mono(),
+    flexShrink: 1,
+    color: groknight.textMuted,
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  cornerHeaderStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 3,
+    minWidth: 0,
+  },
   addMembersButton: {
     width: 44,
     minHeight: 44,
@@ -3543,31 +3755,15 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
-  // ── Corner terminal transcript ─────────────────────────────────
+  // ── Corner ledger ──────────────────────────────────────────────
+  // A turn's whole tool run folds into one line here; the group itself is
+  // pure rhythm, with no rule or fill separating it from the prose around it.
   activityGroup: {
     width: '100%',
     minWidth: 0,
-    marginBottom: 2,
-    borderTopWidth: 1,
-    borderTopColor: groknight.border,
-    backgroundColor: groknight.bgTerminal,
+    marginBottom: 20,
   },
-  activityUpdate: {
-    marginHorizontal: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 9,
-    borderLeftWidth: 2,
-    borderLeftColor: groknight.agentAccent,
-  },
-  activityUpdateLabel: {
-    ...Typography.default(),
-    color: groknight.textMuted,
-    fontSize: 8,
-    lineHeight: 11,
-    letterSpacing: 0.8,
-    marginBottom: 4,
-  },
-  // The one transcript row Rooms and Corners both render. No border, fill,
+  // The Room transcript row. No border, fill,
   // or radius — a repeating content unit never earns a box (DESIGN.md).
   // Vertical rhythm alone separates one row from the next.
   terminalTurn: {

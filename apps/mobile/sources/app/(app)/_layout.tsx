@@ -114,6 +114,14 @@ export default function RootLayout() {
                     statusBarStyle: 'light',
                 }}
             />
+            {/* THROWAWAY TYPE EXPLORATION — removed with @/buzz/font-exploration. */}
+            <Stack.Screen
+                name="buzz/settings/fonts"
+                options={{
+                    headerShown: false,
+                    statusBarStyle: 'light',
+                }}
+            />
             <Stack.Screen
                 name="buzz/settings/workspace"
                 options={{

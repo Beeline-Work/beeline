@@ -42,6 +42,7 @@ import { BrowserNavigationShortcuts } from '@/hooks/useBrowserNavigationShortcut
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
 import { flushBuzzLocalCacheForBackground } from '@/buzz/local-cache';
+import { EXPLORATION_FONT_ASSETS } from '@/buzz/font-exploration-assets';
 
 // Keep remote notifications visible while the app is foregrounded. The sender
 // may be writing in a different Room than the one currently on screen.
@@ -144,6 +145,10 @@ async function loadFonts() {
                 // Bricolage Grotesque  
                 'BricolageGrotesque-Bold': require('@/assets/fonts/BricolageGrotesque-Bold.ttf'),
 
+                // THROWAWAY TYPE EXPLORATION: candidate families for the runtime
+                // type-direction toggle (@/buzz/font-exploration).
+                ...EXPLORATION_FONT_ASSETS,
+
                 ...FontAwesome.font,
             });
         } else {
@@ -164,6 +169,10 @@ async function loadFonts() {
 
                         // Bricolage Grotesque  
                         'BricolageGrotesque-Bold': require('@/assets/fonts/BricolageGrotesque-Bold.ttf'),
+
+                        // THROWAWAY TYPE EXPLORATION: candidate families for the runtime
+                        // type-direction toggle (@/buzz/font-exploration).
+                        ...EXPLORATION_FONT_ASSETS,
 
                         ...FontAwesome.font,
                     });

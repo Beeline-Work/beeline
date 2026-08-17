@@ -77,7 +77,8 @@ import {
   sectionRoomRoster,
 } from '@/buzz/room-participants';
 import {
-  agentRosterCommunityId,
+  agentRosterCommunityIds,
+  mergeAgentRosters,
   resolveAgentDisplayIdentity,
   resolveCornerCardAgentPubkey,
 } from '@/buzz/agent-display';
@@ -1000,15 +1001,17 @@ export default function BuzzChat() {
           directCommunityId ??
           (parentId ? await client.getChannelCommunityId(parentId) : null) ??
           null;
-        // Agent names are presentation, and they come from the roster's soul
-        // overlays — so the roster read falls back to the viewer's selected
-        // Workspace when the channel resolves no community of its own, rather
-        // than leaving the transcript with no roster and every agent showing
-        // its seed placeholder (`agentRosterCommunityId`). Membership, roles,
-        // and profile writes below stay on `channelCommunityId`.
-        const rosterCommunityId = agentRosterCommunityId(
+        // Agent names come from the roster's soul overlays, and both halves of
+        // an agent's registration are community-scoped — so a transcript that
+        // resolves the wrong Workspace, or none, sees no agents at all and
+        // names every one of them with a confident placeholder. Read every
+        // Workspace the viewer belongs to, channel's own first
+        // (`agentRosterCommunityIds`). Membership, roles, and profile writes
+        // below stay strictly on `channelCommunityId`.
+        const rosterCommunityIds = agentRosterCommunityIds(
           channelCommunityId,
           await loadActiveCommunityId(identity.publicKey),
+          availableCommunities.map((community) => community.communityId),
         );
         const presenceChannelId = parentId ?? decodedId;
         const handleLivePresence = (event: Parameters<typeof projectChatEvent>[0]) => {
@@ -1145,14 +1148,32 @@ export default function BuzzChat() {
           // previously starved the resumed composer.
         });
 
-        const [communityAgents, communityMembers, archived, mergeInfo, siblingCorners] =
+        const [agentRosters, communityMembers, archived, mergeInfo, siblingCorners] =
           await Promise.all([
-            rosterCommunityId ? client.listAgents(rosterCommunityId) : Promise.resolve([]),
+            Promise.all(
+              rosterCommunityIds.map((communityId) =>
+                // One unreachable Workspace must not cost the transcript every
+                // other Workspace's names.
+                client.listAgents(communityId).catch((error) => {
+                  console.warn(`Failed to read the agent roster for ${communityId}:`, error);
+                  return [] as Agent[];
+                }),
+              ),
+            ),
             channelCommunityId ? client.communityMembers(channelCommunityId) : Promise.resolve([]),
             t.isChannelArchived(decodedId),
             parentId ? t.getSubchannelMergeTarget(decodedId) : Promise.resolve(null),
             parentId ? t.listSubchannelLifecycle(parentId) : Promise.resolve([]),
           ]);
+        const communityAgents = [...mergeAgentRosters(agentRosters).values()];
+        // Commit the roster the moment it resolves. It used to land only after
+        // the person-profile read below, so a single failure there left the
+        // transcript with no agent names at all until the screen remounted.
+        if (!cancelled) {
+          useBuzzLocalCache
+            .getState()
+            .patchChannel(identity.publicKey, decodedId, { availableAgents: communityAgents });
+        }
         if (!cancelled) {
           setCornerLifecycleStatus(
             siblingCorners.find((corner) => corner.id === decodedId)?.status ?? null,
@@ -1942,8 +1963,7 @@ export default function BuzzChat() {
               )}
             </View>
             <View style={styles.openCornerAction}>
-              <Text style={styles.openCornerText}>VIEW {CORNER_LABEL.toUpperCase()}</Text>
-              <Text style={styles.openCornerGlyph}>›</Text>
+              <Text style={styles.openCornerText}>view →</Text>
             </View>
           </TouchableOpacity>
         );
@@ -2005,13 +2025,21 @@ export default function BuzzChat() {
       // An agent viewing its own Room messages is both `isUser` and an agent;
       // the agent test wins, matching `ledgerSpeakerKey`'s own ordering.
       const isSelfSteer = isOwn && !isAgent;
-      const voiceName = isAgent
+      // A Corner is exactly one administering agent plus you, so anything that
+      // is not your own steer is that agent — by the surface's definition, not
+      // by a roster lookup. Deriving it structurally is what keeps a Corner
+      // correct when the roster is empty or still loading: `isAgent` goes false
+      // there, and a Corner that trusted it printed the signer's bare npub as a
+      // handle and dropped the agent's own words to the ordinary grey tier.
+      const isCornerAgent = isCorner && !isSelfSteer;
+      const speaksAsAgent = isAgent || isCornerAgent;
+      const voiceName = speaksAsAgent
         ? (display ? display.name : (personName ?? shortMemberNpub(item.pubkey ?? '')))
         : (personName ?? (item.pubkey ? shortMemberNpub(item.pubkey) : 'SOMEONE'));
-      // Zero handles in a Corner's single-agent flow; none on your own inset
-      // block; none on a continuation of the voice directly above.
-      const handle =
-        attributionContinued || isSelfSteer || (isCorner && isAgent) ? undefined : voiceName;
+      // Zero handles in a Corner, full stop — its one agent is named in the top
+      // bar. None on your own inset block, and none on a continuation of the
+      // voice directly above.
+      const handle = attributionContinued || isSelfSteer || isCorner ? undefined : voiceName;
       const marginalia = (
         <LedgerMarginalia
           stamp={ledgerStamp(item.timestamp)}
@@ -2039,12 +2067,12 @@ export default function BuzzChat() {
       // reply is a deliberate reach back up the transcript, so it keeps its
       // quote.
       const referencedMessage =
-        !isAgent && item.replyToId ? visibleMessageById.get(item.replyToId) : undefined;
+        !speaksAsAgent && item.replyToId ? visibleMessageById.get(item.replyToId) : undefined;
       const referencedTarget = referencedMessage
         ? replyTargetForMessage(referencedMessage)
         : undefined;
       const replyReference =
-        !isAgent && item.replyToId ? (
+        !speaksAsAgent && item.replyToId ? (
           <View style={styles.replyReference} testID={`reply-reference-${item.id}`}>
             <Text numberOfLines={2} style={styles.replyReferenceText}>
               ↳ {referencedTarget?.authorName ?? 'ORIGINAL MESSAGE'} ·{' '}
@@ -2055,9 +2083,11 @@ export default function BuzzChat() {
 
       // A pasted `git push` dump, stack trace, or npm error wall gets the same
       // treatment as tool telemetry: lifted out of the prose into one ghost
-      // line. Only agent turns are scanned — a person pasting a log is doing it
-      // on purpose.
-      const ledgerText = isAgent ? splitLedgerText(item.text) : undefined;
+      // line. Deliberately gated on `!isSelfSteer` rather than on `isAgent` —
+      // `isAgent` depends on the roster and goes false exactly when a Corner
+      // needs this most, which is how a full push-rejection dump reached the
+      // slab. Your own message is never touched: pasting a log is on purpose.
+      const ledgerText = isSelfSteer ? undefined : splitLedgerText(item.text);
       const machineNoise = ledgerText?.machine ? (
         <LedgerGhostLine
           body={ledgerText.machine}
@@ -2088,7 +2118,7 @@ export default function BuzzChat() {
                 itemId={item.id}
                 handle={handle}
                 continued={attributionContinued}
-                luminous={isAgent}
+                luminous={speaksAsAgent}
                 bodyText={ledgerText ? ledgerText.prose : item.text}
                 bodyTestID={`chat-message-text-${item.id}`}
                 marginalia={marginalia}
@@ -3811,19 +3841,20 @@ const styles = StyleSheet.create({
   cornerPresenceDot: { ...Typography.default(), fontSize: 8 },
   cornerPresenceOnline: { color: groknight.accent },
   cornerPresenceOffline: { color: groknight.textMuted },
+  /* One affordance vocabulary for "enter this corner", shared with
+   * WritePermissionOutcome: `view →` at the row's right edge, a half-step
+   * brighter than the status beside it, never framed. */
   openCornerAction: {
     flexShrink: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
+    width: LEDGER_MARGINALIA_WIDTH,
+    alignItems: 'flex-end',
   },
   openCornerText: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
+    ...Typography.mono(),
+    color: groknight.ledgerBody,
     fontSize: 9,
-    letterSpacing: 0.4,
+    lineHeight: 14,
   },
-  openCornerGlyph: { ...Typography.default(), color: groknight.textPrimary, fontSize: 18 },
 
   // ── Merge summary ───────────────────────────────────────────────
   /* A system row is still a row of the ledger: no rule under it, no frame

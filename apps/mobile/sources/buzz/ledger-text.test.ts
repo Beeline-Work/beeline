@@ -47,6 +47,53 @@ describe('splitLedgerText', () => {
     expect(split.machineLines).toBe(5);
   });
 
+  it('lifts a dump written directly under its sentence, with no blank line', () => {
+    // The shape that actually reaches a corner: the agent introduces the
+    // failure and pastes the output on the very next line. A blank-line-block
+    // rule would have swallowed the sentence with it, or missed the dump.
+    const split = splitLedgerText(
+      [
+        'I pushed the branch and the remote refused it:',
+        'To https://github.com/acme/widgets.git',
+        ' ! [rejected]        fm/thing -> fm/thing (fetch first)',
+        "error: failed to push some refs to 'https://github.com/acme/widgets.git'",
+        'hint: Updates were rejected because the remote contains work that you do',
+        'hint: not have locally.',
+        'Want me to rebase onto the new tip?',
+      ].join('\n'),
+    );
+    expect(split.prose).toBe(
+      'I pushed the branch and the remote refused it:\nWant me to rebase onto the new tip?',
+    );
+    expect(split.machine).toContain('! [rejected]');
+    expect(split.machineLines).toBe(5);
+  });
+
+  it('keeps blank lines inside a run instead of splitting one dump into fragments', () => {
+    const split = splitLedgerText(
+      [
+        'Here is the whole failure.',
+        'remote: Enumerating objects: 12, done.',
+        '',
+        'To git@github.com:acme/widgets.git',
+        ' ! [rejected]        main -> main (non-fast-forward)',
+        'error: failed to push some refs',
+      ].join('\n'),
+    );
+    expect(split.prose).toBe('Here is the whole failure.');
+    expect(split.machine).toContain('Enumerating objects');
+    expect(split.machine).toContain('failed to push some refs');
+  });
+
+  it('leaves a single quoted diagnostic in the prose it belongs to', () => {
+    // Two machine-ish lines is an agent talking *about* an error; three is a
+    // dump. This boundary is the difference between quieting the slab and
+    // hiding what the agent said.
+    const prose = 'The build stopped at:\nerror: missing semicolon\nI can fix that in one edit.';
+    expect(splitLedgerText(prose).machine).toBeUndefined();
+    expect(splitLedgerText(prose).prose).toBe(prose);
+  });
+
   it('lifts a fenced block of output while leaving authored code fenced', () => {
     const output = splitLedgerText(
       'Here is what happened:\n\n```\nnpm ERR! code ELIFECYCLE\nnpm ERR! errno 1\n```\n',

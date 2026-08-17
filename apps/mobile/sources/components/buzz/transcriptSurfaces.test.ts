@@ -182,6 +182,41 @@ describe('The obsidian slab', () => {
     }
   });
 
+  it('leaves no bordered status banner anywhere in the transcript flow', () => {
+    // A status is not something the reader must find and act on, so it never
+    // earns a box. The write-permission outcome was the last one left — a
+    // bordered, filled chip that read as a plate laid on the slab.
+    const outcomeSource = readFileSync(
+      new URL('./WritePermissionOutcome.tsx', import.meta.url),
+      'utf8',
+    );
+    expect(outcomeSource).not.toMatch(/border(?:Top|Bottom|Left|Right)?(?:Width|Color|Radius)/);
+    expect(outcomeSource).not.toMatch(/backgroundColor/);
+    expect(outcomeSource).not.toMatch(/cornerOpenChip/);
+    expect(outcomeSource).not.toMatch(/minHeight/);
+
+    // One dim inscribed line at the prose margin, with the affordance hung in
+    // the same right gutter the timestamps use and lifted one tonal step.
+    expect(styleDefinition(outcomeSource, 'outcome')).toMatch(
+      /paddingRight:\s*LEDGER_MARGINALIA_WIDTH/,
+    );
+    expect(styleDefinition(outcomeSource, 'status')).toMatch(/color:\s*groknight\.ledgerQuiet/);
+    const enter = styleDefinition(outcomeSource, 'enter');
+    expect(enter).toMatch(/position:\s*'absolute'/);
+    expect(enter).toMatch(/right:\s*0/);
+    expect(enter).toMatch(/color:\s*groknight\.ledgerBody/);
+    // A tonal flash on press, never a border.
+    expect(styleDefinition(outcomeSource, 'statusPressed')).toMatch(/color:/);
+    expect(styleDefinition(outcomeSource, 'enterPressed')).toMatch(/color:/);
+    // Faceted diamond for corner, arrow for enterable.
+    expect(outcomeSource).toContain('◇ CORNER OPEN');
+    expect(outcomeSource).toContain('view →');
+
+    // ...and one affordance vocabulary: the Room's own corner card agrees.
+    expect(chatSource).toContain('<Text style={styles.openCornerText}>view →</Text>');
+    expect(chatSource).not.toMatch(/openCornerGlyph/);
+  });
+
   it('separates a system row with air, not with an edge', () => {
     // The corner card is the ledger's other interruption, and the ledger has no
     // delimiters at all — so it is set apart by its own margin and nothing else.
@@ -219,8 +254,19 @@ describe('Speaker identity', () => {
     expect(markdownSource).toMatch(/leadingInline/);
   });
 
-  it('gives a Corner’s single agent zero handles — it is named in the top bar', () => {
-    expect(ledgerBranch()).toMatch(/\(isCorner && isAgent\) \? undefined : voiceName/);
+  it('gives a Corner zero handles, whatever the roster says', () => {
+    const branch = ledgerBranch();
+    // `isCorner` alone, not `isCorner && isAgent`: `isAgent` needs the roster,
+    // and a Corner whose roster is empty or still loading used to print the
+    // signer's bare npub as a handle.
+    expect(branch).toMatch(
+      /const handle = attributionContinued \|\| isSelfSteer \|\| isCorner \? undefined : voiceName/,
+    );
+    // A Corner is one agent plus you, so "not your own steer" *is* the agent —
+    // derived from the surface, never from a lookup that can come back empty.
+    expect(branch).toContain('const isCornerAgent = isCorner && !isSelfSteer');
+    expect(branch).toContain('const speaksAsAgent = isAgent || isCornerAgent');
+    expect(branch).toContain('luminous={speaksAsAgent}');
     expect(chatSource).toMatch(
       /isCorner && cornerAgentPubkey && \([\s\S]{0,400}testID="corner-header-agent"[\s\S]{0,400}<AgentAvatar/,
     );
@@ -239,12 +285,18 @@ describe('Speaker identity', () => {
     // at all, so the transcript showed the seed placeholder while Members
     // showed the real soul name for the same key.
     expect(chatSource).toMatch(
-      /const rosterCommunityId = agentRosterCommunityId\(\s*\n?\s*channelCommunityId,\s*\n?\s*await loadActiveCommunityId\(identity\.publicKey\),/,
+      /const rosterCommunityIds = agentRosterCommunityIds\(\s*\n?\s*channelCommunityId,\s*\n?\s*await loadActiveCommunityId\(identity\.publicKey\),\s*\n?\s*availableCommunities\.map/,
     );
-    expect(chatSource).toContain(
-      'rosterCommunityId ? client.listAgents(rosterCommunityId) : Promise.resolve([])',
-    );
+    expect(chatSource).toMatch(/rosterCommunityIds\.map\(\(communityId\) =>/);
+    expect(chatSource).toContain('mergeAgentRosters(agentRosters).values()');
     expect(chatSource).not.toMatch(/client\.listAgents\(channelCommunityId\)/);
+    // One unreachable Workspace must not cost the others their names...
+    expect(chatSource).toMatch(/client\.listAgents\(communityId\)\.catch\(/);
+    // ...and the roster commits as soon as it resolves, so an unrelated failure
+    // later in the init chain cannot leave the transcript with no names at all.
+    expect(chatSource).toMatch(
+      /const communityAgents = \[\.\.\.mergeAgentRosters[\s\S]{0,400}patchChannel\(identity\.publicKey, decodedId, \{ availableAgents: communityAgents \}\)/,
+    );
 
     // ...and only the roster widens. Membership, roles, and profile writes are
     // authority-adjacent and stay on the channel's own community.
@@ -307,7 +359,11 @@ describe('Machine noise', () => {
 
   it('lifts a pasted git/CLI wall out of an agent’s prose into the same ghost line', () => {
     const branch = ledgerBranch();
-    expect(branch).toContain('const ledgerText = isAgent ? splitLedgerText(item.text) : undefined');
+    // Gated on `!isSelfSteer`, never on `isAgent` — `isAgent` depends on the
+    // roster and goes false exactly where a Corner needs this most, which is
+    // how a full push-rejection dump reached the slab.
+    expect(branch).toContain('const ledgerText = isSelfSteer ? undefined : splitLedgerText(item.text)');
+    expect(branch).not.toMatch(/isAgent \? splitLedgerText/);
     expect(branch).toMatch(/<LedgerGhostLine[\s\S]{0,200}lines of tool output/);
     expect(branch).toMatch(/bodyText=\{ledgerText \? ledgerText\.prose : item\.text\}/);
   });
@@ -316,8 +372,8 @@ describe('Machine noise', () => {
     const branch = ledgerBranch();
     // Body threads every Room/DM reply to the request above it, so the quote
     // was always redundant. A person's deliberate reply still keeps its quote.
-    expect(branch).toMatch(/!isAgent && item\.replyToId \? visibleMessageById/);
-    expect(branch).toMatch(/replyReference =\s*\n?\s*!isAgent && item\.replyToId \?/);
+    expect(branch).toMatch(/!speaksAsAgent && item\.replyToId \? visibleMessageById/);
+    expect(branch).toMatch(/replyReference =\s*\n?\s*!speaksAsAgent && item\.replyToId \?/);
   });
 
   it('decodes percent escapes before anything renders them', () => {

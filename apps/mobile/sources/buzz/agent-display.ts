@@ -36,33 +36,69 @@ export function resolveAgentDisplayIdentity(
 }
 
 /**
- * Which Workspace's agent roster the transcript reads.
+ * Which Workspaces' agent rosters the transcript reads, in precedence order.
  *
- * Every agent name on screen comes from that roster: `listAgents` is what
- * hydrates `Agent.soulProfile` (the human-authored overlay) and
- * `Agent.displayName`, and `resolveAgentDisplayIdentity` falls back to the
- * seed-derived placeholder for any pubkey the roster does not contain.
+ * Every agent name on screen comes from a roster: `listAgents(communityId)` is
+ * what hydrates `Agent.displayName` and the human-authored `Agent.soulProfile`,
+ * and `resolveAgentDisplayIdentity` falls back to the seed-derived placeholder
+ * for any pubkey no roster contains. So an empty or wrong-Workspace roster does
+ * not degrade the name — it replaces it with a confident fake.
  *
- * The transcript used to read strictly the channel's own community, which a
- * channel can genuinely fail to resolve: a Room whose kind:9007 predates the
- * redundant `community` tag, a deliberately local-only Room, or a corner
- * beneath either. With no community there is no roster, so *every* agent in
- * that transcript rendered its seed placeholder ("Alden") while the Members
- * screen — which reads the viewer's selected Workspace — showed the real soul
- * name ("Beebee") for the same key.
+ * Reading exactly one community was the bug. Both halves of the registration
+ * are community-scoped — the identity record is published into the community
+ * channel (`#h`) and the soul overlay is keyed `communityId:agentPubkey` — so a
+ * transcript that resolves the wrong community, or none at all, sees no agents
+ * whatsoever. A Room whose kind:9007 predates the redundant `community` tag, a
+ * local-only Room, a corner beneath either, or simply a Workspace other than
+ * the one that authored the overlay all land there. That is why the transcript
+ * showed a placeholder ("Alden") or a bare npub while the Members screen —
+ * scoped to the viewer's own selected Workspace — showed the real soul name
+ * ("Beebee") for the identical key.
  *
- * Falling back to the viewer's selection closes that. It can only ever add
- * matches: a roster entry is used only when its pubkey equals the message
- * signer's, so a roster from a different Workspace cannot rename anyone; it can
- * only supply the overlay the app already had and the transcript was missing.
- * Membership, roles, and every authority read stay on the channel's own
- * community — this is presentation, and presentation only.
+ * Reading every Workspace the viewer belongs to removes the guess. The order is
+ * what keeps it honest: the channel's own Workspace names its agents first, the
+ * viewer's selection next, and any other Workspace only fills a gap.
  */
-export function agentRosterCommunityId(
+export function agentRosterCommunityIds(
   channelCommunityId: string | null | undefined,
   viewerActiveCommunityId: string | null | undefined,
-): string | null {
-  return channelCommunityId || viewerActiveCommunityId || null;
+  memberCommunityIds: readonly string[] = [],
+): string[] {
+  const ordered = [channelCommunityId, viewerActiveCommunityId, ...memberCommunityIds];
+  return [...new Set(ordered.filter((id): id is string => Boolean(id && id.trim())))];
+}
+
+type NameableAgent = Pick<Agent, 'pubkey' | 'displayName' | 'soulProfile'>;
+
+/** Whether this roster entry can actually name its agent, or is just a row. */
+function namesItsAgent(agent: NameableAgent): boolean {
+  return Boolean(agent.soulProfile?.name?.trim() || agent.displayName?.trim());
+}
+
+/**
+ * Fold rosters into one lookup, earlier rosters winning.
+ *
+ * Precedence is positional (see `agentRosterCommunityIds`), with one override:
+ * an entry that cannot name its agent never blocks a later one that can. The
+ * merge is safe by construction — an entry is only ever consulted for a pubkey
+ * equal to the message signer's, so a roster from another Workspace cannot
+ * rename anybody; it can only supply an overlay the app already had and the
+ * transcript was missing.
+ */
+export function mergeAgentRosters<T extends NameableAgent>(
+  rosters: readonly (readonly T[])[],
+): Map<string, T> {
+  const merged = new Map<string, T>();
+  for (const roster of rosters) {
+    for (const agent of roster) {
+      if (!agent?.pubkey) continue;
+      const incumbent = merged.get(agent.pubkey);
+      if (!incumbent || (!namesItsAgent(incumbent) && namesItsAgent(agent))) {
+        merged.set(agent.pubkey, agent);
+      }
+    }
+  }
+  return merged;
 }
 
 /**

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  agentRosterCommunityId,
+  agentRosterCommunityIds,
   fallbackAgentName,
+  mergeAgentRosters,
   resolveAgentDisplayIdentity,
   resolveCornerCardAgentPubkey,
 } from './agent-display';
@@ -163,22 +164,58 @@ describe('the transcript’s agent roster', () => {
     },
   };
 
-  it('reads the channel’s own Workspace whenever the channel resolves one', () => {
-    expect(agentRosterCommunityId('workspace-1', 'workspace-2')).toBe('workspace-1');
-    expect(agentRosterCommunityId('workspace-1', null)).toBe('workspace-1');
+  it('reads the channel’s own Workspace first, then the viewer’s, then the rest', () => {
+    expect(
+      agentRosterCommunityIds('workspace-1', 'workspace-2', ['workspace-2', 'workspace-3']),
+    ).toEqual(['workspace-1', 'workspace-2', 'workspace-3']);
   });
 
-  it('falls back to the viewer’s selected Workspace when the channel resolves none', () => {
+  it('still reads every Workspace when the channel resolves none', () => {
     // A Room whose kind:9007 predates the redundant `community` tag, a
-    // local-only Room, or a corner beneath either.
-    expect(agentRosterCommunityId(null, 'workspace-1')).toBe('workspace-1');
-    expect(agentRosterCommunityId(undefined, 'workspace-1')).toBe('workspace-1');
-    expect(agentRosterCommunityId('', 'workspace-1')).toBe('workspace-1');
+    // local-only Room, or a corner beneath either. Reading nothing here is what
+    // left the transcript naming every agent with a placeholder.
+    for (const missing of [null, undefined, '', '   ']) {
+      expect(agentRosterCommunityIds(missing, 'workspace-2', ['workspace-3'])).toEqual([
+        'workspace-2',
+        'workspace-3',
+      ]);
+    }
   });
 
-  it('has nothing to read when neither is known', () => {
-    expect(agentRosterCommunityId(null, null)).toBeNull();
-    expect(agentRosterCommunityId(undefined, undefined)).toBeNull();
+  it('never repeats a Workspace, however many ways it arrives', () => {
+    expect(
+      agentRosterCommunityIds('workspace-1', 'workspace-1', ['workspace-1', 'workspace-1']),
+    ).toEqual(['workspace-1']);
+  });
+
+  it('has nothing to read when nothing is known', () => {
+    expect(agentRosterCommunityIds(null, null, [])).toEqual([]);
+    expect(agentRosterCommunityIds(undefined, undefined)).toEqual([]);
+  });
+
+  it('merges rosters with the channel’s own Workspace winning', () => {
+    const channelRoster = [{ ...rosterEntry, displayName: 'Beebee' }];
+    const otherRoster = [
+      { ...rosterEntry, displayName: 'Elsewhere', soulProfile: undefined },
+    ];
+    const merged = mergeAgentRosters([channelRoster, otherRoster]);
+    expect(resolveAgentDisplayIdentity(beebee, merged.get(beebee)).name).toBe('Beebee');
+  });
+
+  it('lets a later Workspace fill a gap the first one cannot name', () => {
+    // A roster row that carries neither an overlay nor a displayName can only
+    // produce the placeholder, so it must not block a Workspace that can name
+    // the same agent.
+    const unnamed = [{ pubkey: beebee, displayName: '', soulProfile: undefined }];
+    const named = [rosterEntry];
+    const merged = mergeAgentRosters([unnamed, named]);
+    expect(resolveAgentDisplayIdentity(beebee, merged.get(beebee)).name).toBe('Beebee');
+  });
+
+  it('ignores roster rows with no pubkey rather than keying on undefined', () => {
+    const merged = mergeAgentRosters([[{ pubkey: '', displayName: 'x' }], [rosterEntry]]);
+    expect(merged.size).toBe(1);
+    expect(merged.get(beebee)).toBeTruthy();
   });
 
   it('is what decides between the real soul name and the seed placeholder', () => {

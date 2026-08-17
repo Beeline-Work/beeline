@@ -13,7 +13,7 @@ import {
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as LocalAuthentication from 'expo-local-authentication';
-import { router } from 'expo-router';
+import { router, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as QRCode from 'qrcode';
 import Svg, { Path, Rect } from 'react-native-svg';
@@ -490,6 +490,30 @@ export default function BuzzIdentitySettings() {
       </HullSurface>
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        {/*
+          THROWAWAY TYPE EXPLORATION — removed with @/buzz/font-exploration.
+          It lives here, at the top of My Settings, because every entry point in
+          the app routes straight to this screen and skips the settings hub, so
+          a row on the hub is unreachable in practice.
+        */}
+        <View style={styles.settingsSection} testID="type-direction-section">
+          <Text style={styles.sectionLabel}>TYPE EXPLORATION</Text>
+          <TouchableOpacity
+            accessibilityLabel="Open type direction exploration"
+            onPress={() => router.push('/buzz/settings/fonts' as Href)}
+            style={styles.settingLine}
+            testID="type-direction-setting"
+          >
+            <View style={styles.settingCopy}>
+              <Text style={styles.settingTitle}>Type direction</Text>
+              <Text style={styles.settingSubtitle}>
+                Switch the app-wide type system between candidates
+              </Text>
+            </View>
+            <Text style={styles.typeDirectionChevron}>›</Text>
+          </TouchableOpacity>
+        </View>
+
         {profilePubkey && (
           <View style={styles.profileSection}>
             <View style={styles.nameSection} testID="identity-person-name-setting">
@@ -1003,6 +1027,11 @@ const styles = StyleSheet.create({
     ...Typography.default('semiBold'),
     color: groknight.textSecondary,
     fontSize: 13,
+  },
+  typeDirectionChevron: {
+    ...Typography.default(),
+    color: groknight.steel,
+    fontSize: 24,
   },
   linkedState: {
     ...Typography.mono('semiBold'),

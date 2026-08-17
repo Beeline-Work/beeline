@@ -90,7 +90,7 @@ function invalidateQueryCache(opts: HttpBridgeOptions, pubkey: string): void {
   }
 }
 
-function canPartitionFilter(filter: Record<string, unknown>): boolean {
+export function canPartitionFilter(filter: Record<string, unknown>): boolean {
   return Object.keys(filter).every(
     (key) => BATCHABLE_FILTER_KEYS.has(key) || key.startsWith('#'),
   );
@@ -129,7 +129,7 @@ function eventMatchesFilter(event: NostrEvent, filter: Record<string, unknown>):
   return true;
 }
 
-function selectQueryEvents(
+export function selectQueryEvents(
   events: readonly NostrEvent[],
   filters: Record<string, unknown>[],
 ): readonly NostrEvent[] {

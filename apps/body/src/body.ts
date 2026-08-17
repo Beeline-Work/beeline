@@ -87,6 +87,7 @@ import {
   getParentChannelId,
   tagValue,
   waitUntilMember,
+  summarizeGitFailure,
   type AgentPresence,
   type ChannelOpsContext,
   type AttachmentReference,
@@ -2811,9 +2812,9 @@ export class Body {
   }
 
   private safePermissionFailure(error: unknown): string {
-    const detail = error instanceof Error ? error.message : String(error);
+    const raw = error instanceof Error ? error.message : String(error);
     return (
-      detail
+      summarizeGitFailure(raw)
         .replace(/https?:\/\/\S+/gi, 'the configured remote')
         .replace(/(?:[A-Za-z0-9._~+/=-]+):(?:[A-Za-z0-9._~+/=-]+)@/g, '[credentials]@')
         .replace(/\s+/g, ' ')
@@ -3054,7 +3055,7 @@ export class Body {
         await postControlMessage(
           info.subchannelId,
           this.agentIdentity,
-          `Agent task stopped before merge-ready: ${String(error)}`,
+          `Agent task stopped before merge-ready: ${summarizeGitFailure(String(error))}`,
           [['status', 'failed'], ...this.deliveryFailureTags(info)],
         ).catch(() => undefined);
         await this.postParentCornerStatus(
@@ -3171,7 +3172,7 @@ export class Body {
       await postControlMessage(
         info.subchannelId,
         this.agentIdentity,
-        `Feature push failed; merge approval is not available. ${push.stderr.trim()}`,
+        `Couldn't prepare this change for review: ${summarizeGitFailure(push.stderr)}`,
         [['status', 'failed'], ['repo', target.repo], ['branch', target.branch], ['tip', target.tip]],
       );
       await this.postParentCornerStatus(
@@ -3334,7 +3335,7 @@ export class Body {
         await postControlMessage(
           info.subchannelId,
           this.agentIdentity,
-          `Human-approved landing on ${target.branch} failed. ${land.stderr.trim()}`,
+          `Couldn't land the approved change on ${target.branch.replace(/^refs\/heads\//, '')}: ${summarizeGitFailure(land.stderr)}`,
           [
             ['status', 'failed'],
             ['repo', target.repo],
@@ -3686,7 +3687,7 @@ export class Body {
           await postControlMessage(
             attempt.candidate.subchannelId,
             this.agentIdentity,
-            `Merge approval could not be landed yet: ${attempt.outcome.reason}`,
+            `Merge approval could not be landed yet: ${summarizeGitFailure(attempt.outcome.reason)}`,
             failureTags,
           ).catch((error) =>
             console.error(

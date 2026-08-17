@@ -234,6 +234,8 @@ export {
   personHandle,
 } from './display-name.js';
 
+export { summarizeGitFailure } from './git-failure.js';
+
 export {
   parsePersonProfile,
   parseGlobalPersonProfile,

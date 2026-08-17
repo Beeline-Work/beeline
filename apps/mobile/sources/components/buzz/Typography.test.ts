@@ -58,6 +58,8 @@ const monoStyles = new Set([
   'nameSaved',
   'handlePrefix',
   'handleInput',
+  'claimInput',
+  'claimSuffix',
   'linkedState',
   'textButtonLabel',
   'segmentText',

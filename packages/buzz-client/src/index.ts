@@ -250,8 +250,15 @@ export {
   parseNip05Identifier,
   normalizeNip05Identifier,
   verifyNip05,
+  claimNip05Handle,
+  Nip05ClaimError,
 } from './nip05.js';
-export type { ParsedNip05, Nip05VerificationStatus, Nip05VerificationResult } from './nip05.js';
+export type {
+  ParsedNip05,
+  Nip05VerificationStatus,
+  Nip05VerificationResult,
+  Nip05ClaimResult,
+} from './nip05.js';
 
 export { buildMediaUploadAuthorization, uploadMedia } from './media.js';
 

@@ -52,6 +52,11 @@ export interface MergeRequest {
 export interface MergeOutcome {
   merged: boolean;
   reason: string;
+  /** True only for a refusal a retry cannot fix (see `ReviewerAuthorityResult.terminal`).
+   *  False (the safe default) for every transient failure — network/relay
+   *  hiccups, a not-yet-visible feature branch, a push race — so those keep
+   *  being retried on the next poll tick instead of being given up on. */
+  terminal?: boolean;
   /** The feature tip the merge would land (the commit that must be approved). */
   featureTip?: string;
   /** `main` before the attempt. */
@@ -70,6 +75,11 @@ export interface ReviewerAuthorityDependencies {
 export interface ReviewerAuthorityResult {
   authorized: boolean;
   reason: string;
+  /** True only for a genuine authorization refusal that a retry cannot fix
+   *  (wrong signer, non-device custody, non-admin role) — false for a
+   *  transient lookup failure (fail-closed on uncertainty, but retryable)
+   *  or when authorized. */
+  terminal: boolean;
 }
 
 /**
@@ -94,18 +104,21 @@ export async function authorizeReviewer(
   } catch (error) {
     return {
       authorized: false,
+      terminal: false,
       reason: `cannot prove approval signer is human; agent identity lookup failed: ${String(error)}`,
     };
   }
   if (signerIsAgent) {
     return {
       authorized: false,
+      terminal: true,
       reason: `merge approval REFUSED: signer ${input.pubkey} is a registered agent identity; agents can never approve merges`,
     };
   }
   if (input.custody !== 'device') {
     return {
       authorized: false,
+      terminal: true,
       reason: `merge approval REFUSED: trusted reviewer key custody must be device-held (custody=${input.custody})`,
     };
   }
@@ -116,16 +129,18 @@ export async function authorizeReviewer(
   } catch (error) {
     return {
       authorized: false,
+      terminal: false,
       reason: `cannot prove approval signer is a human admin; role lookup failed: ${String(error)}`,
     };
   }
   if (reviewerRole !== 'owner' && reviewerRole !== 'admin') {
     return {
       authorized: false,
+      terminal: true,
       reason: `merge approval REFUSED: human admin role required (signer role=${reviewerRole ?? 'none'})`,
     };
   }
-  return { authorized: true, reason: 'authorized device-held human admin' };
+  return { authorized: true, terminal: false, reason: 'authorized device-held human admin' };
 }
 
 /** Clone the repo fresh as the worker and return the checkout path. */
@@ -187,6 +202,7 @@ export async function attemptMerge(req: MergeRequest): Promise<MergeOutcome> {
     return {
       merged: false,
       reason: reviewerAuthority.reason,
+      terminal: reviewerAuthority.terminal,
       featureTip,
       targetTipBefore,
       targetTipAfter: targetTipBefore,
@@ -388,7 +404,7 @@ export class DurableMergeGate {
           reviewer: approval.pubkey,
           outcome,
         });
-        if (outcome.merged || outcome.reason.includes('REFUSED')) {
+        if (outcome.merged || outcome.terminal) {
           this.terminalApprovalIds.add(approval.id);
         }
         if (outcome.merged) break;

@@ -351,8 +351,19 @@ export interface SubchannelInfo {
   session: AgentSession;
   /** Last created_at timestamp when polling for member messages. */
   lastPolledAt: number;
-  /** Whether this subchannel has been archived. */
+  /** Close requested — stops new member-message processing immediately.
+   *  Does NOT by itself mean the archive durably completed; see
+   *  `archiveCompleted`. */
   archived: boolean;
+  /** Set only once the relay-side `archiveChannel` publish inside
+   *  `archiveSubchannel` actually succeeds. A corner can be `archived` (close
+   *  requested) but not yet `archiveCompleted` if a relay publish partway
+   *  through failed — that state is what drives the retry in `pollMembers`. */
+  archiveCompleted?: boolean;
+  /** Per-step idempotency so a retried `archiveSubchannel` does not re-post
+   *  messages that already landed on an earlier, partially-failed attempt. */
+  archiveParentNotified?: boolean;
+  archiveChannelNotified?: boolean;
   /** Repository this edit session will push to. */
   boundRepo?: BoundRepo;
   /** Human request that caused the agent to open this subchannel. */
@@ -873,6 +884,12 @@ export class Body {
    * a `finally` so a failed attempt can still be retried on a later poll.
    */
   private inFlightRequestIds = new Set<string>();
+  /** Same synchronous claim/release shape as `inFlightRequestIds` above —
+   *  `archiveSubchannel` is now retried (both from `pollMembers`'s incomplete-
+   *  archive check and its own `#t=buzz-corner-close` handler), so two
+   *  overlapping maintenance ticks must not both run its relay publishes at
+   *  once for the same corner. */
+  private archivingSubchannels = new Set<string>();
   private requestCursors = new Map<string, number>();
   private runningAgentTasks = new Map<string, Promise<void>>();
   private scheduler: SessionScheduler;
@@ -1370,7 +1387,9 @@ export class Body {
               subchannelId,
               this.agentIdentity,
               `Agent restart could not restore the approved repository: ${this.safePermissionFailure(error)}`,
-              [['status', 'failed']],
+              // No canonical repo/branch/tip is knowable here — resolution
+              // itself is what failed — beyond the raw target string.
+              [['status', 'failed'], ...(repository ? [['repo', repository]] : [])],
             ).catch(() => undefined);
             continue;
           }
@@ -1381,7 +1400,11 @@ export class Body {
             subchannelId,
             this.agentIdentity,
             'Agent restart could not restore this corner worktree; no input was discarded.',
-            [['status', 'failed']],
+            [
+              ['status', 'failed'],
+              ['repo', this.repoId(cornerRepo)],
+              ['branch', cornerRepo.targetBranch ?? 'refs/heads/main'],
+            ],
           ).catch(() => undefined);
           continue;
         }
@@ -2691,6 +2714,10 @@ export class Body {
       repository,
     );
     if (decision === 'allow') {
+      // The durably-found ALLOW must not be dropped just because this status
+      // ping fails to publish — `permissionId` is single-use and nothing
+      // re-matches it on a later poll, so a throw here must not skip opening
+      // the corner below.
       await this.postWritePermissionStatus(
         tlcChannelId,
         permissionId,
@@ -2699,6 +2726,8 @@ export class Body {
         repository,
         'allowed',
         `Editing ${repository} was allowed. Opening an isolated corner and worktree.`,
+      ).catch((statusError) =>
+        console.error('[body] failed to publish write-permission allowed status:', statusError),
       );
       try {
         const boundRepo =
@@ -3025,7 +3054,7 @@ export class Body {
           info.subchannelId,
           this.agentIdentity,
           `Agent task stopped before merge-ready: ${String(error)}`,
-          [['status', 'failed']],
+          [['status', 'failed'], ...this.deliveryFailureTags(info)],
         ).catch(() => undefined);
         await this.postParentCornerStatus(
           info,
@@ -3037,6 +3066,30 @@ export class Body {
       }
     })();
     this.runningAgentTasks.set(info.subchannelId, task);
+  }
+
+  /**
+   * Best-effort `repo`/`branch`/`tip` tags for a corner-scoped failure
+   * message — `apps/push-gateway/src/mapping.ts`'s `isNotifiableEvent`
+   * requires all three on a `body-control` event to make it push-notifiable.
+   * Falls back to whatever subset is actually known rather than fabricating
+   * a value; never throws.
+   */
+  private deliveryFailureTags(info: SubchannelInfo): string[][] {
+    if (!info.boundRepo) return [];
+    const tags: string[][] = [
+      ['repo', this.repoId(info.boundRepo)],
+      ['branch', info.boundRepo.targetBranch ?? 'refs/heads/main'],
+    ];
+    if (info.mergeTarget) {
+      tags.push(['tip', info.mergeTarget.tip]);
+    } else {
+      const head = git(info.worktreePath, ['rev-parse', 'HEAD']);
+      if (head.ok && /^[0-9a-f]{40}$/.test(head.stdout.trim())) {
+        tags.push(['tip', head.stdout.trim()]);
+      }
+    }
+    return tags;
   }
 
   private postParentCornerStatus(
@@ -3118,12 +3171,13 @@ export class Body {
         info.subchannelId,
         this.agentIdentity,
         `Feature push failed; merge approval is not available. ${push.stderr.trim()}`,
-        [['status', 'failed']],
+        [['status', 'failed'], ['repo', target.repo], ['branch', target.branch], ['tip', target.tip]],
       );
       await this.postParentCornerStatus(
         info,
         'failed',
         'Delivery failed. Open corner for details.',
+        [['tip', target.tip]],
       );
       return false;
     }
@@ -3173,7 +3227,12 @@ export class Body {
       );
     }
 
-    info.mergeTarget = target;
+    // Only believe merge-ready is durably announced once the control message
+    // that carries it is actually confirmed published — mobile's approve
+    // button reads the merge target solely from that event. Setting the flag
+    // first would let a failed publish here poison this function's own
+    // idempotency guard above (`info.mergeTarget?.tip === tip`) into
+    // silently skipping the retry a later call needs to make.
     await postControlMessage(
       info.subchannelId,
       this.agentIdentity,
@@ -3188,6 +3247,7 @@ export class Body {
         ['agent', this.agentIdentity.publicKey],
       ],
     );
+    info.mergeTarget = target;
     await this.postParentCornerStatus(info, 'ready', 'Work is ready for review.');
     return true;
   }
@@ -3276,6 +3336,8 @@ export class Body {
           `Human-approved landing on ${target.branch} failed. ${land.stderr.trim()}`,
           [
             ['status', 'failed'],
+            ['repo', target.repo],
+            ['branch', target.branch],
             ['feature', info.featureBranch],
             ['tip', target.tip],
           ],
@@ -3607,6 +3669,41 @@ export class Body {
             `[gate] ${attempt.outcome.merged ? 'LANDED' : attempt.outcome.reason} ` +
               `${attempt.candidate.featureBranch} approval=${attempt.approvalId}`,
           );
+          // A refusal/failure here was previously only ever logged, never
+          // published — the corner just sat on "sent" forever with zero
+          // signal, correctly retried but invisible. Mirror the same
+          // corner-level + parent-status publish `pollDirectRemoteApprovals`
+          // already makes for its own failures.
+          if (attempt.outcome.merged) continue;
+          const info = this.subchannels.get(attempt.candidate.subchannelId);
+          if (!info || info.archived) continue;
+          const target = info.mergeTarget;
+          const failureTags: string[][] = [['status', 'failed']];
+          if (target) {
+            failureTags.push(['repo', target.repo], ['branch', target.branch], ['tip', target.tip]);
+          }
+          await postControlMessage(
+            attempt.candidate.subchannelId,
+            this.agentIdentity,
+            `Merge approval could not be landed yet: ${attempt.outcome.reason}`,
+            failureTags,
+          ).catch((error) =>
+            console.error(
+              `[body] failed to publish merge-gate failure for ${attempt.candidate.subchannelId}:`,
+              error,
+            ),
+          );
+          await this.postParentCornerStatus(
+            info,
+            'failed',
+            'Delivery failed. Open corner for details.',
+            target ? [['tip', target.tip]] : [],
+          ).catch((error) =>
+            console.error(
+              `[body] failed to publish parent status for merge-gate failure ${attempt.candidate.subchannelId}:`,
+              error,
+            ),
+          );
         }
       });
     }
@@ -3673,7 +3770,16 @@ export class Body {
     }
 
     // Archived subchannels are read-only — no more member message processing.
+    // A close that was requested but never durably completed (a relay
+    // publish inside archiveSubchannel failed partway) is retried here,
+    // driven by this same per-tick visit, instead of leaving the corner
+    // permanently stuck once `info.archived` is true.
     if (info.archived) {
+      if (!info.archiveCompleted) {
+        await this.archiveSubchannel(subchannelId).catch((error) =>
+          console.error(`[body] retrying incomplete archive of ${subchannelId}; will retry:`, error),
+        );
+      }
       return 0;
     }
 
@@ -3743,11 +3849,23 @@ export class Body {
         // Close-corner archives the subchannel outright (it also cancels any
         // active turn as part of that teardown) — distinct from a plain
         // cancel, which only stops the current turn and leaves the corner open.
+        // Mirror the ordinary message path below: mark delivered only once
+        // the triggered work actually succeeds, and `failed` on the catch
+        // path. Marking `delivered` before the archive attempt (the old
+        // behavior) makes a partial archive failure permanently
+        // un-retryable — even across a restart, since `delivered` persists.
         if (evt.tags.some((t) => t[0] === 't' && t[1] === CORNER_CLOSE_TAG)) {
+          try {
+            await this.archiveSubchannel(subchannelId);
+          } catch (closeError) {
+            await this.durableState.failed(subchannelId, evt.id, closeError);
+            console.error(`[body] pollMembers: corner close failed for event ${evt.id}:`, closeError);
+            retryFrom = Math.min(retryFrom ?? evt.created_at, evt.created_at);
+            continue;
+          }
           processed.add(evt.id);
           await this.durableState.delivered(subchannelId, evt.id);
           count++;
-          await this.archiveSubchannel(subchannelId);
           return count;
         }
 
@@ -3877,78 +3995,100 @@ export class Body {
   }
 
   /**
-   * Archive a subchannel: cancel session, remove worktree, post archive message.
-   * After archiving, the subchannel is read-only (no more member message processing).
+   * Archive a subchannel: cancel session, post archive messages, mark the
+   * relay projection archived, then remove the worktree. After archiving,
+   * the subchannel is read-only (no more member message processing).
+   *
+   * Safe to call again on a corner that's already `archived` (close
+   * requested) but not yet `archiveCompleted` — every step below is
+   * idempotent (session teardown, the per-step `archive*Notified` flags, and
+   * `removeWorktree`), so a retry after a partial failure only performs
+   * whichever step didn't already land. `archivingSubchannels` guards against
+   * two overlapping maintenance ticks retrying the same corner at once.
    */
   async archiveSubchannel(subchannelId: string): Promise<void> {
-    const info = this.subchannels.get(subchannelId);
-    if (!info) {
-      throw new Error(`Subchannel ${subchannelId} not found`);
-    }
+    if (this.archivingSubchannels.has(subchannelId)) return;
+    this.archivingSubchannels.add(subchannelId);
+    try {
+      const info = this.subchannels.get(subchannelId);
+      if (!info) {
+        throw new Error(`Subchannel ${subchannelId} not found`);
+      }
 
-    // The map name is not authority. Confirm both the in-memory session and
-    // the immutable kind:9007 parent link before any cleanup or metadata edit.
-    // A top-level Room has no parent link and can never pass this gate.
-    const relayParentChannelId = await getParentChannelId(this.agentClientContext(), subchannelId);
-    assertSubchannelArchiveTarget(info, relayParentChannelId);
+      // The map name is not authority. Confirm both the in-memory session and
+      // the immutable kind:9007 parent link before any cleanup or metadata edit.
+      // A top-level Room has no parent link and can never pass this gate.
+      const relayParentChannelId = await getParentChannelId(
+        this.agentClientContext(),
+        subchannelId,
+      );
+      assertSubchannelArchiveTarget(info, relayParentChannelId);
 
-    const { session, worktreePath, featureBranch, subchannelId: scId } = info;
+      const { session, worktreePath, featureBranch, subchannelId: scId } = info;
 
-    // Mark as archived before cleanup.
-    info.archived = true;
-    info.session.archived = true;
+      // Close requested — gates new member-message processing immediately,
+      // even if a step below fails partway and this call has to be retried.
+      info.archived = true;
+      info.session.archived = true;
 
-    // Cancel the ACP session.
-    session.client.sessionCancel(session.sessionId);
+      // Cancel the ACP session.
+      session.client.sessionCancel(session.sessionId);
 
-    // Stop activity projection.
-    if (session.unsubscribeActivity) {
-      session.unsubscribeActivity();
-    }
+      // Stop activity projection.
+      if (session.unsubscribeActivity) {
+        session.unsubscribeActivity();
+      }
 
-    // Stop the client.
-    await session.client.stop();
+      // Stop the client.
+      await session.client.stop();
 
-    // Remove worktree.
-    await this.removeWorktree(scId, worktreePath, featureBranch, info.boundRepo);
-
-    // Post status messages BEFORE archiving (relay rejects events on archived channels).
-    const parentId = session.parentChannelId;
-    if (parentId) {
-      // `mergeSummary` is process-local. Recover the last completed response
-      // from durable conversation state when a restarted daemon closes the
-      // corner, and keep old/verbose stored replies within the current compact
-      // card contract.
-      const durableSummary = await this.durableState.latestAgentMessage(scId);
-      const archiveSummary = cornerArchiveSummary(info.mergeSummary, durableSummary);
-      await postControlMessage(
-        parentId,
-        this.agentIdentity,
-        archiveSummary,
-        [
+      // Post status messages BEFORE archiving (relay rejects events on archived channels).
+      const parentId = session.parentChannelId;
+      if (parentId && !info.archiveParentNotified) {
+        // `mergeSummary` is process-local. Recover the last completed response
+        // from durable conversation state when a restarted daemon closes the
+        // corner, and keep old/verbose stored replies within the current compact
+        // card contract.
+        const durableSummary = await this.durableState.latestAgentMessage(scId);
+        const archiveSummary = cornerArchiveSummary(info.mergeSummary, durableSummary);
+        await postControlMessage(parentId, this.agentIdentity, archiveSummary, [
           ['subchannel', subchannelId],
           ['status', 'archived'],
-        ],
-      );
+        ]);
+        info.archiveParentNotified = true;
+      }
+
+      // Post archive message to subchannel before archival (relay will reject it after).
+      if (!info.archiveChannelNotified) {
+        await postControlMessage(
+          subchannelId,
+          this.agentIdentity,
+          `📦 Subchannel archived — session ended. This channel is now read-only.`,
+          [['status', 'archived']],
+        );
+        info.archiveChannelNotified = true;
+      }
+
+      // Mark subchannel as archived in relay metadata (kind:9002 → 39000 archived=true).
+      // After this call, the relay rejects any further events on this channel.
+      // New subchannels are agent-owned. `role` preserves compatibility for
+      // externally registered historical sessions created by another owner.
+      await archiveChannel(info.role, subchannelId);
+      info.archiveCompleted = true;
+
+      // Remove the worktree only once the relay durably knows this corner is
+      // archived. Removing it earlier (the old order) meant a failure in any
+      // of the three relay publishes above left nothing on disk for
+      // `restoreSubchannels` to find on the next restart — a permanent
+      // zombie corner, visible as "open" forever despite being dead.
+      await this.removeWorktree(scId, worktreePath, featureBranch, info.boundRepo);
+
+      // Remove from active state.
+      this.sessions.delete(subchannelId);
+      this.subchannels.delete(subchannelId);
+    } finally {
+      this.archivingSubchannels.delete(subchannelId);
     }
-
-    // Post archive message to subchannel before archival (relay will reject it after).
-    await postControlMessage(
-      subchannelId,
-      this.agentIdentity,
-      `📦 Subchannel archived — session ended. This channel is now read-only.`,
-      [['status', 'archived']],
-    );
-
-    // Mark subchannel as archived in relay metadata (kind:9002 → 39000 archived=true).
-    // After this call, the relay rejects any further events on this channel.
-    // New subchannels are agent-owned. `role` preserves compatibility for
-    // externally registered historical sessions created by another owner.
-    await archiveChannel(info.role, subchannelId);
-
-    // Remove from active state.
-    this.sessions.delete(subchannelId);
-    this.subchannels.delete(subchannelId);
   }
 
   /** Ensure the agent is a member of the channel, returns current role. */

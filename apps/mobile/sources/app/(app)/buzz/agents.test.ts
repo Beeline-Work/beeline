@@ -12,6 +12,7 @@ const client = vi.hoisted(() => ({
   addMember: vi.fn(async () => undefined),
   waitUntilMemberRole: vi.fn(async () => undefined),
 }));
+const agentPresenceBackfillForWorkspace = vi.hoisted(() => vi.fn(async () => []));
 
 vi.mock('expo-router', () => ({
   router: navigation,
@@ -37,6 +38,7 @@ vi.mock('@/buzz/workspace-bootstrap', () => ({
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     ensureClient = vi.fn(async () => client);
+    agentPresenceBackfillForWorkspace = agentPresenceBackfillForWorkspace;
   },
 }));
 vi.mock('@/components/buzz/CommunityRail', async () => {
@@ -83,6 +85,7 @@ afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
   vi.clearAllMocks();
   client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'owner' }]);
+  agentPresenceBackfillForWorkspace.mockResolvedValue([]);
 });
 
 async function render(): Promise<ReactTestRenderer> {
@@ -161,5 +164,54 @@ describe('Members screen', () => {
     expect(client.addMember).toHaveBeenCalledWith('workspace-1', target, 'admin');
     expect(renderer.root.findAllByProps({ testID: `member-${target}-admin` })).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: `member-${target}-role-label` })).toBeDefined();
+  });
+
+  it('shows a live agent as online and a dormant agent as offline without dropping either identity', async () => {
+    const liveAgentPubkey = 'f'.repeat(64);
+    const dormantAgentPubkey = '1'.repeat(64);
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    client.listAgents.mockResolvedValue([
+      { agentId: 'live', communityId: 'workspace-1', displayName: 'joy', pubkey: liveAgentPubkey, createdAt: 0, raw: {} },
+      { agentId: 'dormant', communityId: 'workspace-1', displayName: 'sumo', pubkey: dormantAgentPubkey, createdAt: 0, raw: {} },
+    ]);
+    // Only the live agent has a fresh presence heartbeat in any Room; the
+    // dormant one has none anywhere in the Workspace (paired, but its daemon
+    // is stopped) — the real distinguishing signal, not a made-up flag.
+    agentPresenceBackfillForWorkspace.mockResolvedValue([
+      {
+        type: 'raw',
+        sessionId: 'room-1',
+        payload: {
+          pubkey: liveAgentPubkey,
+          created_at: nowSeconds,
+          tags: [
+            ['d', 'agent-presence:room-1'],
+            ['h', 'room-1'],
+            ['t', 'agent-presence'],
+            ['agent', liveAgentPubkey],
+            ['status', 'online'],
+          ],
+        },
+      },
+    ]);
+
+    const renderer = await render();
+    // agentPresenceBackfillForWorkspace fans out fire-and-forget (initial
+    // load must not block the screen on a slow presence read) — flush its
+    // resolution and the resulting state update explicitly.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(agentPresenceBackfillForWorkspace).toHaveBeenCalledWith('workspace-1');
+    expect(renderer.root.findByProps({ testID: `agent-${liveAgentPubkey}-identity` })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: `agent-${dormantAgentPubkey}-identity` })).toBeDefined();
+    expect(
+      renderer.root.findByProps({ testID: `agent-${liveAgentPubkey}-presence-label` }).props.children,
+    ).toBe('ONLINE');
+    expect(
+      renderer.root.findByProps({ testID: `agent-${dormantAgentPubkey}-presence-label` }).props.children,
+    ).toBe('OFFLINE');
   });
 });

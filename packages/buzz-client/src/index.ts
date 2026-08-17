@@ -166,7 +166,6 @@ export {
   getChannelRepositoryBinding,
   sendMessage,
   backfillMessages,
-  eventIsAgentActivity,
 } from './channel.js';
 export type { ChannelOpsContext, ChannelRole } from './channel.js';
 
@@ -263,7 +262,6 @@ export {
   buildAttachmentTag,
   buildAttachmentTags,
   parseAttachmentTags,
-  eventAttachments,
 } from './attachment.js';
 
 export { buildMergeApproval, verifyMergeApproval, APPROVAL_MARKER } from './approval.js';

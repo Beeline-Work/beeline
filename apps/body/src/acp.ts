@@ -35,11 +35,6 @@ export interface ToolCallEntry {
   status?: string;
 }
 
-export interface AgentMessageChunk {
-  type: 'text';
-  text: string;
-}
-
 export interface PromptResult {
   stopReason: string;
   updates: SessionUpdate[];

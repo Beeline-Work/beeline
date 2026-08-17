@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AppState,
   type AppStateStatus,
@@ -348,22 +348,6 @@ function WaveSegment({
   return <Animated.View style={[styles.waveSegment, style]} />;
 }
 
-export function StatusGlyph({
-  state,
-}: {
-  state: 'live' | 'waiting' | 'success' | 'error' | 'archived' | 'selected';
-}) {
-  const glyph = {
-    live: '◆',
-    waiting: '◇',
-    success: '✓',
-    error: '!',
-    archived: '□',
-    selected: '⌜',
-  }[state];
-  return <Text style={styles.statusGlyph}>{glyph}</Text>;
-}
-
 export function PixelGateReveal({ children, style }: HullSurfaceProps) {
   const reducedMotion = useReducedMotion();
   const progress = useSharedValue(reducedMotion ? 1 : 0);
@@ -419,17 +403,6 @@ function RevealStrip({ index, progress }: { index: number; progress: SharedValue
       style={[styles.revealStrip, { top: `${index * 25}%`, height: '25%' }, style]}
     />
   );
-}
-
-export function useConfirmationFeedback() {
-  const [confirmed, setConfirmed] = useState(false);
-  const confirm = useCallback(() => {
-    setConfirmed(true);
-    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    const timer = setTimeout(() => setConfirmed(false), 1200);
-    return () => clearTimeout(timer);
-  }, []);
-  return { confirmed, confirm };
 }
 
 const styles = StyleSheet.create({
@@ -510,12 +483,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 15,
     letterSpacing: 0.8,
-  },
-  statusGlyph: {
-    ...Typography.mono('semiBold'),
-    color: groknight.signalBright,
-    fontSize: 12,
-    lineHeight: 16,
   },
   revealStrip: { position: 'absolute', right: 0, left: 0, backgroundColor: groknight.bgRaised },
 });

@@ -58,7 +58,6 @@ export class RelayWs {
   >();
   private authed = false;
   private closed = false;
-  private challenge: string | null = null;
   private connectPromise: Promise<void> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
@@ -177,7 +176,6 @@ export class RelayWs {
         const type = msg[0];
 
         if (type === 'AUTH' && typeof msg[1] === 'string') {
-          this.challenge = msg[1];
           void this.respondAuth(msg[1])
             .then(() => {
               this.authed = true;

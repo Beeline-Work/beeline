@@ -12,7 +12,7 @@
  *   - Activity projection bridges ACP session/update → relay channel events.
  */
 import { randomUUID } from 'node:crypto';
-import { mkdir, rm, writeFile, readFile, realpath, stat } from 'node:fs/promises';
+import { mkdir, rm, readFile, realpath, stat } from 'node:fs/promises';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -91,7 +91,7 @@ import {
   type ChannelOpsContext,
   type AttachmentReference,
 } from '@beeline/buzz-client';
-import { signEvent, type NostrEvent } from '@beeline/nostr';
+import type { NostrEvent } from '@beeline/nostr';
 import type { BodyConfig } from './config.js';
 import { DurableBodyState } from './durable-state.js';
 import {

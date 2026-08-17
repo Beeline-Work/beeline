@@ -2,7 +2,13 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { createBuzzClient, type RepositoryBinding } from '@beeline/buzz-client';
+import WebSocket from 'ws';
+import {
+  createBuzzClient,
+  KIND_PUT_USER,
+  KIND_REMOVE_USER,
+  type RepositoryBinding,
+} from '@beeline/buzz-client';
 import { gitAuthed, gitWithUserCredentials, type Identity } from '@beeline/gate';
 import { Body, type BoundRepo } from './body.js';
 import type { BodyConfig } from './config.js';
@@ -73,6 +79,14 @@ function reconcileRetryMs(error: unknown, pollMs: number): number {
 
 export const DEFAULT_ROOM_WATCHDOG_STALE_MS = 90_000;
 
+/**
+ * Long-interval correctness backstop for Workspace discovery (`reconcile()`)
+ * once the control-plane WS subscription (see `run()`) is driving it instead
+ * of a 5s poll. A missed/dropped WS push (including the removal signal) can
+ * therefore never silently strand a stale membership set past this interval.
+ */
+export const DEFAULT_RECONCILE_HEARTBEAT_MS = 60_000;
+
 /** One durable Workspace control plane multiplexing isolated Room bodies. */
 export class WorkspaceSupervisor {
   private runtime: AgentRuntimeRecord;
@@ -84,12 +98,13 @@ export class WorkspaceSupervisor {
   private readonly namedRepositoryResolutions = new Map<string, Promise<BoundRepo>>();
   private readonly now: () => number;
   private readonly watchdogStaleMs: number;
+  private readonly reconcileHeartbeatMs: number;
 
   constructor(
     runtime: AgentRuntimeRecord,
     configPath: string,
     baseConfig: BodyConfig,
-    options: { now?: () => number; watchdogStaleMs?: number } = {},
+    options: { now?: () => number; watchdogStaleMs?: number; reconcileHeartbeatMs?: number } = {},
   ) {
     this.runtime = runtime;
     this.configPath = configPath;
@@ -104,28 +119,86 @@ export class WorkspaceSupervisor {
     this.watchdogStaleMs =
       options.watchdogStaleMs ??
       Number(process.env.BUZZY_BODY_ROOM_WATCHDOG_STALE_MS ?? DEFAULT_ROOM_WATCHDOG_STALE_MS);
+    this.reconcileHeartbeatMs =
+      options.reconcileHeartbeatMs ??
+      Number(process.env.BUZZY_BODY_RECONCILE_HEARTBEAT_MS ?? DEFAULT_RECONCILE_HEARTBEAT_MS);
   }
 
   activeRoomIds(): string[] {
     return [...this.running.keys()].sort();
   }
 
+  /**
+   * Membership discovery (`reconcile()`) no longer runs on a blind 5s forever
+   * poll. A persistent control-plane WS subscribes once to this agent's own
+   * put/remove-user events (kind 9000/9001, `#p`-filtered — the durable NIP-29
+   * mutation log, not the replaceable 39001/39002 projection, so a removal
+   * event still carries this agent's pubkey even though the *resulting*
+   * projection no longer would) and wakes `reconcile()` on demand instead.
+   * `DEFAULT_RECONCILE_HEARTBEAT_MS` is a long-interval correctness backstop:
+   * `reconcile()` still runs on that cadence even with zero WS activity, so a
+   * socket that never connects, drops, or silently misses a push can never
+   * strand a stale membership set (including a missed removal) indefinitely.
+   * The Room watchdog stays on the tight `pollMs` tick below — it only reads
+   * already-local timestamps, so it costs no relay traffic either way.
+   */
   async run(
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<'aborted' | 'agent-removed'> {
-    const pollMs = opts.pollMs ?? 5_000;
+    const watchdogTickMs = opts.pollMs ?? 5_000;
+    let wake = true; // reconcile once immediately on startup, same as before
+    let nextReconcileAt = 0;
+    let controlClient: ReturnType<typeof createBuzzClient> | undefined;
+    let unsubscribeControl: (() => void) | undefined;
+    try {
+      const candidate = createBuzzClient({
+        baseUrl: this.runtime.relayBaseUrl,
+        ...(this.runtime.relayHost ? { host: this.runtime.relayHost } : {}),
+        ...(this.baseConfig.relayWsUrl ? { wsUrl: this.baseConfig.relayWsUrl } : {}),
+        identity: this.agent,
+        WebSocketImpl: WebSocket,
+      });
+      await candidate.connect();
+      const socket = candidate.socket;
+      if (!socket) throw new Error('control-plane WS connected but exposed no socket');
+      unsubscribeControl = socket.subscribe(
+        [
+          {
+            kinds: [KIND_PUT_USER, KIND_REMOVE_USER],
+            '#p': [this.agent.publicKey],
+            since: Math.floor(this.now() / 1000),
+          },
+        ],
+        () => {
+          wake = true;
+        },
+      );
+      controlClient = candidate;
+    } catch (error) {
+      console.error(
+        `[supervisor] control-plane WS unavailable; relying on the ` +
+          `${this.reconcileHeartbeatMs}ms heartbeat poll:`,
+        error,
+      );
+    }
     try {
       while (!opts.signal?.aborted) {
-        let waitMs = pollMs;
-        try {
-          if (!(await this.reconcile())) return 'agent-removed';
-        } catch (error) {
-          // Membership discovery is a control-plane poll. A transient relay
-          // error must not tear down every active Room (and therefore restart
-          // their pinned ACP processes). Keep serving the last known set and
-          // honor the relay's advertised backoff before reconciling again.
-          waitMs = reconcileRetryMs(error, pollMs);
-          console.error(`[supervisor] discovery failed; retrying in ${waitMs}ms:`, error);
+        let waitMs = watchdogTickMs;
+        if (wake || this.now() >= nextReconcileAt) {
+          wake = false;
+          try {
+            if (!(await this.reconcile())) return 'agent-removed';
+            nextReconcileAt = this.now() + this.reconcileHeartbeatMs;
+          } catch (error) {
+            // Membership discovery is a control-plane read. A transient relay
+            // error must not tear down every active Room (and therefore restart
+            // their pinned ACP processes). Keep serving the last known set and
+            // honor the relay's advertised backoff before reconciling again.
+            const retryMs = reconcileRetryMs(error, watchdogTickMs);
+            nextReconcileAt = this.now() + retryMs;
+            waitMs = Math.min(waitMs, retryMs);
+            console.error(`[supervisor] discovery failed; retrying in ${retryMs}ms:`, error);
+          }
         }
         // Keep Room recovery independent from Workspace discovery: a transient
         // control-plane read cannot prevent the watchdog from reviving a
@@ -145,6 +218,8 @@ export class WorkspaceSupervisor {
       }
       return 'aborted';
     } finally {
+      unsubscribeControl?.();
+      controlClient?.disconnect();
       await this.stopAll();
       await this.scheduler.dispose();
     }

@@ -344,7 +344,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   addRailButton: {
-    borderRadius: 13,
+    borderRadius: 3,
     borderWidth: 1,
     borderColor: groknight.borderActive,
     backgroundColor: groknight.bgHighlight,
@@ -368,7 +368,7 @@ const styles = StyleSheet.create({
     marginBottom: 5,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 8,
+    borderRadius: 3,
     borderWidth: 1,
     borderColor: groknight.border,
     backgroundColor: groknight.bgRaised,

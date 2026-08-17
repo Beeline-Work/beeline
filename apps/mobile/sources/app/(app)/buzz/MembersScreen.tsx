@@ -937,7 +937,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     borderWidth: 1,
     borderColor: groknight.border,
-    borderRadius: 4,
+    borderRadius: 3,
     overflow: 'hidden',
   },
   roleSegmentButton: {
@@ -968,7 +968,7 @@ const styles = StyleSheet.create({
     height: 44,
     borderWidth: 1,
     borderColor: groknight.borderStrong,
-    borderRadius: 12,
+    borderRadius: 3,
     color: groknight.steel,
     fontSize: 26,
     lineHeight: 42,

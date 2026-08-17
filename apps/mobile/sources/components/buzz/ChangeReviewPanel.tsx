@@ -340,7 +340,7 @@ const styles = StyleSheet.create({
   panel: {
     borderWidth: 1,
     borderColor: groknight.border,
-    borderRadius: 8,
+    borderRadius: 3,
     overflow: 'hidden',
     backgroundColor: groknight.bgTerminal,
   },
@@ -348,7 +348,7 @@ const styles = StyleSheet.create({
     minHeight: 72,
     borderWidth: 1,
     borderColor: groknight.border,
-    borderRadius: 5,
+    borderRadius: 3,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
@@ -357,7 +357,7 @@ const styles = StyleSheet.create({
   errorState: {
     borderWidth: 1,
     borderColor: groknight.borderStrong,
-    borderRadius: 5,
+    borderRadius: 3,
     padding: 12,
     gap: 5,
   },
@@ -487,11 +487,11 @@ const styles = StyleSheet.create({
   },
   diffAddedLine: {
     ...Typography.mono('semiBold'),
-    color: diffColors.addedBorder,
+    color: groknight.diffAdded,
     backgroundColor: diffColors.addedBg,
   },
   diffRemovedLine: {
-    color: diffColors.removedBorder,
+    color: groknight.diffRemoved,
     backgroundColor: diffColors.removedBg,
   },
   diffContextLine: { color: groknight.textSecondary, backgroundColor: groknight.bgTerminal },

@@ -13,6 +13,9 @@ describe('Grok Build palette', () => {
       tertiary: '#6c6c6c',
       border: '#4e4e4e',
       accent: '#d7af5f',
+      diffAdded: '#3FB950',
+      diffRemoved: '#F85149',
+      radius: 3,
     });
   });
 });

@@ -5,6 +5,7 @@ import {
   KIND_NOSTR_PROFILE,
   parseGlobalPersonProfile,
   parsePersonProfile,
+  setGlobalPersonProfile,
   setPersonProfile,
 } from './person-profile.js';
 import {
@@ -73,6 +74,7 @@ describe('human cosmetic profiles', () => {
       name: 'ada',
       display_name: 'Ada Lovelace',
       picture: 'https://relay.test/media/person.jpg',
+      nip05: '',
     });
     expect(published && parseGlobalPersonProfile(published)).toMatchObject({
       name: 'Ada Lovelace',
@@ -95,6 +97,42 @@ describe('human cosmetic profiles', () => {
       JSON.stringify({ displayName: 'Grace Hopper', avatar: '' }),
     );
     expect(parsePersonProfile(event)?.name).toBe('Grace Hopper');
+  });
+
+  it('publishes and normalizes a NIP-05 identifier', async () => {
+    let published: NostrEvent | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          published = JSON.parse(String(init?.body)) as NostrEvent;
+          return response({ accepted: true });
+        }
+        return response([]);
+      }),
+    );
+
+    const profile = await setGlobalPersonProfile(ctx, { nip05: ' Ada@Example.COM ' });
+    expect(profile.nip05).toBe('Ada@example.com');
+    expect(JSON.parse(published?.content ?? '{}')).toMatchObject({ nip05: 'Ada@example.com' });
+    expect(published && parseGlobalPersonProfile(published)?.nip05).toBe('Ada@example.com');
+  });
+
+  it('rejects a malformed NIP-05 identifier', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => response([])));
+    await expect(setGlobalPersonProfile(ctx, { nip05: 'not-an-identifier' })).rejects.toThrow(
+      /nip05/,
+    );
+  });
+
+  it('drops an invalid nip05 value found in raw profile content', () => {
+    const event = signed(
+      person,
+      KIND_NOSTR_PROFILE,
+      [],
+      JSON.stringify({ name: 'ada', nip05: 'not-an-identifier' }),
+    );
+    expect(parseGlobalPersonProfile(event)?.nip05).toBeUndefined();
   });
 
   it('rejects a profile that points at a pubkey other than its signer', () => {

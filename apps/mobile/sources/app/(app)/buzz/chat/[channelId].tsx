@@ -82,6 +82,7 @@ import {
   type CornerStatus,
 } from '@/buzz/corners';
 import { directMessagePeer, shortMemberNpub } from '@/buzz/member-display';
+import { resolveNip05Status } from '@/buzz/nip05-verification';
 import {
   canRenameRoom,
   canRemoveRoomParticipant,
@@ -996,9 +997,14 @@ export default function BuzzChat() {
             const peerPubkey = directMessagePeer(dm, identity.publicKey);
             const peerAgent = communityAgents.find((agent) => agent.pubkey === peerPubkey);
             const peerProfile = humanProfiles.find((profile) => profile.pubkey === peerPubkey);
+            const peerNip05Status = peerProfile?.nip05
+              ? await resolveNip05Status(peerPubkey, peerProfile.nip05)
+              : undefined;
+            const verifiedPeerNip05 =
+              peerProfile?.nip05 && peerNip05Status === 'verified' ? peerProfile.nip05 : undefined;
             resolvedRoomName = peerAgent
               ? resolveAgentDisplayIdentity(peerPubkey, peerAgent).name
-              : (peerProfile?.name ?? shortMemberNpub(peerPubkey));
+              : (verifiedPeerNip05 ?? peerProfile?.name ?? shortMemberNpub(peerPubkey));
             setRoomName(resolvedRoomName);
           }
           useBuzzLocalCache.getState().patchChannel(identity.publicKey, decodedId, {

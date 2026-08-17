@@ -233,7 +233,7 @@ const CODEX_HARNESS_NOTICE_CONTINUATION =
   /^(?:codex can still (?:see|access|read)|(?:use|open|read)\s+\S*skill\.md\b)/i;
 
 /** Remove only the known leading Codex startup warning, never mid-reply text. */
-export function stripAgentReplyPreamble(message: string): string {
+function stripCodexHarnessPreamble(message: string): string {
   const lines = message.split(/\r?\n/);
   const firstContent = lines.findIndex((line) => line.trim().length > 0);
   if (firstContent < 0 || !CODEX_HARNESS_NOTICE.test(lines[firstContent]!.trim())) {
@@ -249,6 +249,91 @@ export function stripAgentReplyPreamble(message: string): string {
     replyStart++;
   }
   return lines.slice(replyStart).join('\n');
+}
+
+// pi-acp's `session/new` handler emits its whole startup block as a single
+// leading `agent_message_chunk` (see pi-acp's buildStartupInfo/buildUpdateNotice):
+//   pi v0.83.0
+//   ---
+//
+//   ## Skills
+//   - /home/user/.agents/skills/foo/SKILL.md
+//   ...
+//
+//   ---
+//   New version available: v0.84.2 (installed v0.83.0). Run: `npm i -g @earendil-works/pi-coding-agent`
+// Quiet-mode installs skip straight to just the update-notice line. Because
+// createNarrativeCommitter cuts segments at paragraph breaks, and this block's
+// own internal blank lines land a paragraph break inside it, a segment can
+// begin mid-block (e.g. just `---\n<notice>` or `## Extensions\n- ...`) rather
+// than at the true start of the message — so this strips a recognized *leading
+// run* of boilerplate lines, not only a fixed two-line preamble.
+const PI_STARTUP_VERSION_LINE = /^pi v\d+(?:\.\d+)+(?:[-+][\w.]+)?\s*$/i;
+const PI_UPDATE_NOTICE_LINE =
+  /^new version available:\s*v?\d+(?:\.\d+)+(?:[-+][\w.]+)?\s*\(installed\s*v?\d+(?:\.\d+)+(?:[-+][\w.]+)?\)\.\s*run:\s*`?npm i(?:nstall)? -g\s+\S+`?\.?\s*$/i;
+const PI_KNOWN_SECTION_HEADER = /^##\s+(?:Context|Skills|Prompts|Extensions)\s*$/i;
+const PI_DIVIDER_LINE = /^-{3,}\s*$/;
+/** A bullet whose entire body is a bare path/command token (no spaces) — how
+ *  pi lists skill/context/extension files, never how narration writes prose. */
+const PI_PATH_BULLET_LINE = /^[-*]\s+(?:\/|~\/|npm:)\S*$/;
+
+function nextSignificantLineMatches(lines: readonly string[], from: number, pattern: RegExp): boolean {
+  let j = from;
+  while (j < lines.length && !lines[j]!.trim()) j++;
+  return j < lines.length && pattern.test(lines[j]!.trim());
+}
+
+/** Remove a leading run of pi-acp's harness startup chatter (version banner,
+ *  skill/context/extension path dumps), never mid-reply text. */
+function stripPiHarnessPreamble(message: string): string {
+  const lines = message.split(/\r?\n/);
+  let i = 0;
+  while (i < lines.length && !lines[i]!.trim()) i++;
+  if (i >= lines.length) return message;
+
+  const first = lines[i]!.trim();
+  const entersKnownBlock =
+    PI_STARTUP_VERSION_LINE.test(first) ||
+    PI_KNOWN_SECTION_HEADER.test(first) ||
+    PI_UPDATE_NOTICE_LINE.test(first) ||
+    (PI_DIVIDER_LINE.test(first) && nextSignificantLineMatches(lines, i + 1, PI_UPDATE_NOTICE_LINE));
+  if (!entersKnownBlock) return message;
+
+  let sectionOpen = PI_KNOWN_SECTION_HEADER.test(first);
+  while (i < lines.length) {
+    const line = lines[i]!.trim();
+    if (!line) {
+      i++;
+      continue;
+    }
+    if (
+      PI_STARTUP_VERSION_LINE.test(line) ||
+      PI_DIVIDER_LINE.test(line) ||
+      PI_UPDATE_NOTICE_LINE.test(line)
+    ) {
+      i++;
+      continue;
+    }
+    if (PI_KNOWN_SECTION_HEADER.test(line)) {
+      sectionOpen = true;
+      i++;
+      continue;
+    }
+    if (sectionOpen && PI_PATH_BULLET_LINE.test(line)) {
+      i++;
+      continue;
+    }
+    break;
+  }
+  return lines.slice(i).join('\n');
+}
+
+/** Remove known harness/CLI startup boilerplate from the front of an agent
+ *  reply or narrative segment — never mid-reply text. Each harness's shape is
+ *  matched independently; composing them is safe since a message only ever
+ *  carries one harness's boilerplate. */
+export function stripAgentReplyPreamble(message: string): string {
+  return stripPiHarnessPreamble(stripCodexHarnessPreamble(message));
 }
 
 /** Batched activity to emit as a single channel event. */

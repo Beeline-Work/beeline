@@ -19,6 +19,28 @@ function raw(id: string, content: string, tags: string[][], createdAt: number): 
   };
 }
 
+/** A live `#t=agent-draft` (kind 30078) delivery, shaped like the real relay event. */
+function draft(id: string, text: string, requestId: string, createdAt: number): SessionEvent {
+  return {
+    type: 'raw',
+    sessionId: 'room',
+    payload: {
+      id,
+      content: text,
+      pubkey: agent,
+      createdAt,
+      tags: [
+        ['h', 'room'],
+        ['d', 'agent-draft:room'],
+        ['t', 'agent-draft'],
+        ['agent', agent],
+        ['session', 'session-1'],
+        ['request', requestId],
+      ],
+    },
+  };
+}
+
 function displaySequence(events: SessionEvent[]): ChatDisplayMessage[] {
   return events.reduce<ChatDisplayMessage[]>((messages, event) => {
     const projected = projectChatEvent(event, viewer);
@@ -547,5 +569,67 @@ describe('Buzz Room screen event projection', () => {
     expect(
       transcriptMessages([conversation, activity, merge, lifecycle, corner], true),
     ).toHaveLength(4);
+  });
+
+  it('streams a Room reply into one bubble that fills in place and finalizes without a second bubble', () => {
+    const requestId = 'human-ask-1';
+
+    // Streaming deltas arrive as live `#t=agent-draft` events, growing text.
+    const afterFirstDelta = displaySequence([draft('draft-1', 'Hel', requestId, 10)]);
+    expect(afterFirstDelta).toHaveLength(1);
+    expect(afterFirstDelta[0]).toMatchObject({
+      id: `agent-draft-${requestId}`,
+      text: 'Hel',
+      isAgentAuthor: true,
+      isAgentDraft: true,
+    });
+    expect(afterFirstDelta[0]!.relayId).toBeUndefined();
+
+    const afterMoreDeltas = displaySequence([
+      draft('draft-1', 'Hel', requestId, 10),
+      draft('draft-2', 'Hello wor', requestId, 10),
+      draft('draft-3', 'Hello world!', requestId, 10),
+    ]);
+    // Still exactly one bubble in the transcript — no separate banner element
+    // and no second bubble as the text keeps growing.
+    expect(afterMoreDeltas).toHaveLength(1);
+    expect(afterMoreDeltas[0]).toMatchObject({
+      id: `agent-draft-${requestId}`,
+      text: 'Hello world!',
+      isAgentDraft: true,
+    });
+    expect(transcriptMessages(afterMoreDeltas, false)).toHaveLength(1);
+
+    // The turn's final answer replies to the human's own request event —
+    // the same id Body threads through the draft/turn `request` tag.
+    const final = raw(
+      'final-relay-event-id',
+      'Hello world!',
+      [
+        ['t', 'agent-message'],
+        ['e', requestId, '', 'reply'],
+      ],
+      11,
+    );
+    const settled = upsertChatMessages(afterMoreDeltas, [projectChatEvent(final, viewer, true).message!]);
+
+    // The final reply reconciles onto the SAME bubble id in place — bubble
+    // count does not increase, and it is no longer marked provisional.
+    expect(settled).toHaveLength(1);
+    expect(settled[0]).toMatchObject({
+      id: `agent-draft-${requestId}`,
+      text: 'Hello world!',
+      isAgentAuthor: true,
+      relayId: 'final-relay-event-id',
+    });
+    expect(settled[0]!.isAgentDraft).toBeUndefined();
+
+    // A late-delivered draft flush for the same request (the draft and the
+    // final message arrive over independent subscriptions with no ordering
+    // guarantee) must not regress the finalized bubble back to provisional.
+    const afterStaleDraft = upsertChatMessages(settled, [
+      projectChatEvent(draft('draft-3', 'Hello world!', requestId, 10), viewer).message!,
+    ]);
+    expect(afterStaleDraft).toEqual(settled);
   });
 });

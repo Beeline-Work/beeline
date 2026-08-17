@@ -434,20 +434,11 @@ export async function listCommunities(
   pubkey: string,
   limit = 50,
 ): Promise<Community[]> {
-  const [memberEvents, communityEvents] = await Promise.all([
-    queryEvents(
-      ctx.http,
-      [{ kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS], '#p': [pubkey], limit }],
-      ctx.identity.publicKey,
-    ),
-    queryEvents(
-      ctx.http,
-      [{ kinds: [KIND_CREATE_GROUP, KIND_CHANNEL_METADATA], limit: 1000 }],
-      ctx.identity.publicKey,
-    ),
-  ]);
-  const createEvents = communityEvents.filter((event) => event.kind === KIND_CREATE_GROUP);
-  const metadataEvents = communityEvents.filter((event) => event.kind === KIND_CHANNEL_METADATA);
+  const memberEvents = await queryEvents(
+    ctx.http,
+    [{ kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS], '#p': [pubkey], limit }],
+    ctx.identity.publicKey,
+  );
   const ids = [
     ...new Set(
       memberEvents
@@ -456,6 +447,24 @@ export async function listCommunities(
     ),
   ];
   if (ids.length === 0) return [];
+
+  // Candidate ids are already known from memberEvents above, so scope the
+  // create/metadata read to exactly those instead of scanning every kind:9007
+  // create and kind:39000 metadata event on the relay. Create events carry
+  // `h`; metadata is read by its primary `#d` tag (same convention as
+  // getCommunityMetadata's fallback below), so any metadata event that only
+  // ever carried the older `#h` convention falls through to the existing
+  // per-id `getCommunity` recovery path further down, same as before.
+  const communityEvents = await queryEvents(
+    ctx.http,
+    [
+      { kinds: [KIND_CREATE_GROUP], '#h': ids, limit: Math.max(500, ids.length * 20) },
+      { kinds: [KIND_CHANNEL_METADATA], '#d': ids, limit: Math.max(500, ids.length * 5) },
+    ],
+    ctx.identity.publicKey,
+  );
+  const createEvents = communityEvents.filter((event) => event.kind === KIND_CREATE_GROUP);
+  const metadataEvents = communityEvents.filter((event) => event.kind === KIND_CHANNEL_METADATA);
 
   const wanted = new Set(ids);
   const byId = new Map<string, Community>();
@@ -473,8 +482,9 @@ export async function listCommunities(
     }
   }
 
-  // The broad create scan is shared with Room discovery. Fall back to exact
-  // reads for an older Workspace that fell outside the relay's scan window.
+  // The scoped create/metadata read above still relies on a `#d`-tagged
+  // metadata event; fall back to exact per-id reads (which also try the
+  // older `#h`-only metadata convention) for anything it missed.
   const exactIds = ids.filter((id) => !byId.has(id));
   const recovered = await Promise.all(exactIds.map((id) => getCommunity(ctx, id)));
   for (const community of recovered) {

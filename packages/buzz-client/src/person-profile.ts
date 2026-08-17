@@ -4,6 +4,7 @@ import { publishEvent } from './http.js';
 import { KIND_PERSON_PROFILE, TAG_COMMUNITY, TAG_PERSON_PROFILE } from './kinds.js';
 import { tagValue, tagValues } from './parse.js';
 import { normalizePersonHandle, normalizePersonName } from './display-name.js';
+import { normalizeNip05Identifier } from './nip05.js';
 import { query } from './query.js';
 import type { PersonProfile, PersonProfileInput } from './types.js';
 import type { ChannelOpsContext } from './channel.js';
@@ -39,6 +40,11 @@ function optionalHandle(value: unknown): string | undefined {
   return normalizePersonHandle(value) ?? undefined;
 }
 
+function optionalNip05(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  return normalizeNip05Identifier(value) ?? undefined;
+}
+
 function jsonRecord(content: string): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(content) as unknown;
@@ -61,11 +67,13 @@ export function parseGlobalPersonProfile(event: NostrEvent): PersonProfile | nul
     optionalName(content.name);
   const handle = optionalHandle(content.name ?? content.handle);
   const avatar = optionalAvatar(content.picture ?? content.avatar);
+  const nip05 = optionalNip05(content.nip05);
   return {
     pubkey: event.pubkey,
     ...(name ? { name } : {}),
     ...(handle ? { handle } : {}),
     ...(avatar ? { avatar } : {}),
+    ...(nip05 ? { nip05 } : {}),
     updatedAt: event.created_at,
     raw: event,
   };
@@ -199,6 +207,15 @@ export async function setGlobalPersonProfile(
   if (avatar && (avatar.length > 2048 || !/^https?:\/\//i.test(avatar))) {
     throw new Error('profile avatar must be an http(s) URL');
   }
+  const nip05 =
+    input.nip05 === undefined
+      ? current?.nip05
+      : input.nip05 === ''
+        ? undefined
+        : normalizeNip05Identifier(input.nip05) ?? undefined;
+  if (input.nip05 !== undefined && input.nip05 !== '' && !nip05) {
+    throw new Error('profile nip05 must be a valid name@domain identifier');
+  }
 
   const priorContent = currentEvent ? (jsonRecord(currentEvent.content) ?? {}) : {};
   const createdAt = Math.max(nextTimestamp(), (currentEvent?.created_at ?? 0) + 1);
@@ -214,6 +231,7 @@ export async function setGlobalPersonProfile(
         name: handle ?? '',
         display_name: name ?? '',
         picture: avatar ?? '',
+        nip05: nip05 ?? '',
       }),
     },
     ctx.identity.secretKey,

@@ -16,6 +16,7 @@ import {
   sortCorners,
   type CornerSummary,
 } from '@/buzz/corners';
+import { cornerHref } from '@/buzz/corner-navigation';
 import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { groknight } from '@/buzz/groknight';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
@@ -224,7 +225,7 @@ export default function BuzzCorners() {
                   showsPresence ? (online ? ', agent online' : ', agent offline') : ''
                 }`}
                 style={styles.cornerRow}
-                onPress={() => router.push(`/buzz/chat/${encodeURIComponent(item.id)}`)}
+                onPress={() => router.push(cornerHref(item.id, decodedId, item.name))}
               >
                 {agent ? (
                   <AgentAvatar

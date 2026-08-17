@@ -43,6 +43,7 @@ import {
   sortCorners,
   type CornerSummary,
 } from '@/buzz/corners';
+import { cornerHref } from '@/buzz/corner-navigation';
 import {
   CHANGES_LABEL,
   CORNER_LABEL,
@@ -951,9 +952,7 @@ export default function BuzzChannels() {
                         <TouchableOpacity
                           accessibilityLabel={`Open #${corner.name}, ${status.label}`}
                           key={corner.id}
-                          onPress={() =>
-                            router.push(`/buzz/chat/${encodeURIComponent(corner.id)}` as Href)
-                          }
+                          onPress={() => router.push(cornerHref(corner.id, item.id, corner.name))}
                           style={styles.cornerRow}
                         >
                           <Text numberOfLines={1} style={styles.cornerName}>

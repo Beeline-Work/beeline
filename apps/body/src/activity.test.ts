@@ -491,6 +491,89 @@ describe('createNarrativeCommitter', () => {
     expect(published[0]!.content).toBe('Reproducing the bug now.');
   });
 
+  it('never publishes pi-acp\'s quiet-mode version-update banner', async () => {
+    const narrator = createNarrativeCommitter(channelId, owner);
+    const banner =
+      'New version available: v0.84.2 (installed v0.83.0). Run: `npm i -g @earendil-works/pi-coding-agent`';
+
+    narrator.onChunk(`${banner}\n\nI'll start by reproducing the bug.\n\n`);
+    await narrator.finish();
+
+    expect(published).toHaveLength(1);
+    expect(published[0]!.content).toBe("I'll start by reproducing the bug.");
+  });
+
+  it("never publishes pi-acp's full startup block (skill/context paths, version banner), and streams real narration progressively once boilerplate is skipped", async () => {
+    // pi-acp emits the whole startup block (version line, Context/Skills/
+    // Extensions path dumps, trailing update notice) as one atomic leading
+    // agent_message_chunk. Its own internal blank lines create a paragraph
+    // break inside the block, so a later segment can begin mid-block (e.g.
+    // just `---\n<notice>`) rather than at the true start of the message.
+    const narrator = createNarrativeCommitter(channelId, owner);
+    const startup =
+      [
+        'pi v0.83.0',
+        '---',
+        '',
+        '## Context',
+        '- /home/lunchbox/repo/.git/beeline/worktrees/corner-42/AGENTS.md',
+        '',
+        '## Skills',
+        '- ~/.agents/skills/investigate/SKILL.md',
+        '- ~/.agents/skills/code-review/SKILL.md',
+        '',
+        '## Extensions',
+        '- /home/lunchbox/.pi/agent/extensions/foo.ts',
+        '',
+        '---',
+        'New version available: v0.84.2 (installed v0.83.0). Run: `npm i -g @earendil-works/pi-coding-agent`',
+      ].join('\n') + '\n';
+
+    // The whole startup block lands before any real narration exists —
+    // nothing durable yet, even though the block contains its own paragraph
+    // breaks.
+    narrator.onChunk(startup);
+    await flush();
+    expect(published).toHaveLength(0);
+
+    // Real narration streams in afterward across further onChunk calls,
+    // exactly like the harness-agnostic committer already handles — this is
+    // the "progressive segments commit as chunks arrive" contract.
+    narrator.onChunk(`${startup}I'll start by reproducing the bug.`);
+    await flush();
+    expect(published).toHaveLength(0); // still one growing paragraph
+
+    narrator.onChunk(`${startup}I'll start by reproducing the bug.\n\nFound it in the parser.`);
+    await flush();
+    expect(published).toHaveLength(1);
+    expect(published[0]!.content).toBe("I'll start by reproducing the bug.");
+
+    await narrator.finish();
+    expect(published).toHaveLength(2);
+    expect(published[1]!.content).toBe('Found it in the parser.');
+
+    for (const event of published) {
+      expect(event.content).not.toMatch(
+        /\.git\/beeline|SKILL\.md|New version available|^pi v0\.83\.0/,
+      );
+    }
+  });
+
+  it('does not filter real narration that happens to open with a bulleted list', async () => {
+    // The pi-boilerplate bullet filter only fires inside a recognized
+    // Context/Skills/Prompts/Extensions section — a genuine narration bullet
+    // list with no such header must pass through untouched.
+    const narrator = createNarrativeCommitter(channelId, owner);
+    narrator.onChunk(
+      '- Investigated the auth flow\n- Found the bug in the token refresh path\n\nFixing now.\n\n',
+    );
+    await narrator.finish();
+
+    expect(published.map((event) => event.content)).toEqual([
+      '- Investigated the auth flow\n- Found the bug in the token refresh path\n\nFixing now.',
+    ]);
+  });
+
   it('does not double-publish a segment when finish() runs right after a boundary already committed it', async () => {
     const narrator = createNarrativeCommitter(channelId, owner);
     narrator.onChunk('Reproducing the bug now.\n\n');

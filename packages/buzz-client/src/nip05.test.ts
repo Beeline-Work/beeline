@@ -1,5 +1,12 @@
+import { generateKeypair } from '@beeline/nostr';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { normalizeNip05Identifier, parseNip05Identifier, verifyNip05 } from './nip05.js';
+import {
+  claimNip05Handle,
+  Nip05ClaimError,
+  normalizeNip05Identifier,
+  parseNip05Identifier,
+  verifyNip05,
+} from './nip05.js';
 
 const pubkey = 'a'.repeat(64);
 const otherPubkey = 'b'.repeat(64);
@@ -105,5 +112,58 @@ describe('verifyNip05', () => {
     const result = await verifyNip05('bob@example.com', 'not-hex');
     expect(result.status).toBe('invalid');
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('claimNip05Handle', () => {
+  it('signs a NIP-98 POST with the requested name and returns the claim result', async () => {
+    const identity = generateKeypair();
+    const fetchSpy = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('https://auth.example/nip05/claim');
+      expect(init?.method).toBe('POST');
+      expect(String(init?.headers && (init.headers as Record<string, string>).authorization)).toMatch(
+        /^Nostr /,
+      );
+      expect(JSON.parse(String(init?.body))).toEqual({ name: 'alice' });
+      return jsonResponse({
+        claimed: true,
+        idempotent: false,
+        name: 'alice',
+        pubkey: identity.publicKey,
+      });
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    const result = await claimNip05Handle('https://auth.example', identity, 'alice');
+    expect(result).toEqual({
+      claimed: true,
+      idempotent: false,
+      name: 'alice',
+      pubkey: identity.publicKey,
+    });
+  });
+
+  it('throws a Nip05ClaimError carrying the service error code on a taken name', async () => {
+    const identity = generateKeypair();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ error: 'name_taken', message: 'handle is already claimed' }, 409)),
+    );
+    await expect(claimNip05Handle('https://auth.example', identity, 'alice')).rejects.toMatchObject({
+      code: 'name_taken',
+      status: 409,
+    });
+  });
+
+  it('throws an offline Nip05ClaimError on network failure', async () => {
+    const identity = generateKeypair();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('network down');
+      }),
+    );
+    await expect(claimNip05Handle('https://auth.example', identity, 'alice')).rejects.toBeInstanceOf(
+      Nip05ClaimError,
+    );
   });
 });

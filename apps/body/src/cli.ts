@@ -30,12 +30,14 @@ import {
 } from '@beeline/gate';
 import { createBuzzClient } from '@beeline/buzz-client';
 import {
+  findAgentRuntimeConfigPaths,
   findRuntimeConfigPaths,
   identityFromKey,
   launchRuntimeDaemon,
   pairRepositoryAgent,
   readRuntimeRecord,
   removeAgentRuntime,
+  resolveRuntimeConfigPath,
   runtimeDaemonPid,
   runtimeAgentCommand,
   runtimeIdentity,
@@ -54,6 +56,7 @@ Usage:
   beeline create-and-provision <name>       Create a new TLC + provision agent
   beeline pair <BUZZ-XXXX-XXXX> [options]   Pair this repo and start its durable Room agent
   beeline start [agent-pubkey]              Restart a paired repo's durable agent
+  beeline start --agent <agent-pubkey>      Restart it from anywhere (no repo needed)
 
 Options:
   --workspace-root <path>   Agent workspace (default: ./body-workspace)
@@ -147,7 +150,11 @@ async function waitToRestart(signal: AbortSignal): Promise<void> {
   });
 }
 
-async function runStoredDaemon(configPath: string): Promise<void> {
+async function runStoredDaemon(pathOrPointer: string): Promise<void> {
+  // `--config` may point at the repo-anchored compatibility pointer; every
+  // per-daemon path below (workspace, daemon.pid, Room roots) must hang off the
+  // real runtime directory, not the pointer's.
+  const configPath = await resolveRuntimeConfigPath(pathOrPointer);
   const runtime = await readRuntimeRecord(configPath);
   const agent = runtimeAgentCommand(runtime);
   // This assertion deliberately sits outside the retry loop: unsafe branch
@@ -182,7 +189,11 @@ async function runStoredDaemon(configPath: string): Promise<void> {
         const result = await supervisor.run({ signal: controller.signal });
         if (result === 'agent-removed') {
           controller.abort();
-          await removeAgentRuntime(configPath, runtime.agent.publicKey);
+          await removeAgentRuntime(
+            configPath,
+            runtime.agent.publicKey,
+            runtime.rooms.map((room) => room.repo.gitCommonDir),
+          );
           console.log(`[buzz] agent ${runtime.agent.publicKey} removed; runtime deleted`);
         }
       } catch (error) {
@@ -226,12 +237,25 @@ async function main(): Promise<void> {
   }
 
   if (command === 'start') {
-    const requestedPubkey = args[1];
-    const configs = await findRuntimeConfigPaths(process.cwd());
+    // `--agent <pubkey>` scans the machine-local agent state home, so starting
+    // an agent no longer requires standing in the repository it was paired in.
+    const agentFlag = args.indexOf('--agent');
+    const flagPubkey = agentFlag >= 0 ? args[agentFlag + 1] : undefined;
+    if (agentFlag >= 0 && !flagPubkey) throw new Error('--agent requires an agent pubkey');
+    const requestedPubkey = flagPubkey ?? (args[1] === '--agent' ? undefined : args[1]);
+    const configs = flagPubkey
+      ? await findAgentRuntimeConfigPaths()
+      : await findRuntimeConfigPaths(process.cwd());
     const matching = requestedPubkey
       ? configs.filter((path) => dirname(path).endsWith(requestedPubkey))
       : configs;
-    if (matching.length === 0) throw new Error('no paired agent runtime found in this repository');
+    if (matching.length === 0) {
+      throw new Error(
+        flagPubkey
+          ? `no paired agent runtime found for ${flagPubkey}`
+          : 'no paired agent runtime found in this repository',
+      );
+    }
     if (matching.length > 1) {
       throw new Error(
         'multiple paired agents found; pass the agent pubkey shown by `beeline pair`',

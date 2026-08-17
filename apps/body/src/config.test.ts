@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { loadBodyConfig, resolveCodegraphCommand, resolveReadonlyMcpCommand } from './config.js';
+import {
+  buildAgentEnv,
+  loadBodyConfig,
+  resolveCodegraphCommand,
+  resolveReadonlyMcpCommand,
+} from './config.js';
 
 const binaryEnv = {
   BUZZ_AGENT_BIN: process.execPath,
@@ -44,6 +49,65 @@ describe('loadBodyConfig relay resolution', () => {
     });
 
     expect(config.relayWsUrl).toBe('ws://legacy-ws.test');
+  });
+});
+
+describe('buildAgentEnv passthrough boundary', () => {
+  // AcpClient.start() used to spread the daemon's whole process.env underneath
+  // this map, so the allowlist described nothing. It is the child's entire
+  // environment now, which only works if it actually carries what a harness
+  // needs — and only what a harness needs.
+  const daemonEnv = {
+    PATH: '/usr/bin',
+    HOME: '/home/operator',
+    LANG: 'en_US.UTF-8',
+    LC_ALL: 'en_US.UTF-8',
+    SSH_AUTH_SOCK: '/run/ssh-agent.sock',
+    HTTPS_PROXY: 'http://proxy.test:3128',
+    NODE_EXTRA_CA_CERTS: '/etc/ca.pem',
+    ANTHROPIC_API_KEY: 'anthropic-key',
+    CLAUDE_CONFIG_DIR: '/home/operator/.claude',
+    GITHUB_TOKEN: 'gh-token',
+    BUZZ_DEV_MCP_BIN: '/usr/bin/buzz-dev-mcp',
+    UNRELATED_DEPLOY_SECRET: 'do-not-leak',
+    STRIPE_SECRET_KEY: 'do-not-leak',
+  };
+
+  it('carries the harness, toolchain, locale, proxy and TLS context a coding agent needs', () => {
+    const agentEnv = buildAgentEnv(daemonEnv);
+
+    expect(agentEnv).toMatchObject({
+      PATH: '/usr/bin',
+      HOME: '/home/operator',
+      LANG: 'en_US.UTF-8',
+      LC_ALL: 'en_US.UTF-8',
+      SSH_AUTH_SOCK: '/run/ssh-agent.sock',
+      HTTPS_PROXY: 'http://proxy.test:3128',
+      NODE_EXTRA_CA_CERTS: '/etc/ca.pem',
+      ANTHROPIC_API_KEY: 'anthropic-key',
+      CLAUDE_CONFIG_DIR: '/home/operator/.claude',
+      GITHUB_TOKEN: 'gh-token',
+      BUZZ_DEV_MCP_BIN: '/usr/bin/buzz-dev-mcp',
+    });
+    expect(agentEnv.TMPDIR).toBeTruthy();
+  });
+
+  it('does not hand every ACP child every unrelated secret the daemon holds', () => {
+    const agentEnv = buildAgentEnv(daemonEnv);
+
+    expect(agentEnv.UNRELATED_DEPLOY_SECRET).toBeUndefined();
+    expect(agentEnv.STRIPE_SECRET_KEY).toBeUndefined();
+  });
+
+  it('extends the boundary through BUZZY_BODY_AGENT_ENV_PASSTHROUGH without a code change', () => {
+    const agentEnv = buildAgentEnv({
+      ...daemonEnv,
+      BUZZY_BODY_AGENT_ENV_PASSTHROUGH: 'UNRELATED_DEPLOY_SECRET, MISSING_VAR',
+    });
+
+    expect(agentEnv.UNRELATED_DEPLOY_SECRET).toBe('do-not-leak');
+    expect(agentEnv.STRIPE_SECRET_KEY).toBeUndefined();
+    expect(agentEnv.MISSING_VAR).toBeUndefined();
   });
 });
 

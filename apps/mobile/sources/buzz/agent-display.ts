@@ -12,15 +12,16 @@ export type AgentDisplayIdentity = {
 };
 
 /**
- * Resolve authority-free presentation. A valid human-authored first name wins;
- * legacy compound overlays safely fall back to the stable pubkey-derived name.
+ * Resolve authority-free presentation. A valid human-authored soul overlay
+ * name wins; otherwise the agent's own registered `displayName` wins; only
+ * an agent with neither falls back to the stable pubkey-derived name.
  */
 export function resolveAgentDisplayIdentity(
   pubkey: string,
-  agent?: Pick<Agent, 'pubkey' | 'avatar' | 'soulProfile'> | null,
+  agent?: Pick<Agent, 'pubkey' | 'displayName' | 'avatar' | 'soulProfile'> | null,
 ): AgentDisplayIdentity {
   const overlay = agent?.soulProfile;
-  const name = resolveAgentName(overlay?.name, pubkey);
+  const name = resolveAgentName(overlay?.name ?? agent?.displayName, pubkey);
   const overlayPersonality = overlay?.personality.trim();
   // Once a human soul exists, its absent avatar explicitly selects the generated mark.
   const avatarUrl = overlay ? overlay.avatar?.trim() : agent?.avatar?.trim();

@@ -150,9 +150,16 @@ const OLDER_MESSAGES_PAGE_SIZE = 30;
 const MERGE_APPROVAL_ACCENT = groknight.accent;
 
 function CornerActivity({ message, active }: { message: ChatDisplayMessage; active: boolean }) {
-  const activity = message.activity?.length
-    ? message.activity
-    : [{ kind: 'output' as const, title: 'Output', text: message.text }];
+  // A fresh fallback array literal on every render would defeat
+  // ActivityTimeline's memoization below (its `items` prop would never be
+  // reference-stable), so this stays memoized on the same inputs.
+  const activity = useMemo(
+    () =>
+      message.activity?.length
+        ? message.activity
+        : [{ kind: 'output' as const, title: 'Output', text: message.text }],
+    [message.activity, message.text],
+  );
   const turn = useMemo(() => buildTurnActivity(activity), [activity]);
   return (
     <View style={styles.activityGroup} testID="corner-activity">
@@ -167,7 +174,14 @@ function CornerActivity({ message, active }: { message: ChatDisplayMessage; acti
   );
 }
 
-function AgentPresenceLight({
+/**
+ * Memoized: rendered once per agent transcript row inside FlatList's
+ * renderItem, which is recreated on every presence tick — without this,
+ * every row's presence dot re-renders even when only one other agent's
+ * status actually changed. `online` is the only prop, so a shallow compare
+ * bails correctly whenever this row's own agent status is unchanged.
+ */
+const AgentPresenceLight = React.memo(function AgentPresenceLight({
   online,
   testID,
 }: {
@@ -182,7 +196,7 @@ function AgentPresenceLight({
       testID={testID}
     />
   );
-}
+});
 
 function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
   const image = attachment.mimeType.startsWith('image/') && attachment.thumbnailUrl;

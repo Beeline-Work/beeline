@@ -33,7 +33,19 @@ function shardPoints(cy: number, halfWidth: number, halfLength: number): string 
   return `50,${tip.toFixed(1)} ${(50 + halfWidth).toFixed(1)},${wide.toFixed(1)} 50,${base.toFixed(1)} ${(50 - halfWidth).toFixed(1)},${wide.toFixed(1)}`;
 }
 
-export function PersonAvatar({ pubkey, avatarUrl, name = 'Person', size = 52 }: PersonAvatarProps) {
+/**
+ * Memoized: rendered once per transcript row inside FlatList's renderItem,
+ * which is recreated on every presence tick (room-enter and live updates) —
+ * without this, every row's SVG mark gets rebuilt on updates unrelated to
+ * that row's own identity. Props are all primitives, so a shallow compare
+ * correctly bails when nothing about this row's avatar changed.
+ */
+export const PersonAvatar = React.memo(function PersonAvatar({
+  pubkey,
+  avatarUrl,
+  name = 'Person',
+  size = 52,
+}: PersonAvatarProps) {
   const [failedAvatar, setFailedAvatar] = useState<string | null>(null);
   const showRelayAvatar =
     groknight.photoIdentityMarksEnabled && Boolean(avatarUrl && failedAvatar !== avatarUrl);
@@ -95,7 +107,7 @@ export function PersonAvatar({ pubkey, avatarUrl, name = 'Person', size = 52 }: 
       )}
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   frame: {

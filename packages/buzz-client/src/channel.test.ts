@@ -8,6 +8,7 @@ import {
   listSubchannels,
   renameChannel,
   setChannelVisibility,
+  waitUntilMember,
   type ChannelOpsContext,
 } from './channel.js';
 import { createIdentity } from './identity.js';
@@ -20,6 +21,7 @@ import {
   KIND_STREAM_MESSAGE,
 } from './kinds.js';
 import { tagValue } from './parse.js';
+import type { RelayWs } from './ws.js';
 
 const identity = createIdentity('channel-list-test');
 const memberIdentity = createIdentity('channel-member-test');
@@ -422,5 +424,121 @@ describe('setChannelVisibility', () => {
       visibility: 'invite-only',
     });
     expect(published[0]!.tags).toContainEqual(['visibility', 'private']);
+  });
+});
+
+describe('waitUntilMember (WS-driven)', () => {
+  function membersResponse(channelId: string, pubkey: string): Response {
+    return new Response(
+      JSON.stringify([
+        signEvent(
+          {
+            pubkey: identity.publicKey,
+            created_at: 1_700_000_000,
+            kind: KIND_CHANNEL_MEMBERS,
+            tags: [['d', channelId], ['p', pubkey]],
+            content: '',
+          },
+          identity.secretKey,
+        ),
+      ]),
+    );
+  }
+
+  it('resolves off a live WS push without waiting on the backstop poll', async () => {
+    const channelId = 'ws-member-room';
+    const recruit = createIdentity('ws-recruit');
+    let recruitIsMember = false;
+    let memberQueryCount = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const filter = (JSON.parse(String(init?.body)) as Record<string, unknown>[])[0]!;
+        const kind = (filter.kinds as number[])[0];
+        if (kind !== KIND_CHANNEL_MEMBERS) return new Response(JSON.stringify([]));
+        memberQueryCount += 1;
+        return recruitIsMember
+          ? membersResponse(channelId, recruit.publicKey)
+          : new Response(JSON.stringify([]));
+      }),
+    );
+
+    let capturedHandler: (() => void) | undefined;
+    const unsubscribe = vi.fn();
+    const fakeSocket = {
+      connected: true,
+      subscribe: vi.fn((_filters: unknown, onEvent: () => void) => {
+        capturedHandler = onEvent;
+        return unsubscribe;
+      }),
+    };
+    const wsCtx: ChannelOpsContext = {
+      http,
+      identity,
+      ws: () => fakeSocket as unknown as RelayWs,
+    };
+
+    const waitPromise = waitUntilMember(wsCtx, channelId, recruit.publicKey, {
+      timeoutMs: 15_000,
+    });
+
+    await vi.waitFor(() => expect(memberQueryCount).toBeGreaterThan(0));
+    expect(fakeSocket.subscribe).toHaveBeenCalledOnce();
+    expect(capturedHandler).toBeDefined();
+
+    recruitIsMember = true;
+    capturedHandler!();
+
+    await expect(waitPromise).resolves.toBeUndefined();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it('falls back to plain interval polling when a live socket exists but is not connected', async () => {
+    const channelId = 'disconnected-room';
+    const recruit = createIdentity('disconnected-recruit');
+    let attempt = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const filter = (JSON.parse(String(init?.body)) as Record<string, unknown>[])[0]!;
+        const kind = (filter.kinds as number[])[0];
+        if (kind !== KIND_CHANNEL_MEMBERS) return new Response(JSON.stringify([]));
+        attempt += 1;
+        return attempt < 2 ? new Response(JSON.stringify([])) : membersResponse(channelId, recruit.publicKey);
+      }),
+    );
+
+    const disconnectedSocket = { connected: false, subscribe: vi.fn() };
+    const wsCtx: ChannelOpsContext = {
+      http,
+      identity,
+      ws: () => disconnectedSocket as unknown as RelayWs,
+    };
+
+    await expect(
+      waitUntilMember(wsCtx, channelId, recruit.publicKey, { timeoutMs: 2_000, intervalMs: 20 }),
+    ).resolves.toBeUndefined();
+    expect(disconnectedSocket.subscribe).not.toHaveBeenCalled();
+    expect(attempt).toBeGreaterThanOrEqual(2);
+  });
+
+  it('throws after the timeout when neither a WS push nor the backstop poll ever finds membership', async () => {
+    const channelId = 'timeout-room';
+    const recruit = createIdentity('timeout-recruit');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify([]))));
+
+    const fakeSocket = {
+      connected: true,
+      subscribe: vi.fn(() => vi.fn()),
+    };
+    const wsCtx: ChannelOpsContext = {
+      http,
+      identity,
+      ws: () => fakeSocket as unknown as RelayWs,
+    };
+
+    await expect(
+      waitUntilMember(wsCtx, channelId, recruit.publicKey, { timeoutMs: 80, intervalMs: 20 }),
+    ).rejects.toThrow(/membership not visible/);
   });
 });

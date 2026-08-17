@@ -140,7 +140,7 @@ export class BuzzClient {
       identity: this.identity,
       ...(config.batchQueries !== undefined ? { batchQueries: config.batchQueries } : {}),
     };
-    this.ctx = { http: this.http, identity: this.identity };
+    this.ctx = { http: this.http, identity: this.identity, ws: () => this.ws };
   }
 
   // ── Connection ──────────────────────────────────────────────────────────

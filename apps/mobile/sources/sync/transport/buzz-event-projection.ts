@@ -275,6 +275,14 @@ export type ChatEventProjection = {
   mergeTarget?: MergeTarget;
   clearMergeTarget?: boolean;
   archiveChannel?: boolean;
+  /** A durable relay publish for this corner's own approved-merge delivery
+   *  (push, land, or merge-gate attempt) failed or could not be confirmed.
+   *  Lets the approve button stop showing a stale "sent" state while nothing
+   *  is actually landing — see `apps/body/src/body.ts`'s corner-scoped
+   *  `status=failed` body-control messages (no `subchannel` tag, since those
+   *  are posted directly on this corner's own channel, not a parent Room
+   *  status card). */
+  deliveryFailed?: boolean;
   agentPresence?: AgentPresence;
 };
 
@@ -369,6 +377,11 @@ export function projectChatEvent(
   const status = cornerStatus(event);
   const isMergeSummary = eventHasTag(event, 't', 'merge-summary');
   const isArchived = eventHasTag(event, 'status', 'archived');
+  // A corner's own delivery-failure notices (push/land/merge-gate failures)
+  // are posted directly on the corner's own channel with no `subchannel`
+  // tag — distinct from a `subchannel && status` parent-Room status card
+  // (checked first below) and from the archive notice above.
+  const isDeliveryFailure = bodyControl && !subchannelId && eventHasTag(event, 'status', 'failed');
   const repo = eventTagValue(event, 'repo');
   const branch = eventTagValue(event, 'branch');
   const tip = eventTagValue(event, 'tip');
@@ -507,6 +520,23 @@ export function projectChatEvent(
           timestamp: eventTimestamp(event),
           ...(pubkey ? { pubkey } : {}),
           isArchivedNotice: true,
+          ...(isNew ? { isNew: true } : {}),
+        },
+      };
+    }
+    if (isDeliveryFailure) {
+      // Previously dropped entirely (no `message`) — the relay durably had
+      // the failure but the transcript never showed it and the approve
+      // button never learned about it either.
+      return {
+        ...(mergeTarget ? { mergeTarget } : {}),
+        deliveryFailed: true,
+        message: {
+          id: eventId(event),
+          text,
+          isUser: false,
+          timestamp: eventTimestamp(event),
+          ...(pubkey ? { pubkey } : {}),
           ...(isNew ? { isNew: true } : {}),
         },
       };

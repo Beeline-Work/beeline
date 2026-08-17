@@ -98,7 +98,9 @@ describe('navigateToBuzzChannelFromNotification', () => {
     });
 
     it('uses the notification response id to invalidate the retained room backfill', () => {
-        expect(buzzChatSource).toContain('const { channelId, notificationResponseId }');
+        expect(buzzChatSource).toMatch(
+            /const \{ channelId, notificationResponseId[^}]*\} = useLocalSearchParams/,
+        );
         expect(buzzChatSource).toContain(
             '[decodedId, notificationResponseId, addMessages, applyAgentPresence]',
         );

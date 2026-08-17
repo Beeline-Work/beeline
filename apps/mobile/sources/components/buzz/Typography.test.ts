@@ -13,6 +13,7 @@ const sources = [
   '../../app/(app)/buzz/settings/workspace.tsx',
   './CommunityInviteEntry.tsx',
   './CommunityRail.tsx',
+  './CornerLedger.tsx',
 ];
 
 const monoStyles = new Set([
@@ -104,6 +105,7 @@ const monoStyles = new Set([
   'agentOfflineHintTitle',
   'cornerBackText',
   'cornerChannelName',
+  'cornerHeaderAgent',
   'cornerHeaderMeta',
   'cornerEmptyText',
   'prChip',
@@ -126,6 +128,8 @@ const monoStyles = new Set([
   'roomRenameCancelText',
   'roomRenameApplyText',
   'roomLifecycleTitle',
+  'steerNote',
+  'steerSignature',
 ]);
 
 function styleDefinition(source: string, name: string): string {

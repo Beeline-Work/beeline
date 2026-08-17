@@ -1,6 +1,7 @@
 # Buzzy visual language — Grok Mono Hull
 
-One system for Rooms and Corners. One shape family. One accent, used twice, on purpose.
+One shape family. One accent, used twice, on purpose. Two transcript layouts,
+because a Room and a Corner are not the same conversation.
 
 ## Palette
 
@@ -36,14 +37,37 @@ silhouette from an agent's but built from the same stroke system
 (`avatarInk`/`avatarSoft`/`avatarDim`, `strokeLinejoin: 'miter'`, no
 `Circle`/`Ellipse`).
 
-## Rooms and Corners are one system
+## Rooms and Corners
 
-A Room transcript and a Corner transcript render with the same row component:
-a small faceted avatar, a `›`/`·` glyph, an uppercase mono label (who), and
-body text — no bubble, no per-row box. The only screens that differ between
-a Room and a Corner are the ones with genuinely different content (the
-approval panel and diff review only exist in a Corner) — never the shape
-language rendering that content.
+One material, two layouts. A Room is many voices; a Corner is one agent
+working. They share every primitive — tokens, faceted marks, MonoHull, the one
+radius, the no-box rule — and deliberately diverge in layout, because the two
+surfaces answer different questions.
+
+**A Room transcript** renders every message through one row component
+(`TranscriptRow`, in `buzz/chat/[channelId].tsx`): a small faceted avatar, a
+`›`/`·` glyph, an uppercase mono label naming who, and body text. Many
+participants, so every message names its author. A human's own short message is
+the one layout exception — right-aligned and inset, carried by alignment.
+
+**A Corner transcript is a ledger written by one hand**
+(`components/buzz/CornerLedger.tsx`). A corner has exactly one administering
+agent, so that agent's faceted mark and name sit in the top bar once and never
+repeat: its turns render as plain flowing text — no avatar, no label, no glyph,
+a lot of quiet. A whole turn's tool run folds into one collapsible line
+(`ActivityTimeline`); a corner never prints a wall of output. A human's steer is
+the one thing that must be findable while scrolling a long ledger, so it inverts
+every axis the ledger uses at once: a hairline rule interrupts the page above
+it, the block pulls to the right margin, the type goes semibold in the brightest
+text tone, and a signature names who.
+
+Neither surface boxes a message. The divergence is layout and density, never
+shape language: same palette, same radius, same marks, same motion primitives.
+The approval panel and diff review exist only in a Corner.
+
+The header names the surface honestly or names nothing. A Corner shows its own
+kind:9007 slug, never the word "Room"; while either the channel kind or its name
+is still resolving, a skeleton stands in rather than a guess.
 
 Vocabulary: "Room," never "Channel." No `#` prefix on names — that's someone
 else's product's convention.

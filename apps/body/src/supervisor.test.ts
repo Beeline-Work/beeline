@@ -383,3 +383,105 @@ describe('WorkspaceSupervisor transient relay resilience', () => {
     expect(cornerController.signal.aborted).toBe(false);
   });
 });
+
+describe('WorkspaceSupervisor control-plane wake signal', () => {
+  function runtimeMinimal(name: string): AgentRuntimeRecord {
+    const agent = storedIdentity(name);
+    const body = storedIdentity(`${name}-body`);
+    return {
+      version: 2,
+      communityId: '11111111-1111-4111-8111-111111111111',
+      pairedBy: 'a'.repeat(64),
+      agent: agent.stored,
+      body: body.stored,
+      rooms: [],
+      supervisorRoot: '/tmp/beeline-wake-test',
+      relayBaseUrl: 'http://relay.test',
+      agentBinary: '/bin/true',
+      mcpBinary: '/bin/true',
+      createdAt: new Date(0).toISOString(),
+    };
+  }
+
+  it('does not poll reconcile every tick, but reconciles promptly on a pushed membership event', async () => {
+    const runtime = runtimeMinimal('wake-agent');
+    const isMember = vi.fn().mockResolvedValue(true);
+    const listMyChannels = vi.fn().mockResolvedValue([]);
+    const disconnect = vi.fn();
+    const connect = vi.fn().mockResolvedValue(undefined);
+    let capturedHandler: (() => void) | undefined;
+    const fakeSocket = {
+      subscribe: vi.fn((_filters: unknown, onEvent: () => void) => {
+        capturedHandler = onEvent;
+        return vi.fn();
+      }),
+    };
+    mocks.createBuzzClient.mockReturnValue({
+      isMember,
+      listMyChannels,
+      connect,
+      disconnect,
+      get socket() {
+        return fakeSocket;
+      },
+    });
+    const supervisor = new WorkspaceSupervisor(
+      runtime,
+      `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+      { reconcileHeartbeatMs: 60_000 },
+    );
+    const controller = new AbortController();
+
+    const runPromise = supervisor.run({ pollMs: 5, signal: controller.signal });
+    while (isMember.mock.calls.length < 1) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+    }
+    expect(fakeSocket.subscribe).toHaveBeenCalledOnce();
+
+    // Quiet window: no pushed event, well under the 60s heartbeat — the old
+    // always-on 5s poll would have called isMember again by now.
+    await new Promise((resolveWait) => setTimeout(resolveWait, 60));
+    expect(isMember.mock.calls.length).toBe(1);
+
+    capturedHandler?.();
+    while (isMember.mock.calls.length < 2) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+    }
+    expect(isMember.mock.calls.length).toBe(2);
+
+    controller.abort();
+    await expect(runPromise).resolves.toBe('aborted');
+  });
+
+  it('falls back to the heartbeat poll when the control-plane WS is unavailable', async () => {
+    const runtime = runtimeMinimal('no-ws-agent');
+    const isMember = vi.fn().mockResolvedValue(true);
+    const listMyChannels = vi.fn().mockResolvedValue([]);
+    const disconnect = vi.fn();
+    // No `connect`/`socket` on this mock — mirrors a client that cannot open
+    // a control-plane WS at all; reconcile() must still be driven, just by
+    // the heartbeat instead of a push.
+    mocks.createBuzzClient.mockReturnValue({ isMember, listMyChannels, disconnect });
+    const supervisor = new WorkspaceSupervisor(
+      runtime,
+      `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+      { reconcileHeartbeatMs: 20 },
+    );
+    const controller = new AbortController();
+
+    const runPromise = supervisor.run({ pollMs: 5, signal: controller.signal });
+    while (isMember.mock.calls.length < 2) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+    }
+    expect(isMember.mock.calls.length).toBeGreaterThanOrEqual(2);
+    // Only reconcile()'s own per-call client is ever disconnected — the
+    // failed control-socket attempt must not double-disconnect the same
+    // mock object once per reconcile call.
+    expect(disconnect).toHaveBeenCalledTimes(isMember.mock.calls.length);
+
+    controller.abort();
+    await expect(runPromise).resolves.toBe('aborted');
+  });
+});

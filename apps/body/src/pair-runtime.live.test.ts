@@ -45,6 +45,8 @@ const human = newIdentity('pair-runtime-human');
 let checkout = '';
 let secondCheckout = '';
 let protectedPushCheckout = '';
+/** Machine-local agent state root; the runtime no longer lives in the repo. */
+let stateHome = '';
 let daemonPid: number | undefined;
 let daemonLog = '';
 const selectedAgentKind = process.env.BUZZY_LIVE_AGENT_KIND as AgentKind | undefined;
@@ -97,6 +99,7 @@ const live = (await reachable()) && runtimeAvailable();
 describe.runIf(live)('live one-command pair → Room → branch', () => {
   beforeAll(async () => {
     checkout = await mkdtemp(resolve(tmpdir(), 'beeline-paired-repo-'));
+    stateHome = await mkdtemp(resolve(tmpdir(), 'beeline-state-home-'));
   });
 
   afterAll(async () => {
@@ -112,6 +115,7 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
     if (protectedPushCheckout) {
       await rm(protectedPushCheckout, { recursive: true, force: true });
     }
+    if (stateHome) await rm(stateHome, { recursive: true, force: true });
   });
 
   it('pairs inside the repo and produces a reviewable feature branch there', async () => {
@@ -160,6 +164,7 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
           ...process.env,
           BUZZ_AGENT_BIN: binaries.agentBinary,
           BUZZ_DEV_MCP_BIN: binaries.mcpBinary,
+          XDG_STATE_HOME: stateHome,
         },
         encoding: 'utf8',
         timeout: 60_000,

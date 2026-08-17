@@ -103,6 +103,7 @@ import {
   type NamedRepositoryTarget,
 } from './repository-target.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
+import { prepareRoomAgentHome } from './agent-home.js';
 import { appendPersonaSessionInstructions } from './persona-instructions.js';
 import {
   chunkChangeReviewPatch,
@@ -896,6 +897,8 @@ export class Body {
   private runningAgentTasks = new Map<string, Promise<void>>();
   private scheduler: SessionScheduler;
   private ownsScheduler: boolean;
+  /** Memoized per-room harness env; prepared on this Room's first activation. */
+  private roomAgentEnv?: Promise<Record<string, string>>;
   private durableState: DurableBodyState;
   private agentRelay: RelayClient;
   private mergeWorkerRelay?: RelayClient;
@@ -1021,6 +1024,21 @@ export class Body {
     return Array.from(this.sessions.values());
   }
 
+  /**
+   * Env for this room-instance's ACP children. When the Room has its own agent
+   * home, the harness state dirs point inside it (credentials stay shared, and
+   * `HOME` is never overridden) — see `agent-home.ts`. Prepared once per Body.
+   */
+  private sessionAgentEnv(): Promise<Record<string, string>> {
+    const root = this.config.agentHomeRoot;
+    if (!root) return Promise.resolve(this.config.agentEnv);
+    this.roomAgentEnv ??= prepareRoomAgentHome({ root }).then((overlay) => ({
+      ...this.config.agentEnv,
+      ...overlay,
+    }));
+    return this.roomAgentEnv;
+  }
+
   private async createManagedSession(input: {
     channelId: string;
     mode: SessionMode;
@@ -1055,10 +1073,14 @@ export class Body {
     const lifecycle: SessionLifecycle = {
       activate: async () => {
         if (client.isAlive && session.sessionId) return session.sessionId;
+        // The ACP session cwd is also the child's process cwd, so a harness
+        // that keys per-project state off its own cwd matches this session.
+        await mkdir(input.cwd, { recursive: true });
         client = new AcpClient({
           agentCommand: this.config.agentCommand ?? this.config.agentBinary,
           agentArgs: this.config.agentArgs,
-          agentEnv: this.config.agentEnv,
+          agentEnv: await this.sessionAgentEnv(),
+          agentCwd: input.cwd,
           autoApprovePermissions: input.autoApprovePermissions,
           permissionHandler: input.permissionHandler,
         });
@@ -1108,14 +1130,23 @@ export class Body {
       },
     };
     session.lifecycle = lifecycle;
-    // Room sessions activate eagerly so the conversational surface is ready.
-    // Edit sessions stay lazy: opening a second corner can publish its queued
-    // status immediately instead of waiting for another corner's ACP turn.
-    if (input.mode === 'readonly') {
-      await this.scheduler.run(input.channelId, lifecycle, async () => undefined, {
-        priority: 'interactive',
-      });
-    }
+    // Every session — Room and corner alike — activates lazily, on its first
+    // addressed turn. Provisioning N Rooms used to spawn N ACP processes up
+    // front and immediately evict most of them, so a Workspace's oldest Rooms
+    // were killed before ever handling a message. `startAgentPresence` (not the
+    // ACP process) publishes Room liveness, so "online" stays honest here.
+    return session;
+  }
+
+  /**
+   * Force a session's ACP process live now instead of on its first turn.
+   * Only pre-warming and tests that drive `session.client` directly need this;
+   * ordinary turns go through `runOnSession`, which activates on demand.
+   */
+  async ensureSessionReady(channelId: string): Promise<AgentSession> {
+    const session = this.sessions.get(channelId);
+    if (!session) throw new Error(`no session provisioned for channel ${channelId}`);
+    await this.runOnSession(session, async () => undefined);
     return session;
   }
 
@@ -1123,6 +1154,9 @@ export class Body {
     if (!session.lifecycle) return task();
     return this.scheduler.run(session.channelId, session.lifecycle, task, {
       priority: session.mode === 'readonly' ? 'interactive' : 'background',
+      // A corner budgets against its parent Room, so one Room's corners can
+      // never crowd another Room out of the Workspace pool.
+      roomKey: session.parentChannelId ?? session.channelId,
     });
   }
 

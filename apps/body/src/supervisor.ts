@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import WebSocket from 'ws';
@@ -21,7 +21,11 @@ import {
   type LocalRepositoryBinding,
   type RoomRuntimeRecord,
 } from './runtime.js';
-import { SessionScheduler } from './session-scheduler.js';
+import {
+  DEFAULT_PER_ROOM_LIVE_SESSIONS,
+  DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR,
+  SessionScheduler,
+} from './session-scheduler.js';
 
 interface RunningRoom {
   body: Body;
@@ -110,8 +114,20 @@ export class WorkspaceSupervisor {
     this.configPath = configPath;
     this.baseConfig = baseConfig;
     this.agent = runtimeIdentity(runtime.agent);
+    // Capacity is budgeted per Room under a Workspace ceiling that grows with
+    // the number of Rooms this daemon serves. BUZZY_BODY_MAX_SESSIONS still
+    // pins a fixed Workspace ceiling when an operator sets it explicitly.
+    const fixedWorkspaceCeiling = process.env.BUZZY_BODY_MAX_SESSIONS;
     this.scheduler = new SessionScheduler({
-      maxLiveSessions: Number(process.env.BUZZY_BODY_MAX_SESSIONS ?? '4'),
+      ...(fixedWorkspaceCeiling ? { maxLiveSessions: Number(fixedWorkspaceCeiling) } : {}),
+      perRoomLiveSessions: Number(
+        process.env.BUZZY_BODY_MAX_SESSIONS_PER_ROOM ?? String(DEFAULT_PER_ROOM_LIVE_SESSIONS),
+      ),
+      workspaceFloor: Number(
+        process.env.BUZZY_BODY_MAX_SESSIONS_FLOOR ??
+          String(DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR),
+      ),
+      activeRoomCount: () => this.running.size,
       idleMs: Number(process.env.BUZZY_BODY_SESSION_IDLE_MS ?? String(5 * 60_000)),
       reserveInteractiveSlot: true,
     });
@@ -310,10 +326,56 @@ export class WorkspaceSupervisor {
     }
   }
 
+  /**
+   * Room storage root. `RoomRuntimeRecord.root` is explicit for Rooms created
+   * once the runtime moved off the paired repo's `.git`; a record written
+   * before that carries no root and keeps resolving to its existing location
+   * under the runtime config directory. Never derive over an explicit root —
+   * an open corner's `git worktree` registration stores absolute paths, so
+   * relocating a live Room's directory would silently break it.
+   */
+  private roomRoot(channelId: string, room?: RoomRuntimeRecord): string {
+    return room?.root ?? resolve(dirname(this.configPath), 'rooms', channelId);
+  }
+
+  /**
+   * Per-room harness state directory, or undefined to keep the daemon's
+   * ambient state (see `agent-home.ts`).
+   *
+   * Migration rule: a Room directory that already exists predates per-room
+   * homes, so silently re-homing it would strand whatever per-project state
+   * its harness had built up. Such Rooms keep the shared state until an
+   * operator opts in with `BUZZY_BODY_ROOM_HOME=1`; every new Room is isolated
+   * from the start. The marker directory is created here (not lazily on first
+   * activation) so the decision is stable across daemon restarts.
+   */
+  private roomAgentHomeRoot(workspaceRoot: string): string | undefined {
+    const flag = process.env.BUZZY_BODY_ROOM_HOME;
+    if (flag === '0') return undefined;
+    const home = resolve(workspaceRoot, 'agent-home');
+    if (flag !== '1' && !existsSync(home) && existsSync(workspaceRoot)) return undefined;
+    try {
+      mkdirSync(home, { recursive: true, mode: 0o700 });
+    } catch (error) {
+      console.error(`[supervisor] per-room agent home unavailable at ${home}:`, error);
+      return undefined;
+    }
+    return home;
+  }
+
+  private roomBodyConfig(workspaceRoot: string): BodyConfig {
+    const agentHomeRoot = this.roomAgentHomeRoot(workspaceRoot);
+    return {
+      ...this.baseConfig,
+      workspaceRoot,
+      ...(agentHomeRoot ? { agentHomeRoot } : {}),
+    };
+  }
+
   private startRepositoryRoom(room: RoomRuntimeRecord, channelId = room.channelId): void {
     const controller = new AbortController();
-    const workspaceRoot = resolve(dirname(this.configPath), 'rooms', channelId);
-    const config: BodyConfig = { ...this.baseConfig, workspaceRoot };
+    const workspaceRoot = this.roomRoot(channelId, room);
+    const config: BodyConfig = this.roomBodyConfig(workspaceRoot);
     const startedAt = this.now();
     const health = {
       poll: () => this.notePoll(channelId),
@@ -366,8 +428,8 @@ export class WorkspaceSupervisor {
     kind: 'named-repository' | 'direct-message',
   ): void {
     const controller = new AbortController();
-    const workspaceRoot = resolve(dirname(this.configPath), 'rooms', channelId);
-    const config: BodyConfig = { ...this.baseConfig, workspaceRoot };
+    const workspaceRoot = this.roomRoot(channelId);
+    const config: BodyConfig = this.roomBodyConfig(workspaceRoot);
     const startedAt = this.now();
     const body = new Body(config, runtimeIdentity(this.runtime.body), this.agent, undefined, {
       scheduler: this.scheduler,
@@ -505,6 +567,9 @@ export class WorkspaceSupervisor {
     return {
       channelId,
       repo,
+      // Stamp the storage root explicitly so this Room stays put even if the
+      // runtime record later moves.
+      root: this.roomRoot(channelId),
       membershipSince,
       discoveredAt: new Date().toISOString(),
     };

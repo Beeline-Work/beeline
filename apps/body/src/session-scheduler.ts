@@ -6,10 +6,26 @@ export interface SessionLifecycle {
 export type SessionRunPriority = 'interactive' | 'background';
 
 interface LiveSession {
-  physicalSessionId: string;
+  /** Undefined while the reservation is still spawning its ACP process. */
+  physicalSessionId?: string;
   lifecycle: SessionLifecycle;
   lastUsedAt: number;
+  /** Room this session is budgeted against (a corner budgets against its Room). */
+  roomKey: string;
+  /** True between slot reservation and a completed `activate()`. */
+  pending: boolean;
 }
+
+/** Concurrent live ACP processes one Room (its own session plus corners) may hold. */
+export const DEFAULT_PER_ROOM_LIVE_SESSIONS = 2;
+
+/**
+ * Smallest Workspace-wide ceiling. The dynamic ceiling is
+ * `max(this, perRoom x activeRooms)` so a Workspace with many Rooms is not
+ * squeezed through a fixed pool, while a single-Room Workspace still gets
+ * enough capacity for its Room plus concurrent corners.
+ */
+export const DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR = 4;
 
 /**
  * Workspace-wide bounded session scheduler.
@@ -18,41 +34,79 @@ interface LiveSession {
  * ACP processes may be suspended while idle, but a key is never assigned to a
  * second live process. Reactivation is an explicit generation change on that
  * same pinned logical session, after its transcript has been restored by Body.
+ *
+ * Capacity bookkeeping is guarded by `capacityTail`; the expensive I/O it
+ * governs (an eviction's `suspend()`, a spawn's `activate()`) deliberately runs
+ * *outside* that mutex. A `pending` placeholder is inserted under the lock and
+ * counts against capacity for its whole activation, so oversubscription stays
+ * impossible while two Rooms can spawn their processes concurrently. Holding
+ * the mutex across the spawn (as this scheduler originally did) made one slow
+ * ACP handshake stall every other Room's next turn, workspace-wide.
  */
 export class SessionScheduler {
-  private readonly maxLiveSessions: number;
+  /** Fixed ceiling when explicitly configured; undefined selects the dynamic one. */
+  private readonly fixedMaxLiveSessions?: number;
+  private readonly perRoomLiveSessions: number;
+  private readonly workspaceFloor: number;
+  private readonly activeRoomCount?: () => number;
   private readonly reserveInteractiveSlot: boolean;
   private readonly idleMs: number;
   private readonly live = new Map<string, LiveSession>();
   private readonly busy = new Set<string>();
   private readonly tails = new Map<string, Promise<void>>();
   private readonly physicalHistory = new Map<string, string[]>();
+  /**
+   * Sessions already removed from `live` whose process is still being torn
+   * down. They keep occupying capacity until `suspend()` resolves, so an
+   * eviction moved out of the critical section cannot transiently exceed the
+   * ceiling in real OS processes.
+   */
+  private readonly suspending = new Set<LiveSession>();
   private waiters: Array<() => void> = [];
   private capacityTail: Promise<void> = Promise.resolve();
   private sweepTimer?: ReturnType<typeof setInterval>;
 
   constructor(
     options: {
+      /** Fixed Workspace ceiling. Omit to use `max(floor, perRoom x activeRooms)`. */
       maxLiveSessions?: number;
+      /** Per-Room budget (a Room and its corners share it). */
+      perRoomLiveSessions?: number;
+      /** Floor for the dynamic Workspace ceiling. */
+      workspaceFloor?: number;
+      /** Rooms the supervisor is currently serving; drives the dynamic ceiling. */
+      activeRoomCount?: () => number;
       idleMs?: number;
       reserveInteractiveSlot?: boolean;
     } = {},
   ) {
-    const requestedMaxLiveSessions = options.maxLiveSessions ?? 4;
     this.idleMs = options.idleMs ?? 5 * 60_000;
-    if (!Number.isSafeInteger(requestedMaxLiveSessions) || requestedMaxLiveSessions < 1) {
-      throw new Error('maxLiveSessions must be a positive integer');
-    }
     if (!Number.isSafeInteger(this.idleMs) || this.idleMs < 1) {
       throw new Error('idleMs must be a positive integer');
     }
     this.reserveInteractiveSlot = options.reserveInteractiveSlot ?? false;
-    // A responsive scheduler needs one edit process and one Room process. Keep
-    // capacity-one schedulers available for low-level bound tests, but promote
-    // responsive runtime schedulers to the smallest useful bounded capacity.
-    this.maxLiveSessions = this.reserveInteractiveSlot
-      ? Math.max(2, requestedMaxLiveSessions)
-      : requestedMaxLiveSessions;
+    if (options.maxLiveSessions !== undefined) {
+      if (!Number.isSafeInteger(options.maxLiveSessions) || options.maxLiveSessions < 1) {
+        throw new Error('maxLiveSessions must be a positive integer');
+      }
+      // A responsive scheduler needs one edit process and one Room process. Keep
+      // capacity-one schedulers available for low-level bound tests, but promote
+      // responsive runtime schedulers to the smallest useful bounded capacity.
+      this.fixedMaxLiveSessions = this.reserveInteractiveSlot
+        ? Math.max(2, options.maxLiveSessions)
+        : options.maxLiveSessions;
+    }
+    const perRoom = options.perRoomLiveSessions ?? DEFAULT_PER_ROOM_LIVE_SESSIONS;
+    if (!Number.isSafeInteger(perRoom) || perRoom < 1) {
+      throw new Error('perRoomLiveSessions must be a positive integer');
+    }
+    this.perRoomLiveSessions = perRoom;
+    const floor = options.workspaceFloor ?? DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR;
+    if (!Number.isSafeInteger(floor) || floor < 1) {
+      throw new Error('workspaceFloor must be a positive integer');
+    }
+    this.workspaceFloor = floor;
+    if (options.activeRoomCount) this.activeRoomCount = options.activeRoomCount;
     this.sweepTimer = setInterval(() => void this.sweepIdle(), Math.min(this.idleMs, 30_000));
     this.sweepTimer.unref?.();
   }
@@ -62,7 +116,7 @@ export class SessionScheduler {
     key: string,
     lifecycle: SessionLifecycle,
     task: () => Promise<T>,
-    options: { priority?: SessionRunPriority } = {},
+    options: { priority?: SessionRunPriority; roomKey?: string } = {},
   ): Promise<T> {
     const previous = this.tails.get(key) ?? Promise.resolve();
     let releaseTail!: () => void;
@@ -75,7 +129,12 @@ export class SessionScheduler {
     return previous
       .catch(() => undefined)
       .then(async () => {
-        await this.ensureLive(key, lifecycle, options.priority ?? 'interactive');
+        await this.ensureLive(
+          key,
+          lifecycle,
+          options.priority ?? 'interactive',
+          options.roomKey ?? key,
+        );
         const session = this.live.get(key)!;
         session.lastUsedAt = Date.now();
         try {
@@ -102,12 +161,23 @@ export class SessionScheduler {
     return this.physicalHistory.get(key) ?? [];
   }
 
-  snapshot(): { live: number; busy: number; queuedChannels: number; maxLive: number } {
+  snapshot(): {
+    live: number;
+    pending: number;
+    busy: number;
+    queuedChannels: number;
+    maxLive: number;
+    perRoom: number;
+  } {
+    let pending = 0;
+    for (const session of this.live.values()) if (session.pending) pending += 1;
     return {
       live: this.live.size,
+      pending,
       busy: this.busy.size,
       queuedChannels: this.tails.size,
-      maxLive: this.maxLiveSessions,
+      maxLive: this.workspaceCapacity(),
+      perRoom: this.perRoomLiveSessions,
     };
   }
 
@@ -116,8 +186,7 @@ export class SessionScheduler {
     const session = this.live.get(key);
     if (!session) return;
     this.live.delete(key);
-    await session.lifecycle.suspend();
-    this.wakeCapacityWaiters();
+    await this.retire(session);
   }
 
   /**
@@ -130,23 +199,58 @@ export class SessionScheduler {
     if (!session) return;
     this.live.delete(key);
     this.busy.delete(key);
-    await session.lifecycle.suspend();
-    this.wakeCapacityWaiters();
+    await this.retire(session);
   }
 
   async dispose(): Promise<void> {
     if (this.sweepTimer) clearInterval(this.sweepTimer);
     this.sweepTimer = undefined;
-    const sessions = [...this.live.entries()];
+    const sessions = [...this.live.values()];
     this.live.clear();
-    await Promise.all(sessions.map(([, session]) => session.lifecycle.suspend()));
+    await Promise.all(sessions.map((session) => this.retire(session)));
     this.wakeCapacityWaiters();
   }
 
+  /** Workspace ceiling: fixed when configured, else `max(floor, perRoom x rooms)`. */
+  private workspaceCapacity(): number {
+    if (this.fixedMaxLiveSessions !== undefined) return this.fixedMaxLiveSessions;
+    const rooms = this.activeRoomCount?.() ?? this.distinctLiveRooms();
+    const dynamic = this.perRoomLiveSessions * Math.max(1, rooms);
+    return Math.max(this.workspaceFloor, dynamic);
+  }
+
+  private distinctLiveRooms(): number {
+    const rooms = new Set<string>();
+    for (const session of this.live.values()) rooms.add(session.roomKey);
+    return rooms.size;
+  }
+
+  /** Live plus still-dying sessions — the real occupied-process count. */
+  private occupied(): number {
+    return this.live.size + this.suspending.size;
+  }
+
+  private async retire(session: LiveSession): Promise<void> {
+    this.suspending.add(session);
+    try {
+      await session.lifecycle.suspend();
+    } finally {
+      this.suspending.delete(session);
+      this.wakeCapacityWaiters();
+    }
+  }
+
+  /**
+   * Reserve a capacity slot under the mutex, then do the blocking work outside
+   * it. The reservation is a `pending` entry in `live`: it counts against both
+   * budgets for the whole spawn, so a concurrent Room cannot oversubscribe, and
+   * a concurrent Room's own spawn is not queued behind this one.
+   */
   private async ensureLive(
     key: string,
     lifecycle: SessionLifecycle,
     priority: SessionRunPriority,
+    roomKey: string,
   ): Promise<void> {
     for (;;) {
       const previousCapacity = this.capacityTail;
@@ -157,54 +261,91 @@ export class SessionScheduler {
       this.capacityTail = previousCapacity.catch(() => undefined).then(() => capacity);
       await previousCapacity.catch(() => undefined);
 
-      let retryAfterEviction = false;
       let waitForCapacity: Promise<void> | undefined;
+      let evicted: LiveSession | undefined;
+      let reservation: LiveSession | undefined;
       try {
+        // The per-key FIFO in run() means a pending reservation for this key
+        // can only belong to this call chain, never a concurrent one.
         if (this.live.has(key)) {
           this.busy.add(key);
           return;
         }
 
-        const capacityLimit =
-          priority === 'background' && this.reserveInteractiveSlot
-            ? this.maxLiveSessions - 1
-            : this.maxLiveSessions;
-        if (this.live.size >= capacityLimit) {
-          const idle = [...this.live.entries()]
-            .filter(([candidate]) => !this.busy.has(candidate))
-            .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt)[0];
-          if (idle) {
-            await this.suspend(idle[0]);
-            retryAfterEviction = true;
-          } else {
-            // Register before releasing the capacity lock so a completion
-            // cannot race between the full-capacity check and this waiter.
-            waitForCapacity = new Promise<void>((resolveWaiter) =>
-              this.waiters.push(resolveWaiter),
-            );
-          }
-        }
+        const reserved = priority === 'background' && this.reserveInteractiveSlot ? 1 : 0;
+        const roomLimit = Math.max(1, this.perRoomLiveSessions - reserved);
+        const workspaceLimit = Math.max(1, this.workspaceCapacity() - reserved);
+        const roomLive = [...this.live.values()].filter(
+          (session) => session.roomKey === roomKey,
+        ).length;
 
-        if (!waitForCapacity && !retryAfterEviction) {
-          const physicalSessionId = await lifecycle.activate();
-          const generations = this.physicalHistory.get(key) ?? [];
-          generations.push(physicalSessionId);
-          this.physicalHistory.set(key, generations);
-          this.live.set(key, { physicalSessionId, lifecycle, lastUsedAt: Date.now() });
-          // Reserve the process before releasing the capacity lock, otherwise a
-          // concurrent key could evict this just-activated session before its task
-          // marks itself busy.
+        // A Room over its own budget only ever evicts one of its own idle
+        // sessions, so a busy Room can never evict a quiet Room's process.
+        if (roomLive >= roomLimit) {
+          evicted = this.claimIdleVictim((session) => session.roomKey === roomKey);
+        } else if (this.occupied() >= workspaceLimit) {
+          evicted = this.claimIdleVictim(() => true);
+        }
+        if (!evicted && (roomLive >= roomLimit || this.occupied() >= workspaceLimit)) {
+          // Register before releasing the capacity lock so a completion
+          // cannot race between the full-capacity check and this waiter.
+          waitForCapacity = new Promise<void>((resolveWaiter) => this.waiters.push(resolveWaiter));
+        } else {
+          reservation = { lifecycle, lastUsedAt: Date.now(), roomKey, pending: true };
+          this.live.set(key, reservation);
           this.busy.add(key);
-          return;
         }
       } finally {
         releaseCapacity();
       }
 
-      // A background waiter must not hold the capacity mutex while an
-      // interactive Room turn can use the reserved slot.
-      await waitForCapacity;
+      if (!reservation) {
+        // A background waiter must not hold the capacity mutex while an
+        // interactive Room turn can use the reserved slot.
+        await waitForCapacity;
+        continue;
+      }
+
+      try {
+        // Both of these were previously awaited under the workspace-wide
+        // mutex. AcpClient.stop() alone costs >=800ms and a cold ACP handshake
+        // can cost tens of seconds.
+        if (evicted) await this.retire(evicted);
+        const physicalSessionId = await lifecycle.activate();
+        if (this.live.get(key) !== reservation) {
+          // forceSuspend/dispose retired this reservation mid-activation.
+          await lifecycle.suspend().catch(() => undefined);
+          throw new Error(`session ${key} was suspended while activating`);
+        }
+        reservation.pending = false;
+        reservation.physicalSessionId = physicalSessionId;
+        reservation.lastUsedAt = Date.now();
+        const generations = this.physicalHistory.get(key) ?? [];
+        generations.push(physicalSessionId);
+        this.physicalHistory.set(key, generations);
+        return;
+      } catch (error) {
+        if (this.live.get(key) === reservation) this.live.delete(key);
+        this.busy.delete(key);
+        this.wakeCapacityWaiters();
+        throw error;
+      }
     }
+  }
+
+  /**
+   * Remove and return the least-recently-used idle candidate, under the lock.
+   * It moves straight into `suspending` so the slot it still physically holds
+   * keeps counting until its actual teardown resolves outside the lock.
+   */
+  private claimIdleVictim(match: (session: LiveSession) => boolean): LiveSession | undefined {
+    const victim = [...this.live.entries()]
+      .filter(([candidate, session]) => !this.busy.has(candidate) && match(session))
+      .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt)[0];
+    if (!victim) return undefined;
+    this.live.delete(victim[0]);
+    this.suspending.add(victim[1]);
+    return victim[1];
   }
 
   private async sweepIdle(): Promise<void> {

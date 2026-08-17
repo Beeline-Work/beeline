@@ -58,6 +58,14 @@ export interface BodyConfig {
   agentEnv: Record<string, string>;
   /** Base directory for TLC workspaces and git worktrees. */
   workspaceRoot: string;
+  /**
+   * Per-room-instance harness state directory (see `agent-home.ts`). When set,
+   * this Room's ACP children get their own `CLAUDE_CONFIG_DIR`/`CODEX_HOME`/
+   * XDG state+cache/`TMPDIR` while still sharing the operator's credentials and
+   * `$HOME`. Unset keeps the daemon's ambient harness state, which is what an
+   * already-provisioned Room from before per-room homes must keep using.
+   */
+  agentHomeRoot?: string;
   /** Relay HTTP base (defaults to @beeline/gate config). */
   relayBaseUrl: string;
   relayHost: string;
@@ -193,9 +201,118 @@ export function parseEnvFile(path: string): Record<string, string> {
 }
 
 /**
- * Build the env map for a buzz-agent child process.
+ * Names passed through to an ACP child verbatim when present.
+ *
+ * `AcpClient.start()` used to spread the daemon's entire `process.env`
+ * underneath this map, which silently defeated the allowlist and handed every
+ * harness every secret the daemon happened to hold. The list is deliberately
+ * generous — a coding harness legitimately needs locale, proxy, TLS trust,
+ * toolchain and terminal context — but it is now an actual boundary, and
+ * `BUZZY_BODY_AGENT_ENV_PASSTHROUGH` (comma-separated) extends it without a
+ * code change.
+ */
+export const AGENT_ENV_PASSTHROUGH_NAMES = [
+  'PATH',
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'LANG',
+  'LANGUAGE',
+  'TERM',
+  'COLORTERM',
+  'TZ',
+  'TMPDIR',
+  'HOSTNAME',
+  'EDITOR',
+  'VISUAL',
+  'PAGER',
+  'FORCE_COLOR',
+  'NO_COLOR',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  'CURL_CA_BUNDLE',
+  'REQUESTS_CA_BUNDLE',
+  'NODE_EXTRA_CA_CERTS',
+  'NODE_OPTIONS',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+  'all_proxy',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'ALL_PROXY',
+  'SSH_AUTH_SOCK',
+  'GNUPGHOME',
+  'XDG_RUNTIME_DIR',
+  'XDG_CONFIG_HOME',
+  'XDG_DATA_HOME',
+  'XDG_STATE_HOME',
+  'XDG_CACHE_HOME',
+] as const;
+
+/** Prefixes passed through wholesale: harness, provider and toolchain families. */
+export const AGENT_ENV_PASSTHROUGH_PREFIXES = [
+  'LC_',
+  'ANTHROPIC_',
+  'CLAUDE_',
+  'OPENAI_',
+  'OPENROUTER_',
+  'AZURE_',
+  'AWS_',
+  'GOOGLE_',
+  'GEMINI_',
+  'VERTEX_',
+  'BEDROCK_',
+  'DEEPSEEK_',
+  'XAI_',
+  'GROQ_',
+  'MISTRAL_',
+  'TOGETHER_',
+  'FIREWORKS_',
+  'CEREBRAS_',
+  'OLLAMA_',
+  'CODEX_',
+  'GOOSE_',
+  'GH_',
+  'GITHUB_',
+  'GIT_',
+  'NPM_',
+  'npm_',
+  'NODE_',
+  'RUST_',
+  'CARGO_',
+  'PYTHON',
+  'VIRTUAL_ENV',
+  'UV_',
+  'PNPM_',
+  'YARN_',
+  'BUN_',
+  'FNM_',
+  'NVM_',
+  'VOLTA_',
+  'ASDF_',
+  'MISE_',
+  'HOMEBREW_',
+  'BUZZ_',
+  'BUZZY_',
+] as const;
+
+function isPassthroughName(name: string, extra: Set<string>): boolean {
+  if (extra.has(name)) return true;
+  if ((AGENT_ENV_PASSTHROUGH_NAMES as readonly string[]).includes(name)) return true;
+  return AGENT_ENV_PASSTHROUGH_PREFIXES.some((prefix) => name.startsWith(prefix));
+}
+
+/**
+ * Build the env map for an ACP agent child process.
  * Maps `BUZZY_LLM_*` (egress helper) onto `OPENAI_COMPAT_*` + `BUZZ_AGENT_PROVIDER=openai`.
  * Never logs secret values.
+ *
+ * This map is the child's *entire* environment (see `AcpClient.start()`), not
+ * an overlay on the daemon's, so it carries the documented passthrough set
+ * above alongside the LLM wiring.
  */
 export function buildAgentEnv(
   env: NodeJS.ProcessEnv = process.env,
@@ -214,13 +331,21 @@ export function buildAgentEnv(
     merged.OPENAI_COMPAT_BASE_URL ?? merged.BUZZY_LLM_BASE_URL ?? 'https://api.openai.com/v1';
   const model = merged.OPENAI_COMPAT_MODEL ?? merged.BUZZY_LLM_MODEL ?? merged.OPENAI_MODEL;
 
-  const agentEnv: Record<string, string> = {
-    // Pass through non-secret path/locale vars the child may need.
-    PATH: merged.PATH ?? process.env.PATH ?? '',
-    HOME: merged.HOME ?? process.env.HOME ?? '',
-    TMPDIR: merged.TMPDIR ?? process.env.TMPDIR ?? '/tmp',
-    RUST_LOG: merged.RUST_LOG ?? 'warn',
-  };
+  const extraPassthrough = new Set(
+    (merged.BUZZY_BODY_AGENT_ENV_PASSTHROUGH ?? '')
+      .split(',')
+      .map((name) => name.trim())
+      .filter(Boolean),
+  );
+  const agentEnv: Record<string, string> = {};
+  for (const [name, value] of Object.entries(merged)) {
+    if (isPassthroughName(name, extraPassthrough)) agentEnv[name] = value;
+  }
+  // Values the child always needs a defined answer for.
+  agentEnv.PATH = merged.PATH ?? process.env.PATH ?? '';
+  agentEnv.HOME = merged.HOME ?? process.env.HOME ?? '';
+  agentEnv.TMPDIR = merged.TMPDIR ?? process.env.TMPDIR ?? '/tmp';
+  agentEnv.RUST_LOG = merged.RUST_LOG ?? 'warn';
 
   if (apiKey && model) {
     agentEnv.BUZZ_AGENT_PROVIDER = merged.BUZZ_AGENT_PROVIDER ?? 'openai';

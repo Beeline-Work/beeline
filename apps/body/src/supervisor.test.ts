@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
 import { newIdentity } from '@beeline/gate';
 import type { BodyConfig } from './config.js';
 import type { AgentRuntimeRecord } from './runtime.js';
@@ -483,5 +486,105 @@ describe('WorkspaceSupervisor control-plane wake signal', () => {
 
     controller.abort();
     await expect(runPromise).resolves.toBe('aborted');
+  });
+});
+
+describe('WorkspaceSupervisor per-room storage and harness isolation', () => {
+  const scratchDirs: string[] = [];
+  const savedRoomHome = process.env.BUZZY_BODY_ROOM_HOME;
+
+  function scratch(prefix: string): string {
+    const path = mkdtempSync(resolve(tmpdir(), prefix));
+    scratchDirs.push(path);
+    return path;
+  }
+
+  afterEach(() => {
+    if (savedRoomHome === undefined) delete process.env.BUZZY_BODY_ROOM_HOME;
+    else process.env.BUZZY_BODY_ROOM_HOME = savedRoomHome;
+    for (const path of scratchDirs.splice(0)) rmSync(path, { recursive: true, force: true });
+  });
+
+  function supervisorFor(configPath: string, rooms: AgentRuntimeRecord['rooms'] = []) {
+    const agent = storedIdentity('storage-agent');
+    const body = storedIdentity('storage-body');
+    const runtime: AgentRuntimeRecord = {
+      version: 2,
+      communityId: '11111111-1111-4111-8111-111111111111',
+      pairedBy: 'a'.repeat(64),
+      agent: agent.stored,
+      body: body.stored,
+      rooms,
+      supervisorRoot: '/tmp/beeline-storage-test',
+      relayBaseUrl: 'http://relay.test',
+      agentBinary: '/bin/true',
+      mcpBinary: '/bin/true',
+      createdAt: new Date(0).toISOString(),
+    };
+    return new WorkspaceSupervisor(runtime, configPath, {} as BodyConfig);
+  }
+
+  function roomRoot(supervisor: WorkspaceSupervisor, channelId: string, room?: unknown): string {
+    return (
+      Reflect.get(supervisor, 'roomRoot') as (id: string, record?: unknown) => string
+    ).call(supervisor, channelId, room);
+  }
+
+  function agentHomeRoot(supervisor: WorkspaceSupervisor, workspaceRoot: string) {
+    return (
+      Reflect.get(supervisor, 'roomAgentHomeRoot') as (root: string) => string | undefined
+    ).call(supervisor, workspaceRoot);
+  }
+
+  it('keeps a Room provisioned before the runtime move at the exact directory it occupies', () => {
+    // A record written before RoomRuntimeRecord.root existed. Its corners hold
+    // absolute worktree paths under this directory, so it must not be derived
+    // relative to a relocated runtime record.
+    const legacyRuntimeDir = scratch('beeline-legacy-runtime-');
+    const supervisor = supervisorFor(resolve(legacyRuntimeDir, 'runtime.json'));
+
+    expect(roomRoot(supervisor, 'room-a')).toBe(resolve(legacyRuntimeDir, 'rooms', 'room-a'));
+  });
+
+  it('honours an explicit Room root over deriving one from the config path', () => {
+    const runtimeDir = scratch('beeline-runtime-');
+    const elsewhere = scratch('beeline-elsewhere-');
+    const supervisor = supervisorFor(resolve(runtimeDir, 'runtime.json'));
+
+    expect(roomRoot(supervisor, 'room-a', { root: resolve(elsewhere, 'room-a') })).toBe(
+      resolve(elsewhere, 'room-a'),
+    );
+  });
+
+  it('isolates a new Room harness state but never re-homes an already-served Room', () => {
+    const runtimeDir = scratch('beeline-runtime-');
+    const supervisor = supervisorFor(resolve(runtimeDir, 'runtime.json'));
+
+    const freshRoom = resolve(runtimeDir, 'rooms', 'fresh-room');
+    const home = agentHomeRoot(supervisor, freshRoom);
+    expect(home).toBe(resolve(freshRoom, 'agent-home'));
+    expect(existsSync(home!)).toBe(true);
+    // Stable across daemon restarts: the marker directory now exists, so the
+    // same Room keeps its isolated home instead of flipping back.
+    expect(agentHomeRoot(supervisor, freshRoom)).toBe(home);
+
+    // A Room directory that already exists predates per-room homes. Re-homing
+    // it would strand whatever per-project state its harness had built up.
+    const existingRoom = resolve(runtimeDir, 'rooms', 'existing-room');
+    mkdirSync(existingRoom, { recursive: true });
+    expect(agentHomeRoot(supervisor, existingRoom)).toBeUndefined();
+  });
+
+  it('lets an operator force per-room homes on, or off, for every Room', () => {
+    const runtimeDir = scratch('beeline-runtime-');
+    const supervisor = supervisorFor(resolve(runtimeDir, 'runtime.json'));
+    const existingRoom = resolve(runtimeDir, 'rooms', 'existing-room');
+    mkdirSync(existingRoom, { recursive: true });
+
+    process.env.BUZZY_BODY_ROOM_HOME = '1';
+    expect(agentHomeRoot(supervisor, existingRoom)).toBe(resolve(existingRoom, 'agent-home'));
+
+    process.env.BUZZY_BODY_ROOM_HOME = '0';
+    expect(agentHomeRoot(supervisor, resolve(runtimeDir, 'rooms', 'brand-new'))).toBeUndefined();
   });
 });

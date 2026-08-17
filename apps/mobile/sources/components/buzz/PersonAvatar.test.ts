@@ -67,4 +67,39 @@ describe('Person avatar', () => {
     expect(renderer.root.findAllByType('Image' as any)).toHaveLength(0);
     expect(renderer.root.findAllByType('Polygon' as any).length).toBeGreaterThan(0);
   });
+
+  /**
+   * Regression guard for the enter-room/live-update freeze: PersonAvatar
+   * renders once per transcript row inside FlatList's renderItem, which the
+   * chat screen recreates on every presence tick. Without memoization every
+   * visible row's SVG mark was rebuilt on updates unrelated to that row's
+   * own identity. A `React.memo`-wrapped component exposes the wrapped
+   * function as `.type`; replacing it with a spy directly counts actual
+   * invocations (unlike `React.Profiler.onRender`, which fires on every
+   * commit that reaches this position regardless of a memo bailout).
+   */
+  it('does not re-render when its own props are unchanged', () => {
+    const original = (PersonAvatar as unknown as { type: typeof PersonAvatar }).type;
+    const spy = vi.fn(original);
+    (PersonAvatar as unknown as { type: typeof PersonAvatar }).type = spy as any;
+    try {
+      function Parent({ tick }: { tick: number }) {
+        void tick;
+        return React.createElement(PersonAvatar, { pubkey, name: 'Person' });
+      }
+
+      let renderer!: ReactTestRenderer;
+      act(() => {
+        renderer = create(React.createElement(Parent, { tick: 0 }));
+      });
+      expect(spy).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        renderer.update(React.createElement(Parent, { tick: 1 }));
+      });
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      (PersonAvatar as unknown as { type: typeof PersonAvatar }).type = original;
+    }
+  });
 });

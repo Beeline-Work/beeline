@@ -55,8 +55,22 @@ function toneTextStyle(tone: MonoMarkdownTone): TextStyle {
   return styles.outputText;
 }
 
-/** Compact markdown for the Mono Hull transcript, with real hierarchy and no raw syntax. */
-export function MonoMarkdown({ markdown, tone = 'output', textStyle, testID }: MonoMarkdownProps) {
+/**
+ * Compact markdown for the Mono Hull transcript, with real hierarchy and no raw syntax.
+ *
+ * Memoized: this renders once per transcript row inside FlatList's renderItem,
+ * which is recreated on every presence tick (room-enter and live updates) —
+ * without this, every row's markdown-to-JSX tree gets rebuilt on updates
+ * unrelated to that row's own text. Props are primitives/stable style
+ * references, so a shallow compare correctly bails when this row's own
+ * markdown didn't change.
+ */
+export const MonoMarkdown = React.memo(function MonoMarkdown({
+  markdown,
+  tone = 'output',
+  textStyle,
+  testID,
+}: MonoMarkdownProps) {
   const blocks = useMemo(() => parseMarkdown(markdown), [markdown]);
   const base = textStyle ?? toneTextStyle(tone);
   const onLink = useCallback((url: string) => {
@@ -158,7 +172,7 @@ export function MonoMarkdown({ markdown, tone = 'output', textStyle, testID }: M
       })}
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   root: { width: '100%', minWidth: 0 },

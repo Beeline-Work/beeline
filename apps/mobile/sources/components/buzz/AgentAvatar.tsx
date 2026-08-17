@@ -12,7 +12,14 @@ type AgentAvatarProps = {
   size?: number;
 };
 
-export function AgentAvatar({
+/**
+ * Memoized: rendered once per transcript row inside FlatList's renderItem,
+ * which is recreated on every presence tick (room-enter and live updates) —
+ * without this, every row's SVG mark gets rebuilt on updates unrelated to
+ * that row's own identity. Props are all primitives, so a shallow compare
+ * correctly bails when nothing about this row's avatar changed.
+ */
+export const AgentAvatar = React.memo(function AgentAvatar({
   pubkey,
   avatarSeed,
   avatarUrl,
@@ -117,7 +124,7 @@ export function AgentAvatar({
       )}
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   frame: {

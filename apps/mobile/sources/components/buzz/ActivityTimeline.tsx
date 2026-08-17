@@ -104,8 +104,20 @@ function ActionDetail({ action, onBack }: { action: TurnActivityAction; onBack: 
   );
 }
 
-/** One summary per turn, with secondary action list and tertiary inspectable detail. */
-export function ActivityTimeline({ active = false, items, testID }: ActivityTimelineProps) {
+/**
+ * One summary per turn, with secondary action list and tertiary inspectable detail.
+ *
+ * Memoized: rendered once per corner activity row inside FlatList's
+ * renderItem, which is recreated on every presence tick — without this,
+ * every activity row's (already non-trivial) render re-executes on updates
+ * unrelated to that row's own activity. `items` must stay reference-stable
+ * across unrelated re-renders for this to pay off (see CornerActivity).
+ */
+export const ActivityTimeline = React.memo(function ActivityTimeline({
+  active = false,
+  items,
+  testID,
+}: ActivityTimelineProps) {
   const turn = useMemo(() => buildTurnActivity(items), [items]);
   const [expanded, setExpanded] = useState(false);
   const [selected, setSelected] = useState<TurnActivityAction | null>(null);
@@ -173,7 +185,7 @@ export function ActivityTimeline({ active = false, items, testID }: ActivityTime
       )}
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   timeline: {

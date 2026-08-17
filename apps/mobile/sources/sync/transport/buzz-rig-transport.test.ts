@@ -379,6 +379,50 @@ describe('Room-scoped agent presence transport', () => {
     expect(client.agentPresenceBackfill).toHaveBeenCalledWith('room');
   });
 
+  it('fans a Workspace presence read across every Room the Workspace has, since presence is Room-scoped', async () => {
+    const rawEvent = {
+      id: 'presence',
+      pubkey: 'a'.repeat(64),
+      created_at: 42,
+      kind: 30078,
+      tags: [
+        ['d', 'agent-presence:room-2'],
+        ['h', 'room-2'],
+        ['t', 'agent-presence'],
+        ['agent', 'a'.repeat(64)],
+        ['status', 'online'],
+      ],
+      content: 'online',
+      sig: 'b'.repeat(128),
+    };
+    const client = {
+      communityChannels: vi.fn(async () => ['room-1', 'room-2']),
+      query: vi.fn(async () => [rawEvent]),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    const events = await transport.agentPresenceBackfillForWorkspace('workspace-1');
+
+    expect(client.communityChannels).toHaveBeenCalledWith('workspace-1');
+    expect(client.query).toHaveBeenCalledWith([
+      { kinds: [30078], '#h': ['room-1', 'room-2'], limit: 200 },
+    ]);
+    expect(events).toEqual([expect.objectContaining({ type: 'raw', sessionId: 'room-2' })]);
+  });
+
+  it('reads no presence for a Workspace with no Rooms, without querying the relay', async () => {
+    const client = {
+      communityChannels: vi.fn(async () => []),
+      query: vi.fn(async () => []),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(transport.agentPresenceBackfillForWorkspace('workspace-1')).resolves.toEqual([]);
+    expect(client.query).not.toHaveBeenCalled();
+  });
+
   it('subscribes only to presence and releases the live subscription', async () => {
     const relayUnsubscribe = vi.fn();
     let relayHandler: ((event: BuzzSessionEvent) => void) | undefined;

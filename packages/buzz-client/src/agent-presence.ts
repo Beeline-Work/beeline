@@ -20,10 +20,15 @@ export function isAgentPresenceOnline(
   presence: AgentPresence | undefined,
   now = Date.now(),
 ): boolean {
+  // The daemon and the reader (mobile device or another daemon) are
+  // independent clocks. A heartbeat's `observedAt` landing slightly ahead of
+  // the reader's own `now` is ordinary skew, not staleness — rejecting it
+  // outright (a plain `now - observedAt >= 0` check) makes every heartbeat
+  // look "future" forever whenever the daemon's clock merely runs ahead,
+  // which reads as a permanently offline agent that is actually live.
   return (
     presence?.status === 'online' &&
-    now - presence.observedAt >= 0 &&
-    now - presence.observedAt <= AGENT_PRESENCE_STALE_MS
+    Math.abs(now - presence.observedAt) <= AGENT_PRESENCE_STALE_MS
   );
 }
 

@@ -19,6 +19,7 @@ import {
 import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { groknight } from '@/buzz/groknight';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
+import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { AgentAvatar } from '@/components/buzz/AgentAvatar';
 import { PersonAvatar } from '@/components/buzz/PersonAvatar';
@@ -77,7 +78,7 @@ export default function BuzzCorners() {
         const workspaceRole = nextCommunities.find(
           (workspace) => workspace.communityId === communityId,
         )?.viewerRole;
-        setCanManageWorkspace(workspaceRole === 'owner' || workspaceRole === 'admin');
+        setCanManageWorkspace(isWorkspaceManagerRole(workspaceRole));
         setAgentPresences(presenceMapFromSessionEvents(presenceEvents));
         setPresenceNow(Date.now());
         setAgents(communityId ? await client.listAgents(communityId) : []);

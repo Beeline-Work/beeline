@@ -54,6 +54,22 @@ export default function BuzzSettings() {
           <Text style={styles.rowChevron}>›</Text>
         </TouchableOpacity>
 
+        {/* THROWAWAY TYPE EXPLORATION — removed with @/buzz/font-exploration. */}
+        <TouchableOpacity
+          accessibilityLabel="Open type direction exploration"
+          onPress={() => router.push('/buzz/settings/fonts' as Href)}
+          style={styles.settingsRow}
+          testID="type-direction-setting"
+        >
+          <View style={styles.rowCopy}>
+            <Text style={styles.rowTitle}>Type direction</Text>
+            <Text style={styles.rowSubtitle}>
+              Exploration — switch the app-wide type system between candidates
+            </Text>
+          </View>
+          <Text style={styles.rowChevron}>›</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity
           accessibilityLabel={confirmForget ? 'Confirm sign out' : 'Sign out on this device'}
           onPress={() => void handleForget()}

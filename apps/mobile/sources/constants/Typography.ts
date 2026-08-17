@@ -1,5 +1,18 @@
 import { Platform } from 'react-native';
 
+import { fontDirection, readActiveFontDirectionId } from '@/buzz/font-exploration';
+
+/**
+ * THROWAWAY TYPE EXPLORATION (see `@/buzz/font-exploration`): the default and
+ * mono families below are resolved ONCE, here, from the persisted candidate
+ * direction. Every Buzz screen spreads `...Typography.default()` into a
+ * module-level `StyleSheet.create` object, so the family strings are copied at
+ * import time and cannot be reassigned later — the toggle persists a choice and
+ * reloads the bundle. Reverting this exploration means restoring the two
+ * literal family blocks and dropping this import.
+ */
+const activeDirection = fontDirection(readActiveFontDirectionId());
+
 /**
  * Typography system for Happy Coder app
  * 
@@ -31,20 +44,12 @@ import { Platform } from 'react-native';
 
 // Font family constants
 export const FontFamilies = {
-  // IBM Plex Sans (default typography)
-  default: {
-    regular: 'IBMPlexSans-Regular',
-    italic: 'IBMPlexSans-Italic', 
-    semiBold: 'IBMPlexSans-SemiBold',
-  },
-  
-  // IBM Plex Mono (default monospace)
-  mono: {
-    regular: 'IBMPlexMono-Regular',
-    italic: 'IBMPlexMono-Italic',
-    semiBold: 'IBMPlexMono-SemiBold',
-  },
-  
+  // Body / prose family of the active exploration direction.
+  default: activeDirection.body,
+
+  // Machine-identifier family of the active exploration direction.
+  mono: activeDirection.mono,
+
   // Bricolage Grotesque (logo/special use only)
   logo: {
     bold: 'BricolageGrotesque-Bold',

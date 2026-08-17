@@ -205,6 +205,15 @@ export const ROOM_AGENT_PROMPT_TIMEOUT_MS = 3 * 60_000;
  */
 export const ROOM_WS_MAINTENANCE_TICK_MS = 60_000;
 
+/**
+ * Correctness backstop cadence for a pending write-permission decision. The
+ * Room's already-open WS (`roomSockets`) is the primary, opportunistic path —
+ * see `waitForWritePermissionDecision` — this low-rate poll runs concurrently
+ * the whole wait so a socket that's absent, never connects, or drops mid-wait
+ * still notices a decision within one tick instead of only at timeout.
+ */
+export const WRITE_PERMISSION_BACKSTOP_POLL_MS = 5_000;
+
 /** Corner completions are status updates, not transcripts of the agent's process. */
 export const CORNER_TURN_SUMMARY_MAX_CHARS = 480;
 export const CORNER_TURN_SUMMARY_MAX_ITEMS = 3;
@@ -2677,6 +2686,16 @@ export class Body {
     ]);
   }
 
+  /**
+   * Resolves primarily off the Room's already-authenticated WS (`roomSockets`,
+   * the same socket `runRoomPushLoop` keeps open for request delivery) instead
+   * of polling every 500ms. The WS path is opportunistic, not required: a
+   * `WRITE_PERMISSION_BACKSTOP_POLL_MS` HTTP poll runs concurrently for the
+   * entire wait as the correctness guarantee, so a socket that's absent,
+   * never connects, or drops mid-wait just falls back to being noticed within
+   * one backstop tick instead of instantly — it can never silently strand a
+   * pending decision until timeout.
+   */
   private async waitForWritePermissionDecision(
     tlcChannelId: string,
     permissionId: string,
@@ -2686,46 +2705,116 @@ export class Body {
   ): Promise<'allow' | 'deny' | 'timeout'> {
     const startedAt = Math.floor(Date.now() / 1000) - 1;
     const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      try {
-        const events = await this.agentRelay.queryEvents([
-          {
-            kinds: [9],
-            '#h': [tlcChannelId],
-            '#t': [WRITE_PERMISSION_RESPONSE_TAG],
-            since: startedAt,
-            limit: 100,
-          },
-        ]);
-        const candidates = events
-          .filter(
-            (event) =>
-              event.pubkey !== this.agentIdentity.publicKey &&
-              tagValue(event, 'permission') === permissionId &&
-              tagValue(event, 'request') === requestId &&
-              tagValue(event, 'p') === this.agentIdentity.publicKey &&
-              tagValue(event, 'repo') === repository,
-          )
-          .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
-        for (const event of candidates) {
-          const members = new Set(
-            (await listMembers(this.agentClientContext(), tlcChannelId)).map(
-              (member) => member.pubkey,
-            ),
-          );
-          if (!members.has(event.pubkey)) continue;
-          if (await isRegisteredAgentIdentity(event.pubkey, this.agentRelay)) continue;
-          const decision = tagValue(event, 'decision');
-          if (decision === 'allow' || decision === 'deny') return decision;
-        }
-      } catch (error) {
-        if (!isTransientPermissionPollError(error)) throw error;
-        await new Promise((resolveWait) => setTimeout(resolveWait, 1_000));
-        continue;
+
+    const matchingDecision = async (event: NostrEvent): Promise<'allow' | 'deny' | undefined> => {
+      if (
+        event.pubkey === this.agentIdentity.publicKey ||
+        tagValue(event, 'permission') !== permissionId ||
+        tagValue(event, 'request') !== requestId ||
+        tagValue(event, 'p') !== this.agentIdentity.publicKey ||
+        tagValue(event, 'repo') !== repository
+      ) {
+        return undefined;
       }
-      await new Promise((resolveWait) => setTimeout(resolveWait, 500));
-    }
-    return 'timeout';
+      const members = new Set(
+        (await listMembers(this.agentClientContext(), tlcChannelId)).map(
+          (member) => member.pubkey,
+        ),
+      );
+      if (!members.has(event.pubkey)) return undefined;
+      if (await isRegisteredAgentIdentity(event.pubkey, this.agentRelay)) return undefined;
+      const decision = tagValue(event, 'decision');
+      return decision === 'allow' || decision === 'deny' ? decision : undefined;
+    };
+
+    return new Promise<'allow' | 'deny' | 'timeout'>((resolvePromise, rejectPromise) => {
+      let settled = false;
+      let backstopRunning = false;
+      const finish = (result: 'allow' | 'deny' | 'timeout') => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        clearInterval(backstop);
+        unsubscribe?.();
+        resolvePromise(result);
+      };
+      const fail = (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        clearInterval(backstop);
+        unsubscribe?.();
+        rejectPromise(error);
+      };
+
+      const timer = setTimeout(() => finish('timeout'), Math.max(0, deadline - Date.now()));
+
+      const pollOnce = async () => {
+        if (settled || backstopRunning) return;
+        backstopRunning = true;
+        try {
+          const events = await this.agentRelay.queryEvents([
+            {
+              kinds: [9],
+              '#h': [tlcChannelId],
+              '#t': [WRITE_PERMISSION_RESPONSE_TAG],
+              since: startedAt,
+              limit: 100,
+            },
+          ]);
+          const candidates = events.sort(
+            (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
+          );
+          for (const event of candidates) {
+            if (settled) return;
+            const decision = await matchingDecision(event);
+            if (decision) {
+              finish(decision);
+              return;
+            }
+          }
+        } catch (error) {
+          if (!isTransientPermissionPollError(error)) fail(error);
+        } finally {
+          backstopRunning = false;
+        }
+      };
+      const backstop = setInterval(() => void pollOnce(), WRITE_PERMISSION_BACKSTOP_POLL_MS);
+      backstop.unref?.();
+      void pollOnce();
+
+      let unsubscribe: (() => void) | undefined;
+      const socket = this.roomSockets.get(tlcChannelId)?.socket;
+      if (socket?.connected) {
+        try {
+          unsubscribe = socket.subscribe(
+            [
+              {
+                kinds: [9],
+                '#h': [tlcChannelId],
+                '#t': [WRITE_PERMISSION_RESPONSE_TAG],
+                since: startedAt,
+              },
+            ],
+            (event) => {
+              void matchingDecision(event).then(
+                (decision) => {
+                  if (decision) finish(decision);
+                },
+                (error) => {
+                  if (!isTransientPermissionPollError(error)) fail(error);
+                },
+              );
+            },
+          );
+        } catch {
+          // A socket that looked connected but rejected the REQ synchronously
+          // (e.g. dropped between the connected check and send) just leaves
+          // the backstop poll as the sole path for this wait.
+          unsubscribe = undefined;
+        }
+      }
+    });
   }
 
   /** Start the requested work without blocking discovery/UI updates. */

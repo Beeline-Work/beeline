@@ -11,6 +11,7 @@ import {
   type CommunityMember,
   type CommunityRole,
   type Identity,
+  type Nip05VerificationStatus,
   type PersonProfile,
 } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
@@ -19,7 +20,8 @@ import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { buildCommunityInviteUrl } from '@/buzz/community-invite';
-import { shortMemberNpub } from '@/buzz/member-display';
+import { personIdentityLabel, shortMemberNpub } from '@/buzz/member-display';
+import { resolveNip05StatusMap } from '@/buzz/nip05-verification';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
@@ -42,13 +44,6 @@ function roleAccentColor(role: CommunityRole): string {
   return groknight.textMuted;
 }
 
-/** NIP-05 handle wins, then the display name, then a truncated npub as a last resort. */
-function personIdentityLabel(profile: PersonProfile | undefined, pubkey: string): string {
-  if (profile?.handle) return `@${profile.handle}`;
-  if (profile?.name) return profile.name;
-  return shortMemberNpub(pubkey);
-}
-
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
@@ -65,6 +60,7 @@ export default function BuzzAgents() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [people, setPeople] = useState<CommunityMember[]>([]);
   const [profiles, setProfiles] = useState<PersonProfile[]>([]);
+  const [nip05Status, setNip05Status] = useState<Map<string, Nip05VerificationStatus>>(new Map());
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -94,6 +90,20 @@ export default function BuzzAgents() {
     () => new Map(profiles.map((profile) => [profile.pubkey, profile])),
     [profiles],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    resolveNip05StatusMap(profiles.map((profile) => ({ pubkey: profile.pubkey, nip05: profile.nip05 })))
+      .then((map) => {
+        if (!cancelled) setNip05Status(map);
+      })
+      .catch(() => {
+        // A failed verification round leaves labels on their non-nip05 fallback; never fatal.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [profiles]);
 
   const refreshAgents = useCallback(async (currentTransport: BuzzRigTransport, id: string) => {
     const client = await currentTransport.ensureClient();
@@ -516,7 +526,7 @@ export default function BuzzAgents() {
                           style={styles.personName}
                           testID={`member-${person.pubkey}-identity`}
                         >
-                          {personIdentityLabel(profile, person.pubkey)}
+                          {personIdentityLabel(profile, person.pubkey, nip05Status.get(person.pubkey))}
                           {isSelf ? ' (you)' : ''}
                         </Text>
                       </View>

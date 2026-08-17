@@ -88,14 +88,27 @@ function namesItsAgent(agent: NameableAgent): boolean {
 }
 
 /**
- * Fold rosters into one lookup, earlier rosters winning.
+ * Fold rosters into one lookup, earlier rosters winning — per FIELD, not per
+ * whole entry.
  *
- * Precedence is positional (see `agentRosterCommunityIds`), with one override:
- * an entry that cannot name its agent never blocks a later one that can. The
- * merge is safe by construction — an entry is only ever consulted for a pubkey
- * equal to the message signer's, so a roster from another Workspace cannot
- * rename anybody; it can only supply an overlay the app already had and the
- * transcript was missing.
+ * A single physical agent can appear in more than one Workspace's roster with
+ * a different piece of its identity known in each: a Workspace where it was
+ * merely paired (registered, never given a soul) and the one Workspace where
+ * a human actually authored its soul overlay. Picking one whole incoming
+ * object per pubkey — the original approach — let whichever roster was
+ * consulted first for that pubkey win outright, including its *absence* of a
+ * soul, silently discarding a later roster's soulProfile even though nothing
+ * else about the earlier roster's data was actually better. This is what
+ * still showed the seed placeholder in the transcript: the pairing-only entry
+ * (no soulProfile) from an earlier-consulted Workspace was kept in full, and
+ * the later Workspace's `{ soulProfile: { name: 'Beebee' } }` was dropped
+ * whole, never merged in.
+ *
+ * Once any roster supplies a soulProfile for a pubkey, later rosters can no
+ * longer displace it — matching `agentRosterCommunityIds`' positional
+ * precedence — but a soulProfile discovered on a *later* roster is always
+ * carried onto the merged entry rather than lost with the rest of that
+ * roster's (otherwise losing) object.
  */
 export function mergeAgentRosters<T extends NameableAgent>(
   rosters: readonly (readonly T[])[],
@@ -105,7 +118,24 @@ export function mergeAgentRosters<T extends NameableAgent>(
     for (const agent of roster) {
       if (!agent?.pubkey) continue;
       const incumbent = merged.get(agent.pubkey);
-      if (!incumbent || (!namesItsAgent(incumbent) && namesItsAgent(agent))) {
+      if (!incumbent) {
+        merged.set(agent.pubkey, agent);
+        continue;
+      }
+      if (incumbent.soulProfile) continue; // already has the best data available
+      if (agent.soulProfile) {
+        // Adopt the newly found soul. Never regress a real registered name
+        // the incumbent already had down to this roster's own (possibly
+        // placeholder) copy of the same field.
+        merged.set(agent.pubkey, {
+          ...agent,
+          displayName: namesItsAgent(incumbent) ? incumbent.displayName : agent.displayName,
+        });
+        continue;
+      }
+      // Neither the incumbent nor this roster's entry carries a soul; let a
+      // real registered name fill a placeholder gap.
+      if (!namesItsAgent(incumbent) && namesItsAgent(agent)) {
         merged.set(agent.pubkey, agent);
       }
     }

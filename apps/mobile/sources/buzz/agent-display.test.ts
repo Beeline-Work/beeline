@@ -229,6 +229,21 @@ describe('the transcript’s agent roster', () => {
     expect(resolveAgentDisplayIdentity(beebee, merged.get(beebee)).name).toBe('Beebee');
   });
 
+  it('never drops a soulProfile the merge finds just because an earlier entry already won the pubkey', () => {
+    // The merge must UNION fields across entries for the same pubkey, not
+    // keep one whole incoming object and discard the other. A pairing-only
+    // entry from one Workspace (real displayName, e.g. a human-typed name
+    // that happens not to be the seed fallback, so the earlier "unnamed"
+    // check alone cannot catch it) must not block a later Workspace's
+    // soulProfile from ever being merged in for the identical pubkey.
+    const pairingOnly = [{ pubkey: beebee, displayName: 'Alden', soulProfile: undefined }];
+    const souledWorkspace = [
+      { pubkey: beebee, displayName: '', soulProfile: rosterEntry.soulProfile },
+    ];
+    const merged = mergeAgentRosters([pairingOnly, souledWorkspace]);
+    expect(resolveAgentDisplayIdentity(beebee, merged.get(beebee)).name).toBe('Beebee');
+  });
+
   it('ignores roster rows with no pubkey rather than keying on undefined', () => {
     const merged = mergeAgentRosters([[{ pubkey: '', displayName: 'x' }], [rosterEntry]]);
     expect(merged.size).toBe(1);

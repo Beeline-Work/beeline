@@ -94,6 +94,11 @@ function diffLineStyle(kind: DiffLineKind) {
 const DIFF_CHAR_WIDTH_PX = 6.6;
 const DIFF_MIN_CONTENT_WIDTH_PX = 320;
 
+/** Diff rows are plain Views/Text (no virtualization) so vertical scroll can
+ * be a plain ScrollView on Android; cap the render so a huge diff can't blow
+ * up memory. */
+const DIFF_MAX_RENDERED_LINES = 1500;
+
 export function ChangeReviewPanel({
   transport,
   sessionId,
@@ -157,10 +162,12 @@ export function ChangeReviewPanel({
   );
 
   const lines = useMemo(() => patch?.split('\n') ?? [], [patch]);
+  const visibleLines = useMemo(() => lines.slice(0, DIFF_MAX_RENDERED_LINES), [lines]);
+  const truncatedLineCount = lines.length - visibleLines.length;
   const diffContentWidth = useMemo(() => {
-    const longest = lines.reduce((max, line) => Math.max(max, line.length), 0);
+    const longest = visibleLines.reduce((max, line) => Math.max(max, line.length), 0);
     return Math.max(DIFF_MIN_CONTENT_WIDTH_PX, longest * DIFF_CHAR_WIDTH_PX + 18);
-  }, [lines]);
+  }, [visibleLines]);
   const totalAdded = files.reduce((sum, file) => sum + (file.linesAdded ?? 0), 0);
   const totalRemoved = files.reduce((sum, file) => sum + (file.linesRemoved ?? 0), 0);
 
@@ -231,36 +238,46 @@ export function ChangeReviewPanel({
             <Text style={styles.mutedText}>This file can’t be shown as text.</Text>
           </View>
         ) : (
+          // Vertical-outer + horizontal-inner nesting: this is the
+          // Android-supported direction for nested scrolling (same-axis
+          // nesting hands off correctly via nestedScrollEnabled; the prior
+          // vertical-FlatList-inside-horizontal-ScrollView shape never let
+          // vertical drags reach the inner list). No virtualization here —
+          // rows are plain Text, capped by DIFF_MAX_RENDERED_LINES instead.
           <ScrollView
-            horizontal
             nestedScrollEnabled
-            showsHorizontalScrollIndicator
-            style={styles.diffScrollHorizontal}
-            contentContainerStyle={{ minWidth: diffContentWidth }}
+            showsVerticalScrollIndicator
+            style={styles.diffScrollVertical}
             testID="change-review-diff-scroll"
           >
-            <FlatList
-              data={lines}
-              keyExtractor={(_, index) => `${selected.path}-${index}`}
-              style={[styles.diffList, { width: diffContentWidth }]}
+            <ScrollView
+              horizontal
               nestedScrollEnabled
-              initialNumToRender={30}
-              maxToRenderPerBatch={40}
-              windowSize={7}
-              renderItem={({ item, index }) => {
-                const kind = diffLineKind(item);
-                return (
-                  <Text
-                    style={[styles.diffLine, diffLineStyle(kind), { width: diffContentWidth }]}
-                    numberOfLines={1}
-                    selectable
-                    testID={`change-review-line-${index}`}
-                  >
-                    {item || ' '}
+              showsHorizontalScrollIndicator
+              contentContainerStyle={{ minWidth: diffContentWidth }}
+            >
+              <View style={{ width: diffContentWidth }}>
+                {visibleLines.map((item, index) => {
+                  const kind = diffLineKind(item);
+                  return (
+                    <Text
+                      key={`${selected.path}-${index}`}
+                      style={[styles.diffLine, diffLineStyle(kind), { width: diffContentWidth }]}
+                      numberOfLines={1}
+                      selectable
+                      testID={`change-review-line-${index}`}
+                    >
+                      {item || ' '}
+                    </Text>
+                  );
+                })}
+                {truncatedLineCount > 0 && (
+                  <Text style={styles.diffTruncatedFooter}>
+                    diff truncated — showing {visibleLines.length} of {lines.length} lines
                   </Text>
-                );
-              }}
-            />
+                )}
+              </View>
+            </ScrollView>
           </ScrollView>
         )}
       </HullSurface>
@@ -452,8 +469,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     flex: 1,
   },
-  diffScrollHorizontal: { height: 300, backgroundColor: groknight.bgTerminal },
-  diffList: { height: 300, backgroundColor: groknight.bgTerminal },
+  diffScrollVertical: { height: 300, backgroundColor: groknight.bgTerminal },
   diffLine: {
     ...Typography.mono(),
     paddingHorizontal: 9,
@@ -479,6 +495,13 @@ const styles = StyleSheet.create({
     backgroundColor: diffColors.removedBg,
   },
   diffContextLine: { color: groknight.textSecondary, backgroundColor: groknight.bgTerminal },
+  diffTruncatedFooter: {
+    ...Typography.mono(),
+    color: groknight.textMuted,
+    fontSize: 10,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+  },
   diffLoading: {
     height: 180,
     alignItems: 'center',

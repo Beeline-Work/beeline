@@ -20,7 +20,8 @@ export function AgentAvatar({
   size = 52,
 }: AgentAvatarProps) {
   const [failedAvatar, setFailedAvatar] = useState<string | null>(null);
-  const showRelayAvatar = Boolean(avatarUrl && failedAvatar !== avatarUrl);
+  const showRelayAvatar =
+    groknight.photoIdentityMarksEnabled && Boolean(avatarUrl && failedAvatar !== avatarUrl);
   const geometry = agentAvatarGeometry(avatarSeed || pubkey);
 
   const bodyPoints = [

@@ -56,6 +56,14 @@ export const groknight = {
   avatarDim: '#4e4e4e',
   agentAccent: '#d7af5f',
 
+  /**
+   * DESIGN.md: every identity renders as a seed-derived faceted mark, no
+   * photo dependency. A kind:0 `picture` field must never override it.
+   * Reversible on purpose — flip this one flag if the captain later wants
+   * user photos back; do not reintroduce per-component photo toggles.
+   */
+  photoIdentityMarksEnabled: false,
+
   /** Borders and selection */
   borderQuiet: '#4e4e4e',
   border: '#4e4e4e',

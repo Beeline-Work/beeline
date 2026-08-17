@@ -123,6 +123,7 @@ import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
 import {
   HullSurface,
+  HullWaveSignal,
   MonoButton,
   NewMessageMaterialize,
   PixelLoader,
@@ -2455,23 +2456,22 @@ export default function BuzzChat() {
               </TouchableOpacity>
             </View>
             {isCorner && (
-              <Text style={styles.cornerFooter} numberOfLines={1}>
-                <Text style={styles.cornerFooterRule}>╰─ </Text>
-                <Text style={styles.cornerFooterValue}>{cornerAgentDisplay?.name ?? 'Agent'}</Text>
-                <Text style={styles.cornerFooterSeparator}> · edit session · </Text>
-                <Text
-                  style={
-                    sessionState === 'done'
-                        ? styles.cornerFooterState
-                        : sessionState === 'working'
-                          ? styles.cornerFooterActive
-                          : styles.cornerFooterState
-                  }
-                >
-                  {sessionState}
+              <View style={styles.cornerFooterRow}>
+                <Text style={styles.cornerFooter} numberOfLines={1}>
+                  <Text style={styles.cornerFooterRule}>╰─ </Text>
+                  <Text style={styles.cornerFooterValue}>
+                    {cornerAgentDisplay?.name ?? 'Agent'}
+                  </Text>
+                  <Text style={styles.cornerFooterSeparator}> · edit session · </Text>
+                  {sessionState !== 'working' && (
+                    <Text style={styles.cornerFooterState}>{sessionState}</Text>
+                  )}
                 </Text>
-                <Text style={styles.cornerFooterRule}> ─╯</Text>
-              </Text>
+                {sessionState === 'working' && <HullWaveSignal compact label="LIVE" />}
+                <Text style={styles.cornerFooter} numberOfLines={1}>
+                  <Text style={styles.cornerFooterRule}> ─╯</Text>
+                </Text>
+              </View>
             )}
           </View>
         )}
@@ -4142,10 +4142,14 @@ const styles = StyleSheet.create({
   },
   cornerSendButtonText: { ...Typography.mono(), color: groknight.textMuted },
   sendButtonTextQuiet: { color: groknight.textDisabled },
-  cornerFooter: {
-    ...Typography.mono(),
+  cornerFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginTop: 3,
     paddingHorizontal: 8,
+  },
+  cornerFooter: {
+    ...Typography.mono(),
     color: groknight.textMuted,
     fontSize: 9,
     lineHeight: 13,
@@ -4154,7 +4158,6 @@ const styles = StyleSheet.create({
   cornerFooterValue: { ...Typography.mono(), color: groknight.textMuted },
   cornerFooterSeparator: { ...Typography.mono(), color: groknight.faint },
   cornerFooterState: { ...Typography.mono(), color: groknight.tertiary },
-  cornerFooterActive: { ...Typography.mono(), color: groknight.accent },
   archivedInputBar: {
     paddingHorizontal: 16,
     paddingTop: 12,

@@ -68,6 +68,7 @@ import {
   CHANGE_REVIEW_MANIFEST_TAG,
   CHANGE_REVIEW_VERSION,
   KIND_AGENT_PRESENCE,
+  TAG_AGENT_PRESENCE,
   WRITE_PERMISSION_REQUEST_TAG,
   WRITE_PERMISSION_RESPONSE_TAG,
   TAG_AGENT,
@@ -846,6 +847,21 @@ export class Body {
   private pendingRoomTurns = new Map<string, PendingRoomTurn>();
   /** Live authenticated Room sockets, retained only for teardown and recovery. */
   private roomSockets = new Map<string, ReturnType<typeof createBuzzClient>>();
+  /**
+   * Live-updated agent-presence cache per Room, keyed by channelId, backing
+   * `isRoomAgentOnline`. Deliberately independent of `roomSockets`: that
+   * entry only exists while `runRoomPushLoop` owns a live Room socket, but
+   * `isRoomAgentOnline` is also reached via `pollChannelRequests` called
+   * directly (tests, and any backstop poll) with no push loop running.
+   */
+  private presenceCaches = new Map<
+    string,
+    Promise<{
+      client: ReturnType<typeof createBuzzClient>;
+      byPubkey: Map<string, AgentPresence>;
+      unsubscribe: () => void;
+    }>
+  >();
   private disposed = false;
   private presenceGenerations = new Map<string, string>();
   private activeExchangeReplies = new Set<string>();
@@ -1710,27 +1726,73 @@ export class Body {
     });
   }
 
-  private async isRoomAgentOnline(channelId: string, agentPubkey: string): Promise<boolean> {
-    const events = await this.agentRelay.queryEvents([
-      {
-        kinds: [KIND_AGENT_PRESENCE],
-        authors: [agentPubkey],
-        '#d': [`agent-presence:${channelId}`],
-        limit: 10,
-      },
-    ]);
-    let presence: AgentPresence | undefined;
-    for (const event of events) {
-      if (tagValue(event, 'agent') !== agentPubkey) continue;
+  private ensureChannelPresenceCache(channelId: string): Promise<{
+    client: ReturnType<typeof createBuzzClient>;
+    byPubkey: Map<string, AgentPresence>;
+    unsubscribe: () => void;
+  }> {
+    const existing = this.presenceCaches.get(channelId);
+    if (existing) return existing;
+    const created = this.openChannelPresenceCache(channelId);
+    this.presenceCaches.set(channelId, created);
+    created.catch(() => {
+      if (this.presenceCaches.get(channelId) === created) this.presenceCaches.delete(channelId);
+    });
+    return created;
+  }
+
+  /**
+   * Live-updated presence cache for one Room's agent-presence topic, backed
+   * by `agentPresenceSubscribe` instead of `isRoomAgentOnline`'s old
+   * per-check `queryEvents` poll. Own client/subscription rather than
+   * reusing `roomSockets` (see the field doc above), seeded once with the
+   * currently stored state because a fresh subscribe's backfill replay is
+   * not guaranteed to have landed by the time the very first check runs.
+   */
+  private async openChannelPresenceCache(channelId: string): Promise<{
+    client: ReturnType<typeof createBuzzClient>;
+    byPubkey: Map<string, AgentPresence>;
+    unsubscribe: () => void;
+  }> {
+    const byPubkey = new Map<string, AgentPresence>();
+    const applyEvent = (event: NostrEvent) => {
+      const agentPubkey = tagValue(event, 'agent');
       const status = tagValue(event, 'status');
-      if (status !== 'online' && status !== 'offline') continue;
-      presence = newerAgentPresence(presence, {
+      if (!agentPubkey || (status !== 'online' && status !== 'offline')) return;
+      byPubkey.set(
         agentPubkey,
-        status,
-        observedAt: event.created_at * 1_000,
-      });
+        newerAgentPresence(byPubkey.get(agentPubkey), {
+          agentPubkey,
+          status,
+          observedAt: event.created_at * 1_000,
+        }),
+      );
+    };
+    const client = createBuzzClient({
+      baseUrl: this.config.relayBaseUrl,
+      ...(this.config.relayHost ? { host: this.config.relayHost } : {}),
+      wsUrl: this.config.relayWsUrl,
+      identity: this.agentIdentity,
+      WebSocketImpl: WebSocket,
+    });
+    try {
+      const unsubscribe = await client.agentPresenceSubscribe(channelId, (sessionEvent) =>
+        applyEvent(sessionEvent.event),
+      );
+      const seedEvents = await this.agentRelay.queryEvents([
+        { kinds: [KIND_AGENT_PRESENCE], '#d': [`${TAG_AGENT_PRESENCE}:${channelId}`], limit: 50 },
+      ]);
+      for (const event of seedEvents) applyEvent(event);
+      return { client, byPubkey, unsubscribe };
+    } catch (error) {
+      client.disconnect();
+      throw error;
     }
-    return isAgentPresenceOnline(presence);
+  }
+
+  private async isRoomAgentOnline(channelId: string, agentPubkey: string): Promise<boolean> {
+    const cache = await this.ensureChannelPresenceCache(channelId);
+    return isAgentPresenceOnline(cache.byPubkey.get(agentPubkey));
   }
 
   private async validateAgentExchangeEnvelope(
@@ -4057,6 +4119,15 @@ export class Body {
     this.disposed = true;
     for (const socket of this.roomSockets.values()) socket.disconnect();
     this.roomSockets.clear();
+    await Promise.allSettled(
+      [...this.presenceCaches.values()].map((cachePromise) =>
+        cachePromise.then((cache) => {
+          cache.unsubscribe();
+          cache.client.disconnect();
+        }),
+      ),
+    );
+    this.presenceCaches.clear();
     await this.waitForAgentTasks();
     for (const [, session] of this.sessions) {
       if (session.unsubscribeActivity) session.unsubscribeActivity();

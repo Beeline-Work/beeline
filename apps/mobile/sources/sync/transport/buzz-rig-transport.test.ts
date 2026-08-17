@@ -994,6 +994,74 @@ describe('Buzz corner lifecycle projection', () => {
   });
 });
 
+describe('Buzz cross-Room corner lifecycle batching', () => {
+  const identity = {
+    publicKey: 'a'.repeat(64),
+    secretKey: new Uint8Array(32).fill(1),
+    name: 'reviewer',
+  } as Identity;
+
+  function createEvent(id: string) {
+    return {
+      id: `create-${id}`,
+      pubkey: 'b'.repeat(64),
+      created_at: 1,
+      kind: 9007,
+      tags: [['h', id], ['name', `${id}-corner`]],
+      content: '',
+      sig: 'e'.repeat(128),
+    };
+  }
+
+  it('issues one multi-#h create query and one multi-#h merge-summary query across Rooms, and warms the per-Room cache', async () => {
+    const cornersByRoom: Record<string, string[]> = {
+      'batch-room-a': ['batch-corner-a1', 'batch-corner-a2'],
+      'batch-room-b': ['batch-corner-b1'],
+    };
+    const client = {
+      listSubchannels: vi.fn(async (roomId: string) => cornersByRoom[roomId] ?? []),
+      query: vi.fn(async (filters: Array<Record<string, unknown>>) => {
+        const filter = filters[0]!;
+        if ((filter.kinds as number[])[0] === 9007) {
+          return (filter['#h'] as string[]).map((id) => createEvent(id));
+        }
+        return [];
+      }),
+      getChannelMetadata: vi.fn(async () => ({ archived: false })),
+      sessionEventsBackfill: vi.fn(async () => []),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    const result = await transport.listSubchannelLifecycleForRooms(['batch-room-a', 'batch-room-b']);
+
+    expect(result.get('batch-room-a')).toHaveLength(2);
+    expect(result.get('batch-room-b')).toHaveLength(1);
+
+    const createCalls = client.query.mock.calls.filter(
+      ([filters]) => (filters[0]?.kinds as number[] | undefined)?.[0] === 9007,
+    );
+    expect(createCalls).toHaveLength(1);
+    expect(createCalls[0]![0]![0]!['#h']).toEqual(
+      expect.arrayContaining(['batch-corner-a1', 'batch-corner-a2', 'batch-corner-b1']),
+    );
+    const mergeSummaryCalls = client.query.mock.calls.filter(
+      ([filters]) => (filters[0]?.kinds as number[] | undefined)?.[0] === 9,
+    );
+    expect(mergeSummaryCalls).toHaveLength(1);
+    expect(mergeSummaryCalls[0]![0]![0]!['#h']).toEqual(['batch-room-a', 'batch-room-b']);
+
+    // The batched fetch also warms the single-Room cache used by
+    // `listSubchannelLifecycle` (the 2 other call sites): a follow-up call
+    // for a Room already covered above is a cache hit, no further reads.
+    client.listSubchannels.mockClear();
+    client.query.mockClear();
+    await expect(transport.listSubchannelLifecycle('batch-room-a')).resolves.toHaveLength(2);
+    expect(client.listSubchannels).not.toHaveBeenCalled();
+    expect(client.query).not.toHaveBeenCalled();
+  });
+});
+
 describe('Buzz channel archive scope', () => {
   const identity = {
     publicKey: 'a'.repeat(64),

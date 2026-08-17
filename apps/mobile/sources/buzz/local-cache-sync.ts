@@ -3,6 +3,7 @@ import { latestRoomMessageSummary, type RoomMessageSummary } from '@/buzz/room-l
 import { getCachedChannel, useBuzzLocalCache, type ChannelCacheEntry } from '@/buzz/local-cache';
 import type { BuzzRigTransport } from '@/sync/transport';
 import type { SessionEvent } from '@/sync/transport';
+import { invalidateCornerLifecycleCache } from '@/sync/transport/corner-lifecycle-cache';
 import {
   projectChatEvent,
   upsertChatMessages,
@@ -79,9 +80,16 @@ function applyCornerStatusSignals(
   roomId: string,
   messages: ChatDisplayMessage[],
 ): void {
+  let invalidatedLifecycleCache = false;
   for (const message of messages) {
     if (message.corner) {
       useBuzzLocalCache.getState().patchCornerStatus(viewerPubkey, roomId, message.corner);
+      if (!invalidatedLifecycleCache) {
+        // Same signal as the sidebar patch above: a real status change
+        // should not wait out `listSubchannelLifecycle`'s short-TTL cache.
+        invalidateCornerLifecycleCache(roomId);
+        invalidatedLifecycleCache = true;
+      }
     }
   }
 }

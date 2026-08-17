@@ -685,6 +685,70 @@ describe('Room poll resilience', () => {
     }
   });
 
+  it('isRoomAgentOnline seeds once per Room via a query, then updates live off agentPresenceSubscribe with no further queries', async () => {
+    let presenceHandler: ((sessionEvent: { event: NostrEvent }) => void) | undefined;
+    const unsubscribe = vi.fn();
+    const disconnect = vi.fn();
+    const fakeClient = {
+      agentPresenceSubscribe: vi.fn(
+        async (_channelId: string, handler: (sessionEvent: { event: NostrEvent }) => void) => {
+          presenceHandler = handler;
+          return unsubscribe;
+        },
+      ),
+      disconnect,
+    };
+    mocks.createBuzzClient.mockReturnValue(fakeClient);
+
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-presence-cache-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    const seedQuery = vi.fn(async () => [] as NostrEvent[]);
+    Reflect.set(body, 'agentRelay', { queryEvents: seedQuery });
+
+    const agentPubkey = 'agent-pubkey';
+    const isOnline = (channelId: string) =>
+      (
+        Reflect.get(body, 'isRoomAgentOnline') as (
+          channel: string,
+          pubkey: string,
+        ) => Promise<boolean>
+      ).call(body, channelId, agentPubkey);
+
+    // No presence published yet: offline, seeded by exactly one query and
+    // one subscribe for this Room.
+    await expect(isOnline('room-a')).resolves.toBe(false);
+    expect(seedQuery).toHaveBeenCalledOnce();
+    expect(fakeClient.agentPresenceSubscribe).toHaveBeenCalledOnce();
+
+    // A live presence event updates the cache in place; a repeat check for
+    // the same Room costs zero further queries or subscribes.
+    presenceHandler?.({
+      event: {
+        tags: [
+          ['agent', agentPubkey],
+          ['status', 'online'],
+        ],
+        created_at: Math.floor(Date.now() / 1_000),
+      } as unknown as NostrEvent,
+    });
+    await expect(isOnline('room-a')).resolves.toBe(true);
+    expect(seedQuery).toHaveBeenCalledOnce();
+    expect(fakeClient.agentPresenceSubscribe).toHaveBeenCalledOnce();
+
+    await body.dispose();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
+
   it.skip('lets a healthy Room continue polling while a rate-limited sibling waits', async () => {
     vi.stubGlobal(
       'fetch',

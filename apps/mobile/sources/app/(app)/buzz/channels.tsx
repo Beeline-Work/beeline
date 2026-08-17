@@ -40,6 +40,7 @@ import {
   isCornerActive,
   roomListCorners,
   sortCorners,
+  type CornerSummary,
 } from '@/buzz/corners';
 import {
   CHANGES_LABEL,
@@ -236,22 +237,24 @@ async function enrichDisplayChannels(
   viewerPubkey: string,
 ): Promise<ChannelDisplayItem[]> {
   const client = await transport.ensureClient();
-  const [workspacePeople, workspaceAgents] = activeCommunityId
-    ? await Promise.all([
-        client.communityMembers(activeCommunityId),
-        client.listAgents(activeCommunityId),
-      ])
-    : [undefined, undefined];
+  const [workspacePeople, workspaceAgents, cornersByRoom] = await Promise.all([
+    activeCommunityId ? client.communityMembers(activeCommunityId) : Promise.resolve(undefined),
+    activeCommunityId ? client.listAgents(activeCommunityId) : Promise.resolve(undefined),
+    // One cross-Room batched fetch for every Room's corners instead of one
+    // call graph per Room.
+    transport
+      .listSubchannelLifecycleForRooms(rooms.map((room) => room.id))
+      .catch(() => new Map<string, CornerSummary[]>()),
+  ]);
   const enriched = await Promise.all(
     rooms.map(async (room): Promise<ChannelDisplayItem> => {
-      const [corners, synced, members] = await Promise.allSettled([
-        transport.listSubchannelLifecycle(room.id),
+      const [synced, members] = await Promise.allSettled([
         revalidateCachedMessages(transport, viewerPubkey, room.id),
         client.listMembers(room.id),
       ]);
       return {
         ...room,
-        corners: corners.status === 'fulfilled' ? sortCorners(corners.value) : [],
+        corners: sortCorners(cornersByRoom.get(room.id) ?? []),
         latestMessage: synced.status === 'fulfilled' ? synced.value.entry.latestMessage : undefined,
         updatedAt:
           synced.status === 'fulfilled'

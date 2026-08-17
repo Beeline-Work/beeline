@@ -32,6 +32,7 @@ import {
   Body,
   conciseCornerTurnSummary,
   cornerArchiveSummary,
+  CORNER_CLOSE_TAG,
   CORNER_TURN_SUMMARY_INSTRUCTION,
   CORNER_TURN_SUMMARY_MAX_CHARS,
   cornerNameForIntent,
@@ -3304,5 +3305,229 @@ describe('corner narrative persistence', () => {
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
+  });
+});
+
+describe('graceful relay-failure confirmation', () => {
+  function newBody(agent: ReturnType<typeof newIdentity>, workspaceRoot = '/workspace') {
+    return new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot,
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+    );
+  }
+
+  function cornerSession(subchannelId: string) {
+    const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    return {
+      channelId: subchannelId,
+      sessionId: 'session',
+      client,
+      mode: 'edit' as const,
+      parentChannelId: 'room',
+      archived: false,
+    };
+  }
+
+  it('retries a close that was requested but never durably completed, instead of leaving the corner permanently stuck', async () => {
+    const agent = newIdentity('archive-retry-agent');
+    const body = newBody(agent);
+    body.registerSubchannel({
+      subchannelId: 'corner-incomplete-close',
+      worktreePath: '/tmp/nonexistent-incomplete-close',
+      featureBranch: 'feature/incomplete-close',
+      role: agent,
+      session: cornerSession('corner-incomplete-close'),
+      lastPolledAt: 0,
+      archived: true,
+      archiveCompleted: false,
+    });
+    let archiveCalls = 0;
+    body.archiveSubchannel = async () => {
+      archiveCalls++;
+    };
+
+    const count = await body.pollMembers('corner-incomplete-close');
+
+    expect(archiveCalls).toBe(1);
+    expect(count).toBe(0);
+  });
+
+  it('does not re-attempt an archive that already durably completed', async () => {
+    const agent = newIdentity('archive-complete-agent');
+    const body = newBody(agent);
+    body.registerSubchannel({
+      subchannelId: 'corner-complete-close',
+      worktreePath: '/tmp/nonexistent-complete-close',
+      featureBranch: 'feature/complete-close',
+      role: agent,
+      session: cornerSession('corner-complete-close'),
+      lastPolledAt: 0,
+      archived: true,
+      archiveCompleted: true,
+    });
+    let archiveCalls = 0;
+    body.archiveSubchannel = async () => {
+      archiveCalls++;
+    };
+
+    const count = await body.pollMembers('corner-complete-close');
+
+    expect(archiveCalls).toBe(0);
+    expect(count).toBe(0);
+  });
+
+  it('keeps a #t=buzz-corner-close event pending (not delivered) when archiveSubchannel fails, so it is retried rather than permanently dropped', async () => {
+    const agent = newIdentity('close-fail-agent');
+    const human = newIdentity('close-fail-human');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-corner-close-fail-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      body.registerSubchannel({
+        subchannelId: 'corner-close-fails',
+        worktreePath: '/tmp/nonexistent-close-fails',
+        featureBranch: 'feature/close-fails',
+        role: agent,
+        session: cornerSession('corner-close-fails'),
+        lastPolledAt: 0,
+        archived: false,
+      });
+      const closeEvent = signEvent(
+        {
+          pubkey: human.publicKey,
+          created_at: Math.floor(Date.now() / 1000),
+          kind: 9,
+          tags: [['h', 'corner-close-fails'], ['t', CORNER_CLOSE_TAG]],
+          content: 'Close this corner.',
+        },
+        human.secretKey,
+      );
+      (Reflect.get(body, 'agentRelay') as { queryEvents: unknown }).queryEvents = vi
+        .fn()
+        .mockResolvedValue([closeEvent]);
+      body.archiveSubchannel = async () => {
+        throw new Error('relay unreachable');
+      };
+      const durableState = Reflect.get(body, 'durableState') as {
+        failed: (channelId: string, eventId: string, error: unknown) => Promise<number>;
+        delivered: (channelId: string, eventId: string) => Promise<void>;
+      };
+      const failedSpy = vi.spyOn(durableState, 'failed');
+      const deliveredSpy = vi.spyOn(durableState, 'delivered');
+
+      await body.pollMembers('corner-close-fails');
+
+      expect(failedSpy).toHaveBeenCalledWith(
+        'corner-close-fails',
+        closeEvent.id,
+        expect.any(Error),
+      );
+      expect(deliveredSpy).not.toHaveBeenCalledWith('corner-close-fails', closeEvent.id);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('publishes a DurableMergeGate refusal instead of only logging it, so the corner is not silently stuck on "sent" forever', async () => {
+    const agent = newIdentity('mergegate-agent');
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: '/workspace',
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+    );
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    (Reflect.get(body, 'agentRelay') as { queryEvents: unknown }).queryEvents = vi
+      .fn()
+      .mockResolvedValue([]);
+
+    const mergeTarget = {
+      repo: 'ownerhex/project',
+      branch: 'refs/heads/main',
+      tip: 'a'.repeat(40),
+    };
+    body.registerSubchannel({
+      subchannelId: 'corner-mergegate',
+      worktreePath: '/tmp/nonexistent-mergegate',
+      featureBranch: 'feature/mergegate',
+      role: agent,
+      session: {
+        channelId: 'corner-mergegate',
+        sessionId: 'session',
+        client: new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} }),
+        mode: 'edit' as const,
+        parentChannelId: 'room',
+        archived: false,
+      },
+      lastPolledAt: 0,
+      archived: false,
+      mergeTarget,
+    });
+
+    const fakeMergeGate = {
+      poll: vi.fn().mockResolvedValue([
+        {
+          candidate: {
+            subchannelId: 'corner-mergegate',
+            featureBranch: 'feature/mergegate',
+            agentPubkey: agent.publicKey,
+          },
+          approvalId: 'approval-1',
+          reviewer: 'reviewer-pubkey',
+          outcome: {
+            merged: false,
+            terminal: false,
+            reason: 'worker push refused by relay: connection refused',
+          },
+        },
+      ]),
+    };
+
+    await Reflect.get(body, 'pollRoomMaintenance').call(body, 'room', fakeMergeGate);
+
+    const cornerFailure = published.find(
+      (event) =>
+        event.tags.some((tag) => tag[0] === 'h' && tag[1] === 'corner-mergegate') &&
+        event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'failed'),
+    );
+    expect(cornerFailure).toBeDefined();
+    expect(cornerFailure!.content).toContain('worker push refused by relay');
+    expect(cornerFailure!.tags).toContainEqual(['repo', mergeTarget.repo]);
+    expect(cornerFailure!.tags).toContainEqual(['branch', mergeTarget.branch]);
+    expect(cornerFailure!.tags).toContainEqual(['tip', mergeTarget.tip]);
+
+    const parentStatus = published.find(
+      (event) =>
+        event.tags.some((tag) => tag[0] === 'h' && tag[1] === 'room') &&
+        event.tags.some((tag) => tag[0] === 'subchannel' && tag[1] === 'corner-mergegate') &&
+        event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'failed'),
+    );
+    expect(parentStatus).toBeDefined();
   });
 });

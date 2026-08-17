@@ -159,6 +159,33 @@ export async function findRepositoryRoom(
 }
 
 /**
+ * Idempotently finish gate provisioning for a Room the agent owns: elevate
+ * the dedicated merge worker (if configured) before demoting the agent from
+ * owner to plain member. A resumed call after a crash between these two
+ * steps only performs whichever one didn't already land, instead of the
+ * "Room already exists" short-circuit treating a half-provisioned Room as
+ * fully done — the exact `resolveRepositoryRoom` bug this closes.
+ */
+async function ensureMergeGateProvisioned(
+  agentCtx: ChannelOpsContext,
+  channelId: string,
+  mergeWorkerPubkey?: string,
+): Promise<void> {
+  if (mergeWorkerPubkey && mergeWorkerPubkey !== agentCtx.identity.publicKey) {
+    const workerRole = await projectedRoomRole(agentCtx, channelId, mergeWorkerPubkey);
+    if (workerRole !== 'owner' && workerRole !== 'admin') {
+      await setMemberRole(agentCtx, channelId, mergeWorkerPubkey, 'admin');
+      await waitUntilRole(agentCtx, channelId, mergeWorkerPubkey, 'admin');
+    }
+  }
+  const agentRole = await projectedRoomRole(agentCtx, channelId, agentCtx.identity.publicKey);
+  if (agentRole !== 'member') {
+    await setMemberRole(agentCtx, channelId, agentCtx.identity.publicKey, 'member');
+    await waitUntilRole(agentCtx, channelId, agentCtx.identity.publicKey, 'member');
+  }
+}
+
+/**
  * Resolve the origin-backed Room or create it under the agent's key. The
  * pairing-code minter becomes the initial human admin; the creator is projected
  * down to plain member after provisioning the dedicated merge worker.
@@ -173,9 +200,14 @@ export async function resolveRepositoryRoom(
   const existing = await findRepositoryRoom(agentCtx, communityId, binding.key);
   if (existing) {
     await ensureRepositoryRoomAdmin(agentCtx, existing, pairedBy);
-    // Existing Rooms already have their dedicated gate identity. A later agent
-    // joins as a member and reuses that gate instead of provisioning a new one.
-    return joinRepositoryRoom(agentCtx, existing);
+    const result = await joinRepositoryRoom(agentCtx, existing);
+    // A Room existing does not mean a prior pairing's provisioning actually
+    // finished — repair any interrupted worker-elevation/agent-demotion step
+    // before reusing this Room's gate identity. `mergeWorkerProvisioned`
+    // stays false here regardless: existing Rooms already have their own
+    // dedicated gate identity, so this pairing must not run a second one.
+    await ensureMergeGateProvisioned(agentCtx, existing, mergeWorkerPubkey);
+    return result;
   }
 
   const channelId = repositoryRoomId(communityId, binding);
@@ -191,7 +223,9 @@ export async function resolveRepositoryRoom(
     const raced = await findRepositoryRoom(agentCtx, communityId, binding.key);
     if (raced) {
       await ensureRepositoryRoomAdmin(agentCtx, raced, pairedBy);
-      return joinRepositoryRoom(agentCtx, raced);
+      const result = await joinRepositoryRoom(agentCtx, raced);
+      await ensureMergeGateProvisioned(agentCtx, raced, mergeWorkerPubkey);
+      return result;
     }
     throw error;
   }
@@ -202,12 +236,7 @@ export async function resolveRepositoryRoom(
   // Relay-backed callers provide a distinct gate key before the autonomous
   // agent is projected down to member. User-hosted git origins intentionally
   // omit it because delivery is governed by the user's ambient git authority.
-  if (mergeWorkerPubkey && mergeWorkerPubkey !== agentCtx.identity.publicKey) {
-    await setMemberRole(agentCtx, channelId, mergeWorkerPubkey, 'admin');
-    await waitUntilRole(agentCtx, channelId, mergeWorkerPubkey, 'admin');
-  }
-  await setMemberRole(agentCtx, channelId, agentCtx.identity.publicKey, 'member');
-  await waitUntilRole(agentCtx, channelId, agentCtx.identity.publicKey, 'member');
+  await ensureMergeGateProvisioned(agentCtx, channelId, mergeWorkerPubkey);
   return {
     channelId,
     created: true,

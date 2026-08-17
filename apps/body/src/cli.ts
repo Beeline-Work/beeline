@@ -242,7 +242,7 @@ async function main(): Promise<void> {
     const agentFlag = args.indexOf('--agent');
     const flagPubkey = agentFlag >= 0 ? args[agentFlag + 1] : undefined;
     if (agentFlag >= 0 && !flagPubkey) throw new Error('--agent requires an agent pubkey');
-    const requestedPubkey = flagPubkey ?? (args[1] === '--agent' ? undefined : args[1]);
+    const requestedPubkey = flagPubkey ?? args[1];
     const configs = flagPubkey
       ? await findAgentRuntimeConfigPaths()
       : await findRuntimeConfigPaths(process.cwd());

@@ -52,9 +52,11 @@ import {
   readOnlyMcpServer,
   roomEditPolicyInstructions,
   roomTurnPrompt,
+  WRITE_PERMISSION_BACKSTOP_POLL_MS,
 } from './body.js';
 import { AcpClient, isMutatingPermissionRequest } from './acp.js';
 import { newIdentity } from '@beeline/gate';
+import { WRITE_PERMISSION_RESPONSE_TAG } from '@beeline/buzz-client';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import {
   buildAgentMessage,
@@ -1756,6 +1758,199 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(isTransientPermissionPollError(new Error('fetch failed'))).toBe(true);
     expect(isTransientPermissionPollError(new Error('HTTP 403 forbidden'))).toBe(false);
     expect(isTransientPermissionPollError(new Error('invalid signature'))).toBe(false);
+  });
+
+  function memberProjection(roomId: string, pubkeys: string[]): NostrEvent {
+    return signEvent(
+      {
+        pubkey: human.publicKey,
+        created_at: 1_700_000_000,
+        kind: 39002,
+        tags: [['d', roomId], ...pubkeys.map((pubkey) => ['p', pubkey])],
+        content: '',
+      },
+      human.secretKey,
+    );
+  }
+
+  function routeWritePermissionQuery(
+    filter: Record<string, unknown>,
+    roomId: string,
+    onWritePermissionQuery: () => NostrEvent[],
+  ): Response {
+    const kinds = (filter.kinds as number[] | undefined) ?? [];
+    if (kinds.includes(39002)) {
+      return new Response(JSON.stringify([memberProjection(roomId, [human.publicKey])]), {
+        status: 200,
+      });
+    }
+    if (kinds.includes(39001)) return new Response(JSON.stringify([]), { status: 200 });
+    // isRegisteredAgentIdentity's query is the only one filtering by `authors`.
+    if (filter.authors) return new Response(JSON.stringify([]), { status: 200 });
+    if ((filter['#t'] as string[] | undefined)?.includes(WRITE_PERMISSION_RESPONSE_TAG)) {
+      return new Response(JSON.stringify(onWritePermissionQuery()), { status: 200 });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  }
+
+  it('resolves a write-permission decision pushed over the Room WS without waiting on the backstop poll', async () => {
+    const roomId = 'wp-ws-room';
+    const permissionId = 'perm-ws-1';
+    const requestId = 'req-ws-1';
+    const repository = 'repo';
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: '/tmp/buzzy-write-permission-ws-unit',
+        relayBaseUrl: 'http://relay.test',
+        relayHost: 'relay.test',
+        relayScheme: 'http',
+        relayWsUrl: 'ws://relay.test',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+    );
+
+    let backstopQueries = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const filter = (JSON.parse(String(init?.body)) as Record<string, unknown>[])[0]!;
+        return routeWritePermissionQuery(filter, roomId, () => {
+          backstopQueries += 1;
+          return []; // The WS push below should win before any decision ever appears here.
+        });
+      }),
+    );
+
+    let capturedHandler: ((event: NostrEvent) => void) | undefined;
+    const unsubscribe = vi.fn();
+    const fakeSocket = {
+      connected: true,
+      subscribe: vi.fn((_filters: unknown, onEvent: (event: NostrEvent) => void) => {
+        capturedHandler = onEvent;
+        return unsubscribe;
+      }),
+    };
+    (Reflect.get(body, 'roomSockets') as Map<string, unknown>).set(roomId, {
+      socket: fakeSocket,
+    });
+
+    const decisionPromise = Reflect.get(body, 'waitForWritePermissionDecision').call(
+      body,
+      roomId,
+      permissionId,
+      requestId,
+      repository,
+    ) as Promise<'allow' | 'deny' | 'timeout'>;
+
+    expect(fakeSocket.subscribe).toHaveBeenCalledOnce();
+    expect(capturedHandler).toBeDefined();
+
+    capturedHandler!(
+      signEvent(
+        {
+          pubkey: human.publicKey,
+          created_at: Math.floor(Date.now() / 1000),
+          kind: 9,
+          tags: [
+            ['h', roomId],
+            ['t', WRITE_PERMISSION_RESPONSE_TAG],
+            ['permission', permissionId],
+            ['request', requestId],
+            ['decision', 'allow'],
+            ['repo', repository],
+            ['p', body.agent.publicKey],
+          ],
+          content: 'Allowed editing.',
+        },
+        human.secretKey,
+      ),
+    );
+
+    await expect(decisionPromise).resolves.toBe('allow');
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(backstopQueries).toBeLessThanOrEqual(1);
+  });
+
+  it('falls back to the low-rate HTTP backstop poll when no Room WS is available', async () => {
+    vi.useFakeTimers();
+    const roomId = 'wp-poll-room';
+    const permissionId = 'perm-poll-1';
+    const requestId = 'req-poll-1';
+    const repository = 'repo';
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: '/tmp/buzzy-write-permission-poll-unit',
+        relayBaseUrl: 'http://relay.test',
+        relayHost: 'relay.test',
+        relayScheme: 'http',
+        relayWsUrl: 'ws://relay.test',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+    );
+
+    let decisionPublished = false;
+    let backstopQueries = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const filter = (JSON.parse(String(init?.body)) as Record<string, unknown>[])[0]!;
+        return routeWritePermissionQuery(filter, roomId, () => {
+          backstopQueries += 1;
+          if (!decisionPublished) return [];
+          return [
+            signEvent(
+              {
+                pubkey: human.publicKey,
+                created_at: Math.floor(Date.now() / 1000),
+                kind: 9,
+                tags: [
+                  ['h', roomId],
+                  ['t', WRITE_PERMISSION_RESPONSE_TAG],
+                  ['permission', permissionId],
+                  ['request', requestId],
+                  ['decision', 'allow'],
+                  ['repo', repository],
+                  ['p', body.agent.publicKey],
+                ],
+                content: 'Allowed editing.',
+              },
+              human.secretKey,
+            ),
+          ];
+        });
+      }),
+    );
+
+    // No `roomSockets` entry for this Room: this is the correctness backstop
+    // path (mirrors `room-conversation.live.test.ts`, which drives Body via
+    // `pollChannelRequests` and never establishes `runRoomPushLoop`'s WS).
+    const decisionPromise = Reflect.get(body, 'waitForWritePermissionDecision').call(
+      body,
+      roomId,
+      permissionId,
+      requestId,
+      repository,
+    ) as Promise<'allow' | 'deny' | 'timeout'>;
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(backstopQueries).toBe(1);
+
+    decisionPublished = true;
+    await vi.advanceTimersByTimeAsync(WRITE_PERMISSION_BACKSTOP_POLL_MS);
+
+    await expect(decisionPromise).resolves.toBe('allow');
+    expect(backstopQueries).toBeGreaterThanOrEqual(2);
+    vi.useRealTimers();
   });
 
   it('starts the bound-repository permission flow directly for explicit mutation intent', async () => {

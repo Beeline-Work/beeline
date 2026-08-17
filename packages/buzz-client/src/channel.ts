@@ -39,6 +39,7 @@ import type {
   PublishResult,
   RepositoryBinding,
 } from './types.js';
+import type { RelayWs } from './ws.js';
 
 function now(): number {
   return Math.floor(Date.now() / 1000);
@@ -87,6 +88,13 @@ async function isRegisteredAgentKey(ctx: ChannelOpsContext, pubkey: string): Pro
 export interface ChannelOpsContext {
   http: AuthenticatedHttpBridgeOptions;
   identity: Identity;
+  /**
+   * Optional accessor for the caller's live socket. When it returns an
+   * already-connected RelayWs, the waitUntilMember family (below) resolves
+   * off the relay's own push instead of polling. Opportunistic only — see
+   * waitForRelayProjection.
+   */
+  ws?: () => RelayWs | null;
 }
 
 export type ChannelRole = 'owner' | 'admin' | 'member';
@@ -344,6 +352,97 @@ export async function leaveRoom(ctx: ChannelOpsContext, channelId: string): Prom
   await waitUntilNotMember(ctx, channelId, ctx.identity.publicKey);
 }
 
+/** Low-rate correctness backstop while a live WS push resolves the wait instead. */
+export const RELAY_PROJECTION_BACKSTOP_POLL_MS = 5_000;
+
+/**
+ * Wait for `check()` to become true, resolving off a live WS push on `kinds`
+ * scoped to `channelId` when the context already has an authenticated socket
+ * open — 9000/9001 role and metadata mutations already publish events the
+ * relay pushes over that socket, so a poll-body call only needs to re-run
+ * `check()` when something has actually changed, not on a fixed cadence.
+ *
+ * WS is opportunistic only (gated on `ws.connected`, never forces a
+ * connect): a `RELAY_PROJECTION_BACKSTOP_POLL_MS` poll of `check()` itself
+ * runs concurrently for the whole wait as the correctness guarantee, so an
+ * absent, never-authenticated, or dropped socket just falls back to being
+ * noticed on the next backstop tick instead of stalling. Same technique as
+ * apps/body's waitForWritePermissionDecision.
+ */
+async function waitForRelayProjection(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  kinds: number[],
+  check: () => Promise<boolean>,
+  opts: { timeoutMs: number; intervalMs: number },
+): Promise<boolean> {
+  const ws = ctx.ws?.();
+  if (!ws?.connected) {
+    const start = Date.now();
+    while (Date.now() - start < opts.timeoutMs) {
+      if (await check()) return true;
+      await new Promise((resolveWait) => setTimeout(resolveWait, opts.intervalMs));
+    }
+    return false;
+  }
+
+  const backstopMs = Math.max(opts.intervalMs, RELAY_PROJECTION_BACKSTOP_POLL_MS);
+
+  return new Promise<boolean>((resolvePromise, rejectPromise) => {
+    let settled = false;
+    let backstopRunning = false;
+    let unsubscribe: () => void = () => {};
+
+    const finish = (result: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearInterval(backstop);
+      unsubscribe();
+      resolvePromise(result);
+    };
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearInterval(backstop);
+      unsubscribe();
+      rejectPromise(error);
+    };
+
+    const timer = setTimeout(() => finish(false), opts.timeoutMs);
+
+    const pollOnce = () => {
+      if (settled || backstopRunning) return;
+      backstopRunning = true;
+      check()
+        .then((ok) => {
+          if (ok) finish(true);
+        })
+        .catch(fail)
+        .finally(() => {
+          backstopRunning = false;
+        });
+    };
+
+    const backstop = setInterval(pollOnce, backstopMs);
+    pollOnce();
+
+    try {
+      unsubscribe = ws.subscribe(
+        [
+          { kinds, '#d': [channelId] },
+          { kinds, '#h': [channelId] },
+        ],
+        () => pollOnce(),
+      );
+    } catch {
+      // A socket that looked connected but rejected the REQ synchronously
+      // leaves the backstop poll as the sole path for this wait.
+    }
+  });
+}
+
 /** Poll until relay metadata projects the explicit archive state. */
 export async function waitUntilRoomArchived(
   ctx: ChannelOpsContext,
@@ -352,11 +451,14 @@ export async function waitUntilRoomArchived(
 ): Promise<void> {
   const timeoutMs = opts?.timeoutMs ?? 15_000;
   const intervalMs = opts?.intervalMs ?? 300;
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if ((await getChannelMetadata(ctx, channelId))?.archived === true) return;
-    await new Promise((resolveWait) => setTimeout(resolveWait, intervalMs));
-  }
+  const ok = await waitForRelayProjection(
+    ctx,
+    channelId,
+    [KIND_CHANNEL_METADATA],
+    async () => (await getChannelMetadata(ctx, channelId))?.archived === true,
+    { timeoutMs, intervalMs },
+  );
+  if (ok) return;
   throw new Error(`Room ${channelId} did not become archived after ${timeoutMs}ms`);
 }
 
@@ -457,11 +559,14 @@ export async function waitUntilMember(
 ): Promise<void> {
   const timeoutMs = opts?.timeoutMs ?? 15_000;
   const intervalMs = opts?.intervalMs ?? 300;
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (await isMember(ctx, channelId, pubkey)) return;
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
+  const ok = await waitForRelayProjection(
+    ctx,
+    channelId,
+    [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
+    () => isMember(ctx, channelId, pubkey),
+    { timeoutMs, intervalMs },
+  );
+  if (ok) return;
   throw new Error(
     `membership not visible for ${pubkey.slice(0, 12)}… in ${channelId} after ${timeoutMs}ms (assert on 39002, not publish ack)`,
   );
@@ -483,11 +588,14 @@ export async function waitUntilMemberRole(
 ): Promise<void> {
   const timeoutMs = opts?.timeoutMs ?? 15_000;
   const intervalMs = opts?.intervalMs ?? 300;
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if ((await getChannelRole(ctx, channelId, pubkey)) === role) return;
-    await new Promise((resolveWait) => setTimeout(resolveWait, intervalMs));
-  }
+  const ok = await waitForRelayProjection(
+    ctx,
+    channelId,
+    [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
+    async () => (await getChannelRole(ctx, channelId, pubkey)) === role,
+    { timeoutMs, intervalMs },
+  );
+  if (ok) return;
   throw new Error(
     `role ${role} was not visible for ${pubkey.slice(0, 12)}… in ${channelId} after ${timeoutMs}ms (assert on 39001/39002, not publish ack)`,
   );
@@ -502,11 +610,14 @@ export async function waitUntilNotMember(
 ): Promise<void> {
   const timeoutMs = opts?.timeoutMs ?? 15_000;
   const intervalMs = opts?.intervalMs ?? 300;
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (!(await isMember(ctx, channelId, pubkey))) return;
-    await new Promise((resolveWait) => setTimeout(resolveWait, intervalMs));
-  }
+  const ok = await waitForRelayProjection(
+    ctx,
+    channelId,
+    [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
+    async () => !(await isMember(ctx, channelId, pubkey)),
+    { timeoutMs, intervalMs },
+  );
+  if (ok) return;
   throw new Error(
     `membership still visible for ${pubkey.slice(0, 12)}… in ${channelId} after ${timeoutMs}ms (assert on 39001/39002, not publish ack)`,
   );

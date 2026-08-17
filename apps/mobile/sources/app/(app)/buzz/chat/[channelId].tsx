@@ -303,9 +303,15 @@ export default function BuzzChat() {
   const [mergeTarget, setMergeTarget] = useState<MergeTarget | null>(
     initialChannelCache?.mergeTarget ?? null,
   );
-  const [approvalState, setApprovalState] = useState<'none' | 'sending' | 'sent' | 'merged'>(
-    'none',
-  );
+  // 'delivering' means the approval publish itself was accepted by the relay
+  // — landing/confirming is still in progress or retrying, never "done".
+  // 'failed' means a durable publish on the landing path (push, land, or
+  // merge-gate attempt) failed or could not be confirmed; the underlying
+  // operation keeps retrying automatically, so this is informational, not a
+  // dead end requiring the user to resend the approval.
+  const [approvalState, setApprovalState] = useState<
+    'none' | 'sending' | 'delivering' | 'failed' | 'merged'
+  >('none');
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [reviewFileCount, setReviewFileCount] = useState<number | null>(null);
   const [parentChannelId, setParentChannelId] = useState<string | undefined>(
@@ -756,6 +762,12 @@ export default function BuzzChat() {
             if (projected.archiveChannel) {
               setIsArchived(true);
               setApprovalState('merged');
+            }
+            // A durable publish on the landing path failed or could not be
+            // confirmed — never keep showing a stale "sent"/"delivering"
+            // state while nothing is actually landing. Ignored once merged.
+            if (projected.deliveryFailed) {
+              setApprovalState((current) => (current === 'merged' ? current : 'failed'));
             }
             applyAgentPresence(projected.agentPresence);
           }
@@ -1550,7 +1562,7 @@ export default function BuzzChat() {
     try {
       const result = await transport.submitMergeApproval(decodedId, mergeTarget);
       if (!result.success) throw new Error(result.message ?? 'Approval was not accepted by the relay');
-      setApprovalState('sent');
+      setApprovalState('delivering');
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
       console.warn('Approval failed:', err);
@@ -2156,9 +2168,24 @@ export default function BuzzChat() {
                         <PixelLoader compact />
                         <Text style={styles.approvalStateText}>SENDING APPROVAL</Text>
                       </View>
+                    ) : approvalState === 'delivering' ? (
+                      // Approval accepted by the relay — landing/confirming
+                      // is still in progress. Must never read the same as
+                      // MERGED: that word describes only a durably confirmed
+                      // outcome (the archiveChannel projection below).
+                      <View style={styles.approvalPending} testID="approve-corner-delivering">
+                        <PixelLoader compact />
+                        <Text style={styles.approvalStateText}>✓ APPROVAL SENT · DELIVERING…</Text>
+                      </View>
+                    ) : approvalState === 'failed' ? (
+                      <View style={styles.approvalSent} testID="approve-corner-delivery-failed">
+                        <Text style={styles.approvalStateText}>
+                          ⚠ DELIVERY FAILED · RETRYING AUTOMATICALLY
+                        </Text>
+                      </View>
                     ) : (
                       <View style={styles.approvalSent}>
-                        <Text style={styles.approvalSentText}>✓ APPROVAL SENT</Text>
+                        <Text style={styles.approvalSentText}>✓ MERGED</Text>
                       </View>
                     )}
                     {approvalError ? (

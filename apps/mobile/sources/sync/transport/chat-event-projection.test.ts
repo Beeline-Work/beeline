@@ -396,6 +396,59 @@ describe('Buzz Room screen event projection', () => {
     });
   });
 
+  it('surfaces a corner-scoped delivery failure as a visible message, not a silently dropped event', () => {
+    // Posted directly to the corner's own channel (no `subchannel` tag,
+    // unlike the parent-Room status card above) by publishMergeReady's
+    // push-failure, pollDirectRemoteApprovals's landing failure, or a
+    // surfaced DurableMergeGate refusal — previously projected to `{}`
+    // entirely, so neither a transcript bubble nor the approve button ever
+    // learned the delivery had failed.
+    const event = raw(
+      'push-failed',
+      'Feature push failed; merge approval is not available. connection refused',
+      [
+        ['t', 'body-control'],
+        ['status', 'failed'],
+        ['repo', 'ownerhex/project'],
+        ['branch', 'refs/heads/main'],
+        ['tip', 'a'.repeat(40)],
+      ],
+      10,
+    );
+
+    const projection = projectChatEvent(event, viewer);
+    expect(projection.deliveryFailed).toBe(true);
+    expect(projection.message).toMatchObject({
+      id: 'push-failed',
+      text: 'Feature push failed; merge approval is not available. connection refused',
+    });
+    expect(displaySequence([event])).toHaveLength(1);
+  });
+
+  it('does not confuse an archive notice or a parent-Room status card with a corner-scoped delivery failure', () => {
+    // Archive notices also carry status=archived with no `subchannel` tag —
+    // must not be misread as a delivery failure.
+    expect(
+      projectChatEvent(
+        raw('archived', 'Subchannel archived.', [['t', 'body-control'], ['status', 'archived']], 1),
+        viewer,
+      ).deliveryFailed,
+    ).toBeUndefined();
+    // A parent-Room corner status card carries a `subchannel` tag and is
+    // handled by the existing `corner` projection above, not this one.
+    expect(
+      projectChatEvent(
+        raw(
+          'parent-failed',
+          'Delivery failed. Open corner for details.',
+          [['t', 'body-control'], ['subchannel', cornerId], ['status', 'failed']],
+          2,
+        ),
+        viewer,
+      ).deliveryFailed,
+    ).toBeUndefined();
+  });
+
   it('replaces the parent Room card with an archived completion summary', () => {
     const messages = displaySequence([
       raw(

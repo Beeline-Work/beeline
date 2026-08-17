@@ -64,7 +64,10 @@ describe('WorkspaceSupervisor removal lease', () => {
 
     await expect(supervisor.run({ pollMs: 1 })).resolves.toBe('agent-removed');
     expect(supervisor.activeRoomIds()).toEqual([]);
-    expect(disconnect).toHaveBeenCalledOnce();
+    // reconcile()'s own per-call client, plus the daemon's one shared relay
+    // socket closed at teardown. This fixture returns the same mock object for
+    // every createBuzzClient() call, so both land on this spy.
+    expect(disconnect).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -351,7 +354,9 @@ describe('WorkspaceSupervisor transient relay resilience', () => {
     // Recovers past both transient failures and keeps polling (a crash-loop
     // would have thrown out of run() on the first rejection instead).
     expect(isMember.mock.calls.length).toBeGreaterThanOrEqual(3);
-    expect(disconnect).toHaveBeenCalledTimes(isMember.mock.calls.length);
+    // One per reconcile() client, plus the daemon's shared relay socket closed
+    // once at teardown (same mock object backs both in this fixture).
+    expect(disconnect).toHaveBeenCalledTimes(isMember.mock.calls.length + 1);
   });
 
   it('keeps an active corner Room running across a transient reconcile failure', async () => {

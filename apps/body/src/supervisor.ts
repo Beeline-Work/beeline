@@ -21,6 +21,7 @@ import {
   type LocalRepositoryBinding,
   type RoomRuntimeRecord,
 } from './runtime.js';
+import { SharedRelaySocket } from './relay-socket.js';
 import {
   DEFAULT_PER_ROOM_LIVE_SESSIONS,
   DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR,
@@ -99,6 +100,12 @@ export class WorkspaceSupervisor {
   private readonly agent: Identity;
   private readonly running = new Map<string, RunningRoom>();
   private readonly scheduler: SessionScheduler;
+  /**
+   * One authenticated relay WS for the whole daemon. Every Room push loop,
+   * every Room presence cache and the control plane below multiplex their own
+   * NIP-01 subId onto it, instead of opening ~N+1 sockets on one agent pubkey.
+   */
+  private readonly relaySocket: SharedRelaySocket;
   private readonly namedRepositoryResolutions = new Map<string, Promise<BoundRepo>>();
   private readonly now: () => number;
   private readonly watchdogStaleMs: number;
@@ -130,6 +137,13 @@ export class WorkspaceSupervisor {
       activeRoomCount: () => this.running.size,
       idleMs: Number(process.env.BUZZY_BODY_SESSION_IDLE_MS ?? String(5 * 60_000)),
       reserveInteractiveSlot: true,
+    });
+    this.relaySocket = new SharedRelaySocket({
+      baseUrl: runtime.relayBaseUrl,
+      ...(runtime.relayHost ? { host: runtime.relayHost } : {}),
+      ...(baseConfig.relayWsUrl ? { wsUrl: baseConfig.relayWsUrl } : {}),
+      identity: this.agent,
+      WebSocketImpl: WebSocket,
     });
     this.now = options.now ?? Date.now;
     this.watchdogStaleMs =
@@ -164,17 +178,11 @@ export class WorkspaceSupervisor {
     const watchdogTickMs = opts.pollMs ?? 5_000;
     let wake = true; // reconcile once immediately on startup, same as before
     let nextReconcileAt = 0;
-    let controlClient: ReturnType<typeof createBuzzClient> | undefined;
     let unsubscribeControl: (() => void) | undefined;
     try {
-      const candidate = createBuzzClient({
-        baseUrl: this.runtime.relayBaseUrl,
-        ...(this.runtime.relayHost ? { host: this.runtime.relayHost } : {}),
-        ...(this.baseConfig.relayWsUrl ? { wsUrl: this.baseConfig.relayWsUrl } : {}),
-        identity: this.agent,
-        WebSocketImpl: WebSocket,
-      });
-      await candidate.connect();
+      // The control plane is one more subId on the daemon's shared socket, not
+      // its own connection.
+      const candidate = await this.relaySocket.connected();
       const socket = candidate.socket;
       if (!socket) throw new Error('control-plane WS connected but exposed no socket');
       unsubscribeControl = socket.subscribe(
@@ -189,7 +197,6 @@ export class WorkspaceSupervisor {
           wake = true;
         },
       );
-      controlClient = candidate;
     } catch (error) {
       console.error(
         `[supervisor] control-plane WS unavailable; relying on the ` +
@@ -235,9 +242,11 @@ export class WorkspaceSupervisor {
       return 'aborted';
     } finally {
       unsubscribeControl?.();
-      controlClient?.disconnect();
+      // Rooms still drain their own REQs over the shared socket, so it can only
+      // be closed once every Body has stopped.
       await this.stopAll();
       await this.scheduler.dispose();
+      this.relaySocket.disconnect();
     }
   }
 
@@ -390,6 +399,7 @@ export class WorkspaceSupervisor {
       room.mergeWorker ? runtimeIdentity(room.mergeWorker) : undefined,
       {
         scheduler: this.scheduler,
+        relaySocket: this.relaySocket,
         statePath: resolve(workspaceRoot, 'body-state.json'),
         resolveNamedRepository: (target) => this.resolveNamedRepository(target),
         onRoomPollSuccess: health.poll,
@@ -433,6 +443,7 @@ export class WorkspaceSupervisor {
     const startedAt = this.now();
     const body = new Body(config, runtimeIdentity(this.runtime.body), this.agent, undefined, {
       scheduler: this.scheduler,
+      relaySocket: this.relaySocket,
       statePath: resolve(workspaceRoot, 'body-state.json'),
       resolveNamedRepository: (target) => this.resolveNamedRepository(target),
       onRoomPollSuccess: () => this.notePoll(channelId),

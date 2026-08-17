@@ -774,6 +774,8 @@ describe('Room poll resilience', () => {
     const unsubscribe = vi.fn();
     const disconnect = vi.fn();
     const fakeClient = {
+      connect: vi.fn(async () => undefined),
+      socket: null,
       agentPresenceSubscribe: vi.fn(
         async (_channelId: string, handler: (sessionEvent: { event: NostrEvent }) => void) => {
           presenceHandler = handler;

@@ -104,6 +104,7 @@ import {
 } from './repository-target.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import { prepareRoomAgentHome } from './agent-home.js';
+import type { RelaySocketLease, SharedRelaySocket } from './relay-socket.js';
 import { appendPersonaSessionInstructions } from './persona-instructions.js';
 import {
   chunkChangeReviewPatch,
@@ -918,8 +919,17 @@ export class Body {
       client: ReturnType<typeof createBuzzClient>;
       byPubkey: Map<string, AgentPresence>;
       unsubscribe: () => void;
+      release: () => void;
     }>
   >();
+  /**
+   * The daemon's one authenticated relay socket, when the supervisor provides
+   * it. Every Room push loop and presence cache multiplexes its own REQ onto
+   * it instead of opening another socket on the same agent pubkey. Absent for
+   * a standalone Body (`beeline serve`, unit tests), which then owns and
+   * disposes its own sockets exactly as before.
+   */
+  private sharedSocket?: SharedRelaySocket;
   private disposed = false;
   private presenceGenerations = new Map<string, string>();
   private activeExchangeReplies = new Set<string>();
@@ -940,6 +950,7 @@ export class Body {
       onRoomPollSuccess?: (channelId: string) => void;
       onRoomPollFailure?: (channelId: string, retryInMs: number) => void;
       onRoomPresence?: (channelId: string, status: 'online' | 'offline') => void;
+      relaySocket?: SharedRelaySocket;
     } = {},
   ) {
     this.config = config;
@@ -963,6 +974,7 @@ export class Body {
     this.onRoomPollSuccess = services.onRoomPollSuccess;
     this.onRoomPollFailure = services.onRoomPollFailure;
     this.onRoomPresence = services.onRoomPresence;
+    this.sharedSocket = services.relaySocket;
     this.durableState = new DurableBodyState(
       services.statePath ?? resolve(config.workspaceRoot, '.beeline-body-state.json'),
     );
@@ -983,7 +995,11 @@ export class Body {
    * changes Room membership, gate authority, or repository state.
    */
   async forceRecoverRoom(channelId: string): Promise<void> {
-    this.roomSockets.get(channelId)?.disconnect();
+    // Dropping the transport is a blunt way to unstick one Room's push loop,
+    // and on the daemon's shared socket it would take every sibling Room down
+    // with it. The supervisor's follow-up abort is what actually ends the loop;
+    // the ACP force-suspend below is what actually clears the wedge.
+    if (!this.sharedSocket) this.roomSockets.get(channelId)?.disconnect();
     const affected = [...this.sessions.values()].filter(
       (session) => session.channelId === channelId || session.parentChannelId === channelId,
     );
@@ -1022,6 +1038,32 @@ export class Body {
   /** List all active sessions. */
   listSessions(): AgentSession[] {
     return Array.from(this.sessions.values());
+  }
+
+  /**
+   * A connected, NIP-42-authenticated relay client for one live subscription.
+   *
+   * With a daemon-shared socket every Room and presence cache multiplexes its
+   * own REQ onto one connection (`relay-socket.ts`), and `release()` is a
+   * no-op — closing it would tear down every sibling Room's subscription. A
+   * standalone Body opens and owns one socket per subscription, as before.
+   */
+  private async acquireRelaySocket(): Promise<RelaySocketLease> {
+    if (this.sharedSocket) return this.sharedSocket.acquire();
+    const client = createBuzzClient({
+      baseUrl: this.config.relayBaseUrl,
+      ...(this.config.relayHost ? { host: this.config.relayHost } : {}),
+      wsUrl: this.config.relayWsUrl,
+      identity: this.agentIdentity,
+      WebSocketImpl: WebSocket,
+    });
+    try {
+      await client.connect();
+    } catch (error) {
+      client.disconnect();
+      throw error;
+    }
+    return { client, release: () => client.disconnect() };
   }
 
   /**
@@ -1849,6 +1891,7 @@ export class Body {
     client: ReturnType<typeof createBuzzClient>;
     byPubkey: Map<string, AgentPresence>;
     unsubscribe: () => void;
+    release: () => void;
   }> {
     const existing = this.presenceCaches.get(channelId);
     if (existing) return existing;
@@ -1863,15 +1906,18 @@ export class Body {
   /**
    * Live-updated presence cache for one Room's agent-presence topic, backed
    * by `agentPresenceSubscribe` instead of `isRoomAgentOnline`'s old
-   * per-check `queryEvents` poll. Own client/subscription rather than
-   * reusing `roomSockets` (see the field doc above), seeded once with the
-   * currently stored state because a fresh subscribe's backfill replay is
-   * not guaranteed to have landed by the time the very first check runs.
+   * per-check `queryEvents` poll. Its own REQ rather than reusing
+   * `roomSockets` (see the field doc above) — but on the daemon's shared
+   * socket, so that independence costs a subId, not a connection. Seeded once
+   * with the currently stored state because a fresh subscribe's backfill
+   * replay is not guaranteed to have landed by the time the very first check
+   * runs.
    */
   private async openChannelPresenceCache(channelId: string): Promise<{
     client: ReturnType<typeof createBuzzClient>;
     byPubkey: Map<string, AgentPresence>;
     unsubscribe: () => void;
+    release: () => void;
   }> {
     const byPubkey = new Map<string, AgentPresence>();
     const applyEvent = (event: NostrEvent) => {
@@ -1887,13 +1933,7 @@ export class Body {
         }),
       );
     };
-    const client = createBuzzClient({
-      baseUrl: this.config.relayBaseUrl,
-      ...(this.config.relayHost ? { host: this.config.relayHost } : {}),
-      wsUrl: this.config.relayWsUrl,
-      identity: this.agentIdentity,
-      WebSocketImpl: WebSocket,
-    });
+    const { client, release } = await this.acquireRelaySocket();
     try {
       const unsubscribe = await client.agentPresenceSubscribe(channelId, (sessionEvent) =>
         applyEvent(sessionEvent.event),
@@ -1902,9 +1942,9 @@ export class Body {
         { kinds: [KIND_AGENT_PRESENCE], '#d': [`${TAG_AGENT_PRESENCE}:${channelId}`], limit: 50 },
       ]);
       for (const event of seedEvents) applyEvent(event);
-      return { client, byPubkey, unsubscribe };
+      return { client, byPubkey, unsubscribe, release };
     } catch (error) {
-      client.disconnect();
+      release();
       throw error;
     }
   }
@@ -3476,18 +3516,16 @@ export class Body {
     const reconnectBackoff = new RoomPollBackoff(1_000);
     while (!opts.signal?.aborted && !this.disposed) {
       let client: ReturnType<typeof createBuzzClient> | undefined;
+      let release: (() => void) | undefined;
       let unsubscribe: (() => void) | undefined;
       let offClose: (() => void) | undefined;
       let maintenanceTimer: ReturnType<typeof setInterval> | undefined;
       try {
-        client = createBuzzClient({
-          baseUrl: this.config.relayBaseUrl,
-          ...(this.config.relayHost ? { host: this.config.relayHost } : {}),
-          wsUrl: this.config.relayWsUrl,
-          identity: this.agentIdentity,
-          WebSocketImpl: WebSocket,
-        });
-        await client.connect();
+        // One REQ on the daemon's shared socket, not another authenticated
+        // connection on this same agent pubkey.
+        const lease = await this.acquireRelaySocket();
+        client = lease.client;
+        release = lease.release;
         this.roomSockets.set(channelId, client);
         const roomParticipants = await this.roomParticipants(channelId);
         const durableCursor = await this.durableState.cursor(channelId);
@@ -3568,8 +3606,10 @@ export class Body {
       } finally {
         if (maintenanceTimer) clearInterval(maintenanceTimer);
         offClose?.();
+        // Drop this Room's REQ first; the shared socket keeps serving its
+        // siblings, and only an owned socket is actually closed by release().
         unsubscribe?.();
-        client?.disconnect();
+        release?.();
         if (this.roomSockets.get(channelId) === client) this.roomSockets.delete(channelId);
       }
     }
@@ -4464,13 +4504,18 @@ export class Body {
   /** Dispose all sessions. */
   async dispose(): Promise<void> {
     this.disposed = true;
-    for (const socket of this.roomSockets.values()) socket.disconnect();
+    // The Room push loops own their own REQ teardown via their `finally`; only
+    // a socket this Body opened for itself is closed here. Closing the
+    // daemon's shared socket is the supervisor's call, not one Room's.
+    if (!this.sharedSocket) {
+      for (const socket of this.roomSockets.values()) socket.disconnect();
+    }
     this.roomSockets.clear();
     await Promise.allSettled(
       [...this.presenceCaches.values()].map((cachePromise) =>
         cachePromise.then((cache) => {
           cache.unsubscribe();
-          cache.client.disconnect();
+          cache.release();
         }),
       ),
     );

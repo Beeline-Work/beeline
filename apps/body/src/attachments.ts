@@ -89,7 +89,7 @@ export function generatedImageCandidates(
 /** Agents can share any worktree file using a tiny final-response directive. */
 export function attachmentPathsFromText(text: string): string[] {
   const paths: string[] = [];
-  const expression = /\[\[buzz-attachment:([^\]\r\n]+)\]\]/g;
+  const expression = new RegExp(`\\[\\[${AGENT_ATTACHMENT_DIRECTIVE}:([^\\]\\r\\n]+)\\]\\]`, 'g');
   for (const match of text.matchAll(expression)) {
     const path = match[1]?.trim();
     if (path && !paths.includes(path)) paths.push(path);
@@ -101,7 +101,7 @@ export function attachmentPathsFromText(text: string): string[] {
 export function stripAttachmentDirectives(text: string): string {
   return text
     .replace(/data:[^\s;,]+(?:;[^\s,]+)*;base64,[a-z0-9+/=]+/gi, '[inline binary omitted]')
-    .replace(/\s*\[\[buzz-attachment:[^\]\r\n]+\]\]\s*/g, '\n')
+    .replace(new RegExp(`\\s*\\[\\[${AGENT_ATTACHMENT_DIRECTIVE}:[^\\]\\r\\n]+\\]\\]\\s*`, 'g'), '\n')
     .trim();
 }
 

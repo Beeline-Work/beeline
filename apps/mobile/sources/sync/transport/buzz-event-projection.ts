@@ -9,6 +9,7 @@ import {
 import { agentDraftFromSessionEvent } from '@/buzz/agent-draft';
 import { agentPresenceFromSessionEvent } from '@/buzz/agent-presence';
 import { cornerStatusPrecedence, mapRawCornerStatusTag, type CornerStatus } from '@/buzz/corners';
+import { decodePercentEncoding } from '@/buzz/ledger-text';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -310,10 +311,16 @@ export function sessionEventHasTag(event: SessionEvent, name: string, value?: st
   );
 }
 
+/**
+ * Every message body the transcript and the Room list ever show funnels through
+ * here, which is why the percent-escape decode lives at this seam rather than
+ * at each of the dozen render sites: `%3F` was reaching the slab literally
+ * (`buzz/ledger-text.ts`).
+ */
 function eventText(event: SessionEvent): string {
-  if (event.type === 'assistant_delta') return event.text;
+  if (event.type === 'assistant_delta') return decodePercentEncoding(event.text);
   const content = sessionEventPayload(event)?.content;
-  return typeof content === 'string' ? content : '';
+  return typeof content === 'string' ? decodePercentEncoding(content) : '';
 }
 
 function eventPubkey(event: SessionEvent): string | undefined {
@@ -361,7 +368,9 @@ export function projectChatEvent(
     return {
       message: {
         id: `agent-draft-${agentDraft.requestId}`,
-        text: agentDraft.text,
+        // The streaming draft never passes through `eventText`, so it decodes
+        // here or it is the one surface that still shows raw escapes.
+        text: decodePercentEncoding(agentDraft.text),
         isUser: false,
         timestamp: Math.floor(agentDraft.observedAt / 1_000),
         pubkey: agentDraft.agentPubkey,

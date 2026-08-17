@@ -87,6 +87,24 @@ export const Typography = {
   mono: (weight: 'regular' | 'italic' | 'semiBold' = 'regular') => ({
     fontFamily: getMonoFont(weight),
   }),
+
+  /**
+   * The inscription voice — the Buzz transcript's body type.
+   *
+   * Resolves to IBM Plex Mono like `mono()`, but it is a different semantic
+   * claim and must stay a separate seam: `mono()` marks a deliberate machine
+   * identifier (a command, a handle, a role) and is governed by an allowlist,
+   * while `ledger()` is *prose* set in the terminal face because the ledger is
+   * an inscription rather than a chat feed.
+   *
+   * It takes no weight argument on purpose. Emphasis inside the ledger comes
+   * from the `groknight.ledger*` luminance ladder and from indentation, never
+   * from weight — and regular is the readable floor for light-on-black at this
+   * size, so there is no lighter cut to reach for either (`DESIGN.md`, "Type").
+   */
+  ledger: () => ({
+    fontFamily: getMonoFont('regular'),
+  }),
   
   // Logo font style (Bricolage Grotesque)
   logo: () => ({

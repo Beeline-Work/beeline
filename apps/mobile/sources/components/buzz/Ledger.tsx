@@ -1,5 +1,5 @@
-import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
 import { MonoMarkdown } from './MonoMarkdown';
@@ -8,71 +8,87 @@ import { MonoMarkdown } from './MonoMarkdown';
  * The obsidian ledger — the one transcript primitive a Room and a Corner both
  * render.
  *
- * The screen is a single unbroken slab; the agent's output is what is written
- * across it. So an agent turn is plain flowing text: no bubble, no card, no
- * per-message frame, no rule. Only luminance separates it from the black —
- * ledger text is the brightest tone on the surface and carries a whisper of
- * glow, which is why it reads as lit rather than printed. Rhythm alone
- * separates one paragraph from the next.
+ * An alien prophecy inscribed on a single slab, not a chat app. Everything the
+ * shape of a message — a bubble, a card, a frame, a rule between turns, a name
+ * on its own row — is gone. What is left is one flowing column of terminal type
+ * with a ghosted margin down its right edge.
  *
- * A human's turn is the one thing that must be findable while scrolling a long
- * ledger, so it inverts every axis the ledger uses at once: a hairline rule
- * interrupts the page above it, the block pulls to the right margin, the type
- * goes semibold, and a signature names who. Four redundant signals, still zero
- * boxes — a repeating content unit never earns a border, fill, or radius
- * (DESIGN.md, "Shape").
+ * **Weight goes down; tone and indentation do all the work.** The whole ledger
+ * is set at one size in one regular weight (`Typography.ledger()`), and every
+ * distinction the reader needs is carried by the `groknight.ledger*` luminance
+ * ladder and by where the block sits:
  *
- * The only thing that differs between the two surfaces is attribution, and it
- * differs because the surfaces genuinely differ: a Corner has exactly one
- * administering agent (`openSubchannel` in `apps/body/src/body.ts` signs every
- * corner with a single agent identity), so it names that agent once in the top
- * bar and passes no attribution here. A Room can hold several agents, so it
- * passes `LedgerAttribution` and each agent's voice stays identifiable in the
- * flow. Same component, same shape language, one prop.
+ *   bright + bloom, left column   an agent writing — the prophecy
+ *   mid-grey, left column         another person writing
+ *   mid-grey, inset right         you, steering
+ *   quiet                         the inline handle that opens a voice's run
+ *   ghost                         the right-gutter stamp, collapsed machine noise
+ *
+ * Nothing here is loud by being fat. Bold is banned outright: it fought the
+ * inscribed feel, and it is the one axis a light-on-black slab cannot spend.
+ *
+ * The surfaces differ in exactly one place, and it tracks a real difference
+ * between them. A Corner has one administering agent (`openSubchannel` in
+ * `apps/body/src/body.ts` signs every corner with a single identity), named
+ * once in the top bar — so a Corner's agent turns carry no handle at all and
+ * read as pure flowing text. A Room can hold several agents and several people,
+ * so a voice states its handle inline, once, when it takes over. Same
+ * component, one prop.
  */
+
+/** The right margin the ghosted stamp hangs in, clear of the flowing column. */
+export const LEDGER_MARGINALIA_WIDTH = 36;
 
 type LedgerBodyProps = {
   itemId: string;
   bodyText: string | undefined;
   bodyTestID: string;
   /**
-   * A Room's quiet inline speaker mark. Omitted in a Corner, where the single
-   * agent is named in the top bar instead of on every paragraph.
+   * The voice's handle, set inline as the first thing on the first line so the
+   * entry reads as one log line rather than a name-on-its-own-row header.
+   * Omitted on a continuation of the same voice, and omitted entirely in a
+   * Corner, whose single agent is named in the top bar.
    */
-  attribution?: React.ReactNode;
+  handle?: string;
+  /** A run's opening entry gets air above it; a continuation keeps flowing. */
+  continued?: boolean;
+  marginalia?: React.ReactNode;
   replyReference?: React.ReactNode;
   attachments?: React.ReactNode;
+  /** The turn's tool run, collapsed — rendered under the prose it belongs to. */
+  machineNoise?: React.ReactNode;
 };
 
 /**
- * Who is writing, stated quietly: a small faceted mark, the name in mono, and
- * (for a registered agent) its presence light. Deliberately dimmer and smaller
- * than the prose underneath — it labels the voice without competing with what
- * the voice says.
+ * The ghosted margin: a fixed-width clock stamp, and (when a voice first
+ * announces itself in a Room) the author's short npub under it.
+ *
+ * Hung in the right margin rather than set into the flow, so the centre stays a
+ * clean column — editor line numbers, verse numbers. It is absolutely
+ * positioned against the entry so it can never push the prose around, and it
+ * takes the dimmest tier because none of it is information the reader is
+ * looking for; it is information the reader occasionally checks.
  */
-export function LedgerAttribution({
-  mark,
-  name,
+export function LedgerMarginalia({
+  stamp,
   detail,
-  presence,
   testID,
 }: {
-  mark?: React.ReactNode;
-  name: string;
-  /** A Room appends the author's short npub here; names are not unique. */
+  stamp: string;
+  /** A Room appends the author's short npub here; display names are not unique. */
   detail?: string | null;
-  presence?: React.ReactNode;
   testID?: string;
 }) {
+  if (!stamp && !detail) return null;
   return (
-    <View style={styles.attribution} testID={testID}>
-      {mark}
-      {presence}
-      <Text numberOfLines={1} style={styles.attributionName}>
-        {name.toUpperCase()}
-      </Text>
+    <View pointerEvents="none" style={styles.marginalia} testID={testID}>
+      {stamp ? (
+        <Text numberOfLines={1} style={styles.marginaliaStamp}>
+          {stamp}
+        </Text>
+      ) : null}
       {detail ? (
-        <Text numberOfLines={1} style={styles.attributionDetail}>
+        <Text numberOfLines={1} style={styles.marginaliaDetail}>
           {detail}
         </Text>
       ) : null}
@@ -80,64 +96,84 @@ export function LedgerAttribution({
   );
 }
 
-/** One agent paragraph, written straight onto the slab. */
+/**
+ * One turn, written straight onto the slab.
+ *
+ * `luminous` is the ladder's top step and belongs to the agent alone: its
+ * output is the thing the slab exists to show, so it takes the brightest tone
+ * and a whisper of bloom. Everyone else writing in the left column takes the
+ * ordinary mid-grey. No frame, no rule, no glyph, no box — a run of entries is
+ * separated from the next voice by air and nothing else.
+ */
 export function LedgerEntry({
   itemId,
   bodyText,
   bodyTestID,
-  attribution,
+  handle,
+  continued = false,
+  luminous = false,
+  marginalia,
   replyReference,
   attachments,
-}: LedgerBodyProps) {
+  machineNoise,
+}: LedgerBodyProps & { luminous?: boolean }) {
   return (
-    <View style={styles.ledgerEntry} testID={`chat-message-${itemId}`}>
-      {attribution}
+    <View
+      style={[styles.entry, continued ? styles.entryContinued : styles.entryOpens]}
+      testID={`chat-message-${itemId}`}
+    >
+      {marginalia}
       {replyReference}
       {bodyText ? (
-        <MonoMarkdown markdown={bodyText} textStyle={styles.ledgerText} testID={bodyTestID} />
+        <MonoMarkdown
+          markdown={bodyText}
+          textStyle={luminous ? styles.ledgerTextLuminous : styles.ledgerText}
+          leadingInline={
+            handle ? (
+              <Text style={styles.handle} testID={`chat-handle-${itemId}`}>
+                {handle.toUpperCase()}{'  '}
+              </Text>
+            ) : null
+          }
+          testID={bodyTestID}
+        />
+      ) : handle ? (
+        <Text style={styles.handle} testID={`chat-handle-${itemId}`}>
+          {handle.toUpperCase()}
+        </Text>
       ) : null}
+      {machineNoise}
       {attachments}
     </View>
   );
 }
 
 /**
- * A person steering: the ledger's margin note, and its loudest voice.
+ * You, steering.
  *
- * Who is named once per block, and where depends on the surface for the same
- * reason attribution does. A Corner is one agent writing and a person
- * occasionally interrupting, so the interruption signs off at the end —
- * `— YOU`. A Room is several people and several agents, and there the name has
- * to arrive *before* the words for a fast scroll to work, so it takes the same
- * leading attribution an agent entry does. One or the other; never both.
- *
- * `continued` folds a run of messages from one person into a single block — no
- * second rule, no second name — for the same reason an agent announces itself
- * once per run rather than once per paragraph.
+ * Identified by geometry alone: pulled to the right margin and one luminance
+ * step down from the agent output it interrupts. No caption, no signature, no
+ * rule — on a linear log, "the block that is inset and dim is mine" is learned
+ * once and never has to be restated. A run of your own messages keeps flowing
+ * as one passage for the same reason a voice announces itself once.
  */
 export function LedgerSteer({
   itemId,
-  signature,
-  attribution,
-  continued = false,
   bodyText,
   bodyTestID,
+  continued = false,
+  marginalia,
   replyReference,
   attachments,
   offlineQueued = false,
-}: LedgerBodyProps & {
-  signature: string;
-  continued?: boolean;
-  offlineQueued?: boolean;
-}) {
+}: Omit<LedgerBodyProps, 'handle' | 'machineNoise'> & { offlineQueued?: boolean }) {
   return (
     <View
-      style={[styles.steerBlock, continued && styles.steerBlockContinued]}
+      style={[styles.entry, continued ? styles.entryContinued : styles.entryOpens]}
       testID={`chat-message-${itemId}`}
     >
-      {continued ? null : <View style={styles.steerRule} />}
+      {marginalia}
       <View style={styles.steer}>
-        {attribution}
         {replyReference}
         {bodyText ? (
           <MonoMarkdown markdown={bodyText} textStyle={styles.steerText} testID={bodyTestID} />
@@ -146,116 +182,183 @@ export function LedgerSteer({
         {offlineQueued ? (
           <Text style={styles.steerNote}>SENT TO ROOM · AGENT OFFLINE</Text>
         ) : null}
-        {attribution || continued ? null : (
-          <Text numberOfLines={1} style={styles.steerSignature} testID={`chat-steer-by-${itemId}`}>
-            — {signature}
-          </Text>
-        )}
       </View>
     </View>
   );
 }
 
+/**
+ * A wall of tool output, folded into one ghost line.
+ *
+ * The dimmest tier, one line, with its own disclosure — a `git push` rejection
+ * dump, a stack trace, an npm error wall never prints down the slab. The label
+ * says what happened and the body stays behind a tap
+ * (`DESIGN.md`, "Machine noise").
+ */
+export function LedgerGhostLine({
+  label,
+  body,
+  testID,
+}: {
+  label: string;
+  body: string;
+  testID?: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <View style={styles.ghostBlock} testID={testID}>
+      <Pressable
+        accessibilityLabel={expanded ? `Collapse ${label}` : `${label}. Expand`}
+        accessibilityRole="button"
+        onPress={() => setExpanded((open) => !open)}
+        style={styles.ghostRow}
+      >
+        {/* Two Texts, one line. A single truncating Text would eat the
+            disclosure copy first — the affordance is the whole point of the
+            line, so it is the part that must never be the one to go. Both hold
+            plain string children, clear of the Android blank-flex-Text bug. */}
+        <Text numberOfLines={1} style={styles.ghostLine}>
+          ⋯ {label}
+        </Text>
+        <Text style={styles.ghostAffordance}> · tap to {expanded ? 'collapse' : 'expand'}</Text>
+      </Pressable>
+      {expanded ? (
+        <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
+          <Text selectable style={styles.ghostBody} testID={testID ? `${testID}-body` : undefined}>
+            {body}
+          </Text>
+        </ScrollView>
+      ) : null}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  // Vertical rhythm alone separates one ledger paragraph from the next.
-  ledgerEntry: {
-    width: '100%',
-    minWidth: 0,
-    marginBottom: 22,
-  },
   /**
-   * The luminous line. `textPrimary` on the near-black slab, plus a shadow of
-   * the same tone at zero offset — a diffuse halo, not a drop shadow, so the
-   * text reads as emitting rather than sitting on the surface. Luminance and
-   * weight only: no hue enters the transcript (DESIGN.md, "Luminance").
+   * Air is the only separator in the transcript — no rules, no dividers, no
+   * boxes between turns.
+   *
+   * `marginBottom` is the gap that appears *above* an entry on screen: the
+   * transcript FlatList is `inverted`, so each cell's own bottom margin lands
+   * at its visual top. `continued` describes the entry immediately above, so
+   * that is the side the run/stanza distinction has to be spent on.
    */
-  ledgerText: {
-    ...Typography.default(),
+  entry: {
     width: '100%',
     minWidth: 0,
-    color: groknight.textPrimary,
-    fontSize: 14,
-    lineHeight: 22,
+    paddingRight: LEDGER_MARGINALIA_WIDTH,
+  },
+  entryContinued: { marginBottom: 9 },
+  entryOpens: { marginBottom: 27 },
+  /**
+   * The prophecy. Brightest tone on the slab plus a wide, low-alpha halo of its
+   * own tone at zero offset — a diffuse emission, not a drop shadow, so the
+   * text reads as lit from within rather than sitting on the surface. Luminance
+   * only: no hue and no extra weight enter the transcript.
+   */
+  ledgerTextLuminous: {
+    ...Typography.ledger(),
+    width: '100%',
+    minWidth: 0,
+    color: groknight.ledgerBright,
+    fontSize: 16,
+    lineHeight: 26,
     textShadowColor: groknight.ledgerGlow,
     textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 6,
+    textShadowRadius: 7,
   },
-  attribution: {
-    marginBottom: 7,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  attributionName: {
-    ...Typography.mono('semiBold'),
-    flexShrink: 1,
+  /** Everyone else in the left column: same face, same size, one step down. */
+  ledgerText: {
+    ...Typography.ledger(),
+    width: '100%',
     minWidth: 0,
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 13,
-    letterSpacing: 0.9,
+    color: groknight.ledgerBody,
+    fontSize: 16,
+    lineHeight: 26,
   },
-  attributionDetail: {
+  /**
+   * Inline with the prose, never a row of its own — nested inside the first
+   * paragraph's own `Text` so it wraps as part of the log line. (A `flex: 1`
+   * `Text` that only wraps other `Text` inside a row `View` renders blank on
+   * Android; this shape avoids that class of bug entirely.)
+   */
+  handle: {
+    ...Typography.ledger(),
+    color: groknight.ledgerQuiet,
+    fontSize: 16,
+    lineHeight: 26,
+    letterSpacing: 0.6,
+  },
+  /** Absolute, so the stamp can never reflow the column it annotates. */
+  marginalia: {
+    position: 'absolute',
+    top: 4,
+    right: 0,
+    width: LEDGER_MARGINALIA_WIDTH,
+    alignItems: 'flex-end',
+  },
+  marginaliaStamp: {
     ...Typography.mono(),
-    flexShrink: 1,
-    minWidth: 0,
-    color: groknight.textDisabled,
+    color: groknight.ledgerGhost,
     fontSize: 9,
-    lineHeight: 13,
+    lineHeight: 12,
   },
-  steerBlock: {
-    width: '100%',
-    minWidth: 0,
-    marginTop: 6,
-    marginBottom: 26,
+  marginaliaDetail: {
+    ...Typography.mono(),
+    marginTop: 1,
+    color: groknight.ledgerGhost,
+    fontSize: 8,
+    lineHeight: 11,
   },
-  // A continuation of the same person's block, so it closes the gap the rule
-  // would otherwise have opened.
-  steerBlockContinued: {
-    marginTop: 0,
-    marginBottom: 22,
-  },
-  // The one rule on the page: the ledger stops here because a person spoke.
-  // A hairline divider, the same device list rows already use — not a box.
-  steerRule: {
-    width: '100%',
-    height: StyleSheet.hairlineWidth,
-    marginBottom: 16,
-    backgroundColor: groknight.border,
-  },
-  // An explicit width, not shrink-to-fit: MonoMarkdown's own root is
-  // `width: '100%'`, so an auto-width parent would have nothing but the
-  // signature to size itself from and would collapse to a few characters wide.
+  /**
+   * An explicit width, not shrink-to-fit: MonoMarkdown's own root is
+   * `width: '100%'`, so an auto-width parent would have nothing to size itself
+   * from and would collapse to a few characters wide.
+   */
   steer: {
     alignSelf: 'flex-end',
     minWidth: 0,
-    width: '82%',
+    width: '86%',
   },
-  // Bold, not brighter: the agent's glow stays the brightest thing on the
-  // slab, and a steer is found by weight, inset, and the rule above it.
+  /** Dimmer and inset. That is the whole signal; there is no label. */
   steerText: {
-    ...Typography.default('semiBold'),
+    ...Typography.ledger(),
     minWidth: 0,
-    color: groknight.textPrimary,
-    fontSize: 15,
-    lineHeight: 23,
+    color: groknight.ledgerBody,
+    fontSize: 16,
+    lineHeight: 26,
   },
   steerNote: {
-    ...Typography.mono('semiBold'),
+    ...Typography.mono(),
     marginTop: 8,
     textAlign: 'right',
-    color: groknight.textMuted,
+    color: groknight.ledgerGhost,
     fontSize: 9,
     lineHeight: 13,
     letterSpacing: 0.4,
   },
-  steerSignature: {
+  ghostBlock: { width: '100%', minWidth: 0, marginTop: 6 },
+  ghostRow: { minWidth: 0, flexDirection: 'row', alignItems: 'baseline' },
+  ghostLine: {
     ...Typography.mono(),
-    marginTop: 8,
-    textAlign: 'right',
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 13,
-    letterSpacing: 0.8,
+    flexShrink: 1,
+    minWidth: 0,
+    color: groknight.ledgerGhost,
+    fontSize: 11,
+    lineHeight: 20,
+  },
+  ghostAffordance: {
+    ...Typography.mono(),
+    flexShrink: 0,
+    color: groknight.ledgerGhost,
+    fontSize: 11,
+    lineHeight: 20,
+  },
+  ghostBody: {
+    ...Typography.mono(),
+    marginTop: 4,
+    color: groknight.ledgerGhost,
+    fontSize: 10,
+    lineHeight: 15,
   },
 });

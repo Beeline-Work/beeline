@@ -62,6 +62,8 @@ import {
 } from '@/buzz/local-cache-sync';
 import { groknight } from '@/buzz/groknight';
 import { continuedSpeakerIds } from '@/buzz/ledger-attribution';
+import { splitLedgerText } from '@/buzz/ledger-text';
+import { ledgerStamp } from '@/buzz/relative-time';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
 import {
@@ -74,7 +76,11 @@ import {
   sectionRoomParticipants,
   sectionRoomRoster,
 } from '@/buzz/room-participants';
-import { resolveAgentDisplayIdentity, resolveCornerCardAgentPubkey } from '@/buzz/agent-display';
+import {
+  agentRosterCommunityId,
+  resolveAgentDisplayIdentity,
+  resolveCornerCardAgentPubkey,
+} from '@/buzz/agent-display';
 import {
   cornerStatusPresentation,
   isCornerActive,
@@ -82,7 +88,7 @@ import {
   selectMostRecentActiveCornerId,
   type CornerStatus,
 } from '@/buzz/corners';
-import { directMessagePeer, shortMemberNpub } from '@/buzz/member-display';
+import { directMessagePeer, ledgerFingerprint, shortMemberNpub } from '@/buzz/member-display';
 import { resolveNip05Status } from '@/buzz/nip05-verification';
 import {
   canRenameRoom,
@@ -90,7 +96,11 @@ import {
   normalizedRoomRole,
   roomLifecycleAction,
 } from '@/buzz/room-management';
-import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
+import {
+  loadActiveCommunityId,
+  saveActiveCommunityId,
+  saveLastViewedChannel,
+} from '@/buzz/community-storage';
 import {
   formatAttachmentSize,
   uploadChatAttachment,
@@ -129,7 +139,13 @@ import { AgentAvatar } from '@/components/buzz/AgentAvatar';
 import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome';
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
-import { LedgerAttribution, LedgerEntry, LedgerSteer } from '@/components/buzz/Ledger';
+import {
+  LEDGER_MARGINALIA_WIDTH,
+  LedgerEntry,
+  LedgerGhostLine,
+  LedgerMarginalia,
+  LedgerSteer,
+} from '@/components/buzz/Ledger';
 import {
   HullSurface,
   HullWaveSignal,
@@ -188,20 +204,22 @@ function ledgerSpeakerKey(
 }
 
 /**
- * Everything the agent's tools did in one turn, folded into a single dim line.
- * Tool prose, commands, and outputs stay behind that line's own disclosure
- * (ActivityTimeline) — neither a Room nor a Corner ever prints a wall of
- * output across the slab. A Room passes `attribution` because several agents
+ * Everything the agent's tools did in one turn, folded into a single ghost
+ * line. Tool prose, commands, and outputs stay behind that line's own
+ * disclosure (ActivityTimeline) — neither a Room nor a Corner ever prints a
+ * wall of output across the slab. A Room passes `handle` because several agents
  * can be working there; a Corner names its one agent in the top bar instead.
  */
 function LedgerActivity({
   message,
   active,
-  attribution,
+  handle,
+  marginalia,
 }: {
   message: ChatDisplayMessage;
   active: boolean;
-  attribution?: React.ReactNode;
+  handle?: string;
+  marginalia?: React.ReactNode;
 }) {
   // A fresh fallback array literal on every render would defeat
   // ActivityTimeline's memoization below (its `items` prop would never be
@@ -215,8 +233,13 @@ function LedgerActivity({
   );
   return (
     <View style={styles.activityGroup} testID="corner-activity">
-      {attribution}
-      <ActivityTimeline active={active} items={activity} testID="corner-activity-timeline" />
+      {marginalia}
+      <ActivityTimeline
+        active={active}
+        handle={handle}
+        items={activity}
+        testID="corner-activity-timeline"
+      />
     </View>
   );
 }
@@ -977,6 +1000,16 @@ export default function BuzzChat() {
           directCommunityId ??
           (parentId ? await client.getChannelCommunityId(parentId) : null) ??
           null;
+        // Agent names are presentation, and they come from the roster's soul
+        // overlays — so the roster read falls back to the viewer's selected
+        // Workspace when the channel resolves no community of its own, rather
+        // than leaving the transcript with no roster and every agent showing
+        // its seed placeholder (`agentRosterCommunityId`). Membership, roles,
+        // and profile writes below stay on `channelCommunityId`.
+        const rosterCommunityId = agentRosterCommunityId(
+          channelCommunityId,
+          await loadActiveCommunityId(identity.publicKey),
+        );
         const presenceChannelId = parentId ?? decodedId;
         const handleLivePresence = (event: Parameters<typeof projectChatEvent>[0]) => {
           if (cancelled) return;
@@ -1114,7 +1147,7 @@ export default function BuzzChat() {
 
         const [communityAgents, communityMembers, archived, mergeInfo, siblingCorners] =
           await Promise.all([
-            channelCommunityId ? client.listAgents(channelCommunityId) : Promise.resolve([]),
+            rosterCommunityId ? client.listAgents(rosterCommunityId) : Promise.resolve([]),
             channelCommunityId ? client.communityMembers(channelCommunityId) : Promise.resolve([]),
             t.isChannelArchived(decodedId),
             parentId ? t.getSubchannelMergeTarget(decodedId) : Promise.resolve(null),
@@ -1952,109 +1985,86 @@ export default function BuzzChat() {
       const display = isAgent
         ? resolveAgentDisplayIdentity(item.pubkey ?? 'unknown-agent', knownAgent)
         : null;
-      const agentOnline = Boolean(
-        knownAgent &&
-          item.pubkey &&
-          isAgentPresenceOnlineWithReconnectGrace(
-            agentPresences[item.pubkey],
-            presenceNow,
-            presenceReconnectGrace[item.pubkey],
-          ),
-      );
       const personName = item.pubkey ? personProfileByPubkey.get(item.pubkey)?.name : undefined;
-      const referencedMessage = item.replyToId ? visibleMessageById.get(item.replyToId) : undefined;
-      const referencedTarget = referencedMessage
-        ? replyTargetForMessage(referencedMessage)
-        : undefined;
-      const replyReference = item.replyToId ? (
-        <View style={styles.replyReference} testID={`reply-reference-${item.id}`}>
-          <Text numberOfLines={1} style={styles.replyReferenceAuthor}>
-            ↳ {referencedTarget?.authorName ?? 'ORIGINAL MESSAGE'}
-          </Text>
-          <Text numberOfLines={2} style={styles.replyReferenceText}>
-            {referencedTarget?.preview ?? 'Message not loaded'}
-          </Text>
-        </View>
-      ) : null;
 
       const attachmentElements = item.attachments?.map((attachment) => (
         <AttachmentCard attachment={attachment} key={`${item.id}-${attachment.url}`} />
       ));
 
       // ── The ledger (§ DESIGN.md "The ledger") ────────────────────
-      // One primitive, both surfaces. The only difference is attribution, and
-      // it tracks a real difference between them: a Room holds several voices,
-      // so each one is marked and named before it speaks; a Corner is one
-      // agent (named once in the top bar) plus the occasional human
-      // interruption, so its turns are pure flowing text and its steers sign
-      // off at the end instead. Either way a voice announces itself once per
-      // run, not once per entry.
+      // One primitive, both surfaces. Two things differ, and each tracks a real
+      // difference between them:
+      //
+      //   · A Corner has one administering agent, named in its top bar, so its
+      //     agent turns carry no handle at all — pure flowing prophecy. A Room
+      //     holds several voices, so a voice states a whisper-dim handle inline
+      //     when it takes over, and only then (`continuedAttributionIds`).
+      //   · Your own turn is inset right and one tone down on either surface.
+      //     That geometry is the whole signal; there is no "YOU" caption.
       const attributionContinued = continuedAttributionIds.has(item.id);
-      const agentAttribution =
-        !isCorner && isAgent && !attributionContinued ? (
-          <LedgerAttribution
-            mark={
-              display ? (
-                <AgentAvatar
-                  pubkey={item.pubkey ?? 'unknown-agent'}
-                  avatarSeed={display.avatarSeed}
-                  avatarUrl={display.avatarUrl}
-                  name={display.name}
-                  size={16}
-                />
-              ) : null
-            }
-            name={display ? display.name : (personName ?? shortMemberNpub(item.pubkey ?? ''))}
-            presence={
-              knownAgent && item.pubkey ? (
-                <AgentPresenceLight
-                  online={agentOnline}
-                  testID={`agent-presence-light-${item.pubkey}`}
-                />
-              ) : null
-            }
-            testID={`chat-attribution-${item.id}`}
-          />
-        ) : null;
+      // An agent viewing its own Room messages is both `isUser` and an agent;
+      // the agent test wins, matching `ledgerSpeakerKey`'s own ordering.
+      const isSelfSteer = isOwn && !isAgent;
+      const voiceName = isAgent
+        ? (display ? display.name : (personName ?? shortMemberNpub(item.pubkey ?? '')))
+        : (personName ?? (item.pubkey ? shortMemberNpub(item.pubkey) : 'SOMEONE'));
+      // Zero handles in a Corner's single-agent flow; none on your own inset
+      // block; none on a continuation of the voice directly above.
+      const handle =
+        attributionContinued || isSelfSteer || (isCorner && isAgent) ? undefined : voiceName;
+      const marginalia = (
+        <LedgerMarginalia
+          stamp={ledgerStamp(item.timestamp)}
+          detail={handle && !isAgent && item.pubkey ? ledgerFingerprint(item.pubkey) : null}
+          testID={`chat-marginalia-${item.id}`}
+        />
+      );
 
-      // Machine noise collapses the same way on both surfaces: one dim line,
+      // Machine noise collapses the same way on both surfaces: one ghost line,
       // expandable, never a wall of output down the slab.
       if (item.isAgentActivity) {
         return (
           <LedgerActivity
             active={item.id === activeActivityId}
-            attribution={agentAttribution}
+            handle={handle}
+            marginalia={marginalia}
             message={item}
           />
         );
       }
 
-      const steerSignature = isOwn
-        ? 'YOU'
-        : item.pubkey
-          ? (personName ?? shortMemberNpub(item.pubkey))
-          : 'SOMEONE';
-      // In a Room the name arrives before the words, and carries the author's
-      // npub with it — display names are not unique, and a Room's people are
-      // strangers to each other more often than a Corner's are.
-      const steerAttribution =
-        !isCorner && !attributionContinued ? (
-          <LedgerAttribution
-            mark={
-              !isOwn && item.pubkey ? (
-                <PersonAvatar
-                  pubkey={item.pubkey}
-                  avatarUrl={personProfileByPubkey.get(item.pubkey)?.avatar}
-                  name={personName ?? shortMemberNpub(item.pubkey)}
-                  size={16}
-                />
-              ) : null
-            }
-            name={steerSignature}
-            detail={item.pubkey && !isOwn ? shortMemberNpub(item.pubkey) : null}
-            testID={`chat-attribution-${item.id}`}
-          />
+      // The reply echo is deleted from agent turns: Body threads every Room/DM
+      // reply to the request that triggered it, so the quoted text was always
+      // the message directly above — pure noise on a linear log. A person's own
+      // reply is a deliberate reach back up the transcript, so it keeps its
+      // quote.
+      const referencedMessage =
+        !isAgent && item.replyToId ? visibleMessageById.get(item.replyToId) : undefined;
+      const referencedTarget = referencedMessage
+        ? replyTargetForMessage(referencedMessage)
+        : undefined;
+      const replyReference =
+        !isAgent && item.replyToId ? (
+          <View style={styles.replyReference} testID={`reply-reference-${item.id}`}>
+            <Text numberOfLines={2} style={styles.replyReferenceText}>
+              ↳ {referencedTarget?.authorName ?? 'ORIGINAL MESSAGE'} ·{' '}
+              {referencedTarget?.preview ?? 'Message not loaded'}
+            </Text>
+          </View>
         ) : null;
+
+      // A pasted `git push` dump, stack trace, or npm error wall gets the same
+      // treatment as tool telemetry: lifted out of the prose into one ghost
+      // line. Only agent turns are scanned — a person pasting a log is doing it
+      // on purpose.
+      const ledgerText = isAgent ? splitLedgerText(item.text) : undefined;
+      const machineNoise = ledgerText?.machine ? (
+        <LedgerGhostLine
+          body={ledgerText.machine}
+          label={`${ledgerText.machineLines} lines of tool output`}
+          testID={`chat-machine-noise-${item.id}`}
+        />
+      ) : null;
 
       return (
         <SwipeToReply
@@ -2062,26 +2072,29 @@ export default function BuzzChat() {
           onReply={item.isAgentDraft ? () => undefined : () => beginReply(item)}
         >
           <NewMessageMaterialize enabled={Boolean(item.isNew)}>
-            {isAgent ? (
-              <LedgerEntry
-                itemId={item.id}
-                attribution={agentAttribution}
-                bodyText={item.text}
-                bodyTestID={`chat-message-text-${item.id}`}
-                replyReference={replyReference}
-                attachments={attachmentElements}
-              />
-            ) : (
+            {isSelfSteer ? (
               <LedgerSteer
                 itemId={item.id}
-                signature={steerSignature.toUpperCase()}
-                attribution={steerAttribution}
                 continued={attributionContinued}
                 bodyText={item.text}
                 bodyTestID={`chat-message-text-${item.id}`}
+                marginalia={marginalia}
                 replyReference={replyReference}
                 attachments={attachmentElements}
-                offlineQueued={isOwn && offlineQueuedIds.has(item.id)}
+                offlineQueued={offlineQueuedIds.has(item.id)}
+              />
+            ) : (
+              <LedgerEntry
+                itemId={item.id}
+                handle={handle}
+                continued={attributionContinued}
+                luminous={isAgent}
+                bodyText={ledgerText ? ledgerText.prose : item.text}
+                bodyTestID={`chat-message-text-${item.id}`}
+                marginalia={marginalia}
+                replyReference={replyReference}
+                machineNoise={machineNoise}
+                attachments={attachmentElements}
               />
             )}
           </NewMessageMaterialize>
@@ -3673,27 +3686,17 @@ const styles = StyleSheet.create({
     lineHeight: 11,
     letterSpacing: 0.6,
   },
+  /* A person reaching back up the transcript quotes what they reached for, on
+   * one dim line and with no rule beside it — the ledger has no delimiters. */
   replyReference: {
     minWidth: 0,
-    marginBottom: 7,
-    paddingLeft: 8,
-    paddingVertical: 3,
-    borderLeftWidth: 2,
-    borderLeftColor: groknight.borderStrong,
-  },
-  replyReferenceAuthor: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 0.35,
+    marginBottom: 5,
   },
   replyReferenceText: {
-    ...Typography.default(),
-    marginTop: 1,
-    color: groknight.textMuted,
+    ...Typography.mono(),
+    color: groknight.ledgerGhost,
     fontSize: 11,
-    lineHeight: 15,
+    lineHeight: 17,
   },
   /* An attachment hangs off the message that carries it: a row, not a card. */
   attachmentCard: {
@@ -3753,22 +3756,20 @@ const styles = StyleSheet.create({
     width: '100%',
     minWidth: 0,
     marginBottom: 20,
+    paddingRight: LEDGER_MARGINALIA_WIDTH,
   },
 
   // ── Parent Room corner status ──────────────────────────────────
-  /* A corner card is a system row interleaved into the ledger, so it takes the
-   * ledger's own interruption device — one hairline rule above it — rather than
-   * a bordered card laid on the slab. */
+  /* A corner card is a system row interleaved into the ledger, and the ledger
+   * has no delimiters at all — not between turns, not around a system row.
+   * Air and the identity mark set it apart; nothing is drawn. */
   cornerStatusCard: {
     minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    marginBottom: 16,
-    paddingTop: 14,
-    paddingBottom: 2,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: groknight.border,
+    marginBottom: 24,
+    paddingVertical: 4,
   },
   cornerStatusCopy: { flex: 1, minWidth: 0 },
   cornerStatusAgentRow: { minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -3825,45 +3826,46 @@ const styles = StyleSheet.create({
   openCornerGlyph: { ...Typography.default(), color: groknight.textPrimary, fontSize: 18 },
 
   // ── Merge summary ───────────────────────────────────────────────
+  /* A system row is still a row of the ledger: no rule under it, no frame
+   * around it. It is found by its glyph and by the luminance ladder. */
   mergeSummaryBubble: {
-    paddingHorizontal: 10,
-    paddingVertical: 12,
-    marginBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
+    paddingVertical: 6,
+    marginBottom: 22,
   },
   mergeSummaryTitle: {
     ...Typography.mono(),
     fontSize: 12,
-    color: groknight.chrome,
-    marginBottom: 4,
+    lineHeight: 20,
+    color: groknight.ledgerQuiet,
+    marginBottom: 2,
   },
   mergeSummaryText: {
     ...Typography.mono(),
     fontSize: 12,
-    color: groknight.textSecondary,
-    lineHeight: 16,
+    color: groknight.ledgerQuiet,
+    lineHeight: 18,
   },
   mergeSummaryPubkey: {
     ...Typography.mono(),
-    fontSize: 11,
+    fontSize: 10,
     lineHeight: 15,
-    color: groknight.textMuted,
-    marginTop: 4,
+    color: groknight.ledgerGhost,
+    marginTop: 3,
   },
 
   // ── Archived notice ─────────────────────────────────────────────
   archivedBubble: {
-    paddingVertical: 10,
-    marginBottom: 6,
+    paddingVertical: 8,
+    marginBottom: 20,
     alignSelf: 'center',
     maxWidth: '90%',
   },
   archivedText: {
-    ...Typography.mono('semiBold'),
+    ...Typography.mono(),
     fontSize: 11,
-    lineHeight: 15,
-    color: groknight.textPrimary,
+    lineHeight: 16,
+    letterSpacing: 0.8,
+    color: groknight.ledgerQuiet,
     textAlign: 'center',
   },
 

@@ -16,6 +16,21 @@ const DAY = 24 * HOUR;
 const WEEK = 7 * DAY;
 const YEAR = 365 * DAY;
 
+/**
+ * The ledger's right-gutter stamp: a fixed-width 24h clock time.
+ *
+ * Marginalia, not a headline — it hangs in the margin the way a verse number
+ * does, so it has to be the same width on every line and never re-render as
+ * the clock advances. That rules out `compactRelativeTime`'s relative age here
+ * even though the two read similarly: a relative age changes under the reader.
+ */
+export function ledgerStamp(seconds: number | undefined): string {
+  if (!seconds || seconds <= 0) return '';
+  const at = new Date(seconds * 1000);
+  if (Number.isNaN(at.getTime())) return '';
+  return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+}
+
 export function compactRelativeTime(seconds: number | undefined, nowMs: number): string {
   if (!seconds || seconds <= 0) return '';
   const elapsed = Math.floor(nowMs / 1000) - Math.floor(seconds);

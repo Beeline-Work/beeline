@@ -10,6 +10,7 @@ vi.mock('react-native', async () => {
   return {
     Linking: { openURL: vi.fn() },
     Platform: { OS: 'android', select: (choices: Record<string, unknown>) => choices.default },
+    Pressable: host('Pressable'),
     ScrollView: host('ScrollView'),
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
     Text: host('Text'),
@@ -17,7 +18,7 @@ vi.mock('react-native', async () => {
   };
 });
 
-import { LedgerAttribution, LedgerEntry, LedgerSteer } from './Ledger';
+import { LedgerEntry, LedgerGhostLine, LedgerMarginalia, LedgerSteer } from './Ledger';
 
 const originalConsoleError = console.error;
 
@@ -62,66 +63,100 @@ function renderedText(renderer: ReactTestRenderer): string[] {
   return strings;
 }
 
-/** A stand-in for the faceted identity mark a Room passes as attribution. */
-const mark = () => React.createElement('Svg', { testID: 'agent-mark' });
+/** Flattened style objects for every host node of a kind, for "is anything drawn" checks. */
+function stylesOfType(renderer: ReactTestRenderer, type: string): Record<string, unknown>[] {
+  return renderer.root
+    .findAllByType(type)
+    .flatMap((node: { props: { style?: unknown } }) =>
+      (Array.isArray(node.props.style) ? node.props.style : [node.props.style]).filter(
+        (style: unknown): style is Record<string, unknown> => Boolean(style),
+      ),
+    );
+}
 
 describe('the ledger — an agent turn', () => {
-  it('writes a Corner turn as plain text, with no per-message identity at all', () => {
+  it('writes a Corner turn as pure flowing prophecy, with no handle at all', () => {
     const renderer = render(
       React.createElement(LedgerEntry, {
         itemId: 'msg-1',
+        luminous: true,
         bodyText: 'Moved the retry into the callback handler.',
         bodyTestID: 'chat-message-text-msg-1',
       }),
     );
 
     expect(renderer.root.findByProps({ testID: 'chat-message-text-msg-1' })).toBeTruthy();
-    // A corner is single-agent: the identity lives in the top bar, so no mark,
-    // no uppercase name label, and no ›/· speaker glyph repeats per message.
+    // A corner is single-agent: identity lives in the top bar, so no inline
+    // handle, no mark, and no ›/· speaker glyph repeats per message.
+    expect(renderer.root.findAllByProps({ testID: 'chat-handle-msg-1' })).toHaveLength(0);
     expect(renderer.root.findAllByType('Svg')).toHaveLength(0);
     const text = renderedText(renderer).join(' ');
     expect(text).toContain('Moved the retry into the callback handler.');
     expect(text).not.toMatch(/›|·|—/);
-    expect(renderer.root.findAllByProps({ testID: 'chat-steer-by-msg-1' })).toHaveLength(0);
   });
 
-  it('keeps a Room agent identifiable in the flow, by mark and name', () => {
+  it('opens a Room voice with its handle inline, on the same line as the words', () => {
     const renderer = render(
       React.createElement(LedgerEntry, {
         itemId: 'msg-2',
+        luminous: true,
+        handle: 'Beebee',
         bodyText: 'Read the scheduler and found the stall.',
         bodyTestID: 'body',
-        attribution: React.createElement(LedgerAttribution, {
-          mark: mark(),
-          name: 'Beebee',
-          testID: 'chat-attribution-msg-2',
-        }),
       }),
     );
 
-    expect(renderer.root.findByProps({ testID: 'chat-attribution-msg-2' })).toBeTruthy();
-    expect(renderer.root.findAllByType('Svg')).toHaveLength(1);
-    // Uppercase mono, so the name reads as a machine label rather than prose.
+    const handle = renderer.root.findByProps({ testID: 'chat-handle-msg-2' });
     expect(renderedText(renderer).join(' ')).toContain('BEEBEE');
+
+    // The handle is nested inside the paragraph's own Text, not a sibling row —
+    // that is what makes it read as one log line, and it is also the shape that
+    // avoids the Android "flex Text in a row View" blank-layout bug.
+    expect(handle.parent.type).toBe('Text');
+    expect(renderedText(renderer).join('')).toContain('Read the scheduler and found the stall.');
+    // ...and the paragraph carries the body text as a real string child, so it
+    // is never a Text that wraps only other Texts.
+    const paragraph = handle.parent;
+    expect(paragraph.props.style).not.toMatchObject({ flexDirection: 'row' });
   });
 
-  it('carries no border, fill, or radius on the repeating row, either way', () => {
-    for (const attribution of [
-      undefined,
-      React.createElement(LedgerAttribution, { mark: mark(), name: 'Beebee' }),
-    ]) {
+  it('never prints a repeat handle for a continued run', () => {
+    const renderer = render(
+      React.createElement(LedgerEntry, {
+        itemId: 'msg-3',
+        luminous: true,
+        continued: true,
+        bodyText: 'And rebuilt the index afterwards.',
+        bodyTestID: 'body',
+      }),
+    );
+    expect(renderer.root.findAllByProps({ testID: 'chat-handle-msg-3' })).toHaveLength(0);
+    expect(renderedText(renderer).join(' ')).toContain('And rebuilt the index afterwards.');
+  });
+
+  it('carries no border, fill, radius, or rule on the repeating row', () => {
+    for (const handle of [undefined, 'Beebee']) {
       const renderer = render(
         React.createElement(LedgerEntry, {
           itemId: 'msg-1',
+          luminous: true,
+          handle,
           bodyText: 'A paragraph.',
           bodyTestID: 'body',
-          attribution,
         }),
       );
       const row = renderer.root.findByProps({ testID: 'chat-message-msg-1' });
-      expect(row.props.style).not.toHaveProperty('borderWidth');
-      expect(row.props.style).not.toHaveProperty('borderRadius');
-      expect(row.props.style).not.toHaveProperty('backgroundColor');
+      for (const style of row.props.style.filter(Boolean)) {
+        expect(style).not.toHaveProperty('borderWidth');
+        expect(style).not.toHaveProperty('borderRadius');
+        expect(style).not.toHaveProperty('backgroundColor');
+      }
+      // No delimiter of any kind between turns: nothing in the row is a rule.
+      for (const style of stylesOfType(renderer, 'View')) {
+        expect(style.height).not.toBe(1);
+        expect(style).not.toHaveProperty('borderTopWidth');
+        expect(style).not.toHaveProperty('borderBottomWidth');
+      }
     }
   });
 
@@ -129,22 +164,54 @@ describe('the ledger — an agent turn', () => {
     const renderer = render(
       React.createElement(LedgerEntry, {
         itemId: 'msg-1',
+        luminous: true,
         bodyText: 'A paragraph.',
         bodyTestID: 'body',
       }),
     );
     const style = renderer.root.findByProps({ testID: 'body' }).props.textStyle;
-    expect(style.textShadowColor).toMatch(/^rgba\(228, 228, 228,/);
+    expect(style.textShadowColor).toMatch(/^rgba\(244, 244, 244,/);
     expect(style.textShadowOffset).toEqual({ width: 0, height: 0 });
     expect(style.textShadowRadius).toBeGreaterThan(0);
+    // Restrained: a glow you feel, not neon.
+    expect(Number(style.textShadowColor.match(/([\d.]+)\)$/)![1])).toBeLessThan(0.25);
+  });
+
+  it('separates agent output from ordinary text by brightness, never by weight', () => {
+    const agent = render(
+      React.createElement(LedgerEntry, {
+        itemId: 'a',
+        luminous: true,
+        bodyText: 'prophecy',
+        bodyTestID: 'lit',
+      }),
+    );
+    const person = render(
+      React.createElement(LedgerEntry, {
+        itemId: 'b',
+        bodyText: 'ordinary',
+        bodyTestID: 'plain',
+      }),
+    );
+    const lit = agent.root.findByProps({ testID: 'lit' }).props.textStyle;
+    const plain = person.root.findByProps({ testID: 'plain' }).props.textStyle;
+
+    expect(lit.color).toBe('#f4f4f4');
+    expect(plain.color).toBe('#b0b0b0');
+    // One face, one size, one weight across the whole ledger.
+    expect(lit.fontFamily).toBe(plain.fontFamily);
+    expect(lit.fontFamily).toBe('IBMPlexMono-Regular');
+    expect(lit.fontSize).toBe(plain.fontSize);
+    expect(plain.textShadowColor).toBeUndefined();
   });
 });
 
 describe('the ledger — a human turn', () => {
-  it('emphasises a steer against the agent’s flowing text', () => {
+  it('identifies your own turn by inset and tone alone — no "YOU" label', () => {
     const agent = render(
       React.createElement(LedgerEntry, {
         itemId: 'a',
+        luminous: true,
         bodyText: 'agent prose',
         bodyTestID: 'agent-body',
       }),
@@ -152,7 +219,6 @@ describe('the ledger — a human turn', () => {
     const steer = render(
       React.createElement(LedgerSteer, {
         itemId: 'b',
-        signature: 'YOU',
         bodyText: 'Try the retry path instead.',
         bodyTestID: 'steer-body',
       }),
@@ -161,76 +227,71 @@ describe('the ledger — a human turn', () => {
     const agentStyle = agent.root.findByProps({ testID: 'agent-body' }).props.textStyle;
     const steerStyle = steer.root.findByProps({ testID: 'steer-body' }).props.textStyle;
 
-    // Heavier and larger than the ledger it interrupts — but never brighter:
-    // the agent's output stays the luminous layer.
-    expect(steerStyle.fontSize).toBeGreaterThan(agentStyle.fontSize);
-    expect(steerStyle.fontFamily).not.toBe(agentStyle.fontFamily);
+    // Dimmer, never heavier and never larger: the agent output stays the
+    // luminous layer, and weight is not an axis the ledger spends.
+    expect(steerStyle.fontFamily).toBe(agentStyle.fontFamily);
+    expect(steerStyle.fontSize).toBe(agentStyle.fontSize);
+    expect(steerStyle.color).toBe('#b0b0b0');
     expect(steerStyle.textShadowColor).toBeUndefined();
 
     // ...and pulled out of the ledger column, at a width that does not depend
     // on intrinsic sizing (MonoMarkdown's own root is width: '100%').
-    const inset = steer.root
-      .findAllByType('View')
-      .map((node: { props: { style?: Record<string, unknown> } }) => node.props.style)
-      .find((style?: Record<string, unknown>) => style?.alignSelf === 'flex-end');
-    expect(inset?.width).toBe('82%');
-  });
+    const inset = stylesOfType(steer, 'View').find((style) => style.alignSelf === 'flex-end');
+    expect(inset?.width).toBe('86%');
 
-  it('names who steered with a signature instead of a per-message avatar', () => {
-    const renderer = render(
-      React.createElement(LedgerSteer, {
-        itemId: 'b',
-        signature: 'ALEX',
-        bodyText: 'Ship it.',
-        bodyTestID: 'steer-body',
-      }),
-    );
-    expect(renderedText(renderer).join('')).toContain('— ALEX');
-    expect(renderer.root.findByProps({ testID: 'chat-steer-by-b' })).toBeTruthy();
-    expect(renderer.root.findAllByType('Svg')).toHaveLength(0);
-  });
-
-  it('names a Room steer before its words, and carries the author’s npub', () => {
-    // Display names are not unique, and in a Room the name has to arrive
-    // before the text for a fast scroll to work — so the trailing signature
-    // gives way to a leading attribution rather than doubling up with it.
-    const renderer = render(
-      React.createElement(LedgerSteer, {
-        itemId: 'b',
-        signature: 'ALEX',
-        bodyText: 'Ship it.',
-        bodyTestID: 'steer-body',
-        attribution: React.createElement(LedgerAttribution, {
-          mark: mark(),
-          name: 'Alex',
-          detail: 'npub1abcd…wxyz',
-        }),
-      }),
-    );
-    const text = renderedText(renderer).join(' ');
-    expect(text).toContain('ALEX');
-    expect(text).toContain('npub1abcd…wxyz');
+    // No caption of any kind survives.
+    const text = renderedText(steer).join(' ');
+    expect(text).not.toMatch(/\bYOU\b/i);
     expect(text).not.toContain('—');
-    expect(renderer.root.findAllByProps({ testID: 'chat-steer-by-b' })).toHaveLength(0);
+    expect(steer.root.findAllByProps({ testID: 'chat-steer-by-b' })).toHaveLength(0);
   });
 
-  it('folds a run of one person’s messages into a single block', () => {
+  it('interrupts the ledger with no rule above it', () => {
+    const renderer = render(
+      React.createElement(LedgerSteer, {
+        itemId: 'b',
+        bodyText: 'Ship it.',
+        bodyTestID: 'steer-body',
+      }),
+    );
+    const block = renderer.root.findByProps({ testID: 'chat-message-b' });
+    for (const style of block.props.style.filter(Boolean)) {
+      expect(style).not.toHaveProperty('borderWidth');
+      expect(style).not.toHaveProperty('borderRadius');
+      expect(style).not.toHaveProperty('backgroundColor');
+    }
+    // The hairline that used to mark a steer is gone: separation is air.
+    for (const style of stylesOfType(renderer, 'View')) {
+      expect(style.height).not.toBe(1);
+      expect(style.backgroundColor).toBeUndefined();
+    }
+  });
+
+  it('folds a run of your own messages into a single passage', () => {
+    const opens = render(
+      React.createElement(LedgerSteer, {
+        itemId: 'b1',
+        bodyText: 'Do the thing.',
+        bodyTestID: 'steer-body',
+      }),
+    );
     const continued = render(
       React.createElement(LedgerSteer, {
         itemId: 'b2',
-        signature: 'ALEX',
         continued: true,
         bodyText: 'And rerun the suite.',
         bodyTestID: 'steer-body',
       }),
     );
-    // No second rule and no second name: the block above already carries both.
-    const rule = continued.root
-      .findAllByType('View')
-      .map((node: { props: { style?: Record<string, unknown> } }) => node.props.style)
-      .find((style?: Record<string, unknown>) => style?.height === 1);
-    expect(rule).toBeUndefined();
-    expect(continued.root.findAllByProps({ testID: 'chat-steer-by-b2' })).toHaveLength(0);
+    const gapOf = (renderer: ReactTestRenderer, id: string) =>
+      renderer.root
+        .findByProps({ testID: `chat-message-${id}` })
+        .props.style.filter(Boolean)
+        .reduce((total: number, style: Record<string, number>) => total + (style.marginBottom ?? 0), 0);
+
+    // `marginBottom` is the gap that lands *above* a row: the transcript list
+    // is inverted. A continuation keeps flowing; a new run opens a stanza.
+    expect(gapOf(continued, 'b2')).toBeLessThan(gapOf(opens, 'b1'));
     expect(renderedText(continued).join(' ')).toContain('And rerun the suite.');
   });
 
@@ -238,7 +299,6 @@ describe('the ledger — a human turn', () => {
     const renderer = render(
       React.createElement(LedgerSteer, {
         itemId: 'b',
-        signature: 'YOU',
         bodyText: 'Ship it.',
         bodyTestID: 'steer-body',
         offlineQueued: true,
@@ -246,25 +306,59 @@ describe('the ledger — a human turn', () => {
     );
     expect(renderedText(renderer).join(' ')).toContain('AGENT OFFLINE');
   });
+});
 
-  it('uses no box either — the interruption is one hairline rule', () => {
+describe('the ledger — the right gutter', () => {
+  it('hangs the stamp in the margin without touching the flowing column', () => {
     const renderer = render(
-      React.createElement(LedgerSteer, {
-        itemId: 'b',
-        signature: 'YOU',
-        bodyText: 'Ship it.',
-        bodyTestID: 'steer-body',
+      React.createElement(LedgerMarginalia, {
+        stamp: '09:41',
+        detail: 'npub1abcd…wxyz',
+        testID: 'chat-marginalia-msg-1',
       }),
     );
-    const block = renderer.root.findByProps({ testID: 'chat-message-b' });
-    expect(block.props.style).not.toHaveProperty('borderWidth');
-    expect(block.props.style).not.toHaveProperty('borderRadius');
-    expect(block.props.style).not.toHaveProperty('backgroundColor');
+    const gutter = renderer.root
+      .findAllByProps({ testID: 'chat-marginalia-msg-1' })
+      .find((node: { type: unknown }) => node.type === 'View');
+    expect(gutter.props.style.position).toBe('absolute');
+    expect(gutter.props.style.right).toBe(0);
+    const text = renderedText(renderer).join(' ');
+    expect(text).toContain('09:41');
+    expect(text).toContain('npub1abcd…wxyz');
+  });
 
-    const rule = renderer.root
-      .findAllByType('View')
-      .map((node: { props: { style?: Record<string, unknown> } }) => node.props.style)
-      .find((style?: Record<string, unknown>) => style?.height === 1);
-    expect(rule?.backgroundColor).toBeTruthy();
+  it('renders nothing at all when there is nothing to annotate', () => {
+    const renderer = render(React.createElement(LedgerMarginalia, { stamp: '' }));
+    expect(renderer.toJSON()).toBeNull();
+  });
+});
+
+describe('the ledger — machine noise', () => {
+  it('folds a wall of tool output into one ghost line, expandable', () => {
+    const dump = 'hint: Updates were rejected\nhint: fetch first\nerror: failed to push';
+    const renderer = render(
+      React.createElement(LedgerGhostLine, {
+        label: '3 lines of tool output',
+        body: dump,
+        testID: 'chat-machine-noise-msg-1',
+      }),
+    );
+
+    const [summary, affordance] = renderer.root.findAllByType('Text');
+    // The summary truncates; the disclosure copy beside it never does — the
+    // affordance is the reason the line exists.
+    expect(summary.props.numberOfLines).toBe(1);
+    expect(affordance.props.numberOfLines).toBeUndefined();
+    expect(affordance.props.style.flexShrink).toBe(0);
+    expect(renderedText(renderer).join('')).toContain('⋯');
+    expect(renderedText(renderer).join('')).toContain('tap to expand');
+    // Collapsed means collapsed: the dump is not in the tree at all.
+    expect(renderedText(renderer).join('')).not.toContain('failed to push');
+
+    act(() => {
+      renderer.root.findByType('Pressable').props.onPress();
+    });
+    expect(renderedText(renderer).join('')).toContain('failed to push');
+    expect(renderedText(renderer).join('')).toContain('tap to collapse');
   });
 });

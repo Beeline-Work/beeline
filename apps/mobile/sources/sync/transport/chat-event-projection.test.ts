@@ -67,6 +67,30 @@ describe('Buzz Room screen event projection', () => {
     ).toMatchObject({ clearMergeTarget: true });
   });
 
+  it('decodes percent escapes at the single funnel every surface reads through', () => {
+    // `%3F` was reaching the slab literally. It decodes here rather than at a
+    // dozen render sites, so the transcript and the Room-list preview agree.
+    expect(
+      projectChatEvent(
+        raw('escaped', 'Should I rebase onto the new tip%3F', [['t', 'agent-message']], 1),
+        viewer,
+      ).message,
+    ).toMatchObject({ text: 'Should I rebase onto the new tip?' });
+
+    // ...including the streaming draft, which never passes through eventText.
+    expect(
+      projectChatEvent(draft('d1', 'Reading the scheduler%E2%80%A6', 'req-1', 2), viewer).message,
+    ).toMatchObject({ text: 'Reading the scheduler…' });
+
+    // A bare percent sign is not an escape and survives untouched.
+    expect(
+      projectChatEvent(
+        raw('percent', 'Coverage is at 100% on that path.', [['t', 'agent-message']], 3),
+        viewer,
+      ).message,
+    ).toMatchObject({ text: 'Coverage is at 100% on that path.' });
+  });
+
   it('renders a first-class assistant answer while hiding ordinary body controls', () => {
     const events = [
       raw(

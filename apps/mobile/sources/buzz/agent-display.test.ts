@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  agentRosterCommunityId,
   fallbackAgentName,
   resolveAgentDisplayIdentity,
   resolveCornerCardAgentPubkey,
@@ -141,5 +142,62 @@ describe('corner card agent identity resolution', () => {
       'also-unknown',
     );
     expect(resolveCornerCardAgentPubkey(undefined, undefined, isRegisteredAgent)).toBeUndefined();
+  });
+});
+
+describe('the transcript’s agent roster', () => {
+  const beebee = 'beebee-agent-pubkey';
+  /** Exactly what `client.listAgents(communityId)` hydrates for one agent. */
+  const rosterEntry = {
+    pubkey: beebee,
+    displayName: 'Beebee',
+    soulProfile: {
+      communityId: 'workspace-1',
+      agentPubkey: beebee,
+      authoredBy: 'human-public-key',
+      name: 'Beebee',
+      personality: 'Reads the whole file before touching it.',
+      avatarSeed: 'beebee-soul',
+      updatedAt: 1,
+      raw: {} as never,
+    },
+  };
+
+  it('reads the channel’s own Workspace whenever the channel resolves one', () => {
+    expect(agentRosterCommunityId('workspace-1', 'workspace-2')).toBe('workspace-1');
+    expect(agentRosterCommunityId('workspace-1', null)).toBe('workspace-1');
+  });
+
+  it('falls back to the viewer’s selected Workspace when the channel resolves none', () => {
+    // A Room whose kind:9007 predates the redundant `community` tag, a
+    // local-only Room, or a corner beneath either.
+    expect(agentRosterCommunityId(null, 'workspace-1')).toBe('workspace-1');
+    expect(agentRosterCommunityId(undefined, 'workspace-1')).toBe('workspace-1');
+    expect(agentRosterCommunityId('', 'workspace-1')).toBe('workspace-1');
+  });
+
+  it('has nothing to read when neither is known', () => {
+    expect(agentRosterCommunityId(null, null)).toBeNull();
+    expect(agentRosterCommunityId(undefined, undefined)).toBeNull();
+  });
+
+  it('is what decides between the real soul name and the seed placeholder', () => {
+    // This is the whole reason the fallback above matters: with the roster, the
+    // transcript names the agent exactly as the Members screen does; without
+    // it, the identical pubkey renders a confident placeholder instead.
+    const withRoster = new Map([[beebee, rosterEntry]]);
+    const withoutRoster = new Map<string, typeof rosterEntry>();
+
+    expect(resolveAgentDisplayIdentity(beebee, withRoster.get(beebee)).name).toBe('Beebee');
+    expect(resolveAgentDisplayIdentity(beebee, withRoster.get(beebee)).handle).toBe('beebee');
+    expect(resolveAgentDisplayIdentity(beebee, withoutRoster.get(beebee)).name).toBe(
+      fallbackAgentName(beebee),
+    );
+    expect(fallbackAgentName(beebee)).not.toBe('Beebee');
+  });
+
+  it('still prefers the registered displayName when no human overlay exists', () => {
+    const { soulProfile: _overlay, ...registeredOnly } = rosterEntry;
+    expect(resolveAgentDisplayIdentity(beebee, registeredOnly).name).toBe('Beebee');
   });
 });

@@ -50,12 +50,37 @@ export const groknight = {
   radius: 3,
 
   /**
-   * The transcript's luminous quality: agent output reads as lit from within
-   * against the obsidian rather than printed on it. `textPrimary` at low
-   * alpha, used only as a zero-offset text shadow — a luminance value, not a
-   * new hue, so it stays inside the zero-chroma rule.
+   * The ledger's luminance ladder — the transcript's ONLY hierarchy.
+   *
+   * Nothing in the transcript is loud by being fat; things are loud by being
+   * bright. Weight is fixed at regular across the whole ledger, so these four
+   * steps plus indentation carry every distinction the reader needs:
+   *
+   *   ledgerBright  the prophecy — live agent output, the lit layer
+   *   ledgerBody    ordinary text — a person's own steer, quoted prose
+   *   ledgerQuiet   handles, and the readable floor (4.5:1 on the slab)
+   *   ledgerGhost   marginalia and collapsed machine noise, the dimmest tier
+   *
+   * `ledgerGhost` sits below 4.5:1 on purpose: it is the "ghosted" register the
+   * brief asks for, and it reuses `textDisabled`'s exact value rather than
+   * inventing a dimmer one. Everything it carries is redundant — the ghost
+   * line's own `accessibilityLabel` states the full summary, and a gutter stamp
+   * repeats information the row already conveys by position.
    */
-  ledgerGlow: 'rgba(228, 228, 228, 0.18)',
+  ledgerBright: '#f4f4f4',
+  ledgerBody: '#b0b0b0',
+  ledgerQuiet: '#7c7c7c',
+  ledgerGhost: '#6c6c6c',
+
+  /**
+   * The transcript's luminous quality: agent output reads as lit from within
+   * against the obsidian rather than printed on it. `ledgerBright` at low
+   * alpha, used only as a zero-offset text shadow — a luminance value, not a
+   * new hue, so it stays inside the zero-chroma rule. A whisper, not neon: the
+   * radius is wide and the alpha low enough that the glow never thickens a
+   * stroke or costs legibility.
+   */
+  ledgerGlow: 'rgba(244, 244, 244, 0.16)',
 
   /** Deterministic identity marks */
   avatarGround: '#121212',

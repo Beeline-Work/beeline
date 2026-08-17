@@ -11,6 +11,25 @@ export function shortMemberNpub(pubkey: string): string {
 }
 
 /**
+ * The six discriminating characters of an identity, for the ledger's right
+ * gutter.
+ *
+ * `shortMemberNpub` is the right label anywhere there is room for it, but the
+ * gutter is ~36px wide and three of that label's characters are the constant
+ * `npub1` prefix plus an ellipsis — they carry no information and would push
+ * the useful part off the end. This drops the prefix and keeps the part that
+ * actually tells two same-named people apart. The full identity stays one tap
+ * away in the member list; this is marginalia, not a label.
+ */
+export function ledgerFingerprint(pubkey: string): string {
+  try {
+    return encodeNpub(pubkey).slice(5, 11);
+  } catch {
+    return pubkey.slice(0, 6);
+  }
+}
+
+/**
  * Verified NIP-05 wins, then the app-local @handle, then the display name, then a truncated
  * npub as a last resort. A present-but-unverified/mismatched nip05 never renders as the label —
  * an honest fallback is safer than showing an identifier that hasn't been confirmed.

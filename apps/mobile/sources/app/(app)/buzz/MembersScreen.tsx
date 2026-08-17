@@ -5,8 +5,10 @@ import * as Clipboard from 'expo-clipboard';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
+  isAgentPresenceOnline,
   isSingleWordAgentName,
   type Agent,
+  type AgentPresence,
   type Community,
   type CommunityMember,
   type CommunityRole,
@@ -15,6 +17,7 @@ import {
   type PersonProfile,
 } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { presenceMapFromSessionEvents } from '@/buzz/agent-presence';
 import { groknight } from '@/buzz/groknight';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
@@ -33,6 +36,8 @@ import { Typography } from '@/constants/Typography';
 import { HullSurface, HullWaveSignal, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
 
 const INSTALL_COMMAND = 'curl -fsSL https://relay.buzzrouter.com/install | sh';
+/** Under the 45s daemon heartbeat so a just-started agent reads online promptly. */
+const AGENT_PRESENCE_REFRESH_MS = 30_000;
 
 function roleLabel(role: CommunityRole): string {
   return role.toUpperCase();
@@ -76,6 +81,8 @@ export default function BuzzAgents() {
   const [roleEditorPubkey, setRoleEditorPubkey] = useState<string | null>(null);
   const [viewerAvatarUrl, setViewerAvatarUrl] = useState<string | undefined>();
   const [canManageWorkspace, setCanManageWorkspace] = useState(false);
+  const [agentPresences, setAgentPresences] = useState<Record<string, AgentPresence>>({});
+  const [presenceNow, setPresenceNow] = useState(Date.now());
   const pairingBaseline = useRef<Set<string>>(new Set());
   const pairingPending = useRef(false);
 
@@ -150,9 +157,26 @@ export default function BuzzAgents() {
     }
   }, []);
 
+  /**
+   * Presence is published per (agent, Room), not per Workspace — this
+   * directory has no single Room context, unlike a Corner list or Room
+   * roster. Fan the read across every Room the Workspace has and keep only
+   * the newest record per agent; an agent with no live daemon anywhere
+   * correctly yields no record, i.e. offline.
+   */
+  const refreshAgentPresence = useCallback(
+    async (currentTransport: BuzzRigTransport, id: string) => {
+      const events = await currentTransport.agentPresenceBackfillForWorkspace(id);
+      setAgentPresences(presenceMapFromSessionEvents(events));
+      setPresenceNow(Date.now());
+    },
+    [],
+  );
+
   useEffect(() => {
     let cancelled = false;
-    let interval: ReturnType<typeof setInterval> | undefined;
+    let pairingInterval: ReturnType<typeof setInterval> | undefined;
+    let presenceInterval: ReturnType<typeof setInterval> | undefined;
     void (async () => {
       try {
         const currentIdentity = await loadBuzzIdentity();
@@ -182,10 +206,14 @@ export default function BuzzAgents() {
         const role = allMembers.find((member) => member.pubkey === currentIdentity.publicKey)?.role;
         setCanManageWorkspace(isWorkspaceManagerRole(role));
         await refreshPeople(nextTransport, activeWorkspaceId, currentIdentity.publicKey);
-        interval = setInterval(() => {
+        void refreshAgentPresence(nextTransport, activeWorkspaceId).catch(() => undefined);
+        pairingInterval = setInterval(() => {
           if (!pairingPending.current) return;
           void refreshAgents(nextTransport, activeWorkspaceId).catch(() => undefined);
         }, 2000);
+        presenceInterval = setInterval(() => {
+          void refreshAgentPresence(nextTransport, activeWorkspaceId).catch(() => undefined);
+        }, AGENT_PRESENCE_REFRESH_MS);
       } catch (caught) {
         if (!cancelled) setError(String(caught));
       } finally {
@@ -194,9 +222,15 @@ export default function BuzzAgents() {
     })();
     return () => {
       cancelled = true;
-      if (interval) clearInterval(interval);
+      if (pairingInterval) clearInterval(pairingInterval);
+      if (presenceInterval) clearInterval(presenceInterval);
     };
-  }, [refreshAgents, refreshPeople, requestedCommunityId]);
+  }, [refreshAgentPresence, refreshAgents, refreshPeople, requestedCommunityId]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setPresenceNow(Date.now()), 5_000);
+    return () => clearInterval(timer);
+  }, []);
 
   const handleAdd = useCallback(async () => {
     if (!transport || !communityId || !canManageWorkspace) return;
@@ -624,10 +658,11 @@ export default function BuzzAgents() {
           ) : (
             agents.map((agent) => {
               const display = resolveAgentDisplayIdentity(agent.pubkey, agent);
+              const online = isAgentPresenceOnline(agentPresences[agent.pubkey], presenceNow);
               return (
                 <TouchableOpacity
                   key={agent.agentId}
-                  accessibilityLabel={`${display.name}, ${display.personality}`}
+                  accessibilityLabel={`${display.name}, ${display.personality}, ${online ? 'online' : 'offline'}`}
                   style={[
                     styles.agentRow,
                     selectedPubkey === agent.pubkey && styles.agentRowActive,
@@ -651,6 +686,22 @@ export default function BuzzAgents() {
                     </Text>
                     <Text style={styles.personality} numberOfLines={2}>
                       {display.personality}
+                    </Text>
+                  </View>
+                  <View style={styles.agentPresence} testID={`agent-${agent.pubkey}-presence`}>
+                    <Text
+                      style={[styles.presenceDot, online ? styles.presenceOnline : styles.presenceOffline]}
+                    >
+                      {online ? '●' : '○'}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.presenceLabel,
+                        online ? styles.presenceOnlineLabel : styles.presenceOfflineLabel,
+                      ]}
+                      testID={`agent-${agent.pubkey}-presence-label`}
+                    >
+                      {online ? 'ONLINE' : 'OFFLINE'}
                     </Text>
                   </View>
                   <Text style={styles.chevron}>›</Text>
@@ -679,6 +730,14 @@ export default function BuzzAgents() {
                   </Text>
                 </View>
               </View>
+              {!isAgentPresenceOnline(agentPresences[selected.pubkey], presenceNow) && (
+                <View style={styles.agentOfflineNotice} testID={`agent-${selected.pubkey}-offline-notice`}>
+                  <Text style={styles.agentOfflineNoticeTitle}>○ OFFLINE</Text>
+                  <Text style={styles.agentOfflineNoticeText}>
+                    No daemon is reporting in. Messages will wait until it reconnects.
+                  </Text>
+                </View>
+              )}
               <View style={styles.avatarActions}>
                 <TouchableOpacity
                   accessibilityLabel={`Message ${resolveAgentDisplayIdentity(selected.pubkey, selected).name}`}
@@ -1011,6 +1070,40 @@ const styles = StyleSheet.create({
     color: groknight.textSecondary,
     fontSize: 11,
     lineHeight: 16,
+  },
+  agentPresence: { flexShrink: 0, alignItems: 'flex-end' },
+  presenceDot: { ...Typography.default(), fontSize: 8 },
+  presenceOnline: { color: groknight.accent },
+  presenceOffline: { color: groknight.textMuted },
+  presenceLabel: {
+    ...Typography.mono('semiBold'),
+    marginTop: 2,
+    fontSize: 9,
+    letterSpacing: 0.5,
+  },
+  presenceOnlineLabel: { color: groknight.accent },
+  presenceOfflineLabel: { color: groknight.textMuted },
+  agentOfflineNotice: {
+    marginBottom: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgBase,
+  },
+  agentOfflineNoticeTitle: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 10,
+    lineHeight: 14,
+    letterSpacing: 0.55,
+  },
+  agentOfflineNoticeText: {
+    ...Typography.default(),
+    marginTop: 3,
+    color: groknight.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
   },
   chevron: { ...Typography.default(), color: groknight.chrome, fontSize: 24 },
   editor: {

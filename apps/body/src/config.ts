@@ -96,6 +96,13 @@ export interface BodyConfig {
   accessPolicy?: AgentAccessPolicy;
   accessOwnerPubkey?: string;
   accessAutoResponse?: string;
+  /**
+   * Pair-time default model/effort (`--model`/`--effort` at `beeline pair`),
+   * injected from the runtime record by the daemon. Applied by
+   * `Body.applyModelConfigForSession` only when no human has yet set an
+   * explicit in-app selection (#223) for this agent.
+   */
+  modelSelection?: { model?: string; effort?: string };
 }
 
 function firstExisting(paths: string[]): string | undefined {

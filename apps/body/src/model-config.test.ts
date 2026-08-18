@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   applyAgentModelSelection,
   assertModelConfigOptionAllowed,
+  assertModelSelectionAdvertised,
   DisallowedModelConfigOptionError,
   filterAllowedModelConfigOptions,
   filterModelOptionsByCredentials,
@@ -166,5 +167,44 @@ describe('applyAgentModelSelection — the set path', () => {
     const setConfigOption = vi.fn().mockResolvedValue({});
     await applyAgentModelSelection({ setConfigOption }, 'sess-1', raw, {});
     expect(setConfigOption).not.toHaveBeenCalled();
+  });
+});
+
+describe('assertModelSelectionAdvertised — the pair-time validation gate', () => {
+  const raw = parseAdvertisedConfigOptions(claudeLikeRaw());
+
+  it('accepts a model/effort pair that is genuinely advertised', () => {
+    expect(() =>
+      assertModelSelectionAdvertised(raw, { model: 'sonnet', effort: 'high' }),
+    ).not.toThrow();
+  });
+
+  it('throws a clear error for a model the agent does not advertise', () => {
+    expect(() => assertModelSelectionAdvertised(raw, { model: 'gpt-nonexistent' })).toThrow(
+      /not one of "model"'s advertised options/,
+    );
+  });
+
+  it('throws a clear error for an effort the agent does not advertise', () => {
+    expect(() => assertModelSelectionAdvertised(raw, { effort: 'ultra' })).toThrow(
+      /not one of "effort"'s advertised options/,
+    );
+  });
+
+  it('throws when the agent advertises no selectable axis for the requested field at all', () => {
+    const modelOnly = raw.filter((option) => option.category !== 'effort');
+    expect(() => assertModelSelectionAdvertised(modelOnly, { effort: 'high' })).toThrow(
+      /does not advertise a selectable effort/,
+    );
+  });
+
+  it('never accepts a mode-shaped value even though mode is in the raw catalog', () => {
+    expect(() => assertModelSelectionAdvertised(raw, { model: 'bypassPermissions' })).toThrow(
+      /not one of "model"'s advertised options/,
+    );
+  });
+
+  it('is a no-op when neither model nor effort was requested', () => {
+    expect(() => assertModelSelectionAdvertised(raw, {})).not.toThrow();
   });
 });

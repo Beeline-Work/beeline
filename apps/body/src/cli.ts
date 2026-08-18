@@ -15,7 +15,12 @@
  * Env-driven config; see BodyConfig for all env overrides.
  */
 import { dirname, resolve } from 'node:path';
-import { unlink } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdtemp, rm, unlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { stdin, stdout } from 'node:process';
+import * as clack from '@clack/prompts';
+import pc from 'picocolors';
 import { loadBodyConfig, BASE_URL } from './config.js';
 import { formatAgentCommand, type AgentCommand, type AgentKind } from './agent-command.js';
 import { selectPairAgentCommand } from './pair-agent-selection.js';
@@ -24,6 +29,14 @@ import {
   isAgentAccessPolicy,
   type AgentAccessPolicy,
 } from './access-policy.js';
+import { AcpClient } from './acp.js';
+import {
+  assertModelSelectionAdvertised,
+  filterAllowedModelConfigOptions,
+  filterModelOptionsByCredentials,
+  parseAdvertisedConfigOptions,
+} from './model-config.js';
+import type { AgentModelConfigOption } from '@beeline/buzz-client';
 import { Body } from './body.js';
 import { WorkspaceSupervisor } from './supervisor.js';
 import {
@@ -81,11 +94,13 @@ Pair this repository and start its durable Room agent(s).
 
 Usage:
   beeline pair <BUZZ-XXXX-XXXX> [--agent <codex|claude|goose|pi|reference|custom>]
-               [--agent-command '<command> [args...]']
+               [--agent-command '<command> [args...]'] [--repo <path>]
                [--access <everyone|creator>] [--auto-response '<text>']
+               [--model <model>] [--effort <level>]
 
-  beeline pair <CODE1> <CODE2> ... --agents <kind1,kind2,...>
+  beeline pair <CODE1> <CODE2> ... --agents <kind1,kind2,...> [--repo <path>]
                [--access <everyone|creator>] [--auto-response '<text>']
+               [--model <model>] [--effort <level>]
 
 Agent choices:
   codex      Operator's Codex through the codex-acp adapter
@@ -105,6 +120,30 @@ plus a matching --agents list. Each agent gets its own fresh keypair/identity
 and its own daemon — three distinct agents live in one Room, each addressed by
 its own @-mention. Reusing an identity is refused (unset BUZZ_AGENT_KEY).
 
+Repository: beeline pair resolves the repository to bind in this order:
+  1. --repo <path>          explicit, works from any cwd
+  2. current directory      only if it IS a git repository
+  If neither applies, pairing fails with an actionable error instead of a
+  stack trace. There is no way to infer an existing Room's bound repository
+  from the pairing code alone (pairing codes are Workspace-scoped, not
+  Room-scoped) — --repo is required when pairing a second agent into an
+  existing repository Room from a directory that isn't that checkout.
+
+Model / effort: sets this agent's default before any human picks one in the
+app (#223's in-app picker always overrides once set). Checked against the
+agent's own live advertised catalog at pair time — an unknown model or effort
+is refused with a clear error, not silently launched. In the --agents form,
+--model/--effort apply identically to every agent being paired, matching
+--access/--auto-response's existing convention (each agent still gets its own
+catalog check, so a value invalid for one harness fails that harness only if
+paired alone; the whole command aborts on the first invalid pairing).
+
+Interactive: with neither flag and a real terminal on both ends, beeline asks
+you to pick a model and effort/thinking level from that agent's own live
+catalog (current default pre-selected — press enter to keep it) instead of
+requiring the flags. A non-terminal session (script, CI) never blocks on this;
+it just proceeds with no default, same as before this existed.
+
 Access policy (per agent, set here at invite time):
   everyone  any Room member may address the agent (default)
   creator   only the inviting owner may; anyone else gets the auto-response
@@ -112,6 +151,7 @@ Access policy (per agent, set here at invite time):
 Examples:
   beeline pair BUZZ-XXXX-XXXX --agent codex
   beeline pair BUZZ-XXXX-XXXX --agent claude --access creator
+  beeline pair BUZZ-XXXX-XXXX --repo /path/to/repo --agent claude --model sonnet --effort high
   beeline pair BUZZ-AAAA-AAAA BUZZ-BBBB-BBBB BUZZ-CCCC-CCCC --agents claude,codex,pi
   beeline pair BUZZ-XXXX-XXXX --agent custom --agent-command 'my-agent serve --acp'
 `);
@@ -122,8 +162,11 @@ interface PairOptions {
   kinds?: AgentKind[];
   singleKind?: AgentKind;
   customCommand?: string;
+  repo?: string;
   access: AgentAccessPolicy;
   autoResponse?: string;
+  model?: string;
+  effort?: string;
 }
 
 function parsePairOptions(args: string[]): PairOptions {
@@ -132,9 +175,21 @@ function parsePairOptions(args: string[]): PairOptions {
   let kinds: AgentKind[] | undefined;
   let singleKind: AgentKind | undefined;
   let customCommand: string | undefined;
+  let repo: string | undefined;
   let access: AgentAccessPolicy = DEFAULT_ACCESS_POLICY;
   let autoResponse: string | undefined;
-  const flags = new Set(['--agent', '--agents', '--agent-command', '--access', '--auto-response']);
+  let model: string | undefined;
+  let effort: string | undefined;
+  const flags = new Set([
+    '--agent',
+    '--agents',
+    '--agent-command',
+    '--repo',
+    '--access',
+    '--auto-response',
+    '--model',
+    '--effort',
+  ]);
   for (let index = 1; index < args.length; index += 1) {
     const token = args[index];
     if (!token) continue;
@@ -153,7 +208,10 @@ function parsePairOptions(args: string[]): PairOptions {
         .map((entry) => entry.trim())
         .filter(Boolean) as AgentKind[];
     else if (token === '--agent-command') customCommand = value;
+    else if (token === '--repo') repo = value;
     else if (token === '--auto-response') autoResponse = value;
+    else if (token === '--model') model = value;
+    else if (token === '--effort') effort = value;
     else if (token === '--access') {
       if (!isAgentAccessPolicy(value)) {
         throw new Error(`--access must be one of everyone|creator (got: ${value})`);
@@ -169,9 +227,154 @@ function parsePairOptions(args: string[]): PairOptions {
     ...(kinds ? { kinds } : {}),
     ...(singleKind !== undefined ? { singleKind } : {}),
     ...(customCommand !== undefined ? { customCommand } : {}),
+    ...(repo !== undefined ? { repo } : {}),
     access,
     ...(autoResponse !== undefined ? { autoResponse } : {}),
+    ...(model !== undefined ? { model } : {}),
+    ...(effort !== undefined ? { effort } : {}),
   };
+}
+
+/**
+ * Resolve the repository directory `beeline pair` binds: explicit `--repo`
+ * first, else the cwd if it IS a git repository. `inspectLocalRepository`
+ * (runtime.ts) still does the actual git check and gives the actionable
+ * "pass --repo" error; this only handles a `--repo` path that doesn't exist
+ * at all, so that failure surfaces before spending time on redemption.
+ */
+function resolvePairCwd(repoFlag: string | undefined): string {
+  if (!repoFlag) return process.cwd();
+  const resolved = resolve(repoFlag);
+  if (!existsSync(resolved)) {
+    throw new Error(`--repo path does not exist: ${resolved}`);
+  }
+  return resolved;
+}
+
+const EFFORT_AXIS_CATEGORIES = ['thought_level', 'effort', 'reasoning_effort'] as const;
+
+/**
+ * Briefly start the exact selected ACP command and read `session/new`'s
+ * advertised `configOptions` — the same data `Body.applyModelConfigForSession`
+ * (`body.ts`) captures on every real session. Used both to validate
+ * `--model`/`--effort` against reality and to drive the interactive pickers,
+ * so a flag and a picker pick can never disagree about what's valid.
+ * `raw` is the unfiltered catalog (what `assertModelSelectionAdvertised`
+ * checks against); `catalog` is the allow-list + credential filtered view
+ * (#223's `filterAllowedModelConfigOptions`/`filterModelOptionsByCredentials`)
+ * a human should actually be offered.
+ */
+async function fetchAgentModelCatalog(
+  agent: AgentCommand,
+  agentEnv: Record<string, string>,
+): Promise<{ raw: AgentModelConfigOption[]; catalog: AgentModelConfigOption[] }> {
+  const scratchCwd = await mkdtemp(resolve(tmpdir(), 'beeline-pair-model-check-'));
+  const client = new AcpClient({
+    agentCommand: agent.command,
+    agentArgs: agent.args,
+    agentEnv,
+    agentCwd: scratchCwd,
+  });
+  try {
+    await client.start();
+    const { raw: sessionRaw } = await client.sessionNew({ cwd: scratchCwd });
+    const raw = parseAdvertisedConfigOptions(sessionRaw);
+    const catalog = filterModelOptionsByCredentials(filterAllowedModelConfigOptions(raw), agentEnv);
+    return { raw, catalog };
+  } finally {
+    await client.stop().catch(() => undefined);
+    await rm(scratchCwd, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+/**
+ * Validate `--model`/`--effort` against the agent's own live advertised
+ * catalog before pairing commits to anything, and throw a clear error if
+ * either value isn't one the agent actually offers. A no-op when neither
+ * flag was passed. Picker-sourced selections skip this — they're already
+ * drawn from the same live catalog, so they can't be invalid by construction.
+ */
+async function validateModelSelection(
+  agent: AgentCommand,
+  agentEnv: Record<string, string>,
+  selection: { model?: string; effort?: string },
+): Promise<void> {
+  if (!selection.model && !selection.effort) return;
+  try {
+    const { raw } = await fetchAgentModelCatalog(agent, agentEnv);
+    assertModelSelectionAdvertised(raw, selection);
+  } catch (error) {
+    throw new Error(
+      `--model/--effort check failed for ${formatAgentCommand(agent)}: ` +
+        (error instanceof Error ? error.message : String(error)),
+    );
+  }
+}
+
+/**
+ * Interactive clack pickers for model/effort, run only when both `--model`
+ * and `--effort` were omitted and the session is a real TTY on both ends
+ * (never invoked otherwise — a picker on a non-TTY stream would just hang).
+ * Queries the agent's own LIVE catalog (never a hardcoded list); a picker
+ * only appears for an axis the agent actually advertises, and each option's
+ * current default is pre-selected so pressing enter keeps the harness
+ * default. A catalog fetch failure is a soft skip, not a pairing failure —
+ * model/effort selection has always been optional.
+ */
+async function pickModelAndEffort(
+  agent: AgentCommand,
+  agentEnv: Record<string, string>,
+): Promise<{ model?: string; effort?: string }> {
+  const spinner = clack.spinner();
+  spinner.start(`Reading ${agent.kind}'s available models…`);
+  let catalog: AgentModelConfigOption[];
+  try {
+    catalog = (await fetchAgentModelCatalog(agent, agentEnv)).catalog;
+    spinner.stop('Catalog loaded.');
+  } catch (error) {
+    spinner.stop('Could not read the catalog — skipping model/effort selection.');
+    clack.log.warn(error instanceof Error ? error.message : String(error));
+    return {};
+  }
+
+  const selection: { model?: string; effort?: string } = {};
+  const modelAxis = catalog.find((option) => option.category === 'model');
+  if (modelAxis && modelAxis.options.length > 0) {
+    const picked = await clack.select({
+      message: `Model for this ${agent.kind} agent?`,
+      options: modelAxis.options.map((choice) => ({
+        value: choice.id,
+        label: choice.name ?? choice.id,
+      })),
+      ...(modelAxis.currentValue ? { initialValue: modelAxis.currentValue } : {}),
+    });
+    if (clack.isCancel(picked)) {
+      clack.cancel('Pairing cancelled.');
+      process.exit(1);
+    }
+    selection.model = picked;
+  }
+
+  const effortAxis = catalog.find((option) =>
+    (EFFORT_AXIS_CATEGORIES as readonly string[]).includes(option.category),
+  );
+  if (effortAxis && effortAxis.options.length > 0) {
+    const picked = await clack.select({
+      message: `Effort/thinking level for this ${agent.kind} agent?`,
+      options: effortAxis.options.map((choice) => ({
+        value: choice.id,
+        label: choice.name ?? choice.id,
+      })),
+      ...(effortAxis.currentValue ? { initialValue: effortAxis.currentValue } : {}),
+    });
+    if (clack.isCancel(picked)) {
+      clack.cancel('Pairing cancelled.');
+      process.exit(1);
+    }
+    selection.effort = picked;
+  }
+
+  return selection;
 }
 
 async function assertRuntimeSafe(runtime: AgentRuntimeRecord): Promise<void> {
@@ -235,6 +438,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   config.accessPolicy = runtime.accessPolicy ?? DEFAULT_ACCESS_POLICY;
   config.accessOwnerPubkey = runtime.pairedBy;
   if (runtime.accessAutoResponse) config.accessAutoResponse = runtime.accessAutoResponse;
+  if (runtime.modelSelection) config.modelSelection = runtime.modelSelection;
   const controller = new AbortController();
   const stop = () => controller.abort();
   process.once('SIGINT', stop);
@@ -275,9 +479,13 @@ async function pairOneAgent(input: {
   selectedAgent: AgentCommand;
   agentIdentity: Identity;
   bodyIdentity: Identity;
+  cwd: string;
   llmEnvFile?: string;
   access: AgentAccessPolicy;
   autoResponse?: string;
+  modelSelection?: { model?: string; effort?: string };
+  /** Offer the clack model/effort picker when `modelSelection` wasn't given via flags. */
+  interactiveUi?: boolean;
 }): Promise<PairRuntimeResult> {
   const { code, selectedAgent, agentIdentity, bodyIdentity } = input;
   const mergeWorkerIdentity = newIdentity('buzzy-merge-worker');
@@ -295,10 +503,17 @@ async function pairOneAgent(input: {
     ...(input.llmEnvFile ? { llmEnvFile: input.llmEnvFile } : {}),
     agent: selectedAgent,
   });
+  let modelSelection = input.modelSelection;
+  if (modelSelection) {
+    await validateModelSelection(selectedAgent, localConfig.agentEnv, modelSelection);
+  } else if (input.interactiveUi) {
+    const picked = await pickModelAndEffort(selectedAgent, localConfig.agentEnv);
+    if (picked.model || picked.effort) modelSelection = picked;
+  }
   return pairRepositoryAgent(
     {
       code,
-      cwd: process.cwd(),
+      cwd: input.cwd,
       relayBaseUrl,
       ...(process.env.BUZZY_RELAY_HOST ? { relayHost: process.env.BUZZY_RELAY_HOST } : {}),
       ...(input.llmEnvFile ? { llmEnvFile: input.llmEnvFile } : {}),
@@ -311,6 +526,7 @@ async function pairOneAgent(input: {
       agentArgs: selectedAgent.args,
       accessPolicy: input.access,
       ...(input.autoResponse ? { accessAutoResponse: input.autoResponse } : {}),
+      ...(modelSelection ? { modelSelection } : {}),
       mcpBinary: localConfig.mcpBinary,
     },
     {
@@ -340,7 +556,7 @@ async function pairOneAgent(input: {
 }
 
 function printPairResult(result: PairRuntimeResult): void {
-  console.log(`[buzz] paired agent ${result.pairing.agent.displayName}`);
+  console.log(`[buzz] paired agent ${pc.bold(result.pairing.agent.displayName)}`);
   console.log(`[buzz] workspace: ${result.pairing.communityId}`);
   console.log(
     `[buzz] room: ${result.room.channelId} (${result.room.created ? 'created' : 'joined'})`,
@@ -348,7 +564,127 @@ function printPairResult(result: PairRuntimeResult): void {
   console.log(`[buzz] repo: ${result.runtime.rooms[0]!.repo.root}`);
   console.log(`[buzz] agent pubkey: ${result.pairing.agent.pubkey}`);
   console.log(`[buzz] access policy: ${result.runtime.accessPolicy ?? DEFAULT_ACCESS_POLICY}`);
-  console.log(`[buzz] daemon started (pid ${result.pid})`);
+  if (result.runtime.modelSelection) {
+    console.log(
+      `[buzz] model/effort default: ${pc.cyan(result.runtime.modelSelection.model ?? '(unset)')} / ${pc.cyan(
+        result.runtime.modelSelection.effort ?? '(unset)',
+      )}`,
+    );
+  }
+  console.log(`[buzz] daemon started ${pc.green(`(pid ${result.pid})`)}`);
+}
+
+/**
+ * Parse, validate, and execute `beeline pair`. Every failure mode here — a
+ * bad flag, an unresolvable repo, an unadvertised model/effort, a
+ * redemption failure — is meant for the operator to read and act on, so
+ * it's caught here and reported as a plain message, not a stack trace.
+ */
+async function runPairCommand(
+  args: string[],
+  llmEnvFile: string | undefined,
+  agentPrivateKey: string | undefined,
+): Promise<void> {
+  // A picker on a stream that isn't a real TTY would just hang — never
+  // attempted then. `--model`/`--effort` (or accepting no selection at all,
+  // same as before this feature existed) remain the non-interactive path.
+  const interactiveUi = Boolean(stdin.isTTY && stdout.isTTY);
+  if (interactiveUi) clack.intro(pc.bold('beeline pair'));
+  try {
+    const pairOptions = parsePairOptions(args);
+    if (pairOptions.codes.length === 0) usage();
+    const pairCwd = resolvePairCwd(pairOptions.repo);
+    const flagModelSelection: { model?: string; effort?: string } | undefined =
+      pairOptions.model || pairOptions.effort
+        ? {
+            ...(pairOptions.model ? { model: pairOptions.model } : {}),
+            ...(pairOptions.effort ? { effort: pairOptions.effort } : {}),
+          }
+        : undefined;
+
+    if (pairOptions.kinds) {
+      // Multi-runtime: one single-use pairing code per agent, each minting its
+      // own fresh keypair and launching its own daemon. Three distinct agents
+      // in one Workspace/Room, each independently @-mentionable. --model/
+      // --effort flags (if given) apply identically to every agent, same
+      // convention as --access/--auto-response; the interactive picker below
+      // instead runs once per agent against that agent's own live catalog,
+      // which is the more correct behaviour across differing harnesses.
+      const { codes, kinds } = pairOptions;
+      if (codes.length !== kinds.length) {
+        throw new Error(
+          `--agents expects one pairing code per agent: got ${codes.length} code(s) for ${kinds.length} agent(s)`,
+        );
+      }
+      // A pinned key would make every agent share one identity — refuse (S0).
+      if (agentPrivateKey) {
+        throw new Error(
+          'pairing multiple agents mints a fresh identity for each; unset BUZZ_AGENT_KEY/BUZZ_PRIVATE_KEY first',
+        );
+      }
+      for (let index = 0; index < codes.length; index += 1) {
+        const kind = kinds[index]!;
+        const selectedAgent = await selectPairAgentCommand({
+          explicitKind: kind,
+          env: process.env,
+          cwd: process.cwd(),
+        });
+        console.log(
+          `[body] agent ${index + 1}/${codes.length} (${kind}) binary: ${formatAgentCommand(selectedAgent)}`,
+        );
+        const spinner = interactiveUi ? clack.spinner() : undefined;
+        spinner?.start(`Pairing agent ${index + 1}/${codes.length} (${kind})…`);
+        const result = await pairOneAgent({
+          code: codes[index]!,
+          selectedAgent,
+          agentIdentity: newIdentity('buzzy-agent'),
+          bodyIdentity: newIdentity('buzzy-body'),
+          cwd: pairCwd,
+          ...(llmEnvFile ? { llmEnvFile } : {}),
+          access: pairOptions.access,
+          ...(pairOptions.autoResponse ? { autoResponse: pairOptions.autoResponse } : {}),
+          ...(flagModelSelection ? { modelSelection: flagModelSelection } : {}),
+          interactiveUi,
+        });
+        spinner?.stop(`Paired ${kind} (pid ${result.pid}).`);
+        printPairResult(result);
+      }
+      if (interactiveUi) clack.outro(pc.green('All agents paired.'));
+      return;
+    }
+
+    if (pairOptions.codes.length > 1) {
+      throw new Error('multiple pairing codes require --agents <kind1,kind2,...>');
+    }
+    const selectedAgent = await selectPairAgentCommand({
+      explicitKind: pairOptions.singleKind,
+      customCommand: pairOptions.customCommand,
+      env: process.env,
+      cwd: process.cwd(),
+    });
+    console.log(`[body] agent binary: ${formatAgentCommand(selectedAgent)}`);
+    const spinner = interactiveUi ? clack.spinner() : undefined;
+    spinner?.start('Pairing…');
+    const result = await pairOneAgent({
+      code: pairOptions.codes[0]!,
+      selectedAgent,
+      agentIdentity: identityFromKey(agentPrivateKey, 'buzzy-agent'),
+      bodyIdentity: identityFromKey(process.env.BUZZ_BODY_KEY, 'buzzy-body'),
+      cwd: pairCwd,
+      ...(llmEnvFile ? { llmEnvFile } : {}),
+      access: pairOptions.access,
+      ...(pairOptions.autoResponse ? { autoResponse: pairOptions.autoResponse } : {}),
+      ...(flagModelSelection ? { modelSelection: flagModelSelection } : {}),
+      interactiveUi,
+    });
+    spinner?.stop(`Paired (pid ${result.pid}).`);
+    printPairResult(result);
+    if (interactiveUi) clack.outro(pc.green('Done.'));
+  } catch (error) {
+    if (interactiveUi) clack.cancel(error instanceof Error ? error.message : String(error));
+    else console.error(`[beeline] pair failed: ${error instanceof Error ? error.message : error}`);
+    process.exit(1);
+  }
 }
 
 /** Launch one stored runtime daemon (or report it already running). */
@@ -443,69 +779,7 @@ async function main(): Promise<void> {
       pairUsage();
       return;
     }
-    const pairOptions = parsePairOptions(args);
-    if (pairOptions.codes.length === 0) usage();
-
-    if (pairOptions.kinds) {
-      // Multi-runtime: one single-use pairing code per agent, each minting its
-      // own fresh keypair and launching its own daemon. Three distinct agents
-      // in one Workspace/Room, each independently @-mentionable.
-      const { codes, kinds } = pairOptions;
-      if (codes.length !== kinds.length) {
-        throw new Error(
-          `--agents expects one pairing code per agent: got ${codes.length} code(s) for ${kinds.length} agent(s)`,
-        );
-      }
-      // A pinned key would make every agent share one identity — refuse (S0).
-      if (agentPrivateKey) {
-        throw new Error(
-          'pairing multiple agents mints a fresh identity for each; unset BUZZ_AGENT_KEY/BUZZ_PRIVATE_KEY first',
-        );
-      }
-      for (let index = 0; index < codes.length; index += 1) {
-        const kind = kinds[index]!;
-        const selectedAgent = await selectPairAgentCommand({
-          explicitKind: kind,
-          env: process.env,
-          cwd: process.cwd(),
-        });
-        console.log(
-          `[body] agent ${index + 1}/${codes.length} (${kind}) binary: ${formatAgentCommand(selectedAgent)}`,
-        );
-        const result = await pairOneAgent({
-          code: codes[index]!,
-          selectedAgent,
-          agentIdentity: newIdentity('buzzy-agent'),
-          bodyIdentity: newIdentity('buzzy-body'),
-          ...(llmEnvFile ? { llmEnvFile } : {}),
-          access: pairOptions.access,
-          ...(pairOptions.autoResponse ? { autoResponse: pairOptions.autoResponse } : {}),
-        });
-        printPairResult(result);
-      }
-      return;
-    }
-
-    if (pairOptions.codes.length > 1) {
-      throw new Error('multiple pairing codes require --agents <kind1,kind2,...>');
-    }
-    const selectedAgent = await selectPairAgentCommand({
-      explicitKind: pairOptions.singleKind,
-      customCommand: pairOptions.customCommand,
-      env: process.env,
-      cwd: process.cwd(),
-    });
-    console.log(`[body] agent binary: ${formatAgentCommand(selectedAgent)}`);
-    const result = await pairOneAgent({
-      code: pairOptions.codes[0]!,
-      selectedAgent,
-      agentIdentity: identityFromKey(agentPrivateKey, 'buzzy-agent'),
-      bodyIdentity: identityFromKey(process.env.BUZZ_BODY_KEY, 'buzzy-body'),
-      ...(llmEnvFile ? { llmEnvFile } : {}),
-      access: pairOptions.access,
-      ...(pairOptions.autoResponse ? { autoResponse: pairOptions.autoResponse } : {}),
-    });
-    printPairResult(result);
+    await runPairCommand(args, llmEnvFile, agentPrivateKey);
     return;
   }
 

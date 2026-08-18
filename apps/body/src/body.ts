@@ -1297,10 +1297,12 @@ export class Body {
       );
     } catch (error) {
       console.error('[body] failed to read persisted agent model config:', error);
-      return;
     }
-    if (!selection) return;
-    await applyAgentModelSelection(client, sessionId, rawConfigOptions, selection);
+    // A human's in-app pick (#223) always wins; the pair-time `--model`/
+    // `--effort` default only fills in until one exists.
+    const applied = selection ?? this.config.modelSelection;
+    if (!applied) return;
+    await applyAgentModelSelection(client, sessionId, rawConfigOptions, applied);
   }
 
   /**

@@ -49,6 +49,15 @@ export interface AgentRuntimeRecord {
   accessPolicy?: AgentAccessPolicy;
   /** Optional custom auto-response for a non-permitted questioner. */
   accessAutoResponse?: string;
+  /**
+   * Pair-time default model/effort, set by `--model`/`--effort` and applied
+   * by `Body.applyModelConfigForSession` (`body.ts`) whenever no human has
+   * yet set an explicit in-app selection (#223) for this agent — the same
+   * `session/set_config_option` mechanism, just seeded before any picker
+   * write exists. Never validated again after pairing; the pairing CLI
+   * already checked it against the agent's live advertised catalog.
+   */
+  modelSelection?: { model?: string; effort?: string };
   agentKind?: AgentKind;
   agentCommand?: string;
   agentArgs?: string[];
@@ -192,7 +201,12 @@ function relayRepoFromOrigin(raw: string): { ownerHex: string; repo: string } | 
 /** Inspect the git repository at cwd and derive its immutable Room binding. */
 export function inspectLocalRepository(cwd: string): LocalRepositoryBinding {
   const root = git(cwd, ['rev-parse', '--show-toplevel']);
-  if (!root) throw new Error('beeline pair must be run inside a git repository');
+  if (!root) {
+    throw new Error(
+      `beeline pair must be run inside a git repository; pass --repo <path> to specify one ` +
+        `(checked: ${cwd})`,
+    );
+  }
   const common = git(root, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
   const gitCommonDir = common
     ? resolve(root, common)
@@ -416,6 +430,13 @@ export async function readRuntimeRecord(path: string): Promise<AgentRuntimeRecor
     (parsed.agentKind !== undefined && !AGENT_KINDS.includes(parsed.agentKind)) ||
     (parsed.accessPolicy !== undefined && !isAgentAccessPolicy(parsed.accessPolicy)) ||
     (parsed.accessAutoResponse !== undefined && typeof parsed.accessAutoResponse !== 'string') ||
+    (parsed.modelSelection !== undefined &&
+      (typeof parsed.modelSelection !== 'object' ||
+        parsed.modelSelection === null ||
+        (parsed.modelSelection.model !== undefined &&
+          typeof parsed.modelSelection.model !== 'string') ||
+        (parsed.modelSelection.effort !== undefined &&
+          typeof parsed.modelSelection.effort !== 'string'))) ||
     (parsed.agentCommand !== undefined && !parsed.agentCommand) ||
     (parsed.agentArgs !== undefined &&
       (!Array.isArray(parsed.agentArgs) ||
@@ -552,6 +573,7 @@ export async function pairRepositoryAgent(
     agentArgs?: string[];
     accessPolicy?: AgentAccessPolicy;
     accessAutoResponse?: string;
+    modelSelection?: { model?: string; effort?: string };
     mcpBinary: string;
     agentIdentity: Identity;
     bodyIdentity: Identity;
@@ -626,6 +648,9 @@ export async function pairRepositoryAgent(
     ...(input.llmEnvFile ? { llmEnvFile: input.llmEnvFile } : {}),
     ...(input.accessPolicy ? { accessPolicy: input.accessPolicy } : {}),
     ...(input.accessAutoResponse ? { accessAutoResponse: input.accessAutoResponse } : {}),
+    ...(input.modelSelection?.model || input.modelSelection?.effort
+      ? { modelSelection: input.modelSelection }
+      : {}),
     agentKind: input.agentKind ?? 'reference',
     agentCommand: input.agentCommand ?? input.agentBinary,
     agentArgs: [...(input.agentArgs ?? [])],

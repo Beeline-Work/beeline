@@ -752,6 +752,36 @@ describe('agent activity projection', () => {
     ).toEqual([{ kind: 'summary', title: 'Summary', rollup: { read: 8 } }]);
   });
 
+  it('carries the reasoning receipt, and projects a batch that is only a receipt', () => {
+    // The reasoning text itself never reaches the wire. The span does, and it
+    // is enough on its own to be worth a row — a turn that spent eight seconds
+    // thinking and nothing else still happened.
+    expect(
+      agentActivityDetails(
+        JSON.stringify({
+          update: { sessionUpdate: 'activity_summary', content: { type: 'text', text: '' }, thoughtMs: 8_200 },
+        }),
+      ),
+    ).toEqual([{ kind: 'summary', title: 'Summary', thoughtMs: 8_200 }]);
+  });
+
+  it('ignores a malformed or empty reasoning span rather than rendering a zero', () => {
+    expect(
+      agentActivityDetails(
+        JSON.stringify({
+          update: { sessionUpdate: 'activity_summary', content: { type: 'text', text: '' }, thoughtMs: 0 },
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      agentActivityDetails(
+        JSON.stringify({
+          update: { sessionUpdate: 'activity_summary', content: { type: 'text', text: '' }, thoughtMs: 'soon' },
+        }),
+      ),
+    ).toEqual([]);
+  });
+
   it('never mistakes the agent’s own prose for a tool receipt', () => {
     // `progress_update` is the agent narrating, so it projects as `output` —
     // the kind the corner renders on the slab rather than folding away.

@@ -217,6 +217,87 @@ describe('projectActivity granularity', () => {
     expect(JSON.stringify(content)).not.toContain('inspecting the code');
   });
 
+  it('collapses a reasoning stretch to a bare elapsed receipt, never its content', async () => {
+    const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+
+    // grok Build shows a live `Thinking…` block for the whole stretch and then
+    // collapses it to `Thought for 5.8s` the instant the answer lands. Only
+    // the second half is affordable here: reasoning text is unbounded and
+    // would blow the per-pubkey quota, so the span rides the summary event
+    // that is published anyway and the content never leaves the daemon.
+    emit({ sessionUpdate: 'agent_thought_chunk', content: 'the median bug is the even-length case' });
+    await vi.advanceTimersByTimeAsync(2_000);
+    emit({ sessionUpdate: 'agent_thought_chunk', content: 'and mean([]) divides by zero' });
+    emit(toolCall('read-1', { kind: 'read', title: 'read_file' }));
+    emit(toolCallUpdate('read-1', { status: 'completed' }));
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    unsubscribe();
+
+    expect(published).toHaveLength(1);
+    const content = JSON.parse(published[0]!.content) as {
+      update: { updates: Array<Record<string, unknown>> };
+    };
+    expect(content.update.updates).toEqual([
+      {
+        sessionUpdate: 'activity_summary',
+        content: { type: 'text', text: '' },
+        rollup: { read: 1 },
+        thoughtMs: 2_000,
+      },
+    ]);
+    expect(JSON.stringify(content)).not.toContain('divides by zero');
+  });
+
+  it('carries one reasoning span across batches instead of reporting it per window', async () => {
+    const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+
+    // A think that outlasts the 5s batch window used to have no way to be
+    // reported at all. It must not become one receipt per window either: the
+    // span closes when work lands, which is the same trigger grok uses.
+    emit({ sessionUpdate: 'agent_thought_chunk', content: 'still working it out' });
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(published).toHaveLength(0);
+
+    emit({ sessionUpdate: 'agent_thought_chunk', content: 'got it' });
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(published).toHaveLength(0);
+
+    emit(toolCall('read-2', { kind: 'read', title: 'read_file' }));
+    emit(toolCallUpdate('read-2', { status: 'completed' }));
+    await vi.advanceTimersByTimeAsync(5_000);
+    unsubscribe();
+
+    // One receipt, spanning first thought to last (0ms -> 6000ms) — not one
+    // per 5s window, and not stretched to the flush that happened to carry it.
+    expect(published).toHaveLength(1);
+    const content = JSON.parse(published[0]!.content) as {
+      update: { updates: Array<Record<string, unknown>> };
+    };
+    expect(content.update.updates.at(-1)).toMatchObject({
+      sessionUpdate: 'activity_summary',
+      thoughtMs: 6_000,
+    });
+  });
+
+  it('omits the receipt for a think too short to be worth reporting', async () => {
+    const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+
+    emit({ sessionUpdate: 'agent_thought_chunk', content: 'a' });
+    await vi.advanceTimersByTimeAsync(100);
+    emit({ sessionUpdate: 'agent_thought_chunk', content: 'b' });
+    emit(toolCall('read-3', { kind: 'read', title: 'read_file' }));
+    emit(toolCallUpdate('read-3', { status: 'completed' }));
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    unsubscribe();
+
+    const content = JSON.parse(published[0]!.content) as {
+      update: { updates: Array<Record<string, unknown>> };
+    };
+    expect(content.update.updates.at(-1)!.thoughtMs).toBeUndefined();
+  });
+
   it('never counts a published milestone as an anonymous observational call', async () => {
     const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
 

@@ -148,13 +148,18 @@ export function agentActivityDetails(content: string): AgentActivityItem[] {
     // mistaken for the agent's prose.
     const rollup = compactRollup(update.rollup);
     const text = readTextContent(update.content) ?? stringValue(update.text);
-    if (!rollup && !text) return [];
+    const thoughtMs =
+      typeof update.thoughtMs === 'number' && Number.isFinite(update.thoughtMs) && update.thoughtMs > 0
+        ? update.thoughtMs
+        : undefined;
+    if (!rollup && !text && !thoughtMs) return [];
     return [
       {
         kind: 'summary',
         title: 'Summary',
         ...(text ? { text } : {}),
         ...(rollup ? { rollup } : {}),
+        ...(thoughtMs ? { thoughtMs } : {}),
       },
     ];
   }

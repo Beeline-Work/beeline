@@ -346,7 +346,7 @@ describe('Machine noise', () => {
   it('folds the read-only calls into one counted note — dimmest tier, no box', () => {
     // One note per turn, verb-counted. Not one collapsed line per call, and
     // never a wall: the fold is what buys the reading column its quiet.
-    expect(activitySource).toMatch(/⋯ \{handle/);
+    expect(activitySource).toMatch(/⋯ \{showHandle && handle/);
     expect(styleDefinition(activitySource, 'noteText')).toMatch(/color:\s*groknight\.ledgerGhost/);
     expect(styleDefinition(activitySource, 'noteRow')).not.toMatch(/border|backgroundColor/);
     // The bordered node that used to sit beside the summary is gone.

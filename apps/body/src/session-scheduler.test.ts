@@ -159,3 +159,178 @@ describe('Workspace session scheduler', () => {
     await scheduler.dispose();
   });
 });
+
+/**
+ * Regression suite for the scout's head-of-line probe (`report.md` Appendix A).
+ * These four cases previously demonstrated the choke: every activation in the
+ * Workspace was serialized behind one mutex that also held the ACP spawn and
+ * the >=800ms eviction teardown. They now assert the un-choked contract.
+ */
+describe('Workspace session scheduler concurrency', () => {
+  it('activates another Room while a slow Room activation is still pending', async () => {
+    const scheduler = new SessionScheduler({ maxLiveSessions: 4, idleMs: 60_000 });
+    const releaseSlowActivate = deferred();
+    const events: string[] = [];
+
+    const slow: SessionLifecycle = {
+      activate: async () => {
+        events.push('a:activate:start');
+        await releaseSlowActivate.promise;
+        events.push('a:activate:end');
+        return 'a-physical';
+      },
+      suspend: async () => undefined,
+    };
+    const fast: SessionLifecycle = {
+      activate: async () => {
+        events.push('b:activate');
+        return 'b-physical';
+      },
+      suspend: async () => undefined,
+    };
+
+    const a = scheduler.run('room-a', slow, async () => {
+      events.push('a:task');
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+    const b = scheduler.run('room-b', fast, async () => {
+      events.push('b:task');
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+
+    // room-a is still spawning. Its reservation holds a slot (so capacity is
+    // still honest) but it no longer holds the workspace-wide mutex.
+    expect(scheduler.snapshot()).toMatchObject({ live: 2, pending: 1 });
+    expect(events).toEqual(['a:activate:start', 'b:activate', 'b:task']);
+
+    releaseSlowActivate.resolve();
+    await Promise.all([a, b]);
+    expect(events).toEqual([
+      'a:activate:start',
+      'b:activate',
+      'b:task',
+      'a:activate:end',
+      'a:task',
+    ]);
+    await scheduler.dispose();
+  });
+
+  it('pays two evictions concurrently instead of serializing their teardown', async () => {
+    const scheduler = new SessionScheduler({ maxLiveSessions: 2, idleMs: 60_000 });
+    const SUSPEND_COST_MS = 120;
+    const lifecycle = (channel: string): SessionLifecycle => ({
+      activate: async () => `${channel}-physical`,
+      suspend: async () => {
+        await new Promise((resolveWait) => setTimeout(resolveWait, SUSPEND_COST_MS));
+      },
+    });
+
+    await scheduler.run('room-a', lifecycle('room-a'), async () => undefined);
+    await scheduler.run('room-b', lifecycle('room-b'), async () => undefined);
+    const started = Date.now();
+    const c = scheduler.run('room-c', lifecycle('room-c'), async () => undefined);
+    const d = scheduler.run('room-d', lifecycle('room-d'), async () => undefined);
+    await Promise.all([c, d]);
+    // Two evictions used to cost >= 2x the teardown because both ran under the
+    // one capacity mutex. They now overlap.
+    expect(Date.now() - started).toBeLessThan(SUSPEND_COST_MS * 2);
+    await scheduler.dispose();
+  });
+
+  it('never oversubscribes while several Rooms reserve and activate concurrently', async () => {
+    const scheduler = new SessionScheduler({ maxLiveSessions: 3, idleMs: 60_000 });
+    const active = new Set<string>();
+    let maxActive = 0;
+    const lifecycle = (channel: string): SessionLifecycle => ({
+      activate: async () => {
+        await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+        active.add(channel);
+        maxActive = Math.max(maxActive, active.size);
+        return `${channel}-physical`;
+      },
+      suspend: async () => {
+        await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+        active.delete(channel);
+      },
+    });
+
+    const rooms = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8'];
+    await Promise.all(
+      rooms.map((room) =>
+        scheduler.run(room, lifecycle(room), async () => {
+          await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+        }),
+      ),
+    );
+
+    expect(maxActive).toBeLessThanOrEqual(3);
+    expect(scheduler.snapshot().live).toBeLessThanOrEqual(3);
+    await scheduler.dispose();
+  });
+
+  it('budgets capacity per Room so a busy Room cannot starve a quiet one', async () => {
+    const scheduler = new SessionScheduler({
+      perRoomLiveSessions: 2,
+      workspaceFloor: 8,
+      idleMs: 60_000,
+    });
+    const active = new Set<string>();
+    const lifecycle = (channel: string): SessionLifecycle => ({
+      activate: async () => {
+        active.add(channel);
+        return `${channel}-physical`;
+      },
+      suspend: async () => {
+        active.delete(channel);
+      },
+    });
+    const holds = new Map<string, ReturnType<typeof deferred>>();
+    const hold = (channel: string, roomKey: string) => {
+      const gate = deferred();
+      holds.set(channel, gate);
+      return scheduler.run(channel, lifecycle(channel), async () => gate.promise, { roomKey });
+    };
+
+    // Room A saturates its own budget with two long-running corners.
+    const a1 = hold('room-a:corner-1', 'room-a');
+    const a2 = hold('room-a:corner-2', 'room-a');
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+    // A third Room-A corner must wait for Room A's own budget, not the Workspace.
+    const a3 = hold('room-a:corner-3', 'room-a');
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+    expect(scheduler.generations('room-a:corner-3')).toHaveLength(0);
+
+    // Room B is untouched by Room A's saturation.
+    let roomBRan = false;
+    const b = scheduler.run(
+      'room-b',
+      lifecycle('room-b'),
+      async () => {
+        roomBRan = true;
+      },
+      { roomKey: 'room-b' },
+    );
+    await b;
+    expect(roomBRan).toBe(true);
+    expect(active.has('room-b')).toBe(true);
+
+    for (const gate of holds.values()) gate.resolve();
+    await Promise.all([a1, a2, a3]);
+    expect(scheduler.generations('room-a:corner-3')).toHaveLength(1);
+    await scheduler.dispose();
+  });
+
+  it('grows the Workspace ceiling with the number of Rooms the supervisor serves', async () => {
+    let rooms = 1;
+    const scheduler = new SessionScheduler({
+      perRoomLiveSessions: 2,
+      workspaceFloor: 4,
+      activeRoomCount: () => rooms,
+      idleMs: 60_000,
+    });
+    expect(scheduler.snapshot().maxLive).toBe(4);
+    rooms = 5;
+    expect(scheduler.snapshot().maxLive).toBe(10);
+    await scheduler.dispose();
+  });
+});

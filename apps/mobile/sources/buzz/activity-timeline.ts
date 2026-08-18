@@ -14,9 +14,22 @@ export type ActivityTimelineEntry =
       count: number;
     };
 
+/**
+ * How a single tool call reaches the reader.
+ *
+ * The dividing line is "did this change or observe state," not "was it
+ * expensive": a call that executes or mutates is the payload of the turn and
+ * keeps its own line, while a read/search/list is a receipt and folds into the
+ * turn's one counted note. A failure always keeps its line, whatever it was
+ * doing — after the accent is spent on live state, persistence is the only
+ * escalation the ledger has left.
+ */
+export type ActionWeight = 'mutation' | 'command' | 'failure' | 'observation';
+
 export type TurnActivityAction = {
   id: string;
   kind: 'file' | 'tool';
+  weight: ActionWeight;
   title: string;
   status?: string;
   path?: string;
@@ -27,9 +40,38 @@ export type TurnActivityAction = {
 };
 
 export type TurnActivity = {
-  summary: string;
-  updates: string[];
+  /**
+   * The agent's own prose, lifted clear of the telemetry it was buried in.
+   * This is what the reader is here for, so it renders at the ledger's
+   * brightest tier, full width, and is never collapsed behind a disclosure.
+   */
+  narration: string[];
+  /** Calls that executed or mutated, plus every failure: one line each. */
   actions: TurnActivityAction[];
+  /** Read-only calls, folded behind the counted note. */
+  observations: TurnActivityAction[];
+  /** The counted note's copy, e.g. `12 TOOL CALLS · read 8, searched 3`. */
+  note?: string;
+  /**
+   * The same note in the present tense — `12 TOOL CALLS · reading 8,
+   * searching 3` — shown while the turn is still running.
+   *
+   * grok Build writes its rollup twice: `Reading 2 files, Searching 4 patterns`
+   * while the group is in flight, then `Read 2 files, Searched 4 patterns` when
+   * it settles, roughly 100ms later and in place. The tense *is* the state
+   * report, which is why the row can carry it without a badge, a spinner, or a
+   * second line — and why a reader who glances once knows whether they are
+   * watching work or reading a record of it.
+   */
+  liveNote?: string;
+  /** How many calls that note stands for, including wire-only tallies. */
+  noteCount: number;
+  /**
+   * Total reasoning time this turn, from body's receipt. Rendered as the quiet
+   * half of grok's loud-then-quiet reasoning: the thinking itself never
+   * reaches the client, but `THOUGHT FOR 5.8S` does.
+   */
+  thoughtMs?: number;
   plan?: NonNullable<AgentActivityItem['plan']>;
 };
 
@@ -228,27 +270,140 @@ function mergeToolActivity(
   };
 }
 
-function summaryText(files: number, tests: number, otherTools: number, hasPlan: boolean): string {
-  const parts: string[] = [];
-  if (files) parts.push(`Edited ${files} ${files === 1 ? 'file' : 'files'}`);
-  if (tests) parts.push(tests === 1 ? 'ran tests' : `ran ${tests} test commands`);
-  if (otherTools) parts.push(`${otherTools === 1 ? 'used 1 tool' : `used ${otherTools} tools`}`);
-  if (hasPlan && !parts.length) parts.push('Updated the checklist');
-  return parts.length ? `${parts.join(', ')}.` : 'Turn details.';
+/**
+ * The verb an observational call is counted under in the turn's note.
+ *
+ * A bare total ("12 calls") answers *how much*; the verb breakdown answers
+ * *what kind* in the same width, which is the difference between a number and
+ * a shape of work.
+ */
+function observationVerb(item: AgentActivityItem, title: string): string {
+  const kind = item.toolKind?.toLowerCase();
+  if (kind === 'read') return 'read';
+  if (kind === 'search') return 'searched';
+  if (kind === 'fetch') return 'fetched';
+  const source = `${title} ${item.title} ${item.command ?? ''}`.toLowerCase();
+  if (/\b(search|grep|\brg\b|find)\b/.test(source)) return 'searched';
+  if (/\b(list|ls|glob)\b/.test(source)) return 'listed';
+  if (/\b(read|open|cat|review)\b/.test(source)) return 'read';
+  return 'inspected';
 }
 
-/** Build the three-depth corner model: prose, one summary, then inspectable actions. */
+/**
+ * Did this call change state, or only look at it?
+ *
+ * Mutation and execution are the payload of a turn and keep their own line;
+ * everything observational folds into the counted note. A failure is pulled out
+ * of that fold unconditionally — a failed read still outranks a successful one.
+ */
+function actionWeight(item: AgentActivityItem): ActionWeight {
+  if (isFailure(item)) return 'failure';
+  if (item.files?.length) return 'mutation';
+  const kind = item.toolKind?.toLowerCase();
+  if (kind) {
+    if (kind === 'edit' || kind === 'delete' || kind === 'move' || kind === 'write') {
+      return 'mutation';
+    }
+    if (kind === 'execute') return 'command';
+    if (kind === 'read' || kind === 'search' || kind === 'fetch' || kind === 'think') {
+      return 'observation';
+    }
+  }
+  if (item.command) return 'command';
+  // No declared kind (an older body, or a harness that omits it): fall back to
+  // what the label says it did. Inspection verbs stay observational; anything
+  // that names a write is treated as the payload.
+  const source = `${cleanTitle(item.title)} ${item.command ?? ''}`;
+  if (/\b(edit|write|replace|patch|create|delete|remove|move|rename)\b/i.test(source)) {
+    return 'mutation';
+  }
+  if (/\b(read|open|cat|search|grep|\brg\b|find|list|ls|glob|fetch|think)\b/i.test(source)) {
+    return 'observation';
+  }
+  return 'observation';
+}
+
+/**
+ * `12 TOOL CALLS · read 8, searched 3, listed 1`.
+ *
+ * One note per turn, never one collapsed line per call and never a wall. The
+ * bare total leads because it reads instantly; the verb breakdown follows
+ * because it is what tells the reader whether the turn was research or work.
+ */
+function noteText(total: number, verbs: ReadonlyMap<string, number>): string {
+  const head = `${total} TOOL ${total === 1 ? 'CALL' : 'CALLS'}`;
+  const breakdown = [...verbs.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([verb, count]) => `${verb} ${count}`)
+    .join(', ');
+  return breakdown ? `${head} · ${breakdown}` : head;
+}
+
+/**
+ * Past tense -> present participle, for the in-flight form of the note above.
+ *
+ * A closed map rather than a suffix rule: the vocabulary is small, fixed, and
+ * produced in exactly two places (`observationVerb` here and
+ * `observationalVerb` in `apps/body/src/activity.ts`), and a stemming rule that
+ * turned an unforeseen verb into a non-word would be a worse failure than
+ * simply leaving it in the past tense.
+ */
+const PRESENT_PARTICIPLE: Readonly<Record<string, string>> = {
+  read: 'reading',
+  searched: 'searching',
+  listed: 'listing',
+  fetched: 'fetching',
+  inspected: 'inspecting',
+  queried: 'querying',
+  reasoned: 'reasoning',
+  ran: 'running',
+};
+
+/** `12 TOOL CALLS · reading 8, searching 3` — the note while it is still true. */
+function liveNoteText(total: number, verbs: ReadonlyMap<string, number>): string {
+  const head = `${total} TOOL ${total === 1 ? 'CALL' : 'CALLS'}`;
+  const breakdown = [...verbs.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([verb, count]) => `${PRESENT_PARTICIPLE[verb] ?? verb} ${count}`)
+    .join(', ');
+  return breakdown ? `${head} · ${breakdown}` : head;
+}
+
+/**
+ * The corner's reading model: narration first, tools as footnotes.
+ *
+ * Three groups come out of one pass, and which group a thing lands in is the
+ * whole design:
+ *
+ *   narration     the agent's own prose — primary tier, never collapsed
+ *   actions       calls that executed, mutated, or failed — one line each
+ *   observations  reads/searches/lists — folded behind one counted note
+ *
+ * The synthetic `activity_summary` receipt body publishes is deliberately *not*
+ * narration: its text restates mechanism the note already states, and its
+ * `rollup` is the only record of the observational calls body counts but never
+ * projects as their own events, so it feeds the count and nothing else.
+ */
 export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActivity {
-  const updates: string[] = [];
+  const narration: string[] = [];
   const tools = new Map<string, AgentActivityItem>();
+  const wireRollup = new Map<string, number>();
   let plan: AgentActivityItem['plan'];
+  let thoughtMs = 0;
   let anonymousIndex = 0;
 
   for (const item of items) {
     if (item.plan) plan = item.plan;
+    if (item.kind === 'summary') {
+      for (const [verb, count] of Object.entries(item.rollup ?? {})) {
+        wireRollup.set(verb, (wireRollup.get(verb) ?? 0) + count);
+      }
+      if (item.thoughtMs && item.thoughtMs > 0) thoughtMs += item.thoughtMs;
+      continue;
+    }
     if (item.kind === 'output') {
-      const update = item.text?.trim();
-      if (update && updates.at(-1) !== update) updates.push(update);
+      const prose = item.text?.trim();
+      if (prose && narration.at(-1) !== prose) narration.push(prose);
       continue;
     }
     if (item.kind !== 'tool') continue;
@@ -257,47 +412,70 @@ export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActi
   }
 
   const actions: TurnActivityAction[] = [];
-  const seenFiles = new Set<string>();
-  let testCommands = 0;
-  let otherTools = 0;
+  const observations: TurnActivityAction[] = [];
+  const localVerbs = new Map<string, number>();
+
   for (const [id, tool] of tools) {
-    for (const file of tool.files ?? []) {
-      const existingIndex = actions.findIndex(
-        (action) => action.kind === 'file' && action.path === file.path,
-      );
-      const action: TurnActivityAction = {
-        id: `${id}:file:${file.path}`,
-        kind: 'file',
-        title: file.path.split('/').filter(Boolean).at(-1) ?? file.path,
-        path: file.path,
-        ...(file.status ? { status: file.status } : {}),
-        ...(file.diff ? { diff: file.diff } : {}),
-      };
-      if (existingIndex >= 0) actions[existingIndex] = { ...actions[existingIndex], ...action };
-      else actions.push(action);
-      seenFiles.add(file.path);
-    }
+    const weight = actionWeight(tool);
     const title = actionTitle(tool) ?? cleanTitle(tool.title) ?? 'Tool';
-    const isTest = /(?:^|\s)(?:test|tests|vitest|jest|pytest|cargo test|gradle)(?:\s|$)/i.test(
-      `${title} ${tool.command ?? ''}`,
-    );
-    if (isTest) testCommands += 1;
-    else if (!tool.files?.length && !tool.plan) otherTools += 1;
-    actions.push({
+    // A tool call that touched files *is* its files: one row per path, carrying
+    // the call's own command/output so the drill-down loses nothing. Emitting a
+    // parent row beside them printed the same edit twice.
+    if (tool.files?.length) {
+      for (const file of tool.files) {
+        const row: TurnActivityAction = {
+          id: `${id}:file:${file.path}`,
+          kind: 'file',
+          weight,
+          title: file.path.split('/').filter(Boolean).at(-1) ?? file.path,
+          path: file.path,
+          ...(file.status ?? tool.status ? { status: file.status ?? tool.status } : {}),
+          ...(file.diff ? { diff: file.diff } : {}),
+          ...(tool.command ? { command: tool.command } : {}),
+          ...(tool.input ? { input: tool.input } : {}),
+          ...((tool.output ?? tool.text) ? { output: tool.output ?? tool.text } : {}),
+        };
+        const existing = actions.findIndex(
+          (action) => action.kind === 'file' && action.path === file.path,
+        );
+        if (existing >= 0) actions[existing] = { ...actions[existing], ...row };
+        else actions.push(row);
+      }
+      continue;
+    }
+
+    const row: TurnActivityAction = {
       id,
       kind: 'tool',
+      weight,
       title,
       ...(tool.status ? { status: tool.status } : {}),
       ...(tool.command ? { command: tool.command } : {}),
       ...(tool.input ? { input: tool.input } : {}),
       ...((tool.output ?? tool.text) ? { output: tool.output ?? tool.text } : {}),
-    });
+    };
+    if (weight === 'observation') {
+      observations.push(row);
+      const verb = observationVerb(tool, title);
+      localVerbs.set(verb, (localVerbs.get(verb) ?? 0) + 1);
+    } else {
+      actions.push(row);
+    }
   }
 
+  // The note stands for both what arrived as its own (filtered-out) event and
+  // what only ever arrived as a wire tally, so the verbs merge before counting.
+  const verbs = new Map(localVerbs);
+  for (const [verb, count] of wireRollup) verbs.set(verb, (verbs.get(verb) ?? 0) + count);
+  const total = [...verbs.values()].reduce((sum, count) => sum + count, 0);
+
   return {
-    summary: summaryText(seenFiles.size, testCommands, otherTools, Boolean(plan)),
-    updates,
+    narration,
     actions,
+    observations,
+    ...(total ? { note: noteText(total, verbs), liveNote: liveNoteText(total, verbs) } : {}),
+    noteCount: total,
+    ...(thoughtMs > 0 ? { thoughtMs } : {}),
     ...(plan ? { plan } : {}),
   };
 }

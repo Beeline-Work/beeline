@@ -3,6 +3,7 @@ import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
+  AGENT_PRESENCE_STALE_MS,
   isAgentPresenceOnline,
   type Agent,
   type AgentPresence,
@@ -16,33 +17,72 @@ import {
   sortCorners,
   type CornerSummary,
 } from '@/buzz/corners';
+import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { cornerHref } from '@/buzz/corner-navigation';
 import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { groknight } from '@/buzz/groknight';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
-import { AgentAvatar } from '@/components/buzz/AgentAvatar';
-import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { HullSurface, PixelLoader } from '@/components/buzz/MonoHull';
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
+import { afterInteractions } from '@/buzz/defer-interaction';
+import {
+  selectChannelList,
+  useBuzzLocalCache,
+  type ChannelListCacheEntry,
+} from '@/buzz/local-cache';
 import {
   agentPresenceFromSessionEvent,
   mergeAgentPresence,
   presenceMapFromSessionEvents,
 } from '@/buzz/agent-presence';
 
+/**
+ * What the room list already knows about this Room, read synchronously so the
+ * first painted frame is real content instead of a spinner. Everything here is
+ * refreshed from the relay in the background immediately afterwards.
+ */
+function seedFromRoomListCache(channelId: string): {
+  corners: CornerSummary[];
+  roomName: string;
+  communities: Community[];
+  communityId: string | null;
+  hasCache: boolean;
+} {
+  const state = useBuzzLocalCache.getState();
+  const entry: ChannelListCacheEntry | undefined = selectChannelList(
+    state,
+    state.activeViewerPubkey,
+  );
+  const room = entry?.channels.find((channel) => channel.id === channelId);
+  const corners = room?.corners?.filter((corner) => corner.status !== 'archived') ?? [];
+  return {
+    corners: sortCorners(corners),
+    roomName: room?.title ?? ROOM_LABEL,
+    communities: entry?.communities ?? [],
+    communityId: entry?.communityId ?? null,
+    hasCache: room !== undefined,
+  };
+}
+
 export default function BuzzCorners() {
   const { roomId } = useLocalSearchParams<{ roomId: string }>();
   const decodedId = roomId ? decodeURIComponent(roomId) : '';
   const insets = useSafeAreaInsets();
-  const [corners, setCorners] = useState<CornerSummary[]>([]);
-  const [roomName, setRoomName] = useState(ROOM_LABEL);
-  const [communities, setCommunities] = useState<Community[]>([]);
-  const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
+  // Seeded synchronously from the room list's own cache. This screen used to
+  // hold a full-screen loader across an eight-deep serial relay chain with no
+  // cache read at all, which is a blank screen for as long as the network
+  // takes — the room list already holds this Room's corners and title.
+  const seed = seedFromRoomListCache(decodedId);
+  const [corners, setCorners] = useState<CornerSummary[]>(seed.corners);
+  const [roomName, setRoomName] = useState(seed.roomName);
+  const [communities, setCommunities] = useState<Community[]>(seed.communities);
+  const [activeCommunityId, setActiveCommunityId] = useState<string | null>(seed.communityId);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [personProfiles, setPersonProfiles] = useState<PersonProfile[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!seed.hasCache);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [viewerPubkey, setViewerPubkey] = useState<string | undefined>();
@@ -58,42 +98,80 @@ export default function BuzzCorners() {
       const t = currentTransport ?? transportRef.current;
       if (!t) return;
       setError(null);
+      // Each read publishes its own slice as it lands. Nothing here is
+      // sequenced behind an unrelated round-trip, and nothing gates the
+      // already-painted cache-seeded list. Every failure lands in `error`;
+      // this never rejects, so callers can always settle their own state.
       try {
         const client = await t.ensureClient();
-        const [nextCorners, metadata, nextCommunities, communityId, presenceEvents] =
-          await Promise.all([
-            t.listSubchannelLifecycle(decodedId),
-            client.getChannelMetadata(decodedId),
-            client.listCommunities(),
-            client.getChannelCommunityId(decodedId),
-            t.agentPresenceBackfill(decodedId),
-          ]);
-        // NIP-29's `closed` metadata flag means invite-only, not archived.
-        // `listSubchannelLifecycle` only marks an explicit archive as archived,
-        // so keep every live/open corner visible here.
-        setCorners(sortCorners(nextCorners.filter((corner) => corner.status !== 'archived')));
-        setRoomName(metadata?.name?.trim() || ROOM_LABEL);
-        setCommunities(nextCommunities);
-        setActiveCommunityId(communityId);
-        const workspaceRole = nextCommunities.find(
-          (workspace) => workspace.communityId === communityId,
-        )?.viewerRole;
-        setCanManageWorkspace(isWorkspaceManagerRole(workspaceRole));
-        setAgentPresences(presenceMapFromSessionEvents(presenceEvents));
-        setPresenceNow(Date.now());
-        setAgents(communityId ? await client.listAgents(communityId) : []);
-        setPersonProfiles(
-          communityId
-            ? await client.listPersonProfiles(
-                communityId,
-                nextCorners.map((corner) => corner.openerPubkey),
-              )
-            : [],
-        );
+        const communityIdRead = client.getChannelCommunityId(decodedId);
+        const cornersRead = t.listSubchannelLifecycle(decodedId);
+        const fail = (step: string) => (loadError: unknown) => {
+          console.warn(`BuzzCorners: ${step} failed for ${decodedId}:`, loadError);
+          setError(String(loadError));
+        };
+
         setViewerPubkey(client.identity.publicKey);
-        setViewerAvatarUrl(
-          communityId ? (await client.getPersonProfile(communityId))?.avatar : undefined,
-        );
+
+        const cornersApplied = cornersRead.then((nextCorners) => {
+          // NIP-29's `closed` metadata flag means invite-only, not archived.
+          // `listSubchannelLifecycle` only marks an explicit archive as archived,
+          // so keep every live/open corner visible here.
+          setCorners(sortCorners(nextCorners.filter((corner) => corner.status !== 'archived')));
+          return nextCorners;
+        }, fail('corners'));
+
+        const workspaceApplied = Promise.all([
+          communityIdRead,
+          client.listCommunities().catch((loadError) => {
+            fail('communities')(loadError);
+            return [] as Community[];
+          }),
+        ]).then(([communityId, nextCommunities]) => {
+          setCommunities(nextCommunities);
+          setActiveCommunityId(communityId);
+          const workspaceRole = nextCommunities.find(
+            (workspace) => workspace.communityId === communityId,
+          )?.viewerRole;
+          setCanManageWorkspace(isWorkspaceManagerRole(workspaceRole));
+          return communityId;
+        }, fail('workspace'));
+
+        await Promise.all([
+          client
+            .getChannelMetadata(decodedId)
+            .then(
+              (metadata) => setRoomName(metadata?.name?.trim() || ROOM_LABEL),
+              fail('roomName'),
+            ),
+          t.agentPresenceBackfill(decodedId).then((presenceEvents) => {
+            setAgentPresences(presenceMapFromSessionEvents(presenceEvents));
+            setPresenceNow(Date.now());
+          }, fail('presence')),
+          cornersApplied,
+          workspaceApplied.then(async (communityId) => {
+            if (!communityId) {
+              setAgents([]);
+              setPersonProfiles([]);
+              setViewerAvatarUrl(undefined);
+              return;
+            }
+            await Promise.all([
+              client.listAgents(communityId).then(setAgents, fail('agents')),
+              client
+                .getPersonProfile(communityId)
+                .then((profile) => setViewerAvatarUrl(profile?.avatar), fail('viewerProfile')),
+              Promise.resolve(cornersApplied).then((nextCorners) =>
+                client
+                  .listPersonProfiles(
+                    communityId,
+                    (nextCorners ?? []).map((corner) => corner.openerPubkey),
+                  )
+                  .then(setPersonProfiles, fail('personProfiles')),
+              ),
+            ]);
+          }),
+        ]);
       } catch (loadError) {
         setError(String(loadError));
       }
@@ -104,17 +182,24 @@ export default function BuzzCorners() {
   useEffect(() => {
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
+    let cancelDeferred: (() => void) | undefined;
     void (async () => {
-      try {
-        const identity = await loadBuzzIdentity();
-        if (!identity) {
-          router.replace('/buzz/onboarding');
-          return;
-        }
-        const t = new BuzzRigTransport(identity, await getEffectiveRelayUrl());
+      // Local storage reads, not network.
+      const identity = await loadBuzzIdentity();
+      if (!identity) {
+        router.replace('/buzz/onboarding');
+        return;
+      }
+      const t = new BuzzRigTransport(identity, await getEffectiveRelayUrl());
+      if (cancelled) return;
+      transportRef.current = t;
+      // The list is already on screen from cache; refreshing it is background
+      // work that must not compete with the navigation transition.
+      cancelDeferred = afterInteractions(() => {
         if (cancelled) return;
-        transportRef.current = t;
-        await loadCorners(t);
+        void loadCorners(t).finally(() => {
+          if (!cancelled) setLoading(false);
+        });
         unsubscribe = t.agentPresenceSubscribe(decodedId, (event) => {
           if (cancelled) return;
           const presence = agentPresenceFromSessionEvent(event);
@@ -122,20 +207,30 @@ export default function BuzzCorners() {
           setAgentPresences((current) => mergeAgentPresence(current, presence));
           setPresenceNow(Date.now());
         });
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      });
     })();
     return () => {
       cancelled = true;
+      cancelDeferred?.();
       unsubscribe?.();
     };
   }, [decodedId, loadCorners]);
 
   useEffect(() => {
-    const timer = setInterval(() => setPresenceNow(Date.now()), 5_000);
-    return () => clearInterval(timer);
-  }, []);
+    // Presence only changes at a lease deadline. A five-second clock here woke
+    // the whole list every five seconds forever; wake once, exactly when the
+    // next lease is due, and only while one is actually outstanding.
+    const now = Date.now();
+    const deadlines = Object.values(agentPresences)
+      .map((presence) => presence.observedAt + AGENT_PRESENCE_STALE_MS)
+      .filter((deadline) => Number.isFinite(deadline) && deadline > now);
+    if (deadlines.length === 0) return;
+    const timer = setTimeout(
+      () => setPresenceNow(Date.now()),
+      Math.max(1, Math.min(...deadlines) - now + 1),
+    );
+    return () => clearTimeout(timer);
+  }, [agentPresences]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -163,11 +258,12 @@ export default function BuzzCorners() {
       activeCommunityId={activeCommunityId}
       onSelect={handleCommunitySelect}
       onAdd={() => router.push('/buzz/community' as Href)}
-      onSettings={() => router.push('/buzz/settings/identity' as Href)}
+      onSettings={() => router.push('/buzz/settings' as Href)}
       onWorkspaceSettings={(communityId) =>
-        router.push(
-          { pathname: '/buzz/settings/workspace', params: { communityId } } as unknown as Href,
-        )
+        router.push({
+          pathname: '/buzz/settings/workspace',
+          params: { communityId },
+        } as unknown as Href)
       }
       canManageActiveCommunity={canManageWorkspace}
       viewerPubkey={viewerPubkey}
@@ -217,26 +313,29 @@ export default function BuzzCorners() {
             // dropdown and the in-Room corner card show for this corner.
             const showsPresence = Boolean(agent) && isCornerActive(item.status);
             const online =
-              showsPresence && isAgentPresenceOnline(agentPresences[item.openerPubkey], presenceNow);
+              showsPresence &&
+              isAgentPresenceOnline(agentPresences[item.openerPubkey], presenceNow);
             return (
               <TouchableOpacity
                 accessibilityLabel={`View corner ${item.name}, ${status.label.toLowerCase()}${
                   showsPresence ? (online ? ', agent online' : ', agent offline') : ''
                 }`}
                 style={styles.cornerRow}
-                onPress={() => router.push(`/buzz/chat/${encodeURIComponent(item.id)}`)}
+                onPress={() => router.push(cornerHref(item.id, decodedId, item.name))}
               >
                 {agent ? (
-                  <AgentAvatar
-                    pubkey={item.openerPubkey}
-                    avatarSeed={display.avatarSeed}
+                  <IdentityMark
+                    kind="agent"
+                    seed={display.avatarSeed ?? item.openerPubkey}
                     avatarUrl={display.avatarUrl}
                     name={display.name}
                     size={34}
+                    alive={online}
                   />
                 ) : (
-                  <PersonAvatar
-                    pubkey={item.openerPubkey}
+                  <IdentityMark
+                    kind="human"
+                    seed={item.openerPubkey}
                     avatarUrl={personProfile?.avatar}
                     name={personProfile?.name ?? 'Corner opener'}
                     size={34}

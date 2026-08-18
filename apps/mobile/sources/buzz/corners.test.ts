@@ -5,6 +5,7 @@ import {
   isCornerActive,
   mapRawCornerStatusTag,
   resolveCornerLifecycleStatus,
+  roomCornerSignal,
   roomListCorners,
   selectMostRecentActiveCornerId,
   sortCorners,
@@ -32,15 +33,68 @@ describe('corner navigation model', () => {
     ]);
   });
 
-  it('hides archived corners only from the Room-list dropdown', () => {
+  it('lists only open and actively-worked corners in the Room-list dropdown', () => {
+    // The dropdown is a live-work shortcut, so `merged`, `archived`, and
+    // `failed` corners are excluded outright rather than shown dimmed — a Room
+    // row's count must equal exactly what expanding it reveals.
     expect(roomListCorners(corners).map((corner) => corner.id)).toEqual([
       'open',
       'live-new',
       'live-old',
       'stuck',
-      'broken',
     ]);
-    expect(corners.some((corner) => corner.id === 'archived')).toBe(true);
+    expect(roomListCorners(corners).map((corner) => corner.status)).not.toContain('failed');
+    expect(roomListCorners(corners).map((corner) => corner.status)).not.toContain('archived');
+    expect(roomListCorners(corners).map((corner) => corner.status)).not.toContain('merged');
+    // The excluded corners are filtered for display only; the Room's own corner
+    // array still carries them for the full corners list to show.
+    expect(corners.some((corner) => corner.status === 'archived')).toBe(true);
+    expect(corners.some((corner) => corner.status === 'failed')).toBe(true);
+  });
+
+  it('excludes every terminal and failed status from the dropdown by name', () => {
+    const one = (status: CornerSummary['status']): CornerSummary => ({
+      id: status,
+      name: status,
+      openerPubkey: 'a',
+      status,
+      createdAt: 1,
+    });
+    expect(
+      roomListCorners(
+        (['live', 'needs-attention', 'open', 'failed', 'merged', 'archived'] as const).map(one),
+      ).map((corner) => corner.status),
+    ).toEqual(['live', 'needs-attention', 'open']);
+  });
+
+  describe('roomCornerSignal', () => {
+    it('reports the highest-precedence actively-worked corner', () => {
+      expect(roomCornerSignal(corners)).toBe('live');
+      expect(
+        roomCornerSignal([
+          { id: 'stuck', name: 'stuck', openerPubkey: 'a', status: 'needs-attention' },
+          { id: 'open', name: 'open', openerPubkey: 'a', status: 'open' },
+        ]),
+      ).toBe('needs-attention');
+    });
+
+    it('reports nothing for corners the dropdown does not list', () => {
+      // A Room row must never advertise work its own count and dropdown hide.
+      expect(
+        roomCornerSignal([
+          { id: 'broken', name: 'broken', openerPubkey: 'a', status: 'failed' },
+          { id: 'gone', name: 'gone', openerPubkey: 'a', status: 'archived' },
+          { id: 'landed', name: 'landed', openerPubkey: 'a', status: 'merged' },
+        ]),
+      ).toBeNull();
+    });
+
+    it('reports nothing for a merely open corner or no corners at all', () => {
+      expect(
+        roomCornerSignal([{ id: 'open', name: 'open', openerPubkey: 'a', status: 'open' }]),
+      ).toBeNull();
+      expect(roomCornerSignal([])).toBeNull();
+    });
   });
 
   it('breaks ties by most recent activity, not just creation time', () => {

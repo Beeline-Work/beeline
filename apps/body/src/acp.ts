@@ -127,6 +127,8 @@ export class AcpClient extends EventEmitter {
   private agentEnv: Record<string, string>;
   private agentCommand: string;
   private agentArgs: string[];
+  private agentCwd?: string;
+  private inheritProcessEnv: boolean;
   private autoApprove: boolean;
   private permissionHandler?: AcpPermissionHandler;
 
@@ -136,6 +138,19 @@ export class AcpClient extends EventEmitter {
     agentCommand?: string;
     agentArgs?: string[];
     agentEnv: Record<string, string>;
+    /**
+     * Working directory for the child process. The ACP session `cwd` is a
+     * protocol parameter, so without this a harness that keys per-project
+     * state off its own process cwd sees the daemon's directory for every
+     * Room and corner.
+     */
+    agentCwd?: string;
+    /**
+     * Restore the pre-allowlist behaviour of spreading the daemon's whole
+     * `process.env` underneath `agentEnv`. Escape hatch only — see
+     * `buildAgentEnv`'s passthrough set.
+     */
+    inheritProcessEnv?: boolean;
     autoApprovePermissions?: boolean;
     permissionHandler?: AcpPermissionHandler;
   }) {
@@ -145,6 +160,9 @@ export class AcpClient extends EventEmitter {
     this.agentCommand = command;
     this.agentArgs = [...(opts.agentArgs ?? [])];
     this.agentEnv = opts.agentEnv;
+    if (opts.agentCwd) this.agentCwd = opts.agentCwd;
+    this.inheritProcessEnv =
+      opts.inheritProcessEnv ?? process.env.BUZZY_BODY_AGENT_ENV_INHERIT === '1';
     this.autoApprove = opts.autoApprovePermissions ?? true;
     this.permissionHandler = opts.permissionHandler;
   }
@@ -152,7 +170,10 @@ export class AcpClient extends EventEmitter {
   async start(): Promise<void> {
     if (this.alive) return;
     this.child = spawn(this.agentCommand, this.agentArgs, {
-      env: { ...process.env, ...this.agentEnv },
+      // agentEnv is the child's whole environment: buildAgentEnv's allowlist is
+      // a real boundary, not a decorative one layered over a full inherit.
+      env: this.inheritProcessEnv ? { ...process.env, ...this.agentEnv } : this.agentEnv,
+      ...(this.agentCwd ? { cwd: this.agentCwd } : {}),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.alive = true;

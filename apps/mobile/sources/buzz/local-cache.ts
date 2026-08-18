@@ -33,6 +33,11 @@ export type ChannelDisplayItem = SessionSummary & {
   parentChannelId?: string;
   corners?: CornerSummary[];
   latestMessage?: string;
+  /** Timestamp/author of the previewed conversational message. `updatedAt`
+   * tracks *any* event, so only this can drive an honest unread mark or an
+   * attributed preview line. */
+  latestMessageAt?: number;
+  latestMessageAuthor?: string;
   participantCount?: number;
 };
 
@@ -44,13 +49,24 @@ export type DirectMessageDisplayItem = {
   peerAgent?: Agent;
   avatarUrl?: string;
   latestMessage?: string;
+  latestMessageAt?: number;
   updatedAt: number;
 };
 
 export type WorkspaceMemberDisplayItem = Omit<
   DirectMessageDisplayItem,
-  'id' | 'latestMessage' | 'updatedAt'
+  'id' | 'latestMessage' | 'latestMessageAt' | 'updatedAt'
 >;
+
+/** The conversational-preview fields a message sync contributes to a channel
+ * entry and to every list that shows that channel as a row. */
+export type RoomSummaryPatch = {
+  latestMessage?: string;
+  latestMessageAt?: number;
+  latestMessageId?: string;
+  latestMessageAuthor?: string;
+  latestEventAt?: number;
+};
 
 export type ChannelListCacheEntry = {
   viewerPubkey: string;
@@ -75,9 +91,10 @@ export type ChannelCacheEntry = {
   /** True only after a complete initial history read, not merely a live event. */
   backfilled?: boolean;
   latestMessage?: string;
-  /** Timestamp/id of the displayed conversational message, never a control event. */
+  /** Timestamp/id/author of the displayed conversational message, never a control event. */
   latestMessageAt?: number;
   latestMessageId?: string;
+  latestMessageAuthor?: string;
   latestEventAt?: number;
   roomMembers?: ChannelMember[];
   availablePeople?: CommunityMember[];
@@ -118,24 +135,14 @@ type BuzzCacheState = PersistedBuzzCache & {
     channelId: string,
     messages: ChatDisplayMessage[],
     cursor: number | undefined,
-    summary?: {
-      latestMessage?: string;
-      latestMessageAt?: number;
-      latestMessageId?: string;
-      latestEventAt?: number;
-    },
+    summary?: RoomSummaryPatch,
   ) => void;
   upsertMessages: (
     viewerPubkey: string,
     channelId: string,
     messages: ChatDisplayMessage[],
     cursor?: number,
-    summary?: {
-      latestMessage?: string;
-      latestMessageAt?: number;
-      latestMessageId?: string;
-      latestEventAt?: number;
-    },
+    summary?: RoomSummaryPatch,
   ) => void;
   updateMessages: (
     viewerPubkey: string,
@@ -302,6 +309,12 @@ export function mergeChannelBasicsWithCache(
       ...channel,
       ...(existing.corners !== undefined ? { corners: existing.corners } : {}),
       ...(existing.latestMessage !== undefined ? { latestMessage: existing.latestMessage } : {}),
+      ...(existing.latestMessageAt !== undefined
+        ? { latestMessageAt: existing.latestMessageAt }
+        : {}),
+      ...(existing.latestMessageAuthor !== undefined
+        ? { latestMessageAuthor: existing.latestMessageAuthor }
+        : {}),
       ...(existing.participantCount !== undefined
         ? { participantCount: existing.participantCount }
         : {}),
@@ -310,37 +323,78 @@ export function mergeChannelBasicsWithCache(
   });
 }
 
+/**
+ * Room-list previews, updated in place.
+ *
+ * Every returned object is identity-preserved when its content did not
+ * actually change. A live agent turn writes one of these per delivered batch,
+ * and the room list stays subscribed to this store even while it is covered
+ * by a Room — unconditionally rebuilding the map made every one of those
+ * writes re-render and re-sort the whole list for no visible difference.
+ */
 function updateListSummaries(
   lists: Record<string, ChannelListCacheEntry>,
   viewerPubkey: string,
   channelId: string,
-  summary?: {
-    latestMessage?: string;
-    latestMessageAt?: number;
-    latestMessageId?: string;
-    latestEventAt?: number;
-  },
+  summary?: RoomSummaryPatch,
 ): Record<string, ChannelListCacheEntry> {
   if (!summary?.latestMessage) return lists;
   const updatedAt = summary.latestEventAt ?? 0;
-  return Object.fromEntries(
+  // The preview fields the list rows read. Reference identity is preserved
+  // whenever every one of them already matches, so a live turn that changes
+  // nothing visible does not re-render or re-sort the list.
+  const preview = {
+    latestMessage: summary.latestMessage,
+    latestMessageAt: summary.latestMessageAt,
+    updatedAt,
+  };
+  let listsChanged = false;
+  const next = Object.fromEntries(
     Object.entries(lists).map(([key, entry]) => {
       if (entry.viewerPubkey !== viewerPubkey) return [key, entry];
-      const channels = entry.channels
-        .map((channel) =>
-          channel.id === channelId
-            ? { ...channel, latestMessage: summary.latestMessage, updatedAt }
-            : channel,
-        )
-        .sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0));
-      const directMessages = entry.directMessages
-        .map((dm) =>
-          dm.id === channelId ? { ...dm, latestMessage: summary.latestMessage, updatedAt } : dm,
-        )
-        .sort((a, b) => b.updatedAt - a.updatedAt || a.peerName.localeCompare(b.peerName));
-      return [key, { ...entry, channels, directMessages }];
+      let entryChanged = false;
+      const channels = entry.channels.map((channel) => {
+        if (
+          channel.id !== channelId ||
+          (channel.latestMessage === preview.latestMessage &&
+            channel.latestMessageAt === preview.latestMessageAt &&
+            channel.latestMessageAuthor === summary.latestMessageAuthor &&
+            channel.updatedAt === updatedAt)
+        ) {
+          return channel;
+        }
+        entryChanged = true;
+        return { ...channel, ...preview, latestMessageAuthor: summary.latestMessageAuthor };
+      });
+      const directMessages = entry.directMessages.map((dm) => {
+        if (
+          dm.id !== channelId ||
+          (dm.latestMessage === preview.latestMessage &&
+            dm.latestMessageAt === preview.latestMessageAt &&
+            dm.updatedAt === updatedAt)
+        ) {
+          return dm;
+        }
+        entryChanged = true;
+        return { ...dm, ...preview };
+      });
+      if (!entryChanged) return [key, entry];
+      listsChanged = true;
+      return [
+        key,
+        {
+          ...entry,
+          channels: [...channels].sort(
+            (a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0),
+          ),
+          directMessages: [...directMessages].sort(
+            (a, b) => b.updatedAt - a.updatedAt || a.peerName.localeCompare(b.peerName),
+          ),
+        },
+      ];
     }),
   );
+  return listsChanged ? next : lists;
 }
 
 /**
@@ -358,15 +412,18 @@ function updateListCornerStatus(
   roomId: string,
   corner: { subchannelId: string; status: CornerStatus },
 ): Record<string, ChannelListCacheEntry> {
-  return Object.fromEntries(
+  let listsChanged = false;
+  const next = Object.fromEntries(
     Object.entries(lists).map(([key, entry]) => {
       if (entry.viewerPubkey !== viewerPubkey) return [key, entry];
+      let entryChanged = false;
       const channels = entry.channels.map((channel) => {
         if (channel.id !== roomId || !channel.corners) return channel;
         let changed = false;
         const corners = channel.corners.map((existing) => {
           if (
             existing.id !== corner.subchannelId ||
+            existing.status === corner.status ||
             cornerStatusPrecedence(corner.status) < cornerStatusPrecedence(existing.status)
           ) {
             return existing;
@@ -374,11 +431,19 @@ function updateListCornerStatus(
           changed = true;
           return { ...existing, status: corner.status };
         });
-        return changed ? { ...channel, corners } : channel;
+        if (!changed) return channel;
+        entryChanged = true;
+        return { ...channel, corners };
       });
+      if (!entryChanged) return [key, entry];
+      listsChanged = true;
       return [key, { ...entry, channels }];
     }),
   );
+  // Identity-preserved when nothing moved: this runs once per `.corner`
+  // signal on every live batch and every revalidation, and a new map object
+  // re-renders the room list whether or not a status actually changed.
+  return listsChanged ? next : lists;
 }
 
 const initial = loadCache();
@@ -409,9 +474,17 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
       };
     }),
   patchCornerStatus: (viewerPubkey, roomId, corner) =>
-    set((state) => ({
-      channelLists: updateListCornerStatus(state.channelLists, viewerPubkey, roomId, corner),
-    })),
+    set((state) => {
+      const channelLists = updateListCornerStatus(
+        state.channelLists,
+        viewerPubkey,
+        roomId,
+        corner,
+      );
+      // No status moved: skip the write entirely rather than notifying every
+      // subscriber with an identical snapshot.
+      return channelLists === state.channelLists ? state : { channelLists };
+    }),
   patchChannel: (viewerPubkey, channelId, patch) =>
     set((state) => {
       const key = channelCacheKey(viewerPubkey, channelId);

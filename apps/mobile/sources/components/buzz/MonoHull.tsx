@@ -20,6 +20,7 @@ import Animated, {
   useReducedMotion,
   useSharedValue,
   withRepeat,
+  withSequence,
   withTiming,
   type SharedValue,
 } from 'react-native-reanimated';
@@ -33,6 +34,15 @@ export const motionTokens = {
   confirm: 240,
   loaderFrame: 133,
   liveCycle: 1120,
+  /**
+   * How long a settled row takes to dip and come back when it demotes out of
+   * its live form. Measured against grok Build: its rollup row swaps from the
+   * present participle to the past tense in 52-104ms, which on a terminal is a
+   * single repaint and reads as instantaneous. A silent substitution at that
+   * speed is invisible on a phone — the eye is elsewhere — so the swap is given
+   * a dip the eye can catch, then restored on the shared reveal easing.
+   */
+  demoteDip: 90,
 } as const;
 
 /**
@@ -292,7 +302,13 @@ type HullWaveSignalProps = {
   compact?: boolean;
 };
 
-export function HullWaveSignal({ active = true, label, compact = false }: HullWaveSignalProps) {
+/**
+ * The one continuous loop the app runs while it is on screen and unattended:
+ * a linear 0→1 cycle other live primitives read a phase off. Kept here so
+ * every "something is alive" signal in the product breathes on the same clock
+ * and stops on the same conditions — reduced motion, or the app backgrounded.
+ */
+function useLiveCycle(active: boolean): { progress: SharedValue<number>; still: boolean } {
   const reducedMotion = useReducedMotion();
   const [appActive, setAppActive] = useState(AppState.currentState === 'active');
   const progress = useSharedValue(0);
@@ -320,6 +336,16 @@ export function HullWaveSignal({ active = true, label, compact = false }: HullWa
     );
   }, [active, appActive, progress, reducedMotion]);
 
+  return { progress, still: Boolean(reducedMotion || !active) };
+}
+
+export function HullWaveSignal({ active = true, label, compact = false }: HullWaveSignalProps) {
+  const { progress, still } = useLiveCycle(active);
+  // Gold means one thing product-wide: an agent is alive and working. LIVE is
+  // that state; WAITING and RUNNING report the app's own progress, so they
+  // stay on the grayscale signal tone.
+  const alive = label === 'LIVE';
+
   const segments = useMemo(() => Array.from({ length: compact ? 6 : 9 }, (_, index) => index), [compact]);
   return (
     <View accessibilityLabel={label} accessibilityRole="text" style={styles.waveSignal}>
@@ -327,10 +353,11 @@ export function HullWaveSignal({ active = true, label, compact = false }: HullWa
         {segments.map((index) => (
           <WaveSegment
             key={index}
+            alive={alive}
             index={index}
             count={segments.length}
             progress={progress}
-            staticState={Boolean(reducedMotion || !active)}
+            staticState={still}
           />
         ))}
       </View>
@@ -340,11 +367,13 @@ export function HullWaveSignal({ active = true, label, compact = false }: HullWa
 }
 
 function WaveSegment({
+  alive,
   index,
   count,
   progress,
   staticState,
 }: {
+  alive: boolean;
   index: number;
   count: number;
   progress: SharedValue<number>;
@@ -355,7 +384,130 @@ function WaveSegment({
     const phase = progress.value * Math.PI * 2 + (index / count) * Math.PI * 2;
     return { opacity: 0.3 + 0.7 * Math.sin(phase) ** 2 };
   });
-  return <Animated.View style={[styles.waveSegment, style]} />;
+  return <Animated.View style={[styles.waveSegment, alive && styles.waveSegmentLive, style]} />;
+}
+
+/** The dimmest the live pulse ever goes. High enough that the mark it carries
+ * stays legible at every point in the cycle — a breath, not a blink. */
+const LIVE_PULSE_FLOOR = 0.55;
+
+/**
+ * The same live wave, reduced to a single mark: one slow sin² breath on
+ * whatever it wraps, on `HullWaveSignal`'s clock. It exists so a dense index
+ * row can carry the "an agent is alive here" signal at the size of one glyph
+ * — a nine-segment wave in a 30px leading column would be noise, and a static
+ * accent dot would not read as *live*.
+ *
+ * Motion is the redundant channel here, never the only one: what it wraps is
+ * already the gold `◆` corner glyph, and the row states the count beside it.
+ * With reduced motion on, or the app backgrounded, it simply holds still.
+ */
+export function HullLivePulse({
+  active = true,
+  children,
+  style,
+}: {
+  active?: boolean;
+  children: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const { progress, still } = useLiveCycle(active);
+  const pulse = useAnimatedStyle(() => {
+    if (still) return { opacity: 1 };
+    return { opacity: LIVE_PULSE_FLOOR + (1 - LIVE_PULSE_FLOOR) * Math.sin(progress.value * Math.PI) ** 2 };
+  });
+  return <Animated.View style={[style, pulse]}>{children}</Animated.View>;
+}
+
+/**
+ * The one motion contract for a row that reports mechanism rather than voice.
+ *
+ * Two beats, both taken from watching grok Build work rather than from a
+ * screenshot of it:
+ *
+ *   **Arrival is a pop, not a stream.** Narration reaches the reader by
+ *   growing a phrase at a time (grok repaints one every ~130ms; Beeline's draft
+ *   streamer coalesces at 250ms). A tool rollup does the opposite — it appears
+ *   whole, in a single frame, already complete. That contrast is load-bearing:
+ *   it is how a reader tells the agent's voice from the agent's receipts
+ *   without reading either. So this enters on `reveal`, fast and eased-out,
+ *   against narration that never enters at all.
+ *
+ *   **Demotion is a dip.** When the work settles the row rewrites itself from
+ *   the present tense to the past. grok does that swap in ~100ms and gets away
+ *   with a silent substitution because a terminal reader is watching one
+ *   column; here the change is given a short dip so it registers as *the row
+ *   changing state* rather than as text that was always that way.
+ *
+ * Reduced motion drops both beats and renders the settled row directly — the
+ * tense of the copy still reports the state, which is why the motion is allowed
+ * to be purely redundant.
+ */
+export function HullMechanismReveal({
+  children,
+  live,
+  style,
+}: {
+  children: React.ReactNode;
+  live: boolean;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const reducedMotion = useReducedMotion();
+  // Only a row that arrives *while the work is live* is genuinely new. A
+  // settled row is scrolled back into view constantly by the transcript's
+  // recycling FlatList, and replaying the arrival pop every time it does would
+  // turn a one-time signal into a twitch.
+  const entered = useSharedValue(reducedMotion || !live ? 1 : 0);
+  const settle = useSharedValue(1);
+  // A ref, not state: this only ever gates an imperative animation, and making
+  // it reactive would re-render the row on the very frame it is animating.
+  const wasLive = React.useRef(live);
+
+  useEffect(() => {
+    if (entered.value === 1) return;
+    entered.value = withTiming(1, {
+      duration: motionTokens.reveal,
+      easing: easeOutQuint,
+      reduceMotion: ReduceMotion.System,
+    });
+    // Mount-only: `live` flipping later is the demote beat below, not a second
+    // arrival, and re-running this would replay the pop on top of it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entered]);
+
+  useEffect(() => {
+    const demoted = wasLive.current && !live;
+    wasLive.current = live;
+    if (!demoted || reducedMotion) return;
+    settle.value = withSequence(
+      withTiming(0.4, { duration: motionTokens.demoteDip, easing: Easing.linear }),
+      withTiming(1, { duration: motionTokens.reveal, easing: easeOutQuint }),
+    );
+  }, [live, reducedMotion, settle]);
+
+  const animated = useAnimatedStyle(() => ({
+    opacity: entered.value * settle.value,
+    transform: [{ translateY: (1 - entered.value) * 3 }],
+  }));
+
+  return <Animated.View style={[style, animated]}>{children}</Animated.View>;
+}
+
+/**
+ * The 2px gutter that says whether the row beside it is still happening.
+ *
+ * grok encodes exactly this in the weight of its rail — `┃` while a block is
+ * the live one, `❙` once the next thing starts — and keeps the label itself
+ * untouched, so a failure or an in-flight call never disturbs the reading
+ * column. The port keeps the geometry and spends the reserved accent on the
+ * live state only, which is the one thing `DESIGN.md` already assigns gold to.
+ * The breath comes off the shared live clock, so this rail and every other
+ * live signal in the product move together rather than beating against
+ * each other.
+ */
+export function HullMechanismRail({ live }: { live: boolean }) {
+  const rail = <View style={[styles.mechanismRail, live && styles.mechanismRailLive]} />;
+  return live ? <HullLivePulse>{rail}</HullLivePulse> : rail;
 }
 
 export function PixelGateReveal({ children, style }: HullSurfaceProps) {
@@ -476,6 +628,20 @@ const styles = StyleSheet.create({
   loaderCell: { width: 7, height: 7, backgroundColor: groknight.signalBright },
   loaderCellCompact: { width: 5, height: 5 },
   staticLoader: { ...Typography.mono('semiBold'), color: groknight.signalBright, fontSize: 12 },
+  /**
+   * Geometry, not chroma, carries the status: a fixed 2px column at the
+   * mechanism indent, so a reader scans one edge instead of reading every
+   * label. It is `alignSelf: 'stretch'` rather than a fixed height because the
+   * row it marks can wrap.
+   */
+  mechanismRail: {
+    width: 2,
+    alignSelf: 'stretch',
+    minHeight: 14,
+    flexShrink: 0,
+    backgroundColor: groknight.borderQuiet,
+  },
+  mechanismRailLive: { backgroundColor: groknight.accent },
   activityTip: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 5 },
   activityTipDot: { width: 5, height: 5, backgroundColor: groknight.accent },
   activityTipLabel: {
@@ -487,6 +653,7 @@ const styles = StyleSheet.create({
   waveSignal: { minHeight: 20, flexDirection: 'row', alignItems: 'center', gap: 6 },
   waveSegments: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   waveSegment: { width: 3, height: 6, backgroundColor: groknight.signalBright },
+  waveSegmentLive: { backgroundColor: groknight.accent },
   waveLabel: {
     ...Typography.mono('semiBold'),
     color: groknight.textPrimary,

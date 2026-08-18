@@ -47,6 +47,30 @@ export function replyRootIdForEvent(event: NostrEvent): string {
 const LOAD_BEARING_TOOL_KINDS = new Set(['edit', 'delete', 'move']);
 /** ACP tool-call kinds that are inherently background inspection, never surfaced alone. */
 const LOW_SIGNAL_TOOL_KINDS = new Set(['read', 'search', 'think', 'fetch', 'other']);
+/**
+ * The subset of suppressed kinds that is specifically the agent *reasoning*.
+ *
+ * Its content never reaches the wire and must not: it is unbounded, it is the
+ * noisiest thing the harness emits, and publishing it would blow the per-pubkey
+ * quota on the one stretch of a turn that produces no user-facing result. What
+ * is cheap, and what a reader actually wants, is the receipt — grok Build shows
+ * a live `Thinking…` block for the whole stretch and then collapses it to a
+ * five-word `Thought for 5.8s` the instant the answer lands. Only the elapsed
+ * span is needed for that second half, and a span is a number.
+ */
+const REASONING_SESSION_UPDATE_KINDS = new Set([
+  'agent_thought_chunk',
+  'agent_thought',
+  'reasoning',
+  'reasoning_chunk',
+  'thinking',
+  'thinking_chunk',
+  'analysis',
+  'analysis_chunk',
+]);
+/** Below this a receipt is clutter, not information. */
+const REASONING_RECEIPT_MIN_MS = 400;
+
 /** `session/update` kinds that are reasoning/planning/metadata noise, never projected. */
 const SUPPRESSED_SESSION_UPDATE_KINDS = new Set([
   'agent_thought_chunk',
@@ -180,6 +204,64 @@ function isMajorUpdate(
     path: info.path ?? known?.path,
     isMcp: info.isMcp || known?.isMcp || false,
   });
+}
+
+/** True for an update that is the agent thinking, not the agent working. */
+function isReasoningUpdate(update: Record<string, unknown>): boolean {
+  const sessionUpdate = typeof update.sessionUpdate === 'string' ? update.sessionUpdate : undefined;
+  return Boolean(sessionUpdate && REASONING_SESSION_UPDATE_KINDS.has(sessionUpdate));
+}
+
+/**
+ * The verb an observational (never-projected) tool call is counted under in the
+ * turn's rollup tally.
+ *
+ * The drop itself is deliberate and stays — reads, searches, and MCP chatter
+ * must not each become their own relay write, or a research-heavy turn blows
+ * the per-pubkey quota. What was missing is that the *count* was dropped too,
+ * so a client could not say "41 files read, 12 searches" at all and a long
+ * research phase rendered as total silence. Tallying costs nothing on the wire:
+ * the tally rides the `activity_summary` event that is already published.
+ */
+function observationalVerb(
+  update: Record<string, unknown>,
+  toolCallKinds: Map<string, ToolCallInfo>,
+): string | undefined {
+  const sessionUpdate = typeof update.sessionUpdate === 'string' ? update.sessionUpdate : undefined;
+  if (!sessionUpdate || SUPPRESSED_SESSION_UPDATE_KINDS.has(sessionUpdate)) return undefined;
+  if (
+    sessionUpdate !== 'tool_call' &&
+    sessionUpdate !== 'tool_call_update' &&
+    sessionUpdate !== 'tool_result'
+  ) {
+    return undefined;
+  }
+  // Count each call once, on the terminal event, so a creation event and its
+  // own `tool_call_update` do not tally the same call twice.
+  const status =
+    typeof update.status === 'string'
+      ? update.status
+      : sessionUpdate === 'tool_result'
+        ? 'completed'
+        : undefined;
+  if (status !== 'completed' && status !== 'failed') return undefined;
+  const toolCallId = typeof update.toolCallId === 'string' ? update.toolCallId : undefined;
+  const known = toolCallId ? toolCallKinds.get(toolCallId) : undefined;
+  const current = toolCallInfo(update);
+  const kind = current.kind ?? known?.kind;
+  if (current.isMcp || known?.isMcp) return 'queried';
+  switch (kind) {
+    case 'read':
+      return 'read';
+    case 'search':
+      return 'searched';
+    case 'fetch':
+      return 'fetched';
+    case 'think':
+      return 'reasoned';
+    default:
+      return 'ran';
+  }
 }
 
 /** A deliberately non-raw label for a visible milestone. */
@@ -608,6 +690,13 @@ export function projectActivity(
   // whole picture — files/diff/command from creation, output from the
   // terminal — from a single record.
   const toolCallRaw = new Map<string, Record<string, unknown>>();
+  // The open reasoning stretch, spanning batches. It closes when real work
+  // lands — which is exactly the flush that has something to publish — so a
+  // long think that straddles several 5s windows still reports one span, not
+  // one per window, and a turn that is still only thinking reports nothing at
+  // all rather than a partial count that would have to be revised.
+  let reasoningOpenedAt: number | undefined;
+  let reasoningLastAt: number | undefined;
   const flush = () => {
     if (timer) clearTimeout(timer);
     timer = undefined;
@@ -621,8 +710,21 @@ export function projectActivity(
     // diffs, command, output) so the corner drill-down can inspect it.
     const major: Record<string, unknown>[] = [];
     const labels: string[] = [];
+    // Tally what the filter drops. Read-only work never earns its own wire
+    // event, but its shape ("read 41, searched 12") is exactly what makes a
+    // research phase legible instead of silent, so the counts ride along on
+    // the summary event that is published anyway.
+    //
+    // This has to happen in the *same* pass: the major branch below clears the
+    // tool call's tracked kind/command, so a second pass would re-classify the
+    // very milestone it just published as an anonymous observational call.
+    const rollup: Record<string, number> = {};
     for (const event of events) {
-      if (!isMajorUpdate(event, toolCallKinds)) continue;
+      if (!isMajorUpdate(event, toolCallKinds)) {
+        const verb = observationalVerb(event, toolCallKinds);
+        if (verb) rollup[verb] = (rollup[verb] ?? 0) + 1;
+        continue;
+      }
       const label = describeMajorUpdate(event, toolCallKinds);
       const toolCallId = typeof event.toolCallId === 'string' ? event.toolCallId : undefined;
       const merged = toolCallId ? (toolCallRaw.get(toolCallId) ?? event) : event;
@@ -639,10 +741,32 @@ export function projectActivity(
         toolCallRaw.delete(toolCallId);
       }
     }
-    if (!major.length) return;
+    const rollupTotal = Object.values(rollup).reduce((sum, count) => sum + count, 0);
+    // A reads-only batch used to emit nothing at all, which is the dead-air
+    // bug: during the exact stretch the agent is working hardest the corner
+    // showed no sign of life. It now emits exactly one event (the summary),
+    // never more than the mixed case already cost.
+    if (!major.length && !rollupTotal) return;
+    // Work landed, so the reasoning that preceded it is over: close the span
+    // and let the receipt ride this same event. Reset unconditionally, even
+    // below the reporting floor, or a sub-threshold think would leak into the
+    // next stretch's total.
+    // First reasoning chunk to last, not first-chunk-to-now: the flush that
+    // carries the receipt can be up to a whole batch window later, and the
+    // tool calls in between are not thinking. Under-reporting a stalled think
+    // is the safe direction — the receipt is a fact about the agent, and the
+    // live rail already reports that something is still happening.
+    const thoughtMs =
+      reasoningOpenedAt !== undefined && reasoningLastAt !== undefined
+        ? reasoningLastAt - reasoningOpenedAt
+        : 0;
+    reasoningOpenedAt = undefined;
+    reasoningLastAt = undefined;
     const summary: Record<string, unknown> = {
       sessionUpdate: 'activity_summary',
       content: { type: 'text', text: summarizeMajorActions(labels) },
+      ...(rollupTotal ? { rollup } : {}),
+      ...(thoughtMs >= REASONING_RECEIPT_MIN_MS ? { thoughtMs } : {}),
     };
     void emitActivityEvent(channelId, channelOwner, {
       sessionId,
@@ -657,6 +781,11 @@ export function projectActivity(
     // telemetry so conversation copy cannot be duplicated or lost in a batch.
     if (u.update.sessionUpdate === 'agent_message_chunk') return;
     const sanitized = sanitizeActivityUpdate(u.update);
+    if (isReasoningUpdate(sanitized)) {
+      const now = Date.now();
+      reasoningOpenedAt ??= now;
+      reasoningLastAt = now;
+    }
     trackToolCall(sanitized, toolCallKinds);
     const toolCallId = typeof sanitized.toolCallId === 'string' ? sanitized.toolCallId : undefined;
     if (toolCallId) toolCallRaw.set(toolCallId, { ...toolCallRaw.get(toolCallId), ...sanitized });

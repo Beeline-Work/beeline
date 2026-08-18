@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { closeSync, openSync } from 'node:fs';
 import { chmod, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { decodeNsec, getPublicKey } from '@beeline/nostr';
@@ -52,10 +53,32 @@ export interface AgentRuntimeRecord {
 export interface RoomRuntimeRecord {
   channelId: string;
   repo: LocalRepositoryBinding;
+  /**
+   * This Room's own storage directory (durable inbox, per-room agent home,
+   * corner worktrees). Explicit so a Room can live anywhere and, crucially, so
+   * a Room provisioned before the runtime root moved keeps resolving to the
+   * exact directory it already occupies: `git worktree` writes absolute paths
+   * into `.git/worktrees/<name>/gitdir`, so relocating a live Room's
+   * directory silently breaks every open corner in it.
+   *
+   * Absent on records written before this field existed; readers fall back to
+   * `<dirname(configPath)>/rooms/<channelId>`, which is where those Rooms are.
+   */
+  root?: string;
   /** Dedicated Room-admin identity used only by this Room's approval gate. */
   mergeWorker?: StoredIdentity;
   membershipSince: number;
   discoveredAt: string;
+}
+
+/**
+ * Pointer left at the old repo-anchored runtime path so `beeline start` keeps
+ * working from inside the paired checkout after the real runtime moved to the
+ * agent state home.
+ */
+interface RuntimeLinkRecord {
+  version: 3;
+  link: string;
 }
 
 interface LegacyAgentRuntimeRecord {
@@ -243,6 +266,23 @@ export function runtimeDirectory(supervisorRoot: string, agentPubkey: string): s
   return resolve(agentsDirectory(supervisorRoot), agentPubkey);
 }
 
+/**
+ * Default machine-local root for a paired agent's runtime.
+ *
+ * Historically this was the first paired repository's git common dir, which
+ * put every *other* repository's clone, every Room's durable inbox and every
+ * open corner's worktree inside repo A's `.git` — so deleting or moving repo A
+ * destroyed the whole Workspace agent, and a repo-less Workspace still needed a
+ * git repository to exist and stay put. Nothing in the supervisor or Body reads
+ * a repository out of this root; the per-Room repository binding is
+ * `RoomRuntimeRecord.repo`.
+ */
+export function defaultSupervisorRoot(env: NodeJS.ProcessEnv = process.env): string {
+  const xdgState = env.XDG_STATE_HOME;
+  if (xdgState && isAbsolute(xdgState)) return resolve(xdgState);
+  return resolve(env.HOME ?? homedir(), '.local', 'state');
+}
+
 export async function writeRuntimeRecord(record: AgentRuntimeRecord): Promise<string> {
   const directory = runtimeDirectory(record.supervisorRoot, record.agent.publicKey);
   const path = resolve(directory, 'runtime.json');
@@ -254,8 +294,58 @@ export async function writeRuntimeRecord(record: AgentRuntimeRecord): Promise<st
   return path;
 }
 
+/**
+ * Leave a pointer at the repo-anchored path the runtime used to occupy, so
+ * `beeline start` inside the paired checkout still finds this agent.
+ */
+export async function writeRuntimePointer(
+  gitCommonDir: string,
+  agentPubkey: string,
+  targetConfigPath: string,
+): Promise<string | undefined> {
+  const directory = runtimeDirectory(gitCommonDir, agentPubkey);
+  const path = resolve(directory, 'runtime.json');
+  if (resolve(targetConfigPath) === path) return undefined;
+  const link: RuntimeLinkRecord = { version: 3, link: resolve(targetConfigPath) };
+  try {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await writeFile(path, `${JSON.stringify(link, null, 2)}\n`, { mode: 0o600 });
+    return path;
+  } catch (error) {
+    // A read-only or missing git dir must never fail pairing: the runtime
+    // itself is already written, and `beeline start --agent` still works.
+    console.error(`[beeline] could not write runtime pointer at ${path}:`, error);
+    return undefined;
+  }
+}
+
+function parseRuntimeLink(text: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  const candidate = parsed as Partial<RuntimeLinkRecord> | null;
+  if (!candidate || typeof candidate.link !== 'string' || !candidate.link) return undefined;
+  return resolve(candidate.link);
+}
+
+/** Follow a repo-anchored pointer to the real runtime record path (one hop). */
+export async function resolveRuntimeConfigPath(path: string): Promise<string> {
+  const resolved = resolve(path);
+  let text: string;
+  try {
+    text = await readFile(resolved, 'utf8');
+  } catch {
+    return resolved;
+  }
+  return parseRuntimeLink(text) ?? resolved;
+}
+
 export async function readRuntimeRecord(path: string): Promise<AgentRuntimeRecord> {
-  const parsed = JSON.parse(await readFile(path, 'utf8')) as
+  const configPath = await resolveRuntimeConfigPath(path);
+  const parsed = JSON.parse(await readFile(configPath, 'utf8')) as
     AgentRuntimeRecord | LegacyAgentRuntimeRecord;
   if (parsed.version === 1) {
     runtimeIdentity(parsed.agent);
@@ -289,14 +379,19 @@ export async function readRuntimeRecord(path: string): Promise<AgentRuntimeRecor
     !parsed.communityId ||
     !parsed.supervisorRoot ||
     !Array.isArray(parsed.rooms) ||
-    parsed.rooms.some((room) => !room.channelId || !room.repo?.root) ||
+    parsed.rooms.some(
+      (room) =>
+        !room.channelId ||
+        !room.repo?.root ||
+        (room.root !== undefined && (typeof room.root !== 'string' || !room.root)),
+    ) ||
     (parsed.agentKind !== undefined && !AGENT_KINDS.includes(parsed.agentKind)) ||
     (parsed.agentCommand !== undefined && !parsed.agentCommand) ||
     (parsed.agentArgs !== undefined &&
       (!Array.isArray(parsed.agentArgs) ||
         parsed.agentArgs.some((argument) => typeof argument !== 'string')))
   ) {
-    throw new Error(`invalid agent runtime config: ${path}`);
+    throw new Error(`invalid agent runtime config: ${configPath}`);
   }
   runtimeIdentity(parsed.agent);
   runtimeIdentity(parsed.body);
@@ -307,6 +402,7 @@ export async function readRuntimeRecord(path: string): Promise<AgentRuntimeRecor
 export async function removeAgentRuntime(
   configPath: string,
   expectedAgentPubkey: string,
+  pointerRoots: string[] = [],
 ): Promise<void> {
   const resolvedConfig = resolve(configPath);
   const directory = dirname(resolvedConfig);
@@ -318,8 +414,37 @@ export async function removeAgentRuntime(
     throw new Error(`refusing to remove unexpected agent runtime path: ${resolvedConfig}`);
   }
   await rm(directory, { recursive: true, force: true });
+  // Repo-anchored pointers would otherwise keep advertising a runtime that no
+  // longer exists to `beeline start`.
+  for (const pointerRoot of pointerRoots) {
+    const pointerDirectory = runtimeDirectory(pointerRoot, expectedAgentPubkey);
+    if (pointerDirectory === directory) continue;
+    const pointer = await readFile(resolve(pointerDirectory, 'runtime.json'), 'utf8').catch(
+      () => undefined,
+    );
+    if (pointer && parseRuntimeLink(pointer)) {
+      await rm(pointerDirectory, { recursive: true, force: true });
+    }
+  }
 }
 
+async function runtimeConfigPathsIn(agentsDir: string): Promise<string[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(agentsDir);
+  } catch {
+    return [];
+  }
+  return Promise.all(
+    entries.map((entry) => resolveRuntimeConfigPath(resolve(agentsDir, entry, 'runtime.json'))),
+  );
+}
+
+/**
+ * Runtimes reachable from a checkout. The repo-anchored path is now usually a
+ * pointer to the agent state home; a runtime paired before the move still has
+ * its real record there and resolves to itself.
+ */
 export async function findRuntimeConfigPaths(cwd: string): Promise<string[]> {
   const root = git(cwd, ['rev-parse', '--show-toplevel']);
   if (!root) throw new Error('beeline start must be run inside a paired git repository');
@@ -327,14 +452,17 @@ export async function findRuntimeConfigPaths(cwd: string): Promise<string[]> {
   const gitCommonDir = common
     ? resolve(root, common)
     : resolve(root, git(root, ['rev-parse', '--git-common-dir']) ?? '.git');
-  const agentsDir = agentsDirectory(gitCommonDir);
-  let entries: string[];
-  try {
-    entries = await readdir(agentsDir);
-  } catch {
-    return [];
-  }
-  return entries.map((entry) => resolve(agentsDir, entry, 'runtime.json'));
+  return runtimeConfigPathsIn(agentsDirectory(gitCommonDir));
+}
+
+/**
+ * Runtimes in the machine-local agent state home, so starting an agent no
+ * longer requires standing in the specific repository it was paired in.
+ */
+export async function findAgentRuntimeConfigPaths(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string[]> {
+  return runtimeConfigPathsIn(agentsDirectory(defaultSupervisorRoot(env)));
 }
 
 export async function runtimeDaemonPid(configPath: string): Promise<number | null> {
@@ -396,6 +524,9 @@ export async function pairRepositoryAgent(
     agentIdentity: Identity;
     bodyIdentity: Identity;
     mergeWorkerIdentity: Identity;
+    /** Override the machine-local agent state root (tests, unusual layouts). */
+    supervisorRoot?: string;
+    env?: NodeJS.ProcessEnv;
   },
   deps: {
     redeem(code: string): Promise<RedeemAgentPairingResult>;
@@ -421,6 +552,12 @@ export async function pairRepositoryAgent(
     repo.relayRepo ? input.mergeWorkerIdentity.publicKey : undefined,
   );
   await deps.validate?.(pairing, room, repo);
+  // The runtime root is machine-local agent state, deliberately not the paired
+  // repository's `.git`. The repository binding for this Room is `repo` below.
+  const supervisorRoot = input.supervisorRoot
+    ? resolve(input.supervisorRoot)
+    : defaultSupervisorRoot(input.env);
+  const runtimeRoot = runtimeDirectory(supervisorRoot, input.agentIdentity.publicKey);
   const runtime: AgentRuntimeRecord = {
     version: 2,
     communityId: pairing.communityId,
@@ -431,6 +568,7 @@ export async function pairRepositoryAgent(
       {
         channelId: room.channelId,
         repo,
+        root: resolve(runtimeRoot, 'rooms', room.channelId),
         ...(repo.relayRepo && room.mergeWorkerProvisioned
           ? { mergeWorker: storeIdentity(input.mergeWorkerIdentity, 'buzzy-merge-worker') }
           : {}),
@@ -438,7 +576,7 @@ export async function pairRepositoryAgent(
         discoveredAt: new Date().toISOString(),
       },
     ],
-    supervisorRoot: repo.gitCommonDir,
+    supervisorRoot,
     relayBaseUrl: input.relayBaseUrl,
     ...(input.relayHost ? { relayHost: input.relayHost } : {}),
     ...(input.llmEnvFile ? { llmEnvFile: input.llmEnvFile } : {}),
@@ -450,6 +588,8 @@ export async function pairRepositoryAgent(
     createdAt: new Date().toISOString(),
   };
   const configPath = await writeRuntimeRecord(runtime);
+  // `beeline start` from inside the paired checkout keeps working.
+  await writeRuntimePointer(repo.gitCommonDir, runtime.agent.publicKey, configPath);
   const pid = await (deps.launch ?? launchRuntimeDaemon)(configPath);
   return { pairing, room, runtime, configPath, pid };
 }

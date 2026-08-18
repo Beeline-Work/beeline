@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -29,7 +31,11 @@ vi.mock('@/components/buzz/MonoHull', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return { HullSurface: host('HullSurface'), PixelGateReveal: host('PixelGateReveal') };
+  return {
+    hairlineDivider: { borderBottomWidth: 1, borderBottomColor: '#4e4e4e' },
+    HullSurface: host('HullSurface'),
+    PixelGateReveal: host('PixelGateReveal'),
+  };
 });
 
 import BuzzSettings from './index';
@@ -59,6 +65,47 @@ function render(): ReactTestRenderer {
 }
 
 describe('Buzz global Settings', () => {
+  it('is the one coherent account surface, reachable and not a dead end', () => {
+    // The Workspace rail's YOU command opens this hub; every screen that
+    // mounts the rail must route there rather than jumping past it into
+    // `settings/identity`, which is what stranded this screen — and the only
+    // sign-out in the product with it.
+    const railScreens = [
+      '../../../../app/(app)/buzz/channels.tsx',
+      '../../../../app/(app)/buzz/community.tsx',
+      '../../../../app/(app)/buzz/corners/[roomId].tsx',
+      '../../../../app/(app)/buzz/MembersScreen.tsx',
+      '../../../../app/(app)/buzz/chat/[channelId].tsx',
+      '../../../../app/(app)/join/[token].tsx',
+    ];
+    for (const relativePath of railScreens) {
+      const source = readFileSync(new URL(relativePath, import.meta.url), 'utf8');
+      expect(source, `${relativePath} mounts the rail`).toContain('onSettings=');
+      expect(source, `${relativePath} skips the settings hub`).not.toContain(
+        "onSettings={() => router.push('/buzz/settings/identity'",
+      );
+      expect(source, `${relativePath} should open the hub`).toContain(
+        "onSettings={() => router.push('/buzz/settings' as Href)}",
+      );
+    }
+    // ...and the hub itself is the only thing that opens the identity screen.
+    const renderer = render();
+    expect(renderer.root.findByProps({ testID: 'backup-key-setting' })).toBeDefined();
+  });
+
+  it('renders as an index, not a stack of cards', () => {
+    // DESIGN.md: a box never wraps a repeating content unit. The one box left
+    // on this screen is the destructive confirmation, a non-repeating notice.
+    const source = readFileSync(new URL('./index.tsx', import.meta.url), 'utf8');
+    const rowStyle = source.slice(source.indexOf('  settingsRow: {'));
+    const rowBlock = rowStyle.slice(0, rowStyle.indexOf('},') + 2);
+    expect(rowBlock).not.toMatch(/borderWidth|borderRadius|backgroundColor/);
+    expect(rowBlock).toContain('...hairlineDivider');
+    // Persistent chrome carries no lifted surface of its own.
+    expect(source).not.toContain('<HullSurface');
+    expect(source).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+  });
+
   it('contains key backup and sign-out actions without relay switching', async () => {
     const renderer = render();
     const text = renderer.root

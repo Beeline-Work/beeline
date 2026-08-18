@@ -1,16 +1,19 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { newIdentity } from '@beeline/gate';
 import {
   canonicalizeOrigin,
+  findAgentRuntimeConfigPaths,
+  findRuntimeConfigPaths,
   inspectLocalRepository,
   pairRepositoryAgent,
   readRuntimeRecord,
   removeAgentRuntime,
+  resolveRuntimeConfigPath,
   runtimeAgentCommand,
 } from './runtime.js';
 
@@ -26,6 +29,16 @@ async function repository(origin?: string): Promise<string> {
   cleanup.push(path);
   run(path, ['init', '-q', '-b', 'main']);
   if (origin) run(path, ['remote', 'add', 'origin', origin]);
+  return path;
+}
+
+/**
+ * Machine-local agent state root for one test. Pairing defaults to
+ * `$XDG_STATE_HOME`/`~/.local/state`; tests must never write there.
+ */
+async function stateRoot(): Promise<string> {
+  const path = await mkdtemp(resolve(tmpdir(), 'beeline-state-'));
+  cleanup.push(path);
   return path;
 }
 
@@ -66,6 +79,7 @@ describe('pair → run unification', () => {
     const agent = newIdentity('agent');
     const body = newIdentity('body');
     const mergeWorker = newIdentity('merge-worker');
+    const supervisorRoot = await stateRoot();
     let launchedPath = '';
     const result = await pairRepositoryAgent(
       {
@@ -80,6 +94,7 @@ describe('pair → run unification', () => {
         agentIdentity: agent,
         bodyIdentity: body,
         mergeWorkerIdentity: mergeWorker,
+        supervisorRoot,
       },
       {
         redeem: async (code) => {
@@ -154,6 +169,7 @@ describe('pair → run unification', () => {
     const agent = newIdentity('agent');
     const body = newIdentity('body');
     const mergeWorker = newIdentity('merge-worker');
+    const supervisorRoot = await stateRoot();
     const result = await pairRepositoryAgent(
       {
         code: 'BUZZ-ABCD-EFGH',
@@ -164,6 +180,7 @@ describe('pair → run unification', () => {
         agentIdentity: agent,
         bodyIdentity: body,
         mergeWorkerIdentity: mergeWorker,
+        supervisorRoot,
       },
       {
         redeem: async () => ({
@@ -195,5 +212,166 @@ describe('pair → run unification', () => {
     await expect(
       removeAgentRuntime(resolve(root, 'runtime.json'), agent.publicKey),
     ).rejects.toThrow('refusing to remove unexpected agent runtime path');
+  });
+});
+
+describe('runtime root migration', () => {
+  async function pair(
+    root: string,
+    supervisorRoot: string,
+    agent = newIdentity('agent'),
+  ): Promise<{ configPath: string; agentPubkey: string; channelId: string }> {
+    const channelId = '22222222-2222-4222-8222-222222222222';
+    const result = await pairRepositoryAgent(
+      {
+        code: 'BUZZ-ABCD-EFGH',
+        cwd: root,
+        relayBaseUrl: 'http://relay.test',
+        agentBinary: '/usr/bin/agent',
+        mcpBinary: '/usr/bin/mcp',
+        agentIdentity: agent,
+        bodyIdentity: newIdentity('body'),
+        mergeWorkerIdentity: newIdentity('merge-worker'),
+        supervisorRoot,
+      },
+      {
+        redeem: async () => ({
+          communityId: '11111111-1111-4111-8111-111111111111',
+          pairedBy: 'a'.repeat(64),
+          joined: true,
+          agent: {
+            agentId: 'agent-id',
+            communityId: '11111111-1111-4111-8111-111111111111',
+            displayName: 'Agent',
+            pubkey: agent.publicKey,
+            createdAt: 1,
+            raw: {} as never,
+          },
+        }),
+        resolveRoom: async () => ({
+          channelId,
+          created: true,
+          joined: true,
+          mergeWorkerProvisioned: false,
+        }),
+        launch: async () => 4242,
+      },
+    );
+    return { configPath: result.configPath, agentPubkey: agent.publicKey, channelId };
+  }
+
+  it('stores the runtime in the machine-local agent state home, not the paired repo .git', async () => {
+    const root = await repository('https://example.com/team/project.git');
+    const supervisorRoot = await stateRoot();
+    const { configPath, agentPubkey, channelId } = await pair(root, supervisorRoot);
+
+    expect(configPath).toBe(
+      resolve(supervisorRoot, 'beeline', 'agents', agentPubkey, 'runtime.json'),
+    );
+    expect(configPath.startsWith(root)).toBe(false);
+    // The Room's own storage root is explicit, so a later record move cannot
+    // silently relocate an open corner's registered worktree.
+    const stored = await readRuntimeRecord(configPath);
+    expect(stored.rooms[0]!.root).toBe(
+      resolve(supervisorRoot, 'beeline', 'agents', agentPubkey, 'rooms', channelId),
+    );
+    // The repository binding for the Room is unchanged: the paired Room still
+    // works in the human's own checkout (captain's decision D1).
+    expect(stored.rooms[0]!.repo.root).toBe(root);
+  });
+
+  it('leaves a compatibility pointer so beeline start still works from the paired repo', async () => {
+    const root = await repository('https://example.com/team/project.git');
+    const supervisorRoot = await stateRoot();
+    const { configPath, agentPubkey } = await pair(root, supervisorRoot);
+
+    const pointerPath = resolve(root, '.git', 'beeline', 'agents', agentPubkey, 'runtime.json');
+    expect(existsSync(pointerPath)).toBe(true);
+    expect(JSON.parse(await readFile(pointerPath, 'utf8'))).toEqual({
+      version: 3,
+      link: configPath,
+    });
+
+    expect(await findRuntimeConfigPaths(root)).toEqual([configPath]);
+    expect(await resolveRuntimeConfigPath(pointerPath)).toBe(configPath);
+    // Reading through the pointer yields the real record, not a parse error.
+    expect((await readRuntimeRecord(pointerPath)).agent.publicKey).toBe(agentPubkey);
+  });
+
+  it('finds a runtime by agent pubkey without standing in any repository', async () => {
+    const root = await repository('https://example.com/team/project.git');
+    const supervisorRoot = await stateRoot();
+    const { configPath } = await pair(root, supervisorRoot);
+
+    expect(await findAgentRuntimeConfigPaths({ XDG_STATE_HOME: supervisorRoot })).toEqual([
+      configPath,
+    ]);
+  });
+
+  it('still resolves and runs a runtime recorded in the old repo-anchored layout', async () => {
+    // Exactly the shape an already-paired daemon has on disk today: the record
+    // lives in the repo's .git, supervisorRoot is that git dir, and no Room
+    // carries an explicit root.
+    const root = await repository('https://example.com/team/project.git');
+    const agent = newIdentity('legacy-agent');
+    const body = newIdentity('legacy-body');
+    const channelId = '22222222-2222-4222-8222-222222222222';
+    const gitCommonDir = resolve(root, '.git');
+    const legacyDir = resolve(gitCommonDir, 'beeline', 'agents', agent.publicKey);
+    const legacyPath = resolve(legacyDir, 'runtime.json');
+    await mkdir(legacyDir, { recursive: true });
+    await writeFile(
+      legacyPath,
+      JSON.stringify({
+        version: 2,
+        communityId: '11111111-1111-4111-8111-111111111111',
+        pairedBy: 'a'.repeat(64),
+        agent: {
+          name: 'buzzy-agent',
+          secretKeyHex: Buffer.from(agent.secretKey).toString('hex'),
+          publicKey: agent.publicKey,
+        },
+        body: {
+          name: 'buzzy-body',
+          secretKeyHex: Buffer.from(body.secretKey).toString('hex'),
+          publicKey: body.publicKey,
+        },
+        rooms: [
+          {
+            channelId,
+            repo: inspectLocalRepository(root),
+            membershipSince: 10,
+            discoveredAt: new Date(0).toISOString(),
+          },
+        ],
+        supervisorRoot: gitCommonDir,
+        relayBaseUrl: 'http://relay.test',
+        agentBinary: '/usr/bin/agent',
+        mcpBinary: '/usr/bin/mcp',
+        createdAt: new Date(0).toISOString(),
+      }),
+    );
+
+    const stored = await readRuntimeRecord(legacyPath);
+    expect(stored.agent.publicKey).toBe(agent.publicKey);
+    expect(stored.supervisorRoot).toBe(gitCommonDir);
+    // No root is stamped onto an existing Room: the supervisor derives its
+    // current, unchanged location from the config path instead of moving it.
+    expect(stored.rooms[0]!.root).toBeUndefined();
+    // beeline start from the repo keeps finding it with no pointer present.
+    expect(await findRuntimeConfigPaths(root)).toEqual([legacyPath]);
+  });
+
+  it('removes the repo-anchored pointer along with the runtime it points at', async () => {
+    const root = await repository('https://example.com/team/project.git');
+    const supervisorRoot = await stateRoot();
+    const { configPath, agentPubkey } = await pair(root, supervisorRoot);
+    const pointerPath = resolve(root, '.git', 'beeline', 'agents', agentPubkey, 'runtime.json');
+
+    await removeAgentRuntime(configPath, agentPubkey, [resolve(root, '.git')]);
+
+    expect(existsSync(configPath)).toBe(false);
+    expect(existsSync(pointerPath)).toBe(false);
+    expect(existsSync(root)).toBe(true);
   });
 });

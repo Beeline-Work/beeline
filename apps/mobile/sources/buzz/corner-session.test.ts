@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  cachedChannelKind,
+  channelHeaderTitle,
   cornerSessionState,
   latestCornerTurnSummary,
   resolveCornerViewAgentPubkey,
 } from './corner-session';
+import { ROOM_LABEL } from './vocabulary';
 
 describe('corner session presentation', () => {
   it('uses the corner turn lifecycle, not presence, for working, idle, and done', () => {
@@ -85,5 +88,44 @@ describe('corner session presentation', () => {
         },
       ]),
     ).toBe('Renamed the Room and updated its tests.');
+  });
+});
+
+describe('chat header title', () => {
+  it('never shows the Room label while a corner is loading', () => {
+    // "ROOM" names the wrong surface entirely, and a corner's own name is a
+    // slug, so the label is not even a plausible stand-in for it.
+    expect(channelHeaderTitle(null, 'corner', 'c0ffee00deadbeef')).toBeNull();
+    expect(channelHeaderTitle(null, 'unknown', 'c0ffee00deadbeef')).toBeNull();
+    expect(channelHeaderTitle('', 'corner', 'c0ffee00deadbeef')).toBe('corner-c0ffee00');
+    expect(channelHeaderTitle('fix oauth callback', 'corner', 'c0ffee00deadbeef')).toBe(
+      'fix-oauth-callback',
+    );
+  });
+
+  it('shows a resolved name, and the Room label only for a confirmed Room', () => {
+    expect(channelHeaderTitle('Payments', 'room', 'room-1')).toBe('Payments');
+    expect(channelHeaderTitle('  Payments  ', 'room', 'room-1')).toBe('Payments');
+    expect(channelHeaderTitle('', 'room', 'room-1')).toBe(ROOM_LABEL);
+    expect(channelHeaderTitle(null, 'room', 'room-1')).toBe(ROOM_LABEL);
+  });
+
+  it('never returns the Room label for anything but a confirmed Room', () => {
+    for (const kind of ['corner', 'unknown'] as const) {
+      for (const name of [null, '', 'x'] as const) {
+        expect(channelHeaderTitle(name, kind, 'chan-1')).not.toBe(ROOM_LABEL);
+      }
+    }
+  });
+});
+
+describe('cached channel kind', () => {
+  it('treats a parentless entry as a Room only once its name has been written', () => {
+    expect(cachedChannelKind(undefined)).toBe('unknown');
+    expect(cachedChannelKind({})).toBe('unknown');
+    expect(cachedChannelKind({ roomName: '' })).toBe('unknown');
+    expect(cachedChannelKind({ roomName: 'Payments' })).toBe('room');
+    expect(cachedChannelKind({ parentChannelId: 'room-1' })).toBe('corner');
+    expect(cachedChannelKind({ parentChannelId: 'room-1', roomName: 'fix-oauth' })).toBe('corner');
   });
 });

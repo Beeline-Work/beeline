@@ -37,10 +37,31 @@ export type SessionDetail = SessionSummary & {
 };
 
 export type AgentActivityItem = {
-  kind: 'thinking' | 'tool' | 'output';
+  /**
+   * `output` is the agent's own prose — narration, the thing the reader is
+   * actually here to read. It is deliberately distinct from `summary`, the
+   * synthetic per-batch receipt body publishes, so the corner can show the one
+   * and fold the other. Conflating them is what buried an agent's narration
+   * behind a "tool output" disclosure.
+   */
+  kind: 'thinking' | 'tool' | 'output' | 'summary';
   title: string;
   id?: string;
   toolKind?: string;
+  /**
+   * Per-verb counts of the observational tool calls body deliberately does not
+   * project as their own events (`apps/body/src/activity.ts`). The only source
+   * for "read 41, searched 12" — those calls never reach the wire themselves.
+   */
+  rollup?: Record<string, number>;
+  /**
+   * Milliseconds the agent spent reasoning before this batch's work landed.
+   * The reasoning *text* is never published (unbounded, and quota-hostile), so
+   * this span is the only trace of it — enough for the quiet `THOUGHT FOR 5.8S`
+   * receipt, which is the half of grok Build's loud-then-quiet reasoning the
+   * wire can afford.
+   */
+  thoughtMs?: number;
   text?: string;
   status?: string;
   command?: string;

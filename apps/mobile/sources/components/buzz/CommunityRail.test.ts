@@ -71,17 +71,10 @@ vi.mock('./MonoHull', async () => {
   };
 });
 
-vi.mock('./WorkspaceAvatar', async () => {
+vi.mock('./IdentityMark', async () => {
   const ReactModule = await import('react');
   return {
-    WorkspaceAvatar: (props: any) => ReactModule.createElement('WorkspaceAvatar', props),
-  };
-});
-
-vi.mock('./PersonAvatar', async () => {
-  const ReactModule = await import('react');
-  return {
-    PersonAvatar: (props: any) => ReactModule.createElement('PersonAvatar', props),
+    IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props),
   };
 });
 
@@ -142,9 +135,11 @@ describe('Workspace drawer', () => {
     const renderer = renderShell();
     expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'workspace-avatar-edit' })).toHaveLength(0);
-    expect(
-      renderer.root.findByProps({ testID: 'workspace-avatar-header' }).props.community,
-    ).toMatchObject({ communityId: 'community-1', avatar: 'https://example.test/night-shift.png' });
+    expect(renderer.root.findByProps({ testID: 'workspace-avatar-header' }).props).toMatchObject({
+      kind: 'workspace',
+      seed: 'community-1',
+      avatarUrl: 'https://example.test/night-shift.png',
+    });
 
     const trigger = renderer.root.findByProps({ testID: 'workspace-avatar-trigger' });
     expect(trigger.props.accessibilityState).toEqual({ expanded: false });
@@ -152,8 +147,12 @@ describe('Workspace drawer', () => {
 
     expect(renderer.root.findByProps({ testID: 'community-drawer-overlay' })).toBeDefined();
     expect(
-      renderer.root.findByProps({ testID: 'workspace-avatar-community-1' }).props.community,
-    ).toMatchObject({ communityId: 'community-1', avatar: 'https://example.test/night-shift.png' });
+      renderer.root.findByProps({ testID: 'workspace-avatar-community-1' }).props,
+    ).toMatchObject({
+      kind: 'workspace',
+      seed: 'community-1',
+      avatarUrl: 'https://example.test/night-shift.png',
+    });
     expect(
       renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.accessibilityState,
     ).toEqual({ expanded: true });
@@ -215,7 +214,7 @@ describe('Workspace drawer', () => {
     const mySettings = renderer.root
       .findAllByType('TouchableOpacity' as any)
       .find((node) => node.props.testID === 'community-rail-settings');
-    expect(mySettings?.props.accessibilityLabel).toBe('My Settings');
+    expect(mySettings?.props.accessibilityLabel).toBe('Your settings');
     act(() => renderer.root.findByProps({ testID: 'community-rail-settings' }).props.onPress());
 
     expect(onSettings).toHaveBeenCalledOnce();
@@ -229,8 +228,12 @@ describe('Workspace drawer', () => {
     });
 
     act(() => renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.onPress());
-    expect(renderer.root.findByType('PersonAvatar').props).toMatchObject({
-      pubkey: 'person-pubkey',
+    expect(
+      renderer.root
+        .findAllByType('IdentityMark')
+        .find((node: any) => node.props.kind === 'human')!.props,
+    ).toMatchObject({
+      seed: 'person-pubkey',
       avatarUrl: 'https://example.test/person.png',
       name: 'You',
     });

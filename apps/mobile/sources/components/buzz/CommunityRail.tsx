@@ -14,10 +14,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Community } from '@beeline/buzz-client';
 import { groknight } from '@/buzz/groknight';
 import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
-import { PersonAvatar } from '@/components/buzz/PersonAvatar';
-import { WorkspaceAvatar } from '@/components/buzz/WorkspaceAvatar';
-import { HullSurface } from '@/components/buzz/MonoHull';
 import { Typography } from '@/constants/Typography';
+import { IdentityMark } from '@/components/buzz/IdentityMark';
 
 const DRAWER_WIDTH = 72;
 const DRAWER_DURATION_MS = 180;
@@ -38,26 +36,68 @@ type RailButtonProps = {
   active: boolean;
   label: string;
   children: React.ReactNode;
-  add?: boolean;
   onPress: () => void;
   testID?: string;
 };
 
-function RailButton({ active, label, children, add = false, onPress, testID }: RailButtonProps) {
+/**
+ * A Workspace slot. Selection reads three redundant ways and none of them is a
+ * box or a fill: a full-height bar on the rail's own edge, the mark's own
+ * thicker active frame, and tone — the Workspace you are not in recedes a step
+ * rather than the one you are in lighting up. A column of identical marks at
+ * identical luminance was the thing that made the rail hard to read.
+ */
+function RailButton({ active, label, children, onPress, testID }: RailButtonProps) {
   return (
     <View style={styles.railButtonSlot}>
-      {active && <View style={styles.activeNotch} />}
+      {active && <View style={styles.selectionBar} />}
       <TouchableOpacity
         accessibilityRole="button"
         accessibilityLabel={label}
         accessibilityState={{ selected: active }}
         testID={testID}
         onPress={onPress}
-        style={[styles.railButton, add && styles.addRailButton]}
+        style={[styles.railButton, !active && styles.railButtonIdle]}
       >
         {children}
       </TouchableOpacity>
     </View>
+  );
+}
+
+type RailCommandProps = {
+  label: string;
+  accessibilityLabel: string;
+  onPress: () => void;
+  glyph?: string;
+  children?: React.ReactNode;
+  testID?: string;
+};
+
+/**
+ * A rail command: glyph (or identity mark) over a mono micro-label. The label
+ * is what makes the rail deliberate instead of a column of mystery icons, and
+ * it is why these need no border — the affordance is named, not framed.
+ */
+function RailCommand({
+  label,
+  accessibilityLabel,
+  onPress,
+  glyph,
+  children,
+  testID,
+}: RailCommandProps) {
+  return (
+    <TouchableOpacity
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      onPress={onPress}
+      style={styles.railCommand}
+      testID={testID}
+    >
+      {glyph ? <Text style={styles.railCommandGlyph}>{glyph}</Text> : children}
+      <Text style={styles.railCommandLabel}>{label}</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -73,9 +113,15 @@ export function CommunityRail({
   viewerAvatarUrl,
 }: CommunityRailProps) {
   const insets = useSafeAreaInsets();
+  const activeCommunity =
+    communities.find((community) => community.communityId === activeCommunityId) ?? null;
+  const showsWorkspaceSettings = Boolean(
+    activeCommunity && canManageActiveCommunity && onWorkspaceSettings,
+  );
   return (
-    <HullSurface
-      strength="quiet"
+    // No surface of its own: the rail is the same obsidian as the screen it
+    // slides over, held apart by one hairline edge.
+    <View
       accessibilityLabel={`${WORKSPACE_LABEL} switcher`}
       style={[styles.rail, { paddingTop: Math.max(insets.top, 10) }]}
     >
@@ -87,58 +133,66 @@ export function CommunityRail({
         {communities.map((community) => {
           const active = activeCommunityId === community.communityId;
           return (
-            <View key={community.communityId} style={styles.workspaceRailGroup}>
-              <RailButton
-                active={active}
-                label={community.name}
-                onPress={() => onSelect(community.communityId)}
-                testID={`community-rail-${community.communityId}`}
-              >
-                <WorkspaceAvatar
-                  active={active}
-                  community={community}
-                  size={42}
-                  testID={`workspace-avatar-${community.communityId}`}
-                />
-              </RailButton>
-              {active && canManageActiveCommunity && onWorkspaceSettings && (
-                <TouchableOpacity
-                  accessibilityLabel={`${community.name} ${WORKSPACE_LABEL} settings`}
-                  accessibilityRole="button"
-                  onPress={() => onWorkspaceSettings(community.communityId)}
-                  style={styles.workspaceSettingsButton}
-                  testID={`workspace-settings-${community.communityId}`}
-                >
-                  <Text style={styles.workspaceSettingsGlyph}>⚙</Text>
-                </TouchableOpacity>
-              )}
-            </View>
+            <RailButton
+              active={active}
+              key={community.communityId}
+              label={community.name}
+              onPress={() => onSelect(community.communityId)}
+              testID={`community-rail-${community.communityId}`}
+            >
+              <IdentityMark
+                kind="workspace"
+                seed={community?.communityId ?? 'workspace-loading'}
+                avatarUrl={community?.avatar}
+                name={community?.name}
+                size={40}
+                selected={active}
+                testID={`workspace-avatar-${community.communityId}`}
+              />
+            </RailButton>
           );
         })}
       </ScrollView>
-      <RailButton
-        active={false}
-        add
-        label={`Create or join a ${WORKSPACE_LABEL}`}
+
+      {/* Commands, not identities: one zone, separated by a hairline rather
+          than by a box around each control. */}
+      <View style={styles.railDivider} />
+      <RailCommand
+        accessibilityLabel={`Create or join a ${WORKSPACE_LABEL}`}
+        glyph="＋"
+        label="ADD"
         onPress={onAdd}
         testID="community-rail-add"
-      >
-        <Text style={styles.addRailButtonText}>＋</Text>
-      </RailButton>
-      <RailButton
-        active={false}
-        label="My Settings"
+      />
+      {showsWorkspaceSettings && activeCommunity && (
+        <RailCommand
+          accessibilityLabel={`${activeCommunity.name} ${WORKSPACE_LABEL} settings`}
+          glyph="⚙"
+          label="SETUP"
+          onPress={() => onWorkspaceSettings?.(activeCommunity.communityId)}
+          testID={`workspace-settings-${activeCommunity.communityId}`}
+        />
+      )}
+      <View style={styles.railDivider} />
+      <RailCommand
+        accessibilityLabel="Your settings"
+        glyph={viewerPubkey ? undefined : '⚙'}
+        label="YOU"
         onPress={onSettings}
         testID="community-rail-settings"
       >
         {viewerPubkey ? (
-          <PersonAvatar pubkey={viewerPubkey} avatarUrl={viewerAvatarUrl} name="You" size={38} />
-        ) : (
-          <Text style={styles.settingsRailButtonText}>⚙</Text>
-        )}
-      </RailButton>
+          <IdentityMark
+            kind="human"
+            seed={viewerPubkey}
+            avatarUrl={viewerAvatarUrl}
+            name="You"
+            size={34}
+          />
+        ) : null}
+      </RailCommand>
       <View style={{ height: Math.max(insets.bottom, 8) }} />
-    </HullSurface>
+    </View>
   );
 }
 
@@ -153,34 +207,38 @@ type CommunityDrawerTriggerProps = {
   community?: Community | null;
 };
 
+/**
+ * The Workspace identity *is* the switcher: one press target holding the mark,
+ * the name, and a disclosure caret. Two adjacent targets doing the same thing
+ * (the previous avatar + chevron pair) read as an accident.
+ */
 export function CommunityDrawerTrigger({ community }: CommunityDrawerTriggerProps) {
   const drawer = useContext(CommunityDrawerContext);
   if (!drawer) {
     throw new Error('CommunityDrawerTrigger must be rendered inside BuzzCommunityShell.');
   }
   return (
-    <View style={styles.drawerTrigger}>
-      <TouchableOpacity
-        accessibilityLabel={`Open ${WORKSPACE_LABEL} switcher`}
-        accessibilityRole="button"
-        accessibilityState={{ expanded: drawer.drawerOpen }}
-        onPress={drawer.openDrawer}
-        style={styles.drawerAvatarButton}
-        testID="workspace-avatar-trigger"
-      >
-        <WorkspaceAvatar community={community} size={38} testID="workspace-avatar-header" />
-      </TouchableOpacity>
-      <TouchableOpacity
-        accessibilityLabel={`Open ${WORKSPACE_LABEL} switcher`}
-        accessibilityRole="button"
-        accessibilityState={{ expanded: drawer.drawerOpen }}
-        onPress={drawer.openDrawer}
-        style={styles.drawerToggleButton}
-        testID="community-drawer-trigger"
-      >
-        <Text style={styles.drawerTriggerChevron}>›</Text>
-      </TouchableOpacity>
-    </View>
+    <TouchableOpacity
+      accessibilityLabel={`${community?.name ?? WORKSPACE_LABEL} — switch ${WORKSPACE_LABEL}`}
+      accessibilityRole="button"
+      accessibilityState={{ expanded: drawer.drawerOpen }}
+      onPress={drawer.openDrawer}
+      style={styles.drawerTrigger}
+      testID="workspace-avatar-trigger"
+    >
+      <IdentityMark
+        kind="workspace"
+        seed={community?.communityId ?? 'workspace-loading'}
+        avatarUrl={community?.avatar}
+        name={community?.name}
+        size={26}
+        testID="workspace-avatar-header"
+      />
+      <Text numberOfLines={1} style={styles.drawerTriggerName}>
+        {community?.name ?? WORKSPACE_LABEL}
+      </Text>
+      <Text style={styles.drawerTriggerCaret}>⌄</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -319,8 +377,8 @@ const styles = StyleSheet.create({
     flex: 1,
     width: DRAWER_WIDTH,
     alignItems: 'center',
-    backgroundColor: groknight.bgBase,
-    borderRightWidth: 1,
+    backgroundColor: groknight.bgTerminal,
+    borderRightWidth: StyleSheet.hairlineWidth,
     borderRightColor: groknight.border,
   },
   communityScroll: {
@@ -328,12 +386,12 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   communityScrollContent: {
+    paddingVertical: 4,
     alignItems: 'center',
   },
-  workspaceRailGroup: { width: DRAWER_WIDTH, alignItems: 'center' },
   railButtonSlot: {
     width: DRAWER_WIDTH,
-    height: 60,
+    height: 58,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -343,50 +401,49 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  addRailButton: {
-    borderRadius: 3,
-    borderWidth: 1,
-    borderColor: groknight.borderActive,
-    backgroundColor: groknight.bgHighlight,
-    borderStyle: 'dashed',
+  /* Tone, not a box: an unselected Workspace mark sits one step back from the
+   * one you are in. The rail is a quiet column you glance at, not a row of
+   * competing badges. */
+  railButtonIdle: { opacity: 0.5 },
+  selectionBar: {
+    position: 'absolute',
+    top: 9,
+    bottom: 9,
+    left: 0,
+    width: 2,
+    backgroundColor: groknight.selectedBorder,
   },
-  addRailButtonText: {
-    ...Typography.default(),
-    color: groknight.chrome,
-    fontSize: 20,
-    fontWeight: '500',
+  railDivider: {
+    width: 40,
+    height: 1,
+    marginVertical: 6,
+    backgroundColor: groknight.border,
   },
-  settingsRailButtonText: {
-    ...Typography.default(),
-    color: groknight.steel,
-    fontSize: 18,
-  },
-  workspaceSettingsButton: {
-    width: 32,
-    height: 32,
-    marginTop: -5,
-    marginBottom: 5,
+  railCommand: {
+    width: DRAWER_WIDTH,
+    minHeight: 48,
+    paddingVertical: 4,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 3,
-    borderWidth: 1,
-    borderColor: groknight.border,
-    backgroundColor: groknight.bgRaised,
+    gap: 3,
   },
-  workspaceSettingsGlyph: {
+  /* A rail command is named, so its glyph does not also have to shout: the
+   * mono micro-label under it carries the meaning and the glyph sits on the
+   * same quiet tier as the rest of the chrome. */
+  railCommandGlyph: {
     ...Typography.default(),
-    color: groknight.steel,
-    fontSize: 14,
+    height: 22,
+    color: groknight.textSecondary,
+    fontSize: 19,
+    lineHeight: 22,
+    textAlign: 'center',
   },
-  activeNotch: {
-    position: 'absolute',
-    left: 8,
-    top: 6,
-    width: 10,
-    height: 10,
-    borderLeftWidth: 2,
-    borderTopWidth: 2,
-    borderColor: groknight.selectedBorder,
+  railCommandLabel: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textMuted,
+    fontSize: 9,
+    lineHeight: 12,
+    letterSpacing: 0.6,
   },
   drawerOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -405,28 +462,25 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgTerminal,
   },
   drawerTrigger: {
-    width: 76,
-    height: 44,
-    marginRight: 6,
+    minHeight: 44,
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 8,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 8,
   },
-  drawerAvatarButton: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
+  drawerTriggerName: {
+    ...Typography.default('semiBold'),
+    flexShrink: 1,
+    color: groknight.textPrimary,
+    fontSize: 17,
+    lineHeight: 22,
   },
-  drawerToggleButton: {
-    width: 32,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  drawerTriggerChevron: {
+  drawerTriggerCaret: {
     ...Typography.default('semiBold'),
     color: groknight.steel,
     fontSize: 13,
+    lineHeight: 16,
   },
 });

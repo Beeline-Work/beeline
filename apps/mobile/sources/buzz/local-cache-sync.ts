@@ -1,6 +1,11 @@
 import type { MergeTarget } from '@beeline/buzz-client';
 import { latestRoomMessageSummary, type RoomMessageSummary } from '@/buzz/room-list-summary';
-import { getCachedChannel, useBuzzLocalCache, type ChannelCacheEntry } from '@/buzz/local-cache';
+import {
+  getCachedChannel,
+  useBuzzLocalCache,
+  type ChannelCacheEntry,
+  type RoomSummaryPatch,
+} from '@/buzz/local-cache';
 import type { BuzzRigTransport } from '@/sync/transport';
 import type { SessionEvent } from '@/sync/transport';
 import { invalidateCornerLifecycleCache } from '@/sync/transport/corner-lifecycle-cache';
@@ -31,16 +36,13 @@ function isNewerRoomMessage(
 function messageSummaryPatch(
   candidate: RoomMessageSummary | null,
   cached?: ChannelCacheEntry,
-): {
-  latestMessage?: string;
-  latestMessageAt?: number;
-  latestMessageId?: string;
-} {
+): RoomSummaryPatch {
   if (!candidate || !isNewerRoomMessage(candidate, cached)) return {};
   return {
     latestMessage: candidate.text,
     latestMessageAt: candidate.timestamp,
     latestMessageId: candidate.id,
+    latestMessageAuthor: candidate.authorPubkey,
   };
 }
 

@@ -48,15 +48,17 @@ vi.mock('@/components/buzz/CommunityRail', async () => {
 vi.mock('@/components/buzz/MonoHull', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) => ReactModule.createElement(name, props, props.children);
-  return { HullSurface: host('HullSurface'), HullWaveSignal: host('HullWaveSignal'), MonoButton: host('MonoButton'), PixelLoader: host('PixelLoader') };
+  return {
+    hairlineDivider: { borderBottomWidth: 1, borderBottomColor: '#4e4e4e' },
+    HullSurface: host('HullSurface'),
+    HullWaveSignal: host('HullWaveSignal'),
+    MonoButton: host('MonoButton'),
+    PixelLoader: host('PixelLoader'),
+  };
 });
-vi.mock('@/components/buzz/AgentAvatar', async () => {
+vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
-  return { AgentAvatar: (props: any) => ReactModule.createElement('AgentAvatar', props) };
-});
-vi.mock('@/components/buzz/PersonAvatar', async () => {
-  const ReactModule = await import('react');
-  return { PersonAvatar: (props: any) => ReactModule.createElement('PersonAvatar', props) };
+  return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
 });
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');

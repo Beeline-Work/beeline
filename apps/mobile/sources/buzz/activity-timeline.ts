@@ -52,8 +52,26 @@ export type TurnActivity = {
   observations: TurnActivityAction[];
   /** The counted note's copy, e.g. `12 TOOL CALLS · read 8, searched 3`. */
   note?: string;
+  /**
+   * The same note in the present tense — `12 TOOL CALLS · reading 8,
+   * searching 3` — shown while the turn is still running.
+   *
+   * grok Build writes its rollup twice: `Reading 2 files, Searching 4 patterns`
+   * while the group is in flight, then `Read 2 files, Searched 4 patterns` when
+   * it settles, roughly 100ms later and in place. The tense *is* the state
+   * report, which is why the row can carry it without a badge, a spinner, or a
+   * second line — and why a reader who glances once knows whether they are
+   * watching work or reading a record of it.
+   */
+  liveNote?: string;
   /** How many calls that note stands for, including wire-only tallies. */
   noteCount: number;
+  /**
+   * Total reasoning time this turn, from body's receipt. Rendered as the quiet
+   * half of grok's loud-then-quiet reasoning: the thinking itself never
+   * reaches the client, but `THOUGHT FOR 5.8S` does.
+   */
+  thoughtMs?: number;
   plan?: NonNullable<AgentActivityItem['plan']>;
 };
 
@@ -322,6 +340,36 @@ function noteText(total: number, verbs: ReadonlyMap<string, number>): string {
 }
 
 /**
+ * Past tense -> present participle, for the in-flight form of the note above.
+ *
+ * A closed map rather than a suffix rule: the vocabulary is small, fixed, and
+ * produced in exactly two places (`observationVerb` here and
+ * `observationalVerb` in `apps/body/src/activity.ts`), and a stemming rule that
+ * turned an unforeseen verb into a non-word would be a worse failure than
+ * simply leaving it in the past tense.
+ */
+const PRESENT_PARTICIPLE: Readonly<Record<string, string>> = {
+  read: 'reading',
+  searched: 'searching',
+  listed: 'listing',
+  fetched: 'fetching',
+  inspected: 'inspecting',
+  queried: 'querying',
+  reasoned: 'reasoning',
+  ran: 'running',
+};
+
+/** `12 TOOL CALLS · reading 8, searching 3` — the note while it is still true. */
+function liveNoteText(total: number, verbs: ReadonlyMap<string, number>): string {
+  const head = `${total} TOOL ${total === 1 ? 'CALL' : 'CALLS'}`;
+  const breakdown = [...verbs.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([verb, count]) => `${PRESENT_PARTICIPLE[verb] ?? verb} ${count}`)
+    .join(', ');
+  return breakdown ? `${head} · ${breakdown}` : head;
+}
+
+/**
  * The corner's reading model: narration first, tools as footnotes.
  *
  * Three groups come out of one pass, and which group a thing lands in is the
@@ -341,6 +389,7 @@ export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActi
   const tools = new Map<string, AgentActivityItem>();
   const wireRollup = new Map<string, number>();
   let plan: AgentActivityItem['plan'];
+  let thoughtMs = 0;
   let anonymousIndex = 0;
 
   for (const item of items) {
@@ -349,6 +398,7 @@ export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActi
       for (const [verb, count] of Object.entries(item.rollup ?? {})) {
         wireRollup.set(verb, (wireRollup.get(verb) ?? 0) + count);
       }
+      if (item.thoughtMs && item.thoughtMs > 0) thoughtMs += item.thoughtMs;
       continue;
     }
     if (item.kind === 'output') {
@@ -423,8 +473,9 @@ export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActi
     narration,
     actions,
     observations,
-    ...(total ? { note: noteText(total, verbs) } : {}),
+    ...(total ? { note: noteText(total, verbs), liveNote: liveNoteText(total, verbs) } : {}),
     noteCount: total,
+    ...(thoughtMs > 0 ? { thoughtMs } : {}),
     ...(plan ? { plan } : {}),
   };
 }

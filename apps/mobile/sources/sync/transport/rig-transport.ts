@@ -54,6 +54,14 @@ export type AgentActivityItem = {
    * for "read 41, searched 12" — those calls never reach the wire themselves.
    */
   rollup?: Record<string, number>;
+  /**
+   * Milliseconds the agent spent reasoning before this batch's work landed.
+   * The reasoning *text* is never published (unbounded, and quota-hostile), so
+   * this span is the only trace of it — enough for the quiet `THOUGHT FOR 5.8S`
+   * receipt, which is the half of grok Build's loud-then-quiet reasoning the
+   * wire can afford.
+   */
+  thoughtMs?: number;
   text?: string;
   status?: string;
   command?: string;

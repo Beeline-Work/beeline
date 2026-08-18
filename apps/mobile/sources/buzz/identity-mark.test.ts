@@ -44,6 +44,42 @@ describe('the signature colour is a memory hook', () => {
     expect(used.size).toBeGreaterThanOrEqual(12);
   });
 
+  it('spreads a Workspace’s agents across the wheel instead of piling into one purple corridor', () => {
+    // Four real agents in one Workspace (standing in for the reported
+    // on-device roster — Joy, Beebee, Sumo, Xian) each hashed independently
+    // onto one of the wheel's violet/magenta/pink anchors and all read as
+    // some flavour of purple. These names are representative, not the
+    // literal on-device pubkeys, but exercise the identical mechanism.
+    const workspaceAgents = [
+      'joy-agent-pubkey',
+      'beebee-agent-pubkey',
+      'sumo-agent-pubkey',
+      'xian-agent-pubkey',
+    ];
+    const hues = workspaceAgents.map((seed) => identityPalette(seed, 'agent').hue);
+    for (let i = 0; i < hues.length; i += 1) {
+      for (let j = i + 1; j < hues.length; j += 1) {
+        // Comfortably past the system's general "clearly readable" bar
+        // (>15°): a Workspace-sized roster must not just clear that bar, it
+        // must land in visibly different hue families.
+        expect(hueDistance(hues[i]!, hues[j]!)).toBeGreaterThanOrEqual(60);
+      }
+    }
+  });
+
+  it('keeps the low-discriminability violet/magenta/pink corridor a minority of the wheel', () => {
+    // Muted violet and magenta read as one "purple" family to most eyes even
+    // spaced ~20° apart, so that corridor (240°–360°) must stay a minority
+    // of the anchors an agent can land on — a prior wheel spent more than a
+    // third of its anchors there, which is exactly what produced four
+    // same-Workspace agents all reading as purple.
+    const bigSample = Array.from({ length: 500 }, (_, index) => `agent-corridor-sample-${index}`);
+    const inCorridor = bigSample
+      .map((seed) => identityPalette(seed, 'agent').hue)
+      .filter((hue) => hue >= 240 && hue < 360).length;
+    expect(inCorridor / bigSample.length).toBeLessThan(0.3);
+  });
+
   it('runs agents warm and saturated, people cool and grey', () => {
     // A quiet second reading of the type the shape already states outright.
     const warmth = (kind: IdentityKind) => {

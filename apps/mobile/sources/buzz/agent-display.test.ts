@@ -6,6 +6,7 @@ import {
   mergeAgentRosters,
   resolveAgentDisplayIdentity,
   resolveCornerCardAgentPubkey,
+  resolvePendingAgentDisplay,
 } from './agent-display';
 
 describe('agent display identity', () => {
@@ -268,5 +269,21 @@ describe('the transcript’s agent roster', () => {
   it('still prefers the registered displayName when no human overlay exists', () => {
     const { soulProfile: _overlay, ...registeredOnly } = rosterEntry;
     expect(resolveAgentDisplayIdentity(beebee, registeredOnly).name).toBe('Beebee');
+  });
+
+  it('never renders the seed fallback while the soul is still loading, only the real name once it lands', () => {
+    // Before hydration, nothing is known about this agent yet — not even
+    // whether it has a soul — so there must be no display at all (callers
+    // fall back to a neutral placeholder), never the confident-but-wrong
+    // seed name a resolved-but-empty roster would produce.
+    expect(resolvePendingAgentDisplay(beebee, undefined, false)).toBeNull();
+    // A resolved-but-empty roster before hydration is the same "unknown" case.
+    expect(resolvePendingAgentDisplay(beebee, undefined, false)).toBeNull();
+    // Once the roster has hydrated and the soul is present, it snaps straight
+    // to the real name — never through the seed placeholder.
+    expect(resolvePendingAgentDisplay(beebee, rosterEntry, true)?.name).toBe('Beebee');
+    expect(resolvePendingAgentDisplay(beebee, rosterEntry, true)?.name).not.toBe(
+      fallbackAgentName(beebee),
+    );
   });
 });

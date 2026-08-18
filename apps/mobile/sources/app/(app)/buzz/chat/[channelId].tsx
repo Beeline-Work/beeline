@@ -81,6 +81,7 @@ import {
   mergeAgentRosters,
   resolveAgentDisplayIdentity,
   resolveCornerCardAgentPubkey,
+  resolvePendingAgentDisplay,
 } from '@/buzz/agent-display';
 import {
   cornerName,
@@ -689,7 +690,7 @@ export default function BuzzChat() {
   );
   const turnSummary = isCorner ? latestCornerTurnSummary(messages, cornerAgentPubkey) : undefined;
   const cornerAgentDisplay = cornerAgentPubkey
-    ? resolveAgentDisplayIdentity(cornerAgentPubkey, agentByPubkey.get(cornerAgentPubkey))
+    ? resolvePendingAgentDisplay(cornerAgentPubkey, agentByPubkey.get(cornerAgentPubkey), participantsHydrated)
     : undefined;
   const cornerAgentOnline = Boolean(
     cornerAgentPubkey &&
@@ -2020,7 +2021,7 @@ export default function BuzzChat() {
       const knownAgent = item.pubkey ? agentByPubkey.get(item.pubkey) : undefined;
       const isAgent = item.isAgentAuthor || item.isAgentActivity || isBody || Boolean(knownAgent);
       const display = isAgent
-        ? resolveAgentDisplayIdentity(item.pubkey ?? 'unknown-agent', knownAgent)
+        ? resolvePendingAgentDisplay(item.pubkey ?? 'unknown-agent', knownAgent, participantsHydrated)
         : null;
       const personName = item.pubkey ? personProfileByPubkey.get(item.pubkey)?.name : undefined;
 
@@ -2156,6 +2157,7 @@ export default function BuzzChat() {
       isCorner,
       offlineQueuedIds,
       parentChannelId,
+      participantsHydrated,
       permissionActionId,
       personProfileByPubkey,
       viewerIsAgent,

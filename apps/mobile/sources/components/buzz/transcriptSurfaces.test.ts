@@ -307,11 +307,14 @@ describe('Speaker identity', () => {
     expect(chatSource).not.toMatch(/replaceProfiles\([^)]*rosterCommunityId/);
     expect(chatSource).not.toMatch(/saveActiveCommunityId\(identity\.publicKey, rosterCommunityId\)/);
 
-    // The one resolver, everywhere the transcript names an agent.
+    // The one resolver, everywhere the transcript names an agent — gated on
+    // `participantsHydrated` so a pending roster read shows a neutral
+    // placeholder instead of the seed fallback (`resolveAgentDisplayIdentity`'s
+    // own placeholder) for a beat before snapping to the real name.
     expect(chatSource).not.toMatch(/fallbackAgentName\(/);
     for (const site of [
-      'resolveAgentDisplayIdentity(cornerAgentPubkey, agentByPubkey.get(cornerAgentPubkey))',
-      "resolveAgentDisplayIdentity(item.pubkey ?? 'unknown-agent', knownAgent)",
+      'resolvePendingAgentDisplay(cornerAgentPubkey, agentByPubkey.get(cornerAgentPubkey), participantsHydrated)',
+      "resolvePendingAgentDisplay(item.pubkey ?? 'unknown-agent', knownAgent, participantsHydrated)",
     ]) {
       expect(chatSource, `${site} must resolve through the roster`).toContain(site);
     }

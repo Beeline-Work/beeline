@@ -36,6 +36,26 @@ export function resolveAgentDisplayIdentity(
 }
 
 /**
+ * The transcript/corner-header identity while the roster is still loading.
+ *
+ * `resolveAgentDisplayIdentity` always resolves to *some* confident name —
+ * that is correct once the roster has loaded and simply found nothing, but
+ * calling it before the roster read has even completed shows the identical
+ * pubkey-derived placeholder ("Alden") for a beat, then visibly snaps to the
+ * real registered/soul name ("Beebee") once hydration lands. A wrong name
+ * that corrects itself reads worse than showing nothing: this returns `null`
+ * until `hydrated` is true, so callers fall back to a neutral placeholder
+ * (a short handle) instead of a specific, momentarily-wrong one.
+ */
+export function resolvePendingAgentDisplay(
+  pubkey: string,
+  agent: Pick<Agent, 'pubkey' | 'displayName' | 'avatar' | 'soulProfile'> | undefined,
+  hydrated: boolean,
+): AgentDisplayIdentity | null {
+  return hydrated ? resolveAgentDisplayIdentity(pubkey, agent) : null;
+}
+
+/**
  * Which Workspaces' agent rosters the transcript reads, in precedence order.
  *
  * Every agent name on screen comes from a roster: `listAgents(communityId)` is

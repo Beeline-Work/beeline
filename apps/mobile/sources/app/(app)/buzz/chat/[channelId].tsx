@@ -49,6 +49,7 @@ import {
 import {
   channelCacheKey,
   getCachedChannel,
+  type ChannelCacheEntry,
   profileCacheKey,
   selectChannelList,
   setActiveBuzzCacheViewer,
@@ -60,6 +61,8 @@ import {
   loadOlderMessages,
   revalidateCachedMessages,
 } from '@/buzz/local-cache-sync';
+import { afterInteractions } from '@/buzz/defer-interaction';
+import { hydrateRoomEntry } from '@/buzz/room-entry';
 import { groknight } from '@/buzz/groknight';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
@@ -81,8 +84,8 @@ import {
   selectMostRecentActiveCornerId,
   type CornerStatus,
 } from '@/buzz/corners';
-import { directMessagePeer, shortMemberNpub } from '@/buzz/member-display';
-import { resolveNip05Status } from '@/buzz/nip05-verification';
+import { personIdentityLabel, shortMemberNpub } from '@/buzz/member-display';
+import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
 import {
   canRenameRoom,
   canRemoveRoomParticipant,
@@ -630,6 +633,22 @@ export default function BuzzChat() {
   );
   const isCorner = Boolean(parentChannelId);
   const isDirectMessage = Boolean(directMessage);
+  // A DM's title is its peer's identity. Derived from cached state rather
+  // than resolved inside the enter-room fetch chain, so it is right on the
+  // first painted frame of a warm cache instead of several relay reads later.
+  // Deliberately not `directMessagePeer`, which throws when the viewer is not
+  // a participant — a throw here would be a render-time crash, not a bad title.
+  const dmPeerPubkey = userPubkey
+    ? directMessage?.participants.find((pubkey) => pubkey !== userPubkey)
+    : undefined;
+  const dmPeerProfile = dmPeerPubkey ? personProfileByPubkey.get(dmPeerPubkey) : undefined;
+  const dmPeerNip05Status = useVerifiedNip05Status(dmPeerPubkey ?? '', dmPeerProfile);
+  const displayRoomName = useMemo(() => {
+    if (!dmPeerPubkey) return roomName;
+    const peerAgent = agentByPubkey.get(dmPeerPubkey);
+    if (peerAgent) return resolveAgentDisplayIdentity(dmPeerPubkey, peerAgent).name;
+    return personIdentityLabel(dmPeerProfile, dmPeerPubkey, dmPeerNip05Status);
+  }, [agentByPubkey, dmPeerNip05Status, dmPeerProfile, dmPeerPubkey, roomName]);
   const sessionState = isCorner ? cornerSessionState(messages) : 'idle';
   const cornerAgentPubkey = useMemo(
     () => resolveCornerViewAgentPubkey(messages, (pubkey) => agentByPubkey.has(pubkey)),
@@ -796,10 +815,12 @@ export default function BuzzChat() {
     if (!decodedId) return;
 
     let cancelled = false;
+    const isCancelled = () => cancelled;
     let unsubscribe: (() => void) | undefined;
     let unsubscribePresence: (() => void) | undefined;
     let unsubscribeDraft: (() => void) | undefined;
     let appStateSubscription: ReturnType<typeof AppState.addEventListener> | undefined;
+    const cancelDeferred: (() => void)[] = [];
     agentPresencesRef.current = {};
     presenceReconnectGraceRef.current = {};
     setAgentPresences({});
@@ -809,21 +830,38 @@ export default function BuzzChat() {
     setOlderMessages([]);
     setVisibleMessageCount(INITIAL_MESSAGE_WINDOW);
 
+    // The screen is already painted from the local cache by the time this
+    // runs. The navigation transition owns the next few frames, so every
+    // relay response is projected and committed behind it rather than inside
+    // it — see defer-interaction.ts.
+    const defer = (run: () => void) => {
+      cancelDeferred.push(afterInteractions(run));
+    };
+    const patchChannelCache = (viewerPubkey: string, patch: Partial<ChannelCacheEntry>) => {
+      useBuzzLocalCache.getState().patchChannel(viewerPubkey, decodedId, patch);
+    };
+
     (async () => {
       try {
+        // Identity and relay URL are local storage reads, never network.
         const identity = await loadBuzzIdentity();
         if (!identity) {
           router.replace('/buzz/onboarding');
           return;
         }
+        if (cancelled) return;
         setActiveBuzzCacheViewer(identity.publicKey);
-
-        const url = await getEffectiveRelayUrl();
-        const t = new BuzzRigTransport(identity, url);
-        setTransport(t);
         setUserPubkey(identity.publicKey);
 
+        const url = await getEffectiveRelayUrl();
+        if (cancelled) return;
+        const t = new BuzzRigTransport(identity, url);
+        setTransport(t);
+        // Constructs the shared authenticated client; the WebSocket is opened
+        // lazily by the first live subscription, so this is not a round-trip.
         const client = await t.ensureClient();
+        if (cancelled) return;
+
         // A corner's live agent-activity stream can deliver one raw event per
         // streamed token. Reprojecting + re-sorting the cache on every single
         // one saturates the JS thread and reads as a UI freeze during a send
@@ -861,159 +899,9 @@ export default function BuzzChat() {
             requestAnimationFrame(flushLiveEvents);
           }
         };
-        const installLiveMessages = async () => {
-          const previousSubscription = unsubscribe;
-          unsubscribe = undefined;
-          previousSubscription?.();
-          try {
-            const stopLiveMessages = await t.sessionEventsSubscribeReady(
-              decodedId,
-              handleLiveMessage,
-            );
-            if (cancelled) {
-              stopLiveMessages();
-              return;
-            }
-            unsubscribe = stopLiveMessages;
-          } catch (error) {
-            console.warn(`Failed to establish live Room subscription for ${decodedId}:`, error);
-            if (!cancelled) unsubscribe = t.sessionEventsSubscribe(decodedId, handleLiveMessage);
-          }
-        };
-        // Install live delivery before taking the history snapshot. Stable ids
-        // dedupe overlap, while this ordering closes the push-visible gap between
-        // an HTTP backfill response and a later WebSocket subscription.
-        await installLiveMessages();
-        if (cancelled) return;
 
-        // Self-listing repairs any missing direct Room projections left by an
-        // interrupted or historical Workspace invite. Await it before backfill
-        // so a notification deep-link cannot race into an empty transcript.
-        const availableCommunities = await client.listCommunities();
-        const [
-          directCommunityId,
-          channelMetadata,
-          roomMembers,
-          parentId,
-          messageSync,
-          identityIsAgent,
-          dm,
-          channelRole,
-        ] = await Promise.all([
-          client.getChannelCommunityId(decodedId),
-          client.getChannelMetadata(decodedId),
-          client.listMembers(decodedId),
-          t.getParentChannelId(decodedId),
-          revalidateCachedMessages(t, identity.publicKey, decodedId),
-          client.isAgentIdentity(identity.publicKey),
-          client.getDirectMessage(decodedId),
-          client.getChannelRole(decodedId),
-        ]);
-        // A freshly invited member can receive a successful but empty first
-        // relay snapshot while the direct-membership projection converges.
-        // Keep the live subscription installed and take one short retry so an
-        // opened Room cannot remain a permanently empty transcript.
-        if ((messageSync.entry.messages?.length ?? 0) === 0) {
-          await new Promise((resolve) => setTimeout(resolve, 750));
-          await revalidateCachedMessages(t, identity.publicKey, decodedId);
-        }
-        // Corners inherit their Workspace from the parent Room. Their create event
-        // predates the redundant community tag, so resolve through the parent when
-        // needed before loading cosmetic agent overlays.
-        const channelCommunityId =
-          directCommunityId ??
-          (parentId ? await client.getChannelCommunityId(parentId) : null) ??
-          null;
-        const presenceChannelId = parentId ?? decodedId;
-        const handleLivePresence = (event: Parameters<typeof projectChatEvent>[0]) => {
-          if (cancelled) return;
-          applyAgentPresence(projectChatEvent(event, identity.publicKey).agentPresence);
-        };
-        const installLivePresence = async () => {
-          const previousSubscription = unsubscribePresence;
-          unsubscribePresence = undefined;
-          previousSubscription?.();
-          try {
-            const stopLivePresence = await t.agentPresenceSubscribeReady(
-              presenceChannelId,
-              handleLivePresence,
-            );
-            if (cancelled) {
-              stopLivePresence();
-              return;
-            }
-            unsubscribePresence = stopLivePresence;
-          } catch (error) {
-            console.warn(
-              `Failed to establish live agent presence for ${presenceChannelId}:`,
-              error,
-            );
-            if (!cancelled) {
-              unsubscribePresence = t.agentPresenceSubscribe(presenceChannelId, handleLivePresence);
-            }
-          }
-        };
-        await installLivePresence();
-        if (cancelled) return;
-        // Corners already stream their own reply text as durable, in-place
-        // narrative bubbles (see openSubchannel/startAgentTask). Only a Room
-        // or DM's own turn draft needs to flow into the transcript — the
-        // draft/final reconciliation in buzz-event-projection.ts relies on
-        // the final reply's NIP-10 reply-to, which corners never set.
-        if (!parentId) {
-          const installLiveDraft = async () => {
-            const previousSubscription = unsubscribeDraft;
-            unsubscribeDraft = undefined;
-            previousSubscription?.();
-            try {
-              const stopLiveDraft = await t.agentDraftSubscribeReady(decodedId, handleLiveMessage);
-              if (cancelled) {
-                stopLiveDraft();
-                return;
-              }
-              unsubscribeDraft = stopLiveDraft;
-            } catch (error) {
-              console.warn(`Failed to establish live agent draft subscription for ${decodedId}:`, error);
-              if (!cancelled) unsubscribeDraft = t.agentDraftSubscribe(decodedId, handleLiveMessage);
-            }
-          };
-          await installLiveDraft();
-          if (cancelled) return;
-          const draftEvents = await t.agentDraftBackfill(decodedId);
-          if (!cancelled) draftEvents.forEach(handleLiveMessage);
-        }
-        const presenceEvents = await t.agentPresenceBackfill(presenceChannelId);
-        if (!cancelled) {
-          setCommunities(availableCommunities);
-          setActiveCommunityId(channelCommunityId);
-          setViewerIsAgent(identityIsAgent);
-          setViewerChannelRole(channelRole);
-          setDirectMessage(dm);
-          setRoomName(channelMetadata?.name?.trim() || ROOM_LABEL);
-          const initialPresences = presenceMapFromSessionEvents(presenceEvents);
-          agentPresencesRef.current = initialPresences;
-          setAgentPresences(initialPresences);
-          setPresenceResolved(true);
-          setPresenceNow(Date.now());
-          if (parentId) setParentChannelId(parentId);
-          if (messageSync.mergeTarget !== undefined) setMergeTarget(messageSync.mergeTarget);
-          if (messageSync.archiveChannel) setIsArchived(true);
-          useBuzzLocalCache.getState().patchChannel(identity.publicKey, decodedId, {
-            roomMembers,
-            communityId: channelCommunityId,
-            parentChannelId: parentId ?? undefined,
-            directMessage: dm,
-            roomName: channelMetadata?.name?.trim() || ROOM_LABEL,
-            archived: messageSync.entry.archived,
-            mergeTarget: messageSync.entry.mergeTarget,
-          });
-        }
-
-        void Promise.all([
-          saveActiveCommunityId(identity.publicKey, channelCommunityId),
-          saveLastViewedChannel(identity.publicKey, channelCommunityId, decodedId),
-        ]).catch(() => undefined);
-
+        // Presence grace across background/foreground needs no relay read, so
+        // it is installed now instead of behind the hydration reads.
         let lastAppState = AppState.currentState;
         let onlineBeforeBackground = new Set<string>();
         appStateSubscription = AppState.addEventListener('change', (nextAppState) => {
@@ -1059,66 +947,161 @@ export default function BuzzChat() {
           // previously starved the resumed composer.
         });
 
-        const [communityAgents, communityMembers, archived, mergeInfo, siblingCorners] =
-          await Promise.all([
-            channelCommunityId ? client.listAgents(channelCommunityId) : Promise.resolve([]),
-            channelCommunityId ? client.communityMembers(channelCommunityId) : Promise.resolve([]),
-            t.isChannelArchived(decodedId),
-            parentId ? t.getSubchannelMergeTarget(decodedId) : Promise.resolve(null),
-            parentId ? t.listSubchannelLifecycle(parentId) : Promise.resolve([]),
-          ]);
-        if (!cancelled) {
-          setCornerLifecycleStatus(
-            siblingCorners.find((corner) => corner.id === decodedId)?.status ?? null,
-          );
-        }
-        const agentPubkeys = new Set(communityAgents.map((agent) => agent.pubkey));
-        const humanMembers = communityMembers.filter((member) => !agentPubkeys.has(member.pubkey));
-        const humanProfiles = channelCommunityId
-          ? await client.listPersonProfiles(
-              channelCommunityId,
-              humanMembers.map((member) => member.pubkey),
-            )
-          : [];
-        if (!cancelled) {
-          const workspaceRole = communityMembers.find(
-            (member) => member.pubkey === identity.publicKey,
-          )?.role;
-          setCanManageWorkspace(isWorkspaceManagerRole(workspaceRole));
-          let resolvedRoomName = channelMetadata?.name?.trim() || ROOM_LABEL;
-          if (dm) {
-            const peerPubkey = directMessagePeer(dm, identity.publicKey);
-            const peerAgent = communityAgents.find((agent) => agent.pubkey === peerPubkey);
-            const peerProfile = humanProfiles.find((profile) => profile.pubkey === peerPubkey);
-            const peerNip05Status = peerProfile?.nip05
-              ? await resolveNip05Status(peerPubkey, peerProfile.nip05)
-              : undefined;
-            const verifiedPeerNip05 =
-              peerProfile?.nip05 && peerNip05Status === 'verified' ? peerProfile.nip05 : undefined;
-            resolvedRoomName = peerAgent
-              ? resolveAgentDisplayIdentity(peerPubkey, peerAgent).name
-              : (verifiedPeerNip05 ?? peerProfile?.name ?? shortMemberNpub(peerPubkey));
-            setRoomName(resolvedRoomName);
-          }
-          useBuzzLocalCache.getState().patchChannel(identity.publicKey, decodedId, {
-            availableAgents: communityAgents,
-            availablePeople: humanMembers,
-            roomMembers,
-            communityId: channelCommunityId,
-          });
-          if (channelCommunityId) {
-            useBuzzLocalCache
-              .getState()
-              .replaceProfiles(identity.publicKey, channelCommunityId, humanProfiles);
-          }
-          if (archived) setIsArchived(true);
-          if (mergeInfo) setMergeTarget(mergeInfo.target);
-          useBuzzLocalCache.getState().patchChannel(identity.publicKey, decodedId, {
-            archived,
-            mergeTarget: mergeInfo?.target ?? messageSync.entry.mergeTarget,
-            roomName: resolvedRoomName,
-          });
-        }
+        const handleLivePresence = (event: Parameters<typeof projectChatEvent>[0]) => {
+          if (cancelled) return;
+          applyAgentPresence(projectChatEvent(event, identity.publicKey).agentPresence);
+        };
+
+        /**
+         * Establish live delivery for this Room. Started by hydrateRoomEntry
+         * and awaited by nothing a person can see — the WebSocket connect and
+         * NIP-42 AUTH handshake behind these calls used to gate every other
+         * read on the screen.
+         */
+        const installLiveDelivery = async ({
+          parentChannelId,
+        }: {
+          parentChannelId: string | null;
+        }) => {
+          const presenceChannelId = parentChannelId ?? decodedId;
+          const installMessages = (async () => {
+            try {
+              const stop = await t.sessionEventsSubscribeReady(decodedId, handleLiveMessage);
+              if (cancelled) {
+                stop();
+                return;
+              }
+              unsubscribe = stop;
+            } catch (error) {
+              console.warn(`Failed to establish live Room subscription for ${decodedId}:`, error);
+              if (!cancelled) unsubscribe = t.sessionEventsSubscribe(decodedId, handleLiveMessage);
+            }
+          })();
+          const installPresence = (async () => {
+            try {
+              const stop = await t.agentPresenceSubscribeReady(presenceChannelId, handleLivePresence);
+              if (cancelled) {
+                stop();
+                return;
+              }
+              unsubscribePresence = stop;
+            } catch (error) {
+              console.warn(
+                `Failed to establish live agent presence for ${presenceChannelId}:`,
+                error,
+              );
+              if (!cancelled) {
+                unsubscribePresence = t.agentPresenceSubscribe(presenceChannelId, handleLivePresence);
+              }
+            }
+            const presenceEvents = await t.agentPresenceBackfill(presenceChannelId);
+            if (cancelled) return;
+            defer(() => {
+              if (cancelled) return;
+              const initialPresences = presenceMapFromSessionEvents(presenceEvents);
+              agentPresencesRef.current = initialPresences;
+              setAgentPresences(initialPresences);
+              setPresenceResolved(true);
+              setPresenceNow(Date.now());
+            });
+          })();
+          // Corners already stream their own reply text as durable, in-place
+          // narrative bubbles (see openSubchannel/startAgentTask). Only a Room
+          // or DM's own turn draft needs to flow into the transcript — the
+          // draft/final reconciliation in buzz-event-projection.ts relies on
+          // the final reply's NIP-10 reply-to, which corners never set.
+          const installDraft = parentChannelId
+            ? Promise.resolve()
+            : (async () => {
+                try {
+                  const stop = await t.agentDraftSubscribeReady(decodedId, handleLiveMessage);
+                  if (cancelled) {
+                    stop();
+                    return;
+                  }
+                  unsubscribeDraft = stop;
+                } catch (error) {
+                  console.warn(
+                    `Failed to establish live agent draft subscription for ${decodedId}:`,
+                    error,
+                  );
+                  if (!cancelled) {
+                    unsubscribeDraft = t.agentDraftSubscribe(decodedId, handleLiveMessage);
+                  }
+                }
+                const draftEvents = await t.agentDraftBackfill(decodedId);
+                if (!cancelled) draftEvents.forEach(handleLiveMessage);
+              })();
+          await Promise.all([installMessages, installPresence, installDraft]);
+        };
+
+        await hydrateRoomEntry(
+          {
+            channelId: decodedId,
+            viewerPubkey: identity.publicKey,
+            client,
+            transport: t,
+            installLiveDelivery,
+            revalidateTranscript: () =>
+              revalidateCachedMessages(t, identity.publicKey, decodedId),
+            isCancelled,
+            afterInteractions: defer,
+          },
+          {
+            onCommunities: setCommunities,
+            onViewerIsAgent: setViewerIsAgent,
+            onChannelRole: setViewerChannelRole,
+            onRoomName: (name) => {
+              setRoomName(name);
+              patchChannelCache(identity.publicKey, { roomName: name });
+            },
+            onParentChannelId: (parentId) => {
+              setParentChannelId(parentId);
+              patchChannelCache(identity.publicKey, { parentChannelId: parentId });
+            },
+            onDirectMessage: (dm) => {
+              setDirectMessage(dm);
+              patchChannelCache(identity.publicKey, { directMessage: dm });
+            },
+            onWorkspaceId: (communityId) => {
+              setActiveCommunityId(communityId);
+              patchChannelCache(identity.publicKey, { communityId });
+              void Promise.all([
+                saveActiveCommunityId(identity.publicKey, communityId),
+                saveLastViewedChannel(identity.publicKey, communityId, decodedId),
+              ]).catch(() => undefined);
+            },
+            onMembers: (roomMembers) => patchChannelCache(identity.publicKey, { roomMembers }),
+            onRoster: ({ agents, people, profiles, canManageWorkspace, communityId }) => {
+              setCanManageWorkspace(canManageWorkspace);
+              patchChannelCache(identity.publicKey, {
+                availableAgents: agents,
+                availablePeople: people,
+              });
+              useBuzzLocalCache
+                .getState()
+                .replaceProfiles(identity.publicKey, communityId, profiles);
+            },
+            // revalidateCachedMessages already wrote archive/merge state into
+            // the cache; only the screen's own state is left to publish.
+            onTranscriptSynced: (sync) => {
+              if (sync.mergeTarget !== undefined) setMergeTarget(sync.mergeTarget);
+              if (sync.archiveChannel) setIsArchived(true);
+            },
+            onArchived: () => {
+              setIsArchived(true);
+              patchChannelCache(identity.publicKey, { archived: true });
+            },
+            onMergeTarget: (target) => {
+              setMergeTarget(target);
+              patchChannelCache(identity.publicKey, { mergeTarget: target });
+            },
+            onCornerStatus: setCornerLifecycleStatus,
+            onStepFailed: (step, error) =>
+              console.warn(`BuzzChat: ${step} failed for ${decodedId}:`, error),
+          },
+          ROOM_LABEL,
+        );
       } catch (err) {
         console.warn('Failed to init BuzzChat:', err);
       }
@@ -1126,12 +1109,13 @@ export default function BuzzChat() {
 
     return () => {
       cancelled = true;
+      cancelDeferred.forEach((cancel) => cancel());
       appStateSubscription?.remove();
       if (unsubscribe) unsubscribe();
       if (unsubscribePresence) unsubscribePresence();
       if (unsubscribeDraft) unsubscribeDraft();
     };
-  }, [decodedId, notificationResponseId, addMessages, applyAgentPresence]);
+  }, [decodedId, notificationResponseId, applyAgentPresence]);
 
   const replyTargetForMessage = useCallback(
     (message: ChatDisplayMessage): MessageReplyTarget => {
@@ -1517,7 +1501,7 @@ export default function BuzzChat() {
     if (!transport || !lifecycleAction || roomLifecycleBusy) return;
     const deleting = lifecycleAction === 'delete';
     Alert.alert(
-      deleting ? `Delete ${roomName}?` : `Leave ${roomName}?`,
+      deleting ? `Delete ${displayRoomName}?` : `Leave ${displayRoomName}?`,
       deleting
         ? `This ${ROOM_LABEL} will disappear from the workspace list. Its messages and room data remain stored for future recovery.`
         : `You will lose access to this ${ROOM_LABEL}. Other members will keep their access.`,
@@ -1547,7 +1531,7 @@ export default function BuzzChat() {
         },
       ],
     );
-  }, [decodedId, lifecycleAction, returnToRoomList, roomLifecycleBusy, roomName, transport]);
+  }, [decodedId, displayRoomName, lifecycleAction, returnToRoomList, roomLifecycleBusy, transport]);
 
   const patchCachedRoomName = useCallback(
     (name: string) => {
@@ -2037,7 +2021,7 @@ export default function BuzzChat() {
               style={[styles.channelName, isCorner && styles.cornerChannelName]}
               numberOfLines={1}
             >
-              {roomName}
+              {displayRoomName}
             </Text>
             <Text
               style={[styles.headerMeta, isCorner && styles.cornerHeaderMeta]}
@@ -2686,7 +2670,7 @@ export default function BuzzChat() {
               <View style={styles.roomActionsModalCopy}>
                 <Text style={styles.roomActionsModalEyebrow}>{ROOM_LABEL.toUpperCase()}</Text>
                 <Text numberOfLines={1} style={styles.roomActionsModalTitle}>
-                  {roomName}
+                  {displayRoomName}
                 </Text>
               </View>
               <TouchableOpacity

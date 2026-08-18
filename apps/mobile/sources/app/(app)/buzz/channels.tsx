@@ -66,7 +66,9 @@ import {
   type DirectMessageDisplayItem,
   type WorkspaceMemberDisplayItem,
 } from '@/buzz/local-cache';
-import { cacheLiveSessionEvent, revalidateCachedMessages } from '@/buzz/local-cache-sync';
+import { cacheLiveSessionEvents, revalidateCachedMessages } from '@/buzz/local-cache-sync';
+import { afterInteractions } from '@/buzz/defer-interaction';
+import type { SessionEvent } from '@/sync/transport';
 import {
   BrittlePress,
   hairlineDivider,
@@ -588,6 +590,10 @@ export default function BuzzChannels() {
 
   // A newly-created Workspace is already relay-backed, but device Back can reveal
   // an older mounted home screen. Refresh on focus so its switcher is never stale.
+  //
+  // This refresh re-reads and re-projects every Room's transcript, so it must
+  // not run on the back-navigation transition itself — that work belongs
+  // behind the interaction, not inside it.
   useFocusEffect(
     useCallback(() => {
       if (!transport || !identity) return;
@@ -595,22 +601,51 @@ export default function BuzzChannels() {
         skipInitialFocusRefresh.current = false;
         return;
       }
-      void handleRefresh(false);
+      const cancel = afterInteractions(() => void handleRefresh(false));
+      return cancel;
     }, [handleRefresh, identity, transport]),
   );
 
   // Room previews are a live projection, not a creation-time cache field.
-  // Keep the list current while it is visible; cacheLiveSessionEvent also
+  // Keep the list current while it is visible; cacheLiveSessionEvents also
   // writes the same fresh summary to MMKV on the next background transition.
+  //
+  // Coalesce per animation frame. A corner streaming its reply delivers one
+  // raw event per token, and `cacheLiveSessionEvents` rebuilds and re-sorts
+  // that Room's whole message array per call, then notifies every store
+  // subscriber. Feeding it one event at a time made a live agent turn in any
+  // listed Room saturate the JS thread while this screen was on top.
   useFocusEffect(
     useCallback(() => {
       if (!transport || !identity || !roomIdsKey) return;
+      const pending = new Map<string, SessionEvent[]>();
+      let flushScheduled = false;
+      let stopped = false;
+      const flush = () => {
+        flushScheduled = false;
+        if (stopped || pending.size === 0) return;
+        const batches = [...pending.entries()];
+        pending.clear();
+        for (const [channelId, events] of batches) {
+          cacheLiveSessionEvents(identity.publicKey, channelId, events);
+        }
+      };
       const unsubscribes = roomIdsKey.split(',').map((channelId) =>
         transport.sessionEventsSubscribe(channelId, (event) => {
-          cacheLiveSessionEvent(identity.publicKey, channelId, event);
+          if (stopped) return;
+          const queued = pending.get(channelId);
+          if (queued) queued.push(event);
+          else pending.set(channelId, [event]);
+          if (!flushScheduled) {
+            flushScheduled = true;
+            requestAnimationFrame(flush);
+          }
         }),
       );
-      return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+      return () => {
+        stopped = true;
+        unsubscribes.forEach((unsubscribe) => unsubscribe());
+      };
     }, [identity, roomIdsKey, transport]),
   );
 

@@ -29,11 +29,10 @@ import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { MEMBERS_GLYPH, MEMBERS_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
-import { AgentAvatar } from '@/components/buzz/AgentAvatar';
-import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
 import { hairlineDivider, HullWaveSignal, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
+import { IdentityMark } from '@/components/buzz/IdentityMark';
 
 const INSTALL_COMMAND = 'curl -fsSL https://relay.buzzrouter.com/install | sh';
 /** Under the 45s daemon heartbeat so a just-started agent reads online promptly. */
@@ -552,10 +551,11 @@ export default function BuzzAgents() {
                       (activeCommunity?.viewerRole === 'owner' || person.role === 'member'));
                   return (
                     <View key={person.pubkey} style={styles.personRow}>
-                      <PersonAvatar
+                      <IdentityMark
+                        kind="human"
+                        seed={person.pubkey}
                         avatarUrl={profile?.avatar}
                         name={profile?.name ?? shortMemberNpub(person.pubkey)}
-                        pubkey={person.pubkey}
                         size={44}
                       />
                       <View style={styles.personCopy}>
@@ -672,12 +672,13 @@ export default function BuzzAgents() {
                   ]}
                   onPress={() => chooseAgent(agent)}
                 >
-                  <AgentAvatar
-                    pubkey={agent.pubkey}
-                    avatarSeed={display.avatarSeed}
+                  <IdentityMark
+                    kind="agent"
+                    seed={display.avatarSeed ?? agent.pubkey}
                     avatarUrl={display.avatarUrl}
                     name={display.name}
                     size={44}
+                    alive={online}
                   />
                   <View style={styles.agentCopy}>
                     <Text
@@ -717,9 +718,9 @@ export default function BuzzAgents() {
           {selected && canManageWorkspace && (
             <View style={styles.editor}>
               <View style={styles.editorTitleRow}>
-                <AgentAvatar
-                  pubkey={selected.pubkey}
-                  avatarSeed={resolveAgentDisplayIdentity(selected.pubkey, selected).avatarSeed}
+                <IdentityMark
+                  kind="agent"
+                  seed={resolveAgentDisplayIdentity(selected.pubkey, selected).avatarSeed ?? selected.pubkey}
                   avatarUrl={avatarUrl}
                   name={resolveAgentDisplayIdentity(selected.pubkey, selected).name}
                   size={42}

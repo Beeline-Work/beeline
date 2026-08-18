@@ -92,7 +92,7 @@ describe('One ledger, both surfaces', () => {
     expect(gap(opens)).toBeGreaterThanOrEqual(20);
 
     // A system row in the flow is separated the same way — never framed off.
-    for (const name of ['cornerStatusCard', 'mergeSummaryBubble', 'replyReference']) {
+    for (const name of ['mergeSummaryBubble', 'replyReference']) {
       expect(styleDefinition(chatSource, name), `${name} must not draw an edge`).not.toMatch(
         /border(?:Top|Bottom|Left|Right)?(?:Width|Color)/,
       );
@@ -168,7 +168,6 @@ describe('The obsidian slab', () => {
     'archivedBubble',
     'attachmentCard',
     'attachmentFileGlyph',
-    'cornerStatusCard',
     'mergeSummaryBubble',
     'replyReference',
   ];
@@ -208,16 +207,19 @@ describe('The obsidian slab', () => {
     // Faceted diamond for corner, so the lifecycle glyph family still holds.
     expect(outcomeSource).toContain('◇ ALLOWED');
 
-    // ...and one affordance vocabulary survives for the rows that *do* still
-    // navigate: a terminal corner's durable card in the Room transcript.
-    expect(chatSource).toContain('<Text style={styles.openCornerText}>view →</Text>');
-    expect(chatSource).not.toMatch(/openCornerGlyph/);
+    // ...and the one row that *does* still navigate carries the same
+    // vocabulary: the pinned corner line, which is no longer in the scroll.
+    const barSource = readFileSync(new URL('./CornerLiveBar.tsx', import.meta.url), 'utf8');
+    expect(barSource).toContain('view →');
+    expect(chatSource).not.toMatch(/openCornerGlyph|styles\.openCornerText/);
   });
 
   it('separates a system row with air, not with an edge', () => {
-    // The corner card is the ledger's other interruption, and the ledger has no
-    // delimiters at all — so it is set apart by its own margin and nothing else.
-    const card = styleDefinition(chatSource, 'cornerStatusCard');
+    // A merge summary is the ledger's remaining interruption, and the ledger has
+    // no delimiters at all — so it is set apart by its own margin and nothing
+    // else. (The corner card that used to sit here is gone entirely: a corner's
+    // status is state, and state lives in the pinned line above the composer.)
+    const card = styleDefinition(chatSource, 'mergeSummaryBubble');
     expect(card).not.toMatch(/border/);
     expect(Number(card.match(/marginBottom:\s*(\d+)/)![1])).toBeGreaterThanOrEqual(20);
   });
@@ -265,7 +267,7 @@ describe('Speaker identity', () => {
     expect(branch).toContain('const speaksAsAgent = isAgent || isCornerAgent');
     expect(branch).toContain('luminous={speaksAsAgent}');
     expect(chatSource).toMatch(
-      /isCorner && cornerAgentPubkey && \([\s\S]{0,400}testID="corner-header-agent"[\s\S]{0,400}<AgentAvatar/,
+      /isCorner && cornerAgentPubkey && \([\s\S]{0,400}testID="corner-header-agent"[\s\S]{0,400}<IdentityMark/,
     );
     expect(chatSource).toContain('styles.cornerHeaderAgent');
   });
@@ -384,22 +386,42 @@ describe('Machine noise', () => {
     const barSource = readFileSync(new URL('./CornerLiveBar.tsx', import.meta.url), 'utf8');
     // Gold, and gold only — this is the accent's own assigned meaning
     // (DESIGN.md: live/online presence), never a second hue.
-    expect(styleDefinition(barSource, 'segment')).toMatch(/backgroundColor:\s*groknight\.accent/);
-    expect(styleDefinition(barSource, 'label')).toMatch(/color:\s*groknight\.accent/);
+    expect(styleDefinition(barSource, 'labelLive')).toMatch(/color:\s*groknight\.accent/);
     expect(barSource).not.toMatch(/#[0-9a-fA-F]{3,8}(?!\d)/);
     // A status light needs no frame: it is always in the same place.
     expect(styleDefinition(barSource, 'bar')).not.toMatch(/border|borderRadius/);
-    // It flows while the work is live and settles otherwise, and it never
-    // animates unwatched.
-    expect(barSource).toMatch(/const flowing = live && appActive && !reducedMotion/);
+    // One line that breathes — never a band of dashes, a sweep, or a bar that
+    // fills. It reuses the shared live clock, so it settles under reduced
+    // motion and in the background without owning that logic itself.
+    expect(barSource).toContain('<HullLivePulse>{row}</HullLivePulse>');
+    expect(barSource).not.toMatch(/segment|FlowSegment|withRepeat|translateX/);
 
-    // ...and the note it replaced is gone from the transcript scroll on both
-    // the corner-card path and the permission-outcome path.
-    expect(chatSource).toMatch(/if \(isCornerActive\(item\.corner\.status\)\) return null;/);
+    // ...and every corner note it replaced is gone from the transcript scroll:
+    // the corner card outright, and the permission outcome's navigation.
+    expect(chatSource).toMatch(/if \(item\.corner\) \{[\s\S]{0,700}?\n        return null;\n      \}/);
     expect(chatSource).toMatch(
       /if \(permission\.status === 'allowed' && permission\.subchannelId\) return null;/,
     );
     expect(chatSource).not.toMatch(/testID="agent-live-status"/);
+    expect(chatSource).not.toMatch(/testID=\{`corner-status-\$\{item\.corner\.status\}`\}/);
+  });
+
+  it('stamps no corner status into the transcript at all', () => {
+    // "Alden ✕ FAILED" and "◇ OPEN" rows interrupted a live conversation with
+    // a dead record, and duplicated the pinned indicator while they were at
+    // it. A corner's status is state: it belongs to the pinned line above the
+    // composer while it is active, and to the Room's corners view once it is
+    // not. Neither belongs in the scroll.
+    const branch = chatSource.slice(
+      chatSource.indexOf('      if (item.corner) {'),
+      chatSource.indexOf('      // ── Merge summary ──'),
+    );
+    expect(branch).toContain('return null;');
+    expect(branch).not.toMatch(/cornerStatusPresentation|presentation\.(?:glyph|label)|<Text/);
+    // ...and the styles that drew it are gone with it, not left behind dead.
+    for (const name of ['cornerStatusCard', 'cornerStatusLabel', 'cornerPresenceDot']) {
+      expect(chatSource, `${name} should have been removed`).not.toContain(`  ${name}: {`);
+    }
   });
 
   it('gives a corner the room’s chrome: one composer, one overflow menu', () => {
@@ -466,8 +488,12 @@ describe('Machine noise', () => {
     // One activity-folding loop, not a corner branch plus a room filter.
     expect(fn).not.toMatch(/if \(isCorner\) \{/);
     expect(fn).toMatch(/activityRunOpen/);
-    // A Room still refuses a Corner's own lifecycle cards.
-    expect(fn).toMatch(/!isCorner && !message\.corner &&/);
+    // A Room still refuses a Corner's own lifecycle cards...
+    expect(fn).toMatch(/!isCorner && \(message\.isMergeSummary \|\| message\.isArchivedNotice\)/);
+    // ...and a corner status card never reaches either transcript. Dropping it
+    // at the funnel, not in `renderItem`, is what keeps it from spending a
+    // FlatList cell and a slot of the initial message window.
+    expect(fn).toMatch(/if \(message\.corner\) \{\n\s+activityRunOpen = false;\n\s+continue;/);
   });
 });
 

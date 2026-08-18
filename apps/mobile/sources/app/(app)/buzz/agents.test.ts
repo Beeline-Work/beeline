@@ -56,13 +56,9 @@ vi.mock('@/components/buzz/MonoHull', async () => {
     PixelLoader: host('PixelLoader'),
   };
 });
-vi.mock('@/components/buzz/AgentAvatar', async () => {
+vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
-  return { AgentAvatar: (props: any) => ReactModule.createElement('AgentAvatar', props) };
-});
-vi.mock('@/components/buzz/PersonAvatar', async () => {
-  const ReactModule = await import('react');
-  return { PersonAvatar: (props: any) => ReactModule.createElement('PersonAvatar', props) };
+  return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
 });
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');

@@ -53,6 +53,12 @@ cd apps/mobile/android
 ./gradlew :app:assembleDebug
 ```
 
+## Line isolation test
+
+This line exists solely to verify that the corner opened, made a change,
+committed it, and reported the branch name correctly. If you can read this
+sentence, the line isolation test passes.
+
 ## License
 
 To be decided.

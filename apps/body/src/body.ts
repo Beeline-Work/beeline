@@ -88,9 +88,12 @@ import {
   tagValue,
   waitUntilMember,
   summarizeGitFailure,
+  getAgentModelConfig,
+  publishAgentModelCatalog,
   type AgentPresence,
   type ChannelOpsContext,
   type AttachmentReference,
+  type AgentModelConfigOption,
 } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
 import type { BodyConfig, SessionMode } from './config.js';
@@ -131,6 +134,12 @@ import {
   type RoomAuthorAttribution,
 } from './attachments.js';
 import { isReadOnlyMcpPermissionRequest, READ_ONLY_MCP_SERVER_NAME } from './read-only-policy.js';
+import {
+  applyAgentModelSelection,
+  filterAllowedModelConfigOptions,
+  filterModelOptionsByCredentials,
+  parseAdvertisedConfigOptions,
+} from './model-config.js';
 
 /** Tracks a single agent session. */
 export interface AgentSession {
@@ -160,6 +169,12 @@ export interface AgentSession {
   logicalSessionId?: string;
   /** Internal lifecycle used by the bounded Workspace scheduler. */
   lifecycle?: SessionLifecycle;
+  /**
+   * This agent's advertised model/effort catalog, allow-list + credential
+   * filtered (never `mode`) — refreshed on every (re)activation. See
+   * `model-config.ts`.
+   */
+  modelConfigOptions?: AgentModelConfigOption[];
 }
 
 /**
@@ -1217,6 +1232,9 @@ export class Body {
           this.agentIdentity,
           created.sessionId,
         );
+        if (input.communityId) {
+          await this.applyModelConfigForSession(client, created.sessionId, input.communityId, created.raw, session);
+        }
         return created.sessionId;
       },
       suspend: async () => {
@@ -1232,6 +1250,50 @@ export class Body {
     // were killed before ever handling a message. `startAgentPresence` (not the
     // ACP process) publishes Room liveness, so "online" stays honest here.
     return session;
+  }
+
+  /**
+   * Capture this agent's advertised model/effort catalog at session
+   * (re)activation, publish it (already allow-list + credential filtered —
+   * never `mode`) so the app can render a picker without an ACP connection
+   * of its own, and apply this agent's persisted `(agentPubkey, communityId)`
+   * selection to the freshly created session before its first prompt. A
+   * failed catalog publish or config read never blocks session startup —
+   * both are logged and skipped.
+   */
+  private async applyModelConfigForSession(
+    client: Pick<AcpClient, 'setConfigOption'>,
+    sessionId: string,
+    communityId: string,
+    sessionNewRaw: unknown,
+    session: AgentSession,
+  ): Promise<void> {
+    const rawConfigOptions = parseAdvertisedConfigOptions(sessionNewRaw);
+    const catalogOptions = filterModelOptionsByCredentials(
+      filterAllowedModelConfigOptions(rawConfigOptions),
+      this.config.agentEnv,
+    );
+    session.modelConfigOptions = catalogOptions;
+    if (catalogOptions.length) {
+      try {
+        await publishAgentModelCatalog(this.agentClientContext(), communityId, catalogOptions);
+      } catch (error) {
+        console.error('[body] failed to publish agent model catalog:', error);
+      }
+    }
+    let selection: Awaited<ReturnType<typeof getAgentModelConfig>> = null;
+    try {
+      selection = await getAgentModelConfig(
+        this.agentClientContext(),
+        communityId,
+        this.agentIdentity.publicKey,
+      );
+    } catch (error) {
+      console.error('[body] failed to read persisted agent model config:', error);
+      return;
+    }
+    if (!selection) return;
+    await applyAgentModelSelection(client, sessionId, rawConfigOptions, selection);
   }
 
   /**

@@ -80,8 +80,6 @@ import {
   sectionRoomRoster,
 } from '@/buzz/room-participants';
 import {
-  agentRosterCommunityIds,
-  mergeAgentRosters,
   resolveAgentDisplayIdentity,
   resolveCornerCardAgentPubkey,
   resolvePendingAgentDisplay,

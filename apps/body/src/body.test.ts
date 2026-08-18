@@ -286,6 +286,52 @@ describe('agent identity boundary', () => {
     expect(body.agent.publicKey).not.toBe(body.identity.publicKey);
   });
 
+  describe('corner worktree isolation wiring', () => {
+    it('resolves a paired-checkout corner to a clean sibling, not inside the primary', () => {
+      const body = new Body(
+        { ...config, workspaceRoot: '/home/op/proj-buzzy/.git/beeline/rooms/r1' },
+        newIdentity('operator'),
+      );
+      const path = (
+        body as unknown as {
+          cornerWorktreePath(repo: { localPath: string }, id: string): string;
+        }
+      ).cornerWorktreePath({ localPath: '/home/op/proj-buzzy' }, 'corner-xyz');
+      // Never nested inside the primary checkout or its .git.
+      expect(path.startsWith('/home/op/proj-buzzy/')).toBe(false);
+      expect(path).toBe('/home/op/.beeline-corners/proj-buzzy/corner-xyz');
+    });
+
+    it('the edit-session cd-guard rejects a command that escapes into the shared checkout', async () => {
+      const body = new Body(config, newIdentity('operator'));
+      const handler = (
+        body as unknown as {
+          cornerPermissionHandler(
+            worktree: string,
+            primary?: string,
+          ): (req: unknown) => Promise<'allow' | 'reject'>;
+        }
+      ).cornerPermissionHandler('/pool/.beeline-corners/proj/c1', '/home/op/proj-buzzy');
+
+      const escape = await handler({
+        toolCall: {
+          kind: 'execute',
+          rawInput: { command: 'cd /home/op/proj-buzzy && git commit -am wip' },
+        },
+      });
+      expect(escape).toBe('reject');
+
+      const ok = await handler({
+        toolCall: { kind: 'execute', rawInput: { command: 'git commit -am wip' } },
+      });
+      expect(ok).toBe('allow');
+
+      // Non-command tool calls (edits) are always allowed by the guard.
+      const edit = await handler({ toolCall: { kind: 'edit', rawInput: { path: 'a.ts' } } });
+      expect(edit).toBe('allow');
+    });
+  });
+
   it('refuses to collapse the agent onto the operator identity', () => {
     const operator = newIdentity('operator');
     const body = new Body(config, operator);

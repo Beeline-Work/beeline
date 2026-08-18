@@ -1183,17 +1183,24 @@ export function postAgentTurnStatus(
  * without any client-side changes. This never itself cancels or retries the
  * turn — it only tells the user their agent isn't dead, well before the full
  * idle-cancel timeout would otherwise leave them looking at silence.
+ *
+ * `replyTo`, when given, MUST name an event in `channelId` itself — a relay
+ * rejects a kind:9 reply whose referenced parent lives in a different
+ * channel ("parent event belongs to a different channel"). A corner's first
+ * turn is triggered by a Room event, not a corner one, so callers with no
+ * same-channel parent to thread to must omit it rather than passing a
+ * cross-channel id.
  */
 export function postAgentStallNotice(
   channelId: string,
   owner: Identity,
-  requestId: string,
+  replyTo?: string,
 ): Promise<void> {
   return postAgentMessage(
     channelId,
     owner,
     "Still working on this — my coding backend is taking longer than usual to respond.",
-    requestId,
+    replyTo,
   );
 }
 

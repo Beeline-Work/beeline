@@ -62,6 +62,7 @@ import {
   revalidateCachedMessages,
 } from '@/buzz/local-cache-sync';
 import { afterInteractions } from '@/buzz/defer-interaction';
+import { latestCornerPlan } from '@/buzz/activity-timeline';
 import { hydrateRoomEntry } from '@/buzz/room-entry';
 import { groknight } from '@/buzz/groknight';
 import { continuedSpeakerIds } from '@/buzz/ledger-attribution';
@@ -141,6 +142,7 @@ import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
 import { ChangeReviewPanel } from '@/components/buzz/ChangeReviewPanel';
 import { CornerLiveBar } from '@/components/buzz/CornerLiveBar';
+import { CornerPlanPin } from '@/components/buzz/CornerPlanPin';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome';
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
@@ -410,6 +412,10 @@ export default function BuzzChat() {
   const [mergeTarget, setMergeTarget] = useState<MergeTarget | null>(
     initialChannelCache?.mergeTarget ?? null,
   );
+  // Why the corner has nothing ready, when it has an answer — the review
+  // panel otherwise shows the same generic placeholder whether the corner
+  // hasn't finished yet or explicitly declined to surface a review.
+  const [mergeNotReadyReason, setMergeNotReadyReason] = useState<string | null>(null);
   // 'delivering' means the approval publish itself was accepted by the relay
   // — landing/confirming is still in progress or retrying, never "done".
   // 'failed' means a durable publish on the landing path (push, land, or
@@ -507,6 +513,12 @@ export default function BuzzChat() {
     () => combinedMessages.slice(-visibleMessageCount),
     [combinedMessages, visibleMessageCount],
   );
+  // The most recent plan the agent has published, for the pinned checklist —
+  // a plan update replaces the whole checklist, so only the latest matters.
+  // Scoped to `combinedMessages` (everything currently loaded), not the
+  // windowed `messages`, so paging the visible window never drops a plan
+  // that was established earlier in a long corner.
+  const cornerPlan = useMemo(() => latestCornerPlan(combinedMessages), [combinedMessages]);
 
   const loadOlderTranscriptMessages = useCallback(() => {
     if (loadingOlderMessages) return;
@@ -1284,8 +1296,10 @@ export default function BuzzChat() {
             },
             onMergeTarget: (target) => {
               setMergeTarget(target);
+              setMergeNotReadyReason(null);
               patchChannelCache(identity.publicKey, { mergeTarget: target });
             },
+            onMergeNotReadyReason: setMergeNotReadyReason,
             onCornerStatus: setCornerLifecycleStatus,
             onCornerLifecycle: (corners) => {
               setCornerLifecycle(corners);
@@ -2327,6 +2341,14 @@ export default function BuzzChat() {
           )}
         </View>
 
+        {/* Pinned to the top, under the header: the plan changes far less
+            often than the composer-adjacent live status below, so it earns
+            the stable position where it never fights the composer for
+            space. Hidden entirely when the agent has published no plan. */}
+        {isCorner && !isArchived && cornerPlan && (
+          <CornerPlanPin plan={cornerPlan} testID="corner-plan-pin" />
+        )}
+
         <FlatList
           testID="chat-messages"
           ref={flatListRef}
@@ -2443,10 +2465,11 @@ export default function BuzzChat() {
                     ) : null}
                   </HullSurface>
                 ) : (
-                  <HullSurface strength="quiet" style={styles.nothingReady}>
+                  <HullSurface strength="quiet" style={styles.nothingReady} testID="nothing-ready-panel">
                     <Text style={styles.nothingReadyTitle}>NOTHING READY TO MERGE YET</Text>
-                    <Text style={styles.nothingReadyText}>
-                      A change appears here only after {cornerAgentDisplay?.name ?? 'the agent'} commits real work for review.
+                    <Text style={styles.nothingReadyText} testID="nothing-ready-reason">
+                      {mergeNotReadyReason ??
+                        `A change appears here only after ${cornerAgentDisplay?.name ?? 'the agent'} commits real work for review.`}
                     </Text>
                   </HullSurface>
                 )}

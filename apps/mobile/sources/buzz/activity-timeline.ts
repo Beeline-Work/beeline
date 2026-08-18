@@ -289,6 +289,25 @@ function observationVerb(item: AgentActivityItem, title: string): string {
   return 'inspected';
 }
 
+/** Verb -> the label a folded call's synthesized review-sheet row leads with. */
+const OBSERVED_VERB_LABEL: Readonly<Record<string, string>> = {
+  read: 'Read',
+  searched: 'Searched for',
+  fetched: 'Fetched',
+  listed: 'Listed',
+  inspected: 'Inspected',
+  reasoned: 'Reasoned about',
+  ran: 'Ran',
+};
+
+/** `Read src/foo.ts`, `Searched for handleSubmit`, `Ran npm test` — body ships the
+ *  bare verb/target; the readable phrase is built here, same as every other
+ *  action title in this file. */
+function observedCallTitle(verb: string, target?: string): string {
+  const label = OBSERVED_VERB_LABEL[verb] ?? 'Ran';
+  return target ? `${label} ${clamp(target, MAX_ACTION_TITLE)}` : label;
+}
+
 /**
  * Did this call change state, or only look at it?
  *
@@ -380,17 +399,26 @@ function liveNoteText(total: number, verbs: ReadonlyMap<string, number>): string
  *   observations  reads/searches/lists — folded behind one counted note
  *
  * The synthetic `activity_summary` receipt body publishes is deliberately *not*
- * narration: its text restates mechanism the note already states, and its
- * `rollup` is the only record of the observational calls body counts but never
- * projects as their own events, so it feeds the count and nothing else.
+ * narration: its text restates mechanism the note already states. Its `rollup`
+ * is the only record of the observational calls body counts but never projects
+ * as their own events, and its `observed` array — a compact target + short
+ * result per folded call, capped independently of the tally — is the only
+ * source for those calls' own review-sheet rows, since the calls themselves
+ * never reach the wire.
  */
 export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActivity {
   const narration: string[] = [];
   const tools = new Map<string, AgentActivityItem>();
   const wireRollup = new Map<string, number>();
+  // Body cannot ship the folded calls themselves — that's the noise-control
+  // fold, and it stays — but it ships a compact receipt (target + a taste of
+  // the result) per call on the summary event. These become real review-sheet
+  // rows so the sheet has something to show beyond the bare tally.
+  const observations: TurnActivityAction[] = [];
   let plan: AgentActivityItem['plan'];
   let thoughtMs = 0;
   let anonymousIndex = 0;
+  let observedIndex = 0;
 
   for (const item of items) {
     if (item.plan) plan = item.plan;
@@ -399,6 +427,15 @@ export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActi
         wireRollup.set(verb, (wireRollup.get(verb) ?? 0) + count);
       }
       if (item.thoughtMs && item.thoughtMs > 0) thoughtMs += item.thoughtMs;
+      for (const call of item.observed ?? []) {
+        observations.push({
+          id: `observed-${observedIndex++}`,
+          kind: 'tool',
+          weight: 'observation',
+          title: observedCallTitle(call.verb, call.target),
+          ...(call.result ? { output: call.result } : {}),
+        });
+      }
       continue;
     }
     if (item.kind === 'output') {
@@ -412,7 +449,6 @@ export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActi
   }
 
   const actions: TurnActivityAction[] = [];
-  const observations: TurnActivityAction[] = [];
   const localVerbs = new Map<string, number>();
 
   for (const [id, tool] of tools) {

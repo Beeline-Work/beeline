@@ -247,4 +247,34 @@ describe('buildTurnActivity', () => {
     expect(turn.narration).toEqual([]);
     expect(turn.actions).toEqual([]);
   });
+
+  it('turns body’s per-call receipts into real observation rows, not just a tally', () => {
+    // Before body shipped `observed` on the summary event, a folded batch had
+    // no per-call detail at all — the review sheet had nothing to show beyond
+    // the count. Each receipt becomes its own row here, carrying a readable
+    // title (verb + target) and the short result as its output.
+    const turn = buildTurnActivity([
+      {
+        kind: 'summary',
+        title: 'Summary',
+        text: '',
+        rollup: { read: 1, ran: 1 },
+        observed: [
+          { verb: 'read', target: 'src/foo.ts', result: 'export function foo() {}' },
+          { verb: 'ran', target: 'npm test -- --run' },
+        ],
+      },
+    ]);
+
+    expect(turn.observations).toHaveLength(2);
+    expect(turn.observations).toMatchObject([
+      { weight: 'observation', title: 'Read src/foo.ts', output: 'export function foo() {}' },
+      { weight: 'observation', title: 'Ran npm test -- --run' },
+    ]);
+    // A call with no result carries no output field at all, not an empty one.
+    expect(turn.observations[1]).not.toHaveProperty('output');
+    // Every observation row needs a stable, unique id for React and for the
+    // review sheet's own drill-down state.
+    expect(new Set(turn.observations.map((action) => action.id)).size).toBe(2);
+  });
 });

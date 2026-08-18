@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Modal as RNModal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AgentActivityItem } from '@/sync/transport/rig-transport';
 import { buildTurnActivity, type TurnActivityAction } from '@/buzz/activity-timeline';
 import { groknight } from '@/buzz/groknight';
@@ -292,6 +293,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
   const turn = useMemo(() => buildTurnActivity(items), [items]);
   const [reviewing, setReviewing] = useState(false);
   const [selected, setSelected] = useState<TurnActivityAction | null>(null);
+  const insets = useSafeAreaInsets();
 
   // Newest first. The transcript's own FlatList is inverted, so walking a
   // finished turn backwards is the consistent gesture here, not a novelty: the
@@ -374,7 +376,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
         transparent
         visible={reviewing}
       >
-        <View style={styles.reviewRoot}>
+        <View style={[styles.reviewRoot, { paddingBottom: Math.max(insets.bottom, 12) }]}>
           <Pressable
             accessibilityLabel="Close tool call review"
             onPress={closeReview}
@@ -578,11 +580,13 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   // ── The review sheet ────────────────────────────────────────────
-  /** Bottom-up: it rises from the composer edge, where the tap came from. */
+  /** Bottom-up: it rises from the composer edge, where the tap came from.
+   *  paddingBottom is set inline to the max of this floor and the device's
+   *  safe-area inset, or the sheet's close button and last line sit under the
+   *  Android system nav bar. */
   reviewRoot: {
     flex: 1,
     paddingHorizontal: 12,
-    paddingBottom: 12,
     justifyContent: 'flex-end',
     backgroundColor: 'rgba(5, 5, 6, 0.84)',
   },

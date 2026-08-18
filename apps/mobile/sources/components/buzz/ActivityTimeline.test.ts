@@ -1,7 +1,7 @@
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
@@ -17,6 +17,11 @@ vi.mock('react-native', async () => {
     View: host('View'),
   };
 });
+
+const mockInsets = vi.hoisted(() => ({ current: { top: 0, right: 0, bottom: 0, left: 0 } }));
+vi.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => mockInsets.current,
+}));
 
 vi.mock('./MonoHull', () => ({
   HullActivityTip: () => null,
@@ -295,6 +300,40 @@ describe('corner tool activity', () => {
     expect(renderedText(renderer)).toContain('npm test');
   });
 
+  it('shows the real per-call detail body ships for a folded call, not the empty placeholder', () => {
+    // Before body carried an `observed` receipt on the summary event, the
+    // client had nothing of its own to show here — every folded call was
+    // dropped entirely, and the sheet fell back to "counted but carried no
+    // detail of their own" no matter how many calls the note counted.
+    const renderer = render(
+      React.createElement(ActivityTimeline, {
+        items: [
+          {
+            kind: 'summary' as const,
+            title: 'Summary',
+            text: '',
+            rollup: { read: 1, ran: 1 },
+            observed: [
+              { verb: 'read', target: 'src/foo.ts', result: 'export function foo() {}' },
+              { verb: 'ran', target: 'npm test -- --run', result: 'PASS 12 tests' },
+            ],
+          },
+        ],
+      }),
+    );
+
+    act(() => renderer.root.findByProps({ testID: 'activity-tool-note' }).props.onPress());
+    const sheetText = renderedText(renderer);
+    // A real row per counted call, naming what it looked at.
+    expect(sheetText).toContain('Read src/foo.ts');
+    expect(sheetText).toContain('Ran npm test -- --run');
+    expect(sheetText).not.toContain('These calls were counted but carried no detail of their own.');
+
+    // Tapping one drills into its own concise result, not raw multi-KB output.
+    act(() => renderer.root.findByProps({ testID: 'activity-review-action-observed-0' }).props.onPress());
+    expect(renderedText(renderer)).toContain('export function foo() {}');
+  });
+
   it('gives the counted note no box of its own', () => {
     const renderer = render(React.createElement(ActivityTimeline, { items: NOISY_TURN }));
     const note = renderer.root.findByProps({ testID: 'activity-tool-note' });
@@ -306,5 +345,39 @@ describe('corner tool activity', () => {
   it('renders nothing at all for a turn with no actions and no notes', () => {
     const renderer = render(React.createElement(ActivityTimeline, { items: [] }));
     expect(renderer.toJSON()).toBeNull();
+  });
+});
+
+describe('review sheet safe area', () => {
+  afterEach(() => {
+    mockInsets.current = { top: 0, right: 0, bottom: 0, left: 0 };
+  });
+
+  // The sheet's root style is the only array-valued `style` prop in this tree
+  // (`[styles.reviewRoot, { paddingBottom }]`) — everything else is a plain
+  // object — so merging every array-styled View and reading `paddingBottom`
+  // finds it without depending on tree position.
+  function reviewRootPaddingBottom(renderer: ReactTestRenderer): number | undefined {
+    const merged = renderer.root
+      .findAllByType('View')
+      .map((node: any) => node.props.style)
+      .filter((style: unknown): style is unknown[] => Array.isArray(style))
+      .map((style: unknown[]) => Object.assign({}, ...style))
+      .find((style: any) => 'paddingBottom' in style);
+    return merged?.paddingBottom;
+  }
+
+  it('clears the Android system nav bar by padding the sheet with the device inset', () => {
+    mockInsets.current = { top: 0, right: 0, bottom: 34, left: 0 };
+    const renderer = render(React.createElement(ActivityTimeline, { items: NOISY_TURN }));
+    act(() => renderer.root.findByProps({ testID: 'activity-tool-note' }).props.onPress());
+    expect(reviewRootPaddingBottom(renderer)).toBe(34);
+  });
+
+  it('keeps a fixed floor on a device with no gesture nav bar', () => {
+    mockInsets.current = { top: 0, right: 0, bottom: 0, left: 0 };
+    const renderer = render(React.createElement(ActivityTimeline, { items: NOISY_TURN }));
+    act(() => renderer.root.findByProps({ testID: 'activity-tool-note' }).props.onPress());
+    expect(reviewRootPaddingBottom(renderer)).toBe(12);
   });
 });

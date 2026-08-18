@@ -261,8 +261,8 @@ const styles = StyleSheet.create({
     width: '100%',
     minWidth: 0,
     color: groknight.ledgerBright,
-    fontSize: 16,
-    lineHeight: 26,
+    fontSize: 14,
+    lineHeight: 23,
     textShadowColor: groknight.ledgerGlow,
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 7,
@@ -273,8 +273,8 @@ const styles = StyleSheet.create({
     width: '100%',
     minWidth: 0,
     color: groknight.ledgerBody,
-    fontSize: 16,
-    lineHeight: 26,
+    fontSize: 14,
+    lineHeight: 23,
   },
   /**
    * Inline with the prose, never a row of its own — nested inside the first
@@ -285,8 +285,8 @@ const styles = StyleSheet.create({
   handle: {
     ...Typography.ledger(),
     color: groknight.ledgerQuiet,
-    fontSize: 16,
-    lineHeight: 26,
+    fontSize: 14,
+    lineHeight: 23,
     letterSpacing: 0.6,
   },
   /** Absolute, so the stamp can never reflow the column it annotates. */
@@ -325,8 +325,8 @@ const styles = StyleSheet.create({
     ...Typography.ledger(),
     minWidth: 0,
     color: groknight.ledgerBody,
-    fontSize: 16,
-    lineHeight: 26,
+    fontSize: 14,
+    lineHeight: 23,
   },
   steerNote: {
     ...Typography.mono(),

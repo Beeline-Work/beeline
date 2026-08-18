@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { CornerStatus, CornerSummary } from './corners';
-import { isPinnedCornerLive, selectPinnedCorner } from './room-indicators';
+import {
+  isPinnedCornerLive,
+  isPinnedCornerReadyForReview,
+  selectPinnedCorner,
+} from './room-indicators';
 
 const corner = (id: string, status: CornerStatus, at = 100): CornerSummary => ({
   id,
@@ -36,13 +40,13 @@ describe('selectPinnedCorner', () => {
     }
   });
 
-  it('pins nothing for a corner that is open or waiting on a human, not working', () => {
-    // The line means "doing work right now" — an idle-but-open corner or one
-    // waiting on review is not that, even though it is not terminal either.
+  it('pins an open-but-idle corner and a needs-attention corner too, not just a working one', () => {
+    // The line means "open and worth returning to," not "doing work right
+    // now" — that over-correction is exactly the bug this widens back out of.
     for (const status of ['open', 'needs-attention'] as const) {
       expect(
         selectPinnedCorner({ ...base, lifecycle: [corner('idle', status)] }),
-      ).toBeNull();
+      ).toEqual({ cornerId: 'idle', status });
     }
   });
 
@@ -75,19 +79,40 @@ describe('selectPinnedCorner', () => {
     ).toBeNull();
   });
 
-  it('prefers the corner that is actually running, then the most recent', () => {
+  it('prefers a review-ready corner over one still working, then the most recent', () => {
+    // Review-ready is the most actionable state a captain can act on, so it
+    // wins the single pin even over a corner that is older but still running.
     expect(
       selectPinnedCorner({
         ...base,
-        lifecycle: [corner('waiting', 'open', 900), corner('running', 'live', 100)],
+        lifecycle: [corner('waiting', 'open', 10), corner('running', 'live', 900)],
       }),
-    ).toEqual({ cornerId: 'running', status: 'live' });
+    ).toEqual({ cornerId: 'waiting', status: 'open' });
     expect(
       selectPinnedCorner({
         ...base,
         lifecycle: [corner('older', 'live', 100), corner('newer', 'live', 900)],
       }),
     ).toEqual({ cornerId: 'newer', status: 'live' });
+  });
+
+  it('ranks review-ready above working above needs-attention, recency breaks ties within a tier', () => {
+    expect(
+      selectPinnedCorner({
+        ...base,
+        lifecycle: [
+          corner('attn', 'needs-attention', 900),
+          corner('working', 'live', 500),
+          corner('ready', 'open', 10),
+        ],
+      }),
+    ).toEqual({ cornerId: 'ready', status: 'open' });
+    expect(
+      selectPinnedCorner({
+        ...base,
+        lifecycle: [corner('older-ready', 'open', 10), corner('newer-ready', 'open', 900)],
+      }),
+    ).toEqual({ cornerId: 'newer-ready', status: 'open' });
   });
 
   it('pins a just-permitted corner nobody has a status for yet', () => {
@@ -147,5 +172,13 @@ describe('isPinnedCornerLive', () => {
     expect(isPinnedCornerLive('live')).toBe(true);
     expect(isPinnedCornerLive('needs-attention')).toBe(false);
     expect(isPinnedCornerLive('open')).toBe(false);
+  });
+});
+
+describe('isPinnedCornerReadyForReview', () => {
+  it('is true only for the review-ready status', () => {
+    expect(isPinnedCornerReadyForReview('open')).toBe(true);
+    expect(isPinnedCornerReadyForReview('live')).toBe(false);
+    expect(isPinnedCornerReadyForReview('needs-attention')).toBe(false);
   });
 });

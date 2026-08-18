@@ -5,7 +5,12 @@ import { buildTurnActivity, type TurnActivityAction } from '@/buzz/activity-time
 import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
 import { darkTheme } from '@/theme';
-import { HullActivityTip, HullSurface } from './MonoHull';
+import {
+  HullActivityTip,
+  HullMechanismRail,
+  HullMechanismReveal,
+  HullSurface,
+} from './MonoHull';
 import { MonoMarkdown } from './MonoMarkdown';
 
 const diffColors = darkTheme.colors.diff;
@@ -180,6 +185,82 @@ function MechanismRow({
 }
 
 /**
+ * `5.8` — one decimal, the way grok writes it (`Thought for 5.8s`). Seconds is
+ * the only unit that fits: a receipt in milliseconds reports the machine, and a
+ * receipt in whole seconds loses the difference between a beat and a stall.
+ */
+function thoughtSeconds(ms: number): string {
+  return (ms / 1000).toFixed(1);
+}
+
+/**
+ * The counted note, in the tense that matches its state.
+ *
+ * This is the row that closes the corner's research dead-air. A turn that is
+ * nothing but reads and searches produces no mutation, no command, and no
+ * mechanism row — and used to produce no row at all, so the corner sat silent
+ * through exactly the stretch where the agent was busiest. Body now tallies
+ * those calls onto the batch receipt it was already publishing, and this is
+ * where the tally lands: one line, dimmest tier, no box, saying how many calls
+ * and of what kind.
+ *
+ * Live, it reads `12 TOOL CALLS · reading 8, searching 3` beside a breathing
+ * gold rail; settled, it demotes to the past tense and the rail goes quiet.
+ * Memoized because the corner re-renders it on every presence tick.
+ */
+const ActivityNote = React.memo(function ActivityNote({
+  handle,
+  live,
+  onPress,
+  showHandle,
+  text,
+  thoughtMs,
+}: {
+  handle?: string;
+  live: boolean;
+  onPress: () => void;
+  showHandle: boolean;
+  /** Absent when the only thing this turn left behind is the receipt below. */
+  text?: string;
+  thoughtMs?: number;
+}) {
+  return (
+    <HullMechanismReveal live={live}>
+      <Pressable
+        accessibilityLabel={text ? `${text}. Review the calls` : 'Review this turn'}
+        accessibilityRole="button"
+        onPress={onPress}
+        style={styles.noteRow}
+        testID="activity-tool-note"
+      >
+        <HullMechanismRail live={live} />
+        {/* One line, dimmest tier, no box: this row repeats once per turn,
+            and a repeating content unit never earns a frame. The label
+            truncates; the disclosure never does, because the affordance is
+            the reason the line exists. */}
+        {text ? (
+          <Text numberOfLines={1} style={[styles.noteText, live && styles.noteTextLive]}>
+            ⋯ {showHandle && handle ? `${handle.toUpperCase()} · ` : ''}
+            {text}
+          </Text>
+        ) : null}
+        {/* The quiet half of grok's loud-then-quiet reasoning. It is only ever
+            a receipt: by the time it renders, the thinking is over — which is
+            precisely when grok collapses its own live `Thinking…` block to the
+            same five words. */}
+        {thoughtMs ? (
+          <Text style={styles.noteReceipt} testID="activity-thought-receipt">
+            {text ? '· ' : ''}THOUGHT {thoughtSeconds(thoughtMs)}S
+          </Text>
+        ) : null}
+        <Text style={styles.noteAffordance}> ›</Text>
+        {live ? <HullActivityTip /> : null}
+      </Pressable>
+    </HullMechanismReveal>
+  );
+});
+
+/**
  * A turn, read the way it was worked: narration first, tools as footnotes.
  *
  * Three layers, in the order the eye should take them:
@@ -224,10 +305,17 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
     return [...failures, ...rows];
   }, [turn.actions, turn.observations]);
 
+  // Tense follows state. A turn still in flight says what it *is* doing; a
+  // finished one says what it did. Same row, same position, same width — grok
+  // rewrites its rollup in place for exactly this reason, and moving the row
+  // instead would cost the reader their place in the transcript.
+  const noteCopy = active ? (turn.liveNote ?? turn.note) : turn.note;
+
   const hasContent =
     turn.narration.length > 0 ||
     turn.actions.length > 0 ||
     Boolean(turn.note) ||
+    Boolean(turn.thoughtMs) ||
     Boolean(turn.plan);
   if (!hasContent) return null;
 
@@ -261,27 +349,18 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
         <MechanismRow key={action.id} action={action} onPress={() => setSelected(action)} />
       ))}
 
-      {turn.note ? (
-        <Pressable
-          accessibilityLabel={`${turn.note}. Review the calls`}
-          accessibilityRole="button"
+      {noteCopy || turn.thoughtMs ? (
+        <ActivityNote
+          handle={handle}
+          live={active}
           onPress={() => setReviewing(true)}
-          style={styles.noteRow}
-          testID="activity-tool-note"
-        >
-          {/* One line, dimmest tier, no box: this row repeats once per turn,
-              and a repeating content unit never earns a frame. The label
-              truncates; the disclosure never does, because the affordance is
-              the reason the line exists. */}
-          <Text numberOfLines={1} style={styles.noteText}>
-            ⋯ {handle && !turn.narration.length ? `${handle.toUpperCase()} · ` : ''}
-            {turn.note}
-          </Text>
-          <Text style={styles.noteAffordance}> ›</Text>
-          {active ? <HullActivityTip /> : null}
-        </Pressable>
+          showHandle={!turn.narration.length}
+          text={noteCopy}
+          thoughtMs={turn.thoughtMs}
+        />
       ) : active ? (
         <View style={styles.noteRow}>
+          <HullMechanismRail live />
           <HullActivityTip />
         </View>
       ) : null}
@@ -456,13 +535,18 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     letterSpacing: 0.8,
   },
+  /**
+   * The rail lives in the margin, not in the reading column: 4 + 2 + 6 puts
+   * the label back at the same x=12 every other mechanism row uses, so turning
+   * the rail on and off never reflows a word.
+   */
   noteRow: {
     minHeight: 28,
     marginTop: 2,
-    paddingLeft: 12,
+    paddingLeft: 4,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
   },
   noteText: {
     ...Typography.mono(),
@@ -471,6 +555,20 @@ const styles = StyleSheet.create({
     color: groknight.ledgerGhost,
     fontSize: 11,
     lineHeight: 20,
+  },
+  /**
+   * Live copy lifts one step, and only one. The rail beside it is already
+   * gold and already breathing; taking the label to the accent too would make
+   * a research batch the loudest thing in the corner, which it is not.
+   */
+  noteTextLive: { color: groknight.ledgerQuiet },
+  noteReceipt: {
+    ...Typography.mono(),
+    flexShrink: 0,
+    color: groknight.ledgerGhost,
+    fontSize: 8,
+    lineHeight: 20,
+    letterSpacing: 0.8,
   },
   noteAffordance: {
     ...Typography.mono(),

@@ -20,6 +20,12 @@ vi.mock('react-native', async () => {
 
 vi.mock('./MonoHull', () => ({
   HullActivityTip: () => null,
+  // The two motion primitives are pure presentation over the same children, so
+  // the stub keeps the children and the `live` flag (which the rail encodes as
+  // a prop the structural assertions below read) and drops the animation.
+  HullMechanismRail: (props: any) => ReactStub.createElement('HullMechanismRail', props),
+  HullMechanismReveal: (props: any) =>
+    ReactStub.createElement('HullMechanismReveal', props, props.children),
   HullSurface: (props: any) => ReactStub.createElement('HullSurface', props, props.children),
 }));
 vi.mock('./MonoMarkdown', () => ({
@@ -152,6 +158,91 @@ describe('corner tool activity', () => {
     // The raw output of those calls is nowhere on the slab.
     const collapsed = renderedText(renderer);
     expect(collapsed).not.toContain('FAIL');
+  });
+
+  it('never goes silent through a turn that only ever looked at things', () => {
+    // The research dead-air bug, from the client end. A batch of nothing but
+    // reads and searches produces no mutation, no command, and so no mechanism
+    // row — and before body tallied the calls it dropped, it produced no row
+    // at all, leaving the corner blank through the exact stretch where the
+    // agent was busiest. One counted line is the whole fix.
+    const renderer = render(
+      React.createElement(ActivityTimeline, {
+        active: true,
+        items: [
+          {
+            kind: 'summary' as const,
+            title: 'Summary',
+            text: '',
+            rollup: { read: 8, searched: 3, listed: 1 },
+          },
+        ],
+      }),
+    );
+
+    const note = renderer.root.findByProps({ testID: 'activity-tool-note' });
+    // Live, so it says what it *is* doing, in the present tense grok uses for
+    // a group still in flight.
+    expect(note.findAllByType('Text')[0].props.children.join('')).toContain(
+      '12 TOOL CALLS · reading 8, searching 3, listing 1',
+    );
+    // And the gold rail beside it is breathing, because the work is live.
+    expect(renderer.root.findByType('HullMechanismRail').props.live).toBe(true);
+  });
+
+  it('demotes the same row to the past tense once the work settles', () => {
+    const items = [
+      { kind: 'summary' as const, title: 'Summary', text: '', rollup: { read: 8, searched: 3, listed: 1 } },
+    ];
+    const renderer = render(React.createElement(ActivityTimeline, { active: false, items }));
+
+    const note = renderer.root.findByProps({ testID: 'activity-tool-note' });
+    expect(note.findAllByType('Text')[0].props.children.join('')).toContain(
+      '12 TOOL CALLS · read 8, searched 3, listed 1',
+    );
+    expect(renderer.root.findByType('HullMechanismRail').props.live).toBe(false);
+  });
+
+  it('shows a live signal even before a single call has been counted', () => {
+    // The first batch has not landed yet. There is nothing to count and
+    // nothing to name, but the corner must still not read as idle.
+    const renderer = render(
+      React.createElement(ActivityTimeline, {
+        active: true,
+        items: [{ kind: 'output' as const, title: 'Output', text: 'Looking into it.' }],
+      }),
+    );
+    expect(renderer.root.findByType('HullMechanismRail').props.live).toBe(true);
+  });
+
+  it('reports the reasoning it can never show, as a bare elapsed receipt', () => {
+    // grok's live `Thinking…` block collapses to `Thought for 5.8s` the
+    // instant the answer lands. The block itself is unaffordable here — its
+    // text never leaves the daemon — so the corner keeps only the collapse.
+    const renderer = render(
+      React.createElement(ActivityTimeline, {
+        items: [
+          { kind: 'summary' as const, title: 'Summary', text: '', rollup: { read: 2 }, thoughtMs: 5_800 },
+        ],
+      }),
+    );
+    expect(
+      renderer.root.findByProps({ testID: 'activity-thought-receipt' }).props.children.join(''),
+    ).toBe('· THOUGHT 5.8S');
+  });
+
+  it('still shows a turn whose only trace is the reasoning receipt', () => {
+    // `hasContent` counts the receipt, so the row has to exist for it — an
+    // older body that sends a span with no tally would otherwise render an
+    // empty timeline rather than nothing or something.
+    const renderer = render(
+      React.createElement(ActivityTimeline, {
+        items: [{ kind: 'summary' as const, title: 'Summary', text: '', thoughtMs: 2_400 }],
+      }),
+    );
+    expect(
+      renderer.root.findByProps({ testID: 'activity-thought-receipt' }).props.children.join(''),
+    ).toBe('THOUGHT 2.4S');
   });
 
   it('gives a mutation and an executed command their own lines', () => {

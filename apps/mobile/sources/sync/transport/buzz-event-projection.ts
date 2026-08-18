@@ -75,6 +75,17 @@ function compactPlan(value: unknown): AgentActivityItem['plan'] | undefined {
   return items.length || objective ? { ...(objective ? { objective } : {}), items } : undefined;
 }
 
+/** Verb -> count tally of the tool calls body counted but did not project. */
+function compactRollup(value: unknown): Record<string, number> | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const rollup: Record<string, number> = {};
+  for (const [verb, count] of Object.entries(record)) {
+    if (typeof count === 'number' && Number.isFinite(count) && count > 0) rollup[verb] = count;
+  }
+  return Object.keys(rollup).length ? rollup : undefined;
+}
+
 /**
  * Body activity is a JSON-encoded ACP `session/update` envelope. Project the
  * user-facing content, not that transport envelope. Plain-text activity from
@@ -129,6 +140,23 @@ export function agentActivityDetails(content: string): AgentActivityItem[] {
   if (sessionUpdate === 'progress_update') {
     const text = stringValue(update.text);
     return text ? [{ kind: 'output', title: 'Update', text }] : [];
+  }
+  if (sessionUpdate === 'activity_summary') {
+    // Body's synthetic per-batch receipt. Its text is mechanism, not narration,
+    // and it carries the only count of the observational tool calls that never
+    // reach the wire on their own — so it gets its own kind rather than being
+    // mistaken for the agent's prose.
+    const rollup = compactRollup(update.rollup);
+    const text = readTextContent(update.content) ?? stringValue(update.text);
+    if (!rollup && !text) return [];
+    return [
+      {
+        kind: 'summary',
+        title: 'Summary',
+        ...(text ? { text } : {}),
+        ...(rollup ? { rollup } : {}),
+      },
+    ];
   }
   const text =
     readTextContent(update.content) ??

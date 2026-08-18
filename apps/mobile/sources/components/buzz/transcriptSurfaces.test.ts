@@ -195,24 +195,21 @@ describe('The obsidian slab', () => {
     expect(outcomeSource).not.toMatch(/cornerOpenChip/);
     expect(outcomeSource).not.toMatch(/minHeight/);
 
-    // One dim inscribed line at the prose margin, with the affordance hung in
-    // the same right gutter the timestamps use and lifted one tonal step.
+    // One dim inscribed line at the prose margin.
     expect(styleDefinition(outcomeSource, 'outcome')).toMatch(
       /paddingRight:\s*LEDGER_MARGINALIA_WIDTH/,
     );
     expect(styleDefinition(outcomeSource, 'status')).toMatch(/color:\s*groknight\.ledgerQuiet/);
-    const enter = styleDefinition(outcomeSource, 'enter');
-    expect(enter).toMatch(/position:\s*'absolute'/);
-    expect(enter).toMatch(/right:\s*0/);
-    expect(enter).toMatch(/color:\s*groknight\.ledgerBody/);
-    // A tonal flash on press, never a border.
-    expect(styleDefinition(outcomeSource, 'statusPressed')).toMatch(/color:/);
-    expect(styleDefinition(outcomeSource, 'enterPressed')).toMatch(/color:/);
-    // Faceted diamond for corner, arrow for enterable.
-    expect(outcomeSource).toContain('◇ CORNER OPEN');
-    expect(outcomeSource).toContain('view →');
+    // It reports a decision and never navigates: an open corner is live state,
+    // and live state is the pinned bar's job, not a scroll note's.
+    expect(outcomeSource).not.toContain('CORNER OPEN');
+    expect(outcomeSource).not.toContain('view →');
+    expect(outcomeSource).not.toMatch(/Pressable|onOpenCorner/);
+    // Faceted diamond for corner, so the lifecycle glyph family still holds.
+    expect(outcomeSource).toContain('◇ ALLOWED');
 
-    // ...and one affordance vocabulary: the Room's own corner card agrees.
+    // ...and one affordance vocabulary survives for the rows that *do* still
+    // navigate: a terminal corner's durable card in the Room transcript.
     expect(chatSource).toContain('<Text style={styles.openCornerText}>view →</Text>');
     expect(chatSource).not.toMatch(/openCornerGlyph/);
   });
@@ -340,21 +337,95 @@ describe('Machine noise', () => {
     const activity = chatSource.slice(start, end);
     expect(activity).toContain('<ActivityTimeline');
     expect(activity).not.toContain('turn.updates');
+    expect(activitySource).not.toContain('turn.updates');
     expect(chatSource).not.toMatch(/\bactivityUpdate:\s*\{/);
   });
 
-  it('collapses to one ghost line — dimmest tier, no node, no box', () => {
+  it('folds the read-only calls into one counted note — dimmest tier, no box', () => {
+    // One note per turn, verb-counted. Not one collapsed line per call, and
+    // never a wall: the fold is what buys the reading column its quiet.
     expect(activitySource).toMatch(/⋯ \{handle/);
-    expect(activitySource).toMatch(/tap to expand/);
-    expect(styleDefinition(activitySource, 'summaryText')).toMatch(
-      /color:\s*groknight\.ledgerGhost/,
-    );
+    expect(styleDefinition(activitySource, 'noteText')).toMatch(/color:\s*groknight\.ledgerGhost/);
+    expect(styleDefinition(activitySource, 'noteRow')).not.toMatch(/border|backgroundColor/);
     // The bordered node that used to sit beside the summary is gone.
     expect(activitySource).not.toMatch(/\bnode:\s*\{/);
     expect(activitySource).not.toMatch(/activeNode/);
-    // Even a plan/objective is telemetry, so nothing renders outside the
-    // disclosure while it is collapsed.
-    expect(activitySource).toMatch(/const inspectable =[\s\S]{0,120}Boolean\(turn\.plan\)/);
+  });
+
+  it('keeps the agent’s own prose out of the fold entirely', () => {
+    // Narration is the spine of a turn, so it renders on the slab at the
+    // ledger's own brightest tier — full width, no glyph, no indent, and with
+    // no disclosure between it and the reader. Folding it in with the tool
+    // output is the bug this replaced.
+    const narration = styleDefinition(activitySource, 'narration');
+    expect(narration).toMatch(/Typography\.ledger\(\)/);
+    expect(narration).toMatch(/color:\s*groknight\.ledgerBright/);
+    expect(narration).toMatch(/fontSize:\s*16/);
+    expect(narration).toMatch(/width:\s*'100%'/);
+    expect(narration).toMatch(/textShadowColor:\s*groknight\.ledgerGlow/);
+    expect(narration).not.toMatch(/paddingLeft/);
+    // Mechanism, by contrast, is indented and quiet.
+    expect(styleDefinition(activitySource, 'mechanismRow')).toMatch(/paddingLeft:\s*12/);
+    expect(styleDefinition(activitySource, 'mechanismLabel')).toMatch(
+      /color:\s*groknight\.ledgerQuiet/,
+    );
+    // ...and the escalation above it is luminance, never hue: a mutation lifts
+    // one step, a failure lifts all the way, and gold stays spent on live state.
+    expect(styleDefinition(activitySource, 'mechanismLabelLifted')).toMatch(
+      /color:\s*groknight\.ledgerBody/,
+    );
+    expect(styleDefinition(activitySource, 'mechanismLabelFailed')).toMatch(
+      /color:\s*groknight\.ledgerBright/,
+    );
+    expect(activitySource).not.toMatch(/mechanismLabel\w*: \{[^}]*groknight\.accent/);
+  });
+
+  it('pins the corner indicator above the composer instead of inscribing it', () => {
+    const barSource = readFileSync(new URL('./CornerLiveBar.tsx', import.meta.url), 'utf8');
+    // Gold, and gold only — this is the accent's own assigned meaning
+    // (DESIGN.md: live/online presence), never a second hue.
+    expect(styleDefinition(barSource, 'segment')).toMatch(/backgroundColor:\s*groknight\.accent/);
+    expect(styleDefinition(barSource, 'label')).toMatch(/color:\s*groknight\.accent/);
+    expect(barSource).not.toMatch(/#[0-9a-fA-F]{3,8}(?!\d)/);
+    // A status light needs no frame: it is always in the same place.
+    expect(styleDefinition(barSource, 'bar')).not.toMatch(/border|borderRadius/);
+    // It flows while the work is live and settles otherwise, and it never
+    // animates unwatched.
+    expect(barSource).toMatch(/const flowing = live && appActive && !reducedMotion/);
+
+    // ...and the note it replaced is gone from the transcript scroll on both
+    // the corner-card path and the permission-outcome path.
+    expect(chatSource).toMatch(/if \(isCornerActive\(item\.corner\.status\)\) return null;/);
+    expect(chatSource).toMatch(
+      /if \(permission\.status === 'allowed' && permission\.subchannelId\) return null;/,
+    );
+    expect(chatSource).not.toMatch(/testID="agent-live-status"/);
+  });
+
+  it('gives a corner the room’s chrome: one composer, one overflow menu', () => {
+    // The corner composer is the room composer. No second placeholder word, no
+    // corner-only tone, no corner-only send glyph.
+    expect(chatSource).toContain('placeholder="Message"');
+    expect(chatSource).not.toMatch(/'Steer'/);
+    for (const retired of ['cornerComposer', 'cornerInput', 'cornerSendButtonText']) {
+      expect(chatSource, `${retired} should be retired`).not.toMatch(
+        new RegExp(`\\b${retired}\\b`),
+      );
+    }
+    // Close corner moved off the composer and into the header overflow, which
+    // is the same ••• affordance the Room header already carries.
+    expect(chatSource).not.toMatch(/cancelTurn/);
+    expect(chatSource).toMatch(/testID="corner-actions-menu"/);
+    expect(chatSource).toMatch(/testID="close-corner-action"/);
+    // ...and the only place the close copy survives is inside that sheet.
+    expect(chatSource.match(/CLOSE \{CORNER_LABEL/g)).toHaveLength(1);
+    expect(chatSource.indexOf('CLOSE {CORNER_LABEL')).toBeGreaterThan(
+      chatSource.indexOf('testID="close-corner-action"'),
+    );
+    const menu = chatSource.indexOf('testID="corner-actions-menu"');
+    const list = chatSource.indexOf('testID="chat-messages"');
+    expect(menu).toBeGreaterThanOrEqual(0);
+    expect(menu).toBeLessThan(list);
   });
 
   it('lifts a pasted git/CLI wall out of an agent’s prose into the same ghost line', () => {

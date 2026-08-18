@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionEvent } from '@/sync/transport';
 import {
+  agentActivityDetails,
   projectChatEvent,
   transcriptMessages,
   upsertChatMessages,
@@ -708,5 +709,54 @@ describe('Buzz Room screen event projection', () => {
       projectChatEvent(draft('draft-3', 'Hello world!', requestId, 10), viewer).message!,
     ]);
     expect(afterStaleDraft).toEqual(settled);
+  });
+});
+
+describe('agent activity projection', () => {
+  it('keeps the observational tool-call tally that only rides the summary event', () => {
+    // Body deliberately never projects a read or a search as its own event —
+    // that would blow the per-pubkey relay quota on a research-heavy turn — so
+    // this tally is the single wire record that those calls happened at all.
+    expect(
+      agentActivityDetails(
+        JSON.stringify({
+          update: {
+            sessionUpdate: 'activity_summary',
+            content: { type: 'text', text: 'Edited stats.py' },
+            rollup: { read: 41, searched: 12 },
+          },
+        }),
+      ),
+    ).toEqual([
+      {
+        kind: 'summary',
+        title: 'Summary',
+        text: 'Edited stats.py',
+        rollup: { read: 41, searched: 12 },
+      },
+    ]);
+  });
+
+  it('carries a reads-only batch, which used to project as nothing at all', () => {
+    // No major action means no summary text, and the whole batch used to be
+    // dropped — the corner went silent during the exact stretch the agent was
+    // working hardest. The tally alone is enough to keep the turn legible.
+    expect(
+      agentActivityDetails(
+        JSON.stringify({
+          update: { sessionUpdate: 'activity_summary', content: { type: 'text', text: '' }, rollup: { read: 8 } },
+        }),
+      ),
+    ).toEqual([{ kind: 'summary', title: 'Summary', rollup: { read: 8 } }]);
+  });
+
+  it('never mistakes the agent’s own prose for a tool receipt', () => {
+    // `progress_update` is the agent narrating, so it projects as `output` —
+    // the kind the corner renders on the slab rather than folding away.
+    expect(
+      agentActivityDetails(
+        JSON.stringify({ update: { sessionUpdate: 'progress_update', text: 'Both bugs are fixed.' } }),
+      ),
+    ).toEqual([{ kind: 'output', title: 'Update', text: 'Both bugs are fixed.' }]);
   });
 });

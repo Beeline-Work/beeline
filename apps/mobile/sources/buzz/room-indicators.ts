@@ -1,5 +1,6 @@
 import {
   cornerStatusPrecedence,
+  isCornerTerminal,
   type CornerActivitySignal,
   type CornerStatus,
   type CornerSummary,
@@ -61,13 +62,30 @@ function mostTerminal(
 }
 
 /**
+ * Which qualifying corner to pin when more than one is open at once. This is
+ * a *selection* priority, deliberately not `cornerStatusPrecedence` (which
+ * resolves conflicting reports of one corner's status and must stay
+ * terminal-highest for that job): a corner ready for review is the most
+ * actionable thing a captain can do about it, so it wins the single pin even
+ * over one still being actively worked.
+ */
+const PIN_RELEVANCE: Record<CornerStatus, number> = {
+  open: 0,
+  live: 1,
+  'needs-attention': 2,
+  failed: 3,
+  merged: 3,
+  archived: 3,
+};
+
+/**
  * The one corner the pinned line may name, or `null` for none.
  *
- * The line's presence means one thing: a corner is actively working right
- * now. Only `live` qualifies — an idle-but-open corner, one waiting on a
- * human (`needs-attention`), or a terminal one are all "no line", not a
- * quiet-tier line. When several corners are live at once, the most recent
- * wins.
+ * The line's presence means "this corner is open and worth returning to" —
+ * `live` (working), `needs-attention` (waiting on a human), and `open`
+ * (review-ready) all qualify. Only a terminal status (`merged`/`failed`/
+ * `archived`) is "no line". When several corners qualify at once, a
+ * review-ready one wins, then a working one, then the most recently active.
  */
 export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | null {
   const status = new Map<string, CornerStatus>();
@@ -95,10 +113,10 @@ export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | nul
   }
 
   const candidates = [...status.entries()]
-    .filter(([, value]) => isPinnedCornerLive(value))
+    .filter(([, value]) => !isCornerTerminal(value))
     .sort(
       ([leftId, left], [rightId, right]) =>
-        cornerStatusPrecedence(left) - cornerStatusPrecedence(right) ||
+        PIN_RELEVANCE[left] - PIN_RELEVANCE[right] ||
         (seenAt.get(rightId) ?? 0) - (seenAt.get(leftId) ?? 0) ||
         leftId.localeCompare(rightId),
     );
@@ -109,9 +127,16 @@ export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | nul
 /**
  * Gold, and the breath that goes with it, mean one thing product-wide: an
  * agent is alive and working *in that corner*. `needs-attention` and `open`
- * are open corners waiting on a human, not running ones — `selectPinnedCorner`
- * never surfaces them, so this is the only test a pinned corner can ever fail.
+ * are pinned too (see `selectPinnedCorner`) but are not running work, so they
+ * render on the quiet tier with no pulse — this is the one test that decides
+ * which of a pinned corner's non-terminal statuses earns the gold treatment.
  */
 export function isPinnedCornerLive(status: CornerStatus): boolean {
   return status === 'live';
+}
+
+/** A pinned corner has an approvable change waiting — the pinned line should
+ * say so rather than a generic "active"/"idle". */
+export function isPinnedCornerReadyForReview(status: CornerStatus): boolean {
+  return status === 'open';
 }

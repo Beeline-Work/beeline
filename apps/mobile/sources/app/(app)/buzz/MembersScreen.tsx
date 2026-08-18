@@ -9,6 +9,8 @@ import {
   isAgentPresenceOnline,
   isSingleWordAgentName,
   type Agent,
+  type AgentModelConfigInput,
+  type AgentModelConfigOption,
   type AgentPresence,
   type Community,
   type CommunityMember,
@@ -83,6 +85,10 @@ export default function BuzzAgents() {
   const [canManageWorkspace, setCanManageWorkspace] = useState(false);
   const [agentPresences, setAgentPresences] = useState<Record<string, AgentPresence>>({});
   const [presenceNow, setPresenceNow] = useState(Date.now());
+  const [modelCatalog, setModelCatalog] = useState<AgentModelConfigOption[] | null>(null);
+  const [modelSelection, setModelSelection] = useState<AgentModelConfigInput | null>(null);
+  const [modelConfigWorking, setModelConfigWorking] = useState(false);
+  const [openModelAxis, setOpenModelAxis] = useState<string | null>(null);
   const pairingBaseline = useRef<Set<string>>(new Set());
   const pairingPending = useRef(false);
 
@@ -326,6 +332,58 @@ export default function BuzzAgents() {
     setConfirmingRemoval(false);
     setError(null);
   }, []);
+
+  // The runtime's advertised model/effort catalog + this agent's persisted
+  // selection, if any. A session that has never activated yet has published
+  // no catalog — the section stays hidden rather than showing an error.
+  useEffect(() => {
+    setOpenModelAxis(null);
+    if (!transport || !communityId || !selected) {
+      setModelCatalog(null);
+      setModelSelection(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const [catalog, config] = await Promise.all([
+          transport.agentModelCatalogRead(communityId, selected.pubkey),
+          transport.agentModelConfigRead(communityId, selected.pubkey),
+        ]);
+        if (cancelled) return;
+        setModelCatalog(catalog?.options ?? null);
+        setModelSelection(config ? { model: config.model, effort: config.effort } : null);
+      } catch {
+        if (!cancelled) {
+          setModelCatalog(null);
+          setModelSelection(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [communityId, selected, transport]);
+
+  const chooseModelOption = useCallback(
+    async (axis: AgentModelConfigOption, choiceId: string) => {
+      if (!transport || !communityId || !selected) return;
+      const input: AgentModelConfigInput =
+        axis.category === 'model' ? { model: choiceId } : { effort: choiceId };
+      setModelConfigWorking(true);
+      setError(null);
+      try {
+        await transport.agentModelConfigSet(communityId, selected.pubkey, input);
+        setModelSelection((prev) => ({ ...prev, ...input }));
+        setOpenModelAxis(null);
+      } catch (caught) {
+        setError(`Could not set ${axis.category}: ${String(caught)}`);
+      } finally {
+        setModelConfigWorking(false);
+      }
+    },
+    [communityId, selected, transport],
+  );
 
   const saveSoul = useCallback(
     async (nextName = name, nextPersonality = personality) => {
@@ -832,6 +890,57 @@ export default function BuzzAgents() {
                   <Text style={styles.secondaryButtonText}>Suggest locally</Text>
                 </TouchableOpacity>
               </View>
+              {modelCatalog && modelCatalog.length > 0 && (
+                <View style={styles.modelConfigSection} testID={`agent-${selected.pubkey}-model-config`}>
+                  <Text style={styles.label}>Model / Effort</Text>
+                  {modelCatalog.map((axis) => {
+                    const persisted = axis.category === 'model' ? modelSelection?.model : modelSelection?.effort;
+                    const currentValue = persisted ?? axis.currentValue;
+                    const isOpen = openModelAxis === axis.id;
+                    return (
+                      <View key={axis.id} style={styles.modelAxisBlock}>
+                        <TouchableOpacity
+                          style={styles.modelAxisRow}
+                          disabled={modelConfigWorking}
+                          onPress={() => setOpenModelAxis(isOpen ? null : axis.id)}
+                          testID={`model-axis-${axis.id}`}
+                        >
+                          <Text style={styles.modelAxisLabel}>
+                            {axis.category === 'model' ? 'Model' : 'Effort'}
+                          </Text>
+                          <Text style={styles.modelAxisValue} numberOfLines={1}>
+                            {currentValue ?? '—'}
+                          </Text>
+                          <Text style={styles.chevron}>{isOpen ? '⌄' : '›'}</Text>
+                        </TouchableOpacity>
+                        {isOpen && (
+                          <View style={styles.modelOptionList}>
+                            {axis.options.map((choice) => (
+                              <TouchableOpacity
+                                key={choice.id}
+                                style={styles.modelOptionRow}
+                                disabled={modelConfigWorking}
+                                onPress={() => void chooseModelOption(axis, choice.id)}
+                                testID={`model-option-${axis.id}-${choice.id}`}
+                              >
+                                <Text
+                                  style={[
+                                    styles.modelOptionText,
+                                    choice.id === currentValue && styles.modelOptionTextActive,
+                                  ]}
+                                >
+                                  {choice.name ?? choice.id}
+                                </Text>
+                                {choice.id === currentValue && <Text style={styles.modelOptionCheck}>✓</Text>}
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
               <TouchableOpacity
                 accessibilityLabel="Remove this Agent"
                 accessibilityHint="Stops the Agent and ends its work on the host machine"
@@ -1195,6 +1304,41 @@ const styles = StyleSheet.create({
   },
   editorActions: { flexDirection: 'row', gap: 8 },
   flexButton: { flex: 1, minWidth: 0 },
+  modelConfigSection: { marginTop: 12 },
+  modelAxisBlock: { ...hairlineDivider },
+  modelAxisRow: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+  },
+  modelAxisLabel: {
+    ...Typography.default('semiBold'),
+    color: groknight.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  modelAxisValue: {
+    ...Typography.mono(),
+    flex: 1,
+    minWidth: 0,
+    textAlign: 'right',
+    color: groknight.textPrimary,
+    fontSize: 12,
+  },
+  modelOptionList: { paddingBottom: 8 },
+  modelOptionRow: {
+    minHeight: 38,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    paddingLeft: 12,
+  },
+  modelOptionText: { ...Typography.mono(), color: groknight.textMuted, fontSize: 12 },
+  modelOptionTextActive: { color: groknight.accent },
+  modelOptionCheck: { ...Typography.default(), color: groknight.accent, fontSize: 12 },
   removeButton: {
     marginTop: 22,
     minHeight: 52,

@@ -182,6 +182,58 @@ function isMajorUpdate(
   });
 }
 
+/**
+ * The verb an observational (never-projected) tool call is counted under in the
+ * turn's rollup tally.
+ *
+ * The drop itself is deliberate and stays — reads, searches, and MCP chatter
+ * must not each become their own relay write, or a research-heavy turn blows
+ * the per-pubkey quota. What was missing is that the *count* was dropped too,
+ * so a client could not say "41 files read, 12 searches" at all and a long
+ * research phase rendered as total silence. Tallying costs nothing on the wire:
+ * the tally rides the `activity_summary` event that is already published.
+ */
+function observationalVerb(
+  update: Record<string, unknown>,
+  toolCallKinds: Map<string, ToolCallInfo>,
+): string | undefined {
+  const sessionUpdate = typeof update.sessionUpdate === 'string' ? update.sessionUpdate : undefined;
+  if (!sessionUpdate || SUPPRESSED_SESSION_UPDATE_KINDS.has(sessionUpdate)) return undefined;
+  if (
+    sessionUpdate !== 'tool_call' &&
+    sessionUpdate !== 'tool_call_update' &&
+    sessionUpdate !== 'tool_result'
+  ) {
+    return undefined;
+  }
+  // Count each call once, on the terminal event, so a creation event and its
+  // own `tool_call_update` do not tally the same call twice.
+  const status =
+    typeof update.status === 'string'
+      ? update.status
+      : sessionUpdate === 'tool_result'
+        ? 'completed'
+        : undefined;
+  if (status !== 'completed' && status !== 'failed') return undefined;
+  const toolCallId = typeof update.toolCallId === 'string' ? update.toolCallId : undefined;
+  const known = toolCallId ? toolCallKinds.get(toolCallId) : undefined;
+  const current = toolCallInfo(update);
+  const kind = current.kind ?? known?.kind;
+  if (current.isMcp || known?.isMcp) return 'queried';
+  switch (kind) {
+    case 'read':
+      return 'read';
+    case 'search':
+      return 'searched';
+    case 'fetch':
+      return 'fetched';
+    case 'think':
+      return 'reasoned';
+    default:
+      return 'ran';
+  }
+}
+
 /** A deliberately non-raw label for a visible milestone. */
 function describeMajorUpdate(
   update: Record<string, unknown>,
@@ -621,8 +673,21 @@ export function projectActivity(
     // diffs, command, output) so the corner drill-down can inspect it.
     const major: Record<string, unknown>[] = [];
     const labels: string[] = [];
+    // Tally what the filter drops. Read-only work never earns its own wire
+    // event, but its shape ("read 41, searched 12") is exactly what makes a
+    // research phase legible instead of silent, so the counts ride along on
+    // the summary event that is published anyway.
+    //
+    // This has to happen in the *same* pass: the major branch below clears the
+    // tool call's tracked kind/command, so a second pass would re-classify the
+    // very milestone it just published as an anonymous observational call.
+    const rollup: Record<string, number> = {};
     for (const event of events) {
-      if (!isMajorUpdate(event, toolCallKinds)) continue;
+      if (!isMajorUpdate(event, toolCallKinds)) {
+        const verb = observationalVerb(event, toolCallKinds);
+        if (verb) rollup[verb] = (rollup[verb] ?? 0) + 1;
+        continue;
+      }
       const label = describeMajorUpdate(event, toolCallKinds);
       const toolCallId = typeof event.toolCallId === 'string' ? event.toolCallId : undefined;
       const merged = toolCallId ? (toolCallRaw.get(toolCallId) ?? event) : event;
@@ -639,10 +704,16 @@ export function projectActivity(
         toolCallRaw.delete(toolCallId);
       }
     }
-    if (!major.length) return;
+    const rollupTotal = Object.values(rollup).reduce((sum, count) => sum + count, 0);
+    // A reads-only batch used to emit nothing at all, which is the dead-air
+    // bug: during the exact stretch the agent is working hardest the corner
+    // showed no sign of life. It now emits exactly one event (the summary),
+    // never more than the mixed case already cost.
+    if (!major.length && !rollupTotal) return;
     const summary: Record<string, unknown> = {
       sessionUpdate: 'activity_summary',
       content: { type: 'text', text: summarizeMajorActions(labels) },
+      ...(rollupTotal ? { rollup } : {}),
     };
     void emitActivityEvent(channelId, channelOwner, {
       sessionId,

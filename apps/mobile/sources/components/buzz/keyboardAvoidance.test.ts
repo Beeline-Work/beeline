@@ -34,12 +34,15 @@ describe('Buzz keyboard avoidance', () => {
   });
 
   it('keeps active work outside a growing multiline composer', () => {
-    const listEnd = chatSource.indexOf('        />\n\n        {!isArchived');
+    // The corner indicator is pinned between the transcript and the composer:
+    // it must never scroll with the transcript, and it must never be pushed
+    // off-screen by a composer growing to its multiline maximum.
+    const listEnd = chatSource.indexOf('        />\n\n        {/* The corner-open indicator');
     const inputBar = chatSource.indexOf('<View style={[styles.inputBar');
     expect(listEnd).toBeGreaterThanOrEqual(0);
     expect(inputBar).toBeGreaterThan(listEnd);
-    expect(chatSource.indexOf('testID="agent-live-status"')).toBeGreaterThan(listEnd);
-    expect(chatSource.indexOf('testID="agent-live-status"')).toBeLessThan(inputBar);
+    expect(chatSource.indexOf('testID="corner-live-bar"')).toBeGreaterThan(listEnd);
+    expect(chatSource.indexOf('testID="corner-live-bar"')).toBeLessThan(inputBar);
   });
 
   it('does not rerender the transcript on a fixed presence clock', () => {

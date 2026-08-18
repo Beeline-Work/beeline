@@ -187,7 +187,7 @@ describe('projectActivity granularity', () => {
     ]);
   });
 
-  it('publishes nothing when a batch has no major action', async () => {
+  it('publishes a bare tally, not silence, when a batch only observed', async () => {
     const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
 
     emit({ sessionUpdate: 'agent_thought_chunk', content: 'inspecting the code' });
@@ -197,7 +197,50 @@ describe('projectActivity granularity', () => {
     await vi.advanceTimersByTimeAsync(5_000);
     unsubscribe();
 
-    expect(published).toHaveLength(0);
+    // Reads and searches still never get their own wire event — that is what
+    // keeps a research-heavy turn under the per-pubkey relay quota. What they
+    // now get is a count, on the one summary event, so a long research phase
+    // reads as work in progress instead of as dead air. Exactly one event,
+    // where a mixed batch already costs exactly one.
+    expect(published).toHaveLength(1);
+    const content = JSON.parse(published[0]!.content) as {
+      update: { updates: Array<Record<string, unknown>> };
+    };
+    expect(content.update.updates).toEqual([
+      {
+        sessionUpdate: 'activity_summary',
+        content: { type: 'text', text: '' },
+        rollup: { searched: 1 },
+      },
+    ]);
+    // Reasoning is still never counted, and never projected.
+    expect(JSON.stringify(content)).not.toContain('inspecting the code');
+  });
+
+  it('never counts a published milestone as an anonymous observational call', async () => {
+    const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+
+    // The major branch clears this call's tracked kind/command once it has been
+    // published, so anything re-classifying the same event afterwards sees an
+    // anonymous delta and tallies the milestone a second time.
+    emit(
+      toolCall('test-1', {
+        kind: 'execute',
+        title: 'shell',
+        rawInput: { command: 'npm test -- --run' },
+      }),
+    );
+    emit(toolCallUpdate('test-1', { status: 'completed', output: 'ok' }));
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    unsubscribe();
+
+    const content = JSON.parse(published[0]!.content) as {
+      update: { updates: Array<Record<string, unknown>> };
+    };
+    const summary = content.update.updates.at(-1)!;
+    expect(summary.sessionUpdate).toBe('activity_summary');
+    expect(summary.rollup).toBeUndefined();
   });
 });
 

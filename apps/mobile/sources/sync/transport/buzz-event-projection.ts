@@ -86,6 +86,24 @@ function compactRollup(value: unknown): Record<string, number> | undefined {
   return Object.keys(rollup).length ? rollup : undefined;
 }
 
+/** Per-call receipts (target + short result) for the folded calls the tally above counts. */
+function compactObserved(value: unknown): NonNullable<AgentActivityItem['observed']> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const observed = value.flatMap((item) => {
+    const record = asRecord(item);
+    const verb = stringValue(record?.verb);
+    if (!verb) return [];
+    return [
+      {
+        verb,
+        ...(stringValue(record?.target) ? { target: stringValue(record?.target) } : {}),
+        ...(stringValue(record?.result) ? { result: stringValue(record?.result) } : {}),
+      },
+    ];
+  });
+  return observed.length ? observed : undefined;
+}
+
 /**
  * Body activity is a JSON-encoded ACP `session/update` envelope. Project the
  * user-facing content, not that transport envelope. Plain-text activity from
@@ -147,18 +165,20 @@ export function agentActivityDetails(content: string): AgentActivityItem[] {
     // reach the wire on their own — so it gets its own kind rather than being
     // mistaken for the agent's prose.
     const rollup = compactRollup(update.rollup);
+    const observed = compactObserved(update.observed);
     const text = readTextContent(update.content) ?? stringValue(update.text);
     const thoughtMs =
       typeof update.thoughtMs === 'number' && Number.isFinite(update.thoughtMs) && update.thoughtMs > 0
         ? update.thoughtMs
         : undefined;
-    if (!rollup && !text && !thoughtMs) return [];
+    if (!rollup && !observed && !text && !thoughtMs) return [];
     return [
       {
         kind: 'summary',
         title: 'Summary',
         ...(text ? { text } : {}),
         ...(rollup ? { rollup } : {}),
+        ...(observed ? { observed } : {}),
         ...(thoughtMs ? { thoughtMs } : {}),
       },
     ];

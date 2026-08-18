@@ -64,7 +64,18 @@ import {
 } from './body.js';
 import { AcpClient, isMutatingPermissionRequest } from './acp.js';
 import { newIdentity } from '@beeline/gate';
-import { WRITE_PERMISSION_RESPONSE_TAG } from '@beeline/buzz-client';
+import {
+  WRITE_PERMISSION_RESPONSE_TAG,
+  setAgentModelConfig,
+  KIND_AGENT_MODEL_CATALOG,
+  KIND_AGENT_MODEL_CONFIG,
+  KIND_CHANNEL_ADMINS,
+  KIND_CHANNEL_MEMBERS,
+  KIND_CREATE_GROUP,
+  KIND_STREAM_MESSAGE,
+  TAG_AGENT,
+  TAG_COMMUNITY,
+} from '@beeline/buzz-client';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import {
   buildAgentMessage,
@@ -4184,5 +4195,202 @@ describe('per-agent access policy', () => {
       addressed(stranger, body.agent.publicKey, '2'),
     ], participants);
     expect(refusals(published)).toHaveLength(1);
+  });
+});
+
+describe('per-agent model/effort persistence', () => {
+  const communityId = '22222222-2222-4222-8222-222222222222';
+  const owner = newIdentity('model-config-owner');
+
+  function jsonResponse(body: unknown): Response {
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
+  function filterFrom(init?: RequestInit): Record<string, unknown> {
+    return (JSON.parse(String(init?.body)) as Record<string, unknown>[])[0] ?? {};
+  }
+
+  function signed(
+    identity: ReturnType<typeof newIdentity>,
+    kind: number,
+    tags: string[][],
+    content = '',
+  ): NostrEvent {
+    return signEvent(
+      { pubkey: identity.publicKey, created_at: 1_700_000_000, kind, tags, content },
+      identity.secretKey,
+    );
+  }
+
+  function agentRecord(body: Body): NostrEvent {
+    return signEvent(
+      {
+        pubkey: body.agent.publicKey,
+        created_at: 1_700_000_000,
+        kind: KIND_STREAM_MESSAGE,
+        tags: [
+          ['h', communityId],
+          ['d', 'agent-id'],
+          ['p', body.agent.publicKey],
+          ['t', TAG_AGENT],
+          [TAG_COMMUNITY, communityId],
+        ],
+        content: JSON.stringify({ displayName: 'Agent' }),
+      },
+      body.agent.secretKey,
+    );
+  }
+
+  /** A minimal relay stub covering every read `applyModelConfigForSession` needs, plus publish capture. */
+  function stubRelay(body: Body, published: NostrEvent[]): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        if (kind === KIND_CREATE_GROUP) {
+          return jsonResponse([
+            signed(owner, KIND_CREATE_GROUP, [
+              ['h', communityId],
+              ['name', 'Builders'],
+              [TAG_COMMUNITY, communityId],
+            ]),
+          ]);
+        }
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          return jsonResponse([
+            signed(owner, KIND_CHANNEL_MEMBERS, [
+              ['d', communityId],
+              ['p', owner.publicKey],
+              ['p', body.agent.publicKey],
+            ]),
+          ]);
+        }
+        if (kind === KIND_CHANNEL_ADMINS) {
+          return jsonResponse([signed(owner, KIND_CHANNEL_ADMINS, [['d', communityId]])]);
+        }
+        if (kind === KIND_STREAM_MESSAGE) {
+          const authors = filter.authors as string[] | undefined;
+          if (!authors) return jsonResponse([agentRecord(body)]);
+          return jsonResponse(authors.includes(body.agent.publicKey) ? [agentRecord(body)] : []);
+        }
+        if (kind === KIND_AGENT_MODEL_CONFIG || kind === KIND_AGENT_MODEL_CATALOG) {
+          return jsonResponse(published.filter((event) => event.kind === kind));
+        }
+        return jsonResponse([]);
+      }),
+    );
+  }
+
+  /** Raw `session/new` shape a claude-like adapter advertises (report §3.1) — includes a `mode` axis. */
+  function rawSessionNew(): unknown {
+    return {
+      sessionId: 'sess-1',
+      configOptions: [
+        {
+          id: 'model',
+          category: 'model',
+          currentValue: 'default',
+          options: [{ id: 'default' }, { id: 'sonnet' }, { id: 'opus' }],
+        },
+        {
+          id: 'effort',
+          category: 'effort',
+          currentValue: 'default',
+          options: [{ id: 'default' }, { id: 'low' }, { id: 'high' }],
+        },
+        {
+          id: 'mode',
+          category: 'mode',
+          currentValue: 'default',
+          options: [{ id: 'default' }, { id: 'bypassPermissions' }],
+        },
+      ],
+    };
+  }
+
+  function config(): BodyConfig {
+    return {
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: `/tmp/buzzy-model-config-unit-${Math.random().toString(36).slice(2)}`,
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    };
+  }
+
+  it('applies a persisted selection to a freshly (re)activated session, never touching mode', async () => {
+    const agentIdentity = newIdentity('model-config-agent');
+    const body = new Body(config(), undefined, agentIdentity);
+    const published: NostrEvent[] = [];
+    stubRelay(body, published);
+
+    // A human chose sonnet/high before this session (re)activation — simulates
+    // a selection made while the session was suspended, surviving reopen.
+    await setAgentModelConfig(
+      { http: { baseUrl: 'http://relay.test', host: 'relay.test', identity: owner }, identity: owner },
+      communityId,
+      body.agent.publicKey,
+      { model: 'sonnet', effort: 'high' },
+    );
+
+    const setConfigOption = vi.fn().mockResolvedValue({});
+    const session = { channelId: 'room-1' } as never;
+    await Reflect.get(body, 'applyModelConfigForSession').call(
+      body,
+      { setConfigOption },
+      'sess-1',
+      communityId,
+      rawSessionNew(),
+      session,
+    );
+
+    expect(setConfigOption).toHaveBeenCalledTimes(2);
+    expect(setConfigOption).toHaveBeenCalledWith('sess-1', 'model', 'sonnet');
+    expect(setConfigOption).toHaveBeenCalledWith('sess-1', 'effort', 'high');
+
+    // The published catalog is allow-list filtered — no `mode` axis reaches the relay.
+    // (KIND_AGENT_MODEL_CATALOG and KIND_AGENT_MODEL_CONFIG share the literal
+    // 30078 NIP-33 kind; the `t` tag is what actually distinguishes them.)
+    const catalogEvents = published.filter(
+      (event) => event.kind === KIND_AGENT_MODEL_CATALOG && event.pubkey === body.agent.publicKey,
+    );
+    expect(catalogEvents).toHaveLength(1);
+    const catalogContent = JSON.parse(catalogEvents[0]!.content) as { options: Array<{ category: string }> };
+    expect(catalogContent.options.map((option) => option.category)).toEqual(['model', 'effort']);
+    expect((session as { modelConfigOptions?: Array<{ category: string }> }).modelConfigOptions?.map(
+      (option) => option.category,
+    )).toEqual(['model', 'effort']);
+  });
+
+  it('never calls setConfigOption for mode, even with no persisted selection at all', async () => {
+    const agentIdentity = newIdentity('model-config-agent-2');
+    const body = new Body(config(), undefined, agentIdentity);
+    const published: NostrEvent[] = [];
+    stubRelay(body, published);
+
+    const setConfigOption = vi.fn().mockResolvedValue({});
+    const session = { channelId: 'room-2' } as never;
+    await Reflect.get(body, 'applyModelConfigForSession').call(
+      body,
+      { setConfigOption },
+      'sess-2',
+      communityId,
+      rawSessionNew(),
+      session,
+    );
+
+    expect(setConfigOption).not.toHaveBeenCalled();
   });
 });

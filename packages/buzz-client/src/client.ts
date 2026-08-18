@@ -15,6 +15,7 @@ import {
   redeemAgentPairingCode,
   setAgentSoul,
 } from './agent.js';
+import { getAgentModelCatalog, getAgentModelConfig, setAgentModelConfig } from './agent-model-config.js';
 import { WRITE_PERMISSION_RESPONSE_TAG, type WritePermissionDecision } from './write-permission.js';
 import {
   backfillMessages,
@@ -91,6 +92,9 @@ import type {
   AgentPairingCode,
   AgentSoulInput,
   AgentSoulProfile,
+  AgentModelCatalog,
+  AgentModelConfig,
+  AgentModelConfigInput,
   CreateAgentOptions,
   ChannelFilterOpts,
   ChannelMember,
@@ -502,6 +506,25 @@ export class BuzzClient {
     soul: AgentSoulInput,
   ): Promise<AgentSoulProfile> {
     return setAgentSoul(this.ctx, communityId, agentPubkey, soul);
+  }
+
+  /** The runtime's currently advertised model/effort catalog, if a session has published one. */
+  getAgentModelCatalog(communityId: string, agentPubkey: string): Promise<AgentModelCatalog | null> {
+    return getAgentModelCatalog(this.ctx, communityId, agentPubkey);
+  }
+
+  /** The current human-chosen model/effort selection for an agent, if any. */
+  getAgentModelConfig(communityId: string, agentPubkey: string): Promise<AgentModelConfig | null> {
+    return getAgentModelConfig(this.ctx, communityId, agentPubkey);
+  }
+
+  /** Choose a model/effort for an agent. Applied on that agent's next session (re)activation. */
+  setAgentModelConfig(
+    communityId: string,
+    agentPubkey: string,
+    input: AgentModelConfigInput,
+  ): Promise<AgentModelConfig> {
+    return setAgentModelConfig(this.ctx, communityId, agentPubkey, input);
   }
 
   /** Security classification used by gate services; independent of channel role. */

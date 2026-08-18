@@ -126,7 +126,7 @@ export default function BuzzCommunityCreateOrJoin() {
       activeCommunityId={activeCommunityId}
       onSelect={selectCommunity}
       onAdd={() => undefined}
-      onSettings={() => router.push('/buzz/settings/identity' as Href)}
+      onSettings={() => router.push('/buzz/settings' as Href)}
       onWorkspaceSettings={(communityId) =>
         router.push(
           { pathname: '/buzz/settings/workspace', params: { communityId } } as unknown as Href,

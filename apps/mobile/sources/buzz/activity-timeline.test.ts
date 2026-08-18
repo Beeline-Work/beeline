@@ -107,70 +107,113 @@ describe('buildActivityTimeline', () => {
 });
 
 describe('buildTurnActivity', () => {
-  it('omits reasoning, collapses duplicate tool updates, and exposes file/tool drill-downs', () => {
-    expect(
-      buildTurnActivity([
-        { kind: 'thinking', title: 'Thinking', text: 'Internal narration' },
-        {
-          kind: 'tool',
-          id: 'edit-1',
-          title: 'Edit files',
-          toolKind: 'edit',
-          status: 'in_progress',
-          files: [{ path: 'apps/mobile/chat.tsx' }],
+  it('itemizes what was done and folds what was only looked at', () => {
+    const turn = buildTurnActivity([
+      { kind: 'thinking', title: 'Thinking', text: 'Internal narration' },
+      {
+        kind: 'tool',
+        id: 'edit-1',
+        title: 'Edit files',
+        toolKind: 'edit',
+        status: 'in_progress',
+        files: [{ path: 'apps/mobile/chat.tsx' }],
+      },
+      {
+        kind: 'tool',
+        id: 'edit-1',
+        title: 'Edit files',
+        toolKind: 'edit',
+        status: 'completed',
+        output: 'Applied patch',
+        files: [{ path: 'apps/mobile/chat.tsx', diff: '+new line' }],
+      },
+      {
+        kind: 'tool',
+        id: 'test-1',
+        title: 'Run tests',
+        toolKind: 'execute',
+        command: 'npm test',
+        output: '12 passed',
+      },
+      { kind: 'tool', id: 'read-1', title: 'Read file', toolKind: 'read' },
+      { kind: 'tool', id: 'read-2', title: 'Read file', toolKind: 'read' },
+      { kind: 'tool', id: 'search-1', title: 'Search code', toolKind: 'search' },
+    ]);
+
+    // A mutation and a command each keep their own line, with their detail.
+    expect(turn.actions).toMatchObject([
+      { kind: 'file', weight: 'mutation', path: 'apps/mobile/chat.tsx', diff: '+new line' },
+      { kind: 'tool', weight: 'command', id: 'test-1', command: 'npm test', output: '12 passed' },
+    ]);
+    // ...and a tool call that touched files is *only* its files: no duplicate
+    // parent row printing the same edit a second time.
+    expect(turn.actions.filter((action) => action.id === 'edit-1')).toHaveLength(0);
+    expect(turn.actions[0]?.output).toBe('Applied patch');
+
+    // Three read-only calls become one counted note, never three rows.
+    expect(turn.observations).toHaveLength(3);
+    expect(turn.noteCount).toBe(3);
+    expect(turn.note).toBe('3 TOOL CALLS · read 2, searched 1');
+    // Reasoning is not narration and stays out of the reading column.
+    expect(turn.narration).toEqual([]);
+  });
+
+  it('counts the observational calls that only ever reach the wire as a tally', () => {
+    // Body drops reads/searches to stay under relay quotas and publishes just
+    // their counts on the summary event, so this is the *only* source for them.
+    const turn = buildTurnActivity([
+      { kind: 'summary', title: 'Summary', text: 'Edited stats.py', rollup: { read: 41, searched: 12 } },
+      { kind: 'tool', id: 'read-1', title: 'Read file', toolKind: 'read' },
+    ]);
+
+    expect(turn.noteCount).toBe(54);
+    expect(turn.note).toBe('54 TOOL CALLS · read 42, searched 12');
+    // The summary's own text is mechanism, not the agent's voice.
+    expect(turn.narration).toEqual([]);
+  });
+
+  it('keeps the agent’s prose as narration, never folded into the note', () => {
+    const turn = buildTurnActivity([
+      { kind: 'output', title: 'Update', text: 'Found the projection boundary.' },
+      {
+        kind: 'tool',
+        id: 'plan-1',
+        title: 'Update plan',
+        plan: {
+          items: [
+            { step: 'Trace projection', status: 'completed' },
+            { step: 'Build drill-down', status: 'in_progress' },
+          ],
         },
-        {
-          kind: 'tool',
-          id: 'edit-1',
-          title: 'Edit files',
-          toolKind: 'edit',
-          status: 'completed',
-          output: 'Applied patch',
-          files: [{ path: 'apps/mobile/chat.tsx', diff: '+new line' }],
-        },
-        {
-          kind: 'tool',
-          id: 'test-1',
-          title: 'Run tests',
-          command: 'npm test',
-          output: '12 passed',
-        },
-      ]),
-    ).toMatchObject({
-      summary: 'Edited 1 file, ran tests.',
-      updates: [],
-      actions: [
-        { kind: 'file', path: 'apps/mobile/chat.tsx', diff: '+new line' },
-        { kind: 'tool', id: 'edit-1', output: 'Applied patch' },
-        { kind: 'tool', id: 'test-1', command: 'npm test', output: '12 passed' },
+      },
+    ]);
+
+    expect(turn.narration).toEqual(['Found the projection boundary.']);
+    expect(turn.plan).toMatchObject({
+      items: [
+        { step: 'Trace projection', status: 'completed' },
+        { step: 'Build drill-down', status: 'in_progress' },
       ],
     });
   });
 
-  it('keeps only natural-language progress in the transcript and a stable checklist', () => {
-    expect(
-      buildTurnActivity([
-        { kind: 'output', title: 'Update', text: 'Found the projection boundary.' },
-        {
-          kind: 'tool',
-          id: 'plan-1',
-          title: 'Update plan',
-          plan: {
-            items: [
-              { step: 'Trace projection', status: 'completed' },
-              { step: 'Build drill-down', status: 'in_progress' },
-            ],
-          },
-        },
-      ]),
-    ).toMatchObject({
-      updates: ['Found the projection boundary.'],
-      plan: {
-        items: [
-          { step: 'Trace projection', status: 'completed' },
-          { step: 'Build drill-down', status: 'in_progress' },
-        ],
-      },
-    });
+  it('pulls a failure out of the fold, even when it was only a read', () => {
+    const turn = buildTurnActivity([
+      { kind: 'tool', id: 'read-1', title: 'Read file', toolKind: 'read' },
+      { kind: 'tool', id: 'read-2', title: 'Read file', toolKind: 'read', status: 'failed' },
+    ]);
+
+    expect(turn.actions).toHaveLength(1);
+    expect(turn.actions[0]).toMatchObject({ weight: 'failure' });
+    expect(turn.observations).toHaveLength(1);
+    expect(turn.note).toBe('1 TOOL CALL · read 1');
+  });
+
+  it('says nothing at all when a turn only observed nothing', () => {
+    const turn = buildTurnActivity([]);
+    expect(turn.note).toBeUndefined();
+    expect(turn.noteCount).toBe(0);
+    expect(turn.narration).toEqual([]);
+    expect(turn.actions).toEqual([]);
   });
 });

@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  agentRosterCommunityIds,
   fallbackAgentName,
+  mergeAgentRosters,
   resolveAgentDisplayIdentity,
   resolveCornerCardAgentPubkey,
+  resolvePendingAgentDisplay,
 } from './agent-display';
 
 describe('agent display identity', () => {
@@ -141,5 +144,146 @@ describe('corner card agent identity resolution', () => {
       'also-unknown',
     );
     expect(resolveCornerCardAgentPubkey(undefined, undefined, isRegisteredAgent)).toBeUndefined();
+  });
+});
+
+describe('the transcript’s agent roster', () => {
+  const beebee = 'beebee-agent-pubkey';
+  /** Exactly what `client.listAgents(communityId)` hydrates for one agent. */
+  const rosterEntry = {
+    pubkey: beebee,
+    displayName: 'Beebee',
+    soulProfile: {
+      communityId: 'workspace-1',
+      agentPubkey: beebee,
+      authoredBy: 'human-public-key',
+      name: 'Beebee',
+      personality: 'Reads the whole file before touching it.',
+      avatarSeed: 'beebee-soul',
+      updatedAt: 1,
+      raw: {} as never,
+    },
+  };
+
+  it('reads the channel’s own Workspace first, then the viewer’s, then the rest', () => {
+    expect(
+      agentRosterCommunityIds('workspace-1', 'workspace-2', ['workspace-2', 'workspace-3']),
+    ).toEqual(['workspace-1', 'workspace-2', 'workspace-3']);
+  });
+
+  it('still reads every Workspace when the channel resolves none', () => {
+    // A Room whose kind:9007 predates the redundant `community` tag, a
+    // local-only Room, or a corner beneath either. Reading nothing here is what
+    // left the transcript naming every agent with a placeholder.
+    for (const missing of [null, undefined, '', '   ']) {
+      expect(agentRosterCommunityIds(missing, 'workspace-2', ['workspace-3'])).toEqual([
+        'workspace-2',
+        'workspace-3',
+      ]);
+    }
+  });
+
+  it('never repeats a Workspace, however many ways it arrives', () => {
+    expect(
+      agentRosterCommunityIds('workspace-1', 'workspace-1', ['workspace-1', 'workspace-1']),
+    ).toEqual(['workspace-1']);
+  });
+
+  it('has nothing to read when nothing is known', () => {
+    expect(agentRosterCommunityIds(null, null, [])).toEqual([]);
+    expect(agentRosterCommunityIds(undefined, undefined)).toEqual([]);
+  });
+
+  it('merges rosters with the channel’s own Workspace winning', () => {
+    const channelRoster = [{ ...rosterEntry, displayName: 'Beebee' }];
+    const otherRoster = [
+      { ...rosterEntry, displayName: 'Elsewhere', soulProfile: undefined },
+    ];
+    const merged = mergeAgentRosters([channelRoster, otherRoster]);
+    expect(resolveAgentDisplayIdentity(beebee, merged.get(beebee)).name).toBe('Beebee');
+  });
+
+  it('lets a later Workspace fill a gap the first one cannot name', () => {
+    // A roster row that carries neither an overlay nor a displayName can only
+    // produce the placeholder, so it must not block a Workspace that can name
+    // the same agent.
+    const unnamed = [{ pubkey: beebee, displayName: '', soulProfile: undefined }];
+    const named = [rosterEntry];
+    const merged = mergeAgentRosters([unnamed, named]);
+    expect(resolveAgentDisplayIdentity(beebee, merged.get(beebee)).name).toBe('Beebee');
+  });
+
+  it('lets a later Workspace’s soul override an earlier Workspace’s unsouled pairing registration', () => {
+    // `redeemAgentPairingCode` registers every fresh agent with
+    // `displayName: fallbackAgentName(pubkey)` — never an empty string. An
+    // agent paired into a second Workspace (or attached there some other way)
+    // carries exactly that placeholder displayName in that Workspace's
+    // roster, with no soul overlay. This regressed the transcript ("Alden")
+    // while the Members screen, scoped to the one Workspace that actually
+    // authored the soul, kept showing the real name ("Beebee") for the
+    // identical pubkey.
+    const unsouledPairingRegistration = [
+      { pubkey: beebee, displayName: fallbackAgentName(beebee), soulProfile: undefined },
+    ];
+    const souledWorkspace = [rosterEntry];
+    const merged = mergeAgentRosters([unsouledPairingRegistration, souledWorkspace]);
+    expect(resolveAgentDisplayIdentity(beebee, merged.get(beebee)).name).toBe('Beebee');
+  });
+
+  it('never drops a soulProfile the merge finds just because an earlier entry already won the pubkey', () => {
+    // The merge must UNION fields across entries for the same pubkey, not
+    // keep one whole incoming object and discard the other. A pairing-only
+    // entry from one Workspace (real displayName, e.g. a human-typed name
+    // that happens not to be the seed fallback, so the earlier "unnamed"
+    // check alone cannot catch it) must not block a later Workspace's
+    // soulProfile from ever being merged in for the identical pubkey.
+    const pairingOnly = [{ pubkey: beebee, displayName: 'Alden', soulProfile: undefined }];
+    const souledWorkspace = [
+      { pubkey: beebee, displayName: '', soulProfile: rosterEntry.soulProfile },
+    ];
+    const merged = mergeAgentRosters([pairingOnly, souledWorkspace]);
+    expect(resolveAgentDisplayIdentity(beebee, merged.get(beebee)).name).toBe('Beebee');
+  });
+
+  it('ignores roster rows with no pubkey rather than keying on undefined', () => {
+    const merged = mergeAgentRosters([[{ pubkey: '', displayName: 'x' }], [rosterEntry]]);
+    expect(merged.size).toBe(1);
+    expect(merged.get(beebee)).toBeTruthy();
+  });
+
+  it('is what decides between the real soul name and the seed placeholder', () => {
+    // This is the whole reason the fallback above matters: with the roster, the
+    // transcript names the agent exactly as the Members screen does; without
+    // it, the identical pubkey renders a confident placeholder instead.
+    const withRoster = new Map([[beebee, rosterEntry]]);
+    const withoutRoster = new Map<string, typeof rosterEntry>();
+
+    expect(resolveAgentDisplayIdentity(beebee, withRoster.get(beebee)).name).toBe('Beebee');
+    expect(resolveAgentDisplayIdentity(beebee, withRoster.get(beebee)).handle).toBe('beebee');
+    expect(resolveAgentDisplayIdentity(beebee, withoutRoster.get(beebee)).name).toBe(
+      fallbackAgentName(beebee),
+    );
+    expect(fallbackAgentName(beebee)).not.toBe('Beebee');
+  });
+
+  it('still prefers the registered displayName when no human overlay exists', () => {
+    const { soulProfile: _overlay, ...registeredOnly } = rosterEntry;
+    expect(resolveAgentDisplayIdentity(beebee, registeredOnly).name).toBe('Beebee');
+  });
+
+  it('never renders the seed fallback while the soul is still loading, only the real name once it lands', () => {
+    // Before hydration, nothing is known about this agent yet — not even
+    // whether it has a soul — so there must be no display at all (callers
+    // fall back to a neutral placeholder), never the confident-but-wrong
+    // seed name a resolved-but-empty roster would produce.
+    expect(resolvePendingAgentDisplay(beebee, undefined, false)).toBeNull();
+    // A resolved-but-empty roster before hydration is the same "unknown" case.
+    expect(resolvePendingAgentDisplay(beebee, undefined, false)).toBeNull();
+    // Once the roster has hydrated and the soul is present, it snaps straight
+    // to the real name — never through the seed placeholder.
+    expect(resolvePendingAgentDisplay(beebee, rosterEntry, true)?.name).toBe('Beebee');
+    expect(resolvePendingAgentDisplay(beebee, rosterEntry, true)?.name).not.toBe(
+      fallbackAgentName(beebee),
+    );
   });
 });

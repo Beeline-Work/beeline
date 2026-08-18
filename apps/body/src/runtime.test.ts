@@ -215,6 +215,106 @@ describe('pair → run unification', () => {
   });
 });
 
+describe('multi-identity guard (S0) + access policy', () => {
+  const communityId = '11111111-1111-4111-8111-111111111111';
+
+  async function pairAgent(
+    root: string,
+    supervisorRoot: string,
+    agent = newIdentity('agent'),
+    extra: { accessPolicy?: 'everyone' | 'creator'; accessAutoResponse?: string } = {},
+  ) {
+    return pairRepositoryAgent(
+      {
+        code: 'BUZZ-ABCD-EFGH',
+        cwd: root,
+        relayBaseUrl: 'http://relay.test',
+        agentBinary: '/usr/bin/agent',
+        mcpBinary: '/usr/bin/mcp',
+        agentIdentity: agent,
+        bodyIdentity: newIdentity('body'),
+        mergeWorkerIdentity: newIdentity('merge-worker'),
+        supervisorRoot,
+        ...(extra.accessPolicy ? { accessPolicy: extra.accessPolicy } : {}),
+        ...(extra.accessAutoResponse ? { accessAutoResponse: extra.accessAutoResponse } : {}),
+      },
+      {
+        redeem: async () => ({
+          communityId,
+          pairedBy: 'f'.repeat(64),
+          joined: true,
+          agent: {
+            agentId: `agent-${agent.publicKey.slice(0, 8)}`,
+            communityId,
+            displayName: 'Agent',
+            pubkey: agent.publicKey,
+            createdAt: 1,
+            raw: {} as never,
+          },
+        }),
+        resolveRoom: async () => ({
+          channelId: '22222222-2222-4222-8222-222222222222',
+          created: true,
+          joined: true,
+          mergeWorkerProvisioned: false,
+        }),
+        launch: async () => 4242,
+      },
+    );
+  }
+
+  it('lets three fresh-key agents coexist in one Workspace on one host', async () => {
+    const root = await repository('https://example.com/team/project.git');
+    const supervisorRoot = await stateRoot();
+    const a = await pairAgent(root, supervisorRoot, newIdentity('claude'));
+    const b = await pairAgent(root, supervisorRoot, newIdentity('codex'));
+    const c = await pairAgent(root, supervisorRoot, newIdentity('pi'));
+    const pubkeys = new Set([
+      a.runtime.agent.publicKey,
+      b.runtime.agent.publicKey,
+      c.runtime.agent.publicKey,
+    ]);
+    expect(pubkeys.size).toBe(3);
+    // Each fresh identity owns its own runtime directory; nothing collides.
+    const configs = await findAgentRuntimeConfigPaths({ XDG_STATE_HOME: supervisorRoot });
+    expect(configs.length).toBe(3);
+    expect(a.runtime.communityId).toBe(b.runtime.communityId);
+    expect(b.runtime.communityId).toBe(c.runtime.communityId);
+  });
+
+  it('refuses to pair a second agent that reuses an existing identity (fail closed)', async () => {
+    const root = await repository('https://example.com/team/project.git');
+    const supervisorRoot = await stateRoot();
+    const shared = newIdentity('pinned-key');
+    await pairAgent(root, supervisorRoot, shared);
+    // Reusing the same keypair — the pinned-BUZZ_AGENT_KEY hazard — is refused
+    // before the one-shot code is consumed, never silently sharing one identity.
+    await expect(pairAgent(root, supervisorRoot, shared)).rejects.toThrow(/already paired/);
+  });
+
+  it('persists the inviter-set access policy and custom auto-response', async () => {
+    const root = await repository('https://example.com/team/project.git');
+    const supervisorRoot = await stateRoot();
+    const result = await pairAgent(root, supervisorRoot, newIdentity('agent'), {
+      accessPolicy: 'creator',
+      accessAutoResponse: 'go away, wildling',
+    });
+    const stored = await readRuntimeRecord(result.configPath);
+    expect(stored.accessPolicy).toBe('creator');
+    expect(stored.accessAutoResponse).toBe('go away, wildling');
+    expect(stored.pairedBy).toBe('f'.repeat(64));
+  });
+
+  it('defaults to no persisted access policy (everyone) when unset', async () => {
+    const root = await repository('https://example.com/team/project.git');
+    const supervisorRoot = await stateRoot();
+    const result = await pairAgent(root, supervisorRoot);
+    const stored = await readRuntimeRecord(result.configPath);
+    expect(stored.accessPolicy).toBeUndefined();
+    expect(stored.accessAutoResponse).toBeUndefined();
+  });
+});
+
 describe('runtime root migration', () => {
   async function pair(
     root: string,

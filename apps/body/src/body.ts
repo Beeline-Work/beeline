@@ -94,6 +94,13 @@ import {
 } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
 import type { BodyConfig, SessionMode } from './config.js';
+import {
+  AccessRefusalLimiter,
+  DEFAULT_ACCESS_AUTO_RESPONSE,
+  DEFAULT_ACCESS_POLICY,
+  isSenderPermitted,
+  renderAccessAutoResponse,
+} from './access-policy.js';
 import { DurableBodyState } from './durable-state.js';
 import {
   NAMED_REPOSITORY_PERMISSION_COMMAND,
@@ -934,6 +941,10 @@ export class Body {
   private presenceGenerations = new Map<string, string>();
   private activeExchangeReplies = new Set<string>();
   private resolveNamedRepository?: (target: NamedRepositoryTarget) => Promise<BoundRepo>;
+  /** Rate limiter for the access-policy auto-response: one refusal per sender per window. */
+  private readonly accessRefusals = new AccessRefusalLimiter();
+  /** Cached owner display name for the auto-response template. */
+  private accessOwnerName?: string;
   private onRoomPollSuccess?: (channelId: string) => void;
   private onRoomPollFailure?: (channelId: string, retryInMs: number) => void;
   private onRoomPresence?: (channelId: string, status: 'online' | 'offline') => void;
@@ -2237,6 +2248,50 @@ export class Body {
     }
   }
 
+  /**
+   * Whether a message sender may drive this agent under the configured access
+   * policy. Fail-closed via `isSenderPermitted`: an unknown/unmatched sender is
+   * NOT permitted. Defaults to `everyone` when no policy is configured (a
+   * standalone Body / pre-policy runtime), preserving the shipped behaviour.
+   */
+  private senderAccessAllowed(senderPubkey: string): boolean {
+    return isSenderPermitted(
+      this.config.accessPolicy ?? DEFAULT_ACCESS_POLICY,
+      senderPubkey,
+      this.config.accessOwnerPubkey,
+    );
+  }
+
+  /** Owner display name for the auto-response template, resolved once and cached. */
+  private async resolveAccessOwnerName(channelId: string): Promise<string> {
+    if (this.accessOwnerName) return this.accessOwnerName;
+    const ownerPubkey = this.config.accessOwnerPubkey;
+    if (!ownerPubkey) return 'the owner';
+    const attributions = await this.roomAuthorAttributions(channelId, [ownerPubkey]).catch(
+      () => undefined,
+    );
+    const name = attributions?.get(ownerPubkey)?.name ?? fallbackPersonName(ownerPubkey);
+    this.accessOwnerName = name;
+    return name;
+  }
+
+  /**
+   * Send the configurable auto-response to a non-permitted sender, rate-limited
+   * to one refusal per sender per window so a public Room cannot be turned into
+   * a spam loop.
+   */
+  private async postAccessRefusal(channelId: string, event: NostrEvent): Promise<void> {
+    if (!this.accessRefusals.shouldEmit(event.pubkey)) return;
+    const ownerName = await this.resolveAccessOwnerName(channelId);
+    const template = this.config.accessAutoResponse ?? DEFAULT_ACCESS_AUTO_RESPONSE;
+    await postAgentMessage(
+      channelId,
+      this.agentIdentity,
+      renderAccessAutoResponse(template, ownerName),
+      event.id,
+    ).catch((error) => console.error('[body] failed to publish access refusal:', error));
+  }
+
   /** Process HTTP backfill or a pushed WS event through the canonical Room handlers. */
   private async processChannelRequestEvents(
     tlcChannelId: string,
@@ -2339,6 +2394,16 @@ export class Body {
                 ],
               );
             }
+            this.processedRequestIds.add(event.id);
+            await this.durableState.delivered(tlcChannelId, event.id);
+            continue;
+          }
+
+          // Per-agent access policy (fail-closed). A sender the inviter's
+          // policy does not permit never drives the agent; it gets one
+          // rate-limited auto-response instead of silence, then quiet.
+          if (!this.senderAccessAllowed(event.pubkey)) {
+            await this.postAccessRefusal(tlcChannelId, event);
             this.processedRequestIds.add(event.id);
             await this.durableState.delivered(tlcChannelId, event.id);
             continue;

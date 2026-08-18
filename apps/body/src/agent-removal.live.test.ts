@@ -14,6 +14,8 @@ const agent = newIdentity('agent-removal-agent');
 const body = newIdentity('agent-removal-body');
 const mergeWorker = newIdentity('agent-removal-merge-worker');
 let checkout = '';
+/** Machine-local agent state root; the runtime no longer lives in the repo. */
+let stateHome = '';
 let daemonPid: number | undefined;
 let sessionPid: number | undefined;
 
@@ -84,6 +86,7 @@ const live = await reachable();
 describe.runIf(live)('live agent removal teardown', () => {
   beforeAll(async () => {
     checkout = await mkdtemp(resolve(tmpdir(), 'beeline-agent-removal-'));
+    stateHome = await mkdtemp(resolve(tmpdir(), 'beeline-agent-removal-state-'));
     git(checkout, ['init', '-q', '-b', 'main']);
   });
 
@@ -103,6 +106,7 @@ describe.runIf(live)('live agent removal teardown', () => {
       }
     }
     if (checkout) await rm(checkout, { recursive: true, force: true });
+    if (stateHome) await rm(stateHome, { recursive: true, force: true });
   });
 
   it('pairs, removes through the app SDK, drains the daemon, and deletes runtime state', async () => {
@@ -121,6 +125,7 @@ describe.runIf(live)('live agent removal teardown', () => {
         agentIdentity: agent,
         bodyIdentity: body,
         mergeWorkerIdentity: mergeWorker,
+        supervisorRoot: stateHome,
       },
       {
         redeem: (code) => agentClient.redeemAgentPairingCode(code),

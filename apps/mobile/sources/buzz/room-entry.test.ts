@@ -72,6 +72,7 @@ function handlers(): RoomEntryHandlers & { [K in keyof RoomEntryHandlers]: Retur
     onTranscriptSynced: vi.fn(),
     onArchived: vi.fn(),
     onMergeTarget: vi.fn(),
+    onMergeNotReadyReason: vi.fn(),
     onCornerStatus: vi.fn(),
     onStepFailed: vi.fn(),
   } as never;
@@ -224,6 +225,21 @@ describe('enter-room hydration never blocks the foreground', () => {
         people: [{ pubkey: VIEWER, role: 'admin' }],
       }),
     );
+  });
+
+  it('surfaces why a finished corner has nothing ready to merge, instead of silence', async () => {
+    const { sink } = start(
+      hangingClient(),
+      hangingTransport({
+        getParentChannelId: () => Promise.resolve('parent-room'),
+        getSubchannelMergeTarget: () =>
+          Promise.resolve({ reason: 'The agent has uncommitted work.' }),
+      }),
+    );
+
+    await settle();
+    expect(sink.onMergeNotReadyReason).toHaveBeenCalledWith('The agent has uncommitted work.');
+    expect(sink.onMergeTarget).not.toHaveBeenCalled();
   });
 
   it('hands every response to afterInteractions so projection lands after the transition', async () => {

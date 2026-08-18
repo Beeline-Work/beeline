@@ -23,6 +23,21 @@ export type MessageSyncResult = {
 
 const inFlightRevalidations = new Map<string, Promise<MessageSyncResult>>();
 
+/**
+ * A cold channel's initial backfill returns its N most recent matching kind:9
+ * events, per standard Nostr REQ `limit` semantics — there is no relay query
+ * that returns "the first N" directly. Every channel interleaves narration
+ * with status/activity housekeeping on the same kind, so a corner busy enough
+ * to publish more than this many kind:9 events total pushes its own opening
+ * narration out of the "most recent N" window before this ever runs — the
+ * corner then opens mid-thought, with its earliest narrative segment(s)
+ * looking silently dropped even though they were durably published. A corner
+ * is a bounded single-task session (unlike a Room's unbounded history), so a
+ * generous cap makes that eviction rare in practice without changing a Room's
+ * intentional "open on a short recent window" behavior.
+ */
+const COLD_BACKFILL_LIMIT = 200;
+
 function isNewerRoomMessage(
   candidate: RoomMessageSummary,
   cached?: ChannelCacheEntry,
@@ -112,7 +127,7 @@ async function performMessageRevalidation(
   const fetchStartedAt = Math.floor(Date.now() / 1000);
   const events = await transport.sessionEventsBackfill(
     channelId,
-    warm ? { afterSeq: cached.cursor } : { limit: 50 },
+    warm ? { afterSeq: cached.cursor } : { limit: COLD_BACKFILL_LIMIT },
   );
   const projected = projectEvents(events, viewerPubkey, warm);
   const eventCursor = events.reduce(

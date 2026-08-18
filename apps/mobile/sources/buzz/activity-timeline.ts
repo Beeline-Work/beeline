@@ -515,3 +515,24 @@ export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActi
     ...(plan ? { plan } : {}),
   };
 }
+
+/**
+ * The corner's current plan, for the pinned checklist above the transcript.
+ *
+ * A plan update replaces the whole checklist, never patches it, so the latest
+ * one across every message's activity — in chronological order — is simply
+ * the most recent plan the agent has published. Takes duck-typed messages
+ * (not `ChatDisplayMessage`) so this stays a pure function over activity data
+ * with no dependency on the projection layer's message shape.
+ */
+export function latestCornerPlan(
+  messages: readonly { activity?: readonly AgentActivityItem[] }[],
+): AgentActivityItem['plan'] | undefined {
+  let plan: AgentActivityItem['plan'];
+  for (const message of messages) {
+    for (const item of message.activity ?? []) {
+      if (item.plan) plan = item.plan;
+    }
+  }
+  return plan;
+}

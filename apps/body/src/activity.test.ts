@@ -121,9 +121,10 @@ describe('projectActivity granularity', () => {
     const updates = content.update.updates;
 
     // Only an inspectable edit milestone plus a synthesized summary line —
-    // the non-major MCP/search/shell noise above never reaches the wire, but
-    // the surviving edit's own detail (files, redacted input) is present so
-    // the corner drill-down can inspect it.
+    // the non-major search/shell calls never earn their own tool_activity
+    // event (that's still the noise-control fold), but the surviving edit's
+    // own detail (files, redacted input) is present so the corner drill-down
+    // can inspect it.
     expect(updates).toHaveLength(2);
     expect(updates[0]).toEqual({
       sessionUpdate: 'tool_activity',
@@ -137,15 +138,21 @@ describe('projectActivity granularity', () => {
     expect(updates[1]).toMatchObject({ sessionUpdate: 'activity_summary' });
     const summaryText = (updates[1] as { content: { text: string } }).content.text;
     expect(summaryText).toBe('Edited src/activity.ts');
+    // The folded search/shell calls now ride a compact receipt on the summary
+    // event — target + a short taste of output — so the review sheet has
+    // something real to show instead of just their tally.
+    const observed = (updates[1] as { observed: Array<Record<string, unknown>> }).observed;
+    expect(observed).toEqual([
+      { verb: 'searched', target: 'grep for TODO' },
+      { verb: 'ran', target: "sed -n '1,140p' apps/body/src/activity.ts", result: 'const rawOutput = true;' },
+      { verb: 'ran', target: 'rg -n "activity_batch" apps/body/src', result: 'apps/body/src/activity.ts:activity_batch' },
+    ]);
     const projection = JSON.stringify(content);
-    for (const leaked of [
-      'mcp.codegraph',
-      'sed -n',
-      'rg -n',
-      'rawOutput',
-      'reasoning',
-      'str_replace',
-    ]) {
+    // MCP internals and raw reasoning content stay implementation detail even
+    // in the drill-down — MCP calls never get a compact receipt at all
+    // (verb 'queried' is skipped), and reasoning is dropped before it ever
+    // reaches the batch.
+    for (const leaked of ['mcp.codegraph', 'reasoning', 'str_replace']) {
       expect(projection).not.toContain(leaked);
     }
   });
@@ -211,6 +218,7 @@ describe('projectActivity granularity', () => {
         sessionUpdate: 'activity_summary',
         content: { type: 'text', text: '' },
         rollup: { searched: 1 },
+        observed: [{ verb: 'searched', target: 'search_text' }],
       },
     ]);
     // Reasoning is still never counted, and never projected.
@@ -243,6 +251,7 @@ describe('projectActivity granularity', () => {
         sessionUpdate: 'activity_summary',
         content: { type: 'text', text: '' },
         rollup: { read: 1 },
+        observed: [{ verb: 'read', target: 'read_file' }],
         thoughtMs: 2_000,
       },
     ]);
@@ -322,6 +331,62 @@ describe('projectActivity granularity', () => {
     const summary = content.update.updates.at(-1)!;
     expect(summary.sessionUpdate).toBe('activity_summary');
     expect(summary.rollup).toBeUndefined();
+    expect(summary.observed).toBeUndefined();
+  });
+
+  it('attaches a compact per-call receipt for folded calls, not just their tally', async () => {
+    const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+
+    emit(toolCall('read-detail', { kind: 'read', title: 'read_file', rawInput: { path: 'src/foo.ts' } }));
+    emit(toolCallUpdate('read-detail', { status: 'completed', output: 'export function foo() {}' }));
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    unsubscribe();
+
+    const content = JSON.parse(published[0]!.content) as {
+      update: { updates: Array<Record<string, unknown>> };
+    };
+    const summary = content.update.updates.at(-1) as {
+      rollup: Record<string, number>;
+      observed: Array<{ verb: string; target?: string; result?: string }>;
+    };
+    expect(summary.rollup).toEqual({ read: 1 });
+    // The client can now show what was read and a taste of what it found,
+    // not merely that a read happened.
+    expect(summary.observed).toEqual([
+      { verb: 'read', target: 'src/foo.ts', result: 'export function foo() {}' },
+    ]);
+  });
+
+  it('truncates a folded call receipt and caps how many a batch carries', async () => {
+    const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+
+    // A receipt long enough to need truncation.
+    emit(toolCall('read-long', { kind: 'read', title: 'read_file', rawInput: { path: 'src/long.ts' } }));
+    emit(toolCallUpdate('read-long', { status: 'completed', output: 'x'.repeat(500) }));
+
+    // More folded calls than the per-batch cap.
+    for (let i = 0; i < 25; i++) {
+      emit(toolCall(`search-${i}`, { kind: 'search', title: `search_${i}` }));
+      emit(toolCallUpdate(`search-${i}`, { status: 'completed' }));
+    }
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    unsubscribe();
+
+    const content = JSON.parse(published[0]!.content) as {
+      update: { updates: Array<Record<string, unknown>> };
+    };
+    const summary = content.update.updates.at(-1) as {
+      rollup: Record<string, number>;
+      observed: Array<{ verb: string; target?: string; result?: string }>;
+    };
+    // The tally is exact even when the receipts are capped.
+    expect(summary.rollup).toEqual({ read: 1, searched: 25 });
+    expect(summary.observed.length).toBeLessThanOrEqual(20);
+    const readReceipt = summary.observed.find((entry) => entry.verb === 'read')!;
+    // Truncated well short of the raw 500-char output — "a line or two", not a dump.
+    expect(readReceipt.result!.length).toBeLessThan(250);
   });
 });
 

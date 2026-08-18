@@ -55,6 +55,14 @@ export type AgentActivityItem = {
    */
   rollup?: Record<string, number>;
   /**
+   * A compact receipt per folded call — what it looked at and a short taste of
+   * what it found — riding the same summary event as `rollup`. The calls
+   * themselves still never earn their own wire event (that's the noise-control
+   * fold), so this is body's only source for the review sheet's per-call rows;
+   * without it the sheet has nothing but the bare tally to show.
+   */
+  observed?: Array<{ verb: string; target?: string; result?: string }>;
+  /**
    * Milliseconds the agent spent reasoning before this batch's work landed.
    * The reasoning *text* is never published (unbounded, and quota-hostile), so
    * this span is the only trace of it — enough for the quiet `THOUGHT FOR 5.8S`

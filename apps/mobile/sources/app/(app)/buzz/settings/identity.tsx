@@ -46,10 +46,10 @@ import {
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { Typography } from '@/constants/Typography';
 import { HullSurface, MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
-import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { BuzzRigTransport } from '@/sync/transport';
 import { getBuzzPushEnabled, setBuzzPushEnabled } from '@/push/buzz-push-registration';
 import { getPushPermissionInfo, type PushPermissionInfo } from '@/sync/pushRegistration';
+import { IdentityMark } from '@/components/buzz/IdentityMark';
 
 const TYPED_CONFIRMATION = 'EXPORT';
 
@@ -593,8 +593,9 @@ export default function BuzzIdentitySettings() {
               />
             </View>
             <View style={styles.avatarSection}>
-              <PersonAvatar
-                pubkey={profilePubkey}
+              <IdentityMark
+                kind="human"
+                seed={profilePubkey}
                 avatarUrl={avatarUrl}
                 name={profileName || 'You'}
                 size={76}

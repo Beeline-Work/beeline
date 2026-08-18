@@ -40,7 +40,8 @@ import type {
   MergeTarget,
   PersonProfile,
 } from '@beeline/buzz-client';
-import type { CornerStatus } from '@/buzz/corners';
+import type { CornerStatus, CornerSummary } from '@/buzz/corners';
+import { agentRosterCommunityIds, mergeAgentRosters } from '@/buzz/agent-display';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 
 /** Relay reads the chat screen needs, narrowed to exactly what it calls. */
@@ -61,7 +62,7 @@ export type RoomEntryTransport = {
   getParentChannelId(channelId: string): Promise<string | null>;
   isChannelArchived(channelId: string): Promise<boolean>;
   getSubchannelMergeTarget(channelId: string): Promise<{ target: MergeTarget } | null>;
-  listSubchannelLifecycle(parentId: string): Promise<{ id: string; status: CornerStatus }[]>;
+  listSubchannelLifecycle(parentId: string): Promise<CornerSummary[]>;
 };
 
 export type RoomTranscriptSync = {
@@ -92,6 +93,11 @@ export type RoomEntryDeps = {
   afterInteractions?: (run: () => void) => void;
   /** Retry delay for a Room whose very first history read comes back empty. */
   emptyTranscriptRetryMs?: number;
+  /**
+   * The viewer's own selected Workspace, for the agent-roster union below.
+   * Optional: absent simply narrows the union, it never blocks it.
+   */
+  viewerActiveCommunityId?: () => Promise<string | null>;
 };
 
 export type RoomEntryHandlers = {
@@ -99,7 +105,8 @@ export type RoomEntryHandlers = {
   onViewerIsAgent(isAgent: boolean): void;
   onChannelRole(role: ChannelRole | null): void;
   onRoomName(name: string): void;
-  onParentChannelId(parentChannelId: string): void;
+  /** `null` is a real answer — "this is a Room" — not the absence of one. */
+  onParentChannelId(parentChannelId: string | null): void;
   onDirectMessage(dm: DirectMessage | null): void;
   onWorkspaceId(communityId: string | null): void;
   onMembers(members: ChannelMember[]): void;
@@ -114,6 +121,18 @@ export type RoomEntryHandlers = {
   onArchived(): void;
   onMergeTarget(target: MergeTarget): void;
   onCornerStatus(status: CornerStatus | null): void;
+  /**
+   * Every corner this transcript can name: a Corner reads its siblings, a Room
+   * reads its own. Optional — a caller that only needs its own status can skip
+   * it.
+   */
+  onCornerLifecycle?(corners: CornerSummary[]): void;
+  /**
+   * The agent roster, committed on its own rather than behind `onRoster`'s
+   * person-profile read. Called first with the channel's own Workspace, then
+   * again with the union across every Workspace the viewer belongs to.
+   */
+  onAgents?(agents: Agent[]): void;
   onStepFailed(step: string, error: unknown): void;
 };
 
@@ -163,9 +182,10 @@ export function hydrateRoomEntry(
   const directWorkspaceRead = client.getChannelCommunityId(channelId);
   const metadataRead = client.getChannelMetadata(channelId);
 
+  const communitiesRead = client.listCommunities();
   const steps: Promise<void>[] = [
     step('members', client.listMembers(channelId), handlers.onMembers),
-    step('communities', client.listCommunities(), handlers.onCommunities),
+    step('communities', communitiesRead, handlers.onCommunities),
     step('viewerIsAgent', client.isAgentIdentity(viewerPubkey), handlers.onViewerIsAgent),
     step('channelRole', client.getChannelRole(channelId), handlers.onChannelRole),
     step('directMessage', client.getDirectMessage(channelId), handlers.onDirectMessage),
@@ -176,7 +196,7 @@ export function hydrateRoomEntry(
       handlers.onRoomName(metadata?.name?.trim() || roomNameFallback),
     ),
     step('parentChannelId', parentIdRead, (parentId) => {
-      if (parentId) handlers.onParentChannelId(parentId);
+      handlers.onParentChannelId(parentId);
     }),
   ];
 
@@ -232,12 +252,18 @@ export function hydrateRoomEntry(
   // ── Corner-only reads, gated on the parent link alone ──────────────────────
   const cornerReads = parentIdRead.then(
     (parentId) => {
-      if (!parentId || deps.isCancelled()) return;
+      if (deps.isCancelled()) return;
       return Promise.all([
-        step('mergeTarget', transport.getSubchannelMergeTarget(channelId), (mergeInfo) => {
-          if (mergeInfo) handlers.onMergeTarget(mergeInfo.target);
-        }),
-        step('cornerStatus', transport.listSubchannelLifecycle(parentId), (corners) => {
+        // A merge target only exists for a corner.
+        parentId
+          ? step('mergeTarget', transport.getSubchannelMergeTarget(channelId), (mergeInfo) => {
+              if (mergeInfo) handlers.onMergeTarget(mergeInfo.target);
+            })
+          : Promise.resolve(),
+        // A Corner reads its siblings, a Room its own corners — one shared
+        // short-TTL read serving both the header badge and the corner names.
+        step('cornerStatus', transport.listSubchannelLifecycle(parentId ?? channelId), (corners) => {
+          handlers.onCornerLifecycle?.(corners);
           handlers.onCornerStatus(corners.find((corner) => corner.id === channelId)?.status ?? null);
         }),
       ]).then(() => undefined);
@@ -258,6 +284,46 @@ export function hydrateRoomEntry(
     return client.getChannelCommunityId(parentId).catch(() => null);
   });
 
+  /** One unreachable Workspace must never cost the transcript the others. */
+  const readAgents = (communityId: string): Promise<Agent[]> =>
+    client.listAgents(communityId).catch((error) => {
+      handlers.onStepFailed(`agents:${communityId}`, error);
+      return [] as Agent[];
+    });
+
+  // Agent names come from soul overlays, and both halves of an agent's
+  // registration are community-scoped — so a transcript resolving the wrong
+  // Workspace, or none, names every agent with a confident seed placeholder.
+  // Read the channel's own Workspace first and commit it immediately, then
+  // fold in every other Workspace the viewer belongs to as a gap-filler. The
+  // second pass is deliberately not awaited by the first: a slow or hanging
+  // `listCommunities` must not hold back the names the channel already knows.
+  const primaryAgentsRead = workspaceRead.then((communityId) =>
+    communityId ? readAgents(communityId) : [],
+  );
+  const agentUnion = (async () => {
+    const primary = await primaryAgentsRead;
+    if (deps.isCancelled()) return primary;
+    live(() => handlers.onAgents?.(primary));
+    const [channelCommunityId, activeCommunityId, communities] = await Promise.all([
+      workspaceRead.catch(() => null),
+      deps.viewerActiveCommunityId?.().catch(() => null) ?? Promise.resolve(null),
+      communitiesRead.catch(() => [] as Community[]),
+    ]);
+    if (deps.isCancelled()) return primary;
+    const gapFillers = agentRosterCommunityIds(
+      channelCommunityId,
+      activeCommunityId,
+      communities.map((community) => community.communityId),
+    ).filter((communityId) => communityId !== channelCommunityId);
+    if (gapFillers.length === 0) return primary;
+    const rosters = await Promise.all(gapFillers.map(readAgents));
+    if (deps.isCancelled()) return primary;
+    const merged = [...mergeAgentRosters([primary, ...rosters]).values()];
+    live(() => handlers.onAgents?.(merged));
+    return merged;
+  })();
+
   const roster = workspaceRead.then(async (communityId) => {
     if (deps.isCancelled()) return;
     live(() => handlers.onWorkspaceId(communityId));
@@ -265,10 +331,7 @@ export function hydrateRoomEntry(
     let agents: Agent[] = [];
     let members: CommunityMember[] = [];
     try {
-      [agents, members] = await Promise.all([
-        client.listAgents(communityId),
-        client.communityMembers(communityId),
-      ]);
+      [agents, members] = await Promise.all([primaryAgentsRead, client.communityMembers(communityId)]);
     } catch (error) {
       if (!deps.isCancelled()) handlers.onStepFailed('roster', error);
       return;
@@ -305,5 +368,6 @@ export function hydrateRoomEntry(
     transcriptGapClose,
     cornerReads,
     roster,
+    agentUnion,
   ]).then(() => undefined);
 }

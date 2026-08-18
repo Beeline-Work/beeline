@@ -26,7 +26,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { KeyboardAvoidingView, useKeyboardState } from 'react-native-keyboard-controller';
 import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useLocalSearchParams, router, type Href } from 'expo-router';
+import { useLocalSearchParams, useNavigation, router, type Href } from 'expo-router';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
 import { Modal } from '@/modal';
 import { BuzzRigTransport } from '@/sync/transport';
@@ -64,6 +64,9 @@ import {
 import { afterInteractions } from '@/buzz/defer-interaction';
 import { hydrateRoomEntry } from '@/buzz/room-entry';
 import { groknight } from '@/buzz/groknight';
+import { continuedSpeakerIds } from '@/buzz/ledger-attribution';
+import { splitLedgerText } from '@/buzz/ledger-text';
+import { ledgerStamp } from '@/buzz/relative-time';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
 import {
@@ -76,15 +79,23 @@ import {
   sectionRoomParticipants,
   sectionRoomRoster,
 } from '@/buzz/room-participants';
-import { resolveAgentDisplayIdentity, resolveCornerCardAgentPubkey } from '@/buzz/agent-display';
 import {
+  agentRosterCommunityIds,
+  mergeAgentRosters,
+  resolveAgentDisplayIdentity,
+  resolveCornerCardAgentPubkey,
+  resolvePendingAgentDisplay,
+} from '@/buzz/agent-display';
+import {
+  cornerName,
   cornerStatusPresentation,
   isCornerActive,
   resolveCornerLifecycleStatus,
   selectMostRecentActiveCornerId,
   type CornerStatus,
+  type CornerSummary,
 } from '@/buzz/corners';
-import { personIdentityLabel, shortMemberNpub } from '@/buzz/member-display';
+import { ledgerFingerprint, personIdentityLabel, shortMemberNpub } from '@/buzz/member-display';
 import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
 import {
   canRenameRoom,
@@ -92,7 +103,11 @@ import {
   normalizedRoomRole,
   roomLifecycleAction,
 } from '@/buzz/room-management';
-import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
+import {
+  loadActiveCommunityId,
+  saveActiveCommunityId,
+  saveLastViewedChannel,
+} from '@/buzz/community-storage';
 import {
   formatAttachmentSize,
   uploadChatAttachment,
@@ -100,12 +115,20 @@ import {
 } from '@/buzz/chat-attachment';
 import { describeWriteRequest } from '@/buzz/write-request-copy';
 import {
+  cachedChannelKind,
+  channelHeaderTitle,
   cornerSessionState,
   latestCornerTurnSummary,
   resolveCornerViewAgentPubkey,
+  type ChannelKind,
 } from '@/buzz/corner-session';
+import {
+  chatBackAction,
+  cornerHref,
+  roomHref,
+  type ChatStackRoute,
+} from '@/buzz/corner-navigation';
 import { isNearChatBottom } from '@/buzz/chat-scroll';
-import { buildTurnActivity } from '@/buzz/activity-timeline';
 import { replyMessageText, type MessageReplyTarget } from '@/buzz/message-reply';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
@@ -119,14 +142,19 @@ import {
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
 import { ChangeReviewPanel } from '@/components/buzz/ChangeReviewPanel';
-import { AgentAvatar } from '@/components/buzz/AgentAvatar';
-import { PersonAvatar } from '@/components/buzz/PersonAvatar';
+import { CornerLiveBar } from '@/components/buzz/CornerLiveBar';
 import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome';
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
-import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
+import {
+  LEDGER_MARGINALIA_WIDTH,
+  LedgerEntry,
+  LedgerGhostLine,
+  LedgerMarginalia,
+  LedgerSteer,
+} from '@/components/buzz/Ledger';
+import { IdentityMark } from '@/components/buzz/IdentityMark';
 import {
   HullSurface,
-  HullWaveSignal,
   MonoButton,
   NewMessageMaterialize,
   PixelLoader,
@@ -152,7 +180,60 @@ const OLDER_MESSAGES_PAGE_SIZE = 30;
 // If the product ever approves a non-monochrome exception, change only this value.
 const MERGE_APPROVAL_ACCENT = groknight.accent;
 
-function CornerActivity({ message, active }: { message: ChatDisplayMessage; active: boolean }) {
+/**
+ * The voice a transcript entry belongs to, or `null` for anything that is not
+ * one. People and agents both count: consecutive entries from the same voice
+ * fold into one block. A system row (corner card, merge summary, archive
+ * notice, permission card) belongs to nobody, so each of those ends the run and
+ * makes the next entry re-announce itself.
+ *
+ * The agent test runs before the person test on purpose, so this agrees with
+ * `renderItem`'s own `isAgent ? LedgerEntry : LedgerSteer` choice for the one case
+ * where a message is both: an agent viewing its own Room messages, where
+ * `isUser` and `isAgentAuthor` are true together. Deriving the two differently
+ * would fold a run the renderer draws as two voices.
+ */
+function ledgerSpeakerKey(
+  message: ChatDisplayMessage,
+  agentByPubkey: Map<string, unknown>,
+): string | null {
+  if (message.corner || message.isMergeSummary || message.isArchivedNotice) return null;
+  if (message.writePermission) return null;
+  const isAgent =
+    message.isAgentAuthor ||
+    message.isAgentActivity ||
+    Boolean(message.pubkey && (BODY_PUBKEYS.has(message.pubkey) || agentByPubkey.has(message.pubkey)));
+  if (isAgent) return `agent:${message.pubkey ?? 'unknown-agent'}`;
+  // An optimistic own message has no pubkey until it reconciles, so it keys on
+  // the viewer rather than on a shared "unknown" bucket.
+  return `person:${message.pubkey ?? (message.isUser ? 'self' : 'unknown-person')}`;
+}
+
+/**
+ * One turn of the agent's work: its narration on the slab, its tools as
+ * footnotes.
+ *
+ * The split lives in `ActivityTimeline`, and it is the whole point of this
+ * row — the agent's own prose reads at the ledger's brightest tier, full
+ * width, never behind a disclosure, while every read/search/list folds into
+ * one counted note. An activity event carrying nothing but text is therefore
+ * pure narration, which is exactly what the fallback below builds; treating it
+ * as tool output is what buried an agent's words behind "tap to expand".
+ *
+ * A Room passes `handle` because several agents can be working there; a Corner
+ * names its one agent in the top bar instead.
+ */
+function LedgerActivity({
+  message,
+  active,
+  handle,
+  marginalia,
+}: {
+  message: ChatDisplayMessage;
+  active: boolean;
+  handle?: string;
+  marginalia?: React.ReactNode;
+}) {
   // A fresh fallback array literal on every render would defeat
   // ActivityTimeline's memoization below (its `items` prop would never be
   // reference-stable), so this stays memoized on the same inputs.
@@ -163,16 +244,15 @@ function CornerActivity({ message, active }: { message: ChatDisplayMessage; acti
         : [{ kind: 'output' as const, title: 'Output', text: message.text }],
     [message.activity, message.text],
   );
-  const turn = useMemo(() => buildTurnActivity(activity), [activity]);
   return (
     <View style={styles.activityGroup} testID="corner-activity">
-      {turn.updates.map((update, index) => (
-        <View key={`${message.id}-update-${index}`} style={styles.activityUpdate}>
-          <Text style={styles.activityUpdateLabel}>UPDATE</Text>
-          <MonoMarkdown markdown={update} tone="output" />
-        </View>
-      ))}
-      <ActivityTimeline active={active} items={activity} testID="corner-activity-timeline" />
+      {marginalia}
+      <ActivityTimeline
+        active={active}
+        handle={handle}
+        items={activity}
+        testID="corner-activity-timeline"
+      />
     </View>
   );
 }
@@ -282,75 +362,16 @@ function SwipeToReply({
   );
 }
 
-/**
- * The one transcript row Rooms and Corners both render: a small avatar, a
- * ›/· glyph, an uppercase mono label naming who, and body text — no
- * bubble, no per-row box. A human's own short message is the only layout
- * exception (right-aligned, inset), carried by alignment, not a box.
- */
-function TranscriptRow({
-  itemId,
-  isOwn,
-  isAgent,
-  avatar,
-  presenceLight,
-  label,
-  replyReference,
-  bodyText,
-  bodyTestID,
-  offlineQueued,
-  attachments,
-  provenance,
-}: {
-  itemId: string;
-  isOwn: boolean;
-  isAgent: boolean;
-  avatar: React.ReactNode;
-  presenceLight: React.ReactNode;
-  label: string;
-  replyReference: React.ReactNode;
-  bodyText: string | undefined;
-  bodyTestID: string;
-  offlineQueued: boolean;
-  attachments: AttachmentReference[] | undefined;
-  provenance: string | null;
-}) {
-  return (
-    <View
-      style={[styles.terminalTurn, isOwn && !isAgent && styles.terminalTurnUser]}
-      testID={`chat-message-${itemId}`}
-    >
-      <View style={styles.terminalTurnHeading}>
-        {avatar}
-        {presenceLight}
-        <Text style={styles.terminalTurnGlyph}>{isOwn || isAgent ? '›' : '·'}</Text>
-        <Text numberOfLines={1} style={styles.terminalTurnLabel}>
-          {label}
-        </Text>
-      </View>
-      {replyReference}
-      {bodyText ? (
-        !isOwn && isAgent ? (
-          <MonoMarkdown markdown={bodyText} tone="final" testID={bodyTestID} />
-        ) : (
-          <MonoMarkdown markdown={bodyText} textStyle={styles.terminalTurnText} testID={bodyTestID} />
-        )
-      ) : null}
-      {offlineQueued && (
-        <Text style={styles.offlineDeliveryNote}>SENT TO ROOM · AGENT OFFLINE</Text>
-      )}
-      {attachments?.map((attachment) => (
-        <AttachmentCard attachment={attachment} key={`${itemId}-${attachment.url}`} />
-      ))}
-      {provenance && <Text style={styles.provenanceText}>{provenance}</Text>}
-    </View>
-  );
-}
-
 export default function BuzzChat() {
-  const { channelId, notificationResponseId } = useLocalSearchParams<{
+  // `parent`/`title` are hints, not authority: every surface that opens a
+  // corner already knows both, so passing them makes the header correct on the
+  // first frame instead of one relay round trip later. The screen's own reads
+  // still run and still win.
+  const { channelId, notificationResponseId, parent, title } = useLocalSearchParams<{
     channelId: string;
     notificationResponseId?: string;
+    parent?: string;
+    title?: string;
   }>();
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
   const initialCacheState = useBuzzLocalCache.getState();
@@ -358,7 +379,10 @@ export default function BuzzChat() {
   const initialChannelCache = initialViewerPubkey
     ? getCachedChannel(initialViewerPubkey, decodedId)
     : undefined;
+  const routeParentChannelId = parent?.trim() || undefined;
+  const routeChannelTitle = title?.trim() || undefined;
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
   const flatListRef = useRef<FlatList<ChatDisplayMessage>>(null);
   const composerRef = useRef<TextInput>(null);
   // React state can lag the final Android native text event when the user
@@ -399,13 +423,26 @@ export default function BuzzChat() {
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [reviewFileCount, setReviewFileCount] = useState<number | null>(null);
   const [parentChannelId, setParentChannelId] = useState<string | undefined>(
-    initialChannelCache?.parentChannelId,
+    initialChannelCache?.parentChannelId ?? routeParentChannelId,
+  );
+  // Whether this transcript is a Room or a Corner, tracked separately from
+  // `parentChannelId` because an absent parent means "room" only after the
+  // channel's own read has landed — before that it means "not known yet", and
+  // the header must not name either surface on a guess.
+  const [channelKind, setChannelKind] = useState<ChannelKind>(() =>
+    routeParentChannelId ? 'corner' : cachedChannelKind(initialChannelCache),
   );
   // The corner view's own status badge, sourced from the exact same
   // canonical CornerStatus (via listSubchannelLifecycle) that the Room-list
   // dropdown and the standalone Corners list already read, so all three
   // surfaces show identical primary status words for this corner.
   const [cornerLifecycleStatus, setCornerLifecycleStatus] = useState<CornerStatus | null>(null);
+  // Every corner this transcript can name: a Corner reads its own siblings, a
+  // Room reads its own corners. The pinned indicator needs the corner's real
+  // name ("feat/ux-fix-now"), not an id — and this list is the one place that
+  // name is canonical. It is served from `listSubchannelLifecycle`'s shared
+  // short-TTL cache, which the Room list has usually already warmed.
+  const [cornerLifecycle, setCornerLifecycle] = useState<CornerSummary[]>([]);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(
     initialChannelCache?.communityId ?? null,
@@ -413,10 +450,15 @@ export default function BuzzChat() {
   const [canManageWorkspace, setCanManageWorkspace] = useState(false);
   const [addingMemberPubkey, setAddingMemberPubkey] = useState<string | null>(null);
   const [viewerIsAgent, setViewerIsAgent] = useState(false);
-  const [roomName, setRoomName] = useState(initialChannelCache?.roomName ?? ROOM_LABEL);
+  // `null` while the channel's own metadata read is still in flight; `''` once
+  // it has landed and the channel genuinely carries no name.
+  const [resolvedChannelName, setResolvedChannelName] = useState<string | null>(
+    initialChannelCache?.roomName ?? routeChannelTitle ?? null,
+  );
   const [viewerChannelRole, setViewerChannelRole] = useState<ChannelRole | null>(null);
   const [rosterVisible, setRosterVisible] = useState(false);
   const [roomActionsVisible, setRoomActionsVisible] = useState(false);
+  const [cornerActionsVisible, setCornerActionsVisible] = useState(false);
   const [renameEditing, setRenameEditing] = useState(false);
   const [renameDraft, setRenameDraft] = useState('');
   const [renameBusy, setRenameBusy] = useState(false);
@@ -632,6 +674,17 @@ export default function BuzzChat() {
     mentionSuggestions.matches.length > 0,
   );
   const isCorner = Boolean(parentChannelId);
+  // `null` means "show a skeleton": the channel kind or its name is still
+  // resolving and no honest word exists yet. A corner never renders the Room
+  // label as a stand-in for its own slug.
+  const headerTitle = channelHeaderTitle(
+    resolvedChannelName,
+    isCorner ? 'corner' : channelKind,
+    decodedId,
+  );
+  // Room-lifecycle copy ("Delete <name>?") only ever runs on a Room, which by
+  // then has a resolved name; the label is the safe fallback for the sentence.
+  const roomName = headerTitle ?? ROOM_LABEL;
   const isDirectMessage = Boolean(directMessage);
   // A DM's title is its peer's identity. Derived from cached state rather
   // than resolved inside the enter-room fetch chain, so it is right on the
@@ -649,6 +702,10 @@ export default function BuzzChat() {
     if (peerAgent) return resolveAgentDisplayIdentity(dmPeerPubkey, peerAgent).name;
     return personIdentityLabel(dmPeerProfile, dmPeerPubkey, dmPeerNip05Status);
   }, [agentByPubkey, dmPeerNip05Status, dmPeerProfile, dmPeerPubkey, roomName]);
+  // The header's own title still distinguishes "not resolved yet" (`null` —
+  // render the skeleton) from a resolved name. A DM is resolved as soon as its
+  // peer is known, which the cached roster usually already answers.
+  const displayHeaderTitle = dmPeerPubkey ? displayRoomName : headerTitle;
   const sessionState = isCorner ? cornerSessionState(messages) : 'idle';
   const cornerAgentPubkey = useMemo(
     () => resolveCornerViewAgentPubkey(messages, (pubkey) => agentByPubkey.has(pubkey)),
@@ -656,11 +713,34 @@ export default function BuzzChat() {
   );
   const turnSummary = isCorner ? latestCornerTurnSummary(messages, cornerAgentPubkey) : undefined;
   const cornerAgentDisplay = cornerAgentPubkey
-    ? resolveAgentDisplayIdentity(cornerAgentPubkey, agentByPubkey.get(cornerAgentPubkey))
+    ? resolvePendingAgentDisplay(cornerAgentPubkey, agentByPubkey.get(cornerAgentPubkey), participantsHydrated)
     : undefined;
+  const cornerAgentOnline = Boolean(
+    cornerAgentPubkey &&
+      isAgentPresenceOnlineWithReconnectGrace(
+        agentPresences[cornerAgentPubkey],
+        presenceNow,
+        presenceReconnectGrace[cornerAgentPubkey],
+      ),
+  );
   const visibleMessages = useMemo(
     () => transcriptMessages(messages, isCorner),
     [isCorner, messages],
+  );
+  // Attribution is per run, not per entry: only the first entry of a voice's
+  // run carries its mark and name (see `buzz/ledger-attribution.ts`). A corner
+  // never attributes at all, so it never needs the set.
+  const continuedAttributionIds = useMemo(
+    () =>
+      isCorner
+        ? new Set<string>()
+        : continuedSpeakerIds(
+            visibleMessages.map((message) => ({
+              id: message.id,
+              speaker: ledgerSpeakerKey(message, agentByPubkey),
+            })),
+          ),
+    [agentByPubkey, isCorner, visibleMessages],
   );
   // Newest-first for the inverted FlatList; chronological visibleMessages
   // above stays the source of truth for everything else that reads order.
@@ -676,15 +756,18 @@ export default function BuzzChat() {
     }
     return map;
   }, [visibleMessages]);
-  const openedCornerIds = useMemo(
+  // A corner that a permission ALLOW opened, before its own lifecycle card has
+  // landed. The pinned live bar needs a destination from the instant the corner
+  // exists, since the inline "corner open" note that used to carry that tap is
+  // gone from the transcript.
+  const permittedCornerId = useMemo(
     () =>
-      new Set(
-        messages.flatMap((message) =>
-          message.writePermission?.status === 'allowed' && message.writePermission.subchannelId
-            ? [message.writePermission.subchannelId]
-            : [],
-        ),
-      ),
+      [...messages]
+        .reverse()
+        .find(
+          (message) =>
+            message.writePermission?.status === 'allowed' && message.writePermission.subchannelId,
+        )?.writePermission?.subchannelId,
     [messages],
   );
   // "Most recent active corner" is resolved once, from the same signal used
@@ -748,6 +831,79 @@ export default function BuzzChat() {
         ),
     [agentPresences, messages, presenceNow, presenceReconnectGrace],
   );
+  /**
+   * The pinned corner indicator's whole state, resolved in one place so the
+   * words it shows and the corner a tap on it opens can never disagree.
+   *
+   * One line, and it names the two facts that matter: who is working, and what
+   * on — `beebee active: feat/ux-fix-now`. Both surfaces get one, because both
+   * have the same question to answer: a Room asks "is a corner running, and
+   * where," a Corner asks "is this session still moving." `live` is what turns
+   * the line gold and starts its breath; an open-but-idle corner keeps the same
+   * line on the quiet tier, which is a real and distinct state the old
+   * "working in corner…" strip could not express at all.
+   */
+  const cornerLiveBar = useMemo((): { label: string; live: boolean; cornerId?: string } | null => {
+    const named = (subject: string, verb: string, target?: string) =>
+      target ? `${subject} ${verb}: ${target}` : `${subject} ${verb}`;
+
+    if (isCorner) {
+      const subject = cornerAgentDisplay?.name ?? 'agent';
+      // The branch is the truest name for what a corner is doing; the corner's
+      // own slug is the fallback, and both beat an opaque id.
+      const target = mergeTarget?.branch ?? headerTitle ?? undefined;
+      if (sessionState === 'working') return { label: named(subject, 'active', target), live: true };
+      if (displayedCornerStatus && isCornerActive(displayedCornerStatus)) {
+        return { label: named(subject, 'idle', target), live: false };
+      }
+      return null;
+    }
+
+    // The bar reports the *corner*; the offline hint directly below it reports
+    // the *agent*. Keeping those two facts in two places is what stops the bar
+    // from claiming gold — which DESIGN.md assigns to live/online presence —
+    // for a state that is neither.
+    const working = Boolean(activeAgentTurn?.agentTurn) && !agentsOffline;
+    const cornerId = tappableCornerId ?? permittedCornerId;
+    const agentPubkey = cornerId
+      ? resolveCornerCardAgentPubkey(
+          activeCorner?.corner?.agentPubkey,
+          activeCorner?.pubkey,
+          (pubkey) => agentByPubkey.has(pubkey),
+        )
+      : activeAgentTurn?.agentTurn?.agentPubkey;
+    const subject = agentPubkey
+      ? resolveAgentDisplayIdentity(agentPubkey, agentByPubkey.get(agentPubkey)).name
+      : 'agent';
+    if (cornerId) {
+      const target = cornerName(
+        cornerLifecycle.find((corner) => corner.id === cornerId)?.name,
+        cornerId,
+      );
+      return {
+        label: named(subject, working ? 'active' : 'idle', target),
+        live: working,
+        cornerId,
+      };
+    }
+    if (working) return { label: named(subject, 'active'), live: true };
+    return null;
+  }, [
+    activeAgentTurn,
+    activeCorner,
+    agentByPubkey,
+    agentsOffline,
+    cornerAgentDisplay,
+    cornerLifecycle,
+    displayedCornerStatus,
+    headerTitle,
+    isCorner,
+    mergeTarget,
+    permittedCornerId,
+    sessionState,
+    tappableCornerId,
+  ]);
+
   const activeActivityId = useMemo(() => {
     if (isCorner ? sessionState !== 'working' : !activeAgentTurn) return undefined;
     const latest = visibleMessages.at(-1);
@@ -1046,16 +1202,24 @@ export default function BuzzChat() {
               revalidateCachedMessages(t, identity.publicKey, decodedId),
             isCancelled,
             afterInteractions: defer,
+            viewerActiveCommunityId: () => loadActiveCommunityId(identity.publicKey),
           },
           {
             onCommunities: setCommunities,
             onViewerIsAgent: setViewerIsAgent,
             onChannelRole: setViewerChannelRole,
+            // The channel's own name, never the generic Room label — a cached
+            // label re-seeds the wrong header on the next cold open, and the
+            // header derives its own fallback from the resolved channel kind.
             onRoomName: (name) => {
-              setRoomName(name);
+              setResolvedChannelName(name);
               patchChannelCache(identity.publicKey, { roomName: name });
             },
+            // Called on both branches: an absent parent only means "room" once
+            // this read has actually landed.
             onParentChannelId: (parentId) => {
+              setChannelKind(parentId ? 'corner' : 'room');
+              if (!parentId) return;
               setParentChannelId(parentId);
               patchChannelCache(identity.publicKey, { parentChannelId: parentId });
             },
@@ -1072,12 +1236,15 @@ export default function BuzzChat() {
               ]).catch(() => undefined);
             },
             onMembers: (roomMembers) => patchChannelCache(identity.publicKey, { roomMembers }),
-            onRoster: ({ agents, people, profiles, canManageWorkspace, communityId }) => {
+            // Agent names are the union across every Workspace the viewer
+            // belongs to, and land on their own — never behind the
+            // person-profile read, whose failure used to leave the transcript
+            // with no agent names at all until the screen remounted.
+            onAgents: (agents) =>
+              patchChannelCache(identity.publicKey, { availableAgents: agents }),
+            onRoster: ({ people, profiles, canManageWorkspace, communityId }) => {
               setCanManageWorkspace(canManageWorkspace);
-              patchChannelCache(identity.publicKey, {
-                availableAgents: agents,
-                availablePeople: people,
-              });
+              patchChannelCache(identity.publicKey, { availablePeople: people });
               useBuzzLocalCache
                 .getState()
                 .replaceProfiles(identity.publicKey, communityId, profiles);
@@ -1097,10 +1264,11 @@ export default function BuzzChat() {
               patchChannelCache(identity.publicKey, { mergeTarget: target });
             },
             onCornerStatus: setCornerLifecycleStatus,
+            onCornerLifecycle: setCornerLifecycle,
             onStepFailed: (step, error) =>
               console.warn(`BuzzChat: ${step} failed for ${decodedId}:`, error),
           },
-          ROOM_LABEL,
+          '',
         );
       } catch (err) {
         console.warn('Failed to init BuzzChat:', err);
@@ -1558,10 +1726,10 @@ export default function BuzzChat() {
     }
     if (!transport || !canRenameRoom(viewerChannelRole) || renameBusy) return;
 
-    const previousName = roomName;
+    const previousName = resolvedChannelName;
     setRenameBusy(true);
     setRenameError(null);
-    setRoomName(name);
+    setResolvedChannelName(name);
     patchCachedRoomName(name);
     try {
       const client = await transport.ensureClient();
@@ -1570,8 +1738,8 @@ export default function BuzzChat() {
       setRoomActionsVisible(false);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
-      setRoomName(previousName);
-      patchCachedRoomName(previousName);
+      setResolvedChannelName(previousName);
+      patchCachedRoomName(previousName ?? '');
       setRenameError(`Could not rename ${ROOM_LABEL}: ${String(err)}`);
     } finally {
       setRenameBusy(false);
@@ -1581,7 +1749,7 @@ export default function BuzzChat() {
     patchCachedRoomName,
     renameBusy,
     renameDraft,
-    roomName,
+    resolvedChannelName,
     transport,
     viewerChannelRole,
   ]);
@@ -1607,18 +1775,37 @@ export default function BuzzChat() {
     [activeCommunityId, transport, userPubkey],
   );
 
+  /**
+   * Leave this transcript. A corner returns to its parent Room by id — see
+   * `corner-navigation.ts` for why the route directly underneath cannot be
+   * trusted to be that Room — and a transcript that is the only route on the
+   * stack replaces itself with the Room list instead of calling a
+   * `router.back()` that silently does nothing.
+   */
+  const handleBack = useCallback(() => {
+    const routes = (navigation.getState()?.routes ?? []) as ChatStackRoute[];
+    const action = chatBackAction(routes, parentChannelId);
+    if (action.type === 'pop') router.dismiss(action.count);
+    // The parent Room was never on this stack (the corner was opened straight
+    // from the Room list, or from a notification cold start). Open it here
+    // rather than popping into whatever happens to be underneath.
+    else if (action.type === 'open-room') router.replace(roomHref(action.channelId));
+    else if (action.type === 'back') router.back();
+    else router.replace('/buzz/channels');
+  }, [navigation, parentChannelId]);
+
   const handleCloseCorner = useCallback(async () => {
     if (!transport) return;
     try {
       await transport.closeCorner(decodedId);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-      router.back();
+      handleBack();
     } catch (err) {
       console.warn('Close corner failed:', err);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Modal.alert('Could not close corner', err instanceof Error ? err.message : String(err));
     }
-  }, [decodedId, transport]);
+  }, [decodedId, handleBack, transport]);
 
   const handleApprove = useCallback(async () => {
     if (!transport || !mergeTarget) return;
@@ -1648,9 +1835,14 @@ export default function BuzzChat() {
     });
   }, []);
 
-  const openCorner = useCallback((subchannelId: string) => {
-    router.push(`/buzz/chat/${encodeURIComponent(subchannelId)}` as Href);
-  }, []);
+  const openCorner = useCallback(
+    (subchannelId: string) => {
+      if (subchannelId === decodedId) return;
+      router.push(cornerHref(subchannelId, decodedId));
+    },
+    [decodedId],
+  );
+
 
   const renderItem = useCallback(
     ({ item }: { item: ChatDisplayMessage }) => {
@@ -1660,15 +1852,12 @@ export default function BuzzChat() {
         const display = resolveAgentDisplayIdentity(permission.agentPubkey, permissionAgent);
         const pending = permission.status === 'pending';
         const busy = permissionActionId === permission.permissionId;
-        if (permission.status === 'allowed' && permission.subchannelId) {
-          return (
-            <WritePermissionOutcome
-              status={permission.status}
-              subchannelId={permission.subchannelId}
-              onOpenCorner={openCorner}
-            />
-          );
-        }
+        // An ALLOW that opened a corner is the same live state the pinned bar
+        // above the composer now reports, so it prints nothing here — the
+        // request card that preceded it is already the durable record of the
+        // decision, and repeating it as a scroll note gave the reader two
+        // places to look for one fact.
+        if (permission.status === 'allowed' && permission.subchannelId) return null;
         return (
           <HullSurface
             strength="raised"
@@ -1676,9 +1865,9 @@ export default function BuzzChat() {
             testID={`write-permission-${permission.status}`}
           >
             <View style={styles.writePermissionHeading}>
-              <AgentAvatar
-                pubkey={permission.agentPubkey}
-                avatarSeed={display.avatarSeed}
+              <IdentityMark
+                kind="agent"
+                seed={display.avatarSeed ?? permission.agentPubkey}
                 avatarUrl={display.avatarUrl}
                 name={display.name}
                 size={30}
@@ -1732,7 +1921,6 @@ export default function BuzzChat() {
                 status={permission.status}
                 subchannelId={permission.subchannelId}
                 awaitingPerson={viewerIsAgent && pending}
-                onOpenCorner={openCorner}
               />
             )}
           </HullSurface>
@@ -1740,93 +1928,15 @@ export default function BuzzChat() {
       }
 
       if (item.corner) {
-        // The permission prompt is the live card while a corner is open. Once
-        // archived, always show the durable lifecycle card so its completion
-        // summary remains discoverable in the Room transcript.
-        if (
-          openedCornerIds.has(item.corner.subchannelId) &&
-          item.corner.status !== 'archived'
-        ) {
-          return null;
-        }
-        // Prefer whichever pubkey is actually a registered agent: the
-        // declared `agent` tag, or (if that misses) the event's own signer —
-        // the same source the per-message transcript below resolves by, so
-        // the card can never show a different identity than the view.
-        const resolvedAgentPubkey = resolveCornerCardAgentPubkey(
-          item.corner.agentPubkey,
-          item.pubkey,
-          (pubkey) => agentByPubkey.has(pubkey),
-        );
-        const cornerAgent = resolvedAgentPubkey ? agentByPubkey.get(resolvedAgentPubkey) : undefined;
-        const display = resolvedAgentPubkey
-          ? resolveAgentDisplayIdentity(resolvedAgentPubkey, cornerAgent)
-          : undefined;
-        const cornerOnline = resolvedAgentPubkey
-          ? isAgentPresenceOnlineWithReconnectGrace(
-              agentPresences[resolvedAgentPubkey],
-              presenceNow,
-              presenceReconnectGrace[resolvedAgentPubkey],
-            )
-          : false;
-        // The status WORD is always the corner lifecycle — identical to the
-        // Room-list dropdown and the Corners list, since all three read
-        // `cornerStatusPresentation` over the same canonical CornerStatus.
-        // Presence is a separate dot; it never replaces the lifecycle word.
-        const presentation = cornerStatusPresentation(item.corner.status);
-        const showsPresenceDot = Boolean(resolvedAgentPubkey) && isCornerActive(item.corner.status);
-        return (
-          <TouchableOpacity
-            accessibilityLabel={`${display?.name ?? 'Agent'} corner ${presentation.label.toLowerCase()}${
-              showsPresenceDot ? (cornerOnline ? ', agent online' : ', agent offline') : ''
-            }. View corner`}
-            onPress={() =>
-              router.push(`/buzz/chat/${encodeURIComponent(item.corner!.subchannelId)}` as Href)
-            }
-            style={styles.cornerStatusCard}
-            testID={`corner-status-${item.corner.status}`}
-          >
-            {resolvedAgentPubkey && (
-              <AgentAvatar
-                pubkey={resolvedAgentPubkey}
-                avatarSeed={display?.avatarSeed}
-                avatarUrl={display?.avatarUrl}
-                name={display?.name ?? 'Agent'}
-                size={30}
-              />
-            )}
-            <View style={styles.cornerStatusCopy}>
-              <Text style={styles.cornerStatusAgent}>{display?.name ?? 'Agent'}</Text>
-              <View style={styles.cornerStatusRow}>
-                <Text style={styles.cornerStatusLabel}>
-                  {presentation.glyph} {presentation.label}
-                </Text>
-                {showsPresenceDot && (
-                  <Text
-                    style={[
-                      styles.cornerPresenceDot,
-                      cornerOnline ? styles.cornerPresenceOnline : styles.cornerPresenceOffline,
-                    ]}
-                    testID={`corner-presence-${cornerOnline ? 'online' : 'offline'}`}
-                  >
-                    {cornerOnline ? '●' : '○'}
-                  </Text>
-                )}
-              </View>
-              {item.corner.status === 'archived' && Boolean(item.text.trim()) && (
-                <Text style={styles.cornerArchiveSummary}>{item.text.trim()}</Text>
-              )}
-            </View>
-            <View style={styles.openCornerAction}>
-              <Text style={styles.openCornerText}>VIEW {CORNER_LABEL.toUpperCase()}</Text>
-              <Text style={styles.openCornerGlyph}>›</Text>
-            </View>
-          </TouchableOpacity>
-        );
-      }
-
-      if (item.isAgentActivity && parentChannelId) {
-        return <CornerActivity active={item.id === activeActivityId} message={item} />;
+        // A corner's status never appears inline. A corner being open is
+        // *state*, not an event — a note inscribed at the moment it opened
+        // scrolls away and then lies, and a terminal one ("✕ FAILED",
+        // "◇ OPEN") stamps a dead record across a live conversation. The
+        // Room has exactly one active-corner affordance, the pinned gold
+        // line above the composer, and every corner — live, failed, merged,
+        // archived — is listed in the Room's corners view, which is where a
+        // record belongs (`buzz/corners/[roomId].tsx`).
+        return null;
       }
 
       // ── Merge summary ────────────────────────────────────────────
@@ -1857,71 +1967,104 @@ export default function BuzzChat() {
         );
       }
 
-      // ── Regular message bubble ───────────────────────────────────
+      // ── Ordinary message ─────────────────────────────────────────
       const isBody = item.pubkey && BODY_PUBKEYS.has(item.pubkey);
       const isOwn = item.isUser;
       const knownAgent = item.pubkey ? agentByPubkey.get(item.pubkey) : undefined;
       const isAgent = item.isAgentAuthor || item.isAgentActivity || isBody || Boolean(knownAgent);
       const display = isAgent
-        ? resolveAgentDisplayIdentity(item.pubkey ?? 'unknown-agent', knownAgent)
+        ? resolvePendingAgentDisplay(item.pubkey ?? 'unknown-agent', knownAgent, participantsHydrated)
         : null;
-      const agentOnline = Boolean(
-        knownAgent &&
-          item.pubkey &&
-          isAgentPresenceOnlineWithReconnectGrace(
-            agentPresences[item.pubkey],
-            presenceNow,
-            presenceReconnectGrace[item.pubkey],
-          ),
-      );
       const personName = item.pubkey ? personProfileByPubkey.get(item.pubkey)?.name : undefined;
-      const referencedMessage = item.replyToId ? visibleMessageById.get(item.replyToId) : undefined;
+
+      const attachmentElements = item.attachments?.map((attachment) => (
+        <AttachmentCard attachment={attachment} key={`${item.id}-${attachment.url}`} />
+      ));
+
+      // ── The ledger (§ DESIGN.md "The ledger") ────────────────────
+      // One primitive, both surfaces. Two things differ, and each tracks a real
+      // difference between them:
+      //
+      //   · A Corner has one administering agent, named in its top bar, so its
+      //     agent turns carry no handle at all — pure flowing prophecy. A Room
+      //     holds several voices, so a voice states a whisper-dim handle inline
+      //     when it takes over, and only then (`continuedAttributionIds`).
+      //   · Your own turn is inset right and one tone down on either surface.
+      //     That geometry is the whole signal; there is no "YOU" caption.
+      const attributionContinued = continuedAttributionIds.has(item.id);
+      // An agent viewing its own Room messages is both `isUser` and an agent;
+      // the agent test wins, matching `ledgerSpeakerKey`'s own ordering.
+      const isSelfSteer = isOwn && !isAgent;
+      // A Corner is exactly one administering agent plus you, so anything that
+      // is not your own steer is that agent — by the surface's definition, not
+      // by a roster lookup. Deriving it structurally is what keeps a Corner
+      // correct when the roster is empty or still loading: `isAgent` goes false
+      // there, and a Corner that trusted it printed the signer's bare npub as a
+      // handle and dropped the agent's own words to the ordinary grey tier.
+      const isCornerAgent = isCorner && !isSelfSteer;
+      const speaksAsAgent = isAgent || isCornerAgent;
+      const voiceName = speaksAsAgent
+        ? (display ? display.name : (personName ?? shortMemberNpub(item.pubkey ?? '')))
+        : (personName ?? (item.pubkey ? shortMemberNpub(item.pubkey) : 'SOMEONE'));
+      // Zero handles in a Corner, full stop — its one agent is named in the top
+      // bar. None on your own inset block, and none on a continuation of the
+      // voice directly above.
+      const handle = attributionContinued || isSelfSteer || isCorner ? undefined : voiceName;
+      const marginalia = (
+        <LedgerMarginalia
+          stamp={ledgerStamp(item.timestamp)}
+          detail={handle && !isAgent && item.pubkey ? ledgerFingerprint(item.pubkey) : null}
+          testID={`chat-marginalia-${item.id}`}
+        />
+      );
+
+      // Machine noise collapses the same way on both surfaces: one ghost line,
+      // expandable, never a wall of output down the slab.
+      if (item.isAgentActivity) {
+        return (
+          <LedgerActivity
+            active={item.id === activeActivityId}
+            handle={handle}
+            marginalia={marginalia}
+            message={item}
+          />
+        );
+      }
+
+      // The reply echo is deleted from agent turns: Body threads every Room/DM
+      // reply to the request that triggered it, so the quoted text was always
+      // the message directly above — pure noise on a linear log. A person's own
+      // reply is a deliberate reach back up the transcript, so it keeps its
+      // quote.
+      const referencedMessage =
+        !speaksAsAgent && item.replyToId ? visibleMessageById.get(item.replyToId) : undefined;
       const referencedTarget = referencedMessage
         ? replyTargetForMessage(referencedMessage)
         : undefined;
-      const replyReference = item.replyToId ? (
-        <View style={styles.replyReference} testID={`reply-reference-${item.id}`}>
-          <Text numberOfLines={1} style={styles.replyReferenceAuthor}>
-            ↳ {referencedTarget?.authorName ?? 'ORIGINAL MESSAGE'}
-          </Text>
-          <Text numberOfLines={2} style={styles.replyReferenceText}>
-            {referencedTarget?.preview ?? 'Message not loaded'}
-          </Text>
-        </View>
-      ) : null;
-
-      // Rooms and Corners render the identical row (§ DESIGN.md "Rooms and
-      // Corners are one system") — only the human-own layout differs, and
-      // that's carried by TranscriptRow's own isOwn/isAgent alignment, not a
-      // per-branch component.
-      const avatarElement = !isOwn ? (
-        display ? (
-          <AgentAvatar
-            pubkey={item.pubkey ?? 'unknown-agent'}
-            avatarSeed={display.avatarSeed}
-            avatarUrl={display.avatarUrl}
-            name={display.name}
-            size={18}
-          />
-        ) : item.pubkey ? (
-          <PersonAvatar
-            pubkey={item.pubkey}
-            avatarUrl={personProfileByPubkey.get(item.pubkey)?.avatar}
-            name={personName ?? shortMemberNpub(item.pubkey)}
-            size={18}
-          />
-        ) : null
-      ) : null;
-      const presenceLightElement =
-        knownAgent && item.pubkey ? (
-          <AgentPresenceLight online={agentOnline} testID={`agent-presence-light-${item.pubkey}`} />
+      const replyReference =
+        !speaksAsAgent && item.replyToId ? (
+          <View style={styles.replyReference} testID={`reply-reference-${item.id}`}>
+            <Text numberOfLines={2} style={styles.replyReferenceText}>
+              ↳ {referencedTarget?.authorName ?? 'ORIGINAL MESSAGE'} ·{' '}
+              {referencedTarget?.preview ?? 'Message not loaded'}
+            </Text>
+          </View>
         ) : null;
-      const label = isOwn
-        ? 'YOU'
-        : display
-          ? display.name
-          : (personName ?? shortMemberNpub(item.pubkey ?? ''));
-      const provenance = item.pubkey && !isOwn && !isAgent ? shortMemberNpub(item.pubkey) : null;
+
+      // A pasted `git push` dump, stack trace, or npm error wall gets the same
+      // treatment as tool telemetry: lifted out of the prose into one ghost
+      // line. Deliberately gated on `!isSelfSteer` rather than on `isAgent` —
+      // `isAgent` depends on the roster and goes false exactly when a Corner
+      // needs this most, which is how a full push-rejection dump reached the
+      // slab. Your own message is never touched: pasting a log is on purpose.
+      const ledgerText = isSelfSteer ? undefined : splitLedgerText(item.text);
+      const machineNoise = ledgerText?.machine ? (
+        <LedgerGhostLine
+          body={ledgerText.machine}
+          label={`${ledgerText.machineLines} lines of tool output`}
+          testID={`chat-machine-noise-${item.id}`}
+        />
+      ) : null;
 
       return (
         <SwipeToReply
@@ -1929,20 +2072,31 @@ export default function BuzzChat() {
           onReply={item.isAgentDraft ? () => undefined : () => beginReply(item)}
         >
           <NewMessageMaterialize enabled={Boolean(item.isNew)}>
-            <TranscriptRow
-              itemId={item.id}
-              isOwn={isOwn}
-              isAgent={isAgent}
-              avatar={avatarElement}
-              presenceLight={presenceLightElement}
-              label={label}
-              replyReference={replyReference}
-              bodyText={item.text}
-              bodyTestID={`chat-message-text-${item.id}`}
-              offlineQueued={isOwn && offlineQueuedIds.has(item.id)}
-              attachments={item.attachments}
-              provenance={provenance}
-            />
+            {isSelfSteer ? (
+              <LedgerSteer
+                itemId={item.id}
+                continued={attributionContinued}
+                bodyText={item.text}
+                bodyTestID={`chat-message-text-${item.id}`}
+                marginalia={marginalia}
+                replyReference={replyReference}
+                attachments={attachmentElements}
+                offlineQueued={offlineQueuedIds.has(item.id)}
+              />
+            ) : (
+              <LedgerEntry
+                itemId={item.id}
+                handle={handle}
+                continued={attributionContinued}
+                luminous={speaksAsAgent}
+                bodyText={ledgerText ? ledgerText.prose : item.text}
+                bodyTestID={`chat-message-text-${item.id}`}
+                marginalia={marginalia}
+                replyReference={replyReference}
+                machineNoise={machineNoise}
+                attachments={attachmentElements}
+              />
+            )}
           </NewMessageMaterialize>
         </SwipeToReply>
       );
@@ -1950,15 +2104,18 @@ export default function BuzzChat() {
     [
       agentByPubkey,
       activeActivityId,
+      continuedAttributionIds,
       handleWritePermission,
+      isCorner,
+      offlineQueuedIds,
       parentChannelId,
+      participantsHydrated,
       permissionActionId,
       personProfileByPubkey,
       viewerIsAgent,
       agentPresences,
       presenceNow,
       presenceReconnectGrace,
-      openedCornerIds,
       beginReply,
       replyTargetForMessage,
       visibleMessageById,
@@ -1980,7 +2137,7 @@ export default function BuzzChat() {
       activeCommunityId={activeCommunityId}
       onSelect={handleCommunitySelect}
       onAdd={() => router.push('/buzz/community' as Href)}
-      onSettings={() => router.push('/buzz/settings/identity' as Href)}
+      onSettings={() => router.push('/buzz/settings' as Href)}
       onWorkspaceSettings={(communityId) =>
         router.push({
           pathname: '/buzz/settings/workspace',
@@ -1996,50 +2153,98 @@ export default function BuzzChat() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
-        {/* Header */}
-        <HullSurface
-          strength="quiet"
+        {/* Header. No surface of its own — the chrome sits on the same
+            obsidian as the transcript, parted only by a hairline. */}
+        <View
           style={[styles.header, { minHeight: insets.top + 60, paddingTop: insets.top + 8 }]}
         >
           <TouchableOpacity
-            accessibilityLabel="Back to Rooms"
-            onPress={() => router.back()}
+            accessibilityLabel={isCorner ? `Back to this ${CORNER_LABEL}’s ${ROOM_LABEL}` : 'Back to Rooms'}
+            onPress={handleBack}
             style={styles.backButton}
             testID="chat-back"
           >
             <Text style={[styles.backText, isCorner && styles.cornerBackText]}>‹</Text>
           </TouchableOpacity>
+          {/*
+            A corner has exactly one administering agent, so its identity is
+            stated here once and never repeated on a message. The ledger below
+            renders the agent's turns as unattributed flowing text precisely
+            because this mark and name are always on screen above them.
+          */}
+          {isCorner && cornerAgentPubkey && (
+            <View style={styles.cornerHeaderMark} testID="corner-header-agent">
+              <IdentityMark
+                kind="agent"
+                seed={cornerAgentDisplay?.avatarSeed ?? cornerAgentPubkey}
+                avatarUrl={cornerAgentDisplay?.avatarUrl}
+                name={cornerAgentDisplay?.name ?? 'Agent'}
+                size={26}
+                alive={sessionState === 'working'}
+              />
+            </View>
+          )}
           <TouchableOpacity
-            accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)} in this ${ROOM_LABEL}`}
+            accessibilityLabel={
+              isCorner
+                ? `${cornerAgentDisplay?.name ?? 'Agent'}’s ${CORNER_LABEL}. View ${formatRoomParticipantTotal(roomParticipantTotal)}`
+                : `View ${formatRoomParticipantTotal(roomParticipantTotal)} in this ${ROOM_LABEL}`
+            }
             accessibilityRole="button"
             disabled={!participantsHydrated}
             onPress={() => setRosterVisible(true)}
             style={styles.headerCenter}
             testID="room-participant-roster-trigger"
           >
-            <Text
-              style={[styles.channelName, isCorner && styles.cornerChannelName]}
-              numberOfLines={1}
-            >
-              {displayRoomName}
-            </Text>
-            <Text
-              style={[styles.headerMeta, isCorner && styles.cornerHeaderMeta]}
-              numberOfLines={1}
-              testID={isCorner ? 'corner-view-status' : undefined}
-            >
-              {isCorner && displayedCornerStatus
-                ? // Same canonical status word as the Room-list dropdown, the
-                  // Room chat card, and the standalone Corners list.
-                  `${cornerStatusPresentation(displayedCornerStatus).glyph} ${cornerStatusPresentation(displayedCornerStatus).label}  ·  ${
-                    participantsHydrated
-                      ? formatRoomParticipantTotal(roomParticipantTotal)
-                      : 'LOADING MEMBERS'
-                  }`
-                : participantsHydrated
+            {displayHeaderTitle === null ? (
+              // The channel's own name has not landed yet. Neither "Room" nor
+              // a corner slug would be true, so show neither.
+              <View
+                accessibilityLabel="Loading name"
+                style={[styles.channelNameSkeleton, isCorner && styles.cornerChannelNameSkeleton]}
+                testID="chat-title-skeleton"
+              />
+            ) : (
+              <Text
+                style={[styles.channelName, isCorner && styles.cornerChannelName]}
+                numberOfLines={1}
+              >
+                {displayHeaderTitle}
+              </Text>
+            )}
+            {isCorner ? (
+              <View style={styles.cornerHeaderStatusRow}>
+                <Text numberOfLines={1} style={styles.cornerHeaderAgent}>
+                  {(cornerAgentDisplay?.name ?? 'AGENT').toUpperCase()}
+                </Text>
+                {cornerAgentPubkey && (
+                  <AgentPresenceLight
+                    online={cornerAgentOnline}
+                    testID="corner-header-presence"
+                  />
+                )}
+                <Text
+                  numberOfLines={1}
+                  style={styles.cornerHeaderMeta}
+                  testID="corner-view-status"
+                >
+                  {/*
+                    Same canonical status word as the Room-list dropdown, the
+                    Room chat card, and the standalone Corners list.
+                  */}
+                  {displayedCornerStatus
+                    ? `·  ${cornerStatusPresentation(displayedCornerStatus).glyph} ${cornerStatusPresentation(displayedCornerStatus).label}`
+                    : '·  …'}
+                  {participantsHydrated ? `  ·  ${formatRoomParticipantTotal(roomParticipantTotal)}` : ''}
+                </Text>
+              </View>
+            ) : (
+              <Text style={styles.headerMeta} numberOfLines={1}>
+                {participantsHydrated
                   ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ·  IN THIS ROOM  ›`
                   : 'LOADING MEMBERS'}
-            </Text>
+              </Text>
+            )}
           </TouchableOpacity>
           {!parentChannelId && !isDirectMessage && !viewerIsAgent && !isArchived && (
             <TouchableOpacity
@@ -2052,6 +2257,21 @@ export default function BuzzChat() {
               testID="room-member-picker"
             >
               <Text style={styles.addMembersGlyph}>＋</Text>
+            </TouchableOpacity>
+          )}
+          {/* One overflow vocabulary: the same ••• the Room header carries,
+              holding whatever destructive/rare actions the surface has. A
+              corner's "close" belongs here, not as a permanent button sitting
+              under the composer where the reader's thumb lives. */}
+          {isCorner && !viewerIsAgent && !isArchived && (
+            <TouchableOpacity
+              accessibilityLabel={`${CORNER_LABEL} actions`}
+              accessibilityRole="button"
+              onPress={() => setCornerActionsVisible(true)}
+              style={styles.roomActionsButton}
+              testID="corner-actions-menu"
+            >
+              <Text style={styles.roomActionsGlyph}>•••</Text>
             </TouchableOpacity>
           )}
           {!parentChannelId &&
@@ -2079,7 +2299,7 @@ export default function BuzzChat() {
               <Text style={styles.archivedBadgeText}>□ ARCHIVED</Text>
             </View>
           )}
-        </HullSurface>
+        </View>
 
         <FlatList
           testID="chat-messages"
@@ -2209,32 +2429,19 @@ export default function BuzzChat() {
           }
         />
 
-        {!isArchived &&
-          !parentChannelId &&
-          ((activeCorner?.corner && isCornerActive(activeCorner.corner.status)) ||
-            activeAgentTurn?.agentTurn) && (
-            <TouchableOpacity
-              accessibilityLabel={tappableCornerId ? 'View active corner' : 'Agent activity'}
-              accessibilityRole={tappableCornerId ? 'button' : undefined}
-              disabled={!tappableCornerId}
-              onPress={() =>
-                tappableCornerId &&
-                router.push(`/buzz/chat/${encodeURIComponent(tappableCornerId)}` as Href)
-              }
-              style={styles.agentLiveStatus}
-              testID="agent-live-status"
-            >
-              {!agentsOffline && <PixelLoader compact />}
-              <Text style={styles.agentLiveStatusText}>
-                {agentsOffline
-                  ? 'OFFLINE'
-                  : activeAgentTurn?.agentTurn
-                    ? 'thinking…'
-                    : 'working in corner…'}
-              </Text>
-              {tappableCornerId && <Text style={styles.agentLiveStatusGlyph}>›</Text>}
-            </TouchableOpacity>
-          )}
+        {/* The Room's only active-corner affordance: one pinned line naming
+            who is working and what on, gold and breathing while the work is
+            live. Never a scroll element — see CornerLiveBar. */}
+        {!isArchived && cornerLiveBar && (
+          <CornerLiveBar
+            label={cornerLiveBar.label}
+            live={cornerLiveBar.live}
+            onPress={
+              cornerLiveBar.cornerId ? () => openCorner(cornerLiveBar.cornerId!) : undefined
+            }
+            testID="corner-live-bar"
+          />
+        )}
         {!isArchived && agentsOffline && (
           <View style={styles.agentOfflineHint} testID="agent-offline-hint">
             <Text style={styles.agentOfflineHintTitle}>□ AGENT OFFLINE</Text>
@@ -2253,15 +2460,6 @@ export default function BuzzChat() {
           </View>
         ) : (
           <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-            {parentChannelId && !viewerIsAgent && (
-              <TouchableOpacity
-                accessibilityLabel={`Close ${CORNER_LABEL}`}
-                style={styles.cancelTurnButton}
-                onPress={() => void handleCloseCorner()}
-              >
-                <Text style={styles.cancelTurnText}>■ CLOSE {CORNER_LABEL.toUpperCase()}</Text>
-              </TouchableOpacity>
-            )}
             {mentionMenuVisible && (
               <View
                 accessibilityLabel="Mention a Room participant"
@@ -2285,16 +2483,17 @@ export default function BuzzChat() {
                       testID={`mention-suggestion-${participant.handle}`}
                     >
                       {display ? (
-                        <AgentAvatar
-                          pubkey={participant.pubkey}
-                          avatarSeed={display.avatarSeed}
+                        <IdentityMark
+                          kind="agent"
+                          seed={display.avatarSeed ?? participant.pubkey}
                           avatarUrl={display.avatarUrl}
                           name={display.name}
                           size={28}
                         />
                       ) : (
-                        <PersonAvatar
-                          pubkey={participant.pubkey}
+                        <IdentityMark
+                          kind="human"
+                          seed={participant.pubkey}
                           avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
                           name={participant.name}
                           size={28}
@@ -2366,7 +2565,6 @@ export default function BuzzChat() {
             <View
               style={[
                 styles.composer,
-                isCorner && styles.cornerComposer,
                 composerFocused && styles.composerFocused,
               ]}
             >
@@ -2382,7 +2580,7 @@ export default function BuzzChat() {
               </TouchableOpacity>
               <TextInput
                 ref={composerRef}
-                style={[styles.input, { height: composerHeight }, isCorner && styles.cornerInput]}
+                style={[styles.input, { height: composerHeight }]}
                 value={inputText}
                 onChangeText={(value) => {
                   inputTextRef.current = value;
@@ -2423,7 +2621,7 @@ export default function BuzzChat() {
                       : nextSelection,
                   );
                 }}
-                placeholder={parentChannelId ? 'Steer' : 'Message'}
+                placeholder="Message"
                 placeholderTextColor={groknight.dim}
                 multiline
                 numberOfLines={1}
@@ -2443,34 +2641,12 @@ export default function BuzzChat() {
                 testID="chat-send"
               >
                 <Text
-                  style={[
-                    styles.sendButtonText,
-                    isCorner && styles.cornerSendButtonText,
-                    mergeTarget && styles.sendButtonTextQuiet,
-                  ]}
+                  style={[styles.sendButtonText, mergeTarget && styles.sendButtonTextQuiet]}
                 >
                   ⏎
                 </Text>
               </TouchableOpacity>
             </View>
-            {isCorner && (
-              <View style={styles.cornerFooterRow}>
-                <Text style={styles.cornerFooter} numberOfLines={1}>
-                  <Text style={styles.cornerFooterRule}>╰─ </Text>
-                  <Text style={styles.cornerFooterValue}>
-                    {cornerAgentDisplay?.name ?? 'Agent'}
-                  </Text>
-                  <Text style={styles.cornerFooterSeparator}> · edit session · </Text>
-                  {sessionState !== 'working' && (
-                    <Text style={styles.cornerFooterState}>{sessionState}</Text>
-                  )}
-                </Text>
-                {sessionState === 'working' && <HullWaveSignal compact label="LIVE" />}
-                <Text style={styles.cornerFooter} numberOfLines={1}>
-                  <Text style={styles.cornerFooterRule}> ─╯</Text>
-                </Text>
-              </View>
-            )}
           </View>
         )}
       </KeyboardAvoidingView>
@@ -2565,16 +2741,18 @@ export default function BuzzChat() {
                           testID={`room-roster-${participant.kind}-${participant.pubkey}`}
                         >
                           {display ? (
-                            <AgentAvatar
-                              pubkey={participant.pubkey}
-                              avatarSeed={display.avatarSeed}
+                            <IdentityMark
+                              kind="agent"
+                              seed={display.avatarSeed ?? participant.pubkey}
                               avatarUrl={display.avatarUrl}
                               name={display.name}
                               size={38}
+                              alive={agentOnline}
                             />
                           ) : (
-                            <PersonAvatar
-                              pubkey={participant.pubkey}
+                            <IdentityMark
+                              kind="human"
+                              seed={participant.pubkey}
                               avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
                               name={displayName}
                               size={38}
@@ -2800,6 +2978,58 @@ export default function BuzzChat() {
 
       <RNModal
         animationType="fade"
+        onRequestClose={() => setCornerActionsVisible(false)}
+        transparent
+        visible={cornerActionsVisible}
+      >
+        <View
+          style={[styles.roomActionsModalRoot, { paddingBottom: Math.max(insets.bottom, 18) }]}
+        >
+          <Pressable
+            accessibilityLabel={`Close ${CORNER_LABEL} actions`}
+            onPress={() => setCornerActionsVisible(false)}
+            style={StyleSheet.absoluteFill}
+          />
+          <HullSurface strength="raised" style={styles.roomActionsModal} testID="corner-actions-sheet">
+            <View style={styles.roomActionsModalHeading}>
+              <View style={styles.roomActionsModalCopy}>
+                <Text style={styles.roomActionsModalEyebrow}>{CORNER_LABEL.toUpperCase()}</Text>
+                <Text numberOfLines={1} style={styles.roomActionsModalTitle}>
+                  {headerTitle ?? cornerAgentDisplay?.name ?? CORNER_LABEL}
+                </Text>
+              </View>
+              <TouchableOpacity
+                accessibilityLabel={`Close ${CORNER_LABEL} actions`}
+                onPress={() => setCornerActionsVisible(false)}
+                style={styles.roomActionsModalClose}
+              >
+                <Text style={styles.roomActionsModalCloseText}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              accessibilityLabel={`Close ${CORNER_LABEL}`}
+              accessibilityRole="button"
+              onPress={() => {
+                setCornerActionsVisible(false);
+                void handleCloseCorner();
+              }}
+              style={styles.roomLifecycleAction}
+              testID="close-corner-action"
+            >
+              <View style={styles.roomLifecycleCopy}>
+                <Text style={styles.roomLifecycleTitle}>CLOSE {CORNER_LABEL.toUpperCase()}</Text>
+                <Text style={styles.roomLifecycleHint}>
+                  Ends the edit session and archives this {CORNER_LABEL}. Unmerged work is lost.
+                </Text>
+              </View>
+              <Text style={styles.roomLifecycleGlyph}>■</Text>
+            </TouchableOpacity>
+          </HullSurface>
+        </View>
+      </RNModal>
+
+      <RNModal
+        animationType="fade"
         onRequestClose={() => setParticipantPickerVisible(false)}
         transparent
         visible={participantPickerVisible}
@@ -2861,16 +3091,17 @@ export default function BuzzChat() {
                         >
                           <View style={styles.memberPickerIdentity}>
                             {display ? (
-                              <AgentAvatar
-                                pubkey={option.pubkey}
-                                avatarSeed={display.avatarSeed}
+                              <IdentityMark
+                                kind="agent"
+                                seed={display.avatarSeed ?? option.pubkey}
                                 avatarUrl={display.avatarUrl}
                                 name={display.name}
                                 size={28}
                               />
                             ) : (
-                              <PersonAvatar
-                                pubkey={option.pubkey}
+                              <IdentityMark
+                                kind="human"
+                                seed={option.pubkey}
                                 avatarUrl={personProfileByPubkey.get(option.pubkey)?.avatar}
                                 name={option.name}
                                 size={28}
@@ -2975,6 +3206,12 @@ const styles = StyleSheet.create({
     color: groknight.muted,
   },
   cornerBackText: { ...Typography.mono(), color: groknight.textMuted },
+  // The single agent's faceted mark, stated once for the whole corner.
+  cornerHeaderMark: {
+    marginRight: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   headerCenter: {
     flex: 1,
     minHeight: 44,
@@ -2987,10 +3224,25 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     color: groknight.textPrimary,
   },
+  // A corner's name is a slug, not a title — set it at label scale so it
+  // reads as an identifier beside the agent's mark rather than a headline.
   cornerChannelName: {
     ...Typography.mono('semiBold'),
+    fontSize: 15,
+    lineHeight: 19,
+    letterSpacing: 0.2,
     color: groknight.textPrimary,
   },
+  // Stands in for the name until the channel's own read lands, so the header
+  // never has to guess between "Room" and a corner slug.
+  channelNameSkeleton: {
+    width: 132,
+    height: 13,
+    marginVertical: 5,
+    backgroundColor: groknight.bgHover,
+    borderRadius: groknight.radius,
+  },
+  cornerChannelNameSkeleton: { width: 108 },
   headerMeta: {
     ...Typography.default(),
     fontSize: 11,
@@ -2998,8 +3250,28 @@ const styles = StyleSheet.create({
     color: groknight.textMuted,
     marginTop: 2,
   },
-  cornerHeaderMeta: { ...Typography.mono(), color: groknight.textMuted },
-  cornerHeaderStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 },
+  cornerHeaderAgent: {
+    ...Typography.mono('semiBold'),
+    flexShrink: 0,
+    color: groknight.textSecondary,
+    fontSize: 10,
+    lineHeight: 14,
+    letterSpacing: 0.7,
+  },
+  cornerHeaderMeta: {
+    ...Typography.mono(),
+    flexShrink: 1,
+    color: groknight.textMuted,
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  cornerHeaderStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 3,
+    minWidth: 0,
+  },
   addMembersButton: {
     width: 44,
     minHeight: 44,
@@ -3444,47 +3716,28 @@ const styles = StyleSheet.create({
     lineHeight: 11,
     letterSpacing: 0.6,
   },
+  /* A person reaching back up the transcript quotes what they reached for, on
+   * one dim line and with no rule beside it — the ledger has no delimiters. */
   replyReference: {
     minWidth: 0,
-    marginBottom: 7,
-    paddingLeft: 8,
-    paddingVertical: 3,
-    borderLeftWidth: 2,
-    borderLeftColor: groknight.borderStrong,
-  },
-  replyReferenceAuthor: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 0.35,
+    marginBottom: 5,
   },
   replyReferenceText: {
-    ...Typography.default(),
-    marginTop: 1,
-    color: groknight.textMuted,
-    fontSize: 11,
-    lineHeight: 15,
-  },
-  provenanceText: {
     ...Typography.mono(),
+    color: groknight.ledgerGhost,
     fontSize: 11,
-    lineHeight: 15,
-    color: groknight.textMuted,
-    marginTop: 4,
+    lineHeight: 17,
   },
+  /* An attachment hangs off the message that carries it: a row, not a card. */
   attachmentCard: {
     minWidth: 0,
     width: '100%',
     minHeight: 58,
     marginTop: 8,
-    padding: 6,
+    paddingVertical: 6,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 9,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgBase,
   },
   attachmentThumbnail: {
     width: 46,
@@ -3496,9 +3749,6 @@ const styles = StyleSheet.create({
     height: 46,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: groknight.border,
-    backgroundColor: groknight.bgHighlight,
   },
   attachmentFileGlyphText: {
     ...Typography.default(),
@@ -3527,104 +3777,18 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
-  // ── Corner terminal transcript ─────────────────────────────────
+  // ── The ledger ─────────────────────────────────────────────────
+  // A turn's whole tool run folds into one line here; the group itself is
+  // pure rhythm, with no rule or fill separating it from the prose around it.
+  // Every other transcript shape lives in components/buzz/Ledger.tsx, which
+  // Rooms and Corners share.
   activityGroup: {
     width: '100%',
     minWidth: 0,
-    marginBottom: 2,
-    borderTopWidth: 1,
-    borderTopColor: groknight.border,
-    backgroundColor: groknight.bgTerminal,
-  },
-  activityUpdate: {
-    marginHorizontal: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 9,
-    borderLeftWidth: 2,
-    borderLeftColor: groknight.agentAccent,
-  },
-  activityUpdateLabel: {
-    ...Typography.default(),
-    color: groknight.textMuted,
-    fontSize: 8,
-    lineHeight: 11,
-    letterSpacing: 0.8,
-    marginBottom: 4,
-  },
-  // The one transcript row Rooms and Corners both render. No border, fill,
-  // or radius — a repeating content unit never earns a box (DESIGN.md).
-  // Vertical rhythm alone separates one row from the next.
-  terminalTurn: {
-    width: '100%',
-    minWidth: 0,
-    marginBottom: 18,
-  },
-  // A human's own short message is the one layout exception: right-aligned
-  // and inset, carried by alignment/width, never by a border, radius, or
-  // fill.
-  terminalTurnUser: {
-    alignSelf: 'flex-end',
-    width: 'auto',
-    maxWidth: '84%',
-    marginLeft: 44,
-  },
-  offlineDeliveryNote: {
-    ...Typography.mono('semiBold'),
-    marginTop: 7,
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 13,
-    letterSpacing: 0.4,
-  },
-  terminalTurnHeading: {
-    minWidth: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-    marginBottom: 6,
-  },
-  terminalTurnGlyph: {
-    ...Typography.mono(),
-    color: groknight.textMuted,
-    fontSize: 11,
-  },
-  terminalTurnLabel: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 10,
-    letterSpacing: 0.7,
-    flexShrink: 1,
-  },
-  terminalTurnText: {
-    ...Typography.mono(),
-    width: '100%',
-    minWidth: 0,
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
+    marginBottom: 20,
+    paddingRight: LEDGER_MARGINALIA_WIDTH,
   },
 
-  // ── Parent Room corner status ──────────────────────────────────
-  cornerStatusCard: {
-    minWidth: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgRaised,
-  },
-  cornerStatusCopy: { flex: 1, minWidth: 0 },
-  cornerStatusAgentRow: { minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  cornerStatusAgent: {
-    ...Typography.default('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 12,
-    lineHeight: 16,
-  },
   agentPresenceLight: {
     width: 9,
     height: 9,
@@ -3634,85 +3798,47 @@ const styles = StyleSheet.create({
   },
   agentPresenceOnline: { backgroundColor: groknight.textSecondary },
   agentPresenceOffline: { backgroundColor: 'transparent' },
-  cornerStatusLabel: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 10,
-    lineHeight: 14,
-    letterSpacing: 0.6,
-  },
-  cornerStatusRow: {
-    marginTop: 2,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  cornerArchiveSummary: {
-    ...Typography.default(),
-    marginTop: 7,
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  cornerPresenceDot: { ...Typography.default(), fontSize: 8 },
-  cornerPresenceOnline: { color: groknight.accent },
-  cornerPresenceOffline: { color: groknight.textMuted },
-  openCornerAction: {
-    flexShrink: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-  },
-  openCornerText: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 9,
-    letterSpacing: 0.4,
-  },
-  openCornerGlyph: { ...Typography.default(), color: groknight.textPrimary, fontSize: 18 },
-
   // ── Merge summary ───────────────────────────────────────────────
+  /* A system row is still a row of the ledger: no rule under it, no frame
+   * around it. It is found by its glyph and by the luminance ladder. */
   mergeSummaryBubble: {
-    paddingHorizontal: 10,
-    paddingVertical: 12,
-    marginBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
+    paddingVertical: 6,
+    marginBottom: 22,
   },
   mergeSummaryTitle: {
     ...Typography.mono(),
     fontSize: 12,
-    color: groknight.chrome,
-    marginBottom: 4,
+    lineHeight: 20,
+    color: groknight.ledgerQuiet,
+    marginBottom: 2,
   },
   mergeSummaryText: {
     ...Typography.mono(),
     fontSize: 12,
-    color: groknight.textSecondary,
-    lineHeight: 16,
+    color: groknight.ledgerQuiet,
+    lineHeight: 18,
   },
   mergeSummaryPubkey: {
     ...Typography.mono(),
-    fontSize: 11,
+    fontSize: 10,
     lineHeight: 15,
-    color: groknight.textMuted,
-    marginTop: 4,
+    color: groknight.ledgerGhost,
+    marginTop: 3,
   },
 
   // ── Archived notice ─────────────────────────────────────────────
   archivedBubble: {
-    backgroundColor: groknight.bgHighlight,
-    borderRadius: 3,
-    padding: 8,
-    marginBottom: 6,
+    paddingVertical: 8,
+    marginBottom: 20,
     alignSelf: 'center',
     maxWidth: '90%',
   },
   archivedText: {
-    ...Typography.mono('semiBold'),
+    ...Typography.mono(),
     fontSize: 11,
-    lineHeight: 15,
-    color: groknight.textPrimary,
+    lineHeight: 16,
+    letterSpacing: 0.8,
+    color: groknight.ledgerQuiet,
     textAlign: 'center',
   },
 
@@ -3832,26 +3958,6 @@ const styles = StyleSheet.create({
     borderTopColor: groknight.border,
     backgroundColor: groknight.bgTerminal,
   },
-  agentLiveStatus: {
-    minHeight: 30,
-    marginBottom: 6,
-    paddingHorizontal: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-  },
-  agentLiveStatusText: {
-    ...Typography.mono('semiBold'),
-    color: groknight.accent,
-    fontSize: 10,
-    lineHeight: 14,
-    letterSpacing: 0.35,
-  },
-  agentLiveStatusGlyph: {
-    ...Typography.default(),
-    color: groknight.gutter,
-    fontSize: 15,
-  },
   agentOfflineHint: {
     minWidth: 0,
     marginBottom: 7,
@@ -3874,21 +3980,6 @@ const styles = StyleSheet.create({
     color: groknight.textMuted,
     fontSize: 11,
     lineHeight: 15,
-  },
-  cancelTurnButton: {
-    minHeight: 36,
-    marginBottom: 7,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgBase,
-  },
-  cancelTurnText: {
-    ...Typography.mono(),
-    color: groknight.textSecondary,
-    fontSize: 10,
-    letterSpacing: 0.5,
   },
   writePermissionCard: {
     minWidth: 0,
@@ -4095,9 +4186,6 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgBase,
   },
   composerFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 9 },
-  cornerComposer: {
-    backgroundColor: groknight.bgTerminal,
-  },
   attachButton: {
     width: 40,
     height: 40,
@@ -4123,7 +4211,6 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     textAlignVertical: 'top',
   },
-  cornerInput: { ...Typography.mono(), color: groknight.textPrimary },
   sendButton: {
     width: 40,
     height: 40,
@@ -4138,24 +4225,7 @@ const styles = StyleSheet.create({
     color: groknight.textPrimary,
     fontSize: 16,
   },
-  cornerSendButtonText: { ...Typography.mono(), color: groknight.textMuted },
   sendButtonTextQuiet: { color: groknight.textDisabled },
-  cornerFooterRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 3,
-    paddingHorizontal: 8,
-  },
-  cornerFooter: {
-    ...Typography.mono(),
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 13,
-  },
-  cornerFooterRule: { ...Typography.mono(), color: groknight.border },
-  cornerFooterValue: { ...Typography.mono(), color: groknight.textMuted },
-  cornerFooterSeparator: { ...Typography.mono(), color: groknight.faint },
-  cornerFooterState: { ...Typography.mono(), color: groknight.tertiary },
   archivedInputBar: {
     paddingHorizontal: 16,
     paddingTop: 12,

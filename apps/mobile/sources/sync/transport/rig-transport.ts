@@ -37,10 +37,23 @@ export type SessionDetail = SessionSummary & {
 };
 
 export type AgentActivityItem = {
-  kind: 'thinking' | 'tool' | 'output';
+  /**
+   * `output` is the agent's own prose — narration, the thing the reader is
+   * actually here to read. It is deliberately distinct from `summary`, the
+   * synthetic per-batch receipt body publishes, so the corner can show the one
+   * and fold the other. Conflating them is what buried an agent's narration
+   * behind a "tool output" disclosure.
+   */
+  kind: 'thinking' | 'tool' | 'output' | 'summary';
   title: string;
   id?: string;
   toolKind?: string;
+  /**
+   * Per-verb counts of the observational tool calls body deliberately does not
+   * project as their own events (`apps/body/src/activity.ts`). The only source
+   * for "read 41, searched 12" — those calls never reach the wire themselves.
+   */
+  rollup?: Record<string, number>;
   text?: string;
   status?: string;
   command?: string;

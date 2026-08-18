@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionEvent } from '@/sync/transport';
 import {
+  agentActivityDetails,
   projectChatEvent,
   transcriptMessages,
   upsertChatMessages,
@@ -65,6 +66,30 @@ describe('Buzz Room screen event projection', () => {
         viewer,
       ),
     ).toMatchObject({ clearMergeTarget: true });
+  });
+
+  it('decodes percent escapes at the single funnel every surface reads through', () => {
+    // `%3F` was reaching the slab literally. It decodes here rather than at a
+    // dozen render sites, so the transcript and the Room-list preview agree.
+    expect(
+      projectChatEvent(
+        raw('escaped', 'Should I rebase onto the new tip%3F', [['t', 'agent-message']], 1),
+        viewer,
+      ).message,
+    ).toMatchObject({ text: 'Should I rebase onto the new tip?' });
+
+    // ...including the streaming draft, which never passes through eventText.
+    expect(
+      projectChatEvent(draft('d1', 'Reading the scheduler%E2%80%A6', 'req-1', 2), viewer).message,
+    ).toMatchObject({ text: 'Reading the scheduler…' });
+
+    // A bare percent sign is not an escape and survives untouched.
+    expect(
+      projectChatEvent(
+        raw('percent', 'Coverage is at 100% on that path.', [['t', 'agent-message']], 3),
+        viewer,
+      ).message,
+    ).toMatchObject({ text: 'Coverage is at 100% on that path.' });
   });
 
   it('renders a first-class assistant answer while hiding ordinary body controls', () => {
@@ -615,13 +640,15 @@ describe('Buzz Room screen event projection', () => {
       corner: { subchannelId: 'corner-1', status: 'live' },
     };
 
+    // A corner status card is dropped on BOTH surfaces: it is state, owned by
+    // the pinned line while live and by the corners view once terminal, so it
+    // must not spend a transcript cell on either.
     expect(transcriptMessages([conversation, activity, merge, lifecycle, corner], false)).toEqual([
       conversation,
-      corner,
     ]);
     expect(
       transcriptMessages([conversation, activity, merge, lifecycle, corner], true),
-    ).toHaveLength(4);
+    ).toEqual([conversation, merge, lifecycle]);
   });
 
   it('streams a Room reply into one bubble that fills in place and finalizes without a second bubble', () => {
@@ -684,5 +711,54 @@ describe('Buzz Room screen event projection', () => {
       projectChatEvent(draft('draft-3', 'Hello world!', requestId, 10), viewer).message!,
     ]);
     expect(afterStaleDraft).toEqual(settled);
+  });
+});
+
+describe('agent activity projection', () => {
+  it('keeps the observational tool-call tally that only rides the summary event', () => {
+    // Body deliberately never projects a read or a search as its own event —
+    // that would blow the per-pubkey relay quota on a research-heavy turn — so
+    // this tally is the single wire record that those calls happened at all.
+    expect(
+      agentActivityDetails(
+        JSON.stringify({
+          update: {
+            sessionUpdate: 'activity_summary',
+            content: { type: 'text', text: 'Edited stats.py' },
+            rollup: { read: 41, searched: 12 },
+          },
+        }),
+      ),
+    ).toEqual([
+      {
+        kind: 'summary',
+        title: 'Summary',
+        text: 'Edited stats.py',
+        rollup: { read: 41, searched: 12 },
+      },
+    ]);
+  });
+
+  it('carries a reads-only batch, which used to project as nothing at all', () => {
+    // No major action means no summary text, and the whole batch used to be
+    // dropped — the corner went silent during the exact stretch the agent was
+    // working hardest. The tally alone is enough to keep the turn legible.
+    expect(
+      agentActivityDetails(
+        JSON.stringify({
+          update: { sessionUpdate: 'activity_summary', content: { type: 'text', text: '' }, rollup: { read: 8 } },
+        }),
+      ),
+    ).toEqual([{ kind: 'summary', title: 'Summary', rollup: { read: 8 } }]);
+  });
+
+  it('never mistakes the agent’s own prose for a tool receipt', () => {
+    // `progress_update` is the agent narrating, so it projects as `output` —
+    // the kind the corner renders on the slab rather than folding away.
+    expect(
+      agentActivityDetails(
+        JSON.stringify({ update: { sessionUpdate: 'progress_update', text: 'Both bugs are fixed.' } }),
+      ),
+    ).toEqual([{ kind: 'output', title: 'Update', text: 'Both bugs are fixed.' }]);
   });
 });

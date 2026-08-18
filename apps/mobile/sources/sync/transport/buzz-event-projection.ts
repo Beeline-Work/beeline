@@ -9,6 +9,7 @@ import {
 import { agentDraftFromSessionEvent } from '@/buzz/agent-draft';
 import { agentPresenceFromSessionEvent } from '@/buzz/agent-presence';
 import { cornerStatusPrecedence, mapRawCornerStatusTag, type CornerStatus } from '@/buzz/corners';
+import { decodePercentEncoding } from '@/buzz/ledger-text';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -74,6 +75,17 @@ function compactPlan(value: unknown): AgentActivityItem['plan'] | undefined {
   return items.length || objective ? { ...(objective ? { objective } : {}), items } : undefined;
 }
 
+/** Verb -> count tally of the tool calls body counted but did not project. */
+function compactRollup(value: unknown): Record<string, number> | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const rollup: Record<string, number> = {};
+  for (const [verb, count] of Object.entries(record)) {
+    if (typeof count === 'number' && Number.isFinite(count) && count > 0) rollup[verb] = count;
+  }
+  return Object.keys(rollup).length ? rollup : undefined;
+}
+
 /**
  * Body activity is a JSON-encoded ACP `session/update` envelope. Project the
  * user-facing content, not that transport envelope. Plain-text activity from
@@ -128,6 +140,23 @@ export function agentActivityDetails(content: string): AgentActivityItem[] {
   if (sessionUpdate === 'progress_update') {
     const text = stringValue(update.text);
     return text ? [{ kind: 'output', title: 'Update', text }] : [];
+  }
+  if (sessionUpdate === 'activity_summary') {
+    // Body's synthetic per-batch receipt. Its text is mechanism, not narration,
+    // and it carries the only count of the observational tool calls that never
+    // reach the wire on their own — so it gets its own kind rather than being
+    // mistaken for the agent's prose.
+    const rollup = compactRollup(update.rollup);
+    const text = readTextContent(update.content) ?? stringValue(update.text);
+    if (!rollup && !text) return [];
+    return [
+      {
+        kind: 'summary',
+        title: 'Summary',
+        ...(text ? { text } : {}),
+        ...(rollup ? { rollup } : {}),
+      },
+    ];
   }
   const text =
     readTextContent(update.content) ??
@@ -310,10 +339,16 @@ export function sessionEventHasTag(event: SessionEvent, name: string, value?: st
   );
 }
 
+/**
+ * Every message body the transcript and the Room list ever show funnels through
+ * here, which is why the percent-escape decode lives at this seam rather than
+ * at each of the dozen render sites: `%3F` was reaching the slab literally
+ * (`buzz/ledger-text.ts`).
+ */
 function eventText(event: SessionEvent): string {
-  if (event.type === 'assistant_delta') return event.text;
+  if (event.type === 'assistant_delta') return decodePercentEncoding(event.text);
   const content = sessionEventPayload(event)?.content;
-  return typeof content === 'string' ? content : '';
+  return typeof content === 'string' ? decodePercentEncoding(content) : '';
 }
 
 function eventPubkey(event: SessionEvent): string | undefined {
@@ -361,7 +396,9 @@ export function projectChatEvent(
     return {
       message: {
         id: `agent-draft-${agentDraft.requestId}`,
-        text: agentDraft.text,
+        // The streaming draft never passes through `eventText`, so it decodes
+        // here or it is the one surface that still shows raw escapes.
+        text: decodePercentEncoding(agentDraft.text),
         isUser: false,
         timestamp: Math.floor(agentDraft.observedAt / 1_000),
         pubkey: agentDraft.agentPubkey,
@@ -577,53 +614,70 @@ export function projectChatEvent(
   };
 }
 
-/** Rooms show conversation plus one compact Corner card; telemetry stays in Corners. */
+/**
+ * The messages a transcript actually renders, for either surface.
+ *
+ * Both surfaces run one loop, because tool telemetry is now collapsed the same
+ * way on both: consecutive activity events fold into one entry, which the UI
+ * renders as a single dim, expandable line rather than a wall of output
+ * (DESIGN.md, "Machine noise"). An activity event carrying no projected
+ * activity is still dropped outright on both — there is nothing to disclose.
+ *
+ * A Room additionally hides Corner-scoped lifecycle cards (merge summaries,
+ * archive notices, turn lifecycle) that belong to a Corner's own transcript,
+ * keeping its own compact Corner card instead.
+ */
 export function transcriptMessages(
   messages: ChatDisplayMessage[],
   isCorner: boolean,
 ): ChatDisplayMessage[] {
-  if (isCorner) {
-    const transcript: ChatDisplayMessage[] = [];
-    let activityRunOpen = false;
-    for (const message of messages) {
-      // Lifecycle is presentation state, not a blank conversational message,
-      // but it remains a hard turn boundary for the activity on either side.
-      if (message.agentTurn) {
+  const transcript: ChatDisplayMessage[] = [];
+  let activityRunOpen = false;
+  for (const message of messages) {
+    // Lifecycle is presentation state, not a blank conversational message,
+    // but it remains a hard turn boundary for the activity on either side.
+    if (message.agentTurn) {
+      activityRunOpen = false;
+      continue;
+    }
+    // A corner's status is never inscribed into a transcript, on either
+    // surface: the pinned line above the composer owns it while it is live,
+    // and the Room's corners view owns it once it is not. Dropping it *here*
+    // rather than returning null from `renderItem` is the load-bearing part —
+    // a null-rendering row still occupies a FlatList cell and still spends the
+    // initial message window, so a Room with a long corner history opened
+    // half-empty. It stays a hard turn boundary, like lifecycle above.
+    if (message.corner) {
+      activityRunOpen = false;
+      continue;
+    }
+    if (!isCorner && (message.isMergeSummary || message.isArchivedNotice)) {
+      activityRunOpen = false;
+      continue;
+    }
+
+    if (message.isAgentActivity) {
+      if (!message.activity?.length) {
         activityRunOpen = false;
         continue;
       }
-
-      if (message.isAgentActivity) {
-        if (!message.activity?.length) {
-          activityRunOpen = false;
-          continue;
-        }
-        const previous = transcript.at(-1);
-        if (activityRunOpen && previous?.isAgentActivity) {
-          previous.activity = [...(previous.activity ?? []), ...message.activity];
-          // Keep the first event id stable while the live run grows. Never join
-          // prose here: final messages and user messages remain hard boundaries.
-          continue;
-        }
-        activityRunOpen = true;
-      } else {
-        activityRunOpen = false;
+      const previous = transcript.at(-1);
+      if (activityRunOpen && previous?.isAgentActivity) {
+        previous.activity = [...(previous.activity ?? []), ...message.activity];
+        // Keep the first event id stable while the live run grows. Never join
+        // prose here: final messages and user messages remain hard boundaries.
+        continue;
       }
-      transcript.push({
-        ...message,
-        ...(message.activity ? { activity: [...message.activity] } : {}),
-      });
+      activityRunOpen = true;
+    } else {
+      activityRunOpen = false;
     }
-    return transcript;
+    transcript.push({
+      ...message,
+      ...(message.activity ? { activity: [...message.activity] } : {}),
+    });
   }
-  return messages.filter(
-    (message) =>
-      Boolean(message.corner) ||
-      (!message.agentTurn &&
-        !message.isAgentActivity &&
-        !message.isMergeSummary &&
-        !message.isArchivedNotice),
-  );
+  return transcript;
 }
 
 const AGENT_TURN_STATUS_ORDER: Record<AgentTurnStatus, number> = {

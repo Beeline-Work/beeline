@@ -17,13 +17,13 @@ import {
   sortCorners,
   type CornerSummary,
 } from '@/buzz/corners';
+import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { cornerHref } from '@/buzz/corner-navigation';
 import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { groknight } from '@/buzz/groknight';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
-import { AgentAvatar } from '@/components/buzz/AgentAvatar';
-import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { HullSurface, PixelLoader } from '@/components/buzz/MonoHull';
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
@@ -258,7 +258,7 @@ export default function BuzzCorners() {
       activeCommunityId={activeCommunityId}
       onSelect={handleCommunitySelect}
       onAdd={() => router.push('/buzz/community' as Href)}
-      onSettings={() => router.push('/buzz/settings/identity' as Href)}
+      onSettings={() => router.push('/buzz/settings' as Href)}
       onWorkspaceSettings={(communityId) =>
         router.push({
           pathname: '/buzz/settings/workspace',
@@ -321,19 +321,21 @@ export default function BuzzCorners() {
                   showsPresence ? (online ? ', agent online' : ', agent offline') : ''
                 }`}
                 style={styles.cornerRow}
-                onPress={() => router.push(`/buzz/chat/${encodeURIComponent(item.id)}`)}
+                onPress={() => router.push(cornerHref(item.id, decodedId, item.name))}
               >
                 {agent ? (
-                  <AgentAvatar
-                    pubkey={item.openerPubkey}
-                    avatarSeed={display.avatarSeed}
+                  <IdentityMark
+                    kind="agent"
+                    seed={display.avatarSeed ?? item.openerPubkey}
                     avatarUrl={display.avatarUrl}
                     name={display.name}
                     size={34}
+                    alive={online}
                   />
                 ) : (
-                  <PersonAvatar
-                    pubkey={item.openerPubkey}
+                  <IdentityMark
+                    kind="human"
+                    seed={item.openerPubkey}
                     avatarUrl={personProfile?.avatar}
                     name={personProfile?.name ?? 'Corner opener'}
                     size={34}

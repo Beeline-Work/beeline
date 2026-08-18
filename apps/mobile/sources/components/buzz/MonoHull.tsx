@@ -292,7 +292,13 @@ type HullWaveSignalProps = {
   compact?: boolean;
 };
 
-export function HullWaveSignal({ active = true, label, compact = false }: HullWaveSignalProps) {
+/**
+ * The one continuous loop the app runs while it is on screen and unattended:
+ * a linear 0→1 cycle other live primitives read a phase off. Kept here so
+ * every "something is alive" signal in the product breathes on the same clock
+ * and stops on the same conditions — reduced motion, or the app backgrounded.
+ */
+function useLiveCycle(active: boolean): { progress: SharedValue<number>; still: boolean } {
   const reducedMotion = useReducedMotion();
   const [appActive, setAppActive] = useState(AppState.currentState === 'active');
   const progress = useSharedValue(0);
@@ -320,6 +326,16 @@ export function HullWaveSignal({ active = true, label, compact = false }: HullWa
     );
   }, [active, appActive, progress, reducedMotion]);
 
+  return { progress, still: Boolean(reducedMotion || !active) };
+}
+
+export function HullWaveSignal({ active = true, label, compact = false }: HullWaveSignalProps) {
+  const { progress, still } = useLiveCycle(active);
+  // Gold means one thing product-wide: an agent is alive and working. LIVE is
+  // that state; WAITING and RUNNING report the app's own progress, so they
+  // stay on the grayscale signal tone.
+  const alive = label === 'LIVE';
+
   const segments = useMemo(() => Array.from({ length: compact ? 6 : 9 }, (_, index) => index), [compact]);
   return (
     <View accessibilityLabel={label} accessibilityRole="text" style={styles.waveSignal}>
@@ -327,10 +343,11 @@ export function HullWaveSignal({ active = true, label, compact = false }: HullWa
         {segments.map((index) => (
           <WaveSegment
             key={index}
+            alive={alive}
             index={index}
             count={segments.length}
             progress={progress}
-            staticState={Boolean(reducedMotion || !active)}
+            staticState={still}
           />
         ))}
       </View>
@@ -340,11 +357,13 @@ export function HullWaveSignal({ active = true, label, compact = false }: HullWa
 }
 
 function WaveSegment({
+  alive,
   index,
   count,
   progress,
   staticState,
 }: {
+  alive: boolean;
   index: number;
   count: number;
   progress: SharedValue<number>;
@@ -355,7 +374,39 @@ function WaveSegment({
     const phase = progress.value * Math.PI * 2 + (index / count) * Math.PI * 2;
     return { opacity: 0.3 + 0.7 * Math.sin(phase) ** 2 };
   });
-  return <Animated.View style={[styles.waveSegment, style]} />;
+  return <Animated.View style={[styles.waveSegment, alive && styles.waveSegmentLive, style]} />;
+}
+
+/** The dimmest the live pulse ever goes. High enough that the mark it carries
+ * stays legible at every point in the cycle — a breath, not a blink. */
+const LIVE_PULSE_FLOOR = 0.55;
+
+/**
+ * The same live wave, reduced to a single mark: one slow sin² breath on
+ * whatever it wraps, on `HullWaveSignal`'s clock. It exists so a dense index
+ * row can carry the "an agent is alive here" signal at the size of one glyph
+ * — a nine-segment wave in a 30px leading column would be noise, and a static
+ * accent dot would not read as *live*.
+ *
+ * Motion is the redundant channel here, never the only one: what it wraps is
+ * already the gold `◆` corner glyph, and the row states the count beside it.
+ * With reduced motion on, or the app backgrounded, it simply holds still.
+ */
+export function HullLivePulse({
+  active = true,
+  children,
+  style,
+}: {
+  active?: boolean;
+  children: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const { progress, still } = useLiveCycle(active);
+  const pulse = useAnimatedStyle(() => {
+    if (still) return { opacity: 1 };
+    return { opacity: LIVE_PULSE_FLOOR + (1 - LIVE_PULSE_FLOOR) * Math.sin(progress.value * Math.PI) ** 2 };
+  });
+  return <Animated.View style={[style, pulse]}>{children}</Animated.View>;
 }
 
 export function PixelGateReveal({ children, style }: HullSurfaceProps) {
@@ -487,6 +538,7 @@ const styles = StyleSheet.create({
   waveSignal: { minHeight: 20, flexDirection: 'row', alignItems: 'center', gap: 6 },
   waveSegments: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   waveSegment: { width: 3, height: 6, backgroundColor: groknight.signalBright },
+  waveSegmentLive: { backgroundColor: groknight.accent },
   waveLabel: {
     ...Typography.mono('semiBold'),
     color: groknight.textPrimary,

@@ -98,7 +98,9 @@ describe('navigateToBuzzChannelFromNotification', () => {
     });
 
     it('uses the notification response id to invalidate the retained room backfill', () => {
-        expect(buzzChatSource).toContain('const { channelId, notificationResponseId }');
+        expect(buzzChatSource).toMatch(
+            /const \{ channelId, notificationResponseId[^}]*\} = useLocalSearchParams/,
+        );
         // The hydration effect must re-run when a notification re-opens the
         // same channel. Assert that dependency, not the whole literal list —
         // the rest of the list is free to change with the effect's internals.

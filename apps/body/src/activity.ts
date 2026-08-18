@@ -934,8 +934,16 @@ export function createDraftStreamer(
   const lastCreatedAt = { value: 0 };
   const flush = () => {
     timer = undefined;
-    if (latest === published) return;
-    published = latest;
+    // A cold session's harness startup banner (pi/Codex boilerplate) is the
+    // first thing to stream in on a fresh ACP session — strip it the same
+    // way the reconciled final message is stripped, so a turn interrupted
+    // right after startup output never leaves the raw banner as the last
+    // thing published to the Room. While only boilerplate has streamed in,
+    // the stripped text is empty and nothing is published at all.
+    const stripped = stripAgentReplyPreamble(latest).trim();
+    if (stripped === published) return;
+    published = stripped;
+    if (!stripped) return;
     const createdAt = nextMonotonicSecond(lastCreatedAt);
     inflight = inflight
       .then(() => postAgentDraft(channelId, owner, sessionId, requestId, published, createdAt))

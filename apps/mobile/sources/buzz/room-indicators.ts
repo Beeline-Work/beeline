@@ -1,6 +1,5 @@
 import {
   cornerStatusPrecedence,
-  isCornerTerminal,
   type CornerActivitySignal,
   type CornerStatus,
   type CornerSummary,
@@ -64,10 +63,11 @@ function mostTerminal(
 /**
  * The one corner the pinned line may name, or `null` for none.
  *
- * Candidates are ranked by how much they are being worked on (status
- * precedence) and then by recency, so a Room running two corners pins the one
- * actually moving. Terminal corners are not ranked lower — they are not
- * candidates at all.
+ * The line's presence means one thing: a corner is actively working right
+ * now. Only `live` qualifies — an idle-but-open corner, one waiting on a
+ * human (`needs-attention`), or a terminal one are all "no line", not a
+ * quiet-tier line. When several corners are live at once, the most recent
+ * wins.
  */
 export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | null {
   const status = new Map<string, CornerStatus>();
@@ -95,7 +95,7 @@ export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | nul
   }
 
   const candidates = [...status.entries()]
-    .filter(([, value]) => !isCornerTerminal(value))
+    .filter(([, value]) => isPinnedCornerLive(value))
     .sort(
       ([leftId, left], [rightId, right]) =>
         cornerStatusPrecedence(left) - cornerStatusPrecedence(right) ||
@@ -109,9 +109,8 @@ export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | nul
 /**
  * Gold, and the breath that goes with it, mean one thing product-wide: an
  * agent is alive and working *in that corner*. `needs-attention` and `open`
- * are open corners waiting on a human, not running ones, so they keep the
- * pinned line on the quiet tier — a real and distinct state, stated in the
- * copy (`idle`) as well as the tone.
+ * are open corners waiting on a human, not running ones — `selectPinnedCorner`
+ * never surfaces them, so this is the only test a pinned corner can ever fail.
  */
 export function isPinnedCornerLive(status: CornerStatus): boolean {
   return status === 'live';

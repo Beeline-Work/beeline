@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import WebSocket from 'ws';
@@ -21,7 +21,12 @@ import {
   type LocalRepositoryBinding,
   type RoomRuntimeRecord,
 } from './runtime.js';
-import { SessionScheduler } from './session-scheduler.js';
+import { SharedRelaySocket } from './relay-socket.js';
+import {
+  DEFAULT_PER_ROOM_LIVE_SESSIONS,
+  DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR,
+  SessionScheduler,
+} from './session-scheduler.js';
 
 interface RunningRoom {
   body: Body;
@@ -95,6 +100,12 @@ export class WorkspaceSupervisor {
   private readonly agent: Identity;
   private readonly running = new Map<string, RunningRoom>();
   private readonly scheduler: SessionScheduler;
+  /**
+   * One authenticated relay WS for the whole daemon. Every Room push loop,
+   * every Room presence cache and the control plane below multiplex their own
+   * NIP-01 subId onto it, instead of opening ~N+1 sockets on one agent pubkey.
+   */
+  private readonly relaySocket: SharedRelaySocket;
   private readonly namedRepositoryResolutions = new Map<string, Promise<BoundRepo>>();
   private readonly now: () => number;
   private readonly watchdogStaleMs: number;
@@ -110,10 +121,29 @@ export class WorkspaceSupervisor {
     this.configPath = configPath;
     this.baseConfig = baseConfig;
     this.agent = runtimeIdentity(runtime.agent);
+    // Capacity is budgeted per Room under a Workspace ceiling that grows with
+    // the number of Rooms this daemon serves. BUZZY_BODY_MAX_SESSIONS still
+    // pins a fixed Workspace ceiling when an operator sets it explicitly.
+    const fixedWorkspaceCeiling = process.env.BUZZY_BODY_MAX_SESSIONS;
     this.scheduler = new SessionScheduler({
-      maxLiveSessions: Number(process.env.BUZZY_BODY_MAX_SESSIONS ?? '4'),
+      ...(fixedWorkspaceCeiling ? { maxLiveSessions: Number(fixedWorkspaceCeiling) } : {}),
+      perRoomLiveSessions: Number(
+        process.env.BUZZY_BODY_MAX_SESSIONS_PER_ROOM ?? String(DEFAULT_PER_ROOM_LIVE_SESSIONS),
+      ),
+      workspaceFloor: Number(
+        process.env.BUZZY_BODY_MAX_SESSIONS_FLOOR ??
+          String(DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR),
+      ),
+      activeRoomCount: () => this.running.size,
       idleMs: Number(process.env.BUZZY_BODY_SESSION_IDLE_MS ?? String(5 * 60_000)),
       reserveInteractiveSlot: true,
+    });
+    this.relaySocket = new SharedRelaySocket({
+      baseUrl: runtime.relayBaseUrl,
+      ...(runtime.relayHost ? { host: runtime.relayHost } : {}),
+      ...(baseConfig.relayWsUrl ? { wsUrl: baseConfig.relayWsUrl } : {}),
+      identity: this.agent,
+      WebSocketImpl: WebSocket,
     });
     this.now = options.now ?? Date.now;
     this.watchdogStaleMs =
@@ -148,17 +178,11 @@ export class WorkspaceSupervisor {
     const watchdogTickMs = opts.pollMs ?? 5_000;
     let wake = true; // reconcile once immediately on startup, same as before
     let nextReconcileAt = 0;
-    let controlClient: ReturnType<typeof createBuzzClient> | undefined;
     let unsubscribeControl: (() => void) | undefined;
     try {
-      const candidate = createBuzzClient({
-        baseUrl: this.runtime.relayBaseUrl,
-        ...(this.runtime.relayHost ? { host: this.runtime.relayHost } : {}),
-        ...(this.baseConfig.relayWsUrl ? { wsUrl: this.baseConfig.relayWsUrl } : {}),
-        identity: this.agent,
-        WebSocketImpl: WebSocket,
-      });
-      await candidate.connect();
+      // The control plane is one more subId on the daemon's shared socket, not
+      // its own connection.
+      const candidate = await this.relaySocket.connected();
       const socket = candidate.socket;
       if (!socket) throw new Error('control-plane WS connected but exposed no socket');
       unsubscribeControl = socket.subscribe(
@@ -173,7 +197,6 @@ export class WorkspaceSupervisor {
           wake = true;
         },
       );
-      controlClient = candidate;
     } catch (error) {
       console.error(
         `[supervisor] control-plane WS unavailable; relying on the ` +
@@ -219,9 +242,11 @@ export class WorkspaceSupervisor {
       return 'aborted';
     } finally {
       unsubscribeControl?.();
-      controlClient?.disconnect();
+      // Rooms still drain their own REQs over the shared socket, so it can only
+      // be closed once every Body has stopped.
       await this.stopAll();
       await this.scheduler.dispose();
+      this.relaySocket.disconnect();
     }
   }
 
@@ -310,10 +335,56 @@ export class WorkspaceSupervisor {
     }
   }
 
+  /**
+   * Room storage root. `RoomRuntimeRecord.root` is explicit for Rooms created
+   * once the runtime moved off the paired repo's `.git`; a record written
+   * before that carries no root and keeps resolving to its existing location
+   * under the runtime config directory. Never derive over an explicit root —
+   * an open corner's `git worktree` registration stores absolute paths, so
+   * relocating a live Room's directory would silently break it.
+   */
+  private roomRoot(channelId: string, room?: RoomRuntimeRecord): string {
+    return room?.root ?? resolve(dirname(this.configPath), 'rooms', channelId);
+  }
+
+  /**
+   * Per-room harness state directory, or undefined to keep the daemon's
+   * ambient state (see `agent-home.ts`).
+   *
+   * Migration rule: a Room directory that already exists predates per-room
+   * homes, so silently re-homing it would strand whatever per-project state
+   * its harness had built up. Such Rooms keep the shared state until an
+   * operator opts in with `BUZZY_BODY_ROOM_HOME=1`; every new Room is isolated
+   * from the start. The marker directory is created here (not lazily on first
+   * activation) so the decision is stable across daemon restarts.
+   */
+  private roomAgentHomeRoot(workspaceRoot: string): string | undefined {
+    const flag = process.env.BUZZY_BODY_ROOM_HOME;
+    if (flag === '0') return undefined;
+    const home = resolve(workspaceRoot, 'agent-home');
+    if (flag !== '1' && !existsSync(home) && existsSync(workspaceRoot)) return undefined;
+    try {
+      mkdirSync(home, { recursive: true, mode: 0o700 });
+    } catch (error) {
+      console.error(`[supervisor] per-room agent home unavailable at ${home}:`, error);
+      return undefined;
+    }
+    return home;
+  }
+
+  private roomBodyConfig(workspaceRoot: string): BodyConfig {
+    const agentHomeRoot = this.roomAgentHomeRoot(workspaceRoot);
+    return {
+      ...this.baseConfig,
+      workspaceRoot,
+      ...(agentHomeRoot ? { agentHomeRoot } : {}),
+    };
+  }
+
   private startRepositoryRoom(room: RoomRuntimeRecord, channelId = room.channelId): void {
     const controller = new AbortController();
-    const workspaceRoot = resolve(dirname(this.configPath), 'rooms', channelId);
-    const config: BodyConfig = { ...this.baseConfig, workspaceRoot };
+    const workspaceRoot = this.roomRoot(channelId, room);
+    const config: BodyConfig = this.roomBodyConfig(workspaceRoot);
     const startedAt = this.now();
     const health = {
       poll: () => this.notePoll(channelId),
@@ -328,6 +399,7 @@ export class WorkspaceSupervisor {
       room.mergeWorker ? runtimeIdentity(room.mergeWorker) : undefined,
       {
         scheduler: this.scheduler,
+        relaySocket: this.relaySocket,
         statePath: resolve(workspaceRoot, 'body-state.json'),
         resolveNamedRepository: (target) => this.resolveNamedRepository(target),
         onRoomPollSuccess: health.poll,
@@ -366,11 +438,12 @@ export class WorkspaceSupervisor {
     kind: 'named-repository' | 'direct-message',
   ): void {
     const controller = new AbortController();
-    const workspaceRoot = resolve(dirname(this.configPath), 'rooms', channelId);
-    const config: BodyConfig = { ...this.baseConfig, workspaceRoot };
+    const workspaceRoot = this.roomRoot(channelId);
+    const config: BodyConfig = this.roomBodyConfig(workspaceRoot);
     const startedAt = this.now();
     const body = new Body(config, runtimeIdentity(this.runtime.body), this.agent, undefined, {
       scheduler: this.scheduler,
+      relaySocket: this.relaySocket,
       statePath: resolve(workspaceRoot, 'body-state.json'),
       resolveNamedRepository: (target) => this.resolveNamedRepository(target),
       onRoomPollSuccess: () => this.notePoll(channelId),
@@ -505,6 +578,9 @@ export class WorkspaceSupervisor {
     return {
       channelId,
       repo,
+      // Stamp the storage root explicitly so this Room stays put even if the
+      // runtime record later moves.
+      root: this.roomRoot(channelId),
       membershipSince,
       discoveredAt: new Date().toISOString(),
     };

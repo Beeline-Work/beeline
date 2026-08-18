@@ -1,6 +1,7 @@
 /** Production-relay proof that GitHub-origin landing waits for a signed human approval. */
-import { afterAll, describe, expect, it } from 'vitest';
-import { readFile } from 'node:fs/promises';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { BASE_URL, newIdentity, queryEvents } from '@beeline/gate';
@@ -13,6 +14,8 @@ const checkout = process.env.BUZZY_GITHUB_LIVE_CHECKOUT ?? '';
 const selectedAgent = process.env.BUZZY_LIVE_AGENT_KIND ?? 'codex';
 let daemonPid: number | undefined;
 let humanClient: ReturnType<typeof createBuzzClient> | undefined;
+/** Machine-local agent state root; the runtime no longer lives in the repo. */
+let stateHome = '';
 
 async function reachable(): Promise<boolean> {
   try {
@@ -53,7 +56,11 @@ function localGit(args: string[]): string {
 const live = Boolean(checkout) && runtimeAvailable() && (await reachable());
 
 describe.runIf(live)('GitHub-origin pair → conversation → human-approved land', () => {
-  afterAll(() => {
+  beforeAll(async () => {
+    stateHome = await mkdtemp(resolve(tmpdir(), 'beeline-github-state-'));
+  });
+
+  afterAll(async () => {
     humanClient?.disconnect();
     if (daemonPid) {
       try {
@@ -62,6 +69,7 @@ describe.runIf(live)('GitHub-origin pair → conversation → human-approved lan
         // The daemon may already have exited after a failed assertion.
       }
     }
+    if (stateHome) await rm(stateHome, { recursive: true, force: true });
   });
 
   it(
@@ -80,7 +88,9 @@ describe.runIf(live)('GitHub-origin pair → conversation → human-approved lan
         [resolve('dist/cli.js'), 'pair', pairing.code, '--agent', selectedAgent],
         {
           cwd: checkout,
-          env: process.env,
+          // The runtime now lives under the machine-local agent state home,
+          // not the checkout's .git — keep it inside this test's scratch dir.
+          env: { ...process.env, XDG_STATE_HOME: stateHome },
           encoding: 'utf8',
           timeout: 60_000,
         },

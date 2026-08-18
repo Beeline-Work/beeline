@@ -598,4 +598,90 @@ describe('Buzz local cache', () => {
     );
     expect(sequential?.cursor).toBe(batched?.cursor);
   });
+  /**
+   * The room list stays subscribed to this store even while a Room covers it,
+   * and its selector reads `channelLists`. Rebuilding that map on every write
+   * re-rendered and re-sorted the whole list once per delivered live batch,
+   * for no visible difference — so an unchanged write must be identity-stable.
+   */
+  describe('room-list writes are identity-stable when nothing changed', () => {
+    const seedList = () =>
+      useBuzzLocalCache.getState().setChannelList({
+        viewerPubkey: viewer,
+        communityId: 'workspace',
+        channels: [
+          {
+            id: 'room',
+            active: true,
+            title: 'Room',
+            latestMessage: 'settled preview',
+            updatedAt: 12,
+            corners: [
+              { id: 'corner-1', name: 'work', openerPubkey: 'agent', status: 'live' },
+            ],
+          },
+        ],
+        directMessages: [],
+        workspaceMembers: [],
+        communities: [],
+        personalWorkspaceId: null,
+        viewerIsAgent: false,
+        canEditWorkspaceAvatar: false,
+        updatedAt: Date.now(),
+        lastAccessedAt: Date.now(),
+      });
+
+    it('keeps the same channelLists object when a preview write changes nothing', () => {
+      seedList();
+      const before = useBuzzLocalCache.getState().channelLists;
+
+      useBuzzLocalCache.getState().upsertMessages(viewer, 'room', [], undefined, {
+        latestMessage: 'settled preview',
+        latestEventAt: 12,
+      });
+
+      expect(useBuzzLocalCache.getState().channelLists).toBe(before);
+    });
+
+    it('still publishes a genuinely new preview', () => {
+      seedList();
+      const before = useBuzzLocalCache.getState().channelLists;
+
+      useBuzzLocalCache.getState().upsertMessages(viewer, 'room', [], undefined, {
+        latestMessage: 'brand new preview',
+        latestEventAt: 20,
+      });
+
+      const after = useBuzzLocalCache.getState().channelLists;
+      expect(after).not.toBe(before);
+      expect(after[`${viewer}:workspace`]?.channels[0]).toMatchObject({
+        latestMessage: 'brand new preview',
+        updatedAt: 20,
+      });
+    });
+
+    it('keeps the same channelLists object when a corner signal repeats its status', () => {
+      seedList();
+      const before = useBuzzLocalCache.getState().channelLists;
+
+      useBuzzLocalCache
+        .getState()
+        .patchCornerStatus(viewer, 'room', { subchannelId: 'corner-1', status: 'live' });
+
+      expect(useBuzzLocalCache.getState().channelLists).toBe(before);
+    });
+
+    it('still advances a corner whose status genuinely moved', () => {
+      seedList();
+      const before = useBuzzLocalCache.getState().channelLists;
+
+      useBuzzLocalCache
+        .getState()
+        .patchCornerStatus(viewer, 'room', { subchannelId: 'corner-1', status: 'archived' });
+
+      const after = useBuzzLocalCache.getState().channelLists;
+      expect(after).not.toBe(before);
+      expect(after[`${viewer}:workspace`]?.channels[0]?.corners?.[0]?.status).toBe('archived');
+    });
+  });
 });

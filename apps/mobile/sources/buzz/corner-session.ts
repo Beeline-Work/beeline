@@ -1,7 +1,56 @@
 import { resolveCornerCardAgentPubkey } from '@/buzz/agent-display';
+import { cornerName } from '@/buzz/corners';
+import { ROOM_LABEL } from '@/buzz/vocabulary';
 import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection';
 
 export type CornerSessionState = 'working' | 'idle' | 'done';
+
+/**
+ * What the chat screen knows about the channel it is showing before its own
+ * metadata read lands. `unknown` is a real state — a notification deep link or
+ * a cold first visit reaches the transcript with nothing but an id.
+ */
+export type ChannelKind = 'room' | 'corner' | 'unknown';
+
+/**
+ * Whether a locally cached channel entry already proves room-vs-corner.
+ *
+ * `parentChannelId` is written as `parentId ?? undefined`, so an absent value
+ * means "room" only once the same patch has also written the resolved name;
+ * before that it is indistinguishable from "never fetched".
+ */
+export function cachedChannelKind(
+  cache: { parentChannelId?: string; roomName?: string } | undefined,
+): ChannelKind {
+  if (!cache) return 'unknown';
+  if (cache.parentChannelId) return 'corner';
+  return cache.roomName ? 'room' : 'unknown';
+}
+
+/**
+ * The chat header's title, or `null` when the screen should show a skeleton.
+ *
+ * `resolvedName` is `null` only while the channel's own metadata read is still
+ * in flight; an empty string means the read landed and the channel carries no
+ * name, which is a different answer.
+ *
+ * A corner must never fall back to the word "Room": it names the wrong surface,
+ * and because a corner's own kind:9007 name is a slug like `fix-oauth-callback`
+ * the generic label is not even a plausible stand-in. When the channel kind
+ * itself is still unresolved, neither word is honest, so this returns `null`
+ * and the caller renders a skeleton instead of guessing.
+ */
+export function channelHeaderTitle(
+  resolvedName: string | null,
+  kind: ChannelKind,
+  channelId: string,
+): string | null {
+  if (kind === 'corner') {
+    return resolvedName === null ? null : cornerName(resolvedName, channelId);
+  }
+  if (resolvedName !== null && resolvedName.trim()) return resolvedName.trim();
+  return kind === 'room' ? ROOM_LABEL : null;
+}
 
 /**
  * The corner view's own header identity. `agentTurn.agentPubkey` is declared

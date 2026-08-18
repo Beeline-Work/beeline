@@ -777,15 +777,58 @@ export function isReadOnlyInformationRequest(content: string): boolean {
   ).test(normalized);
 }
 
-export function cornerNameForIntent(intent: string | undefined, parentChannelId: string): string {
-  const slug = intent
-    ?.normalize('NFKD')
+/** Leading "open/create/launch/start [up] [a/the] [new] corner" imperative,
+ *  with an optional connector ("and", "then", "to") before the actual task
+ *  description that usually follows it. */
+const CORNER_OPEN_LEAD_STRIP = new RegExp(
+  String.raw`^${REQUEST_LEAD}(?:open|create|launch|start)\s+(?:up\s+)?(?:a\s+|the\s+)?(?:new\s+)?corner\b[\s,:;-]*(?:and\s+|then\s+|to\s+)?`,
+  'i',
+);
+/** "start work(ing) [on]" lead for the alternate phrasing whose corner
+ *  mention trails the task ("start working on X in a new corner"). */
+const CORNER_WORK_LEAD_STRIP = new RegExp(
+  String.raw`^${REQUEST_LEAD}start\s+(?:(?:the|this|that)\s+)?(?:work|working)\s+(?:on\s+)?`,
+  'i',
+);
+const CORNER_MENTION_TRAIL_STRIP = /\s*\b(?:in|inside|within)\s+(?:a\s+|the\s+)?(?:new\s+)?corner\b\.?\s*$/i;
+
+/**
+ * The actual task described by a corner-open request, with the "open a
+ * corner" (or "...in a new corner") imperative itself stripped out — a
+ * corner's name/branch must describe the work, not the verb that opened it.
+ * A message with no such imperative (e.g. the agent-originated write-request
+ * flow, whose message was never phrased as an "open a corner" command) is
+ * returned unchanged. Stripping down to nothing (e.g. a bare "open a
+ * corner") returns '', so callers fall back to a non-misleading name instead
+ * of slugifying the verb.
+ */
+export function taskDescriptionFromCornerRequest(content: string): string {
+  const normalized = content.normalize('NFKC').replace(/\s+/g, ' ').trim();
+  const leadStripped = normalized.replace(CORNER_OPEN_LEAD_STRIP, '').trim();
+  if (leadStripped !== normalized) return leadStripped;
+  const trailStripped = normalized
+    .replace(CORNER_WORK_LEAD_STRIP, '')
+    .replace(CORNER_MENTION_TRAIL_STRIP, '')
+    .trim();
+  return trailStripped !== normalized ? trailStripped : normalized;
+}
+
+/** Collision-safe short suffix comes from the caller (the corner's own
+ *  UUID); this only ever returns the bare task slug, or '' when the request
+ *  carried no describable task (see `taskDescriptionFromCornerRequest`). */
+export function taskSlugForCornerIntent(intent: string | undefined): string {
+  if (!intent) return '';
+  return taskDescriptionFromCornerRequest(intent)
+    .normalize('NFKD')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 42)
     .replace(/-+$/g, '');
-  return slug || `corner-${parentChannelId.slice(0, 8)}`;
+}
+
+export function cornerNameForIntent(intent: string | undefined, parentChannelId: string): string {
+  return taskSlugForCornerIntent(intent) || `corner-${parentChannelId.slice(0, 8)}`;
 }
 
 /**
@@ -1219,7 +1262,20 @@ export class Body {
   private async promptAgent(
     session: AgentSession,
     prompt: string,
-    stream?: { channelId: string; requestId: string; narrate?: boolean },
+    stream?: {
+      channelId: string;
+      requestId: string;
+      narrate?: boolean;
+      /**
+       * The event a stall notice should thread as a reply, when one exists
+       * in `channelId` itself. Deliberately separate from `requestId` (used
+       * only for the draft's plain `request` tag, which carries no channel
+       * constraint): a corner's opening turn is triggered by a Room event,
+       * not a corner one, so its caller omits this rather than reusing
+       * `requestId` across channels — see `postAgentStallNotice`.
+       */
+      replyToId?: string;
+    },
   ): Promise<PromptResult & { narrativeFloor?: number }> {
     const draft = stream
       ? createDraftStreamer(
@@ -1248,7 +1304,7 @@ export class Body {
       if (!stream || stallNotified) return;
       stallTimer = setTimeout(() => {
         stallNotified = true;
-        postAgentStallNotice(stream.channelId, this.agentIdentity, stream.requestId).catch(
+        postAgentStallNotice(stream.channelId, this.agentIdentity, stream.replyToId).catch(
           (error) => console.error('[body] failed to publish agent stall notice:', error),
         );
       }, ROOM_AGENT_STALL_NOTICE_MS);
@@ -1682,9 +1738,15 @@ export class Body {
     // 2. Mirror parent members: query members of TLC, add each as member of subchannel.
     await this.mirrorMembers(tlcChannelId, subchannelId);
 
-    // 4. Create git worktree + feature branch.
+    // 4. Create git worktree + feature branch. Named after the actual task
+    // (same slug basis as the corner's own name), with the corner's own
+    // short id kept as a suffix for collision safety — a bare UUID fragment
+    // told a reviewer nothing about what the branch was for.
     const worktreePath = resolve(this.config.workspaceRoot, `.worktrees/${subchannelId}`);
-    const featureBranch = `feature/${subchannelId.slice(0, 8)}`;
+    const branchSlug = taskSlugForCornerIntent(intent);
+    const featureBranch = branchSlug
+      ? `feature/${branchSlug}-${subchannelId.slice(0, 8)}`
+      : `feature/${subchannelId.slice(0, 8)}`;
     await this.createWorktree(boundRepo, worktreePath, featureBranch);
 
     // Best-effort, non-blocking: build the codegraph index for this fresh
@@ -2150,6 +2212,7 @@ export class Body {
         const result = await this.promptAgent(session, prompt, {
           channelId,
           requestId: request.eventId,
+          replyToId: request.eventId,
         });
         const reply = await this.publishAgentResult(
           channelId,
@@ -2638,6 +2701,7 @@ export class Body {
       const result = await this.promptAgent(session, prompt, {
         channelId: tlcChannelId,
         requestId: request.eventId,
+        replyToId: request.eventId,
       });
       if (turn.transitionedToCorner) {
         await this.appendRoomPermissionOutcome(tlcChannelId, turn);
@@ -3085,6 +3149,11 @@ export class Body {
             '',
             taskInstructions,
           ].join('\n'),
+          // No `replyToId`: `requestId` here is the Room event that opened
+          // this corner, not an event in `info.subchannelId` itself — a
+          // stall notice threaded to it would be rejected by the relay as a
+          // cross-channel reply. This corner's opening turn has no
+          // same-channel parent to thread to.
           { channelId: info.subchannelId, requestId, narrate: true },
         );
         // The corner may have been closed (archived) while this turn was
@@ -3964,7 +4033,7 @@ export class Body {
             return this.promptAgent(
               session,
               `${prompt}\n\n${CORNER_TURN_SUMMARY_INSTRUCTION}`,
-              { channelId: subchannelId, requestId: evt.id, narrate: true },
+              { channelId: subchannelId, requestId: evt.id, replyToId: evt.id, narrate: true },
             );
           };
           const runningTask = this.runningAgentTasks.get(subchannelId);

@@ -817,7 +817,11 @@ describe('Buzz change review metadata', () => {
       ]),
     };
 
-    await expect(transport.getSubchannelMergeTarget(channel)).resolves.toBeNull();
+    // Withdrawn, not silent: the human still learns why via `reason`, since
+    // this lifecycle event never reaches the transcript on its own.
+    await expect(transport.getSubchannelMergeTarget(channel)).resolves.toEqual({
+      reason: 'nothing ready',
+    });
   });
 
   it('does not submit a second approval for the same committed corner target', async () => {

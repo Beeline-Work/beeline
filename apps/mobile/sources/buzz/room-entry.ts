@@ -61,7 +61,9 @@ export type RoomEntryClient = {
 export type RoomEntryTransport = {
   getParentChannelId(channelId: string): Promise<string | null>;
   isChannelArchived(channelId: string): Promise<boolean>;
-  getSubchannelMergeTarget(channelId: string): Promise<{ target: MergeTarget } | null>;
+  getSubchannelMergeTarget(
+    channelId: string,
+  ): Promise<{ target: MergeTarget } | { reason: string } | null>;
   listSubchannelLifecycle(parentId: string): Promise<CornerSummary[]>;
 };
 
@@ -120,6 +122,12 @@ export type RoomEntryHandlers = {
   onTranscriptSynced(sync: RoomTranscriptSync): void;
   onArchived(): void;
   onMergeTarget(target: MergeTarget): void;
+  /**
+   * The corner explicitly declined to surface a review — uncommitted work,
+   * or no committed change at all — for a reader that has no other way to
+   * see why, since that lifecycle event never reaches the transcript.
+   */
+  onMergeNotReadyReason?(reason: string): void;
   onCornerStatus(status: CornerStatus | null): void;
   /**
    * Every corner this transcript can name: a Corner reads its siblings, a Room
@@ -257,7 +265,9 @@ export function hydrateRoomEntry(
         // A merge target only exists for a corner.
         parentId
           ? step('mergeTarget', transport.getSubchannelMergeTarget(channelId), (mergeInfo) => {
-              if (mergeInfo) handlers.onMergeTarget(mergeInfo.target);
+              if (mergeInfo && 'target' in mergeInfo) handlers.onMergeTarget(mergeInfo.target);
+              else if (mergeInfo && 'reason' in mergeInfo)
+                handlers.onMergeNotReadyReason?.(mergeInfo.reason);
             })
           : Promise.resolve(),
         // A Corner reads its siblings, a Room its own corners — one shared

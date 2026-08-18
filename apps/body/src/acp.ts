@@ -86,6 +86,34 @@ function agentMessageChunkText(update: Record<string, unknown>): string {
 }
 
 /**
+ * Concatenate every `agent_message_chunk` delta into one running text,
+ * inserting a paragraph break wherever a text run resumes after one or more
+ * intervening non-text updates (a tool call, a plan update, reasoning). A
+ * harness's own deltas rarely carry a separating newline when narration
+ * resumes after doing something else — the model treats it as a fresh
+ * thought, not literally continued prose — so joining with nothing there
+ * glues two distinct sentences together mid-word (e.g. "...patterns" +
+ * "Now I have..." -> "...patternsNow I have..."). Consecutive deltas within
+ * one uninterrupted text run are joined as-is: that is normal token
+ * streaming and already carries its own whitespace.
+ */
+function joinAgentMessageChunks(updates: readonly SessionUpdate[]): string {
+  let text = '';
+  let lastWasText = false;
+  for (const u of updates) {
+    const delta = agentMessageChunkText(u.update);
+    if (!delta) {
+      lastWasText = false;
+      continue;
+    }
+    if (!lastWasText && text && !/\s$/.test(text)) text += '\n\n';
+    text += delta;
+    lastWasText = true;
+  }
+  return text;
+}
+
+/**
  * ACP tool kinds are intentionally portable and runtimes sometimes put the
  * concrete tool name in the title or raw input. Treat shell/execute as
  * mutating because an arbitrary command can cross the write boundary.
@@ -317,7 +345,6 @@ export class AcpClient extends EventEmitter {
   ): Promise<PromptResult> {
     const updates: SessionUpdate[] = [];
     let promptRunId: string | undefined;
-    let streamedText = '';
     let requestId: number | undefined;
     const onUpdate = (u: SessionUpdate) => {
       if (u.sessionId !== sessionId) return;
@@ -327,10 +354,7 @@ export class AcpClient extends EventEmitter {
       onActivity?.();
       if (onChunk) {
         const delta = agentMessageChunkText(u.update);
-        if (delta) {
-          streamedText += delta;
-          onChunk(delta, streamedText);
-        }
+        if (delta) onChunk(delta, joinAgentMessageChunks(updates));
       }
     };
     this.on('session/update', onUpdate);
@@ -349,7 +373,7 @@ export class AcpClient extends EventEmitter {
         },
       )) as { stopReason?: string };
 
-      const agentText = updates.map((u) => agentMessageChunkText(u.update)).join('');
+      const agentText = joinAgentMessageChunks(updates);
 
       const toolCalls: ToolCallEntry[] = updates
         .filter((u) => {

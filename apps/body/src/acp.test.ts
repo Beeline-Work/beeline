@@ -306,6 +306,54 @@ lines.on('line', (line) => {
   return binary;
 }
 
+/** Narrates, gets interrupted by a tool call, then resumes narrating with no
+ *  separating whitespace of its own — matching how a real harness's deltas
+ *  behave when the model treats a resumed reply as a fresh thought. */
+async function fakeInterruptedNarrationAgent(): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-interrupted-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'fake-interrupted-narration-agent.mjs');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+
+const lines = createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+const chunk = (text) =>
+  send({
+    jsonrpc: '2.0',
+    method: 'session/update',
+    params: { sessionId: 'interrupted-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } } },
+  });
+const toolCall = () =>
+  send({
+    jsonrpc: '2.0',
+    method: 'session/update',
+    params: { sessionId: 'interrupted-session', update: { sessionUpdate: 'tool_call', toolCallId: 'tc-1', kind: 'read' } },
+  });
+
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'interrupted-session' } });
+  } else if (message.method === 'session/prompt') {
+    chunk('...existing test and typecheck patterns');
+    toolCall();
+    chunk('Now I have the full picture.');
+    send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
 async function fakeWedgedAgent(): Promise<string> {
   const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-wedged-'));
   temporaryDirectories.push(directory);
@@ -419,6 +467,30 @@ describe('AcpClient live steering', () => {
         { delta: 'world', fullText: 'Hello world' },
       ]);
       expect(result.agentText).toBe('Hello world');
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('inserts a paragraph break when narration resumes after a tool call, instead of gluing the two thoughts together', async () => {
+    const client = new AcpClient({
+      agentBinary: await fakeInterruptedNarrationAgent(),
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const seenFullText: string[] = [];
+      const result = await client.sessionPrompt(sessionId, 'go', 5_000, (_delta, fullText) => {
+        seenFullText.push(fullText);
+      });
+      expect(result.agentText).not.toContain('patternsNow');
+      expect(result.agentText).toBe(
+        '...existing test and typecheck patterns\n\nNow I have the full picture.',
+      );
+      // The live stream (what a corner's narrative committer actually reads)
+      // must carry the same break, not just the final joined result.
+      expect(seenFullText.at(-1)).toBe(result.agentText);
     } finally {
       await client.stop();
     }

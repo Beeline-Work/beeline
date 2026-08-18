@@ -300,7 +300,7 @@ describe('Buzz local cache', () => {
     const transport = { sessionEventsBackfill };
 
     await revalidateCachedMessages(transport as never, viewer, 'room');
-    expect(sessionEventsBackfill).toHaveBeenNthCalledWith(1, 'room', { limit: 50 });
+    expect(sessionEventsBackfill).toHaveBeenNthCalledWith(1, 'room', { limit: 200 });
     expect(useBuzzLocalCache.getState().channels[channelCacheKey(viewer, 'room')]?.cursor).toBe(10);
     expect(useBuzzLocalCache.getState().channels[channelCacheKey(viewer, 'room')]?.backfilled).toBe(
       true,
@@ -316,6 +316,25 @@ describe('Buzz local cache', () => {
     expect(
       useBuzzLocalCache.getState().channelLists[`${viewer}:workspace`]?.channels[0],
     ).toMatchObject({ latestMessage: 'live', updatedAt: 12 });
+  });
+
+  it('keeps a busy corner\'s opening narration on a cold open, past the old 50-event limit', async () => {
+    // A relay's `limit` returns the N most recent matching events — there is
+    // no way to ask for "the first N" directly. Simulate that faithfully: a
+    // channel whose total kind:9 traffic (61 events: activity/status noise
+    // interleaved with narration) exceeds the OLD 50-event cold-fetch cap but
+    // not the current 200-event one.
+    const opening = controlEvent('opening-narration', 1, [['t', 'agent-message']], 'Starting work.');
+    const noise = Array.from({ length: 60 }, (_, index) => event(`noise-${index}`, index + 2));
+    const all = [opening, ...noise];
+    const sessionEventsBackfill = vi.fn((_channelId: string, opts: { limit?: number }) =>
+      Promise.resolve(opts.limit ? all.slice(-opts.limit) : all),
+    );
+
+    await revalidateCachedMessages({ sessionEventsBackfill } as never, viewer, 'corner');
+
+    const cached = useBuzzLocalCache.getState().channels[channelCacheKey(viewer, 'corner')];
+    expect(cached?.messages?.some((item) => item.id === 'opening-narration')).toBe(true);
   });
 
   it('flips a stale cached archived=false corner to archived once a fresh archive event lands', async () => {
@@ -556,7 +575,7 @@ describe('Buzz local cache', () => {
 
     await revalidateCachedMessages({ sessionEventsBackfill } as never, viewer, 'room');
 
-    expect(sessionEventsBackfill).toHaveBeenCalledWith('room', { limit: 50 });
+    expect(sessionEventsBackfill).toHaveBeenCalledWith('room', { limit: 200 });
     expect(
       useBuzzLocalCache
         .getState()
@@ -576,8 +595,8 @@ describe('Buzz local cache', () => {
     await revalidateCachedMessages({ sessionEventsBackfill } as never, viewer, 'room');
     await revalidateCachedMessages({ sessionEventsBackfill } as never, viewer, 'room');
 
-    expect(sessionEventsBackfill).toHaveBeenNthCalledWith(1, 'room', { limit: 50 });
-    expect(sessionEventsBackfill).toHaveBeenNthCalledWith(2, 'room', { limit: 50 });
+    expect(sessionEventsBackfill).toHaveBeenNthCalledWith(1, 'room', { limit: 200 });
+    expect(sessionEventsBackfill).toHaveBeenNthCalledWith(2, 'room', { limit: 200 });
   });
 
   it('cacheLiveSessionEvents writes a whole burst of live events in one store update, same result as one at a time', () => {

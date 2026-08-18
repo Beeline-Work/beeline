@@ -1,3 +1,5 @@
+<!-- Buzzy is a Nostr-based mobile merge tool built with Turborepo and React Native. -->
+
 # Buzzy
 
 The merge you hold from your phone. See [`spec.md`](./spec.md) for the full

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { closeSync, openSync } from 'node:fs';
-import { chmod, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -12,6 +12,7 @@ import type {
   RepositoryRoomResult,
 } from '@beeline/buzz-client';
 import { AGENT_KINDS, type AgentCommand, type AgentKind } from './agent-command.js';
+import { isAgentAccessPolicy, type AgentAccessPolicy } from './access-policy.js';
 
 export interface LocalRepositoryBinding {
   root: string;
@@ -41,6 +42,13 @@ export interface AgentRuntimeRecord {
   relayBaseUrl: string;
   relayHost?: string;
   llmEnvFile?: string;
+  /**
+   * Who may drive this agent, set by the inviter at pairing time. Absent on
+   * pre-policy records; readers treat that as `everyone` (see access-policy.ts).
+   */
+  accessPolicy?: AgentAccessPolicy;
+  /** Optional custom auto-response for a non-permitted questioner. */
+  accessAutoResponse?: string;
   agentKind?: AgentKind;
   agentCommand?: string;
   agentArgs?: string[];
@@ -267,6 +275,26 @@ export function runtimeDirectory(supervisorRoot: string, agentPubkey: string): s
 }
 
 /**
+ * Whether a machine-local runtime already exists for this agent pubkey.
+ *
+ * Runtime storage is keyed by agent pubkey, so a prior pairing of the *same*
+ * identity — the reused-key hazard — is exactly a pre-existing `runtime.json`
+ * here. Fresh keypairs (the default; `identityFromKey(undefined)`) never
+ * collide, so N fresh-key agents coexist while a reused key is detectable.
+ */
+export async function agentRuntimeExists(
+  supervisorRoot: string,
+  agentPubkey: string,
+): Promise<boolean> {
+  try {
+    await stat(resolve(runtimeDirectory(supervisorRoot, agentPubkey), 'runtime.json'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Default machine-local root for a paired agent's runtime.
  *
  * Historically this was the first paired repository's git common dir, which
@@ -386,6 +414,8 @@ export async function readRuntimeRecord(path: string): Promise<AgentRuntimeRecor
         (room.root !== undefined && (typeof room.root !== 'string' || !room.root)),
     ) ||
     (parsed.agentKind !== undefined && !AGENT_KINDS.includes(parsed.agentKind)) ||
+    (parsed.accessPolicy !== undefined && !isAgentAccessPolicy(parsed.accessPolicy)) ||
+    (parsed.accessAutoResponse !== undefined && typeof parsed.accessAutoResponse !== 'string') ||
     (parsed.agentCommand !== undefined && !parsed.agentCommand) ||
     (parsed.agentArgs !== undefined &&
       (!Array.isArray(parsed.agentArgs) ||
@@ -520,6 +550,8 @@ export async function pairRepositoryAgent(
     agentKind?: AgentKind;
     agentCommand?: string;
     agentArgs?: string[];
+    accessPolicy?: AgentAccessPolicy;
+    accessAutoResponse?: string;
     mcpBinary: string;
     agentIdentity: Identity;
     bodyIdentity: Identity;
@@ -543,6 +575,23 @@ export async function pairRepositoryAgent(
     launch?(configPath: string): Promise<number>;
   },
 ): Promise<PairRuntimeResult> {
+  // The runtime root is machine-local agent state, deliberately not the paired
+  // repository's `.git`. The repository binding for this Room is `repo` below.
+  const supervisorRoot = input.supervisorRoot
+    ? resolve(input.supervisorRoot)
+    : defaultSupervisorRoot(input.env);
+  // S0 — fail-closed multi-identity guard. Every agent in a Workspace must own
+  // a fresh keypair. Runtime storage is keyed by agent pubkey, so a runtime
+  // already sitting at this pubkey means the identity is being reused for a
+  // second agent (a pinned BUZZ_AGENT_KEY across pairings). Refuse rather than
+  // silently overwrite the first agent's binding and share one Nostr identity.
+  if (await agentRuntimeExists(supervisorRoot, input.agentIdentity.publicKey)) {
+    throw new Error(
+      `agent identity ${input.agentIdentity.publicKey} is already paired on this host; ` +
+        'every agent needs its own fresh keypair. Restart the existing one with ' +
+        '`beeline start --agent <pubkey>`, or unset BUZZ_AGENT_KEY/BUZZ_PRIVATE_KEY to mint a new identity.',
+    );
+  }
   // Resolve the repository before consuming the one-shot pairing code.
   const repo = inspectLocalRepository(input.cwd);
   const pairing = await deps.redeem(input.code);
@@ -552,11 +601,6 @@ export async function pairRepositoryAgent(
     repo.relayRepo ? input.mergeWorkerIdentity.publicKey : undefined,
   );
   await deps.validate?.(pairing, room, repo);
-  // The runtime root is machine-local agent state, deliberately not the paired
-  // repository's `.git`. The repository binding for this Room is `repo` below.
-  const supervisorRoot = input.supervisorRoot
-    ? resolve(input.supervisorRoot)
-    : defaultSupervisorRoot(input.env);
   const runtimeRoot = runtimeDirectory(supervisorRoot, input.agentIdentity.publicKey);
   const runtime: AgentRuntimeRecord = {
     version: 2,
@@ -580,6 +624,8 @@ export async function pairRepositoryAgent(
     relayBaseUrl: input.relayBaseUrl,
     ...(input.relayHost ? { relayHost: input.relayHost } : {}),
     ...(input.llmEnvFile ? { llmEnvFile: input.llmEnvFile } : {}),
+    ...(input.accessPolicy ? { accessPolicy: input.accessPolicy } : {}),
+    ...(input.accessAutoResponse ? { accessAutoResponse: input.accessAutoResponse } : {}),
     agentKind: input.agentKind ?? 'reference',
     agentCommand: input.agentCommand ?? input.agentBinary,
     agentArgs: [...(input.agentArgs ?? [])],

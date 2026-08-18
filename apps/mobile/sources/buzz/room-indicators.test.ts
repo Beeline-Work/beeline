@@ -36,6 +36,16 @@ describe('selectPinnedCorner', () => {
     }
   });
 
+  it('pins nothing for a corner that is open or waiting on a human, not working', () => {
+    // The line means "doing work right now" — an idle-but-open corner or one
+    // waiting on review is not that, even though it is not terminal either.
+    for (const status of ['open', 'needs-attention'] as const) {
+      expect(
+        selectPinnedCorner({ ...base, lifecycle: [corner('idle', status)] }),
+      ).toBeNull();
+    }
+  });
+
   it('pins an open corner and reports its status', () => {
     expect(
       selectPinnedCorner({

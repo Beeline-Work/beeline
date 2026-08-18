@@ -2,27 +2,27 @@ import { Platform } from 'react-native';
 
 /**
  * Typography system for Happy Coder app
- * 
- * Default typography: IBM Plex Sans
- * Monospace typography: IBM Plex Mono  
+ *
+ * Default typography: IBM Plex Mono (Plex Terminal Ledger — full terminal hull)
+ * Monospace typography: IBM Plex Mono
  * Logo typography: Bricolage Grotesque (specific use only)
- * 
+ *
  * Usage Examples:
- * 
- * // Default typography (IBM Plex Sans)
+ *
+ * // Default typography (IBM Plex Mono)
  * <Text style={{ fontSize: 16, ...Typography.default() }}>Regular text</Text>
  * <Text style={{ fontSize: 16, ...Typography.default('italic') }}>Italic text</Text>
  * <Text style={{ fontSize: 16, ...Typography.default('semiBold') }}>Semi-bold text</Text>
- * 
+ *
  * // Monospace typography (IBM Plex Mono)
  * <Text style={{ fontSize: 14, ...Typography.mono() }}>Code text</Text>
  * <Text style={{ fontSize: 14, ...Typography.mono('italic') }}>Italic code</Text>
  * <Text style={{ fontSize: 14, ...Typography.mono('semiBold') }}>Bold code</Text>
- * 
+ *
  * // Logo typography (Bricolage Grotesque - use sparingly!)
  * // Note: Don't add fontWeight as this font is already bold
  * <Text style={{ fontSize: 28, ...Typography.logo() }}>Logo Text</Text>
- * 
+ *
  * // Alternative direct usage
  * <Text style={{ fontSize: 16, fontFamily: getDefaultFont('semiBold') }}>Direct usage</Text>
  * <Text style={{ fontSize: 14, fontFamily: getMonoFont() }}>Direct mono usage</Text>
@@ -31,13 +31,13 @@ import { Platform } from 'react-native';
 
 // Font family constants
 export const FontFamilies = {
-  // IBM Plex Sans (default typography)
+  // IBM Plex Mono (default typography — prose and machine labels share one family)
   default: {
-    regular: 'IBMPlexSans-Regular',
-    italic: 'IBMPlexSans-Italic', 
-    semiBold: 'IBMPlexSans-SemiBold',
+    regular: 'IBMPlexMono-Regular',
+    italic: 'IBMPlexMono-Italic',
+    semiBold: 'IBMPlexMono-SemiBold',
   },
-  
+
   // IBM Plex Mono (default monospace)
   mono: {
     regular: 'IBMPlexMono-Regular',
@@ -78,7 +78,7 @@ export const FontWeights = {
 
 // Style utilities for easy inline usage
 export const Typography = {
-  // Default font styles (IBM Plex Sans)
+  // Default font styles (IBM Plex Mono)
   default: (weight: 'regular' | 'italic' | 'semiBold' = 'regular') => ({
     fontFamily: getDefaultFont(weight),
   }),

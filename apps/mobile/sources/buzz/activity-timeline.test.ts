@@ -172,6 +172,37 @@ describe('buildTurnActivity', () => {
     expect(turn.narration).toEqual([]);
   });
 
+  it('writes the same note in the present tense while the work is still in flight', () => {
+    // grok Build writes its rollup twice — `Reading 2 files, Searching 4
+    // patterns` in flight, `Read 2 files, Searched 4 patterns` once the group
+    // settles — and the tense is the whole state report. Same count, same
+    // order, same row.
+    const turn = buildTurnActivity([
+      { kind: 'summary', title: 'Summary', text: '', rollup: { read: 8, searched: 3, listed: 1 } },
+    ]);
+
+    expect(turn.note).toBe('12 TOOL CALLS · read 8, searched 3, listed 1');
+    expect(turn.liveNote).toBe('12 TOOL CALLS · reading 8, searching 3, listing 1');
+  });
+
+  it('leaves an unforeseen verb in the past tense rather than inventing a non-word', () => {
+    const turn = buildTurnActivity([
+      { kind: 'summary', title: 'Summary', text: '', rollup: { transmogrified: 2 } },
+    ]);
+
+    expect(turn.liveNote).toBe('2 TOOL CALLS · transmogrified 2');
+  });
+
+  it('carries the reasoning receipt without ever carrying the reasoning', () => {
+    const turn = buildTurnActivity([
+      { kind: 'summary', title: 'Summary', text: '', rollup: { read: 2 }, thoughtMs: 5_800 },
+      { kind: 'summary', title: 'Summary', text: '', thoughtMs: 1_200 },
+    ]);
+
+    // Successive batches report disjoint spans, so they add up to the turn's.
+    expect(turn.thoughtMs).toBe(7_000);
+  });
+
   it('keeps the agent’s prose as narration, never folded into the note', () => {
     const turn = buildTurnActivity([
       { kind: 'output', title: 'Update', text: 'Found the projection boundary.' },

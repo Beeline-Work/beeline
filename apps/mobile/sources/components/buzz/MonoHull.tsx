@@ -20,6 +20,7 @@ import Animated, {
   useReducedMotion,
   useSharedValue,
   withRepeat,
+  withSequence,
   withTiming,
   type SharedValue,
 } from 'react-native-reanimated';
@@ -33,6 +34,15 @@ export const motionTokens = {
   confirm: 240,
   loaderFrame: 133,
   liveCycle: 1120,
+  /**
+   * How long a settled row takes to dip and come back when it demotes out of
+   * its live form. Measured against grok Build: its rollup row swaps from the
+   * present participle to the past tense in 52-104ms, which on a terminal is a
+   * single repaint and reads as instantaneous. A silent substitution at that
+   * speed is invisible on a phone — the eye is elsewhere — so the swap is given
+   * a dip the eye can catch, then restored on the shared reveal easing.
+   */
+  demoteDip: 90,
 } as const;
 
 /**
@@ -409,6 +419,97 @@ export function HullLivePulse({
   return <Animated.View style={[style, pulse]}>{children}</Animated.View>;
 }
 
+/**
+ * The one motion contract for a row that reports mechanism rather than voice.
+ *
+ * Two beats, both taken from watching grok Build work rather than from a
+ * screenshot of it:
+ *
+ *   **Arrival is a pop, not a stream.** Narration reaches the reader by
+ *   growing a phrase at a time (grok repaints one every ~130ms; Beeline's draft
+ *   streamer coalesces at 250ms). A tool rollup does the opposite — it appears
+ *   whole, in a single frame, already complete. That contrast is load-bearing:
+ *   it is how a reader tells the agent's voice from the agent's receipts
+ *   without reading either. So this enters on `reveal`, fast and eased-out,
+ *   against narration that never enters at all.
+ *
+ *   **Demotion is a dip.** When the work settles the row rewrites itself from
+ *   the present tense to the past. grok does that swap in ~100ms and gets away
+ *   with a silent substitution because a terminal reader is watching one
+ *   column; here the change is given a short dip so it registers as *the row
+ *   changing state* rather than as text that was always that way.
+ *
+ * Reduced motion drops both beats and renders the settled row directly — the
+ * tense of the copy still reports the state, which is why the motion is allowed
+ * to be purely redundant.
+ */
+export function HullMechanismReveal({
+  children,
+  live,
+  style,
+}: {
+  children: React.ReactNode;
+  live: boolean;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const reducedMotion = useReducedMotion();
+  // Only a row that arrives *while the work is live* is genuinely new. A
+  // settled row is scrolled back into view constantly by the transcript's
+  // recycling FlatList, and replaying the arrival pop every time it does would
+  // turn a one-time signal into a twitch.
+  const entered = useSharedValue(reducedMotion || !live ? 1 : 0);
+  const settle = useSharedValue(1);
+  // A ref, not state: this only ever gates an imperative animation, and making
+  // it reactive would re-render the row on the very frame it is animating.
+  const wasLive = React.useRef(live);
+
+  useEffect(() => {
+    if (entered.value === 1) return;
+    entered.value = withTiming(1, {
+      duration: motionTokens.reveal,
+      easing: easeOutQuint,
+      reduceMotion: ReduceMotion.System,
+    });
+    // Mount-only: `live` flipping later is the demote beat below, not a second
+    // arrival, and re-running this would replay the pop on top of it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entered]);
+
+  useEffect(() => {
+    const demoted = wasLive.current && !live;
+    wasLive.current = live;
+    if (!demoted || reducedMotion) return;
+    settle.value = withSequence(
+      withTiming(0.4, { duration: motionTokens.demoteDip, easing: Easing.linear }),
+      withTiming(1, { duration: motionTokens.reveal, easing: easeOutQuint }),
+    );
+  }, [live, reducedMotion, settle]);
+
+  const animated = useAnimatedStyle(() => ({
+    opacity: entered.value * settle.value,
+    transform: [{ translateY: (1 - entered.value) * 3 }],
+  }));
+
+  return <Animated.View style={[style, animated]}>{children}</Animated.View>;
+}
+
+/**
+ * The 2px gutter that says whether the row beside it is still happening.
+ *
+ * grok encodes exactly this in the weight of its rail — `┃` while a block is
+ * the live one, `❙` once the next thing starts — and keeps the label itself
+ * untouched, so a failure or an in-flight call never disturbs the reading
+ * column. The port keeps the geometry and spends the reserved accent on the
+ * live state only, which is the one thing `DESIGN.md` already assigns gold to.
+ * The breath comes off the shared live clock, so this rail and every other
+ * live signal in the product move together rather than beating against
+ * each other.
+ */
+export function HullMechanismRail({ live }: { live: boolean }) {
+  const rail = <View style={[styles.mechanismRail, live && styles.mechanismRailLive]} />;
+  return live ? <HullLivePulse>{rail}</HullLivePulse> : rail;
+}
+
 export function PixelGateReveal({ children, style }: HullSurfaceProps) {
   const reducedMotion = useReducedMotion();
   const progress = useSharedValue(reducedMotion ? 1 : 0);
@@ -527,6 +628,20 @@ const styles = StyleSheet.create({
   loaderCell: { width: 7, height: 7, backgroundColor: groknight.signalBright },
   loaderCellCompact: { width: 5, height: 5 },
   staticLoader: { ...Typography.mono('semiBold'), color: groknight.signalBright, fontSize: 12 },
+  /**
+   * Geometry, not chroma, carries the status: a fixed 2px column at the
+   * mechanism indent, so a reader scans one edge instead of reading every
+   * label. It is `alignSelf: 'stretch'` rather than a fixed height because the
+   * row it marks can wrap.
+   */
+  mechanismRail: {
+    width: 2,
+    alignSelf: 'stretch',
+    minHeight: 14,
+    flexShrink: 0,
+    backgroundColor: groknight.borderQuiet,
+  },
+  mechanismRailLive: { backgroundColor: groknight.accent },
   activityTip: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 5 },
   activityTipDot: { width: 5, height: 5, backgroundColor: groknight.accent },
   activityTipLabel: {

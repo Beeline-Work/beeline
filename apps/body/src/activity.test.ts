@@ -484,6 +484,54 @@ describe('createDraftStreamer', () => {
     await streamer.finish();
     expect(published).toHaveLength(1);
   });
+
+  const PI_COLD_SESSION_BANNER = [
+    'pi v0.83.0',
+    '---',
+    '',
+    '## Context',
+    '- /home/lunchbox/proj-buzzy/AGENTS.md',
+    '',
+    '## Skills',
+    '- /home/lunchbox/.pi/agent/skills/trusty-squire/SKILL.md',
+    '- /home/lunchbox/.pi/agent/skills/no-mistakes/SKILL.md',
+    '- /home/lunchbox/.pi/agent/skills/find-skills/SKILL.md',
+    '- /home/lunchbox/.pi/agent/skills/create-payment-credential/SKILL.md',
+    '',
+    '---',
+    'New version available: v0.84.2 (installed v0.83.0). Run: `npm i -g @earendil-works/pi-coding-agent`',
+    '',
+  ].join('\n');
+
+  it('never publishes a cold session harness startup banner as a live draft', async () => {
+    const streamer = createDraftStreamer(channelId, owner, sessionId, requestId);
+
+    // The banner streams in first, exactly as pi-acp emits it before any real
+    // reply text — a turn interrupted right here (e.g. a daemon restart)
+    // must leave nothing published, not the raw banner.
+    streamer.onChunk(PI_COLD_SESSION_BANNER);
+    await vi.advanceTimersByTimeAsync(AGENT_DRAFT_FLUSH_MS);
+    expect(published).toHaveLength(0);
+
+    await streamer.finish();
+    expect(published).toHaveLength(0);
+  });
+
+  it('publishes only the real answer once it streams in after the banner', async () => {
+    const streamer = createDraftStreamer(channelId, owner, sessionId, requestId);
+
+    streamer.onChunk(PI_COLD_SESSION_BANNER);
+    await vi.advanceTimersByTimeAsync(AGENT_DRAFT_FLUSH_MS);
+    expect(published).toHaveLength(0);
+
+    streamer.onChunk(`${PI_COLD_SESSION_BANNER}\nThe answer is 42.`);
+    await streamer.finish();
+
+    expect(published).toHaveLength(1);
+    expect(published[0]!.content).toBe('The answer is 42.');
+    expect(published[0]!.content).not.toContain('pi v0.83.0');
+    expect(published[0]!.content).not.toContain('New version available');
+  });
 });
 
 describe('nextNarrativeSegment', () => {

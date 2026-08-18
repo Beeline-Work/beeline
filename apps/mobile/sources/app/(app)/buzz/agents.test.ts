@@ -13,6 +13,9 @@ const client = vi.hoisted(() => ({
   waitUntilMemberRole: vi.fn(async () => undefined),
 }));
 const agentPresenceBackfillForWorkspace = vi.hoisted(() => vi.fn(async () => []));
+const agentModelCatalogRead = vi.hoisted(() => vi.fn(async () => null));
+const agentModelConfigRead = vi.hoisted(() => vi.fn(async () => null));
+const agentModelConfigSet = vi.hoisted(() => vi.fn(async () => undefined));
 
 vi.mock('expo-router', () => ({
   router: navigation,
@@ -39,6 +42,9 @@ vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     ensureClient = vi.fn(async () => client);
     agentPresenceBackfillForWorkspace = agentPresenceBackfillForWorkspace;
+    agentModelCatalogRead = agentModelCatalogRead;
+    agentModelConfigRead = agentModelConfigRead;
+    agentModelConfigSet = agentModelConfigSet;
   },
 }));
 vi.mock('@/components/buzz/CommunityRail', async () => {
@@ -88,7 +94,18 @@ beforeEach(() => {
   vi.clearAllMocks();
   client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'owner' }]);
   agentPresenceBackfillForWorkspace.mockResolvedValue([]);
+  agentModelCatalogRead.mockResolvedValue(null);
+  agentModelConfigRead.mockResolvedValue(null);
+  agentModelConfigSet.mockResolvedValue(undefined);
 });
+
+/** Nearest TouchableOpacity ancestor — used to select an agent row from its identity text. */
+function ancestorButton(node: any): any {
+  let current = node;
+  while (current && current.type !== 'TouchableOpacity') current = current.parent;
+  if (!current) throw new Error('no TouchableOpacity ancestor found');
+  return current;
+}
 
 async function render(): Promise<ReactTestRenderer> {
   let renderer!: ReactTestRenderer;
@@ -215,5 +232,79 @@ describe('Members screen', () => {
     expect(
       renderer.root.findByProps({ testID: `agent-${dormantAgentPubkey}-presence-label` }).props.children,
     ).toBe('OFFLINE');
+  });
+
+  it('hides the Model / Effort section when the agent has never published a catalog', async () => {
+    const agentPubkey = '2'.repeat(64);
+    client.listAgents.mockResolvedValue([
+      { agentId: 'a1', communityId: 'workspace-1', displayName: 'joy', pubkey: agentPubkey, createdAt: 0, raw: {} },
+    ]);
+    const renderer = await render();
+
+    await act(async () => {
+      ancestorButton(renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` })).props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(agentModelCatalogRead).toHaveBeenCalledWith('workspace-1', agentPubkey);
+    expect(renderer.root.findAllByProps({ testID: `agent-${agentPubkey}-model-config` })).toHaveLength(0);
+  });
+
+  it('lists the advertised model/effort catalog, never a mode axis, and lets you choose an option', async () => {
+    const agentPubkey = '3'.repeat(64);
+    client.listAgents.mockResolvedValue([
+      { agentId: 'a2', communityId: 'workspace-1', displayName: 'joy', pubkey: agentPubkey, createdAt: 0, raw: {} },
+    ]);
+    agentModelCatalogRead.mockResolvedValue({
+      communityId: 'workspace-1',
+      agentPubkey,
+      options: [
+        {
+          id: 'model',
+          category: 'model',
+          currentValue: 'sonnet',
+          options: [{ id: 'sonnet' }, { id: 'opus', name: 'Opus' }],
+        },
+        {
+          id: 'effort',
+          category: 'effort',
+          currentValue: 'default',
+          options: [{ id: 'low' }, { id: 'high' }],
+        },
+      ],
+      updatedAt: 0,
+      raw: {},
+    });
+    agentModelConfigRead.mockResolvedValue({
+      communityId: 'workspace-1',
+      agentPubkey,
+      authoredBy: 'a'.repeat(64),
+      model: 'sonnet',
+      updatedAt: 0,
+      raw: {},
+    });
+    const renderer = await render();
+
+    await act(async () => {
+      ancestorButton(renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` })).props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(renderer.root.findByProps({ testID: `agent-${agentPubkey}-model-config` })).toBeDefined();
+    // No mode axis was even advertised by the daemon-published catalog (it is
+    // filtered before publish) — this asserts the client never renders one.
+    expect(renderer.root.findAllByProps({ testID: 'model-axis-mode' })).toHaveLength(0);
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'model-axis-effort' }).props.onPress();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'model-option-effort-high' }).props.onPress();
+      await Promise.resolve();
+    });
+
+    expect(agentModelConfigSet).toHaveBeenCalledWith('workspace-1', agentPubkey, { effort: 'high' });
   });
 });

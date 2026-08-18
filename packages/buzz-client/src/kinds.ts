@@ -39,6 +39,12 @@ export const KIND_COMMUNITY_INVITE = 30078;
 /** NIP-33 parameterized replaceable application data (live in-flight agent reply draft). */
 export const KIND_AGENT_DRAFT = 30078;
 
+/** NIP-33 parameterized replaceable application data (self-authored advertised model/effort catalog). */
+export const KIND_AGENT_MODEL_CATALOG = 30078;
+
+/** NIP-33 parameterized replaceable application data (human-authored agent model/effort selection). */
+export const KIND_AGENT_MODEL_CONFIG = 30078;
+
 /** NIP-42 AUTH challenge response. */
 export const KIND_AUTH = 22242;
 
@@ -59,6 +65,12 @@ export const TAG_AGENT_PAIRING = 'buzz-agent-pairing';
 
 /** Marker for display-only, human-authored agent profile metadata. */
 export const TAG_AGENT_SOUL = 'buzz-agent-soul';
+
+/** Marker for a self-authored snapshot of an agent runtime's advertised model/effort catalog. */
+export const TAG_AGENT_MODEL_CATALOG = 'buzz-agent-model-catalog';
+
+/** Marker for a human-authored agent model/effort selection. */
+export const TAG_AGENT_MODEL_CONFIG = 'buzz-agent-model-config';
 
 /** Marker for self-authored, display-only human profile metadata. */
 export const TAG_PERSON_PROFILE = 'buzz-person-profile';

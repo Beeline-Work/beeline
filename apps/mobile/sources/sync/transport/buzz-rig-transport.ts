@@ -45,6 +45,9 @@ import {
   type SessionEvent as BuzzSessionEvent,
   type WritePermissionDecision,
   type AttachmentReference,
+  type AgentModelCatalog,
+  type AgentModelConfig,
+  type AgentModelConfigInput,
 } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
@@ -580,6 +583,34 @@ export class BuzzRigTransport implements RigTransport {
     };
     this.subscriptions.set(subscriptionKey, unsubscribe);
     return unsubscribe;
+  }
+
+  /** The runtime's currently advertised model/effort catalog for an agent, if any session has published one. */
+  async agentModelCatalogRead(
+    communityId: string,
+    agentPubkey: string,
+  ): Promise<AgentModelCatalog | null> {
+    const client = await this.getClient();
+    return client.getAgentModelCatalog(communityId, agentPubkey);
+  }
+
+  /** The current human-chosen model/effort selection for an agent, if any. */
+  async agentModelConfigRead(
+    communityId: string,
+    agentPubkey: string,
+  ): Promise<AgentModelConfig | null> {
+    const client = await this.getClient();
+    return client.getAgentModelConfig(communityId, agentPubkey);
+  }
+
+  /** Choose a model/effort for an agent. Applied on that agent's next session (re)activation. */
+  async agentModelConfigSet(
+    communityId: string,
+    agentPubkey: string,
+    input: AgentModelConfigInput,
+  ): Promise<AgentModelConfig> {
+    const client = await this.getClient();
+    return client.setAgentModelConfig(communityId, agentPubkey, input);
   }
 
   async permissionRespond(

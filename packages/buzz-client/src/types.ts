@@ -81,6 +81,44 @@ export interface AgentSoulProfile extends Omit<AgentSoulInput, 'intent'> {
   raw: NostrEvent;
 }
 
+/**
+ * One portable model/effort/mode axis as advertised by an ACP runtime's
+ * `session/new` `configOptions`. `category` is harness-defined (`model`,
+ * `thought_level`, `effort`, `reasoning_effort`, `mode`, ...); only the first
+ * four are ever exposed to a picker — see `ALLOWED_AGENT_MODEL_CONFIG_CATEGORIES`.
+ */
+export interface AgentModelConfigOption {
+  /** The `configId` passed back to `session/set_config_option`. */
+  id: string;
+  category: string;
+  currentValue?: string;
+  options: Array<{ id: string; name?: string }>;
+}
+
+/** Self-authored, per-(agent,Workspace) snapshot of what the runtime currently advertises. */
+export interface AgentModelCatalog {
+  communityId: string;
+  agentPubkey: string;
+  options: AgentModelConfigOption[];
+  updatedAt: number;
+  raw: NostrEvent;
+}
+
+export interface AgentModelConfigInput {
+  /** The chosen `model` option's id. Absent leaves the current model choice alone. */
+  model?: string;
+  /** The chosen effort/thought-level option's id. */
+  effort?: string;
+}
+
+export interface AgentModelConfig extends AgentModelConfigInput {
+  communityId: string;
+  agentPubkey: string;
+  authoredBy: string;
+  updatedAt: number;
+  raw: NostrEvent;
+}
+
 /** Global kind:0, self-authored cosmetic metadata for a human identity. */
 export interface PersonProfile {
   /** Present only when a legacy Workspace-scoped profile supplied the fallback. */

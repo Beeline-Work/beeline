@@ -140,6 +140,8 @@ const monoStyles = new Set([
   'ghostBody',
   'summaryHandle',
   'summaryAffordance',
+  'modelAxisValue',
+  'modelOptionText',
 ]);
 
 function styleDefinition(source: string, name: string): string {

@@ -21,4 +21,19 @@ describe('beeline pair help', () => {
     );
     expect(result.stdout).toContain('--agent-command');
   });
+
+  it('documents multi-runtime pairing and the per-agent access policy', () => {
+    const directory = fileURLToPath(new URL('..', import.meta.url));
+    const result = spawnSync(
+      process.execPath,
+      ['--import', 'tsx', 'src/cli.ts', 'pair', '--help'],
+      { cwd: directory, encoding: 'utf8' },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('--agents <kind1,kind2,...>');
+    expect(result.stdout).toContain('--access <everyone|creator>');
+    expect(result.stdout).toContain('one single-use pairing code per agent');
+    expect(result.stdout).toContain('creator   only the inviting owner may');
+  });
 });

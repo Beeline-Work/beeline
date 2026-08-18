@@ -16,6 +16,7 @@ import {
   type AgentCommand,
   type AgentKind,
 } from './agent-command.js';
+import type { AgentAccessPolicy } from './access-policy.js';
 
 export type SessionMode = 'readonly' | 'edit';
 
@@ -78,6 +79,15 @@ export interface BodyConfig {
    * human permission flow instead.
    */
   autoApprovePermissions: boolean;
+  /**
+   * Per-agent access policy (who may drive this agent) plus its owner pubkey
+   * and optional custom auto-response, injected from the runtime record by the
+   * daemon. Absent for a standalone Body (`beeline serve`, unit tests), which
+   * defaults to `everyone` — i.e. the pre-policy behaviour. See access-policy.ts.
+   */
+  accessPolicy?: AgentAccessPolicy;
+  accessOwnerPubkey?: string;
+  accessAutoResponse?: string;
 }
 
 function firstExisting(paths: string[]): string | undefined {

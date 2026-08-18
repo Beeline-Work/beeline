@@ -140,6 +140,13 @@ import {
   filterModelOptionsByCredentials,
   parseAdvertisedConfigOptions,
 } from './model-config.js';
+import {
+  assertCornerWorktreeIsolated,
+  classifyCornerCommand,
+  cornerWorktreePath,
+  legacyCornerWorktreePath,
+  shellCommandFromRawInput,
+} from './corner-isolation.js';
 
 /** Tracks a single agent session. */
 export interface AgentSession {
@@ -1601,7 +1608,14 @@ export class Body {
             continue;
           }
         }
-        const worktreePath = resolve(this.config.workspaceRoot, `.worktrees/${subchannelId}`);
+        // Prefer the current isolated (top-level) location, but a corner opened
+        // before this change lives at the legacy buried `.worktrees/<id>` path;
+        // restore it there rather than orphaning in-flight work across upgrade.
+        const isolatedWorktreePath = this.cornerWorktreePath(cornerRepo, subchannelId);
+        const legacyWorktreePath = legacyCornerWorktreePath(this.config.workspaceRoot, subchannelId);
+        const worktreePath = existsSync(isolatedWorktreePath)
+          ? isolatedWorktreePath
+          : legacyWorktreePath;
         if (!existsSync(worktreePath)) {
           await postControlMessage(
             subchannelId,
@@ -1636,6 +1650,7 @@ export class Body {
             'You may call any skill available to you, but only when the current task explicitly calls for it or names it directly. Never auto-trigger a skill (e.g. a design/UX review skill) on routine or trivial work.',
           ].join('\n'),
           autoApprovePermissions: true,
+          permissionHandler: this.cornerPermissionHandler(worktreePath, cornerRepo.localPath),
           parentChannelId,
           worktreePath,
           featureBranch,
@@ -1814,13 +1829,21 @@ export class Body {
     // 4. Create git worktree + feature branch. Named after the actual task
     // (same slug basis as the corner's own name), with the corner's own
     // short id kept as a suffix for collision safety — a bare UUID fragment
-    // told a reviewer nothing about what the branch was for.
-    const worktreePath = resolve(this.config.workspaceRoot, `.worktrees/${subchannelId}`);
+    // told a reviewer nothing about what the branch was for. The worktree is a
+    // clean, top-level sibling of the source checkout (never buried inside its
+    // `.git`), so the agent's cd-to-project reflex lands inside the worktree
+    // rather than the shared primary checkout. See `corner-isolation.ts`.
+    const worktreePath = this.cornerWorktreePath(boundRepo, subchannelId);
     const branchSlug = taskSlugForCornerIntent(intent);
     const featureBranch = branchSlug
       ? `feature/${branchSlug}-${subchannelId.slice(0, 8)}`
       : `feature/${subchannelId.slice(0, 8)}`;
     await this.createWorktree(boundRepo, worktreePath, featureBranch);
+
+    // Fail closed: the edit session must never launch onto the shared primary
+    // checkout. Mirrors firstmate's `validate_spawn_worktree` pre-launch
+    // assertion — refuse the corner rather than tangle the protected branch.
+    assertCornerWorktreeIsolated(worktreePath, boundRepo.localPath);
 
     // Best-effort, non-blocking: build the codegraph index for this fresh
     // worktree so codegraph MCP tools have something to query as soon as
@@ -1860,6 +1883,9 @@ export class Body {
       // A corner is the agent's isolated worktree. Target landing and archive
       // cleanup remain behind an independently verified signed human approval.
       autoApprovePermissions: true,
+      // cd-guard backstop: deny a command that would escape the worktree into
+      // the shared checkout, even if the harness leaks past cwd isolation.
+      permissionHandler: this.cornerPermissionHandler(worktreePath, boundRepo.localPath),
       parentChannelId: tlcChannelId,
       worktreePath,
       featureBranch,
@@ -4505,6 +4531,42 @@ export class Body {
     } catch (error) {
       console.warn('[body] codegraph index priming failed (continuing without it):', error);
     }
+  }
+
+  /**
+   * Clean, top-level worktree path for a corner. Anchored off the source
+   * checkout (the operator's shared primary checkout — the only thing a corner
+   * can tangle with) so it is never nested inside it or its `.git`. See
+   * `corner-isolation.ts`.
+   */
+  private cornerWorktreePath(boundRepo: BoundRepo, subchannelId: string): string {
+    return cornerWorktreePath({
+      ...(this.config.cornersRoot ? { cornersRoot: this.config.cornersRoot } : {}),
+      workspaceRoot: this.config.workspaceRoot,
+      ...(boundRepo.localPath ? { sourceCheckout: boundRepo.localPath } : {}),
+      subchannelId,
+    });
+  }
+
+  /**
+   * cd-guard for an edit session (backstop for a leaky harness): deny a tool
+   * command that would move the corner out of its isolated worktree into the
+   * shared checkout, otherwise auto-approve. See `corner-isolation.ts`.
+   */
+  private cornerPermissionHandler(
+    worktreePath: string,
+    primaryCheckout?: string,
+  ): AcpPermissionHandler {
+    return async (request) => {
+      const command = shellCommandFromRawInput(request.toolCall?.kind, request.toolCall?.rawInput);
+      if (!command) return 'allow';
+      const verdict = classifyCornerCommand(command, worktreePath, primaryCheckout);
+      if (verdict.decision === 'deny') {
+        console.warn(`[body] cd-guard blocked corner command [${verdict.code}]: ${command}`);
+        return 'reject';
+      }
+      return 'allow';
+    };
   }
 
   /**

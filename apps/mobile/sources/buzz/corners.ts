@@ -42,6 +42,19 @@ export function isCornerActive(status: CornerStatus): boolean {
 }
 
 /**
+ * A corner whose life is over: it landed, it failed, or it was closed. Nothing
+ * that reports *current* work may ever name one of these — the pinned corner
+ * line above the composer least of all, since it is tappable and a terminal
+ * corner is a read-only channel a tap strands the reader in. Written as the
+ * complement of the three terminal words rather than as an allowlist of live
+ * ones so a new non-terminal `CornerStatus` is reportable by default, and a
+ * new terminal one has to be named here to become terminal.
+ */
+export function isCornerTerminal(status: CornerStatus): boolean {
+  return status === 'merged' || status === 'failed' || status === 'archived';
+}
+
+/**
  * A corner view's own archived confirmation (`isChannelArchived` / a live
  * archive signal) is fetched independently of, and can resolve after, its
  * last known lifecycle-status snapshot (`listSubchannelLifecycle`, fetched
@@ -163,26 +176,3 @@ export type CornerActivitySignal = {
   status: CornerStatus;
   timestamp: number;
 };
-
-/**
- * Pick the corner a "view corner" affordance should open when several exist:
- * the most recently active one among those still actively worked on, falling
- * back to the most recently active overall (never a stale/empty corner ahead
- * of one with real turns). `signals` may contain several entries per corner
- * (one per status update); only the latest per subchannel is considered.
- */
-export function selectMostRecentActiveCornerId(
-  signals: CornerActivitySignal[],
-): string | undefined {
-  const latestBySubchannel = new Map<string, CornerActivitySignal>();
-  for (const signal of signals) {
-    const existing = latestBySubchannel.get(signal.subchannelId);
-    if (!existing || signal.timestamp >= existing.timestamp) {
-      latestBySubchannel.set(signal.subchannelId, signal);
-    }
-  }
-  const candidates = [...latestBySubchannel.values()];
-  const active = candidates.filter((candidate) => isCornerActive(candidate.status));
-  const pool = active.length > 0 ? active : candidates;
-  return [...pool].sort((a, b) => b.timestamp - a.timestamp)[0]?.subchannelId;
-}

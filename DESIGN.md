@@ -156,6 +156,17 @@ exactly **one** active-corner affordance, the pinned line, and exactly one place
 a finished corner is recorded, the Room's corners view. The transcript keeps the
 conversation and nothing else.
 
+**A turn in progress and an open corner are two different facts, and they get
+two different lines.** A question being answered is transient and has nowhere
+to go, so it shows as one unpressable `beebee thinking…` line that disappears
+when the reply lands. A corner is a place that exists, so the pinned line names
+it and opens it. They may show together, separately, or not at all, and neither
+is ever derived from the other: an agent busy on a plain Room reply must not
+light the corner line, and a corner line must never name a corner that has
+merged, failed, or closed — a tappable dead channel is worse than no line at
+all. Both gates are enforced in code (`buzz/room-indicators.ts`), because this
+rule was once held by care alone and did not hold.
+
 **There is no reply echo under an agent turn.** Body threads every Room/DM reply
 to the request that triggered it, so the quoted block was always the message
 directly above — pure noise on a linear log. A person's own reply is a

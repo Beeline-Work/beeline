@@ -100,7 +100,7 @@ import {
   normalizedRoomRole,
   roomLifecycleAction,
 } from '@/buzz/room-management';
-import { isPinnedCornerLive, selectPinnedCorner } from '@/buzz/room-indicators';
+import { selectPinnedCorner } from '@/buzz/room-indicators';
 import {
   loadActiveCommunityId,
   saveActiveCommunityId,
@@ -871,10 +871,11 @@ export default function BuzzChat() {
       return null;
     }
 
-    if (!pinnedCorner) return null;
-    // Gold is reserved for an agent alive and working, so a corner that has
-    // stopped moving — or whose daemon is offline — keeps the line quiet.
-    const live = isPinnedCornerLive(pinnedCorner.status) && !agentsOffline;
+    // selectPinnedCorner only ever names a corner that is actively working
+    // right now — an idle, closed, or terminal corner is never a candidate —
+    // so the line's mere presence already means "live". An offline daemon
+    // cannot really be doing that work, so the line hides rather than lying.
+    if (!pinnedCorner || agentsOffline) return null;
     const agentPubkey = resolveCornerCardAgentPubkey(
       pinnedCornerCard?.corner?.agentPubkey,
       pinnedCornerCard?.pubkey,
@@ -888,8 +889,8 @@ export default function BuzzChat() {
       pinnedCorner.cornerId,
     );
     return {
-      label: named(subject, live ? 'active' : 'idle', target),
-      live,
+      label: named(subject, 'active', target),
+      live: true,
       cornerId: pinnedCorner.cornerId,
     };
   }, [

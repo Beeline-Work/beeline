@@ -1655,7 +1655,26 @@ export class Body {
       );
     }
 
-    const readonlyCwd = boundRepo?.localPath ?? this.config.workspaceRoot;
+    // A paired *local* Room must never run its read-only session in the
+    // operator's live primary checkout (which sits on the protected branch);
+    // route it through an isolated detached-HEAD read worktree instead so a
+    // stray commit can never land on the live `main`. A relay-clone Room has
+    // no local checkout and already runs in its isolated workspace root.
+    // Fail closed: if the isolated read surface can't be established, refuse
+    // the Room rather than falling back to the live checkout.
+    let readonlyCwd: string;
+    if (boundRepo?.localPath) {
+      try {
+        readonlyCwd = await this.ensureReaderWorktree(boundRepo);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new ReadOnlyToolsUnavailableError(
+          `read-only tools unavailable: could not establish an isolated read worktree (${detail})`,
+        );
+      }
+    } else {
+      readonlyCwd = this.config.workspaceRoot;
+    }
     // Resolve the server before any relay membership or session side effect.
     // Missing read-only tools must never create a no-tool or edit-tool session.
     const readonlyServer = readOnlyMcpServer(this.config, readonlyCwd);
@@ -4558,6 +4577,68 @@ export class Body {
       encoding: 'utf8',
     });
     this.excludeCodegraphFromWorktreeStatus(worktreePath);
+  }
+
+  /**
+   * Establish (or refresh) the isolated read surface for a paired *local* Room,
+   * returning the directory the read-only Room session must use as its cwd.
+   *
+   * A Room's read-only session must NEVER run with its cwd on the operator's
+   * live primary checkout. That checkout sits on the protected target branch
+   * (e.g. `main`), and the read-only boundary — read-only MCP mount plus a
+   * rejected mutating-permission path — is the only thing between the
+   * underlying ACP harness and a `git commit` landing *directly on the live
+   * `main`*. That boundary is not a hard guarantee for every harness (an
+   * external CLI can carry its own shell/git), so a leak commits onto the live
+   * protected branch with no branch/worktree to isolate it — exactly the
+   * "corner work landed on main, review panel shows nothing to approve" failure.
+   *
+   * The fix is structural: give the Room its own detached-HEAD worktree at the
+   * current target tip. Its files are identical to the live checkout for
+   * inspection, but HEAD is off every branch, so any stray commit lands on an
+   * orphan detached HEAD instead of the live `main`. Corners already isolate
+   * into their own feature worktrees (`createWorktree`); this closes the one
+   * remaining session whose cwd still pointed at the protected branch.
+   *
+   * Fail closed: this throws rather than ever returning the live checkout path,
+   * and the caller must NOT fall back to it.
+   */
+  private async ensureReaderWorktree(boundRepo: BoundRepo): Promise<string> {
+    if (!boundRepo.localPath) {
+      throw new Error('reader worktree requires a local checkout');
+    }
+    await mkdir(this.config.workspaceRoot, { recursive: true });
+    const readerPath = resolve(this.config.workspaceRoot, '.reader');
+    // Base the read surface on the local target branch the live checkout
+    // tracks, so its content matches the live checkout exactly (no fetch, no
+    // staleness beyond what the live `main` itself has at provision time).
+    const target = (boundRepo.targetBranch ?? 'refs/heads/main').replace(/^refs\/heads\//, '');
+    const localRef = `refs/heads/${target}`;
+    const baseRef = git(boundRepo.localPath, ['rev-parse', '--verify', localRef]).ok
+      ? localRef
+      : 'HEAD';
+
+    if (existsSync(readerPath)) {
+      // Refresh the disposable read surface to the current target tip and
+      // discard anything a prior session left (a stray commit, untracked
+      // files). A detached reset keeps HEAD off every branch.
+      const reset = git(readerPath, ['reset', '--hard', baseRef]);
+      if (reset.ok) {
+        git(readerPath, ['clean', '-ffd']);
+        this.excludeCodegraphFromWorktreeStatus(readerPath);
+        return readerPath;
+      }
+      // Broken/stale reader (e.g. the worktree registration was lost): tear it
+      // down and recreate it below rather than wedging the Room forever.
+      git(boundRepo.localPath, ['worktree', 'remove', '--force', readerPath]);
+      await rm(readerPath, { recursive: true, force: true });
+    }
+
+    await mkdir(resolve(readerPath, '..'), { recursive: true });
+    const add = git(boundRepo.localPath, ['worktree', 'add', '--detach', readerPath, baseRef]);
+    if (!add.ok) throw new Error(`reader worktree add failed: ${add.stderr}`);
+    this.excludeCodegraphFromWorktreeStatus(readerPath);
+    return readerPath;
   }
 
   /** Remove a git worktree and clean up. */

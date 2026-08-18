@@ -139,7 +139,7 @@ describe('One ledger, both surfaces', () => {
     for (const name of ['ledgerTextLuminous', 'ledgerText', 'steerText', 'handle']) {
       const definition = styleDefinition(ledgerSource, name);
       expect(definition, `${name} must use the inscription voice`).toMatch(/Typography\.ledger\(\)/);
-      expect(definition, `${name} must stay on the ledger size`).toMatch(/fontSize:\s*16/);
+      expect(definition, `${name} must stay on the ledger size`).toMatch(/fontSize:\s*14/);
     }
 
     // No hue enters the transcript: the glow is ledgerBright at low alpha.
@@ -374,7 +374,7 @@ describe('Machine noise', () => {
     const narration = styleDefinition(activitySource, 'narration');
     expect(narration).toMatch(/Typography\.ledger\(\)/);
     expect(narration).toMatch(/color:\s*groknight\.ledgerBright/);
-    expect(narration).toMatch(/fontSize:\s*16/);
+    expect(narration).toMatch(/fontSize:\s*14/);
     expect(narration).toMatch(/width:\s*'100%'/);
     expect(narration).toMatch(/textShadowColor:\s*groknight\.ledgerGlow/);
     expect(narration).not.toMatch(/paddingLeft/);

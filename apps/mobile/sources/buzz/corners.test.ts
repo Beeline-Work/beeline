@@ -3,11 +3,11 @@ import {
   cornerName,
   cornerStatusPresentation,
   isCornerActive,
+  isCornerTerminal,
   mapRawCornerStatusTag,
   resolveCornerLifecycleStatus,
   roomCornerSignal,
   roomListCorners,
-  selectMostRecentActiveCornerId,
   sortCorners,
   type CornerSummary,
 } from './corners';
@@ -159,44 +159,13 @@ describe('corner navigation model', () => {
     expect(isCornerActive('archived')).toBe(false);
   });
 
-  describe('selectMostRecentActiveCornerId', () => {
-    it('picks the most recently active corner over a stale one', () => {
-      const id = selectMostRecentActiveCornerId([
-        { subchannelId: 'stale', status: 'live', timestamp: 1 },
-        { subchannelId: 'fresh', status: 'live', timestamp: 100 },
-      ]);
-      expect(id).toBe('fresh');
-    });
-
-    it('prefers an actively-worked corner over a merely more recent terminal one', () => {
-      const id = selectMostRecentActiveCornerId([
-        { subchannelId: 'working', status: 'live', timestamp: 1 },
-        { subchannelId: 'merged', status: 'merged', timestamp: 100 },
-      ]);
-      expect(id).toBe('working');
-    });
-
-    it('only considers each corner\'s latest status, not every historical update', () => {
-      const id = selectMostRecentActiveCornerId([
-        { subchannelId: 'a', status: 'live', timestamp: 1 },
-        { subchannelId: 'a', status: 'failed', timestamp: 50 },
-        { subchannelId: 'b', status: 'live', timestamp: 10 },
-      ]);
-      // 'a' is now failed (inactive), so the only active candidate is 'b'.
-      expect(id).toBe('b');
-    });
-
-    it('falls back to the most recent overall when nothing is active', () => {
-      const id = selectMostRecentActiveCornerId([
-        { subchannelId: 'a', status: 'merged', timestamp: 1 },
-        { subchannelId: 'b', status: 'archived', timestamp: 50 },
-      ]);
-      expect(id).toBe('b');
-    });
-
-    it('returns undefined for no corners', () => {
-      expect(selectMostRecentActiveCornerId([])).toBeUndefined();
-    });
+  it('names exactly the three terminal statuses', () => {
+    expect(isCornerTerminal('merged')).toBe(true);
+    expect(isCornerTerminal('failed')).toBe(true);
+    expect(isCornerTerminal('archived')).toBe(true);
+    expect(isCornerTerminal('live')).toBe(false);
+    expect(isCornerTerminal('needs-attention')).toBe(false);
+    expect(isCornerTerminal('open')).toBe(false);
   });
 
   describe('resolveCornerLifecycleStatus', () => {

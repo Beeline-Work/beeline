@@ -60,6 +60,14 @@ export interface BodyConfig {
   /** Base directory for TLC workspaces and git worktrees. */
   workspaceRoot: string;
   /**
+   * Optional override for where corner edit worktrees are placed. Corners must
+   * live at a clean, top-level path (never buried inside the source checkout's
+   * `.git`) so a harness's project-root reflex cannot resolve back to the
+   * shared primary checkout — see `corner-isolation.ts`. When unset, Body
+   * derives a hidden sibling of the source checkout. Mainly a test/override hook.
+   */
+  cornersRoot?: string;
+  /**
    * Per-room-instance harness state directory (see `agent-home.ts`). When set,
    * this Room's ACP children get their own `CLAUDE_CONFIG_DIR`/`CODEX_HOME`/
    * XDG state+cache/`TMPDIR` while still sharing the operator's credentials and

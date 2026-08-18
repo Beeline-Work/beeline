@@ -287,7 +287,7 @@ export function hydrateRoomEntry(
   /** One unreachable Workspace must never cost the transcript the others. */
   const readAgents = (communityId: string): Promise<Agent[]> =>
     client.listAgents(communityId).catch((error) => {
-      handlers.onStepFailed(`agents:${communityId}`, error);
+      if (!deps.isCancelled()) handlers.onStepFailed(`agents:${communityId}`, error);
       return [] as Agent[];
     });
 
@@ -304,7 +304,10 @@ export function hydrateRoomEntry(
   const agentUnion = (async () => {
     const primary = await primaryAgentsRead;
     if (deps.isCancelled()) return primary;
-    live(() => handlers.onAgents?.(primary));
+    // An empty roster read must never wipe names the cache already holds —
+    // that transient clear is the seed-placeholder flash this union exists to
+    // remove in the first place.
+    if (primary.length > 0) live(() => handlers.onAgents?.(primary));
     const [channelCommunityId, activeCommunityId, communities] = await Promise.all([
       workspaceRead.catch(() => null),
       deps.viewerActiveCommunityId?.().catch(() => null) ?? Promise.resolve(null),
@@ -320,7 +323,7 @@ export function hydrateRoomEntry(
     const rosters = await Promise.all(gapFillers.map(readAgents));
     if (deps.isCancelled()) return primary;
     const merged = [...mergeAgentRosters([primary, ...rosters]).values()];
-    live(() => handlers.onAgents?.(merged));
+    if (merged.length > 0) live(() => handlers.onAgents?.(merged));
     return merged;
   })();
 

@@ -739,6 +739,59 @@ describe('agent activity projection', () => {
     ]);
   });
 
+  it('carries the compact per-call receipt that backs the review sheet\'s real detail', () => {
+    // Body's `observed` array is the only source of per-call detail for a
+    // folded call — the calls themselves never earn their own wire event, so
+    // without this the review sheet has nothing beyond the tally to show.
+    expect(
+      agentActivityDetails(
+        JSON.stringify({
+          update: {
+            sessionUpdate: 'activity_summary',
+            content: { type: 'text', text: '' },
+            rollup: { read: 1, ran: 1 },
+            observed: [
+              { verb: 'read', target: 'src/foo.ts', result: 'export function foo() {}' },
+              { verb: 'ran', target: 'npm test -- --run' },
+            ],
+          },
+        }),
+      ),
+    ).toEqual([
+      {
+        kind: 'summary',
+        title: 'Summary',
+        rollup: { read: 1, ran: 1 },
+        observed: [
+          { verb: 'read', target: 'src/foo.ts', result: 'export function foo() {}' },
+          { verb: 'ran', target: 'npm test -- --run' },
+        ],
+      },
+    ]);
+  });
+
+  it('drops a malformed observed entry rather than rendering a verbless row', () => {
+    expect(
+      agentActivityDetails(
+        JSON.stringify({
+          update: {
+            sessionUpdate: 'activity_summary',
+            content: { type: 'text', text: '' },
+            rollup: { read: 1 },
+            observed: [{ target: 'src/foo.ts' }, { verb: 'read', target: 'src/foo.ts' }],
+          },
+        }),
+      ),
+    ).toEqual([
+      {
+        kind: 'summary',
+        title: 'Summary',
+        rollup: { read: 1 },
+        observed: [{ verb: 'read', target: 'src/foo.ts' }],
+      },
+    ]);
+  });
+
   it('carries a reads-only batch, which used to project as nothing at all', () => {
     // No major action means no summary text, and the whole batch used to be
     // dropped — the corner went silent during the exact stretch the agent was

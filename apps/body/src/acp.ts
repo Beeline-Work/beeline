@@ -453,6 +453,20 @@ export class AcpClient extends EventEmitter {
     this.notify('session/cancel', { sessionId });
   }
 
+  /**
+   * The portable model/effort setter, confirmed round-tripping on pi/codex/
+   * claude (report `data/buzzy-multiagent-runtimes/report.md` §3.2). The
+   * param is `configId`, not `optionId` — `session/set_model` is NOT
+   * portable and must not be used. Returns the runtime's updated
+   * `configOptions`. Callers must validate `configId`/`value` against the
+   * allow-listed catalog before calling this — see
+   * `apps/body/src/model-config.ts`'s `assertModelConfigOptionAllowed`; this
+   * method performs no policy checks of its own.
+   */
+  async setConfigOption(sessionId: string, configId: string, value: string): Promise<unknown> {
+    return this.request('session/set_config_option', { sessionId, configId, value });
+  }
+
   private clearTimer(p: Pending): void {
     if (p.timer) {
       clearTimeout(p.timer);

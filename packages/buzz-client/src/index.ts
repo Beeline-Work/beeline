@@ -14,6 +14,10 @@ export type {
   RepositoryBinding,
   AgentSoulInput,
   AgentSoulProfile,
+  AgentModelConfigOption,
+  AgentModelCatalog,
+  AgentModelConfigInput,
+  AgentModelConfig,
   PersonProfile,
   PersonProfileInput,
   MediaBlob,
@@ -78,6 +82,8 @@ export {
   KIND_PERSON_PROFILE,
   KIND_AGENT_PRESENCE,
   KIND_AGENT_DRAFT,
+  KIND_AGENT_MODEL_CATALOG,
+  KIND_AGENT_MODEL_CONFIG,
   KIND_AUTH,
   TAG_AGENT_ACTIVITY,
   TAG_AGENT_PRESENCE,
@@ -85,6 +91,8 @@ export {
   TAG_AGENT,
   TAG_AGENT_PAIRING,
   TAG_AGENT_SOUL,
+  TAG_AGENT_MODEL_CATALOG,
+  TAG_AGENT_MODEL_CONFIG,
   TAG_PERSON_PROFILE,
   TAG_MERGE_APPROVAL,
   TAG_PARENT,
@@ -220,6 +228,17 @@ export {
   isAgentIdentityEvent,
   parseAgent,
 } from './agent.js';
+
+export {
+  ALLOWED_AGENT_MODEL_CONFIG_CATEGORIES,
+  isAllowedAgentModelConfigCategory,
+  parseAgentModelCatalog,
+  publishAgentModelCatalog,
+  getAgentModelCatalog,
+  parseAgentModelConfig,
+  setAgentModelConfig,
+  getAgentModelConfig,
+} from './agent-model-config.js';
 
 export {
   fallbackAgentName,

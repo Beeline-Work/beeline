@@ -141,6 +141,49 @@ export function assertModelConfigOptionAllowed(
   }
 }
 
+/**
+ * Where a `{model, effort}` selection lands among a session's advertised
+ * axes. `effort` is deliberately matched against whichever of
+ * `thought_level`/`effort`/`reasoning_effort` a harness actually advertises
+ * (claude: effort, codex: reasoning_effort, pi: thought_level) — the
+ * category name, not the harness, decides the match, so no per-harness
+ * branching is needed here or in any caller.
+ */
+function modelSelectionTargets(
+  selection: { model?: string; effort?: string },
+): Array<{ categories: readonly string[]; label: string; value: string | undefined }> {
+  return [
+    { categories: ['model'], label: 'model', value: selection.model },
+    {
+      categories: ['thought_level', 'effort', 'reasoning_effort'],
+      label: 'effort',
+      value: selection.effort,
+    },
+  ];
+}
+
+/**
+ * Validate a `{model, effort}` selection against a session's RAW advertised
+ * catalog and throw a clear, specific error for the first axis that is
+ * missing or whose value isn't advertised. Unlike `applyAgentModelSelection`
+ * (which logs and skips so a bad in-app pick can never abort a live
+ * session), this is for a context — pairing — where a bad selection must
+ * fail loudly instead of silently launching with the wrong default.
+ */
+export function assertModelSelectionAdvertised(
+  advertisedOptions: AgentModelConfigOption[],
+  selection: { model?: string; effort?: string },
+): void {
+  for (const target of modelSelectionTargets(selection)) {
+    if (!target.value) continue;
+    const axis = advertisedOptions.find((option) => target.categories.includes(option.category));
+    if (!axis) {
+      throw new Error(`this agent does not advertise a selectable ${target.label}`);
+    }
+    assertModelConfigOptionAllowed(axis.id, target.value, advertisedOptions);
+  }
+}
+
 /** Minimal shape `applyAgentModelSelection` needs from an ACP client. */
 export interface ModelConfigSettable {
   setConfigOption(sessionId: string, configId: string, value: string): Promise<unknown>;
@@ -160,11 +203,7 @@ export async function applyAgentModelSelection(
   advertisedOptions: AgentModelConfigOption[],
   selection: { model?: string; effort?: string },
 ): Promise<void> {
-  const targets: Array<{ categories: readonly string[]; value: string | undefined }> = [
-    { categories: ['model'], value: selection.model },
-    { categories: ['thought_level', 'effort', 'reasoning_effort'], value: selection.effort },
-  ];
-  for (const target of targets) {
+  for (const target of modelSelectionTargets(selection)) {
     if (!target.value) continue;
     const axis = advertisedOptions.find((option) => target.categories.includes(option.category));
     if (!axis) continue;

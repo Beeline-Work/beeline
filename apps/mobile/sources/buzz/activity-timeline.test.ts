@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildActivityTimeline, buildTurnActivity } from './activity-timeline';
+import { buildActivityTimeline, buildTurnActivity, latestCornerPlan } from './activity-timeline';
 
 describe('buildActivityTimeline', () => {
   it('keeps a thinking firehose as one quiet progress item', () => {
@@ -276,5 +276,35 @@ describe('buildTurnActivity', () => {
     // Every observation row needs a stable, unique id for React and for the
     // review sheet's own drill-down state.
     expect(new Set(turn.observations.map((action) => action.id)).size).toBe(2);
+  });
+});
+
+describe('latestCornerPlan', () => {
+  it('returns undefined when no message has published a plan (no empty pin)', () => {
+    expect(latestCornerPlan([{ activity: [{ kind: 'output', title: 'Update', text: 'hi' }] }])).toBeUndefined();
+    expect(latestCornerPlan([])).toBeUndefined();
+  });
+
+  it('returns the single published plan', () => {
+    const plan = { items: [{ step: 'Trace projection', status: 'completed' as const }] };
+    expect(latestCornerPlan([{ activity: [{ kind: 'tool', title: 'Plan', plan }] }])).toEqual(plan);
+  });
+
+  it('a later plan update replaces the whole checklist, in message order across the transcript', () => {
+    const first = { items: [{ step: 'Trace projection', status: 'in_progress' as const }] };
+    const second = {
+      items: [
+        { step: 'Trace projection', status: 'completed' as const },
+        { step: 'Build drill-down', status: 'in_progress' as const },
+      ],
+    };
+
+    expect(
+      latestCornerPlan([
+        { activity: [{ kind: 'tool', title: 'Plan', plan: first }] },
+        { activity: [{ kind: 'output', title: 'Update', text: 'still working' }] },
+        { activity: [{ kind: 'tool', title: 'Plan', plan: second }] },
+      ]),
+    ).toEqual(second);
   });
 });

@@ -4,6 +4,8 @@
  */
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hasWriteTools, inventoryForMcpServers } from './mcp-inventory.js';
@@ -37,6 +39,8 @@ import {
   CORNER_TURN_SUMMARY_MAX_CHARS,
   cornerNameForIntent,
   cornerOpenTaskPrompt,
+  taskDescriptionFromCornerRequest,
+  taskSlugForCornerIntent,
   isChannelAddressedMessage,
   isRoomConversationMessage,
   isChannelTaskRequest,
@@ -1133,6 +1137,100 @@ describe('Room poll resilience', () => {
       expect(
         published.some((event) => event.content?.includes('taking longer than usual')),
       ).toBe(false);
+      await scheduler.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never threads a stall notice to an event outside the channel it publishes into', async () => {
+    // A corner's opening turn is driven by the Room event that opened it —
+    // `requestId` here stands in for that Room event, while `channelId` is
+    // the corner. A relay rejects a kind:9 reply whose `e`-tagged parent
+    // carries a different `h` tag ("parent event belongs to a different
+    // channel"), so the stall notice must never thread to `requestId` unless
+    // the caller explicitly vouches it lives in `channelId` via `replyToId`.
+    vi.useFakeTimers();
+    try {
+      const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
+      const body = new Body(
+        {
+          agentBinary: '/nonexistent',
+          mcpBinary: '/nonexistent',
+          agentEnv: {},
+          workspaceRoot: '/tmp/buzzy-stall-cross-channel',
+          relayBaseUrl: 'http://relay.test',
+          relayHost: 'relay.test',
+          relayScheme: 'http',
+          relayWsUrl: 'ws://relay.test',
+          autoApprovePermissions: true,
+        },
+        newIdentity('cross-channel-operator'),
+        newIdentity('cross-channel-agent'),
+        undefined,
+        { scheduler },
+      );
+      const published: NostrEvent[] = [];
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+          const event = JSON.parse(String(init?.body)) as NostrEvent;
+          // Mirror the relay's real validation: reject a kind:9 reply whose
+          // `e`-tagged parent event is known to live in a different channel.
+          // The fixture's only cross-channel event is the Room's own
+          // corner-open message, which never actually lives in `the-corner`.
+          if (event.tags.some((tag) => tag[0] === 'e' && tag[1] === 'room-open-corner-event')) {
+            return new Response(
+              JSON.stringify({ error: 'invalid: parent event belongs to a different channel' }),
+              { status: 400 },
+            );
+          }
+          published.push(event);
+          return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+        }),
+      );
+
+      const sessionCancel = vi.fn();
+      const sessionPrompt = vi.fn(
+        (_sessionId: string, _prompt: string, timeoutMs: number) =>
+          new Promise<never>((_resolve, reject) =>
+            setTimeout(
+              () =>
+                reject(new Error(`ACP session/prompt timed out after ${timeoutMs}ms of inactivity`)),
+              timeoutMs,
+            ),
+          ),
+      );
+      const session = {
+        channelId: 'the-corner',
+        sessionId: 'corner-session',
+        mode: 'edit',
+        client: { sessionPrompt, sessionCancel },
+        lifecycle: {
+          activate: vi.fn().mockResolvedValue('corner-session'),
+          suspend: vi.fn().mockResolvedValue(undefined),
+        },
+      } as never;
+
+      // `requestId` names the Room event that opened this corner —
+      // deliberately NOT in `channelId` — and no `replyToId` is given,
+      // exactly like `startAgentTask`'s corner-open call.
+      const prompt = Reflect.get(body, 'promptAgent').call(body, session, 'hello', {
+        channelId: 'the-corner',
+        requestId: 'room-open-corner-event',
+      });
+      const rejection = expect(prompt).rejects.toThrow('timed out after');
+
+      await vi.advanceTimersByTimeAsync(ROOM_AGENT_STALL_NOTICE_MS + 2);
+
+      const stallNotice = published.find((event) =>
+        event.content.includes('taking longer than usual'),
+      );
+      expect(stallNotice).toBeDefined();
+      expect(stallNotice!.tags.some((tag) => tag[0] === 'e')).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(ROOM_AGENT_PROMPT_TIMEOUT_MS);
+      await rejection;
       await scheduler.dispose();
     } finally {
       vi.useRealTimers();
@@ -3213,6 +3311,55 @@ describe('corner display names', () => {
   it('uses a corner fallback without exposing the subchannel noun', () => {
     expect(cornerNameForIntent('  ', '12345678-abcd')).toBe('corner-12345678');
   });
+
+  it('derives the name from the actual task, not the "open a corner" verb that opened it', () => {
+    expect(cornerNameForIntent('open a corner and add color to code blocks', 'room-id')).toBe(
+      'add-color-to-code-blocks',
+    );
+    expect(cornerNameForIntent('open the corner and add color to code blocks', 'room-id')).toBe(
+      'add-color-to-code-blocks',
+    );
+    expect(cornerNameForIntent('please open a new corner to fix the flaky test', 'room-id')).toBe(
+      'fix-the-flaky-test',
+    );
+  });
+
+  it('strips a trailing "...in a new corner" mention just as well as a leading one', () => {
+    expect(
+      cornerNameForIntent('start working on syntax highlighting in a new corner', 'room-id'),
+    ).toBe('syntax-highlighting');
+  });
+
+  it('falls back to the collision-safe short suffix when the request is only the imperative itself', () => {
+    expect(cornerNameForIntent('open a corner', 'room-id')).toBe('corner-room-id');
+    expect(cornerNameForIntent('open up a new corner', 'room-id')).toBe('corner-room-id');
+  });
+
+  it('leaves a message with no corner-open imperative untouched (the agent-originated write-request flow)', () => {
+    expect(cornerNameForIntent('add color to code blocks', 'room-id')).toBe(
+      'add-color-to-code-blocks',
+    );
+  });
+
+  it('taskSlugForCornerIntent is the same task-descriptive basis openSubchannel uses for both the corner name and the feature branch', () => {
+    // cornerNameForIntent(intent, parentId) === taskSlugForCornerIntent(intent)
+    // whenever a real task slug exists — the corner-id fallback only kicks in
+    // when the slug is empty, which is exactly what `openSubchannel` needs to
+    // decide whether to fold the slug into the git branch name.
+    const intent = 'open a corner and add color to code blocks';
+    expect(taskSlugForCornerIntent(intent)).toBe('add-color-to-code-blocks');
+    expect(cornerNameForIntent(intent, 'room-id')).toBe(taskSlugForCornerIntent(intent));
+    expect(taskSlugForCornerIntent('open a corner')).toBe('');
+  });
+
+  it('taskDescriptionFromCornerRequest strips only the corner-open imperative, keeping the rest of the sentence intact', () => {
+    expect(
+      taskDescriptionFromCornerRequest('open a corner and add color to code blocks'),
+    ).toBe('add color to code blocks');
+    expect(taskDescriptionFromCornerRequest('Fix OAuth callback + retry state')).toBe(
+      'Fix OAuth callback + retry state',
+    );
+  });
 });
 
 describe('live steering loop', () => {
@@ -3465,6 +3612,130 @@ describe('corner narrative persistence', () => {
       );
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('corner merge-ready surfaces a real committed change', () => {
+  function gitCommand(cwd: string, args: string[]): string {
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    if (result.status !== 0) throw new Error(result.stderr);
+    return result.stdout.trim();
+  }
+
+  /** A worktree with one real committed change on its feature branch and a
+   *  clean tree, matching a normal completed corner turn. */
+  function committedFeatureWorktree(): string {
+    const directory = mkdtempSync(join(tmpdir(), 'buzzy-merge-ready-'));
+    gitCommand(directory, ['init', '-b', 'main']);
+    gitCommand(directory, ['config', 'user.name', 'Merge Ready Test']);
+    gitCommand(directory, ['config', 'user.email', 'merge-ready@test.invalid']);
+    writeFileSync(join(directory, 'README.md'), '# Before\n');
+    gitCommand(directory, ['add', '.']);
+    gitCommand(directory, ['commit', '-m', 'base']);
+    gitCommand(directory, ['checkout', '-b', 'feature/ready']);
+    writeFileSync(join(directory, 'README.md'), '# After\n');
+    gitCommand(directory, ['add', 'README.md']);
+    gitCommand(directory, ['commit', '-m', 'real change']);
+    return directory;
+  }
+
+  function newBody(agent: ReturnType<typeof newIdentity>) {
+    return new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: '/workspace',
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+    );
+  }
+
+  it('publishes merge-ready for a corner turn that committed a real change to a clean tree', async () => {
+    const agent = newIdentity('merge-ready-agent');
+    const body = newBody(agent);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const worktreePath = committedFeatureWorktree();
+    try {
+      const info = {
+        subchannelId: 'corner-merge-ready',
+        worktreePath,
+        featureBranch: 'feature/ready',
+        role: agent,
+        session: { channelId: 'corner-merge-ready', sessionId: 'session' } as never,
+        lastPolledAt: 0,
+        archived: false,
+        boundRepo: { repo: 'repo', targetBranch: 'refs/heads/main' },
+      };
+      body.registerSubchannel(info);
+
+      const ready = await Reflect.get(body, 'publishMergeReady').call(body, info);
+
+      expect(ready).toBe(true);
+      const readyEvent = published.find((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+      );
+      expect(readyEvent).toBeDefined();
+      const notReadyEvent = published.find((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
+      );
+      expect(notReadyEvent).toBeUndefined();
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
+  it('publishes a non-empty reason when the worktree still has uncommitted work, for the mobile review panel to show', async () => {
+    const agent = newIdentity('merge-not-ready-agent');
+    const body = newBody(agent);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const worktreePath = committedFeatureWorktree();
+    try {
+      // An unstaged edit to an already-tracked file: real, incomplete work.
+      writeFileSync(join(worktreePath, 'README.md'), '# After\n\nUnsaved edit\n');
+      const info = {
+        subchannelId: 'corner-merge-not-ready',
+        worktreePath,
+        featureBranch: 'feature/ready',
+        role: agent,
+        session: { channelId: 'corner-merge-not-ready', sessionId: 'session' } as never,
+        lastPolledAt: 0,
+        archived: false,
+        boundRepo: { repo: 'repo', targetBranch: 'refs/heads/main' },
+      };
+      body.registerSubchannel(info);
+
+      const ready = await Reflect.get(body, 'publishMergeReady').call(body, info);
+
+      expect(ready).toBe(false);
+      const notReadyEvent = published.find((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
+      );
+      expect(notReadyEvent?.content).toBeTruthy();
+      expect(notReadyEvent!.content).toContain('Nothing ready to merge yet');
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
     }
   });
 });

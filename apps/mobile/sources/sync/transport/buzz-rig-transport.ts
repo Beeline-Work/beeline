@@ -624,7 +624,7 @@ export class BuzzRigTransport implements RigTransport {
   ): Promise<{ content: string; isBinary?: boolean } | null> {
     const client = await this.getClient();
     const mergeInfo = await this.getSubchannelMergeTarget(sessionId);
-    if (!mergeInfo) return null;
+    if (!mergeInfo || !('target' in mergeInfo)) return null;
     const events = await client.query([
       {
         kinds: [CHANGE_REVIEW_EVENT_KIND],
@@ -681,7 +681,7 @@ export class BuzzRigTransport implements RigTransport {
   async workspaceFilesRead(sessionId: SessionId): Promise<ChangedFile[]> {
     const client = await this.getClient();
     const mergeInfo = await this.getSubchannelMergeTarget(sessionId);
-    if (!mergeInfo) return [];
+    if (!mergeInfo || !('target' in mergeInfo)) return [];
     const events = await client.query([
       {
         kinds: [CHANGE_REVIEW_EVENT_KIND],
@@ -726,12 +726,20 @@ export class BuzzRigTransport implements RigTransport {
   /**
    * Read the merge target from the subchannel's control messages.
    * The body posts a control message with repo/branch/tip tags on subchannel open.
+   *
+   * A corner that finished but has nothing reviewable (uncommitted work, or
+   * no committed change at all) returns `{ reason }` instead of `null` —
+   * `null` alone can't distinguish "nothing has happened yet" from "the
+   * agent tried and explicitly declined," and the corner-lifecycle event
+   * carrying that explanation is deliberately excluded from the transcript
+   * (DESIGN.md: corner status is never inscribed there), so this is the only
+   * place the human can learn why the review panel is empty.
    */
   async getSubchannelMergeTarget(subchannelId: string): Promise<{
     target: MergeTarget;
     channelId: string;
     authorPubkey: string;
-  } | null> {
+  } | { reason: string } | null> {
     const client = await this.getClient();
     // Activity frames can push merge-ready outside the short transcript
     // backfill window. Fetch body controls directly so review and approval
@@ -741,7 +749,7 @@ export class BuzzRigTransport implements RigTransport {
     ]);
     for (const event of [...events].sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id)).reverse()) {
       if ((event.tags ?? []).some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready')) {
-        return null;
+        return event.content ? { reason: event.content } : null;
       }
       const repo = tagValue(event, 'repo');
       const branch = tagValue(event, 'branch');
@@ -1006,7 +1014,7 @@ export class BuzzRigTransport implements RigTransport {
     // If input has channelId, try to find merge target there.
     if (input.channelId) {
       const mergeInfo = await this.getSubchannelMergeTarget(input.channelId);
-      if (mergeInfo) {
+      if (mergeInfo && 'target' in mergeInfo) {
         return this.submitMergeApproval(input.channelId, mergeInfo.target);
       }
       return { success: false, message: 'No merge target found in subchannel messages' };

@@ -37,6 +37,7 @@ const REPEATING_ROW_STYLES = [
   'rowMark',
   'rowCopy',
   'rowTitleLine',
+  'rowGutter',
   'cornerRow',
   'cornerDropdown',
   'cornerPeek',
@@ -60,6 +61,7 @@ describe('Room list — Grok Mono Hull invariants', () => {
   it('routes buttons, reveal, press, and the live signal through shared MonoHull primitives', () => {
     for (const primitive of [
       'BrittlePress',
+      'HullLivePulse',
       'HullWaveSignal',
       'MonoButton',
       'PixelGateReveal',
@@ -108,24 +110,81 @@ describe('Room list — Grok Mono Hull invariants', () => {
     }
   });
 
-  it('spends the gold accent only on genuinely live corner work', () => {
-    // DESIGN.md fixes gold to agent identity, live/online presence, owner role,
-    // and merge approval. Unread and attention states here must carry on weight
-    // and luminance instead, so this screen has exactly three accent uses: the
-    // Room row's live glyph, the live corner's glyph, and the live-count in the
-    // section heading — each redundant with a glyph or the LIVE wave label.
+  it('spends the gold accent only on genuinely live agent work', () => {
+    // Gold means exactly one thing product-wide: an agent is alive and working.
+    // On this screen that is a Room with a live corner — the row's ◆ glyph, its
+    // corner count, the corner's own glyph in the dropdown, and the live tally
+    // in the section heading. Everything else, unread and needs-attention
+    // included, escalates on weight and luminance instead.
     const accentStyles = [...source.matchAll(/ {2}([A-Za-z0-9_]+): \{[^}]*groknight\.accent/g)].map(
       (match) => match[1],
     );
-    expect(accentStyles.sort()).toEqual(['cornerGlyphLive', 'indexSignalCount', 'roomGlyphLive']);
-    expect(styleBlock(source, 'rowUnread')).not.toMatch(/accent/);
-    expect(styleBlock(source, 'rowTitleUnread')).not.toMatch(/accent/);
+    expect(accentStyles.sort()).toEqual([
+      'cornerGlyphLive',
+      'cornerPeekCountLive',
+      'indexSignalCount',
+      'roomGlyphLive',
+    ]);
+    for (const name of ['rowUnread', 'rowTitleUnread', 'roomGlyphAttention', 'rowAgeUnread']) {
+      expect(styleBlock(source, name), `${name} must not take gold`).not.toMatch(/accent/);
+    }
+    // Every gold mark on a row is driven by the same derived `live` flag, so a
+    // Room that is merely unread or merely busy can never pick it up.
+    expect(source).toContain('live && styles.roomGlyphLive');
+    expect(source).toContain('row.live && styles.cornerPeekCountLive');
+    expect(source).toContain('<RoomRowMark attention={row.attention} glyph={row.glyph} live={row.live} />');
+  });
+
+  it('runs the live pulse only on a Room that is actually live', () => {
+    // The gold ◆ breathes; a quiet row must not pay for an animation clock it
+    // never uses, and the mark stays memoized so a list-level state change
+    // (presence, the age tick) cannot rebuild every row's glyph.
+    expect(source).toContain('const RoomRowMark = React.memo(');
+    expect(source).toContain('if (!live) return <View style={styles.rowMark}>{mark}</View>;');
+    expect(source).toContain('<HullLivePulse active style={styles.rowMark}>');
+  });
+
+  it('reads on exactly three tones: name, activity line, gutter marginalia', () => {
+    // The ledger's luminance ladder at index scale. The name is the brightest
+    // thing on the row; the activity line sits a step down; everything the
+    // right gutter carries is ghosted.
+    expect(styleBlock(source, 'rowTitle')).toContain('groknight.textPrimary');
+    expect(styleBlock(source, 'rowPreview')).toContain('groknight.ledgerQuiet');
+    for (const name of ['rowAge', 'cornerPeekCount', 'cornerPeekCaret']) {
+      expect(styleBlock(source, name), `${name} belongs to the ghosted tier`).toContain(
+        'groknight.ledgerGhost',
+      );
+    }
+    // Unread spends the index's one weight step plus one luminance step — it is
+    // the only place on this screen weight is spent at all.
+    expect(styleBlock(source, 'rowTitle')).toContain('Typography.default()');
+    expect(styleBlock(source, 'rowTitleUnread')).toContain("Typography.default('semiBold')");
+    expect(styleBlock(source, 'rowTitleUnread')).toContain('groknight.ledgerBright');
+  });
+
+  it('hangs every row\u2019s metadata in one fixed right gutter', () => {
+    // Marginalia, exactly as the transcript does it: absolutely positioned at a
+    // fixed width, so an age stamp or a corner count can never reflow the copy
+    // beside it, and every row reserves the column whether or not it has one.
+    const gutter = styleBlock(source, 'rowGutter');
+    expect(gutter).toMatch(/position: 'absolute'/);
+    expect(gutter).toContain('width: ROW_GUTTER_WIDTH');
+    expect(gutter).toMatch(/alignItems: 'flex-end'/);
+    expect(styleBlock(source, 'indexRow')).toContain(
+      'paddingRight: SCREEN_INSET + ROW_GUTTER_WIDTH',
+    );
+    // The stamp lives in the gutter, never back on the name's own line.
+    expect(styleBlock(source, 'rowAge')).not.toContain("marginLeft: 'auto'");
+    expect(source).toContain('<View pointerEvents="box-none" style={styles.rowGutter}>');
+    // Rooms and DMs use the same cell, the same gutter, and the same divider.
+    expect(source.match(/style=\{styles\.rowGutter\}/g)).toHaveLength(2);
+    expect(source.match(/style=\{styles\.roomCell\}/g)).toHaveLength(2);
   });
 
   it('shows a human preview line, never raw plumbing or a placeholder id', () => {
     // The preview is whatever `roomPreviewText` sanitized at ingest; the row
     // must not re-derive or re-format message content itself.
-    expect(source).toContain('item.latestMessage ??');
+    expect(source).toContain('{row.preview}');
     // No slicing, splitting, or rewriting of message text on this screen — the
     // one sanitizer is `roomPreviewText`, applied where the preview is stored.
     expect(source).not.toMatch(/latestMessage[^\n]*\.(?:slice|split|replace|substring)\(/);
@@ -133,7 +192,7 @@ describe('Room list — Grok Mono Hull invariants', () => {
   });
 
   it('attributes the preview with the same identity waterfall the rest of the app uses', () => {
-    expect(source).toContain('previewAuthorLabel(');
+    expect(source).toContain('roomRowPresentation(item, authorNames)');
     expect(source).toContain("names.set(identity.publicKey, 'You')");
   });
 
@@ -146,12 +205,14 @@ describe('Room list — Grok Mono Hull invariants', () => {
 
   it('renders the corner count from exactly the corners the dropdown lists', () => {
     // Captain's hard requirement: only open/active corners are counted and
-    // listed. `roomListCorners` is the single filter, and both the count and the
-    // dropdown map over its result — nothing else may compute a corner total.
-    expect(source).toContain('const corners = roomListCorners(item.corners ?? []);');
+    // listed. `roomRowPresentation` resolves that one set through
+    // `roomListCorners`, and both the count and the dropdown read its result —
+    // nothing on this screen may compute a corner total of its own.
+    expect(source).toContain('const corners = row.corners;');
     expect(source).toContain('const canExpand = corners.length > 0;');
     expect(source).toContain('{corners.length}');
     expect(source).toContain('{corners.map((corner) => {');
+    expect(source).not.toContain('roomListCorners(');
     expect(source).not.toMatch(/item\.corners(?:\s*\?\?\s*\[\])?\.length/);
   });
 
@@ -160,8 +221,26 @@ describe('Room list — Grok Mono Hull invariants', () => {
   });
 
   it('keeps 44pt touch targets on every index control', () => {
+    /** A minimum written either as a literal or as one of the screen's own
+     * layout constants — both are real, and the constant is what a row height
+     * shared by every row in the index should be. */
+    const minimumTouchSize = (name: string): number => {
+      const written = [
+        ...styleBlock(source, name).matchAll(/min(?:Width|Height): ([A-Z_0-9]+|\d+)/g),
+      ].map((match) => match[1]);
+      expect(written.length, `${name} declares no minimum size`).toBeGreaterThan(0);
+      const values = written.map((token) => {
+        if (/^\d+$/.test(token)) return Number(token);
+        const declared = source.match(new RegExp(`const ${token} = (\\d+);`))?.[1];
+        expect(declared, `${name} references an undeclared ${token}`).toBeTruthy();
+        return Number(declared);
+      });
+      // `minWidth: 0` is a flex guard, not a touch bound — the target is the
+      // largest minimum the style declares.
+      return Math.max(...values);
+    };
     for (const name of ['headerAction', 'indexRow', 'cornerPeek', 'cornerRow']) {
-      expect(styleBlock(source, name)).toMatch(/min(?:Width|Height): (?:4[4-9]|[5-9]\d)/);
+      expect(minimumTouchSize(name), `${name} is under the 44pt floor`).toBeGreaterThanOrEqual(44);
     }
     for (const name of ['railButtonSlot', 'railCommand', 'drawerTrigger']) {
       expect(styleBlock(railSource, name)).toMatch(/(?:height|minHeight): (?:4[4-9]|[5-9]\d)/);
@@ -199,5 +278,30 @@ describe('Workspace rail and chrome — Grok Mono Hull invariants', () => {
     expect(railSource).toContain('<WorkspaceAvatar');
     expect(railSource).toContain('<PersonAvatar');
     expect(railSource).not.toMatch(/borderRadius: \d*size|borderRadius: '50%'/);
+  });
+
+  it('distinguishes the active Workspace by tone, never by a fill behind it', () => {
+    // Selection is redundantly encoded — edge bar, the mark's own heavier
+    // frame, and tone — and none of those three is a background plate.
+    expect(railSource).toContain('!active && styles.railButtonIdle');
+    expect(styleBlock(railSource, 'railButtonIdle')).toMatch(/opacity: 0\.\d+/);
+    for (const name of ['railButton', 'railButtonIdle', 'railButtonSlot']) {
+      expect(styleBlock(railSource, name), `${name} must not fill`).not.toMatch(
+        /backgroundColor/,
+      );
+    }
+  });
+
+  it('keeps the header a Workspace name plus quiet named affordances', () => {
+    // The Workspace name is the anchor; Members and ＋Room sit a tier below it
+    // rather than competing for the top of the ladder.
+    expect(styleBlock(railSource, 'drawerTriggerName')).toContain('groknight.textPrimary');
+    expect(styleBlock(source, 'headerActionText')).toContain('groknight.textMuted');
+    expect(styleBlock(railSource, 'railCommandGlyph')).toContain('groknight.textSecondary');
+  });
+
+  it('opens one coherent settings surface rather than skipping past the hub', () => {
+    expect(source).toContain("onSettings={() => router.push('/buzz/settings' as Href)}");
+    expect(source).not.toContain("router.push('/buzz/settings/identity'");
   });
 });

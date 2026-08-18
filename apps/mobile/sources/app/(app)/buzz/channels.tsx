@@ -37,13 +37,11 @@ import { shortMemberNpub } from '@/buzz/member-display';
 import { ensurePersonNameForWorkspace } from '@/buzz/person-name';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { compactRelativeTime } from '@/buzz/relative-time';
-import { previewAuthorLabel } from '@/buzz/room-list-summary';
 import { isRoomUnread, roomReadAt, useRoomReadState } from '@/buzz/room-read-state';
+import { isRoomAlive, NO_ACTIVITY_PREVIEW, roomRowPresentation } from '@/buzz/room-list-row';
 import {
   cornerStatusPresentation,
   isCornerActive,
-  roomCornerSignal,
-  roomListCorners,
   sortCorners,
   type CornerSummary,
 } from '@/buzz/corners';
@@ -77,6 +75,7 @@ import { cacheLiveSessionEvent, revalidateCachedMessages } from '@/buzz/local-ca
 import {
   BrittlePress,
   hairlineDivider,
+  HullLivePulse,
   HullWaveSignal,
   MonoButton,
   PixelGateReveal,
@@ -87,13 +86,41 @@ import {
  * one-minute tick while it is the focused screen and never on a render loop. */
 const AGE_TICK_MS = 60_000;
 
-/** The one row-leading glyph vocabulary of the index: corner state when a Room
- * has reportable corner work, otherwise whether the Room has been spoken in.
- * `cornerStatusPresentation` stays the single source for the corner glyphs. */
-function roomRowGlyph(signal: ReturnType<typeof roomCornerSignal>, hasMessage: boolean): string {
-  if (signal) return cornerStatusPresentation(signal).glyph;
-  return hasMessage ? '›' : '·';
-}
+/**
+ * A Room row's leading mark. Memoized on primitives and mounted as a live
+ * primitive *only* where there is life: an idle row renders a plain `View`, so
+ * a list of twenty quiet Rooms costs twenty static glyphs and not twenty
+ * animation clocks. The same lesson `TranscriptRow` learned — a FlatList
+ * re-invokes `renderItem` for every visible row on every list-level state
+ * change, so a leaf that rebuilds work on each pass is felt as a freeze.
+ */
+const RoomRowMark = React.memo(function RoomRowMark({
+  attention,
+  glyph,
+  live,
+}: {
+  attention: boolean;
+  glyph: string;
+  live: boolean;
+}) {
+  const mark = (
+    <Text
+      style={[
+        styles.roomGlyph,
+        attention && styles.roomGlyphAttention,
+        live && styles.roomGlyphLive,
+      ]}
+    >
+      {glyph}
+    </Text>
+  );
+  if (!live) return <View style={styles.rowMark}>{mark}</View>;
+  return (
+    <HullLivePulse active style={styles.rowMark}>
+      {mark}
+    </HullLivePulse>
+  );
+});
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -394,9 +421,7 @@ export default function BuzzChannels() {
     [directMessages],
   );
   const hasConversations = orderedChannels.length > 0 || orderedDirectMessages.length > 0;
-  const liveRoomCount = orderedChannels.filter((channel) =>
-    roomCornerSignal(channel.corners ?? []),
-  ).length;
+  const liveRoomCount = orderedChannels.filter((channel) => isRoomAlive(channel.corners)).length;
 
   const activeCommunity = useMemo(
     () => communities.find((community) => community.communityId === activeCommunityId) ?? null,
@@ -762,7 +787,7 @@ export default function BuzzChannels() {
       activeCommunityId={activeCommunityId}
       onSelect={handleSelectCommunity}
       onAdd={() => router.push('/buzz/community' as Href)}
-      onSettings={() => router.push('/buzz/settings/identity' as Href)}
+      onSettings={() => router.push('/buzz/settings' as Href)}
       onWorkspaceSettings={(communityId) =>
         router.push(
           { pathname: '/buzz/settings/workspace', params: { communityId } } as unknown as Href,
@@ -891,54 +916,57 @@ export default function BuzzChannels() {
                   );
                   const age = compactRelativeTime(dm.latestMessageAt ?? dm.updatedAt, ageNow);
                   return (
-                    <TouchableOpacity
-                      accessibilityLabel={`Open direct message with ${dm.peerName}${
-                        unread ? ', unread' : ''
-                      }`}
-                      key={dm.id}
-                      onPress={() => openChannel(dm.id)}
-                      style={[styles.indexRow, styles.rowTrailingReserve]}
-                      testID={`direct-message-${dm.peerPubkey}`}
-                    >
-                      <View style={styles.rowMark}>
-                        {display ? (
-                          <AgentAvatar
-                            pubkey={dm.peerPubkey}
-                            avatarSeed={display.avatarSeed}
-                            avatarUrl={display.avatarUrl}
-                            name={display.name}
-                            size={30}
-                          />
-                        ) : (
-                          <PersonAvatar
-                            pubkey={dm.peerPubkey}
-                            avatarUrl={dm.avatarUrl}
-                            name={dm.peerName}
-                            size={30}
-                          />
-                        )}
-                      </View>
-                      <View style={styles.rowCopy}>
-                        <View style={styles.rowTitleLine}>
-                          <Text
-                            numberOfLines={1}
-                            style={[styles.rowTitle, unread && styles.rowTitleUnread]}
-                          >
-                            {dm.peerName}
-                          </Text>
-                          {unread && <Text style={styles.rowUnread}>NEW</Text>}
-                          {age !== '' && (
-                            <Text style={[styles.rowAge, unread && styles.rowAgeUnread]}>{age}</Text>
-                          )}
-                        </View>
-                        <Text
-                          numberOfLines={1}
-                          style={[styles.rowPreview, unread && styles.rowPreviewUnread]}
+                    <View key={dm.id} style={styles.roomCell}>
+                      <View style={styles.roomRow}>
+                        <TouchableOpacity
+                          accessibilityLabel={`Open direct message with ${dm.peerName}${
+                            unread ? ', unread' : ''
+                          }`}
+                          onPress={() => openChannel(dm.id)}
+                          style={[styles.roomPrimary, styles.indexRow]}
+                          testID={`direct-message-${dm.peerPubkey}`}
                         >
-                          {dm.latestMessage ?? 'Nothing said yet'}
-                        </Text>
+                          <View style={styles.rowMark}>
+                            {display ? (
+                              <AgentAvatar
+                                pubkey={dm.peerPubkey}
+                                avatarSeed={display.avatarSeed}
+                                avatarUrl={display.avatarUrl}
+                                name={display.name}
+                                size={30}
+                              />
+                            ) : (
+                              <PersonAvatar
+                                pubkey={dm.peerPubkey}
+                                avatarUrl={dm.avatarUrl}
+                                name={dm.peerName}
+                                size={30}
+                              />
+                            )}
+                          </View>
+                          <View style={styles.rowCopy}>
+                            <View style={styles.rowTitleLine}>
+                              <Text
+                                numberOfLines={1}
+                                style={[styles.rowTitle, unread && styles.rowTitleUnread]}
+                              >
+                                {dm.peerName}
+                              </Text>
+                              {unread && <Text style={styles.rowUnread}>NEW</Text>}
+                            </View>
+                            <Text
+                              numberOfLines={1}
+                              style={[styles.rowPreview, unread && styles.rowPreviewUnread]}
+                            >
+                              {dm.latestMessage ?? NO_ACTIVITY_PREVIEW}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                        <View pointerEvents="none" style={styles.rowGutter}>
+                          <Text style={[styles.rowAge, unread && styles.rowAgeUnread]}>{age}</Text>
+                        </View>
                       </View>
-                    </TouchableOpacity>
+                    </View>
                   );
                 })}
               </View>
@@ -979,17 +1007,14 @@ export default function BuzzChannels() {
             ) : null
           }
           renderItem={({ item }) => {
-            const corners = roomListCorners(item.corners ?? []);
-            const cornerSignal = roomCornerSignal(item.corners ?? []);
+            const row = roomRowPresentation(item, authorNames);
+            const corners = row.corners;
             const canExpand = corners.length > 0;
             const title = item.title ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`;
             const expanded = canExpand && expandedRoomId === item.id;
             const unread = isRoomUnread(
               roomReadAt(readAt, identity?.publicKey, item.id),
               item.latestMessageAt,
-            );
-            const author = previewAuthorLabel(
-              item.latestMessageAuthor ? authorNames.get(item.latestMessageAuthor) : undefined,
             );
             const age = compactRelativeTime(item.latestMessageAt ?? item.updatedAt, ageNow);
             return (
@@ -999,12 +1024,12 @@ export default function BuzzChannels() {
                     accessibilityHint={
                       canExpand ? `Long press to reveal ${CORNER_LABEL.toLowerCase()}s` : undefined
                     }
-                    accessibilityLabel={`Open ${title}${unread ? ', unread' : ''}, ${
-                      item.participantCount ?? 0
-                    } participants${canExpand ? `, ${corners.length} open ${CHANGES_LABEL}` : ''}`}
-                    contentStyle={
-                      canExpand ? styles.indexRow : [styles.indexRow, styles.rowTrailingReserve]
-                    }
+                    accessibilityLabel={`Open ${title}${unread ? ', unread' : ''}${
+                      row.live ? ', agent working' : ''
+                    }, ${item.participantCount ?? 0} participants${
+                      canExpand ? `, ${corners.length} open ${CHANGES_LABEL}` : ''
+                    }`}
+                    contentStyle={styles.indexRow}
                     delayLongPress={350}
                     onLongPress={
                       canExpand
@@ -1016,17 +1041,7 @@ export default function BuzzChannels() {
                     style={styles.roomPrimary}
                     testID={`room-${item.id}`}
                   >
-                    <View style={styles.rowMark}>
-                      <Text
-                        style={[
-                          styles.roomGlyph,
-                          cornerSignal === 'needs-attention' && styles.roomGlyphAttention,
-                          cornerSignal === 'live' && styles.roomGlyphLive,
-                        ]}
-                      >
-                        {roomRowGlyph(cornerSignal, Boolean(item.latestMessage))}
-                      </Text>
-                    </View>
+                    <RoomRowMark attention={row.attention} glyph={row.glyph} live={row.live} />
                     <View style={styles.rowCopy}>
                       <View style={styles.rowTitleLine}>
                         <Text
@@ -1041,36 +1056,48 @@ export default function BuzzChannels() {
                         </Text>
                         {item.archived && <Text style={styles.rowFlag}>ARCHIVED</Text>}
                         {unread && <Text style={styles.rowUnread}>NEW</Text>}
-                        {age !== '' && (
-                          <Text style={[styles.rowAge, unread && styles.rowAgeUnread]}>{age}</Text>
-                        )}
                       </View>
                       <Text
                         numberOfLines={1}
                         style={[styles.rowPreview, unread && styles.rowPreviewUnread]}
                       >
-                        {author !== '' && <Text style={styles.rowPreviewAuthor}>{author} </Text>}
-                        {item.latestMessage ?? 'Nothing said yet'}
+                        {row.author !== '' && (
+                          <Text style={styles.rowPreviewAuthor}>{row.author} </Text>
+                        )}
+                        {row.preview}
                       </Text>
                     </View>
                   </BrittlePress>
-                  {canExpand && (
-                    <TouchableOpacity
-                      accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${corners.length} open ${
-                        corners.length === 1 ? CORNER_LABEL : CHANGES_LABEL
-                      } in ${title}`}
-                      accessibilityRole="button"
-                      accessibilityState={{ expanded }}
-                      onPress={() =>
-                        setExpandedRoomId((current) => (current === item.id ? null : item.id))
-                      }
-                      style={styles.cornerPeek}
-                      testID={`room-corners-toggle-${item.id}`}
-                    >
-                      <Text style={styles.cornerPeekCount}>{corners.length}</Text>
-                      <Text style={styles.cornerPeekCaret}>{expanded ? '⌃' : '⌄'}</Text>
-                    </TouchableOpacity>
-                  )}
+                  {/* The right gutter: a fixed marginalia column, laid over the
+                      row rather than inside it, so an age stamp or a corner
+                      count can never reflow the copy beside it. */}
+                  <View pointerEvents="box-none" style={styles.rowGutter}>
+                    <Text style={[styles.rowAge, unread && styles.rowAgeUnread]}>{age}</Text>
+                    {canExpand && (
+                      <TouchableOpacity
+                        accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${corners.length} open ${
+                          corners.length === 1 ? CORNER_LABEL : CHANGES_LABEL
+                        } in ${title}`}
+                        accessibilityRole="button"
+                        accessibilityState={{ expanded }}
+                        onPress={() =>
+                          setExpandedRoomId((current) => (current === item.id ? null : item.id))
+                        }
+                        style={styles.cornerPeek}
+                        testID={`room-corners-toggle-${item.id}`}
+                      >
+                        <Text
+                          style={[
+                            styles.cornerPeekCount,
+                            row.live && styles.cornerPeekCountLive,
+                          ]}
+                        >
+                          {corners.length}
+                        </Text>
+                        <Text style={styles.cornerPeekCaret}>{expanded ? '⌃' : '⌄'}</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 </View>
                 {expanded && (
                   <PixelGateReveal style={styles.cornerDropdown}>
@@ -1135,12 +1162,21 @@ const ROW_MARK_WIDTH = 30;
 const ROW_GAP = 10;
 const SCREEN_INSET = 16;
 /**
- * The trailing disclosure column, reserved on *every* row whether or not it has
- * corners. Letting the column collapse on a corner-less row moved that row's
- * age stamp 46px right of its neighbours', which ragged the one right edge the
- * index reads down.
+ * The right gutter — the index's marginalia column, and the exact counterpart
+ * of the transcript's timestamp margin. It is reserved on *every* row whether
+ * or not that row has corners (a collapsing column ragged the one right edge
+ * the index reads down), and it is laid *over* the row rather than inside it,
+ * so nothing hanging in it can ever reflow the copy to its left.
  */
-const ROW_TRAILING_WIDTH = 46;
+const ROW_GUTTER_WIDTH = 46;
+/**
+ * One row height for the whole index, sized so the gutter holds both of its
+ * marks — the age stamp on the name's line, the corner count below it at a
+ * full 44pt touch target — without any row growing taller than its neighbours.
+ */
+const INDEX_ROW_HEIGHT = 72;
+/** Drops the gutter's first mark onto the same optical line as the row name. */
+const ROW_GUTTER_TOP = 14;
 
 const styles = StyleSheet.create({
   container: { flex: 1, minWidth: 0, backgroundColor: groknight.bgTerminal },
@@ -1170,9 +1206,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  /* The Workspace name is the header's anchor; Members and ＋Room read as
+   * quiet named affordances beside it, on the index label's own tier rather
+   * than competing with the name for the top of the ladder. */
   headerActionText: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textSecondary,
+    ...Typography.mono(),
+    color: groknight.textMuted,
     fontSize: 10,
     lineHeight: 14,
     letterSpacing: 0.8,
@@ -1256,29 +1295,34 @@ const styles = StyleSheet.create({
   dmSection: { marginTop: 4 },
   indexRow: {
     minWidth: 0,
-    minHeight: 62,
-    paddingHorizontal: SCREEN_INSET,
+    minHeight: INDEX_ROW_HEIGHT,
+    paddingLeft: SCREEN_INSET,
+    paddingRight: SCREEN_INSET + ROW_GUTTER_WIDTH,
     paddingVertical: 11,
     flexDirection: 'row',
     alignItems: 'center',
     gap: ROW_GAP,
   },
   rowMark: { width: ROW_MARK_WIDTH, alignItems: 'center', justifyContent: 'center' },
-  rowTrailingReserve: { paddingRight: SCREEN_INSET + ROW_TRAILING_WIDTH },
   rowCopy: { flex: 1, minWidth: 0 },
   rowTitleLine: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  /* The index reads on three tones and nothing else: the name is the brightest
+   * thing on the row, the activity line sits a step down, and everything the
+   * gutter carries is ghosted. It is the ledger's ladder at index scale, so a
+   * row previews the voice the transcript will show when it is opened. */
   rowTitle: {
-    ...Typography.default('semiBold'),
+    ...Typography.default(),
     flexShrink: 1,
-    color: groknight.textSecondary,
+    color: groknight.textPrimary,
     fontSize: 15,
     lineHeight: 20,
   },
   /* Unread is weight plus one luminance step, in two places (the name and its
    * age) plus a named mono flag — never gold. DESIGN.md fixes gold to agent
-   * identity, live presence, owner role, and merge approval; unread would be a
-   * fifth meaning with nothing to stay redundant against. */
-  rowTitleUnread: { color: groknight.textPrimary },
+   * identity, live presence, owner role, and merge approval; on this screen it
+   * means exactly one of those — an agent is working in this Room — and unread
+   * would be a fifth meaning with nothing to stay redundant against. */
+  rowTitleUnread: { ...Typography.default('semiBold'), color: groknight.ledgerBright },
   rowTitleArchived: { color: groknight.textMuted },
   rowUnread: {
     ...Typography.mono('semiBold'),
@@ -1294,12 +1338,15 @@ const styles = StyleSheet.create({
     lineHeight: 12,
     letterSpacing: 0.8,
   },
+  /* Always rendered, even when a Room has no timestamp to show, so the mark
+   * below it in the gutter never shifts up a line. */
   rowAge: {
     ...Typography.mono(),
-    marginLeft: 'auto',
+    minHeight: 14,
     color: groknight.ledgerGhost,
     fontSize: 10,
     lineHeight: 14,
+    letterSpacing: 0.4,
   },
   /* The index keeps weight as an unread signal — it is a scanning surface, not
    * the inscription. The ledger's no-weight rule governs the transcript. */
@@ -1324,8 +1371,19 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   roomCell: { ...hairlineDivider },
-  roomRow: { minWidth: 0, flexDirection: 'row', alignItems: 'stretch' },
+  roomRow: { position: 'relative', minWidth: 0, flexDirection: 'row', alignItems: 'stretch' },
   roomPrimary: { flex: 1, minWidth: 0 },
+  /* Marginalia, not a third column of content: absolutely placed, fixed width,
+   * right-aligned, and every mark in it ghosted — the same treatment the
+   * transcript gives its timestamps and npub fingerprints. */
+  rowGutter: {
+    position: 'absolute',
+    top: ROW_GUTTER_TOP,
+    right: SCREEN_INSET,
+    bottom: 0,
+    width: ROW_GUTTER_WIDTH,
+    alignItems: 'flex-end',
+  },
   roomGlyph: {
     ...Typography.default('semiBold'),
     color: groknight.steel,
@@ -1340,24 +1398,31 @@ const styles = StyleSheet.create({
    * gray rather than gold — gold stays exclusive to live work. */
   roomGlyphAttention: { color: groknight.textPrimary },
   cornerPeek: {
-    width: ROW_TRAILING_WIDTH,
-    minHeight: 62,
+    width: ROW_GUTTER_WIDTH,
+    minHeight: 44,
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-end',
+    gap: 4,
   },
   cornerPeekCount: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 12,
+    ...Typography.mono(),
+    color: groknight.ledgerGhost,
+    fontSize: 11,
     lineHeight: 14,
   },
-  /* Count and caret read as one disclosure control, so the caret carries real
-   * weight instead of trailing off as a stray mark under a number. */
+  /* The second of this screen's two accent marks, and the same claim as the
+   * first: work is happening in these corners right now. It is redundant with
+   * the row's own live ◆ and with the LIVE wave in the section heading, so the
+   * gold never carries the state by itself. */
+  cornerPeekCountLive: { color: groknight.accent },
+  /* Count and caret read as one disclosure control, so the caret sits on the
+   * count's own tone rather than trailing off as a stray mark beside it. */
   cornerPeekCaret: {
-    ...Typography.default('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 15,
-    lineHeight: 15,
+    ...Typography.default(),
+    color: groknight.ledgerGhost,
+    fontSize: 13,
+    lineHeight: 14,
   },
 
   /* ── expanded corners: a hairline rail, not a nested container ────────── */
@@ -1390,16 +1455,18 @@ const styles = StyleSheet.create({
   },
   cornerGlyphLive: { color: groknight.accent },
   cornerName: {
-    ...Typography.default('semiBold'),
+    ...Typography.default(),
     flex: 1,
     minWidth: 0,
-    color: groknight.textSecondary,
+    color: groknight.textPrimary,
     fontSize: 13,
     lineHeight: 17,
   },
+  /* A corner's lifecycle word hangs in the same gutter the ages do, at the
+   * same ghosted tier — the dropdown is an index inside an index. */
   cornerStatus: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textMuted,
+    ...Typography.mono(),
+    color: groknight.ledgerGhost,
     fontSize: 9,
     lineHeight: 12,
     letterSpacing: 0.6,

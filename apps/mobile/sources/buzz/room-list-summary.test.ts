@@ -139,6 +139,51 @@ describe('roomPreviewText', () => {
     expect(preview.endsWith('…')).toBe(true);
   });
 
+  it('suppresses a bare ref or object id rather than dressing it up as a sentence', () => {
+    // The #195 shape: a message that is nothing but a git pointer. Shortening
+    // the sha made it *worse* — a recognizably machine-shaped 40-hex blob
+    // turned into a plausible-looking `remote/1a2b3c4` on the index.
+    for (const plumbing of [
+      'remote/1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b',
+      'refs/heads/beeline/corner-4f2a',
+      'origin/main',
+      '1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b',
+      'upstream/feature 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b',
+    ]) {
+      expect(roomPreviewText(plumbing), plumbing).toBe('');
+    }
+    for (const line of [
+      '* [new branch]      main -> main',
+      '! [rejected]        main -> main (fetch first)',
+      '[up to date]        main -> main',
+      'abc1234..def5678  main -> main',
+      '+ abc1234...def5678 main -> main (forced update)',
+      'Everything up-to-date',
+      "Branch 'main' set up to track 'origin/main'.",
+      'refs/heads/main -> refs/remotes/origin/main',
+    ]) {
+      expect(roomPreviewText(line), line).toBe('');
+    }
+  });
+
+  it('never mistakes an ordinary word for an object id', () => {
+    // `[0-9a-f]{7,}` alone would swallow real words spelled out of a–f. A bare
+    // object id carries a digit; a word does not.
+    expect(roomPreviewText('defaced')).toBe('defaced');
+    expect(roomPreviewText('effaced facade')).toBe('effaced facade');
+    expect(roomPreviewText('deadbeef')).toBe('deadbeef');
+    expect(roomPreviewText('dead1beef')).toBe('');
+  });
+
+  it('keeps a sentence that merely mentions a ref, shortening the id inside it', () => {
+    // Suppression is for a preview that is *only* plumbing. Real prose around
+    // a pointer is exactly what a person wants to read.
+    expect(
+      roomPreviewText('Pushed 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b to origin/main for review'),
+    ).toBe('Pushed 1a2b3c4 to origin/main for review');
+    expect(roomPreviewText('remote/main is ahead now')).toBe('remote/main is ahead now');
+  });
+
   it('is what the latest-message projection stores, so an all-plumbing message keeps the prior preview', () => {
     expect(
       latestRoomMessage([

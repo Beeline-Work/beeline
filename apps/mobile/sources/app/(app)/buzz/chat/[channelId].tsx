@@ -89,7 +89,6 @@ import {
   cornerStatusPresentation,
   isCornerActive,
   resolveCornerLifecycleStatus,
-  selectMostRecentActiveCornerId,
   type CornerStatus,
   type CornerSummary,
 } from '@/buzz/corners';
@@ -101,6 +100,7 @@ import {
   normalizedRoomRole,
   roomLifecycleAction,
 } from '@/buzz/room-management';
+import { isPinnedCornerLive, selectPinnedCorner } from '@/buzz/room-indicators';
 import {
   loadActiveCommunityId,
   saveActiveCommunityId,
@@ -141,6 +141,7 @@ import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
 import { ChangeReviewPanel } from '@/components/buzz/ChangeReviewPanel';
 import { CornerLiveBar } from '@/components/buzz/CornerLiveBar';
+import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome';
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
 import {
@@ -441,6 +442,10 @@ export default function BuzzChat() {
   // name is canonical. It is served from `listSubchannelLifecycle`'s shared
   // short-TTL cache, which the Room list has usually already warmed.
   const [cornerLifecycle, setCornerLifecycle] = useState<CornerSummary[]>([]);
+  // "No corner on record" and "the corner list has not answered yet" are
+  // different answers, and only the first one may let a freshly permitted
+  // corner onto the pinned line — see `selectPinnedCorner`.
+  const [cornerLifecycleLoaded, setCornerLifecycleLoaded] = useState(false);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(
     initialChannelCache?.communityId ?? null,
@@ -768,34 +773,45 @@ export default function BuzzChat() {
         )?.writePermission?.subchannelId,
     [messages],
   );
-  // "Most recent active corner" is resolved once, from the same signal used
-  // to pick which corner a tap on the ambient status strip opens, so the
-  // status text and the destination it navigates to can never disagree.
-  const mostRecentActiveCornerId = useMemo(
+  // Every corner status card this Room's transcript carries, newest per corner
+  // resolved downstream. This is corner state and only corner state — no turn
+  // signal reaches it.
+  const cornerSignals = useMemo(
     () =>
-      selectMostRecentActiveCornerId(
-        messages.flatMap((message) =>
-          message.corner
-            ? [
-                {
-                  subchannelId: message.corner.subchannelId,
-                  status: message.corner.status,
-                  timestamp: message.timestamp,
-                },
-              ]
-            : [],
-        ),
+      messages.flatMap((message) =>
+        message.corner
+          ? [
+              {
+                subchannelId: message.corner.subchannelId,
+                status: message.corner.status,
+                timestamp: message.timestamp,
+              },
+            ]
+          : [],
       ),
     [messages],
   );
-  const activeCorner = useMemo(
+  // The one corner the pinned line may name: open, not terminal in *any*
+  // source, and chosen by how much it is being worked on. `null` for a Room
+  // with no live corner, however busy its agent is right now.
+  const pinnedCorner = useMemo(
     () =>
-      mostRecentActiveCornerId
+      selectPinnedCorner({
+        signals: cornerSignals,
+        lifecycle: cornerLifecycle,
+        lifecycleLoaded: cornerLifecycleLoaded,
+        permittedCornerId,
+      }),
+    [cornerLifecycle, cornerLifecycleLoaded, cornerSignals, permittedCornerId],
+  );
+  const pinnedCornerCard = useMemo(
+    () =>
+      pinnedCorner
         ? [...messages]
             .reverse()
-            .find((message) => message.corner?.subchannelId === mostRecentActiveCornerId)
+            .find((message) => message.corner?.subchannelId === pinnedCorner.cornerId)
         : undefined,
-    [messages, mostRecentActiveCornerId],
+    [messages, pinnedCorner],
   );
   // cornerLifecycleStatus is a one-time snapshot fetched at mount; isArchived
   // is kept live by several independent update paths (live archive signal,
@@ -806,13 +822,6 @@ export default function BuzzChat() {
     () => resolveCornerLifecycleStatus(cornerLifecycleStatus, isArchived),
     [cornerLifecycleStatus, isArchived],
   );
-  // Only route the ambient status strip when the resolved id is genuinely
-  // the active corner — never send a tap to a stale/unrelated corner that
-  // merely happens to be the most recent one on record.
-  const tappableCornerId =
-    activeCorner?.corner && isCornerActive(activeCorner.corner.status)
-      ? mostRecentActiveCornerId
-      : undefined;
   const activeAgentTurn = useMemo(
     () =>
       [...messages]
@@ -830,16 +839,18 @@ export default function BuzzChat() {
     [agentPresences, messages, presenceNow, presenceReconnectGrace],
   );
   /**
-   * The pinned corner indicator's whole state, resolved in one place so the
-   * words it shows and the corner a tap on it opens can never disagree.
+   * The pinned corner line's whole state, resolved in one place so the words it
+   * shows and the corner a tap on it opens can never disagree.
    *
    * One line, and it names the two facts that matter: who is working, and what
    * on — `beebee active: feat/ux-fix-now`. Both surfaces get one, because both
    * have the same question to answer: a Room asks "is a corner running, and
-   * where," a Corner asks "is this session still moving." `live` is what turns
-   * the line gold and starts its breath; an open-but-idle corner keeps the same
-   * line on the quiet tier, which is a real and distinct state the old
-   * "working in corner…" strip could not express at all.
+   * where," a Corner asks "is this session still moving."
+   *
+   * Its input is corner state and nothing else. A Room turn in progress is a
+   * different fact about a different object and drives `turnProgressLabel`
+   * below — see `buzz/room-indicators.ts` for why the two are kept apart by
+   * construction rather than by care.
    */
   const cornerLiveBar = useMemo((): { label: string; live: boolean; cornerId?: string } | null => {
     const named = (subject: string, verb: string, target?: string) =>
@@ -850,6 +861,9 @@ export default function BuzzChat() {
       // The branch is the truest name for what a corner is doing; the corner's
       // own slug is the fallback, and both beat an opaque id.
       const target = mergeTarget?.branch ?? headerTitle ?? undefined;
+      // This corner's own session, not some other corner's: `sessionState`
+      // reads this channel's `agent-turn` events, which is exactly "is this
+      // edit session still moving."
       if (sessionState === 'working') return { label: named(subject, 'active', target), live: true };
       if (displayedCornerStatus && isCornerActive(displayedCornerStatus)) {
         return { label: named(subject, 'idle', target), live: false };
@@ -857,38 +871,28 @@ export default function BuzzChat() {
       return null;
     }
 
-    // The bar reports the *corner*; the offline hint directly below it reports
-    // the *agent*. Keeping those two facts in two places is what stops the bar
-    // from claiming gold — which DESIGN.md assigns to live/online presence —
-    // for a state that is neither.
-    const working = Boolean(activeAgentTurn?.agentTurn) && !agentsOffline;
-    const cornerId = tappableCornerId ?? permittedCornerId;
-    const agentPubkey = cornerId
-      ? resolveCornerCardAgentPubkey(
-          activeCorner?.corner?.agentPubkey,
-          activeCorner?.pubkey,
-          (pubkey) => agentByPubkey.has(pubkey),
-        )
-      : activeAgentTurn?.agentTurn?.agentPubkey;
+    if (!pinnedCorner) return null;
+    // Gold is reserved for an agent alive and working, so a corner that has
+    // stopped moving — or whose daemon is offline — keeps the line quiet.
+    const live = isPinnedCornerLive(pinnedCorner.status) && !agentsOffline;
+    const agentPubkey = resolveCornerCardAgentPubkey(
+      pinnedCornerCard?.corner?.agentPubkey,
+      pinnedCornerCard?.pubkey,
+      (pubkey) => agentByPubkey.has(pubkey),
+    );
     const subject = agentPubkey
       ? resolveAgentDisplayIdentity(agentPubkey, agentByPubkey.get(agentPubkey)).name
       : 'agent';
-    if (cornerId) {
-      const target = cornerName(
-        cornerLifecycle.find((corner) => corner.id === cornerId)?.name,
-        cornerId,
-      );
-      return {
-        label: named(subject, working ? 'active' : 'idle', target),
-        live: working,
-        cornerId,
-      };
-    }
-    if (working) return { label: named(subject, 'active'), live: true };
-    return null;
+    const target = cornerName(
+      cornerLifecycle.find((corner) => corner.id === pinnedCorner.cornerId)?.name,
+      pinnedCorner.cornerId,
+    );
+    return {
+      label: named(subject, live ? 'active' : 'idle', target),
+      live,
+      cornerId: pinnedCorner.cornerId,
+    };
   }, [
-    activeAgentTurn,
-    activeCorner,
     agentByPubkey,
     agentsOffline,
     cornerAgentDisplay,
@@ -897,10 +901,30 @@ export default function BuzzChat() {
     headerTitle,
     isCorner,
     mergeTarget,
-    permittedCornerId,
+    pinnedCorner,
+    pinnedCornerCard,
     sessionState,
-    tappableCornerId,
   ]);
+
+  /**
+   * The ordinary turn indicator, and the only thing a plain question in a Room
+   * ever lights: "beebee thinking…" while the reply is being composed, gone
+   * when it lands. Its input is the Room's own `#t=agent-turn` lifecycle and
+   * nothing else — no corner reaches it, exactly as no turn reaches the corner
+   * line above.
+   *
+   * A Corner has no line of its own here: its composer footer already carries
+   * `LIVE`, and its pinned line above already reports the same session.
+   */
+  const turnProgressLabel = useMemo(() => {
+    if (isCorner || agentsOffline) return null;
+    const turn = activeAgentTurn?.agentTurn;
+    if (!turn) return null;
+    const subject = turn.agentPubkey
+      ? resolveAgentDisplayIdentity(turn.agentPubkey, agentByPubkey.get(turn.agentPubkey)).name
+      : 'agent';
+    return `${subject} thinking…`;
+  }, [activeAgentTurn, agentByPubkey, agentsOffline, isCorner]);
 
   const activeActivityId = useMemo(() => {
     if (isCorner ? sessionState !== 'working' : !activeAgentTurn) return undefined;
@@ -1262,7 +1286,10 @@ export default function BuzzChat() {
               patchChannelCache(identity.publicKey, { mergeTarget: target });
             },
             onCornerStatus: setCornerLifecycleStatus,
-            onCornerLifecycle: setCornerLifecycle,
+            onCornerLifecycle: (corners) => {
+              setCornerLifecycle(corners);
+              setCornerLifecycleLoaded(true);
+            },
             onStepFailed: (step, error) =>
               console.warn(`BuzzChat: ${step} failed for ${decodedId}:`, error),
           },
@@ -2439,6 +2466,13 @@ export default function BuzzChat() {
             }
             testID="corner-live-bar"
           />
+        )}
+        {/* The ordinary per-turn indicator, independent of the line above: a
+            Room can be thinking with no corner open, or hold an open corner
+            with nothing being asked of it. Both may show at once; neither
+            implies the other. */}
+        {!isArchived && turnProgressLabel && (
+          <TurnProgressLine label={turnProgressLabel} testID="turn-progress-line" />
         )}
         {!isArchived && agentsOffline && (
           <View style={styles.agentOfflineHint} testID="agent-offline-hint">

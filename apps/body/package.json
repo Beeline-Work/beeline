@@ -28,6 +28,8 @@
     "@beeline/buzz-client": "*",
     "@beeline/gate": "*",
     "@beeline/nostr": "*",
+    "@clack/prompts": "^1.7.0",
+    "picocolors": "^1.1.1",
     "ws": "^8.18.0"
   },
   "devDependencies": {

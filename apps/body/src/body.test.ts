@@ -4439,4 +4439,59 @@ describe('per-agent model/effort persistence', () => {
 
     expect(setConfigOption).not.toHaveBeenCalled();
   });
+
+  it('falls back to the pair-time --model/--effort default when no human has picked one yet', async () => {
+    const agentIdentity = newIdentity('model-config-agent-3');
+    const cfg = config();
+    cfg.modelSelection = { model: 'sonnet', effort: 'low' };
+    const body = new Body(cfg, undefined, agentIdentity);
+    const published: NostrEvent[] = [];
+    stubRelay(body, published);
+
+    const setConfigOption = vi.fn().mockResolvedValue({});
+    const session = { channelId: 'room-3' } as never;
+    await Reflect.get(body, 'applyModelConfigForSession').call(
+      body,
+      { setConfigOption },
+      'sess-3',
+      communityId,
+      rawSessionNew(),
+      session,
+    );
+
+    expect(setConfigOption).toHaveBeenCalledTimes(2);
+    expect(setConfigOption).toHaveBeenCalledWith('sess-3', 'model', 'sonnet');
+    expect(setConfigOption).toHaveBeenCalledWith('sess-3', 'effort', 'low');
+  });
+
+  it('lets a human in-app selection (#223) override the pair-time default, never the reverse', async () => {
+    const agentIdentity = newIdentity('model-config-agent-4');
+    const cfg = config();
+    cfg.modelSelection = { model: 'opus', effort: 'high' };
+    const body = new Body(cfg, undefined, agentIdentity);
+    const published: NostrEvent[] = [];
+    stubRelay(body, published);
+
+    await setAgentModelConfig(
+      { http: { baseUrl: 'http://relay.test', host: 'relay.test', identity: owner }, identity: owner },
+      communityId,
+      body.agent.publicKey,
+      { model: 'sonnet', effort: 'low' },
+    );
+
+    const setConfigOption = vi.fn().mockResolvedValue({});
+    const session = { channelId: 'room-4' } as never;
+    await Reflect.get(body, 'applyModelConfigForSession').call(
+      body,
+      { setConfigOption },
+      'sess-4',
+      communityId,
+      rawSessionNew(),
+      session,
+    );
+
+    expect(setConfigOption).toHaveBeenCalledTimes(2);
+    expect(setConfigOption).toHaveBeenCalledWith('sess-4', 'model', 'sonnet');
+    expect(setConfigOption).toHaveBeenCalledWith('sess-4', 'effort', 'low');
+  });
 });

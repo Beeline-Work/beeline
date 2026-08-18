@@ -5,6 +5,7 @@ import * as Clipboard from 'expo-clipboard';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
+  AGENT_PRESENCE_STALE_MS,
   isAgentPresenceOnline,
   isSingleWordAgentName,
   type Agent,
@@ -228,9 +229,20 @@ export default function BuzzAgents() {
   }, [refreshAgentPresence, refreshAgents, refreshPeople, requestedCommunityId]);
 
   useEffect(() => {
-    const timer = setInterval(() => setPresenceNow(Date.now()), 5_000);
-    return () => clearInterval(timer);
-  }, []);
+    // Presence only changes at a lease deadline. A five-second clock here woke
+    // the whole directory every five seconds forever; wake once, exactly when
+    // the next lease is due, and only while one is actually outstanding.
+    const now = Date.now();
+    const deadlines = Object.values(agentPresences)
+      .map((presence) => presence.observedAt + AGENT_PRESENCE_STALE_MS)
+      .filter((deadline) => Number.isFinite(deadline) && deadline > now);
+    if (deadlines.length === 0) return;
+    const timer = setTimeout(
+      () => setPresenceNow(Date.now()),
+      Math.max(1, Math.min(...deadlines) - now + 1),
+    );
+    return () => clearTimeout(timer);
+  }, [agentPresences]);
 
   const handleAdd = useCallback(async () => {
     if (!transport || !communityId || !canManageWorkspace) return;

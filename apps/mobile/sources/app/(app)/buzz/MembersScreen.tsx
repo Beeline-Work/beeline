@@ -446,7 +446,7 @@ export default function BuzzAgents() {
         router.replace({ pathname: '/buzz/channels', params: { communityId: id } });
       }}
       onAdd={() => router.push('/buzz/community' as Href)}
-      onSettings={() => router.push('/buzz/settings/identity' as Href)}
+      onSettings={() => router.push('/buzz/settings' as Href)}
       onWorkspaceSettings={(id) =>
         router.push(
           { pathname: '/buzz/settings/workspace', params: { communityId: id } } as unknown as Href,

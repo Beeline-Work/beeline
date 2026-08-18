@@ -170,19 +170,47 @@ whether or not a row has corners. Rows are parted by the shared
 
 The leading unit reports the row's kind: a Room shows one state glyph (`◆` live
 corner, `▲` needs attention, `›` spoken in, `·` quiet); a DM shows its peer's
-faceted mark. Line one is the name, then any flag, then the age in mono. Line
-two is one human-readable line: an uppercase mono author label — the same "who"
-the ledger's attribution carries — and the preview. Preview text is sanitized
-where it is stored, not where it is drawn: fenced code, markdown syntax, git and
-tool plumbing, and bare 40-hex shas never reach a row (`roomPreviewText`,
-`apps/mobile/sources/buzz/room-list-summary.ts`).
+faceted mark. Line one is the name; line two is one human-readable activity
+line — an uppercase mono author label, the same "who" the ledger's attribution
+carries, then the preview.
+
+**The index reads on three tones and nothing else**, the ledger's ladder at
+index scale: the name is the brightest thing on the row (`textPrimary`), the
+activity line sits a step down on `ledgerQuiet` exactly as an inline handle
+does, and everything the gutter carries is `ledgerGhost`. So a row previews the
+voice the transcript will show when it is opened.
+
+**Metadata hangs in the right gutter, as it does in the transcript.** The age
+stamp, and under it a Room's open-corner count, sit in a fixed 46px column that
+is *absolutely positioned over* the row rather than laid out inside it — so
+nothing hanging there can reflow the copy beside it, and every row reserves the
+column whether or not it has a count. Same marginalia rhythm, same ghosted
+register, one straight right edge down the whole screen.
+
+Preview text is sanitized where it is stored, not rewritten where it is drawn:
+fenced code, markdown syntax, git and tool plumbing, bare 40-hex shas, and a
+lone ref pointer (`remote/1a2b3c4`, `refs/heads/…`, `origin/main`) never reach
+a row (`roomPreviewText`, `apps/mobile/sources/buzz/room-list-summary.ts`). A
+row applies one reader-side floor and no more — `isMachinePreview` declines a
+preview that a cache entry from an older build already holds, rather than
+re-deriving it.
 
 Unread is weight plus one luminance step, in two places, plus a `NEW` mono
 label. It is deliberately not gold — see the accent rule below. The index is
-the one surface that still spends weight: it is scanned, not read, and the
-ledger's no-weight rule governs the transcript. Its *tones* are the ledger's,
-though — the preview and its author label sit on `ledgerQuiet`, exactly as an
-inline handle does, so a row previews the voice the transcript will show.
+the one surface that still spends weight, and unread is the only thing it
+spends weight on: it is scanned, not read, and the ledger's no-weight rule
+governs the transcript.
+
+**Gold on the index means one thing: an agent is working in this Room right
+now.** A Room with a live corner takes the accent on its `◆` and on its corner
+count, and the `◆` breathes on `HullLivePulse` — the single-mark form of the
+corner's own `HullWaveSignal`, on the same clock, mounted only where there is
+life. Nothing else on the screen takes it: `needs-attention` is the most
+action-worthy state here and it escalates to the brightest *grey* instead,
+precisely so gold keeps meaning exactly one thing. Every row-level decision —
+which glyph, whether it is live, which corners count — is derived once in
+`apps/mobile/sources/buzz/room-list-row.ts`, so the heading's LIVE tally and the
+rows beneath it can never disagree.
 
 A Room's corner count and its expanded dropdown are the same set: only `live`,
 `needs-attention`, and `open` corners (`roomListCorners`). `merged`, `archived`,
@@ -191,9 +219,24 @@ always equals what expanding reveals; they stay reachable through the Room
 transcript's durable cards and the `ALL CORNERS` link the dropdown ends with.
 Expanded corners hang off a 1px rail, not a nested container.
 
-The Workspace rail is the same slab with one hairline edge. Selection is an edge
-bar, never a floating bracket, and every rail command is *named* by a mono
-micro-label rather than framed in a box — the affordance is named, not outlined.
+The Room-list header is the Workspace name and nothing louder: the name is the
+anchor, and `⌬ MEMBERS` / `＋ ROOM` sit beside it as quiet named affordances on
+the same mono tier as the index's own section labels.
+
+The Workspace rail is the same slab with one hairline edge. Selection reads
+three redundant ways and none of them is a box or a fill: an edge bar (never a
+floating bracket), the mark's own heavier frame, and tone — the Workspaces you
+are *not* in recede a step rather than the one you are in lighting up. Every
+rail command is *named* by a mono micro-label rather than framed in a box — the
+affordance is named, not outlined — and its glyph sits on the chrome's quiet
+tier, because the label already carries the meaning.
+
+**Settings is one entry, not two.** The rail's `YOU` command opens the account
+hub (`buzz/settings/`), which is itself an index in this same vocabulary —
+boxless rows, one hairline between them, the three tones, the trailing mark in
+the gutter. Every screen that mounts the rail routes there. Jumping past it
+straight into `settings/identity` is what stranded the hub, and the product's
+only sign-out with it.
 
 ## Identity
 
@@ -260,16 +303,28 @@ still IBM Plex Sans. Bricolage Grotesque is the logo lockup only.
 Primitives live in `apps/mobile/sources/components/buzz/MonoHull.tsx`:
 `HullSurface` (the lifted-region texture), `BrittlePress` (70ms in / 110ms out
 press), `MonoButton`, `PixelLoader` (four-frame, ~7.5fps), `HullWaveSignal`
-(9-segment sin² live wave), `StatusGlyph`, `PixelGateReveal` (176ms strip
-reveal), `NewMessageMaterialize` (140ms fade+rise). All reduced-motion aware via
-`ReduceMotion.System`. No primitive exceeds ~240ms except the two continuous,
-low-duty-cycle loops (`PixelLoader`, `HullWaveSignal`), and no more than two of
-those run on-screen at once.
+(9-segment sin² live wave), `HullLivePulse` (the same wave reduced to one
+mark), `StatusGlyph`, `PixelGateReveal` (176ms strip reveal),
+`NewMessageMaterialize` (140ms fade+rise). All reduced-motion aware via
+`ReduceMotion.System`, and all of the continuous ones also stop when the app
+backgrounds. No primitive exceeds ~240ms except the continuous, low-duty-cycle
+loops, which share one clock (`motionTokens.liveCycle`).
+
+At most two of `PixelLoader` / `HullWaveSignal` run on-screen at once.
+`HullLivePulse` is deliberately outside that count: it is a single-glyph
+opacity breath — no geometry, no layout, one animated style — mounted *only*
+where something is genuinely live, so its instance count is bounded by real
+concurrent agent work rather than by decoration. On the Room list that means
+one per live Room, and if several Rooms are working at once the index is
+supposed to look like it. A quiet row must never pay for a clock it does not
+use: mount the primitive conditionally, do not pass it `active={false}`.
 
 ## The two color exceptions, stated so no one re-litigates them
 
-1. **Gold (`#d7af5f`)** marks: agent identity, live/online presence, owner role,
-   and the merge-approval action. It is never the *only* signal for any of these
+1. **Gold (`#d7af5f`)** marks one idea — *an agent is alive* — plus the moment
+   you act on its work: agent identity, live/online presence (the Corner's LIVE
+   wave, a presence dot, and a Room on the index with a live corner), owner
+   role, and the merge-approval action. It is never the *only* signal for any of these
    — each is redundantly encoded by shape, glyph, or copy. Do not add a second
    hue; do not let a fifth meaning attach to gold without checking whether it
    still needs to be redundant with something else first. The ledger's glow is

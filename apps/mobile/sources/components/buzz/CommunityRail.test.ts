@@ -215,7 +215,7 @@ describe('Workspace drawer', () => {
     const mySettings = renderer.root
       .findAllByType('TouchableOpacity' as any)
       .find((node) => node.props.testID === 'community-rail-settings');
-    expect(mySettings?.props.accessibilityLabel).toBe('My Settings');
+    expect(mySettings?.props.accessibilityLabel).toBe('Your settings');
     act(() => renderer.root.findByProps({ testID: 'community-rail-settings' }).props.onPress());
 
     expect(onSettings).toHaveBeenCalledOnce();

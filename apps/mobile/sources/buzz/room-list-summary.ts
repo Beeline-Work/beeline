@@ -17,6 +17,7 @@ const PREVIEW_MAX_CHARS = 120;
 const PLUMBING_LINE: RegExp[] = [
   /^(?:hint|error|fatal|warning|remote|usage|stderr|stdout):/i,
   /^!\s*\[/,
+  /^\*\s*\[new (?:branch|tag)\]/i,
   /^(?:to|from)\s+(?:https?:\/\/|git@|ssh:\/\/)/i,
   /^diff --git\b/,
   /^index [0-9a-f]{7,}\.\.[0-9a-f]{7,}/i,
@@ -24,10 +25,55 @@ const PLUMBING_LINE: RegExp[] = [
   /^[+-]{3} [ab]?\//,
   /^\s*at .+\(.+:\d+:\d+\)$/,
   /^\$ /,
+  /^everything up-to-date$/i,
+  /^branch '.+' set up to track\b/i,
+  // `git push` ref-status lines: the leading bracket form (`* [new branch]`,
+  // `! [rejected]`, `[up to date]`) and the bare range form
+  // (`abc1234..def5678  main -> main`, `+ abc1234...def5678  main -> main`).
+  /^[-*+=!]?\s*\[(?:new branch|new tag|deleted|rejected|remote rejected|up to date)\]/i,
+  /^[+-]?\s*[0-9a-f]{7,}\.{2,3}[0-9a-f]{7,}\b/i,
 ];
 
 /** A divider or setext underline carries no words. */
 const RULE_LINE = /^[-=_*~]{3,}$/;
+
+/**
+ * A lone machine token: a ref path (`remote/1a2b3c4`, `refs/heads/main`,
+ * `origin/main`), a bare object id, or any slash-joined path ending in one.
+ *
+ * These are the shapes that survive every line-level filter above, because a
+ * ref pointer is a perfectly well-formed "sentence" of one word — and
+ * `shortenShas` made it *worse*, turning a recognizably machine-shaped 40-hex
+ * blob into a plausible-looking `remote/1a2b3c4`. The index is a place to
+ * scan, not a terminal: a preview built only from tokens like these has
+ * nothing a person can read, so it is suppressed outright and the row keeps
+ * the last message that did.
+ */
+const MACHINE_TOKEN =
+  /^(?:[0-9a-f]{7,}\.{2,3}[0-9a-f]{7,}|[0-9a-f]{7,}|(?:remote|origin|upstream|refs|heads|tags)\/\S*|\S*\/[0-9a-f]{7,}|->)$/i;
+
+/** A bare object id is hex *and* carries a digit, so an ordinary word that
+ * happens to spell out of `a`–`f` ("defaced") is never mistaken for one. */
+const OBJECT_ID = /\d/;
+
+/**
+ * True when nothing in the text is a word a person would read — every token is
+ * a ref, a pointer, or an object id.
+ *
+ * Exported because it is also the *reader*-side floor: a preview stored by an
+ * older build of this file is already in the local cache, and the index must
+ * not print it while waiting for a revalidation to replace it. Checking is not
+ * re-deriving — a row still never rewrites message text, it only declines to
+ * show one that says nothing.
+ */
+export function isMachinePreview(text: string): boolean {
+  const tokens = text.trim().split(/\s+/).filter((token) => token.length > 0);
+  if (tokens.length === 0 || tokens.every((token) => token === '->')) return false;
+  return tokens.every(
+    (token) =>
+      MACHINE_TOKEN.test(token) && (token.includes('/') || token === '->' || OBJECT_ID.test(token)),
+  );
+}
 
 export type RoomMessageSummary = {
   id: string;
@@ -71,7 +117,7 @@ export function roomPreviewText(raw: string, limit = PREVIEW_MAX_CHARS): string 
     .filter((line) => line.length > 0)
     .join(' ');
   const collapsed = shortenShas(readable).replace(/\s+/g, ' ').trim();
-  if (!collapsed) return '';
+  if (!collapsed || isMachinePreview(collapsed)) return '';
   return collapsed.length > limit ? `${collapsed.slice(0, limit - 1).trimEnd()}…` : collapsed;
 }
 

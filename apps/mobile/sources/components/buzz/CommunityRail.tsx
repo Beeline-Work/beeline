@@ -42,10 +42,11 @@ type RailButtonProps = {
 };
 
 /**
- * A Workspace slot. Selection reads off a full-height bar on the rail's own
- * edge rather than a floating corner bracket — the bar says "you are here" at
- * a glance in a column of otherwise identical marks, and it is redundant with
- * the mark's own thicker active frame, so it never carries the state alone.
+ * A Workspace slot. Selection reads three redundant ways and none of them is a
+ * box or a fill: a full-height bar on the rail's own edge, the mark's own
+ * thicker active frame, and tone — the Workspace you are not in recedes a step
+ * rather than the one you are in lighting up. A column of identical marks at
+ * identical luminance was the thing that made the rail hard to read.
  */
 function RailButton({ active, label, children, onPress, testID }: RailButtonProps) {
   return (
@@ -57,7 +58,7 @@ function RailButton({ active, label, children, onPress, testID }: RailButtonProp
         accessibilityState={{ selected: active }}
         testID={testID}
         onPress={onPress}
-        style={styles.railButton}
+        style={[styles.railButton, !active && styles.railButtonIdle]}
       >
         {children}
       </TouchableOpacity>
@@ -172,7 +173,7 @@ export function CommunityRail({
       )}
       <View style={styles.railDivider} />
       <RailCommand
-        accessibilityLabel="My Settings"
+        accessibilityLabel="Your settings"
         glyph={viewerPubkey ? undefined : '⚙'}
         label="YOU"
         onPress={onSettings}
@@ -385,6 +386,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  /* Tone, not a box: an unselected Workspace mark sits one step back from the
+   * one you are in. The rail is a quiet column you glance at, not a row of
+   * competing badges. */
+  railButtonIdle: { opacity: 0.5 },
   selectionBar: {
     position: 'absolute',
     top: 9,
@@ -407,10 +412,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 3,
   },
+  /* A rail command is named, so its glyph does not also have to shout: the
+   * mono micro-label under it carries the meaning and the glyph sits on the
+   * same quiet tier as the rest of the chrome. */
   railCommandGlyph: {
     ...Typography.default(),
     height: 22,
-    color: groknight.chrome,
+    color: groknight.textSecondary,
     fontSize: 19,
     lineHeight: 22,
     textAlign: 'center',

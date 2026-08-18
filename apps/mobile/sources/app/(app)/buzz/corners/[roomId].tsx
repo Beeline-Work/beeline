@@ -164,7 +164,7 @@ export default function BuzzCorners() {
       activeCommunityId={activeCommunityId}
       onSelect={handleCommunitySelect}
       onAdd={() => router.push('/buzz/community' as Href)}
-      onSettings={() => router.push('/buzz/settings/identity' as Href)}
+      onSettings={() => router.push('/buzz/settings' as Href)}
       onWorkspaceSettings={(communityId) =>
         router.push(
           { pathname: '/buzz/settings/workspace', params: { communityId } } as unknown as Href,

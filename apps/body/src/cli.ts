@@ -17,8 +17,13 @@
 import { dirname, resolve } from 'node:path';
 import { unlink } from 'node:fs/promises';
 import { loadBodyConfig, BASE_URL } from './config.js';
-import { formatAgentCommand, type AgentKind } from './agent-command.js';
+import { formatAgentCommand, type AgentCommand, type AgentKind } from './agent-command.js';
 import { selectPairAgentCommand } from './pair-agent-selection.js';
+import {
+  DEFAULT_ACCESS_POLICY,
+  isAgentAccessPolicy,
+  type AgentAccessPolicy,
+} from './access-policy.js';
 import { Body } from './body.js';
 import { WorkspaceSupervisor } from './supervisor.js';
 import {
@@ -27,6 +32,7 @@ import {
   createChannel,
   newIdentity,
   setMemberRole,
+  type Identity,
 } from '@beeline/gate';
 import { createBuzzClient } from '@beeline/buzz-client';
 import {
@@ -42,6 +48,7 @@ import {
   runtimeAgentCommand,
   runtimeIdentity,
   type AgentRuntimeRecord,
+  type PairRuntimeResult,
 } from './runtime.js';
 
 function usage(exitCode = 1): void {
@@ -70,11 +77,15 @@ All other config via env vars (see config.ts).
 
 function pairUsage(): void {
   console.log(`
-Pair this repository and start its durable Room agent.
+Pair this repository and start its durable Room agent(s).
 
 Usage:
   beeline pair <BUZZ-XXXX-XXXX> [--agent <codex|claude|goose|pi|reference|custom>]
                [--agent-command '<command> [args...]']
+               [--access <everyone|creator>] [--auto-response '<text>']
+
+  beeline pair <CODE1> <CODE2> ... --agents <kind1,kind2,...>
+               [--access <everyone|creator>] [--auto-response '<text>']
 
 Agent choices:
   codex      Operator's Codex through the codex-acp adapter
@@ -89,32 +100,77 @@ ACP adapters stay visible and can be installed when selected on a terminal. In a
 non-interactive session, beeline prints the manual adapter install command and
 never installs packages automatically. Several ready matches require --agent.
 
+Multiple runtimes in one Workspace: pass one single-use pairing code per agent
+plus a matching --agents list. Each agent gets its own fresh keypair/identity
+and its own daemon — three distinct agents live in one Room, each addressed by
+its own @-mention. Reusing an identity is refused (unset BUZZ_AGENT_KEY).
+
+Access policy (per agent, set here at invite time):
+  everyone  any Room member may address the agent (default)
+  creator   only the inviting owner may; anyone else gets the auto-response
+
 Examples:
   beeline pair BUZZ-XXXX-XXXX --agent codex
-  beeline pair BUZZ-XXXX-XXXX --agent claude
-  beeline pair BUZZ-XXXX-XXXX --agent goose
-  beeline pair BUZZ-XXXX-XXXX --agent pi
+  beeline pair BUZZ-XXXX-XXXX --agent claude --access creator
+  beeline pair BUZZ-AAAA-AAAA BUZZ-BBBB-BBBB BUZZ-CCCC-CCCC --agents claude,codex,pi
   beeline pair BUZZ-XXXX-XXXX --agent custom --agent-command 'my-agent serve --acp'
 `);
 }
 
-function parsePairOptions(args: string[]): { kind?: AgentKind; customCommand?: string } {
-  let kind: AgentKind | undefined;
+interface PairOptions {
+  codes: string[];
+  kinds?: AgentKind[];
+  singleKind?: AgentKind;
+  customCommand?: string;
+  access: AgentAccessPolicy;
+  autoResponse?: string;
+}
+
+function parsePairOptions(args: string[]): PairOptions {
+  // args[0] === 'pair'; positionals after it are pairing codes.
+  const codes: string[] = [];
+  let kinds: AgentKind[] | undefined;
+  let singleKind: AgentKind | undefined;
   let customCommand: string | undefined;
-  for (let index = 2; index < args.length; index += 1) {
-    const flag = args[index];
-    if (flag !== '--agent' && flag !== '--agent-command') {
-      throw new Error(`unknown beeline pair option: ${flag}`);
+  let access: AgentAccessPolicy = DEFAULT_ACCESS_POLICY;
+  let autoResponse: string | undefined;
+  const flags = new Set(['--agent', '--agents', '--agent-command', '--access', '--auto-response']);
+  for (let index = 1; index < args.length; index += 1) {
+    const token = args[index];
+    if (!token) continue;
+    if (!token.startsWith('--')) {
+      codes.push(token);
+      continue;
     }
+    if (!flags.has(token)) throw new Error(`unknown beeline pair option: ${token}`);
     const value = args[index + 1];
-    if (!value) throw new Error(`${flag} requires a value`);
-    if (flag === '--agent') kind = value as AgentKind;
-    else customCommand = value;
+    if (!value) throw new Error(`${token} requires a value`);
     index += 1;
+    if (token === '--agent') singleKind = value as AgentKind;
+    else if (token === '--agents')
+      kinds = value
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean) as AgentKind[];
+    else if (token === '--agent-command') customCommand = value;
+    else if (token === '--auto-response') autoResponse = value;
+    else if (token === '--access') {
+      if (!isAgentAccessPolicy(value)) {
+        throw new Error(`--access must be one of everyone|creator (got: ${value})`);
+      }
+      access = value;
+    }
+  }
+  if (kinds && (singleKind || customCommand)) {
+    throw new Error('--agents cannot be combined with --agent or --agent-command');
   }
   return {
-    ...(kind !== undefined ? { kind } : {}),
+    codes,
+    ...(kinds ? { kinds } : {}),
+    ...(singleKind !== undefined ? { singleKind } : {}),
     ...(customCommand !== undefined ? { customCommand } : {}),
+    access,
+    ...(autoResponse !== undefined ? { autoResponse } : {}),
   };
 }
 
@@ -173,6 +229,12 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     env,
     agent,
   });
+  // Per-agent access policy is a property of the paired runtime, not the
+  // process env, so inject it here where both are in hand. The supervisor's
+  // per-Room config spread carries it to every Body.
+  config.accessPolicy = runtime.accessPolicy ?? DEFAULT_ACCESS_POLICY;
+  config.accessOwnerPubkey = runtime.pairedBy;
+  if (runtime.accessAutoResponse) config.accessAutoResponse = runtime.accessAutoResponse;
   const controller = new AbortController();
   const stop = () => controller.abort();
   process.once('SIGINT', stop);
@@ -207,6 +269,105 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   }
 }
 
+/** Pair one agent (fresh or pinned identity) and launch its durable daemon. */
+async function pairOneAgent(input: {
+  code: string;
+  selectedAgent: AgentCommand;
+  agentIdentity: Identity;
+  bodyIdentity: Identity;
+  llmEnvFile?: string;
+  access: AgentAccessPolicy;
+  autoResponse?: string;
+}): Promise<PairRuntimeResult> {
+  const { code, selectedAgent, agentIdentity, bodyIdentity } = input;
+  const mergeWorkerIdentity = newIdentity('buzzy-merge-worker');
+  const relayBaseUrl = (process.env.BUZZY_RELAY_URL ?? BASE_URL)
+    .replace(/^ws/, 'http')
+    .replace(/\/$/, '');
+  const client = createBuzzClient({
+    baseUrl: relayBaseUrl,
+    ...(process.env.BUZZY_RELAY_HOST ? { host: process.env.BUZZY_RELAY_HOST } : {}),
+    identity: agentIdentity,
+  });
+  // Fail before consuming the one-shot code if the local agent runtime is absent.
+  const localConfig = loadBodyConfig({
+    workspaceRoot: process.cwd(),
+    ...(input.llmEnvFile ? { llmEnvFile: input.llmEnvFile } : {}),
+    agent: selectedAgent,
+  });
+  return pairRepositoryAgent(
+    {
+      code,
+      cwd: process.cwd(),
+      relayBaseUrl,
+      ...(process.env.BUZZY_RELAY_HOST ? { relayHost: process.env.BUZZY_RELAY_HOST } : {}),
+      ...(input.llmEnvFile ? { llmEnvFile: input.llmEnvFile } : {}),
+      agentIdentity,
+      bodyIdentity,
+      mergeWorkerIdentity,
+      agentBinary: localConfig.agentBinary,
+      agentKind: selectedAgent.kind,
+      agentCommand: selectedAgent.command,
+      agentArgs: selectedAgent.args,
+      accessPolicy: input.access,
+      ...(input.autoResponse ? { accessAutoResponse: input.autoResponse } : {}),
+      mcpBinary: localConfig.mcpBinary,
+    },
+    {
+      redeem: (pairingCode) => client.redeemAgentPairingCode(pairingCode),
+      resolveRoom: (pairing, repository, mergeWorkerPubkey) =>
+        client.resolveRepositoryRoom(
+          pairing.communityId,
+          repository,
+          pairing.pairedBy,
+          mergeWorkerPubkey,
+        ),
+      validate: async (_pairing, _room, repo) => {
+        if (!repo.relayRepo) return;
+        await assertAgentNotPushAllowed({
+          ownerHex: repo.relayRepo.ownerHex,
+          repo: repo.relayRepo.repo,
+          agentPubkey: agentIdentity.publicKey,
+          protectedRef: `refs/heads/${repo.targetBranch}`,
+          relay: createRelayClient(agentIdentity, {
+            baseUrl: relayBaseUrl,
+            host: new URL(relayBaseUrl).host,
+          }),
+        });
+      },
+    },
+  );
+}
+
+function printPairResult(result: PairRuntimeResult): void {
+  console.log(`[buzz] paired agent ${result.pairing.agent.displayName}`);
+  console.log(`[buzz] workspace: ${result.pairing.communityId}`);
+  console.log(
+    `[buzz] room: ${result.room.channelId} (${result.room.created ? 'created' : 'joined'})`,
+  );
+  console.log(`[buzz] repo: ${result.runtime.rooms[0]!.repo.root}`);
+  console.log(`[buzz] agent pubkey: ${result.pairing.agent.pubkey}`);
+  console.log(`[buzz] access policy: ${result.runtime.accessPolicy ?? DEFAULT_ACCESS_POLICY}`);
+  console.log(`[buzz] daemon started (pid ${result.pid})`);
+}
+
+/** Launch one stored runtime daemon (or report it already running). */
+async function startRuntime(configPath: string): Promise<void> {
+  const runtime = await readRuntimeRecord(configPath);
+  const selectedAgent = runtimeAgentCommand(runtime);
+  await assertRuntimeSafe(runtime);
+  console.log(
+    `[body] agent ${runtime.agent.publicKey} binary: ${formatAgentCommand(selectedAgent)}`,
+  );
+  const existingPid = await runtimeDaemonPid(configPath);
+  if (existingPid) {
+    console.log(`[buzz] agent daemon is already running (pid ${existingPid})`);
+    return;
+  }
+  const pid = await launchRuntimeDaemon(configPath);
+  console.log(`[buzz] agent daemon started (pid ${pid})`);
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args.length === 0) usage();
@@ -237,42 +398,43 @@ async function main(): Promise<void> {
   }
 
   if (command === 'start') {
-    // `--agent <pubkey>` scans the machine-local agent state home, so starting
-    // an agent no longer requires standing in the repository it was paired in.
+    // `--agent <pubkey>` and `--all` scan the machine-local agent state home,
+    // so starting an agent no longer requires standing in the repo it was
+    // paired in. With no pubkey, `beeline start` starts *every* agent paired
+    // in this repository (three runtimes = three daemons = three identities in
+    // one Room); `--all` does the same for every agent paired on this host.
+    const allFlag = args.includes('--all');
     const agentFlag = args.indexOf('--agent');
     const flagPubkey = agentFlag >= 0 ? args[agentFlag + 1] : undefined;
     if (agentFlag >= 0 && !flagPubkey) throw new Error('--agent requires an agent pubkey');
-    const requestedPubkey = flagPubkey ?? args[1];
-    const configs = flagPubkey
-      ? await findAgentRuntimeConfigPaths()
-      : await findRuntimeConfigPaths(process.cwd());
+    const positionalPubkey = args
+      .slice(1)
+      .find((token) => !token.startsWith('--') && token !== flagPubkey);
+    const requestedPubkey = flagPubkey ?? positionalPubkey;
+    const configs =
+      allFlag || flagPubkey
+        ? await findAgentRuntimeConfigPaths()
+        : await findRuntimeConfigPaths(process.cwd());
     const matching = requestedPubkey
       ? configs.filter((path) => dirname(path).endsWith(requestedPubkey))
       : configs;
-    if (matching.length === 0) {
+    // Pointers resolve to the same real record; start each runtime once.
+    const unique = [...new Set(matching)];
+    if (unique.length === 0) {
       throw new Error(
-        flagPubkey
-          ? `no paired agent runtime found for ${flagPubkey}`
-          : 'no paired agent runtime found in this repository',
+        requestedPubkey
+          ? `no paired agent runtime found for ${requestedPubkey}`
+          : allFlag
+            ? 'no paired agent runtime found on this host'
+            : 'no paired agent runtime found in this repository',
       );
     }
-    if (matching.length > 1) {
+    if (requestedPubkey && unique.length > 1) {
       throw new Error(
-        'multiple paired agents found; pass the agent pubkey shown by `beeline pair`',
+        'multiple paired agents match that pubkey; pass the full agent pubkey shown by `beeline pair`',
       );
     }
-    const runtime = await readRuntimeRecord(matching[0]!);
-    const selectedAgent = runtimeAgentCommand(runtime);
-    await assertRuntimeSafe(runtime);
-    const existingPid = await runtimeDaemonPid(matching[0]!);
-    if (existingPid) {
-      console.log(`[body] agent binary: ${formatAgentCommand(selectedAgent)}`);
-      console.log(`[buzz] agent daemon is already running (pid ${existingPid})`);
-      return;
-    }
-    const pid = await launchRuntimeDaemon(matching[0]!);
-    console.log(`[body] agent binary: ${formatAgentCommand(selectedAgent)}`);
-    console.log(`[buzz] agent daemon started (pid ${pid})`);
+    for (const path of unique) await startRuntime(path);
     return;
   }
 
@@ -281,81 +443,69 @@ async function main(): Promise<void> {
       pairUsage();
       return;
     }
-    const code = args[1];
-    if (!code) usage();
     const pairOptions = parsePairOptions(args);
+    if (pairOptions.codes.length === 0) usage();
+
+    if (pairOptions.kinds) {
+      // Multi-runtime: one single-use pairing code per agent, each minting its
+      // own fresh keypair and launching its own daemon. Three distinct agents
+      // in one Workspace/Room, each independently @-mentionable.
+      const { codes, kinds } = pairOptions;
+      if (codes.length !== kinds.length) {
+        throw new Error(
+          `--agents expects one pairing code per agent: got ${codes.length} code(s) for ${kinds.length} agent(s)`,
+        );
+      }
+      // A pinned key would make every agent share one identity — refuse (S0).
+      if (agentPrivateKey) {
+        throw new Error(
+          'pairing multiple agents mints a fresh identity for each; unset BUZZ_AGENT_KEY/BUZZ_PRIVATE_KEY first',
+        );
+      }
+      for (let index = 0; index < codes.length; index += 1) {
+        const kind = kinds[index]!;
+        const selectedAgent = await selectPairAgentCommand({
+          explicitKind: kind,
+          env: process.env,
+          cwd: process.cwd(),
+        });
+        console.log(
+          `[body] agent ${index + 1}/${codes.length} (${kind}) binary: ${formatAgentCommand(selectedAgent)}`,
+        );
+        const result = await pairOneAgent({
+          code: codes[index]!,
+          selectedAgent,
+          agentIdentity: newIdentity('buzzy-agent'),
+          bodyIdentity: newIdentity('buzzy-body'),
+          ...(llmEnvFile ? { llmEnvFile } : {}),
+          access: pairOptions.access,
+          ...(pairOptions.autoResponse ? { autoResponse: pairOptions.autoResponse } : {}),
+        });
+        printPairResult(result);
+      }
+      return;
+    }
+
+    if (pairOptions.codes.length > 1) {
+      throw new Error('multiple pairing codes require --agents <kind1,kind2,...>');
+    }
     const selectedAgent = await selectPairAgentCommand({
-      explicitKind: pairOptions.kind,
+      explicitKind: pairOptions.singleKind,
       customCommand: pairOptions.customCommand,
       env: process.env,
       cwd: process.cwd(),
     });
-    const agentIdentity = identityFromKey(agentPrivateKey, 'buzzy-agent');
-    const bodyIdentity = identityFromKey(process.env.BUZZ_BODY_KEY, 'buzzy-body');
-    const mergeWorkerIdentity = newIdentity('buzzy-merge-worker');
-    const relayBaseUrl = (process.env.BUZZY_RELAY_URL ?? BASE_URL)
-      .replace(/^ws/, 'http')
-      .replace(/\/$/, '');
-    const client = createBuzzClient({
-      baseUrl: relayBaseUrl,
-      ...(process.env.BUZZY_RELAY_HOST ? { host: process.env.BUZZY_RELAY_HOST } : {}),
-      identity: agentIdentity,
-    });
-    // Fail before consuming the one-shot code if the local agent runtime is absent.
-    const localConfig = loadBodyConfig({
-      workspaceRoot: process.cwd(),
-      llmEnvFile,
-      agent: selectedAgent,
-    });
     console.log(`[body] agent binary: ${formatAgentCommand(selectedAgent)}`);
-    const result = await pairRepositoryAgent(
-      {
-        code: code!,
-        cwd: process.cwd(),
-        relayBaseUrl,
-        ...(process.env.BUZZY_RELAY_HOST ? { relayHost: process.env.BUZZY_RELAY_HOST } : {}),
-        ...(llmEnvFile ? { llmEnvFile } : {}),
-        agentIdentity,
-        bodyIdentity,
-        mergeWorkerIdentity,
-        agentBinary: localConfig.agentBinary,
-        agentKind: selectedAgent.kind,
-        agentCommand: selectedAgent.command,
-        agentArgs: selectedAgent.args,
-        mcpBinary: localConfig.mcpBinary,
-      },
-      {
-        redeem: (pairingCode) => client.redeemAgentPairingCode(pairingCode),
-        resolveRoom: (pairing, repository, mergeWorkerPubkey) =>
-          client.resolveRepositoryRoom(
-            pairing.communityId,
-            repository,
-            pairing.pairedBy,
-            mergeWorkerPubkey,
-          ),
-        validate: async (_pairing, _room, repo) => {
-          if (!repo.relayRepo) return;
-          await assertAgentNotPushAllowed({
-            ownerHex: repo.relayRepo.ownerHex,
-            repo: repo.relayRepo.repo,
-            agentPubkey: agentIdentity.publicKey,
-            protectedRef: `refs/heads/${repo.targetBranch}`,
-            relay: createRelayClient(agentIdentity, {
-              baseUrl: relayBaseUrl,
-              host: new URL(relayBaseUrl).host,
-            }),
-          });
-        },
-      },
-    );
-    console.log(`[buzz] paired agent ${result.pairing.agent.displayName}`);
-    console.log(`[buzz] workspace: ${result.pairing.communityId}`);
-    console.log(
-      `[buzz] room: ${result.room.channelId} (${result.room.created ? 'created' : 'joined'})`,
-    );
-    console.log(`[buzz] repo: ${result.runtime.rooms[0]!.repo.root}`);
-    console.log(`[buzz] agent pubkey: ${result.pairing.agent.pubkey}`);
-    console.log(`[buzz] daemon started (pid ${result.pid})`);
+    const result = await pairOneAgent({
+      code: pairOptions.codes[0]!,
+      selectedAgent,
+      agentIdentity: identityFromKey(agentPrivateKey, 'buzzy-agent'),
+      bodyIdentity: identityFromKey(process.env.BUZZ_BODY_KEY, 'buzzy-body'),
+      ...(llmEnvFile ? { llmEnvFile } : {}),
+      access: pairOptions.access,
+      ...(pairOptions.autoResponse ? { autoResponse: pairOptions.autoResponse } : {}),
+    });
+    printPairResult(result);
     return;
   }
 

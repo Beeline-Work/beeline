@@ -3767,3 +3767,151 @@ describe('user-facing failure text stays free of git/tool plumbing', () => {
     expect(detail).toContain('[credentials]@');
   });
 });
+
+describe('per-agent access policy', () => {
+  const owner = newIdentity('owner');
+  const stranger = newIdentity('stranger');
+
+  function baseConfig(access: Partial<BodyConfig>): BodyConfig {
+    return {
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: `/tmp/buzzy-access-policy-unit-${Math.random().toString(36).slice(2)}`,
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+      ...access,
+    };
+  }
+
+  function addressed(author: ReturnType<typeof newIdentity>, agentPubkey: string, id: string) {
+    return signEvent(
+      {
+        pubkey: author.publicKey,
+        created_at: Number(id) || 1,
+        kind: 9,
+        tags: [
+          ['h', 'parent-channel'],
+          ['p', agentPubkey],
+        ],
+        content: `message ${id}`,
+      },
+      author.secretKey,
+    );
+  }
+
+  function withCapturedPublishes(): NostrEvent[] {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        try {
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        } catch {
+          /* non-JSON bodies are irrelevant to the assertions */
+        }
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    return published;
+  }
+
+  function refusals(published: NostrEvent[]): NostrEvent[] {
+    return published.filter((event) => event?.content?.includes('King of the Andals'));
+  }
+
+  function drive(body: Body) {
+    return (Reflect.get(body, 'processChannelRequestEvents') as (...a: unknown[]) => Promise<number>).bind(
+      body,
+    );
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('creator: answers the owner and refuses everyone else with the auto-response', async () => {
+    const body = new Body(
+      baseConfig({ accessPolicy: 'creator', accessOwnerPubkey: owner.publicKey }),
+    );
+    Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
+    const reply = vi
+      .spyOn(body as never, 'replyInRoom' as never)
+      .mockResolvedValue(true as never);
+    const published = withCapturedPublishes();
+    const process = drive(body);
+    const participants = [owner.publicKey, stranger.publicKey, body.agent.publicKey];
+
+    // A non-permitted stranger never drives the backend; it gets one refusal.
+    await process('parent-channel', { repo: 'repo' }, 'repository', [
+      addressed(stranger, body.agent.publicKey, '1'),
+    ], participants);
+    expect(reply).not.toHaveBeenCalled();
+    expect(refusals(published)).toHaveLength(1);
+    expect(refusals(published)[0]!.content).toContain('wildling');
+
+    // The owner is permitted and reaches the ordinary reply path, no refusal.
+    await process('parent-channel', { repo: 'repo' }, 'repository', [
+      addressed(owner, body.agent.publicKey, '2'),
+    ], participants);
+    expect(reply).toHaveBeenCalledTimes(1);
+    expect(refusals(published)).toHaveLength(1);
+  });
+
+  it('everyone: answers any sender, no refusal', async () => {
+    const body = new Body(
+      baseConfig({ accessPolicy: 'everyone', accessOwnerPubkey: owner.publicKey }),
+    );
+    Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
+    const reply = vi
+      .spyOn(body as never, 'replyInRoom' as never)
+      .mockResolvedValue(true as never);
+    const published = withCapturedPublishes();
+    const process = drive(body);
+    const participants = [owner.publicKey, stranger.publicKey, body.agent.publicKey];
+
+    await process('parent-channel', { repo: 'repo' }, 'repository', [
+      addressed(stranger, body.agent.publicKey, '1'),
+    ], participants);
+    expect(reply).toHaveBeenCalledTimes(1);
+    expect(refusals(published)).toHaveLength(0);
+  });
+
+  it('defaults to everyone when no policy is configured (unchanged behaviour)', async () => {
+    const body = new Body(baseConfig({}));
+    Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
+    const reply = vi
+      .spyOn(body as never, 'replyInRoom' as never)
+      .mockResolvedValue(true as never);
+    withCapturedPublishes();
+    const process = drive(body);
+    const participants = [stranger.publicKey, body.agent.publicKey];
+
+    await process('parent-channel', { repo: 'repo' }, 'repository', [
+      addressed(stranger, body.agent.publicKey, '1'),
+    ], participants);
+    expect(reply).toHaveBeenCalledTimes(1);
+  });
+
+  it('rate-limits the refusal to one per sender, then goes quiet', async () => {
+    const body = new Body(
+      baseConfig({ accessPolicy: 'creator', accessOwnerPubkey: owner.publicKey }),
+    );
+    Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
+    vi.spyOn(body as never, 'replyInRoom' as never).mockResolvedValue(true as never);
+    const published = withCapturedPublishes();
+    const process = drive(body);
+    const participants = [owner.publicKey, stranger.publicKey, body.agent.publicKey];
+
+    // Two distinct addressed messages from the same non-permitted sender yield
+    // exactly one refusal — the second is suppressed within the window.
+    await process('parent-channel', { repo: 'repo' }, 'repository', [
+      addressed(stranger, body.agent.publicKey, '1'),
+      addressed(stranger, body.agent.publicKey, '2'),
+    ], participants);
+    expect(refusals(published)).toHaveLength(1);
+  });
+});

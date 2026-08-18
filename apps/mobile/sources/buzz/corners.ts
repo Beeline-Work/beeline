@@ -112,7 +112,11 @@ export function cornerStatusPresentation(status: CornerStatus): {
     case 'needs-attention':
       return { glyph: '▲', label: 'NEEDS ATTENTION' };
     case 'open':
-      return { glyph: '◇', label: 'OPEN' };
+      // The only path to this status (`cornerSummaryFromEvents` in
+      // `buzz-rig-transport.ts`) is a `ready` display-status or a
+      // `merge-ready` tagged event — 'open' never means merely "not yet
+      // closed", it always means the corner has an approvable change.
+      return { glyph: '◇', label: 'READY' };
     case 'failed':
       return { glyph: '✕', label: 'FAILED' };
     case 'merged':

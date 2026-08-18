@@ -264,6 +264,53 @@ function observationalVerb(
   }
 }
 
+/** Compact per-call receipt for a folded (never separately projected)
+ *  observational call: what it looked at, and a short taste of what it found. */
+export interface CompactObservedCall {
+  verb: string;
+  target?: string;
+  result?: string;
+}
+
+/** A folded batch can carry many calls; cap the receipts, not the tally. */
+const MAX_OBSERVED_DETAILS_PER_BATCH = 20;
+const MAX_OBSERVED_TARGET_CHARS = 160;
+const MAX_OBSERVED_RESULT_CHARS = 160;
+
+/** What the call looked at — a path, a search/fetch query, or a bare command —
+ *  falling back to its title so a call the client can't otherwise name still
+ *  shows something. */
+function observedTarget(
+  update: Record<string, unknown>,
+  known: ToolCallInfo | undefined,
+): string | undefined {
+  const current = toolCallInfo(update);
+  const path = current.path ?? known?.path;
+  if (path) return compactText(path, MAX_OBSERVED_TARGET_CHARS);
+  const rawInput = objectValue(update.rawInput);
+  // A terminal update (tool_call_update/tool_result) usually omits rawInput —
+  // only the creation event carried it — so fall back to what trackToolCall
+  // remembered from that creation event before falling back to a bare title.
+  const candidate =
+    rawInput?.pattern ?? rawInput?.query ?? rawInput?.url ?? current.command ?? known?.command;
+  if (typeof candidate === 'string' && candidate.trim()) {
+    return compactText(candidate, MAX_OBSERVED_TARGET_CHARS);
+  }
+  const title = current.title ?? known?.title;
+  return title ? compactText(title, MAX_OBSERVED_TARGET_CHARS) : undefined;
+}
+
+/** A line or two of what the call returned — never the raw multi-KB output a
+ *  read/search call can carry, just enough to say what it found. */
+function observedResult(update: Record<string, unknown>): string | undefined {
+  const toolCall = objectValue(update.toolCall);
+  const raw = update.output ?? update.rawOutput ?? update.result ?? update.content ?? toolCall?.output;
+  const text = compactText(raw, MAX_OBSERVED_RESULT_CHARS);
+  if (!text) return undefined;
+  const firstLines = text.split(/\r?\n/).slice(0, 2).join(' ').trim();
+  return firstLines ? compactText(firstLines, MAX_OBSERVED_RESULT_CHARS) : undefined;
+}
+
 /** A deliberately non-raw label for a visible milestone. */
 function describeMajorUpdate(
   update: Record<string, unknown>,
@@ -719,10 +766,27 @@ export function projectActivity(
     // tool call's tracked kind/command, so a second pass would re-classify the
     // very milestone it just published as an anonymous observational call.
     const rollup: Record<string, number> = {};
+    // A compact receipt per folded call — not the calls themselves, which stay
+    // dropped for the quota reason above, but enough (what it looked at, a line
+    // or two of what it found) that the review sheet has something real to show
+    // instead of just the tally. Capped independently of the tally: a batch of
+    // hundreds of reads still reports its true count, just not hundreds of rows.
+    const observed: CompactObservedCall[] = [];
     for (const event of events) {
       if (!isMajorUpdate(event, toolCallKinds)) {
         const verb = observationalVerb(event, toolCallKinds);
-        if (verb) rollup[verb] = (rollup[verb] ?? 0) + 1;
+        if (verb) {
+          rollup[verb] = (rollup[verb] ?? 0) + 1;
+          // MCP calls stay implementation detail even in the drill-down —
+          // 'queried' is the one verb observationalVerb reserves for them.
+          if (verb !== 'queried' && observed.length < MAX_OBSERVED_DETAILS_PER_BATCH) {
+            const toolCallId = typeof event.toolCallId === 'string' ? event.toolCallId : undefined;
+            const known = toolCallId ? toolCallKinds.get(toolCallId) : undefined;
+            const target = observedTarget(event, known);
+            const result = observedResult(event);
+            observed.push({ verb, ...(target ? { target } : {}), ...(result ? { result } : {}) });
+          }
+        }
         continue;
       }
       const label = describeMajorUpdate(event, toolCallKinds);
@@ -766,6 +830,7 @@ export function projectActivity(
       sessionUpdate: 'activity_summary',
       content: { type: 'text', text: summarizeMajorActions(labels) },
       ...(rollupTotal ? { rollup } : {}),
+      ...(observed.length ? { observed } : {}),
       ...(thoughtMs >= REASONING_RECEIPT_MIN_MS ? { thoughtMs } : {}),
     };
     void emitActivityEvent(channelId, channelOwner, {

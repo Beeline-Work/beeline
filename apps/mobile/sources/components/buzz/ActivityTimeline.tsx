@@ -442,8 +442,8 @@ const styles = StyleSheet.create({
     width: '100%',
     minWidth: 0,
     color: groknight.ledgerBright,
-    fontSize: 16,
-    lineHeight: 26,
+    fontSize: 14,
+    lineHeight: 23,
     textShadowColor: groknight.ledgerGlow,
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 7,
@@ -451,8 +451,8 @@ const styles = StyleSheet.create({
   narrationHandle: {
     ...Typography.ledger(),
     color: groknight.ledgerQuiet,
-    fontSize: 16,
-    lineHeight: 26,
+    fontSize: 14,
+    lineHeight: 23,
     letterSpacing: 0.6,
   },
   objective: {

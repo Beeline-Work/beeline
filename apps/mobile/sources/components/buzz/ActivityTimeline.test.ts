@@ -119,7 +119,7 @@ describe('corner narration', () => {
     // ...at the ledger's brightest tier and full width, exactly like an
     // ordinary agent turn — its transport must not change how it reads.
     expect(narration.props.textStyle.color).toBe(groknight.ledgerBright);
-    expect(narration.props.textStyle.fontSize).toBe(16);
+    expect(narration.props.textStyle.fontSize).toBe(14);
     expect(narration.props.textStyle.width).toBe('100%');
     expect(narration.props.textStyle.textShadowColor).toBe(groknight.ledgerGlow);
   });

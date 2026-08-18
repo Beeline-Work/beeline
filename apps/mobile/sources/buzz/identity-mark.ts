@@ -42,7 +42,7 @@ export type IdentityPalette = {
   deep: string;
   /** Which curated hue this identity landed on. Exposed for tests and docs. */
   hueIndex: number;
-  /** The hue in degrees, after the kind's temperament shift. */
+  /** The anchor's hue in degrees — one of `HUE_WHEEL`, unmodified. */
   hue: number;
 };
 
@@ -88,22 +88,32 @@ function mulberry32(seed: number): () => number {
 }
 
 /**
- * Sixteen hue anchors — ember, terracotta, amber, olive, moss, fern, jade, sea,
- * teal, steel, dusk, indigo, iris, orchid, plum, rose — spread around the whole
- * wheel with a hard 20° floor between neighbours, and nudged off the zones that
- * die on a near-black slab (pure yellow, pure blue).
- *
- * This is the entire reason the palette is curated rather than hashed: a raw
- * `hash % 360` hue clusters, and three identities in one list came out as three
- * near-identical purples. Here, two identities are either the *same* signature
- * or at least ~19° apart after the temperament shift below — there is no such
- * thing as "almost the same colour" in this system.
+ * Sixteen hue anchors, spread around the wheel by *discriminability*, not by
+ * raw degree — a hard 20° floor between neighbours almost everywhere, but
+ * only three anchors (30° apart) across the whole 130°-wide violet → magenta
+ * → rose corridor. Muted, low-saturation violet and magenta read as one
+ * indistinguishable "purple" family to most eyes even at a textbook-even 20°
+ * apart, while the same 20° step through red/orange/yellow/green/teal/blue
+ * reads as genuinely different hues. An earlier version spent 6 of its 16
+ * anchors (more than a third) in that one low-discriminability corridor —
+ * four real agents in one Workspace each independently hashed onto one of
+ * those six and all four read as "some flavour of purple". Under-provisioning
+ * that corridor and spending the freed anchors on the rest of the wheel is
+ * what actually fixes it; a kind's warm/cool lean (`weightedHueIndex` below)
+ * only ever picks among these fixed anchors, never moves one.
  *
  * The array is deliberately stored in a scrambled order rather than in hue
  * order, so even a seed distribution that correlates adjacent indices cannot
  * produce adjacent hues.
  */
-const HUE_WHEEL = [8, 162, 310, 116, 264, 70, 224, 28, 184, 340, 140, 286, 92, 244, 48, 204] as const;
+const HUE_WHEEL = [160, 20, 300, 100, 240, 60, 180, 0, 220, 330, 80, 270, 40, 200, 120, 140] as const;
+
+/** The anchors on the warm side of the wheel — red through amber, and
+ *  magenta/rose the other way round — used only to WEIGHT which anchor a
+ *  kind is more likely to land on. */
+function isWarmAnchor(hue: number): boolean {
+  return hue < 90 || hue > 300;
+}
 
 /**
  * The kind's temperament. Agents run warmer and a step more saturated; humans
@@ -111,23 +121,40 @@ const HUE_WHEEL = [8, 162, 310, 116, 264, 70, 224, 28, 184, 340, 140, 286, 92, 2
  * already states outright. Workspaces run most neutral of all: they are
  * structure, and structure should not compete with the people inside it.
  *
- * The hue blend is small on purpose. At 14% toward a pole the sixteen anchors
- * still land ~19° apart, so the whole agent set feels warm without any two
- * agents converging.
+ * `warmBias` is a relative pick-odds multiplier applied to the warm anchors
+ * only (1 is neutral, >1 favours warm, <1 favours cool) — see
+ * `weightedHueIndex`. It never drives an anchor's odds to zero, so every
+ * kind can still land anywhere on the wheel; it only leans the distribution.
  */
-const TEMPERAMENT: Record<
-  IdentityKind,
-  { pole: number; blend: number; saturation: number; lightness: number }
-> = {
-  agent: { pole: 40, blend: 0.14, saturation: 0.42, lightness: 0.62 },
-  human: { pole: 214, blend: 0.14, saturation: 0.24, lightness: 0.6 },
-  workspace: { pole: 214, blend: 0.06, saturation: 0.15, lightness: 0.58 },
+const TEMPERAMENT: Record<IdentityKind, { warmBias: number; saturation: number; lightness: number }> = {
+  agent: { warmBias: 2, saturation: 0.42, lightness: 0.62 },
+  human: { warmBias: 0.5, saturation: 0.24, lightness: 0.6 },
+  workspace: { warmBias: 1, saturation: 0.15, lightness: 0.58 },
 };
 
-/** Blend a hue toward a pole along the shorter arc. */
-function blendHue(hue: number, pole: number, amount: number): number {
-  const delta = (((pole - hue + 540) % 360) - 180) * amount;
-  return (hue + delta + 360) % 360;
+/**
+ * Picks one of the sixteen anchors, reweighted toward (or away from) the warm
+ * arc by `warmBias` — never by moving where an anchor sits.
+ *
+ * A prior version blended every anchor's *hue value* proportionally toward a
+ * pole. That kept any two given anchors ~19° apart on paper, but every anchor
+ * on the far side of the pole got pushed the *same* direction around the
+ * wheel on its way toward it, so they piled up in one narrow corridor right
+ * past the pole's antipode — on-device, four agents in one Workspace all
+ * landed in that corridor and read as indistinguishable shades of purple.
+ * Reweighting *which* anchor gets picked, instead of moving the anchors
+ * themselves, keeps the full sixteen-anchor spacing intact for every kind: a
+ * small set of agents can still land anywhere on the wheel, just leaning warm.
+ */
+function weightedHueIndex(random: () => number, warmBias: number): number {
+  const weights = HUE_WHEEL.map((hue) => (isWarmAnchor(hue) ? warmBias : 1));
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  let remaining = random() * total;
+  for (let index = 0; index < weights.length; index += 1) {
+    remaining -= weights[index]!;
+    if (remaining <= 0) return index;
+  }
+  return weights.length - 1;
 }
 
 function hslToHex(hue: number, saturation: number, lightness: number): string {
@@ -159,9 +186,9 @@ function hslToHex(hue: number, saturation: number, lightness: number): string {
  */
 export function identityPalette(seed: string, kind: IdentityKind): IdentityPalette {
   const random = mulberry32(fnv1a32(`${kind}:${seed}`));
-  const hueIndex = Math.floor(random() * HUE_WHEEL.length) % HUE_WHEEL.length;
   const temperament = TEMPERAMENT[kind];
-  const hue = blendHue(HUE_WHEEL[hueIndex]!, temperament.pole, temperament.blend);
+  const hueIndex = weightedHueIndex(random, temperament.warmBias);
+  const hue = HUE_WHEEL[hueIndex]!;
   // One of three luminance registers, so two identities that do land on the
   // same hue still separate at a glance without a second hue being invented.
   const register = Math.floor(random() * 3);

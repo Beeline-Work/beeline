@@ -640,13 +640,15 @@ describe('Buzz Room screen event projection', () => {
       corner: { subchannelId: 'corner-1', status: 'live' },
     };
 
+    // A corner status card is dropped on BOTH surfaces: it is state, owned by
+    // the pinned line while live and by the corners view once terminal, so it
+    // must not spend a transcript cell on either.
     expect(transcriptMessages([conversation, activity, merge, lifecycle, corner], false)).toEqual([
       conversation,
-      corner,
     ]);
     expect(
       transcriptMessages([conversation, activity, merge, lifecycle, corner], true),
-    ).toHaveLength(4);
+    ).toEqual([conversation, merge, lifecycle]);
   });
 
   it('streams a Room reply into one bubble that fills in place and finalizes without a second bubble', () => {

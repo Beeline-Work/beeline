@@ -26,9 +26,9 @@ import { groknight } from '@/buzz/groknight';
 import { MEMBERS_GLYPH, MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { HullSurface, MonoButton, PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
-import { WorkspaceAvatar } from '@/components/buzz/WorkspaceAvatar';
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
+import { IdentityMark } from '@/components/buzz/IdentityMark';
 
 type WorkspaceRoomSetting = {
   id: string;
@@ -266,7 +266,13 @@ export default function WorkspaceSettings() {
           <View style={styles.section} testID="workspace-overview-settings">
             <Text style={styles.sectionLabel}>WORKSPACE</Text>
             <View style={styles.workspaceIdentityRow}>
-              <WorkspaceAvatar community={community} size={72} />
+              <IdentityMark
+                kind="workspace"
+                seed={community?.communityId ?? 'workspace-loading'}
+                avatarUrl={community?.avatar}
+                name={community?.name}
+                size={72}
+              />
               <View style={styles.workspaceIdentityCopy}>
                 <Text style={styles.sectionTitle}>Picture</Text>
                 <View style={styles.inlineActions}>

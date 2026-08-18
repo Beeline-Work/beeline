@@ -274,9 +274,12 @@ describe('Workspace rail and chrome — Grok Mono Hull invariants', () => {
     expect(styleBlock(railSource, 'selectionBar')).toContain('groknight.selectedBorder');
   });
 
-  it('renders every identity in the chrome as a faceted mark', () => {
-    expect(railSource).toContain('<WorkspaceAvatar');
-    expect(railSource).toContain('<PersonAvatar');
+  it('renders every identity in the chrome through the one identity mark', () => {
+    // Shape reports the type — ▢ for a Workspace, ○ for a person — and both
+    // come out of the single `IdentityMark` primitive, never a rail-local one.
+    expect(railSource).toMatch(/<IdentityMark\s+kind="workspace"/);
+    expect(railSource).toMatch(/<IdentityMark\s+kind="human"/);
+    expect(railSource).not.toMatch(/AgentAvatar|PersonAvatar|WorkspaceAvatar/);
     expect(railSource).not.toMatch(/borderRadius: \d*size|borderRadius: '50%'/);
   });
 

@@ -14,9 +14,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Community } from '@beeline/buzz-client';
 import { groknight } from '@/buzz/groknight';
 import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
-import { PersonAvatar } from '@/components/buzz/PersonAvatar';
-import { WorkspaceAvatar } from '@/components/buzz/WorkspaceAvatar';
 import { Typography } from '@/constants/Typography';
+import { IdentityMark } from '@/components/buzz/IdentityMark';
 
 const DRAWER_WIDTH = 72;
 const DRAWER_DURATION_MS = 180;
@@ -141,10 +140,13 @@ export function CommunityRail({
               onPress={() => onSelect(community.communityId)}
               testID={`community-rail-${community.communityId}`}
             >
-              <WorkspaceAvatar
-                active={active}
-                community={community}
+              <IdentityMark
+                kind="workspace"
+                seed={community?.communityId ?? 'workspace-loading'}
+                avatarUrl={community?.avatar}
+                name={community?.name}
                 size={40}
+                selected={active}
                 testID={`workspace-avatar-${community.communityId}`}
               />
             </RailButton>
@@ -180,7 +182,13 @@ export function CommunityRail({
         testID="community-rail-settings"
       >
         {viewerPubkey ? (
-          <PersonAvatar pubkey={viewerPubkey} avatarUrl={viewerAvatarUrl} name="You" size={34} />
+          <IdentityMark
+            kind="human"
+            seed={viewerPubkey}
+            avatarUrl={viewerAvatarUrl}
+            name="You"
+            size={34}
+          />
         ) : null}
       </RailCommand>
       <View style={{ height: Math.max(insets.bottom, 8) }} />
@@ -218,7 +226,14 @@ export function CommunityDrawerTrigger({ community }: CommunityDrawerTriggerProp
       style={styles.drawerTrigger}
       testID="workspace-avatar-trigger"
     >
-      <WorkspaceAvatar community={community} size={26} testID="workspace-avatar-header" />
+      <IdentityMark
+        kind="workspace"
+        seed={community?.communityId ?? 'workspace-loading'}
+        avatarUrl={community?.avatar}
+        name={community?.name}
+        size={26}
+        testID="workspace-avatar-header"
+      />
       <Text numberOfLines={1} style={styles.drawerTriggerName}>
         {community?.name ?? WORKSPACE_LABEL}
       </Text>

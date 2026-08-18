@@ -44,7 +44,12 @@ carries is redundant with copy the reader can reach another way.
 ## Shape
 
 One corner radius, `groknight.radius = 3`, everywhere a box appears. No other
-radius value ships. Nothing renders as a circle or a soft pill.
+radius value ships. No *box* renders as a circle or a soft pill.
+
+The identity marks are the one deliberate exception, and it is a shape
+*vocabulary*, not a softening: a mark's silhouette is what states its type, and
+three silhouettes that a person can tell apart before reading anything need a
+curve among them. See "Identity" below.
 
 A box (border + fill + radius) appears only around:
 - something the user must find and act on (an input, a button), or
@@ -98,7 +103,7 @@ ledger keeps the light.
 handle set *into* the first line — dim, uppercase, immediately followed by the
 words, which wrap beneath it. A log line, never a name on its own row. It repeats
 only on a speaker change: consecutive entries by the same voice inherit the
-announcement, and anything else (another person, a corner card) ends the run
+announcement, and anything else (another person, a merge summary) ends the run
 (`buzz/ledger-attribution.ts`).
 
 The two surfaces differ here, and only here, because they genuinely differ:
@@ -139,8 +144,17 @@ same left margin as the prose above it. Only its affordance lifts — `view →`
 hangs in the same right gutter the timestamps do, one tonal step brighter, with
 a faint tonal flash on press and no border at any point. `◇` means corner (the
 lifecycle glyph family) and `→` means enterable, and that pairing is the one
-"enter this corner" vocabulary the transcript has: `WritePermissionOutcome` and
-the Room's own corner card both use it.
+"enter this corner" vocabulary the product has, shared by
+`WritePermissionOutcome` and the pinned corner line below the transcript.
+
+**A corner's status is never stamped into the transcript.** Not while it runs,
+not after it ends. A note inscribed the moment a corner opened scrolls away and
+then lies — still saying "open" long after the corner merged — and a terminal
+stamp (`Alden ✕ FAILED`, `◇ OPEN`) interrupts a live conversation with a dead
+record while duplicating the pinned line above the composer. So a Room has
+exactly **one** active-corner affordance, the pinned line, and exactly one place
+a finished corner is recorded, the Room's corners view. The transcript keeps the
+conversation and nothing else.
 
 **There is no reply echo under an agent turn.** Body threads every Room/DM reply
 to the request that triggered it, so the quoted block was always the message
@@ -215,8 +229,9 @@ rows beneath it can never disagree.
 A Room's corner count and its expanded dropdown are the same set: only `live`,
 `needs-attention`, and `open` corners (`roomListCorners`). `merged`, `archived`,
 and `failed` corners are excluded outright rather than dimmed, so the count
-always equals what expanding reveals; they stay reachable through the Room
-transcript's durable cards and the `ALL CORNERS` link the dropdown ends with.
+always equals what expanding reveals; they stay reachable through the
+`ALL CORNERS` link the dropdown ends with, which is the one place in the product
+a finished corner is recorded.
 Expanded corners hang off a 1px rail, not a nested container.
 
 The Room-list header is the Workspace name and nothing louder: the name is the
@@ -240,12 +255,67 @@ only sign-out with it.
 
 ## Identity
 
-Every identity — agent, workspace, person — renders as a deterministic,
-seed-derived, faceted polygon mark. No curves, no illustration assets, no photo
-dependency. Agents get an angular drone-like frame with gold accent strokes;
-workspaces get hex plating; people get a faceted mark distinct in silhouette
-from an agent's but built from the same stroke system (`avatarInk`/`avatarSoft`/
-`avatarDim`, `strokeLinejoin: 'miter'`, no `Circle`/`Ellipse`).
+An identity mark answers four questions at once, on four independent axes, so
+that recognising someone never depends on reading a name. Source of truth:
+`apps/mobile/sources/buzz/identity-mark.ts` (pure, testable, no React Native)
+drawn by `components/buzz/IdentityMark.tsx`, the **one** identity component in
+the product. Every avatar, transcript handle mark, Members row, Workspace rail
+tile, presence-sized dot and Corner top bar renders that primitive. A second
+`SomethingAvatar` component is the drift this system replaced, and a test
+enforces that none comes back.
+
+**1 · Shape is the type.** `△` agent, `○` human, `▢` workspace. Agents are
+angular and engineered, people are organic, Workspaces are structural — read
+pre-verbally, at any size, before colour or detail resolves. This is why the
+circle exists in a product that otherwise has no curves: the type distinction
+is worth more than the purity, and it is contained to the marks alone.
+
+**2 · Colour is the memory.** "beebee is the amber one." Each identity gets one
+deterministic signature colour from its seed — a pubkey for a person or agent,
+the community id for a Workspace — and keeps it forever, everywhere.
+
+The palette is **curated, never hashed**. Sixteen hand-placed hues span the
+whole wheel with a hard 20° floor between neighbours; a raw `hash % 360` was
+tried and it clusters, putting three identities in one list on three
+near-identical purples. Here two identities are either the *same* signature or
+a clearly readable distance apart — "almost the same colour" is not a state
+this system can produce. The array is stored scrambled rather than in hue
+order, hue and cypher draw from independent PRNG streams, and a third
+luminance register separates two identities that do land on one hue.
+
+Saturation stays low so every mark sits inside the obsidian world rather than
+on top of it, and each type carries a temperament as a quiet second reading of
+what the shape already states: agents warmer and a step more saturated, people
+cooler and greyer, Workspaces most neutral of all — structure should not
+compete with the people inside it.
+
+**3 · The cypher is the tiebreak.** Inside the silhouette, a hashed
+nine-cell primitive grid drawn in tones of the signature colour (`void` /
+`mid` / `bright`, where a void shows the mark's own deep tone rather than a
+hole in the slab). One geometry per shape, all nine cells, so no type is a
+weaker tiebreak than another: a **triangular mesh** for `△`, **radial rings ×
+sectors** for `○`, and speakeasy's **3×3 block/slot/cut/void plate** for `▢`
+(the FNV-1a + primitive-grid method is adopted from that product's `RoomMark`;
+the tones are ours). Every cell is cut back from its neighbours — left
+edge-to-edge, two adjacent same-tone cells fuse and the cypher stops being one.
+
+The cypher is deliberately coarse, and below `CYPHER_MIN_SIZE` (24px) it is
+dropped entirely: at handle and presence-dot scale the mark goes solid, because
+there the colour and silhouette *are* the identity and nine cells of ~4px would
+only mud them. That is the design, not a degradation.
+
+**4 · A gold ring means alive.** An agent working right now takes a gold ring
+plus a wider low-alpha halo *outside* its silhouette, breathing on the shared
+live clock (`HullLivePulse`). It never touches the identity colour: who this is
+and what it is doing stay two separate reads, and a gold *fill* would have
+destroyed the first to say the second. The ring is drawn in the mark's own
+shape — a circular halo around a triangle would blunt exactly the shape read
+the system is built on — and it is mounted only where something is genuinely
+live, so a quiet row pays for no clock.
+
+A relay `picture` field never overrides any of this: `groknight
+.photoIdentityMarksEnabled` gates the photo path for all three types in one
+place and ships `false`. A photo would defeat every axis above at once.
 
 One concept gets one glyph, product-wide. Members are `⌬` everywhere the members
 screen is reachable — the Room-list header, the Workspace settings section, the
@@ -311,23 +381,36 @@ backgrounds. No primitive exceeds ~240ms except the continuous, low-duty-cycle
 loops, which share one clock (`motionTokens.liveCycle`).
 
 At most two of `PixelLoader` / `HullWaveSignal` run on-screen at once.
-`HullLivePulse` is deliberately outside that count: it is a single-glyph
-opacity breath — no geometry, no layout, one animated style — mounted *only*
-where something is genuinely live, so its instance count is bounded by real
-concurrent agent work rather than by decoration. On the Room list that means
-one per live Room, and if several Rooms are working at once the index is
-supposed to look like it. A quiet row must never pay for a clock it does not
-use: mount the primitive conditionally, do not pass it `active={false}`.
+`HullLivePulse` is deliberately outside that count: it is a single opacity
+breath — no geometry, no layout, one animated style — mounted *only* where
+something is genuinely live, so its instance count is bounded by real concurrent
+agent work rather than by decoration. On the Room list that means one per live
+Room, and if several Rooms are working at once the index is supposed to look
+like it. A quiet row must never pay for a clock it does not use: mount the
+primitive conditionally, do not pass it `active={false}`.
+
+It is also **the only motion "live" is allowed to have.** The pinned corner line
+and a working agent's gold ring both breathe on it — a calm heartbeat, on the
+one clock. Live state must never be reported by something that *travels*: a
+sweeping band, a moving crest, a progress bar, or a row of dashes all read as
+"something is filling up towards a finish", which is a claim the product cannot
+make about an agent's turn, and at rest they read as broken chrome. Breathing
+says "still going" and claims nothing else.
 
 ## The two color exceptions, stated so no one re-litigates them
 
 1. **Gold (`#d7af5f`)** marks one idea — *an agent is alive* — plus the moment
-   you act on its work: agent identity, live/online presence (the Corner's LIVE
-   wave, a presence dot, and a Room on the index with a live corner), owner
-   role, and the merge-approval action. It is never the *only* signal for any of these
-   — each is redundantly encoded by shape, glyph, or copy. Do not add a second
-   hue; do not let a fifth meaning attach to gold without checking whether it
-   still needs to be redundant with something else first. The ledger's glow is
+   you act on its work: the ring around a working agent's identity mark,
+   live/online presence (the Corner's LIVE wave, a presence dot, the pinned
+   corner line, and a Room on the index with a live corner), owner role, and the
+   merge-approval action. It is never the *only* signal for any of these — each
+   is redundantly encoded by shape, glyph, or copy. Note what gold is *not*:
+   identity itself. An agent's mark carries its own signature colour, and gold
+   only rings it — a gold-filled mark would spend the one accent on something
+   that is true of every agent all the time, which is how an accent stops
+   meaning anything. Do not add a second hue; do not let a further meaning
+   attach to gold without checking whether it still needs to be redundant with
+   something else first. The ledger's glow is
    not a third exception: it is `ledgerBright` at low alpha, luminance with no
    hue. That is deliberate — this "better Matrix" is monochrome, never green.
 2. **Diff green/red** (`#3FB950`/`#F85149`, `groknight.diffAdded`/

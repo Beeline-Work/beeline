@@ -47,10 +47,10 @@ import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { groknight } from '@/buzz/groknight';
 import { BeelineMark } from '@/components/buzz/BeelineMark';
 import { MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
-import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
+import { IdentityMark } from '@/components/buzz/IdentityMark';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -333,8 +333,9 @@ export default function BuzzOnboarding() {
         <PixelGateReveal style={styles.namePanel}>
           <Text style={styles.sectionLabel}>IDENTITY · YOUR WORKSPACE</Text>
           <View style={styles.nameAvatar}>
-            <PersonAvatar
-              pubkey={namingIdentity.publicKey}
+            <IdentityMark
+              kind="human"
+              seed={namingIdentity.publicKey}
               name={normalized ?? nameInput}
               size={82}
             />

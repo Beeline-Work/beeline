@@ -56,8 +56,6 @@ import {
   WORKSPACE_LABEL,
 } from '@/buzz/vocabulary';
 import { CommunityInviteEntry } from '@/components/buzz/CommunityInviteEntry';
-import { AgentAvatar } from '@/components/buzz/AgentAvatar';
-import { PersonAvatar } from '@/components/buzz/PersonAvatar';
 import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
@@ -71,6 +69,7 @@ import {
   type DirectMessageDisplayItem,
   type WorkspaceMemberDisplayItem,
 } from '@/buzz/local-cache';
+import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { cacheLiveSessionEvent, revalidateCachedMessages } from '@/buzz/local-cache-sync';
 import {
   BrittlePress,
@@ -928,16 +927,17 @@ export default function BuzzChannels() {
                         >
                           <View style={styles.rowMark}>
                             {display ? (
-                              <AgentAvatar
-                                pubkey={dm.peerPubkey}
-                                avatarSeed={display.avatarSeed}
+                              <IdentityMark
+                                kind="agent"
+                                seed={display.avatarSeed ?? dm.peerPubkey}
                                 avatarUrl={display.avatarUrl}
                                 name={display.name}
                                 size={30}
                               />
                             ) : (
-                              <PersonAvatar
-                                pubkey={dm.peerPubkey}
+                              <IdentityMark
+                                kind="human"
+                                seed={dm.peerPubkey}
                                 avatarUrl={dm.avatarUrl}
                                 name={dm.peerName}
                                 size={30}

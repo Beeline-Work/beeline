@@ -93,10 +93,10 @@ describe('TLC read-only boundary', () => {
     await ctx.body.provision(tlcChannelId);
     ctx.tlcChannelId = tlcChannelId;
 
-    const session = ctx.body.getSession(tlcChannelId);
-    if (session) {
-      ctx.readonlySessionId = session.sessionId;
-    }
+    // Room sessions activate lazily on their first addressed turn; this suite
+    // drives `session.client` directly, so ask for the process up front.
+    const session = await ctx.body.ensureSessionReady(tlcChannelId);
+    ctx.readonlySessionId = session.sessionId;
 
     ctx.skipped = false;
   }, 60_000);

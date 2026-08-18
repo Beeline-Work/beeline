@@ -277,6 +277,84 @@ describe('agent identity boundary', () => {
     expect(() => body.setAgentIdentity(operator)).toThrow('must be distinct');
   });
 
+  it('provisions a Room without spawning its ACP process until the first turn', async () => {
+    const scheduler = new SessionScheduler({ maxLiveSessions: 4, idleMs: 60_000 });
+    const run = vi.spyOn(scheduler, 'run');
+    const body = new Body(
+      { ...config, readonlyMcpCommand: '/buzz-readonly-mcp', readonlyMcpArgs: [] },
+      newIdentity('operator'),
+      newIdentity('agent'),
+      undefined,
+      { scheduler },
+    );
+    vi.spyOn(body as never, 'ensureAgentInChannel' as never).mockResolvedValue(undefined as never);
+    vi.spyOn(body as never, 'ensureAgentEntity' as never).mockResolvedValue(undefined as never);
+    vi.spyOn(body as never, 'channelCommunityId' as never).mockResolvedValue(null as never);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ accepted: true }), { status: 200 })),
+    );
+
+    const session = await body.provision('room-id', { repo: 'repo', localPath: '/paired/repo' });
+
+    // Eagerly activating every provisioned Room used to spawn N ACP processes
+    // at startup and immediately evict most of them.
+    expect(run).not.toHaveBeenCalled();
+    expect(session.sessionId).toBe('');
+
+    let activations = 0;
+    session.lifecycle = {
+      activate: async () => {
+        activations += 1;
+        return 'physical-1';
+      },
+      suspend: async () => undefined,
+    };
+    await body.ensureSessionReady('room-id');
+
+    expect(activations).toBe(1);
+    expect(run).toHaveBeenCalledWith(
+      'room-id',
+      expect.anything(),
+      expect.any(Function),
+      expect.objectContaining({ priority: 'interactive', roomKey: 'room-id' }),
+    );
+    await scheduler.dispose();
+  });
+
+  it('budgets a corner against its parent Room, not as its own Room', async () => {
+    const scheduler = new SessionScheduler({ maxLiveSessions: 4, idleMs: 60_000 });
+    const run = vi.spyOn(scheduler, 'run');
+    const body = new Body(config, newIdentity('operator'), newIdentity('agent'), undefined, {
+      scheduler,
+    });
+    const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    const corner = {
+      channelId: 'corner-1',
+      sessionId: 'corner-session',
+      client,
+      mode: 'edit' as const,
+      parentChannelId: 'room-a',
+      lifecycle: { activate: async () => 'physical-1', suspend: async () => undefined },
+    };
+    body.registerSession(corner);
+
+    await (
+      Reflect.get(body, 'runOnSession') as (
+        session: unknown,
+        task: () => Promise<void>,
+      ) => Promise<void>
+    ).call(body, corner, async () => undefined);
+
+    expect(run).toHaveBeenCalledWith(
+      'corner-1',
+      expect.anything(),
+      expect.any(Function),
+      expect.objectContaining({ priority: 'background', roomKey: 'room-a' }),
+    );
+    await scheduler.dispose();
+  });
+
   it('mounts only buzz-readonly-mcp when provisioning a Room', async () => {
     const body = new Body({
       ...config,
@@ -696,6 +774,8 @@ describe('Room poll resilience', () => {
     const unsubscribe = vi.fn();
     const disconnect = vi.fn();
     const fakeClient = {
+      connect: vi.fn(async () => undefined),
+      socket: null,
       agentPresenceSubscribe: vi.fn(
         async (_channelId: string, handler: (sessionEvent: { event: NostrEvent }) => void) => {
           presenceHandler = handler;

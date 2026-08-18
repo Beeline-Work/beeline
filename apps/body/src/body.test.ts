@@ -2979,6 +2979,87 @@ describe('first-class assistant messages', () => {
     ).toBe('Visible answer.');
   });
 
+  it('strips a full pi-acp cold-session startup banner, including the update-nag line', () => {
+    const banner = [
+      'pi v0.83.0',
+      '---',
+      '',
+      '## Context',
+      '- /home/lunchbox/proj-buzzy/AGENTS.md',
+      '',
+      '## Skills',
+      '- /home/lunchbox/.pi/agent/skills/trusty-squire/SKILL.md',
+      '- /home/lunchbox/.pi/agent/skills/no-mistakes/SKILL.md',
+      '- /home/lunchbox/.pi/agent/skills/find-skills/SKILL.md',
+      '- /home/lunchbox/.pi/agent/skills/create-payment-credential/SKILL.md',
+      '',
+      '---',
+      'New version available: v0.84.2 (installed v0.83.0). Run: `npm i -g @earendil-works/pi-coding-agent`',
+      '',
+    ].join('\n');
+    expect(stripAgentReplyPreamble(banner)).toBe('');
+    expect(stripAgentReplyPreamble(`${banner}\nThe real answer.`)).toBe('The real answer.');
+  });
+
+  it.each([
+    ['a Room reply', { replyTo: 'trigger-event' }],
+    ['a corner turn summary', { concise: true }],
+  ] as const)(
+    'never publishes a cold session harness banner as %s — falls back instead',
+    async (_label, options) => {
+      const agent = newIdentity('banner-fallback-agent');
+      const published: NostrEvent[] = [];
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+        }),
+      );
+      const body = new Body(
+        {
+          agentBinary: '/nonexistent',
+          mcpBinary: '/nonexistent',
+          agentEnv: {},
+          workspaceRoot: '/workspace',
+          relayBaseUrl: 'https://relay.example',
+          relayHost: 'relay.example',
+          relayScheme: 'https',
+          relayWsUrl: 'wss://relay.example',
+          autoApprovePermissions: true,
+        },
+        undefined,
+        agent,
+      );
+
+      const banner = [
+        'pi v0.83.0',
+        '---',
+        '',
+        '## Skills',
+        '- /home/lunchbox/.pi/agent/skills/trusty-squire/SKILL.md',
+        '',
+        '---',
+        'New version available: v0.84.2 (installed v0.83.0). Run: `npm i -g @earendil-works/pi-coding-agent`',
+        '',
+      ].join('\n');
+
+      await Reflect.get(body, 'publishAgentResult').call(
+        body,
+        'channel-id',
+        { cwd: '/workspace' },
+        { agentText: banner, updates: [] },
+        'No repository findings to report.',
+        options,
+      );
+
+      expect(published).toHaveLength(1);
+      expect(published[0]!.content).toBe('No repository findings to report.');
+      expect(published[0]!.content).not.toContain('pi v0.83.0');
+      expect(published[0]!.content).not.toContain('New version available');
+    },
+  );
+
   it('omits cross-channel reply linkage for corner outcomes', async () => {
     const agent = newIdentity('corner-agent-message');
     const published: NostrEvent[] = [];

@@ -71,6 +71,12 @@ describe('repository binding', () => {
     expect(inspectLocalRepository(local).repository.key).toBe(localBinding.key);
     expect(localBinding.key).not.toBe(inspectLocalRepository(otherLocal).repository.key);
   });
+
+  it('gives an actionable --repo error instead of a bare git failure outside any repository', async () => {
+    const nonRepo = await mkdtemp(resolve(tmpdir(), 'beeline-non-repo-'));
+    cleanup.push(nonRepo);
+    expect(() => inspectLocalRepository(nonRepo)).toThrow('pass --repo <path>');
+  });
 });
 
 describe('pair → run unification', () => {
@@ -212,6 +218,102 @@ describe('pair → run unification', () => {
     await expect(
       removeAgentRuntime(resolve(root, 'runtime.json'), agent.publicKey),
     ).rejects.toThrow('refusing to remove unexpected agent runtime path');
+  });
+
+  it('persists a pair-time model/effort default and round-trips it through readRuntimeRecord', async () => {
+    const root = await repository('https://example.com/team/project.git');
+    const agent = newIdentity('agent');
+    const supervisorRoot = await stateRoot();
+    const result = await pairRepositoryAgent(
+      {
+        code: 'BUZZ-ABCD-EFGH',
+        cwd: root,
+        relayBaseUrl: 'http://relay.test',
+        agentBinary: '/usr/bin/agent',
+        agentKind: 'claude',
+        agentCommand: '/usr/bin/claude-agent-acp',
+        mcpBinary: '/usr/bin/mcp',
+        agentIdentity: agent,
+        bodyIdentity: newIdentity('body'),
+        mergeWorkerIdentity: newIdentity('merge-worker'),
+        supervisorRoot,
+        modelSelection: { model: 'sonnet', effort: 'high' },
+      },
+      {
+        redeem: async () => ({
+          communityId: '11111111-1111-4111-8111-111111111111',
+          pairedBy: 'a'.repeat(64),
+          joined: true,
+          agent: {
+            agentId: 'agent-id',
+            communityId: '11111111-1111-4111-8111-111111111111',
+            displayName: 'Agent',
+            pubkey: agent.publicKey,
+            createdAt: 1,
+            raw: {} as never,
+          },
+        }),
+        resolveRoom: async () => ({
+          channelId: '22222222-2222-4222-8222-222222222222',
+          created: true,
+          joined: true,
+          mergeWorkerProvisioned: false,
+        }),
+        launch: async () => 4242,
+      },
+    );
+
+    expect(result.runtime.modelSelection).toEqual({ model: 'sonnet', effort: 'high' });
+    const stored = await readRuntimeRecord(result.configPath);
+    expect(stored.modelSelection).toEqual({ model: 'sonnet', effort: 'high' });
+  });
+
+  it('rejects a runtime record with a malformed modelSelection field', async () => {
+    const root = await repository('https://example.com/team/project.git');
+    const agent = newIdentity('agent');
+    const supervisorRoot = await stateRoot();
+    const result = await pairRepositoryAgent(
+      {
+        code: 'BUZZ-ABCD-EFGH',
+        cwd: root,
+        relayBaseUrl: 'http://relay.test',
+        agentBinary: '/usr/bin/agent',
+        mcpBinary: '/usr/bin/mcp',
+        agentIdentity: agent,
+        bodyIdentity: newIdentity('body'),
+        mergeWorkerIdentity: newIdentity('merge-worker'),
+        supervisorRoot,
+      },
+      {
+        redeem: async () => ({
+          communityId: '11111111-1111-4111-8111-111111111111',
+          pairedBy: 'a'.repeat(64),
+          joined: true,
+          agent: {
+            agentId: 'agent-id',
+            communityId: '11111111-1111-4111-8111-111111111111',
+            displayName: 'Agent',
+            pubkey: agent.publicKey,
+            createdAt: 1,
+            raw: {} as never,
+          },
+        }),
+        resolveRoom: async () => ({
+          channelId: '22222222-2222-4222-8222-222222222222',
+          created: true,
+          joined: true,
+          mergeWorkerProvisioned: false,
+        }),
+        launch: async () => 4242,
+      },
+    );
+
+    const raw = JSON.parse(await readFile(result.configPath, 'utf8')) as Record<string, unknown>;
+    raw.modelSelection = 'sonnet';
+    await writeFile(result.configPath, `${JSON.stringify(raw)}\n`);
+    await expect(readRuntimeRecord(result.configPath)).rejects.toThrow(
+      'invalid agent runtime config',
+    );
   });
 });
 

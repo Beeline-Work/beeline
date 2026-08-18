@@ -4,10 +4,11 @@
  */
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { listChangeReviewFiles, resolveReviewBaseTip } from './change-review.js';
 import { hasWriteTools, inventoryForMcpServers } from './mcp-inventory.js';
 import { parseEnvFile, hasLlmCredentials, type BodyConfig } from './config.js';
 
@@ -294,6 +295,9 @@ describe('agent identity boundary', () => {
     vi.spyOn(body as never, 'ensureAgentInChannel' as never).mockResolvedValue(undefined as never);
     vi.spyOn(body as never, 'ensureAgentEntity' as never).mockResolvedValue(undefined as never);
     vi.spyOn(body as never, 'channelCommunityId' as never).mockResolvedValue(null as never);
+    vi.spyOn(body as never, 'ensureReaderWorktree' as never).mockResolvedValue(
+      '/paired/repo/.reader' as never,
+    );
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response(JSON.stringify({ accepted: true }), { status: 200 })),
@@ -375,6 +379,11 @@ describe('agent identity boundary', () => {
     vi.spyOn(body as never, 'ensureAgentInChannel' as never).mockResolvedValue(undefined as never);
     vi.spyOn(body as never, 'ensureAgentEntity' as never).mockResolvedValue(undefined as never);
     vi.spyOn(body as never, 'channelCommunityId' as never).mockResolvedValue(null as never);
+    // The read-only session runs in the Room's isolated detached read worktree,
+    // never the live primary checkout that sits on the protected branch.
+    vi.spyOn(body as never, 'ensureReaderWorktree' as never).mockResolvedValue(
+      '/paired/repo/.reader' as never,
+    );
     const create = vi
       .spyOn(body as never, 'createManagedSession' as never)
       .mockResolvedValue(session as never);
@@ -397,10 +406,15 @@ describe('agent identity boundary', () => {
             name: 'buzz-readonly-mcp',
             command: '/buzz-readonly-mcp',
             args: ['--fixed-entrypoint'],
-            env: [{ name: 'BUZZ_READONLY_ROOT', value: '/paired/repo' }],
+            env: [{ name: 'BUZZ_READONLY_ROOT', value: '/paired/repo/.reader' }],
           },
         ],
       }),
+    );
+    // The read surface is the isolated worktree, not the live checkout.
+    expect(JSON.stringify(create.mock.calls)).toContain('/paired/repo/.reader');
+    expect(JSON.stringify(create.mock.calls)).not.toContain(
+      '"value":"/paired/repo"',
     );
     expect(JSON.stringify(create.mock.calls)).not.toContain('buzz-dev-mcp');
   });
@@ -3736,6 +3750,177 @@ describe('corner merge-ready surfaces a real committed change', () => {
       expect(notReadyEvent!.content).toContain('Nothing ready to merge yet');
     } finally {
       await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('corner work is isolated off the live primary checkout on main', () => {
+  function gitCommand(cwd: string, args: string[]): string {
+    const result = spawnSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' },
+    });
+    if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`);
+    return result.stdout.trim();
+  }
+
+  /** A live primary checkout sitting on `main`, exactly the paired-room shape:
+   *  the room is served straight from this on-`main` working tree. */
+  function livePrimaryCheckoutOnMain(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'buzzy-live-checkout-'));
+    gitCommand(dir, ['init', '-b', 'main']);
+    gitCommand(dir, ['config', 'user.name', 'Primary Checkout']);
+    gitCommand(dir, ['config', 'user.email', 'primary@test.invalid']);
+    writeFileSync(join(dir, 'README.md'), '# Base\n');
+    gitCommand(dir, ['add', '.']);
+    gitCommand(dir, ['commit', '-m', 'base commit on main']);
+    return dir;
+  }
+
+  function newBody(agent: ReturnType<typeof newIdentity>, workspaceRoot: string) {
+    return new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot,
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+        readonlyMcpCommand: '/buzz-readonly-mcp',
+        readonlyMcpArgs: [],
+      },
+      undefined,
+      agent,
+    );
+  }
+
+  it("read-only Room session for a paired local checkout never runs on the live main; a stray commit there can't reach main", async () => {
+    const liveCheckout = livePrimaryCheckoutOnMain();
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'buzzy-room-root-'));
+    const mainTipBefore = gitCommand(liveCheckout, ['rev-parse', 'main']);
+    const agent = newIdentity('reader-isolation-agent');
+    const body = newBody(agent, workspaceRoot);
+    try {
+      vi.spyOn(body as never, 'ensureAgentInChannel' as never).mockResolvedValue(
+        undefined as never,
+      );
+      vi.spyOn(body as never, 'ensureAgentEntity' as never).mockResolvedValue(undefined as never);
+      vi.spyOn(body as never, 'channelCommunityId' as never).mockResolvedValue(null as never);
+      let capturedCwd: string | undefined;
+      let capturedReadonlyRoot: string | undefined;
+      vi.spyOn(body as never, 'createManagedSession' as never).mockImplementation(
+        (async (input: { cwd: string; mcpServers: { env: { name: string; value: string }[] }[] }) => {
+          capturedCwd = input.cwd;
+          capturedReadonlyRoot = input.mcpServers[0]?.env?.find(
+            (e) => e.name === 'BUZZ_READONLY_ROOT',
+          )?.value;
+          return { channelId: 'room', sessionId: 'readonly-session' } as never;
+        }) as never,
+      );
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response(JSON.stringify({ accepted: true }), { status: 200 })),
+      );
+
+      await body.provision('room', {
+        repo: 'repo',
+        localPath: liveCheckout,
+        targetBranch: 'refs/heads/main',
+      });
+
+      // The session cwd is the Room's isolated read worktree, NOT the live
+      // checkout — the whole point of the fix.
+      const readerPath = resolve(workspaceRoot, '.reader');
+      expect(capturedCwd).toBe(readerPath);
+      expect(capturedCwd).not.toBe(liveCheckout);
+      expect(capturedReadonlyRoot).toBe(readerPath);
+      expect(existsSync(readerPath)).toBe(true);
+
+      // It is a detached HEAD at the current target tip: off every branch, so a
+      // commit lands on an orphan, not on the protected branch.
+      expect(gitCommand(readerPath, ['rev-parse', '--abbrev-ref', 'HEAD'])).toBe('HEAD');
+      expect(gitCommand(readerPath, ['rev-parse', 'HEAD'])).toBe(mainTipBefore);
+
+      // Simulate the exact failure mode: the underlying harness commits inside
+      // the read-only session's cwd. It must NOT move the live `main`.
+      writeFileSync(join(readerPath, 'README.md'), '# Stray write from a leaky harness\n');
+      gitCommand(readerPath, ['config', 'user.name', 'Leaky Harness']);
+      gitCommand(readerPath, ['config', 'user.email', 'leak@test.invalid']);
+      gitCommand(readerPath, ['add', '.']);
+      gitCommand(readerPath, ['commit', '-m', 'stray commit that used to land on main']);
+      const strayCommit = gitCommand(readerPath, ['rev-parse', 'HEAD']);
+
+      expect(gitCommand(liveCheckout, ['rev-parse', 'main'])).toBe(mainTipBefore);
+      const containing = gitCommand(liveCheckout, [
+        'branch',
+        '--contains',
+        strayCommit,
+      ]);
+      expect(containing).toBe('');
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+      await rm(liveCheckout, { recursive: true, force: true });
+    }
+  });
+
+  it('a paired-room corner isolates onto a feature branch off main, and its commit yields a non-empty review diff', async () => {
+    const liveCheckout = livePrimaryCheckoutOnMain();
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'buzzy-room-root-'));
+    const mainTipBefore = gitCommand(liveCheckout, ['rev-parse', 'main']);
+    const agent = newIdentity('corner-isolation-agent');
+    const body = newBody(agent, workspaceRoot);
+    try {
+      const boundRepo = {
+        repo: 'repo',
+        localPath: liveCheckout,
+        targetBranch: 'refs/heads/main',
+      };
+      const worktreePath = resolve(workspaceRoot, '.worktrees', 'corner-x');
+      const featureBranch = 'feature/color-blocks-cornerx';
+
+      await (
+        Reflect.get(body, 'createWorktree') as (
+          repo: unknown,
+          path: string,
+          branch: string,
+        ) => Promise<void>
+      ).call(body, boundRepo, worktreePath, featureBranch);
+
+      // The corner checks out its own feature branch, never main.
+      expect(gitCommand(worktreePath, ['rev-parse', '--abbrev-ref', 'HEAD'])).toBe(featureBranch);
+
+      // The agent commits its real work in the corner worktree.
+      writeFileSync(join(worktreePath, 'code-block.tsx'), 'export const highlight = true;\n');
+      gitCommand(worktreePath, ['add', '.']);
+      gitCommand(worktreePath, ['commit', '-m', 'feat(mobile): syntax-highlighted code blocks']);
+      const featureTip = gitCommand(worktreePath, ['rev-parse', 'HEAD']);
+
+      // The live primary checkout's `main` never moved; only the feature branch
+      // contains the work.
+      expect(gitCommand(liveCheckout, ['rev-parse', 'main'])).toBe(mainTipBefore);
+      const containing = gitCommand(liveCheckout, ['branch', '--contains', featureTip])
+        .split('\n')
+        // `git branch` marks the current branch with `*` and a branch checked
+        // out in a linked worktree with `+`; strip both leading markers.
+        .map((l) => l.replace(/^[*+]/, '').trim())
+        .filter(Boolean);
+      expect(containing).toContain(featureBranch);
+      expect(containing).not.toContain('main');
+
+      // The merge-ready gate now sees a real base→tip diff, so the review panel
+      // has a change to approve instead of "nothing to review".
+      const base = resolveReviewBaseTip(worktreePath, 'refs/heads/main');
+      expect(base).toBe(mainTipBefore);
+      const files = listChangeReviewFiles(worktreePath, base, featureTip);
+      expect(files.length).toBeGreaterThan(0);
+      expect(files.map((f) => f.path)).toContain('code-block.tsx');
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+      await rm(liveCheckout, { recursive: true, force: true });
     }
   });
 });

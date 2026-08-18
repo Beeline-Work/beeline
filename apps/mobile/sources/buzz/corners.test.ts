@@ -128,7 +128,7 @@ describe('corner navigation model', () => {
       glyph: '▲',
       label: 'NEEDS ATTENTION',
     });
-    expect(cornerStatusPresentation('open')).toEqual({ glyph: '◇', label: 'OPEN' });
+    expect(cornerStatusPresentation('open')).toEqual({ glyph: '◇', label: 'READY' });
     expect(cornerStatusPresentation('failed')).toEqual({ glyph: '✕', label: 'FAILED' });
     expect(cornerStatusPresentation('merged')).toEqual({ glyph: '✓', label: 'MERGED' });
     expect(cornerStatusPresentation('archived')).toEqual({ glyph: '□', label: 'ARCHIVED' });

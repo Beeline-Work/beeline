@@ -101,7 +101,11 @@ import {
   normalizedRoomRole,
   roomLifecycleAction,
 } from '@/buzz/room-management';
-import { selectPinnedCorner } from '@/buzz/room-indicators';
+import {
+  isPinnedCornerLive,
+  isPinnedCornerReadyForReview,
+  selectPinnedCorner,
+} from '@/buzz/room-indicators';
 import {
   loadActiveCommunityId,
   saveActiveCommunityId,
@@ -854,10 +858,12 @@ export default function BuzzChat() {
    * The pinned corner line's whole state, resolved in one place so the words it
    * shows and the corner a tap on it opens can never disagree.
    *
-   * One line, and it names the two facts that matter: who is working, and what
-   * on — `beebee active: feat/ux-fix-now`. Both surfaces get one, because both
-   * have the same question to answer: a Room asks "is a corner running, and
-   * where," a Corner asks "is this session still moving."
+   * One line, and it names the two facts that matter: who owns the corner, and
+   * what state it's in — `beebee active: feat/ux-fix-now` while working,
+   * `beebee ready for review: feat/ux-fix-now` once there's a change to
+   * approve. Both surfaces get one, because both have the same question to
+   * answer: a Room asks "is there an open corner, and what does it need," a
+   * Corner asks "is this session still moving."
    *
    * Its input is corner state and nothing else. A Room turn in progress is a
    * different fact about a different object and drives `turnProgressLabel`
@@ -883,10 +889,12 @@ export default function BuzzChat() {
       return null;
     }
 
-    // selectPinnedCorner only ever names a corner that is actively working
-    // right now — an idle, closed, or terminal corner is never a candidate —
-    // so the line's mere presence already means "live". An offline daemon
-    // cannot really be doing that work, so the line hides rather than lying.
+    // selectPinnedCorner names any open corner — working, waiting on a
+    // human, or review-ready — and excludes only a terminal one. The line's
+    // mere presence means "open," not "live"; gold and the breathing pulse
+    // are reserved for a corner actually being worked right now. An offline
+    // daemon cannot really be doing that work, so the line hides rather than
+    // lying.
     if (!pinnedCorner || agentsOffline) return null;
     const agentPubkey = resolveCornerCardAgentPubkey(
       pinnedCornerCard?.corner?.agentPubkey,
@@ -900,9 +908,15 @@ export default function BuzzChat() {
       cornerLifecycle.find((corner) => corner.id === pinnedCorner.cornerId)?.name,
       pinnedCorner.cornerId,
     );
+    const live = isPinnedCornerLive(pinnedCorner.status);
+    const verb = isPinnedCornerReadyForReview(pinnedCorner.status)
+      ? 'ready for review'
+      : live
+        ? 'active'
+        : 'needs attention';
     return {
-      label: named(subject, 'active', target),
-      live: true,
+      label: named(subject, verb, target),
+      live,
       cornerId: pinnedCorner.cornerId,
     };
   }, [

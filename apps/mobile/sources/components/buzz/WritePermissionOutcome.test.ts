@@ -23,7 +23,7 @@ vi.mock('react-native', async () => {
   };
 });
 
-import { WritePermissionOutcome } from './WritePermissionOutcome';
+import { WritePermissionOutcome, writePermissionStatusLabel } from './WritePermissionOutcome';
 
 const originalConsoleError = console.error;
 
@@ -49,95 +49,55 @@ function render(element: React.ReactElement): ReactTestRenderer {
 }
 
 describe('write permission corner outcome', () => {
-  it('shows a direct corner action after Body publishes the opened corner id', () => {
-    const onOpenCorner = vi.fn();
-    const renderer = render(
-      React.createElement(WritePermissionOutcome, {
-        status: 'allowed',
-        subchannelId: 'new-corner-id',
-        onOpenCorner,
-      }),
-    );
-
-    const action = renderer.root
-      .findAllByProps({ testID: 'write-permission-open-corner' })
-      .find((node: { type: unknown }) => node.type === 'Pressable');
-    act(() => action.props.onPress());
-    expect(onOpenCorner).toHaveBeenCalledWith('new-corner-id');
-  });
-
   it('inscribes the outcome as one dim line — no border, no fill, no chip', () => {
     const renderer = render(
-      React.createElement(WritePermissionOutcome, {
-        status: 'allowed',
-        subchannelId: 'new-corner-id',
-        onOpenCorner: vi.fn(),
-      }),
+      React.createElement(WritePermissionOutcome, { status: 'denied' }),
     );
-    const pressable = renderer.root
-      .findAllByProps({ testID: 'write-permission-open-corner' })
-      .find((node: { type: unknown }) => node.type === 'Pressable');
-    expect(pressable.props.style).not.toHaveProperty('borderWidth');
-    expect(pressable.props.style).not.toHaveProperty('borderColor');
-    expect(pressable.props.style).not.toHaveProperty('backgroundColor');
-    expect(pressable.props.style).not.toHaveProperty('minHeight');
+    const [line] = renderer.root.findAllByType('View');
+    expect(line.props.style).not.toHaveProperty('borderWidth');
+    expect(line.props.style).not.toHaveProperty('borderColor');
+    expect(line.props.style).not.toHaveProperty('backgroundColor');
+    expect(line.props.style).not.toHaveProperty('minHeight');
     // Starts at the prose margin and reserves the same right gutter the
     // timestamps hang in.
-    expect(pressable.props.style.paddingHorizontal).toBeUndefined();
-    expect(pressable.props.style.paddingRight).toBe(36);
+    expect(line.props.style.paddingHorizontal).toBeUndefined();
+    expect(line.props.style.paddingRight).toBe(36);
 
-    const [status, enter] = renderer.root.findAllByType('Text');
-    // Faceted diamond for "corner", arrow for "enterable".
-    expect(status.props.children).toContain('◇');
-    expect(enter.props.children).toContain('view →');
-    // Only the affordance lifts: dim label, half-step-brighter action, and the
-    // action hangs in the gutter rather than sitting inline.
+    const [status] = renderer.root.findAllByType('Text');
+    expect(status.props.children).toContain('STILL READ-ONLY');
     const tone = (node: { props: { style: unknown } }) =>
       (Array.isArray(node.props.style) ? node.props.style : [node.props.style])
         .filter(Boolean)
         .reduce((merged: Record<string, unknown>, style: Record<string, unknown>) => ({ ...merged, ...style }), {});
     expect(tone(status).color).toBe('#7c7c7c');
-    expect(tone(enter).color).toBe('#b0b0b0');
-    expect(tone(enter).position).toBe('absolute');
-    expect(tone(enter).right).toBe(0);
   });
 
-  it('flashes tonally on press instead of drawing a border', () => {
-    let pressedTree!: ReactTestRenderer;
-    act(() => {
-      pressedTree = create(
-        React.createElement(WritePermissionOutcome, {
-          status: 'allowed',
-          subchannelId: 'new-corner-id',
-          onOpenCorner: vi.fn(),
-        }),
-      );
-    });
-    // The mock renders the unpressed branch; assert the pressed styles exist
-    // and are purely tonal, which is what the render prop selects between.
-    const source = pressedTree.root
-      .findAllByType('Text')
-      .map((node: { props: { style: unknown } }) => node.props.style)
-      .flat()
-      .filter(Boolean);
-    for (const style of source) {
-      expect(style).not.toHaveProperty('borderWidth');
-      expect(style).not.toHaveProperty('backgroundColor');
-    }
-  });
-
-  it('does not offer navigation before a corner exists or after denial', () => {
-    const onOpenCorner = vi.fn();
-    for (const props of [
-      { status: 'allowed' as const },
-      { status: 'denied' as const, subchannelId: 'never-opened' },
-    ]) {
+  it('reports the decision and never navigates', () => {
+    // An open corner is live state, not a decision. It lives in the pinned
+    // CornerLiveBar above the composer, which stays true as the corner's
+    // status moves on; a note inscribed here would scroll away and then lie.
+    for (const status of ['pending', 'allowed', 'denied', 'expired', 'failed'] as const) {
       const renderer = render(
-        React.createElement(WritePermissionOutcome, { ...props, onOpenCorner }),
+        React.createElement(WritePermissionOutcome, { status, subchannelId: 'new-corner-id' }),
       );
+      expect(renderer.root.findAllByType('Pressable')).toHaveLength(0);
       expect(renderer.root.findAllByProps({ testID: 'write-permission-open-corner' })).toHaveLength(
         0,
       );
+    }
+  });
+
+  it('names every decision plainly, and never claims a corner is open', () => {
+    const label = (props: Parameters<typeof writePermissionStatusLabel>) =>
+      writePermissionStatusLabel(...props);
+    expect(label(['allowed', 'new-corner-id'])).toBe('◇ ALLOWED · OPENING CORNER');
+    expect(label(['pending', undefined, true])).toBe('⊘ A PERSON MUST RESPOND');
+    expect(label(['denied'])).toContain('STILL READ-ONLY');
+    expect(label(['failed'])).toContain('STILL READ-ONLY');
+    expect(label(['expired'])).toContain('STILL READ-ONLY');
+    // The scroll note the pinned bar replaced.
+    for (const status of ['pending', 'allowed', 'denied', 'expired', 'failed'] as const) {
+      expect(label([status, 'new-corner-id'])).not.toContain('CORNER OPEN');
     }
   });
 });

@@ -138,6 +138,7 @@ import { Typography } from '@/constants/Typography';
 import { ChangeReviewPanel } from '@/components/buzz/ChangeReviewPanel';
 import { AgentAvatar } from '@/components/buzz/AgentAvatar';
 import { PersonAvatar } from '@/components/buzz/PersonAvatar';
+import { CornerLiveBar } from '@/components/buzz/CornerLiveBar';
 import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome';
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
 import {
@@ -149,7 +150,6 @@ import {
 } from '@/components/buzz/Ledger';
 import {
   HullSurface,
-  HullWaveSignal,
   MonoButton,
   NewMessageMaterialize,
   PixelLoader,
@@ -205,11 +205,18 @@ function ledgerSpeakerKey(
 }
 
 /**
- * Everything the agent's tools did in one turn, folded into a single ghost
- * line. Tool prose, commands, and outputs stay behind that line's own
- * disclosure (ActivityTimeline) — neither a Room nor a Corner ever prints a
- * wall of output across the slab. A Room passes `handle` because several agents
- * can be working there; a Corner names its one agent in the top bar instead.
+ * One turn of the agent's work: its narration on the slab, its tools as
+ * footnotes.
+ *
+ * The split lives in `ActivityTimeline`, and it is the whole point of this
+ * row — the agent's own prose reads at the ledger's brightest tier, full
+ * width, never behind a disclosure, while every read/search/list folds into
+ * one counted note. An activity event carrying nothing but text is therefore
+ * pure narration, which is exactly what the fallback below builds; treating it
+ * as tool output is what buried an agent's words behind "tap to expand".
+ *
+ * A Room passes `handle` because several agents can be working there; a Corner
+ * names its one agent in the top bar instead.
  */
 function LedgerActivity({
   message,
@@ -440,6 +447,7 @@ export default function BuzzChat() {
   const [viewerChannelRole, setViewerChannelRole] = useState<ChannelRole | null>(null);
   const [rosterVisible, setRosterVisible] = useState(false);
   const [roomActionsVisible, setRoomActionsVisible] = useState(false);
+  const [cornerActionsVisible, setCornerActionsVisible] = useState(false);
   const [renameEditing, setRenameEditing] = useState(false);
   const [renameDraft, setRenameDraft] = useState('');
   const [renameBusy, setRenameBusy] = useState(false);
@@ -717,15 +725,18 @@ export default function BuzzChat() {
     }
     return map;
   }, [visibleMessages]);
-  const openedCornerIds = useMemo(
+  // A corner that a permission ALLOW opened, before its own lifecycle card has
+  // landed. The pinned live bar needs a destination from the instant the corner
+  // exists, since the inline "corner open" note that used to carry that tap is
+  // gone from the transcript.
+  const permittedCornerId = useMemo(
     () =>
-      new Set(
-        messages.flatMap((message) =>
-          message.writePermission?.status === 'allowed' && message.writePermission.subchannelId
-            ? [message.writePermission.subchannelId]
-            : [],
-        ),
-      ),
+      [...messages]
+        .reverse()
+        .find(
+          (message) =>
+            message.writePermission?.status === 'allowed' && message.writePermission.subchannelId,
+        )?.writePermission?.subchannelId,
     [messages],
   );
   // "Most recent active corner" is resolved once, from the same signal used
@@ -789,6 +800,49 @@ export default function BuzzChat() {
         ),
     [agentPresences, messages, presenceNow, presenceReconnectGrace],
   );
+  /**
+   * The pinned corner indicator's whole state, resolved in one place so the
+   * word it shows and the corner a tap on it opens can never disagree.
+   *
+   * Both surfaces get one, because both have the same question to answer: a
+   * Room asks "is a corner running, and where," a Corner asks "is this session
+   * still moving." `live` drives the flowing band; a settled band is a corner
+   * that is open but idle, which is a real and distinct state the old
+   * "working in corner…" strip could not express at all.
+   */
+  const cornerLiveBar = useMemo((): { label: string; live: boolean; cornerId?: string } | null => {
+    if (isCorner) {
+      if (sessionState === 'working') return { label: 'LIVE · EDIT SESSION', live: true };
+      if (displayedCornerStatus && isCornerActive(displayedCornerStatus)) {
+        return { label: 'CORNER OPEN · EDIT SESSION IDLE', live: false };
+      }
+      return null;
+    }
+    // The bar reports the *corner*; the offline hint directly below it reports
+    // the *agent*. Keeping those two facts in two places is what stops the bar
+    // from claiming gold — which DESIGN.md assigns to live/online presence —
+    // for a state that is neither.
+    const working = Boolean(activeAgentTurn?.agentTurn) && !agentsOffline;
+    const cornerId = tappableCornerId ?? permittedCornerId;
+    if (cornerId) {
+      return {
+        label: working ? 'WORKING IN CORNER' : 'CORNER OPEN',
+        live: working,
+        cornerId,
+      };
+    }
+    if (working) return { label: 'THINKING', live: true };
+    return null;
+  }, [
+    activeAgentTurn,
+    agentsOffline,
+    displayedCornerStatus,
+    isCorner,
+    permittedCornerId,
+    sessionState,
+    tappableCornerId,
+  ]);
+
   const activeActivityId = useMemo(() => {
     if (isCorner ? sessionState !== 'working' : !activeAgentTurn) return undefined;
     const latest = visibleMessages.at(-1);
@@ -1807,15 +1861,12 @@ export default function BuzzChat() {
         const display = resolveAgentDisplayIdentity(permission.agentPubkey, permissionAgent);
         const pending = permission.status === 'pending';
         const busy = permissionActionId === permission.permissionId;
-        if (permission.status === 'allowed' && permission.subchannelId) {
-          return (
-            <WritePermissionOutcome
-              status={permission.status}
-              subchannelId={permission.subchannelId}
-              onOpenCorner={openCorner}
-            />
-          );
-        }
+        // An ALLOW that opened a corner is the same live state the pinned bar
+        // above the composer now reports, so it prints nothing here — the
+        // request card that preceded it is already the durable record of the
+        // decision, and repeating it as a scroll note gave the reader two
+        // places to look for one fact.
+        if (permission.status === 'allowed' && permission.subchannelId) return null;
         return (
           <HullSurface
             strength="raised"
@@ -1879,7 +1930,6 @@ export default function BuzzChat() {
                 status={permission.status}
                 subchannelId={permission.subchannelId}
                 awaitingPerson={viewerIsAgent && pending}
-                onOpenCorner={openCorner}
               />
             )}
           </HullSurface>
@@ -1887,15 +1937,14 @@ export default function BuzzChat() {
       }
 
       if (item.corner) {
-        // The permission prompt is the live card while a corner is open. Once
-        // archived, always show the durable lifecycle card so its completion
-        // summary remains discoverable in the Room transcript.
-        if (
-          openedCornerIds.has(item.corner.subchannelId) &&
-          item.corner.status !== 'archived'
-        ) {
-          return null;
-        }
+        // An *active* corner is live state, not a transcript event: it belongs
+        // in the pinned bar above the composer, which is always on screen and
+        // always current, not in a note that scrolls away and then lies about
+        // a status that has since moved on. Terminal corners keep their durable
+        // card — that one is a record, and a record is exactly what the
+        // transcript is for (DESIGN.md, "Index rows": merged/archived/failed
+        // corners stay reachable through the Room transcript's durable cards).
+        if (isCornerActive(item.corner.status)) return null;
         // Prefer whichever pubkey is actually a registered agent: the
         // declared `agent` tag, or (if that misses) the event's own signer —
         // the same source the per-message transcript below resolves by, so
@@ -2145,7 +2194,6 @@ export default function BuzzChat() {
       agentPresences,
       presenceNow,
       presenceReconnectGrace,
-      openedCornerIds,
       beginReply,
       replyTargetForMessage,
       visibleMessageById,
@@ -2286,6 +2334,21 @@ export default function BuzzChat() {
               testID="room-member-picker"
             >
               <Text style={styles.addMembersGlyph}>＋</Text>
+            </TouchableOpacity>
+          )}
+          {/* One overflow vocabulary: the same ••• the Room header carries,
+              holding whatever destructive/rare actions the surface has. A
+              corner's "close" belongs here, not as a permanent button sitting
+              under the composer where the reader's thumb lives. */}
+          {isCorner && !viewerIsAgent && !isArchived && (
+            <TouchableOpacity
+              accessibilityLabel={`${CORNER_LABEL} actions`}
+              accessibilityRole="button"
+              onPress={() => setCornerActionsVisible(true)}
+              style={styles.roomActionsButton}
+              testID="corner-actions-menu"
+            >
+              <Text style={styles.roomActionsGlyph}>•••</Text>
             </TouchableOpacity>
           )}
           {!parentChannelId &&
@@ -2443,29 +2506,18 @@ export default function BuzzChat() {
           }
         />
 
-        {!isArchived &&
-          !parentChannelId &&
-          ((activeCorner?.corner && isCornerActive(activeCorner.corner.status)) ||
-            activeAgentTurn?.agentTurn) && (
-            <TouchableOpacity
-              accessibilityLabel={tappableCornerId ? 'View active corner' : 'Agent activity'}
-              accessibilityRole={tappableCornerId ? 'button' : undefined}
-              disabled={!tappableCornerId}
-              onPress={() => tappableCornerId && openCorner(tappableCornerId)}
-              style={styles.agentLiveStatus}
-              testID="agent-live-status"
-            >
-              {!agentsOffline && <PixelLoader compact />}
-              <Text style={styles.agentLiveStatusText}>
-                {agentsOffline
-                  ? 'OFFLINE'
-                  : activeAgentTurn?.agentTurn
-                    ? 'thinking…'
-                    : 'working in corner…'}
-              </Text>
-              {tappableCornerId && <Text style={styles.agentLiveStatusGlyph}>›</Text>}
-            </TouchableOpacity>
-          )}
+        {/* The corner-open indicator: pinned, gold, and flowing while the work
+            is live. Never a scroll element — see CornerLiveBar. */}
+        {!isArchived && cornerLiveBar && (
+          <CornerLiveBar
+            label={cornerLiveBar.label}
+            live={cornerLiveBar.live}
+            onPress={
+              cornerLiveBar.cornerId ? () => openCorner(cornerLiveBar.cornerId!) : undefined
+            }
+            testID="corner-live-bar"
+          />
+        )}
         {!isArchived && agentsOffline && (
           <View style={styles.agentOfflineHint} testID="agent-offline-hint">
             <Text style={styles.agentOfflineHintTitle}>□ AGENT OFFLINE</Text>
@@ -2484,15 +2536,6 @@ export default function BuzzChat() {
           </View>
         ) : (
           <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-            {parentChannelId && !viewerIsAgent && (
-              <TouchableOpacity
-                accessibilityLabel={`Close ${CORNER_LABEL}`}
-                style={styles.cancelTurnButton}
-                onPress={() => void handleCloseCorner()}
-              >
-                <Text style={styles.cancelTurnText}>■ CLOSE {CORNER_LABEL.toUpperCase()}</Text>
-              </TouchableOpacity>
-            )}
             {mentionMenuVisible && (
               <View
                 accessibilityLabel="Mention a Room participant"
@@ -2597,7 +2640,6 @@ export default function BuzzChat() {
             <View
               style={[
                 styles.composer,
-                isCorner && styles.cornerComposer,
                 composerFocused && styles.composerFocused,
               ]}
             >
@@ -2613,7 +2655,7 @@ export default function BuzzChat() {
               </TouchableOpacity>
               <TextInput
                 ref={composerRef}
-                style={[styles.input, { height: composerHeight }, isCorner && styles.cornerInput]}
+                style={[styles.input, { height: composerHeight }]}
                 value={inputText}
                 onChangeText={(value) => {
                   inputTextRef.current = value;
@@ -2654,7 +2696,7 @@ export default function BuzzChat() {
                       : nextSelection,
                   );
                 }}
-                placeholder={parentChannelId ? 'Steer' : 'Message'}
+                placeholder="Message"
                 placeholderTextColor={groknight.dim}
                 multiline
                 numberOfLines={1}
@@ -2674,34 +2716,12 @@ export default function BuzzChat() {
                 testID="chat-send"
               >
                 <Text
-                  style={[
-                    styles.sendButtonText,
-                    isCorner && styles.cornerSendButtonText,
-                    mergeTarget && styles.sendButtonTextQuiet,
-                  ]}
+                  style={[styles.sendButtonText, mergeTarget && styles.sendButtonTextQuiet]}
                 >
                   ⏎
                 </Text>
               </TouchableOpacity>
             </View>
-            {isCorner && (
-              <View style={styles.cornerFooterRow}>
-                <Text style={styles.cornerFooter} numberOfLines={1}>
-                  <Text style={styles.cornerFooterRule}>╰─ </Text>
-                  <Text style={styles.cornerFooterValue}>
-                    {cornerAgentDisplay?.name ?? 'Agent'}
-                  </Text>
-                  <Text style={styles.cornerFooterSeparator}> · edit session · </Text>
-                  {sessionState !== 'working' && (
-                    <Text style={styles.cornerFooterState}>{sessionState}</Text>
-                  )}
-                </Text>
-                {sessionState === 'working' && <HullWaveSignal compact label="LIVE" />}
-                <Text style={styles.cornerFooter} numberOfLines={1}>
-                  <Text style={styles.cornerFooterRule}> ─╯</Text>
-                </Text>
-              </View>
-            )}
           </View>
         )}
       </KeyboardAvoidingView>
@@ -3027,6 +3047,58 @@ export default function BuzzChat() {
             )}
           </HullSurface>
         </KeyboardAvoidingView>
+      </RNModal>
+
+      <RNModal
+        animationType="fade"
+        onRequestClose={() => setCornerActionsVisible(false)}
+        transparent
+        visible={cornerActionsVisible}
+      >
+        <View
+          style={[styles.roomActionsModalRoot, { paddingBottom: Math.max(insets.bottom, 18) }]}
+        >
+          <Pressable
+            accessibilityLabel={`Close ${CORNER_LABEL} actions`}
+            onPress={() => setCornerActionsVisible(false)}
+            style={StyleSheet.absoluteFill}
+          />
+          <HullSurface strength="raised" style={styles.roomActionsModal} testID="corner-actions-sheet">
+            <View style={styles.roomActionsModalHeading}>
+              <View style={styles.roomActionsModalCopy}>
+                <Text style={styles.roomActionsModalEyebrow}>{CORNER_LABEL.toUpperCase()}</Text>
+                <Text numberOfLines={1} style={styles.roomActionsModalTitle}>
+                  {headerTitle ?? cornerAgentDisplay?.name ?? CORNER_LABEL}
+                </Text>
+              </View>
+              <TouchableOpacity
+                accessibilityLabel={`Close ${CORNER_LABEL} actions`}
+                onPress={() => setCornerActionsVisible(false)}
+                style={styles.roomActionsModalClose}
+              >
+                <Text style={styles.roomActionsModalCloseText}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              accessibilityLabel={`Close ${CORNER_LABEL}`}
+              accessibilityRole="button"
+              onPress={() => {
+                setCornerActionsVisible(false);
+                void handleCloseCorner();
+              }}
+              style={styles.roomLifecycleAction}
+              testID="close-corner-action"
+            >
+              <View style={styles.roomLifecycleCopy}>
+                <Text style={styles.roomLifecycleTitle}>CLOSE {CORNER_LABEL.toUpperCase()}</Text>
+                <Text style={styles.roomLifecycleHint}>
+                  Ends the edit session and archives this {CORNER_LABEL}. Unmerged work is lost.
+                </Text>
+              </View>
+              <Text style={styles.roomLifecycleGlyph}>■</Text>
+            </TouchableOpacity>
+          </HullSurface>
+        </View>
       </RNModal>
 
       <RNModal
@@ -4016,26 +4088,6 @@ const styles = StyleSheet.create({
     borderTopColor: groknight.border,
     backgroundColor: groknight.bgTerminal,
   },
-  agentLiveStatus: {
-    minHeight: 30,
-    marginBottom: 6,
-    paddingHorizontal: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-  },
-  agentLiveStatusText: {
-    ...Typography.mono('semiBold'),
-    color: groknight.accent,
-    fontSize: 10,
-    lineHeight: 14,
-    letterSpacing: 0.35,
-  },
-  agentLiveStatusGlyph: {
-    ...Typography.default(),
-    color: groknight.gutter,
-    fontSize: 15,
-  },
   agentOfflineHint: {
     minWidth: 0,
     marginBottom: 7,
@@ -4058,21 +4110,6 @@ const styles = StyleSheet.create({
     color: groknight.textMuted,
     fontSize: 11,
     lineHeight: 15,
-  },
-  cancelTurnButton: {
-    minHeight: 36,
-    marginBottom: 7,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgBase,
-  },
-  cancelTurnText: {
-    ...Typography.mono(),
-    color: groknight.textSecondary,
-    fontSize: 10,
-    letterSpacing: 0.5,
   },
   writePermissionCard: {
     minWidth: 0,
@@ -4279,9 +4316,6 @@ const styles = StyleSheet.create({
     backgroundColor: groknight.bgBase,
   },
   composerFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 9 },
-  cornerComposer: {
-    backgroundColor: groknight.bgTerminal,
-  },
   attachButton: {
     width: 40,
     height: 40,
@@ -4307,7 +4341,6 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     textAlignVertical: 'top',
   },
-  cornerInput: { ...Typography.mono(), color: groknight.textPrimary },
   sendButton: {
     width: 40,
     height: 40,
@@ -4322,24 +4355,7 @@ const styles = StyleSheet.create({
     color: groknight.textPrimary,
     fontSize: 16,
   },
-  cornerSendButtonText: { ...Typography.mono(), color: groknight.textMuted },
   sendButtonTextQuiet: { color: groknight.textDisabled },
-  cornerFooterRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 3,
-    paddingHorizontal: 8,
-  },
-  cornerFooter: {
-    ...Typography.mono(),
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 13,
-  },
-  cornerFooterRule: { ...Typography.mono(), color: groknight.border },
-  cornerFooterValue: { ...Typography.mono(), color: groknight.textMuted },
-  cornerFooterSeparator: { ...Typography.mono(), color: groknight.faint },
-  cornerFooterState: { ...Typography.mono(), color: groknight.tertiary },
   archivedInputBar: {
     paddingHorizontal: 16,
     paddingTop: 12,

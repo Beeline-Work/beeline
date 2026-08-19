@@ -30,6 +30,10 @@ import {
   AGENT_REQUEST_TAG,
   AGENT_EXCHANGE_MAX_MESSAGES,
   agentExchangeTurnPrompt,
+  abandonedCornerCloseRetryDelayMs,
+  ABANDONED_CORNER_CLOSE_REFUSED,
+  ABANDONED_CORNER_CLOSE_RETRY_BASE_MS,
+  ABANDONED_CORNER_CLOSE_RETRY_CAP_MS,
   assertRelayCornerArchiveTarget,
   assertSubchannelArchiveTarget,
   Body,
@@ -49,6 +53,7 @@ import {
   isChannelWorkIntent,
   isReadOnlyInformationRequest,
   isRepositoryMutationRequest,
+  isNonRetryableRelayError,
   isTransientPermissionPollError,
   humanAgentExchangeRequest,
   ReadOnlyToolsUnavailableError,
@@ -6330,5 +6335,224 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
     expect(
       (Reflect.get(body, 'inboundMessageSeq') as Map<string, number>).get('noack-room'),
     ).toBeUndefined();
+  });
+});
+
+/**
+ * A corner's lifecycle belongs to the ONE agent whose key signed its immutable
+ * kind:9007 create event — that is what the relay authorizes a kind:9002
+ * archive against. `listSubchannels` lists every child of a Room regardless of
+ * creator, so in a multi-agent Room every daemon discovers every other
+ * daemon's corners; adopting one produced an "abandoned" entry whose every
+ * close attempt came back `HTTP 400 actor not authorized`, retried forever.
+ */
+describe('a corner belongs to the agent that opened it', () => {
+  const CREATE_KIND = 9007;
+
+  function newBody(agent: ReturnType<typeof newIdentity>, workspaceRoot: string) {
+    return new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot,
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+    );
+  }
+
+  function cornerCreateEvent(
+    creator: ReturnType<typeof newIdentity>,
+    subchannelId: string,
+    parentChannelId: string,
+  ): NostrEvent {
+    return signEvent(
+      {
+        pubkey: creator.publicKey,
+        created_at: Math.floor(Date.now() / 1000),
+        kind: CREATE_KIND,
+        tags: [
+          ['h', subchannelId],
+          ['parent', parentChannelId],
+        ],
+        content: '',
+      },
+      creator.secretKey,
+    );
+  }
+
+  function closeEvent(human: ReturnType<typeof newIdentity>, subchannelId: string): NostrEvent {
+    return signEvent(
+      {
+        pubkey: human.publicKey,
+        created_at: Math.floor(Date.now() / 1000),
+        kind: 9,
+        tags: [
+          ['h', subchannelId],
+          ['t', CORNER_CLOSE_TAG],
+        ],
+        content: 'Close this corner.',
+      },
+      human.secretKey,
+    );
+  }
+
+  /** Serve `creates` to /query; record publishes, optionally refusing some. */
+  function stubRelayHttp(
+    creates: NostrEvent[],
+    refuse?: (event: NostrEvent) => { status: number; body: string } | undefined,
+  ): NostrEvent[] {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/query')) {
+          return new Response(JSON.stringify(creates), { status: 200 });
+        }
+        const event = JSON.parse(String(init?.body)) as NostrEvent;
+        const refusal = refuse?.(event);
+        if (refusal) return new Response(refusal.body, { status: refusal.status });
+        published.push(event);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    return published;
+  }
+
+  it('never adopts a corner another agent opened, so it is never tracked as abandoned', async () => {
+    const agent = newIdentity('foreign-restore-agent');
+    const otherAgent = newIdentity('foreign-restore-other');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-foreign-restore-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      mocks.createBuzzClient.mockReturnValue({
+        listSubchannels: async () => ['corner-foreign'],
+        getChannelMetadata: async () => ({ archived: false }),
+        disconnect: () => undefined,
+      } as never);
+      Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
+      stubRelayHttp([cornerCreateEvent(otherAgent, 'corner-foreign', 'room-shared')]);
+
+      await Reflect.get(body, 'restoreSubchannels').call(body, 'room-shared', {
+        repo: 'proj',
+        localPath: join(workspaceRoot, 'checkout'),
+        targetBranch: 'refs/heads/main',
+      });
+
+      expect(body.getSubchannels().has('corner-foreign')).toBe(false);
+      // The critical half: it is NOT parked in the sessionless close path,
+      // whose every archive attempt the relay would refuse.
+      expect(body.getAbandonedCorners().has('corner-foreign')).toBe(false);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to archive a corner it did not open, and stops tracking it entirely', async () => {
+    const agent = newIdentity('foreign-close-agent');
+    const otherAgent = newIdentity('foreign-close-other');
+    const human = newIdentity('foreign-close-human');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-foreign-close-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      Reflect.get(body, 'abandonedCorners').set('corner-theirs', {
+        subchannelId: 'corner-theirs',
+        parentChannelId: 'room-shared-close',
+        reason: 'no restorable corner state was found for it',
+      });
+      Reflect.set(body, 'agentRelay', {
+        queryEvents: vi.fn(async () => [closeEvent(human, 'corner-theirs')]),
+      });
+      const published = stubRelayHttp([
+        cornerCreateEvent(otherAgent, 'corner-theirs', 'room-shared-close'),
+      ]);
+      vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+      await Reflect.get(body, 'pollAbandonedCornerCloses').call(body, 'room-shared-close');
+
+      // No kind:9002 is even attempted — the relay would refuse it 400.
+      expect(published.filter((event) => event.kind === 9002)).toHaveLength(0);
+      // And it leaves this daemon's books: it was never ours to close.
+      expect(body.getAbandonedCorners().has('corner-theirs')).toBe(false);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('parks a close the relay refuses outright instead of hot-retrying an event that can never be accepted', async () => {
+    const agent = newIdentity('parked-close-agent');
+    const human = newIdentity('parked-close-human');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-parked-close-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      Reflect.get(body, 'abandonedCorners').set('corner-refused', {
+        subchannelId: 'corner-refused',
+        parentChannelId: 'room-refused',
+        reason: 'its worktree was missing after a restart',
+      });
+      Reflect.set(body, 'agentRelay', {
+        queryEvents: vi.fn(async () => [closeEvent(human, 'corner-refused')]),
+      });
+      const published = stubRelayHttp(
+        [cornerCreateEvent(agent, 'corner-refused', 'room-refused')],
+        (event) =>
+          event.kind === 9002
+            ? { status: 400, body: '{"error":"invalid: actor not authorized for namespace"}' }
+            : undefined,
+      );
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+      await Reflect.get(body, 'pollAbandonedCornerCloses').call(body, 'room-refused');
+      const afterFirst = published.length;
+
+      // The human pressed a button and nothing happened: the corner says so,
+      // in plain language with none of the relay's own transport plumbing.
+      const refusal = published.find((event) =>
+        event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'failed'),
+      );
+      expect(refusal).toBeDefined();
+      expect(refusal!.content).toBe(ABANDONED_CORNER_CLOSE_REFUSED);
+      expect(refusal!.content).not.toMatch(/HTTP|9002|not authorized/);
+
+      // Parked: the next maintenance tick republishes nothing and logs nothing.
+      const errorsAfterFirst = errors.mock.calls.length;
+      await Reflect.get(body, 'pollAbandonedCornerCloses').call(body, 'room-refused');
+      expect(published).toHaveLength(afterFirst);
+      expect(errors.mock.calls.length).toBe(errorsAfterFirst);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('classifies a relay refusal as non-retryable only when a retry genuinely cannot help', () => {
+    expect(
+      isNonRetryableRelayError(
+        new Error('publishEvent kind=9002 failed: HTTP 400 {"error":"invalid: actor not authorized"}'),
+      ),
+    ).toBe(true);
+    expect(isNonRetryableRelayError(new Error('publishEvent kind=9002 failed: HTTP 403 nope'))).toBe(
+      true,
+    );
+    // "Later" answers, and everything transient, stay retryable.
+    expect(isNonRetryableRelayError(new Error('HTTP 429 rate limited, retry in 12s'))).toBe(false);
+    expect(isNonRetryableRelayError(new Error('HTTP 408 request timeout'))).toBe(false);
+    expect(isNonRetryableRelayError(new Error('HTTP 502 Bad Gateway'))).toBe(false);
+    expect(isNonRetryableRelayError(new Error('fetch failed'))).toBe(false);
+  });
+
+  it('spaces out a transient close failure instead of retrying it at the maintenance cadence', () => {
+    expect(abandonedCornerCloseRetryDelayMs(1)).toBe(ABANDONED_CORNER_CLOSE_RETRY_BASE_MS);
+    expect(abandonedCornerCloseRetryDelayMs(2)).toBe(ABANDONED_CORNER_CLOSE_RETRY_BASE_MS * 2);
+    expect(abandonedCornerCloseRetryDelayMs(20)).toBe(ABANDONED_CORNER_CLOSE_RETRY_CAP_MS);
+    // A relay that advertises its own delay always wins over our floor.
+    expect(abandonedCornerCloseRetryDelayMs(1, new Error('rate limited, retry in 900s'))).toBe(
+      900_000,
+    );
   });
 });

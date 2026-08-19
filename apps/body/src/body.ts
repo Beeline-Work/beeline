@@ -442,6 +442,23 @@ export interface SubchannelInfo {
   mergeSummary?: string;
   /** Exact signed human approval that authorizes landing and archive cleanup. */
   humanMergeApproval?: { id: string; reviewer: string; tip: string };
+  /**
+   * What the human was actually shown for review, captured when merge-ready
+   * was published. The corner's worktree can no longer derive this once the
+   * target ref has advanced to the landed tip (the review base and the tip
+   * collapse onto each other), so the landed-work recap reads it from here.
+   */
+  reviewedChange?: { base: string; tip: string; commitCount: number; fileCount: number; files: string[] };
+  /** Feature tip this corner last successfully pushed, so a realigned (rebased)
+   *  history can be advertised with a compare-and-set force rather than being
+   *  rejected as a non-fast-forward of the corner's own branch. */
+  pushedFeatureTip?: string;
+  /** Approved tips already auto-realigned once after a moved-target refusal. */
+  realignedTips?: Set<string>;
+  /** Automatic realigns run for this corner, capped at MAX_CORNER_REALIGN_ATTEMPTS. */
+  realignAttempts?: number;
+  /** The landed-work recap has already been posted to the parent Room. */
+  landSummaryPosted?: boolean;
   /** Successfully forwarded member events, preventing same-second relay replays. */
   processedMemberEventIds?: Set<string>;
 }
@@ -655,6 +672,64 @@ interface AgentExchangeEnvelope extends AgentExchangeAuthorization {
 export const AGENT_REQUEST_TAG = 'buzz-agent-request';
 export const MERGE_READY_TAG = 'merge-ready';
 export const LANDED_TAG = 'landed';
+/**
+ * A land was refused because the target branch moved on, and the corner's own
+ * agent is bringing the change up to date rather than leaving it dead-ended.
+ * Carried on the corner-scoped failure card so a client can say what is
+ * actually happening instead of claiming a background retry.
+ */
+export const MERGE_REALIGN_TAG = 'merge-realigning';
+/** Agent-authored recap posted to the PARENT Room when a corner's work lands. */
+export const LAND_SUMMARY_TAG = 'land-summary';
+/**
+ * Truthful retry posture for a corner-scoped delivery failure. `auto` is the
+ * only value that may claim the daemon keeps retrying on its own; `realigning`
+ * means an agent turn is fixing it; `blocked` means nothing further happens
+ * until a human says something. Never guess — a missing tag means "unknown",
+ * which a client must render without any retry claim.
+ */
+export type DeliveryRetryPosture = 'auto' | 'realigning' | 'blocked';
+/**
+ * One automatic realign per approved tip, and never more than this many for a
+ * single corner. A target that keeps moving under a corner is a person's
+ * problem to sequence, not a loop for the daemon to run forever.
+ */
+export const MAX_CORNER_REALIGN_ATTEMPTS = 2;
+
+/**
+ * Is this land refusal the "someone else advanced the target branch" shape —
+ * the one class of land failure the corner's own agent can actually fix, by
+ * rebasing its feature branch onto the new tip?
+ *
+ * Recognizes both wordings the two non-relay land paths produce: the raw git
+ * rejection a `push` returns (`landOnDirectRemote`), and the plain sentence
+ * `landInLocalCheckout` writes itself for the identical situation after its
+ * `merge-base --is-ancestor` check fails.
+ */
+export function isMovedTargetLandFailure(reason: string): boolean {
+  return /non-fast-forward|\[rejected\]|fetch first|not a fast[- ]forward|cannot lock ref|update_ref failed|has moved on since/i.test(
+    reason,
+  );
+}
+
+/**
+ * Keep a landed-work recap readable in a Room: no fenced code, no raw 40-hex
+ * plumbing, and a hard line cap. Same spirit as `summarizeGitFailure` — a
+ * person reading their Room on a phone gets the story, never the tooling. The
+ * landed commit id is appended by the caller, so a sha the agent quotes inside
+ * its own prose is shortened rather than repeated at full length.
+ */
+export function conciseLandSummary(text: string, maxLines = 7): string {
+  return text
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/\b[0-9a-f]{40}\b/gi, (sha) => sha.slice(0, 7))
+    .split('\n')
+    .map((line) => line.replace(/\s+$/, ''))
+    .filter((line) => line.trim().length > 0)
+    .slice(0, maxLines)
+    .join('\n')
+    .trim();
+}
 export const AGENT_CANCEL_TAG = 'buzz-agent-cancel';
 /** Human-triggered corner close: archives the subchannel (not just the active turn). */
 export const CORNER_CLOSE_TAG = 'buzz-corner-close';
@@ -4023,17 +4098,44 @@ export class Body {
       await this.postParentCornerStatus(info, 'needs-attention', 'Nothing committed is ready for review.');
       return false;
     }
+    // Snapshot what this review actually contains while the base is still
+    // derivable — once the target ref advances to this tip, `base` and `tip`
+    // collapse and the landed-work recap could no longer name a single file.
+    info.reviewedChange = {
+      base,
+      tip,
+      commitCount:
+        Number(git(info.worktreePath, ['rev-list', '--count', `${base}..${tip}`]).stdout.trim()) || 0,
+      fileCount: files.length,
+      files: files.slice(0, 5).map((file) => file.path),
+    };
     if (info.mergeTarget?.tip === tip) return true;
 
+    // A realign REWRITES this corner's feature history (rebase onto the moved
+    // target), so the next publish is not a fast-forward of the ref this
+    // corner last pushed and a plain push would be rejected — leaving the
+    // self-heal unable to advertise the change it just fixed. Force is scoped
+    // as tightly as it can be: only when the new tip genuinely does not
+    // descend from what THIS corner last pushed, and as a compare-and-set on
+    // that exact sha, so anything else touching the feature ref aborts the
+    // push instead of being clobbered.
+    const rewritten =
+      Boolean(info.pushedFeatureTip) &&
+      !git(info.worktreePath, ['merge-base', '--is-ancestor', info.pushedFeatureTip!, tip]).ok;
+    const forceArgs = rewritten
+      ? [`--force-with-lease=refs/heads/${info.featureBranch}:${info.pushedFeatureTip}`]
+      : [];
     const push = boundRepo.ownerHex
       ? gitAuthed(info.worktreePath, this.agentIdentity, boundRepo.ownerHex, boundRepo.repo, [
           'push',
+          ...forceArgs,
           boundRepo.remoteName ?? 'origin',
           `${info.featureBranch}:refs/heads/${info.featureBranch}`,
         ])
       : boundRepo.remoteName
         ? gitWithUserCredentials(info.worktreePath, [
             'push',
+            ...forceArgs,
             boundRepo.remoteName,
             `${tip}:refs/heads/${info.featureBranch}`,
           ])
@@ -4053,6 +4155,7 @@ export class Body {
       );
       return false;
     }
+    info.pushedFeatureTip = tip;
 
     // Publish review data before advertising merge readiness. The manifest is
     // small and eager; patches are separate, bounded events fetched per file.
@@ -4273,12 +4376,22 @@ export class Body {
         : this.landInLocalCheckout(boundRepo.localPath!, target);
       if (outcome.kind === 'skip') continue;
       if (outcome.kind === 'failed') {
+        // A target that moved on is the one land failure an agent can fix.
+        // Hand it back to the corner's own session to rebase rather than
+        // leaving the human with a dead-ended corner and no next step.
+        if (isMovedTargetLandFailure(outcome.reason)) {
+          await this.realignAfterMovedTarget(info, target);
+          continue;
+        }
         await postControlMessage(
           info.subchannelId,
           this.agentIdentity,
           `Couldn't land the approved change on ${target.branch.replace(/^refs\/heads\//, '')}: ${summarizeGitFailure(outcome.reason)}`,
           [
             ['status', 'failed'],
+            // This loop genuinely re-attempts the same approval on the next
+            // maintenance tick, so an automatic-retry claim here is true.
+            ['retry', 'auto' satisfies DeliveryRetryPosture],
             ['repo', target.repo],
             ['branch', target.branch],
             ['feature', info.featureBranch],
@@ -4327,6 +4440,188 @@ export class Body {
     return landed;
   }
 
+  /**
+   * Self-heal a land refused because the target branch moved on since the
+   * human approved this exact tip.
+   *
+   * The old shape published the refusal and left everything else in place, so
+   * the approval stayed valid, the same poll re-refused it on every
+   * maintenance tick, and the corner dead-ended: the only way forward was a
+   * person noticing and hand-driving a rebase. Here the corner's OWN agent
+   * session is given the rebase as an ordinary turn, and `startAgentTask`'s
+   * existing tail re-runs `publishMergeReady`, so the human gets a fresh
+   * review to approve on the new tip.
+   *
+   * Bounded on purpose. The approved tip is cleared either way — it is not
+   * landable as it stands, and leaving it set is exactly what made the refusal
+   * repeat forever — and a second refusal for the SAME approved tip, or a
+   * corner that has already burned `MAX_CORNER_REALIGN_ATTEMPTS`, stops and
+   * says so in the corner instead of realigning again.
+   */
+  private async realignAfterMovedTarget(
+    info: SubchannelInfo,
+    target: NonNullable<SubchannelInfo['mergeTarget']>,
+  ): Promise<void> {
+    const branch = target.branch.replace(/^refs\/heads\//, '');
+    // Never start a second turn on a session that is already running one.
+    // `mergeTarget` is deliberately left intact so the next tick retries this
+    // whole decision rather than silently dropping the approval.
+    if (this.runningAgentTasks.has(info.subchannelId)) return;
+
+    const alreadyRealigned = Boolean(info.realignedTips?.has(target.tip));
+    const exhausted = (info.realignAttempts ?? 0) >= MAX_CORNER_REALIGN_ATTEMPTS;
+    const failureTags: string[][] = [
+      ['repo', target.repo],
+      ['branch', target.branch],
+      ['feature', info.featureBranch],
+      ['tip', target.tip],
+    ];
+    // Stop the poll re-refusing this same approval every tick. A new
+    // merge-ready publish is what restores a landable target.
+    info.mergeTarget = undefined;
+    info.humanMergeApproval = undefined;
+
+    if (alreadyRealigned || exhausted) {
+      await postControlMessage(
+        info.subchannelId,
+        this.agentIdentity,
+        `Still couldn't land this change on ${branch} — it moved on again while the change was being brought up to date. ` +
+          `Nothing was lost: the work is committed on ${info.featureBranch}. ` +
+          `Tell me here how you'd like to proceed — nothing is retrying on its own.`,
+        [
+          ['status', 'failed'],
+          ['retry', 'blocked' satisfies DeliveryRetryPosture],
+          ...failureTags,
+        ],
+      );
+      await this.postParentCornerStatus(
+        info,
+        'needs-attention',
+        `Couldn't land on ${branch}. Waiting on you.`,
+        [['tip', target.tip]],
+      );
+      return;
+    }
+
+    info.realignedTips = info.realignedTips ?? new Set();
+    info.realignedTips.add(target.tip);
+    info.realignAttempts = (info.realignAttempts ?? 0) + 1;
+
+    await postControlMessage(
+      info.subchannelId,
+      this.agentIdentity,
+      `Couldn't land this change on ${branch} — ${branch} moved on since you approved it. ` +
+        `I'm bringing the change up to date with ${branch} now, and you'll get a fresh review to approve when it's ready. ` +
+        `The approval you already gave no longer applies to this change.`,
+      [
+        ['t', MERGE_REALIGN_TAG],
+        ['status', 'failed'],
+        ['retry', 'realigning' satisfies DeliveryRetryPosture],
+        ...failureTags,
+      ],
+    );
+    this.startAgentTask(
+      info,
+      `bring this change up to date with ${branch} so it can land`,
+      this.realignTaskInstructions(info, target),
+    );
+  }
+
+  /** The rebase turn's own instructions — conflicts are resolved in the corner. */
+  private realignTaskInstructions(
+    info: SubchannelInfo,
+    target: NonNullable<SubchannelInfo['mergeTarget']>,
+  ): string {
+    const branch = target.branch.replace(/^refs\/heads\//, '');
+    const remote = info.boundRepo?.remoteName;
+    const base = remote ? `${remote}/${branch}` : branch;
+    return [
+      `The ${branch} branch moved on after this change was approved, so the change could not land.`,
+      remote
+        ? `Fetch the latest ${branch} first: git fetch ${remote} ${branch}`
+        : `The latest ${branch} is already present in this repository.`,
+      `Rebase this corner's branch ${info.featureBranch} onto ${base}, resolving any conflicts here in the corner.`,
+      'Keep the original intent of the change intact — do not drop work to make the rebase easier.',
+      `Commit the result on ${info.featureBranch}.`,
+      `Do not modify, merge into, or push ${branch}, and do not archive this corner.`,
+      'Then say in one or two sentences what you had to change to bring it up to date.',
+    ].join('\n');
+  }
+
+  /**
+   * One agent-authored recap in the PARENT Room when a corner's work actually
+   * lands — the only way a Room reader learns what a corner delivered without
+   * opening it.
+   *
+   * Terminal land only: the caller has already confirmed the target ref sits
+   * at the approved tip, which is true for every repo kind (relay-origin work
+   * lands through the merge gate, direct/local work through
+   * `pollDirectRemoteApprovals`, and both converge here). Exactly once per
+   * corner, and entirely best-effort — a dead ACP session or a failed publish
+   * must never hold up the archive that follows.
+   */
+  private async postCornerLandSummary(info: SubchannelInfo, landedTip: string): Promise<void> {
+    if (info.landSummaryPosted) return;
+    const parentId = info.session.parentChannelId;
+    if (!parentId) return;
+    info.landSummaryPosted = true;
+
+    const branch = (info.mergeTarget?.branch ?? info.boundRepo?.targetBranch ?? 'refs/heads/main').replace(
+      /^refs\/heads\//,
+      '',
+    );
+    const objective = info.request?.content
+      ? taskDescriptionFromCornerRequest(info.request.content).slice(0, 240)
+      : '';
+    const change = info.reviewedChange;
+    const changeLine = change
+      ? `${change.commitCount} ${change.commitCount === 1 ? 'commit' : 'commits'} across ` +
+        `${change.fileCount} ${change.fileCount === 1 ? 'file' : 'files'}` +
+        (change.files.length
+          ? ` (${change.files.slice(0, 3).join(', ')}${change.fileCount > 3 ? ', …' : ''})`
+          : '')
+      : 'the work committed in this corner';
+    const landedLine = `Landed on ${branch} at ${landedTip.slice(0, 12)}.`;
+
+    let recap = [
+      objective ? `Set out to: ${objective}` : `Set out to finish the work in ${info.featureBranch}.`,
+      `Landed: ${changeLine}.`,
+    ].join('\n');
+    try {
+      const result = await this.promptAgent(info.session, [
+        `This corner's change has landed on ${branch} at ${landedTip.slice(0, 12)}.`,
+        'Write a short recap for the people in the parent room, who did not watch this corner work.',
+        'Cover, in this order and in plain language:',
+        '- what this corner set out to do',
+        '- what actually landed, in one line',
+        '- anything you deliberately did NOT do',
+        'Under 6 lines. No code fences, no command output, no commit hashes — the commit id is appended for you.',
+        '',
+        `For reference — objective: ${objective || '(not recorded)'}; landed: ${changeLine}.`,
+      ].join('\n'));
+      const authored = conciseLandSummary(stripAgentReplyPreamble(result.agentText));
+      if (authored) recap = authored;
+    } catch (error) {
+      console.error(`[body] land summary turn failed for ${info.subchannelId}:`, error);
+    }
+
+    await postAgentMessage(
+      parentId,
+      this.agentIdentity,
+      `${recap}\n${landedLine}`,
+      undefined,
+      [],
+      [
+        ['t', LAND_SUMMARY_TAG],
+        ['subchannel', info.subchannelId],
+        ['feature', info.featureBranch],
+        ['branch', branch],
+        ['tip', landedTip],
+        ['agent', this.agentIdentity.publicKey],
+      ],
+    );
+  }
+
   /** Archive only after human approval and the target ref reach the exact tip. */
   async pollMergeCompletions(): Promise<number> {
     let merged = 0;
@@ -4357,6 +4652,12 @@ export class Body {
               ]).stdout.trim()
             : undefined;
       if (targetTip !== info.mergeTarget.tip) continue;
+      // The work is durably on the target ref — the one moment a Room reader
+      // can be told, in the agent's own voice, what this corner delivered.
+      // Never allowed to block the archive below.
+      await this.postCornerLandSummary(info, targetTip).catch((error) =>
+        console.error(`[body] land summary publish failed for ${info.subchannelId}:`, error),
+      );
       await this.postMergeSummary(
         info.subchannelId,
         info.mergeSummary ?? `Merged ${info.featureBranch} at ${targetTip.slice(0, 12)}…`,

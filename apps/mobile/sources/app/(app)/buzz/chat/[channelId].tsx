@@ -47,6 +47,7 @@ import {
   transcriptMessages,
   upsertChatMessages,
   type ChatDisplayMessage,
+  type DeliveryRetryPosture,
 } from '@/sync/transport/buzz-event-projection';
 import {
   channelCacheKey,
@@ -440,12 +441,20 @@ export default function BuzzChat() {
   // 'delivering' means the approval publish itself was accepted by the relay
   // — landing/confirming is still in progress or retrying, never "done".
   // 'failed' means a durable publish on the landing path (push, land, or
-  // merge-gate attempt) failed or could not be confirmed; the underlying
-  // operation keeps retrying automatically, so this is informational, not a
-  // dead end requiring the user to resend the approval.
+  // merge-gate attempt) failed or could not be confirmed. Whether anything is
+  // still happening after that is NOT inferable here — the daemon says so on
+  // the failure event itself, and `deliveryRetry` below carries its answer.
   const [approvalState, setApprovalState] = useState<
     'none' | 'sending' | 'delivering' | 'failed' | 'merged'
   >('none');
+  // The daemon's own posture after a failed land. This screen used to hard-code
+  // "RETRYING AUTOMATICALLY", which is false for a land the daemon has stopped
+  // re-attempting (a moved target being rebased, or one it has given up on) —
+  // exactly the case that reads as a dead end to the person holding the phone.
+  const [deliveryRetry, setDeliveryRetry] = useState<DeliveryRetryPosture | undefined>(undefined);
+  // Reviewable tip currently on screen. Held on a ref, not read off
+  // `mergeTarget`, because a whole live batch is applied before any re-render.
+  const mergeTargetTipRef = useRef<string | null>(initialChannelCache?.mergeTarget?.tip ?? null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [reviewFileCount, setReviewFileCount] = useState<number | null>(null);
   const [parentChannelId, setParentChannelId] = useState<string | undefined>(
@@ -1146,8 +1155,26 @@ export default function BuzzChat() {
           pendingLiveEvents = [];
           const projections = cacheLiveSessionEvents(identity.publicKey, decodedId, batch);
           for (const projected of projections) {
-            if (projected.mergeTarget) setMergeTarget(projected.mergeTarget);
-            if (projected.clearMergeTarget) setMergeTarget(null);
+            if (projected.mergeTarget) {
+              // A merge-ready on a DIFFERENT tip is a new change to review —
+              // it supersedes whatever happened to the previous approval, so
+              // the panel must go back to offering the approve button instead
+              // of staying stuck on the earlier attempt's failure. Tracked on
+              // a ref because a whole batch is applied before any re-render.
+              if (
+                mergeTargetTipRef.current &&
+                mergeTargetTipRef.current !== projected.mergeTarget.tip
+              ) {
+                setApprovalState((current) => (current === 'merged' ? current : 'none'));
+                setDeliveryRetry(undefined);
+              }
+              mergeTargetTipRef.current = projected.mergeTarget.tip;
+              setMergeTarget(projected.mergeTarget);
+            }
+            if (projected.clearMergeTarget) {
+              mergeTargetTipRef.current = null;
+              setMergeTarget(null);
+            }
             if (projected.archiveChannel) {
               setIsArchived(true);
               setApprovalState('merged');
@@ -1157,6 +1184,7 @@ export default function BuzzChat() {
             // state while nothing is actually landing. Ignored once merged.
             if (projected.deliveryFailed) {
               setApprovalState((current) => (current === 'merged' ? current : 'failed'));
+              setDeliveryRetry(projected.deliveryRetry);
             }
             applyAgentPresence(projected.agentPresence);
           }
@@ -2719,9 +2747,18 @@ export default function BuzzChat() {
                         <Text style={styles.approvalStateText}>✓ APPROVAL SENT · DELIVERING…</Text>
                       </View>
                     ) : approvalState === 'failed' ? (
+                      // Only ever claim what the daemon actually told us it is
+                      // doing — see `deliveryRetry`. A land the daemon has
+                      // stopped re-attempting must never read as "retrying".
                       <View style={styles.approvalSent} testID="approve-corner-delivery-failed">
                         <Text style={styles.approvalStateText}>
-                          ⚠ DELIVERY FAILED · RETRYING AUTOMATICALLY
+                          {deliveryRetry === 'auto'
+                            ? '⚠ DELIVERY FAILED · RETRYING AUTOMATICALLY'
+                            : deliveryRetry === 'realigning'
+                              ? '⚠ TARGET MOVED ON · UPDATING THIS CHANGE FOR A NEW REVIEW'
+                              : deliveryRetry === 'blocked'
+                                ? '⚠ COULDN’T LAND · WAITING ON YOU'
+                                : '⚠ DELIVERY FAILED · SEE THE CORNER FOR DETAILS'}
                         </Text>
                       </View>
                     ) : (

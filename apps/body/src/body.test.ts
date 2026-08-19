@@ -39,6 +39,9 @@ import {
   assertSubchannelArchiveTarget,
   Body,
   conciseCornerTurnSummary,
+  conciseLandSummary,
+  isMovedTargetLandFailure,
+  MAX_CORNER_REALIGN_ATTEMPTS,
   cornerArchiveSummary,
   CORNER_CLOSE_TAG,
   CORNER_TURN_SUMMARY_INSTRUCTION,
@@ -6895,5 +6898,52 @@ describe('a corner that fell out of local tracking is still closable', () => {
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
+  });
+});
+
+describe('moved-target land refusals are classified, and recaps stay readable', () => {
+  it('recognizes both wordings the two non-relay land paths produce', () => {
+    // The raw rejection a remote push returns...
+    expect(
+      isMovedTargetLandFailure(
+        'To /tmp/remote.git\n ! [rejected]        abc -> main (non-fast-forward)\nhint: Updates were rejected',
+      ),
+    ).toBe(true);
+    // ...and the sentence the local-checkout path writes for the same thing.
+    expect(
+      isMovedTargetLandFailure(
+        'The master branch has moved on since this change was approved — it needs to be rebased before it can land.',
+      ),
+    ).toBe(true);
+    // A branch-rules decline is a different problem and must not be rebased at.
+    expect(isMovedTargetLandFailure('remote: error: pre-receive hook declined')).toBe(false);
+    expect(isMovedTargetLandFailure('Permission denied (publickey).')).toBe(false);
+  });
+
+  it('caps a recap and strips fenced output and raw shas', () => {
+    const summary = conciseLandSummary(
+      [
+        'Set out to add a haiku.',
+        '```',
+        'git log --oneline',
+        '```',
+        `Landed at ${'a'.repeat(40)}.`,
+        'one',
+        'two',
+        'three',
+        'four',
+        'five',
+        'six',
+      ].join('\n'),
+    );
+
+    expect(summary.split('\n')).toHaveLength(7);
+    expect(summary).not.toContain('```');
+    expect(summary).not.toContain('a'.repeat(40));
+    expect(summary).toContain(`Landed at ${'a'.repeat(7)}.`);
+  });
+
+  it('allows exactly two automatic realigns per corner', () => {
+    expect(MAX_CORNER_REALIGN_ATTEMPTS).toBe(2);
   });
 });

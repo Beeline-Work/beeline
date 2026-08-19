@@ -5,7 +5,6 @@ import type {
   ChannelMember,
   Community,
   CommunityMember,
-  CommunityRole,
   DirectMessage,
   MergeTarget,
   PersonProfile,
@@ -57,10 +56,7 @@ export type DirectMessageDisplayItem = {
 export type WorkspaceMemberDisplayItem = Omit<
   DirectMessageDisplayItem,
   'id' | 'latestMessage' | 'latestMessageAt' | 'updatedAt'
-> & {
-  /** Workspace role for a person entry; agents don't carry one here. */
-  role?: CommunityRole;
-};
+>;
 
 /** The conversational-preview fields a message sync contributes to a channel
  * entry and to every list that shows that channel as a row. */

@@ -450,6 +450,36 @@ describe('Buzz Room screen event projection', () => {
     expect(displaySequence([event])).toHaveLength(1);
   });
 
+  it('carries the daemon’s own retry posture, and invents none when the daemon did not say', () => {
+    // The screen used to hard-code "RETRYING AUTOMATICALLY" for every one of
+    // these, which is a lie for a land nothing is re-attempting — the exact
+    // reading that made a non-fast-forward refusal look like a dead end that
+    // was also somehow still working on itself.
+    const failure = (retry?: string) =>
+      projectChatEvent(
+        raw(
+          `land-failed-${retry ?? 'none'}`,
+          'Couldn’t land the approved change on main.',
+          [
+            ['t', 'body-control'],
+            ['status', 'failed'],
+            ...(retry ? [['retry', retry]] : []),
+          ],
+          11,
+        ),
+        viewer,
+      );
+
+    expect(failure('auto').deliveryRetry).toBe('auto');
+    expect(failure('realigning').deliveryRetry).toBe('realigning');
+    expect(failure('blocked').deliveryRetry).toBe('blocked');
+    // Absent, or a value this client does not understand, is "unknown" — not
+    // a default that lets the screen claim a retry nobody promised.
+    expect(failure(undefined).deliveryRetry).toBeUndefined();
+    expect(failure('sometime-maybe').deliveryRetry).toBeUndefined();
+    expect(failure(undefined).deliveryFailed).toBe(true);
+  });
+
   it('renders the daemon’s queued-steer acknowledgement as a quiet system line, not an agent turn', () => {
     // `postSteerQueuedNotice` (apps/body/src/activity.ts): the receipt for a
     // message sent while a turn was already running. It is a body-control

@@ -175,6 +175,10 @@ import {
   wrapAgentCommand,
   type SandboxSessionSpec,
 } from './bwrap-sandbox.js';
+import {
+  NO_PERSONAL_CONNECTORS_INSTRUCTION,
+  toolScopeWarning,
+} from './harness-tool-scope.js';
 
 /** Tracks a single agent session. */
 export interface AgentSession {
@@ -2339,6 +2343,15 @@ export class Body {
       if (this.config.bwrapPath) console.log(`[body] ${sandboxWarning}`);
       else console.warn(`[body] ${sandboxWarning}`);
     }
+    // Separate boundary, separate warning: the OS sandbox above decides what the
+    // harness may WRITE, and neither it nor the permission callback decides which
+    // tools exist in the session at all. A harness held perfectly to the
+    // read-only rule can still hand Room members the operator's own account
+    // tools. Only `allowlisted` harnesses stay silent here.
+    const scopeWarning = toolScopeWarning(this.config.agentCommand ?? this.config.agentBinary, {
+      isolatedHarnessHome: Boolean(this.config.agentHomeRoot),
+    });
+    if (scopeWarning) console.warn(`[body] ${scopeWarning}`);
     // Resolve the server before any relay membership or session side effect.
     // Missing read-only tools must never create a no-tool or edit-tool session.
     const readonlyServer = readOnlyMcpServer(this.config, readonlyCwd);
@@ -2358,6 +2371,7 @@ export class Body {
         mcpServers: [readonlyServer],
         systemPrompt: [
           'You are a helpful coding assistant in a read-only conversation channel.',
+          NO_PERSONAL_CONNECTORS_INSTRUCTION,
           'Use buzz-readonly-mcp to list, read, search, and inspect local git history when analysis needs repository evidence.',
           'Those inspection tools are non-mutating and do not require human approval.',
           'Never request native shell or execute permission for listing, reading, searching, or git-history inspection; use the read-only MCP tools instead.',
@@ -2484,6 +2498,7 @@ export class Body {
       mcpServers,
       systemPrompt: [
         'You are a coding agent in an edit session.',
+        NO_PERSONAL_CONNECTORS_INSTRUCTION,
         `You are working in a git worktree: ${worktreePath}`,
         `Your feature branch is: ${featureBranch}`,
         'You have full shell and file editing tools available.',

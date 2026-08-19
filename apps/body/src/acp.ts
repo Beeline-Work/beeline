@@ -16,6 +16,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import type { SessionMode } from './config.js';
+import {
+  harnessReadsMetaSystemPrompt,
+  sessionToolScopeMeta,
+} from './harness-tool-scope.js';
 
 /** Bound on the stderr tail kept for an exit-failure error message. */
 const STDERR_TAIL_MAX_CHARS = 2_000;
@@ -344,6 +348,24 @@ export class AcpClient extends EventEmitter {
       })),
     };
     if (opts.systemPrompt) params.systemPrompt = opts.systemPrompt;
+    // The tool-scope lockdown is applied HERE, not at the call sites, so a new
+    // session path cannot ship without it: every session/new this daemon sends
+    // pins the harness to the servers listed on the same request. See
+    // `harness-tool-scope.ts` for what each harness actually honours.
+    //
+    // `agentLabel`, NOT `agentCommand`: under the OS sandbox the spawn command
+    // is `bwrap` and the harness is only an argument to it, so matching on the
+    // command would classify every sandboxed session as an unknown harness and
+    // silently send no lockdown at all.
+    const meta: Record<string, unknown> = {
+      ...(sessionToolScopeMeta(this.agentLabel) ?? {}),
+    };
+    // claude-agent-acp reads the system prompt only from `_meta.systemPrompt`;
+    // its top-level `systemPrompt` sibling above is silently ignored there.
+    if (opts.systemPrompt && harnessReadsMetaSystemPrompt(this.agentLabel)) {
+      meta.systemPrompt = { append: opts.systemPrompt };
+    }
+    if (Object.keys(meta).length > 0) params._meta = meta;
     const raw = (await this.request('session/new', params)) as Record<string, unknown>;
     const sessionId = raw.sessionId as string | undefined;
     if (!sessionId) throw new Error('session/new missing sessionId');

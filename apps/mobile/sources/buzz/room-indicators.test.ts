@@ -79,6 +79,21 @@ describe('selectPinnedCorner', () => {
     ).toBeNull();
   });
 
+  it('drops a stale "ready for review" pin once the corner is closed without ever landing', () => {
+    // The captain's repro: a corner whose session died sat on `open` (READY)
+    // forever, because nothing ever published its close. Once the daemon does
+    // — see `pollAbandonedCornerCloses` in `apps/body/src/body.ts` — the
+    // review-ready pin has to go, not merely lose the tie-break to another
+    // corner.
+    expect(
+      selectPinnedCorner({
+        ...base,
+        lifecycle: [corner('honeybees', 'open')],
+        signals: [{ subchannelId: 'honeybees', status: 'archived', timestamp: 900 }],
+      }),
+    ).toBeNull();
+  });
+
   it('prefers a review-ready corner over one still working, then the most recent', () => {
     // Review-ready is the most actionable state a captain can act on, so it
     // wins the single pin even over a corner that is older but still running.

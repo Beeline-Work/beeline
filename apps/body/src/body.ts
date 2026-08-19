@@ -12,7 +12,7 @@
  *   - Activity projection bridges ACP session/update → relay channel events.
  */
 import { randomUUID } from 'node:crypto';
-import { mkdir, rm, readFile, realpath, stat } from 'node:fs/promises';
+import { mkdir, readdir, rm, readFile, realpath, stat } from 'node:fs/promises';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -144,6 +144,7 @@ import {
   assertCornerWorktreeIsolated,
   classifyCornerCommand,
   cornerWorktreePath,
+  cornersPoolRoot,
   legacyCornerWorktreePath,
   shellCommandFromRawInput,
 } from './corner-isolation.js';
@@ -265,6 +266,16 @@ export function isAcpPromptStallError(error: unknown): boolean {
  * `opts.pollMs`, which the push loop no longer uses for actual polling.
  */
 export const ROOM_WS_MAINTENANCE_TICK_MS = 60_000;
+
+/**
+ * How often a Body sweeps its corners pool for stray worktrees — corner
+ * directories no live subchannel and no git registration still backs, plus
+ * git-registered worktrees whose corner has since been archived (e.g. a corner
+ * that merged/closed while the daemon was down). Reap-on-close is immediate
+ * (`archiveSubchannel` → `removeWorktree`); this is the periodic backstop for
+ * strays, throttled so the maintenance tick stays cheap.
+ */
+export const CORNER_WORKTREE_PRUNE_INTERVAL_MS = 10 * 60_000;
 
 /**
  * Correctness backstop cadence for a pending write-permission decision. The
@@ -967,6 +978,8 @@ export class Body {
    *  once for the same corner. */
   private archivingSubchannels = new Set<string>();
   private requestCursors = new Map<string, number>();
+  /** Throttle for the periodic stray-corner-worktree prune (per Body). */
+  private lastWorktreePruneAt = 0;
   private runningAgentTasks = new Map<string, Promise<void>>();
   private scheduler: SessionScheduler;
   private ownsScheduler: boolean;
@@ -2597,15 +2610,20 @@ export class Body {
               continue;
             }
           }
+          const cornerWorkIntent = isChannelWorkIntent(
+            event,
+            this.agentIdentity.publicKey,
+            roomParticipants,
+          );
           if (
             await this.replyInRoom(
               tlcChannelId,
               boundRepo,
               request,
-              editPolicy === 'repository' &&
-                isChannelWorkIntent(event, this.agentIdentity.publicKey, roomParticipants),
+              editPolicy === 'repository' && cornerWorkIntent,
               editPolicy,
               exchangeRequest?.kind === 'authorized' ? exchangeRequest.authorization : undefined,
+              cornerWorkIntent,
             )
           ) {
             opened++;
@@ -2648,6 +2666,7 @@ export class Body {
     explicitCornerWork = false,
     editPolicy: RoomEditPolicy = boundRepo ? 'repository' : 'direct-message',
     agentExchange?: AgentExchangeAuthorization,
+    cornerWorkIntent = explicitCornerWork,
   ): Promise<boolean> {
     const informationOnly =
       agentExchange !== undefined || isReadOnlyInformationRequest(request.content);
@@ -2683,6 +2702,43 @@ export class Body {
       );
       this.startAgentTask(info, displayPrompt, taskInstructions);
       return true;
+    }
+
+    // The repository belongs to the Room. An explicit open-a-corner command in
+    // a Room with no repository linked is refused with an actionable message,
+    // never a crash — unless the operator named an exact owner/repo, which the
+    // named-repository flow below still handles.
+    if (cornerWorkIntent && !boundRepo && editPolicy !== 'direct-message') {
+      const named =
+        editPolicy === 'named-repository'
+          ? namedRepositoryTargetFromRoomRequest(request.content)
+          : undefined;
+      if (!named) {
+        await this.durableState.appendConversation(tlcChannelId, {
+          role: 'user',
+          text: userPrompt,
+          eventId: request.eventId,
+          at: new Date(request.createdAt * 1_000).toISOString(),
+        });
+        const reply =
+          "This Room doesn't have a repository linked yet, so I can't open a corner or make code changes here. " +
+          'Ask a Room admin to link a repository to this Room (or name an exact owner/repo to work on), and I can open corners for it.';
+        await postAgentMessage(
+          tlcChannelId,
+          this.agentIdentity,
+          reply,
+          request.eventId,
+          [],
+          [],
+          request.replyRootId,
+        );
+        await this.durableState.appendConversation(tlcChannelId, {
+          role: 'agent',
+          text: attachmentPrompt(this.agentIdentity.publicKey, reply, [], this.ownRoomAttribution()),
+          at: new Date().toISOString(),
+        });
+        return false;
+      }
     }
 
     if (editPolicy === 'direct-message' && isRepositoryMutationRequest(request.content)) {
@@ -3858,7 +3914,7 @@ export class Body {
       await this.provision(tlcChannelId, boundRepo);
       if (boundRepo.repositoryKey) await this.restoreSubchannels(tlcChannelId, boundRepo);
       await this.runRoomPushLoop(tlcChannelId, boundRepo, 'repository', stopPresence, opts, () =>
-        this.pollRoomMaintenance(tlcChannelId),
+        this.pollRoomMaintenance(tlcChannelId, undefined, boundRepo),
       );
     } finally {
       this.presenceGenerations.delete(tlcChannelId);
@@ -3930,7 +3986,7 @@ export class Body {
       // The Workspace supervisor owns current-role discovery. It aborts this
       // loop when the Room disappears from the agent's member/admin projection.
       await this.runRoomPushLoop(channelId, boundRepo, 'repository', stopPresence, opts, () =>
-        this.pollRoomMaintenance(channelId, mergeGate),
+        this.pollRoomMaintenance(channelId, mergeGate, boundRepo),
       );
     } finally {
       this.presenceGenerations.delete(channelId);
@@ -3946,6 +4002,7 @@ export class Body {
   private async pollRoomMaintenance(
     channelId: string,
     mergeGate?: DurableMergeGate,
+    boundRepo?: BoundRepo,
   ): Promise<void> {
     const guarded = async (label: string, run: () => Promise<unknown>) => {
       try {
@@ -3954,6 +4011,7 @@ export class Body {
         console.error(`[body] Room ${channelId} ${label} failed; will retry:`, error);
       }
     };
+    await guarded('stray worktree prune', () => this.pruneStrayCornerWorktrees(boundRepo));
     await guarded('corner member poll', async () => {
       const results = await Promise.allSettled(
         [...this.subchannels.keys()].map((subchannelId) => this.pollMembers(subchannelId)),
@@ -4719,6 +4777,103 @@ export class Body {
       } catch {
         /* ignore */
       }
+    }
+  }
+
+  /** The corners pool root for this Body's bound repo (parent of every corner worktree). */
+  private cornersPoolRoot(boundRepo?: BoundRepo): string {
+    return cornersPoolRoot({
+      ...(this.config.cornersRoot ? { cornersRoot: this.config.cornersRoot } : {}),
+      workspaceRoot: this.config.workspaceRoot,
+      ...(boundRepo?.localPath ? { sourceCheckout: boundRepo.localPath } : {}),
+    });
+  }
+
+  /** Paths git currently registers as worktrees of `checkoutOrGitDir`. */
+  private registeredWorktrees(checkoutOrGitDir: string): Set<string> {
+    const paths = new Set<string>();
+    const result = git(checkoutOrGitDir, ['worktree', 'list', '--porcelain']);
+    if (!result.ok) return paths;
+    for (const line of result.stdout.split('\n')) {
+      if (line.startsWith('worktree ')) paths.add(resolve(line.slice('worktree '.length).trim()));
+    }
+    return paths;
+  }
+
+  /**
+   * Periodic backstop that reaps stray corner worktrees (litter accumulates as
+   * ~84M-per-worktree strays). Two classes:
+   *   1. Orphan directories under the corners pool that neither a live corner
+   *      nor git's worktree registry still backs — a crash between `git
+   *      worktree remove` and the directory delete, or a dir git never
+   *      registered.
+   *   2. Git-registered worktrees with no live corner whose corner channel is
+   *      archived on the relay — a corner that merged/closed while the daemon
+   *      was down, which `restoreSubchannels` deliberately skips, so nothing
+   *      else ever cleans it up.
+   *
+   * Reap-on-close (`archiveSubchannel` → `removeWorktree`) stays the immediate
+   * path for the normal case; this is throttled and deliberately conservative:
+   * without a definitive git worktree registry it prunes nothing (never guesses
+   * a live corner into deletion).
+   */
+  private async pruneStrayCornerWorktrees(boundRepo?: BoundRepo): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastWorktreePruneAt < CORNER_WORKTREE_PRUNE_INTERVAL_MS) return;
+    this.lastWorktreePruneAt = now;
+
+    const pool = this.cornersPoolRoot(boundRepo);
+    if (!existsSync(pool)) return;
+    // The authority on which worktrees git still tracks: the shared checkout
+    // for a paired repo, or the bare git dir for a relay-origin/local corner.
+    const worktreeGitDir =
+      boundRepo?.localPath ??
+      (boundRepo ? resolve(this.config.workspaceRoot, `.git-${boundRepo.repo}`) : undefined);
+    if (!worktreeGitDir || !existsSync(worktreeGitDir)) return;
+
+    git(worktreeGitDir, ['worktree', 'prune']);
+    const registered = this.registeredWorktrees(worktreeGitDir);
+    const live = new Set([...this.subchannels.values()].map((info) => resolve(info.worktreePath)));
+
+    let entries: { name: string; isDirectory(): boolean }[];
+    try {
+      entries = await readdir(pool, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    const archivedCandidates: { dir: string; subchannelId: string }[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const dir = resolve(pool, entry.name);
+      if (live.has(dir)) continue;
+      if (!registered.has(dir)) {
+        // Orphan: no live corner, git no longer tracks it. Safe to reap.
+        await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+        continue;
+      }
+      // Registered but not live: reap only if its corner is archived. The dir
+      // basename is the subchannel id (see cornerWorktreePath).
+      archivedCandidates.push({ dir, subchannelId: entry.name });
+    }
+    if (archivedCandidates.length === 0) return;
+
+    const client = createBuzzClient({
+      baseUrl: this.config.relayBaseUrl,
+      ...(this.config.relayHost ? { host: this.config.relayHost } : {}),
+      identity: this.agentIdentity,
+    });
+    try {
+      for (const { dir, subchannelId } of archivedCandidates) {
+        const archived = await client
+          .getChannelMetadata(subchannelId)
+          .then((metadata) => metadata?.archived ?? false)
+          .catch(() => false);
+        if (!archived) continue;
+        git(worktreeGitDir, ['worktree', 'remove', '--force', dir]);
+        await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+      }
+    } finally {
+      client.disconnect();
     }
   }
 

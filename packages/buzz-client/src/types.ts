@@ -61,6 +61,39 @@ export interface RepositoryBinding {
   localOnly: boolean;
 }
 
+/** Input for binding (or re-binding) a repository to a Room. */
+export interface RoomRepositoryInput {
+  /** SHA-256 repository identity (converges clones of the same origin). */
+  key: string;
+  /** Human-facing repository name. */
+  name: string;
+  /** Credential-free canonical git remote URL — the source of truth. */
+  remote: string;
+  /** Optional protected/target branch short name (e.g. "main"). */
+  targetBranch?: string;
+}
+
+/**
+ * The repository a Room owns, resolved from published Room state.
+ *
+ * `source` records where the resolution came from: `config` is a mutable,
+ * admin-authored room-config event (the Stage-2-writable path); `genesis` is
+ * the immutable binding carried on the Room's create event — the migration /
+ * compatibility path that keeps every Room paired before room-repo config
+ * existed resolving with no republish.
+ */
+export interface RoomRepository {
+  channelId: string;
+  communityId?: string;
+  binding: RepositoryBinding;
+  targetBranch?: string;
+  source: 'config' | 'genesis';
+  /** Room admin who authored a `config` binding; absent for `genesis`. */
+  authoredBy?: string;
+  updatedAt?: number;
+  raw?: NostrEvent;
+}
+
 export interface AgentSoulInput {
   name: string;
   personality: string;

@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { newIdentity } from '@beeline/gate';
 import type { BodyConfig } from './config.js';
-import type { AgentRuntimeRecord } from './runtime.js';
+import { inspectLocalRepository, type AgentRuntimeRecord, type RoomRuntimeRecord } from './runtime.js';
 
 const mocks = vi.hoisted(() => ({
   createBuzzClient: vi.fn(),
@@ -107,6 +108,7 @@ describe('WorkspaceSupervisor unbound channel policy', () => {
         .mockResolvedValue([{ channelId: 'dm-channel', event: { created_at: 20 } }]),
       getChannelCommunityId: vi.fn().mockResolvedValue(runtime.communityId),
       getParentChannelId: vi.fn().mockResolvedValue(null),
+      resolveRoomRepository: vi.fn().mockResolvedValue(null),
       getChannelRepositoryBinding: vi.fn().mockResolvedValue(null),
       getDirectMessage: vi.fn().mockResolvedValue({
         participants: [runtime.agent.publicKey, 'b'.repeat(64)],
@@ -141,6 +143,7 @@ describe('WorkspaceSupervisor unbound channel policy', () => {
         .mockResolvedValue([{ channelId: 'repo-less-room', event: { created_at: 20 } }]),
       getChannelCommunityId: vi.fn().mockResolvedValue(runtime.communityId),
       getParentChannelId: vi.fn().mockResolvedValue(null),
+      resolveRoomRepository: vi.fn().mockResolvedValue(null),
       getChannelRepositoryBinding: vi.fn().mockResolvedValue(null),
       getDirectMessage: vi.fn().mockResolvedValue(null),
       disconnect: vi.fn(),
@@ -591,5 +594,109 @@ describe('WorkspaceSupervisor per-room storage and harness isolation', () => {
 
     process.env.BUZZY_BODY_ROOM_HOME = '0';
     expect(agentHomeRoot(supervisor, resolve(runtimeDir, 'rooms', 'brand-new'))).toBeUndefined();
+  });
+});
+
+describe('WorkspaceSupervisor room owns the repo (Stage 1)', () => {
+  function storedId(name: string) {
+    return storedIdentity(name).stored;
+  }
+
+  function runtime(supervisorRoot: string, rooms: RoomRuntimeRecord[] = []): AgentRuntimeRecord {
+    return {
+      version: 2,
+      communityId: '11111111-1111-4111-8111-111111111111',
+      pairedBy: 'a'.repeat(64),
+      agent: storedId('canon-agent'),
+      body: storedId('canon-body'),
+      rooms,
+      supervisorRoot,
+      relayBaseUrl: 'http://relay.test',
+      agentBinary: '/bin/true',
+      mcpBinary: '/bin/true',
+      createdAt: new Date(0).toISOString(),
+    };
+  }
+
+  function supervisorFor(supervisorRoot: string, rooms: RoomRuntimeRecord[] = []): WorkspaceSupervisor {
+    const rt = runtime(supervisorRoot, rooms);
+    return new WorkspaceSupervisor(
+      rt,
+      `/tmp/beeline/agents/${rt.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+    );
+  }
+
+  it('places the canonical checkout per-host per-repo (not per-agent), identical across agents', () => {
+    const root = '/tmp/beeline-canon-host';
+    const a = supervisorFor(root) as never as { canonicalCheckoutPath(key: string): string };
+    const b = supervisorFor(root) as never as { canonicalCheckoutPath(key: string): string };
+    const expected = resolve(root, 'beeline', 'repositories', 'repo-key-xyz');
+    expect(a.canonicalCheckoutPath('repo-key-xyz')).toBe(expected);
+    // A different agent on the same host resolves the SAME shared checkout.
+    expect(b.canonicalCheckoutPath('repo-key-xyz')).toBe(expected);
+  });
+
+  it('serves a remote Room from beeline own clone of origin, never the operator checkout', () => {
+    const tmp = mkdtempSync(resolve(tmpdir(), 'buzzy-canon-'));
+    const gitEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1' };
+    const runGit = (cwd: string, args: string[]) =>
+      spawnSync('git', args, { cwd, env: gitEnv, encoding: 'utf8' });
+
+    // A real "origin" repo, and a separate operator working checkout of it.
+    const origin = resolve(tmp, 'origin');
+    spawnSync('git', ['init', '-q', '-b', 'main', origin], { env: gitEnv, encoding: 'utf8' });
+    runGit(origin, ['config', 'user.email', 't@t.local']);
+    runGit(origin, ['config', 'user.name', 'test']);
+    spawnSync('git', ['-C', origin, 'commit', '-q', '--allow-empty', '-m', 'init'], {
+      env: gitEnv,
+      encoding: 'utf8',
+    });
+    const operatorCheckout = resolve(tmp, 'operator-proj');
+    spawnSync('git', ['clone', '-q', origin, operatorCheckout], { env: gitEnv, encoding: 'utf8' });
+
+    // The Room's stored binding points at the OPERATOR's checkout (the pairing
+    // shape). Serving must NOT use it — it must clone its own canonical.
+    const opBinding = inspectLocalRepository(operatorCheckout);
+    const room: RoomRuntimeRecord = {
+      channelId: 'repo-room',
+      repo: opBinding,
+      membershipSince: 1,
+      discoveredAt: new Date(0).toISOString(),
+    };
+
+    const supervisorRoot = resolve(tmp, 'state');
+    const supervisor = supervisorFor(supervisorRoot, [room]) as never as {
+      resolveServingRepo(room: RoomRuntimeRecord): Promise<{ localPath?: string; targetBranch?: string }>;
+    };
+
+    return supervisor.resolveServingRepo(room).then((bound) => {
+      const canonical = resolve(supervisorRoot, 'beeline', 'repositories', opBinding.repository.key);
+      expect(bound.localPath).toBe(canonical);
+      // The load-bearing safety property: the agent NEVER serves from the
+      // operator's working tree (which carries WIP and drifts).
+      expect(bound.localPath).not.toBe(operatorCheckout);
+      expect(existsSync(resolve(canonical, '.git'))).toBe(true);
+      expect(inspectLocalRepository(canonical).repository.key).toBe(opBinding.repository.key);
+      rmSync(tmp, { recursive: true, force: true });
+    });
+  });
+
+  it('leaves a local-only Room on its stored checkout (no origin to clone a canonical from)', async () => {
+    const room: RoomRuntimeRecord = {
+      channelId: 'local-room',
+      repo: {
+        root: '/tmp/local-proj',
+        repository: { name: 'local-proj', key: 'local-key', localOnly: true },
+        targetBranch: 'main',
+      } as never,
+      membershipSince: 1,
+      discoveredAt: new Date(0).toISOString(),
+    };
+    const supervisor = supervisorFor('/tmp/beeline-local-host', [room]) as never as {
+      resolveServingRepo(room: RoomRuntimeRecord): Promise<{ localPath?: string }>;
+    };
+    const bound = await supervisor.resolveServingRepo(room);
+    expect(bound.localPath).toBe('/tmp/local-proj');
   });
 });

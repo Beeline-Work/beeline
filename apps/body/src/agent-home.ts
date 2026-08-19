@@ -92,3 +92,31 @@ export function roomAgentHomeEnv(root: string): Record<string, string> {
     TMPDIR: resolve(resolved, 'tmp'),
   };
 }
+
+/**
+ * Harness state/credential directories in a prepared env, and the temp
+ * directory, split apart because the OS sandbox treats them differently: a
+ * Room keeps the state dirs read-only but still needs a writable temp
+ * (`bwrap-sandbox.ts`). Reads whatever the env actually carries, so it is
+ * correct both for a Room with its own agent home and for one still on the
+ * daemon's ambient state.
+ */
+export const HARNESS_STATE_ENV_VARS = [
+  'CLAUDE_CONFIG_DIR',
+  'CODEX_HOME',
+  'XDG_STATE_HOME',
+  'XDG_CACHE_HOME',
+] as const;
+
+export function harnessStateDirsFromEnv(env: Record<string, string | undefined>): {
+  stateDirs: string[];
+  tmpDir?: string;
+} {
+  const stateDirs: string[] = [];
+  for (const name of HARNESS_STATE_ENV_VARS) {
+    const value = env[name];
+    if (value) stateDirs.push(resolve(value));
+  }
+  const tmp = env.TMPDIR;
+  return { stateDirs, ...(tmp ? { tmpDir: resolve(tmp) } : {}) };
+}

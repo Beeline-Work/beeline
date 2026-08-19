@@ -103,15 +103,34 @@ export function enforcesPermissionBoundary(agentCommand: string | undefined): bo
 }
 
 /**
- * One-line operator warning for a harness the daemon cannot hold to the Room
- * read-only boundary, or `undefined` when it can.
+ * One-line operator line about how a Room's read-only rule is actually held for
+ * this harness, or `undefined` when nothing needs saying.
+ *
+ * Two independent layers can hold it, and the line must not conflate them. The
+ * ACP permission callback (`session-sandbox.ts`) binds only a harness that
+ * asks; the OS sandbox (`bwrap-sandbox.ts`) binds every harness, including one
+ * that never asks, because the filesystem it is handed is read-only. So a
+ * harness the callback cannot hold is only ADVISORY while it is also unwrapped —
+ * once the daemon wraps it, the boundary is real and the line says so instead
+ * of warning about a gap that has been closed.
  */
-export function roomSandboxWarning(agentCommand: string | undefined): string | undefined {
+export function roomSandboxWarning(
+  agentCommand: string | undefined,
+  options: { osSandbox?: boolean } = {},
+): string | undefined {
   const { enforcement, note } = harnessEnforcement(agentCommand);
   if (enforcement === 'sandboxed' || enforcement === 'permission-callback') return undefined;
+  if (options.osSandbox) {
+    return (
+      `Room read-only enforcement for this harness is the OS sandbox (sandbox=ON): ${note}. ` +
+      `Its ACP child runs on a read-only filesystem, so a write is refused by the kernel ` +
+      `rather than by a permission request the harness never sends.`
+    );
+  }
   return (
-    `Room read-only enforcement is ADVISORY for this harness: ${note}. ` +
+    `Room read-only enforcement is ADVISORY for this harness (sandbox=OFF): ${note}. ` +
     `The Room system prompt still forbids editing, but the daemon cannot block it. ` +
-    `Use codex or claude for a Room that must be read-only.`
+    `Use codex or claude for a Room that must be read-only, or install bubblewrap so the ` +
+    `daemon can enforce it at the OS level.`
   );
 }

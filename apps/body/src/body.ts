@@ -149,12 +149,16 @@ import {
 } from './model-config.js';
 import {
   assertCornerWorktreeIsolated,
-  classifyCornerCommand,
   cornerWorktreePath,
   cornersPoolRoot,
   legacyCornerWorktreePath,
-  shellCommandFromRawInput,
 } from './corner-isolation.js';
+import {
+  classifyCornerPermission,
+  classifyRoomPermission,
+  ROOM_READ_ONLY_STEER,
+} from './session-sandbox.js';
+import { roomSandboxWarning } from './harness-capabilities.js';
 
 /** Tracks a single agent session. */
 export interface AgentSession {
@@ -591,6 +595,8 @@ interface PendingRoomTurn {
   transitionedToCorner: boolean;
   /** Information-only turns can never be escalated into editing by the agent. */
   readOnlyInformationRequest: boolean;
+  /** One read-only denial note per turn, not one per rejected tool call. */
+  readOnlyDenialNoted?: boolean;
   /** Exact target written in this turn; absent stays fail-closed. */
   namedRepositoryTarget?: NamedRepositoryTarget;
 }
@@ -2046,6 +2052,11 @@ export class Body {
     }
 
     const readonlyCwd = boundRepo?.localPath ?? this.config.workspaceRoot;
+    // A harness that never sends session/request_permission cannot be held to
+    // the Room read-only boundary by the handler below; say so out loud rather
+    // than letting an advisory prompt read as an enforced sandbox.
+    const sandboxWarning = roomSandboxWarning(this.config.agentCommand ?? this.config.agentBinary);
+    if (sandboxWarning) console.warn(`[body] ${sandboxWarning}`);
     // Resolve the server before any relay membership or session side effect.
     // Missing read-only tools must never create a no-tool or edit-tool session.
     const readonlyServer = readOnlyMcpServer(this.config, readonlyCwd);
@@ -2069,6 +2080,8 @@ export class Body {
           'Those inspection tools are non-mutating and do not require human approval.',
           'Never request native shell or execute permission for listing, reading, searching, or git-history inspection; use the read-only MCP tools instead.',
           'You CANNOT create, edit, or delete files until the host grants a human-approved edit session.',
+          `The host DENIES every write, edit, delete, move, and shell/execute request in this Room, whatever path it names: ${ROOM_READ_ONLY_STEER}`,
+          'Never attempt to reach outside this session by absolute path, and never run builds, tests, formatters, or git commands here.',
           'An information-only request (analysis, explanation, summary, research, or a question) must be answered here and must never be escalated into editing.',
           'Never claim that an action, tool result, peer reply, or agent exchange happened unless the host-provided transcript or tool result shows it actually happened.',
           ...roomEditPolicyInstructions(editPolicy),
@@ -3155,6 +3168,7 @@ export class Body {
             },
           },
           editPolicy,
+          'host',
         );
         await this.appendRoomPermissionOutcome(tlcChannelId, turn);
         return turn.transitionedToCorner;
@@ -3342,16 +3356,59 @@ export class Body {
   }
 
   /**
-   * A Room ACP process always rejects the concrete tool invocation: allowing it
-   * in-place would mutate the paired checkout. Human ALLOW instead creates the
+   * Record a Room read-only denial once per turn: an operator log line, and a
+   * `control` entry on the channel's durable conversation so the steer is in
+   * the agent's replayed context instead of being lost with the ACP rejection.
+   */
+  private async noteRoomReadOnlyDenial(
+    tlcChannelId: string,
+    permission: AcpPermissionRequest,
+  ): Promise<void> {
+    const tool = this.permissionToolLabel(permission);
+    console.warn(`[body] Room read-only sandbox denied '${tool}' in ${tlcChannelId}`);
+    const turn = this.pendingRoomTurns.get(tlcChannelId);
+    if (turn) {
+      if (turn.readOnlyDenialNoted) return;
+      turn.readOnlyDenialNoted = true;
+    }
+    await this.durableState
+      .appendConversation(tlcChannelId, {
+        role: 'control',
+        text: `Host denied '${tool}': ${ROOM_READ_ONLY_STEER}`,
+        at: new Date().toISOString(),
+      })
+      .catch((error) => console.error('[body] failed to record the Room read-only denial:', error));
+  }
+
+  /**
+   * A Room is read-only, and the ACP permission callback is where that is
+   * ENFORCED rather than merely instructed. Every request that is not an exact
+   * host-marked read-only MCP call is denied: file writes, edits, deletes,
+   * moves, and shell/execute alike, regardless of the path they name — a Room
+   * session's cwd isolation constrains its default directory, not its absolute
+   * path reach, so path-scoping a Room denial would be no boundary at all.
+   *
+   * Human ALLOW never un-denies the in-place invocation; it creates the
    * isolated edit corner and replays the same request there.
+   *
+   * ACP's permission response carries only an option id — there is no reason
+   * field, and every adapter hard-codes its own denial text — so the corner
+   * steer rides `ROOM_READ_ONLY_STEER` into the Room system prompt and (once
+   * per turn, here) into the durable conversation the agent's next session
+   * replays.
    */
   private async handleRoomPermissionRequest(
     tlcChannelId: string,
     permission: AcpPermissionRequest,
     editPolicy?: RoomEditPolicy,
+    origin: 'harness' | 'host' = 'harness',
   ): Promise<AcpPermissionDecision> {
     if (isReadOnlyMcpPermissionRequest(permission)) return 'allow';
+    // A host-synthesized request is the human's own explicit open-a-corner
+    // command replayed through this path, not an agent trying to write.
+    if (origin === 'harness' && classifyRoomPermission(permission).decision === 'deny') {
+      await this.noteRoomReadOnlyDenial(tlcChannelId, permission);
+    }
     const turn = this.pendingRoomTurns.get(tlcChannelId);
     if (!turn || turn.permissionHandled || !isMutatingPermissionRequest(permission)) {
       return 'reject';
@@ -5279,20 +5336,23 @@ export class Body {
   }
 
   /**
-   * cd-guard for an edit session (backstop for a leaky harness): deny a tool
-   * command that would move the corner out of its isolated worktree into the
-   * shared checkout, otherwise auto-approve. See `corner-isolation.ts`.
+   * Worktree guard for an edit session: deny a tool call that would move the
+   * corner out of its isolated worktree (the cd-guard) or that would write,
+   * delete, move, or execute against a path resolving outside it — absolute
+   * paths, `..` climbs, and symlink escapes alike, resolved physically before
+   * comparison. Reads outside the worktree stay allowed; everything else in a
+   * corner is auto-approved. See `session-sandbox.ts` and `corner-isolation.ts`.
    */
   private cornerPermissionHandler(
     worktreePath: string,
     primaryCheckout?: string,
   ): AcpPermissionHandler {
     return async (request) => {
-      const command = shellCommandFromRawInput(request.toolCall?.kind, request.toolCall?.rawInput);
-      if (!command) return 'allow';
-      const verdict = classifyCornerCommand(command, worktreePath, primaryCheckout);
+      const verdict = classifyCornerPermission(request, worktreePath, primaryCheckout);
       if (verdict.decision === 'deny') {
-        console.warn(`[body] cd-guard blocked corner command [${verdict.code}]: ${command}`);
+        console.warn(
+          `[body] corner sandbox blocked a tool call [${verdict.code}]: ${verdict.reason}`,
+        );
         return 'reject';
       }
       return 'allow';

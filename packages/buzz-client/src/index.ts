@@ -250,6 +250,13 @@ export {
 } from './room-repository.js';
 
 export {
+  canonicalizeGitRemote,
+  repositoryKeyForRemote,
+  repositoryNameFromCanonicalRemote,
+  parseGitRemoteInput,
+} from './git-url.js';
+
+export {
   fallbackAgentName,
   fallbackPersonName,
   isSingleWordAgentName,

@@ -30,6 +30,7 @@ import {
   createBuzzClient,
   buildAttachmentTags,
   tagValue,
+  tagValues,
   classifySessionEvent,
   toSessionEvent,
   CHANGE_REVIEW_EVENT_KIND,
@@ -37,6 +38,10 @@ import {
   CHANGE_REVIEW_MANIFEST_TAG,
   APPROVAL_MARKER,
   KIND_AGENT_PRESENCE,
+  KIND_CREATE_GROUP,
+  TAG_COMMUNITY,
+  TAG_PARENT,
+  TAG_DIRECT_MESSAGE,
   parseChangeReviewManifest,
   type BuzzClient,
   type ChannelMetadata,
@@ -48,7 +53,11 @@ import {
   type AgentModelCatalog,
   type AgentModelConfig,
   type AgentModelConfigInput,
+  type RoomRepository,
+  type RoomRepositoryInput,
 } from '@beeline/buzz-client';
+import type { RepoCandidate } from '@/buzz/room-repo-picker';
+import { dedupeRepoCandidates } from '@/buzz/room-repo-picker';
 import type { NostrEvent } from '@beeline/nostr';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { cornerName, mapRawCornerStatusTag, type CornerSummary } from '@/buzz/corners';
@@ -611,6 +620,59 @@ export class BuzzRigTransport implements RigTransport {
   ): Promise<AgentModelConfig> {
     const client = await this.getClient();
     return client.setAgentModelConfig(communityId, agentPubkey, input);
+  }
+
+  // ── Room→repo (Stage 2 app UI over Stage 1's daemon/relay backbone) ─────
+
+  /** Resolve the repository a Room owns, or `null` for a chat-only Room. */
+  async roomRepositoryRead(channelId: string): Promise<RoomRepository | null> {
+    const client = await this.getClient();
+    return client.resolveRoomRepository(channelId);
+  }
+
+  /** Bind (or re-bind) a Room's repository. Room-admin authority is enforced server-side too. */
+  async roomRepositorySet(
+    channelId: string,
+    input: RoomRepositoryInput & { communityId?: string },
+  ): Promise<RoomRepository> {
+    const client = await this.getClient();
+    return client.setRoomRepository(channelId, input);
+  }
+
+  /**
+   * Distinct repos already bound to some top-level Room in this Workspace —
+   * the repo picker's "connected repos" candidate list. The app has no
+   * separate GitHub/connected-accounts source yet, so this is derived from
+   * existing Room→repo bindings; see the root `AGENTS.md`'s Room→repo
+   * assignment UI entry for the noted gap. Mirrors `settings/workspace.tsx`'s
+   * `loadWorkspaceRooms` room-create enumeration (exclude corners and DMs),
+   * then resolves each Room's repo.
+   */
+  async workspaceRoomRepositoryCandidates(communityId: string): Promise<RepoCandidate[]> {
+    const client = await this.getClient();
+    const creates = await client.query([{ kinds: [KIND_CREATE_GROUP], limit: 500 }]);
+    const roomIds = new Set<string>();
+    for (const create of creates) {
+      if (tagValue(create, TAG_COMMUNITY) !== communityId) continue;
+      if (tagValue(create, TAG_PARENT) || tagValues(create, 't').includes(TAG_DIRECT_MESSAGE)) continue;
+      const id = tagValue(create, 'h') ?? tagValue(create, 'd');
+      if (id && id !== communityId) roomIds.add(id);
+    }
+    const repos = await Promise.all(
+      [...roomIds].map((id) => client.resolveRoomRepository(id).catch(() => null)),
+    );
+    // `setRoomRepository` rejects a remote-less binding, so a local-only
+    // genesis binding can't be picked here — filter it out rather than offer
+    // a candidate that fails the moment it's selected.
+    return dedupeRepoCandidates(
+      repos
+        .filter((repo): repo is RoomRepository => repo !== null && Boolean(repo.binding.remote))
+        .map((repo) => ({
+          key: repo.binding.key,
+          name: repo.binding.name,
+          remote: repo.binding.remote!,
+        })),
+    );
   }
 
   async permissionRespond(

@@ -581,3 +581,49 @@ describe('The offline-agent notice', () => {
     expect(chatSource).not.toMatch(/offlineNoticeForSend\(\{[\s\S]{0,400}mentionedAgent[,\s)]/);
   });
 });
+
+describe('The corner review footer never claims a retry the daemon is not making', () => {
+  /** The `approvalState === 'failed'` branch of the review panel. */
+  function failedBranch(): string {
+    const start = chatSource.indexOf("approvalState === 'failed' ? (");
+    expect(start, 'missing the failed branch of the review panel').toBeGreaterThanOrEqual(0);
+    const end = chatSource.indexOf('testID="approve-corner-error"', start);
+    expect(end, 'failed branch is not followed by the approval-error line').toBeGreaterThan(start);
+    return chatSource.slice(start, end);
+  }
+
+  it('gates the automatic-retry wording on the daemon’s own retry posture', () => {
+    const branch = failedBranch();
+    // The string may exist — but only under `deliveryRetry === 'auto'`, the
+    // one posture where `pollDirectRemoteApprovals` really does re-attempt the
+    // same approval on the next maintenance tick.
+    expect(branch).toContain("deliveryRetry === 'auto'");
+    const retryClaims = branch.match(/RETRYING AUTOMATICALLY/g) ?? [];
+    expect(retryClaims).toHaveLength(1);
+    expect(branch.indexOf("deliveryRetry === 'auto'")).toBeLessThan(
+      branch.indexOf('RETRYING AUTOMATICALLY'),
+    );
+  });
+
+  it('says what is actually happening for the other three postures', () => {
+    const branch = failedBranch();
+    // A moved target being rebased, a land nobody is re-attempting, and a
+    // daemon that did not say — none of which may read as "retrying".
+    expect(branch).toContain("deliveryRetry === 'realigning'");
+    expect(branch).toContain('UPDATING THIS CHANGE FOR A NEW REVIEW');
+    expect(branch).toContain("deliveryRetry === 'blocked'");
+    expect(branch).toContain('WAITING ON YOU');
+    expect(branch).toContain('SEE THE CORNER FOR DETAILS');
+  });
+
+  it('drops the failure state as soon as a fresh reviewable tip arrives', () => {
+    // Otherwise the self-heal's whole point is lost: the corner rebases,
+    // republishes a review, and the panel still shows the old attempt's
+    // failure instead of the approve button for the new change.
+    expect(chatSource).toContain('mergeTargetTipRef');
+    const live = chatSource.slice(chatSource.indexOf('const flushLiveEvents = () => {'));
+    expect(live).toContain('mergeTargetTipRef.current !== projected.mergeTarget.tip');
+    expect(live).toContain('setDeliveryRetry(undefined)');
+    expect(live).toContain('setDeliveryRetry(projected.deliveryRetry)');
+  });
+});

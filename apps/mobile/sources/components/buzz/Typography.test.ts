@@ -18,6 +18,11 @@ const sources = [
 
 const monoStyles = new Set([
   'command',
+  // Onboarding's create-a-new-key backup step: the key itself and the checkbox
+  // glyph are deliberate machine text. Its reveal/copy actions are not — they
+  // match the identity screen's, which stay on the default face.
+  'keyText',
+  'confirmBox',
   'channelMeta',
   'count',
   'errorLabel',

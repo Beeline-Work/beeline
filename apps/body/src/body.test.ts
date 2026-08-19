@@ -236,7 +236,7 @@ describe('acp', () => {
     ).toBe(false);
   });
 
-  it('recognizes only exact host-marked read-only MCP approvals', () => {
+  it('recognizes a read-only MCP approval from any harness, marked or not', () => {
     expect(
       isReadOnlyMcpPermissionRequest({
         _meta: { is_mcp_tool_approval: true },
@@ -247,15 +247,28 @@ describe('acp', () => {
         },
       }),
     ).toBe(true);
+    // The envelope is the harness-agnostic signal: a harness that sets no
+    // codex-style marker, and titles the call its own way, is still recognized.
     expect(
       isReadOnlyMcpPermissionRequest({
         toolCall: {
           kind: 'execute',
-          title: 'mcp.buzz-readonly-mcp.read_file',
+          title: 'Read a repository file',
           rawInput: { server: 'buzz-readonly-mcp', tool: 'read_file', arguments: {} },
         },
       }),
-    ).toBe(false);
+    ).toBe(true);
+    // A marked approval whose envelope the harness omitted still resolves off
+    // one of the known flattened title shapes.
+    expect(
+      isReadOnlyMcpPermissionRequest({
+        _meta: { is_mcp_tool_approval: true },
+        toolCall: { kind: 'execute', title: 'mcp__buzz-readonly-mcp__git_diff' },
+      }),
+    ).toBe(true);
+  });
+
+  it('refuses anything outside this server and its fixed tool list', () => {
     expect(
       isReadOnlyMcpPermissionRequest({
         _meta: { is_mcp_tool_approval: true },
@@ -263,6 +276,37 @@ describe('acp', () => {
           kind: 'execute',
           title: 'mcp.buzz-readonly-mcp.shell',
           rawInput: { server: 'buzz-readonly-mcp', tool: 'shell', arguments: {} },
+        },
+      }),
+    ).toBe(false);
+    // Another server's `read_file` is not this server's read_file.
+    expect(
+      isReadOnlyMcpPermissionRequest({
+        _meta: { is_mcp_tool_approval: true },
+        toolCall: {
+          kind: 'execute',
+          title: 'mcp.buzz-readonly-mcp.read_file',
+          rawInput: { server: 'other-mcp', tool: 'read_file', arguments: {} },
+        },
+      }),
+    ).toBe(false);
+    // A shell payload wearing the envelope's field names is not an MCP call.
+    expect(
+      isReadOnlyMcpPermissionRequest({
+        toolCall: {
+          kind: 'execute',
+          title: 'mcp.buzz-readonly-mcp.read_file',
+          rawInput: { server: 'buzz-readonly-mcp', tool: 'read_file', command: ['rm', '-rf', '.'] },
+        },
+      }),
+    ).toBe(false);
+    // A bare shell call cannot borrow the title fallback: it carries no marker.
+    expect(
+      isReadOnlyMcpPermissionRequest({
+        toolCall: {
+          kind: 'execute',
+          title: 'mcp.buzz-readonly-mcp.read_file',
+          rawInput: { command: ['mcp.buzz-readonly-mcp.read_file'] },
         },
       }),
     ).toBe(false);

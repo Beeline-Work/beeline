@@ -1,4 +1,5 @@
 import {
+  AGENT_PRESENCE_STALE_MS,
   TAG_AGENT_PRESENCE,
   isAgentPresenceOnline,
   newerAgentPresence,
@@ -102,15 +103,77 @@ export function presenceMapFromSessionEvents(
 }
 
 /**
- * A user just addressed an agent (an explicit @mention, or the corner's own
- * agent) whose presence reads offline/stale. The daemon cannot speak for
- * itself here — a fully down daemon publishes nothing, not even an error —
- * so this is a client-rendered notice from detected staleness, not a
- * message either party sent. `null` when the agent is online: never render
- * a notice for a healthy agent.
+ * Latest transcript timestamp at which each pubkey published a relay message
+ * into this channel. First-hand evidence of life, on a stream (kind:9 message
+ * delivery) entirely independent of the replaceable presence lease.
  */
-export function addressedAgentOfflineNotice(agentName: string, online: boolean): string | null {
-  if (online) return null;
+export function latestUtteranceByPubkey(
+  messages: readonly Pick<
+    ChatDisplayMessage,
+    'pubkey' | 'timestamp' | 'isUser' | 'isSystemNotice'
+  >[],
+): Record<string, number> {
+  return messages.reduce<Record<string, number>>((latest, message) => {
+    // A client-only notice was never signed by anyone, and the viewer's own
+    // message says nothing about whoever it addresses.
+    if (message.isSystemNotice || message.isUser || !message.pubkey) return latest;
+    const seen = latest[message.pubkey];
+    if (seen === undefined || message.timestamp > seen) latest[message.pubkey] = message.timestamp;
+    return latest;
+  }, {});
+}
+
+/**
+ * Whether an addressed agent may be presumed alive. Absence of a heartbeat is
+ * not proof of absence: the presence lease and reply delivery are independent
+ * relay streams, so a lease this client never read — or read once and let go
+ * stale — says nothing while the agent is visibly answering. Both of those
+ * used to render the offline notice on every single send of a live
+ * conversation, and nothing the agent published could falsify it.
+ *
+ * Evidence that may close it: an explicit `offline` marker the daemon
+ * published on shutdown, or an expired lease with nothing from the agent
+ * since. Everything else is unknown, and unknown never accuses.
+ */
+export function isAddressedAgentPresumedLive(
+  presence: RoomAgentPresence | undefined,
+  now: number,
+  reconnectGraceUntil: number,
+  lastSpokeAt: number | undefined,
+  presenceResolved: boolean,
+): boolean {
+  if (isAgentPresenceOnlineWithReconnectGrace(presence, now, reconnectGraceUntil)) return true;
+  // A graceful shutdown published after the agent last spoke is the one signal
+  // that outranks the transcript: the daemon itself said it was going away.
+  if (
+    presence?.status === 'offline' &&
+    (lastSpokeAt === undefined || presence.observedAt >= lastSpokeAt)
+  ) {
+    return false;
+  }
+  // Two-sided, for the same reason `isAgentPresenceOnline` compares an
+  // absolute difference: the daemon and this device are independent clocks.
+  if (lastSpokeAt !== undefined && Math.abs(now - lastSpokeAt) <= AGENT_PRESENCE_STALE_MS) {
+    return true;
+  }
+  // No completed presence snapshot yet — the bootstrap read is still in
+  // flight, which is unknown, not an offline verdict.
+  return !presenceResolved;
+}
+
+/**
+ * A user just addressed an agent (an explicit @mention, or the corner's own
+ * agent) that `isAddressedAgentPresumedLive` found real evidence is down. The
+ * daemon cannot speak for itself here — a fully down daemon publishes nothing,
+ * not even an error — so this is a client-rendered notice from detected
+ * staleness, not a message either party sent. `null` whenever the agent may be
+ * live: never render a notice a healthy agent would contradict.
+ */
+export function addressedAgentOfflineNotice(
+  agentName: string,
+  presumedLive: boolean,
+): string | null {
+  if (presumedLive) return null;
   return `${agentName} seems offline right now — its host machine may be off.`;
 }
 

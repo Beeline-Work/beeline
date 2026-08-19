@@ -4,9 +4,11 @@ import type { SessionEvent } from '@/sync/transport';
 import {
   addressedAgentOfflineNotice,
   agentPresenceFromSessionEvent,
+  isAddressedAgentPresumedLive,
   isAgentPresenceOnlineWithReconnectGrace,
   isAgentOfflineAfterPresenceResolved,
   isAgentTurnActive,
+  latestUtteranceByPubkey,
   presenceMapFromSessionEvents,
   reconnectPresenceAfterForeground,
 } from './agent-presence';
@@ -163,17 +165,120 @@ describe('mobile agent presence projection', () => {
 });
 
 describe('addressedAgentOfflineNotice', () => {
-  it('renders a friendly notice naming the agent when its presence is stale', () => {
+  it('renders a friendly notice naming the agent when it is not presumed live', () => {
     expect(addressedAgentOfflineNotice('beebee', false)).toBe(
       'beebee seems offline right now — its host machine may be off.',
     );
   });
 
-  it('renders nothing when the addressed agent is online (fresh presence)', () => {
+  it('renders nothing when the addressed agent may be live', () => {
     expect(addressedAgentOfflineNotice('beebee', true)).toBeNull();
   });
 
   it('renders nothing for a healthy agent regardless of name', () => {
     expect(addressedAgentOfflineNotice('alden', true)).toBeNull();
+  });
+});
+
+describe('latestUtteranceByPubkey', () => {
+  it('keeps the newest relay message per signer', () => {
+    expect(
+      latestUtteranceByPubkey([
+        { pubkey: agent, timestamp: 10, isUser: false },
+        { pubkey: agent, timestamp: 40, isUser: false },
+        { pubkey: agent, timestamp: 25, isUser: false },
+        { pubkey: 'c'.repeat(64), timestamp: 5, isUser: false },
+      ]),
+    ).toEqual({ [agent]: 40, ['c'.repeat(64)]: 5 });
+  });
+
+  it('ignores the viewer, unsigned rows, and client-only notices', () => {
+    expect(
+      latestUtteranceByPubkey([
+        { pubkey: agent, timestamp: 10, isUser: true },
+        { pubkey: agent, timestamp: 20, isUser: false, isSystemNotice: true },
+        { pubkey: undefined, timestamp: 30, isUser: false },
+      ]),
+    ).toEqual({});
+  });
+});
+
+describe('isAddressedAgentPresumedLive', () => {
+  const now = 1_800_000_000_000;
+
+  it('is live on a fresh presence lease', () => {
+    expect(
+      isAddressedAgentPresumedLive(
+        { agentPubkey: agent, status: 'online', observedAt: now - 1_000 },
+        now,
+        0,
+        undefined,
+        true,
+      ),
+    ).toBe(true);
+  });
+
+  it('is live while the presence snapshot has not resolved yet', () => {
+    expect(isAddressedAgentPresumedLive(undefined, now, 0, undefined, false)).toBe(true);
+  });
+
+  it('accuses an agent with no lease once the snapshot has resolved', () => {
+    expect(isAddressedAgentPresumedLive(undefined, now, 0, undefined, true)).toBe(false);
+  });
+
+  it('is live when the agent just spoke, even with no lease at all', () => {
+    expect(isAddressedAgentPresumedLive(undefined, now, 0, now - 5_000, true)).toBe(true);
+  });
+
+  it('is live when the agent just spoke and its lease has gone stale', () => {
+    expect(
+      isAddressedAgentPresumedLive(
+        { agentPubkey: agent, status: 'online', observedAt: now - AGENT_PRESENCE_STALE_MS - 1 },
+        now,
+        0,
+        now - 5_000,
+        true,
+      ),
+    ).toBe(true);
+  });
+
+  it('accuses a stale lease once the agent has been silent past the window', () => {
+    expect(
+      isAddressedAgentPresumedLive(
+        { agentPubkey: agent, status: 'online', observedAt: now - AGENT_PRESENCE_STALE_MS - 1 },
+        now,
+        0,
+        now - AGENT_PRESENCE_STALE_MS - 1,
+        true,
+      ),
+    ).toBe(false);
+  });
+
+  it('honours a graceful shutdown published after the agent last spoke', () => {
+    expect(
+      isAddressedAgentPresumedLive(
+        { agentPubkey: agent, status: 'offline', observedAt: now - 1_000 },
+        now,
+        0,
+        now - 5_000,
+        true,
+      ),
+    ).toBe(false);
+  });
+
+  it('keeps a restarted agent live when it spoke after its last offline marker', () => {
+    expect(
+      isAddressedAgentPresumedLive(
+        { agentPubkey: agent, status: 'offline', observedAt: now - 60_000 },
+        now,
+        0,
+        now - 5_000,
+        true,
+      ),
+    ).toBe(true);
+  });
+
+  it('tolerates a daemon clock running ahead of the device', () => {
+    expect(isAddressedAgentPresumedLive(undefined, now, 0, now + 30_000, true)).toBe(true);
   });
 });

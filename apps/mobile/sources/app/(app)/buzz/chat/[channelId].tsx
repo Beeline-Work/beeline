@@ -144,9 +144,11 @@ import { replyMessageText, type MessageReplyTarget } from '@/buzz/message-reply'
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
   addressedAgentOfflineNotice,
+  isAddressedAgentPresumedLive,
   isAgentPresenceOnlineWithReconnectGrace,
   isAgentOfflineAfterPresenceResolved,
   isAgentTurnActive,
+  latestUtteranceByPubkey,
   mergeAgentPresence,
   presenceMapFromSessionEvents,
   type RoomAgentPresence,
@@ -766,6 +768,11 @@ export default function BuzzChat() {
     () => transcriptMessages(messages, isCorner),
     [isCorner, messages],
   );
+  // First-hand proof of life, read at send time only. Held in a ref so the
+  // send handler is not recreated (and FlatList's renderItem with it) on every
+  // delivered batch.
+  const utteranceAtRef = useRef<Record<string, number>>({});
+  utteranceAtRef.current = useMemo(() => latestUtteranceByPubkey(messages), [messages]);
   // Attribution is per run, not per entry: only the first entry of a voice's
   // run carries its mark and name (see `buzz/ledger-attribution.ts`). A corner
   // never attributes at all, so it never needs the set.
@@ -1498,15 +1505,20 @@ export default function BuzzChat() {
       // an explicit @mention resolved one above.
       const addressedAgentPubkey = parentChannelId ? cornerAgentPubkey : mentionedAgent;
       if (addressedAgentPubkey) {
-        const addressedAgentOnline = isAgentPresenceOnlineWithReconnectGrace(
+        // The real clock, not the render-time `presenceNow` (which only
+        // advances to the next lease deadline and can lag by minutes once
+        // every lease has already expired).
+        const addressedAgentLive = isAddressedAgentPresumedLive(
           agentPresences[addressedAgentPubkey],
-          presenceNow,
+          Date.now(),
           presenceReconnectGrace[addressedAgentPubkey],
+          utteranceAtRef.current[addressedAgentPubkey],
+          presenceResolved,
         );
         const offlineNotice = addressedAgentOfflineNotice(
           resolveAgentDisplayIdentity(addressedAgentPubkey, agentByPubkey.get(addressedAgentPubkey))
             .name,
-          addressedAgentOnline,
+          addressedAgentLive,
         );
         if (offlineNotice) {
           addMessages([
@@ -1572,7 +1584,7 @@ export default function BuzzChat() {
     roomRepository,
     cornerAgentPubkey,
     agentPresences,
-    presenceNow,
+    presenceResolved,
     presenceReconnectGrace,
     agentByPubkey,
   ]);

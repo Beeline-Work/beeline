@@ -1,6 +1,6 @@
-import { stdin, stdout } from 'node:process';
-import { createInterface } from 'node:readline/promises';
 import { spawn } from 'node:child_process';
+import { stdin, stdout } from 'node:process';
+import * as clack from '@clack/prompts';
 
 import {
   detectInstalledAgentCommands,
@@ -11,6 +11,7 @@ import {
   type DetectedAgentCommand,
   type AgentKind,
 } from './agent-command.js';
+import { unwrapPrompt } from './clack-support.js';
 
 type SelectionOutput = Pick<NodeJS.WritableStream, 'write'>;
 
@@ -23,13 +24,23 @@ Install one of these supported agents:
 Then retry, or explicitly use \`--agent reference\` with an LLM key.
 For another ACP server, use \`--agent custom --agent-command "<cmd> [args...]"\`.`;
 
-async function askOnTerminal(question: string): Promise<string> {
-  const terminal = createInterface({ input: stdin, output: stdout });
-  try {
-    return await terminal.question(question);
-  } finally {
-    terminal.close();
-  }
+/** Default interactive "install this missing adapter now?" prompt. */
+async function clackConfirmInstall(message: string): Promise<boolean> {
+  const picked = await clack.confirm({ message });
+  return unwrapPrompt(picked, 'Pairing cancelled.');
+}
+
+/** Default interactive "which detected agent?" picker. */
+async function clackSelectAgent(candidates: DetectedAgentCommand[]): Promise<AgentKind> {
+  const picked = await clack.select<AgentKind>({
+    message: "Which agent should back this repo's agent?",
+    options: candidates.map((candidate) => ({
+      value: candidate.kind,
+      label: candidate.kind,
+      ...(candidate.status === 'missing-adapter' ? { hint: 'adapter not installed' } : {}),
+    })),
+  });
+  return unwrapPrompt(picked, 'Pairing cancelled.');
 }
 
 async function installAdapter(
@@ -75,7 +86,10 @@ export async function selectPairAgentCommand(opts: {
   cwd?: string;
   interactive?: boolean;
   output?: SelectionOutput;
-  ask?: (question: string) => Promise<string>;
+  /** Interactive "which agent?" picker; defaults to a clack.select prompt. */
+  selectAgent?: (candidates: DetectedAgentCommand[]) => Promise<AgentKind>;
+  /** Interactive "install this adapter now?" prompt; defaults to clack.confirm. */
+  confirmInstall?: (message: string) => Promise<boolean>;
   install?: (
     command: AdapterInstallCommand,
     opts: { cwd?: string; env?: NodeJS.ProcessEnv },
@@ -83,7 +97,8 @@ export async function selectPairAgentCommand(opts: {
 }): Promise<AgentCommand> {
   const output = opts.output ?? stdout;
   const interactive = opts.interactive ?? Boolean(stdin.isTTY && stdout.isTTY);
-  const ask = opts.ask ?? askOnTerminal;
+  const selectAgent = opts.selectAgent ?? clackSelectAgent;
+  const confirmInstall = opts.confirmInstall ?? clackConfirmInstall;
   const runInstall = opts.install ?? installAdapter;
 
   if (opts.explicitKind !== undefined) {
@@ -107,8 +122,8 @@ export async function selectPairAgentCommand(opts: {
           `${candidate.kind} cannot be used non-interactively until its adapter is installed.`,
         );
       }
-      const answer = (await ask(`${manual}. Install now? [y/N] `)).trim().toLowerCase();
-      if (answer !== 'y' && answer !== 'yes') throw new Error(manual);
+      const install = await confirmInstall(`${manual}. Install now?`);
+      if (!install) throw new Error(manual);
       output.write(
         `[buzz] installing ${candidate.kind} adapter: ${formatAdapterInstallCommand(candidate.install)}\n`,
       );
@@ -167,44 +182,37 @@ export async function selectPairAgentCommand(opts: {
     return detected[0]!.agent;
   }
 
-  output.write("Which agent should back this repo's agent?\n");
-  detected.forEach((candidate, index) =>
-    output.write(
-      `  ${index + 1}) ${candidate.kind}${candidate.status === 'missing-adapter' ? ' (adapter not installed — install now?)' : ''}\n`,
-    ),
-  );
+  // A failed install for one candidate loops back to the picker rather than
+  // aborting outright, so a menu with several candidates can recover by
+  // choosing another one; a lone missing-adapter candidate has nothing left
+  // to fall back to and throws instead.
   while (true) {
-    const answer = (await ask(`Choose [1-${detected.length}]: `)).trim();
-    const selection = Number(answer);
-    if (Number.isInteger(selection) && selection >= 1 && selection <= detected.length) {
-      const selected = detected[selection - 1]!;
-      if (selected.status === 'ready') {
-        output.write(`[buzz] using ${selected.kind} (selected)\n`);
-        return selected.agent;
-      }
-      const manual = missingAdapterMessage(selected);
-      output.write(
-        `[buzz] installing ${selected.kind} adapter: ${formatAdapterInstallCommand(selected.install)}\n`,
-      );
-      try {
-        await runInstall(selected.install, { cwd: opts.cwd, env: opts.env });
-        const installed = resolveAgentCommand({
-          kind: selected.kind,
-          env: opts.env,
-          cwd: opts.cwd,
-        });
-        output.write(`[buzz] using ${installed.kind} (adapter installed)\n`);
-        return installed;
-      } catch (installError) {
-        output.write(
-          `[buzz] could not install the ${selected.kind} adapter: ${errorMessage(installError)}\n${manual}\n`,
-        );
-        if (detected.length === 1) {
-          throw new Error(`Adapter installation failed for ${selected.kind}.`);
-        }
-      }
-      continue;
+    const pickedKind = await selectAgent(detected);
+    const selected = detected.find((candidate) => candidate.kind === pickedKind)!;
+    if (selected.status === 'ready') {
+      output.write(`[buzz] using ${selected.kind} (selected)\n`);
+      return selected.agent;
     }
-    output.write(`Enter a number from 1 to ${detected.length}.\n`);
+    const manual = missingAdapterMessage(selected);
+    output.write(
+      `[buzz] installing ${selected.kind} adapter: ${formatAdapterInstallCommand(selected.install)}\n`,
+    );
+    try {
+      await runInstall(selected.install, { cwd: opts.cwd, env: opts.env });
+      const installed = resolveAgentCommand({
+        kind: selected.kind,
+        env: opts.env,
+        cwd: opts.cwd,
+      });
+      output.write(`[buzz] using ${installed.kind} (adapter installed)\n`);
+      return installed;
+    } catch (installError) {
+      output.write(
+        `[buzz] could not install the ${selected.kind} adapter: ${errorMessage(installError)}\n${manual}\n`,
+      );
+      if (detected.length === 1) {
+        throw new Error(`Adapter installation failed for ${selected.kind}.`);
+      }
+    }
   }
 }

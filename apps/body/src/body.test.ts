@@ -91,6 +91,7 @@ import {
   STEER_QUEUED_TAG,
 } from './activity.js';
 import { isReadOnlyMcpPermissionRequest } from './read-only-policy.js';
+import { ROOM_READ_ONLY_STEER } from './session-sandbox.js';
 import { SessionScheduler } from './session-scheduler.js';
 import { AGENT_ERROR_STATE_MESSAGES } from './agent-state-messages.js';
 
@@ -332,9 +333,116 @@ describe('agent identity boundary', () => {
       });
       expect(ok).toBe('allow');
 
-      // Non-command tool calls (edits) are always allowed by the guard.
+      // A relative in-worktree edit stays allowed by the guard.
       const edit = await handler({ toolCall: { kind: 'edit', rawInput: { path: 'a.ts' } } });
       expect(edit).toBe('allow');
+    });
+
+    it('the edit-session guard rejects a write that reaches outside the worktree', async () => {
+      const body = new Body(config, newIdentity('operator'));
+      const handler = (
+        body as unknown as {
+          cornerPermissionHandler(
+            worktree: string,
+            primary?: string,
+          ): (req: unknown) => Promise<'allow' | 'reject'>;
+        }
+      ).cornerPermissionHandler('/pool/.beeline-corners/proj/c1', '/home/op/proj-buzzy');
+
+      // The live breach shape: an absolute path into the operator's own tree.
+      await expect(
+        handler({
+          toolCall: {
+            kind: 'edit',
+            title: 'Write',
+            rawInput: { file_path: '/home/op/proj-buzzy/apps/mobile/sources/x.ts' },
+          },
+        }),
+      ).resolves.toBe('reject');
+      await expect(
+        handler({ toolCall: { kind: 'edit', rawInput: { path: '../../../etc/hosts' } } }),
+      ).resolves.toBe('reject');
+      // Reads outside the worktree stay allowed, per the pre-existing policy.
+      await expect(
+        handler({
+          toolCall: { kind: 'read', rawInput: { path: '/home/op/proj-buzzy/README.md' } },
+        }),
+      ).resolves.toBe('allow');
+    });
+  });
+
+  describe('Room sessions cannot write or execute at all', () => {
+    it('denies a write and a shell command, and records the corner steer', async () => {
+      const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
+      const appended: Array<{ role: string; text: string }> = [];
+      const durable = (body as unknown as { durableState: unknown }).durableState;
+      vi.spyOn(durable as never, 'appendConversation' as never).mockImplementation((async (
+        _channelId: string,
+        entry: { role: string; text: string },
+      ) => {
+        appended.push(entry);
+      }) as never);
+
+      const handle = (
+        body as unknown as {
+          handleRoomPermissionRequest(
+            channelId: string,
+            permission: unknown,
+            editPolicy?: string,
+          ): Promise<'allow' | 'reject'>;
+        }
+      ).handleRoomPermissionRequest.bind(body);
+
+      // No pending turn at all: still denied, never allowed. cwd isolation does
+      // not constrain absolute-path reach, so the path is irrelevant here.
+      await expect(
+        handle('room-1', {
+          toolCall: {
+            kind: 'edit',
+            title: 'Write',
+            rawInput: { file_path: '/home/op/proj-buzzy/apps/mobile/sources/x.ts' },
+          },
+        }),
+      ).resolves.toBe('reject');
+      await expect(
+        handle('room-1', {
+          toolCall: { kind: 'execute', rawInput: { command: 'npm run typecheck' } },
+        }),
+      ).resolves.toBe('reject');
+      await expect(
+        handle('room-1', {
+          toolCall: { kind: 'execute', rawInput: { command: 'git commit -am wip' } },
+        }),
+      ).resolves.toBe('reject');
+
+      expect(appended.length).toBeGreaterThan(0);
+      for (const entry of appended) {
+        expect(entry.role).toBe('control');
+        expect(entry.text).toContain(ROOM_READ_ONLY_STEER);
+      }
+    });
+
+    it('still auto-allows an exact read-only MCP inspection call', async () => {
+      const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
+      const handle = (
+        body as unknown as {
+          handleRoomPermissionRequest(
+            channelId: string,
+            permission: unknown,
+          ): Promise<'allow' | 'reject'>;
+        }
+      ).handleRoomPermissionRequest.bind(body);
+
+      await expect(
+        handle('room-1', {
+          _meta: { is_mcp_tool_approval: true },
+          toolCall: {
+            kind: 'execute',
+            title: 'mcp.buzz-readonly-mcp.read_file',
+            rawInput: { server: 'buzz-readonly-mcp', tool: 'read_file', arguments: {} },
+          },
+        }),
+      ).resolves.toBe('allow');
     });
   });
 
@@ -2946,6 +3054,9 @@ describe('Room conversation and permission-gated work intent', () => {
         }),
       }),
       'repository',
+      // The human's own open-a-corner command replayed through this path is
+      // host-originated, so it never records an agent read-only denial note.
+      'host',
     );
     expect(provision).not.toHaveBeenCalled();
   });
@@ -3040,6 +3151,7 @@ describe('Room conversation and permission-gated work intent', () => {
         }),
       }),
       'named-repository',
+      'host',
     );
     expect(provision).not.toHaveBeenCalled();
   });

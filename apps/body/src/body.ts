@@ -98,6 +98,7 @@ import {
   waitUntilMember,
   summarizeGitFailure,
   getAgentModelConfig,
+  getRoomRepository,
   publishAgentModelCatalog,
   type AgentPresence,
   type ChannelOpsContext,
@@ -121,6 +122,13 @@ import {
   parseNamedRepositoryTarget,
   type NamedRepositoryTarget,
 } from './repository-target.js';
+import { resolvePreviewUrl } from './preview-url.js';
+import {
+  TARGET_BRANCH_PROPOSAL_TAG,
+  shortBranchName,
+  targetBranchChangeIntent,
+  targetBranchProposalText,
+} from './target-branch.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import type { RelaySocketLease, SharedRelaySocket } from './relay-socket.js';
@@ -2391,10 +2399,13 @@ export class Body {
    */
   async openSubchannel(
     tlcChannelId: string,
-    boundRepo: BoundRepo,
+    roomRepo: BoundRepo,
     intent?: string,
     request?: ChannelTaskRequest,
   ): Promise<SubchannelInfo> {
+    // Pick up an admin-confirmed target-branch change here and nowhere else:
+    // this corner snapshots the target it opened with and keeps it for life.
+    const boundRepo = await this.cornerBoundRepo(tlcChannelId, roomRepo);
     const agentId = this.agentIdentity;
     await this.ensureAgentInChannel(tlcChannelId, agentId);
     const communityId = await this.channelCommunityId(tlcChannelId);
@@ -2466,6 +2477,11 @@ export class Body {
         'A tool or skill can be unavailable or fail to initialize (for example codegraph before its index is ready). Treat that as a normal recoverable error for that one call and continue the task with what you have; never abort the task because a single tool or skill is missing.',
         'You may call any skill available to you, but only when the current task explicitly calls for it or names it directly. Never auto-trigger a skill (e.g. a design/UX review skill) on routine or trivial work.',
         `Repo: ${this.repoId(boundRepo)}`,
+        // Fixed for this corner's whole life: a later admin-confirmed change
+        // applies to the NEXT corner, never to an in-flight review.
+        `This corner will land to the target branch ${shortBranchName(boundRepo.targetBranch)}, ` +
+          'fixed when it opened. If someone asks, say so — if the Room target branch has since ' +
+          'changed, this corner still lands to the branch it opened against.',
         ...(intent ? [`User intent: ${intent}`] : []),
       ].join('\n'),
       // A corner is the agent's isolated worktree. Target landing and archive
@@ -3315,6 +3331,25 @@ export class Body {
       return true;
     }
 
+    // "land to staging from now on" is a Room CONFIG change, not work and not
+    // a repository mutation this agent may perform. It is answered with a
+    // typed proposal card a Room admin confirms in the app; the agent never
+    // authors the Room→repository binding. Checked ahead of the mutation
+    // escalation below because its verbs ("land", "make") are mutation verbs.
+    if (boundRepo && editPolicy === 'repository' && !informationOnly) {
+      const targetChange = targetBranchChangeIntent(request.content);
+      if (targetChange) {
+        await this.proposeTargetBranchChange(
+          tlcChannelId,
+          boundRepo,
+          request,
+          userPrompt,
+          targetChange.branch,
+        );
+        return false;
+      }
+    }
+
     // The repository belongs to the Room. An explicit open-a-corner command in
     // a Room with no repository linked is refused with an actionable message,
     // never a crash — unless the operator named an exact owner/repo, which the
@@ -4142,6 +4177,30 @@ export class Body {
     ]);
   }
 
+  /**
+   * The preview deployment URL for a corner's pushed tip, if its host made
+   * one. Reads the corner's own git remote (never a configured guess) and
+   * swallows every failure — a review card with no PREVIEW row is the correct
+   * answer for a repo whose CI publishes no preview.
+   */
+  private async resolveCornerPreviewUrl(
+    info: SubchannelInfo,
+    tip: string,
+  ): Promise<string | undefined> {
+    const boundRepo = info.boundRepo;
+    if (!boundRepo || boundRepo.ownerHex) return undefined;
+    const remoteName = boundRepo.remoteName;
+    if (!remoteName) return undefined;
+    try {
+      const remote = git(info.worktreePath, ['remote', 'get-url', remoteName]);
+      if (!remote.ok) return undefined;
+      return await resolvePreviewUrl({ remote: remote.stdout.trim(), tip });
+    } catch (error) {
+      console.error('[body] preview URL lookup failed (ignored):', error);
+      return undefined;
+    }
+  }
+
   /** Push the agent's feature tip and publish the exact human-approval target. */
   private async publishMergeReady(info: SubchannelInfo): Promise<boolean> {
     const boundRepo = info.boundRepo;
@@ -4280,6 +4339,12 @@ export class Body {
       );
     }
 
+    // Branch/PR preview deployments only exist because of the push above, so
+    // this is the earliest the URL can be known. Strictly best-effort: no
+    // statuses, no credentials, or a non-GitHub origin publishes no tag, and
+    // the review card then renders no PREVIEW row.
+    const previewUrl = await this.resolveCornerPreviewUrl(info, tip);
+
     // Only believe merge-ready is durably announced once the control message
     // that carries it is actually confirmed published — mobile's approve
     // button reads the merge target solely from that event. Setting the flag
@@ -4298,6 +4363,7 @@ export class Body {
         ['feature', info.featureBranch],
         ['tip', target.tip],
         ['agent', this.agentIdentity.publicKey],
+        ...(previewUrl ? [['preview', previewUrl]] : []),
       ],
     );
     info.mergeTarget = target;
@@ -5908,6 +5974,125 @@ export class Body {
     if (agent.publicKey === this.bodyIdentity.publicKey) {
       throw new Error('agent identity must be distinct from the human/operator identity');
     }
+  }
+
+  /**
+   * The Room's CURRENT landing target, re-read from published Room state.
+   *
+   * The daemon's `boundRepo.targetBranch` is a snapshot taken when the Room
+   * started serving, so an admin who repointed the Room since then would
+   * otherwise be invisible until a restart. Best-effort by design: any read
+   * failure falls back to the snapshot rather than blocking a turn, and a
+   * config event bound to a DIFFERENT repository is ignored outright (repo
+   * hot-swap on a live Room is deliberately out of scope here).
+   */
+  private async currentRoomTargetBranch(
+    channelId: string,
+    boundRepo: BoundRepo,
+  ): Promise<string> {
+    const fallback = shortBranchName(boundRepo.targetBranch);
+    try {
+      const config = await getRoomRepository(this.agentClientContext(), channelId);
+      if (!config?.targetBranch) return fallback;
+      if (
+        boundRepo.repositoryKey &&
+        config.binding.key &&
+        config.binding.key !== boundRepo.repositoryKey
+      ) {
+        return fallback;
+      }
+      return shortBranchName(config.targetBranch);
+    } catch (error) {
+      console.error(`[body] could not re-read the Room target branch for ${channelId}:`, error);
+      return fallback;
+    }
+  }
+
+  /**
+   * The repository a corner opening RIGHT NOW should tree off and land to.
+   *
+   * A corner snapshots its target at open time (`SubchannelInfo.boundRepo`) and
+   * keeps it for its whole life — an in-flight review must never silently
+   * change what it is proposing to land onto. This is the one place the newer
+   * admin-confirmed target is picked up, so the change takes effect on the
+   * NEXT corner and never on an open one.
+   */
+  private async cornerBoundRepo(channelId: string, boundRepo: BoundRepo): Promise<BoundRepo> {
+    const current = await this.currentRoomTargetBranch(channelId, boundRepo);
+    if (current === shortBranchName(boundRepo.targetBranch)) return boundRepo;
+    console.log(
+      `[body] Room ${channelId} target branch is now ${current}; new corners will land to it`,
+    );
+    return { ...boundRepo, targetBranch: `refs/heads/${current}` };
+  }
+
+  /**
+   * Answer a "land to staging from now on" ask with a typed proposal card.
+   *
+   * The agent proposes; it never authors the binding. The card carries the
+   * exact from/to pair and the requester, and a Room ADMIN confirms it in the
+   * app, which republishes the Room→repository event under the admin's own key
+   * (`setRoomTargetBranch`). Returns false when nothing needed proposing.
+   */
+  private async proposeTargetBranchChange(
+    tlcChannelId: string,
+    boundRepo: BoundRepo,
+    request: ChannelTaskRequest,
+    userPrompt: string,
+    branch: string,
+  ): Promise<boolean> {
+    const from = await this.currentRoomTargetBranch(tlcChannelId, boundRepo);
+    await this.durableState.appendConversation(tlcChannelId, {
+      role: 'user',
+      text: userPrompt,
+      eventId: request.eventId,
+      at: new Date(request.createdAt * 1_000).toISOString(),
+    });
+    if (from === branch) {
+      const reply = `This Room already lands to ${branch}, so there is nothing to change.`;
+      await postAgentMessage(
+        tlcChannelId,
+        this.agentIdentity,
+        reply,
+        request.eventId,
+        [],
+        [],
+        request.replyRootId,
+      );
+      await this.durableState.appendConversation(tlcChannelId, {
+        role: 'agent',
+        text: attachmentPrompt(this.agentIdentity.publicKey, reply, [], this.ownRoomAttribution()),
+        at: new Date().toISOString(),
+      });
+      return false;
+    }
+    await postControlMessage(
+      tlcChannelId,
+      this.agentIdentity,
+      targetBranchProposalText(from, branch),
+      [
+        ['t', TARGET_BRANCH_PROPOSAL_TAG],
+        ['from', from],
+        ['to', branch],
+        ['repo', this.repoId(boundRepo)],
+        ['agent', this.agentIdentity.publicKey],
+        ['request', request.eventId],
+        ['requester', request.authorPubkey],
+      ],
+    );
+    await this.durableState.appendConversation(tlcChannelId, {
+      role: 'agent',
+      text: attachmentPrompt(
+        this.agentIdentity.publicKey,
+        `Proposed changing this Room's target branch from ${from} to ${branch}. ` +
+          'A Room admin has to confirm it before it applies; corners already open keep landing to ' +
+          `${from}.`,
+        [],
+        this.ownRoomAttribution(),
+      ),
+      at: new Date().toISOString(),
+    });
+    return true;
   }
 
   private agentClientContext(): ChannelOpsContext {

@@ -940,3 +940,129 @@ describe('agent activity projection', () => {
     ).toEqual([{ kind: 'output', title: 'Update', text: 'Both bugs are fixed.' }]);
   });
 });
+
+describe('a merge-ready tip that has a preview deployment', () => {
+  function mergeReady(tags: string[][]): SessionEvent {
+    return raw(
+      'merge-ready-1',
+      'Work is ready for human merge approval — abc123def456…',
+      [
+        ['t', 'body-control'],
+        ['t', 'merge-ready'],
+        ['status', 'ready'],
+        ['repo', 'owner/repo'],
+        ['branch', 'refs/heads/main'],
+        ['tip', 'c'.repeat(40)],
+        ['agent', agent],
+        ...tags,
+      ],
+      1_000,
+    );
+  }
+
+  it('carries the preview URL alongside the merge target', () => {
+    const projected = projectChatEvent(
+      mergeReady([['preview', 'https://repo-git-feature.vercel.app']]),
+      viewer,
+    );
+    expect(projected.mergeTarget).toEqual({
+      repo: 'owner/repo',
+      branch: 'refs/heads/main',
+      tip: 'c'.repeat(40),
+    });
+    expect(projected.previewUrl).toBe('https://repo-git-feature.vercel.app');
+    // Never folded INTO the signed approval binding.
+    expect(projected.mergeTarget).not.toHaveProperty('preview');
+  });
+
+  it('has no preview when the daemon published no tag', () => {
+    expect(projectChatEvent(mergeReady([]), viewer).previewUrl).toBeUndefined();
+  });
+
+  it('drops a preview tag that is not an https URL', () => {
+    for (const value of ['javascript:alert(1)', 'http://insecure.example', 'not a url', '']) {
+      expect(
+        projectChatEvent(mergeReady([['preview', value]]), viewer).previewUrl,
+        value,
+      ).toBeUndefined();
+    }
+  });
+
+  it('never attaches a preview to an event that is not merge-ready', () => {
+    const projected = projectChatEvent(
+      raw(
+        'not-ready',
+        'Nothing ready to merge yet.',
+        [
+          ['t', 'body-control'],
+          ['t', 'merge-not-ready'],
+          ['status', 'needs-attention'],
+          ['preview', 'https://stale.example'],
+        ],
+        1_001,
+      ),
+      viewer,
+    );
+    expect(projected.previewUrl).toBeUndefined();
+    expect(projected.clearMergeTarget).toBe(true);
+  });
+});
+
+describe('a proposed target-branch change', () => {
+  const requester = 'd'.repeat(64);
+
+  function proposal(tags: string[][]): SessionEvent {
+    return raw(
+      'proposal-1',
+      'Change target branch: main → staging',
+      [
+        ['t', 'body-control'],
+        ['t', 'buzz-target-branch-proposal'],
+        ['agent', agent],
+        ['requester', requester],
+        ['repo', 'owner/repo'],
+        ...tags,
+      ],
+      2_000,
+    );
+  }
+
+  it('projects a card carrying both ends of the change', () => {
+    const projected = projectChatEvent(
+      proposal([
+        ['from', 'main'],
+        ['to', 'staging'],
+      ]),
+      viewer,
+    );
+    expect(projected.message?.targetBranchProposal).toEqual({
+      proposalId: 'proposal-1',
+      from: 'main',
+      to: 'staging',
+      repository: 'owner/repo',
+      agentPubkey: agent,
+      requesterPubkey: requester,
+    });
+    expect(projected.message?.text).toBe('Change target branch: main → staging');
+    // A proposal is never a merge target and never archives anything.
+    expect(projected.mergeTarget).toBeUndefined();
+    expect(projected.archiveChannel).toBeUndefined();
+  });
+
+  it('renders nothing for a malformed proposal rather than a half card', () => {
+    expect(projectChatEvent(proposal([['from', 'main']]), viewer).message).toBeUndefined();
+    expect(projectChatEvent(proposal([['to', 'staging']]), viewer).message).toBeUndefined();
+  });
+
+  it('survives the transcript filter, since it is something to act on', () => {
+    const projected = projectChatEvent(
+      proposal([
+        ['from', 'main'],
+        ['to', 'staging'],
+      ]),
+      viewer,
+    );
+    expect(transcriptMessages([projected.message!])).toHaveLength(1);
+    expect(transcriptMessages([projected.message!])[0]!.targetBranchProposal?.to).toBe('staging');
+  });
+});

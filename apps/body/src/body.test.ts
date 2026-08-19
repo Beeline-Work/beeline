@@ -4,7 +4,7 @@
  */
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -3648,6 +3648,29 @@ describe('corner display names', () => {
     );
   });
 
+  it('names the task even when the request opens with an @mention or conversational scaffolding', () => {
+    const cases: [string, string][] = [
+      // The dogfooded regression: the mention plus the imperative ate the name.
+      ['@lena open a corner and add a haiku to README.md', 'add-a-haiku-to-readme-md'],
+      ['@lena go fix the login bug', 'fix-the-login-bug'],
+      ['@lena, please open a corner and fix the flaky test', 'fix-the-flaky-test'],
+      ['@lena make a corner for the sidebar redesign', 'the-sidebar-redesign'],
+      ['@lena spin up a corner and refactor the parser', 'refactor-the-parser'],
+      ['hey @lena, can you open a new corner to update the changelog', 'update-the-changelog'],
+      ["@lena let's add dark mode to settings", 'add-dark-mode-to-settings'],
+      ['@lena start working on syntax highlighting in a new corner', 'syntax-highlighting'],
+    ];
+    for (const [request, slug] of cases) {
+      expect([request, cornerNameForIntent(request, 'room-id')]).toEqual([request, slug]);
+    }
+  });
+
+  it('falls back to the generic corner name when the request names no work at all', () => {
+    expect(cornerNameForIntent('@lena go', 'room-id')).toBe('corner-room-id');
+    expect(cornerNameForIntent('@lena open a corner', 'room-id')).toBe('corner-room-id');
+    expect(cornerNameForIntent('@lena ok do it', 'room-id')).toBe('corner-room-id');
+  });
+
   it('taskSlugForCornerIntent is the same task-descriptive basis openSubchannel uses for both the corner name and the feature branch', () => {
     // cornerNameForIntent(intent, parentId) === taskSlugForCornerIntent(intent)
     // whenever a real task slug exists — the corner-id fallback only kicks in
@@ -4043,6 +4066,299 @@ describe('corner merge-ready surfaces a real committed change', () => {
       expect(notReadyEvent!.content).toContain('Nothing ready to merge yet');
     } finally {
       await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('a local-only repository lands through the daemon, never through the agent', () => {
+  function gitCommand(cwd: string, args: string[]): string {
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    if (result.status !== 0) throw new Error(`git ${args.join(' ')}: ${result.stderr}`);
+    return result.stdout.trim();
+  }
+
+  /**
+   * A repository with NO remote at all (exactly what `beeline pair` records as
+   * `localOnly`), plus a linked corner worktree holding one committed change —
+   * the shape the dogfood hit, where the approval had nothing to push to.
+   */
+  function localOnlyRepoWithCorner(): { root: string; repoPath: string; cornerPath: string; tip: string } {
+    const root = mkdtempSync(join(tmpdir(), 'buzzy-local-land-'));
+    const repoPath = join(root, 'repo');
+    const cornerPath = join(root, 'corner');
+    mkdirSync(repoPath, { recursive: true });
+    gitCommand(repoPath, ['init', '-b', 'master']);
+    gitCommand(repoPath, ['config', 'user.name', 'Local Land Test']);
+    gitCommand(repoPath, ['config', 'user.email', 'local-land@test.invalid']);
+    writeFileSync(join(repoPath, 'README.md'), '# Before\n');
+    gitCommand(repoPath, ['add', '.']);
+    gitCommand(repoPath, ['commit', '-m', 'base']);
+    gitCommand(repoPath, ['worktree', 'add', '-b', 'feature/haiku', cornerPath, 'master']);
+    gitCommand(cornerPath, ['config', 'user.name', 'Local Land Agent']);
+    gitCommand(cornerPath, ['config', 'user.email', 'agent@test.invalid']);
+    writeFileSync(join(cornerPath, 'README.md'), '# Before\n\nan old silent pond\n');
+    gitCommand(cornerPath, ['add', 'README.md']);
+    gitCommand(cornerPath, ['commit', '-m', 'add a haiku']);
+    return { root, repoPath, cornerPath, tip: gitCommand(cornerPath, ['rev-parse', 'HEAD']) };
+  }
+
+  function newBody(agent: ReturnType<typeof newIdentity>, statePath: string) {
+    return new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: '/workspace',
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+      undefined,
+      { statePath },
+    );
+  }
+
+  function localCornerInfo(
+    agent: ReturnType<typeof newIdentity>,
+    repoPath: string,
+    cornerPath: string,
+    tip: string,
+  ) {
+    return {
+      subchannelId: 'corner-local-land',
+      worktreePath: cornerPath,
+      featureBranch: 'feature/haiku',
+      role: agent,
+      session: {
+        channelId: 'corner-local-land',
+        parentChannelId: 'room-local',
+        sessionId: 'session',
+      } as never,
+      lastPolledAt: 0,
+      archived: false,
+      boundRepo: {
+        repo: 'proj',
+        repositoryKey: 'local-key',
+        localOnly: true,
+        localPath: repoPath,
+        targetBranch: 'refs/heads/master',
+      },
+      mergeTarget: { repo: 'local/local-key', branch: 'refs/heads/master', tip },
+    };
+  }
+
+  it('fast-forwards the checked-out target branch, moving the working tree with it', () => {
+    const agent = newIdentity('local-land-ff');
+    const { root, repoPath, tip } = localOnlyRepoWithCorner();
+    try {
+      const body = newBody(agent, join(root, 'state.json'));
+      const outcome = Reflect.get(body, 'landInLocalCheckout').call(body, repoPath, {
+        repo: 'local/local-key',
+        branch: 'refs/heads/master',
+        tip,
+      });
+
+      expect(outcome).toEqual({ kind: 'landed' });
+      expect(gitCommand(repoPath, ['rev-parse', 'refs/heads/master'])).toBe(tip);
+      // The ref advance must not leave the operator's tree reading as reverted.
+      expect(readFileSync(join(repoPath, 'README.md'), 'utf8')).toContain('an old silent pond');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('advances a target branch that is not the one checked out', () => {
+    const agent = newIdentity('local-land-ref');
+    const { root, repoPath, tip } = localOnlyRepoWithCorner();
+    try {
+      gitCommand(repoPath, ['checkout', '-q', '-b', 'scratch']);
+      const body = newBody(agent, join(root, 'state.json'));
+      const outcome = Reflect.get(body, 'landInLocalCheckout').call(body, repoPath, {
+        repo: 'local/local-key',
+        branch: 'refs/heads/master',
+        tip,
+      });
+
+      expect(outcome).toEqual({ kind: 'landed' });
+      expect(gitCommand(repoPath, ['rev-parse', 'refs/heads/master'])).toBe(tip);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a non-fast-forward land, exactly like the remote path rejects a moved target', () => {
+    const agent = newIdentity('local-land-nonff');
+    const { root, repoPath, tip } = localOnlyRepoWithCorner();
+    try {
+      writeFileSync(join(repoPath, 'OTHER.md'), 'someone else landed first\n');
+      gitCommand(repoPath, ['add', 'OTHER.md']);
+      gitCommand(repoPath, ['commit', '-m', 'target moved on']);
+      const moved = gitCommand(repoPath, ['rev-parse', 'refs/heads/master']);
+      const body = newBody(agent, join(root, 'state.json'));
+
+      const outcome = Reflect.get(body, 'landInLocalCheckout').call(body, repoPath, {
+        repo: 'local/local-key',
+        branch: 'refs/heads/master',
+        tip,
+      });
+
+      expect(outcome.kind).toBe('failed');
+      expect(gitCommand(repoPath, ['rev-parse', 'refs/heads/master'])).toBe(moved);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('lands an approved local-only corner and publishes the same landed status the remote path does', async () => {
+    const agent = newIdentity('local-land-poll');
+    const reviewer = newIdentity('local-land-reviewer');
+    const { root, repoPath, cornerPath, tip } = localOnlyRepoWithCorner();
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    try {
+      const body = newBody(agent, join(root, 'state.json'));
+      const info = localCornerInfo(agent, repoPath, cornerPath, tip);
+      body.registerSubchannel(info as never);
+      Reflect.set(body, 'findHumanMergeApproval', async (target: typeof info) => {
+        target.humanMergeApproval = { id: 'approval-1', reviewer: reviewer.publicKey, tip };
+        return target.humanMergeApproval;
+      });
+
+      const landed = await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
+
+      expect(landed).toBe(1);
+      expect(gitCommand(repoPath, ['rev-parse', 'refs/heads/master'])).toBe(tip);
+      const landedEvent = published.find((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'landed'),
+      );
+      expect(landedEvent).toBeDefined();
+      expect(landedEvent!.tags).toContainEqual(['delivery', 'landed']);
+      const parentStatus = published.find(
+        (event) =>
+          event.tags.some((tag) => tag[0] === 'subchannel' && tag[1] === 'corner-local-land') &&
+          event.tags.some((tag) => tag[0] === 'delivery' && tag[1] === 'landed'),
+      );
+      expect(parentStatus).toBeDefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('publishes a plain-language refusal, with no git plumbing, when the local target moved since approval', async () => {
+    const agent = newIdentity('local-land-poll-nonff');
+    const reviewer = newIdentity('local-land-reviewer-nonff');
+    const { root, repoPath, cornerPath, tip } = localOnlyRepoWithCorner();
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    try {
+      writeFileSync(join(repoPath, 'OTHER.md'), 'someone else landed first\n');
+      gitCommand(repoPath, ['add', 'OTHER.md']);
+      gitCommand(repoPath, ['commit', '-m', 'target moved on']);
+      const moved = gitCommand(repoPath, ['rev-parse', 'refs/heads/master']);
+      const body = newBody(agent, join(root, 'state.json'));
+      const info = localCornerInfo(agent, repoPath, cornerPath, tip);
+      body.registerSubchannel(info as never);
+      Reflect.set(body, 'findHumanMergeApproval', async (target: typeof info) => {
+        target.humanMergeApproval = { id: 'approval-1', reviewer: reviewer.publicKey, tip };
+        return target.humanMergeApproval;
+      });
+
+      const landed = await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
+
+      expect(landed).toBe(0);
+      expect(gitCommand(repoPath, ['rev-parse', 'refs/heads/master'])).toBe(moved);
+      const failure = published.find((event) =>
+        event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'failed'),
+      );
+      expect(failure).toBeDefined();
+      expect(failure!.content).toContain('moved on');
+      expect(failure!.content).not.toMatch(/\bgit\b|hint:|non-fast-forward/i);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('never forwards the signed merge approval into the agent session', async () => {
+    const agent = newIdentity('local-land-forward');
+    const reviewer = newIdentity('local-land-forward-reviewer');
+    const { root, repoPath, cornerPath, tip } = localOnlyRepoWithCorner();
+    const steered: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ accepted: true }), { status: 200 })),
+    );
+    try {
+      const body = newBody(agent, join(root, 'state.json'));
+      const info = {
+        ...localCornerInfo(agent, repoPath, cornerPath, tip),
+        session: {
+          channelId: 'corner-local-land',
+          parentChannelId: 'room-local',
+          sessionId: 'session',
+          client: {
+            activeRunId: () => 'run-1',
+            sessionSteer: async (_sessionId: string, prompt: string) => {
+              steered.push(prompt);
+            },
+            sessionCancel: () => undefined,
+          },
+        } as never,
+      };
+      body.registerSubchannel(info as never);
+
+      const approval = signEvent(
+        {
+          pubkey: reviewer.publicKey,
+          created_at: Math.floor(Date.now() / 1000),
+          kind: KIND_STREAM_MESSAGE,
+          tags: [
+            ['h', 'corner-local-land'],
+            ['t', 'buzz-merge-approval'],
+            ['repo', 'local/local-key'],
+            ['branch', 'refs/heads/master'],
+            ['tip', tip],
+          ],
+          content: `APPROVE merge of local/local-key refs/heads/master -> ${tip}`,
+        },
+        reviewer.secretKey,
+      );
+      const chatter = signEvent(
+        {
+          pubkey: reviewer.publicKey,
+          created_at: Math.floor(Date.now() / 1000) + 1,
+          kind: KIND_STREAM_MESSAGE,
+          tags: [['h', 'corner-local-land']],
+          content: 'also please tidy the imports',
+        },
+        reviewer.secretKey,
+      );
+      Reflect.set(body, 'agentRelay', {
+        queryEvents: vi.fn(async () => [approval, chatter]),
+      });
+
+      await body.pollMembers('corner-local-land');
+
+      // The ordinary message still reaches the agent; the grant never does.
+      expect(steered.some((prompt) => prompt.includes('tidy the imports'))).toBe(true);
+      expect(steered.some((prompt) => prompt.includes('APPROVE merge of'))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

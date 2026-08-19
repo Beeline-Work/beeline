@@ -463,6 +463,11 @@ export interface BoundRepo {
 
 export type RoomEditPolicy = 'repository' | 'named-repository' | 'direct-message';
 
+/** Result of one attempt to advance a non-relay target ref to an approved tip.
+ *  `skip` is "not this tick" (a later poll retries); `failed` carries the raw
+ *  reason, humanized once at the publish site. */
+type LandOutcome = { kind: 'skip' } | { kind: 'landed' } | { kind: 'failed'; reason: string };
+
 /** A Room cannot safely start unless its fixed inspection MCP is available. */
 export class ReadOnlyToolsUnavailableError extends Error {
   override readonly name = 'ReadOnlyToolsUnavailableError';
@@ -822,11 +827,15 @@ export function isReadOnlyInformationRequest(content: string): boolean {
   ).test(normalized);
 }
 
-/** Leading "open/create/launch/start [up] [a/the] [new] corner" imperative,
- *  with an optional connector ("and", "then", "to") before the actual task
- *  description that usually follows it. */
+/** Leading "@handle" addressing. Who the request is aimed at is authenticated
+ *  by the signed `p` tag, never by this text, so a mention is pure scaffolding
+ *  here — leaving it in is what produced `lena-open-a-corner-and-add-a-...`. */
+const AGENT_MENTION_LEAD_STRIP = /^(?:@[\p{L}\p{N}_-]+\s*[,:;]?\s+)+/u;
+/** Leading "open/create/launch/start/make/spin up [a/the] [new] corner"
+ *  imperative, with an optional connector ("and", "then", "to", "for")
+ *  before the actual task description that usually follows it. */
 const CORNER_OPEN_LEAD_STRIP = new RegExp(
-  String.raw`^${REQUEST_LEAD}(?:open|create|launch|start)\s+(?:up\s+)?(?:a\s+|the\s+)?(?:new\s+)?corner\b[\s,:;-]*(?:and\s+|then\s+|to\s+)?`,
+  String.raw`^${REQUEST_LEAD}(?:open|create|launch|start|make|spin)\s+(?:up\s+)?(?:a\s+|the\s+)?(?:new\s+)?corner\b[\s,:;-]*(?:and\s+|then\s+|to\s+|for\s+|that\s+)?`,
   'i',
 );
 /** "start work(ing) [on]" lead for the alternate phrasing whose corner
@@ -835,27 +844,61 @@ const CORNER_WORK_LEAD_STRIP = new RegExp(
   String.raw`^${REQUEST_LEAD}start\s+(?:(?:the|this|that)\s+)?(?:work|working)\s+(?:on\s+)?`,
   'i',
 );
+/** Conversational scaffolding a person puts in front of the actual ask
+ *  ("go fix …", "hey, please …", "let's add …"). `go`/`just` only strip when
+ *  a word actually follows, so a bare "go" still reduces to nothing. */
+const REQUEST_SCAFFOLD_LEAD_STRIP = new RegExp(
+  String.raw`^(?:(?:hey|hi|hello|yo|ok|okay|alright|so|now)\b[,:;-]*\s+|(?:please|kindly|just)\s+(?=[\p{L}\p{N}])|(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need)\s+you\s+to\s+|i(?:['’]d| would)\s+like\s+you\s+to\s+|(?:let['’]?s|lets)\s+(?=[\p{L}\p{N}])|go\s+(?:ahead\s+and\s+)?(?=[\p{L}\p{N}]))`,
+  'iu',
+);
 const CORNER_MENTION_TRAIL_STRIP = /\s*\b(?:in|inside|within)\s+(?:a\s+|the\s+)?(?:new\s+)?corner\b\.?\s*$/i;
 
+/** Words that name no work of their own. A remainder built only from these
+ *  (a bare "go", "ok do it") is not a task description, so callers fall back
+ *  to the generic corner name rather than slugifying filler. */
+const TASK_FILLER_WORDS = new Set([
+  'a', 'an', 'and', 'the', 'this', 'that', 'it', 'then', 'now', 'go', 'ok', 'okay', 'please',
+  'pls', 'plz', 'thanks', 'thank', 'ty', 'yes', 'yeah', 'sure', 'just', 'let', 'lets', 'us',
+  'me', 'you', 'your', 'start', 'begin', 'do', 'does', 'doing', 'done', 'work', 'working',
+  'corner', 'on', 'for', 'to', 'up', 'in', 'of', 'with', 'new', 'some', 'something', 'stuff',
+  'thing', 'things', 'task', 'if', 'so',
+]);
+
+function namesRealWork(text: string): boolean {
+  const words = text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+  return words.some((word) => !TASK_FILLER_WORDS.has(word));
+}
+
 /**
- * The actual task described by a corner-open request, with the "open a
- * corner" (or "...in a new corner") imperative itself stripped out — a
- * corner's name/branch must describe the work, not the verb that opened it.
- * A message with no such imperative (e.g. the agent-originated write-request
- * flow, whose message was never phrased as an "open a corner" command) is
- * returned unchanged. Stripping down to nothing (e.g. a bare "open a
- * corner") returns '', so callers fall back to a non-misleading name instead
- * of slugifying the verb.
+ * The actual task described by a corner-open request, with the addressing and
+ * the "open a corner" (or "...in a new corner") scaffolding stripped out — a
+ * corner's name/branch must describe the work, not the imperative that opened
+ * it. Scaffolding is peeled to a fixpoint so layered phrasings ("@lena please
+ * open a corner and go fix X") reduce to the subject. A message with no such
+ * scaffolding (e.g. the agent-originated write-request flow, whose message was
+ * never phrased as an "open a corner" command) is returned unchanged.
+ * Stripping down to nothing meaningful (a bare "open a corner", a bare
+ * "@lena go") returns '', so callers fall back to a non-misleading name.
  */
 export function taskDescriptionFromCornerRequest(content: string): string {
   const normalized = content.normalize('NFKC').replace(/\s+/g, ' ').trim();
-  const leadStripped = normalized.replace(CORNER_OPEN_LEAD_STRIP, '').trim();
-  if (leadStripped !== normalized) return leadStripped;
-  const trailStripped = normalized
-    .replace(CORNER_WORK_LEAD_STRIP, '')
-    .replace(CORNER_MENTION_TRAIL_STRIP, '')
-    .trim();
-  return trailStripped !== normalized ? trailStripped : normalized;
+  let text = normalized;
+  // Bounded because each pass must shrink the string to continue; the cap is
+  // only a belt-and-braces guard against a future non-consuming alternative.
+  // The mention peels inside the loop too, since a greeting can precede it
+  // ("hey @lena, can you open a corner and …").
+  for (let pass = 0; pass < 6; pass++) {
+    const before = text;
+    text = text
+      .replace(AGENT_MENTION_LEAD_STRIP, '')
+      .replace(CORNER_OPEN_LEAD_STRIP, '')
+      .replace(CORNER_WORK_LEAD_STRIP, '')
+      .replace(REQUEST_SCAFFOLD_LEAD_STRIP, '')
+      .trim();
+    if (text === before) break;
+  }
+  text = text.replace(CORNER_MENTION_TRAIL_STRIP, '').trim();
+  return namesRealWork(text) ? text : '';
 }
 
 /** Collision-safe short suffix comes from the caller (the corner's own
@@ -3690,9 +3733,96 @@ export class Body {
   }
 
   /**
+   * Advance a direct git remote's protected ref to the approved tip.
+   * `skip` means "nothing to do on this tick" (the feature ref hasn't caught
+   * up, or the target already sits at the approved tip).
+   */
+  private landOnDirectRemote(
+    info: SubchannelInfo,
+    remote: string,
+    target: NonNullable<SubchannelInfo['mergeTarget']>,
+  ): LandOutcome {
+    const featureTip = gitWithUserCredentials(info.worktreePath, [
+      'ls-remote',
+      remote,
+      `refs/heads/${info.featureBranch}`,
+    ])
+      .stdout.trim()
+      .split(/\s+/)[0];
+    if (featureTip !== target.tip) return { kind: 'skip' };
+    const targetTip = gitWithUserCredentials(info.worktreePath, [
+      'ls-remote',
+      remote,
+      target.branch,
+    ])
+      .stdout.trim()
+      .split(/\s+/)[0];
+    if (targetTip === target.tip) return { kind: 'skip' };
+
+    const land = gitWithUserCredentials(info.worktreePath, [
+      'push',
+      remote,
+      `${target.tip}:${target.branch}`,
+    ]);
+    return land.ok ? { kind: 'landed' } : { kind: 'failed', reason: land.stderr };
+  }
+
+  /**
+   * Land into a local-only repository — one with no origin at all, so there is
+   * nothing to push to and the DAEMON itself must move the target branch.
+   *
+   * The corner's worktree is a linked `git worktree` of `localPath`, so the
+   * approved tip is already in that repository's object store; landing is a
+   * ref advance, not a transfer. It stays fast-forward-only, which is the
+   * local equivalent of the remote path's non-fast-forward rejection: if the
+   * target branch moved since the human approved this exact tip, the change is
+   * refused rather than force-landed. When the target branch is the one
+   * checked out at `localPath`, `merge --ff-only` is used so the operator's
+   * working tree and index move with the ref instead of silently reading as
+   * "everything reverted"; otherwise the ref is advanced with a compare-and-set
+   * on the tip we just verified.
+   */
+  private landInLocalCheckout(
+    localPath: string,
+    target: NonNullable<SubchannelInfo['mergeTarget']>,
+  ): LandOutcome {
+    const branch = target.branch.replace(/^refs\/heads\//, '');
+    const ref = `refs/heads/${branch}`;
+    const current = git(localPath, ['rev-parse', '--verify', ref]);
+    if (!current.ok) {
+      return { kind: 'failed', reason: `The ${branch} branch no longer exists in this repository.` };
+    }
+    const targetTip = current.stdout.trim();
+    if (targetTip === target.tip) return { kind: 'skip' };
+    if (!git(localPath, ['cat-file', '-e', `${target.tip}^{commit}`]).ok) {
+      return { kind: 'failed', reason: 'The approved change is no longer present in this repository.' };
+    }
+    // Fast-forward only — a diverged target is a moved target.
+    if (!git(localPath, ['merge-base', '--is-ancestor', targetTip, target.tip]).ok) {
+      return {
+        kind: 'failed',
+        reason: `The ${branch} branch has moved on since this change was approved — it needs to be rebased before it can land.`,
+      };
+    }
+
+    const checkedOut = git(localPath, ['symbolic-ref', '--quiet', 'HEAD']).stdout.trim();
+    const land =
+      checkedOut === ref
+        ? git(localPath, ['merge', '--ff-only', target.tip])
+        : git(localPath, ['update-ref', ref, target.tip, targetTip]);
+    return land.ok ? { kind: 'landed' } : { kind: 'failed', reason: land.stderr };
+  }
+
+  /**
    * Land non-relay work only after an exact signed human-admin approval. The
    * agent completion path may push its feature ref, but can never advance the
    * target ref by itself.
+   *
+   * Covers both non-relay shapes: a direct git remote (push the approved tip)
+   * and a local-only repository with no remote at all (advance the branch in
+   * the checkout ourselves). The local shape used to fall out of this loop
+   * entirely on `!remote`, so an approved local corner never landed and its
+   * approval event was left to be forwarded to the agent as chat.
    */
   private async pollDirectRemoteApprovals(): Promise<number> {
     let landed = 0;
@@ -3700,36 +3830,20 @@ export class Body {
       const boundRepo = info.boundRepo;
       const remote = boundRepo?.remoteName;
       const target = info.mergeTarget;
-      if (info.archived || boundRepo?.ownerHex || !remote || !target) continue;
+      // Relay-origin repos land through the merge gate, never here.
+      if (info.archived || !boundRepo || boundRepo.ownerHex || !target) continue;
+      if (!remote && !boundRepo.localPath) continue;
       if (!(await this.findHumanMergeApproval(info))) continue;
 
-      const featureTip = gitWithUserCredentials(info.worktreePath, [
-        'ls-remote',
-        remote,
-        `refs/heads/${info.featureBranch}`,
-      ])
-        .stdout.trim()
-        .split(/\s+/)[0];
-      if (featureTip !== target.tip) continue;
-      const targetTip = gitWithUserCredentials(info.worktreePath, [
-        'ls-remote',
-        remote,
-        target.branch,
-      ])
-        .stdout.trim()
-        .split(/\s+/)[0];
-      if (targetTip === target.tip) continue;
-
-      const land = gitWithUserCredentials(info.worktreePath, [
-        'push',
-        remote,
-        `${target.tip}:${target.branch}`,
-      ]);
-      if (!land.ok) {
+      const outcome = remote
+        ? this.landOnDirectRemote(info, remote, target)
+        : this.landInLocalCheckout(boundRepo.localPath!, target);
+      if (outcome.kind === 'skip') continue;
+      if (outcome.kind === 'failed') {
         await postControlMessage(
           info.subchannelId,
           this.agentIdentity,
-          `Couldn't land the approved change on ${target.branch.replace(/^refs\/heads\//, '')}: ${summarizeGitFailure(land.stderr)}`,
+          `Couldn't land the approved change on ${target.branch.replace(/^refs\/heads\//, '')}: ${summarizeGitFailure(outcome.reason)}`,
           [
             ['status', 'failed'],
             ['repo', target.repo],
@@ -4229,8 +4343,18 @@ export class Body {
           await this.durableState.delivered(subchannelId, evt.id);
           continue;
         }
-        // Skip control messages.
-        if (evt.tags.some((t) => t[0] === 't' && t[1] === 'body-control')) {
+        // Skip control messages, and the human's signed merge approval with
+        // them. The approval is a daemon-facing grant that the land path acts
+        // on (`pollDirectRemoteApprovals` / the merge gate) — never
+        // conversation. Forwarding it dropped a literal
+        // "APPROVE merge of <repo> <branch> -> <sha>" into the agent's ACP
+        // session, where the only honest answer it can give is that landing
+        // is the host's job.
+        if (
+          evt.tags.some(
+            (t) => t[0] === 't' && (t[1] === 'body-control' || t[1] === APPROVAL_MARKER),
+          )
+        ) {
           await this.durableState.delivered(subchannelId, evt.id);
           continue;
         }

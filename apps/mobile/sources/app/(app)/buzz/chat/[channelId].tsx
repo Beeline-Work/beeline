@@ -218,7 +218,7 @@ function ledgerSpeakerKey(
 ): string | null {
   if (message.corner || message.isMergeSummary || message.isArchivedNotice || message.isSystemNotice)
     return null;
-  if (message.writePermission) return null;
+  if (message.writePermission || message.targetBranchProposal) return null;
   const isAgent =
     message.isAgentAuthor ||
     message.isAgentActivity ||
@@ -434,6 +434,10 @@ export default function BuzzChat() {
   const [mergeTarget, setMergeTarget] = useState<MergeTarget | null>(
     initialChannelCache?.mergeTarget ?? null,
   );
+  /** Branch/PR preview deployment for the merge-ready tip, when one exists.
+   *  Never part of `mergeTarget` — that object is the exact signed approval
+   *  binding and must not grow a cosmetic field. */
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   // Why the corner has nothing ready, when it has an answer — the review
   // panel otherwise shows the same generic placeholder whether the corner
   // hasn't finished yet or explicitly declined to surface a review.
@@ -525,6 +529,12 @@ export default function BuzzChat() {
   );
   const [composerFocused, setComposerFocused] = useState(false);
   const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
+  /** Proposal currently being confirmed, and the last refusal/failure text. */
+  const [targetBranchActionId, setTargetBranchActionId] = useState<string | null>(null);
+  const [targetBranchNotice, setTargetBranchNotice] = useState<{
+    proposalId: string;
+    text: string;
+  } | null>(null);
   const [agentPresences, setAgentPresences] = useState<Record<string, RoomAgentPresence>>({});
   const [presenceResolved, setPresenceResolved] = useState(false);
   const [presenceReconnectGrace, setPresenceReconnectGrace] = useState<Record<string, number>>({});
@@ -1169,10 +1179,15 @@ export default function BuzzChat() {
               }
               mergeTargetTipRef.current = projected.mergeTarget.tip;
               setMergeTarget(projected.mergeTarget);
+              // The preview belongs to the tip it rode in on, so it moves with
+              // the merge target on both edges — a superseded tip must never
+              // leave a stale PREVIEW row pointing at the old deploy.
+              setPreviewUrl(projected.previewUrl ?? null);
             }
             if (projected.clearMergeTarget) {
               mergeTargetTipRef.current = null;
               setMergeTarget(null);
+              setPreviewUrl(null);
             }
             if (projected.archiveChannel) {
               setIsArchived(true);
@@ -1394,6 +1409,7 @@ export default function BuzzChat() {
             // the cache; only the screen's own state is left to publish.
             onTranscriptSynced: (sync) => {
               if (sync.mergeTarget !== undefined) setMergeTarget(sync.mergeTarget);
+              if (sync.previewUrl !== undefined) setPreviewUrl(sync.previewUrl);
               if (sync.archiveChannel) setIsArchived(true);
             },
             onArchived: () => {
@@ -1783,6 +1799,46 @@ export default function BuzzChat() {
       }
     },
     [cacheViewerPubkey, decodedId, transport, viewerIsAgent],
+  );
+
+  /**
+   * Confirm a proposed target-branch change.
+   *
+   * The republished Room→repository event is signed by THIS viewer, so a
+   * non-admin is refused here with a plain sentence rather than being allowed
+   * to publish an event every reader would silently ignore. The SDK
+   * (`setRoomTargetBranch`) and every reader re-check the role independently —
+   * this guard is the clear answer, not the boundary.
+   */
+  const handleConfirmTargetBranch = useCallback(
+    async (message: ChatDisplayMessage) => {
+      const proposal = message.targetBranchProposal;
+      if (!transport || !proposal || targetBranchActionId) return;
+      if (viewerIsAgent || !canManageRoomRepository(viewerChannelRole)) {
+        setTargetBranchNotice({
+          proposalId: proposal.proposalId,
+          text: `Only a ${ROOM_LABEL} admin can change the target branch.`,
+        });
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        return;
+      }
+      setTargetBranchActionId(proposal.proposalId);
+      setTargetBranchNotice(null);
+      try {
+        const updated = await transport.roomTargetBranchSet(decodedId, proposal.to);
+        setRoomRepository(updated);
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch (err) {
+        setTargetBranchNotice({
+          proposalId: proposal.proposalId,
+          text: err instanceof Error ? err.message : String(err),
+        });
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      } finally {
+        setTargetBranchActionId(null);
+      }
+    },
+    [decodedId, targetBranchActionId, transport, viewerChannelRole, viewerIsAgent],
   );
 
   const handleAddRoomMember = useCallback(
@@ -2224,6 +2280,56 @@ export default function BuzzChat() {
         );
       }
 
+      if (item.targetBranchProposal) {
+        const proposal = item.targetBranchProposal;
+        const applied = roomRepository?.targetBranch === proposal.to;
+        const busy = targetBranchActionId === proposal.proposalId;
+        const notice =
+          targetBranchNotice?.proposalId === proposal.proposalId ? targetBranchNotice.text : null;
+        const canConfirm = !viewerIsAgent && canManageRoomRepository(viewerChannelRole);
+        return (
+          <HullSurface
+            strength="raised"
+            style={styles.targetBranchCard}
+            testID="target-branch-proposal"
+          >
+            <Text style={styles.targetBranchTitle}>Change this {ROOM_LABEL}’s target branch</Text>
+            <Text style={styles.targetBranchChange} testID="target-branch-change">
+              {proposal.from} → {proposal.to}
+            </Text>
+            <Text style={styles.targetBranchBoundary}>
+              {`Confirming republishes this ${ROOM_LABEL}'s repository binding under your key. ` +
+                `${CORNER_LABEL}s already open keep landing to ${proposal.from}.`}
+            </Text>
+            {applied ? (
+              <Text style={styles.targetBranchStatus} testID="target-branch-applied">
+                ✓ TARGET BRANCH IS NOW {proposal.to.toUpperCase()}
+              </Text>
+            ) : canConfirm ? (
+              <View style={styles.targetBranchActions}>
+                <MonoButton
+                  label={`Confirm ${proposal.to}`}
+                  loading={busy}
+                  disabled={busy}
+                  onPress={() => void handleConfirmTargetBranch(item)}
+                  style={styles.targetBranchButton}
+                  testID="target-branch-confirm"
+                />
+              </View>
+            ) : (
+              <Text style={styles.targetBranchStatus} testID="target-branch-denied">
+                {`ONLY A ${ROOM_LABEL.toUpperCase()} ADMIN CAN CONFIRM THIS`}
+              </Text>
+            )}
+            {notice ? (
+              <Text style={styles.targetBranchStatus} testID="target-branch-notice">
+                {notice}
+              </Text>
+            ) : null}
+          </HullSurface>
+        );
+      }
+
       if (item.corner) {
         // A corner's status never appears inline. A corner being open is
         // *state*, not an event — a note inscribed at the moment it opened
@@ -2412,12 +2518,17 @@ export default function BuzzChat() {
       activeActivityId,
       continuedAttributionIds,
       handleWritePermission,
+      handleConfirmTargetBranch,
       isCorner,
       offlineQueuedIds,
       parentChannelId,
       participantsHydrated,
       permissionActionId,
       personProfileByPubkey,
+      roomRepository,
+      targetBranchActionId,
+      targetBranchNotice,
+      viewerChannelRole,
       viewerIsAgent,
       agentPresences,
       presenceNow,
@@ -2709,6 +2820,27 @@ export default function BuzzChat() {
                           ? 'PREPARING YOUR REVIEW'
                           : `${reviewFiles.length} ${reviewFiles.length === 1 ? 'FILE' : 'FILES'} READY TO REVIEW`}
                       </Text>
+                      {/* One compact row, and only when the repo's host
+                          actually published a preview deployment for this
+                          exact tip — no statuses means no row at all. */}
+                      {previewUrl ? (
+                        <TouchableOpacity
+                          accessibilityRole="link"
+                          accessibilityLabel={`Open the branch preview at ${previewUrl}`}
+                          onPress={() => {
+                            void Linking.openURL(previewUrl).catch((err) =>
+                              console.warn('Preview link failed to open:', err),
+                            );
+                          }}
+                          style={styles.previewLinkRow}
+                          testID="change-review-preview"
+                        >
+                          <Text style={styles.previewLinkLabel}>PREVIEW ↗</Text>
+                          <Text style={styles.previewLinkUrl} numberOfLines={1}>
+                            {previewUrl.replace(/^https:\/\//, '')}
+                          </Text>
+                        </TouchableOpacity>
+                      ) : null}
                     </View>
                     {transport && (
                       <ChangeReviewPanel
@@ -4444,6 +4576,66 @@ const styles = StyleSheet.create({
     color: groknight.textMuted,
     fontSize: 11,
     lineHeight: 15,
+  },
+  previewLinkRow: {
+    marginTop: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minWidth: 0,
+  },
+  previewLinkLabel: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 9,
+    lineHeight: 14,
+    letterSpacing: 0.5,
+    flexShrink: 0,
+  },
+  previewLinkUrl: {
+    ...Typography.mono(),
+    color: groknight.textMuted,
+    fontSize: 9,
+    lineHeight: 14,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  targetBranchCard: {
+    minWidth: 0,
+    marginBottom: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    gap: 8,
+  },
+  targetBranchTitle: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  targetBranchChange: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 12,
+    lineHeight: 17,
+    letterSpacing: 0.35,
+  },
+  targetBranchBoundary: {
+    ...Typography.default(),
+    color: groknight.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  targetBranchActions: { flexDirection: 'row', gap: 8 },
+  targetBranchButton: { flex: 1, minWidth: 0 },
+  targetBranchStatus: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textSecondary,
+    fontSize: 9,
+    lineHeight: 14,
+    letterSpacing: 0.5,
   },
   writePermissionCard: {
     minWidth: 0,

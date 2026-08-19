@@ -5,6 +5,8 @@ import {
   parseRoomRepository,
   resolveRoomRepository,
   setRoomRepository,
+  setRoomTargetBranch,
+  normalizeTargetBranchName,
 } from './room-repository.js';
 import { createIdentity } from './identity.js';
 import {
@@ -228,5 +230,99 @@ describe('resolveRoomRepository', () => {
     const published: NostrEvent[] = [];
     stubRelay({ published, genesisRepo: false });
     await expect(resolveRoomRepository(ctx(admin), channelId)).resolves.toBeNull();
+  });
+});
+
+describe('room target branch (chat-native change)', () => {
+  it('normalizes a proposed branch name and refuses anything that is not one', () => {
+    expect(normalizeTargetBranchName(' staging ')).toBe('staging');
+    expect(normalizeTargetBranchName('refs/heads/release/2026-08')).toBe('release/2026-08');
+    for (const bad of ['', '   ', 'two words', 'a..b', 'a\\b', '-lead', 'x.lock', '@', 'a//b', '.hidden']) {
+      expect(normalizeTargetBranchName(bad)).toBeNull();
+    }
+  });
+
+  it('republishes the SAME binding under the confirming admin key with the new target', async () => {
+    const published: NostrEvent[] = [];
+    stubRelay({ published });
+    await setRoomRepository(ctx(admin), channelId, {
+      key: 'repo-key',
+      name: 'buzzy',
+      remote: 'git://github.com/lunchboxfortwo/buzzy',
+      targetBranch: 'main',
+    });
+
+    const updated = await setRoomTargetBranch(ctx(admin), channelId, 'refs/heads/staging');
+    expect(updated.targetBranch).toBe('staging');
+    // Binding identity is carried forward untouched — only the target moved.
+    expect(updated.binding).toMatchObject({
+      key: 'repo-key',
+      name: 'buzzy',
+      remote: 'git://github.com/lunchboxfortwo/buzzy',
+    });
+    expect(updated.raw!.pubkey).toBe(admin.publicKey);
+    await expect(getRoomRepository(ctx(admin), channelId)).resolves.toMatchObject({
+      targetBranch: 'staging',
+      authoredBy: admin.publicKey,
+    });
+  });
+
+  it('promotes a genesis-bound Room to a config binding without inventing a remote', async () => {
+    const published: NostrEvent[] = [];
+    stubRelay({ published, genesisRepo: true });
+    const updated = await setRoomTargetBranch(ctx(admin), channelId, 'staging');
+    expect(updated.source).toBe('config');
+    expect(updated.binding.remote).toBe('git://github.com/lunchboxfortwo/buzzy');
+    expect(updated.binding.key).toBe('genesis-key');
+    expect(updated.targetBranch).toBe('staging');
+  });
+
+  it('refuses a non-admin writer, and the reader ignores the event even if it lands', async () => {
+    const published: NostrEvent[] = [];
+    stubRelay({ published, genesisRepo: true, admins: [admin.publicKey] });
+
+    // Client-side: the SDK refuses to author it at all.
+    await expect(setRoomTargetBranch(ctx(member), channelId, 'staging')).rejects.toThrow(
+      'only a Room admin',
+    );
+    expect(published).toHaveLength(0);
+
+    // Reader-side: even a hand-signed non-admin event on the wire is ignored.
+    published.push(
+      signEvent(
+        {
+          pubkey: member.publicKey,
+          created_at: Math.floor(Date.now() / 1000) + 500,
+          kind: KIND_ROOM_REPOSITORY,
+          tags: [
+            ['d', `${TAG_ROOM_REPOSITORY}:${channelId}`],
+            ['h', channelId],
+            ['t', TAG_ROOM_REPOSITORY],
+          ],
+          content: JSON.stringify({
+            key: 'genesis-key',
+            name: 'buzzy',
+            remote: 'git://github.com/lunchboxfortwo/buzzy',
+            localOnly: false,
+            targetBranch: 'staging',
+          }),
+        },
+        member.secretKey,
+      ),
+    );
+    await expect(getRoomRepository(ctx(admin), channelId)).resolves.toBeNull();
+  });
+
+  it('refuses an invalid branch name and a Room with no repository', async () => {
+    const published: NostrEvent[] = [];
+    stubRelay({ published, genesisRepo: true });
+    await expect(setRoomTargetBranch(ctx(admin), channelId, 'two words')).rejects.toThrow(
+      'not a valid git branch name',
+    );
+
+    stubRelay({ published: [], genesisRepo: false });
+    await expect(setRoomTargetBranch(ctx(admin), channelId, 'staging')).rejects.toThrow(
+      'no repository linked',
+    );
   });
 });

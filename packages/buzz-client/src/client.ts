@@ -17,7 +17,12 @@ import {
   setAgentSoul,
 } from './agent.js';
 import { getAgentModelCatalog, getAgentModelConfig, setAgentModelConfig } from './agent-model-config.js';
-import { getRoomRepository, resolveRoomRepository, setRoomRepository } from './room-repository.js';
+import {
+  getRoomRepository,
+  resolveRoomRepository,
+  setRoomRepository,
+  setRoomTargetBranch,
+} from './room-repository.js';
 import { WRITE_PERMISSION_RESPONSE_TAG, type WritePermissionDecision } from './write-permission.js';
 import {
   backfillMessages,
@@ -363,6 +368,15 @@ export class BuzzClient {
     input: RoomRepositoryInput & { communityId?: string },
   ): Promise<RoomRepository> {
     return setRoomRepository(this.ctx, channelId, input);
+  }
+
+  /**
+   * Repoint the Room's target branch, carrying the current repository binding
+   * forward. Admin-only under the caller's own key — the chat-native
+   * "land to staging from now on" confirm runs through here.
+   */
+  setRoomTargetBranch(channelId: string, targetBranch: string): Promise<RoomRepository> {
+    return setRoomTargetBranch(this.ctx, channelId, targetBranch);
   }
 
   // ── Community ops ───────────────────────────────────────────────────────

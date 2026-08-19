@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -59,22 +59,24 @@ describe('pair agent auto-selection', () => {
     expect(log.text()).toBe('[buzz] using codex (auto-detected)\n');
   });
 
-  it('shows a numbered TTY menu and persists the selected detected command', async () => {
+  it('offers a picker over every detected agent and persists the selected command', async () => {
     const codex = await executables('codex', 'codex-acp');
     const goose = await executables('goose');
     const log = capture();
+    const selectAgent = vi.fn().mockResolvedValue('goose');
 
     const selected = await selectPairAgentCommand({
       env: { PATH: [codex, goose].join(delimiter) },
       interactive: true,
       output: log.output,
-      ask: async () => '2',
+      selectAgent,
     });
 
     expect(selected).toEqual({ kind: 'goose', command: resolve(goose, 'goose'), args: ['acp'] });
-    expect(log.text()).toContain(
-      "Which agent should back this repo's agent?\n  1) codex\n  2) goose\n",
-    );
+    expect(selectAgent).toHaveBeenCalledWith([
+      expect.objectContaining({ kind: 'codex', status: 'ready' }),
+      expect.objectContaining({ kind: 'goose', status: 'ready' }),
+    ]);
     expect(log.text()).toContain('[buzz] using goose (selected)');
   });
 
@@ -94,19 +96,23 @@ describe('pair agent auto-selection', () => {
     const directory = await executables('claude', 'goose');
     const log = capture();
     const installs: Array<{ command: string; args: string[] }> = [];
+    const selectAgent = vi.fn().mockResolvedValue('claude');
 
     const selected = await selectPairAgentCommand({
       env: { PATH: directory },
       interactive: true,
       output: log.output,
-      ask: async () => '1',
+      selectAgent,
       install: async (command) => {
         installs.push(command);
         await addExecutable(directory, 'claude-agent-acp');
       },
     });
 
-    expect(log.text()).toContain('1) claude (adapter not installed — install now?)\n  2) goose');
+    expect(selectAgent).toHaveBeenCalledWith([
+      expect.objectContaining({ kind: 'claude', status: 'missing-adapter' }),
+      expect.objectContaining({ kind: 'goose', status: 'ready' }),
+    ]);
     expect(installs).toEqual([
       {
         command: 'npm',
@@ -140,22 +146,43 @@ describe('pair agent auto-selection', () => {
     async ({ kind, binary, adapter, packageName }) => {
       const directory = await executables(binary);
       const installs: Array<{ command: string; args: string[] }> = [];
+      const confirmInstall = vi.fn().mockResolvedValue(true);
 
       const selected = await selectPairAgentCommand({
         explicitKind: kind,
         env: { PATH: directory },
         interactive: true,
-        ask: async () => 'yes',
+        confirmInstall,
         install: async (command) => {
           installs.push(command);
           await addExecutable(directory, adapter);
         },
       });
 
+      expect(confirmInstall).toHaveBeenCalledWith(expect.stringContaining('Install now?'));
       expect(installs).toEqual([{ command: 'npm', args: ['install', '-g', packageName] }]);
       expect(selected).toEqual({ kind, command: resolve(directory, adapter), args: [] });
     },
   );
+
+  it('declines an explicit preset install when confirmInstall resolves false', async () => {
+    const directory = await executables('pi');
+    let installed = false;
+
+    await expect(
+      selectPairAgentCommand({
+        explicitKind: 'pi',
+        env: { PATH: directory },
+        interactive: true,
+        confirmInstall: async () => false,
+        install: async () => {
+          installed = true;
+        },
+      }),
+    ).rejects.toThrow(/pi adapter not installed/);
+
+    expect(installed).toBe(false);
+  });
 
   it('prints the manual command and does not install an explicit preset without a TTY', async () => {
     const directory = await executables('pi');
@@ -222,19 +249,21 @@ describe('pair agent auto-selection', () => {
   it('reports install failure with the manual command and lets another menu choice proceed', async () => {
     const directory = await executables('claude', 'goose');
     const log = capture();
-    const answers = ['1', '2'];
+    const picks = ['claude', 'goose'];
+    const selectAgent = vi.fn().mockImplementation(async () => picks.shift());
 
     const selected = await selectPairAgentCommand({
       env: { PATH: directory },
       interactive: true,
       output: log.output,
-      ask: async () => answers.shift()!,
+      selectAgent,
       install: async () => {
         throw new Error('permission denied');
       },
     });
 
     expect(selected.kind).toBe('goose');
+    expect(selectAgent).toHaveBeenCalledTimes(2);
     expect(log.text()).toContain('could not install the claude adapter: permission denied');
     expect(log.text()).toContain(
       'install it with: npm install -g @agentclientprotocol/claude-agent-acp',
@@ -244,20 +273,17 @@ describe('pair agent auto-selection', () => {
 
   it('lets an explicit preset bypass detection and prompting', async () => {
     const reference = await executables('buzz-agent');
-    let asked = false;
+    const selectAgent = vi.fn();
 
     const selected = await selectPairAgentCommand({
       explicitKind: 'reference',
       env: { PATH: reference },
       interactive: true,
-      ask: async () => {
-        asked = true;
-        return '1';
-      },
+      selectAgent,
     });
 
     expect(selected.kind).toBe('reference');
-    expect(asked).toBe(false);
+    expect(selectAgent).not.toHaveBeenCalled();
   });
 
   it('keeps an explicit custom ACP command working without detection', async () => {
@@ -275,5 +301,40 @@ describe('pair agent auto-selection', () => {
       command: resolve(directory, 'my-acp'),
       args: ['serve', '--stdio'],
     });
+  });
+});
+
+describe('pair agent selection — clack cancel handling', () => {
+  it('exits cleanly (no throw past the caller, no stack trace) when the agent picker is cancelled', async () => {
+    vi.resetModules();
+    vi.doMock('@clack/prompts', () => ({
+      select: vi.fn().mockResolvedValue(Symbol('clack.cancel')),
+      confirm: vi.fn(),
+      isCancel: (value: unknown) => typeof value === 'symbol',
+      cancel: vi.fn(),
+    }));
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+
+    try {
+      const { selectPairAgentCommand: selectWithMockedClack } = await import(
+        './pair-agent-selection.js'
+      );
+      const codex = await executables('codex', 'codex-acp');
+      const goose = await executables('goose');
+
+      await expect(
+        selectWithMockedClack({
+          env: { PATH: [codex, goose].join(delimiter) },
+          interactive: true,
+        }),
+      ).rejects.toThrow('process.exit(1)');
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    } finally {
+      exitSpy.mockRestore();
+      vi.doUnmock('@clack/prompts');
+      vi.resetModules();
+    }
   });
 });

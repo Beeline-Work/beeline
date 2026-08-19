@@ -441,6 +441,52 @@ export function assertSubchannelArchiveTarget(
   }
 }
 
+/**
+ * A corner this daemon knows exists but holds no live session for: its
+ * worktree was gone at restart, its approved repository could not be
+ * re-resolved, or its ACP session refused to come back. `restoreSubchannels`
+ * used to just log a card and `continue`, which left the corner in no map at
+ * all — and because `#t=buzz-corner-close` is only ever consumed by
+ * `pollMembers`, and `pollMembers` only ever visits `this.subchannels`, every
+ * press of the human "close corner" control was then a silent no-op forever.
+ * These entries are what the sessionless close path in `pollAbandonedCornerCloses`
+ * polls, so closing a dead corner is a daemon action rather than an agent turn.
+ */
+export type AbandonedCorner = {
+  subchannelId: string;
+  parentChannelId: string;
+  /** Why no live session exists, quoted back on the archive card. */
+  reason: string;
+  boundRepo?: BoundRepo;
+  featureBranch?: string;
+  /** Best known on-disk location, when one was derivable. */
+  worktreePath?: string;
+};
+
+/**
+ * The sessionless twin of `assertSubchannelArchiveTarget`. With no live
+ * session to cross-check, authority comes entirely from the relay: the
+ * immutable kind:9007 create event must name a distinct parent, and that
+ * parent must be the Room this Body actually serves. A Workspace or top-level
+ * Room has no parent link and can never pass.
+ */
+export function assertRelayCornerArchiveTarget(
+  subchannelId: string,
+  relayParentChannelId: string | null,
+  expectedParentChannelId: string,
+): void {
+  if (
+    !relayParentChannelId ||
+    relayParentChannelId === subchannelId ||
+    relayParentChannelId !== expectedParentChannelId
+  ) {
+    throw new Error(
+      `refusing to archive non-corner channel ${subchannelId}: ` +
+        `relayParent=${relayParentChannelId ?? 'none'} expectedParent=${expectedParentChannelId}`,
+    );
+  }
+}
+
 export interface BoundRepo {
   /** Relay repository owner, when origin is a Buzz smart-HTTP remote. */
   ownerHex?: string;
@@ -1019,6 +1065,16 @@ export class Body {
    *  overlapping maintenance ticks must not both run its relay publishes at
    *  once for the same corner. */
   private archivingSubchannels = new Set<string>();
+  /**
+   * Corners with no live session, keyed by subchannel id — see
+   * `AbandonedCorner`. `pollAbandonedCornerCloses` is the only reader; an
+   * entry leaves the map the moment its corner is archived (or is found
+   * already archived on the relay).
+   */
+  private abandonedCorners = new Map<string, AbandonedCorner>();
+  /** Close-request scan cursor per abandoned corner, so a quiet corner costs
+   *  one bounded `since`-filtered read per maintenance tick and no more. */
+  private abandonedCornerScanAt = new Map<string, number>();
   private requestCursors = new Map<string, number>();
   /** Throttle for the periodic stray-corner-worktree prune (per Body). */
   private lastWorktreePruneAt = 0;
@@ -1652,7 +1708,18 @@ export class Body {
           .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
           .find((event) => tagValue(event, 'feature') && tagValue(event, 'parent'));
         const featureBranch = control ? tagValue(control, 'feature') : undefined;
-        if (!featureBranch) continue;
+        if (!featureBranch) {
+          // Nothing on the relay says which branch this corner owns, so it can
+          // never be restored — but it is still an open corner a human can ask
+          // to close, so it must remain reachable by the sessionless path.
+          this.markCornerAbandoned({
+            subchannelId,
+            parentChannelId,
+            reason: 'no restorable corner state was found for it',
+            ...(boundRepo ? { boundRepo } : {}),
+          });
+          continue;
+        }
         let cornerRepo = boundRepo;
         if (!cornerRepo) {
           const repository = control ? tagValue(control, 'repo') : undefined;
@@ -1669,6 +1736,12 @@ export class Body {
               // itself is what failed — beyond the raw target string.
               [['status', 'failed'], ...(repository ? [['repo', repository]] : [])],
             ).catch(() => undefined);
+            this.markCornerAbandoned({
+              subchannelId,
+              parentChannelId,
+              reason: 'its approved repository could not be re-resolved after a restart',
+              ...(featureBranch ? { featureBranch } : {}),
+            });
             continue;
           }
         }
@@ -1691,89 +1764,137 @@ export class Body {
               ['branch', cornerRepo.targetBranch ?? 'refs/heads/main'],
             ],
           ).catch(() => undefined);
+          this.markCornerAbandoned({
+            subchannelId,
+            parentChannelId,
+            reason: 'its worktree was missing after a restart',
+            boundRepo: cornerRepo,
+            featureBranch,
+            worktreePath,
+          });
           continue;
         }
         this.primeCodegraphIndex(worktreePath);
-        const restoredMcpServers: McpServerWire[] = [
-          { name: 'buzz-dev-mcp', command: this.config.mcpBinary, args: [], env: [] },
-        ];
-        const restoredCodegraphServer = codegraphMcpServer(this.config);
-        if (restoredCodegraphServer) restoredMcpServers.push(restoredCodegraphServer);
-        const session = await this.createManagedSession({
-          channelId: subchannelId,
-          mode: 'edit',
-          cwd: worktreePath,
-          mcpServers: restoredMcpServers,
-          systemPrompt: [
-            'You are a coding agent resuming one durable corner after a supervisor restart.',
-            `You are working in a git worktree: ${worktreePath}`,
-            `Your feature branch is: ${featureBranch}`,
-            'Continue the restored transcript on this branch. Never start a second context.',
-            'Never merge, push or change the target branch, or archive this corner; only a signed human approval may authorize those effects.',
-            'A tool or skill can be unavailable or fail to initialize (for example codegraph before its index is ready). Treat that as a normal recoverable error for that one call and continue the task with what you have; never abort the task because a single tool or skill is missing.',
-            'You may call any skill available to you, but only when the current task explicitly calls for it or names it directly. Never auto-trigger a skill (e.g. a design/UX review skill) on routine or trivial work.',
-          ].join('\n'),
-          autoApprovePermissions: true,
-          permissionHandler: this.cornerPermissionHandler(worktreePath, cornerRepo.localPath),
-          parentChannelId,
-          worktreePath,
-          featureBranch,
-          ...(communityId ? { communityId } : {}),
-        });
-        const cursor = await this.durableState.cursor(subchannelId);
-        const requestId = control ? tagValue(control, 'request') : undefined;
-        const requestEvent = requestId
-          ? parentEvents.find((event) => event.id === requestId)
-          : undefined;
-        const request = requestEvent
-          ? {
-              eventId: requestEvent.id,
-              authorPubkey: requestEvent.pubkey,
-              content: requestEvent.content.trim(),
-              attachments: parseAttachmentTags(requestEvent.tags),
-              createdAt: requestEvent.created_at,
-            }
-          : undefined;
-        const ready = [...events]
-          .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))
-          .find((event) =>
-            event.tags.some(
-              (tag) => tag[0] === 't' && (tag[1] === MERGE_READY_TAG || tag[1] === LANDED_TAG),
-            ),
-          );
-        const tip = ready ? tagValue(ready, 'tip') : undefined;
-        const info: SubchannelInfo = {
-          subchannelId,
-          worktreePath,
-          featureBranch,
-          role: this.agentIdentity,
-          session,
-          lastPolledAt: cursor.createdAt,
-          archived: false,
-          boundRepo: cornerRepo,
-          ...(request ? { request } : {}),
-          ...(tip
+        // A corner whose ACP session refuses to come back must not abort the
+        // restore of every corner behind it in this loop, and must stay
+        // reachable by the sessionless close path — a dead session is exactly
+        // one of the states a human presses "close corner" to get out of.
+        try {
+          const restoredMcpServers: McpServerWire[] = [
+            { name: 'buzz-dev-mcp', command: this.config.mcpBinary, args: [], env: [] },
+          ];
+          const restoredCodegraphServer = codegraphMcpServer(this.config);
+          if (restoredCodegraphServer) restoredMcpServers.push(restoredCodegraphServer);
+          const session = await this.createManagedSession({
+            channelId: subchannelId,
+            mode: 'edit',
+            cwd: worktreePath,
+            mcpServers: restoredMcpServers,
+            systemPrompt: [
+              'You are a coding agent resuming one durable corner after a supervisor restart.',
+              `You are working in a git worktree: ${worktreePath}`,
+              `Your feature branch is: ${featureBranch}`,
+              'Continue the restored transcript on this branch. Never start a second context.',
+              'Never merge, push or change the target branch, or archive this corner; only a signed human approval may authorize those effects.',
+              'A tool or skill can be unavailable or fail to initialize (for example codegraph before its index is ready). Treat that as a normal recoverable error for that one call and continue the task with what you have; never abort the task because a single tool or skill is missing.',
+              'You may call any skill available to you, but only when the current task explicitly calls for it or names it directly. Never auto-trigger a skill (e.g. a design/UX review skill) on routine or trivial work.',
+            ].join('\n'),
+            autoApprovePermissions: true,
+            permissionHandler: this.cornerPermissionHandler(worktreePath, cornerRepo.localPath),
+            parentChannelId,
+            worktreePath,
+            featureBranch,
+            ...(communityId ? { communityId } : {}),
+          });
+          const cursor = await this.durableState.cursor(subchannelId);
+          const requestId = control ? tagValue(control, 'request') : undefined;
+          const requestEvent = requestId
+            ? parentEvents.find((event) => event.id === requestId)
+            : undefined;
+          const request = requestEvent
             ? {
-                mergeTarget: {
-                  repo: tagValue(ready!, 'repo') ?? this.repoId(cornerRepo),
-                  branch:
-                    tagValue(ready!, 'branch') ?? cornerRepo.targetBranch ?? 'refs/heads/main',
-                  tip,
-                },
+                eventId: requestEvent.id,
+                authorPubkey: requestEvent.pubkey,
+                content: requestEvent.content.trim(),
+                attachments: parseAttachmentTags(requestEvent.tags),
+                createdAt: requestEvent.created_at,
               }
-            : {}),
-        };
-        session.lastPolledAt = cursor.createdAt;
-        this.registerSubchannel(info);
-        if (request && !tip)
-          this.startAgentTask(
-            info,
-            attachmentPrompt(request.authorPubkey, request.content, request.attachments ?? []),
-          );
+            : undefined;
+          const ready = [...events]
+            .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))
+            .find((event) =>
+              event.tags.some(
+                (tag) => tag[0] === 't' && (tag[1] === MERGE_READY_TAG || tag[1] === LANDED_TAG),
+              ),
+            );
+          const tip = ready ? tagValue(ready, 'tip') : undefined;
+          const info: SubchannelInfo = {
+            subchannelId,
+            worktreePath,
+            featureBranch,
+            role: this.agentIdentity,
+            session,
+            lastPolledAt: cursor.createdAt,
+            archived: false,
+            boundRepo: cornerRepo,
+            ...(request ? { request } : {}),
+            ...(tip
+              ? {
+                  mergeTarget: {
+                    repo: tagValue(ready!, 'repo') ?? this.repoId(cornerRepo),
+                    branch:
+                      tagValue(ready!, 'branch') ?? cornerRepo.targetBranch ?? 'refs/heads/main',
+                    tip,
+                  },
+                }
+              : {}),
+          };
+          session.lastPolledAt = cursor.createdAt;
+          this.registerSubchannel(info);
+          this.abandonedCorners.delete(subchannelId);
+          if (request && !tip)
+            this.startAgentTask(
+              info,
+              attachmentPrompt(request.authorPubkey, request.content, request.attachments ?? []),
+            );
+        } catch (restoreError) {
+          console.error(`[body] could not restore corner ${subchannelId}:`, restoreError);
+          await postControlMessage(
+            subchannelId,
+            this.agentIdentity,
+            summarizeGitFailure(
+              `Agent restart could not restore this corner's session: ${String(restoreError)}`,
+            ),
+            [['status', 'failed']],
+          ).catch(() => undefined);
+          this.markCornerAbandoned({
+            subchannelId,
+            parentChannelId,
+            reason: 'its agent session could not be restarted',
+            boundRepo: cornerRepo,
+            featureBranch,
+            worktreePath,
+          });
+        }
       }
     } finally {
       client.disconnect();
     }
+  }
+
+  /**
+   * Record a corner this daemon cannot serve, so the sessionless close path
+   * can still reach it. Never overwrites a live corner's registration: if a
+   * later restore succeeds, `restoreSubchannels` drops the entry.
+   */
+  private markCornerAbandoned(entry: AbandonedCorner): void {
+    if (this.subchannels.has(entry.subchannelId)) return;
+    this.abandonedCorners.set(entry.subchannelId, entry);
+  }
+
+  /** Corners with no live session (test/introspection access). */
+  getAbandonedCorners(): ReadonlyMap<string, AbandonedCorner> {
+    return this.abandonedCorners;
   }
 
   /**
@@ -4172,6 +4293,11 @@ export class Body {
       const failed = results.find((result) => result.status === 'rejected');
       if (failed?.status === 'rejected') throw failed.reason;
     });
+    // A corner with no live session has no member poll of its own, so this is
+    // the only place its human close request is ever consumed.
+    await guarded('abandoned corner close watch', () =>
+      this.pollAbandonedCornerCloses(channelId),
+    );
     if (mergeGate) {
       await guarded('merge gate poll', async () => {
         const attempts = await mergeGate.poll();
@@ -4536,6 +4662,14 @@ export class Body {
     try {
       const info = this.subchannels.get(subchannelId);
       if (!info) {
+        // No live session — but a corner this daemon could not restore is
+        // exactly the one a human is most likely to be closing. Close it as a
+        // daemon action rather than reporting "not found" and doing nothing.
+        const abandoned = this.abandonedCorners.get(subchannelId);
+        if (abandoned) {
+          await this.closeAbandonedCorner(abandoned);
+          return;
+        }
         throw new Error(`Subchannel ${subchannelId} not found`);
       }
 
@@ -4555,16 +4689,25 @@ export class Body {
       info.archived = true;
       info.session.archived = true;
 
-      // Cancel the ACP session.
-      session.client.sessionCancel(session.sessionId);
-
-      // Stop activity projection.
-      if (session.unsubscribeActivity) {
-        session.unsubscribeActivity();
+      // Cancel and stop the ACP session. Every step here is best-effort: the
+      // point of a close is that this session ends, so a wedged or already
+      // dead backend must not be able to keep the corner open forever by
+      // throwing out of the teardown before any relay publish happens.
+      try {
+        session.client.sessionCancel(session.sessionId);
+      } catch (error) {
+        console.error(`[body] archive ${subchannelId}: session cancel failed; continuing:`, error);
       }
-
-      // Stop the client.
-      await session.client.stop();
+      try {
+        session.unsubscribeActivity?.();
+      } catch (error) {
+        console.error(`[body] archive ${subchannelId}: activity teardown failed; continuing:`, error);
+      }
+      try {
+        await session.client.stop();
+      } catch (error) {
+        console.error(`[body] archive ${subchannelId}: session stop failed; continuing:`, error);
+      }
 
       // Post status messages BEFORE archiving (relay rejects events on archived channels).
       const parentId = session.parentChannelId;
@@ -4610,9 +4753,169 @@ export class Body {
       // Remove from active state.
       this.sessions.delete(subchannelId);
       this.subchannels.delete(subchannelId);
+      this.abandonedCorners.delete(subchannelId);
+      this.abandonedCornerScanAt.delete(subchannelId);
     } finally {
       this.archivingSubchannels.delete(subchannelId);
     }
+  }
+
+  /**
+   * Watch for a human close request on every corner this Room cannot serve.
+   *
+   * `#t=buzz-corner-close` is consumed by `pollMembers`, which only ever
+   * visits `this.subchannels` — so a corner that failed to restore consumed
+   * nothing, and each press of the close control only ever added its literal
+   * message text to the transcript. This is the missing consumer: one bounded
+   * `since`-filtered read per abandoned corner per maintenance tick, closing
+   * the corner at the daemon level with no session and no agent turn involved.
+   */
+  private async pollAbandonedCornerCloses(parentChannelId: string): Promise<void> {
+    const entries = [...this.abandonedCorners.values()].filter(
+      (entry) => entry.parentChannelId === parentChannelId,
+    );
+    if (entries.length === 0) return;
+    for (const entry of entries) {
+      const { subchannelId } = entry;
+      if (this.archivingSubchannels.has(subchannelId)) continue;
+      const cursor = await this.durableState.cursor(subchannelId);
+      const since = Math.max(this.abandonedCornerScanAt.get(subchannelId) ?? 0, cursor.createdAt);
+      let events: NostrEvent[];
+      try {
+        events = await queryEventBacklog(
+          { kinds: [9], '#h': [subchannelId], since },
+          { query: this.agentRelay.queryEvents },
+        );
+      } catch (error) {
+        console.error(`[body] abandoned corner ${subchannelId} close scan failed:`, error);
+        continue;
+      }
+      // Structurally the same gate `pollMembers` applies to a live corner: an
+      // agent never closes its own corner, only a human in the channel can.
+      const close = events.find(
+        (event) =>
+          event.pubkey !== this.agentIdentity.publicKey &&
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === CORNER_CLOSE_TAG),
+      );
+      // Only advance the scan cursor when nothing needs acting on: a close we
+      // fail to complete must be seen again on the next tick.
+      if (!close) {
+        const newest = events.reduce((max, event) => Math.max(max, event.created_at), since);
+        this.abandonedCornerScanAt.set(subchannelId, newest);
+        continue;
+      }
+      // Enqueue before acting so `delivered`/`failed` below are real durable
+      // bookkeeping rather than no-ops: both ignore an event the inbox has
+      // never seen.
+      await this.durableState.enqueue(subchannelId, [close]);
+      try {
+        await this.closeAbandonedCorner(entry);
+        await this.durableState.delivered(subchannelId, close.id);
+      } catch (error) {
+        await this.durableState.failed(subchannelId, close.id, error);
+        console.error(`[body] abandoned corner ${subchannelId} close failed; will retry:`, error);
+      }
+    }
+  }
+
+  /**
+   * Close a corner that has no live session: terminate nothing (there is
+   * nothing left to terminate), tell the parent Room so its pinned
+   * corner-status card goes terminal, mark the corner archived on the relay,
+   * and reap whatever is left of its worktree.
+   *
+   * Authority is entirely relay-derived here (`assertRelayCornerArchiveTarget`,
+   * plus `archiveChannel`'s own independent kind:9007 parent-link check), since
+   * there is no in-memory session to cross-check against.
+   */
+  private async closeAbandonedCorner(entry: AbandonedCorner): Promise<void> {
+    const { subchannelId, parentChannelId } = entry;
+    if (this.archivingSubchannels.has(subchannelId)) return;
+    this.archivingSubchannels.add(subchannelId);
+    try {
+      const relayParentChannelId = await getParentChannelId(
+        this.agentClientContext(),
+        subchannelId,
+      );
+      assertRelayCornerArchiveTarget(subchannelId, relayParentChannelId, parentChannelId);
+
+      const durableSummary = await this.durableState.latestAgentMessage(subchannelId);
+      const disposition = this.describeAbandonedCornerWork(entry);
+      const archiveSummary = [
+        cornerArchiveSummary(undefined, durableSummary),
+        `Closed without a live agent session because ${entry.reason}.`,
+        disposition,
+      ]
+        .filter((line): line is string => Boolean(line))
+        .join('\n');
+
+      await postControlMessage(parentChannelId, this.agentIdentity, archiveSummary, [
+        ['subchannel', subchannelId],
+        ['status', 'archived'],
+      ]);
+      await postControlMessage(subchannelId, this.agentIdentity, archiveSummary, [
+        ['status', 'archived'],
+      ]);
+      await archiveChannel(this.agentIdentity, subchannelId);
+
+      // Last, and only once the relay durably knows this corner is closed —
+      // same ordering rule `archiveSubchannel` follows, so a failure above
+      // always leaves something on disk for a later attempt to find.
+      for (const path of this.abandonedCornerWorktreePaths(entry)) {
+        await this.removeWorktree(
+          subchannelId,
+          path,
+          entry.featureBranch ?? '',
+          entry.boundRepo,
+        ).catch((error) =>
+          console.error(`[body] abandoned corner ${subchannelId} worktree reap failed:`, error),
+        );
+      }
+      this.abandonedCorners.delete(subchannelId);
+      this.abandonedCornerScanAt.delete(subchannelId);
+    } finally {
+      this.archivingSubchannels.delete(subchannelId);
+    }
+  }
+
+  /** Every on-disk location this corner's worktree could occupy (current
+   *  isolated layout and the legacy buried one), deduped. */
+  private abandonedCornerWorktreePaths(entry: AbandonedCorner): string[] {
+    const paths = new Set<string>();
+    if (entry.worktreePath) paths.add(entry.worktreePath);
+    if (entry.boundRepo) paths.add(this.cornerWorktreePath(entry.boundRepo, entry.subchannelId));
+    paths.add(legacyCornerWorktreePath(this.config.workspaceRoot, entry.subchannelId));
+    return [...paths];
+  }
+
+  /**
+   * Say plainly what a close does and does not destroy, so it is never a
+   * silent discard. Closing removes the corner's worktree but never its
+   * branch, so committed work always survives and only uncommitted edits in
+   * a still-present worktree are lost — name the branch that still holds the
+   * commits, and say so when there are edits going with the worktree.
+   */
+  private describeAbandonedCornerWork(entry: AbandonedCorner): string | undefined {
+    const branch = entry.featureBranch;
+    if (!branch) return undefined;
+    const gitDir = entry.boundRepo?.localPath;
+    const branchExists =
+      gitDir && git(gitDir, ['rev-parse', '--verify', `refs/heads/${branch}`]).ok;
+    // Only a path that is genuinely its own worktree root may be reported on:
+    // `git status` in a leftover non-worktree directory walks up to whatever
+    // repository encloses it and would report that repository's dirt as this
+    // corner's discarded edits.
+    const dirtyPath = this.abandonedCornerWorktreePaths(entry).find((path) => {
+      if (!existsSync(path)) return false;
+      const toplevel = git(path, ['rev-parse', '--show-toplevel']);
+      return toplevel.ok && resolve(toplevel.stdout.trim()) === resolve(path);
+    });
+    const dirty = dirtyPath ? git(dirtyPath, ['status', '--porcelain']).stdout.trim() : '';
+    if (!branchExists && !dirty) return undefined;
+    const lines: string[] = [];
+    if (branchExists) lines.push(`Committed work is kept on branch ${branch}; it was not deleted.`);
+    if (dirty) lines.push('Uncommitted edits in the corner worktree were discarded with it.');
+    return lines.join(' ');
   }
 
   /** Ensure the agent is a member of the channel, returns current role. */

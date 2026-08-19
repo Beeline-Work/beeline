@@ -172,6 +172,7 @@ export {
   getChannelMetadata,
   listSubchannels,
   getParentChannelId,
+  getChannelCreator,
   getChannelCommunityId,
   getChannelRepositoryBinding,
   sendMessage,

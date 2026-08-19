@@ -18,7 +18,7 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => ({
   createBuzzClient: mocks.createBuzzClient,
 }));
 
-import { WorkspaceSupervisor } from './supervisor.js';
+import { DEFAULT_ROOM_DISCOVERY_RETRY_MS, WorkspaceSupervisor } from './supervisor.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -742,5 +742,113 @@ describe('WorkspaceSupervisor room owns the repo (Stage 1)', () => {
     expect(resolveSpy).toHaveBeenCalledTimes(2);
 
     vi.unstubAllGlobals();
+  });
+});
+
+describe('WorkspaceSupervisor per-Room discovery isolation', () => {
+  function runtimeNoRooms(name: string): AgentRuntimeRecord {
+    const agent = storedIdentity(name);
+    const body = storedIdentity(`${name}-body`);
+    return {
+      version: 2,
+      communityId: '11111111-1111-4111-8111-111111111111',
+      pairedBy: 'a'.repeat(64),
+      agent: agent.stored,
+      body: body.stored,
+      rooms: [],
+      supervisorRoot: '/tmp/beeline-discovery-test',
+      relayBaseUrl: 'http://relay.test',
+      agentBinary: '/bin/true',
+      mcpBinary: '/bin/true',
+      createdAt: new Date(0).toISOString(),
+    };
+  }
+
+  /**
+   * One unservable Room (bound to a local-only repository that lives on
+   * another checkout — a legitimate durable state, not a relay hiccup) used to
+   * throw straight out of `reconcile()`. That aborted the whole pass: every
+   * Room behind it in the join loop never started, and `run()` re-ran
+   * discovery on its 5s error backoff forever, one log line per pass.
+   */
+  function discoveryClient(runtime: AgentRuntimeRecord) {
+    return {
+      isMember: vi.fn().mockResolvedValue(true),
+      listMyChannels: vi.fn().mockResolvedValue([
+        { channelId: 'unservable-room', event: { created_at: 20 } },
+        { channelId: 'good-dm', event: { created_at: 21 } },
+        { channelId: 'good-room', event: { created_at: 22 } },
+      ]),
+      getChannelCommunityId: vi.fn().mockResolvedValue(runtime.communityId),
+      getParentChannelId: vi.fn().mockResolvedValue(null),
+      resolveRoomRepository: vi.fn(async (channelId: string) =>
+        channelId === 'unservable-room'
+          ? { binding: { name: 'elsewhere', key: 'elsewhere', localOnly: true } }
+          : null,
+      ),
+      getChannelRepositoryBinding: vi.fn().mockResolvedValue(null),
+      getDirectMessage: vi.fn(async (channelId: string) =>
+        channelId === 'good-dm'
+          ? { participants: [runtime.agent.publicKey, 'b'.repeat(64)] }
+          : null,
+      ),
+      disconnect: vi.fn(),
+    };
+  }
+
+  it('skips one unservable Room and still joins every other invited Room', async () => {
+    const runtime = runtimeNoRooms('discovery-agent');
+    mocks.createBuzzClient.mockReturnValue(discoveryClient(runtime));
+    const supervisor = new WorkspaceSupervisor(
+      runtime,
+      `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+    );
+    const startConversation = vi
+      .spyOn(supervisor as never, 'startConversationRoom' as never)
+      .mockImplementation(() => undefined as never);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    // The pass completes rather than throwing...
+    await expect(supervisor.reconcile()).resolves.toBe(true);
+
+    // ...and the two Rooms listed *after* the unservable one are still served.
+    expect(startConversation).toHaveBeenCalledWith('good-dm', 'direct-message');
+    expect(startConversation).toHaveBeenCalledWith('good-room', 'named-repository');
+  });
+
+  it('logs the unservable Room once and retries it on a long cadence, not every pass', async () => {
+    const runtime = runtimeNoRooms('discovery-log-agent');
+    mocks.createBuzzClient.mockReturnValue(discoveryClient(runtime));
+    let now = 1_000_000;
+    const supervisor = new WorkspaceSupervisor(
+      runtime,
+      `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+      { now: () => now },
+    );
+    vi.spyOn(supervisor as never, 'startConversationRoom' as never).mockImplementation(
+      () => undefined as never,
+    );
+    const materialize = vi.spyOn(supervisor as never, 'materializeRoom' as never);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await supervisor.reconcile();
+    await supervisor.reconcile();
+    await supervisor.reconcile();
+
+    const unservableLogs = errors.mock.calls.filter((call) =>
+      String(call[0]).includes('unservable-room'),
+    );
+    expect(unservableLogs).toHaveLength(1);
+    expect(String(unservableLogs[0]![0])).toContain('could not be joined');
+    // Parked, not re-attempted on every pass.
+    expect(materialize).toHaveBeenCalledTimes(1);
+
+    // Past the retry cadence it is tried again — an operator who fixes the
+    // underlying cause is still picked up, just not by polling every 5s.
+    now += DEFAULT_ROOM_DISCOVERY_RETRY_MS + 1;
+    await supervisor.reconcile();
+    expect(materialize).toHaveBeenCalledTimes(2);
   });
 });

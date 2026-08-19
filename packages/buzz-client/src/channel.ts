@@ -773,6 +773,30 @@ export async function getParentChannelId(
   return null;
 }
 
+/**
+ * Pubkey that signed a channel's immutable kind:9007 create event.
+ *
+ * This is the identity the relay authorizes a channel's lifecycle commands
+ * against (kind:9002 archive in particular). A corner is created and signed by
+ * exactly ONE agent, while `listSubchannels` lists every child of a Room
+ * regardless of who opened it — so a daemon that discovers a corner must read
+ * this before taking any lifecycle action on it.
+ *
+ * `null` means the create event is not readable, which is deliberately a
+ * different answer from "someone else created it": a caller must not treat an
+ * unreadable create event as proof of foreign ownership.
+ */
+export async function getChannelCreator(
+  ctx: ChannelOpsContext,
+  channelId: string,
+): Promise<string | null> {
+  const events = await query(ctx, [{ kinds: [KIND_CREATE_GROUP], '#h': [channelId], limit: 5 }]);
+  const create = events
+    .filter((event) => tagValue(event, 'h') === channelId)
+    .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))[0];
+  return create?.pubkey ?? null;
+}
+
 /** Resolve a channel's community UUID from its kind:9007 create event. */
 export async function getChannelCommunityId(
   ctx: ChannelOpsContext,

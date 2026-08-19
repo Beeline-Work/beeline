@@ -92,6 +92,7 @@ import {
   listMembers,
   listPersonProfiles,
   getParentChannelId,
+  getChannelCreator,
   tagValue,
   waitUntilMember,
   summarizeGitFailure,
@@ -851,6 +852,49 @@ export function isRepositoryMutationRequest(content: string): boolean {
   ).test(normalized);
 }
 
+/**
+ * A relay refusal the exact same signed event can never overcome.
+ *
+ * `publishEvent` (`packages/buzz-client/src/http.ts`) already retries 5xx and
+ * transport failures internally, so anything that surfaces to a caller as an
+ * HTTP 4xx is the relay's verdict on the event *itself* — a signed Nostr event
+ * has a stable id, so re-sending it is guaranteed to be refused again. 408 and
+ * 429 are the two 4xx codes that genuinely mean "later", so they stay
+ * retryable.
+ */
+export function isNonRetryableRelayError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/\bHTTP\s+(?:408|429)\b/.test(message)) return false;
+  return /\bHTTP\s+4\d\d\b/.test(message);
+}
+
+/**
+ * Retry spacing for a sessionless corner close that failed transiently. A
+ * permanently refused close is parked outright rather than spaced out — see
+ * `Body.noteAbandonedCornerCloseFailure`.
+ */
+export const ABANDONED_CORNER_CLOSE_RETRY_BASE_MS = 60_000;
+export const ABANDONED_CORNER_CLOSE_RETRY_CAP_MS = 15 * 60_000;
+
+/**
+ * What a parked close says in the corner. Plain language only: the relay's own
+ * refusal text is transport plumbing and never reaches a transcript.
+ */
+export const ABANDONED_CORNER_CLOSE_REFUSED =
+  'Could not close this corner: the relay refused this agent\u2019s archive command, and a ' +
+  'retry cannot change that answer, so no further attempts will be made. Nothing was ' +
+  'discarded — any committed work on the corner\u2019s branch is untouched. A Room admin, or ' +
+  'the agent that opened this corner, can close it.';
+
+export function abandonedCornerCloseRetryDelayMs(attempt: number, error?: unknown): number {
+  const exponentialMs = Math.min(
+    ABANDONED_CORNER_CLOSE_RETRY_CAP_MS,
+    ABANDONED_CORNER_CLOSE_RETRY_BASE_MS * 2 ** Math.max(0, attempt - 1),
+  );
+  // An explicit quota instruction always wins over our own steady-state floor.
+  return Math.max(exponentialMs, relayRetryAfterMs(error));
+}
+
 export function isTransientPermissionPollError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /(?:HTTP\s+(?:429|5\d\d)\b|fetch failed|ECONNRESET|ETIMEDOUT|socket hang up)/i.test(
@@ -1095,6 +1139,18 @@ export class Body {
   /** Close-request scan cursor per abandoned corner, so a quiet corner costs
    *  one bounded `since`-filtered read per maintenance tick and no more. */
   private abandonedCornerScanAt = new Map<string, number>();
+  /**
+   * Backoff/park state for a sessionless close that failed, keyed by
+   * subchannel id. A relay 4xx is a verdict on the exact signed event, so it
+   * parks (`retryAt` = Infinity) instead of being re-published on every
+   * maintenance tick forever; anything else backs off exponentially.
+   * `loggedMessage` de-dupes the console line so one wedged corner cannot
+   * bury every other log line at the maintenance cadence.
+   */
+  private abandonedCornerCloseRetry = new Map<
+    string,
+    { retryAt: number; attempts: number; loggedMessage?: string }
+  >();
   /**
    * Same synchronous claim/release shape again, for `pollMembers`. The WS
    * maintenance timer fires `pollRoomMaintenance` without awaiting the prior
@@ -1830,6 +1886,15 @@ export class Body {
       for (const subchannelId of ids) {
         if (this.subchannels.has(subchannelId)) continue;
         if ((await client.getChannelMetadata(subchannelId))?.archived) continue;
+        // `listSubchannels` lists every child of the Room, whoever opened it.
+        // In a multi-agent Room that includes corners another agent created
+        // and whose own daemon owns their lifecycle. The relay authorizes a
+        // corner's kind:9002 archive against its kind:9007 creator, so
+        // adopting a foreign corner here can only ever produce an un-closable
+        // "abandoned" entry whose every close attempt is refused 400. An
+        // unreadable create event is not an answer, so it keeps the old path.
+        const creatorPubkey = await getChannelCreator(this.agentClientContext(), subchannelId);
+        if (creatorPubkey && creatorPubkey !== this.agentIdentity.publicKey) continue;
         const events = await this.agentRelay.queryEvents([
           {
             kinds: [9],
@@ -5036,6 +5101,11 @@ export class Body {
     for (const entry of entries) {
       const { subchannelId } = entry;
       if (this.archivingSubchannels.has(subchannelId)) continue;
+      // A close that already failed is skipped — including its relay read —
+      // until its own backoff elapses. A parked one (`Infinity`) never
+      // returns: the same signed 9002 can only be refused again.
+      const retry = this.abandonedCornerCloseRetry.get(subchannelId);
+      if (retry && Date.now() < retry.retryAt) continue;
       const cursor = await this.durableState.cursor(subchannelId);
       const since = Math.max(this.abandonedCornerScanAt.get(subchannelId) ?? 0, cursor.createdAt);
       let events: NostrEvent[];
@@ -5069,11 +5139,61 @@ export class Body {
       try {
         await this.closeAbandonedCorner(entry);
         await this.durableState.delivered(subchannelId, close.id);
+        this.abandonedCornerCloseRetry.delete(subchannelId);
       } catch (error) {
         await this.durableState.failed(subchannelId, close.id, error);
-        console.error(`[body] abandoned corner ${subchannelId} close failed; will retry:`, error);
+        await this.noteAbandonedCornerCloseFailure(subchannelId, close.id, error);
       }
     }
+  }
+
+  /**
+   * A failed sessionless close must never become a hot retry loop.
+   *
+   * A relay 4xx (`isNonRetryableRelayError`) is the relay's verdict on the
+   * exact signed kind:9002 — a signed event has a stable id, so re-publishing
+   * it on every maintenance tick can only be refused again. Park the corner,
+   * consume the close request durably so a restart does not re-drive it, and
+   * tell the human once in the corner itself, because they pressed a button
+   * and nothing happened. Anything else is transient and backs off
+   * exponentially instead of retrying at the maintenance cadence forever.
+   *
+   * The console line is de-duped by message either way: a wedged corner is one
+   * log line, not one per tick.
+   */
+  private async noteAbandonedCornerCloseFailure(
+    subchannelId: string,
+    closeEventId: string,
+    error: unknown,
+  ): Promise<void> {
+    const state = this.abandonedCornerCloseRetry.get(subchannelId) ?? { retryAt: 0, attempts: 0 };
+    state.attempts += 1;
+    const message = error instanceof Error ? error.message : String(error);
+    const parked = isNonRetryableRelayError(error);
+    const delayMs = parked ? 0 : abandonedCornerCloseRetryDelayMs(state.attempts, error);
+    const alreadyLogged = state.loggedMessage === message;
+    state.retryAt = parked ? Number.POSITIVE_INFINITY : Date.now() + delayMs;
+    state.loggedMessage = message;
+    this.abandonedCornerCloseRetry.set(subchannelId, state);
+
+    if (!alreadyLogged) {
+      console.error(
+        `[body] abandoned corner ${subchannelId} close failed ` +
+          `(${parked ? 'parked; the relay refused it outright' : `retrying in ${delayMs}ms`}):`,
+        error,
+      );
+    }
+    if (!parked) return;
+
+    // Consume the request: `delivered` advances the durable cursor, so the
+    // same doomed close is not rediscovered after a restart either.
+    await this.durableState.delivered(subchannelId, closeEventId).catch(() => undefined);
+    await postControlMessage(
+      subchannelId,
+      this.agentIdentity,
+      ABANDONED_CORNER_CLOSE_REFUSED,
+      [['status', 'failed']],
+    ).catch(() => undefined);
   }
 
   /**
@@ -5096,6 +5216,25 @@ export class Body {
         subchannelId,
       );
       assertRelayCornerArchiveTarget(subchannelId, relayParentChannelId, parentChannelId);
+
+      // Fail closed on ownership before publishing anything. The relay
+      // authorizes kind:9002 against the corner's kind:9007 creator, so a
+      // corner another agent opened is that daemon's to close — attempting it
+      // here is refused (`HTTP 400 actor not authorized`) and the corner is
+      // tracked forever for nothing. This reads the same cached create-event
+      // query `getParentChannelId` just issued, so it costs no extra round
+      // trip. Drop the entry rather than park it: it was never ours.
+      const creatorPubkey = await getChannelCreator(this.agentClientContext(), subchannelId);
+      if (creatorPubkey && creatorPubkey !== this.agentIdentity.publicKey) {
+        this.abandonedCorners.delete(subchannelId);
+        this.abandonedCornerScanAt.delete(subchannelId);
+        this.abandonedCornerCloseRetry.delete(subchannelId);
+        console.log(
+          `[body] corner ${subchannelId} was opened by another agent; ` +
+            `leaving its lifecycle to that daemon`,
+        );
+        return;
+      }
 
       const durableSummary = await this.durableState.latestAgentMessage(subchannelId);
       const disposition = this.describeAbandonedCornerWork(entry);

@@ -228,3 +228,64 @@ describe('beeline pair — --model/--effort validation', () => {
     expect(stderr).toContain('invalid agent pairing code');
   });
 });
+
+describe('beeline pair — --access/--auto-response (non-interactive)', () => {
+  it('rejects an unrecognized --access value with a clear error, not a stack trace', async () => {
+    const gitRepo = await tmpDir('beeline-pair-cli-gitrepo-');
+    spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: gitRepo });
+    const stateHome = await tmpDir('beeline-pair-cli-state-');
+
+    const { status, stderr } = runPair(
+      ['BUZZ-ABCD-EFGH', '--repo', gitRepo, '--access', 'nobody'],
+      { cwd: gitRepo, env: { XDG_STATE_HOME: stateHome } },
+    );
+
+    expect(status).toBe(1);
+    expect(stderr).toContain('--access must be one of everyone|creator');
+    expect(stderr).not.toMatch(/\n\s+at /);
+  });
+
+  it('never prompts non-interactively: --access creator with no --auto-response proceeds straight to redemption', async () => {
+    const gitRepo = await tmpDir('beeline-pair-cli-gitrepo-');
+    spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: gitRepo });
+    const stateHome = await tmpDir('beeline-pair-cli-state-');
+    const agent = await fakeModelAgent();
+
+    // A non-TTY spawnSync run has no stdin to answer an access-scope or
+    // auto-response prompt with, so if either ever blocked on one this would
+    // hang past the timeout instead of reaching the (synchronous, pre-relay)
+    // pairing-code format check.
+    const { status, stderr } = runPair(
+      [
+        'not-a-real-code',
+        '--repo',
+        gitRepo,
+        '--agent',
+        'custom',
+        '--agent-command',
+        agent,
+        '--access',
+        'creator',
+      ],
+      { cwd: gitRepo, env: { XDG_STATE_HOME: stateHome } },
+    );
+
+    expect(status).toBe(1);
+    expect(stderr).toContain('invalid agent pairing code');
+  });
+
+  it('never prompts non-interactively with neither flag given: falls back to the everyone default', async () => {
+    const gitRepo = await tmpDir('beeline-pair-cli-gitrepo-');
+    spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: gitRepo });
+    const stateHome = await tmpDir('beeline-pair-cli-state-');
+    const agent = await fakeModelAgent();
+
+    const { status, stderr } = runPair(
+      ['not-a-real-code', '--repo', gitRepo, '--agent', 'custom', '--agent-command', agent],
+      { cwd: gitRepo, env: { XDG_STATE_HOME: stateHome } },
+    );
+
+    expect(status).toBe(1);
+    expect(stderr).toContain('invalid agent pairing code');
+  });
+});

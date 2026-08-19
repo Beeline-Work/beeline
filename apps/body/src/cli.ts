@@ -16,8 +16,7 @@
  */
 import { dirname, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm, unlink } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { unlink } from 'node:fs/promises';
 import { stdin, stdout } from 'node:process';
 import * as clack from '@clack/prompts';
 import pc from 'picocolors';
@@ -29,14 +28,10 @@ import {
   isAgentAccessPolicy,
   type AgentAccessPolicy,
 } from './access-policy.js';
-import { AcpClient } from './acp.js';
-import {
-  assertModelSelectionAdvertised,
-  filterAllowedModelConfigOptions,
-  filterModelOptionsByCredentials,
-  parseAdvertisedConfigOptions,
-} from './model-config.js';
-import type { AgentModelConfigOption } from '@beeline/buzz-client';
+import { assertModelSelectionAdvertised } from './model-config.js';
+import { fetchAgentModelCatalog } from './model-catalog.js';
+import { pickModelAndEffort, resolveAccessSettings } from './agent-settings-prompts.js';
+import { withSpinner } from './clack-support.js';
 import { Body } from './body.js';
 import { WorkspaceSupervisor } from './supervisor.js';
 import {
@@ -66,9 +61,9 @@ import {
 
 function usage(exitCode = 1): void {
   console.error(`
-Buzzy Body — agent session manager.
+${pc.bold('Buzzy Body — agent session manager.')}
 
-Usage:
+${pc.dim('Usage:')}
   beeline provision <channel-uuid>          Attach read-only agent to a TLC
   beeline serve <channel-uuid> <owner> <repo>  Internal: serve one explicitly-wired Room
   beeline open <channel-uuid> <owner> <repo>  Open subchannel + edit session
@@ -78,7 +73,7 @@ Usage:
   beeline start [agent-pubkey]              Restart a paired repo's durable agent
   beeline start --agent <agent-pubkey>      Restart it from anywhere (no repo needed)
 
-Options:
+${pc.dim('Options:')}
   --workspace-root <path>   Agent workspace (default: ./body-workspace)
   --llm-env-file <path>     Path to LLM credentials env file
   --agent-key <nsec>        Agent Nostr secret (hex or nsec)
@@ -90,9 +85,9 @@ All other config via env vars (see config.ts).
 
 function pairUsage(): void {
   console.log(`
-Pair this repository and start its durable Room agent(s).
+${pc.bold('Pair this repository and start its durable Room agent(s).')}
 
-Usage:
+${pc.dim('Usage:')}
   beeline pair <BUZZ-XXXX-XXXX> [--agent <codex|claude|goose|pi|reference|custom>]
                [--agent-command '<command> [args...]'] [--repo <path>]
                [--access <everyone|creator>] [--auto-response '<text>']
@@ -148,6 +143,11 @@ Access policy (per agent, set here at invite time):
   everyone  any Room member may address the agent (default)
   creator   only the inviting owner may; anyone else gets the auto-response
 
+Interactive: on a real TTY, --access/--auto-response missing their flags are
+also offered as clack pickers (in that order, right after model/effort) —
+enter keeps everyone/the default auto-response. A non-terminal session never
+blocks on this; it proceeds with the everyone default, same as before.
+
 Examples:
   beeline pair BUZZ-XXXX-XXXX --agent codex
   beeline pair BUZZ-XXXX-XXXX --agent claude --access creator
@@ -163,7 +163,8 @@ interface PairOptions {
   singleKind?: AgentKind;
   customCommand?: string;
   repo?: string;
-  access: AgentAccessPolicy;
+  /** Undefined means `--access` was omitted — the interactive flow (or the default) decides. */
+  access?: AgentAccessPolicy;
   autoResponse?: string;
   model?: string;
   effort?: string;
@@ -176,7 +177,7 @@ function parsePairOptions(args: string[]): PairOptions {
   let singleKind: AgentKind | undefined;
   let customCommand: string | undefined;
   let repo: string | undefined;
-  let access: AgentAccessPolicy = DEFAULT_ACCESS_POLICY;
+  let access: AgentAccessPolicy | undefined;
   let autoResponse: string | undefined;
   let model: string | undefined;
   let effort: string | undefined;
@@ -228,7 +229,7 @@ function parsePairOptions(args: string[]): PairOptions {
     ...(singleKind !== undefined ? { singleKind } : {}),
     ...(customCommand !== undefined ? { customCommand } : {}),
     ...(repo !== undefined ? { repo } : {}),
-    access,
+    ...(access !== undefined ? { access } : {}),
     ...(autoResponse !== undefined ? { autoResponse } : {}),
     ...(model !== undefined ? { model } : {}),
     ...(effort !== undefined ? { effort } : {}),
@@ -249,42 +250,6 @@ function resolvePairCwd(repoFlag: string | undefined): string {
     throw new Error(`--repo path does not exist: ${resolved}`);
   }
   return resolved;
-}
-
-const EFFORT_AXIS_CATEGORIES = ['thought_level', 'effort', 'reasoning_effort'] as const;
-
-/**
- * Briefly start the exact selected ACP command and read `session/new`'s
- * advertised `configOptions` — the same data `Body.applyModelConfigForSession`
- * (`body.ts`) captures on every real session. Used both to validate
- * `--model`/`--effort` against reality and to drive the interactive pickers,
- * so a flag and a picker pick can never disagree about what's valid.
- * `raw` is the unfiltered catalog (what `assertModelSelectionAdvertised`
- * checks against); `catalog` is the allow-list + credential filtered view
- * (#223's `filterAllowedModelConfigOptions`/`filterModelOptionsByCredentials`)
- * a human should actually be offered.
- */
-async function fetchAgentModelCatalog(
-  agent: AgentCommand,
-  agentEnv: Record<string, string>,
-): Promise<{ raw: AgentModelConfigOption[]; catalog: AgentModelConfigOption[] }> {
-  const scratchCwd = await mkdtemp(resolve(tmpdir(), 'beeline-pair-model-check-'));
-  const client = new AcpClient({
-    agentCommand: agent.command,
-    agentArgs: agent.args,
-    agentEnv,
-    agentCwd: scratchCwd,
-  });
-  try {
-    await client.start();
-    const { raw: sessionRaw } = await client.sessionNew({ cwd: scratchCwd });
-    const raw = parseAdvertisedConfigOptions(sessionRaw);
-    const catalog = filterModelOptionsByCredentials(filterAllowedModelConfigOptions(raw), agentEnv);
-    return { raw, catalog };
-  } finally {
-    await client.stop().catch(() => undefined);
-    await rm(scratchCwd, { recursive: true, force: true }).catch(() => undefined);
-  }
 }
 
 /**
@@ -309,72 +274,6 @@ async function validateModelSelection(
         (error instanceof Error ? error.message : String(error)),
     );
   }
-}
-
-/**
- * Interactive clack pickers for model/effort, run only when both `--model`
- * and `--effort` were omitted and the session is a real TTY on both ends
- * (never invoked otherwise — a picker on a non-TTY stream would just hang).
- * Queries the agent's own LIVE catalog (never a hardcoded list); a picker
- * only appears for an axis the agent actually advertises, and each option's
- * current default is pre-selected so pressing enter keeps the harness
- * default. A catalog fetch failure is a soft skip, not a pairing failure —
- * model/effort selection has always been optional.
- */
-async function pickModelAndEffort(
-  agent: AgentCommand,
-  agentEnv: Record<string, string>,
-): Promise<{ model?: string; effort?: string }> {
-  const spinner = clack.spinner();
-  spinner.start(`Reading ${agent.kind}'s available models…`);
-  let catalog: AgentModelConfigOption[];
-  try {
-    catalog = (await fetchAgentModelCatalog(agent, agentEnv)).catalog;
-    spinner.stop('Catalog loaded.');
-  } catch (error) {
-    spinner.stop('Could not read the catalog — skipping model/effort selection.');
-    clack.log.warn(error instanceof Error ? error.message : String(error));
-    return {};
-  }
-
-  const selection: { model?: string; effort?: string } = {};
-  const modelAxis = catalog.find((option) => option.category === 'model');
-  if (modelAxis && modelAxis.options.length > 0) {
-    const picked = await clack.select({
-      message: `Model for this ${agent.kind} agent?`,
-      options: modelAxis.options.map((choice) => ({
-        value: choice.id,
-        label: choice.name ?? choice.id,
-      })),
-      ...(modelAxis.currentValue ? { initialValue: modelAxis.currentValue } : {}),
-    });
-    if (clack.isCancel(picked)) {
-      clack.cancel('Pairing cancelled.');
-      process.exit(1);
-    }
-    selection.model = picked;
-  }
-
-  const effortAxis = catalog.find((option) =>
-    (EFFORT_AXIS_CATEGORIES as readonly string[]).includes(option.category),
-  );
-  if (effortAxis && effortAxis.options.length > 0) {
-    const picked = await clack.select({
-      message: `Effort/thinking level for this ${agent.kind} agent?`,
-      options: effortAxis.options.map((choice) => ({
-        value: choice.id,
-        label: choice.name ?? choice.id,
-      })),
-      ...(effortAxis.currentValue ? { initialValue: effortAxis.currentValue } : {}),
-    });
-    if (clack.isCancel(picked)) {
-      clack.cancel('Pairing cancelled.');
-      process.exit(1);
-    }
-    selection.effort = picked;
-  }
-
-  return selection;
 }
 
 async function assertRuntimeSafe(runtime: AgentRuntimeRecord): Promise<void> {
@@ -481,10 +380,11 @@ async function pairOneAgent(input: {
   bodyIdentity: Identity;
   cwd: string;
   llmEnvFile?: string;
-  access: AgentAccessPolicy;
+  /** Undefined defers to the interactive picker (or `DEFAULT_ACCESS_POLICY` non-interactively). */
+  access?: AgentAccessPolicy;
   autoResponse?: string;
   modelSelection?: { model?: string; effort?: string };
-  /** Offer the clack model/effort picker when `modelSelection` wasn't given via flags. */
+  /** Offer the clack model/effort/access/auto-response pickers when their flags weren't given. */
   interactiveUi?: boolean;
 }): Promise<PairRuntimeResult> {
   const { code, selectedAgent, agentIdentity, bodyIdentity } = input;
@@ -510,6 +410,11 @@ async function pairOneAgent(input: {
     const picked = await pickModelAndEffort(selectedAgent, localConfig.agentEnv);
     if (picked.model || picked.effort) modelSelection = picked;
   }
+  const { access, autoResponse } = await resolveAccessSettings({
+    ...(input.access !== undefined ? { access: input.access } : {}),
+    ...(input.autoResponse !== undefined ? { autoResponse: input.autoResponse } : {}),
+    interactiveUi: Boolean(input.interactiveUi),
+  });
   return pairRepositoryAgent(
     {
       code,
@@ -524,8 +429,8 @@ async function pairOneAgent(input: {
       agentKind: selectedAgent.kind,
       agentCommand: selectedAgent.command,
       agentArgs: selectedAgent.args,
-      accessPolicy: input.access,
-      ...(input.autoResponse ? { accessAutoResponse: input.autoResponse } : {}),
+      accessPolicy: access,
+      ...(autoResponse ? { accessAutoResponse: autoResponse } : {}),
       ...(modelSelection ? { modelSelection } : {}),
       mcpBinary: localConfig.mcpBinary,
     },
@@ -688,20 +593,28 @@ async function runPairCommand(
 }
 
 /** Launch one stored runtime daemon (or report it already running). */
-async function startRuntime(configPath: string): Promise<void> {
+/**
+ * `spinnerHandle`, when given (interactive `start` only), receives status
+ * updates via `.message()` instead of `console.log` so they render inside
+ * the live spinner rather than racing it. Non-interactive callers omit it and
+ * get the exact same plain `console.log` lines as before this existed.
+ */
+async function startRuntime(
+  configPath: string,
+  spinnerHandle?: ReturnType<typeof clack.spinner>,
+): Promise<void> {
+  const report = (text: string) => (spinnerHandle ? spinnerHandle.message(text) : console.log(text));
   const runtime = await readRuntimeRecord(configPath);
   const selectedAgent = runtimeAgentCommand(runtime);
   await assertRuntimeSafe(runtime);
-  console.log(
-    `[body] agent ${runtime.agent.publicKey} binary: ${formatAgentCommand(selectedAgent)}`,
-  );
+  report(`[body] agent ${runtime.agent.publicKey} binary: ${formatAgentCommand(selectedAgent)}`);
   const existingPid = await runtimeDaemonPid(configPath);
   if (existingPid) {
-    console.log(`[buzz] agent daemon is already running (pid ${existingPid})`);
+    report(`[buzz] agent daemon is already running (pid ${existingPid})`);
     return;
   }
   const pid = await launchRuntimeDaemon(configPath);
-  console.log(`[buzz] agent daemon started (pid ${pid})`);
+  report(`[buzz] agent daemon started (pid ${pid})`);
 }
 
 async function main(): Promise<void> {
@@ -711,6 +624,12 @@ async function main(): Promise<void> {
   const command = args[0];
   if (command === '--help' || command === '-h') usage(0);
 
+  // Every command below shares this: a real terminal on both ends gets clack
+  // framing (intro/outro, spinners, clean cancel lines); a script/CI/piped
+  // run (or `daemon`, which is never a human at a keyboard) gets the exact
+  // same plain output as before this existed, and never blocks on a prompt.
+  const interactiveUi = command !== 'daemon' && Boolean(stdin.isTTY && stdout.isTTY);
+
   // Parse optional flags.
   const llmEnvFile = process.env.BUZZY_BODY_LLM_FILE;
   const workspaceRoot = process.env.BUZZY_BODY_WORKSPACE ?? './body-workspace';
@@ -718,10 +637,10 @@ async function main(): Promise<void> {
 
   if (command === '--version' || command === 'version') {
     const config = loadBodyConfig({ workspaceRoot, llmEnvFile });
-    console.log('beeline 0.0.0');
-    console.log(`[body] agent binary: ${config.agentCommand ?? config.agentBinary}`);
-    console.log(`[body] mcp binary: ${config.mcpBinary}`);
-    console.log(`[body] read-only mcp: ${config.readonlyMcpCommand}`);
+    console.log(pc.bold('beeline 0.0.0'));
+    console.log(`${pc.dim('[body] agent binary:')} ${config.agentCommand ?? config.agentBinary}`);
+    console.log(`${pc.dim('[body] mcp binary:')} ${config.mcpBinary}`);
+    console.log(`${pc.dim('[body] read-only mcp:')} ${config.readonlyMcpCommand}`);
     return;
   }
 
@@ -770,7 +689,25 @@ async function main(): Promise<void> {
         'multiple paired agents match that pubkey; pass the full agent pubkey shown by `beeline pair`',
       );
     }
-    for (const path of unique) await startRuntime(path);
+    if (interactiveUi) clack.intro(pc.bold('beeline start'));
+    for (const path of unique) {
+      if (!interactiveUi) {
+        await startRuntime(path);
+        continue;
+      }
+      const spinnerHandle = clack.spinner();
+      spinnerHandle.start(`Starting ${dirname(path)}…`);
+      try {
+        await startRuntime(path, spinnerHandle);
+        spinnerHandle.stop(pc.green('Started.'));
+      } catch (error) {
+        spinnerHandle.stop(pc.red('Failed.'));
+        throw error;
+      }
+    }
+    if (interactiveUi) {
+      clack.outro(pc.green(unique.length > 1 ? 'All agents started.' : 'Done.'));
+    }
     return;
   }
 
@@ -818,7 +755,12 @@ async function main(): Promise<void> {
           usage();
           return;
         }
-        const session = await body.provision(channelId);
+        const session = await withSpinner(
+          interactiveUi,
+          `Provisioning ${channelId}…`,
+          'Provisioned.',
+          () => body.provision(channelId),
+        );
         console.log(`[body] provisioned: session=${session.sessionId} mode=${session.mode}`);
         break;
       }
@@ -831,7 +773,12 @@ async function main(): Promise<void> {
           usage();
           return;
         }
-        const info = await body.openSubchannel(channelId, { ownerHex, repo });
+        const info = await withSpinner(
+          interactiveUi,
+          `Opening a corner on ${repo}…`,
+          'Corner opened.',
+          () => body.openSubchannel(channelId, { ownerHex, repo }),
+        );
         console.log(`[body] subchannel opened: id=${info.subchannelId}`);
         console.log(`[body]   worktree: ${info.worktreePath}`);
         console.log(`[body]   branch: ${info.featureBranch}`);
@@ -851,7 +798,9 @@ async function main(): Promise<void> {
         const stop = () => controller.abort();
         process.once('SIGINT', stop);
         process.once('SIGTERM', stop);
-        console.log(`[body] watching channel requests addressed to agent ${body.agent.publicKey}`);
+        console.log(
+          `${pc.dim('[body] watching channel requests addressed to agent')} ${body.agent.publicKey}`,
+        );
         await body.runChannelLoop(
           channelId,
           { ownerHex, repo, targetBranch: 'refs/heads/main' },
@@ -866,20 +815,32 @@ async function main(): Promise<void> {
           usage();
           return;
         }
-        await body.archiveSubchannel(subchannelId);
+        await withSpinner(interactiveUi, `Archiving ${subchannelId}…`, 'Archived.', () =>
+          body.archiveSubchannel(subchannelId),
+        );
         console.log(`[body] archived: subchannel=${subchannelId}`);
         break;
       }
 
       case 'create-and-provision': {
         const name = args[1] ?? 'buzzy-tlc';
-        const channelId = await createChannel(bodyIdentity, name);
+        const channelId = await withSpinner(
+          interactiveUi,
+          `Creating ${name}…`,
+          'Created.',
+          () => createChannel(bodyIdentity, name),
+        );
         console.log(`[body] created TLC: ${channelId} name=${name}`);
 
         // Add agent as member.
         await setMemberRole(bodyIdentity, channelId, agentIdentity.publicKey, 'member');
 
-        const session = await body.provision(channelId);
+        const session = await withSpinner(
+          interactiveUi,
+          `Provisioning ${channelId}…`,
+          'Provisioned.',
+          () => body.provision(channelId),
+        );
         console.log(`[body] provisioned: session=${session.sessionId}`);
         console.log(`CHANNEL=${channelId}`);
         break;
@@ -894,6 +855,13 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error('[body] fatal:', err);
+  // `daemon` is never a human at a keyboard — always the plain, full-detail
+  // form (stack included) regardless of whether a TTY happens to be attached.
+  const interactiveUi = process.argv[2] !== 'daemon' && Boolean(stdin.isTTY && stdout.isTTY);
+  if (interactiveUi) {
+    clack.cancel(err instanceof Error ? err.message : String(err));
+  } else {
+    console.error(pc.red('[body] fatal:'), err);
+  }
   process.exit(1);
 });

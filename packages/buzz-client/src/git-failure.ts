@@ -17,8 +17,19 @@ export function summarizeGitFailure(raw: string): string {
   const text = raw.trim();
   if (!text) return 'The delivery failed for an unknown reason.';
 
-  if (/non-fast-forward|\[rejected\]|fetch first|would clobber/i.test(text)) {
+  // A local ref that moved under a compare-and-set is the same story as a
+  // remote non-fast-forward rejection: someone else advanced the target.
+  if (
+    /non-fast-forward|\[rejected\]|fetch first|would clobber|cannot lock ref|update_ref failed|not a fast[- ]forward/i.test(
+      text,
+    )
+  ) {
     return 'The target branch has moved on since this change was prepared — it needs to be rebased before it can land.';
+  }
+  // Landing into a local checkout can be blocked by the operator's own
+  // in-progress edits, which is a person-fixable situation, not a failure.
+  if (/would be overwritten|please commit your changes|stash them before/i.test(text)) {
+    return 'The repository checkout has uncommitted local changes in the way — they need to be committed or stashed before this can land.';
   }
   if (/hook declined|pre-receive hook/i.test(text)) {
     return "The repository's branch rules blocked this change.";

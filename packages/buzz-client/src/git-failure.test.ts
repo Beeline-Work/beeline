@@ -21,6 +21,31 @@ describe('summarizeGitFailure', () => {
     expect(summary).not.toMatch(/git|hint:|\[rejected\]|fetch first/i);
   });
 
+  it('treats a local ref that moved under the compare-and-set as the same moved-target story', () => {
+    const summary = summarizeGitFailure(
+      `fatal: update_ref failed for ref 'refs/heads/master': cannot lock ref 'refs/heads/master': is at ${'b'.repeat(40)} but expected ${'a'.repeat(40)}`,
+    );
+    expect(summary).toBe(
+      'The target branch has moved on since this change was prepared — it needs to be rebased before it can land.',
+    );
+    expect(summary).not.toMatch(/fatal:|update_ref|refs\/heads/i);
+  });
+
+  it('recognizes the operator’s own uncommitted edits blocking a local land', () => {
+    const summary = summarizeGitFailure(
+      [
+        'error: Your local changes to the following files would be overwritten by merge:',
+        '\tREADME.md',
+        'Please commit your changes or stash them before you merge.',
+        'Aborting',
+      ].join('\n'),
+    );
+    expect(summary).toBe(
+      'The repository checkout has uncommitted local changes in the way — they need to be committed or stashed before this can land.',
+    );
+    expect(summary).not.toMatch(/error:|Aborting|README\.md/);
+  });
+
   it('recognizes a branch-protection hook rejection', () => {
     const summary = summarizeGitFailure(
       '! [remote rejected] main -> main (pre-receive hook declined)',

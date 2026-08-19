@@ -3,6 +3,7 @@ import { Linking, ScrollView, StyleSheet, Text, View, type TextStyle } from 'rea
 import { parseMarkdown, type MarkdownSpan } from '@/components/markdown/parseMarkdown';
 import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
+import { CodeHighlighter } from '@/components/buzz/CodeHighlighter';
 
 type MonoMarkdownProps = {
   markdown: string;
@@ -144,15 +145,14 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
         }
         if (block.type === 'code-block' || block.type === 'mermaid') {
           const code = block.content;
+          const language = 'language' in block ? block.language ?? null : null;
           return (
             <View key={index} style={[styles.codeFrame, blockStyle]}>
               {'language' in block && block.language ? (
                 <Text style={styles.codeLanguage}>{block.language}</Text>
               ) : null}
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <Text selectable style={styles.codeBlock}>
-                  {code}
-                </Text>
+                <CodeHighlighter code={code} language={language} />
               </ScrollView>
             </View>
           );

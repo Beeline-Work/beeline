@@ -6,6 +6,8 @@ import { resolve } from 'node:path';
 import { newIdentity } from '@beeline/gate';
 import type { BodyConfig } from './config.js';
 import { inspectLocalRepository, type AgentRuntimeRecord, type RoomRuntimeRecord } from './runtime.js';
+import { AGENT_ERROR_STATE_MESSAGES } from './agent-state-messages.js';
+import type { NostrEvent } from '@beeline/nostr';
 
 const mocks = vi.hoisted(() => ({
   createBuzzClient: vi.fn(),
@@ -698,5 +700,47 @@ describe('WorkspaceSupervisor room owns the repo (Stage 1)', () => {
     };
     const bound = await supervisor.resolveServingRepo(room);
     expect(bound.localPath).toBe('/tmp/local-proj');
+  });
+
+  it('speaks a repo-unavailable notice once across repeated resolve failures, and clears once resolution succeeds', async () => {
+    const room: RoomRuntimeRecord = {
+      channelId: 'repo-unavailable-room',
+      repo: {
+        root: '/tmp/nonexistent-repo-unavailable',
+        repository: { name: 'nonexistent-repo', key: 'repo-unavailable-key', localOnly: false },
+        targetBranch: 'main',
+        remoteName: 'origin',
+      } as never,
+      membershipSince: 1,
+      discoveredAt: new Date(0).toISOString(),
+    };
+    const supervisor = supervisorFor('/tmp/beeline-repo-unavailable-host', [room]);
+    const resolveSpy = vi
+      .spyOn(supervisor as never, 'resolveServingRepo' as never)
+      .mockRejectedValue(new Error('could not clone canonical checkout for nonexistent-repo: fatal'));
+    const startRepositoryRoom = (
+      Reflect.get(supervisor, 'startRepositoryRoom') as (...args: unknown[]) => Promise<void>
+    ).bind(supervisor);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const noticeCount = () =>
+      published.filter((item) => item.content === AGENT_ERROR_STATE_MESSAGES['repo-unavailable']).length;
+
+    await startRepositoryRoom(room, room.channelId);
+    expect(noticeCount()).toBe(1);
+
+    // The next reconcile retries the same still-unresolved Room: same
+    // underlying failure, no second notice.
+    await startRepositoryRoom(room, room.channelId);
+    expect(noticeCount()).toBe(1);
+    expect(resolveSpy).toHaveBeenCalledTimes(2);
+
+    vi.unstubAllGlobals();
   });
 });

@@ -59,6 +59,22 @@ export {
   READ_ONLY_TOOL_NAMES,
 } from './read-only-policy.js';
 export {
+  classifyCornerPermission,
+  classifyRoomPermission,
+  permissionTargetPaths,
+  pathEscapesRoot,
+  physicalPath,
+  ROOM_READ_ONLY_STEER,
+  type SandboxDenyCode,
+  type SandboxVerdict,
+} from './session-sandbox.js';
+export {
+  enforcesPermissionBoundary,
+  harnessEnforcement,
+  roomSandboxWarning,
+  type HarnessEnforcement,
+} from './harness-capabilities.js';
+export {
   projectActivity,
   postAgentMessage,
   postControlMessage,

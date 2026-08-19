@@ -577,6 +577,12 @@ export class AcpClient extends EventEmitter {
               ...(typeof params.update.title === 'string' ? { title: params.update.title } : {}),
               ...(typeof params.update.kind === 'string' ? { kind: params.update.kind } : {}),
               ...('rawInput' in params.update ? { rawInput: params.update.rawInput } : {}),
+              // `content`/`locations` carry the touched file paths for adapters
+              // whose permission request omits them (codex-acp's file-change
+              // request has no rawInput at all) — the corner worktree guard in
+              // `session-sandbox.ts` reads them.
+              ...('content' in params.update ? { content: params.update.content } : {}),
+              ...('locations' in params.update ? { locations: params.update.locations } : {}),
             });
           }
         }

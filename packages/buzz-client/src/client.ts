@@ -16,6 +16,7 @@ import {
   setAgentSoul,
 } from './agent.js';
 import { getAgentModelCatalog, getAgentModelConfig, setAgentModelConfig } from './agent-model-config.js';
+import { getRoomRepository, resolveRoomRepository, setRoomRepository } from './room-repository.js';
 import { WRITE_PERMISSION_RESPONSE_TAG, type WritePermissionDecision } from './write-permission.js';
 import {
   backfillMessages,
@@ -115,6 +116,8 @@ import type {
   RedeemInviteResult,
   RedeemAgentPairingResult,
   RepositoryBinding,
+  RoomRepository,
+  RoomRepositoryInput,
   SessionEvent,
   SessionEventHandler,
   Unsubscribe,
@@ -341,6 +344,24 @@ export class BuzzClient {
 
   getChannelRepositoryBinding(channelId: string): Promise<RepositoryBinding | null> {
     return getChannelRepositoryBinding(this.ctx, channelId);
+  }
+
+  /** The repository a Room owns, from published Room state (config → genesis). */
+  resolveRoomRepository(channelId: string): Promise<RoomRepository | null> {
+    return resolveRoomRepository(this.ctx, channelId);
+  }
+
+  /** The mutable, admin-authored Room→repository binding, if any. */
+  getRoomRepository(channelId: string): Promise<RoomRepository | null> {
+    return getRoomRepository(this.ctx, channelId);
+  }
+
+  /** Bind (or re-bind) a repository to a Room. Admin-only, remote-first. */
+  setRoomRepository(
+    channelId: string,
+    input: RoomRepositoryInput & { communityId?: string },
+  ): Promise<RoomRepository> {
+    return setRoomRepository(this.ctx, channelId, input);
   }
 
   // ── Community ops ───────────────────────────────────────────────────────

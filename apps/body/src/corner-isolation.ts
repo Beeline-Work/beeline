@@ -75,7 +75,12 @@ export function cornerWorktreePath(opts: {
   return resolve(base, opts.subchannelId);
 }
 
-function cornersPoolRoot(opts: {
+/**
+ * The directory that holds every corner worktree for a source checkout — the
+ * parent of {@link cornerWorktreePath}. Exposed so a periodic prune can sweep
+ * strays (worktrees no live corner or git registration still backs).
+ */
+export function cornersPoolRoot(opts: {
   cornersRoot?: string;
   workspaceRoot: string;
   sourceCheckout?: string;

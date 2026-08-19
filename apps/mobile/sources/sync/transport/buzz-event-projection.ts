@@ -281,6 +281,12 @@ export type ChatDisplayMessage = {
   pubkey?: string;
   isMergeSummary?: boolean;
   isArchivedNotice?: boolean;
+  /**
+   * Client-rendered-only: never published, never a relay event. Set when the
+   * user addressed an agent whose presence reads offline/stale, so the
+   * transcript explains the silence instead of leaving it unexplained.
+   */
+  isSystemNotice?: boolean;
   /** True when the relay message is explicitly projected as an Agent answer. */
   isAgentAuthor?: boolean;
   isAgentActivity?: boolean;

@@ -89,6 +89,21 @@ function agentMessageChunkText(update: Record<string, unknown>): string {
 }
 
 /**
+ * A delta that binds to the word right before it, so it can only be a
+ * continuation of the same sentence and never the start of a fresh thought:
+ * an elided-word apostrophe ("I" + "'ll"), a hyphen, closing or sentence
+ * punctuation, or its own leading whitespace (which already separates the two
+ * runs on its own).
+ *
+ * This is the stream-head defect that made a corner's first message render as
+ * `'ll take a look at the README first.` — a non-text update landing between
+ * the model's first token and its second one earned a synthetic paragraph
+ * break mid-word, and `createNarrativeCommitter` then durably published the
+ * one-character head (`I`) as its own transcript message.
+ */
+const CHUNK_CONTINUES_PREVIOUS_WORD = /^[\s'\u2018\u2019\u02bc.,!?;:%)\]}-]/;
+
+/**
  * Concatenate every `agent_message_chunk` delta into one running text,
  * inserting a paragraph break wherever a text run resumes after one or more
  * intervening non-text updates (a tool call, a plan update, reasoning). A
@@ -99,6 +114,11 @@ function agentMessageChunkText(update: Record<string, unknown>): string {
  * "Now I have..." -> "...patternsNow I have..."). Consecutive deltas within
  * one uninterrupted text run are joined as-is: that is normal token
  * streaming and already carries its own whitespace.
+ *
+ * The break is withheld when the resuming delta is a word continuation
+ * (`CHUNK_CONTINUES_PREVIOUS_WORD`): an interruption between two tokens of a
+ * single word is the harness's timing, not the model starting over, and a
+ * break there splits one sentence into two durable transcript messages.
  */
 function joinAgentMessageChunks(updates: readonly SessionUpdate[]): string {
   let text = '';
@@ -109,7 +129,14 @@ function joinAgentMessageChunks(updates: readonly SessionUpdate[]): string {
       lastWasText = false;
       continue;
     }
-    if (!lastWasText && text && !/\s$/.test(text)) text += '\n\n';
+    if (
+      !lastWasText &&
+      text &&
+      !/\s$/.test(text) &&
+      !CHUNK_CONTINUES_PREVIOUS_WORD.test(delta)
+    ) {
+      text += '\n\n';
+    }
     text += delta;
     lastWasText = true;
   }

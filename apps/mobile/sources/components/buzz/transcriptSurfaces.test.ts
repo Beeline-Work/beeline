@@ -627,3 +627,20 @@ describe('The corner review footer never claims a retry the daemon is not making
     expect(live).toContain('setDeliveryRetry(projected.deliveryRetry)');
   });
 });
+
+describe('The change-ready review card', () => {
+  it('describes the change, never re-prints the turn narration', () => {
+    // The card sat directly above the diff and rendered the corner's last
+    // agent message — the concise reduction of prose the transcript already
+    // carries in full, so the same sentences appeared a third time. Its line
+    // now comes from the reviewed manifest instead.
+    expect(chatSource).toContain('changeReviewSummary(reviewFiles)');
+    expect(chatSource).not.toContain('latestCornerTurnSummary');
+    expect(chatSource).not.toContain('turnSummary');
+  });
+
+  it('never guesses a file count before the manifest lands', () => {
+    // "not loaded yet" and "nothing changed" are different answers.
+    expect(chatSource).toContain("reviewFiles === null\n                          ? 'PREPARING YOUR REVIEW'");
+  });
+});

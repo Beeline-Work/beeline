@@ -908,6 +908,26 @@ describe('createNarrativeCommitter', () => {
     }
   });
 
+  it('commits an opening sentence as one segment, first character included', async () => {
+    // Stream-head defect: a break landing between the model's first token and
+    // the second token of the same word split the sentence into two durable
+    // messages, so the corner's first visible message read
+    // "'ll take a look at the README first." The joined stream carries no such
+    // break any more (see acp.ts's joinAgentMessageChunks) — this pins the
+    // committer's side of the contract: an unbroken sentence commits whole.
+    const narrator = createNarrativeCommitter(channelId, owner);
+    const narration = "I'll take a look at the README first.";
+    let accumulated = '';
+    for (const character of narration) {
+      accumulated += character;
+      narrator.onChunk(accumulated);
+    }
+    await narrator.finish();
+
+    expect(published.map((event) => event.content)).toEqual([narration]);
+    expect(published[0]!.content.startsWith('I')).toBe(true);
+  });
+
   it('does not filter real narration that happens to open with a bulleted list', async () => {
     // The pi-boilerplate bullet filter only fires inside a recognized
     // Context/Skills/Prompts/Extensions section — a genuine narration bullet

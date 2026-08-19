@@ -268,6 +268,89 @@ describe('agent entity model', () => {
     expect(published.every((event) => event.pubkey === owner.publicKey)).toBe(true);
   });
 
+  it('completes the Workspace-level removal even when one Room membership never confirms (an offline agent stuck in an orphaned corner)', async () => {
+    const roomId = '55555555-5555-4555-8555-555555555555';
+    const record = signed(
+      agentIdentity,
+      KIND_STREAM_MESSAGE,
+      [
+        ['h', communityId],
+        ['t', TAG_AGENT],
+        ['d', '22222222-2222-4222-8222-222222222222'],
+        ['p', agentIdentity.publicKey],
+        ['name', 'Patch'],
+        [TAG_COMMUNITY, communityId],
+      ],
+      JSON.stringify({ displayName: 'Patch' }),
+    );
+    const roomCreate = signed(owner, KIND_CREATE_GROUP, [
+      ['h', roomId],
+      ['name', 'Orphaned Corner'],
+      [TAG_COMMUNITY, communityId],
+    ]);
+    const removedCommunity = new Set<string>();
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          const event = JSON.parse(String(init?.body)) as NostrEvent;
+          published.push(event);
+          if (event.tags.find((tag) => tag[0] === 'h')?.[1] === communityId) {
+            removedCommunity.add(communityId);
+          }
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        if (kind === KIND_STREAM_MESSAGE) {
+          return jsonResponse((filter.authors as string[] | undefined) ? [] : [record]);
+        }
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([communityCreate(), roomCreate]);
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          const id = String(
+            (filter['#d'] as string[] | undefined)?.[0] ??
+              (filter['#h'] as string[] | undefined)?.[0] ??
+              '',
+          );
+          // The Room's own projection never drops the agent — standing in for
+          // a dormant daemon's un-archived corner, which never converges no
+          // matter how many times this is polled.
+          const stillMember = id === roomId || !removedCommunity.has(id);
+          return jsonResponse([
+            signed(owner, KIND_CHANNEL_MEMBERS, [
+              ['d', id],
+              ['p', owner.publicKey],
+              ...(stillMember ? [['p', agentIdentity.publicKey]] : []),
+            ]),
+          ]);
+        }
+        if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([]);
+        return jsonResponse([]);
+      }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      const removal = removeAgent(ctx(owner), communityId, agentIdentity.publicKey);
+      // Drain the Room's doomed 15s wait; the community-level wait resolves
+      // on its own first check once that removal is published.
+      await vi.advanceTimersByTimeAsync(16_000);
+      await removal;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(
+      published.some(
+        (event) =>
+          event.kind === KIND_REMOVE_USER &&
+          event.tags.find((tag) => tag[0] === 'h')?.[1] === communityId,
+      ),
+    ).toBe(true);
+    expect(removedCommunity.has(communityId)).toBe(true);
+  });
+
   it('refuses registration before the agent key is a community member', async () => {
     vi.stubGlobal(
       'fetch',

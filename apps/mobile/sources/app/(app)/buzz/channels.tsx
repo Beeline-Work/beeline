@@ -18,6 +18,7 @@ import {
   TAG_PARENT,
   tagValue,
   tagValues,
+  parseGitRemoteInput,
   type Community,
   type Identity,
   type PersonProfile,
@@ -82,6 +83,8 @@ import {
   PixelGateReveal,
   PixelLoader,
 } from '@/components/buzz/MonoHull';
+import { RepoPicker } from '@/components/buzz/RepoPicker';
+import type { RepoCandidate } from '@/buzz/room-repo-picker';
 
 /** Relative ages only change on the minute, so the index re-derives them on a
  * one-minute tick while it is the focused screen and never on a render loop. */
@@ -372,6 +375,11 @@ export default function BuzzChannels() {
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [channelName, setChannelName] = useState('');
   const [creatingChannel, setCreatingChannel] = useState(false);
+  // Optional repo step: leave `pendingRepo` null for a chat-only Room.
+  const [showRepoPicker, setShowRepoPicker] = useState(false);
+  const [pendingRepo, setPendingRepo] = useState<RepoCandidate | null>(null);
+  const [repoCandidates, setRepoCandidates] = useState<RepoCandidate[]>([]);
+  const [repoPickerError, setRepoPickerError] = useState<string | null>(null);
   const [viewerIsAgent, setViewerIsAgent] = useState(initialListCache?.viewerIsAgent ?? false);
   const [viewerAvatarUrl, setViewerAvatarUrl] = useState<string | undefined>(
     initialListCache?.viewerAvatarUrl,
@@ -756,6 +764,35 @@ export default function BuzzChannels() {
     [activeCommunityId, identity],
   );
 
+  const handleToggleRepoPicker = useCallback(async () => {
+    setShowRepoPicker((value) => !value);
+    if (showRepoPicker || !transport || !activeCommunityId) return;
+    setRepoPickerError(null);
+    try {
+      const candidates = await transport.workspaceRoomRepositoryCandidates(activeCommunityId);
+      setRepoCandidates(candidates);
+    } catch (err) {
+      setRepoPickerError(`Could not load repos: ${String(err)}`);
+    }
+  }, [activeCommunityId, showRepoPicker, transport]);
+
+  const handleSelectRepoCandidate = useCallback((candidate: RepoCandidate) => {
+    setPendingRepo(candidate);
+    setShowRepoPicker(false);
+    setRepoPickerError(null);
+  }, []);
+
+  const handleSubmitRepoUrl = useCallback((url: string) => {
+    const input = parseGitRemoteInput(url);
+    if (!input) {
+      setRepoPickerError('That does not look like a git URL.');
+      return;
+    }
+    setPendingRepo(input);
+    setShowRepoPicker(false);
+    setRepoPickerError(null);
+  }, []);
+
   const handleCreateChannel = useCallback(async () => {
     const name = channelName.trim();
     if (!name || !transport || !identity || viewerIsAgent) return;
@@ -767,8 +804,22 @@ export default function BuzzChannels() {
         ...(activeCommunityId ? { communityId: activeCommunityId } : {}),
       });
       await client.waitUntilMember(channelId, client.identity.publicKey);
+      if (pendingRepo?.remote) {
+        try {
+          await client.setRoomRepository(channelId, {
+            key: pendingRepo.key,
+            name: pendingRepo.name,
+            remote: pendingRepo.remote,
+            ...(activeCommunityId ? { communityId: activeCommunityId } : {}),
+          });
+        } catch (err) {
+          setError(`${ROOM_LABEL} created, but could not link the repo: ${String(err)}`);
+        }
+      }
       setChannelName('');
       setShowCreateChannel(false);
+      setPendingRepo(null);
+      setShowRepoPicker(false);
       const channels = await loadDisplayChannels(
         transport,
         activeCommunityId,
@@ -783,7 +834,7 @@ export default function BuzzChannels() {
     } finally {
       setCreatingChannel(false);
     }
-  }, [activeCommunityId, channelName, communities, identity, transport, viewerIsAgent]);
+  }, [activeCommunityId, channelName, communities, identity, pendingRepo, transport, viewerIsAgent]);
 
   const handleInvitePeople = useCallback(async () => {
     if (!transport || !activeCommunityId || creatingInvite) return;
@@ -894,6 +945,29 @@ export default function BuzzChannels() {
                 onPress={() => void handleCreateChannel()}
               />
             </View>
+            <TouchableOpacity
+              accessibilityRole="button"
+              disabled={creatingChannel}
+              onPress={() => void handleToggleRepoPicker()}
+              style={styles.repoRow}
+              testID="create-room-repo-row"
+            >
+              <Text style={styles.repoRowLabel}>REPO</Text>
+              <Text numberOfLines={1} style={styles.repoRowValue}>
+                {pendingRepo ? `▢ ${pendingRepo.name}` : 'none — chat only'}
+              </Text>
+              <Text style={styles.repoRowChevron}>{showRepoPicker ? '⌄' : '›'}</Text>
+            </TouchableOpacity>
+            {showRepoPicker && (
+              <RepoPicker
+                candidates={repoCandidates}
+                currentKey={pendingRepo?.key ?? null}
+                error={repoPickerError}
+                onSelect={handleSelectRepoCandidate}
+                onSubmitUrl={handleSubmitRepoUrl}
+                testIDPrefix="create-room-repo-picker"
+              />
+            )}
           </PixelGateReveal>
         )}
 
@@ -1264,6 +1338,27 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   inlineForm: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  repoRow: {
+    marginTop: 10,
+    minHeight: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  repoRowLabel: {
+    ...Typography.mono(),
+    color: groknight.textMuted,
+    fontSize: 11,
+  },
+  repoRowValue: {
+    ...Typography.mono(),
+    flex: 1,
+    minWidth: 0,
+    textAlign: 'right',
+    color: groknight.textSecondary,
+    fontSize: 12,
+  },
+  repoRowChevron: { ...Typography.default(), color: groknight.chrome, fontSize: 18 },
   input: {
     ...Typography.default(),
     flex: 1,

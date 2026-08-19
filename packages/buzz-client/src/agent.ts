@@ -295,12 +295,21 @@ export async function redeemAgentPairingCode(
     });
     await waitUntilMember(ctx, communityId, ctx.identity.publicKey);
   }
-  const agent = await createAgentRecord(
-    ctx,
-    communityId,
-    { displayName: fallbackAgentName(ctx.identity.publicKey) },
-    tokenHash,
-  );
+  let agent: Agent;
+  try {
+    agent = await createAgentRecord(
+      ctx,
+      communityId,
+      { displayName: fallbackAgentName(ctx.identity.publicKey) },
+      tokenHash,
+    );
+  } catch (error) {
+    // The membership above already landed. Publishing the identity record is
+    // the second half of one registration, so a failure here must not leave
+    // the key sitting in the Workspace roster as an unexplained member.
+    if (!wasMember) await abandonAgentPairing(ctx, communityId);
+    throw error;
+  }
   return { communityId, pairedBy: pairing.pubkey, agent, joined: !wasMember };
 }
 
@@ -477,6 +486,42 @@ export async function listAgents(
           }
         : agent;
     });
+}
+
+/**
+ * Best-effort undo of this agent's own `redeemAgentPairingCode` registration.
+ *
+ * Redemption is two irreversible relay writes — the agent self-adds as a
+ * Workspace member, then publishes its kind:9 identity record — and the rest
+ * of `beeline pair` can still fail after that point. Without an undo the
+ * half-created agent stays in the Workspace forever as a permanently-offline
+ * ghost with no daemon behind it.
+ *
+ * The published identity record is an ordinary event and cannot be
+ * unpublished, but `listAgents` filters on *current* Workspace membership, so
+ * dropping the membership the agent just added is what actually makes the
+ * ghost disappear from the app.
+ *
+ * This is a self-removal — the agent's own key signing kind:9001 for itself —
+ * NOT `removeAgent`, which is an admin action and explicitly refuses an agent
+ * caller. It never throws: it only ever runs while a real pairing error is
+ * already propagating, and a relay that declines the self-removal must not
+ * replace that error with its own.
+ */
+export async function abandonAgentPairing(
+  ctx: ChannelOpsContext,
+  communityId: string,
+): Promise<boolean> {
+  try {
+    if (!(await isMember(ctx, communityId, ctx.identity.publicKey))) return true;
+    await removeMember(ctx, communityId, ctx.identity.publicKey, {
+      extraTags: [[TAG_COMMUNITY, communityId]],
+    });
+    await waitUntilNotMember(ctx, communityId, ctx.identity.publicKey);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

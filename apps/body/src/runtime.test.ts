@@ -649,3 +649,178 @@ describe('runtime root migration', () => {
     expect(existsSync(root)).toBe(true);
   });
 });
+
+describe('a pair run that fails after redemption', () => {
+  const communityId = '22222222-2222-4222-8222-222222222222';
+
+  /**
+   * Redemption self-adds the agent as a Workspace member and publishes its
+   * identity record — both irreversible relay writes. Model that membership
+   * as a live Set so the assertion is the thing the app actually reads:
+   * whether the agent is still a Workspace member afterwards.
+   */
+  function workspace(agentPubkey: string) {
+    const members = new Set<string>();
+    return {
+      members,
+      redeem: async () => {
+        members.add(agentPubkey);
+        return {
+          communityId,
+          pairedBy: 'a'.repeat(64),
+          joined: true,
+          agent: {
+            agentId: 'agent-id',
+            communityId,
+            displayName: 'Agent',
+            pubkey: agentPubkey,
+            createdAt: 1,
+            raw: {} as never,
+          },
+        };
+      },
+      abandonPairing: async () => {
+        members.delete(agentPubkey);
+      },
+    };
+  }
+
+  it('leaves no half-created agent in the Workspace when the Room never resolves', async () => {
+    const root = await repository('https://example.com/team/project.git');
+    const agent = newIdentity('agent');
+    const supervisorRoot = await stateRoot();
+    const relay = workspace(agent.publicKey);
+
+    await expect(
+      pairRepositoryAgent(
+        {
+          code: 'BUZZ-ABCD-EFGH',
+          cwd: root,
+          relayBaseUrl: 'http://relay.test',
+          agentBinary: '/usr/bin/agent',
+          mcpBinary: '/usr/bin/mcp',
+          agentIdentity: agent,
+          bodyIdentity: newIdentity('body'),
+          mergeWorkerIdentity: newIdentity('merge-worker'),
+          supervisorRoot,
+        },
+        {
+          redeem: relay.redeem,
+          resolveRoom: async () => {
+            throw new Error('relay unreachable');
+          },
+          abandonPairing: relay.abandonPairing,
+          launch: async () => 1,
+        },
+      ),
+    ).rejects.toThrow('relay unreachable');
+
+    expect([...relay.members]).toEqual([]);
+    // Nothing half-written on disk either.
+    expect(
+      existsSync(
+        resolve(supervisorRoot, 'beeline', 'agents', agent.publicKey, 'runtime.json'),
+      ),
+    ).toBe(false);
+  });
+
+  it('rolls the registration back when the startup-protection check refuses', async () => {
+    const root = await repository('https://example.com/team/project.git');
+    const agent = newIdentity('agent');
+    const relay = workspace(agent.publicKey);
+
+    await expect(
+      pairRepositoryAgent(
+        {
+          code: 'BUZZ-ABCD-EFGH',
+          cwd: root,
+          relayBaseUrl: 'http://relay.test',
+          agentBinary: '/usr/bin/agent',
+          mcpBinary: '/usr/bin/mcp',
+          agentIdentity: agent,
+          bodyIdentity: newIdentity('body'),
+          mergeWorkerIdentity: newIdentity('merge-worker'),
+          supervisorRoot: await stateRoot(),
+        },
+        {
+          redeem: relay.redeem,
+          resolveRoom: async () => ({ channelId: 'room-1', created: true }),
+          validate: async () => {
+            throw new Error('agent is in push-allowed');
+          },
+          abandonPairing: relay.abandonPairing,
+          launch: async () => 1,
+        },
+      ),
+    ).rejects.toThrow('agent is in push-allowed');
+
+    expect([...relay.members]).toEqual([]);
+  });
+
+  it('keeps a completed pairing when only the daemon fails to launch', async () => {
+    // The runtime record is already on disk here, so the pairing is real and
+    // recoverable; undoing the registration would delete a valid agent.
+    const root = await repository('https://example.com/team/project.git');
+    const agent = newIdentity('agent');
+    const relay = workspace(agent.publicKey);
+
+    await expect(
+      pairRepositoryAgent(
+        {
+          code: 'BUZZ-ABCD-EFGH',
+          cwd: root,
+          relayBaseUrl: 'http://relay.test',
+          agentBinary: '/usr/bin/agent',
+          mcpBinary: '/usr/bin/mcp',
+          agentIdentity: agent,
+          bodyIdentity: newIdentity('body'),
+          mergeWorkerIdentity: newIdentity('merge-worker'),
+          supervisorRoot: await stateRoot(),
+        },
+        {
+          redeem: relay.redeem,
+          resolveRoom: async () => ({ channelId: 'room-1', created: true }),
+          abandonPairing: relay.abandonPairing,
+          launch: async () => {
+            throw new Error('spawn ENOENT');
+          },
+        },
+      ),
+    ).rejects.toThrow('beeline start --agent');
+
+    expect([...relay.members]).toEqual([agent.publicKey]);
+  });
+
+  it('refuses before spending the one-shot code when runtime state is unwritable', async () => {
+    const root = await repository('https://example.com/team/project.git');
+    const agent = newIdentity('agent');
+    const relay = workspace(agent.publicKey);
+    // A file where the agents directory must go: the runtime write would have
+    // thrown after redemption, which is exactly the ghost-making shape.
+    const supervisorRoot = await stateRoot();
+    await writeFile(resolve(supervisorRoot, 'beeline'), 'not a directory');
+
+    await expect(
+      pairRepositoryAgent(
+        {
+          code: 'BUZZ-ABCD-EFGH',
+          cwd: root,
+          relayBaseUrl: 'http://relay.test',
+          agentBinary: '/usr/bin/agent',
+          mcpBinary: '/usr/bin/mcp',
+          agentIdentity: agent,
+          bodyIdentity: newIdentity('body'),
+          mergeWorkerIdentity: newIdentity('merge-worker'),
+          supervisorRoot,
+        },
+        {
+          redeem: relay.redeem,
+          resolveRoom: async () => ({ channelId: 'room-1', created: true }),
+          launch: async () => 1,
+        },
+      ),
+    ).rejects.toThrow('cannot write agent runtime state');
+
+    expect([...relay.members]).toEqual([]);
+  });
+});

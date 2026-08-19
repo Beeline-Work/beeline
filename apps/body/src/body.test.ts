@@ -67,6 +67,7 @@ import { newIdentity } from '@beeline/gate';
 import {
   WRITE_PERMISSION_RESPONSE_TAG,
   setAgentModelConfig,
+  AGENT_PRESENCE_HEARTBEAT_MS,
   KIND_AGENT_MODEL_CATALOG,
   KIND_AGENT_MODEL_CONFIG,
   KIND_CHANNEL_ADMINS,
@@ -82,6 +83,8 @@ import {
   postAgentMessage,
   postAgentPresence,
   startAgentPresence,
+  agentPresenceRetryDelayMs,
+  AGENT_PRESENCE_RETRY_MAX_ATTEMPTS,
   stripAgentReplyPreamble,
   replyRootIdForEvent,
 } from './activity.js';
@@ -669,6 +672,138 @@ describe('agent presence', () => {
     await presence();
 
     expect(statuses).toEqual(['online', 'offline', 'online', 'offline']);
+  });
+
+  /**
+   * `stop()` drains any in-flight backoff before publishing its offline
+   * marker, so under fake timers it must be advanced, not merely awaited —
+   * awaiting it directly deadlocks the test and leaks fake timers into the
+   * next one.
+   */
+  const stopUnderFakeTimers = async (presence: { (): Promise<void> }): Promise<void> => {
+    const stopping = presence();
+    await vi.advanceTimersByTimeAsync(2 * AGENT_PRESENCE_HEARTBEAT_MS);
+    await stopping;
+  };
+
+  it('retries a relay quota rejection instead of spending a whole lease slice on it', async () => {
+    // 429 is not in publishEvent's retryable set (5xx/network only), so the
+    // heartbeat used to be logged and dropped — and two dropped heartbeats at
+    // the 45s cadence exceed the 120s lease, which is a live daemon reading
+    // as offline in every client until the quota window clears.
+    vi.useFakeTimers();
+    const agent = newIdentity('quota-presence-agent');
+    let attempts = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return new Response(
+            JSON.stringify({ error: 'rate-limited: quota exceeded; retry in 1s' }),
+            { status: 429 },
+          );
+        }
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    const published: string[] = [];
+    const presence = startAgentPresence('presence-room', agent, 60_000, (status) =>
+      published.push(status),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(published).toEqual([]);
+    // The relay's own advertised delay is honoured, plus jitter (<=1.25x).
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(published).toEqual(['online']);
+
+    await stopUnderFakeTimers(presence);
+    vi.useRealTimers();
+  });
+
+  it('stamps a retried heartbeat when it is published, not when it was enqueued', async () => {
+    // A stamp from before the retry would land already past its 120s lease and
+    // become the newest replaceable record — a delivered heartbeat that reads
+    // as expired, which is the "still offline after presence recovered" shape.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const agent = newIdentity('stamp-presence-agent');
+    const stamps: number[] = [];
+    let attempts = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        attempts += 1;
+        if (attempts === 1) {
+          return new Response(JSON.stringify({ error: 'retry in 4s' }), { status: 429 });
+        }
+        stamps.push((JSON.parse(String(init?.body)) as NostrEvent).created_at);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    const enqueuedAt = Math.floor(Date.now() / 1_000);
+    const presence = startAgentPresence('presence-room', agent, 60_000);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(6_000);
+
+    expect(stamps).toHaveLength(1);
+    expect(stamps[0]).toBeGreaterThanOrEqual(enqueuedAt + 3);
+
+    await stopUnderFakeTimers(presence);
+    vi.useRealTimers();
+  });
+
+  it('coalesces a heartbeat that fires while another is still retrying', async () => {
+    // Presence is a REPLACEABLE record: only the latest matters, so queueing
+    // ticks behind a retry just spends more of the quota that rejected them.
+    vi.useFakeTimers();
+    const agent = newIdentity('coalesce-presence-agent');
+    let attempts = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        attempts += 1;
+        return new Response(JSON.stringify({ error: 'rate-limited' }), { status: 429 });
+      }),
+    );
+
+    const presence = startAgentPresence('presence-room', agent, 60_000);
+    // Nine heartbeats restate 'online' while the first is still backing off —
+    // exactly what the interval tick does, driven explicitly so the assertion
+    // does not depend on where the jittered delays happen to land.
+    for (let tick = 0; tick < 9; tick += 1) void presence.setStatus('online');
+    await vi.advanceTimersByTimeAsync(9_000);
+
+    // Each restates the status already being published, so the whole window
+    // costs one bounded retry run — not ten queued publishes against the very
+    // quota that is rejecting them.
+    expect(attempts).toBeLessThanOrEqual(AGENT_PRESENCE_RETRY_MAX_ATTEMPTS);
+
+    await stopUnderFakeTimers(presence);
+    vi.useRealTimers();
+  });
+});
+
+describe('agentPresenceRetryDelayMs', () => {
+  it('grows exponentially and stays inside a bounded jitter band', () => {
+    expect(agentPresenceRetryDelayMs(1, undefined, () => 0.5)).toBe(1_000);
+    expect(agentPresenceRetryDelayMs(2, undefined, () => 0.5)).toBe(2_000);
+    expect(agentPresenceRetryDelayMs(3, undefined, () => 0.5)).toBe(4_000);
+    // Jitter is +/-25% of the exponential term, never zero and never doubling.
+    expect(agentPresenceRetryDelayMs(1, undefined, () => 0)).toBe(750);
+    expect(agentPresenceRetryDelayMs(1, undefined, () => 0.999)).toBeLessThanOrEqual(1_250);
+  });
+
+  it("honours the relay's own advertised delay over a shorter exponential term", () => {
+    const rateLimited = new Error('HTTP 429 {"error":"rate-limited; retry in 6s"}');
+    expect(agentPresenceRetryDelayMs(1, rateLimited, () => 0.5)).toBe(6_000);
+  });
+
+  it('never waits longer than one heartbeat interval, whatever the relay asks', () => {
+    const absurd = new Error('HTTP 429 {"error":"retry in 600s"}');
+    expect(agentPresenceRetryDelayMs(4, absurd, () => 0.999)).toBe(AGENT_PRESENCE_HEARTBEAT_MS);
   });
 });
 

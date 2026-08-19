@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { agentActivityDetails } from '@/sync/transport/buzz-event-projection';
 import { buildActivityTimeline, buildTurnActivity, latestCornerPlan } from './activity-timeline';
 
 describe('buildActivityTimeline', () => {
@@ -283,6 +284,41 @@ describe('latestCornerPlan', () => {
   it('returns undefined when no message has published a plan (no empty pin)', () => {
     expect(latestCornerPlan([{ activity: [{ kind: 'output', title: 'Update', text: 'hi' }] }])).toBeUndefined();
     expect(latestCornerPlan([])).toBeUndefined();
+  });
+
+  it("reads a plan straight off body's own wire envelope, end to end", () => {
+    // The seam this whole feature hangs on, and the one that was silently
+    // broken: the daemon rides a changed plan out on the `activity_summary`
+    // receipt inside its `activity_batch` envelope, and the pin reads it back
+    // through `agentActivityDetails`. A regression anywhere along that chain
+    // makes the objective panel render an objective with no checklist and
+    // nothing to say why.
+    const activity = agentActivityDetails(
+      JSON.stringify({
+        update: {
+          sessionUpdate: 'activity_batch',
+          updates: [
+            {
+              sessionUpdate: 'activity_summary',
+              content: { type: 'text', text: '' },
+              plan: {
+                items: [
+                  { step: 'Find the renderer', status: 'completed' },
+                  { step: 'Wire the highlighter', status: 'in_progress' },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(latestCornerPlan([{ activity }])).toEqual({
+      items: [
+        { step: 'Find the renderer', status: 'completed' },
+        { step: 'Wire the highlighter', status: 'in_progress' },
+      ],
+    });
   });
 
   it('returns the single published plan', () => {

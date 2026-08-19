@@ -549,26 +549,52 @@ function planStatus(value: unknown): CompactActivityPlanItem['status'] {
   return 'pending';
 }
 
+/**
+ * The plan/checklist carried by an update, in whichever shape the harness
+ * used. Three are known and all three appear in the wild: ACP's own `plan`
+ * `session/update` (`entries: [{content, status}]`), a harness that models
+ * the same thing as an `update_plan` tool call (`rawInput.plan: [...]`), and
+ * an already-compacted `{objective, items}` record.
+ *
+ * Every field that survives is a short structured string capped by
+ * `compactText`. That bound is deliberate: this is the only agent-authored
+ * text that reaches the corner's pinned objective panel, and a panel that
+ * renders free-running harness output is exactly how the first objective
+ * banner (PR #165) ended up showing a codex startup dump at the top of every
+ * corner. Structured, length-capped fields cannot carry a banner.
+ */
 function activityPlan(...sources: unknown[]): CompactActivityPlan | undefined {
   for (const source of sources) {
     const record = objectValue(source);
     if (!record) continue;
     const planValue = record.plan;
+    const planRecord = objectValue(planValue);
     const rawItems = Array.isArray(planValue)
       ? planValue
-      : Array.isArray(objectValue(planValue)?.items)
-        ? (objectValue(planValue)!.items as unknown[])
-        : Array.isArray(record.items)
-          ? record.items
-          : [];
+      : Array.isArray(planRecord?.items)
+        ? (planRecord!.items as unknown[])
+        : Array.isArray(planRecord?.entries)
+          ? (planRecord!.entries as unknown[])
+          : Array.isArray(record.items)
+            ? record.items
+            : Array.isArray(record.entries)
+              ? record.entries
+              : [];
     const items = rawItems
       .map((item) => {
         const entry = objectValue(item);
-        const step = compactText(entry?.step ?? entry?.text ?? entry?.title, 240);
+        // `content` is ACP's own field name for a plan entry's text. It is
+        // taken only when it is a plain string — on a tool call the same key
+        // holds an array of content blocks, which is not a plan step.
+        const stepSource =
+          entry?.step ??
+          entry?.text ??
+          entry?.title ??
+          (typeof entry?.content === 'string' ? entry.content : undefined);
+        const step = compactText(stepSource, 240);
         return step ? { step, status: planStatus(entry?.status) } : undefined;
       })
       .filter((item): item is CompactActivityPlanItem => Boolean(item));
-    const planRecord = objectValue(planValue);
     const objective = compactText(record.objective ?? planRecord?.objective, 320);
     if (items.length || objective) return { ...(objective ? { objective } : {}), items };
   }
@@ -744,6 +770,15 @@ export function projectActivity(
   // all rather than a partial count that would have to be revised.
   let reasoningOpenedAt: number | undefined;
   let reasoningLastAt: number | undefined;
+  // The agent's current plan/checklist, and the last one actually put on the
+  // wire. An ACP `plan` update is suppressed from the transcript (it is
+  // reasoning there, not work) but it is the ONLY source for the corner's
+  // pinned objective panel, so it is carried out on the `activity_summary`
+  // event this projection already publishes — the same zero-extra-write
+  // technique `thoughtMs` uses. Only a *changed* plan rides along, so a
+  // 10-step checklist is not re-sent on every 5s batch.
+  let currentPlan: CompactActivityPlan | undefined;
+  let publishedPlanKey = '';
   const flush = () => {
     if (timer) clearTimeout(timer);
     timer = undefined;
@@ -806,11 +841,17 @@ export function projectActivity(
       }
     }
     const rollupTotal = Object.values(rollup).reduce((sum, count) => sum + count, 0);
+    // A plan change alone earns a flush. Without this a turn that opens by
+    // planning and then only reads files would leave the objective panel
+    // empty for the whole first batch — and a turn that does nothing but
+    // re-plan would never publish the checklist at all.
+    const planKey = currentPlan ? JSON.stringify(currentPlan) : '';
+    const plan = planKey && planKey !== publishedPlanKey ? currentPlan : undefined;
     // A reads-only batch used to emit nothing at all, which is the dead-air
     // bug: during the exact stretch the agent is working hardest the corner
     // showed no sign of life. It now emits exactly one event (the summary),
     // never more than the mixed case already cost.
-    if (!major.length && !rollupTotal) return;
+    if (!major.length && !rollupTotal && !plan) return;
     // Work landed, so the reasoning that preceded it is over: close the span
     // and let the receipt ride this same event. Reset unconditionally, even
     // below the reporting floor, or a sub-threshold think would leak into the
@@ -832,7 +873,9 @@ export function projectActivity(
       ...(rollupTotal ? { rollup } : {}),
       ...(observed.length ? { observed } : {}),
       ...(thoughtMs >= REASONING_RECEIPT_MIN_MS ? { thoughtMs } : {}),
+      ...(plan ? { plan } : {}),
     };
+    if (plan) publishedPlanKey = planKey;
     void emitActivityEvent(channelId, channelOwner, {
       sessionId,
       channelId,
@@ -851,6 +894,16 @@ export function projectActivity(
       reasoningOpenedAt ??= now;
       reasoningLastAt = now;
     }
+    // Read the plan off every update, including the ones dropped below: ACP
+    // sends it as its own suppressed `plan` update, while other harnesses
+    // model it as an `update_plan` tool call that is not load-bearing enough
+    // to survive `isMajorUpdate`. Both are the same fact about the turn.
+    const updatePlan = activityPlan(
+      sanitized,
+      sanitized.rawInput,
+      objectValue(sanitized.toolCall),
+    );
+    if (updatePlan?.items.length) currentPlan = updatePlan;
     trackToolCall(sanitized, toolCallKinds);
     const toolCallId = typeof sanitized.toolCallId === 'string' ? sanitized.toolCallId : undefined;
     if (toolCallId) toolCallRaw.set(toolCallId, { ...toolCallRaw.get(toolCallId), ...sanitized });

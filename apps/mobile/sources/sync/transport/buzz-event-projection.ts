@@ -282,9 +282,11 @@ export type ChatDisplayMessage = {
   isMergeSummary?: boolean;
   isArchivedNotice?: boolean;
   /**
-   * Client-rendered-only: never published, never a relay event. Set when the
-   * user addressed an agent whose presence reads offline/stale, so the
-   * transcript explains the silence instead of leaving it unexplained.
+   * A quiet, non-attributed system line rather than someone's turn. Two
+   * sources: the client-only "you addressed an agent whose presence reads
+   * offline/stale" notice (never published, never a relay event), and the
+   * daemon's published `#t=steer-queued` acknowledgement that a message sent
+   * mid-turn was received and will be delivered as the next prompt.
    */
   isSystemNotice?: boolean;
   /** True when the relay message is explicitly projected as an Agent answer. */
@@ -450,6 +452,12 @@ export function projectChatEvent(
   // tag — distinct from a `subchannel && status` parent-Room status card
   // (checked first below) and from the archive notice above.
   const isDeliveryFailure = bodyControl && !subchannelId && sessionEventHasTag(event, 'status', 'failed');
+  // The daemon's quiet "your message is queued behind the running turn"
+  // acknowledgement (`apps/body/src/activity.ts`'s `postSteerQueuedNotice`).
+  // Deliberately NOT an `#t=agent-message`: it is a receipt for the human's
+  // own input, not the agent speaking, so it renders as a system line and
+  // never joins the agent's attributed voice run.
+  const isSteerQueued = bodyControl && !subchannelId && sessionEventHasTag(event, 't', 'steer-queued');
   const repo = sessionEventTagValue(event, 'repo');
   const branch = sessionEventTagValue(event, 'branch');
   const tip = sessionEventTagValue(event, 'tip');
@@ -588,6 +596,19 @@ export function projectChatEvent(
           timestamp: eventTimestamp(event),
           ...(pubkey ? { pubkey } : {}),
           isArchivedNotice: true,
+          ...(isNew ? { isNew: true } : {}),
+        },
+      };
+    }
+    if (isSteerQueued) {
+      return {
+        message: {
+          id: eventId(event),
+          text,
+          isUser: false,
+          timestamp: eventTimestamp(event),
+          ...(pubkey ? { pubkey } : {}),
+          isSystemNotice: true,
           ...(isNew ? { isNew: true } : {}),
         },
       };

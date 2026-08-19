@@ -33,6 +33,7 @@ import {
   startAgentPresence,
   postAgentTurnStatus,
   postAgentStallNotice,
+  postSteerQueuedNotice,
   postControlMessage,
   replyRootIdForEvent,
   stripAgentReplyPreamble,
@@ -1075,6 +1076,32 @@ export class Body {
   /** Close-request scan cursor per abandoned corner, so a quiet corner costs
    *  one bounded `since`-filtered read per maintenance tick and no more. */
   private abandonedCornerScanAt = new Map<string, number>();
+  /**
+   * Same synchronous claim/release shape again, for `pollMembers`. The WS
+   * maintenance timer fires `pollRoomMaintenance` without awaiting the prior
+   * tick, so two ticks can enter a corner's member poll at once. A steer that
+   * has to wait for the running turn holds the loop for the whole turn, which
+   * is exactly long enough for the next tick to re-read the same still-pending
+   * event (it is neither in `processedMemberEventIds` nor durably `delivered`
+   * yet) and deliver it a second time. Claiming per corner keeps a corner's
+   * queued steers strictly ordered and delivered exactly once.
+   */
+  private inFlightSubchannelPolls = new Set<string>();
+  /**
+   * Per-channel count of inbound human messages seen. A turn snapshots this
+   * when its prompt actually starts; the "still working" stall notice is
+   * deferred whenever the count has moved since, because a fresh steer — not
+   * backend silence — is then what the human is waiting on, and the honest
+   * signal for that is the queued acknowledgement, not "still working".
+   */
+  private inboundMessageSeq = new Map<string, number>();
+  /**
+   * Channels that already carry an unanswered queued-steer acknowledgement.
+   * Keeps the ack to at most one per channel per active turn no matter how
+   * many steers pile up behind it; cleared the moment the channel is seen
+   * with no turn running (i.e. the queue drained).
+   */
+  private steerQueuedChannels = new Set<string>();
   private requestCursors = new Map<string, number>();
   /** Throttle for the periodic stray-corner-worktree prune (per Body). */
   private lastWorktreePruneAt = 0;
@@ -1446,6 +1473,74 @@ export class Body {
   }
 
   /**
+   * Record that a human message arrived for this channel. Called at the point
+   * of ARRIVAL (a pushed Room event, a corner member event), not at the point
+   * the turn for it finally starts — the whole reason it exists is to tell a
+   * still-running turn that its silence is no longer the interesting fact.
+   */
+  private noteInboundMessage(channelId: string): void {
+    this.inboundMessageSeq.set(channelId, (this.inboundMessageSeq.get(channelId) ?? 0) + 1);
+  }
+
+  /**
+   * Earliest point a Room learns a human message exists. Records it for the
+   * stall-notice check and, when a turn is already running on this Room's
+   * pinned session, publishes the queued acknowledgement immediately.
+   *
+   * Deliberately called OFF `runRoomPushLoop`'s `delivery` chain: that chain
+   * serializes handling behind the running turn (which is what makes the
+   * message a correctly-ordered next prompt), so an ack raised from inside it
+   * could only ever arrive after the answer it was meant to precede.
+   */
+  private noteRoomInboundMessage(
+    channelId: string,
+    event: NostrEvent,
+    roomParticipants: string[],
+  ): void {
+    // Best-effort and fail-quiet: this only decides whether to publish a
+    // courtesy ack, so a malformed/partial pushed event is skipped rather
+    // than allowed to break the delivery callback it is called from.
+    if (!event || typeof event.content !== 'string' || !Array.isArray(event.tags)) return;
+    if (event.pubkey === this.agentIdentity.publicKey) return;
+    if (!event.content.trim()) return;
+    if (!isRoomConversationMessage(event)) return;
+    if (!isChannelAddressedMessage(event, this.agentIdentity.publicKey, roomParticipants)) return;
+    this.noteInboundMessage(channelId);
+    if (!this.channelTurnActive(channelId)) {
+      this.steerQueuedChannels.delete(channelId);
+      return;
+    }
+    void this.acknowledgeQueuedSteer(channelId, event.id);
+  }
+
+  /** Whether an ACP turn is currently running on this channel's pinned session. */
+  private channelTurnActive(channelId: string): boolean {
+    if (this.runningAgentTasks.has(channelId)) return true;
+    const session = this.sessions.get(channelId);
+    // Best-effort, like `noteRoomInboundMessage` below: this only gates a
+    // courtesy ack, so a session whose client has no `activeRunId` (a
+    // half-built session, a stub) reads as "no turn running" rather than
+    // throwing out of a delivery callback or a Room turn.
+    if (typeof session?.client?.activeRunId !== 'function') return false;
+    return Boolean(session.client.activeRunId(session.sessionId));
+  }
+
+  /**
+   * Publish the quiet "received, will apply next" acknowledgement for a
+   * message that has to wait behind a running turn. De-duped per channel: a
+   * burst of steers earns one ack, not one each. Never throws — a failed ack
+   * must not cost the steer its delivery.
+   */
+  private async acknowledgeQueuedSteer(channelId: string, requestId?: string): Promise<void> {
+    if (this.steerQueuedChannels.has(channelId)) return;
+    this.steerQueuedChannels.add(channelId);
+    await postSteerQueuedNotice(channelId, this.agentIdentity, requestId).catch((error) => {
+      this.steerQueuedChannels.delete(channelId);
+      console.error('[body] failed to publish queued-steer acknowledgement:', error);
+    });
+  }
+
+  /**
    * Prompt deadlines are process-health boundaries, not merely UI timeouts.
    * Retire a non-returning ACP generation so the next Room turn gets a fresh
    * process instead of reusing one that has already stopped answering.
@@ -1495,6 +1590,9 @@ export class Body {
     // on a slow-but-active turn.
     let stallTimer: ReturnType<typeof setTimeout> | undefined;
     let stallNotified = false;
+    // Baseline for the "a fresh message arrived" check below. Sampled when the
+    // prompt actually starts, not when this method is entered.
+    let stallBaselineSeq = 0;
     const clearStallTimer = () => {
       if (stallTimer) clearTimeout(stallTimer);
       stallTimer = undefined;
@@ -1503,17 +1601,34 @@ export class Body {
       clearStallTimer();
       if (!stream || stallNotified) return;
       stallTimer = setTimeout(() => {
+        // A new human message landed on this channel since the window opened.
+        // The human is waiting on their own steer, not on backend silence —
+        // answering that with "still working" is what made a mid-turn steer
+        // read as swallowed. `acknowledgeQueuedSteer` owns that signal; push
+        // the stall window out and re-measure from the newest message instead.
+        const seq = this.inboundMessageSeq.get(stream.channelId) ?? 0;
+        if (seq !== stallBaselineSeq) {
+          stallBaselineSeq = seq;
+          armStallTimer();
+          return;
+        }
         stallNotified = true;
         postAgentStallNotice(stream.channelId, this.agentIdentity, stream.replyToId).catch(
           (error) => console.error('[body] failed to publish agent stall notice:', error),
         );
       }, ROOM_AGENT_STALL_NOTICE_MS);
     };
-    armStallTimer();
     let result: PromptResult;
     try {
-      result = await this.runOnSession(session, () =>
-        session.client.sessionPrompt(
+      result = await this.runOnSession(session, () => {
+        // Armed HERE, not before `runOnSession`: a turn queued behind another
+        // turn on the same pinned session has sent the backend nothing yet, so
+        // a "my coding backend is taking longer than usual" notice fired while
+        // merely waiting in that FIFO is simply false — and lands in the
+        // transcript directly under the message that is still waiting its turn.
+        if (stream) stallBaselineSeq = this.inboundMessageSeq.get(stream.channelId) ?? 0;
+        armStallTimer();
+        return session.client.sessionPrompt(
           session.sessionId,
           prompt,
           ROOM_AGENT_PROMPT_TIMEOUT_MS,
@@ -1523,8 +1638,8 @@ export class Body {
               narrator?.onChunk(fullText);
             }),
           armStallTimer,
-        ),
-      );
+        );
+      });
     } catch (error) {
       if (isAcpPromptStallError(error)) {
         session.client.sessionCancel(session.sessionId);
@@ -2804,6 +2919,16 @@ export class Body {
               await this.durableState.delivered(tlcChannelId, event.id);
               continue;
             }
+          }
+          // Covers the HTTP backstop / directly-driven Room (no push loop, so
+          // `noteRoomInboundMessage` never ran) and re-checks after any wait
+          // above. `replyInRoom` below queues on the session FIFO when a turn
+          // is already running, so the human gets the ack rather than silence.
+          this.noteInboundMessage(tlcChannelId);
+          if (this.channelTurnActive(tlcChannelId)) {
+            await this.acknowledgeQueuedSteer(tlcChannelId, event.id);
+          } else {
+            this.steerQueuedChannels.delete(tlcChannelId);
           }
           const cornerWorkIntent = isChannelWorkIntent(
             event,
@@ -4089,6 +4214,7 @@ export class Body {
             // sees a continuously-delivering socket as continuously healthy
             // instead of judging it stale purely by connect-time age.
             this.onRoomPollSuccess?.(channelId);
+            this.noteRoomInboundMessage(channelId, sessionEvent.event, roomParticipants);
             delivery = delivery
               .then(async () => {
                 await this.processChannelRequestEvents(
@@ -4401,6 +4527,22 @@ export class Body {
    * Returns the number of new messages processed.
    */
   async pollMembers(subchannelId: string): Promise<number> {
+    if (!this.subchannels.has(subchannelId)) {
+      throw new Error(`Subchannel ${subchannelId} not found`);
+    }
+    // Claimed synchronously (no `await` between check and add) — see
+    // `inFlightSubchannelPolls`. An overlapping maintenance tick must not
+    // re-deliver a steer this invocation is still holding open.
+    if (this.inFlightSubchannelPolls.has(subchannelId)) return 0;
+    this.inFlightSubchannelPolls.add(subchannelId);
+    try {
+      return await this.pollMembersOnce(subchannelId);
+    } finally {
+      this.inFlightSubchannelPolls.delete(subchannelId);
+    }
+  }
+
+  private async pollMembersOnce(subchannelId: string): Promise<number> {
     const info = this.subchannels.get(subchannelId);
     if (!info) {
       throw new Error(`Subchannel ${subchannelId} not found`);
@@ -4520,6 +4662,10 @@ export class Body {
         // the original task ended between polling and delivery, wait for its
         // cleanup and preserve this message as the next ordered prompt.
         const prompt = attachmentPrompt(evt.pubkey, evt.content, attachments);
+        // A genuine human turn for this corner — from here on, any "still
+        // working" notice about the turn currently in flight would be
+        // answering this message rather than describing the backend.
+        this.noteInboundMessage(subchannelId);
         try {
           let agentReply = '';
           let agentResult: (PromptResult & { narrativeFloor?: number }) | undefined;
@@ -4538,16 +4684,40 @@ export class Body {
               { channelId: subchannelId, requestId: evt.id, replyToId: evt.id, narrate: true },
             );
           };
+          // A message that arrives mid-turn is never discarded. Live steering
+          // is tried first (the harness injects it into the run in progress);
+          // when the harness has no steering channel at all — none of the
+          // shipped ACP adapters advertise one — the message is QUEUED as the
+          // next prompt instead. `runOnSession`'s per-session FIFO is that
+          // queue: a prompt issued now runs the moment the active turn
+          // releases the session, and because this loop walks the durable
+          // pending list in order under `inFlightSubchannelPolls`, several
+          // queued steers deliver in order and exactly once.
+          //
+          // The old shape rethrew the steer failure whenever no
+          // `runningAgentTasks` entry existed — true for every corner
+          // FOLLOW-UP turn — which left the human's message silently failed
+          // and blindly re-attempted on a later tick, with no acknowledgement
+          // at any point.
           const runningTask = this.runningAgentTasks.get(subchannelId);
           if (runningTask || session.client.activeRunId(session.sessionId)) {
+            let steered = false;
             try {
               await session.client.sessionSteer(session.sessionId, prompt, 60_000);
+              steered = true;
             } catch (error) {
-              if (!runningTask) throw error;
-              await runningTask;
+              console.log(
+                `[body] live steering unavailable for ${subchannelId}; ` +
+                  `queueing the message as the next turn: ${String(error)}`,
+              );
+            }
+            if (!steered) {
+              await this.acknowledgeQueuedSteer(subchannelId, evt.id);
+              if (runningTask) await runningTask;
               agentResult = await promptNewTurn();
             }
           } else {
+            this.steerQueuedChannels.delete(subchannelId);
             agentResult = await promptNewTurn();
           }
           await this.durableState.appendConversation(subchannelId, {

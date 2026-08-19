@@ -1204,6 +1204,34 @@ export function postAgentStallNotice(
   );
 }
 
+/** Marker tag on the quiet "your steer is queued" acknowledgement below. */
+export const STEER_QUEUED_TAG = 'steer-queued';
+
+/**
+ * Immediate, lightweight acknowledgement that a message which arrived while a
+ * turn was already running has been RECEIVED and will be delivered as the next
+ * prompt — never a fabricated agent answer, and deliberately distinct from
+ * `postAgentStallNotice` above ("still working" is a statement about the
+ * backend's silence; this one is a statement about the human's own input).
+ *
+ * Published as a `body-control` status event rather than an `#t=agent-message`
+ * so it renders as a quiet system line and never joins the agent's attributed
+ * voice run in the transcript. Callers are responsible for keeping it quiet —
+ * at most one per channel per active turn (see `Body.acknowledgeQueuedSteer`).
+ */
+export function postSteerQueuedNotice(
+  channelId: string,
+  owner: Identity,
+  requestId?: string,
+): Promise<void> {
+  return postControlMessage(
+    channelId,
+    owner,
+    'Got it — queued. I’ll pick this up as soon as the current step finishes.',
+    [['t', STEER_QUEUED_TAG], ['status', 'queued'], ...(requestId ? [['request', requestId]] : [])],
+  );
+}
+
 /** Publish one signed, replaceable Room-scoped daemon presence marker. */
 export async function postAgentPresence(
   channelId: string,

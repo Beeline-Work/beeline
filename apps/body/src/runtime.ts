@@ -376,6 +376,36 @@ export async function writeRuntimeRecord(record: AgentRuntimeRecord): Promise<st
 }
 
 /**
+ * Fail BEFORE the one-shot pairing code is consumed if this host cannot
+ * actually store the runtime.
+ *
+ * `writeRuntimeRecord` is the last irreversible step of pairing that can still
+ * throw after the agent has already registered itself in the Workspace, and a
+ * throw there is exactly the half-created ghost this preflight exists to
+ * prevent: an unusable directory (missing parent, read-only mount, wrong
+ * owner) is a property of the host, knowable before any relay write.
+ */
+export async function assertRuntimeStorageWritable(
+  supervisorRoot: string,
+  agentPubkey: string,
+): Promise<void> {
+  const directory = runtimeDirectory(supervisorRoot, agentPubkey);
+  const probe = resolve(directory, `write-probe-${process.pid}.tmp`);
+  try {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await writeFile(probe, '', { mode: 0o600 });
+  } catch (error) {
+    throw new Error(
+      `cannot write agent runtime state at ${directory}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  } finally {
+    await rm(probe, { force: true }).catch(() => undefined);
+  }
+}
+
+/**
  * Leave a pointer at the repo-anchored path the runtime used to occupy, so
  * `beeline start` inside the paired checkout still finds this agent.
  */
@@ -642,6 +672,12 @@ export async function pairRepositoryAgent(
       repo: LocalRepositoryBinding,
     ): Promise<void>;
     launch?(configPath: string): Promise<number>;
+    /**
+     * Best-effort undo of `redeem`'s Workspace registration, called only when
+     * a step between redemption and the runtime record landing on disk throws.
+     * Must never throw itself — a real pairing error is already propagating.
+     */
+    abandonPairing?(pairing: RedeemAgentPairingResult): Promise<unknown>;
   },
 ): Promise<PairRuntimeResult> {
   // The runtime root is machine-local agent state, deliberately not the paired
@@ -659,61 +695,96 @@ export async function pairRepositoryAgent(
   // explicit `null` pairs the agent with no repository binding at all — see
   // `input.repo` above.
   const repo = input.repo === undefined ? inspectLocalRepository(input.cwd) : input.repo;
-  const pairing = await deps.redeem(input.code);
-  const room = repo
-    ? await deps.resolveRoom(
-        pairing,
-        repo.repository,
-        repo.relayRepo ? input.mergeWorkerIdentity.publicKey : undefined,
-      )
-    : undefined;
-  if (repo && room) await deps.validate?.(pairing, room, repo);
+  // Last host-local precondition before the irreversible relay writes below.
+  await assertRuntimeStorageWritable(supervisorRoot, input.agentIdentity.publicKey);
   const runtimeRoot = runtimeDirectory(supervisorRoot, input.agentIdentity.publicKey);
-  const runtime: AgentRuntimeRecord = {
-    version: 2,
-    communityId: pairing.communityId,
-    pairedBy: pairing.pairedBy,
-    agent: storeIdentity(input.agentIdentity, 'buzzy-agent'),
-    body: storeIdentity(input.bodyIdentity, 'buzzy-body'),
-    // Empty when pairing with no repository: the supervisor discovers every
-    // Room this agent is invited to from relay membership and materializes
-    // each Room's own repository on demand (`WorkspaceSupervisor.reconcile`).
-    rooms:
-      repo && room
-        ? [
-            {
-              channelId: room.channelId,
-              repo,
-              root: resolve(runtimeRoot, 'rooms', room.channelId),
-              ...(repo.relayRepo && room.mergeWorkerProvisioned
-                ? { mergeWorker: storeIdentity(input.mergeWorkerIdentity, 'buzzy-merge-worker') }
-                : {}),
-              membershipSince: Math.floor(Date.now() / 1000),
-              discoveredAt: new Date().toISOString(),
-            },
-          ]
-        : [],
-    supervisorRoot,
-    relayBaseUrl: input.relayBaseUrl,
-    ...(input.relayHost ? { relayHost: input.relayHost } : {}),
-    ...(input.llmEnvFile ? { llmEnvFile: input.llmEnvFile } : {}),
-    ...(input.accessPolicy ? { accessPolicy: input.accessPolicy } : {}),
-    ...(input.accessAutoResponse ? { accessAutoResponse: input.accessAutoResponse } : {}),
-    ...(input.modelSelection?.model || input.modelSelection?.effort
-      ? { modelSelection: input.modelSelection }
-      : {}),
-    agentKind: input.agentKind ?? 'reference',
-    agentCommand: input.agentCommand ?? input.agentBinary,
-    agentArgs: [...(input.agentArgs ?? [])],
-    agentBinary: input.agentCommand ?? input.agentBinary,
-    mcpBinary: input.mcpBinary,
-    createdAt: new Date().toISOString(),
-  };
-  const configPath = await writeRuntimeRecord(runtime);
+  // ── Everything from here to `writeRuntimeRecord` is the half-created window.
+  // `redeem` self-adds the agent as a Workspace member and publishes its
+  // identity record; both are irreversible relay writes, and `resolveRoom`,
+  // `validate` and the runtime write can all still fail after them. A failure
+  // there used to leave the agent registered with no daemon behind it — a
+  // permanently-offline ghost in the Workspace that the operator cannot even
+  // re-pair, because the one-shot code is already spent. Undo the registration
+  // instead, best-effort, and only when this run is the one that added it.
+  const pairing = await deps.redeem(input.code);
+  let configPath: string;
+  let room: RepositoryRoomResult | undefined;
+  let runtime: AgentRuntimeRecord;
+  try {
+    room = repo
+      ? await deps.resolveRoom(
+          pairing,
+          repo.repository,
+          repo.relayRepo ? input.mergeWorkerIdentity.publicKey : undefined,
+        )
+      : undefined;
+    if (repo && room) await deps.validate?.(pairing, room, repo);
+    runtime = {
+      version: 2,
+      communityId: pairing.communityId,
+      pairedBy: pairing.pairedBy,
+      agent: storeIdentity(input.agentIdentity, 'buzzy-agent'),
+      body: storeIdentity(input.bodyIdentity, 'buzzy-body'),
+      // Empty when pairing with no repository: the supervisor discovers every
+      // Room this agent is invited to from relay membership and materializes
+      // each Room's own repository on demand (`WorkspaceSupervisor.reconcile`).
+      rooms:
+        repo && room
+          ? [
+              {
+                channelId: room.channelId,
+                repo,
+                root: resolve(runtimeRoot, 'rooms', room.channelId),
+                ...(repo.relayRepo && room.mergeWorkerProvisioned
+                  ? { mergeWorker: storeIdentity(input.mergeWorkerIdentity, 'buzzy-merge-worker') }
+                  : {}),
+                membershipSince: Math.floor(Date.now() / 1000),
+                discoveredAt: new Date().toISOString(),
+              },
+            ]
+          : [],
+      supervisorRoot,
+      relayBaseUrl: input.relayBaseUrl,
+      ...(input.relayHost ? { relayHost: input.relayHost } : {}),
+      ...(input.llmEnvFile ? { llmEnvFile: input.llmEnvFile } : {}),
+      ...(input.accessPolicy ? { accessPolicy: input.accessPolicy } : {}),
+      ...(input.accessAutoResponse ? { accessAutoResponse: input.accessAutoResponse } : {}),
+      ...(input.modelSelection?.model || input.modelSelection?.effort
+        ? { modelSelection: input.modelSelection }
+        : {}),
+      agentKind: input.agentKind ?? 'reference',
+      agentCommand: input.agentCommand ?? input.agentBinary,
+      agentArgs: [...(input.agentArgs ?? [])],
+      agentBinary: input.agentCommand ?? input.agentBinary,
+      mcpBinary: input.mcpBinary,
+      createdAt: new Date().toISOString(),
+    };
+    configPath = await writeRuntimeRecord(runtime);
+  } catch (error) {
+    if (pairing.joined) await deps.abandonPairing?.(pairing).catch(() => undefined);
+    throw error;
+  }
+  // Past this line the pairing is complete and recoverable from disk, so a
+  // failure must NOT roll the registration back: that would delete a valid
+  // agent the host still believes it owns. `writeRuntimePointer` already
+  // swallows its own errors, and a daemon that fails to launch is started by
+  // `beeline start --agent <pubkey>`.
+  //
   // `beeline start` from inside the paired checkout keeps working. With no
   // repository there is no checkout to anchor a pointer in; `beeline start`
   // finds the agent in the machine-local state home instead.
   if (repo) await writeRuntimePointer(repo.gitCommonDir, runtime.agent.publicKey, configPath);
-  const pid = await (deps.launch ?? launchRuntimeDaemon)(configPath);
+  let pid: number;
+  try {
+    pid = await (deps.launch ?? launchRuntimeDaemon)(configPath);
+  } catch (error) {
+    throw new Error(
+      `agent ${runtime.agent.publicKey} is paired, but its daemon did not start: ${
+        error instanceof Error ? error.message : String(error)
+      }. Do not re-run \`beeline pair\` (the code is spent) — run ` +
+        `\`beeline start --agent ${runtime.agent.publicKey}\`.`,
+      { cause: error },
+    );
+  }
   return { pairing, ...(room ? { room } : {}), runtime, configPath, pid };
 }

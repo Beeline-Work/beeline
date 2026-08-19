@@ -2,11 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 import { AGENT_PRESENCE_STALE_MS } from '@beeline/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
 import {
+  OFFLINE_NOTICE_REPEAT_WINDOW_MS,
   addressedAgentOfflineNotice,
   agentPresenceFromSessionEvent,
+  offlineNoticeForSend,
   isAgentPresenceOnlineWithReconnectGrace,
   isAgentOfflineAfterPresenceResolved,
   isAgentTurnActive,
+  mergeAgentPresence,
   presenceMapFromSessionEvents,
   reconnectPresenceAfterForeground,
 } from './agent-presence';
@@ -175,5 +178,162 @@ describe('addressedAgentOfflineNotice', () => {
 
   it('renders nothing for a healthy agent regardless of name', () => {
     expect(addressedAgentOfflineNotice('alden', true)).toBeNull();
+  });
+});
+
+describe('offlineNoticeForSend', () => {
+  const beebee = 'b'.repeat(64);
+  const alden = 'a'.repeat(64);
+  const roster = [
+    { pubkey: beebee, name: 'beebee', handle: 'beebee' },
+    { pubkey: alden, name: 'alden', handle: 'alden' },
+  ];
+  const base = {
+    presenceResolved: true,
+    isOnline: (pubkey: string) => pubkey !== beebee,
+    agentName: (pubkey: string) => (pubkey === beebee ? 'beebee' : 'alden'),
+  };
+
+  it('stays silent on a Room message that does not mention the offline agent', () => {
+    expect(
+      offlineNoticeForSend({
+        ...base,
+        send: { sentText: 'shipping the release notes now', mentionableAgents: roster },
+        now: 1_000,
+      }),
+    ).toBeNull();
+  });
+
+  it('stays silent when the message mentions a different, healthy agent', () => {
+    expect(
+      offlineNoticeForSend({
+        ...base,
+        send: { sentText: '@alden take a look', mentionableAgents: roster },
+        now: 1_000,
+      }),
+    ).toBeNull();
+  });
+
+  it('renders exactly one notice for a message that mentions the offline agent', () => {
+    expect(
+      offlineNoticeForSend({
+        ...base,
+        send: { sentText: '@beebee are you there?', mentionableAgents: roster },
+        now: 1_000,
+      }),
+    ).toEqual({
+      agentPubkey: beebee,
+      text: 'beebee seems offline right now — its host machine may be off.',
+    });
+  });
+
+  it('does not repeat itself when the same agent is mentioned again moments later', () => {
+    const noticedAt = new Map<string, number>();
+    const first = offlineNoticeForSend({
+      ...base,
+      send: { sentText: '@beebee are you there?', mentionableAgents: roster },
+      noticedAt,
+      now: 1_000,
+    });
+    expect(first).not.toBeNull();
+    noticedAt.set(first!.agentPubkey, 1_000);
+
+    expect(
+      offlineNoticeForSend({
+        ...base,
+        send: { sentText: '@beebee hello?', mentionableAgents: roster },
+        noticedAt,
+        now: 3_000,
+      }),
+    ).toBeNull();
+  });
+
+  it('speaks again once the repeat window has passed', () => {
+    const noticedAt = new Map([[beebee, 1_000]]);
+    expect(
+      offlineNoticeForSend({
+        ...base,
+        send: { sentText: '@beebee still down?', mentionableAgents: roster },
+        noticedAt,
+        now: 1_000 + OFFLINE_NOTICE_REPEAT_WINDOW_MS,
+      }),
+    ).not.toBeNull();
+  });
+
+  it('never accuses an agent while its presence lease is still unknown', () => {
+    expect(
+      offlineNoticeForSend({
+        ...base,
+        presenceResolved: false,
+        send: { sentText: '@beebee are you there?', mentionableAgents: roster },
+        now: 1_000,
+      }),
+    ).toBeNull();
+  });
+
+  it('ignores a dropdown selection whose handle is no longer in the sent text', () => {
+    expect(
+      offlineNoticeForSend({
+        ...base,
+        send: {
+          sentText: 'never mind, I will do it myself',
+          mentionableAgents: roster,
+          selectedMentions: new Map([['beebee', beebee]]),
+        },
+        now: 1_000,
+      }),
+    ).toBeNull();
+  });
+
+  it("addresses a Corner's own agent implicitly, with no mention needed", () => {
+    expect(
+      offlineNoticeForSend({
+        ...base,
+        send: { sentText: 'keep going', cornerAgentPubkey: beebee },
+        now: 1_000,
+      }),
+    ).toMatchObject({ agentPubkey: beebee });
+  });
+});
+
+describe('recovering from a stale presence lease', () => {
+  const stale = { agentPubkey: agent, status: 'online' as const, observedAt: 0 };
+
+  it('flips back online the moment a fresh heartbeat lands', () => {
+    const now = AGENT_PRESENCE_STALE_MS * 3;
+    expect(isAgentPresenceOnlineWithReconnectGrace(stale, now)).toBe(false);
+
+    const recovered = mergeAgentPresence({ [agent]: stale }, {
+      agentPubkey: agent,
+      status: 'online',
+      observedAt: now,
+    });
+    expect(isAgentPresenceOnlineWithReconnectGrace(recovered[agent], now)).toBe(true);
+  });
+
+  it('stays offline when the heartbeat that arrives is itself already past its lease', () => {
+    // The reader has no way to tell a delivered-but-old record from a dead
+    // daemon, which is why the publisher must stamp `created_at` at publish
+    // time (see startAgentPresence in apps/body/src/activity.ts) rather than
+    // when the heartbeat was enqueued behind a retry.
+    const now = AGENT_PRESENCE_STALE_MS * 3;
+    const late = mergeAgentPresence({ [agent]: stale }, {
+      agentPubkey: agent,
+      status: 'online',
+      observedAt: now - AGENT_PRESENCE_STALE_MS - 1,
+    });
+    expect(isAgentPresenceOnlineWithReconnectGrace(late[agent], now)).toBe(false);
+  });
+
+  it('never lets an older record displace the newest one the reader already holds', () => {
+    const now = AGENT_PRESENCE_STALE_MS * 3;
+    const fresh = { agentPubkey: agent, status: 'online' as const, observedAt: now };
+    const merged = mergeAgentPresence({ [agent]: fresh }, {
+      agentPubkey: agent,
+      status: 'offline',
+      observedAt: now - 60_000,
+    });
+    expect(merged[agent]).toBe(fresh);
+    expect(isAgentPresenceOnlineWithReconnectGrace(merged[agent], now)).toBe(true);
   });
 });

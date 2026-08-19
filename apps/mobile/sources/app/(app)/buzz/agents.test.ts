@@ -11,12 +11,27 @@ const client = vi.hoisted(() => ({
   listPersonProfiles: vi.fn(async () => []),
   addMember: vi.fn(async () => undefined),
   waitUntilMemberRole: vi.fn(async () => undefined),
+  removeAgent: vi.fn(async () => undefined),
 }));
 const agentPresenceBackfillForWorkspace = vi.hoisted(() => vi.fn(async () => []));
 const agentModelCatalogRead = vi.hoisted(() => vi.fn(async () => null));
 const agentModelConfigRead = vi.hoisted(() => vi.fn(async () => null));
 const agentModelConfigSet = vi.hoisted(() => vi.fn(async () => undefined));
+const mmkvValues = vi.hoisted(() => new Map<string, string>());
 
+vi.mock('react-native-mmkv', () => ({
+  MMKV: class {
+    getString(key: string) {
+      return mmkvValues.get(key);
+    }
+    set(key: string, value: string) {
+      mmkvValues.set(key, value);
+    }
+    delete(key: string) {
+      mmkvValues.delete(key);
+    }
+  },
+}));
 vi.mock('expo-router', () => ({
   router: navigation,
   useLocalSearchParams: () => ({ communityId: 'workspace-1' }),
@@ -77,7 +92,9 @@ vi.mock('react-native', async () => {
   };
 });
 
+import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
 import { shortMemberNpub } from '@/buzz/member-display';
+import { useBuzzLocalCache } from '@/buzz/local-cache';
 import MembersScreen from './MembersScreen';
 
 const originalConsoleError = console.error;
@@ -92,11 +109,17 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
   vi.clearAllMocks();
+  useBuzzLocalCache.getState().clear();
   client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'owner' }]);
+  client.removeAgent.mockResolvedValue(undefined);
   agentPresenceBackfillForWorkspace.mockResolvedValue([]);
   agentModelCatalogRead.mockResolvedValue(null);
   agentModelConfigRead.mockResolvedValue(null);
   agentModelConfigSet.mockResolvedValue(undefined);
+  (prepareWorkspaceContext as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+    workspaces: [{ communityId: 'workspace-1', name: 'Night Shift', viewerRole: 'owner' }],
+    activeWorkspaceId: 'workspace-1',
+  });
 });
 
 /** Nearest TouchableOpacity ancestor — used to select an agent row from its identity text. */
@@ -306,5 +329,106 @@ describe('Members screen', () => {
     });
 
     expect(agentModelConfigSet).toHaveBeenCalledWith('workspace-1', agentPubkey, { effort: 'high' });
+  });
+
+  it('paints from the local Workspace roster cache before any network read resolves', async () => {
+    const cachedAgentPubkey = '6'.repeat(64);
+    const cachedPersonPubkey = '7'.repeat(64);
+    const viewerPubkey = 'a'.repeat(64);
+    useBuzzLocalCache.getState().setActiveViewer(viewerPubkey);
+    useBuzzLocalCache.getState().setChannelList({
+      viewerPubkey,
+      communityId: 'workspace-1',
+      channels: [],
+      directMessages: [],
+      workspaceMembers: [
+        { peerPubkey: cachedPersonPubkey, peerName: 'Cached Carol', peerKind: 'person', role: 'member' },
+        {
+          peerPubkey: cachedAgentPubkey,
+          peerName: 'sumo',
+          peerKind: 'agent',
+          peerAgent: {
+            agentId: 'cached-agent',
+            communityId: 'workspace-1',
+            displayName: 'sumo',
+            pubkey: cachedAgentPubkey,
+            createdAt: 0,
+            raw: {},
+          },
+        },
+      ],
+      communities: [{ communityId: 'workspace-1', name: 'Night Shift', viewerRole: 'owner' }],
+      personalWorkspaceId: null,
+      viewerIsAgent: false,
+      canEditWorkspaceAvatar: true,
+      updatedAt: 0,
+      lastAccessedAt: 0,
+    } as any);
+
+    // A slow/absent network: nothing the mount effect awaits ever resolves.
+    (prepareWorkspaceContext as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise(() => {}),
+    );
+
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(React.createElement(MembersScreen));
+    });
+
+    expect(renderer.root.findByProps({ testID: `agent-${cachedAgentPubkey}-identity` }).props.children).toBe(
+      'sumo',
+    );
+    expect(renderer.root.findByProps({ testID: `member-${cachedPersonPubkey}-identity` })).toBeDefined();
+  });
+
+  it('removes an agent through a pure membership change even while its presence is stale/offline', async () => {
+    const agentPubkey = '8'.repeat(64);
+    client.listAgents
+      .mockResolvedValueOnce([
+        { agentId: 'a5', communityId: 'workspace-1', displayName: 'sumo', pubkey: agentPubkey, createdAt: 0, raw: {} },
+      ])
+      .mockResolvedValue([]);
+    // No presence record anywhere in the Workspace: this agent reads offline.
+    agentPresenceBackfillForWorkspace.mockResolvedValue([]);
+    const renderer = await render();
+
+    await act(async () => {
+      ancestorButton(renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` })).props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(renderer.root.findByProps({ testID: `agent-${agentPubkey}-offline-notice` })).toBeDefined();
+
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'Remove this Agent' }).props.onPress();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ label: 'Stop & Remove' }).props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(client.removeAgent).toHaveBeenCalledWith('workspace-1', agentPubkey);
+    expect(renderer.root.findAllByProps({ testID: `agent-${agentPubkey}-identity` })).toHaveLength(0);
+  });
+
+  it('never renders a Remove Agent action for a non-admin viewer', async () => {
+    const agentPubkey = '9'.repeat(64);
+    client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'member' }]);
+    client.listAgents.mockResolvedValue([
+      { agentId: 'a6', communityId: 'workspace-1', displayName: 'sumo', pubkey: agentPubkey, createdAt: 0, raw: {} },
+    ]);
+    const renderer = await render();
+
+    await act(async () => {
+      ancestorButton(renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` })).props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(renderer.root.findAllByProps({ accessibilityLabel: 'Remove this Agent' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'add-agent' })).toHaveLength(0);
   });
 });

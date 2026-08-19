@@ -1,6 +1,7 @@
 /** Native Google-first onboarding. OAuth proves lookup only; the Nostr key remains device-held. */
 import React, { useEffect, useRef, useState } from 'react';
-import { Platform, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as Linking from 'expo-linking';
@@ -27,6 +28,13 @@ import {
   saveBuzzIdentity,
 } from '@/auth/buzz-identity-storage';
 import {
+  canConfirmNewKeyBackup,
+  canEnterWithNewKey,
+  createNewKeyDraft,
+  maskNsec,
+  type NewKeyDraft,
+} from '@/auth/new-key-onboarding';
+import {
   nextGoogleOnboardingStatus,
   noticeForOidcError,
   waitForGoogleAuthCallback,
@@ -46,7 +54,12 @@ import {
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { groknight } from '@/buzz/groknight';
 import { BeelineMark } from '@/components/buzz/BeelineMark';
-import { MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
+import {
+  hairlineDivider,
+  HullSurface,
+  MonoButton,
+  PixelGateReveal,
+} from '@/components/buzz/MonoHull';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
@@ -85,9 +98,14 @@ export default function BuzzOnboarding() {
   const [notice, setNotice] = useState<GoogleOnboardingNotice | null>(
     Platform.OS === 'web' ? WEB_NOTICE : null,
   );
-  const [loadingAction, setLoadingAction] = useState<'google' | 'bind' | 'import' | 'name' | null>(
-    null,
-  );
+  const [loadingAction, setLoadingAction] = useState<
+    'google' | 'bind' | 'import' | 'name' | 'create' | 'enter' | null
+  >(null);
+  const [newKey, setNewKey] = useState<NewKeyDraft | null>(null);
+  const [newKeyRevealed, setNewKeyRevealed] = useState(false);
+  const [newKeyCopied, setNewKeyCopied] = useState(false);
+  const [newKeySeen, setNewKeySeen] = useState(false);
+  const [newKeyConfirmed, setNewKeyConfirmed] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
   const [nameFocused, setNameFocused] = useState(false);
   const [namingIdentity, setNamingIdentity] = useState<Identity | null>(null);
@@ -277,6 +295,98 @@ export default function BuzzOnboarding() {
     }
   };
 
+  const resetNewKey = () => {
+    setNewKey(null);
+    setNewKeyRevealed(false);
+    setNewKeyCopied(false);
+    setNewKeySeen(false);
+    setNewKeyConfirmed(false);
+  };
+
+  const handleCreateKey = async () => {
+    setLoadingAction('create');
+    setNotice(null);
+    try {
+      const draft = await createNewKeyDraft();
+      setNewKeyRevealed(false);
+      setNewKeyCopied(false);
+      setNewKeySeen(false);
+      setNewKeyConfirmed(false);
+      // Generated in memory only. Nothing reaches SecureStore until the
+      // backup gate below opens.
+      setNewKey(draft);
+    } catch (error) {
+      setNotice({
+        status: 'bind_retry',
+        title: 'KEY NOT CREATED',
+        message: error instanceof Error ? error.message : String(error),
+        retryable: false,
+      });
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const handleRevealNewKey = () => {
+    const next = !newKeyRevealed;
+    setNewKeyRevealed(next);
+    if (next) setNewKeySeen(true);
+  };
+
+  const handleCopyNewKey = async () => {
+    if (!newKey) return;
+    try {
+      await Clipboard.setStringAsync(newKey.nsec);
+      setNewKeyCopied(true);
+      setNewKeySeen(true);
+      setTimeout(() => setNewKeyCopied(false), 1_200);
+    } catch {
+      setNotice({
+        status: 'bind_retry',
+        title: 'COPY FAILED',
+        message: 'Beeline could not reach the clipboard. Reveal the key and copy it by hand.',
+        retryable: false,
+      });
+    }
+  };
+
+  const handleEnterWithNewKey = async () => {
+    if (!newKey) return;
+    // Fail closed: the button is disabled without this, and it is re-checked
+    // here so no other path can persist an unbacked key.
+    if (!canEnterWithNewKey({ seen: newKeySeen, confirmed: newKeyConfirmed })) {
+      setNotice({
+        status: 'bind_retry',
+        title: 'BACK UP YOUR KEY',
+        message: 'Reveal or copy your secret key, then confirm you saved it.',
+        retryable: false,
+      });
+      return;
+    }
+    setLoadingAction('enter');
+    setNotice(null);
+    let identitySaved = false;
+    try {
+      await markPersonNameOnboardingPending();
+      await saveBuzzIdentity(newKey.identity);
+      identitySaved = true;
+      await registerBuzzPushNotifications(newKey.identity);
+      const identity = newKey.identity;
+      resetNewKey();
+      await continueAfterIdentity(identity);
+    } catch (error) {
+      if (!identitySaved) await clearPersonNameOnboardingPending();
+      setNotice({
+        status: 'bind_retry',
+        title: 'SETUP FAILED',
+        message: error instanceof Error ? error.message : String(error),
+        retryable: false,
+      });
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
   const handleNameContinue = async () => {
     if (!namingIdentity) return;
     const normalized = normalizePersonName(nameInput);
@@ -382,6 +492,116 @@ export default function BuzzOnboarding() {
     );
   }
 
+  if (newKey) {
+    const backupConfirmable = canConfirmNewKeyBackup({ seen: newKeySeen });
+    const canEnter = canEnterWithNewKey({ seen: newKeySeen, confirmed: newKeyConfirmed });
+    return (
+      <View
+        style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
+        testID="onboarding-new-key-step"
+      >
+        <PixelGateReveal style={styles.namePanel}>
+          <Text style={styles.sectionLabel}>NEW KEY · BACK IT UP</Text>
+          <View style={styles.nameAvatar}>
+            <IdentityMark kind="human" seed={newKey.identity.publicKey} size={82} />
+          </View>
+          <Text style={styles.nameTitle}>Save your key</Text>
+          <Text style={styles.nameBody}>
+            This key is your Beeline identity. It lives only on this device and Beeline cannot
+            reset it. Save it somewhere safe before you continue.
+          </Text>
+
+          <Text style={styles.sectionLabel}>PUBLIC · NPUB</Text>
+          <HullSurface strength="code" style={styles.keyBox}>
+            <Text selectable style={styles.keyText} testID="onboarding-new-key-npub">
+              {newKey.npub}
+            </Text>
+          </HullSurface>
+
+          <View style={styles.warning}>
+            <Text style={styles.warningGlyph}>!</Text>
+            <Text style={styles.warningText}>
+              Anyone with the secret key controls this identity. Never share it.
+            </Text>
+          </View>
+
+          <Text style={styles.sectionLabel}>SECRET · NSEC</Text>
+          <HullSurface strength="code" style={styles.keyBox}>
+            <Text selectable={newKeyRevealed} style={styles.keyText} testID="onboarding-new-key-nsec">
+              {newKeyRevealed ? newKey.nsec : maskNsec(newKey.nsec)}
+            </Text>
+          </HullSurface>
+          <View style={styles.keyActions}>
+            <TouchableOpacity
+              accessibilityLabel={newKeyRevealed ? 'Hide secret key' : 'Reveal secret key'}
+              accessibilityRole="button"
+              onPress={handleRevealNewKey}
+              style={styles.keyAction}
+              testID="onboarding-new-key-reveal"
+            >
+              <Text style={styles.keyActionText}>{newKeyRevealed ? 'Hide' : 'Reveal'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              accessibilityLabel="Copy secret key"
+              accessibilityRole="button"
+              onPress={() => void handleCopyNewKey()}
+              style={styles.keyAction}
+              testID="onboarding-new-key-copy"
+            >
+              <Text style={styles.keyActionText}>{newKeyCopied ? '✓ COPIED' : 'Copy'}</Text>
+            </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity
+            accessibilityLabel="I saved my key"
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: newKeyConfirmed, disabled: !backupConfirmable }}
+            disabled={!backupConfirmable}
+            onPress={() => {
+              // Fail closed here too, not only via `disabled`: the gate must not
+              // depend on a touchable honouring a prop.
+              if (!backupConfirmable) return;
+              setNewKeyConfirmed((value) => !value);
+            }}
+            style={styles.confirmRow}
+            testID="onboarding-new-key-confirm"
+          >
+            <Text style={styles.confirmBox}>{newKeyConfirmed ? '[✓]' : '[ ]'}</Text>
+            <Text style={[styles.confirmText, !backupConfirmable && styles.confirmTextIdle]}>
+              I saved my key
+            </Text>
+          </TouchableOpacity>
+          {!backupConfirmable && (
+            <Text style={styles.confirmHint}>Reveal or copy the key to enable this.</Text>
+          )}
+
+          {notice && (
+            <View accessibilityRole="alert" style={styles.noticePanel}>
+              <Text style={styles.statusLabel}>◇ {notice.title}</Text>
+              <Text style={styles.noticeText}>{notice.message}</Text>
+            </View>
+          )}
+
+          <MonoButton
+            disabled={!canEnter || loading}
+            label="Enter Beeline"
+            loading={loadingAction === 'enter'}
+            onPress={() => void handleEnterWithNewKey()}
+            testID="onboarding-new-key-enter"
+          />
+          <MonoButton
+            disabled={loading}
+            label="Discard this key"
+            onPress={resetNewKey}
+            style={styles.keyDiscard}
+            variant="secondary"
+            testID="onboarding-new-key-discard"
+          />
+        </PixelGateReveal>
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <View style={styles.brandSurface}>
@@ -399,6 +619,21 @@ export default function BuzzOnboarding() {
 
       {showAdvanced && (
         <PixelGateReveal style={styles.importPanel}>
+          <Text style={styles.sectionLabel}>ADVANCED · NEW NOSTR KEY</Text>
+          <Text style={styles.keyGuide}>
+            No key yet? Create one on this device. You back it up before entering Beeline.
+          </Text>
+          <View style={styles.importAction}>
+            <MonoButton
+              label="Create a new key"
+              loading={loadingAction === 'create'}
+              variant="secondary"
+              onPress={() => void handleCreateKey()}
+              disabled={loading}
+              testID="onboarding-create-key"
+            />
+          </View>
+          <View style={styles.advancedDivider} />
           <Text style={styles.sectionLabel}>ADVANCED · EXISTING NOSTR KEY</Text>
           <Text style={styles.keyGuide}>
             Your nostr key stays on this device and does not go to Google.
@@ -552,6 +787,69 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     textAlign: 'center',
     letterSpacing: 0.2,
+  },
+  advancedDivider: {
+    ...hairlineDivider,
+    marginTop: 16,
+    marginBottom: 16,
+  },
+  keyBox: { paddingHorizontal: 12, paddingVertical: 10, marginTop: 6, marginBottom: 10 },
+  keyText: {
+    ...Typography.mono(),
+    color: groknight.textPrimary,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  keyActions: { flexDirection: 'row', gap: 10, marginBottom: 16 },
+  keyAction: {
+    minHeight: 44,
+    paddingHorizontal: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  keyActionText: {
+    ...Typography.default('semiBold'),
+    color: groknight.chrome,
+    fontSize: 12,
+  },
+  keyDiscard: { marginTop: 10 },
+  warning: { flexDirection: 'row', gap: 10, marginBottom: 16 },
+  warningGlyph: {
+    ...Typography.default('semiBold'),
+    color: groknight.chrome,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  warningText: {
+    ...Typography.default(),
+    flex: 1,
+    minWidth: 0,
+    color: groknight.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  confirmRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 44 },
+  confirmBox: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  confirmText: {
+    ...Typography.default(),
+    flex: 1,
+    minWidth: 0,
+    color: groknight.textPrimary,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  confirmTextIdle: { color: groknight.textDisabled },
+  confirmHint: {
+    ...Typography.default(),
+    marginBottom: 10,
+    color: groknight.textMuted,
+    fontSize: 12,
+    lineHeight: 16,
   },
   namePanel: { width: '100%', maxWidth: 420, alignSelf: 'center' },
   nameAvatar: { alignItems: 'center', marginTop: 18, marginBottom: 18 },

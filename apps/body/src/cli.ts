@@ -44,6 +44,8 @@ import {
 } from '@beeline/gate';
 import { createBuzzClient } from '@beeline/buzz-client';
 import {
+  assertAgentIdentityUnpaired,
+  defaultSupervisorRoot,
   findAgentRuntimeConfigPaths,
   findRuntimeConfigPaths,
   identityFromKey,
@@ -55,7 +57,9 @@ import {
   runtimeDaemonPid,
   runtimeAgentCommand,
   runtimeIdentity,
+  tryInspectLocalRepository,
   type AgentRuntimeRecord,
+  type LocalRepositoryBinding,
   type PairRuntimeResult,
 } from './runtime.js';
 
@@ -69,8 +73,10 @@ ${pc.dim('Usage:')}
   beeline open <channel-uuid> <owner> <repo>  Open subchannel + edit session
   beeline archive <subchannel-uuid>         Archive subchannel
   beeline create-and-provision <name>       Create a new TLC + provision agent
-  beeline pair <BUZZ-XXXX-XXXX> [options]   Pair this repo and start its durable Room agent
-  beeline start [agent-pubkey]              Restart a paired repo's durable agent
+  beeline pair <BUZZ-XXXX-XXXX> [options]   Pair an agent (optionally to this repo)
+                                            and start its durable daemon
+  beeline start [agent-pubkey]              Restart this repo's (or, outside a
+                                            repo, this host's) durable agent
   beeline start --agent <agent-pubkey>      Restart it from anywhere (no repo needed)
 
 ${pc.dim('Options:')}
@@ -115,14 +121,18 @@ plus a matching --agents list. Each agent gets its own fresh keypair/identity
 and its own daemon — three distinct agents live in one Room, each addressed by
 its own @-mention. Reusing an identity is refused (unset BUZZ_AGENT_KEY).
 
-Repository: beeline pair resolves the repository to bind in this order:
-  1. --repo <path>          explicit, works from any cwd
+Repository (optional): a repository belongs to a ROOM, not to an agent, so
+pairing without one is a valid configuration — the daemon materializes each
+Room's own repository on demand once a Room is bound to one. beeline pair
+resolves an optional initial binding in this order:
+  1. --repo <path>          explicit, works from any cwd (must be a git repo)
   2. current directory      only if it IS a git repository
-  If neither applies, pairing fails with an actionable error instead of a
-  stack trace. There is no way to infer an existing Room's bound repository
-  from the pairing code alone (pairing codes are Workspace-scoped, not
-  Room-scoped) — --repo is required when pairing a second agent into an
-  existing repository Room from a directory that isn't that checkout.
+  3. neither                pair with no repository; the agent serves the
+                            Rooms it is invited to and materializes each
+                            Room's repository when that Room has one
+There is no way to infer an existing Room's bound repository from the pairing
+code alone (pairing codes are Workspace-scoped, not Room-scoped) — pass --repo
+to create/join that repository's Room at pair time from any directory.
 
 Model / effort: sets this agent's default before any human picks one in the
 app (#223's in-app picker always overrides once set). Checked against the
@@ -237,19 +247,35 @@ function parsePairOptions(args: string[]): PairOptions {
 }
 
 /**
- * Resolve the repository directory `beeline pair` binds: explicit `--repo`
- * first, else the cwd if it IS a git repository. `inspectLocalRepository`
- * (runtime.ts) still does the actual git check and gives the actionable
- * "pass --repo" error; this only handles a `--repo` path that doesn't exist
- * at all, so that failure surfaces before spending time on redemption.
+ * Resolve the OPTIONAL repository binding `beeline pair` records at pair
+ * time: explicit `--repo` first, else the cwd if it happens to be a git
+ * repository, else none at all.
+ *
+ * `--repo` is an explicit statement of intent, so a path that doesn't exist
+ * or isn't a git repository is fatal. A bare `beeline pair <code>` from a
+ * non-repo directory is NOT — since room-owns-repo the repository is a
+ * property of the Room, and an agent with no local repository serves
+ * chat-only Rooms and materializes a Room's repository when one is bound.
+ *
+ * Both failures are raised here, up front, before any interactive question.
  */
-function resolvePairCwd(repoFlag: string | undefined): string {
-  if (!repoFlag) return process.cwd();
+function resolvePairRepository(repoFlag: string | undefined): {
+  cwd: string;
+  repo: LocalRepositoryBinding | null;
+} {
+  if (!repoFlag) {
+    const cwd = process.cwd();
+    return { cwd, repo: tryInspectLocalRepository(cwd) };
+  }
   const resolved = resolve(repoFlag);
   if (!existsSync(resolved)) {
     throw new Error(`--repo path does not exist: ${resolved}`);
   }
-  return resolved;
+  const repo = tryInspectLocalRepository(resolved);
+  if (!repo) {
+    throw new Error(`--repo path is not a git repository: ${resolved}`);
+  }
+  return { cwd: resolved, repo };
 }
 
 /**
@@ -372,13 +398,29 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   }
 }
 
-/** Pair one agent (fresh or pinned identity) and launch its durable daemon. */
+/**
+ * Pair one agent (fresh or pinned identity) and launch its durable daemon.
+ *
+ * This function owns the whole interactive-then-working sequence for one
+ * agent, and the ordering is load-bearing: every clack prompt runs FIRST and
+ * the live spinner starts only once the last question is answered. A spinner
+ * started by the caller around this call would render on the same stdout line
+ * as `pickModelAndEffort`'s own catalog spinner (each clack spinner drives its
+ * own ~80ms `setInterval` that erases and rewrites that line), which is
+ * exactly the rapid flicker between "Pairing…" and "Reading … models…" — and
+ * it would keep spinning underneath the model/access prompts too.
+ */
 async function pairOneAgent(input: {
   code: string;
   selectedAgent: AgentCommand;
   agentIdentity: Identity;
   bodyIdentity: Identity;
   cwd: string;
+  /** Resolved by `resolvePairRepository`; `null` pairs with no repository. */
+  repo: LocalRepositoryBinding | null;
+  /** Spinner copy for the non-interactive work phase (interactive runs only). */
+  progressLabel: string;
+  progressDone: (pid: number) => string;
   llmEnvFile?: string;
   /** Undefined defers to the interactive picker (or `DEFAULT_ACCESS_POLICY` non-interactively). */
   access?: AgentAccessPolicy;
@@ -405,7 +447,12 @@ async function pairOneAgent(input: {
   });
   let modelSelection = input.modelSelection;
   if (modelSelection) {
-    await validateModelSelection(selectedAgent, localConfig.agentEnv, modelSelection);
+    await withSpinner(
+      Boolean(input.interactiveUi),
+      `Checking ${selectedAgent.kind}'s advertised models…`,
+      'Model/effort selection checked.',
+      () => validateModelSelection(selectedAgent, localConfig.agentEnv, modelSelection!),
+    );
   } else if (input.interactiveUi) {
     const picked = await pickModelAndEffort(selectedAgent, localConfig.agentEnv);
     if (picked.model || picked.effort) modelSelection = picked;
@@ -415,58 +462,76 @@ async function pairOneAgent(input: {
     ...(input.autoResponse !== undefined ? { autoResponse: input.autoResponse } : {}),
     interactiveUi: Boolean(input.interactiveUi),
   });
-  return pairRepositoryAgent(
-    {
-      code,
-      cwd: input.cwd,
-      relayBaseUrl,
-      ...(process.env.BUZZY_RELAY_HOST ? { relayHost: process.env.BUZZY_RELAY_HOST } : {}),
-      ...(input.llmEnvFile ? { llmEnvFile: input.llmEnvFile } : {}),
-      agentIdentity,
-      bodyIdentity,
-      mergeWorkerIdentity,
-      agentBinary: localConfig.agentBinary,
-      agentKind: selectedAgent.kind,
-      agentCommand: selectedAgent.command,
-      agentArgs: selectedAgent.args,
-      accessPolicy: access,
-      ...(autoResponse ? { accessAutoResponse: autoResponse } : {}),
-      ...(modelSelection ? { modelSelection } : {}),
-      mcpBinary: localConfig.mcpBinary,
-    },
-    {
-      redeem: (pairingCode) => client.redeemAgentPairingCode(pairingCode),
-      resolveRoom: (pairing, repository, mergeWorkerPubkey) =>
-        client.resolveRepositoryRoom(
-          pairing.communityId,
-          repository,
-          pairing.pairedBy,
-          mergeWorkerPubkey,
-        ),
-      validate: async (_pairing, _room, repo) => {
-        if (!repo.relayRepo) return;
-        await assertAgentNotPushAllowed({
-          ownerHex: repo.relayRepo.ownerHex,
-          repo: repo.relayRepo.repo,
-          agentPubkey: agentIdentity.publicKey,
-          protectedRef: `refs/heads/${repo.targetBranch}`,
-          relay: createRelayClient(agentIdentity, {
-            baseUrl: relayBaseUrl,
-            host: new URL(relayBaseUrl).host,
-          }),
-        });
+  // Every question is answered — only now is one spinner alone on the line.
+  const spinner = input.interactiveUi ? clack.spinner() : undefined;
+  spinner?.start(input.progressLabel);
+  try {
+    const result = await pairRepositoryAgent(
+      {
+        code,
+        cwd: input.cwd,
+        repo: input.repo,
+        relayBaseUrl,
+        ...(process.env.BUZZY_RELAY_HOST ? { relayHost: process.env.BUZZY_RELAY_HOST } : {}),
+        ...(input.llmEnvFile ? { llmEnvFile: input.llmEnvFile } : {}),
+        agentIdentity,
+        bodyIdentity,
+        mergeWorkerIdentity,
+        agentBinary: localConfig.agentBinary,
+        agentKind: selectedAgent.kind,
+        agentCommand: selectedAgent.command,
+        agentArgs: selectedAgent.args,
+        accessPolicy: access,
+        ...(autoResponse ? { accessAutoResponse: autoResponse } : {}),
+        ...(modelSelection ? { modelSelection } : {}),
+        mcpBinary: localConfig.mcpBinary,
       },
-    },
-  );
+      {
+        redeem: (pairingCode) => client.redeemAgentPairingCode(pairingCode),
+        resolveRoom: (pairing, repository, mergeWorkerPubkey) =>
+          client.resolveRepositoryRoom(
+            pairing.communityId,
+            repository,
+            pairing.pairedBy,
+            mergeWorkerPubkey,
+          ),
+        validate: async (_pairing, _room, repo) => {
+          if (!repo.relayRepo) return;
+          await assertAgentNotPushAllowed({
+            ownerHex: repo.relayRepo.ownerHex,
+            repo: repo.relayRepo.repo,
+            agentPubkey: agentIdentity.publicKey,
+            protectedRef: `refs/heads/${repo.targetBranch}`,
+            relay: createRelayClient(agentIdentity, {
+              baseUrl: relayBaseUrl,
+              host: new URL(relayBaseUrl).host,
+            }),
+          });
+        },
+      },
+    );
+    spinner?.stop(pc.green(input.progressDone(result.pid)));
+    return result;
+  } catch (error) {
+    spinner?.stop(pc.red('Pairing failed.'));
+    throw error;
+  }
 }
 
 function printPairResult(result: PairRuntimeResult): void {
   console.log(`[buzz] paired agent ${pc.bold(result.pairing.agent.displayName)}`);
   console.log(`[buzz] workspace: ${result.pairing.communityId}`);
-  console.log(
-    `[buzz] room: ${result.room.channelId} (${result.room.created ? 'created' : 'joined'})`,
-  );
-  console.log(`[buzz] repo: ${result.runtime.rooms[0]!.repo.root}`);
+  const pairedRoom = result.runtime.rooms[0];
+  if (result.room && pairedRoom) {
+    console.log(
+      `[buzz] room: ${result.room.channelId} (${result.room.created ? 'created' : 'joined'})`,
+    );
+    console.log(`[buzz] repo: ${pairedRoom.repo.root}`);
+  } else {
+    console.log(
+      '[buzz] repo: none — add this agent to a Room from the app; each Room supplies its own',
+    );
+  }
   console.log(`[buzz] agent pubkey: ${result.pairing.agent.pubkey}`);
   console.log(`[buzz] access policy: ${result.runtime.accessPolicy ?? DEFAULT_ACCESS_POLICY}`);
   if (result.runtime.modelSelection) {
@@ -498,7 +563,7 @@ async function runPairCommand(
   try {
     const pairOptions = parsePairOptions(args);
     if (pairOptions.codes.length === 0) usage();
-    const pairCwd = resolvePairCwd(pairOptions.repo);
+    const { cwd: pairCwd, repo: pairRepo } = resolvePairRepository(pairOptions.repo);
     const flagModelSelection: { model?: string; effort?: string } | undefined =
       pairOptions.model || pairOptions.effort
         ? {
@@ -537,21 +602,21 @@ async function runPairCommand(
         console.log(
           `[body] agent ${index + 1}/${codes.length} (${kind}) binary: ${formatAgentCommand(selectedAgent)}`,
         );
-        const spinner = interactiveUi ? clack.spinner() : undefined;
-        spinner?.start(`Pairing agent ${index + 1}/${codes.length} (${kind})…`);
         const result = await pairOneAgent({
           code: codes[index]!,
           selectedAgent,
           agentIdentity: newIdentity('buzzy-agent'),
           bodyIdentity: newIdentity('buzzy-body'),
           cwd: pairCwd,
+          repo: pairRepo,
+          progressLabel: `Pairing agent ${index + 1}/${codes.length} (${kind})…`,
+          progressDone: (pid) => `Paired ${kind} (pid ${pid}).`,
           ...(llmEnvFile ? { llmEnvFile } : {}),
           access: pairOptions.access,
           ...(pairOptions.autoResponse ? { autoResponse: pairOptions.autoResponse } : {}),
           ...(flagModelSelection ? { modelSelection: flagModelSelection } : {}),
           interactiveUi,
         });
-        spinner?.stop(`Paired ${kind} (pid ${result.pid}).`);
         printPairResult(result);
       }
       if (interactiveUi) clack.outro(pc.green('All agents paired.'));
@@ -561,6 +626,13 @@ async function runPairCommand(
     if (pairOptions.codes.length > 1) {
       throw new Error('multiple pairing codes require --agents <kind1,kind2,...>');
     }
+    // A pinned BUZZ_AGENT_KEY already paired on this host is fatal (S0), so
+    // it is checked here — before the agent/model/access questions — rather
+    // than inside `pairRepositoryAgent`, where it would only fire after the
+    // operator had answered all of them. Fresh identities can't collide, so
+    // the --agents form above needs no equivalent check.
+    const agentIdentity = identityFromKey(agentPrivateKey, 'buzzy-agent');
+    await assertAgentIdentityUnpaired(defaultSupervisorRoot(process.env), agentIdentity.publicKey);
     const selectedAgent = await selectPairAgentCommand({
       explicitKind: pairOptions.singleKind,
       customCommand: pairOptions.customCommand,
@@ -568,21 +640,21 @@ async function runPairCommand(
       cwd: process.cwd(),
     });
     console.log(`[body] agent binary: ${formatAgentCommand(selectedAgent)}`);
-    const spinner = interactiveUi ? clack.spinner() : undefined;
-    spinner?.start('Pairing…');
     const result = await pairOneAgent({
       code: pairOptions.codes[0]!,
       selectedAgent,
-      agentIdentity: identityFromKey(agentPrivateKey, 'buzzy-agent'),
+      agentIdentity,
       bodyIdentity: identityFromKey(process.env.BUZZ_BODY_KEY, 'buzzy-body'),
       cwd: pairCwd,
+      repo: pairRepo,
+      progressLabel: 'Pairing…',
+      progressDone: (pid) => `Paired (pid ${pid}).`,
       ...(llmEnvFile ? { llmEnvFile } : {}),
       access: pairOptions.access,
       ...(pairOptions.autoResponse ? { autoResponse: pairOptions.autoResponse } : {}),
       ...(flagModelSelection ? { modelSelection: flagModelSelection } : {}),
       interactiveUi,
     });
-    spinner?.stop(`Paired (pid ${result.pid}).`);
     printPairResult(result);
     if (interactiveUi) clack.outro(pc.green('Done.'));
   } catch (error) {
@@ -666,10 +738,15 @@ async function main(): Promise<void> {
       .slice(1)
       .find((token) => !token.startsWith('--') && token !== flagPubkey);
     const requestedPubkey = flagPubkey ?? positionalPubkey;
-    const configs =
-      allFlag || flagPubkey
-        ? await findAgentRuntimeConfigPaths()
-        : await findRuntimeConfigPaths(process.cwd());
+    // An agent paired with no repository leaves no repo-anchored pointer to
+    // find, and a repo-less operator has no checkout to stand in — so a bare
+    // `beeline start` outside any git repository scans the machine-local
+    // agent state home instead of failing. Inside a repository the scope
+    // stays that repository's paired agents, unchanged.
+    const hostScope = allFlag || Boolean(flagPubkey) || !tryInspectLocalRepository(process.cwd());
+    const configs = hostScope
+      ? await findAgentRuntimeConfigPaths()
+      : await findRuntimeConfigPaths(process.cwd());
     const matching = requestedPubkey
       ? configs.filter((path) => dirname(path).endsWith(requestedPubkey))
       : configs;
@@ -679,7 +756,7 @@ async function main(): Promise<void> {
       throw new Error(
         requestedPubkey
           ? `no paired agent runtime found for ${requestedPubkey}`
-          : allFlag
+          : hostScope
             ? 'no paired agent runtime found on this host'
             : 'no paired agent runtime found in this repository',
       );

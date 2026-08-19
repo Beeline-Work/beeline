@@ -102,6 +102,15 @@ import {
   STEER_QUEUED_TAG,
 } from './activity.js';
 import { isReadOnlyMcpPermissionRequest } from './read-only-policy.js';
+import {
+  CLAUDE_ACP_MCP_GIT_LOG_PERMISSION,
+  CLAUDE_ACP_MCP_GIT_SHOW_PERMISSION,
+  CLAUDE_ACP_MCP_READ_FILE_PERMISSION,
+  CLAUDE_ACP_NATIVE_BASH_PERMISSION,
+  CLAUDE_ACP_NATIVE_READ_TOOL_CALL,
+  CLAUDE_ACP_NATIVE_WRITE_PERMISSION,
+  CODEX_ACP_MCP_READ_FILE_PERMISSION,
+} from './fixtures/claude-agent-acp-permissions.js';
 import { ROOM_READ_ONLY_STEER } from './session-sandbox.js';
 import { SessionScheduler } from './session-scheduler.js';
 import { AGENT_ERROR_STATE_MESSAGES } from './agent-state-messages.js';
@@ -253,36 +262,120 @@ describe('acp', () => {
     ).toBe(false);
   });
 
-  it('recognizes only exact host-marked read-only MCP approvals', () => {
+  /**
+   * The live regression these pin: a claude-backed Room reported EVERY
+   * read-only tool call — `read_file`, `git_log`, `git_show` — coming back
+   * "User refused permission to run tool". Every request below marked as
+   * captured is the verbatim payload a real claude-agent-acp process sent
+   * (`src/fixtures/claude-agent-acp-permissions.ts`, reproducible with
+   * `scripts/capture-acp-permissions.mjs`), so the detector is tested against
+   * the shape that actually arrives rather than an assumed one.
+   */
+  it('allows the exact read-only MCP requests a real claude-agent-acp sends', () => {
+    for (const captured of [
+      CLAUDE_ACP_MCP_READ_FILE_PERMISSION,
+      CLAUDE_ACP_MCP_GIT_LOG_PERMISSION,
+      CLAUDE_ACP_MCP_GIT_SHOW_PERMISSION,
+    ]) {
+      // The two properties that decide this, both as captured: nothing marks
+      // the call as MCP, and the tool name is double-underscore separated.
+      expect(captured.toolCall.kind).toBe('other');
+      expect(captured).not.toHaveProperty('_meta');
+      expect(captured.toolCall.rawInput).not.toHaveProperty('server');
+      expect(captured.toolCall.title).toMatch(/^mcp__buzz-readonly-mcp__/);
+      expect(isReadOnlyMcpPermissionRequest(captured)).toBe(true);
+    }
+  });
+
+  it('denies the same adapter\'s captured native write and shell requests', () => {
+    expect(isReadOnlyMcpPermissionRequest(CLAUDE_ACP_NATIVE_WRITE_PERMISSION)).toBe(false);
+    expect(isReadOnlyMcpPermissionRequest(CLAUDE_ACP_NATIVE_BASH_PERMISSION)).toBe(false);
+  });
+
+  it('allows the adapter-declared read/search kinds, captured and synthetic', () => {
+    // claude-agent-acp's own `Read`, as it declares itself. In `default` mode
+    // Claude Code auto-approves its built-in Read so it never reaches the host,
+    // but the kind it declares is what a stricter CLI permission config would
+    // send, and it is the adapter's word — not the model's — about the tool.
     expect(
-      isReadOnlyMcpPermissionRequest({
-        _meta: { is_mcp_tool_approval: true },
-        toolCall: {
-          kind: 'execute',
-          title: 'mcp.buzz-readonly-mcp.read_file',
-          rawInput: { server: 'buzz-readonly-mcp', tool: 'read_file', arguments: {} },
-        },
-      }),
+      isReadOnlyMcpPermissionRequest({ toolCall: CLAUDE_ACP_NATIVE_READ_TOOL_CALL }),
     ).toBe(true);
     expect(
-      isReadOnlyMcpPermissionRequest({
-        toolCall: {
-          kind: 'execute',
-          title: 'mcp.buzz-readonly-mcp.read_file',
-          rawInput: { server: 'buzz-readonly-mcp', tool: 'read_file', arguments: {} },
-        },
-      }),
-    ).toBe(false);
+      isReadOnlyMcpPermissionRequest({ toolCall: { kind: 'search', title: 'grep "beeline"' } }),
+    ).toBe(true);
+    // A read of a file whose NAME contains a mutating word is still a read.
     expect(
       isReadOnlyMcpPermissionRequest({
+        toolCall: { kind: 'read', title: 'Read src/write.ts', rawInput: { file_path: 'src/write.ts' } },
+      }),
+    ).toBe(true);
+  });
+
+  it('recognizes the inspection toolset across the other adapters\' spellings', () => {
+    // codex-acp forwards a real MCP envelope and spells the tool with dots.
+    expect(isReadOnlyMcpPermissionRequest(CODEX_ACP_MCP_READ_FILE_PERMISSION)).toBe(true);
+    for (const title of [
+      'mcp.buzz-readonly-mcp.search_text',
+      'buzz-readonly-mcp/git_show',
+      'buzz-readonly-mcp:list_files',
+      'mcp__buzz-readonly-mcp__git_diff',
+      'buzz-readonly-mcp (read_file)',
+    ]) {
+      expect(isReadOnlyMcpPermissionRequest({ toolCall: { kind: 'other', title } })).toBe(true);
+    }
+  });
+
+  it('stays fail-closed on every non-read shape', () => {
+    for (const request of [
+      // A tool on the inspection server that is not one of its six.
+      {
         _meta: { is_mcp_tool_approval: true },
         toolCall: {
           kind: 'execute',
           title: 'mcp.buzz-readonly-mcp.shell',
           rawInput: { server: 'buzz-readonly-mcp', tool: 'shell', arguments: {} },
         },
-      }),
-    ).toBe(false);
+      },
+      { toolCall: { kind: 'other', title: 'mcp__buzz-readonly-mcp__write_file' } },
+      // Kinds that are neither reads nor recognized inspection calls.
+      { toolCall: { kind: 'other', title: 'SomeBrandNewTool' } },
+      { toolCall: { kind: 'think', title: 'Update TODOs: ship it' } },
+      { toolCall: { kind: 'edit', title: 'Write' } },
+      {},
+    ]) {
+      expect(isReadOnlyMcpPermissionRequest(request)).toBe(false);
+    }
+  });
+
+  /**
+   * Identifying a tool by the tail of its title is only safe while the title is
+   * a tool NAME. A native shell tool's title is its COMMAND LINE, so a command
+   * ending in an inspection tool name under a path containing the server name
+   * satisfies the same suffix match — and an auto-allow there walks straight
+   * through the Room read-only boundary the detector exists to hold.
+   */
+  it('never resolves a shell payload by name, however its command text reads', () => {
+    for (const command of [
+      'rm -rf /tmp/buzz-readonly-mcp/read_file',
+      'cat /opt/buzz-readonly-mcp/read_file',
+      'git -C /srv/buzz-readonly-mcp commit -am buzz-readonly-mcp/read_file',
+    ]) {
+      expect(
+        isReadOnlyMcpPermissionRequest({
+          toolCall: { kind: 'execute', title: command, rawInput: { command } },
+        }),
+      ).toBe(false);
+      expect(
+        isReadOnlyMcpPermissionRequest({
+          toolCall: { kind: 'execute', title: command, rawInput: { cmd: command } },
+        }),
+      ).toBe(false);
+      expect(
+        isReadOnlyMcpPermissionRequest({
+          toolCall: { kind: 'execute', title: command, rawInput: command },
+        }),
+      ).toBe(false);
+    }
   });
 });
 
@@ -505,6 +598,72 @@ describe('agent identity boundary', () => {
         expect(entry.role).toBe('control');
         expect(entry.text).toContain(ROOM_READ_ONLY_STEER);
       }
+    });
+
+    /**
+     * The same regression at the layer that actually answers the harness.
+     * `handleRoomPermissionRequest` is where a Room's read-only rule is
+     * ENFORCED, and its fail-closed default is what turned an unrecognized
+     * inspection call into "User refused permission to run tool". These drive
+     * it with the verbatim captured claude-agent-acp payloads.
+     */
+    it('answers a real claude read_file/git_log/git_show with allow, and its write/bash with reject', async () => {
+      const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
+      const appended: Array<{ role: string; text: string }> = [];
+      const durable = (body as unknown as { durableState: unknown }).durableState;
+      vi.spyOn(durable as never, 'appendConversation' as never).mockImplementation((async (
+        _channelId: string,
+        entry: { role: string; text: string },
+      ) => {
+        appended.push(entry);
+      }) as never);
+      const handle = (
+        body as unknown as {
+          handleRoomPermissionRequest(
+            channelId: string,
+            permission: unknown,
+          ): Promise<'allow' | 'reject'>;
+        }
+      ).handleRoomPermissionRequest.bind(body);
+
+      // Reads flow with no pending turn at all — the state a Room read runs in
+      // when the human only asked a question.
+      for (const captured of [
+        CLAUDE_ACP_MCP_READ_FILE_PERMISSION,
+        CLAUDE_ACP_MCP_GIT_LOG_PERMISSION,
+        CLAUDE_ACP_MCP_GIT_SHOW_PERMISSION,
+        { toolCall: CLAUDE_ACP_NATIVE_READ_TOOL_CALL },
+      ]) {
+        await expect(handle('room-1', captured)).resolves.toBe('allow');
+      }
+      // An allowed read is not a denial: it leaves no read-only steer behind.
+      expect(appended).toEqual([]);
+
+      await expect(handle('room-1', CLAUDE_ACP_NATIVE_WRITE_PERMISSION)).resolves.toBe('reject');
+      await expect(handle('room-1', CLAUDE_ACP_NATIVE_BASH_PERMISSION)).resolves.toBe('reject');
+      expect(appended.length).toBeGreaterThan(0);
+      for (const entry of appended) expect(entry.text).toContain(ROOM_READ_ONLY_STEER);
+    });
+
+    it('rejects a shell command whose text merely spells an inspection tool', async () => {
+      const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
+      const durable = (body as unknown as { durableState: unknown }).durableState;
+      vi.spyOn(durable as never, 'appendConversation' as never).mockImplementation(
+        (async () => {}) as never,
+      );
+      const handle = (
+        body as unknown as {
+          handleRoomPermissionRequest(
+            channelId: string,
+            permission: unknown,
+          ): Promise<'allow' | 'reject'>;
+        }
+      ).handleRoomPermissionRequest.bind(body);
+
+      const command = 'rm -rf /tmp/buzz-readonly-mcp/read_file';
+      await expect(
+        handle('room-1', { toolCall: { kind: 'execute', title: command, rawInput: { command } } }),
+      ).resolves.toBe('reject');
     });
 
     it('still auto-allows an exact read-only MCP inspection call', async () => {

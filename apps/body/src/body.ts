@@ -93,6 +93,7 @@ import {
   listPersonProfiles,
   getParentChannelId,
   getChannelCreator,
+  getChannelMetadata,
   tagValue,
   waitUntilMember,
   summarizeGitFailure,
@@ -290,6 +291,24 @@ export const ROOM_WS_MAINTENANCE_TICK_MS = 60_000;
 export const CORNER_WORKTREE_PRUNE_INTERVAL_MS = 10 * 60_000;
 
 /**
+ * How often a Room re-derives its close-pending corners straight from the
+ * relay (`pollUntrackedCornerCloses`), rather than from local runtime state.
+ * Deliberately far slower than the maintenance tick: this is the backstop for
+ * a corner that fell out of local tracking entirely, not the primary path.
+ */
+export const UNTRACKED_CORNER_SCAN_INTERVAL_MS = 5 * 60_000;
+
+/**
+ * Batch size for the multi-`#h` close-request read that backs the sweep above,
+ * so a Room with a long corner history still asks the relay one bounded
+ * question at a time.
+ */
+export const UNTRACKED_CORNER_SCAN_BATCH = 25;
+
+/** Page size for that sweep's paged read of the agent's own create events. */
+export const UNTRACKED_CORNER_CREATE_PAGE_SIZE = 500;
+
+/**
  * Correctness backstop cadence for a pending write-permission decision. The
  * Room's already-open WS (`roomSockets`) is the primary, opportunistic path —
  * see `waitForWritePermissionDecision` — this low-rate poll runs concurrently
@@ -467,6 +486,17 @@ export type AbandonedCorner = {
   featureBranch?: string;
   /** Best known on-disk location, when one was derivable. */
   worktreePath?: string;
+  /**
+   * `created_at` of a close request already proven to exist, set only by the
+   * relay-derived sweep. `DurableBodyState`'s cursor is a high-water mark that
+   * advances past any delivered event even while an OLDER one is still
+   * pending, so a corner whose close failed and which then delivered a later
+   * message carries a cursor ahead of its own close. This floors the
+   * sessionless watch's `since` back to a close it has already seen on the
+   * relay, so adopting such a corner can never mean tracking it forever
+   * without ever seeing the request that got it adopted.
+   */
+  closeRequestedAt?: number;
 };
 
 /**
@@ -1151,6 +1181,16 @@ export class Body {
     string,
     { retryAt: number; attempts: number; loggedMessage?: string }
   >();
+  /** Last relay-derived close-pending corner sweep per Room, in wall-clock ms.
+   *  See `pollUntrackedCornerCloses`. */
+  private untrackedCornerScanAt = new Map<string, number>();
+  /**
+   * Corner ids that sweep has finished with for good — archived on the relay,
+   * or closed by this daemon. Their kind:9007 create event is immutable, so
+   * without this every later sweep would re-read the metadata of every corner
+   * this agent has ever closed in the Room.
+   */
+  private untrackedCornerResolved = new Set<string>();
   /**
    * Same synchronous claim/release shape again, for `pollMembers`. The WS
    * maintenance timer fires `pollRoomMaintenance` without awaiting the prior
@@ -4467,7 +4507,11 @@ export class Body {
       await this.provision(tlcChannelId, boundRepo);
       if (boundRepo.repositoryKey) await this.restoreSubchannels(tlcChannelId, boundRepo);
       await this.runRoomPushLoop(tlcChannelId, boundRepo, 'repository', stopPresence, opts, () =>
-        this.pollRoomMaintenance(tlcChannelId, undefined, boundRepo),
+        this.pollRoomMaintenance(tlcChannelId, undefined, boundRepo, {
+          // Same condition the restore above is gated on: no repository key,
+          // no corners, nothing to re-derive.
+          cornerDiscovery: Boolean(boundRepo.repositoryKey),
+        }),
       );
     } finally {
       this.presenceGenerations.delete(tlcChannelId);
@@ -4495,7 +4539,10 @@ export class Body {
       // repo-less Room may resume only its already-approved named-repo corners.
       if (editPolicy === 'named-repository') await this.restoreSubchannels(channelId);
       await this.runRoomPushLoop(channelId, undefined, editPolicy, stopPresence, opts, () =>
-        this.pollRoomMaintenance(channelId),
+        this.pollRoomMaintenance(channelId, undefined, undefined, {
+          // A DM never opens a corner, so it has no corner set to re-derive.
+          cornerDiscovery: editPolicy === 'named-repository',
+        }),
       );
     } finally {
       this.presenceGenerations.delete(channelId);
@@ -4556,6 +4603,7 @@ export class Body {
     channelId: string,
     mergeGate?: DurableMergeGate,
     boundRepo?: BoundRepo,
+    options?: { cornerDiscovery?: boolean },
   ): Promise<void> {
     const guarded = async (label: string, run: () => Promise<unknown>) => {
       try {
@@ -4572,6 +4620,15 @@ export class Body {
       const failed = results.find((result) => result.status === 'rejected');
       if (failed?.status === 'rejected') throw failed.reason;
     });
+    // ...and a corner that fell out of local tracking altogether is in no map
+    // for that watch to read, so its close request is re-derived from the relay
+    // first. Runs before the watch below so an adopted corner closes on this
+    // same tick rather than a minute later.
+    if (options?.cornerDiscovery !== false) {
+      await guarded('untracked corner close scan', () =>
+        this.pollUntrackedCornerCloses(channelId, boundRepo),
+      );
+    }
     // A corner with no live session has no member poll of its own, so this is
     // the only place its human close request is ever consumed.
     await guarded('abandoned corner close watch', () =>
@@ -5084,6 +5141,133 @@ export class Body {
   }
 
   /**
+   * Re-derive this Room's close-pending corners from the RELAY, not from local
+   * runtime state.
+   *
+   * Nothing else ever puts a corner this daemon did not just open into either
+   * `subchannels` or `abandonedCorners`: `restoreSubchannels` is the sole
+   * writer, it runs once at Room start, and it enumerates through
+   * `listSubchannels` — whose child discovery is a newest-500 *unscoped*
+   * kind:9007 scan plus a newest-500 `body-control` window on the Room itself.
+   * Both windows are shared: the first with every channel created anywhere on
+   * the relay, the second with every status card the Room has ever published.
+   * An older corner falls out of both, and from that moment it is in NO map —
+   * so `pollAbandonedCornerCloses`, which reads `abandonedCorners` alone, never
+   * considers it and each press of the human close control is a silent no-op
+   * forever, exactly as if #240 had never landed.
+   *
+   * The corner's own create event is the durable, precisely filterable record
+   * of it: signed by the agent that opened the corner, carrying `parent`. One
+   * `authors`-scoped read therefore enumerates every corner THIS agent owns —
+   * a set bounded by this agent's own history rather than the whole relay's —
+   * and client-side `parent` filtering bounds it to this Room. That `authors`
+   * filter is also what keeps #244 intact by construction: another daemon's
+   * corner is never a candidate here, so a non-owner daemon still leaves it
+   * entirely alone.
+   *
+   * Adoption is gated on a close request already being pending. An untracked
+   * corner nobody asked to close is deliberately left alone: adopting it would
+   * put a permanent per-tick relay read on every corner this agent has ever
+   * opened, to no purpose. Everything after adoption — the ownership re-check,
+   * the archive publishes, backoff, 4xx parking — is the existing
+   * `pollAbandonedCornerCloses`/`closeAbandonedCorner` path unchanged.
+   */
+  private async pollUntrackedCornerCloses(
+    parentChannelId: string,
+    boundRepo?: BoundRepo,
+  ): Promise<void> {
+    const now = Date.now();
+    if (
+      now - (this.untrackedCornerScanAt.get(parentChannelId) ?? 0) <
+      UNTRACKED_CORNER_SCAN_INTERVAL_MS
+    )
+      return;
+    this.untrackedCornerScanAt.set(parentChannelId, now);
+
+    // Paged, not a single newest-N window: reintroducing a window here would
+    // reintroduce the exact bug, just at a higher threshold. `authors` already
+    // bounds this to one agent's own channel history.
+    const creates = await queryEventBacklog(
+      { kinds: [9007], authors: [this.agentIdentity.publicKey] },
+      { pageSize: UNTRACKED_CORNER_CREATE_PAGE_SIZE, query: this.agentRelay.queryEvents },
+    );
+    const candidates = creates
+      .filter((event) => tagValue(event, 'parent') === parentChannelId)
+      .map((event) => tagValue(event, 'h'))
+      .filter((id): id is string => Boolean(id) && id !== parentChannelId)
+      .filter(
+        (id) =>
+          !this.subchannels.has(id) &&
+          !this.abandonedCorners.has(id) &&
+          !this.untrackedCornerResolved.has(id),
+      );
+    if (candidates.length === 0) return;
+
+    // One batched read per group covers the whole candidate set, and the
+    // overwhelmingly common answer is "nobody asked to close any of these".
+    const closeRequested = new Map<string, number>();
+    for (let index = 0; index < candidates.length; index += UNTRACKED_CORNER_SCAN_BATCH) {
+      const batch = candidates.slice(index, index + UNTRACKED_CORNER_SCAN_BATCH);
+      const closes = await this.agentRelay.queryEvents([
+        { kinds: [9], '#h': batch, '#t': [CORNER_CLOSE_TAG], limit: 500 },
+      ]);
+      for (const event of closes) {
+        // Same gate as every other close path: an agent never closes its own
+        // corner, only a human in the channel can.
+        if (event.pubkey === this.agentIdentity.publicKey) continue;
+        const id = tagValue(event, 'h');
+        if (!id || !batch.includes(id)) continue;
+        // Keep the OLDEST: the sessionless watch's read window is floored to
+        // this, and a later press must not hide the first one.
+        const known = closeRequested.get(id);
+        closeRequested.set(
+          id,
+          known === undefined ? event.created_at : Math.min(known, event.created_at),
+        );
+      }
+    }
+    if (closeRequested.size === 0) return;
+
+    for (const subchannelId of candidates) {
+      const closeRequestedAt = closeRequested.get(subchannelId);
+      if (closeRequestedAt === undefined) continue;
+      const metadata = await getChannelMetadata(this.agentClientContext(), subchannelId);
+      if (metadata?.archived) {
+        // Already closed — never spend another read on it.
+        this.untrackedCornerResolved.add(subchannelId);
+        continue;
+      }
+      // Recover the feature branch so the archive card can still say where the
+      // committed work lives. Not finding one is not a reason to refuse the
+      // close — that is exactly the state a human presses the button to escape.
+      const events = await this.agentRelay.queryEvents([
+        {
+          kinds: [9],
+          '#h': [subchannelId],
+          authors: [this.agentIdentity.publicKey],
+          limit: 5_000,
+        },
+      ]);
+      const control = [...events]
+        .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
+        .find((event) => tagValue(event, 'feature') && tagValue(event, 'parent'));
+      const featureBranch = control ? tagValue(control, 'feature') : undefined;
+      this.markCornerAbandoned({
+        subchannelId,
+        parentChannelId,
+        reason: 'this daemon no longer tracks it',
+        closeRequestedAt,
+        ...(boundRepo ? { boundRepo } : {}),
+        ...(featureBranch ? { featureBranch } : {}),
+      });
+      console.log(
+        `[body] adopting untracked corner ${subchannelId} in Room ${parentChannelId}: ` +
+          'a close is pending and this daemon no longer tracks it',
+      );
+    }
+  }
+
+  /**
    * Watch for a human close request on every corner this Room cannot serve.
    *
    * `#t=buzz-corner-close` is consumed by `pollMembers`, which only ever
@@ -5107,7 +5291,11 @@ export class Body {
       const retry = this.abandonedCornerCloseRetry.get(subchannelId);
       if (retry && Date.now() < retry.retryAt) continue;
       const cursor = await this.durableState.cursor(subchannelId);
-      const since = Math.max(this.abandonedCornerScanAt.get(subchannelId) ?? 0, cursor.createdAt);
+      const floor = Math.max(this.abandonedCornerScanAt.get(subchannelId) ?? 0, cursor.createdAt);
+      // Never scan past a close this corner was adopted for — see
+      // `AbandonedCorner.closeRequestedAt`.
+      const since =
+        entry.closeRequestedAt === undefined ? floor : Math.min(floor, entry.closeRequestedAt);
       let events: NostrEvent[];
       try {
         events = await queryEventBacklog(
@@ -5229,6 +5417,7 @@ export class Body {
         this.abandonedCorners.delete(subchannelId);
         this.abandonedCornerScanAt.delete(subchannelId);
         this.abandonedCornerCloseRetry.delete(subchannelId);
+        this.untrackedCornerResolved.add(subchannelId);
         console.log(
           `[body] corner ${subchannelId} was opened by another agent; ` +
             `leaving its lifecycle to that daemon`,
@@ -5270,6 +5459,9 @@ export class Body {
       }
       this.abandonedCorners.delete(subchannelId);
       this.abandonedCornerScanAt.delete(subchannelId);
+      // The create event is immutable, so the relay sweep would keep offering
+      // this corner back as a candidate; record that it is finished with.
+      this.untrackedCornerResolved.add(subchannelId);
     } finally {
       this.archivingSubchannels.delete(subchannelId);
     }

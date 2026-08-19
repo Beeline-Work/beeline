@@ -179,6 +179,24 @@ import {
   NO_PERSONAL_CONNECTORS_INSTRUCTION,
   toolScopeWarning,
 } from './harness-tool-scope.js';
+import {
+  describeCiOutcome,
+  resolveGitHubRepo,
+  resolveGitHubToken,
+  watchCommitCi,
+  type CiWatchOptions,
+} from './ci-watch.js';
+import {
+  isReleaseConfirmation,
+  releaseBriefing,
+  releaseCornerIntent,
+  releaseCornerPrompt,
+  releaseCornerTaskPrompt,
+  releaseRoomIntent,
+  summarizeUnreleasedWork,
+  type ReleaseCornerBrief,
+  type ReleaseRoomIntent,
+} from './release-flow.js';
 
 /** Tracks a single agent session. */
 export interface AgentSession {
@@ -477,6 +495,8 @@ export interface SubchannelInfo {
   realignAttempts?: number;
   /** The landed-work recap has already been posted to the parent Room. */
   landSummaryPosted?: boolean;
+  /** A post-land CI watch is already running for this corner's landed commit. */
+  ciWatchStarted?: boolean;
   /** Successfully forwarded member events, preventing same-second relay replays. */
   processedMemberEventIds?: Set<string>;
 }
@@ -699,6 +719,26 @@ export const LANDED_TAG = 'landed';
 export const MERGE_REALIGN_TAG = 'merge-realigning';
 /** Agent-authored recap posted to the PARENT Room when a corner's work lands. */
 export const LAND_SUMMARY_TAG = 'land-summary';
+/**
+ * The one post-land CI verdict, threaded to the land recap above. Published
+ * only when CI actually decided — see `Body.watchLandedCommitCi`.
+ */
+export const CI_RESULT_TAG = 'ci-result';
+/** Spacing, budget, and no-CI grace for the post-land CI watch. */
+export const CI_WATCH_POLL_MS = 30_000;
+export const CI_WATCH_TIMEOUT_MS = 15 * 60_000;
+export const CI_WATCH_NONE_GRACE_MS = 120_000;
+/**
+ * How long a release proposal stays confirmable. Long enough for a person to
+ * read the summary and think; short enough that a "yes" to something else
+ * entirely, an hour later, cannot open a release corner.
+ */
+export const RELEASE_PROPOSAL_TTL_MS = 30 * 60_000;
+
+/** A release the agent has offered to cut, waiting on a person's confirmation. */
+interface PendingReleaseProposal extends ReleaseCornerBrief {
+  expiresAt: number;
+}
 /**
  * Truthful retry posture for a corner-scoped delivery failure. `auto` is the
  * only value that may claim the daemon keeps retrying on its own; `realigning`
@@ -1366,6 +1406,23 @@ export class Body {
   private onRoomPollSuccess?: (channelId: string) => void;
   private onRoomPollFailure?: (channelId: string, retryInMs: number) => void;
   private onRoomPresence?: (channelId: string, status: 'online' | 'offline') => void;
+  /**
+   * Post-land CI watches still running. They deliberately outlive the corner
+   * they report on (it is archived seconds after the land), so shutdown is the
+   * only thing that ends one early: `dispose()` aborts the signal and drains
+   * this set rather than leaving a timer holding the daemon open.
+   */
+  private readonly pendingCiWatches = new Set<Promise<void>>();
+  private readonly ciWatchAbort = new AbortController();
+  /** Test seam: poll cadence/transport for the CI watch. Never set in production. */
+  private ciWatchOptions: Partial<CiWatchOptions> = {};
+  /**
+   * Release proposals awaiting a person's confirmation, one per Room. Held in
+   * memory on purpose: a lost proposal costs a re-ask, and a proposal that
+   * survived a restart would let a stale "yes" open a corner for a release
+   * summary nobody can still see. See `release-flow.ts`.
+   */
+  private readonly releaseProposals = new Map<string, PendingReleaseProposal>();
 
   constructor(
     config: BodyConfig,
@@ -3326,8 +3383,25 @@ export class Body {
     agentExchange?: AgentExchangeAuthorization,
     cornerWorkIntent = explicitCornerWork,
   ): Promise<boolean> {
+    // A release ask is answered by summarizing and offering, never by editing:
+    // it is read-only for the same reason an information request is, and the
+    // corner it may lead to is opened by a person's confirmation, not here.
+    // A Room-config change is never one of them, and it is checked here rather
+    // than trusted to the block below: a repository whose branch is literally
+    // named `release` makes "make release the target branch" read as a release
+    // ask, and `informationOnly` (which a release ask sets) is exactly what
+    // gates the target-branch proposal out.
+    const releaseIntent =
+      boundRepo &&
+      editPolicy === 'repository' &&
+      !explicitCornerWork &&
+      !targetBranchChangeIntent(request.content)
+        ? releaseRoomIntent(request.content)
+        : undefined;
     const informationOnly =
-      agentExchange !== undefined || isReadOnlyInformationRequest(request.content);
+      agentExchange !== undefined ||
+      releaseIntent !== undefined ||
+      isReadOnlyInformationRequest(request.content);
     const requestAuthor =
       request.authorAttribution ??
       (() => {
@@ -3379,6 +3453,30 @@ export class Body {
         );
         return false;
       }
+    }
+
+    // "yes" to a release this agent offered to cut. The proposal, not this
+    // message, is what authorizes the corner: the person already read the
+    // summary of exactly what would go into it, so their agreement is a
+    // corner-open command with the task already agreed. A bare confirmation
+    // with no live proposal is nothing — it falls through to an ordinary turn.
+    const proposal = this.liveReleaseProposal(tlcChannelId);
+    if (proposal && boundRepo && editPolicy === 'repository' && isReleaseConfirmation(request.content)) {
+      this.releaseProposals.delete(tlcChannelId);
+      await this.durableState.appendConversation(tlcChannelId, {
+        role: 'user',
+        text: userPrompt,
+        eventId: request.eventId,
+        at: new Date(request.createdAt * 1_000).toISOString(),
+      });
+      const info = await this.openSubchannel(
+        tlcChannelId,
+        boundRepo,
+        releaseCornerIntent(proposal),
+        request,
+      );
+      this.startAgentTask(info, releaseCornerPrompt(proposal), releaseCornerTaskPrompt(proposal));
+      return true;
     }
 
     // The repository belongs to the Room. An explicit open-a-corner command in
@@ -3548,7 +3646,14 @@ export class Body {
       userPrompt,
       request.eventId,
     );
-    const prompt = agentExchange
+    // A release turn answers from host-read git facts, and registers the offer
+    // it is about to make so a plain "yes" afterwards still means "cut it".
+    const releaseContext = releaseIntent
+      ? this.prepareReleaseProposal(tlcChannelId, boundRepo, releaseIntent)
+      : undefined;
+    const prompt = releaseContext
+      ? [releaseContext, '', sharedPrompt].join('\n')
+      : agentExchange
       ? [
           'Host boundary: the current human explicitly authorized one bounded live exchange with another Room agent.',
           `Write only your first visible message to that peer. Each agent may send at most ${AGENT_EXCHANGE_MAX_MESSAGES} messages.`,
@@ -3663,6 +3768,53 @@ export class Body {
           );
       }
     }
+  }
+
+  /** A release proposal this Room can still confirm, expiring stale ones. */
+  private liveReleaseProposal(tlcChannelId: string): PendingReleaseProposal | undefined {
+    const proposal = this.releaseProposals.get(tlcChannelId);
+    if (!proposal) return undefined;
+    if (proposal.expiresAt <= Date.now()) {
+      this.releaseProposals.delete(tlcChannelId);
+      return undefined;
+    }
+    return proposal;
+  }
+
+  /**
+   * Read what is actually unreleased, and hold the offer the agent is about to
+   * make so the person's confirmation has something to attach to.
+   *
+   * Registered BEFORE the turn runs rather than after it, and independently of
+   * how the agent chooses to phrase the offer: the daemon knows it asked for a
+   * proposal, and a person's "yes" must not depend on a model having produced
+   * a particular sentence. Nothing is proposed when there is nothing
+   * unreleased — the briefing tells the agent to say so and stop, so a "yes"
+   * then has nothing to confirm, correctly.
+   */
+  private prepareReleaseProposal(
+    tlcChannelId: string,
+    boundRepo: BoundRepo | undefined,
+    intent: ReleaseRoomIntent,
+  ): string | undefined {
+    const repoPath = boundRepo?.localPath;
+    if (!repoPath) return undefined;
+    const work = summarizeUnreleasedWork(
+      repoPath,
+      boundRepo.targetBranch ?? 'refs/heads/main',
+      boundRepo.remoteName,
+    );
+    if (!work) return undefined;
+    if (work.commitCount > 0) {
+      this.releaseProposals.set(tlcChannelId, {
+        work,
+        ...(intent.kind === 'release' && intent.version ? { version: intent.version } : {}),
+        expiresAt: Date.now() + RELEASE_PROPOSAL_TTL_MS,
+      });
+    } else {
+      this.releaseProposals.delete(tlcChannelId);
+    }
+    return releaseBriefing(work, intent);
   }
 
   private async appendRoomPermissionOutcome(
@@ -4476,8 +4628,15 @@ export class Body {
       .split(/\s+/)[0];
     if (targetTip === target.tip) return { kind: 'skip' };
 
+    // `--follow-tags` carries any ANNOTATED tag reachable from the approved
+    // tip and missing from the remote — which is how a release corner's tag
+    // reaches the remote at all. It is scoped by construction: only tags
+    // reachable from the exact tip a human approved, only tags the remote does
+    // not already have, and only annotated ones (a lightweight tag is left
+    // behind on purpose, since it carries no authorship of its own).
     const land = gitWithUserCredentials(info.worktreePath, [
       'push',
+      '--follow-tags',
       remote,
       `${target.tip}:${target.branch}`,
     ]);
@@ -4498,6 +4657,11 @@ export class Body {
    * working tree and index move with the ref instead of silently reading as
    * "everything reverted"; otherwise the ref is advanced with a compare-and-set
    * on the tip we just verified.
+   *
+   * A tag the corner created (a release corner's annotated tag) needs no
+   * equivalent of the remote path's `--follow-tags`: the corner's worktree is a
+   * linked worktree of THIS repository, so its tags are already in the same ref
+   * store the land is advancing. There is nowhere to carry them to.
    */
   private landInLocalCheckout(
     localPath: string,
@@ -4740,11 +4904,18 @@ export class Body {
    * `pollDirectRemoteApprovals`, and both converge here). Exactly once per
    * corner, and entirely best-effort — a dead ACP session or a failed publish
    * must never hold up the archive that follows.
+   *
+   * Returns the published event id so the CI report that follows the land can
+   * be threaded to this recap rather than arriving in the Room as an orphan
+   * line about a commit nobody is looking at any more.
    */
-  private async postCornerLandSummary(info: SubchannelInfo, landedTip: string): Promise<void> {
-    if (info.landSummaryPosted) return;
+  private async postCornerLandSummary(
+    info: SubchannelInfo,
+    landedTip: string,
+  ): Promise<string | undefined> {
+    if (info.landSummaryPosted) return undefined;
     const parentId = info.session.parentChannelId;
-    if (!parentId) return;
+    if (!parentId) return undefined;
     info.landSummaryPosted = true;
 
     const branch = (info.mergeTarget?.branch ?? info.boundRepo?.targetBranch ?? 'refs/heads/main').replace(
@@ -4786,7 +4957,7 @@ export class Body {
       console.error(`[body] land summary turn failed for ${info.subchannelId}:`, error);
     }
 
-    await postAgentMessage(
+    const event = buildAgentMessage(
       parentId,
       this.agentIdentity,
       `${recap}\n${landedLine}`,
@@ -4801,6 +4972,80 @@ export class Body {
         ['agent', this.agentIdentity.publicKey],
       ],
     );
+    await publishEvent(event, this.agentIdentity);
+    return event.id;
+  }
+
+  /**
+   * Follow a landed commit's CI and say — once — how it went.
+   *
+   * A land is not the end of the story: the change is on the branch, and the
+   * next thing every reader wants is whether it went green. This is the one
+   * follow-up, threaded to the land recap, and it is silent unless there is a
+   * verdict: a repository with no CI, a still-running pipeline past the watch
+   * budget, an unreadable API, and every non-GitHub remote (local-only,
+   * relay-origin, another host) all produce no message and no error. Silence is
+   * the correct answer to "I don't know", and a Room full of "CI status
+   * unknown" lines would be worse than one that only ever speaks when it has
+   * something to report.
+   *
+   * Fire-and-forget by design — the corner is archived immediately after the
+   * land, so this must outlive it: it captures every fact it needs up front
+   * (the repository is read through the canonical checkout, which survives the
+   * corner's worktree being reaped) and afterwards touches nothing but the
+   * relay.
+   */
+  private watchLandedCommitCi(
+    info: SubchannelInfo,
+    landedTip: string,
+    replyTo: string | undefined,
+  ): void {
+    if (info.ciWatchStarted) return;
+    const parentId = info.session.parentChannelId;
+    const boundRepo = info.boundRepo;
+    // Relay-origin repositories are hosted by the Buzz relay and have no
+    // GitHub checks to read; a local-only repository has no remote at all.
+    if (!parentId || !boundRepo || boundRepo.ownerHex || !boundRepo.remoteName) return;
+    // Read the remote synchronously, before the corner's worktree can be
+    // reaped by the archive that follows this land.
+    const repoDir = boundRepo.localPath ?? info.worktreePath;
+    const repoRef = resolveGitHubRepo(repoDir, boundRepo.remoteName);
+    if (!repoRef) return;
+    info.ciWatchStarted = true;
+
+    const branch = (info.mergeTarget?.branch ?? boundRepo.targetBranch ?? 'refs/heads/main').replace(
+      /^refs\/heads\//,
+      '',
+    );
+    const subchannelId = info.subchannelId;
+    const watch = (async () => {
+      // The same ambient credentials the land push just used. Resolved inside
+      // the async body because a credential helper is a subprocess: doing it
+      // on the caller's synchronous path would stall the maintenance tick that
+      // just landed the change.
+      const token = this.ciWatchOptions.token ?? resolveGitHubToken(repoDir);
+      const conclusion = await watchCommitCi(repoRef, landedTip, {
+        pollMs: CI_WATCH_POLL_MS,
+        timeoutMs: CI_WATCH_TIMEOUT_MS,
+        noneGraceMs: CI_WATCH_NONE_GRACE_MS,
+        signal: this.ciWatchAbort.signal,
+        ...this.ciWatchOptions,
+        ...(token ? { token } : {}),
+      });
+      const message = describeCiOutcome(conclusion, { branch, tip: landedTip });
+      if (!message) return;
+      await postAgentMessage(parentId, this.agentIdentity, message, replyTo, [], [
+        ['t', CI_RESULT_TAG],
+        ['subchannel', subchannelId],
+        ['branch', branch],
+        ['tip', landedTip],
+        ['ci', conclusion.kind],
+        ['agent', this.agentIdentity.publicKey],
+      ]);
+    })()
+      .catch((error) => console.error(`[body] CI watch failed for ${subchannelId}:`, error))
+      .finally(() => this.pendingCiWatches.delete(watch));
+    this.pendingCiWatches.add(watch);
   }
 
   /** Archive only after human approval and the target ref reach the exact tip. */
@@ -4836,9 +5081,14 @@ export class Body {
       // The work is durably on the target ref — the one moment a Room reader
       // can be told, in the agent's own voice, what this corner delivered.
       // Never allowed to block the archive below.
-      await this.postCornerLandSummary(info, targetTip).catch((error) =>
-        console.error(`[body] land summary publish failed for ${info.subchannelId}:`, error),
-      );
+      const landSummaryId = await this.postCornerLandSummary(info, targetTip).catch((error) => {
+        console.error(`[body] land summary publish failed for ${info.subchannelId}:`, error);
+        return undefined;
+      });
+      // Started here rather than at the land itself, because this is the one
+      // point every repository kind converges on with the target ref actually
+      // confirmed at the approved tip — the commit CI would be running against.
+      this.watchLandedCommitCi(info, targetTip, landSummaryId);
       await this.postMergeSummary(
         info.subchannelId,
         info.mergeSummary ?? `Merged ${info.featureBranch} at ${targetTip.slice(0, 12)}…`,
@@ -6585,6 +6835,11 @@ export class Body {
   /** Dispose all sessions. */
   async dispose(): Promise<void> {
     this.disposed = true;
+    // A post-land CI watch can be minutes from its next poll; ending the wait
+    // is what stops shutdown blocking on it.
+    this.ciWatchAbort.abort();
+    await Promise.allSettled([...this.pendingCiWatches]);
+    this.releaseProposals.clear();
     // The Room push loops own their own REQ teardown via their `finally`; only
     // a socket this Body opened for itself is closed here. Closing the
     // daemon's shared socket is the supervisor's call, not one Room's.

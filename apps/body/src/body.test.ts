@@ -34,6 +34,7 @@ import {
   ABANDONED_CORNER_CLOSE_REFUSED,
   ABANDONED_CORNER_CLOSE_RETRY_BASE_MS,
   ABANDONED_CORNER_CLOSE_RETRY_CAP_MS,
+  UNTRACKED_CORNER_SCAN_INTERVAL_MS,
   assertRelayCornerArchiveTarget,
   assertSubchannelArchiveTarget,
   Body,
@@ -6554,5 +6555,345 @@ describe('a corner belongs to the agent that opened it', () => {
     expect(abandonedCornerCloseRetryDelayMs(1, new Error('rate limited, retry in 900s'))).toBe(
       900_000,
     );
+  });
+});
+
+describe('a corner that fell out of local tracking is still closable', () => {
+  const CREATE_KIND = 9007;
+  const METADATA_KIND = 39000;
+
+  function newBody(agent: ReturnType<typeof newIdentity>, workspaceRoot: string) {
+    return new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot,
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+    );
+  }
+
+  function cornerCreateEvent(
+    creator: ReturnType<typeof newIdentity>,
+    subchannelId: string,
+    parentChannelId: string,
+  ): NostrEvent {
+    return signEvent(
+      {
+        pubkey: creator.publicKey,
+        created_at: Math.floor(Date.now() / 1000),
+        kind: CREATE_KIND,
+        tags: [
+          ['h', subchannelId],
+          ['parent', parentChannelId],
+        ],
+        content: '',
+      },
+      creator.secretKey,
+    );
+  }
+
+  function closeEvent(human: ReturnType<typeof newIdentity>, subchannelId: string): NostrEvent {
+    return signEvent(
+      {
+        pubkey: human.publicKey,
+        created_at: Math.floor(Date.now() / 1000),
+        kind: 9,
+        tags: [
+          ['h', subchannelId],
+          ['t', CORNER_CLOSE_TAG],
+        ],
+        content: 'Close this corner.',
+      },
+      human.secretKey,
+    );
+  }
+
+  function archivedMetadataEvent(
+    signer: ReturnType<typeof newIdentity>,
+    subchannelId: string,
+  ): NostrEvent {
+    return signEvent(
+      {
+        pubkey: signer.publicKey,
+        created_at: Math.floor(Date.now() / 1000),
+        kind: METADATA_KIND,
+        tags: [
+          ['d', subchannelId],
+          ['archived', 'true'],
+        ],
+        content: '',
+      },
+      signer.secretKey,
+    );
+  }
+
+  /**
+   * The sweep's whole point is that it asks the relay a precisely FILTERED
+   * question, so a stub that serves every event to every filter would prove
+   * nothing. This one actually applies kinds/authors/single-letter-tag/since.
+   */
+  function matching(events: NostrEvent[], filter: Record<string, unknown>): NostrEvent[] {
+    return events.filter((event) => {
+      if (Array.isArray(filter.kinds) && !filter.kinds.includes(event.kind)) return false;
+      if (Array.isArray(filter.authors) && !filter.authors.includes(event.pubkey)) return false;
+      if (typeof filter.since === 'number' && event.created_at < filter.since) return false;
+      for (const [key, values] of Object.entries(filter)) {
+        if (!key.startsWith('#') || !Array.isArray(values)) continue;
+        const tagName = key.slice(1);
+        const hit = (values as string[]).some((value) =>
+          event.tags.some((tag) => tag[0] === tagName && tag[1] === value),
+        );
+        if (!hit) return false;
+      }
+      return true;
+    });
+  }
+
+  function relayReader(events: NostrEvent[]) {
+    return vi.fn(async (filters: Record<string, unknown>[]) =>
+      filters.flatMap((filter) => matching(events, filter)),
+    );
+  }
+
+  /** Serve `events` to /query through the same filter, record every publish. */
+  function stubRelayHttp(events: NostrEvent[]): NostrEvent[] {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/query')) {
+          const filters = JSON.parse(String(init?.body)) as Record<string, unknown>[];
+          const hits = filters.flatMap((filter) => matching(events, filter));
+          return new Response(JSON.stringify(hits), { status: 200 });
+        }
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    return published;
+  }
+
+  it('archives a corner it authored that is open on the relay, has a pending close, and is in no local map', async () => {
+    const agent = newIdentity('untracked-close-agent');
+    const human = newIdentity('untracked-close-human');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-untracked-close-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      const create = cornerCreateEvent(agent, 'corner-untracked', 'room-untracked');
+      const intro = signEvent(
+        {
+          pubkey: agent.publicKey,
+          created_at: Math.floor(Date.now() / 1000),
+          kind: 9,
+          tags: [
+            ['h', 'corner-untracked'],
+            ['feature', 'feature/untracked-work'],
+            ['parent', 'room-untracked'],
+          ],
+          content: 'corner opened',
+        },
+        agent.secretKey,
+      );
+      const close = closeEvent(human, 'corner-untracked');
+      const relayEvents = [create, intro, close];
+      Reflect.set(body, 'agentRelay', { queryEvents: relayReader(relayEvents) });
+      const published = stubRelayHttp(relayEvents);
+
+      // The exact live shape: not restored, not abandoned — in NO map at all.
+      expect(body.getSubchannels().has('corner-untracked')).toBe(false);
+      expect(body.getAbandonedCorners().has('corner-untracked')).toBe(false);
+
+      await Reflect.get(body, 'pollUntrackedCornerCloses').call(body, 'room-untracked');
+
+      // Re-derived from the relay, with the branch its committed work is on.
+      const adopted = body.getAbandonedCorners().get('corner-untracked');
+      expect(adopted).toMatchObject({
+        subchannelId: 'corner-untracked',
+        parentChannelId: 'room-untracked',
+        featureBranch: 'feature/untracked-work',
+      });
+
+      await Reflect.get(body, 'pollAbandonedCornerCloses').call(body, 'room-untracked');
+
+      // The corner is archived on the relay...
+      const archiveCommand = published.find(
+        (event) =>
+          event.kind === 9002 &&
+          event.tags.some((tag) => tag[0] === 'archived' && tag[1] === 'true'),
+      );
+      expect(archiveCommand?.tags).toContainEqual(['h', 'corner-untracked']);
+      // ...and the parent Room told, which is what clears its stale pin.
+      const parentCard = published.find((event) =>
+        event.tags.some((tag) => tag[0] === 'h' && tag[1] === 'room-untracked'),
+      );
+      expect(parentCard?.tags).toContainEqual(['subchannel', 'corner-untracked']);
+      expect(parentCard?.tags).toContainEqual(['status', 'archived']);
+      expect(body.getAbandonedCorners().has('corner-untracked')).toBe(false);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves an untracked corner another agent opened entirely alone, close request or not', async () => {
+    const agent = newIdentity('untracked-foreign-agent');
+    const otherAgent = newIdentity('untracked-foreign-other');
+    const human = newIdentity('untracked-foreign-human');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-untracked-foreign-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      const relayEvents = [
+        cornerCreateEvent(otherAgent, 'corner-not-ours', 'room-untracked-foreign'),
+        closeEvent(human, 'corner-not-ours'),
+      ];
+      Reflect.set(body, 'agentRelay', { queryEvents: relayReader(relayEvents) });
+      const published = stubRelayHttp(relayEvents);
+
+      await Reflect.get(body, 'pollUntrackedCornerCloses').call(body, 'room-untracked-foreign');
+
+      // #244's rule, enforced by the `authors` filter rather than a later
+      // check: a foreign corner is never even a candidate, so nothing is
+      // adopted and no doomed kind:9002 is ever signed.
+      expect(body.getAbandonedCorners().has('corner-not-ours')).toBe(false);
+      expect(published).toEqual([]);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('never reprocesses a corner that is already archived, and never adopts one nobody asked to close', async () => {
+    const agent = newIdentity('untracked-settled-agent');
+    const human = newIdentity('untracked-settled-human');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-untracked-settled-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      const relayEvents = [
+        // Already closed: a close was pressed, and the corner is archived.
+        cornerCreateEvent(agent, 'corner-settled', 'room-untracked-settled'),
+        closeEvent(human, 'corner-settled'),
+        archivedMetadataEvent(agent, 'corner-settled'),
+        // Open, ours, untracked — but nobody asked to close it.
+        cornerCreateEvent(agent, 'corner-quiet', 'room-untracked-settled'),
+      ];
+      const queryEvents = relayReader(relayEvents);
+      Reflect.set(body, 'agentRelay', { queryEvents });
+      const published = stubRelayHttp(relayEvents);
+
+      await Reflect.get(body, 'pollUntrackedCornerCloses').call(body, 'room-untracked-settled');
+      expect(body.getAbandonedCorners().size).toBe(0);
+      expect(published).toEqual([]);
+
+      // A second sweep re-reads the immutable create events, but must not go
+      // back to the relay about either corner: the archived one is settled for
+      // good, and the quiet one has no close request.
+      Reflect.get(body, 'untrackedCornerScanAt').clear();
+      queryEvents.mockClear();
+      await Reflect.get(body, 'pollUntrackedCornerCloses').call(body, 'room-untracked-settled');
+
+      const asked = queryEvents.mock.calls.flatMap(
+        ([filters]) => filters as Record<string, unknown>[],
+      );
+      // The create-event enumeration plus ONE batched close read for the
+      // candidates that are still open — no per-corner follow-up.
+      expect(asked.map((filter) => (filter.kinds as number[]).join())).toEqual([
+        String(CREATE_KIND),
+        '9',
+      ]);
+      // The settled corner is gone from the candidate set for good: the sweep
+      // never asks about it again, let alone re-reads its metadata.
+      expect(asked[1]!['#h']).toEqual(['corner-quiet']);
+      expect(body.getAbandonedCorners().size).toBe(0);
+      expect(published).toEqual([]);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('still sees a close older than the corner\'s own durable delivery cursor', async () => {
+    const agent = newIdentity('untracked-cursor-agent');
+    const human = newIdentity('untracked-cursor-human');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-untracked-cursor-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      const close = closeEvent(human, 'corner-cursor');
+      // The cursor is a high-water mark: a close that failed while the corner
+      // was still live, followed by any delivered later message, leaves it
+      // ahead of the close's own timestamp.
+      const later = signEvent(
+        {
+          pubkey: human.publicKey,
+          created_at: close.created_at + 600,
+          kind: 9,
+          tags: [['h', 'corner-cursor']],
+          content: 'any later message',
+        },
+        human.secretKey,
+      );
+      const relayEvents = [
+        cornerCreateEvent(agent, 'corner-cursor', 'room-untracked-cursor'),
+        close,
+        later,
+      ];
+      Reflect.set(body, 'agentRelay', { queryEvents: relayReader(relayEvents) });
+      const published = stubRelayHttp(relayEvents);
+      const durable = Reflect.get(body, 'durableState') as {
+        enqueue: (channelId: string, events: NostrEvent[]) => Promise<unknown>;
+        delivered: (channelId: string, eventId: string) => Promise<void>;
+        cursor: (channelId: string) => Promise<{ createdAt: number }>;
+      };
+      await durable.enqueue('corner-cursor', [close, later]);
+      await durable.delivered('corner-cursor', later.id);
+      expect((await durable.cursor('corner-cursor')).createdAt).toBeGreaterThan(close.created_at);
+
+      await Reflect.get(body, 'pollUntrackedCornerCloses').call(body, 'room-untracked-cursor');
+      expect(body.getAbandonedCorners().get('corner-cursor')?.closeRequestedAt).toBe(
+        close.created_at,
+      );
+
+      await Reflect.get(body, 'pollAbandonedCornerCloses').call(body, 'room-untracked-cursor');
+
+      // Without the floor the watch's `since` starts past the close, the
+      // corner is tracked forever, and nothing is ever archived.
+      const archiveCommand = published.find(
+        (event) =>
+          event.kind === 9002 &&
+          event.tags.some((tag) => tag[0] === 'archived' && tag[1] === 'true'),
+      );
+      expect(archiveCommand?.tags).toContainEqual(['h', 'corner-cursor']);
+      expect(body.getAbandonedCorners().has('corner-cursor')).toBe(false);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('scans at most once per interval, so the backstop never becomes a hot loop', async () => {
+    const agent = newIdentity('untracked-throttle-agent');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-untracked-throttle-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      const queryEvents = relayReader([]);
+      Reflect.set(body, 'agentRelay', { queryEvents });
+      stubRelayHttp([]);
+
+      await Reflect.get(body, 'pollUntrackedCornerCloses').call(body, 'room-untracked-throttle');
+      await Reflect.get(body, 'pollUntrackedCornerCloses').call(body, 'room-untracked-throttle');
+      expect(queryEvents).toHaveBeenCalledTimes(1);
+
+      Reflect.get(body, 'untrackedCornerScanAt').set(
+        'room-untracked-throttle',
+        Date.now() - UNTRACKED_CORNER_SCAN_INTERVAL_MS - 1,
+      );
+      await Reflect.get(body, 'pollUntrackedCornerCloses').call(body, 'room-untracked-throttle');
+      expect(queryEvents).toHaveBeenCalledTimes(2);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
   });
 });

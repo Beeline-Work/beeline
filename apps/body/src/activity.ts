@@ -1233,9 +1233,73 @@ export async function postAgentPresence(
 }
 
 /**
+ * A relay quota rejection advertises its own delay in the refusal text
+ * ("retry in 12s"). Parsed here so presence and Room polling honour the same
+ * instruction rather than each guessing.
+ */
+export function relayRetryAfterMs(error: unknown): number {
+  const seconds = [...String(error).matchAll(/retry in\s+(\d+(?:\.\d+)?)s/gi)].map((match) =>
+    Number(match[1]),
+  );
+  return seconds.length ? Math.ceil(Math.max(...seconds) * 1_000) : 0;
+}
+
+/** Longest a relay's own advertised quota delay is honoured for one heartbeat. */
+const AGENT_PRESENCE_RETRY_BASE_MS = 1_000;
+const AGENT_PRESENCE_RETRY_CAP_MS = 8_000;
+export const AGENT_PRESENCE_RETRY_MAX_ATTEMPTS = 4;
+
+/**
+ * Spacing for one retried heartbeat.
+ *
+ * `publishEvent` (`packages/buzz-client/src/http.ts`) retries 5xx and network
+ * failures only, so a relay quota rejection (HTTP 429) comes straight back out
+ * — and a dropped heartbeat is not a lost log line, it is lease time: at a 45s
+ * cadence against a 120s lease, two swallowed heartbeats are enough to make a
+ * perfectly live daemon read as offline in every client until the quota window
+ * clears. Retrying inside the interval keeps the lease alive instead.
+ *
+ * Jitter is not decoration: one daemon holds a heartbeat per Room, they were
+ * all rejected by the same burst, and retrying them in lockstep is how a quota
+ * rejection becomes a self-sustaining one.
+ */
+export function agentPresenceRetryDelayMs(
+  attempt: number,
+  error?: unknown,
+  random: () => number = Math.random,
+): number {
+  const exponentialMs = Math.min(
+    AGENT_PRESENCE_RETRY_CAP_MS,
+    AGENT_PRESENCE_RETRY_BASE_MS * 2 ** Math.max(0, attempt - 1),
+  );
+  // An explicit quota instruction always wins over our own steady-state cap:
+  // retrying earlier than the relay asked recreates the storm.
+  const base = Math.max(exponentialMs, relayRetryAfterMs(error));
+  const jittered = base * (0.75 + random() * 0.5);
+  // Past one heartbeat interval the timer's own next tick is the better
+  // retry — with coalescing below it carries the freshest status anyway.
+  return Math.min(AGENT_PRESENCE_HEARTBEAT_MS, Math.round(jittered));
+}
+
+/**
  * Start a low-rate heartbeat. Publishes immediately and serializes refreshes so
  * a slow relay cannot create overlapping requests. The returned stop function
  * emits an offline marker after any in-flight heartbeat settles.
+ *
+ * Two properties here are load-bearing for the client's online/offline verdict,
+ * which is nothing but "how old is the newest presence record":
+ *
+ *  - **`created_at` is stamped at PUBLISH time, never at enqueue time.** A
+ *    heartbeat that waited behind a retrying predecessor would otherwise land
+ *    carrying a timestamp from minutes ago, and — because this is a
+ *    parameterized-replaceable record — that already-expired stamp becomes the
+ *    newest one the relay holds. The reader then sees a freshly delivered
+ *    heartbeat that is instantly past its lease and keeps showing the agent
+ *    offline even though presence has recovered.
+ *  - **Heartbeats coalesce rather than queue.** Only the latest presence record
+ *    matters, so a tick that fires while another attempt is still retrying
+ *    replaces it. Queued heartbeats are pure waste against the very quota that
+ *    was already rejecting them.
  */
 export function startAgentPresence(
   channelId: string,
@@ -1249,12 +1313,68 @@ export function startAgentPresence(
   let chain = Promise.resolve();
   let status: AgentPresenceStatus = initialStatus;
   const generationId = randomUUID();
+
+  /** Sleep in slices so `stop()` is never held for a whole backoff delay. */
+  const backoff = async (delayMs: number): Promise<void> => {
+    for (let remaining = delayMs; remaining > 0 && !stopped; remaining -= 250) {
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(250, remaining)));
+    }
+  };
+
+  const publishWithRetry = async (nextStatus: AgentPresenceStatus): Promise<void> => {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await postAgentPresence(
+          channelId,
+          owner,
+          nextStatus,
+          nextMonotonicSecond(lastCreatedAt),
+          generationId,
+        );
+        onPublished?.(nextStatus);
+        return;
+      } catch (error) {
+        const lastAttempt = attempt >= AGENT_PRESENCE_RETRY_MAX_ATTEMPTS;
+        // A shutdown's own offline marker still retries: it is what tells every
+        // reader the daemon is gone rather than merely unreachable.
+        if (lastAttempt || (stopped && nextStatus !== 'offline')) {
+          console.error(
+            `[body] agent presence ${nextStatus} failed after ${attempt} attempts:`,
+            error,
+          );
+          return;
+        }
+        await backoff(agentPresenceRetryDelayMs(attempt, error));
+        if (stopped && nextStatus !== 'offline') return;
+      }
+    }
+  };
+
+  const queue: AgentPresenceStatus[] = [];
+  let inflightStatus: AgentPresenceStatus | null = null;
+  let draining = false;
   const enqueue = (nextStatus: AgentPresenceStatus) => {
-    const createdAt = nextMonotonicSecond(lastCreatedAt);
+    // Coalesce only a REDUNDANT repeat, never a transition. While something is
+    // in flight, an ordinary heartbeat tick restating the status already being
+    // published adds nothing to a replaceable record and just spends more of
+    // the quota that is currently rejecting it; an online→offline change is
+    // real news and always gets its own publish. When nothing is in flight the
+    // repeat is the whole point — that is what refreshes the lease.
+    if (draining && nextStatus === (queue.at(-1) ?? inflightStatus)) return chain;
+    queue.push(nextStatus);
+    if (draining) return chain;
+    draining = true;
     chain = chain
-      .then(() => postAgentPresence(channelId, owner, nextStatus, createdAt, generationId))
-      .then(() => onPublished?.(nextStatus))
-      .catch((error) => console.error(`[body] agent presence ${nextStatus} failed:`, error));
+      .then(async () => {
+        for (let target = queue.shift(); target !== undefined; target = queue.shift()) {
+          inflightStatus = target;
+          await publishWithRetry(target);
+        }
+      })
+      .finally(() => {
+        draining = false;
+        inflightStatus = null;
+      });
     return chain;
   };
 
@@ -1274,10 +1394,7 @@ export function startAgentPresence(
     stopped = true;
     clearInterval(timer);
     await chain;
-    const createdAt = nextMonotonicSecond(lastCreatedAt);
-    await postAgentPresence(channelId, owner, 'offline', createdAt, generationId)
-      .then(() => onPublished?.('offline'))
-      .catch((error) => console.error('[body] agent presence offline failed:', error));
+    await publishWithRetry('offline');
   };
   return Object.assign(stop, { generationId, setStatus });
 }

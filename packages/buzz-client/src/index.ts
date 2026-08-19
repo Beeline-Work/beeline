@@ -217,6 +217,7 @@ export {
 } from './community.js';
 
 export {
+  abandonAgentPairing,
   attachAgentToChannel,
   createAgent,
   createAgentPairingCode,

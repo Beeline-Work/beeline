@@ -2009,6 +2009,21 @@ export class Body {
        *  sorts after its own narrative segments, even when both land in the
        *  same wall-clock second. */
       minCreatedAt?: number;
+      /**
+       * Compute the summary but do not put it in the transcript.
+       *
+       * A corner turn that narrated durably (`stream.narrate`) has already
+       * committed the agent's full prose as `#t=agent-message` segments, so
+       * publishing the concise reduction of that same prose printed the same
+       * words a second time, as bullets, directly beneath themselves. The
+       * summary is still needed — it is the corner's status/archive card copy
+       * and its durable conversation entry, both of which read this
+       * function's return value — so it is computed either way.
+       *
+       * Never honoured when the turn produced attachments (or attachment
+       * errors): those reach the human only through this message.
+       */
+      summaryOnly?: boolean;
     } = {},
   ): Promise<string> {
     const uploaded = await this.uploadAgentOutputs(session, result);
@@ -2022,6 +2037,7 @@ export class Body {
     // completed turn as a failure to report.
     if (options.concise) reply = conciseCornerTurnSummary(reply) || fallback;
     if (!reply) throw new Error('agent returned an empty reply');
+    if (options.summaryOnly && !uploaded.attachments.length && !uploaded.errors.length) return reply;
     const createdAt =
       options.minCreatedAt !== undefined
         ? Math.max(Math.floor(Date.now() / 1_000), options.minCreatedAt + 1)
@@ -4046,7 +4062,13 @@ export class Body {
           info.session,
           result,
           `Completed: ${prompt}`,
-          { concise: true, minCreatedAt: result.narrativeFloor },
+          {
+            concise: true,
+            minCreatedAt: result.narrativeFloor,
+            // The narrative committer already put this turn's full prose in
+            // the transcript; the concise reduction would repeat it.
+            summaryOnly: result.narrativeFloor !== undefined,
+          },
         );
         await this.durableState.appendConversation(info.subchannelId, {
           role: 'agent',
@@ -5325,7 +5347,11 @@ export class Body {
               session,
               agentResult,
               'Completed the requested follow-up.',
-              { concise: true, minCreatedAt: agentResult.narrativeFloor },
+              {
+                concise: true,
+                minCreatedAt: agentResult.narrativeFloor,
+                summaryOnly: agentResult.narrativeFloor !== undefined,
+              },
             );
             info.mergeSummary = agentReply || info.mergeSummary;
             await this.durableState.appendConversation(subchannelId, {

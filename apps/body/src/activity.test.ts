@@ -26,6 +26,8 @@ import {
   NARRATIVE_SEGMENT_MAX_CHARS,
   AGENT_MESSAGE_TAG,
   postAgentMessage,
+  postSteerQueuedNotice,
+  STEER_QUEUED_TAG,
 } from './activity.js';
 import { KIND_AGENT_DRAFT, TAG_AGENT_DRAFT } from '@beeline/buzz-client';
 
@@ -961,5 +963,40 @@ describe('createNarrativeCommitter', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('postSteerQueuedNotice', () => {
+  beforeEach(() => {
+    published.length = 0;
+  });
+
+  it('is a body-control receipt for the human’s own input, never an agent reply', async () => {
+    const owner = newIdentity('steer-ack-agent');
+    await postSteerQueuedNotice('corner-9', owner, 'request-9');
+
+    expect(published).toHaveLength(1);
+    const event = published[0]!;
+    expect(event.kind).toBe(9);
+    expect(event.tags).toEqual(
+      expect.arrayContaining([
+        ['h', 'corner-9'],
+        ['t', 'body-control'],
+        ['t', STEER_QUEUED_TAG],
+        ['status', 'queued'],
+        ['request', 'request-9'],
+      ]),
+    );
+    // The distinction the whole fix rests on: this is NOT the agent speaking,
+    // so it must not be tagged as an agent message and must not thread as a
+    // NIP-10 reply to the message it acknowledges.
+    expect(event.tags.some((tag) => tag[0] === 't' && tag[1] === AGENT_MESSAGE_TAG)).toBe(false);
+    expect(event.tags.some((tag) => tag[0] === 'e')).toBe(false);
+    expect(event.content).toContain('queued');
+  });
+
+  it('omits the request tag when the caller has no event id to reference', async () => {
+    await postSteerQueuedNotice('corner-10', newIdentity('steer-ack-agent-2'));
+    expect(published[0]!.tags.some((tag) => tag[0] === 'request')).toBe(false);
   });
 });

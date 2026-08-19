@@ -81,6 +81,7 @@ import {
   roomParticipantPubkeys,
   sectionRoomParticipants,
   sectionRoomRoster,
+  selectedMentionAgentPubkey,
 } from '@/buzz/room-participants';
 import {
   resolveAgentDisplayIdentity,
@@ -143,7 +144,7 @@ import { isNearChatBottom } from '@/buzz/chat-scroll';
 import { replyMessageText, type MessageReplyTarget } from '@/buzz/message-reply';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
-  addressedAgentOfflineNotice,
+  offlineNoticeForSend,
   isAgentPresenceOnlineWithReconnectGrace,
   isAgentOfflineAfterPresenceResolved,
   isAgentTurnActive,
@@ -410,6 +411,9 @@ export default function BuzzChat() {
   // typing so an async roster refresh cannot turn a selected agent into an
   // unaddressed plain Room message.
   const selectedAgentMentionsRef = useRef(new Map<string, string>());
+  // When each agent was last told about, so a standing offline condition is
+  // stated once instead of re-stated on every message (see offlineNoticeForSend).
+  const offlineNoticedAtRef = useRef(new Map<string, number>());
   const sendInFlightRef = useRef(false);
 
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
@@ -1478,47 +1482,51 @@ export default function BuzzChat() {
       // one native frame to commit the cleared composer and optimistic row
       // before that CPU work begins; the network publish itself remains async.
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      const normalizedText = text.normalize('NFKC').toLocaleLowerCase();
-      const selectedMentionedAgent = [...selectedAgentMentionsRef.current.entries()]
-        .sort(([left], [right]) => right.length - left.length)
-        .find(([handle]) => {
-          const mention = `@${handle.normalize('NFKC').toLocaleLowerCase()}`;
-          const offset = normalizedText.indexOf(mention);
-          if (offset < 0) return false;
-          const trailing = normalizedText[offset + mention.length];
-          return trailing === undefined || /[\s,.:;!?)}\]]/.test(trailing);
-        })?.[1];
+      const selectedMentionedAgent = selectedMentionAgentPubkey(
+        text,
+        selectedAgentMentionsRef.current,
+      );
       const mentionedAgent = replyTarget?.isAgent
         ? replyTarget.authorPubkey
         : parentChannelId
           ? undefined
           : (selectedMentionedAgent ?? mentionedAgentPubkey(text, mentionableAgents));
-      // A Corner has exactly one administering agent, so every message there
-      // addresses it implicitly — a Room message only addresses an agent when
-      // an explicit @mention resolved one above.
-      const addressedAgentPubkey = parentChannelId ? cornerAgentPubkey : mentionedAgent;
-      if (addressedAgentPubkey) {
-        const addressedAgentOnline = isAgentPresenceOnlineWithReconnectGrace(
-          agentPresences[addressedAgentPubkey],
-          presenceNow,
-          presenceReconnectGrace[addressedAgentPubkey],
-        );
-        const offlineNotice = addressedAgentOfflineNotice(
-          resolveAgentDisplayIdentity(addressedAgentPubkey, agentByPubkey.get(addressedAgentPubkey))
-            .name,
-          addressedAgentOnline,
-        );
-        if (offlineNotice) {
-          addMessages([
-            {
-              id: `offline-notice-${Date.now()}`,
-              text: offlineNotice,
-              isUser: false,
-              timestamp: Date.now(),
-              isSystemNotice: true,
-            },
-          ]);
-        }
+      // The notice is decided from the text that is actually going out, never
+      // from `mentionedAgent` — that also carries the reply shortcut, which
+      // addresses an agent the reader never named. Corners address their one
+      // agent implicitly.
+      const offlineNotice = offlineNoticeForSend({
+        send: {
+          sentText: text,
+          ...(parentChannelId && cornerAgentPubkey ? { cornerAgentPubkey } : {}),
+          ...(parentChannelId
+            ? {}
+            : {
+                mentionableAgents,
+                selectedMentions: selectedAgentMentionsRef.current,
+              }),
+        },
+        presenceResolved,
+        isOnline: (pubkey) =>
+          isAgentPresenceOnlineWithReconnectGrace(
+            agentPresences[pubkey],
+            presenceNow,
+            presenceReconnectGrace[pubkey],
+          ),
+        agentName: (pubkey) => resolveAgentDisplayIdentity(pubkey, agentByPubkey.get(pubkey)).name,
+        noticedAt: offlineNoticedAtRef.current,
+      });
+      if (offlineNotice) {
+        offlineNoticedAtRef.current.set(offlineNotice.agentPubkey, Date.now());
+        addMessages([
+          {
+            id: `offline-notice-${Date.now()}`,
+            text: offlineNotice.text,
+            isUser: false,
+            timestamp: Date.now(),
+            isSystemNotice: true,
+          },
+        ]);
       }
       // Build and sign exactly once. publishPreparedMessage retries the same
       // id on a transient failure, so the relay can dedupe an ambiguous send.
@@ -1573,6 +1581,7 @@ export default function BuzzChat() {
     cornerAgentPubkey,
     agentPresences,
     presenceNow,
+    presenceResolved,
     presenceReconnectGrace,
     agentByPubkey,
   ]);

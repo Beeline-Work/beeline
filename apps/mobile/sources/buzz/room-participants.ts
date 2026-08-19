@@ -1,4 +1,4 @@
-type MentionableAgent = { pubkey: string; name: string; handle?: string };
+export type MentionableAgent = { pubkey: string; name: string; handle?: string };
 type RoomRosterMember = { pubkey: string };
 type RoomParticipant = RoomRosterMember & { kind: 'person' | 'agent' };
 
@@ -127,6 +127,27 @@ export function formatRoomParticipantList(names: string[]): string {
 /** Compact header count; the unified participant bar carries the actual names. */
 export function formatRoomParticipantTotal(total: number): string {
   return `${total} ${total === 1 ? 'participant' : 'participants'}`;
+}
+
+/**
+ * Resolve an agent the user picked from the mention dropdown, but only while
+ * its handle is still literally present in the text being sent — the picker's
+ * selections outlive the message they were made in.
+ */
+export function selectedMentionAgentPubkey(
+  text: string,
+  selections: ReadonlyMap<string, string>,
+): string | undefined {
+  const normalized = text.normalize('NFKC').toLocaleLowerCase();
+  return [...selections.entries()]
+    .sort(([left], [right]) => right.length - left.length)
+    .find(([handle]) => {
+      const mention = `@${handle.normalize('NFKC').toLocaleLowerCase()}`;
+      const offset = normalized.indexOf(mention);
+      if (offset < 0) return false;
+      const trailing = normalized[offset + mention.length];
+      return trailing === undefined || /[\s,.:;!?)}\]]/.test(trailing);
+    })?.[1];
 }
 
 /** Resolve the first visible @Agent name into the member pubkey written to the Nostr p-tag. */

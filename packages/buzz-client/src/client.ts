@@ -6,6 +6,7 @@
 import type { NostrEvent } from '@beeline/nostr';
 import { buildMergeApproval } from './approval.js';
 import {
+  abandonAgentPairing,
   attachAgentToChannel,
   createAgent,
   createAgentPairingCode,
@@ -503,6 +504,11 @@ export class BuzzClient {
 
   redeemAgentPairingCode(code: string): Promise<RedeemAgentPairingResult> {
     return redeemAgentPairingCode(this.ctx, code);
+  }
+
+  /** Best-effort undo of this identity's own pairing registration. Never throws. */
+  abandonAgentPairing(communityId: string): Promise<boolean> {
+    return abandonAgentPairing(this.ctx, communityId);
   }
 
   resolveRepositoryRoom(

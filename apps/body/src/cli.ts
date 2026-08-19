@@ -495,6 +495,15 @@ async function pairOneAgent(input: {
             pairing.pairedBy,
             mergeWorkerPubkey,
           ),
+        // Undo this agent's own Workspace registration when a later pair step
+        // fails, so a failed run leaves no permanently-offline ghost behind.
+        abandonPairing: async (pairing) => {
+          if (await client.abandonAgentPairing(pairing.communityId)) return;
+          console.error(
+            `[beeline] could not unregister agent ${agentIdentity.publicKey} after the failed ` +
+              'pairing; remove it from the Workspace in the app to clear the offline entry.',
+          );
+        },
         validate: async (_pairing, _room, repo) => {
           if (!repo.relayRepo) return;
           await assertAgentNotPushAllowed({

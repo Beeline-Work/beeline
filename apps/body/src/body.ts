@@ -38,6 +38,7 @@ import {
   stripAgentReplyPreamble,
   createDraftStreamer,
   createNarrativeCommitter,
+  relayRetryAfterMs,
 } from './activity.js';
 import {
   AGENT_ERROR_STATE_MESSAGES,
@@ -358,13 +359,6 @@ export function cornerArchiveSummary(
 ): string {
   const candidate = inMemorySummary?.trim() ? inMemorySummary : durableSummary;
   return conciseCornerTurnSummary(candidate ?? '') || CORNER_ARCHIVE_FALLBACK_SUMMARY;
-}
-
-function relayRetryAfterMs(error: unknown): number {
-  const seconds = [...String(error).matchAll(/retry in\s+(\d+(?:\.\d+)?)s/gi)].map((match) =>
-    Number(match[1]),
-  );
-  return seconds.length ? Math.ceil(Math.max(...seconds) * 1_000) : 0;
 }
 
 /** Bounded exponential spacing for one Room's failed request poll. */

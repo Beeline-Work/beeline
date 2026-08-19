@@ -2,7 +2,7 @@
  * Hermetic unit tests for body modules.
  * These tests do NOT require a relay or LLM endpoint.
  */
-import { afterEach, describe, it, expect, vi } from 'vitest';
+import { afterAll, afterEach, describe, it, expect, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -298,6 +298,80 @@ describe('agent identity boundary', () => {
   it('always assigns the agent a key distinct from the operator', () => {
     const body = new Body(config, newIdentity('operator'));
     expect(body.agent.publicKey).not.toBe(body.identity.publicKey);
+  });
+
+  describe('OS sandbox wiring', () => {
+    // A real git repository, because `sessionSpawnCommand` resolves a corner's
+    // git common directory by asking git rather than guessing a path.
+    const sandboxRoot = mkdtempSync(join(tmpdir(), 'buzzy-sandbox-wiring-'));
+    const repoRoot = join(sandboxRoot, 'repo');
+    const notARepo = join(sandboxRoot, 'plain');
+    mkdirSync(repoRoot, { recursive: true });
+    mkdirSync(notARepo, { recursive: true });
+    spawnSync('git', ['init', '-q', '-b', 'main', repoRoot]);
+
+    afterAll(() => rmSync(sandboxRoot, { recursive: true, force: true }));
+
+    type SpawnProbe = {
+      sessionSpawnCommand(
+        input: { mode: 'readonly' | 'edit'; cwd: string; worktreePath?: string },
+        env: Record<string, string>,
+      ): { command: string; args: string[] };
+    };
+
+    it('spawns a Room child with a read-only filesystem and no writable bind', () => {
+      const body = new Body({ ...config, bwrapPath: '/usr/bin/bwrap' }, newIdentity('operator'));
+      const spawn = (body as unknown as SpawnProbe).sessionSpawnCommand(
+        { mode: 'readonly', cwd: '/srv/checkout' },
+        { CLAUDE_CONFIG_DIR: '/srv/rooms/r1/agent-home/claude' },
+      );
+      expect(spawn.command).toBe('/usr/bin/bwrap');
+      expect(spawn.args.slice(0, 3)).toEqual(['--ro-bind', '/', '/']);
+      // Harness state is writable (codex/pi cannot start otherwise); the Room's
+      // cwd — the canonical checkout — is bound nowhere and so stays read-only.
+      const binds = spawn.args
+        .map((argument, index) => (argument === '--bind-try' ? spawn.args[index + 1] : undefined))
+        .filter(Boolean);
+      expect(binds).toEqual(['/srv/rooms/r1/agent-home/claude']);
+      expect(binds).not.toContain('/srv/checkout');
+      expect(spawn.args.slice(-1)).toEqual(['/nonexistent']);
+    });
+
+    it('spawns a corner child with its worktree and git dir writable', () => {
+      const body = new Body({ ...config, bwrapPath: '/usr/bin/bwrap' }, newIdentity('operator'));
+      const spawn = (body as unknown as SpawnProbe).sessionSpawnCommand(
+        { mode: 'edit', cwd: repoRoot, worktreePath: repoRoot },
+        { TMPDIR: '/srv/rooms/r1/agent-home/tmp' },
+      );
+      expect(spawn.command).toBe('/usr/bin/bwrap');
+      const binds = spawn.args
+        .map((argument, index) => (argument === '--bind-try' ? spawn.args[index + 1] : undefined))
+        .filter(Boolean);
+      expect(binds).toContain(repoRoot);
+      expect(binds).toContain(join(repoRoot, '.git'));
+      expect(binds).toContain('/srv/rooms/r1/agent-home/tmp');
+    });
+
+    it('spawns the bare command when no bwrap was detected at daemon start', () => {
+      const body = new Body(config, newIdentity('operator'));
+      const spawn = (body as unknown as SpawnProbe).sessionSpawnCommand(
+        { mode: 'edit', cwd: repoRoot, worktreePath: repoRoot },
+        {},
+      );
+      // Today's behaviour, unchanged: bwrap missing must never fail a session.
+      expect(spawn).toEqual({ command: '/nonexistent', args: [] });
+    });
+
+    it('fails open rather than sandboxing a corner it cannot resolve a git dir for', () => {
+      const body = new Body({ ...config, bwrapPath: '/usr/bin/bwrap' }, newIdentity('operator'));
+      const spawn = (body as unknown as SpawnProbe).sessionSpawnCommand(
+        // Not a git repository: a wrapped session here could edit but never
+        // commit, which is worse than an unwrapped one.
+        { mode: 'edit', cwd: notARepo, worktreePath: notARepo },
+        {},
+      );
+      expect(spawn).toEqual({ command: '/nonexistent', args: [] });
+    });
   });
 
   describe('corner worktree isolation wiring', () => {

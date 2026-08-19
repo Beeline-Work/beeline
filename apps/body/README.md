@@ -70,6 +70,11 @@ by projecting agent activity into the relay channel.
 
 3. **LLM egress credentials** — set via env or file (see below).
 
+4. **`bubblewrap` (optional, recommended)** — `bwrap` on PATH lets the daemon
+   confine every ACP harness child to a read-only filesystem plus the paths that
+   session legitimately owns. Without it the daemon logs one advisory line and
+   spawns unwrapped; see **Key design decisions** below.
+
 ## Configuration (env vars)
 
 | Variable                     | Required | Default                 | Description                                       |
@@ -86,6 +91,7 @@ by projecting agent activity into the relay channel.
 | `BUZZ_BODY_KEY`              | No       | auto                    | Body operator Nostr nsec/hex                      |
 | `BUZZ_AGENT_KEY`             | No       | generated at pair       | Existing agent Nostr nsec/hex                     |
 | `BUZZY_BODY_AUTO_APPROVE`    | No       | `1`                     | Auto-approve permissions inside edit corners only |
+| `BUZZY_BODY_SANDBOX`         | No       | `bwrap`                 | `off` disables the bubblewrap OS sandbox for ACP children (overrides `runtime.json`'s `sandbox`) |
 
 ### LLM credentials
 
@@ -281,6 +287,25 @@ into the process environment.
   can publish only the feature ref and `merge-ready`; target landing and archive
   cleanup require an independently verified, exact-tip approval from a
   device-held human admin.
+- **The permission handler is the policy; bubblewrap is the floor.** The Room
+  read-only rule and the corner worktree rule are enforced in the ACP permission
+  callback (`session-sandbox.ts`), which only binds a harness that actually asks
+  — and `pi-acp` never does (see `harness-capabilities.ts`). When `bwrap` is
+  installed the daemon additionally spawns every ACP child into a mount
+  namespace (`bwrap-sandbox.ts`): the whole filesystem read-only, a private
+  `/tmp`, read-write binds for that harness's own state directories, and — for a
+  corner only — its worktree plus the git common directory it commits through.
+  A Room therefore cannot write any checkout, or anywhere else on the host.
+  Harness state is writable in **both** modes on purpose: with it read-only,
+  `codex-acp` cannot open a Room session at all and `pi-acp` cannot open one in
+  either mode, which is worse than the gap it closes; the harness's own
+  bookkeeping is neither the repository nor the operator's tree.
+  `harness-sandbox.live.test.ts` holds that line for every installed adapter.
+  Network is untouched, since every harness needs its model API. Detection runs
+  once at daemon start and **fails open**: a missing or unusable `bwrap` logs one
+  advisory line and spawns unwrapped, exactly as before. Set `sandbox: "off"` in
+  the agent's `runtime.json` (or `BUZZY_BODY_SANDBOX=off`) on a host where
+  bubblewrap misbehaves.
 - **Permission intent is authority-free:** any current human Room member may
   answer the prompt. The signed response is bound to the agent, permission UUID,
   and original request event; it changes no Room role and grants no merge power.

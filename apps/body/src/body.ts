@@ -122,7 +122,7 @@ import {
   type NamedRepositoryTarget,
 } from './repository-target.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
-import { prepareRoomAgentHome } from './agent-home.js';
+import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import type { RelaySocketLease, SharedRelaySocket } from './relay-socket.js';
 import { appendPersonaSessionInstructions } from './persona-instructions.js';
 import {
@@ -161,6 +161,12 @@ import {
   ROOM_READ_ONLY_STEER,
 } from './session-sandbox.js';
 import { roomSandboxWarning } from './harness-capabilities.js';
+import {
+  harnessHomeStateDirs,
+  resolveGitCommonDir,
+  wrapAgentCommand,
+  type SandboxSessionSpec,
+} from './bwrap-sandbox.js';
 
 /** Tracks a single agent session. */
 export interface AgentSession {
@@ -1417,6 +1423,59 @@ export class Body {
     return this.roomAgentEnv;
   }
 
+  /**
+   * The ACP child's spawn command for one session, wrapped in bwrap when the
+   * daemon detected a working one at start-up.
+   *
+   * A Room gets a read-only filesystem plus a private temp; a corner adds its
+   * own worktree, this Room's harness state directories, and the git common
+   * directory its linked worktree commits through. See `bwrap-sandbox.ts`.
+   *
+   * Fails open on purpose: an edit session whose git common directory cannot be
+   * resolved would be sandboxed into a worktree it could edit but never commit
+   * from, which is a worse outcome than today's unwrapped spawn — so it says so
+   * and spawns unwrapped, leaving `session-sandbox.ts`'s cd-guard in place.
+   */
+  private sessionSpawnCommand(
+    input: { mode: SessionMode; cwd: string; worktreePath?: string; channelIdForLog?: string },
+    env: Record<string, string>,
+  ): { command: string; args: string[] } {
+    const command = this.config.agentCommand ?? this.config.agentBinary;
+    const args = this.config.agentArgs;
+    if (!this.config.bwrapPath) return { command, args: [...(args ?? [])] };
+    const { stateDirs, tmpDir } = harnessStateDirsFromEnv(env);
+    // Bind-try tolerates an absent state root, but the harness itself cannot
+    // create one on a read-only $HOME — so create the roots we know about here,
+    // in the daemon, before the child is confined.
+    const homeStateDirs = harnessHomeStateDirs(command);
+    for (const dir of homeStateDirs) {
+      try {
+        mkdirSync(dir, { recursive: true });
+      } catch {
+        // Best effort: an unwritable home just means bind-try skips it.
+      }
+    }
+    const spec: SandboxSessionSpec = {
+      mode: input.mode,
+      cwd: input.cwd,
+      harnessStateDirs: stateDirs,
+      harnessHomeStateDirs: homeStateDirs,
+      ...(tmpDir ? { tmpDir } : {}),
+      ...(input.worktreePath ? { worktreePath: input.worktreePath } : {}),
+    };
+    if (input.mode === 'edit') {
+      const gitCommonDir = resolveGitCommonDir(input.worktreePath ?? input.cwd);
+      if (!gitCommonDir) {
+        console.warn(
+          `[body] OS sandbox skipped for edit session ${input.channelIdForLog ?? input.cwd}: git common directory unresolved`,
+        );
+        return { command, args: [...(args ?? [])] };
+      }
+      spec.gitCommonDir = gitCommonDir;
+    }
+    return wrapAgentCommand({ bwrapPath: this.config.bwrapPath, spec, command, args });
+  }
+
   private async createManagedSession(input: {
     channelId: string;
     mode: SessionMode;
@@ -1454,10 +1513,23 @@ export class Body {
         // The ACP session cwd is also the child's process cwd, so a harness
         // that keys per-project state off its own cwd matches this session.
         await mkdir(input.cwd, { recursive: true });
+        const sessionEnv = await this.sessionAgentEnv();
+        const spawnCommand = this.sessionSpawnCommand(
+          {
+            mode: input.mode,
+            cwd: input.cwd,
+            ...(input.worktreePath ? { worktreePath: input.worktreePath } : {}),
+            channelIdForLog: input.channelId,
+          },
+          sessionEnv,
+        );
         client = new AcpClient({
-          agentCommand: this.config.agentCommand ?? this.config.agentBinary,
-          agentArgs: this.config.agentArgs,
-          agentEnv: await this.sessionAgentEnv(),
+          agentCommand: spawnCommand.command,
+          agentArgs: spawnCommand.args,
+          // Under the OS sandbox `spawnCommand.command` is bwrap; a failure
+          // still has to name the harness the operator configured.
+          agentLabel: this.config.agentCommand ?? this.config.agentBinary,
+          agentEnv: sessionEnv,
           agentCwd: input.cwd,
           autoApprovePermissions: input.autoApprovePermissions,
           permissionHandler: input.permissionHandler,
@@ -2160,8 +2232,14 @@ export class Body {
     // A harness that never sends session/request_permission cannot be held to
     // the Room read-only boundary by the handler below; say so out loud rather
     // than letting an advisory prompt read as an enforced sandbox.
-    const sandboxWarning = roomSandboxWarning(this.config.agentCommand ?? this.config.agentBinary);
-    if (sandboxWarning) console.warn(`[body] ${sandboxWarning}`);
+    const sandboxWarning = roomSandboxWarning(this.config.agentCommand ?? this.config.agentBinary, {
+      osSandbox: Boolean(this.config.bwrapPath),
+    });
+    if (sandboxWarning) {
+      // ON is a statement of fact, not a warning; OFF is the gap operators must see.
+      if (this.config.bwrapPath) console.log(`[body] ${sandboxWarning}`);
+      else console.warn(`[body] ${sandboxWarning}`);
+    }
     // Resolve the server before any relay membership or session side effect.
     // Missing read-only tools must never create a no-tool or edit-tool session.
     const readonlyServer = readOnlyMcpServer(this.config, readonlyCwd);

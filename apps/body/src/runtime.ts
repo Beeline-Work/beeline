@@ -13,6 +13,7 @@ import type {
 } from '@beeline/buzz-client';
 import { AGENT_KINDS, type AgentCommand, type AgentKind } from './agent-command.js';
 import { isAgentAccessPolicy, type AgentAccessPolicy } from './access-policy.js';
+import { isSandboxPolicy, type SandboxPolicy } from './bwrap-sandbox.js';
 
 export interface LocalRepositoryBinding {
   root: string;
@@ -58,6 +59,14 @@ export interface AgentRuntimeRecord {
    * already checked it against the agent's live advertised catalog.
    */
   modelSelection?: { model?: string; effort?: string };
+  /**
+   * OS sandbox policy for this agent's ACP children (`bwrap-sandbox.ts`).
+   * Absent means `bwrap` — wrap when a working bubblewrap is detected, spawn
+   * unwrapped with one advisory line when it is not. `off` is the escape hatch
+   * for a host where bubblewrap misbehaves; it disables the wrapper entirely
+   * and leaves `session-sandbox.ts`'s permission handler as the only boundary.
+   */
+  sandbox?: SandboxPolicy;
   agentKind?: AgentKind;
   agentCommand?: string;
   agentArgs?: string[];
@@ -499,6 +508,7 @@ export async function readRuntimeRecord(path: string): Promise<AgentRuntimeRecor
     (parsed.agentKind !== undefined && !AGENT_KINDS.includes(parsed.agentKind)) ||
     (parsed.accessPolicy !== undefined && !isAgentAccessPolicy(parsed.accessPolicy)) ||
     (parsed.accessAutoResponse !== undefined && typeof parsed.accessAutoResponse !== 'string') ||
+    (parsed.sandbox !== undefined && !isSandboxPolicy(parsed.sandbox)) ||
     (parsed.modelSelection !== undefined &&
       (typeof parsed.modelSelection !== 'object' ||
         parsed.modelSelection === null ||

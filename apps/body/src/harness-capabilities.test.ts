@@ -32,7 +32,20 @@ describe('harness permission enforcement', () => {
     expect(roomSandboxWarning('claude-agent-acp')).toBeUndefined();
     const warning = roomSandboxWarning('pi-acp');
     expect(warning).toMatch(/ADVISORY/);
+    expect(warning).toMatch(/sandbox=OFF/);
     expect(warning).toMatch(/session\/request_permission/);
     expect(roomSandboxWarning('some-unknown-acp')).toMatch(/ADVISORY/);
+  });
+
+  it('stops calling the boundary advisory once the OS sandbox actually holds it', () => {
+    // pi never sends session/request_permission, but under bwrap its writes are
+    // refused by the kernel — the line must say ON, not keep warning about a
+    // gap the sandbox closed (`bwrap-sandbox.ts`).
+    const wrapped = roomSandboxWarning('pi-acp', { osSandbox: true });
+    expect(wrapped).toMatch(/sandbox=ON/);
+    expect(wrapped).not.toMatch(/ADVISORY/);
+    expect(roomSandboxWarning('some-unknown-acp', { osSandbox: true })).toMatch(/sandbox=ON/);
+    // A harness the callback already holds still needs no line at all.
+    expect(roomSandboxWarning('codex-acp', { osSandbox: true })).toBeUndefined();
   });
 });

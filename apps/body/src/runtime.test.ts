@@ -487,6 +487,26 @@ describe('multi-identity guard (S0) + access policy', () => {
     expect(stored.accessPolicy).toBeUndefined();
     expect(stored.accessAutoResponse).toBeUndefined();
   });
+
+  it('round-trips the OS sandbox off-switch and rejects a bogus value', async () => {
+    const root = await repository('https://example.com/team/project.git');
+    const supervisorRoot = await stateRoot();
+    const result = await pairAgent(root, supervisorRoot);
+    // Absent means the default: wrap when a working bwrap is detected.
+    expect((await readRuntimeRecord(result.configPath)).sandbox).toBeUndefined();
+
+    const raw = JSON.parse(await readFile(result.configPath, 'utf8')) as Record<string, unknown>;
+    raw.sandbox = 'off';
+    await writeFile(result.configPath, `${JSON.stringify(raw)}\n`);
+    expect((await readRuntimeRecord(result.configPath)).sandbox).toBe('off');
+
+    // A typo must be a loud config error, never a silently-unsandboxed daemon.
+    raw.sandbox = 'on';
+    await writeFile(result.configPath, `${JSON.stringify(raw)}\n`);
+    await expect(readRuntimeRecord(result.configPath)).rejects.toThrow(
+      'invalid agent runtime config',
+    );
+  });
 });
 
 describe('runtime root migration', () => {

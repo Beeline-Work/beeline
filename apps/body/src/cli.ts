@@ -62,6 +62,7 @@ import {
   type LocalRepositoryBinding,
   type PairRuntimeResult,
 } from './runtime.js';
+import { detectBwrapSandbox } from './bwrap-sandbox.js';
 
 function usage(exitCode = 1): void {
   console.error(`
@@ -364,6 +365,12 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   config.accessOwnerPubkey = runtime.pairedBy;
   if (runtime.accessAutoResponse) config.accessAutoResponse = runtime.accessAutoResponse;
   if (runtime.modelSelection) config.modelSelection = runtime.modelSelection;
+  // OS sandbox for every ACP child (`bwrap-sandbox.ts`). Detected exactly once
+  // here, at daemon start, so an unusable bwrap costs one advisory line rather
+  // than a failed spawn per session — and so the operator learns the state of
+  // the boundary before any Room comes online.
+  const sandbox = detectBwrapSandbox({ ...(runtime.sandbox ? { policy: runtime.sandbox } : {}) });
+  if (sandbox.path) config.bwrapPath = sandbox.path;
   const controller = new AbortController();
   const stop = () => controller.abort();
   process.once('SIGINT', stop);
@@ -372,6 +379,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     `[buzz] Workspace supervisor ${runtime.communityId} starting with ${runtime.rooms.length} Room binding(s)`,
   );
   console.log(`[body] agent binary: ${formatAgentCommand(agent)}`);
+  console.log(`[body] ${sandbox.advisory}`);
 
   try {
     while (!controller.signal.aborted) {

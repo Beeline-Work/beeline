@@ -9,6 +9,7 @@ import {
   isAgentOfflineAfterPresenceResolved,
   isAgentTurnActive,
   latestUtteranceByPubkey,
+  offlineNoticeDecision,
   presenceMapFromSessionEvents,
   reconnectPresenceAfterForeground,
 } from './agent-presence';
@@ -177,6 +178,36 @@ describe('addressedAgentOfflineNotice', () => {
 
   it('renders nothing for a healthy agent regardless of name', () => {
     expect(addressedAgentOfflineNotice('alden', true)).toBeNull();
+  });
+});
+
+describe('offlineNoticeDecision', () => {
+  const other = 'c'.repeat(64);
+
+  it('notifies once, then stays quiet for every later message of the same outage', () => {
+    const first = offlineNoticeDecision(new Set(), agent, false);
+    expect(first.notify).toBe(true);
+    expect(offlineNoticeDecision(first.noticed, agent, false).notify).toBe(false);
+    expect(offlineNoticeDecision(first.noticed, agent, false).notify).toBe(false);
+  });
+
+  it('never notifies for an agent that may be live', () => {
+    expect(offlineNoticeDecision(new Set(), agent, true).notify).toBe(false);
+  });
+
+  it('notifies again only after the agent has read live in between', () => {
+    const outage = offlineNoticeDecision(new Set(), agent, false);
+    const recovered = offlineNoticeDecision(outage.noticed, agent, true);
+    expect(recovered.notify).toBe(false);
+    expect(recovered.noticed.has(agent)).toBe(false);
+    expect(offlineNoticeDecision(recovered.noticed, agent, false).notify).toBe(true);
+  });
+
+  it('tracks each agent separately', () => {
+    const first = offlineNoticeDecision(new Set(), agent, false);
+    const second = offlineNoticeDecision(first.noticed, other, false);
+    expect(second.notify).toBe(true);
+    expect(offlineNoticeDecision(second.noticed, agent, false).notify).toBe(false);
   });
 });
 

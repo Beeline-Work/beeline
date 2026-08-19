@@ -150,6 +150,7 @@ import {
   isAgentTurnActive,
   latestUtteranceByPubkey,
   mergeAgentPresence,
+  offlineNoticeDecision,
   presenceMapFromSessionEvents,
   type RoomAgentPresence,
 } from '@/buzz/agent-presence';
@@ -773,6 +774,9 @@ export default function BuzzChat() {
   // delivered batch.
   const utteranceAtRef = useRef<Record<string, number>>({});
   utteranceAtRef.current = useMemo(() => latestUtteranceByPubkey(messages), [messages]);
+  // Agents already told about, so one outage explains itself once instead of
+  // stamping every message addressed to them.
+  const offlineNoticedRef = useRef<ReadonlySet<string>>(new Set());
   // Attribution is per run, not per entry: only the first entry of a voice's
   // run carries its mark and name (see `buzz/ledger-attribution.ts`). A corner
   // never attributes at all, so it never needs the set.
@@ -1077,6 +1081,7 @@ export default function BuzzChat() {
     const cancelDeferred: (() => void)[] = [];
     agentPresencesRef.current = {};
     presenceReconnectGraceRef.current = {};
+    offlineNoticedRef.current = new Set();
     setAgentPresences({});
     setPresenceReconnectGrace({});
     setPresenceResolved(false);
@@ -1515,11 +1520,21 @@ export default function BuzzChat() {
           utteranceAtRef.current[addressedAgentPubkey],
           presenceResolved,
         );
-        const offlineNotice = addressedAgentOfflineNotice(
-          resolveAgentDisplayIdentity(addressedAgentPubkey, agentByPubkey.get(addressedAgentPubkey))
-            .name,
+        const decision = offlineNoticeDecision(
+          offlineNoticedRef.current,
+          addressedAgentPubkey,
           addressedAgentLive,
         );
+        offlineNoticedRef.current = decision.noticed;
+        const offlineNotice = decision.notify
+          ? addressedAgentOfflineNotice(
+              resolveAgentDisplayIdentity(
+                addressedAgentPubkey,
+                agentByPubkey.get(addressedAgentPubkey),
+              ).name,
+              addressedAgentLive,
+            )
+          : null;
         if (offlineNotice) {
           addMessages([
             {

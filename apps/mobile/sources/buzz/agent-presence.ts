@@ -177,6 +177,32 @@ export function addressedAgentOfflineNotice(
   return `${agentName} seems offline right now — its host machine may be off.`;
 }
 
+/**
+ * The notice is a one-time explanation of an outage, not a per-send stamp. It
+ * used to be re-inserted on every single message addressed to the agent, so a
+ * long conversation with one briefly-unreachable agent filled the transcript
+ * with identical rows saying the same thing.
+ *
+ * `noticed` carries the agents already told about. An agent that reads live
+ * again is dropped from it, so a genuine second outage explains itself once
+ * more rather than staying silent forever after the first.
+ */
+export function offlineNoticeDecision(
+  noticed: ReadonlySet<string>,
+  agentPubkey: string,
+  presumedLive: boolean,
+): { notify: boolean; noticed: ReadonlySet<string> } {
+  const alreadyNoticed = noticed.has(agentPubkey);
+  if (presumedLive) {
+    if (!alreadyNoticed) return { notify: false, noticed };
+    const cleared = new Set(noticed);
+    cleared.delete(agentPubkey);
+    return { notify: false, noticed: cleared };
+  }
+  if (alreadyNoticed) return { notify: false, noticed };
+  return { notify: true, noticed: new Set(noticed).add(agentPubkey) };
+}
+
 /** Reinstall relay delivery before reading the current replaceable presence snapshot. */
 export async function reconnectPresenceAfterForeground(
   installSubscription: () => Promise<void>,

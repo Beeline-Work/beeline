@@ -171,7 +171,12 @@ export function agentActivityDetails(content: string): AgentActivityItem[] {
       typeof update.thoughtMs === 'number' && Number.isFinite(update.thoughtMs) && update.thoughtMs > 0
         ? update.thoughtMs
         : undefined;
-    if (!rollup && !observed && !text && !thoughtMs) return [];
+    // The agent's plan rides this receipt rather than an event of its own —
+    // body publishes it here whenever it changes, so the corner's objective
+    // panel costs no extra relay write. See `projectActivity` in
+    // `apps/body/src/activity.ts`.
+    const plan = compactPlan(update.plan);
+    if (!rollup && !observed && !text && !thoughtMs && !plan) return [];
     return [
       {
         kind: 'summary',
@@ -180,6 +185,7 @@ export function agentActivityDetails(content: string): AgentActivityItem[] {
         ...(rollup ? { rollup } : {}),
         ...(observed ? { observed } : {}),
         ...(thoughtMs ? { thoughtMs } : {}),
+        ...(plan ? { plan } : {}),
       },
     ];
   }
@@ -679,6 +685,28 @@ export function projectChatEvent(
  * archive notices, turn lifecycle) that belong to a Corner's own transcript,
  * keeping its own compact Corner card instead.
  */
+/**
+ * Whether an activity batch has anything a reader can see.
+ *
+ * Body publishes a plan change on its own `activity_summary` event so the
+ * corner's pinned objective panel costs no extra relay write. That event
+ * carries nothing else — no label, no counts, no receipts — and its plan is
+ * read straight off the raw message list by `latestCornerPlan`, never from
+ * this transcript. Keeping it here would spend an initial-window slot on a
+ * FlatList cell that renders nothing (`ActivityTimeline` returns null), which
+ * is the same silent-empty-row failure a corner status card once had.
+ */
+function hasVisibleActivity(items: readonly AgentActivityItem[]): boolean {
+  return items.some(
+    (item) =>
+      item.kind !== 'summary' ||
+      Boolean(item.text) ||
+      Boolean(item.rollup) ||
+      Boolean(item.observed?.length) ||
+      Boolean(item.thoughtMs),
+  );
+}
+
 export function transcriptMessages(
   messages: ChatDisplayMessage[],
   isCorner: boolean,
@@ -709,7 +737,7 @@ export function transcriptMessages(
     }
 
     if (message.isAgentActivity) {
-      if (!message.activity?.length) {
+      if (!message.activity?.length || !hasVisibleActivity(message.activity)) {
         activityRunOpen = false;
         continue;
       }

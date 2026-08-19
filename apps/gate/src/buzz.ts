@@ -46,7 +46,13 @@ function sign(identity: Identity, kind: number, tags: string[][], content = ''):
 async function createGroup(
   owner: Identity,
   name: string,
-  opts?: { parentChannelId?: string; communityId?: string; communitySelfLink?: boolean },
+  opts?: {
+    parentChannelId?: string;
+    communityId?: string;
+    communitySelfLink?: boolean;
+    /** Extra immutable create-event tags for specialized channel shapes. */
+    extraTags?: string[][];
+  },
 ): Promise<string> {
   const channelId = randomUUID();
   const tags: string[][] = [
@@ -64,6 +70,7 @@ async function createGroup(
   if (opts?.communitySelfLink) {
     tags.push([TAG_COMMUNITY, channelId]);
   }
+  if (opts?.extraTags) tags.push(...opts.extraTags);
   const event = sign(owner, KIND_CREATE_GROUP, tags);
   await publishEvent(event, owner);
   return channelId;
@@ -73,7 +80,7 @@ async function createGroup(
 export function createChannel(
   owner: Identity,
   name: string,
-  opts?: { parentChannelId?: string; communityId?: string },
+  opts?: { parentChannelId?: string; communityId?: string; extraTags?: string[][] },
 ): Promise<string> {
   return createGroup(owner, name, opts);
 }

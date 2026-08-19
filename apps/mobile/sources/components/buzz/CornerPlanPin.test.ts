@@ -8,11 +8,38 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
+    AppState: { currentState: 'active', addEventListener: () => ({ remove: () => undefined }) },
     Platform: { OS: 'android', select: (choices: Record<string, unknown>) => choices.default },
     ScrollView: host('ScrollView'),
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
     Text: host('Text'),
     View: host('View'),
+  };
+});
+
+// The pin pulses its active step through MonoHull's `HullLivePulse`, which
+// reaches reanimated and (via expo-haptics) expo-modules-core's
+// React-Native-only `__DEV__` global. Same shims as MechanismMotion.test.ts.
+vi.mock('expo-haptics', () => ({
+  impactAsync: () => undefined,
+  notificationAsync: () => undefined,
+  ImpactFeedbackStyle: { Light: 'light' },
+  NotificationFeedbackType: { Success: 'success' },
+}));
+
+vi.mock('react-native-reanimated', async () => {
+  const ReactModule = await import('react');
+  return {
+    default: { View: (props: any) => ReactModule.createElement('AnimatedView', props) },
+    Easing: { linear: 'linear', out: (fn: unknown) => fn, poly: (n: number) => n },
+    ReduceMotion: { System: 'system' },
+    useAnimatedStyle: (factory: () => unknown) => factory(),
+    useReducedMotion: () => false,
+    useSharedValue: (value: number) => ({ value }),
+    withRepeat: (value: unknown) => value,
+    withTiming: (value: number) => value,
+    withSequence: (...steps: unknown[]) => steps[0],
+    FadeInDown: { duration: () => ({}) },
   };
 });
 
@@ -48,9 +75,51 @@ function rows(renderer: ReactTestRenderer) {
 }
 
 describe('CornerPlanPin', () => {
-  it('renders nothing when the plan has no items (no empty pin)', () => {
-    const renderer = render(React.createElement(CornerPlanPin, { plan: { items: [] } }));
-    expect(renderer.toJSON()).toBeNull();
+  it('renders nothing when there is neither an objective nor a plan (no empty pin)', () => {
+    expect(render(React.createElement(CornerPlanPin, { plan: { items: [] } })).toJSON()).toBeNull();
+    expect(render(React.createElement(CornerPlanPin, {})).toJSON()).toBeNull();
+  });
+
+  it('states a single objective on one line with no checklist at all', () => {
+    const renderer = render(
+      React.createElement(CornerPlanPin, { objective: 'Add color to code blocks' }),
+    );
+    const texts = renderer.root.findAllByType('Text');
+    // Eyebrow + the objective line. Nothing else: a corner with no published
+    // plan still names what it is for.
+    expect(texts).toHaveLength(2);
+    expect(texts[1].props.children).toBe('Add color to code blocks');
+    expect(texts[1].props.numberOfLines).toBe(2);
+    expect(renderer.root.findAllByType('ScrollView')).toHaveLength(0);
+  });
+
+  it("prefers the agent's own plan objective over the corner's opening task", () => {
+    const renderer = render(
+      React.createElement(CornerPlanPin, {
+        objective: 'the corner opening task',
+        plan: { objective: 'the plan objective', items: [{ step: 'One', status: 'pending' }] },
+      }),
+    );
+    const texts = renderer.root.findAllByType('Text');
+    expect(texts[1].props.children).toBe('the plan objective');
+  });
+
+  it('pulses only the in-progress step, and only it', () => {
+    const renderer = render(
+      React.createElement(CornerPlanPin, {
+        plan: {
+          items: [
+            { step: 'Done', status: 'completed' },
+            { step: 'Working', status: 'in_progress' },
+            { step: 'Next', status: 'pending' },
+          ],
+        },
+      }),
+    );
+    // `HullLivePulse` renders one reanimated view; nothing else in the pin does.
+    const pulses = renderer.root.findAllByType('AnimatedView');
+    expect(pulses).toHaveLength(1);
+    expect(pulses[0].findAllByType('Text')[1].props.children).toBe('Working');
   });
 
   it('marks the current step gold, done steps struck-through and greyed, and pending steps quiet', () => {

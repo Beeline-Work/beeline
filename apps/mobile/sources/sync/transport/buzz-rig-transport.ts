@@ -61,7 +61,16 @@ import { dedupeRepoCandidates } from '@/buzz/room-repo-picker';
 import type { NostrEvent } from '@beeline/nostr';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { cornerName, mapRawCornerStatusTag, type CornerSummary } from '@/buzz/corners';
-import { toRigEvent } from './buzz-event-projection';
+import {
+  projectChatEvent,
+  toRigEvent,
+  type ChatDisplayMessage,
+} from './buzz-event-projection';
+import {
+  ROOM_CONTEXT_LIMIT,
+  selectRoomContext,
+  type RoomContextEntry,
+} from '@/buzz/corner-context';
 import {
   clearCornerLifecycleCache,
   getCachedCornerLifecycle,
@@ -69,6 +78,11 @@ import {
 } from './corner-lifecycle-cache';
 
 export { invalidateCornerLifecycleCache } from './corner-lifecycle-cache';
+
+/** Room events read back to find the pre-open window. Generous enough that a
+ *  burst of corner status cards and activity batches right before the corner
+ *  opened cannot crowd out the conversation underneath them. */
+const ROOM_CONTEXT_SCAN_LIMIT = 80;
 
 let sharedClientEntry: { key: string; client: BuzzClient } | undefined;
 
@@ -1092,6 +1106,46 @@ export class BuzzRigTransport implements RigTransport {
   async getParentChannelId(channelId: string): Promise<string | null> {
     const client = await this.getClient();
     return client.getParentChannelId(channelId);
+  }
+
+  /**
+   * What a corner inherited from the Room it was opened out of: the objective
+   * the daemon recorded on the corner's create event, and the bounded window
+   * of Room conversation that immediately preceded the corner opening.
+   *
+   * Both come from the corner's own kind:9007 create event and the parent
+   * Room's history, so this works for every corner — including ones opened
+   * before this shipped, which simply have no `task` tag and fall back to the
+   * corner's name. The create-event read is the same filter
+   * `getParentChannelId` already issues, so on the enter-corner path it is a
+   * cache hit rather than a second round trip.
+   */
+  async cornerBriefing(
+    cornerChannelId: string,
+    parentChannelId: string,
+    limit: number = ROOM_CONTEXT_LIMIT,
+  ): Promise<{ task?: string; context: RoomContextEntry[] }> {
+    const client = await this.getClient();
+    const creates = await client.query([
+      { kinds: [KIND_CREATE_GROUP], '#h': [cornerChannelId], limit: 5 },
+    ]);
+    const create = creates
+      .slice()
+      .sort((a, b) => a.created_at - b.created_at)
+      .find((event) => tagValue(event, TAG_PARENT));
+    // No create event means no reliable "before the corner opened" boundary,
+    // and a window taken from the wrong side of it would be worse than none.
+    if (!create) return { context: [] };
+    const task = tagValue(create, 'task');
+    const events = await client.sessionEventsBackfill(parentChannelId, {
+      until: create.created_at,
+      limit: ROOM_CONTEXT_SCAN_LIMIT,
+    });
+    const viewer = this.identity.publicKey;
+    const messages = events
+      .map((event) => projectChatEvent(toRigEvent(event), viewer).message)
+      .filter((message): message is ChatDisplayMessage => Boolean(message));
+    return { ...(task ? { task } : {}), context: selectRoomContext(messages, limit) };
   }
 
   /**

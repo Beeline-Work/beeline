@@ -117,7 +117,12 @@ interface LegacyAgentRuntimeRecord {
 
 export interface PairRuntimeResult {
   pairing: RedeemAgentPairingResult;
-  room: RepositoryRoomResult;
+  /**
+   * The repository Room resolved at pair time. Absent when the agent paired
+   * with no repository binding — the daemon then discovers and materializes
+   * every Room it is invited to from that Room's own published repository.
+   */
+  room?: RepositoryRoomResult;
   runtime: AgentRuntimeRecord;
   configPath: string;
   pid: number;
@@ -198,15 +203,18 @@ function relayRepoFromOrigin(raw: string): { ownerHex: string; repo: string } | 
   return { ownerHex: match[1]!.toLowerCase(), repo: decodeURIComponent(match[2]!) };
 }
 
-/** Inspect the git repository at cwd and derive its immutable Room binding. */
-export function inspectLocalRepository(cwd: string): LocalRepositoryBinding {
+/**
+ * Inspect the git repository at cwd and derive its immutable Room binding,
+ * or `null` when cwd is not inside a git repository at all.
+ *
+ * Since room-owns-repo, a repository is a property of a ROOM (resolved from
+ * published Room state and materialized on demand by the daemon), not of the
+ * agent — so pairing with no local repository is a valid configuration and
+ * "no repository here" is an ordinary answer, not a failure.
+ */
+export function tryInspectLocalRepository(cwd: string): LocalRepositoryBinding | null {
   const root = git(cwd, ['rev-parse', '--show-toplevel']);
-  if (!root) {
-    throw new Error(
-      `beeline pair must be run inside a git repository; pass --repo <path> to specify one ` +
-        `(checked: ${cwd})`,
-    );
-  }
+  if (!root) return null;
   const common = git(root, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
   const gitCommonDir = common
     ? resolve(root, common)
@@ -253,6 +261,19 @@ export function inspectLocalRepository(cwd: string): LocalRepositoryBinding {
     },
     ...(relayRepoFromOrigin(remoteUrl) ? { relayRepo: relayRepoFromOrigin(remoteUrl) } : {}),
   };
+}
+
+/**
+ * `tryInspectLocalRepository` for callers that genuinely require a repository
+ * at this path (the supervisor's checkout resolution, and `--repo <path>`,
+ * where the operator named the directory explicitly).
+ */
+export function inspectLocalRepository(cwd: string): LocalRepositoryBinding {
+  const binding = tryInspectLocalRepository(cwd);
+  if (!binding) {
+    throw new Error(`not a git repository; pass --repo <path> to specify one (checked: ${cwd})`);
+  }
+  return binding;
 }
 
 export function identityFromKey(value: string | undefined, name: string): Identity {
@@ -306,6 +327,24 @@ export async function agentRuntimeExists(
   } catch {
     return false;
   }
+}
+
+/**
+ * S0 — fail-closed multi-identity guard, as a standalone precondition so
+ * `beeline pair` can check it BEFORE asking the operator any interactive
+ * question. `pairRepositoryAgent` re-checks it immediately before consuming
+ * the one-shot pairing code, so the guard holds for direct callers too.
+ */
+export async function assertAgentIdentityUnpaired(
+  supervisorRoot: string,
+  agentPubkey: string,
+): Promise<void> {
+  if (!(await agentRuntimeExists(supervisorRoot, agentPubkey))) return;
+  throw new Error(
+    `agent identity ${agentPubkey} is already paired on this host; ` +
+      'every agent needs its own fresh keypair. Restart the existing one with ' +
+      '`beeline start --agent <pubkey>`, or unset BUZZ_AGENT_KEY/BUZZ_PRIVATE_KEY to mint a new identity.',
+  );
 }
 
 /**
@@ -564,6 +603,14 @@ export async function pairRepositoryAgent(
   input: {
     code: string;
     cwd: string;
+    /**
+     * The repository binding to record for the Room created at pair time.
+     * Omitted derives it from `cwd` and fails when cwd is not a git
+     * repository (the historical behaviour); an explicit `null` pairs the
+     * agent with NO repository binding, which is a fully valid
+     * configuration since room-owns-repo.
+     */
+    repo?: LocalRepositoryBinding | null;
     relayBaseUrl: string;
     relayHost?: string;
     llmEnvFile?: string;
@@ -607,22 +654,20 @@ export async function pairRepositoryAgent(
   // already sitting at this pubkey means the identity is being reused for a
   // second agent (a pinned BUZZ_AGENT_KEY across pairings). Refuse rather than
   // silently overwrite the first agent's binding and share one Nostr identity.
-  if (await agentRuntimeExists(supervisorRoot, input.agentIdentity.publicKey)) {
-    throw new Error(
-      `agent identity ${input.agentIdentity.publicKey} is already paired on this host; ` +
-        'every agent needs its own fresh keypair. Restart the existing one with ' +
-        '`beeline start --agent <pubkey>`, or unset BUZZ_AGENT_KEY/BUZZ_PRIVATE_KEY to mint a new identity.',
-    );
-  }
-  // Resolve the repository before consuming the one-shot pairing code.
-  const repo = inspectLocalRepository(input.cwd);
+  await assertAgentIdentityUnpaired(supervisorRoot, input.agentIdentity.publicKey);
+  // Resolve the repository before consuming the one-shot pairing code. An
+  // explicit `null` pairs the agent with no repository binding at all — see
+  // `input.repo` above.
+  const repo = input.repo === undefined ? inspectLocalRepository(input.cwd) : input.repo;
   const pairing = await deps.redeem(input.code);
-  const room = await deps.resolveRoom(
-    pairing,
-    repo.repository,
-    repo.relayRepo ? input.mergeWorkerIdentity.publicKey : undefined,
-  );
-  await deps.validate?.(pairing, room, repo);
+  const room = repo
+    ? await deps.resolveRoom(
+        pairing,
+        repo.repository,
+        repo.relayRepo ? input.mergeWorkerIdentity.publicKey : undefined,
+      )
+    : undefined;
+  if (repo && room) await deps.validate?.(pairing, room, repo);
   const runtimeRoot = runtimeDirectory(supervisorRoot, input.agentIdentity.publicKey);
   const runtime: AgentRuntimeRecord = {
     version: 2,
@@ -630,18 +675,24 @@ export async function pairRepositoryAgent(
     pairedBy: pairing.pairedBy,
     agent: storeIdentity(input.agentIdentity, 'buzzy-agent'),
     body: storeIdentity(input.bodyIdentity, 'buzzy-body'),
-    rooms: [
-      {
-        channelId: room.channelId,
-        repo,
-        root: resolve(runtimeRoot, 'rooms', room.channelId),
-        ...(repo.relayRepo && room.mergeWorkerProvisioned
-          ? { mergeWorker: storeIdentity(input.mergeWorkerIdentity, 'buzzy-merge-worker') }
-          : {}),
-        membershipSince: Math.floor(Date.now() / 1000),
-        discoveredAt: new Date().toISOString(),
-      },
-    ],
+    // Empty when pairing with no repository: the supervisor discovers every
+    // Room this agent is invited to from relay membership and materializes
+    // each Room's own repository on demand (`WorkspaceSupervisor.reconcile`).
+    rooms:
+      repo && room
+        ? [
+            {
+              channelId: room.channelId,
+              repo,
+              root: resolve(runtimeRoot, 'rooms', room.channelId),
+              ...(repo.relayRepo && room.mergeWorkerProvisioned
+                ? { mergeWorker: storeIdentity(input.mergeWorkerIdentity, 'buzzy-merge-worker') }
+                : {}),
+              membershipSince: Math.floor(Date.now() / 1000),
+              discoveredAt: new Date().toISOString(),
+            },
+          ]
+        : [],
     supervisorRoot,
     relayBaseUrl: input.relayBaseUrl,
     ...(input.relayHost ? { relayHost: input.relayHost } : {}),
@@ -659,8 +710,10 @@ export async function pairRepositoryAgent(
     createdAt: new Date().toISOString(),
   };
   const configPath = await writeRuntimeRecord(runtime);
-  // `beeline start` from inside the paired checkout keeps working.
-  await writeRuntimePointer(repo.gitCommonDir, runtime.agent.publicKey, configPath);
+  // `beeline start` from inside the paired checkout keeps working. With no
+  // repository there is no checkout to anchor a pointer in; `beeline start`
+  // finds the agent in the machine-local state home instead.
+  if (repo) await writeRuntimePointer(repo.gitCommonDir, runtime.agent.publicKey, configPath);
   const pid = await (deps.launch ?? launchRuntimeDaemon)(configPath);
-  return { pairing, room, runtime, configPath, pid };
+  return { pairing, ...(room ? { room } : {}), runtime, configPath, pid };
 }

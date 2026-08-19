@@ -11,6 +11,7 @@ import {
   findRuntimeConfigPaths,
   inspectLocalRepository,
   pairRepositoryAgent,
+  tryInspectLocalRepository,
   readRuntimeRecord,
   removeAgentRuntime,
   resolveRuntimeConfigPath,
@@ -76,6 +77,77 @@ describe('repository binding', () => {
     const nonRepo = await mkdtemp(resolve(tmpdir(), 'beeline-non-repo-'));
     cleanup.push(nonRepo);
     expect(() => inspectLocalRepository(nonRepo)).toThrow('pass --repo <path>');
+  });
+
+  it('answers "no repository here" instead of throwing, for the optional pair-time binding', async () => {
+    const nonRepo = await mkdtemp(resolve(tmpdir(), 'beeline-non-repo-'));
+    cleanup.push(nonRepo);
+    expect(tryInspectLocalRepository(nonRepo)).toBeNull();
+    const repo = await repository('https://example.com/team/project.git');
+    expect(tryInspectLocalRepository(repo)?.repository.name).toBe('project');
+  });
+});
+
+describe('pairing with no repository', () => {
+  it('pairs the agent with no Room binding and never resolves a repository Room', async () => {
+    // A repository belongs to a ROOM, so an agent paired with none is a
+    // valid configuration: it serves chat-only Rooms and materializes a
+    // Room's repository on demand once one is bound.
+    const nonRepo = await mkdtemp(resolve(tmpdir(), 'beeline-non-repo-pair-'));
+    cleanup.push(nonRepo);
+    const agent = newIdentity('agent');
+    const body = newIdentity('body');
+    const mergeWorker = newIdentity('merge-worker');
+    const supervisorRoot = await stateRoot();
+    let resolvedRoomCalls = 0;
+    const result = await pairRepositoryAgent(
+      {
+        code: 'BUZZ-ABCD-EFGH',
+        cwd: nonRepo,
+        repo: null,
+        relayBaseUrl: 'http://relay.test',
+        agentBinary: '/usr/bin/agent',
+        mcpBinary: '/usr/bin/mcp',
+        agentIdentity: agent,
+        bodyIdentity: body,
+        mergeWorkerIdentity: mergeWorker,
+        supervisorRoot,
+      },
+      {
+        redeem: async () => ({
+          communityId: '11111111-1111-4111-8111-111111111111',
+          pairedBy: 'a'.repeat(64),
+          joined: true,
+          agent: {
+            agentId: 'agent-id',
+            communityId: '11111111-1111-4111-8111-111111111111',
+            displayName: 'Agent',
+            pubkey: agent.publicKey,
+            createdAt: 1,
+            raw: {} as never,
+          },
+        }),
+        resolveRoom: async () => {
+          resolvedRoomCalls += 1;
+          throw new Error('resolveRoom must not run without a repository binding');
+        },
+        validate: async () => {
+          throw new Error('validate must not run without a repository binding');
+        },
+        launch: async () => 4242,
+      },
+    );
+
+    expect(resolvedRoomCalls).toBe(0);
+    expect(result.room).toBeUndefined();
+    expect(result.pid).toBe(4242);
+    expect(result.runtime.rooms).toEqual([]);
+    // The record still round-trips: an empty rooms list is a valid runtime,
+    // and the supervisor discovers Rooms from relay membership anyway.
+    const stored = await readRuntimeRecord(result.configPath);
+    expect(stored.rooms).toEqual([]);
+    expect(stored.communityId).toBe('11111111-1111-4111-8111-111111111111');
+    expect(stored.agent.publicKey).toBe(agent.publicKey);
   });
 });
 

@@ -65,6 +65,7 @@ import {
 } from '@/buzz/local-cache-sync';
 import { afterInteractions } from '@/buzz/defer-interaction';
 import { latestCornerPlan } from '@/buzz/activity-timeline';
+import { cornerObjectiveLine, type RoomContextEntry } from '@/buzz/corner-context';
 import { hydrateRoomEntry } from '@/buzz/room-entry';
 import { groknight } from '@/buzz/groknight';
 import { continuedSpeakerIds } from '@/buzz/ledger-attribution';
@@ -157,6 +158,7 @@ import { Typography } from '@/constants/Typography';
 import { ChangeReviewPanel } from '@/components/buzz/ChangeReviewPanel';
 import { CornerLiveBar } from '@/components/buzz/CornerLiveBar';
 import { CornerPlanPin } from '@/components/buzz/CornerPlanPin';
+import { RoomContextPreamble } from '@/components/buzz/RoomContextPreamble';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome';
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
@@ -471,6 +473,11 @@ export default function BuzzChat() {
   // different answers, and only the first one may let a freshly permitted
   // corner onto the pinned line — see `selectPinnedCorner`.
   const [cornerLifecycleLoaded, setCornerLifecycleLoaded] = useState(false);
+  // What this corner inherited from the Room it was opened out of: the task
+  // the daemon recorded on its create event, and the bounded window of Room
+  // conversation that preceded it. Corner-only; a Room never reads it.
+  const [cornerTask, setCornerTask] = useState<string | undefined>(undefined);
+  const [roomContext, setRoomContext] = useState<RoomContextEntry[]>([]);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(
     initialChannelCache?.communityId ?? null,
@@ -547,6 +554,18 @@ export default function BuzzChat() {
   // windowed `messages`, so paging the visible window never drops a plan
   // that was established earlier in a long corner.
   const cornerPlan = useMemo(() => latestCornerPlan(combinedMessages), [combinedMessages]);
+  // The one line the corner's pinned panel opens with. Human-authored only:
+  // the agent's own plan objective, else the task the corner was opened for,
+  // else the corner's (task-slugged) name. Never raw harness output — that is
+  // exactly what put a codex startup dump in the first objective banner.
+  const cornerObjective = useMemo(
+    () =>
+      cornerObjectiveLine({
+        ...(cornerTask ? { task: cornerTask } : {}),
+        ...(resolvedChannelName ? { cornerName: resolvedChannelName } : {}),
+      }),
+    [cornerTask, resolvedChannelName],
+  );
 
   const loadOlderTranscriptMessages = useCallback(() => {
     if (loadingOlderMessages) return;
@@ -1365,6 +1384,10 @@ export default function BuzzChat() {
               setCornerLifecycle(corners);
               setCornerLifecycleLoaded(true);
             },
+            onCornerBriefing: (briefing) => {
+              if (briefing.task) setCornerTask(briefing.task);
+              if (briefing.context.length) setRoomContext(briefing.context);
+            },
             onStepFailed: (step, error) =>
               console.warn(`BuzzChat: ${step} failed for ${decodedId}:`, error),
           },
@@ -1384,6 +1407,24 @@ export default function BuzzChat() {
       if (unsubscribeDraft) unsubscribeDraft();
     };
   }, [decodedId, notificationResponseId, applyAgentPresence]);
+
+  /**
+   * Who said an inherited Room line. Room context is quoted *from a Room*, so
+   * it keeps its attribution even though the corner around it never shows
+   * handles — a corner's zero-handle rule is about its own single agent, and
+   * these lines are neither the corner's agent nor this reader.
+   */
+  const roomContextSpeakerLabel = useCallback(
+    (pubkey: string | undefined, isAgent: boolean): string | undefined => {
+      if (!pubkey) return undefined;
+      const knownAgent = agentByPubkey.get(pubkey);
+      if (isAgent || knownAgent || BODY_PUBKEYS.has(pubkey)) {
+        return resolvePendingAgentDisplay(pubkey, knownAgent, participantsHydrated)?.name;
+      }
+      return personProfileByPubkey.get(pubkey)?.name ?? shortMemberNpub(pubkey);
+    },
+    [agentByPubkey, participantsHydrated, personProfileByPubkey],
+  );
 
   const replyTargetForMessage = useCallback(
     (message: ChatDisplayMessage): MessageReplyTarget => {
@@ -2558,8 +2599,12 @@ export default function BuzzChat() {
             often than the composer-adjacent live status below, so it earns
             the stable position where it never fights the composer for
             space. Hidden entirely when the agent has published no plan. */}
-        {isCorner && !isArchived && cornerPlan && (
-          <CornerPlanPin plan={cornerPlan} testID="corner-plan-pin" />
+        {isCorner && !isArchived && (
+          <CornerPlanPin
+            {...(cornerObjective ? { objective: cornerObjective } : {})}
+            {...(cornerPlan ? { plan: cornerPlan } : {})}
+            testID="corner-plan-pin"
+          />
         )}
 
         <FlatList
@@ -2598,10 +2643,23 @@ export default function BuzzChat() {
             </View>
           }
           ListFooterComponent={
-            loadingOlderMessages ? (
-              <View style={styles.olderMessagesLoading} testID="older-messages-loading">
-                <PixelLoader compact />
-              </View>
+            // Inverted list: the footer is the visual TOP. The Room discussion
+            // a corner was opened out of belongs above the corner's own first
+            // line, and this is the slot that puts it there.
+            loadingOlderMessages || (isCorner && roomContext.length) ? (
+              <>
+                {isCorner && roomContext.length ? (
+                  <RoomContextPreamble
+                    entries={roomContext}
+                    speakerLabel={roomContextSpeakerLabel}
+                  />
+                ) : null}
+                {loadingOlderMessages ? (
+                  <View style={styles.olderMessagesLoading} testID="older-messages-loading">
+                    <PixelLoader compact />
+                  </View>
+                ) : null}
+              </>
             ) : null
           }
           ListHeaderComponent={

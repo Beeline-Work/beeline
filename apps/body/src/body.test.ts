@@ -39,6 +39,7 @@ import {
   CORNER_TURN_SUMMARY_INSTRUCTION,
   CORNER_TURN_SUMMARY_MAX_CHARS,
   cornerNameForIntent,
+  createAgentSubchannel,
   cornerOpenTaskPrompt,
   taskDescriptionFromCornerRequest,
   taskSlugForCornerIntent,
@@ -2578,7 +2579,16 @@ describe('Room conversation and permission-gated work intent', () => {
     ).resolves.toBe('reject');
 
     expect(open).toHaveBeenCalledWith('parent-channel', { repo: 'repo' }, request.content, request);
-    expect(start).toHaveBeenCalledWith(info, request.content);
+    // A corner reached through the write-permission escalation is still opened
+    // out of a Room conversation, so its first turn carries that conversation
+    // — the request that triggered it ("go ahead", "yes do it") is just as
+    // likely to omit the task as an explicit open-corner command is.
+    expect(start).toHaveBeenCalledWith(
+      info,
+      request.content,
+      expect.stringContaining('Recent Room transcript (oldest to newest):'),
+    );
+    expect(start.mock.calls[0]![2]).toContain(request.content);
     expect(turn.transitionedToCorner).toBe(true);
     expect(
       published.some(
@@ -5690,6 +5700,58 @@ describe('closing a corner with no live session', () => {
   });
 });
 
+describe("a corner records the objective it was opened for", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("writes the human's own task onto the corner's immutable create event", async () => {
+    // The corner's *name* is a 42-char slug, and its transcript's opening
+    // messages fall out of the cold-backfill window on a busy corner — so the
+    // objective the pinned panel reads has to live somewhere permanent and
+    // cheap to read. The create event is both.
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    const agent = newIdentity('agent');
+    await createAgentSubchannel(
+      agent,
+      'parent-room',
+      'add-color-to-code-blocks',
+      undefined,
+      'add color to code blocks',
+    );
+
+    const create = published.find((event) => event.kind === 9007);
+    expect(create).toBeDefined();
+    expect(create!.tags.find((tag) => tag[0] === 'task')?.[1]).toBe('add color to code blocks');
+    expect(create!.tags.find((tag) => tag[0] === 'parent')?.[1]).toBe('parent-room');
+  });
+
+  it('writes no task tag at all when the request named no describable work', async () => {
+    // `taskDescriptionFromCornerRequest` returns '' for a bare "open a corner".
+    // An empty-but-present tag would read as an objective of "" on the client;
+    // absence is the honest answer and falls back to the corner's name.
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    await createAgentSubchannel(newIdentity('agent'), 'parent-room', 'corner-parent-', undefined);
+
+    const create = published.find((event) => event.kind === 9007);
+    expect(create!.tags.some((tag) => tag[0] === 'task')).toBe(false);
+  });
+});
+
 /**
  * A message sent while a turn is already running must be DELIVERED, not
  * swallowed. Two independent defects produced the live "my steer vanished and
@@ -6158,4 +6220,3 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
     ).toBeUndefined();
   });
 });
-

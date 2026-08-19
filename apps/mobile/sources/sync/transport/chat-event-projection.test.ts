@@ -769,6 +769,41 @@ describe('agent activity projection', () => {
     ]);
   });
 
+  it("carries the agent's plan on the summary event, with no other content", () => {
+    // Body publishes a plan change on the receipt event it was already
+    // sending, so the corner's pinned objective panel costs no extra relay
+    // write. A plan-only receipt carries nothing else at all.
+    expect(
+      agentActivityDetails(
+        JSON.stringify({
+          update: {
+            sessionUpdate: 'activity_summary',
+            content: { type: 'text', text: '' },
+            plan: {
+              objective: 'Colour the code blocks',
+              items: [
+                { step: 'Find the renderer', status: 'completed' },
+                { step: 'Wire the highlighter', status: 'in_progress' },
+              ],
+            },
+          },
+        }),
+      ),
+    ).toEqual([
+      {
+        kind: 'summary',
+        title: 'Summary',
+        plan: {
+          objective: 'Colour the code blocks',
+          items: [
+            { step: 'Find the renderer', status: 'completed' },
+            { step: 'Wire the highlighter', status: 'in_progress' },
+          ],
+        },
+      },
+    ]);
+  });
+
   it('carries the compact per-call receipt that backs the review sheet\'s real detail', () => {
     // Body's `observed` array is the only source of per-call detail for a
     // folded call — the calls themselves never earn their own wire event, so

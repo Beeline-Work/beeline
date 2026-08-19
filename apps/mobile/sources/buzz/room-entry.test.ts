@@ -54,6 +54,7 @@ function hangingTransport(overrides: Partial<RoomEntryTransport> = {}): RoomEntr
     isChannelArchived: hangs,
     getSubchannelMergeTarget: hangs,
     listSubchannelLifecycle: hangs,
+    cornerBriefing: hangs,
     ...overrides,
   };
 }
@@ -74,6 +75,7 @@ function handlers(): RoomEntryHandlers & { [K in keyof RoomEntryHandlers]: Retur
     onMergeTarget: vi.fn(),
     onMergeNotReadyReason: vi.fn(),
     onCornerStatus: vi.fn(),
+    onCornerBriefing: vi.fn(),
     onStepFailed: vi.fn(),
   } as never;
 }
@@ -240,6 +242,47 @@ describe('enter-room hydration never blocks the foreground', () => {
     await settle();
     expect(sink.onMergeNotReadyReason).toHaveBeenCalledWith('The agent has uncommitted work.');
     expect(sink.onMergeTarget).not.toHaveBeenCalled();
+  });
+
+  it("publishes a corner's inherited Room context while every other read hangs", async () => {
+    // A corner opened mid-discussion must not start blank, and recovering the
+    // discussion that led to it must not be able to delay anything else.
+    const { sink } = start(
+      hangingClient(),
+      hangingTransport({
+        getParentChannelId: () => Promise.resolve('parent-room'),
+        cornerBriefing: () =>
+          Promise.resolve({
+            task: 'add colour to code blocks',
+            context: [
+              { id: 'a', text: 'the code blocks are unreadable', timestamp: 1, isAgent: false },
+            ],
+          }),
+      }),
+    );
+
+    await settle();
+    expect(sink.onCornerBriefing).toHaveBeenCalledWith({
+      task: 'add colour to code blocks',
+      context: [
+        { id: 'a', text: 'the code blocks are unreadable', timestamp: 1, isAgent: false },
+      ],
+    });
+  });
+
+  it('never reads a corner briefing for a Room', async () => {
+    const cornerBriefing = vi.fn(() => hangs<never>());
+    const { sink } = start(
+      hangingClient(),
+      hangingTransport({
+        getParentChannelId: () => Promise.resolve(null),
+        cornerBriefing: cornerBriefing as never,
+      }),
+    );
+
+    await settle();
+    expect(cornerBriefing).not.toHaveBeenCalled();
+    expect(sink.onCornerBriefing).not.toHaveBeenCalled();
   });
 
   it('hands every response to afterInteractions so projection lands after the transition', async () => {

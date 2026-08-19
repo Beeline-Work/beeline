@@ -1,0 +1,315 @@
+/**
+ * Session sandbox policy — the fail-closed half of the Room/Corner boundary.
+ *
+ * `corner-isolation.ts` places a corner's worktree somewhere a harness's
+ * "go to the project root" reflex cannot walk out of, and guards a persistent
+ * `cd`. That constrains the *default directory*; it does not constrain
+ * **absolute-path reach**. A harness's built-in write/exec tools can name any
+ * path on the host, so the only daemon-side boundary left is the ACP
+ * `session/request_permission` handler:
+ *
+ *   - A ROOM session is read-only, full stop. Every write / edit / delete /
+ *     move / execute request is denied regardless of path — the human-approved
+ *     escalation opens a separate corner session and replays the work there.
+ *     Only Beeline's own fixed inspection MCP (`read-only-policy.ts`) is
+ *     auto-allowed, and this module never widens that.
+ *   - A CORNER session may mutate, but only inside its own worktree. A write
+ *     whose target resolves outside it — an absolute path, a `..` climb, or a
+ *     symlink that lands outside — is denied. Reads outside stay allowed, per
+ *     the pre-existing corner policy.
+ *
+ * Path comparison is done on *physically resolved* paths (the deepest existing
+ * ancestor is `realpath`'d and the not-yet-existing remainder appended), so a
+ * symlink inside the worktree pointing at the operator's checkout does not
+ * launder a write out of the sandbox.
+ *
+ * IMPORTANT — this is a permission-callback policy, so it only binds a harness
+ * that actually asks. See `harness-capabilities.ts` for which harnesses do.
+ */
+import { realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { isMutatingPermissionRequest, type AcpPermissionRequest } from './acp.js';
+import { classifyCornerCommand, shellCommandFromRawInput } from './corner-isolation.js';
+
+/**
+ * Steering text for a Room denial. ACP's permission response carries only an
+ * option id — there is no reason field on the wire, and every adapter
+ * hard-codes its own denial text ("User refused permission to run tool") — so
+ * this reaches the agent through the Room system prompt and the durable
+ * conversation transcript rather than through the rejection itself.
+ */
+export const ROOM_READ_ONLY_STEER =
+  'this Room is read-only; open a corner to make changes. ' +
+  'Files, shell commands, and git state cannot be modified from a Room.';
+
+export type SandboxDenyCode =
+  'room-read-only' | 'path-escape' | 'command-write-escape' | 'persistent-cd' | 'git-escape';
+
+export type SandboxVerdict =
+  { decision: 'allow' } | { decision: 'deny'; code: SandboxDenyCode; reason: string };
+
+const ALLOW: SandboxVerdict = { decision: 'allow' };
+
+/** Object keys whose string value names a filesystem path, across harnesses. */
+const PATH_KEYS = new Set([
+  'path',
+  'paths',
+  'file',
+  'files',
+  'filepath',
+  'file_path',
+  'filename',
+  'file_name',
+  'abspath',
+  'abs_path',
+  'absolutepath',
+  'absolute_path',
+  'targetfile',
+  'target_file',
+  'notebookpath',
+  'notebook_path',
+  'oldpath',
+  'old_path',
+  'newpath',
+  'new_path',
+  'source',
+  'destination',
+  'dest',
+  'dir',
+  'directory',
+  'cwd',
+  'workdir',
+  'working_directory',
+]);
+
+/** Bounds on the raw-input walk: a permission payload is never legitimately huge. */
+const MAX_WALK_NODES = 500;
+const MAX_WALK_DEPTH = 8;
+
+/**
+ * Every filesystem path named anywhere in a permission request — `rawInput`,
+ * the tracked tool-call metadata, `locations`, diff `content`, and adapter
+ * `_meta` (codex puts an apply-patch's `changes[].path` there and nowhere
+ * else). Walked generically because each adapter names its paths differently
+ * and a per-adapter list would silently miss the next one.
+ */
+export function permissionTargetPaths(request: AcpPermissionRequest): string[] {
+  const found: string[] = [];
+  let nodes = 0;
+
+  const visit = (value: unknown, keyIsPath: boolean, depth: number): void => {
+    if (nodes >= MAX_WALK_NODES || depth > MAX_WALK_DEPTH) return;
+    nodes += 1;
+    if (typeof value === 'string') {
+      if (keyIsPath && value.trim()) found.push(value.trim());
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) visit(entry, keyIsPath, depth + 1);
+      return;
+    }
+    if (!value || typeof value !== 'object') return;
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      visit(child, PATH_KEYS.has(key.toLowerCase()), depth + 1);
+    }
+  };
+
+  visit(request.toolCall, false, 0);
+  visit(request._meta, false, 0);
+  return found;
+}
+
+/** Expand a leading `~` so a home-relative path is compared as an absolute one. */
+function expandHome(path: string): string {
+  if (path === '~') return homedir();
+  if (path.startsWith('~/')) return resolve(homedir(), path.slice(2));
+  return path;
+}
+
+/**
+ * Physically resolve `path`: `realpath` the deepest existing ancestor and
+ * re-append the not-yet-existing remainder. A plain `resolve` would compare
+ * the *lexical* path, which a symlink inside the worktree defeats.
+ */
+export function physicalPath(path: string): string {
+  const absolute = resolve(path);
+  let current = absolute;
+  const trailing: string[] = [];
+  for (;;) {
+    try {
+      return resolve(realpathSync(current), ...trailing);
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return absolute;
+      trailing.unshift(basename(current));
+      current = parent;
+    }
+  }
+}
+
+/** Is `child` the same as, or nested under, `parent`? Both already physical. */
+function isInside(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+/**
+ * Does `path` land outside `root`? A bare relative path resolves against the
+ * root and therefore stays inside unless it climbs out with `..`.
+ */
+export function pathEscapesRoot(path: string, root: string): boolean {
+  const expanded = expandHome(path);
+  const rootReal = physicalPath(root);
+  const target = physicalPath(isAbsolute(expanded) ? expanded : resolve(rootReal, expanded));
+  return !isInside(rootReal, target);
+}
+
+/**
+ * Command words that mutate a path named on their own argv. Deliberately short,
+ * and only ever consulted as a segment's HEAD word (after env assignments and
+ * forking wrappers): the guard fires only on an ABSOLUTE argument that resolves
+ * outside the worktree, so an ordinary in-worktree `rm -rf dist`, a
+ * `cat /etc/hostname`, or an `npm install` is untouched. Readers are absent on
+ * purpose — this is a write guard, not an access-control list.
+ */
+const WRITING_COMMANDS = new Set([
+  'cp',
+  'mv',
+  'rm',
+  'rmdir',
+  'mkdir',
+  'touch',
+  'tee',
+  'dd',
+  'truncate',
+  'install',
+  'chmod',
+  'chown',
+  'chgrp',
+  'ln',
+  'shred',
+  'rsync',
+  'patch',
+]);
+
+/** Wrappers that run the real command word next; a `cd` behind them is the cd-guard's job. */
+const COMMAND_WRAPPERS = new Set([
+  'sudo',
+  'env',
+  'xargs',
+  'nohup',
+  'timeout',
+  'gtimeout',
+  'time',
+  'exec',
+  'command',
+  'builtin',
+  'nice',
+  'ionice',
+  'stdbuf',
+]);
+
+/** Redirection sinks that are never a filesystem escape. */
+const DISCARD_SINKS = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/tty']);
+
+/** Absolute paths a shell command would write to, outside the worktree. */
+function commandWriteEscape(command: string, worktree: string): string | undefined {
+  const escapes = (token: string): boolean =>
+    (token.startsWith('/') || token.startsWith('~')) &&
+    !DISCARD_SINKS.has(token) &&
+    pathEscapesRoot(token, worktree);
+
+  // Output redirection to an absolute path: `… > /home/op/proj/file.ts`.
+  // `2>/dev/null` never matches: the char before `>` must not be a word char.
+  for (const match of command.matchAll(/(?:^|[^\w>])>>?\s*("?)([~/][^\s"'|;&)]*)\1/g)) {
+    const target = match[2];
+    if (target && escapes(target)) return target;
+  }
+
+  for (const segment of command.split(/&&|\|\||[;|&\n]+/)) {
+    const words = segment.trim().split(/\s+/).filter(Boolean);
+    let i = 0;
+    while (i < words.length) {
+      const word = words[i]!;
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word) || COMMAND_WRAPPERS.has(word)) {
+        i += 1;
+        continue;
+      }
+      break;
+    }
+    const word = words[i];
+    if (!word) continue;
+    const head = word.includes('/') ? basename(word) : word;
+    const rest = words.slice(i + 1);
+    if (!WRITING_COMMANDS.has(head) && !(head === 'sed' && rest.some(inPlaceSedFlag))) continue;
+    for (const arg of rest) {
+      if (arg.startsWith('-')) continue;
+      if (escapes(arg)) return arg;
+    }
+  }
+  return undefined;
+}
+
+function inPlaceSedFlag(word: string): boolean {
+  return word === '-i' || /^-i\S*$/.test(word) || word.startsWith('--in-place');
+}
+
+/**
+ * Room policy: deny every mutating request outright.
+ *
+ * Fail-closed by construction — the caller allows ONLY an exact
+ * `isReadOnlyMcpPermissionRequest` match before consulting this, so a request
+ * this function cannot classify is still denied by the Room handler. The
+ * verdict exists to carry the steering reason and to make the denial explicit
+ * rather than a fall-through.
+ */
+export function classifyRoomPermission(request: AcpPermissionRequest): SandboxVerdict {
+  if (!isMutatingPermissionRequest(request)) return ALLOW;
+  return { decision: 'deny', code: 'room-read-only', reason: ROOM_READ_ONLY_STEER };
+}
+
+/**
+ * Corner policy: the cd-guard, plus a path guard that denies a mutating request
+ * whose target resolves outside the corner's own worktree. Reads are untouched.
+ */
+export function classifyCornerPermission(
+  request: AcpPermissionRequest,
+  worktreePath: string,
+  primaryCheckout?: string,
+): SandboxVerdict {
+  const command = shellCommandFromRawInput(request.toolCall?.kind, request.toolCall?.rawInput);
+  if (command) {
+    const verdict = classifyCornerCommand(command, worktreePath, primaryCheckout);
+    if (verdict.decision === 'deny') return verdict;
+  }
+
+  if (!isMutatingPermissionRequest(request)) return ALLOW;
+
+  if (command) {
+    const escape = commandWriteEscape(command, worktreePath);
+    if (escape) {
+      return {
+        decision: 'deny',
+        code: 'command-write-escape',
+        reason:
+          `this command would write to '${escape}', outside the corner's isolated worktree ` +
+          `(${worktreePath}). Keep every change inside the worktree.`,
+      };
+    }
+  }
+
+  for (const path of permissionTargetPaths(request)) {
+    if (pathEscapesRoot(path, worktreePath)) {
+      return {
+        decision: 'deny',
+        code: 'path-escape',
+        reason:
+          `'${path}' resolves outside the corner's isolated worktree (${worktreePath}). ` +
+          `A corner may only modify files inside its own worktree.`,
+      };
+    }
+  }
+
+  return ALLOW;
+}

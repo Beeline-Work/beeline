@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
-import type { KeyboardAwareScrollViewRef } from 'react-native-keyboard-controller';
 import * as Clipboard from 'expo-clipboard';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -114,12 +113,6 @@ export default function BuzzAgents() {
   const [openModelAxis, setOpenModelAxis] = useState<string | null>(null);
   const pairingBaseline = useRef<Set<string>>(new Set());
   const pairingPending = useRef(false);
-  // The pair panel and error banner both render at the very top of the
-  // scroll content, above the People section — so a tap on "Add agent"
-  // from further down (e.g. the Agents section) produced feedback the
-  // admin had already scrolled past. Snap back to the top whenever either
-  // becomes visible so the result is never off-screen.
-  const scrollRef = useRef<KeyboardAwareScrollViewRef | null>(null);
 
   const activeCommunity = useMemo(
     () => communities.find((community) => community.communityId === communityId) ?? null,
@@ -291,11 +284,6 @@ export default function BuzzAgents() {
     );
     return () => clearTimeout(timer);
   }, [agentPresences]);
-
-  useEffect(() => {
-    if (!pairCommand && !error) return;
-    scrollRef.current?.scrollTo({ y: 0, animated: true });
-  }, [pairCommand, error]);
 
   const handleAdd = useCallback(async () => {
     if (!transport || !communityId || !canManageWorkspace) return;
@@ -592,7 +580,6 @@ export default function BuzzAgents() {
         </View>
 
         <KeyboardAwareScrollView
-          ref={scrollRef}
           bottomOffset={16}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"

@@ -41,6 +41,7 @@ import type {
   PersonProfile,
 } from '@beeline/buzz-client';
 import type { CornerStatus, CornerSummary } from '@/buzz/corners';
+import type { RoomContextEntry } from '@/buzz/corner-context';
 import { agentRosterCommunityIds, mergeAgentRosters } from '@/buzz/agent-display';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 
@@ -60,6 +61,11 @@ export type RoomEntryClient = {
 
 export type RoomEntryTransport = {
   getParentChannelId(channelId: string): Promise<string | null>;
+  /** What this corner inherited from the Room it was opened out of. */
+  cornerBriefing(
+    cornerChannelId: string,
+    parentChannelId: string,
+  ): Promise<{ task?: string; context: RoomContextEntry[] }>;
   isChannelArchived(channelId: string): Promise<boolean>;
   getSubchannelMergeTarget(
     channelId: string,
@@ -129,6 +135,11 @@ export type RoomEntryHandlers = {
    */
   onMergeNotReadyReason?(reason: string): void;
   onCornerStatus(status: CornerStatus | null): void;
+  /**
+   * The corner's inherited objective and the Room discussion that led to it.
+   * Corner-only, and optional — a Room never calls it.
+   */
+  onCornerBriefing?(briefing: { task?: string; context: RoomContextEntry[] }): void;
   /**
    * Every corner this transcript can name: a Corner reads its siblings, a Room
    * reads its own. Optional — a caller that only needs its own status can skip
@@ -276,6 +287,14 @@ export function hydrateRoomEntry(
           handlers.onCornerLifecycle?.(corners);
           handlers.onCornerStatus(corners.find((corner) => corner.id === channelId)?.status ?? null);
         }),
+        // A corner opened mid-discussion must not start blank. Its own read,
+        // never a link in a chain: the objective line and the inherited Room
+        // window paint the moment this lands and nothing else waits on it.
+        parentId && handlers.onCornerBriefing
+          ? step('cornerBriefing', transport.cornerBriefing(channelId, parentId), (briefing) =>
+              handlers.onCornerBriefing?.(briefing),
+            )
+          : Promise.resolve(),
       ]).then(() => undefined);
     },
     () => undefined,

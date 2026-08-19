@@ -313,12 +313,17 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
   // instead would cost the reader their place in the transcript.
   const noteCopy = active ? (turn.liveNote ?? turn.note) : turn.note;
 
+  // A plan alone is NOT content for this row. The plan's home is the pinned
+  // objective panel above the transcript (`CornerPlanPin`), and body now
+  // publishes a plan change on its own `activity_summary` event — so counting
+  // it here would print an otherwise-empty mechanism row in the transcript
+  // every time the agent re-planned. It stays available inside this turn's
+  // review sheet as the historical snapshot it always was.
   const hasContent =
     turn.narration.length > 0 ||
     turn.actions.length > 0 ||
     Boolean(turn.note) ||
-    Boolean(turn.thoughtMs) ||
-    Boolean(turn.plan);
+    Boolean(turn.thoughtMs);
   if (!hasContent) return null;
 
   const closeReview = () => {

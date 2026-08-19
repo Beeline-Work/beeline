@@ -249,6 +249,8 @@ export {
   setRoomRepository,
   getRoomRepository,
   resolveRoomRepository,
+  setRoomTargetBranch,
+  normalizeTargetBranchName,
 } from './room-repository.js';
 
 export {

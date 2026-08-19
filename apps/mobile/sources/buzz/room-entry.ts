@@ -76,6 +76,7 @@ export type RoomEntryTransport = {
 export type RoomTranscriptSync = {
   entry: { messages?: unknown[]; mergeTarget?: MergeTarget | null; archived?: boolean };
   mergeTarget?: MergeTarget | null;
+  previewUrl?: string | null;
   archiveChannel: boolean;
 };
 

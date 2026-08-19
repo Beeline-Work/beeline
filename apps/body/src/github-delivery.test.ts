@@ -360,3 +360,87 @@ describe('a land refused because the target moved on self-heals', () => {
     expect(failure!.tags).toContainEqual(['retry', 'auto']);
   });
 });
+
+describe('preview deployment URL on the review card', () => {
+  function mergeReadyTags(events: NostrEvent[]): string[][] {
+    return (
+      events.find((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'))
+        ?.tags ?? []
+    );
+  }
+
+  it('publishes no preview tag when the origin is not a host with a checks API', async () => {
+    const { info, body } = await repository();
+    const events = captureEvents();
+    // A live fetch here would be a bug: the local origin never reaches a host.
+    await expect(publish(body, info)).resolves.toBe(true);
+    expect(mergeReadyTags(events).map((tag) => tag[0])).not.toContain('preview');
+  });
+
+  it('carries the preview URL of the pushed tip when the host published one', async () => {
+    const { worktree, info, body } = await repository();
+    // The fetch URL names GitHub (what the checks lookup reads) while the push
+    // still goes to the local bare remote.
+    const pushUrl = run(worktree, ['remote', 'get-url', 'origin']);
+    run(worktree, ['remote', 'set-url', 'origin', 'https://github.com/lunchboxfortwo/scratch.git']);
+    run(worktree, ['remote', 'set-url', '--push', 'origin', pushUrl]);
+    const tip = run(worktree, ['rev-parse', 'HEAD']);
+
+    const events: NostrEvent[] = [];
+    const seen: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url.startsWith('https://api.github.com/')) {
+          seen.push(url);
+          return new Response(
+            JSON.stringify({
+              statuses: [
+                { context: 'ci/tests', state: 'success', target_url: 'https://ci.example/run/9' },
+                {
+                  context: 'vercel',
+                  state: 'success',
+                  description: 'Deployment has completed',
+                  target_url: 'https://scratch-git-feature-corner.vercel.app',
+                },
+              ],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        events.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    await expect(publish(body, info)).resolves.toBe(true);
+    expect(seen[0]).toBe(
+      `https://api.github.com/repos/lunchboxfortwo/scratch/commits/${tip}/status`,
+    );
+    expect(mergeReadyTags(events)).toContainEqual([
+      'preview',
+      'https://scratch-git-feature-corner.vercel.app',
+    ]);
+  });
+
+  it('still publishes merge-ready when the preview lookup fails outright', async () => {
+    const { worktree, info, body } = await repository();
+    const pushUrl = run(worktree, ['remote', 'get-url', 'origin']);
+    run(worktree, ['remote', 'set-url', 'origin', 'https://github.com/lunchboxfortwo/scratch.git']);
+    run(worktree, ['remote', 'set-url', '--push', 'origin', pushUrl]);
+
+    const events: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).startsWith('https://api.github.com/')) throw new Error('rate limited');
+        events.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    await expect(publish(body, info)).resolves.toBe(true);
+    expect(mergeReadyTags(events).map((tag) => tag[0])).not.toContain('preview');
+  });
+});

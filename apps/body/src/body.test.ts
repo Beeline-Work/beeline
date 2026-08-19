@@ -7021,3 +7021,253 @@ describe('moved-target land refusals are classified, and recaps stay readable', 
     expect(MAX_CORNER_REALIGN_ATTEMPTS).toBe(2);
   });
 });
+
+describe('the Room target branch changes by admin confirm, never by the agent', () => {
+  const admin = newIdentity('target-branch-admin');
+  const roomId = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
+  const repositoryKey = 'repo-key-target-branch';
+
+  function baseConfig(workspaceRoot: string): BodyConfig {
+    return {
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot,
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    };
+  }
+
+  function jsonResponse(body: unknown): Response {
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
+  /** The admin-authored Room→repository config event as it sits on the relay. */
+  function roomRepositoryEvent(channelId: string, targetBranch: string): NostrEvent {
+    return signEvent(
+      {
+        pubkey: admin.publicKey,
+        created_at: 1_700_000_500,
+        kind: 30_078,
+        tags: [
+          ['d', `buzz-room-repository:${channelId}`],
+          ['h', channelId],
+          ['t', 'buzz-room-repository'],
+        ],
+        content: JSON.stringify({
+          key: repositoryKey,
+          name: 'buzzy',
+          remote: 'https://github.com/lunchboxfortwo/buzzy',
+          localOnly: false,
+          targetBranch,
+        }),
+      },
+      admin.secretKey,
+    );
+  }
+
+  /**
+   * Relay stub scoped to what this flow reads: the Room's repository config
+   * and the admin projection that authorizes its author.
+   */
+  function stubRelay(channelId: string, targetBranch: string | null): NostrEvent[] {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          return jsonResponse({ accepted: true });
+        }
+        const filter = (JSON.parse(String(init?.body)) as Record<string, unknown>[])[0] ?? {};
+        const kind = (filter.kinds as number[] | undefined)?.[0];
+        if (kind === 30_078 && targetBranch) {
+          return jsonResponse([roomRepositoryEvent(channelId, targetBranch)]);
+        }
+        if (kind === KIND_CHANNEL_ADMINS) {
+          return jsonResponse([
+            signEvent(
+              {
+                pubkey: admin.publicKey,
+                created_at: 1_700_000_000,
+                kind: KIND_CHANNEL_ADMINS,
+                tags: [['d', channelId], ['p', admin.publicKey, '', 'admin']],
+                content: '',
+              },
+              admin.secretKey,
+            ),
+          ]);
+        }
+        return jsonResponse([]);
+      }),
+    );
+    return published;
+  }
+
+  function proposals(published: NostrEvent[]): NostrEvent[] {
+    return published.filter((event) =>
+      (event.tags ?? []).some((tag) => tag[0] === 't' && tag[1] === 'buzz-target-branch-proposal'),
+    );
+  }
+
+  function makeBody(): { body: Body; workspaceRoot: string } {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'buzzy-target-branch-'));
+    const body = new Body(baseConfig(workspaceRoot));
+    const durableState = Reflect.get(body, 'durableState') as {
+      appendConversation: (...args: unknown[]) => Promise<void>;
+    };
+    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
+    return { body, workspaceRoot };
+  }
+
+  function reply(
+    body: Body,
+    channelId: string,
+    content: string,
+    boundRepo: Record<string, unknown>,
+  ): Promise<boolean> {
+    return Reflect.get(body, 'replyInRoom').call(body, channelId, boundRepo, {
+      eventId: 'target-branch-request',
+      authorPubkey: admin.publicKey,
+      content,
+      createdAt: 1,
+    }) as Promise<boolean>;
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('answers "land to staging from now on" with a proposal card and authors NO binding', async () => {
+    const { body, workspaceRoot } = makeBody();
+    const published = stubRelay(roomId, 'main');
+    const open = vi.spyOn(body, 'openSubchannel');
+    const createSession = vi.spyOn(body as never, 'createManagedSession' as never);
+
+    await expect(
+      reply(body, roomId, '@lena land to staging from now on', {
+        repo: 'buzzy',
+        repositoryKey,
+        targetBranch: 'refs/heads/main',
+      }),
+    ).resolves.toBe(false);
+
+    // A proposal, not work: no corner, no session, no permission escalation.
+    expect(open).not.toHaveBeenCalled();
+    expect(createSession).not.toHaveBeenCalled();
+
+    const card = proposals(published);
+    expect(card).toHaveLength(1);
+    expect(card[0]!.kind).toBe(9);
+    expect(card[0]!.pubkey).toBe(body.agent.publicKey);
+    expect(card[0]!.content).toBe('Change target branch: main → staging');
+    expect(card[0]!.tags).toContainEqual(['from', 'main']);
+    expect(card[0]!.tags).toContainEqual(['to', 'staging']);
+    expect(card[0]!.tags).toContainEqual(['requester', admin.publicKey]);
+    expect(card[0]!.tags).toContainEqual(['t', 'body-control']);
+
+    // THE security property: the agent never authors the Room→repository
+    // binding itself — that event may only be signed by a confirming admin.
+    expect(published.filter((event) => event.kind === 30_078)).toHaveLength(0);
+    rmSync(workspaceRoot, { recursive: true, force: true });
+  });
+
+  it('says nothing to propose when the Room already lands there', async () => {
+    const { body, workspaceRoot } = makeBody();
+    const published = stubRelay(roomId, 'staging');
+
+    await expect(
+      reply(body, roomId, 'land to staging from now on', {
+        repo: 'buzzy',
+        repositoryKey,
+        targetBranch: 'refs/heads/main',
+      }),
+    ).resolves.toBe(false);
+
+    expect(proposals(published)).toHaveLength(0);
+    // The published Room state wins over the daemon's start-time snapshot.
+    expect(published.map((event) => event.content).join('\n')).toContain(
+      'already lands to staging',
+    );
+    rmSync(workspaceRoot, { recursive: true, force: true });
+  });
+
+  it('uses the confirmed target for the NEXT corner and leaves an open one alone', async () => {
+    const { body, workspaceRoot } = makeBody();
+    stubRelay(roomId, 'staging');
+    const roomRepo = { repo: 'buzzy', repositoryKey, targetBranch: 'refs/heads/main' };
+    const cornerBoundRepo = Reflect.get(body, 'cornerBoundRepo') as (
+      channelId: string,
+      repo: unknown,
+    ) => Promise<{ targetBranch?: string }>;
+
+    // The Room's boundRepo snapshot still says main; a corner opening now
+    // picks up the admin-confirmed staging target.
+    await expect(cornerBoundRepo.call(body, roomId, roomRepo)).resolves.toMatchObject({
+      repo: 'buzzy',
+      repositoryKey,
+      targetBranch: 'refs/heads/staging',
+    });
+    // The Room's own snapshot object is never mutated, so a corner already
+    // open keeps the target it opened against.
+    expect(roomRepo.targetBranch).toBe('refs/heads/main');
+    rmSync(workspaceRoot, { recursive: true, force: true });
+  });
+
+  it('openSubchannel is the one place the newer target is picked up', async () => {
+    const { body, workspaceRoot } = makeBody();
+    stubRelay(roomId, 'staging');
+    const roomRepo = { repo: 'buzzy', repositoryKey, targetBranch: 'refs/heads/main' };
+    const cornerBoundRepo = vi.spyOn(body as never, 'cornerBoundRepo' as never);
+    // Stop the open right after the target resolves; everything past this
+    // point (channel create, worktree, ACP) needs a real relay and repo.
+    vi.spyOn(body as never, 'ensureAgentInChannel' as never).mockRejectedValue(
+      new Error('stop after target resolution') as never,
+    );
+
+    await expect(body.openSubchannel(roomId, roomRepo, 'add a haiku')).rejects.toThrow(
+      'stop after target resolution',
+    );
+    expect(cornerBoundRepo).toHaveBeenCalledWith(roomId, roomRepo);
+    await expect(
+      (cornerBoundRepo.mock.results[0]!.value as Promise<{ targetBranch?: string }>),
+    ).resolves.toMatchObject({ targetBranch: 'refs/heads/staging' });
+    rmSync(workspaceRoot, { recursive: true, force: true });
+  });
+
+  it('ignores a config event bound to a different repository', async () => {
+    const { body, workspaceRoot } = makeBody();
+    stubRelay(roomId, 'staging');
+    const cornerBoundRepo = Reflect.get(body, 'cornerBoundRepo') as (
+      channelId: string,
+      repo: unknown,
+    ) => Promise<{ targetBranch?: string }>;
+
+    await expect(
+      cornerBoundRepo.call(body, roomId, {
+        repo: 'buzzy',
+        repositoryKey: 'some-other-repository',
+        targetBranch: 'refs/heads/main',
+      }),
+    ).resolves.toMatchObject({ targetBranch: 'refs/heads/main' });
+    rmSync(workspaceRoot, { recursive: true, force: true });
+  });
+
+  it('keeps the start-time target when the Room publishes no config at all', async () => {
+    const { body, workspaceRoot } = makeBody();
+    stubRelay(roomId, null);
+    const cornerBoundRepo = Reflect.get(body, 'cornerBoundRepo') as (
+      channelId: string,
+      repo: unknown,
+    ) => Promise<{ targetBranch?: string }>;
+
+    await expect(
+      cornerBoundRepo.call(body, roomId, { repo: 'buzzy', targetBranch: 'refs/heads/main' }),
+    ).resolves.toMatchObject({ targetBranch: 'refs/heads/main' });
+    rmSync(workspaceRoot, { recursive: true, force: true });
+  });
+});

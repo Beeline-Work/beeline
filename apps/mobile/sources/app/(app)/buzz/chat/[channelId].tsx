@@ -132,7 +132,7 @@ import {
   cachedChannelKind,
   channelHeaderTitle,
   cornerSessionState,
-  latestCornerTurnSummary,
+  changeReviewSummary,
   resolveCornerViewAgentPubkey,
   type ChannelKind,
 } from '@/buzz/corner-session';
@@ -456,7 +456,7 @@ export default function BuzzChat() {
   // `mergeTarget`, because a whole live batch is applied before any re-render.
   const mergeTargetTipRef = useRef<string | null>(initialChannelCache?.mergeTarget?.tip ?? null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
-  const [reviewFileCount, setReviewFileCount] = useState<number | null>(null);
+  const [reviewFiles, setReviewFiles] = useState<string[] | null>(null);
   const [parentChannelId, setParentChannelId] = useState<string | undefined>(
     initialChannelCache?.parentChannelId ?? routeParentChannelId,
   );
@@ -782,7 +782,6 @@ export default function BuzzChat() {
     () => resolveCornerViewAgentPubkey(messages, (pubkey) => agentByPubkey.has(pubkey)),
     [agentByPubkey, messages],
   );
-  const turnSummary = isCorner ? latestCornerTurnSummary(messages, cornerAgentPubkey) : undefined;
   const cornerAgentDisplay = cornerAgentPubkey
     ? resolvePendingAgentDisplay(cornerAgentPubkey, agentByPubkey.get(cornerAgentPubkey), participantsHydrated)
     : undefined;
@@ -1012,7 +1011,7 @@ export default function BuzzChat() {
   }, [activeAgentTurn, isArchived, isCorner, sessionState, visibleMessages]);
 
   useEffect(() => {
-    setReviewFileCount(null);
+    setReviewFiles(null);
     setApprovalError(null);
   }, [mergeTarget?.tip]);
 
@@ -2121,8 +2120,8 @@ export default function BuzzChat() {
     }
   }, [transport, mergeTarget, decodedId]);
 
-  const handleReviewFilesLoaded = useCallback((files: readonly unknown[]) => {
-    setReviewFileCount(files.length);
+  const handleReviewFilesLoaded = useCallback((files: readonly { path?: string }[]) => {
+    setReviewFiles(files.map((file) => file.path ?? '').filter(Boolean));
   }, []);
 
   const handleCommunitySelect = useCallback((communityId: string | null) => {
@@ -2697,13 +2696,18 @@ export default function BuzzChat() {
                   <HullSurface strength="raised" style={styles.approvalBar}>
                     <View style={styles.approvalInfo}>
                       <Text style={styles.prChip}>CHANGE READY FOR REVIEW</Text>
-                      <Text style={styles.approvalBarText} numberOfLines={2}>
-                        {turnSummary ?? `${cornerAgentDisplay?.name ?? 'The agent'} completed this turn.`}
+                      {/* What CHANGED, never what the agent said — the
+                          transcript above already carries the turn's prose in
+                          full, and echoing its summary here printed the same
+                          sentences a third time. */}
+                      <Text style={styles.approvalBarText} numberOfLines={2} testID="change-review-summary">
+                        {changeReviewSummary(reviewFiles) ??
+                          `${cornerAgentDisplay?.name ?? 'The agent'} committed work for review.`}
                       </Text>
                       <Text style={styles.approvalStateText}>
-                        {reviewFileCount === null
+                        {reviewFiles === null
                           ? 'PREPARING YOUR REVIEW'
-                          : `${reviewFileCount} ${reviewFileCount === 1 ? 'FILE' : 'FILES'} READY TO REVIEW`}
+                          : `${reviewFiles.length} ${reviewFiles.length === 1 ? 'FILE' : 'FILES'} READY TO REVIEW`}
                       </Text>
                     </View>
                     {transport && (

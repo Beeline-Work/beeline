@@ -91,6 +91,7 @@ import {
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import {
   buildAgentMessage,
+  createNarrativeCommitter,
   postAgentMessage,
   postAgentPresence,
   startAgentPresence,
@@ -3702,6 +3703,76 @@ describe('first-class assistant messages', () => {
     );
     expect(published[0]!.content.split('\n')).toHaveLength(3);
     expect(published[0]!.content.length).toBeLessThanOrEqual(CORNER_TURN_SUMMARY_MAX_CHARS);
+  });
+
+  it('a narrated corner turn puts its prose in the transcript exactly once', async () => {
+    // Triplication defect: the corner narrated its prose durably AND then
+    // published the concise reduction of that same prose as a second message,
+    // which the review card then echoed a third time. The narration is the
+    // single source of truth for the transcript; the summary is computed for
+    // the status/archive card and the durable conversation, not re-inscribed.
+    const agent = newIdentity('narrated-corner-agent');
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: '/workspace',
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+    );
+
+    const agentText = "I'll take a look at the README first.\n\nAdded the note and ran the tests.";
+    const narrator = createNarrativeCommitter('corner-id', agent);
+    narrator.onChunk(agentText);
+    await narrator.finish();
+    const narrativeFloor = narrator.lastCreatedAt();
+    expect(published.map((event) => event.content)).toEqual([
+      "I'll take a look at the README first.",
+      'Added the note and ran the tests.',
+    ]);
+
+    const summary = await Reflect.get(body, 'publishAgentResult').call(
+      body,
+      'corner-id',
+      { cwd: '/workspace' },
+      { agentText, updates: [] },
+      'Done.',
+      { concise: true, minCreatedAt: narrativeFloor, summaryOnly: narrativeFloor !== undefined },
+    );
+
+    // The card/archive copy still exists — it just never reaches the transcript.
+    expect(summary).toContain("I'll take a look at the README first.");
+    expect(published).toHaveLength(2);
+    expect(
+      published.filter((event) =>
+        event.content.includes("I'll take a look at the README first."),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('both corner turn call sites suppress the duplicate summary only when the turn narrated', () => {
+    // Pins the wiring the test above exercises by hand: the corner-open turn
+    // and the corner follow-up turn both key `summaryOnly` off the narrator's
+    // own floor, so a harness that streamed nothing still gets its one
+    // end-of-turn message in the transcript.
+    const source = readFileSync(new URL('./body.ts', import.meta.url), 'utf8');
+    const callSites = source.match(/summaryOnly: \w+\.narrativeFloor !== undefined/g) ?? [];
+    expect(callSites).toHaveLength(2);
   });
 
   it('strips only a leading Codex skill-budget warning', () => {

@@ -354,6 +354,47 @@ lines.on('line', (line) => {
   return binary;
 }
 
+/** Emits the model's very first token, gets interrupted by a non-text update
+ *  before the second token of the SAME word arrives, then finishes the
+ *  sentence — the live stream-head shape that made a corner's first message
+ *  render as `'ll take a look at the README first.` */
+async function fakeWordSplitNarrationAgent(): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-word-split-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'fake-word-split-narration-agent.mjs');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+
+const lines = createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+const update = (update) =>
+  send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'word-split-session', update } });
+const chunk = (text) =>
+  update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
+
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'word-split-session' } });
+  } else if (message.method === 'session/prompt') {
+    chunk('I');
+    update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'checking' } });
+    chunk("'ll take a look at the README first.");
+    send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
 async function fakeWedgedAgent(): Promise<string> {
   const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-wedged-'));
   temporaryDirectories.push(directory);
@@ -516,6 +557,34 @@ describe('AcpClient live steering', () => {
       );
       // The live stream (what a corner's narrative committer actually reads)
       // must carry the same break, not just the final joined result.
+      expect(seenFullText.at(-1)).toBe(result.agentText);
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('keeps the first characters of a turn when a non-text update splits the opening word', async () => {
+    // Live stream-head defect: any non-text session/update landing between the
+    // model's first token and its second earned a synthetic paragraph break
+    // mid-word, and the narrative committer then published the one-character
+    // head as its own transcript message — so the corner's first visible
+    // message began "'ll take a look at the README first."
+    const client = new AcpClient({
+      agentBinary: await fakeWordSplitNarrationAgent(),
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const seenFullText: string[] = [];
+      const result = await client.sessionPrompt(sessionId, 'go', 5_000, (_delta, fullText) => {
+        seenFullText.push(fullText);
+      });
+      expect(result.agentText).toBe("I'll take a look at the README first.");
+      expect(result.agentText.startsWith('I')).toBe(true);
+      expect(result.agentText).not.toContain('\n\n');
+      // The live stream a corner's narrative committer reads carries the same
+      // unbroken sentence, not a one-character head followed by its own tail.
       expect(seenFullText.at(-1)).toBe(result.agentText);
     } finally {
       await client.stop();

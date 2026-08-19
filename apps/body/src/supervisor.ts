@@ -8,8 +8,9 @@ import {
   KIND_PUT_USER,
   KIND_REMOVE_USER,
   type RepositoryBinding,
+  type RoomRepository,
 } from '@beeline/buzz-client';
-import { gitAuthed, gitWithUserCredentials, type Identity } from '@beeline/gate';
+import { git, gitAuthed, gitWithUserCredentials, type Identity } from '@beeline/gate';
 import { Body, type BoundRepo } from './body.js';
 import type { BodyConfig } from './config.js';
 import type { NamedRepositoryTarget } from './repository-target.js';
@@ -46,6 +47,8 @@ interface DesiredChannel {
   membershipSince: number;
   kind: 'repository' | 'named-repository' | 'direct-message';
   repositoryRoom?: RoomRuntimeRecord;
+  /** Repository resolved from Room state for a not-yet-materialized Room. */
+  roomRepository?: RoomRepository;
 }
 
 function relayRepoFromBinding(
@@ -285,11 +288,16 @@ export class WorkspaceSupervisor {
         if ((await client.getChannelCommunityId(channelId)) !== this.runtime.communityId) continue;
         if (channelId === this.runtime.communityId) continue;
         if (await client.getParentChannelId(channelId)) continue;
-        const binding = await client.getChannelRepositoryBinding(channelId);
-        if (binding) {
+        // The repository belongs to the ROOM, resolved from published Room
+        // state (admin-authored config → immutable genesis binding), not from
+        // this agent's own pairing binding — any agent joining the Room trees
+        // off the same repo.
+        const roomRepository = await client.resolveRoomRepository(channelId);
+        if (roomRepository) {
           desired.set(channelId, {
             membershipSince: membership.event.created_at,
             kind: 'repository',
+            roomRepository,
           });
           continue;
         }
@@ -315,16 +323,20 @@ export class WorkspaceSupervisor {
         if (target.kind === 'repository') {
           let room = this.runtime.rooms.find((candidate) => candidate.channelId === channelId);
           if (!room) {
-            const binding = await client.getChannelRepositoryBinding(channelId);
-            if (binding) {
-              room = await this.materializeRoom(channelId, target.membershipSince, binding);
+            const roomRepository =
+              target.roomRepository ?? (await client.resolveRoomRepository(channelId));
+            if (roomRepository) {
+              // Materialize the ONE shared per-repo-per-host checkout eagerly,
+              // on join — the Room's read-only session reads code from it
+              // (list/read/search/git-log) before any corner is opened.
+              room = await this.materializeRoom(channelId, target.membershipSince, roomRepository);
               this.runtime.rooms.push(room);
               await writeRuntimeRecord(this.runtime);
             } else {
               room = target.repositoryRoom;
             }
           }
-          if (room) this.startRepositoryRoom(room, channelId);
+          if (room) await this.startRepositoryRoom(room, channelId);
         } else {
           this.startConversationRoom(channelId, target.kind);
         }
@@ -381,7 +393,26 @@ export class WorkspaceSupervisor {
     };
   }
 
-  private startRepositoryRoom(room: RoomRuntimeRecord, channelId = room.channelId): void {
+  private async startRepositoryRoom(
+    room: RoomRuntimeRecord,
+    channelId = room.channelId,
+  ): Promise<void> {
+    // Serve from beeline's OWN dedicated canonical checkout, never the
+    // operator's working tree. The operator's checkout carries their WIP and
+    // can drift (the confirmed leak where the agent shared it); the agent must
+    // read clean origin state and never touch the operator's tree.
+    let boundRepo: BoundRepo;
+    try {
+      boundRepo = await this.resolveServingRepo(room);
+    } catch (error) {
+      // A room whose canonical checkout cannot be materialized cannot be
+      // served yet. Leave it unstarted; the next reconcile retries.
+      console.error(
+        `[supervisor] Room ${channelId} canonical checkout unavailable; will retry:`,
+        error,
+      );
+      return;
+    }
     const controller = new AbortController();
     const workspaceRoot = this.roomRoot(channelId, room);
     const config: BodyConfig = this.roomBodyConfig(workspaceRoot);
@@ -408,7 +439,7 @@ export class WorkspaceSupervisor {
       },
     );
     const promise = body
-      .runRepositoryRoomLoop(this.runtime.communityId, channelId, boundRepoFromRoom(room), {
+      .runRepositoryRoomLoop(this.runtime.communityId, channelId, boundRepo, {
         signal: controller.signal,
       })
       .catch((error) => {
@@ -430,7 +461,7 @@ export class WorkspaceSupervisor {
       backoffUntil: 0,
       recovering: false,
     });
-    console.log(`[supervisor] serving Room ${channelId} from ${room.repo.root}`);
+    console.log(`[supervisor] serving Room ${channelId} from ${boundRepo.localPath}`);
   }
 
   private startConversationRoom(
@@ -489,7 +520,7 @@ export class WorkspaceSupervisor {
   }
 
   private async materializeNamedRepository(target: NamedRepositoryTarget): Promise<BoundRepo> {
-    const repositories = resolve(dirname(this.configPath), 'repositories');
+    const repositories = this.sharedRepositoriesRoot();
     const key = createHash('sha256')
       .update(`${target.kind}:${target.relayOwnerHex ?? target.owner}/${target.repo}`)
       .digest('hex');
@@ -543,19 +574,50 @@ export class WorkspaceSupervisor {
     };
   }
 
-  private async materializeRoom(
-    channelId: string,
-    membershipSince: number,
-    binding: RepositoryBinding,
-  ): Promise<RoomRuntimeRecord> {
-    if (binding.localOnly) {
-      throw new Error(`invited Room ${channelId} is local-only on another checkout`);
+  /**
+   * The ONE shared canonical checkout root for this host — NOT per-agent and
+   * NOT per-room. Every agent/room/corner for a given repo on this host trees
+   * off a single checkout of it under here, keyed by repository key.
+   *
+   * Deliberately anchored on the machine-local `supervisorRoot`, not on
+   * `dirname(this.configPath)` (which is per-agent): a second agent paired on
+   * the same host resolves the identical path and reuses the first agent's
+   * clone instead of materializing its own.
+   */
+  private sharedRepositoriesRoot(): string {
+    return resolve(this.runtime.supervisorRoot, 'beeline', 'repositories');
+  }
+
+  /** Absolute path of this host's dedicated canonical checkout for a repo key. */
+  private canonicalCheckoutPath(repositoryKey: string): string {
+    return resolve(this.sharedRepositoriesRoot(), repositoryKey);
+  }
+
+  /**
+   * Ensure beeline's OWN dedicated canonical checkout of a repository exists
+   * and tracks clean origin state, and return it as a `LocalRepositoryBinding`
+   * rooted there. NEVER the operator's working tree: that tree carries WIP and
+   * drifts (the confirmed operator-checkout leak), so the agent clones its own
+   * canonical from origin, keyed by repository key — one per repo per host,
+   * shared by every agent/room/corner, never per-agent or per-room.
+   *
+   * The binding IDENTITY (key/name/localOnly) is preserved from the caller's
+   * `binding`; only the checkout root and branch state are (re)materialized.
+   */
+  private async ensureCanonicalCheckout(input: {
+    binding: RepositoryBinding;
+    relayRepo?: { ownerHex: string; repo: string };
+    targetBranch?: string;
+  }): Promise<LocalRepositoryBinding> {
+    const { binding } = input;
+    if (binding.localOnly || !binding.remote) {
+      throw new Error(`repository ${binding.name} has no remote to clone a canonical checkout from`);
     }
-    const repositories = resolve(dirname(this.configPath), 'repositories');
-    const root = resolve(repositories, binding.key);
+    const relayRepo = input.relayRepo ?? relayRepoFromBinding(binding);
+    const repositories = this.sharedRepositoriesRoot();
+    const root = this.canonicalCheckoutPath(binding.key);
     await mkdir(repositories, { recursive: true, mode: 0o700 });
     if (!existsSync(root)) {
-      const relayRepo = relayRepoFromBinding(binding);
       const result = relayRepo
         ? gitAuthed(repositories, this.agent, relayRepo.ownerHex, relayRepo.repo, [
             'clone',
@@ -563,21 +625,85 @@ export class WorkspaceSupervisor {
             root,
           ])
         : gitWithUserCredentials(repositories, ['clone', cloneUrl(binding), root]);
-      if (!result.ok)
-        throw new Error(`could not clone invited Room ${channelId}: ${result.stderr}`);
+      if (!result.ok) {
+        throw new Error(`could not clone canonical checkout for ${binding.name}: ${result.stderr}`);
+      }
     }
     const local = inspectLocalRepository(root);
     if (local.repository.key !== binding.key) {
-      throw new Error(`invited Room ${channelId} repository binding mismatch`);
+      throw new Error(`canonical checkout for ${binding.name} has a mismatched binding key`);
     }
-    const relayRepo = relayRepoFromBinding(binding);
-    const repo: LocalRepositoryBinding = {
+    // Track clean origin state and pin the working tree to the target branch,
+    // so the read-only session reads exactly what origin holds — never WIP.
+    // Best-effort: corners use separate `git worktree` trees, so this never
+    // fights their edits, and every Room of one repo shares one target branch.
+    const target = input.targetBranch ?? local.targetBranch;
+    if (local.remoteName) {
+      const fetchResult = relayRepo
+        ? gitAuthed(root, this.agent, relayRepo.ownerHex, relayRepo.repo, ['fetch', local.remoteName])
+        : gitWithUserCredentials(root, ['fetch', local.remoteName]);
+      const remoteRef = `refs/remotes/${local.remoteName}/${target}`;
+      if (fetchResult.ok && git(root, ['rev-parse', '--verify', remoteRef]).ok) {
+        git(root, ['checkout', '-q', target]);
+        git(root, ['reset', '--hard', remoteRef]);
+      }
+    } else if (target !== local.targetBranch) {
+      git(root, ['checkout', '-q', target]);
+    }
+    // Preserve the room's binding identity; only the root/branch are canonical.
+    return {
       ...local,
+      repository: binding,
+      ...(target ? { targetBranch: target } : {}),
       ...(relayRepo ? { relayRepo } : {}),
     };
+  }
+
+  /**
+   * The repository this daemon actually serves a Room from: beeline's dedicated
+   * canonical checkout for a remote repo, or (only for a non-convergent
+   * local-only repo, which has no origin to clone) the stored binding as-is.
+   */
+  private async resolveServingRepo(room: RoomRuntimeRecord): Promise<BoundRepo> {
+    if (room.repo.repository.localOnly) return boundRepoFromRoom(room);
+    const canonical = await this.ensureCanonicalCheckout({
+      binding: room.repo.repository,
+      ...(room.repo.relayRepo ? { relayRepo: room.repo.relayRepo } : {}),
+      ...(room.repo.targetBranch ? { targetBranch: room.repo.targetBranch } : {}),
+    });
+    return {
+      ...boundRepoFromRoom(room),
+      localPath: canonical.root,
+      remoteName: canonical.remoteName ?? 'origin',
+      ...(canonical.targetBranch
+        ? { targetBranch: `refs/heads/${canonical.targetBranch}` }
+        : {}),
+    };
+  }
+
+  /**
+   * Materialize a newly-discovered Room by resolving its repository to the one
+   * dedicated per-host canonical checkout. Called on join (during reconcile),
+   * before the Room's read-only session ever runs, so pre-corner code reading
+   * has a real checkout to read.
+   */
+  private async materializeRoom(
+    channelId: string,
+    membershipSince: number,
+    roomRepository: RoomRepository,
+  ): Promise<RoomRuntimeRecord> {
+    const binding = roomRepository.binding;
+    if (binding.localOnly) {
+      throw new Error(`invited Room ${channelId} is local-only on another checkout`);
+    }
+    const local = await this.ensureCanonicalCheckout({
+      binding,
+      ...(relayRepoFromBinding(binding) ? { relayRepo: relayRepoFromBinding(binding)! } : {}),
+      ...(roomRepository.targetBranch ? { targetBranch: roomRepository.targetBranch } : {}),
+    });
     return {
       channelId,
-      repo,
+      repo: local,
       // Stamp the storage root explicitly so this Room stays put even if the
       // runtime record later moves.
       root: this.roomRoot(channelId),

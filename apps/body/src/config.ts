@@ -103,6 +103,14 @@ export interface BodyConfig {
    * explicit in-app selection (#223) for this agent.
    */
   modelSelection?: { model?: string; effort?: string };
+  /**
+   * Absolute path to a `bwrap` that passed `detectBwrapSandbox`'s self-test at
+   * daemon start. Present means every ACP child is spawned inside the mount
+   * namespace described in `bwrap-sandbox.ts`; absent means unwrapped (bwrap
+   * missing, self-test failed, or `sandbox: 'off'` on the runtime record), i.e.
+   * the pre-sandbox behaviour with `session-sandbox.ts` as the only boundary.
+   */
+  bwrapPath?: string;
 }
 
 function firstExisting(paths: string[]): string | undefined {

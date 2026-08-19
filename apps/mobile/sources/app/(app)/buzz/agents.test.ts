@@ -12,6 +12,8 @@ const client = vi.hoisted(() => ({
   addMember: vi.fn(async () => undefined),
   waitUntilMemberRole: vi.fn(async () => undefined),
   removeAgent: vi.fn(async () => undefined),
+  createAgentPairingCode: vi.fn(async () => ({ code: 'abc123', expiresAt: 0 })),
+  createInvite: vi.fn(async () => ({ token: 'bzi_test' })),
 }));
 const agentPresenceBackfillForWorkspace = vi.hoisted(() => vi.fn(async () => []));
 const agentModelCatalogRead = vi.hoisted(() => vi.fn(async () => null));
@@ -112,6 +114,8 @@ beforeEach(() => {
   useBuzzLocalCache.getState().clear();
   client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'owner' }]);
   client.removeAgent.mockResolvedValue(undefined);
+  client.createAgentPairingCode.mockResolvedValue({ code: 'abc123', expiresAt: 0 });
+  client.createInvite.mockResolvedValue({ token: 'bzi_test' });
   agentPresenceBackfillForWorkspace.mockResolvedValue([]);
   agentModelCatalogRead.mockResolvedValue(null);
   agentModelConfigRead.mockResolvedValue(null);
@@ -121,6 +125,15 @@ beforeEach(() => {
     activeWorkspaceId: 'workspace-1',
   });
 });
+
+/** Every string rendered inside the error banner, joined. */
+function errorText(renderer: ReactTestRenderer): string {
+  return renderer.root
+    .findAllByProps({ accessibilityRole: 'alert' })
+    .flatMap((alert: any) => alert.findAllByType('Text'))
+    .map((node: any) => (typeof node.props.children === 'string' ? node.props.children : ''))
+    .join(' ');
+}
 
 /** Nearest TouchableOpacity ancestor — used to select an agent row from its identity text. */
 function ancestorButton(node: any): any {
@@ -431,4 +444,128 @@ describe('Members screen', () => {
     expect(renderer.root.findAllByProps({ accessibilityLabel: 'Remove this Agent' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'add-agent' })).toHaveLength(0);
   });
+
+  // #232 made this screen paint from the roster cache, so an owner's admin
+  // controls render before the init effect has a transport. Before this fix
+  // every handler began `if (!transport ...) return`, so each of these taps was
+  // a silent no-op for the whole connect window (and forever if init threw).
+  describe('admin actions taken before the transport has connected', () => {
+    function seedOwnerCache() {
+      const viewerPubkey = 'a'.repeat(64);
+      useBuzzLocalCache.getState().setActiveViewer(viewerPubkey);
+      useBuzzLocalCache.getState().setChannelList({
+        viewerPubkey,
+        communityId: 'workspace-1',
+        channels: [],
+        directMessages: [],
+        workspaceMembers: [
+          { peerPubkey: viewerPubkey, peerName: 'Owner', peerKind: 'person', role: 'owner' },
+        ],
+        communities: [{ communityId: 'workspace-1', name: 'Night Shift', viewerRole: 'owner' }],
+        personalWorkspaceId: null,
+        viewerIsAgent: false,
+        canEditWorkspaceAvatar: true,
+        updatedAt: 0,
+        lastAccessedAt: 0,
+      } as any);
+    }
+
+    it('waits for the pending connection and then executes, instead of swallowing the tap', async () => {
+      seedOwnerCache();
+      let releaseWorkspace!: (value: unknown) => void;
+      (prepareWorkspaceContext as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+        () => new Promise((resolve) => { releaseWorkspace = resolve; }),
+      );
+
+      let renderer!: ReactTestRenderer;
+      await act(async () => {
+        renderer = create(React.createElement(MembersScreen));
+      });
+
+      // The cache-seeded owner sees the controls while init is still in flight.
+      expect(renderer.root.findByProps({ testID: 'add-agent' })).toBeDefined();
+      await act(async () => {
+        renderer.root.findByProps({ testID: 'add-agent' }).props.onPress();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(client.createAgentPairingCode).not.toHaveBeenCalled();
+      // The tap is held, not dropped: the button reports work in progress.
+      expect(renderer.root.findByProps({ testID: 'add-agent' }).props.loading).toBe(true);
+
+      await act(async () => {
+        releaseWorkspace({
+          workspaces: [{ communityId: 'workspace-1', name: 'Night Shift', viewerRole: 'owner' }],
+          activeWorkspaceId: 'workspace-1',
+        });
+        for (let i = 0; i < 12; i += 1) await Promise.resolve();
+      });
+
+      expect(client.createAgentPairingCode).toHaveBeenCalledWith('workspace-1');
+      expect(renderer.root.findByProps({ testID: 'add-agent' }).props.loading).toBe(false);
+    });
+
+    it('runs a queued "Invite person" once the connection lands', async () => {
+      seedOwnerCache();
+      client.createInvite.mockResolvedValue({ token: 'bzi_test' });
+      let releaseWorkspace!: (value: unknown) => void;
+      (prepareWorkspaceContext as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+        () => new Promise((resolve) => { releaseWorkspace = resolve; }),
+      );
+
+      let renderer!: ReactTestRenderer;
+      await act(async () => {
+        renderer = create(React.createElement(MembersScreen));
+      });
+
+      await act(async () => {
+        renderer.root.findByProps({ testID: 'invite-person' }).props.onPress();
+        await Promise.resolve();
+      });
+      expect(client.createInvite).not.toHaveBeenCalled();
+
+      await act(async () => {
+        releaseWorkspace({
+          workspaces: [{ communityId: 'workspace-1', name: 'Night Shift', viewerRole: 'owner' }],
+          activeWorkspaceId: 'workspace-1',
+        });
+        for (let i = 0; i < 12; i += 1) await Promise.resolve();
+      });
+
+      expect(client.createInvite).toHaveBeenCalledWith('workspace-1');
+    });
+
+    it('surfaces the real init failure to a queued tap instead of returning silently', async () => {
+      seedOwnerCache();
+      let failWorkspace!: (reason: unknown) => void;
+      (prepareWorkspaceContext as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+        () => new Promise((_resolve, reject) => { failWorkspace = reject; }),
+      );
+
+      let renderer!: ReactTestRenderer;
+      await act(async () => {
+        renderer = create(React.createElement(MembersScreen));
+      });
+
+      await act(async () => {
+        renderer.root.findByProps({ testID: 'add-agent' }).props.onPress();
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        failWorkspace(new Error('relay unreachable'));
+        for (let i = 0; i < 12; i += 1) await Promise.resolve();
+      });
+
+      expect(client.createAgentPairingCode).not.toHaveBeenCalled();
+      expect(renderer.root.findAllByProps({ accessibilityRole: 'alert' }).length).toBeGreaterThan(0);
+      // The discriminating assertion: the banner carries the *handler's* own
+      // failure text, proving the queued tap reached its catch. A silent return
+      // leaves only the init effect's bare `String(caught)` message behind.
+      expect(errorText(renderer)).toContain('Could not create pairing code');
+      expect(errorText(renderer)).toContain('relay unreachable');
+      expect(renderer.root.findByProps({ testID: 'add-agent' }).props.loading).toBe(false);
+    });
+  });
+
 });

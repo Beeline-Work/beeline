@@ -232,6 +232,7 @@ async function loadWorkspaceRoster(
       peerName: profileByPubkey.get(person.pubkey)?.name ?? shortMemberNpub(person.pubkey),
       peerKind: 'person' as const,
       avatarUrl: profileByPubkey.get(person.pubkey)?.avatar,
+      role: person.role,
     })),
     ...agents
       .filter((agent) => agent.pubkey !== viewerPubkey)

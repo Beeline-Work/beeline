@@ -26,6 +26,8 @@ import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { buildCommunityInviteUrl } from '@/buzz/community-invite';
+import { profileCacheKey, selectChannelList, useBuzzLocalCache } from '@/buzz/local-cache';
+import { seedMembersFromWorkspaceCache } from '@/buzz/members-cache';
 import { personIdentityLabel, shortMemberNpub } from '@/buzz/member-display';
 import { resolveNip05StatusMap } from '@/buzz/nip05-verification';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
@@ -61,15 +63,33 @@ export default function BuzzAgents() {
   const requestedCommunityId = first(
     useLocalSearchParams<{ communityId?: string | string[] }>().communityId,
   );
-  const [communityId, setCommunityId] = useState<string | null>(requestedCommunityId ?? null);
+  // Seeded synchronously from the same Workspace roster cache the Room list
+  // already warms (`channelLists`), so this screen paints from whatever the
+  // app already knows on first frame instead of blocking on a fresh relay
+  // read. Never awaited — a cold cache just falls back to `loading`.
+  const initialCacheState = useBuzzLocalCache.getState();
+  const initialCachedList = selectChannelList(
+    initialCacheState,
+    initialCacheState.activeViewerPubkey,
+    requestedCommunityId,
+  );
+  const initialCommunityId = requestedCommunityId ?? initialCachedList?.communityId ?? null;
+  const initialCachedSeed = seedMembersFromWorkspaceCache(initialCachedList?.workspaceMembers ?? []);
+  const initialCachedProfiles =
+    initialCacheState.activeViewerPubkey && initialCommunityId
+      ? (initialCacheState.profiles[
+          profileCacheKey(initialCacheState.activeViewerPubkey, initialCommunityId)
+        ] ?? [])
+      : [];
+  const [communityId, setCommunityId] = useState<string | null>(initialCommunityId);
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
-  const [communities, setCommunities] = useState<Community[]>([]);
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [people, setPeople] = useState<CommunityMember[]>([]);
-  const [profiles, setProfiles] = useState<PersonProfile[]>([]);
+  const [communities, setCommunities] = useState<Community[]>(initialCachedList?.communities ?? []);
+  const [agents, setAgents] = useState<Agent[]>(initialCachedSeed.agents);
+  const [people, setPeople] = useState<CommunityMember[]>(initialCachedSeed.people);
+  const [profiles, setProfiles] = useState<PersonProfile[]>(initialCachedProfiles);
   const [nip05Status, setNip05Status] = useState<Map<string, Nip05VerificationStatus>>(new Map());
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!initialCachedList);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pairCommand, setPairCommand] = useState<string | null>(null);
@@ -82,7 +102,9 @@ export default function BuzzAgents() {
   const [confirmingRemoval, setConfirmingRemoval] = useState(false);
   const [roleEditorPubkey, setRoleEditorPubkey] = useState<string | null>(null);
   const [viewerAvatarUrl, setViewerAvatarUrl] = useState<string | undefined>();
-  const [canManageWorkspace, setCanManageWorkspace] = useState(false);
+  const [canManageWorkspace, setCanManageWorkspace] = useState(
+    initialCachedList?.canEditWorkspaceAvatar ?? false,
+  );
   const [agentPresences, setAgentPresences] = useState<Record<string, AgentPresence>>({});
   const [presenceNow, setPresenceNow] = useState(Date.now());
   const [modelCatalog, setModelCatalog] = useState<AgentModelConfigOption[] | null>(null);
@@ -211,7 +233,21 @@ export default function BuzzAgents() {
         setViewerAvatarUrl(viewerProfile?.avatar);
         const role = allMembers.find((member) => member.pubkey === currentIdentity.publicKey)?.role;
         setCanManageWorkspace(isWorkspaceManagerRole(role));
-        await refreshPeople(nextTransport, activeWorkspaceId, currentIdentity.publicKey);
+        const agentPubkeys = new Set(listed.map((agent) => agent.pubkey));
+        const nextPeople = allMembers.filter((member) => !agentPubkeys.has(member.pubkey));
+        setPeople(nextPeople);
+        // Membership/roles are already in hand above; the room list and role
+        // itself must never wait on a name/soul read landing behind them.
+        setLoading(false);
+        client
+          .listPersonProfiles(
+            activeWorkspaceId,
+            nextPeople.map((member) => member.pubkey),
+          )
+          .then((nextProfiles) => {
+            if (!cancelled) setProfiles(nextProfiles);
+          })
+          .catch(() => undefined);
         void refreshAgentPresence(nextTransport, activeWorkspaceId).catch(() => undefined);
         pairingInterval = setInterval(() => {
           if (!pairingPending.current) return;
@@ -231,7 +267,7 @@ export default function BuzzAgents() {
       if (pairingInterval) clearInterval(pairingInterval);
       if (presenceInterval) clearInterval(presenceInterval);
     };
-  }, [refreshAgentPresence, refreshAgents, refreshPeople, requestedCommunityId]);
+  }, [refreshAgentPresence, refreshAgents, requestedCommunityId]);
 
   useEffect(() => {
     // Presence only changes at a lease deadline. A five-second clock here woke

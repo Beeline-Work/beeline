@@ -87,6 +87,7 @@ import {
 } from './activity.js';
 import { isReadOnlyMcpPermissionRequest } from './read-only-policy.js';
 import { SessionScheduler } from './session-scheduler.js';
+import { AGENT_ERROR_STATE_MESSAGES } from './agent-state-messages.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -2124,6 +2125,255 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(sessionPromptSpy).not.toHaveBeenCalled();
 
     await rm('/tmp/buzzy-stall-retry-cap-unit', { recursive: true, force: true });
+  });
+
+  it('speaks a state-appropriate notice once per transition, and re-notifies only after recovery', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-error-state-notice-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
+    const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    const sessionPromptSpy = vi.spyOn(client, 'sessionPrompt');
+    body.registerSession({
+      channelId: 'parent-channel',
+      sessionId: 'readonly-session',
+      client,
+      mode: 'readonly',
+    });
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const processChannelRequestEvents = (
+      Reflect.get(body, 'processChannelRequestEvents') as (...args: unknown[]) => Promise<number>
+    ).bind(body);
+    const roomParticipants = [human.publicKey, body.agent.publicKey];
+    const harnessDownError = new Error('ACP agent codex exited code=1 signal=null');
+    const noticeCount = () =>
+      published.filter((item) =>
+        item.content.includes(AGENT_ERROR_STATE_MESSAGES['harness-unavailable']),
+      ).length;
+
+    // First failing turn: the backend won't start. One notice.
+    sessionPromptSpy.mockRejectedValue(harnessDownError);
+    const firstEvent = requestEvent([['p', body.agent.publicKey]], human, 'Are you there?');
+    await expect(
+      processChannelRequestEvents('parent-channel', { repo: 'repo' }, 'repository', [firstEvent], roomParticipants),
+    ).rejects.toThrow('exited');
+    expect(noticeCount()).toBe(1);
+
+    // The same failure recurring on a later poll (same event, retried) must
+    // not add a second notice — this is the "per transition, not per poll" rule.
+    await expect(
+      processChannelRequestEvents('parent-channel', { repo: 'repo' }, 'repository', [firstEvent], roomParticipants),
+    ).rejects.toThrow('exited');
+    expect(noticeCount()).toBe(1);
+
+    // The backend recovers: `firstEvent` is still durably pending (it kept
+    // throwing, so it was never marked delivered), and the durable inbox
+    // retries it ahead of anything new. Its retry now succeeds, clearing the
+    // errored state.
+    sessionPromptSpy.mockResolvedValueOnce({
+      stopReason: 'end_turn',
+      updates: [],
+      agentText: 'I am back.',
+      toolCalls: [],
+    } as never);
+    await processChannelRequestEvents('parent-channel', { repo: 'repo' }, 'repository', [], roomParticipants);
+    expect(noticeCount()).toBe(1);
+
+    // The backend fails again with the same shape on a fresh addressed turn:
+    // because the state cleared on the intervening success, this is a fresh
+    // transition and re-notifies.
+    sessionPromptSpy.mockRejectedValue(harnessDownError);
+    const secondEvent = requestEvent([['p', body.agent.publicKey]], human, 'Hello again?');
+    await expect(
+      processChannelRequestEvents('parent-channel', { repo: 'repo' }, 'repository', [secondEvent], roomParticipants),
+    ).rejects.toThrow('exited');
+    expect(noticeCount()).toBe(2);
+
+    await rm('/tmp/buzzy-error-state-notice-unit', { recursive: true, force: true });
+  });
+
+  it('never publishes an error-state notice for a healthy agent', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-error-state-healthy-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
+    const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    vi.spyOn(client, 'sessionPrompt').mockResolvedValue({
+      stopReason: 'end_turn',
+      updates: [],
+      agentText: 'All good here.',
+      toolCalls: [],
+    } as never);
+    body.registerSession({
+      channelId: 'parent-channel',
+      sessionId: 'readonly-session',
+      client,
+      mode: 'readonly',
+    });
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const processChannelRequestEvents = (
+      Reflect.get(body, 'processChannelRequestEvents') as (...args: unknown[]) => Promise<number>
+    ).bind(body);
+    const roomParticipants = [human.publicKey, body.agent.publicKey];
+    const event = requestEvent([['p', body.agent.publicKey]], human, 'How are you?');
+
+    await processChannelRequestEvents('parent-channel', { repo: 'repo' }, 'repository', [event], roomParticipants);
+
+    const errorTexts = Object.values(AGENT_ERROR_STATE_MESSAGES);
+    expect(published.some((item) => errorTexts.includes(item.content))).toBe(false);
+
+    await rm('/tmp/buzzy-error-state-healthy-unit', { recursive: true, force: true });
+  });
+
+  it('classifies a rate-limit-shaped session failure as rate-limited, not harness-unavailable', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-error-state-ratelimit-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
+    const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    vi.spyOn(client, 'sessionPrompt').mockRejectedValue(
+      new Error('OpenRouter error: 429 Too Many Requests, please retry later'),
+    );
+    body.registerSession({
+      channelId: 'parent-channel',
+      sessionId: 'readonly-session',
+      client,
+      mode: 'readonly',
+    });
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const processChannelRequestEvents = (
+      Reflect.get(body, 'processChannelRequestEvents') as (...args: unknown[]) => Promise<number>
+    ).bind(body);
+    const roomParticipants = [human.publicKey, body.agent.publicKey];
+    const event = requestEvent([['p', body.agent.publicKey]], human, 'What does this repo do?');
+
+    await expect(
+      processChannelRequestEvents('parent-channel', { repo: 'repo' }, 'repository', [event], roomParticipants),
+    ).rejects.toThrow('429');
+
+    expect(
+      published.some((item) => item.content === AGENT_ERROR_STATE_MESSAGES['rate-limited']),
+    ).toBe(true);
+    expect(
+      published.some((item) => item.content === AGENT_ERROR_STATE_MESSAGES['harness-unavailable']),
+    ).toBe(false);
+
+    await rm('/tmp/buzzy-error-state-ratelimit-unit', { recursive: true, force: true });
+  });
+
+  it('speaks a corner turn failure once per transition through the same pollMembers dedup', async () => {
+    const agent = newIdentity('corner-error-state-agent');
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: '/tmp/buzzy-error-state-corner-unit',
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+    );
+    const sessionPrompt = vi.fn().mockRejectedValue(
+      new Error('ACP agent codex exited code=1 signal=null'),
+    );
+    const session = {
+      channelId: 'corner-error-state',
+      sessionId: 'session-error-state',
+      client: { sessionPrompt, sessionCancel: vi.fn(), activeRunId: () => undefined },
+    } as never;
+    body.registerSubchannel({
+      subchannelId: 'corner-error-state',
+      worktreePath: '/tmp/nonexistent-corner-error-state',
+      featureBranch: 'feature/error-state',
+      role: agent,
+      session,
+      lastPolledAt: 0,
+      archived: false,
+    });
+    const followUp = signEvent(
+      {
+        pubkey: human.publicKey,
+        created_at: Math.floor(Date.now() / 1000),
+        kind: 9,
+        tags: [['h', 'corner-error-state']],
+        content: 'One more thing.',
+      },
+      human.secretKey,
+    );
+    (Reflect.get(body, 'agentRelay') as { queryEvents: unknown }).queryEvents = vi
+      .fn()
+      .mockResolvedValue([followUp]);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const noticeCount = () =>
+      published.filter((item) =>
+        item.content.includes(AGENT_ERROR_STATE_MESSAGES['harness-unavailable']),
+      ).length;
+
+    await body.pollMembers('corner-error-state');
+    expect(noticeCount()).toBe(1);
+
+    // Same underlying failure, retried on a second poll tick: still one notice.
+    await body.pollMembers('corner-error-state');
+    expect(noticeCount()).toBe(1);
+
+    await rm('/tmp/buzzy-error-state-corner-unit', { recursive: true, force: true });
   });
 
   it('opens an edit corner only after a human allows the first mutating request', async () => {

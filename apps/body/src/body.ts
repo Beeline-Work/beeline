@@ -40,6 +40,11 @@ import {
   createNarrativeCommitter,
 } from './activity.js';
 import {
+  AGENT_ERROR_STATE_MESSAGES,
+  classifyAgentErrorState,
+  type AgentErrorState,
+} from './agent-state-messages.js';
+import {
   createChannel,
   setMemberRole,
   newIdentity,
@@ -1017,6 +1022,13 @@ export class Body {
   private sharedSocket?: SharedRelaySocket;
   private disposed = false;
   private presenceGenerations = new Map<string, string>();
+  /**
+   * Last errored/blocked state notified per channel (Room or corner). Drives
+   * the "one notice per state transition, not per poll" rule for
+   * `notifyAgentErrorStateOnce`/`clearAgentErrorState` — see
+   * `agent-state-messages.ts`.
+   */
+  private erroredStateByChannel = new Map<string, AgentErrorState>();
   private activeExchangeReplies = new Set<string>();
   private resolveNamedRepository?: (target: NamedRepositoryTarget) => Promise<BoundRepo>;
   /** Rate limiter for the access-policy auto-response: one refusal per sender per window. */
@@ -2218,6 +2230,31 @@ export class Body {
     return () => this.activeExchangeReplies.delete(key);
   }
 
+  /**
+   * Speak a hard-coded, state-appropriate notice into a Room/corner — once
+   * per transition into `state`, not once per poll. A repeated call with the
+   * same `state` already notified for this channel is a no-op; a different
+   * `state` (or the same one recurring after `clearAgentErrorState`) notifies
+   * again. Best-effort: a failed publish is logged, never thrown, matching
+   * every other notice helper here (`postAgentStallNotice` et al.).
+   */
+  private notifyAgentErrorStateOnce(
+    channelId: string,
+    state: AgentErrorState,
+    replyTo?: string,
+  ): void {
+    if (this.erroredStateByChannel.get(channelId) === state) return;
+    this.erroredStateByChannel.set(channelId, state);
+    postAgentMessage(channelId, this.agentIdentity, AGENT_ERROR_STATE_MESSAGES[state], replyTo).catch(
+      (error) => console.error(`[body] failed to publish agent error notice (${state}):`, error),
+    );
+  }
+
+  /** The errored state for this channel has cleared; the next occurrence may notify again. */
+  private clearAgentErrorState(channelId: string): void {
+    this.erroredStateByChannel.delete(channelId);
+  }
+
   private async postUnavailableExchangeReply(
     channelId: string,
     request: ChannelTaskRequest,
@@ -2630,6 +2667,7 @@ export class Body {
           }
           this.processedRequestIds.add(event.id);
           await this.durableState.delivered(tlcChannelId, event.id);
+          this.clearAgentErrorState(tlcChannelId);
         } catch (error) {
           const attempts = await this.durableState.failed(tlcChannelId, event.id, error);
           // A genuinely wedged backend: stop blindly re-driving it from
@@ -2647,6 +2685,8 @@ export class Body {
             await this.durableState.delivered(tlcChannelId, event.id);
             continue;
           }
+          const errorState = classifyAgentErrorState(error);
+          if (errorState) this.notifyAgentErrorStateOnce(tlcChannelId, errorState, event.id);
           throw error;
         }
       } finally {
@@ -3840,6 +3880,7 @@ export class Body {
         if (reconnectBackoff.recovered()) {
           console.log(`[body] Room ${channelId} WS reconnected`);
         }
+        this.clearAgentErrorState(channelId);
         await presence.setStatus('online');
 
         // This is a belt-and-suspenders read, not the request loop. Starting
@@ -3882,6 +3923,10 @@ export class Body {
         this.onRoomPollFailure?.(channelId, delayMs);
         await presence.setStatus('offline');
         console.error(`[body] Room WebSocket failed; reconnecting in ${delayMs}ms:`, error);
+        // Fire-and-forget: this best-effort publish can itself retry for
+        // seconds over HTTP (the WS reconnect it's reporting on may still be
+        // unaffected), and must never add to the reconnect backoff delay.
+        this.notifyAgentErrorStateOnce(channelId, 'relay-disconnected');
         await this.waitForPoll(delayMs, opts.signal);
       } finally {
         if (maintenanceTimer) clearInterval(maintenanceTimer);
@@ -4298,6 +4343,7 @@ export class Body {
           processed.add(evt.id);
           await this.durableState.delivered(subchannelId, evt.id);
           count++;
+          this.clearAgentErrorState(subchannelId);
         } catch (err) {
           // The close path kills the ACP session to abort the turn, which
           // routinely surfaces here as a rejected prompt — that is close
@@ -4334,6 +4380,8 @@ export class Body {
             count++;
             continue;
           }
+          const errorState = classifyAgentErrorState(err);
+          if (errorState) this.notifyAgentErrorStateOnce(subchannelId, errorState, evt.id);
           retryFrom = Math.min(retryFrom ?? evt.created_at, evt.created_at);
         }
       }

@@ -385,6 +385,21 @@ lines.on('line', (line) => {
   return binary;
 }
 
+async function fakeAuthFailingAgent(): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-authfail-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'fake-authfail-agent.mjs');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+process.stderr.write('Error: ANTHROPIC_API_KEY is not set. Please run \`claude login\`.\\n');
+process.exit(1);
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
 describe('AcpClient live steering', () => {
   it('lets the host intercept and reject a mutating permission request', async () => {
     const requests: unknown[] = [];
@@ -429,6 +444,17 @@ describe('AcpClient live steering', () => {
     await prompt;
     expect(client.isAlive).toBe(true);
     await client.stop();
+  });
+
+  it('carries the child process stderr tail into a spawn/exit failure', async () => {
+    const client = new AcpClient({
+      agentCommand: await fakeAuthFailingAgent(),
+      agentEnv: {},
+    });
+
+    await expect(client.start()).rejects.toThrow(
+      /ACP agent .* exited code=1 signal=null: Error: ANTHROPIC_API_KEY is not set\. Please run `claude login`\./,
+    );
   });
 
   it('injects ordered follow-ups into the active prompt run', async () => {

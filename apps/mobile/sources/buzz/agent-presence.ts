@@ -101,6 +101,19 @@ export function presenceMapFromSessionEvents(
   }, {});
 }
 
+/**
+ * A user just addressed an agent (an explicit @mention, or the corner's own
+ * agent) whose presence reads offline/stale. The daemon cannot speak for
+ * itself here — a fully down daemon publishes nothing, not even an error —
+ * so this is a client-rendered notice from detected staleness, not a
+ * message either party sent. `null` when the agent is online: never render
+ * a notice for a healthy agent.
+ */
+export function addressedAgentOfflineNotice(agentName: string, online: boolean): string | null {
+  if (online) return null;
+  return `${agentName} seems offline right now — its host machine may be off.`;
+}
+
 /** Reinstall relay delivery before reading the current replaceable presence snapshot. */
 export async function reconnectPresenceAfterForeground(
   installSubscription: () => Promise<void>,

@@ -143,6 +143,7 @@ import { isNearChatBottom } from '@/buzz/chat-scroll';
 import { replyMessageText, type MessageReplyTarget } from '@/buzz/message-reply';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
+  addressedAgentOfflineNotice,
   isAgentPresenceOnlineWithReconnectGrace,
   isAgentOfflineAfterPresenceResolved,
   isAgentTurnActive,
@@ -211,7 +212,8 @@ function ledgerSpeakerKey(
   message: ChatDisplayMessage,
   agentByPubkey: Map<string, unknown>,
 ): string | null {
-  if (message.corner || message.isMergeSummary || message.isArchivedNotice) return null;
+  if (message.corner || message.isMergeSummary || message.isArchivedNotice || message.isSystemNotice)
+    return null;
   if (message.writePermission) return null;
   const isAgent =
     message.isAgentAuthor ||
@@ -1491,6 +1493,33 @@ export default function BuzzChat() {
         : parentChannelId
           ? undefined
           : (selectedMentionedAgent ?? mentionedAgentPubkey(text, mentionableAgents));
+      // A Corner has exactly one administering agent, so every message there
+      // addresses it implicitly — a Room message only addresses an agent when
+      // an explicit @mention resolved one above.
+      const addressedAgentPubkey = parentChannelId ? cornerAgentPubkey : mentionedAgent;
+      if (addressedAgentPubkey) {
+        const addressedAgentOnline = isAgentPresenceOnlineWithReconnectGrace(
+          agentPresences[addressedAgentPubkey],
+          presenceNow,
+          presenceReconnectGrace[addressedAgentPubkey],
+        );
+        const offlineNotice = addressedAgentOfflineNotice(
+          resolveAgentDisplayIdentity(addressedAgentPubkey, agentByPubkey.get(addressedAgentPubkey))
+            .name,
+          addressedAgentOnline,
+        );
+        if (offlineNotice) {
+          addMessages([
+            {
+              id: `offline-notice-${Date.now()}`,
+              text: offlineNotice,
+              isUser: false,
+              timestamp: Date.now(),
+              isSystemNotice: true,
+            },
+          ]);
+        }
+      }
       // Build and sign exactly once. publishPreparedMessage retries the same
       // id on a transient failure, so the relay can dedupe an ambiguous send.
       const eventId = replyTarget
@@ -1541,6 +1570,11 @@ export default function BuzzChat() {
     agentsOffline,
     roomRepoCandidates.length,
     roomRepository,
+    cornerAgentPubkey,
+    agentPresences,
+    presenceNow,
+    presenceReconnectGrace,
+    agentByPubkey,
   ]);
 
   const pickPhoto = useCallback(async () => {
@@ -2149,6 +2183,15 @@ export default function BuzzChat() {
         return (
           <View style={styles.archivedBubble}>
             <Text style={styles.archivedText}>□ CORNER ARCHIVED · READ-ONLY</Text>
+          </View>
+        );
+      }
+
+      // ── Offline notice (client-rendered only, never published) ────
+      if (item.isSystemNotice) {
+        return (
+          <View style={styles.systemNoticeBubble} testID={`system-notice-${item.id}`}>
+            <Text style={styles.systemNoticeText}>{item.text}</Text>
           </View>
         );
       }
@@ -4138,6 +4181,19 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 16,
     letterSpacing: 0.8,
+    color: groknight.ledgerQuiet,
+    textAlign: 'center',
+  },
+
+  // ── Offline notice (client-rendered only) ─────────────────────────
+  systemNoticeBubble: {
+    paddingVertical: 8,
+    marginBottom: 20,
+    alignSelf: 'center',
+    maxWidth: '90%',
+  },
+  systemNoticeText: {
+    ...Typography.ledger(),
     color: groknight.ledgerQuiet,
     textAlign: 'center',
   },

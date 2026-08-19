@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AGENT_PRESENCE_STALE_MS } from '@beeline/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
 import {
+  addressedAgentOfflineNotice,
   agentPresenceFromSessionEvent,
   isAgentPresenceOnlineWithReconnectGrace,
   isAgentOfflineAfterPresenceResolved,
@@ -158,5 +159,21 @@ describe('mobile agent presence projection', () => {
 
     expect(order).toEqual(['subscribe', 'backfill']);
     expect(refreshed[agent]).toMatchObject({ status: 'online' });
+  });
+});
+
+describe('addressedAgentOfflineNotice', () => {
+  it('renders a friendly notice naming the agent when its presence is stale', () => {
+    expect(addressedAgentOfflineNotice('beebee', false)).toBe(
+      'beebee seems offline right now — its host machine may be off.',
+    );
+  });
+
+  it('renders nothing when the addressed agent is online (fresh presence)', () => {
+    expect(addressedAgentOfflineNotice('beebee', true)).toBeNull();
+  });
+
+  it('renders nothing for a healthy agent regardless of name', () => {
+    expect(addressedAgentOfflineNotice('alden', true)).toBeNull();
   });
 });

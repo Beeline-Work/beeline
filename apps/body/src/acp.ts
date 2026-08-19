@@ -17,6 +17,9 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import type { SessionMode } from './config.js';
 
+/** Bound on the stderr tail kept for an exit-failure error message. */
+const STDERR_TAIL_MAX_CHARS = 2_000;
+
 export interface McpServerWire {
   name: string;
   command: string;
@@ -152,6 +155,10 @@ export class AcpClient extends EventEmitter {
   private toolCallMetadata = new Map<string, AcpPermissionRequest['toolCall']>();
   private supportsStandardSteering = false;
   private alive = false;
+  /** Bounded tail of recent stderr, so a spawn/exit failure's rejection text
+   *  carries the real reason (e.g. a harness's own "missing API key" notice)
+   *  instead of just the bare exit code — see `classifyAgentErrorState`. */
+  private stderrTail = '';
   private agentEnv: Record<string, string>;
   private agentCommand: string;
   private agentArgs: string[];
@@ -206,8 +213,10 @@ export class AcpClient extends EventEmitter {
     });
     this.alive = true;
 
+    this.stderrTail = '';
     this.child.stderr.setEncoding('utf8');
     this.child.stderr.on('data', (chunk: string) => {
+      this.stderrTail = (this.stderrTail + chunk).slice(-STDERR_TAIL_MAX_CHARS);
       this.emit('stderr', chunk);
     });
 
@@ -216,9 +225,14 @@ export class AcpClient extends EventEmitter {
 
     this.child.on('exit', (code, signal) => {
       this.alive = false;
+      const stderrSuffix = this.stderrTail.trim() ? `: ${this.stderrTail.trim()}` : '';
       for (const [, p] of this.pending) {
         this.clearTimer(p);
-        p.reject(new Error(`ACP agent ${this.agentCommand} exited code=${code} signal=${signal}`));
+        p.reject(
+          new Error(
+            `ACP agent ${this.agentCommand} exited code=${code} signal=${signal}${stderrSuffix}`,
+          ),
+        );
       }
       this.pending.clear();
       this.activeRunIds.clear();

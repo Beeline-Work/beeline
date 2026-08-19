@@ -507,8 +507,18 @@ export interface SubchannelInfo {
    * stranded by its own success.
    */
   landedTip?: string;
-  /** The landed-work recap has already been posted to the parent Room. */
+  /**
+   * The landed-work recap is durably on the wire in the parent Room.
+   *
+   * Set only once `publishEvent` has actually accepted it — never on entry to
+   * the attempt. Claiming it up front made a single transient relay refusal
+   * permanent: every later poll returned at the guard and the Room was never
+   * told anything, which is one of the two ways the live recap went missing.
+   * `landSummaryInFlight` is what keeps the attempt itself exactly-once.
+   */
   landSummaryPosted?: boolean;
+  /** Recap attempts spent, capped at MAX_LAND_SUMMARY_ATTEMPTS before the archive proceeds. */
+  landSummaryAttempts?: number;
   /** A post-land CI watch is already running for this corner's landed commit. */
   ciWatchStarted?: boolean;
   /** Successfully forwarded member events, preventing same-second relay replays. */
@@ -779,6 +789,54 @@ export type DeliveryRetryPosture = 'auto' | 'realigning' | 'blocked';
  * problem to sequence, not a loop for the daemon to run forever.
  */
 export const MAX_CORNER_REALIGN_ATTEMPTS = 2;
+
+/**
+ * How long the landed-work recap will wait for the corner's own agent to write
+ * it before falling back to the deterministic line.
+ *
+ * Deliberately far shorter than `ROOM_AGENT_PROMPT_TIMEOUT_MS`. This turn runs
+ * INLINE on the maintenance tick, at the exact moment the archive is stopping
+ * the session it is talking to, so "no answer" is the normal outcome of a race
+ * the recap always loses — and every second spent waiting is a second this
+ * corner's summary and archive, and every other corner's land behind it in the
+ * same loop, do not happen. The recap's content is a nicety; its existence is
+ * not, and the deterministic fallback is already a true record of the land.
+ */
+export const LAND_SUMMARY_TURN_TIMEOUT_MS = 45_000;
+
+/**
+ * Maintenance ticks a refused land recap may hold a landed corner's archive
+ * open for. Past this the teardown proceeds and the Room goes without — but
+ * only after this many logged refusals naming the precise reason.
+ */
+export const MAX_LAND_SUMMARY_ATTEMPTS = 3;
+
+/** The message of a caught unknown, without a stack, for a one-line log. */
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Resolve `work`, or reject with `reason` once `ms` have passed.
+ *
+ * The loser is abandoned, not cancelled: an ACP request that never answers
+ * keeps its own idle timer and rejects into a handler that no longer cares.
+ */
+function withTimeout<T>(work: Promise<T>, ms: number, reason: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(reason)), ms);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 /**
  * Is this land refusal the "someone else advanced the target branch" shape —
@@ -1361,6 +1419,15 @@ export class Body {
    * queued steers strictly ordered and delivered exactly once.
    */
   private inFlightSubchannelPolls = new Set<string>();
+  /**
+   * Corners with a landed-work recap attempt in flight. The same claim/release
+   * shape again: the land path and the completion poll can both reach
+   * `postCornerLandSummary` for one corner at once, and a recap that has to ask
+   * the agent for prose is easily long enough for that. Released on failure —
+   * `SubchannelInfo.landSummaryPosted` is the permanent half, and it is only
+   * ever set once the relay has actually taken the event.
+   */
+  private landSummaryInFlight = new Set<string>();
   /**
    * Per-channel count of inbound human messages seen. A turn snapshots this
    * when its prompt actually starts; the "still working" stall notice is
@@ -4838,6 +4905,32 @@ export class Body {
         continue;
       }
 
+      // The land is proven HERE — this is the only moment every non-relay
+      // shape (a direct-remote push, a local fast-forward, and the re-land
+      // after a moved-target self-heal) is known to have succeeded. Recapping
+      // from `pollMergeCompletions` alone made the recap depend on that poll
+      // re-deriving the land from `info.mergeTarget`, which landing itself is
+      // what destroys.
+      //
+      // Recorded BEFORE anything is published about it. Landing is a one-shot:
+      // the very next visit sees the target ref already at the approved tip and
+      // returns `skip`, so this block runs exactly once — and it used to write
+      // `landedTip` only after two awaited relay publishes, either of which
+      // throws out of the whole poll on an ordinary transient refusal. The
+      // corner then had no `landedTip`, and once the next corner turn's
+      // `publishMergeReady` withdrew `mergeTarget` there was nothing left for
+      // `confirmedLandedTip` to re-derive either: no recap, no summary, no
+      // archive, forever. That is the live miss this ordering closes.
+      info.landedTip = target.tip;
+      console.log(
+        `[body] landed corner ${info.subchannelId} on ${target.branch} at ${target.tip.slice(0, 12)}`,
+      );
+
+      // Both status publishes are announcements ABOUT a land that already
+      // happened, and neither is retryable (see above). A refused announcement
+      // is therefore logged and stepped over rather than allowed to cost this
+      // corner its recap — or to abort the loop and starve every corner behind
+      // it of its own land.
       await postControlMessage(
         info.subchannelId,
         this.agentIdentity,
@@ -4854,6 +4947,8 @@ export class Body {
           ['tip', target.tip],
           ['agent', this.agentIdentity.publicKey],
         ],
+      ).catch((error) =>
+        console.error(`[body] land status card refused for ${info.subchannelId}:`, error),
       );
       await this.postParentCornerStatus(
         info,
@@ -4865,14 +4960,9 @@ export class Body {
           ['reviewer', info.humanMergeApproval!.reviewer],
           ['tip', target.tip],
         ],
+      ).catch((error) =>
+        console.error(`[body] land parent status refused for ${info.subchannelId}:`, error),
       );
-      // The land is proven HERE — this is the only moment every non-relay
-      // shape (a direct-remote push, a local fast-forward, and the re-land
-      // after a moved-target self-heal) is known to have succeeded. Recapping
-      // from `pollMergeCompletions` alone made the recap depend on that poll
-      // re-deriving the land from `info.mergeTarget`, which landing itself is
-      // what destroys.
-      info.landedTip = target.tip;
       await this.recapLandedCorner(info, target.tip);
       landed++;
     }
@@ -5009,9 +5099,48 @@ export class Body {
   ): Promise<string | undefined> {
     if (info.landSummaryPosted) return undefined;
     const parentId = info.session.parentChannelId;
-    if (!parentId) return undefined;
-    info.landSummaryPosted = true;
+    if (!parentId) {
+      this.noteLandRecap(info, 'skipped', 'the corner has no parent Room');
+      return undefined;
+    }
+    // Claimed synchronously (no `await` between check and add), the same shape
+    // `inFlightRequestIds` uses: the land path and the completion poll can be
+    // inside this function for the same corner at once, and a recap turn is
+    // long enough for that to be routine. The claim is RELEASED in `finally`,
+    // so a failed attempt is retried rather than burned — unlike
+    // `landSummaryPosted`, which now only ever means "the relay took it".
+    if (this.landSummaryInFlight.has(info.subchannelId)) return undefined;
+    this.landSummaryInFlight.add(info.subchannelId);
+    info.landSummaryAttempts = (info.landSummaryAttempts ?? 0) + 1;
+    this.noteLandRecap(
+      info,
+      'attempting',
+      `tip=${landedTip.slice(0, 12)} room=${parentId} attempt=${info.landSummaryAttempts}`,
+    );
+    try {
+      return await this.publishCornerLandSummary(info, landedTip, parentId);
+    } finally {
+      this.landSummaryInFlight.delete(info.subchannelId);
+    }
+  }
 
+  /** One line per outcome, so a recap that never arrives is never also silent in the log. */
+  private noteLandRecap(
+    info: SubchannelInfo,
+    outcome: 'attempting' | 'published' | 'refused' | 'skipped' | 'degraded',
+    detail: string,
+  ): void {
+    const line = `[body] land recap ${outcome} for corner ${info.subchannelId}: ${detail}`;
+    if (outcome === 'refused') console.error(line);
+    else console.log(line);
+  }
+
+  /** The recap itself. Split out purely so the in-flight claim above owns one `finally`. */
+  private async publishCornerLandSummary(
+    info: SubchannelInfo,
+    landedTip: string,
+    parentId: string,
+  ): Promise<string | undefined> {
     const branch = (info.mergeTarget?.branch ?? info.boundRepo?.targetBranch ?? 'refs/heads/main').replace(
       /^refs\/heads\//,
       '',
@@ -5033,22 +5162,40 @@ export class Body {
       objective ? `Set out to: ${objective}` : `Set out to finish the work in ${info.featureBranch}.`,
       `Landed: ${changeLine}.`,
     ].join('\n');
-    try {
-      const result = await this.promptAgent(info.session, [
-        `This corner's change has landed on ${branch} at ${landedTip.slice(0, 12)}.`,
-        'Write a short recap for the people in the parent room, who did not watch this corner work.',
-        'Cover, in this order and in plain language:',
-        '- what this corner set out to do',
-        '- what actually landed, in one line',
-        '- anything you deliberately did NOT do',
-        'Under 6 lines. No code fences, no command output, no commit hashes — the commit id is appended for you.',
-        '',
-        `For reference — objective: ${objective || '(not recorded)'}; landed: ${changeLine}.`,
-      ].join('\n'));
-      const authored = conciseLandSummary(stripAgentReplyPreamble(result.agentText));
-      if (authored) recap = authored;
-    } catch (error) {
-      console.error(`[body] land summary turn failed for ${info.subchannelId}:`, error);
+    // The agent's own voice is the nice-to-have; the record is the point. A
+    // land is immediately followed by the archive that stops this very session,
+    // so asking it for prose is a request that can hang until the ACP idle
+    // budget expires — three minutes of a maintenance tick that is holding up
+    // this corner's own summary and archive, and every other corner's land
+    // behind it. Bounded here, and skipped outright once the corner is closing.
+    if (info.archived || info.session.archived) {
+      this.noteLandRecap(info, 'degraded', 'corner is closing; using the deterministic recap');
+    } else {
+      try {
+        const result = await withTimeout(
+          this.promptAgent(info.session, [
+            `This corner's change has landed on ${branch} at ${landedTip.slice(0, 12)}.`,
+            'Write a short recap for the people in the parent room, who did not watch this corner work.',
+            'Cover, in this order and in plain language:',
+            '- what this corner set out to do',
+            '- what actually landed, in one line',
+            '- anything you deliberately did NOT do',
+            'Under 6 lines. No code fences, no command output, no commit hashes — the commit id is appended for you.',
+            '',
+            `For reference — objective: ${objective || '(not recorded)'}; landed: ${changeLine}.`,
+          ].join('\n')),
+          LAND_SUMMARY_TURN_TIMEOUT_MS,
+          `the corner session did not answer within ${Math.round(LAND_SUMMARY_TURN_TIMEOUT_MS / 1000)}s`,
+        );
+        const authored = conciseLandSummary(stripAgentReplyPreamble(result.agentText));
+        if (authored) recap = authored;
+      } catch (error) {
+        this.noteLandRecap(
+          info,
+          'degraded',
+          `agent turn unavailable (${errorText(error)}); using the deterministic recap`,
+        );
+      }
     }
 
     const event = buildAgentMessage(
@@ -5067,6 +5214,10 @@ export class Body {
       ],
     );
     await publishEvent(event, this.agentIdentity);
+    // Only now. Everything above is re-attemptable; a relay that took the
+    // event is the one fact that makes a second recap a duplicate.
+    info.landSummaryPosted = true;
+    this.noteLandRecap(info, 'published', `event=${event.id} room=${parentId}`);
     return event.id;
   }
 
@@ -5154,10 +5305,36 @@ export class Body {
   private async recapLandedCorner(info: SubchannelInfo, landedTip: string): Promise<void> {
     if (info.landSummaryPosted) return;
     const landSummaryId = await this.postCornerLandSummary(info, landedTip).catch((error) => {
-      console.error(`[body] land summary publish failed for ${info.subchannelId}:`, error);
+      this.noteLandRecap(info, 'refused', errorText(error));
       return undefined;
     });
     this.watchLandedCommitCi(info, landedTip, landSummaryId);
+  }
+
+  /**
+   * Whether the archive that follows a land may proceed without the Room having
+   * been told what the corner delivered.
+   *
+   * A landed corner is deleted from every map the moment it is archived, so an
+   * archive is the last chance the recap ever gets. A refused publish therefore
+   * holds the teardown for a few maintenance ticks — but only a few: a corner
+   * left open forever because the relay will not take one kind:9 event is a
+   * worse failure than a Room that missed a recap, and by then the refusal has
+   * been logged `MAX_LAND_SUMMARY_ATTEMPTS` times with its precise reason.
+   */
+  private landRecapSettled(info: SubchannelInfo): boolean {
+    if (info.landSummaryPosted) return true;
+    // A corner with no parent Room has nowhere to recap TO, and
+    // `postCornerLandSummary` returns without spending an attempt on it — so
+    // without this it would hold its own archive open forever.
+    if (!info.session.parentChannelId) return true;
+    if ((info.landSummaryAttempts ?? 0) < MAX_LAND_SUMMARY_ATTEMPTS) return false;
+    this.noteLandRecap(
+      info,
+      'skipped',
+      `giving up after ${info.landSummaryAttempts} attempts; archiving without a recap`,
+    );
+    return true;
   }
 
   /**
@@ -5211,8 +5388,11 @@ export class Body {
       info.landedTip = landedTip;
       // The work is durably on the target ref — the one moment a Room reader
       // can be told, in the agent's own voice, what this corner delivered.
-      // Never allowed to block the archive below.
       await this.recapLandedCorner(info, landedTip);
+      // The archive deletes this corner from every map, so it is the recap's
+      // last chance. A refusal that is still worth re-attempting holds the
+      // teardown for this tick rather than taking the record with it.
+      if (!this.landRecapSettled(info)) continue;
       await this.postMergeSummary(
         info.subchannelId,
         info.mergeSummary ?? `Merged ${info.featureBranch} at ${landedTip.slice(0, 12)}…`,
@@ -5959,6 +6139,19 @@ export class Body {
 
       // Post status messages BEFORE archiving (relay rejects events on archived channels).
       const parentId = session.parentChannelId;
+      // Last chance. Everything below deletes this corner from every map, so a
+      // land whose recap has not reached the Room yet — a human closing the
+      // corner in the window after the land, or a refusal the completion poll
+      // never got to re-attempt — loses it here or never. `info.archived` is
+      // already true above, so this takes the deterministic path and costs one
+      // publish, not an agent turn against the session just stopped.
+      if (
+        info.landedTip &&
+        !info.landSummaryPosted &&
+        (info.landSummaryAttempts ?? 0) < MAX_LAND_SUMMARY_ATTEMPTS
+      ) {
+        await this.recapLandedCorner(info, info.landedTip);
+      }
       if (parentId && !info.archiveParentNotified) {
         // `mergeSummary` is process-local. Recover the last completed response
         // from durable conversation state when a restarted daemon closes the

@@ -3,7 +3,7 @@ import {
   cachedChannelKind,
   channelHeaderTitle,
   cornerSessionState,
-  latestCornerTurnSummary,
+  changeReviewSummary,
   resolveCornerViewAgentPubkey,
 } from './corner-session';
 import { ROOM_LABEL } from './vocabulary';
@@ -76,18 +76,21 @@ describe('corner session presentation', () => {
     expect(resolveCornerViewAgentPubkey(messages, isRegisteredAgent)).toBe('beebee-pk');
   });
 
-  it('uses the durable agent reply as the turn summary', () => {
-    expect(
-      latestCornerTurnSummary([
-        { id: 'steer', text: 'Please rename the Room', isUser: true, timestamp: 1 },
-        {
-          id: 'summary',
-          text: 'Renamed the Room and updated its tests.',
-          isUser: false,
-          timestamp: 2,
-        },
-      ]),
-    ).toBe('Renamed the Room and updated its tests.');
+  it('describes the reviewed change, never the turn narration', () => {
+    // The review card sits directly above the diff, under a transcript that
+    // already carries the agent's prose in full — it names files, not words.
+    expect(changeReviewSummary(['apps/body/src/acp.ts'])).toBe('apps/body/src/acp.ts');
+    expect(changeReviewSummary(['a.ts', 'b.ts'])).toBe('a.ts, b.ts');
+    expect(changeReviewSummary(['a.ts', 'b.ts', 'c.ts', 'd.ts'])).toBe('a.ts, b.ts +2 more');
+  });
+
+  it('says nothing at all until the manifest has actually loaded', () => {
+    // "not known yet" and "nothing changed" are different answers; the card
+    // renders its own neutral line rather than a count it cannot stand behind.
+    expect(changeReviewSummary(null)).toBeUndefined();
+    expect(changeReviewSummary(undefined)).toBeUndefined();
+    expect(changeReviewSummary([])).toBeUndefined();
+    expect(changeReviewSummary(['   '])).toBeUndefined();
   });
 });
 

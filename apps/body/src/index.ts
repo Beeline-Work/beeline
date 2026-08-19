@@ -75,6 +75,20 @@ export {
   type HarnessEnforcement,
 } from './harness-capabilities.js';
 export {
+  buildBwrapArgv,
+  detectBwrapSandbox,
+  harnessHomeStateDirs,
+  isSandboxPolicy,
+  resolveGitCommonDir,
+  sandboxMountPlan,
+  wrapAgentCommand,
+  DEFAULT_SANDBOX_POLICY,
+  type BwrapAvailability,
+  type SandboxMountPlan,
+  type SandboxPolicy,
+  type SandboxSessionSpec,
+} from './bwrap-sandbox.js';
+export {
   projectActivity,
   postAgentMessage,
   postControlMessage,

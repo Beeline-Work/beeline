@@ -571,3 +571,35 @@ describe('AcpClient live steering', () => {
     }
   });
 });
+
+
+describe('AcpClient failure reporting', () => {
+  it('names the configured harness, not the OS sandbox wrapper, when the child dies', async () => {
+    // Under `bwrap-sandbox.ts` the spawned command IS bwrap, so without an
+    // explicit label every harness crash would be reported as a bwrap crash —
+    // and `classifyAgentErrorState` reads this text to tell a missing API key
+    // from an unavailable harness.
+    const client = new AcpClient({
+      agentCommand: '/bin/sh',
+      // Stay alive long enough for the request to be registered, so the exit
+      // rejects a real pending call rather than racing the write.
+      agentArgs: ['-c', 'echo "missing API key" >&2; sleep 0.4; exit 3'],
+      agentLabel: 'pi-acp',
+      agentEnv: {},
+    });
+    // `start()` awaits the ACP `initialize` handshake, so a child that dies
+    // instead of answering surfaces exactly here.
+    await expect(client.start()).rejects.toThrow(/ACP agent pi-acp exited code=3/);
+    // The stderr tail rides along, which is what `classifyAgentErrorState` reads.
+    await expect(client.start()).rejects.toThrow(/missing API key/);
+  });
+
+  it('falls back to the spawned command when no label is given', async () => {
+    const client = new AcpClient({
+      agentCommand: '/bin/sh',
+      agentArgs: ['-c', 'sleep 0.4; exit 4'],
+      agentEnv: {},
+    });
+    await expect(client.start()).rejects.toThrow(/ACP agent \/bin\/sh exited code=4/);
+  });
+});

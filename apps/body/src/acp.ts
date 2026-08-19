@@ -161,6 +161,7 @@ export class AcpClient extends EventEmitter {
   private stderrTail = '';
   private agentEnv: Record<string, string>;
   private agentCommand: string;
+  private agentLabel: string;
   private agentArgs: string[];
   private agentCwd?: string;
   private inheritProcessEnv: boolean;
@@ -172,6 +173,13 @@ export class AcpClient extends EventEmitter {
     agentBinary?: string;
     agentCommand?: string;
     agentArgs?: string[];
+    /**
+     * Human name for the harness in error text. When the daemon wraps the child
+     * in an OS sandbox (`bwrap-sandbox.ts`), `agentCommand` is `bwrap` — but a
+     * spawn/exit failure has to name the harness the operator configured, not
+     * the wrapper, or `classifyAgentErrorState` reports a crash in bubblewrap.
+     */
+    agentLabel?: string;
     agentEnv: Record<string, string>;
     /**
      * Working directory for the child process. The ACP session `cwd` is a
@@ -193,6 +201,7 @@ export class AcpClient extends EventEmitter {
     const command = opts.agentCommand ?? opts.agentBinary;
     if (!command) throw new Error('ACP agent command is required');
     this.agentCommand = command;
+    this.agentLabel = opts.agentLabel ?? command;
     this.agentArgs = [...(opts.agentArgs ?? [])];
     this.agentEnv = opts.agentEnv;
     if (opts.agentCwd) this.agentCwd = opts.agentCwd;
@@ -230,7 +239,7 @@ export class AcpClient extends EventEmitter {
         this.clearTimer(p);
         p.reject(
           new Error(
-            `ACP agent ${this.agentCommand} exited code=${code} signal=${signal}${stderrSuffix}`,
+            `ACP agent ${this.agentLabel} exited code=${code} signal=${signal}${stderrSuffix}`,
           ),
         );
       }

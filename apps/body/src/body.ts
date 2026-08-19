@@ -70,6 +70,7 @@ import {
   isMember,
   isAgentPresenceOnline,
   newerAgentPresence,
+  AGENT_PRESENCE_STALE_MS,
   CHANGE_REVIEW_FILE_TAG,
   CHANGE_REVIEW_MANIFEST_TAG,
   CHANGE_REVIEW_VERSION,
@@ -365,6 +366,35 @@ function relayRetryAfterMs(error: unknown): number {
     Number(match[1]),
   );
   return seconds.length ? Math.ceil(Math.max(...seconds) * 1_000) : 0;
+}
+
+/**
+ * Whether a still-unrecovered reconnect outage has lasted long enough to
+ * publish an explicit `offline` presence marker.
+ *
+ * The two presence signals are not interchangeable. A lease going stale means
+ * "no recent word from this daemon" and heals itself the moment a heartbeat
+ * lands; an explicit `offline` marker is the daemon *asserting* it is gone,
+ * which every reader treats as authoritative and which no reconnect-grace
+ * window forgives. Publishing the second one on any reconnect failure spent
+ * that authority on a one-second socket blip — and because `setStatus` also
+ * changes what the 45s heartbeat republishes, the daemon then went on
+ * asserting "I am offline" with a *fresh* timestamp every heartbeat, while
+ * answering normally over the reconnected socket. That is what made a live
+ * agent read offline to the app on turn after turn.
+ *
+ * A daemon also cannot tell "the relay is unreachable from here" from "I am
+ * going away", and only the second deserves the marker. So a blip is left to
+ * the lease, which already expires on exactly this timescale, and the marker
+ * is reserved for an outage that has outlived it. Graceful shutdown is
+ * unaffected: `startAgentPresence`'s own stop path publishes `offline`
+ * directly.
+ */
+export function shouldMarkPresenceOfflineForOutage(
+  outageStartedAt: number,
+  now: number,
+): boolean {
+  return now - outageStartedAt >= AGENT_PRESENCE_STALE_MS;
 }
 
 /** Bounded exponential spacing for one Room's failed request poll. */
@@ -3834,6 +3864,7 @@ export class Body {
     maintenance: () => Promise<void>,
   ): Promise<void> {
     const reconnectBackoff = new RoomPollBackoff(1_000);
+    let outageStartedAt: number | undefined;
     while (!opts.signal?.aborted && !this.disposed) {
       let client: ReturnType<typeof createBuzzClient> | undefined;
       let release: (() => void) | undefined;
@@ -3881,6 +3912,7 @@ export class Body {
           console.log(`[body] Room ${channelId} WS reconnected`);
         }
         this.clearAgentErrorState(channelId);
+        outageStartedAt = undefined;
         await presence.setStatus('online');
 
         // This is a belt-and-suspenders read, not the request loop. Starting
@@ -3921,7 +3953,12 @@ export class Body {
         if (opts.signal?.aborted || this.disposed) break;
         const delayMs = reconnectBackoff.failed(error);
         this.onRoomPollFailure?.(channelId, delayMs);
-        await presence.setStatus('offline');
+        outageStartedAt ??= Date.now();
+        // A blip is left to the lease; only an outage that outlived it earns
+        // the authoritative marker. See shouldMarkPresenceOfflineForOutage.
+        if (shouldMarkPresenceOfflineForOutage(outageStartedAt, Date.now())) {
+          await presence.setStatus('offline');
+        }
         console.error(`[body] Room WebSocket failed; reconnecting in ${delayMs}ms:`, error);
         // Fire-and-forget: this best-effort publish can itself retry for
         // seconds over HTTP (the WS reconnect it's reporting on may still be

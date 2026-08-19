@@ -56,6 +56,7 @@ import {
   ROOM_AGENT_STALL_MAX_ATTEMPTS,
   ROOM_POLL_FAILURE_BACKOFF_CAP_MS,
   RoomPollBackoff,
+  shouldMarkPresenceOfflineForOutage,
   codegraphMcpServer,
   readOnlyMcpServer,
   roomEditPolicyInstructions,
@@ -65,6 +66,7 @@ import {
 import { AcpClient, isMutatingPermissionRequest } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import {
+  AGENT_PRESENCE_STALE_MS,
   WRITE_PERMISSION_RESPONSE_TAG,
   setAgentModelConfig,
   KIND_AGENT_MODEL_CATALOG,
@@ -717,6 +719,22 @@ describe('agent presence', () => {
 });
 
 describe('Room poll resilience', () => {
+  it('never asserts offline for a reconnect blip, only for an outage that outlived the lease', () => {
+    const outageStartedAt = 1_800_000_000_000;
+    // A socket close and its 1s-backoff retry: the lease already covers this,
+    // and asserting offline here is what made a live agent read offline.
+    expect(shouldMarkPresenceOfflineForOutage(outageStartedAt, outageStartedAt)).toBe(false);
+    expect(shouldMarkPresenceOfflineForOutage(outageStartedAt, outageStartedAt + 1_000)).toBe(false);
+    expect(
+      shouldMarkPresenceOfflineForOutage(outageStartedAt, outageStartedAt + AGENT_PRESENCE_STALE_MS - 1),
+    ).toBe(false);
+    // Past the lease the record would read stale anyway; the explicit marker
+    // now only confirms what a reader has already concluded.
+    expect(
+      shouldMarkPresenceOfflineForOutage(outageStartedAt, outageStartedAt + AGENT_PRESENCE_STALE_MS),
+    ).toBe(true);
+  });
+
   it('backs off one Room independently and resets immediately after a successful poll', () => {
     const backoff = new RoomPollBackoff(1_000, 4_000);
     expect(backoff.failed()).toBe(1_000);

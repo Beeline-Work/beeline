@@ -42,6 +42,48 @@ import { IdentityMark } from '@/components/buzz/IdentityMark';
 const INSTALL_COMMAND = 'curl -fsSL https://relay.buzzrouter.com/install | sh';
 /** Under the 45s daemon heartbeat so a just-started agent reads online promptly. */
 const AGENT_PRESENCE_REFRESH_MS = 30_000;
+/** How long an admin action waits for the connect handshake before failing honestly. */
+const CONNECTION_WAIT_TIMEOUT_MS = 15_000;
+const CONNECTING_MESSAGE = 'Still connecting to the relay. Try again in a moment.';
+
+/** The relay-backed context every admin write needs; only exists once init lands. */
+type WorkspaceConnection = { transport: BuzzRigTransport; communityId: string };
+
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason: unknown) => void;
+};
+
+function createDeferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  // Every rejection is surfaced through the awaiting handler's own `error`
+  // state. This keeps a deferred nobody happened to await from tripping the
+  // unhandled-rejection warning.
+  promise.catch(() => undefined);
+  return { promise, resolve, reject };
+}
+
+function awaitWithin<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (caught) => {
+        clearTimeout(timer);
+        reject(caught);
+      },
+    );
+  });
+}
 
 function roleLabel(role: CommunityRole): string {
   return role.toUpperCase();
@@ -113,6 +155,14 @@ export default function BuzzAgents() {
   const [openModelAxis, setOpenModelAxis] = useState<string | null>(null);
   const pairingBaseline = useRef<Set<string>>(new Set());
   const pairingPending = useRef(false);
+  // The screen paints from the Workspace roster cache, so an owner's admin
+  // controls are on screen before the init effect has built a transport. A
+  // handler must therefore never read a null transport as "not allowed" —
+  // that silently swallowed every tap for the whole connect window, and
+  // forever if init threw. Handlers await this instead; it is created
+  // synchronously at effect start, resolved where the transport lands, and
+  // rejected with the real error if init fails.
+  const connectionRef = useRef<Deferred<WorkspaceConnection> | null>(null);
 
   const activeCommunity = useMemo(
     () => communities.find((community) => community.communityId === communityId) ?? null,
@@ -205,6 +255,8 @@ export default function BuzzAgents() {
     let cancelled = false;
     let pairingInterval: ReturnType<typeof setInterval> | undefined;
     let presenceInterval: ReturnType<typeof setInterval> | undefined;
+    const connection = createDeferred<WorkspaceConnection>();
+    connectionRef.current = connection;
     void (async () => {
       try {
         const currentIdentity = await loadBuzzIdentity();
@@ -225,6 +277,7 @@ export default function BuzzAgents() {
           client.communityMembers(activeWorkspaceId),
         ]);
         if (cancelled) return;
+        connection.resolve({ transport: nextTransport, communityId: activeWorkspaceId });
         setIdentity(currentIdentity);
         setTransport(nextTransport);
         setCommunities(available);
@@ -257,6 +310,9 @@ export default function BuzzAgents() {
           void refreshAgentPresence(nextTransport, activeWorkspaceId).catch(() => undefined);
         }, AGENT_PRESENCE_REFRESH_MS);
       } catch (caught) {
+        // Rejecting unconditionally: a handler that is already waiting must
+        // fail with the real reason, not sit out the full timeout.
+        connection.reject(caught);
         if (!cancelled) setError(String(caught));
       } finally {
         if (!cancelled) setLoading(false);
@@ -285,15 +341,30 @@ export default function BuzzAgents() {
     return () => clearTimeout(timer);
   }, [agentPresences]);
 
+  /**
+   * The one place a handler turns "the button is on screen" into "the relay
+   * context actually exists". Resolves immediately once init has landed;
+   * otherwise waits on the init effect's own promise, bounded, so a tap during
+   * the connect window executes late rather than vanishing, and a failed init
+   * surfaces its real error instead of a silent return.
+   */
+  const requireConnection = useCallback(async (): Promise<WorkspaceConnection> => {
+    if (transport && communityId) return { transport, communityId };
+    const pending = connectionRef.current;
+    if (!pending) throw new Error(CONNECTING_MESSAGE);
+    return awaitWithin(pending.promise, CONNECTION_WAIT_TIMEOUT_MS, CONNECTING_MESSAGE);
+  }, [communityId, transport]);
+
   const handleAdd = useCallback(async () => {
-    if (!transport || !communityId || !canManageWorkspace) return;
+    if (!canManageWorkspace) return;
     setWorking(true);
     setError(null);
     try {
+      const { transport: ready, communityId: workspaceId } = await requireConnection();
       pairingBaseline.current = new Set(agents.map((agent) => agent.pubkey));
       pairingPending.current = true;
-      const client = await transport.ensureClient();
-      const pairing = await client.createAgentPairingCode(communityId);
+      const client = await ready.ensureClient();
+      const pairing = await client.createAgentPairingCode(workspaceId);
       setPairCommand(`beeline pair ${pairing.code}`);
       setPairExpiresAt(pairing.expiresAt);
     } catch (caught) {
@@ -302,15 +373,16 @@ export default function BuzzAgents() {
     } finally {
       setWorking(false);
     }
-  }, [agents, canManageWorkspace, communityId, transport]);
+  }, [agents, canManageWorkspace, requireConnection]);
 
   const invitePerson = useCallback(async () => {
-    if (!transport || !communityId || !canManageWorkspace) return;
+    if (!canManageWorkspace) return;
     setWorking(true);
     setError(null);
     try {
-      const client = await transport.ensureClient();
-      const invite = await client.createInvite(communityId);
+      const { transport: ready, communityId: workspaceId } = await requireConnection();
+      const client = await ready.ensureClient();
+      const invite = await client.createInvite(workspaceId);
       const url = buildCommunityInviteUrl(invite.token, await getEffectiveRelayUrl());
       await Share.share({ message: url });
     } catch (caught) {
@@ -318,44 +390,46 @@ export default function BuzzAgents() {
     } finally {
       setWorking(false);
     }
-  }, [canManageWorkspace, communityId, transport]);
+  }, [canManageWorkspace, requireConnection]);
 
   const setPersonRole = useCallback(
     async (pubkey: string, role: CommunityRole) => {
-      if (!transport || !communityId || !canManageWorkspace) return;
+      if (!canManageWorkspace) return;
       setWorking(true);
       setError(null);
       try {
-        const client = await transport.ensureClient();
-        await client.addMember(communityId, pubkey, role);
-        await client.waitUntilMemberRole(communityId, pubkey, role);
-        await refreshPeople(transport, communityId, identity?.publicKey);
+        const { transport: ready, communityId: workspaceId } = await requireConnection();
+        const client = await ready.ensureClient();
+        await client.addMember(workspaceId, pubkey, role);
+        await client.waitUntilMemberRole(workspaceId, pubkey, role);
+        await refreshPeople(ready, workspaceId, identity?.publicKey);
       } catch (caught) {
         setError(`Could not change person role: ${String(caught)}`);
       } finally {
         setWorking(false);
       }
     },
-    [canManageWorkspace, communityId, identity?.publicKey, refreshPeople, transport],
+    [canManageWorkspace, identity?.publicKey, refreshPeople, requireConnection],
   );
 
   const removePerson = useCallback(
     async (pubkey: string) => {
-      if (!transport || !communityId || !canManageWorkspace) return;
+      if (!canManageWorkspace) return;
       setWorking(true);
       setError(null);
       try {
-        const client = await transport.ensureClient();
-        await client.removeMember(communityId, pubkey);
-        await client.waitUntilNotMember(communityId, pubkey);
-        await refreshPeople(transport, communityId, identity?.publicKey);
+        const { transport: ready, communityId: workspaceId } = await requireConnection();
+        const client = await ready.ensureClient();
+        await client.removeMember(workspaceId, pubkey);
+        await client.waitUntilNotMember(workspaceId, pubkey);
+        await refreshPeople(ready, workspaceId, identity?.publicKey);
       } catch (caught) {
         setError(`Could not remove person: ${String(caught)}`);
       } finally {
         setWorking(false);
       }
     },
-    [canManageWorkspace, communityId, identity?.publicKey, refreshPeople, transport],
+    [canManageWorkspace, identity?.publicKey, refreshPeople, requireConnection],
   );
 
   const chooseAgent = useCallback((agent: Agent) => {
@@ -403,13 +477,14 @@ export default function BuzzAgents() {
 
   const chooseModelOption = useCallback(
     async (axis: AgentModelConfigOption, choiceId: string) => {
-      if (!transport || !communityId || !selected) return;
+      if (!selected) return;
       const input: AgentModelConfigInput =
         axis.category === 'model' ? { model: choiceId } : { effort: choiceId };
       setModelConfigWorking(true);
       setError(null);
       try {
-        await transport.agentModelConfigSet(communityId, selected.pubkey, input);
+        const { transport: ready, communityId: workspaceId } = await requireConnection();
+        await ready.agentModelConfigSet(workspaceId, selected.pubkey, input);
         setModelSelection((prev) => ({ ...prev, ...input }));
         setOpenModelAxis(null);
       } catch (caught) {
@@ -418,17 +493,18 @@ export default function BuzzAgents() {
         setModelConfigWorking(false);
       }
     },
-    [communityId, selected, transport],
+    [requireConnection, selected],
   );
 
   const saveSoul = useCallback(
     async (nextName = name, nextPersonality = personality) => {
-      if (!transport || !communityId || !selected || !canManageWorkspace) return;
+      if (!selected || !canManageWorkspace) return;
       setWorking(true);
       setError(null);
       try {
-        const client = await transport.ensureClient();
-        await client.setAgentSoul(communityId, selected.pubkey, {
+        const { transport: ready, communityId: workspaceId } = await requireConnection();
+        const client = await ready.ensureClient();
+        await client.setAgentSoul(workspaceId, selected.pubkey, {
           name: nextName,
           personality: nextPersonality,
           intent,
@@ -437,25 +513,26 @@ export default function BuzzAgents() {
         });
         setName(nextName);
         setPersonality(nextPersonality);
-        await refreshAgents(transport, communityId);
+        await refreshAgents(ready, workspaceId);
       } catch (caught) {
         setError(`Could not save soul: ${String(caught)}`);
       } finally {
         setWorking(false);
       }
     },
-    [avatarUrl, canManageWorkspace, communityId, intent, name, personality, refreshAgents, selected, transport],
+    [avatarUrl, canManageWorkspace, intent, name, personality, refreshAgents, requireConnection, selected],
   );
 
   const changeAvatar = useCallback(async () => {
-    if (!transport || !communityId || !selected || !canManageWorkspace) return;
+    if (!selected || !canManageWorkspace) return;
     setWorking(true);
     setError(null);
     try {
-      const client = await transport.ensureClient();
+      const { transport: ready, communityId: workspaceId } = await requireConnection();
+      const client = await ready.ensureClient();
       const nextAvatar = await pickAndUploadAvatar(client);
       if (!nextAvatar) return;
-      await client.setAgentSoul(communityId, selected.pubkey, {
+      await client.setAgentSoul(workspaceId, selected.pubkey, {
         name,
         personality,
         intent,
@@ -463,34 +540,35 @@ export default function BuzzAgents() {
         avatar: nextAvatar,
       });
       setAvatarUrl(nextAvatar);
-      await refreshAgents(transport, communityId);
+      await refreshAgents(ready, workspaceId);
     } catch (caught) {
       setError(`Could not set Agent picture: ${String(caught)}`);
     } finally {
       setWorking(false);
     }
-  }, [canManageWorkspace, communityId, intent, name, personality, refreshAgents, selected, transport]);
+  }, [canManageWorkspace, intent, name, personality, refreshAgents, requireConnection, selected]);
 
   const resetAvatar = useCallback(async () => {
-    if (!transport || !communityId || !selected || !canManageWorkspace) return;
+    if (!selected || !canManageWorkspace) return;
     setWorking(true);
     setError(null);
     try {
-      const client = await transport.ensureClient();
-      await client.setAgentSoul(communityId, selected.pubkey, {
+      const { transport: ready, communityId: workspaceId } = await requireConnection();
+      const client = await ready.ensureClient();
+      await client.setAgentSoul(workspaceId, selected.pubkey, {
         name,
         personality,
         intent,
         avatarSeed: selected.pubkey,
       });
       setAvatarUrl(undefined);
-      await refreshAgents(transport, communityId);
+      await refreshAgents(ready, workspaceId);
     } catch (caught) {
       setError(`Could not restore generated Agent mark: ${String(caught)}`);
     } finally {
       setWorking(false);
     }
-  }, [canManageWorkspace, communityId, intent, name, personality, refreshAgents, selected, transport]);
+  }, [canManageWorkspace, intent, name, personality, refreshAgents, requireConnection, selected]);
 
   const handleUseDefault = useCallback(() => {
     if (!selected) return;
@@ -500,39 +578,41 @@ export default function BuzzAgents() {
   }, [selected]);
 
   const removeSelectedAgent = useCallback(async () => {
-    if (!transport || !communityId || !selected || !canManageWorkspace) return;
+    if (!selected || !canManageWorkspace) return;
     setWorking(true);
     setError(null);
     try {
-      const client = await transport.ensureClient();
-      await client.removeAgent(communityId, selected.pubkey);
+      const { transport: ready, communityId: workspaceId } = await requireConnection();
+      const client = await ready.ensureClient();
+      await client.removeAgent(workspaceId, selected.pubkey);
       setSelectedPubkey(null);
       setIntent('');
       setName('');
       setPersonality('');
       setAvatarUrl(undefined);
       setConfirmingRemoval(false);
-      await refreshAgents(transport, communityId);
+      await refreshAgents(ready, workspaceId);
     } catch (caught) {
       setError(`Could not remove Agent: ${String(caught)}`);
     } finally {
       setWorking(false);
     }
-  }, [canManageWorkspace, communityId, refreshAgents, selected, transport]);
+  }, [canManageWorkspace, refreshAgents, requireConnection, selected]);
 
   const messageSelectedAgent = useCallback(async () => {
-    if (!transport || !communityId || !selected) return;
+    if (!selected) return;
     setWorking(true);
     setError(null);
     try {
-      const result = await transport.resolveDirectMessage(communityId, selected.pubkey);
+      const { transport: ready, communityId: workspaceId } = await requireConnection();
+      const result = await ready.resolveDirectMessage(workspaceId, selected.pubkey);
       router.push(`/buzz/chat/${encodeURIComponent(result.channelId)}` as Href);
     } catch (caught) {
       setError(`Could not message Agent: ${String(caught)}`);
     } finally {
       setWorking(false);
     }
-  }, [communityId, selected, transport]);
+  }, [requireConnection, selected]);
 
   if (loading) {
     return (

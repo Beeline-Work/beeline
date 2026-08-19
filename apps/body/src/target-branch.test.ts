@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  TARGET_BRANCH_PROPOSAL_COMMAND,
   shortBranchName,
   targetBranchChangeIntent,
+  targetBranchProposalFromPermission,
   targetBranchProposalText,
 } from './target-branch.js';
 
@@ -54,6 +56,33 @@ describe('targetBranchChangeIntent', () => {
     }
   });
 
+  // The confirmed live miss: the article and the noun stood between the
+  // preposition and the branch name, the capture stopped on `a`, and the whole
+  // ask fell through to an ordinary conversational turn.
+  it('recognizes the branch behind an article and a "branch called" noun phrase', () => {
+    for (const message of [
+      'from now on land changes to a branch called staging instead of master',
+      '@lena from now on land changes to a branch called staging instead of master',
+      'land changes to a branch called staging from now on',
+      'from now on, land changes to the branch staging instead of master',
+      'always land changes to a branch named staging',
+      'going forward, ship to a new branch called staging',
+      'from now on merge into the staging branch',
+      'set the target branch to a branch called staging',
+    ]) {
+      expect(targetBranchChangeIntent(message), message).toEqual({ branch: 'staging' });
+    }
+  });
+
+  it('still refuses the noun phrase with no branch name after it', () => {
+    for (const message of [
+      'from now on land changes to a branch',
+      'from now on land to the branch',
+    ]) {
+      expect(targetBranchChangeIntent(message), message).toBeNull();
+    }
+  });
+
   it('refuses a branch token that is not a valid git branch name', () => {
     expect(targetBranchChangeIntent('set the target branch to ..')).toBeNull();
     expect(targetBranchChangeIntent('land to from now on')).toBeNull();
@@ -67,5 +96,60 @@ describe('proposal copy', () => {
   it('shortens a full ref', () => {
     expect(shortBranchName('refs/heads/main')).toBe('main');
     expect(shortBranchName(undefined)).toBe('main');
+  });
+});
+
+describe('the agent-attempted proposal marker', () => {
+  const command = (line: string) => ({ toolCall: { title: line, kind: 'execute' } });
+
+  it('reads the branch out of the exact documented command', () => {
+    expect(
+      targetBranchProposalFromPermission(
+        command(`${TARGET_BRANCH_PROPOSAL_COMMAND} --branch staging`),
+      ),
+    ).toBe('staging');
+    expect(
+      targetBranchProposalFromPermission(
+        command(`${TARGET_BRANCH_PROPOSAL_COMMAND} --branch=refs/heads/release/2026-08`),
+      ),
+    ).toBe('release/2026-08');
+  });
+
+  it('tolerates a harness wrapping the command and quoting the branch', () => {
+    for (const line of [
+      `bash -lc ${TARGET_BRANCH_PROPOSAL_COMMAND} --branch staging`,
+      `${TARGET_BRANCH_PROPOSAL_COMMAND} --branch "staging"`,
+      `${TARGET_BRANCH_PROPOSAL_COMMAND} --branch 'staging'`,
+    ]) {
+      expect(targetBranchProposalFromPermission(command(line)), line).toBe('staging');
+    }
+  });
+
+  it('finds it wherever the adapter puts the command line', () => {
+    expect(
+      targetBranchProposalFromPermission({
+        toolCall: {
+          title: 'Run shell command',
+          kind: 'execute',
+          rawInput: { command: `${TARGET_BRANCH_PROPOSAL_COMMAND} --branch staging` },
+        },
+      }),
+    ).toBe('staging');
+  });
+
+  it('is undefined for anything that is not the exact marker', () => {
+    for (const line of [
+      'echo hello',
+      `${TARGET_BRANCH_PROPOSAL_COMMAND}`,
+      `${TARGET_BRANCH_PROPOSAL_COMMAND} staging`,
+      `${TARGET_BRANCH_PROPOSAL_COMMAND} --branch ..`,
+      `${TARGET_BRANCH_PROPOSAL_COMMAND} --branch `,
+      // A chained shell payload is not this marker; it is an ordinary command.
+      `${TARGET_BRANCH_PROPOSAL_COMMAND} --branch staging && rm -rf /tmp/x`,
+      `${TARGET_BRANCH_PROPOSAL_COMMAND} --branch staging; rm -rf /tmp/x`,
+      'beeline-request-edit-corner --repo owner/repo',
+    ]) {
+      expect(targetBranchProposalFromPermission(command(line)), line).toBeUndefined();
+    }
   });
 });

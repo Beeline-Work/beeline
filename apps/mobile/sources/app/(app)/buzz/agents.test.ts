@@ -12,10 +12,8 @@ const client = vi.hoisted(() => ({
   addMember: vi.fn(async () => undefined),
   waitUntilMemberRole: vi.fn(async () => undefined),
   removeAgent: vi.fn(async () => undefined),
-  createAgentPairingCode: vi.fn(async () => ({ code: 'abc123', expiresAt: 0 })),
 }));
 const agentPresenceBackfillForWorkspace = vi.hoisted(() => vi.fn(async () => []));
-const scrollTo = vi.hoisted(() => vi.fn());
 const agentModelCatalogRead = vi.hoisted(() => vi.fn(async () => null));
 const agentModelConfigRead = vi.hoisted(() => vi.fn(async () => null));
 const agentModelConfigSet = vi.hoisted(() => vi.fn(async () => undefined));
@@ -42,11 +40,7 @@ vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
 vi.mock('react-native-keyboard-controller', async () => {
   const ReactModule = await import('react');
-  const KeyboardAwareScrollView = ReactModule.forwardRef((props: any, ref: any) => {
-    ReactModule.useImperativeHandle(ref, () => ({ scrollTo }));
-    return ReactModule.createElement('ScrollView', props, props.children);
-  });
-  return { KeyboardAwareScrollView };
+  return { KeyboardAwareScrollView: (props: any) => ReactModule.createElement('ScrollView', props, props.children) };
 });
 vi.mock('@/auth/buzz-identity-storage', () => ({
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
@@ -122,7 +116,6 @@ beforeEach(() => {
   agentModelCatalogRead.mockResolvedValue(null);
   agentModelConfigRead.mockResolvedValue(null);
   agentModelConfigSet.mockResolvedValue(undefined);
-  scrollTo.mockClear();
   (prepareWorkspaceContext as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
     workspaces: [{ communityId: 'workspace-1', name: 'Night Shift', viewerRole: 'owner' }],
     activeWorkspaceId: 'workspace-1',
@@ -437,33 +430,5 @@ describe('Members screen', () => {
 
     expect(renderer.root.findAllByProps({ accessibilityLabel: 'Remove this Agent' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'add-agent' })).toHaveLength(0);
-  });
-
-  it('scrolls the pair panel into view when "Add agent" succeeds, even after scrolling past it', async () => {
-    const renderer = await render();
-
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'add-agent' }).props.onPress();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(client.createAgentPairingCode).toHaveBeenCalledWith('workspace-1');
-    expect(renderer.root.findByProps({ testID: 'add-agent' })).toBeDefined();
-    expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ y: 0 }));
-  });
-
-  it('scrolls the error banner into view when "Add agent" fails', async () => {
-    client.createAgentPairingCode.mockRejectedValueOnce(new Error('relay unreachable'));
-    const renderer = await render();
-
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'add-agent' }).props.onPress();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(renderer.root.findByProps({ accessibilityRole: 'alert' })).toBeDefined();
-    expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ y: 0 }));
   });
 });

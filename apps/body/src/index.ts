@@ -89,6 +89,15 @@ export {
   type SandboxSessionSpec,
 } from './bwrap-sandbox.js';
 export {
+  harnessToolScope,
+  harnessReadsMetaSystemPrompt,
+  sessionToolScopeMeta,
+  toolScopeWarning,
+  CLAUDE_TOOL_SCOPE_SETTINGS,
+  NO_PERSONAL_CONNECTORS_INSTRUCTION,
+  type ToolScopeEnforcement,
+} from './harness-tool-scope.js';
+export {
   projectActivity,
   postAgentMessage,
   postControlMessage,

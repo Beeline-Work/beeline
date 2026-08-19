@@ -450,6 +450,36 @@ describe('Buzz Room screen event projection', () => {
     expect(displaySequence([event])).toHaveLength(1);
   });
 
+  it('renders the daemon’s queued-steer acknowledgement as a quiet system line, not an agent turn', () => {
+    // `postSteerQueuedNotice` (apps/body/src/activity.ts): the receipt for a
+    // message sent while a turn was already running. It is a body-control
+    // event, so before this branch existed it projected to `{}` — durably
+    // published, invisible in the transcript, which is exactly the silence
+    // that made a mid-turn steer read as swallowed.
+    const event = raw(
+      'steer-queued-1',
+      'Got it — queued. I’ll pick this up as soon as the current step finishes.',
+      [
+        ['t', 'body-control'],
+        ['t', 'steer-queued'],
+        ['status', 'queued'],
+        ['request', 'req-1'],
+      ],
+      12,
+    );
+
+    const projection = projectChatEvent(event, viewer);
+    expect(projection.message).toMatchObject({
+      id: 'steer-queued-1',
+      isSystemNotice: true,
+      isUser: false,
+    });
+    // Never an agent turn: it must not be attributed to the agent's voice.
+    expect(projection.message?.isAgentAuthor).toBeUndefined();
+    expect(projection.deliveryFailed).toBeUndefined();
+    expect(displaySequence([event])).toHaveLength(1);
+  });
+
   it('does not confuse an archive notice or a parent-Room status card with a corner-scoped delivery failure', () => {
     // Archive notices also carry status=archived with no `subchannel` tag —
     // must not be misread as a delivery failure.

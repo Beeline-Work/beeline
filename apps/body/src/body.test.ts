@@ -88,6 +88,7 @@ import {
   AGENT_PRESENCE_RETRY_MAX_ATTEMPTS,
   stripAgentReplyPreamble,
   replyRootIdForEvent,
+  STEER_QUEUED_TAG,
 } from './activity.js';
 import { isReadOnlyMcpPermissionRequest } from './read-only-policy.js';
 import { SessionScheduler } from './session-scheduler.js';
@@ -5688,3 +5689,473 @@ describe('closing a corner with no live session', () => {
     }
   });
 });
+
+/**
+ * A message sent while a turn is already running must be DELIVERED, not
+ * swallowed. Two independent defects produced the live "my steer vanished and
+ * the daemon answered with its canned stall notice instead" report:
+ *
+ *  1. `pollMembers` rethrew a failed `sessionSteer` whenever no
+ *     `runningAgentTasks` entry existed — the case for every corner FOLLOW-UP
+ *     turn — leaving the human's message durably `failed` and blindly
+ *     re-attempted later, with nothing said to them at any point. None of the
+ *     shipped ACP adapters advertise a live-steering channel, so that failure
+ *     is the ordinary path, not an edge case.
+ *  2. `promptAgent` armed the stall-notice timer BEFORE `runOnSession`, i.e.
+ *     while the turn was still merely queued in the per-session FIFO behind
+ *     the turn already running. Twenty seconds of *waiting our turn* then
+ *     published "my coding backend is taking longer than usual to respond"
+ *     directly under the message that was still waiting — a claim about a
+ *     backend we had not yet sent anything to.
+ */
+describe('a message that arrives mid-turn is queued, acknowledged, and delivered', () => {
+  function newBody(agent: ReturnType<typeof newIdentity>, workspaceRoot = '/workspace') {
+    return new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot,
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+    );
+  }
+
+  function stubPublishing(): NostrEvent[] {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    return published;
+  }
+
+  const queuedAcks = (published: NostrEvent[]): NostrEvent[] =>
+    published.filter((event) =>
+      event.tags.some((tag) => tag[0] === 't' && tag[1] === STEER_QUEUED_TAG),
+    );
+
+  const stallNotices = (published: NostrEvent[]): NostrEvent[] =>
+    published.filter((event) => event.content.includes('taking longer than usual'));
+
+  function memberMessage(
+    human: ReturnType<typeof newIdentity>,
+    channelId: string,
+    content: string,
+    createdAt: number,
+  ): NostrEvent {
+    return signEvent(
+      {
+        pubkey: human.publicKey,
+        created_at: createdAt,
+        kind: 9,
+        tags: [['h', channelId]],
+        content,
+      },
+      human.secretKey,
+    );
+  }
+
+  it('queues mid-turn corner steers as ordered next prompts instead of dropping them', async () => {
+    const published = stubPublishing();
+    const agent = newIdentity('queue-agent');
+    const human = newIdentity('queue-human');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-steer-queue-'));
+    try {
+    const body = newBody(agent, workspaceRoot);
+
+    const prompts: string[] = [];
+    const sessionPrompt = vi.fn(async (_sessionId: string, prompt: string) => {
+      prompts.push(prompt);
+      return { stopReason: 'end_turn', updates: [], agentText: 'ok', toolCalls: [] };
+    });
+    // The shape every shipped harness actually has: a run is in flight, and
+    // there is no live-steering channel to inject into.
+    const sessionSteer = vi
+      .fn()
+      .mockRejectedValue(new Error('ACP session corner-queue has no active run to steer'));
+    const session = {
+      channelId: 'corner-queue',
+      sessionId: 'session-queue',
+      client: { sessionPrompt, sessionSteer, sessionCancel: vi.fn(), activeRunId: () => 'run-1' },
+    } as never;
+
+    body.registerSubchannel({
+      subchannelId: 'corner-queue',
+      worktreePath: '/tmp/nonexistent-corner-queue',
+      featureBranch: 'feature/queue',
+      role: agent,
+      session,
+      lastPolledAt: 0,
+      archived: false,
+    });
+
+    const now = Math.floor(Date.now() / 1000);
+    const first = memberMessage(human, 'corner-queue', 'First: fix the mobile layout.', now);
+    const second = memberMessage(human, 'corner-queue', 'Second: and the empty state.', now + 1);
+    (Reflect.get(body, 'agentRelay') as { queryEvents: unknown }).queryEvents = vi
+      .fn()
+      .mockResolvedValue([first, second]);
+
+    const count = await body.pollMembers('corner-queue');
+
+    // Both steers were delivered — none lost — and in the order they were sent.
+    expect(count).toBe(2);
+    expect(sessionSteer).toHaveBeenCalledTimes(2);
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).toContain('First: fix the mobile layout.');
+    expect(prompts[1]).toContain('Second: and the empty state.');
+
+    // One quiet acknowledgement for the burst, not one per message and not a
+    // fabricated agent reply.
+    const acks = queuedAcks(published);
+    expect(acks).toHaveLength(1);
+    expect(acks[0]!.tags).toContainEqual(['h', 'corner-queue']);
+    expect(acks[0]!.tags).toContainEqual(['t', 'body-control']);
+    expect(acks[0]!.tags).toContainEqual(['status', 'queued']);
+    expect(acks[0]!.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message')).toBe(false);
+    expect(acks[0]!.content).toContain('queued');
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('never re-delivers a queued steer to an overlapping maintenance tick', async () => {
+    stubPublishing();
+    const agent = newIdentity('overlap-agent');
+    const human = newIdentity('overlap-human');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-steer-overlap-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+
+      let releasePrompt!: () => void;
+      let markStarted!: () => void;
+      const promptStarted = new Promise<void>((r) => {
+        markStarted = r;
+      });
+      const sessionPrompt = vi.fn(async () => {
+        markStarted();
+        await new Promise<void>((r) => {
+          releasePrompt = r;
+        });
+        return { stopReason: 'end_turn', updates: [], agentText: 'ok', toolCalls: [] };
+      });
+
+      const session = {
+        channelId: 'corner-overlap',
+        sessionId: 'session-overlap',
+        client: {
+          sessionPrompt,
+          sessionSteer: vi.fn().mockRejectedValue(new Error('no active run to steer')),
+          sessionCancel: vi.fn(),
+          activeRunId: () => 'run-1',
+        },
+      } as never;
+      body.registerSubchannel({
+        subchannelId: 'corner-overlap',
+        worktreePath: '/tmp/nonexistent-corner-overlap',
+        featureBranch: 'feature/overlap',
+        role: agent,
+        session,
+        lastPolledAt: 0,
+        archived: false,
+      });
+
+      const evt = memberMessage(
+        human,
+        'corner-overlap',
+        'Steer once.',
+        Math.floor(Date.now() / 1000),
+      );
+      (Reflect.get(body, 'agentRelay') as { queryEvents: unknown }).queryEvents = vi
+        .fn()
+        .mockResolvedValue([evt]);
+
+      const firstTick = body.pollMembers('corner-overlap');
+      await promptStarted;
+      // The maintenance timer fires without awaiting the prior tick; the same
+      // still-pending event must not be delivered a second time.
+      const secondTick = await body.pollMembers('corner-overlap');
+      releasePrompt();
+      await firstTick;
+
+      expect(secondTick).toBe(0);
+      expect(sessionPrompt).toHaveBeenCalledTimes(1);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('publishes no queued acknowledgement when the corner has no turn running', async () => {
+    const published = stubPublishing();
+    const agent = newIdentity('idle-corner-agent');
+    const human = newIdentity('idle-corner-human');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-steer-idle-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+
+      const sessionPrompt = vi.fn(async () => ({
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: 'done',
+        toolCalls: [],
+      }));
+      const sessionSteer = vi.fn();
+      const session = {
+        channelId: 'corner-idle',
+        sessionId: 'session-idle',
+        client: {
+          sessionPrompt,
+          sessionSteer,
+          sessionCancel: vi.fn(),
+          activeRunId: () => undefined,
+        },
+      } as never;
+      body.registerSubchannel({
+        subchannelId: 'corner-idle',
+        worktreePath: '/tmp/nonexistent-corner-idle',
+        featureBranch: 'feature/idle',
+        role: agent,
+        session,
+        lastPolledAt: 0,
+        archived: false,
+      });
+      (Reflect.get(body, 'agentRelay') as { queryEvents: unknown }).queryEvents = vi
+        .fn()
+        .mockResolvedValue([
+          memberMessage(human, 'corner-idle', 'Do this now.', Math.floor(Date.now() / 1000)),
+        ]);
+
+      expect(await body.pollMembers('corner-idle')).toBe(1);
+      expect(sessionSteer).not.toHaveBeenCalled();
+      expect(sessionPrompt).toHaveBeenCalledOnce();
+      expect(queuedAcks(published)).toHaveLength(0);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('never arms the stall notice for a turn that is only waiting its place in the session FIFO', async () => {
+    vi.useFakeTimers();
+    try {
+      const published = stubPublishing();
+      const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
+      const body = new Body(
+        {
+          agentBinary: '/nonexistent',
+          mcpBinary: '/nonexistent',
+          agentEnv: {},
+          workspaceRoot: '/tmp/buzzy-queued-stall',
+          relayBaseUrl: 'http://relay.test',
+          relayHost: 'relay.test',
+          relayScheme: 'http',
+          relayWsUrl: 'ws://relay.test',
+          autoApprovePermissions: true,
+        },
+        newIdentity('queued-stall-operator'),
+        newIdentity('queued-stall-agent'),
+        undefined,
+        { scheduler },
+      );
+
+      // A healthy, continuously-active turn that simply runs a long time.
+      const runMs = ROOM_AGENT_STALL_NOTICE_MS * 4;
+      const sessionPrompt = vi.fn(
+        (
+          _sessionId: string,
+          _prompt: string,
+          _timeoutMs: number,
+          _onChunk: unknown,
+          onActivity?: () => void,
+        ) =>
+          new Promise((resolveRun) => {
+            const beat = setInterval(() => onActivity?.(), ROOM_AGENT_STALL_NOTICE_MS / 4);
+            setTimeout(() => {
+              clearInterval(beat);
+              resolveRun({ stopReason: 'end_turn', updates: [], agentText: 'ok', toolCalls: [] });
+            }, runMs);
+          }),
+      );
+      const session = {
+        channelId: 'fifo-room',
+        sessionId: 'fifo-session',
+        mode: 'readonly',
+        client: { sessionPrompt, sessionCancel: vi.fn() },
+        lifecycle: {
+          activate: vi.fn().mockResolvedValue('fifo-session'),
+          suspend: vi.fn().mockResolvedValue(undefined),
+        },
+      } as never;
+
+      const running = Reflect.get(body, 'promptAgent').call(body, session, 'first', {
+        channelId: 'fifo-room',
+        requestId: 'req-1',
+        replyToId: 'req-1',
+      });
+      // Issued while `running` still holds the session: this one only waits.
+      const queued = Reflect.get(body, 'promptAgent').call(body, session, 'second', {
+        channelId: 'fifo-room',
+        requestId: 'req-2',
+        replyToId: 'req-2',
+      });
+
+      await vi.advanceTimersByTimeAsync(runMs * 2 + 10);
+      await running;
+      await queued;
+
+      expect(sessionPrompt).toHaveBeenCalledTimes(2);
+      // Both turns were continuously active for their whole run. The old shape
+      // still published one notice — for the turn that had not started yet.
+      expect(stallNotices(published)).toHaveLength(0);
+      await scheduler.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('defers the stall notice when a fresh message arrives, and still fires once the channel goes quiet', async () => {
+    vi.useFakeTimers();
+    try {
+      const published = stubPublishing();
+      const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
+      const body = new Body(
+        {
+          agentBinary: '/nonexistent',
+          mcpBinary: '/nonexistent',
+          agentEnv: {},
+          workspaceRoot: '/tmp/buzzy-fresh-message-stall',
+          relayBaseUrl: 'http://relay.test',
+          relayHost: 'relay.test',
+          relayScheme: 'http',
+          relayWsUrl: 'ws://relay.test',
+          autoApprovePermissions: true,
+        },
+        newIdentity('fresh-stall-operator'),
+        newIdentity('fresh-stall-agent'),
+        undefined,
+        { scheduler },
+      );
+
+      const sessionPrompt = vi.fn(
+        (_sessionId: string, _prompt: string, timeoutMs: number) =>
+          new Promise<never>((_resolve, reject) =>
+            setTimeout(
+              () => reject(new Error(`ACP session/prompt timed out after ${timeoutMs}ms`)),
+              timeoutMs,
+            ),
+          ),
+      );
+      const session = {
+        channelId: 'fresh-room',
+        sessionId: 'fresh-session',
+        mode: 'readonly',
+        client: { sessionPrompt, sessionCancel: vi.fn() },
+        lifecycle: {
+          activate: vi.fn().mockResolvedValue('fresh-session'),
+          suspend: vi.fn().mockResolvedValue(undefined),
+        },
+      } as never;
+
+      const prompt = Reflect.get(body, 'promptAgent').call(body, session, 'hello', {
+        channelId: 'fresh-room',
+        requestId: 'fresh-request',
+      });
+      const rejection = expect(prompt).rejects.toThrow('timed out after');
+
+      await vi.advanceTimersByTimeAsync(ROOM_AGENT_STALL_NOTICE_MS - 1_000);
+      // The human speaks again just before the window would have closed.
+      Reflect.get(body, 'noteInboundMessage').call(body, 'fresh-room');
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      // The stall notice must never be the answer to that fresh message.
+      expect(stallNotices(published)).toHaveLength(0);
+
+      // With no further input, the backend's genuine silence is still reported.
+      await vi.advanceTimersByTimeAsync(ROOM_AGENT_STALL_NOTICE_MS);
+      expect(stallNotices(published)).toHaveLength(1);
+
+      await vi.advanceTimersByTimeAsync(ROOM_AGENT_PROMPT_TIMEOUT_MS);
+      await rejection;
+      await scheduler.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('acknowledges a Room message pushed mid-turn without waiting for the turn it is queued behind', async () => {
+    const published = stubPublishing();
+    const agent = newIdentity('room-ack-agent');
+    const human = newIdentity('room-ack-human');
+    const body = newBody(agent);
+
+    const sessions = Reflect.get(body, 'sessions') as Map<string, unknown>;
+    sessions.set('ack-room', {
+      channelId: 'ack-room',
+      sessionId: 'ack-session',
+      client: { activeRunId: () => 'run-1' },
+    });
+
+    const participants = [agent.publicKey, human.publicKey];
+    const steer = memberMessage(
+      human,
+      'ack-room',
+      'the bigger problem with mobile is the empty state',
+      Math.floor(Date.now() / 1000),
+    );
+    Reflect.get(body, 'noteRoomInboundMessage').call(body, 'ack-room', steer, participants);
+    Reflect.get(body, 'noteRoomInboundMessage').call(body, 'ack-room', steer, participants);
+    await vi.waitFor(() => expect(queuedAcks(published)).toHaveLength(1));
+
+    expect(queuedAcks(published)[0]!.tags).toContainEqual(['h', 'ack-room']);
+    // Bumping the inbound counter is what suppresses the running turn's stall
+    // notice — the two halves of the contract are one signal.
+    expect((Reflect.get(body, 'inboundMessageSeq') as Map<string, number>).get('ack-room')).toBe(2);
+  });
+
+  it('acknowledges nothing for a Room control event or the agent’s own message', async () => {
+    const published = stubPublishing();
+    const agent = newIdentity('room-noack-agent');
+    const human = newIdentity('room-noack-human');
+    const body = newBody(agent);
+
+    const sessions = Reflect.get(body, 'sessions') as Map<string, unknown>;
+    sessions.set('noack-room', {
+      channelId: 'noack-room',
+      sessionId: 'noack-session',
+      client: { activeRunId: () => 'run-1' },
+    });
+    const participants = [agent.publicKey, human.publicKey];
+    const control = signEvent(
+      {
+        pubkey: human.publicKey,
+        created_at: Math.floor(Date.now() / 1000),
+        kind: 9,
+        tags: [
+          ['h', 'noack-room'],
+          ['t', 'body-control'],
+        ],
+        content: 'APPROVE merge',
+      },
+      human.secretKey,
+    );
+    const ownMessage = memberMessage(agent, 'noack-room', 'my own reply', 1);
+
+    Reflect.get(body, 'noteRoomInboundMessage').call(body, 'noack-room', control, participants);
+    Reflect.get(body, 'noteRoomInboundMessage').call(body, 'noack-room', ownMessage, participants);
+
+    expect(queuedAcks(published)).toHaveLength(0);
+    expect(
+      (Reflect.get(body, 'inboundMessageSeq') as Map<string, number>).get('noack-room'),
+    ).toBeUndefined();
+  });
+});
+

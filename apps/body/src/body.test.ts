@@ -4,7 +4,7 @@
  */
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -30,6 +30,7 @@ import {
   AGENT_REQUEST_TAG,
   AGENT_EXCHANGE_MAX_MESSAGES,
   agentExchangeTurnPrompt,
+  assertRelayCornerArchiveTarget,
   assertSubchannelArchiveTarget,
   Body,
   conciseCornerTurnSummary,
@@ -5172,5 +5173,383 @@ describe('room owns the repo (Stage 1)', () => {
       localPath: '/does/not/matter',
     });
     expect(registered).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A corner the daemon cannot serve — worktree gone after a restart, approved
+ * repository unresolvable, ACP session dead — used to be reachable by nothing.
+ * `#t=buzz-corner-close` is only ever consumed by `pollMembers`, and
+ * `pollMembers` only ever visits `this.subchannels`, so every press of the
+ * human close control just added its literal text to the transcript and the
+ * corner stayed open (and pinned in its parent Room) forever.
+ */
+describe('closing a corner with no live session', () => {
+  const CREATE_KIND = 9007;
+
+  function newBody(agent: ReturnType<typeof newIdentity>, workspaceRoot: string) {
+    return new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot,
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+    );
+  }
+
+  /** The immutable kind:9007 create event that proves a channel is a corner. */
+  function cornerCreateEvent(
+    agent: ReturnType<typeof newIdentity>,
+    subchannelId: string,
+    parentChannelId: string,
+  ): NostrEvent {
+    return signEvent(
+      {
+        pubkey: agent.publicKey,
+        created_at: Math.floor(Date.now() / 1000),
+        kind: CREATE_KIND,
+        tags: [
+          ['h', subchannelId],
+          ['parent', parentChannelId],
+        ],
+        content: '',
+      },
+      agent.secretKey,
+    );
+  }
+
+  function closeEvent(human: ReturnType<typeof newIdentity>, subchannelId: string): NostrEvent {
+    return signEvent(
+      {
+        pubkey: human.publicKey,
+        created_at: Math.floor(Date.now() / 1000),
+        kind: 9,
+        tags: [
+          ['h', subchannelId],
+          ['t', CORNER_CLOSE_TAG],
+        ],
+        content: 'Close this corner.',
+      },
+      human.secretKey,
+    );
+  }
+
+  /** Serve corner create events to `/query`, record every publish. */
+  function stubRelayHttp(creates: NostrEvent[]): NostrEvent[] {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/query')) {
+          return new Response(JSON.stringify(creates), { status: 200 });
+        }
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    return published;
+  }
+
+  it('records a corner whose worktree is gone as abandoned, instead of leaving it in no map at all', async () => {
+    const agent = newIdentity('restore-gap-agent');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-restore-gap-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      const control = signEvent(
+        {
+          pubkey: agent.publicKey,
+          created_at: Math.floor(Date.now() / 1000),
+          kind: 9,
+          tags: [
+            ['h', 'corner-lost'],
+            ['feature', 'feature/lost-work'],
+            ['parent', 'room-lost'],
+          ],
+          content: 'corner opened',
+        },
+        agent.secretKey,
+      );
+      mocks.createBuzzClient.mockReturnValue({
+        listSubchannels: async () => ['corner-lost'],
+        getChannelMetadata: async () => ({ archived: false }),
+        disconnect: () => undefined,
+      } as never);
+      Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => [control]) });
+      stubRelayHttp([]);
+
+      await Reflect.get(body, 'restoreSubchannels').call(body, 'room-lost', {
+        repo: 'proj',
+        localPath: join(workspaceRoot, 'checkout'),
+        targetBranch: 'refs/heads/main',
+      });
+
+      // Not restorable, so deliberately not a live corner...
+      expect(body.getSubchannels().has('corner-lost')).toBe(false);
+      // ...but still reachable by the sessionless close path.
+      const abandoned = body.getAbandonedCorners().get('corner-lost');
+      expect(abandoned).toMatchObject({
+        subchannelId: 'corner-lost',
+        parentChannelId: 'room-lost',
+        featureBranch: 'feature/lost-work',
+      });
+      expect(abandoned?.reason).toContain('worktree was missing');
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('closes an abandoned corner on a human close request: archived on the relay, and the parent Room told so its pin goes terminal', async () => {
+    const agent = newIdentity('dead-close-agent');
+    const human = newIdentity('dead-close-human');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-dead-close-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      Reflect.get(body, 'abandonedCorners').set('corner-dead', {
+        subchannelId: 'corner-dead',
+        parentChannelId: 'room-dead',
+        reason: 'its worktree was missing after a restart',
+        featureBranch: 'feature/dead-work',
+      });
+      const close = closeEvent(human, 'corner-dead');
+      Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => [close]) });
+      const published = stubRelayHttp([cornerCreateEvent(agent, 'corner-dead', 'room-dead')]);
+
+      await Reflect.get(body, 'pollAbandonedCornerCloses').call(body, 'room-dead');
+
+      // The parent Room's corner-status card goes terminal, which is what
+      // clears the stale "ready for review" pin on the Room list.
+      const parentCard = published.find((event) =>
+        event.tags.some((tag) => tag[0] === 'h' && tag[1] === 'room-dead'),
+      );
+      expect(parentCard).toBeDefined();
+      expect(parentCard!.tags).toContainEqual(['subchannel', 'corner-dead']);
+      expect(parentCard!.tags).toContainEqual(['status', 'archived']);
+
+      // The corner itself is archived on the relay (kind:9002 archived=true).
+      const archiveCommand = published.find(
+        (event) =>
+          event.kind === 9002 && event.tags.some((tag) => tag[0] === 'archived' && tag[1] === 'true'),
+      );
+      expect(archiveCommand).toBeDefined();
+      expect(archiveCommand!.tags).toContainEqual(['h', 'corner-dead']);
+
+      // Closed for good: nothing left to re-close on a later tick.
+      expect(body.getAbandonedCorners().has('corner-dead')).toBe(false);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('reaps the corner worktree when one is still on disk, and says what a close did and did not discard', async () => {
+    const agent = newIdentity('reap-close-agent');
+    const human = newIdentity('reap-close-human');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-reap-close-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      const worktreePath = join(workspaceRoot, 'corner-reap-worktree');
+      mkdirSync(worktreePath, { recursive: true });
+      spawnSync('git', ['init', '-q', worktreePath]);
+      writeFileSync(join(worktreePath, 'scratch.txt'), 'uncommitted edit\n');
+
+      Reflect.get(body, 'abandonedCorners').set('corner-reap', {
+        subchannelId: 'corner-reap',
+        parentChannelId: 'room-reap',
+        reason: 'its agent session could not be restarted',
+        featureBranch: 'feature/reap-work',
+        worktreePath,
+      });
+      const close = closeEvent(human, 'corner-reap');
+      Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => [close]) });
+      const published = stubRelayHttp([cornerCreateEvent(agent, 'corner-reap', 'room-reap')]);
+
+      await Reflect.get(body, 'pollAbandonedCornerCloses').call(body, 'room-reap');
+
+      expect(existsSync(worktreePath)).toBe(false);
+      const parentCard = published.find((event) =>
+        event.tags.some((tag) => tag[0] === 'h' && tag[1] === 'room-reap'),
+      );
+      // A close is never a silent discard.
+      expect(parentCard!.content).toContain('Uncommitted edits');
+      expect(parentCard!.content).toContain('could not be restarted');
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves a quiet abandoned corner open: only an actual close request closes it', async () => {
+    const agent = newIdentity('quiet-corner-agent');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-quiet-corner-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      Reflect.get(body, 'abandonedCorners').set('corner-quiet', {
+        subchannelId: 'corner-quiet',
+        parentChannelId: 'room-quiet',
+        reason: 'its worktree was missing after a restart',
+      });
+      const chatter = signEvent(
+        {
+          pubkey: agent.publicKey,
+          created_at: Math.floor(Date.now() / 1000),
+          kind: 9,
+          tags: [['h', 'corner-quiet']],
+          content: 'just talking',
+        },
+        agent.secretKey,
+      );
+      Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => [chatter]) });
+      const published = stubRelayHttp([cornerCreateEvent(agent, 'corner-quiet', 'room-quiet')]);
+
+      await Reflect.get(body, 'pollAbandonedCornerCloses').call(body, 'room-quiet');
+
+      expect(published).toHaveLength(0);
+      expect(body.getAbandonedCorners().has('corner-quiet')).toBe(true);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('never lets the agent close its own corner: only a human close request counts', async () => {
+    const agent = newIdentity('self-close-agent');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-self-close-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      Reflect.get(body, 'abandonedCorners').set('corner-self', {
+        subchannelId: 'corner-self',
+        parentChannelId: 'room-self',
+        reason: 'its worktree was missing after a restart',
+      });
+      // Same tag, signed by the agent identity rather than a human.
+      const agentClose = closeEvent(agent, 'corner-self');
+      Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => [agentClose]) });
+      const published = stubRelayHttp([cornerCreateEvent(agent, 'corner-self', 'room-self')]);
+
+      await Reflect.get(body, 'pollAbandonedCornerCloses').call(body, 'room-self');
+
+      expect(published).toHaveLength(0);
+      expect(body.getAbandonedCorners().has('corner-self')).toBe(true);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('retries a close whose relay publish failed, rather than marking it delivered and never trying again', async () => {
+    const agent = newIdentity('close-retry-agent');
+    const human = newIdentity('close-retry-human');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-close-retry-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      Reflect.get(body, 'abandonedCorners').set('corner-retry', {
+        subchannelId: 'corner-retry',
+        parentChannelId: 'room-retry',
+        reason: 'its worktree was missing after a restart',
+      });
+      const close = closeEvent(human, 'corner-retry');
+      Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => [close]) });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: string | URL | Request) => {
+          if (String(input).endsWith('/query')) {
+            return new Response(
+              JSON.stringify([cornerCreateEvent(agent, 'corner-retry', 'room-retry')]),
+              { status: 200 },
+            );
+          }
+          return new Response('relay unavailable', { status: 503 });
+        }),
+      );
+      const durableState = Reflect.get(body, 'durableState') as {
+        failed: (channelId: string, eventId: string, error: unknown) => Promise<number>;
+        delivered: (channelId: string, eventId: string) => Promise<void>;
+      };
+      const failedSpy = vi.spyOn(durableState, 'failed');
+      const deliveredSpy = vi.spyOn(durableState, 'delivered');
+
+      await Reflect.get(body, 'pollAbandonedCornerCloses').call(body, 'room-retry');
+
+      expect(failedSpy).toHaveBeenCalledWith('corner-retry', close.id, expect.anything());
+      expect(deliveredSpy).not.toHaveBeenCalled();
+      // Still on the books, so the next maintenance tick tries again.
+      expect(body.getAbandonedCorners().has('corner-retry')).toBe(true);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to archive a channel the relay does not link to this Room, even when it is on the abandoned list', () => {
+    expect(() =>
+      assertRelayCornerArchiveTarget('corner', 'room', 'room'),
+    ).not.toThrow();
+    // A top-level Room or Workspace has no parent link at all.
+    expect(() => assertRelayCornerArchiveTarget('room', null, 'room')).toThrow('non-corner');
+    // A self-referencing link is not a parent.
+    expect(() => assertRelayCornerArchiveTarget('corner', 'corner', 'corner')).toThrow('non-corner');
+    // A corner belonging to some other Room is not this Body's to archive.
+    expect(() => assertRelayCornerArchiveTarget('corner', 'other-room', 'room')).toThrow(
+      'non-corner',
+    );
+  });
+
+  it('still refuses a corner it has never heard of, so the abandoned path did not weaken archiveSubchannel', async () => {
+    const agent = newIdentity('unknown-corner-agent');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-unknown-corner-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      await expect(body.archiveSubchannel('corner-never-seen')).rejects.toThrow('not found');
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('completes a healthy corner close even when the dead ACP session throws on teardown', async () => {
+    const agent = newIdentity('wedged-session-agent');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-wedged-session-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      body.registerSubchannel({
+        subchannelId: 'corner-wedged',
+        worktreePath: join(workspaceRoot, 'gone'),
+        featureBranch: 'feature/wedged',
+        role: agent,
+        session: {
+          channelId: 'corner-wedged',
+          parentChannelId: 'room-wedged',
+          sessionId: 'session',
+          mode: 'edit',
+          archived: false,
+          client: {
+            sessionCancel: () => {
+              throw new Error('backend is gone');
+            },
+            stop: async () => {
+              throw new Error('backend is gone');
+            },
+          },
+        } as never,
+        lastPolledAt: 0,
+        archived: false,
+      } as never);
+      const published = stubRelayHttp([cornerCreateEvent(agent, 'corner-wedged', 'room-wedged')]);
+
+      await body.archiveSubchannel('corner-wedged');
+
+      expect(
+        published.some(
+          (event) =>
+            event.kind === 9002 &&
+            event.tags.some((tag) => tag[0] === 'archived' && tag[1] === 'true'),
+        ),
+      ).toBe(true);
+      expect(body.getSubchannels().has('corner-wedged')).toBe(false);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
   });
 });

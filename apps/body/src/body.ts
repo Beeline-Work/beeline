@@ -493,6 +493,18 @@ export interface SubchannelInfo {
   realignedTips?: Set<string>;
   /** Automatic realigns run for this corner, capped at MAX_CORNER_REALIGN_ATTEMPTS. */
   realignAttempts?: number;
+  /**
+   * Tip this corner's approved work is CONFIRMED to sit at on the target ref.
+   *
+   * Recorded by whichever path actually landed it, because `mergeTarget` — the
+   * only other record of the tip — is withdrawn by `publishMergeReady` as a
+   * direct consequence of landing: once the target branch holds the corner's
+   * work, the worktree has nothing left to review, so the next follow-up
+   * turn's tail clears it. Everything terminal (the recap, the merge summary,
+   * the archive) reads this instead, so a corner that landed can never be
+   * stranded by its own success.
+   */
+  landedTip?: string;
   /** The landed-work recap has already been posted to the parent Room. */
   landSummaryPosted?: boolean;
   /** A post-land CI watch is already running for this corner's landed commit. */
@@ -4780,6 +4792,14 @@ export class Body {
           ['tip', target.tip],
         ],
       );
+      // The land is proven HERE — this is the only moment every non-relay
+      // shape (a direct-remote push, a local fast-forward, and the re-land
+      // after a moved-target self-heal) is known to have succeeded. Recapping
+      // from `pollMergeCompletions` alone made the recap depend on that poll
+      // re-deriving the land from `info.mergeTarget`, which landing itself is
+      // what destroys.
+      info.landedTip = target.tip;
+      await this.recapLandedCorner(info, target.tip);
       landed++;
     }
     return landed;
@@ -5048,50 +5068,80 @@ export class Body {
     this.pendingCiWatches.add(watch);
   }
 
+  /**
+   * Tell the parent Room what this corner delivered, and follow the landed
+   * commit's CI — once per corner, from whichever path landed it.
+   *
+   * A direct land and the completion poll that follows it in the same tick
+   * both call this, so the exactly-once property lives here rather than
+   * resting on each half's own internal guard. Entirely best-effort: neither
+   * half may hold up the teardown that follows a land.
+   */
+  private async recapLandedCorner(info: SubchannelInfo, landedTip: string): Promise<void> {
+    if (info.landSummaryPosted) return;
+    const landSummaryId = await this.postCornerLandSummary(info, landedTip).catch((error) => {
+      console.error(`[body] land summary publish failed for ${info.subchannelId}:`, error);
+      return undefined;
+    });
+    this.watchLandedCommitCi(info, landedTip, landSummaryId);
+  }
+
+  /**
+   * The tip this corner's approved work is confirmed to sit at on the target
+   * ref, or `undefined` while it does not.
+   *
+   * Reads the ref for whichever repository shape the corner is bound to: a
+   * relay origin (through the merge gate's own remote), a direct git remote,
+   * or a local-only checkout the daemon advanced itself.
+   */
+  private async confirmedLandedTip(info: SubchannelInfo): Promise<string | undefined> {
+    const boundRepo = info.boundRepo;
+    const target = info.mergeTarget;
+    if (!boundRepo || !target) return undefined;
+    if (!(await this.findHumanMergeApproval(info))) return undefined;
+    const targetTip = boundRepo.ownerHex
+      ? lsRemoteRef(
+          info.worktreePath,
+          this.agentIdentity,
+          boundRepo.ownerHex,
+          boundRepo.repo,
+          target.branch,
+        )
+      : boundRepo.remoteName
+        ? gitWithUserCredentials(info.worktreePath, [
+            'ls-remote',
+            boundRepo.remoteName,
+            target.branch,
+          ])
+            .stdout.trim()
+            .split(/\s+/)[0]
+        : boundRepo.localPath
+          ? git(boundRepo.localPath, ['rev-parse', '--verify', target.branch]).stdout.trim()
+          : undefined;
+    return targetTip === target.tip ? target.tip : undefined;
+  }
+
   /** Archive only after human approval and the target ref reach the exact tip. */
   async pollMergeCompletions(): Promise<number> {
     let merged = 0;
     for (const info of [...this.subchannels.values()]) {
-      if (info.archived || !info.mergeTarget || !info.boundRepo) continue;
-      if (!(await this.findHumanMergeApproval(info))) continue;
-      const targetTip = info.boundRepo.ownerHex
-        ? lsRemoteRef(
-            info.worktreePath,
-            this.agentIdentity,
-            info.boundRepo.ownerHex,
-            info.boundRepo.repo,
-            info.mergeTarget.branch,
-          )
-        : info.boundRepo.remoteName
-          ? gitWithUserCredentials(info.worktreePath, [
-              'ls-remote',
-              info.boundRepo.remoteName,
-              info.mergeTarget.branch,
-            ])
-              .stdout.trim()
-              .split(/\s+/)[0]
-          : info.boundRepo.localPath
-            ? git(info.boundRepo.localPath, [
-                'rev-parse',
-                '--verify',
-                info.mergeTarget.branch,
-              ]).stdout.trim()
-            : undefined;
-      if (targetTip !== info.mergeTarget.tip) continue;
+      if (info.archived || !info.boundRepo) continue;
+      // `info.landedTip` is the fallback for a corner whose land was already
+      // confirmed by another path and whose approvable `mergeTarget` has since
+      // been withdrawn — which is what `publishMergeReady` does on the first
+      // follow-up turn after a land, since the worktree then holds nothing the
+      // target branch does not already have. Without it a landed corner could
+      // never be recapped, summarized or archived at all.
+      const landedTip = (await this.confirmedLandedTip(info)) ?? info.landedTip;
+      if (!landedTip) continue;
+      info.landedTip = landedTip;
       // The work is durably on the target ref — the one moment a Room reader
       // can be told, in the agent's own voice, what this corner delivered.
       // Never allowed to block the archive below.
-      const landSummaryId = await this.postCornerLandSummary(info, targetTip).catch((error) => {
-        console.error(`[body] land summary publish failed for ${info.subchannelId}:`, error);
-        return undefined;
-      });
-      // Started here rather than at the land itself, because this is the one
-      // point every repository kind converges on with the target ref actually
-      // confirmed at the approved tip — the commit CI would be running against.
-      this.watchLandedCommitCi(info, targetTip, landSummaryId);
+      await this.recapLandedCorner(info, landedTip);
       await this.postMergeSummary(
         info.subchannelId,
-        info.mergeSummary ?? `Merged ${info.featureBranch} at ${targetTip.slice(0, 12)}…`,
+        info.mergeSummary ?? `Merged ${info.featureBranch} at ${landedTip.slice(0, 12)}…`,
       );
       await this.archiveSubchannel(info.subchannelId);
       merged++;
@@ -5379,8 +5429,16 @@ export class Body {
           // signal, correctly retried but invisible. Mirror the same
           // corner-level + parent-status publish `pollDirectRemoteApprovals`
           // already makes for its own failures.
-          if (attempt.outcome.merged) continue;
           const info = this.subchannels.get(attempt.candidate.subchannelId);
+          if (attempt.outcome.merged) {
+            // Record the land against the corner immediately. The completion
+            // poll below re-derives it from the target ref, but a corner whose
+            // `mergeTarget` is withdrawn between the two (see
+            // `SubchannelInfo.landedTip`) would otherwise lose its recap and
+            // its archive despite having genuinely landed.
+            if (info && !info.archived && info.mergeTarget) info.landedTip = info.mergeTarget.tip;
+            continue;
+          }
           if (!info || info.archived) continue;
           const target = info.mergeTarget;
           const failureTags: string[][] = [['status', 'failed']];

@@ -298,3 +298,229 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
     }
   });
 });
+
+/**
+ * The recap used to be posted from ONE place — `pollMergeCompletions` — which
+ * re-derives the land from `info.mergeTarget` rather than being told about it.
+ * That is the exact state landing destroys: once the target branch holds the
+ * corner's work, `publishMergeReady` (run at the tail of every corner turn)
+ * finds nothing left to review and withdraws the target, after which every
+ * later poll skips the corner entirely. A corner that genuinely landed then
+ * never got a recap, a merge summary, or an archive.
+ *
+ * These walk the live shape that missed: a localOnly repo, an approval, and
+ * the daemon's own fast-forward land.
+ */
+describe('every land path recaps the corner exactly once', () => {
+  function gitCommand(cwd: string, args: string[]): string {
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    if (result.status !== 0) throw new Error(`git ${args.join(' ')}: ${result.stderr}`);
+    return result.stdout.trim();
+  }
+
+  function newBody(agent: ReturnType<typeof newIdentity>, statePath: string) {
+    return new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: '/workspace',
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+      undefined,
+      { statePath },
+    );
+  }
+
+  /** A repo with NO remote at all, plus a corner worktree holding one commit. */
+  function localOnlyCorner(): {
+    root: string;
+    repoPath: string;
+    cornerPath: string;
+    tip: string;
+  } {
+    const root = mkdtempSync(join(tmpdir(), 'buzzy-land-paths-'));
+    const repoPath = join(root, 'repo');
+    const cornerPath = join(root, 'corner');
+    mkdirSync(repoPath, { recursive: true });
+    gitCommand(repoPath, ['init', '-b', 'master']);
+    gitCommand(repoPath, ['config', 'user.name', 'Land Paths Test']);
+    gitCommand(repoPath, ['config', 'user.email', 'land-paths@test.invalid']);
+    writeFileSync(join(repoPath, 'README.md'), '# Before\n');
+    gitCommand(repoPath, ['add', '.']);
+    gitCommand(repoPath, ['commit', '-m', 'base']);
+    gitCommand(repoPath, ['worktree', 'add', '-b', 'feature/haiku', cornerPath, 'master']);
+    writeFileSync(join(cornerPath, 'README.md'), '# Before\n\nan old silent pond\n');
+    gitCommand(cornerPath, ['add', 'README.md']);
+    gitCommand(cornerPath, ['commit', '-m', 'add a haiku']);
+    return { root, repoPath, cornerPath, tip: gitCommand(cornerPath, ['rev-parse', 'HEAD']) };
+  }
+
+  function cornerInfo(
+    agent: ReturnType<typeof newIdentity>,
+    repoPath: string,
+    cornerPath: string,
+    boundRepo: Record<string, unknown>,
+  ) {
+    return {
+      subchannelId: 'corner-land-paths',
+      worktreePath: cornerPath,
+      featureBranch: 'feature/haiku',
+      role: agent,
+      session: {
+        channelId: 'corner-land-paths',
+        parentChannelId: 'room-local',
+        sessionId: 'session',
+      } as never,
+      lastPolledAt: 0,
+      archived: false,
+      request: {
+        eventId: 'req-1',
+        authorPubkey: 'human',
+        content: '@lena open a corner and add a haiku to the readme',
+        createdAt: 1,
+      },
+      boundRepo: { repo: 'proj', repositoryKey: 'local-key', localPath: repoPath, ...boundRepo },
+    };
+  }
+
+  function capturePublishes(): NostrEvent[] {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    return published;
+  }
+
+  function landSummaries(published: NostrEvent[]): NostrEvent[] {
+    return published.filter((event) =>
+      event.tags.some((tag) => tag[0] === 't' && tag[1] === 'land-summary'),
+    );
+  }
+
+  /** Approve the corner's exact tip, as a device-held human admin would. */
+  function approve(body: Body, tip: string, recap: string): void {
+    Reflect.set(body, 'findHumanMergeApproval', async (target: { humanMergeApproval?: unknown }) => {
+      target.humanMergeApproval = {
+        id: 'approval-1',
+        reviewer: newIdentity('land-paths-reviewer').publicKey,
+        tip,
+      };
+      return target.humanMergeApproval;
+    });
+    Reflect.set(body, 'promptAgent', async () => ({ agentText: recap, updates: [] }));
+  }
+
+  it('recaps a local-only fast-forward land from the land itself, with no completion poll', async () => {
+    const agent = newIdentity('land-paths-local');
+    const { root, repoPath, cornerPath, tip } = localOnlyCorner();
+    const published = capturePublishes();
+    try {
+      const body = newBody(agent, join(root, 'state.json'));
+      const info = cornerInfo(agent, repoPath, cornerPath, {
+        localOnly: true,
+        targetBranch: 'refs/heads/master',
+      });
+      body.registerSubchannel(info as never);
+      approve(body, tip, 'Added a haiku to the readme. Did not touch the build.');
+
+      await Reflect.get(body, 'publishMergeReady').call(body, info);
+      // The one poll the live tick ran before the recap went missing.
+      const landed = await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
+
+      expect(landed).toBe(1);
+      expect(gitCommand(repoPath, ['rev-parse', 'refs/heads/master'])).toBe(tip);
+      const summaries = landSummaries(published);
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]!.tags).toContainEqual(['h', 'room-local']);
+      expect(summaries[0]!.tags).toContainEqual(['subchannel', 'corner-land-paths']);
+      expect(summaries[0]!.tags).toContainEqual(['tip', tip]);
+      expect(summaries[0]!.content).toContain('Added a haiku');
+      expect(summaries[0]!.content).toContain(`Landed on master at ${tip.slice(0, 12)}.`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('still recaps and archives when the land withdraws the corner own merge target', async () => {
+    const agent = newIdentity('land-paths-withdrawn');
+    const { root, repoPath, cornerPath, tip } = localOnlyCorner();
+    const published = capturePublishes();
+    const archived: string[] = [];
+    try {
+      const body = newBody(agent, join(root, 'state.json'));
+      const info = cornerInfo(agent, repoPath, cornerPath, {
+        localOnly: true,
+        targetBranch: 'refs/heads/master',
+      });
+      body.registerSubchannel(info as never);
+      approve(body, tip, 'Added a haiku to the readme.');
+      Reflect.set(body, 'archiveSubchannel', async (id: string) => {
+        archived.push(id);
+      });
+
+      await Reflect.get(body, 'publishMergeReady').call(body, info);
+      await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
+      // The tail of the very next corner turn. master now holds the corner's
+      // work, so there is nothing left to review and the approvable target is
+      // withdrawn — the state that used to make the recap unreachable.
+      await Reflect.get(body, 'publishMergeReady').call(body, info);
+      expect(info.mergeTarget).toBeUndefined();
+      expect(
+        published.some((event) =>
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
+        ),
+      ).toBe(true);
+
+      await body.pollMergeCompletions();
+
+      expect(landSummaries(published)).toHaveLength(1);
+      // ...and the landed corner is still torn down, not stranded open.
+      expect(archived).toEqual(['corner-land-paths']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('recaps a direct-remote push land from the land itself', async () => {
+    const agent = newIdentity('land-paths-remote');
+    const { root, repoPath, cornerPath, tip } = localOnlyCorner();
+    const published = capturePublishes();
+    try {
+      const originPath = join(root, 'origin.git');
+      gitCommand(root, ['init', '--bare', '-b', 'master', originPath]);
+      gitCommand(repoPath, ['remote', 'add', 'origin', originPath]);
+      gitCommand(repoPath, ['push', 'origin', 'master']);
+      // The agent's completion path is only ever allowed to publish its own
+      // feature ref; the land is what advances the protected one.
+      gitCommand(cornerPath, ['push', 'origin', 'feature/haiku']);
+
+      const body = newBody(agent, join(root, 'state.json'));
+      const info = cornerInfo(agent, repoPath, cornerPath, {
+        remoteName: 'origin',
+        targetBranch: 'refs/heads/master',
+      });
+      body.registerSubchannel(info as never);
+      approve(body, tip, 'Added a haiku to the readme.');
+
+      await Reflect.get(body, 'publishMergeReady').call(body, info);
+      const landed = await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
+
+      expect(landed).toBe(1);
+      expect(gitCommand(originPath, ['rev-parse', 'refs/heads/master'])).toBe(tip);
+      expect(landSummaries(published)).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

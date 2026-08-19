@@ -49,6 +49,27 @@ const CONNECTING_MESSAGE = 'Still connecting to the relay. Try again in a moment
 /** The relay-backed context every admin write needs; only exists once init lands. */
 type WorkspaceConnection = { transport: BuzzRigTransport; communityId: string };
 
+/**
+ * Which admin action is in flight, so only the tapped control animates.
+ *
+ * This screen used to hold one shared `working` boolean, which every handler
+ * set and three `MonoButton`s read as `loading` — so tapping "Add agent"
+ * pulsed "Invite person" (and relabelled it "Creating invite") at the same
+ * time. The concurrency intent is unchanged: any action in flight still
+ * disables every other control; only the spinner and the busy label are
+ * narrowed to the action the person actually tapped.
+ */
+type MembersAction =
+  | 'add-agent'
+  | 'invite-person'
+  | 'person-role'
+  | 'remove-person'
+  | 'save-soul'
+  | 'change-avatar'
+  | 'reset-avatar'
+  | 'remove-agent'
+  | 'message-agent';
+
 type Deferred<T> = {
   promise: Promise<T>;
   resolve: (value: T) => void;
@@ -132,7 +153,9 @@ export default function BuzzAgents() {
   const [profiles, setProfiles] = useState<PersonProfile[]>(initialCachedProfiles);
   const [nip05Status, setNip05Status] = useState<Map<string, Nip05VerificationStatus>>(new Map());
   const [loading, setLoading] = useState(!initialCachedList);
-  const [working, setWorking] = useState(false);
+  const [working, setWorking] = useState<MembersAction | null>(null);
+  /** Any admin action in flight — every control is gated on this, as before. */
+  const busy = working !== null;
   const [error, setError] = useState<string | null>(null);
   const [pairCommand, setPairCommand] = useState<string | null>(null);
   const [pairExpiresAt, setPairExpiresAt] = useState<number | null>(null);
@@ -357,7 +380,7 @@ export default function BuzzAgents() {
 
   const handleAdd = useCallback(async () => {
     if (!canManageWorkspace) return;
-    setWorking(true);
+    setWorking('add-agent');
     setError(null);
     try {
       const { transport: ready, communityId: workspaceId } = await requireConnection();
@@ -371,13 +394,13 @@ export default function BuzzAgents() {
       pairingPending.current = false;
       setError(`Could not create pairing code: ${String(caught)}`);
     } finally {
-      setWorking(false);
+      setWorking(null);
     }
   }, [agents, canManageWorkspace, requireConnection]);
 
   const invitePerson = useCallback(async () => {
     if (!canManageWorkspace) return;
-    setWorking(true);
+    setWorking('invite-person');
     setError(null);
     try {
       const { transport: ready, communityId: workspaceId } = await requireConnection();
@@ -388,14 +411,14 @@ export default function BuzzAgents() {
     } catch (caught) {
       setError(`Could not create person invite: ${String(caught)}`);
     } finally {
-      setWorking(false);
+      setWorking(null);
     }
   }, [canManageWorkspace, requireConnection]);
 
   const setPersonRole = useCallback(
     async (pubkey: string, role: CommunityRole) => {
       if (!canManageWorkspace) return;
-      setWorking(true);
+      setWorking('person-role');
       setError(null);
       try {
         const { transport: ready, communityId: workspaceId } = await requireConnection();
@@ -406,7 +429,7 @@ export default function BuzzAgents() {
       } catch (caught) {
         setError(`Could not change person role: ${String(caught)}`);
       } finally {
-        setWorking(false);
+        setWorking(null);
       }
     },
     [canManageWorkspace, identity?.publicKey, refreshPeople, requireConnection],
@@ -415,7 +438,7 @@ export default function BuzzAgents() {
   const removePerson = useCallback(
     async (pubkey: string) => {
       if (!canManageWorkspace) return;
-      setWorking(true);
+      setWorking('remove-person');
       setError(null);
       try {
         const { transport: ready, communityId: workspaceId } = await requireConnection();
@@ -426,7 +449,7 @@ export default function BuzzAgents() {
       } catch (caught) {
         setError(`Could not remove person: ${String(caught)}`);
       } finally {
-        setWorking(false);
+        setWorking(null);
       }
     },
     [canManageWorkspace, identity?.publicKey, refreshPeople, requireConnection],
@@ -499,7 +522,7 @@ export default function BuzzAgents() {
   const saveSoul = useCallback(
     async (nextName = name, nextPersonality = personality) => {
       if (!selected || !canManageWorkspace) return;
-      setWorking(true);
+      setWorking('save-soul');
       setError(null);
       try {
         const { transport: ready, communityId: workspaceId } = await requireConnection();
@@ -517,7 +540,7 @@ export default function BuzzAgents() {
       } catch (caught) {
         setError(`Could not save soul: ${String(caught)}`);
       } finally {
-        setWorking(false);
+        setWorking(null);
       }
     },
     [avatarUrl, canManageWorkspace, intent, name, personality, refreshAgents, requireConnection, selected],
@@ -525,7 +548,7 @@ export default function BuzzAgents() {
 
   const changeAvatar = useCallback(async () => {
     if (!selected || !canManageWorkspace) return;
-    setWorking(true);
+    setWorking('change-avatar');
     setError(null);
     try {
       const { transport: ready, communityId: workspaceId } = await requireConnection();
@@ -544,13 +567,13 @@ export default function BuzzAgents() {
     } catch (caught) {
       setError(`Could not set Agent picture: ${String(caught)}`);
     } finally {
-      setWorking(false);
+      setWorking(null);
     }
   }, [canManageWorkspace, intent, name, personality, refreshAgents, requireConnection, selected]);
 
   const resetAvatar = useCallback(async () => {
     if (!selected || !canManageWorkspace) return;
-    setWorking(true);
+    setWorking('reset-avatar');
     setError(null);
     try {
       const { transport: ready, communityId: workspaceId } = await requireConnection();
@@ -566,7 +589,7 @@ export default function BuzzAgents() {
     } catch (caught) {
       setError(`Could not restore generated Agent mark: ${String(caught)}`);
     } finally {
-      setWorking(false);
+      setWorking(null);
     }
   }, [canManageWorkspace, intent, name, personality, refreshAgents, requireConnection, selected]);
 
@@ -579,7 +602,7 @@ export default function BuzzAgents() {
 
   const removeSelectedAgent = useCallback(async () => {
     if (!selected || !canManageWorkspace) return;
-    setWorking(true);
+    setWorking('remove-agent');
     setError(null);
     try {
       const { transport: ready, communityId: workspaceId } = await requireConnection();
@@ -595,13 +618,13 @@ export default function BuzzAgents() {
     } catch (caught) {
       setError(`Could not remove Agent: ${String(caught)}`);
     } finally {
-      setWorking(false);
+      setWorking(null);
     }
   }, [canManageWorkspace, refreshAgents, requireConnection, selected]);
 
   const messageSelectedAgent = useCallback(async () => {
     if (!selected) return;
-    setWorking(true);
+    setWorking('message-agent');
     setError(null);
     try {
       const { transport: ready, communityId: workspaceId } = await requireConnection();
@@ -610,7 +633,7 @@ export default function BuzzAgents() {
     } catch (caught) {
       setError(`Could not message Agent: ${String(caught)}`);
     } finally {
-      setWorking(false);
+      setWorking(null);
     }
   }, [requireConnection, selected]);
 
@@ -712,9 +735,9 @@ export default function BuzzAgents() {
               <Text style={styles.count}>{people.length}</Text>
               {canManageWorkspace && (
                 <MonoButton
-                  label={working ? 'Creating invite' : 'Invite person'}
-                  loading={working}
-                  disabled={working}
+                  label={working === 'invite-person' ? 'Creating invite' : 'Invite person'}
+                  loading={working === 'invite-person'}
+                  disabled={busy}
                   onPress={() => void invitePerson()}
                   variant="secondary"
                   style={styles.sectionAction}
@@ -765,7 +788,7 @@ export default function BuzzAgents() {
                               return (
                                 <TouchableOpacity
                                   accessibilityState={{ selected: selectedRole, disabled: !allowed }}
-                                  disabled={!allowed || selectedRole || working}
+                                  disabled={!allowed || selectedRole || busy}
                                   key={role}
                                   onPress={() => {
                                     setRoleEditorPubkey(null);
@@ -804,7 +827,7 @@ export default function BuzzAgents() {
                         {actorCanChange && (
                           <TouchableOpacity
                             accessibilityLabel={`Remove ${profile?.name ?? shortMemberNpub(person.pubkey)}`}
-                            disabled={working}
+                            disabled={busy}
                             onPress={() => void removePerson(person.pubkey)}
                             style={styles.removePersonButton}
                             testID={`member-${person.pubkey}-remove`}
@@ -826,9 +849,9 @@ export default function BuzzAgents() {
               <Text style={styles.count}>{agents.length}</Text>
               {canManageWorkspace && (
                 <MonoButton
-                  label={working ? 'Adding agent' : 'Add agent'}
-                  loading={working}
-                  disabled={working}
+                  label={working === 'add-agent' ? 'Adding agent' : 'Add agent'}
+                  loading={working === 'add-agent'}
+                  disabled={busy}
                   onPress={() => void handleAdd()}
                   variant="secondary"
                   style={styles.sectionAction}
@@ -932,7 +955,7 @@ export default function BuzzAgents() {
                 <TouchableOpacity
                   accessibilityLabel={`Message ${resolveAgentDisplayIdentity(selected.pubkey, selected).name}`}
                   style={styles.secondaryButton}
-                  disabled={working}
+                  disabled={busy}
                   onPress={() => void messageSelectedAgent()}
                   testID={`message-agent-${selected.pubkey}`}
                 >
@@ -940,7 +963,7 @@ export default function BuzzAgents() {
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.secondaryButton}
-                  disabled={working}
+                  disabled={busy}
                   onPress={() => void changeAvatar()}
                 >
                   <Text style={styles.secondaryButtonText}>
@@ -950,7 +973,7 @@ export default function BuzzAgents() {
                 {avatarUrl && (
                   <TouchableOpacity
                     style={styles.avatarReset}
-                    disabled={working}
+                    disabled={busy}
                     onPress={() => void resetAvatar()}
                   >
                     <Text style={styles.avatarResetText}>Use generated mark</Text>
@@ -994,13 +1017,13 @@ export default function BuzzAgents() {
                   label="Save"
                   style={[styles.primaryButton, styles.flexButton]}
                   disabled={
-                    !intent.trim() || !isSingleWordAgentName(name) || !personality.trim() || working
+                    !intent.trim() || !isSingleWordAgentName(name) || !personality.trim() || busy
                   }
                   onPress={() => void saveSoul()}
                 />
                 <TouchableOpacity
                   style={[styles.secondaryButton, styles.flexButton]}
-                  disabled={working}
+                  disabled={busy}
                   onPress={handleUseDefault}
                 >
                   <Text style={styles.secondaryButtonText}>Suggest locally</Text>
@@ -1061,7 +1084,7 @@ export default function BuzzAgents() {
                 accessibilityLabel="Remove this Agent"
                 accessibilityHint="Stops the Agent and ends its work on the host machine"
                 style={styles.removeButton}
-                disabled={working}
+                disabled={busy}
                 onPress={() => setConfirmingRemoval(true)}
               >
                 <Text style={styles.removeButtonLabel}>Remove Agent</Text>
@@ -1081,16 +1104,16 @@ export default function BuzzAgents() {
                     <TouchableOpacity
                       accessibilityLabel="Cancel Agent removal"
                       style={[styles.secondaryButton, styles.flexButton]}
-                      disabled={working}
+                      disabled={busy}
                       onPress={() => setConfirmingRemoval(false)}
                     >
                       <Text style={styles.secondaryButtonText}>Cancel</Text>
                     </TouchableOpacity>
                     <MonoButton
-                      label={working ? 'Stopping Agent' : 'Stop & Remove'}
-                      loading={working}
+                      label={working === 'remove-agent' ? 'Stopping Agent' : 'Stop & Remove'}
+                      loading={working === 'remove-agent'}
                       style={[styles.primaryButton, styles.flexButton]}
-                      disabled={working}
+                      disabled={busy}
                       onPress={() => void removeSelectedAgent()}
                     />
                   </View>

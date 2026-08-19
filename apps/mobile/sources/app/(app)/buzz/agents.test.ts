@@ -449,6 +449,53 @@ describe('Members screen', () => {
   // controls render before the init effect has a transport. Before this fix
   // every handler began `if (!transport ...) return`, so each of these taps was
   // a silent no-op for the whole connect window (and forever if init threw).
+  describe('per-action pending state', () => {
+    it('animates only the tapped control, and still gates every other one', async () => {
+      const viewerPubkey = 'a'.repeat(64);
+      useBuzzLocalCache.getState().setActiveViewer(viewerPubkey);
+      useBuzzLocalCache.getState().setChannelList({
+        viewerPubkey,
+        communityId: 'workspace-1',
+        channels: [],
+        directMessages: [],
+        workspaceMembers: [
+          { peerPubkey: viewerPubkey, peerName: 'Owner', peerKind: 'person', role: 'owner' },
+        ],
+        communities: [{ communityId: 'workspace-1', name: 'Night Shift', viewerRole: 'owner' }],
+        personalWorkspaceId: null,
+        viewerIsAgent: false,
+        canEditWorkspaceAvatar: true,
+        updatedAt: 0,
+        lastAccessedAt: 0,
+      } as any);
+      // A pairing code that never resolves holds "Add agent" in flight for
+      // the whole assertion window.
+      client.createAgentPairingCode.mockImplementation(() => new Promise(() => undefined));
+
+      let renderer!: ReactTestRenderer;
+      await act(async () => {
+        renderer = create(React.createElement(MembersScreen));
+        for (let i = 0; i < 12; i += 1) await Promise.resolve();
+      });
+
+      await act(async () => {
+        renderer.root.findByProps({ testID: 'add-agent' }).props.onPress();
+        for (let i = 0; i < 12; i += 1) await Promise.resolve();
+      });
+
+      const addAgent = renderer.root.findByProps({ testID: 'add-agent' });
+      const invitePerson = renderer.root.findByProps({ testID: 'invite-person' });
+      // Only the tapped control spins and relabels...
+      expect(addAgent.props.loading).toBe(true);
+      expect(addAgent.props.label).toBe('Adding agent');
+      expect(invitePerson.props.loading).toBe(false);
+      expect(invitePerson.props.label).toBe('Invite person');
+      // ...while the concurrency intent is unchanged: both stay disabled.
+      expect(addAgent.props.disabled).toBe(true);
+      expect(invitePerson.props.disabled).toBe(true);
+    });
+  });
+
   describe('admin actions taken before the transport has connected', () => {
     function seedOwnerCache() {
       const viewerPubkey = 'a'.repeat(64);

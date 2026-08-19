@@ -1,9 +1,10 @@
 import { describe, expect, it, afterEach } from 'vitest';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { getPublicKey } from '@beeline/nostr';
 
 const bodyDirectory = fileURLToPath(new URL('..', import.meta.url));
 const cliPath = resolve(bodyDirectory, 'src/cli.ts');
@@ -89,23 +90,63 @@ function runPair(
 }
 
 describe('beeline pair — repository resolution', () => {
-  it('fails with an actionable error (not a stack trace) when the cwd is not a git repository and --repo is absent', async () => {
+  it('pairs from a directory that is not a git repository: no repo is not an error', async () => {
     const nonRepo = await tmpDir('beeline-pair-cli-nonrepo-');
     const stateHome = await tmpDir('beeline-pair-cli-state-');
     const agent = await fakeModelAgent();
-    // --agent custom pins the agent so the failure under test is the
-    // repository check, not the host's own installed-agent auto-detection
-    // (this sandbox has several real coding CLIs on PATH).
+    // A repository belongs to a ROOM, so pairing with none is valid. A
+    // malformed pairing code fails synchronously before any network call, so
+    // reaching *that* failure proves the repo check no longer blocks. --agent
+    // custom pins the agent so the host's own installed-agent auto-detection
+    // (this sandbox has several real coding CLIs on PATH) can't interfere.
     const { status, stderr } = runPair(
-      ['BUZZ-ABCD-EFGH', '--agent', 'custom', '--agent-command', agent],
+      ['not-a-real-code', '--agent', 'custom', '--agent-command', agent],
       { cwd: nonRepo, env: { XDG_STATE_HOME: stateHome } },
     );
 
     expect(status).toBe(1);
-    expect(stderr).toContain('[beeline] pair failed:');
-    expect(stderr).toContain('pass --repo <path>');
+    expect(stderr).toContain('invalid agent pairing code');
+    expect(stderr).not.toContain('git repository');
     // No raw stack trace: a thrown Error's frames all start with a
     // whitespace-indented "at " line, which the clean handler never emits.
+    expect(stderr).not.toMatch(/\n\s+at /);
+  });
+
+  it('still rejects an explicit --repo that is not a git repository, before any question', async () => {
+    const nonRepo = await tmpDir('beeline-pair-cli-nonrepo-');
+    const stateHome = await tmpDir('beeline-pair-cli-state-');
+    const { status, stderr } = runPair(['BUZZ-ABCD-EFGH', '--repo', nonRepo], {
+      cwd: nonRepo,
+      env: { XDG_STATE_HOME: stateHome },
+    });
+
+    expect(status).toBe(1);
+    expect(stderr).toContain('--repo path is not a git repository');
+    expect(stderr).not.toMatch(/\n\s+at /);
+  });
+
+  it('refuses an already-paired pinned identity up front, before selecting an agent', async () => {
+    // The multi-identity guard (S0) is fatal, so it must fire before the
+    // interactive agent/model/access questions rather than after them. A
+    // pre-existing runtime.json at this pubkey is exactly that condition;
+    // `--agent custom` with a command that does not exist would fail agent
+    // selection first if the guard ran later than it does.
+    const nonRepo = await tmpDir('beeline-pair-cli-nonrepo-');
+    const stateHome = await tmpDir('beeline-pair-cli-state-');
+    // A fixed 32-byte key so the derived pubkey is stable for the fixture.
+    const agentKey = '11'.repeat(32);
+    const pubkey = getPublicKey(Uint8Array.from(Buffer.from(agentKey, 'hex')));
+    const runtimeDir = resolve(stateHome, 'beeline', 'agents', pubkey);
+    await mkdir(runtimeDir, { recursive: true });
+    await writeFile(resolve(runtimeDir, 'runtime.json'), '{}\n');
+
+    const { status, stderr } = runPair(
+      ['BUZZ-ABCD-EFGH', '--agent', 'custom', '--agent-command', '/nonexistent/agent-binary'],
+      { cwd: nonRepo, env: { XDG_STATE_HOME: stateHome, BUZZ_AGENT_KEY: agentKey } },
+    );
+
+    expect(status).toBe(1);
+    expect(stderr).toContain('is already paired on this host');
     expect(stderr).not.toMatch(/\n\s+at /);
   });
 
@@ -138,6 +179,41 @@ describe('beeline pair — repository resolution', () => {
 
     expect(status).toBe(1);
     expect(stderr).toContain('--repo path does not exist');
+  });
+});
+
+describe('beeline pair — one live spinner at a time', () => {
+  // Each clack spinner drives its own ~80ms setInterval that erases and
+  // rewrites the same stdout line, so two live at once flicker rapidly
+  // between their two messages — and a spinner left running underneath a
+  // clack.select fights the prompt for that line too. The pair flow's rule
+  // is therefore: ask every question first, start the working spinner last.
+  // Terminal rendering can't be asserted from a piped test process, so this
+  // pins the source structure that guarantees it (same technique as the
+  // mobile design tests).
+  it('never starts a spinner around the interactive questions', async () => {
+    const source = await readFile(resolve(bodyDirectory, 'src/cli.ts'), 'utf8');
+    const pairOneAgent = source.slice(
+      source.indexOf('async function pairOneAgent('),
+      source.indexOf('function printPairResult('),
+    );
+    const runPairCommand = source.slice(
+      source.indexOf('async function runPairCommand('),
+      source.indexOf('async function startRuntime('),
+    );
+    expect(pairOneAgent).not.toBe('');
+    expect(runPairCommand).not.toBe('');
+
+    // The caller must not wrap pairOneAgent (which prompts) in a spinner.
+    expect(runPairCommand).not.toContain('clack.spinner()');
+    // pairOneAgent owns exactly one, started after the last question.
+    expect(pairOneAgent.match(/clack\.spinner\(\)/g)).toHaveLength(1);
+    expect(pairOneAgent.indexOf('clack.spinner()')).toBeGreaterThan(
+      pairOneAgent.indexOf('pickModelAndEffort('),
+    );
+    expect(pairOneAgent.indexOf('clack.spinner()')).toBeGreaterThan(
+      pairOneAgent.indexOf('resolveAccessSettings('),
+    );
   });
 });
 

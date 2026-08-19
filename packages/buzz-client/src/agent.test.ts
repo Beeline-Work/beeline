@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import {
+  abandonAgentPairing,
   attachAgentToChannel,
   createAgent,
   hasAgentIdentityMarker,
@@ -429,5 +430,75 @@ describe('agent entity model', () => {
     expect(published[0]!.tags).toContainEqual(['p', agentIdentity.publicKey]);
     expect(published[0]!.tags).toContainEqual(['role', 'member']);
     expect(published[0]!.pubkey).toBe(owner.publicKey);
+  });
+});
+
+describe('abandonAgentPairing', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("drops the membership redemption just added, so a failed pair leaves no ghost", async () => {
+    // `listAgents` filters on current Workspace membership, so this is the
+    // write that actually makes a half-created agent disappear from the app.
+    const removed = new Set<string>();
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          const event = JSON.parse(String(init?.body)) as NostrEvent;
+          published.push(event);
+          removed.add(event.tags.find((tag) => tag[0] === 'p')?.[1] ?? '');
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          return jsonResponse([memberState(!removed.has(agentIdentity.publicKey))]);
+        }
+        if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([]);
+        return jsonResponse([]);
+      }),
+    );
+
+    await expect(abandonAgentPairing(ctx(), communityId)).resolves.toBe(true);
+
+    // The agent signs its OWN removal: `removeAgent` is an admin action and
+    // explicitly refuses an agent caller, so it can never be the undo here.
+    expect(published).toHaveLength(1);
+    expect(published[0]!.kind).toBe(KIND_REMOVE_USER);
+    expect(published[0]!.pubkey).toBe(agentIdentity.publicKey);
+    expect(published[0]!.tags).toContainEqual(['p', agentIdentity.publicKey]);
+  });
+
+  it('publishes nothing when the redemption never added the membership', async () => {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          return jsonResponse({ accepted: true });
+        }
+        const kind = (filterFrom(init).kinds as number[])[0];
+        if (kind === KIND_CHANNEL_MEMBERS) return jsonResponse([memberState(false)]);
+        return jsonResponse([]);
+      }),
+    );
+
+    await expect(abandonAgentPairing(ctx(), communityId)).resolves.toBe(true);
+    expect(published).toEqual([]);
+  });
+
+  it('swallows a relay refusal instead of replacing the real pairing error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('relay unreachable');
+      }),
+    );
+
+    await expect(abandonAgentPairing(ctx(), communityId)).resolves.toBe(false);
   });
 });

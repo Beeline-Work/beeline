@@ -556,3 +556,28 @@ describe('Leaving a corner', () => {
     expect(chatSource).not.toMatch(/router\.push\(`\/buzz\/chat\/\$\{encodeURIComponent\(tappableCornerId/);
   });
 });
+
+describe('The offline-agent notice', () => {
+  it('is decided once, by the shared gate, never re-derived in the screen', () => {
+    // A bare `addressedAgentOfflineNotice(...)` call here is the shape that
+    // shipped: no "was this send addressed to that agent" test, no
+    // presence-resolved gate, and no memory of having already said it.
+    expect(chatSource).not.toContain('addressedAgentOfflineNotice(');
+    expect(chatSource).toContain('offlineNoticeForSend({');
+    expect(chatSource).toContain('presenceResolved,');
+  });
+
+  it('remembers who it already told, so a standing condition is stated once', () => {
+    expect(chatSource).toContain('noticedAt: offlineNoticedAtRef.current');
+    expect(chatSource).toMatch(
+      /offlineNoticedAtRef\.current\.set\(offlineNotice\.agentPubkey, Date\.now\(\)\)/,
+    );
+  });
+
+  it('judges the text that is actually sent, not the reply shortcut', () => {
+    // `mentionedAgent` folds in `replyTarget?.isAgent`, which addresses an
+    // agent the reader never named — it routes the p-tag and nothing else.
+    expect(chatSource).toMatch(/offlineNoticeForSend\(\{[\s\S]{0,200}sentText: text,/);
+    expect(chatSource).not.toMatch(/offlineNoticeForSend\(\{[\s\S]{0,400}mentionedAgent[,\s)]/);
+  });
+});

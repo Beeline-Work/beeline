@@ -6,6 +6,11 @@ import {
 } from '@beeline/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
 import {
+  mentionedAgentPubkey,
+  selectedMentionAgentPubkey,
+  type MentionableAgent,
+} from './room-participants';
+import {
   sessionEventHasTag,
   sessionEventPayload,
   sessionEventTagValue,
@@ -112,6 +117,80 @@ export function presenceMapFromSessionEvents(
 export function addressedAgentOfflineNotice(agentName: string, online: boolean): string | null {
   if (online) return null;
   return `${agentName} seems offline right now — its host machine may be off.`;
+}
+
+/**
+ * How long one agent's offline notice stands for. A second notice inside the
+ * window is the same fact restated, not new information.
+ */
+export const OFFLINE_NOTICE_REPEAT_WINDOW_MS = 5 * 60_000;
+
+export type OfflineNoticeSend = {
+  /** Exactly the text handed to the relay, mention prefix and all. */
+  sentText: string;
+  /** A Corner addresses its one administering agent implicitly. */
+  cornerAgentPubkey?: string;
+  /** Room roster used to resolve a typed @mention; ignored in a Corner. */
+  mentionableAgents?: readonly MentionableAgent[];
+  /** Handles the user picked from the mention dropdown, handle → pubkey. */
+  selectedMentions?: ReadonlyMap<string, string>;
+};
+
+/**
+ * Which agent — if any — this send actually addressed.
+ *
+ * A Corner has exactly one administering agent, so every message there
+ * addresses it. A Room only addresses an agent when the text that was SENT
+ * names it: neither a stale dropdown selection nor a reply shortcut counts on
+ * its own, because the notice must describe the message the reader just
+ * watched leave, not the conversation's history.
+ */
+export function offlineNoticeAddressee(send: OfflineNoticeSend): string | undefined {
+  if (send.cornerAgentPubkey) return send.cornerAgentPubkey;
+  return (
+    (send.selectedMentions
+      ? selectedMentionAgentPubkey(send.sentText, send.selectedMentions)
+      : undefined) ?? mentionedAgentPubkey(send.sentText, [...(send.mentionableAgents ?? [])])
+  );
+}
+
+/**
+ * Decide whether this send earns a client-rendered offline notice, and for
+ * whom. `null` means stay silent.
+ *
+ * Three gates, each one a separate way the notice turned into per-turn spam:
+ *
+ *  - **addressed** — see `offlineNoticeAddressee`. An offline agent nobody
+ *    spoke to is not news; the Room's own OFFLINE banner already says it.
+ *  - **presence resolved** — an absent presence lease is UNKNOWN, not offline
+ *    (the same distinction `isAgentOfflineAfterPresenceResolved` draws for the
+ *    banner). The presence backfill is one independent step of the room-entry
+ *    fan-out, so a send during hydration would otherwise accuse a perfectly
+ *    healthy agent of being down.
+ *  - **not already said** — the notice restates a standing condition, so
+ *    repeating it once per message buries the conversation. One notice per
+ *    agent per `OFFLINE_NOTICE_REPEAT_WINDOW_MS`; `noticedAt` is the caller's
+ *    record of when that agent was last told about.
+ */
+export function offlineNoticeForSend(input: {
+  send: OfflineNoticeSend;
+  presenceResolved: boolean;
+  isOnline: (agentPubkey: string) => boolean;
+  agentName: (agentPubkey: string) => string;
+  noticedAt?: ReadonlyMap<string, number>;
+  now?: number;
+  repeatWindowMs?: number;
+}): { agentPubkey: string; text: string } | null {
+  if (!input.presenceResolved) return null;
+  const agentPubkey = offlineNoticeAddressee(input.send);
+  if (!agentPubkey) return null;
+  const text = addressedAgentOfflineNotice(input.agentName(agentPubkey), input.isOnline(agentPubkey));
+  if (!text) return null;
+  const last = input.noticedAt?.get(agentPubkey);
+  const now = input.now ?? Date.now();
+  const window = input.repeatWindowMs ?? OFFLINE_NOTICE_REPEAT_WINDOW_MS;
+  if (last !== undefined && now - last < window) return null;
+  return { agentPubkey, text };
 }
 
 /** Reinstall relay delivery before reading the current replaceable presence snapshot. */

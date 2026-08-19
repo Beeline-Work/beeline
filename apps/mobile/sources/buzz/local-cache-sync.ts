@@ -18,6 +18,8 @@ import {
 export type MessageSyncResult = {
   entry: ChannelCacheEntry;
   mergeTarget?: MergeTarget | null;
+  /** Preview deployment for the merge-ready tip, when its host published one. */
+  previewUrl?: string | null;
   archiveChannel: boolean;
 };
 
@@ -72,15 +74,24 @@ export function sessionEventCursor(event: SessionEvent): number | undefined {
 function projectEvents(events: SessionEvent[], viewerPubkey: string, isNew: boolean) {
   let messages: ChatDisplayMessage[] = [];
   let mergeTarget: MergeTarget | null | undefined;
+  // The preview belongs to the merge target it rode in on: a withdrawn target
+  // must never leave a stale PREVIEW row pointing at an older tip's deploy.
+  let previewUrl: string | null | undefined;
   let archiveChannel = false;
   for (const event of events) {
     const projected = projectChatEvent(event, viewerPubkey, isNew);
-    if (projected.mergeTarget) mergeTarget = projected.mergeTarget;
-    if (projected.clearMergeTarget) mergeTarget = null;
+    if (projected.mergeTarget) {
+      mergeTarget = projected.mergeTarget;
+      previewUrl = projected.previewUrl ?? null;
+    }
+    if (projected.clearMergeTarget) {
+      mergeTarget = null;
+      previewUrl = null;
+    }
     if (projected.archiveChannel) archiveChannel = true;
     if (projected.message) messages = upsertChatMessages(messages, [projected.message]);
   }
-  return { messages, mergeTarget, archiveChannel };
+  return { messages, mergeTarget, previewUrl, archiveChannel };
 }
 
 /**
@@ -167,6 +178,7 @@ async function performMessageRevalidation(
   return {
     entry: getCachedChannel(viewerPubkey, channelId)!,
     mergeTarget: projected.mergeTarget,
+    previewUrl: projected.previewUrl,
     archiveChannel: projected.archiveChannel,
   };
 }

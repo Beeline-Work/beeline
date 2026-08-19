@@ -327,6 +327,20 @@ export type ChatDisplayMessage = {
     status: AgentTurnStatus;
     generationId?: string;
   };
+  /**
+   * A daemon-published proposal to repoint this Room's landing target. The
+   * agent may only ever *propose* — the binding itself is republished under a
+   * confirming Room admin's own key (`roomTargetBranchSet`), and every reader
+   * re-checks that author's current role.
+   */
+  targetBranchProposal?: {
+    proposalId: string;
+    from: string;
+    to: string;
+    repository?: string;
+    agentPubkey?: string;
+    requesterPubkey?: string;
+  };
   writePermission?: {
     permissionId: string;
     requestId: string;
@@ -341,6 +355,13 @@ export type ChatDisplayMessage = {
 export type ChatEventProjection = {
   message?: ChatDisplayMessage;
   mergeTarget?: MergeTarget;
+  /**
+   * Branch/PR preview deployment for the merge-ready tip, when the repo's host
+   * published one. Deliberately NOT a field on `MergeTarget`: that object is
+   * the exact signed approval binding (repo/branch/tip) and must not grow a
+   * cosmetic field a reviewer's signature would then be read as covering.
+   */
+  previewUrl?: string;
   clearMergeTarget?: boolean;
   archiveChannel?: boolean;
   /** A durable relay publish for this corner's own approved-merge delivery
@@ -485,9 +506,14 @@ export function projectChatEvent(
   const repo = sessionEventTagValue(event, 'repo');
   const branch = sessionEventTagValue(event, 'branch');
   const tip = sessionEventTagValue(event, 'tip');
-  const mergeTarget =
-    sessionEventHasTag(event, 't', 'merge-ready') && repo && branch && tip
-      ? { repo, branch, tip }
+  const isMergeReady = sessionEventHasTag(event, 't', 'merge-ready');
+  const mergeTarget = isMergeReady && repo && branch && tip ? { repo, branch, tip } : undefined;
+  // Only ever an https link the daemon read off the repo host; anything else
+  // is dropped rather than rendered as a tappable row.
+  const previewCandidate = sessionEventTagValue(event, 'preview');
+  const previewUrl =
+    mergeTarget && previewCandidate && /^https:\/\/[^\s]+$/i.test(previewCandidate)
+      ? previewCandidate
       : undefined;
   const permissionId = sessionEventTagValue(event, 'permission');
   const permissionRequestId = sessionEventTagValue(event, 'request');
@@ -577,6 +603,7 @@ export function projectChatEvent(
   if (isMergeSummary) {
     return {
       ...(mergeTarget ? { mergeTarget } : {}),
+      ...(previewUrl ? { previewUrl } : {}),
       message: {
         id: eventId(event),
         text,
@@ -591,9 +618,40 @@ export function projectChatEvent(
 
   if (bodyControl) {
     const clearMergeTarget = sessionEventHasTag(event, 't', 'merge-not-ready');
+    // A daemon-published proposal to repoint the Room's landing target. It is
+    // rendered as a card because it is exactly what DESIGN.md's Shape rule
+    // admits a box for: something the reader must find and act on.
+    if (sessionEventHasTag(event, 't', 'buzz-target-branch-proposal')) {
+      const from = sessionEventTagValue(event, 'from');
+      const to = sessionEventTagValue(event, 'to');
+      if (!from || !to) return {};
+      return {
+        message: {
+          id: `target-branch-${eventId(event)}`,
+          text,
+          isUser: false,
+          timestamp: eventTimestamp(event),
+          ...(pubkey ? { pubkey } : {}),
+          targetBranchProposal: {
+            proposalId: eventId(event),
+            from,
+            to,
+            ...(repo ? { repository: repo } : {}),
+            ...(sessionEventTagValue(event, 'agent') ?? pubkey
+              ? { agentPubkey: sessionEventTagValue(event, 'agent') ?? pubkey }
+              : {}),
+            ...(sessionEventTagValue(event, 'requester')
+              ? { requesterPubkey: sessionEventTagValue(event, 'requester')! }
+              : {}),
+          },
+          ...(isNew ? { isNew: true } : {}),
+        },
+      };
+    }
     if (subchannelId && status) {
       return {
         ...(mergeTarget ? { mergeTarget } : {}),
+        ...(previewUrl ? { previewUrl } : {}),
         ...(clearMergeTarget ? { clearMergeTarget: true } : {}),
         message: {
           id: `corner-${subchannelId}`,
@@ -644,6 +702,7 @@ export function projectChatEvent(
       const deliveryRetry = deliveryRetryPosture(sessionEventTagValue(event, 'retry'));
       return {
         ...(mergeTarget ? { mergeTarget } : {}),
+        ...(previewUrl ? { previewUrl } : {}),
         deliveryFailed: true,
         ...(deliveryRetry ? { deliveryRetry } : {}),
         message: {
@@ -658,6 +717,7 @@ export function projectChatEvent(
     }
     return {
       ...(mergeTarget ? { mergeTarget } : {}),
+      ...(previewUrl ? { previewUrl } : {}),
       ...(clearMergeTarget ? { clearMergeTarget: true } : {}),
       ...(isArchived && !subchannelId ? { archiveChannel: true } : {}),
     };
@@ -675,6 +735,7 @@ export function projectChatEvent(
 
   return {
     ...(mergeTarget ? { mergeTarget } : {}),
+    ...(previewUrl ? { previewUrl } : {}),
     message: {
       id: reconciledId ?? relayId,
       ...(reconciledId ? { relayId } : {}),

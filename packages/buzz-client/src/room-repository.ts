@@ -175,3 +175,58 @@ export async function resolveRoomRepository(
   if (!binding) return null;
   return { channelId, binding, source: 'genesis' };
 }
+
+/**
+ * Git ref-name rules that matter for a Room's target branch, applied to a
+ * short branch name (`refs/heads/` is stripped first). Deliberately strict:
+ * this value is proposed from free-form chat, so anything that isn't plainly a
+ * branch name is refused rather than guessed at.
+ */
+export function normalizeTargetBranchName(value: string | undefined | null): string | null {
+  const raw = (value ?? '').trim().replace(/^refs\/heads\//, '').replace(/^\/+|\/+$/g, '');
+  if (!raw || raw.length > 200) return null;
+  if (/[\s~^:?*\[\\]/.test(raw)) return null;
+  if (raw.includes('..') || raw.includes('@{') || raw.includes('//')) return null;
+  if (raw === '@' || raw.startsWith('-') || raw.endsWith('.') || raw.endsWith('.lock')) return null;
+  if (raw.split('/').some((segment) => !segment || segment.startsWith('.'))) return null;
+  return raw;
+}
+
+/**
+ * Repoint the Room's target branch, carrying its current repository binding
+ * forward unchanged.
+ *
+ * This is the write half of the chat-native "land to staging from now on"
+ * flow: the agent only ever *proposes* the change (a typed proposal card), and
+ * this runs under the confirming ADMIN's key — `setRoomRepository` re-checks
+ * that the author is a current Room admin/owner, and `getRoomRepository`
+ * independently re-checks it again on every read, so an agent-authored or
+ * demoted-member event can never take effect.
+ *
+ * A Room resolving through the immutable `genesis` binding is promoted to a
+ * `config` event here: the binding identity is preserved byte-for-byte and
+ * only the target branch is new.
+ */
+export async function setRoomTargetBranch(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  targetBranch: string,
+): Promise<RoomRepository> {
+  const branch = normalizeTargetBranchName(targetBranch);
+  if (!branch) throw new Error('that is not a valid git branch name');
+  const current = await resolveRoomRepository(ctx, channelId);
+  if (!current) {
+    throw new Error('this Room has no repository linked, so it has no target branch to change');
+  }
+  const { binding } = current;
+  if (binding.localOnly || !binding.remote) {
+    throw new Error('a local-only Room repository has no publishable target branch');
+  }
+  return setRoomRepository(ctx, channelId, {
+    key: binding.key,
+    name: binding.name,
+    remote: binding.remote,
+    targetBranch: branch,
+    ...(current.communityId ? { communityId: current.communityId } : {}),
+  });
+}

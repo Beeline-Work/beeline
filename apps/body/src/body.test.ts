@@ -4495,3 +4495,116 @@ describe('per-agent model/effort persistence', () => {
     expect(setConfigOption).toHaveBeenCalledWith('sess-4', 'effort', 'low');
   });
 });
+
+describe('room owns the repo (Stage 1)', () => {
+  const config: BodyConfig = {
+    agentBinary: '/nonexistent',
+    mcpBinary: '/nonexistent',
+    readonlyMcpCommand: '/buzz-readonly-mcp',
+    agentEnv: {},
+    workspaceRoot: '/tmp/buzzy-room-repo-unit',
+    relayBaseUrl: 'http://relay.test',
+    relayHost: 'relay.test',
+    relayScheme: 'http',
+    relayWsUrl: 'ws://relay.test',
+    autoApprovePermissions: true,
+  };
+
+  function stubPublish(published: NostrEvent[]): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+  }
+
+  it('refuses an open-a-corner command in a repo-less Room with an actionable message', async () => {
+    const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
+    const open = vi.spyOn(body, 'openSubchannel');
+    const create = vi.spyOn(body as never, 'createManagedSession' as never);
+    const durableState = Reflect.get(body, 'durableState') as {
+      appendConversation: (...args: unknown[]) => Promise<void>;
+    };
+    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
+    const published: NostrEvent[] = [];
+    stubPublish(published);
+
+    await expect(
+      Reflect.get(body, 'replyInRoom').call(
+        body,
+        'repo-less-room',
+        undefined, // no repository resolved for this Room
+        {
+          eventId: 'req-1',
+          authorPubkey: body.identity.publicKey,
+          content: 'open a corner and add a retry helper',
+          createdAt: 1,
+        },
+        false, // explicitCornerWork stays false because there is no repository
+        'named-repository',
+        undefined,
+        true, // but the message IS an open-a-corner intent
+      ),
+    ).resolves.toBe(false);
+
+    expect(open).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+    expect(published).toHaveLength(1);
+    expect(published[0]!.content).toContain("doesn't have a repository linked");
+    expect(published[0]!.tags).toContainEqual(['t', 'agent-message']);
+  });
+
+  it('reaps a stray corner worktree while preserving a live one', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'buzzy-prune-'));
+    const gitEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1' };
+    const srcCheckout = join(root, 'proj');
+    const runGit = (cwd: string, args: string[]) =>
+      spawnSync('git', args, { cwd, env: gitEnv, encoding: 'utf8' });
+    spawnSync('git', ['init', '-q', srcCheckout], { env: gitEnv, encoding: 'utf8' });
+    runGit(srcCheckout, ['config', 'user.email', 't@t.local']);
+    runGit(srcCheckout, ['config', 'user.name', 'test']);
+    await writeFile(join(srcCheckout, 'README.md'), '# proj\n');
+    runGit(srcCheckout, ['add', '.']);
+    runGit(srcCheckout, ['commit', '-qm', 'init']);
+
+    // Corners pool is the hidden sibling of the source checkout.
+    const pool = join(root, '.beeline-corners', 'proj');
+    const liveDir = join(pool, 'live-corner');
+    const strayDir = join(pool, 'stray-corner');
+    // A real, git-registered worktree that a live corner still backs.
+    runGit(srcCheckout, ['worktree', 'add', '-q', '-b', 'feature/live', liveDir]);
+    // A stray directory git never tracked (crash litter) — must be reaped.
+    await writeFile(join(root, '.beeline-corners', 'proj', '.keep'), '').catch(() => undefined);
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(strayDir, { recursive: true });
+    await writeFile(join(strayDir, 'leftover.txt'), 'litter');
+
+    const body = new Body({ ...config, workspaceRoot: root }, newIdentity('operator'), newIdentity('agent'));
+    // Register the live corner so the prune must preserve it.
+    Reflect.get(body, 'subchannels').set('live-corner', { worktreePath: liveDir });
+
+    const { existsSync } = await import('node:fs');
+    await Reflect.get(body, 'pruneStrayCornerWorktrees').call(body, {
+      repo: 'proj',
+      localPath: srcCheckout,
+    });
+
+    expect(existsSync(liveDir)).toBe(true);
+    expect(existsSync(strayDir)).toBe(false);
+
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it('throttles the prune so it does not run every maintenance tick', async () => {
+    const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
+    Reflect.set(body, 'lastWorktreePruneAt', Date.now());
+    const registered = vi.spyOn(body as never, 'registeredWorktrees' as never);
+    await Reflect.get(body, 'pruneStrayCornerWorktrees').call(body, {
+      repo: 'proj',
+      localPath: '/does/not/matter',
+    });
+    expect(registered).not.toHaveBeenCalled();
+  });
+});

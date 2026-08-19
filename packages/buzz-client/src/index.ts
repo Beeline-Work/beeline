@@ -12,6 +12,8 @@ export type {
   AgentPairingCode,
   RedeemAgentPairingResult,
   RepositoryBinding,
+  RoomRepository,
+  RoomRepositoryInput,
   AgentSoulInput,
   AgentSoulProfile,
   AgentModelConfigOption,
@@ -239,6 +241,13 @@ export {
   setAgentModelConfig,
   getAgentModelConfig,
 } from './agent-model-config.js';
+
+export {
+  parseRoomRepository,
+  setRoomRepository,
+  getRoomRepository,
+  resolveRoomRepository,
+} from './room-repository.js';
 
 export {
   fallbackAgentName,

@@ -654,6 +654,19 @@ export class BuzzRigTransport implements RigTransport {
   }
 
   /**
+   * Repoint a Room's landing target, carrying its current repository binding
+   * forward. This is the admin-confirm half of the chat-native target-branch
+   * change: the agent only ever publishes a proposal card, and this event is
+   * signed by the confirming admin's own key. Non-admins are refused here AND
+   * again by every reader (`getRoomRepository` re-checks the author's current
+   * role), so a refusal cannot be bypassed by publishing directly.
+   */
+  async roomTargetBranchSet(channelId: string, targetBranch: string): Promise<RoomRepository> {
+    const client = await this.getClient();
+    return client.setRoomTargetBranch(channelId, targetBranch);
+  }
+
+  /**
    * Distinct repos already bound to some top-level Room in this Workspace —
    * the repo picker's "connected repos" candidate list. The app has no
    * separate GitHub/connected-accounts source yet, so this is derived from

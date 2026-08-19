@@ -152,6 +152,10 @@ const monoStyles = new Set([
   'repoChipText',
   'repoPromptTitle',
   'repoPromptDismissText',
+  'targetBranchChange',
+  'targetBranchStatus',
+  'previewLinkLabel',
+  'previewLinkUrl',
 ]);
 
 function styleDefinition(source: string, name: string): string {

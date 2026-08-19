@@ -97,6 +97,21 @@ export const DEFAULT_ROOM_WATCHDOG_STALE_MS = 90_000;
  */
 export const DEFAULT_RECONCILE_HEARTBEAT_MS = 60_000;
 
+/**
+ * How long one Room that cannot be joined is left alone before discovery tries
+ * it again.
+ *
+ * A Room can be unservable for a perfectly legitimate, durable reason — the
+ * observed one is a Room bound to a local-only repository that lives on
+ * another checkout entirely, which no amount of retrying will change on this
+ * host. Such a failure used to escape `reconcile()` and put the whole
+ * discovery pass on the 5s error backoff forever, which both spammed the log
+ * and starved every *other* invited Room of its join. It is now handled per
+ * Room, on this much longer cadence, so an operator fixing the underlying
+ * cause is still picked up without polling a known-bad Room every few seconds.
+ */
+export const DEFAULT_ROOM_DISCOVERY_RETRY_MS = 10 * 60_000;
+
 /** One durable Workspace control plane multiplexing isolated Room bodies. */
 export class WorkspaceSupervisor {
   private runtime: AgentRuntimeRecord;
@@ -115,6 +130,15 @@ export class WorkspaceSupervisor {
   /** Rooms already notified their repo can't be materialized — one notice per
    *  transition into that state, not once per reconcile retry. */
   private readonly repoUnavailableNotified = new Set<string>();
+  /**
+   * Rooms whose join failed, keyed by channel id: when to try again, and the
+   * last message logged for them. One unservable Room must cost exactly one
+   * log line and its own retry cadence — never the whole discovery pass.
+   */
+  private readonly roomDiscoveryFailures = new Map<
+    string,
+    { retryAt: number; message: string }
+  >();
   private readonly now: () => number;
   private readonly watchdogStaleMs: number;
   private readonly reconcileHeartbeatMs: number;
@@ -325,31 +349,70 @@ export class WorkspaceSupervisor {
 
       for (const [channelId, target] of desired) {
         if (this.running.has(channelId)) continue;
-        if (target.kind === 'repository') {
-          let room = this.runtime.rooms.find((candidate) => candidate.channelId === channelId);
-          if (!room) {
-            const roomRepository =
-              target.roomRepository ?? (await client.resolveRoomRepository(channelId));
-            if (roomRepository) {
-              // Materialize the ONE shared per-repo-per-host checkout eagerly,
-              // on join — the Room's read-only session reads code from it
-              // (list/read/search/git-log) before any corner is opened.
-              room = await this.materializeRoom(channelId, target.membershipSince, roomRepository);
-              this.runtime.rooms.push(room);
-              await writeRuntimeRecord(this.runtime);
-            } else {
-              room = target.repositoryRoom;
+        // One Room that cannot be joined is a fact about that Room, not about
+        // discovery. Isolate it here: a throw used to abort the whole pass,
+        // so a single unservable Room (a local-only repo bound on another
+        // checkout is the observed case) both starved every Room behind it in
+        // this loop of its join and pinned discovery to the 5s error backoff
+        // forever.
+        const failure = this.roomDiscoveryFailures.get(channelId);
+        if (failure && this.now() < failure.retryAt) continue;
+        try {
+          if (target.kind === 'repository') {
+            let room = this.runtime.rooms.find((candidate) => candidate.channelId === channelId);
+            if (!room) {
+              const roomRepository =
+                target.roomRepository ?? (await client.resolveRoomRepository(channelId));
+              if (roomRepository) {
+                // Materialize the ONE shared per-repo-per-host checkout eagerly,
+                // on join — the Room's read-only session reads code from it
+                // (list/read/search/git-log) before any corner is opened.
+                room = await this.materializeRoom(
+                  channelId,
+                  target.membershipSince,
+                  roomRepository,
+                );
+                this.runtime.rooms.push(room);
+                await writeRuntimeRecord(this.runtime);
+              } else {
+                room = target.repositoryRoom;
+              }
             }
+            if (room) await this.startRepositoryRoom(room, channelId);
+          } else {
+            this.startConversationRoom(channelId, target.kind);
           }
-          if (room) await this.startRepositoryRoom(room, channelId);
-        } else {
-          this.startConversationRoom(channelId, target.kind);
+          this.roomDiscoveryFailures.delete(channelId);
+        } catch (error) {
+          this.noteRoomDiscoveryFailure(channelId, error);
         }
       }
       return true;
     } finally {
       client.disconnect();
     }
+  }
+
+  /**
+   * Record one Room's join failure without letting it reach the discovery
+   * pass. The Room is parked for `DEFAULT_ROOM_DISCOVERY_RETRY_MS`, and the
+   * console line is emitted only when the reason changed — a Room that is
+   * durably unservable (a local-only repository bound on another checkout)
+   * says so once, not every pass.
+   */
+  private noteRoomDiscoveryFailure(channelId: string, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    const previous = this.roomDiscoveryFailures.get(channelId);
+    this.roomDiscoveryFailures.set(channelId, {
+      retryAt: this.now() + DEFAULT_ROOM_DISCOVERY_RETRY_MS,
+      message,
+    });
+    if (previous?.message === message) return;
+    console.error(
+      `[supervisor] Room ${channelId} could not be joined; skipping it and retrying in ` +
+        `${DEFAULT_ROOM_DISCOVERY_RETRY_MS}ms:`,
+      error,
+    );
   }
 
   /**

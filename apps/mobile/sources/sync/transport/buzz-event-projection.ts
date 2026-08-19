@@ -351,8 +351,26 @@ export type ChatEventProjection = {
    *  are posted directly on this corner's own channel, not a parent Room
    *  status card). */
   deliveryFailed?: boolean;
+  /** What is actually happening after that failure, straight from the daemon's
+   *  `retry` tag — `auto` (the land poll really does re-attempt this same
+   *  approval on its own), `realigning` (the corner's agent is rebasing onto
+   *  the moved target and will republish a fresh review), or `blocked`
+   *  (nothing happens until a person says something). Absent means the daemon
+   *  did not say, and a client must then make NO retry claim at all. */
+  deliveryRetry?: DeliveryRetryPosture;
   agentPresence?: AgentPresence;
 };
+
+/** Mirror of `apps/body/src/body.ts`'s `DeliveryRetryPosture`. */
+export type DeliveryRetryPosture = 'auto' | 'realigning' | 'blocked';
+
+const DELIVERY_RETRY_POSTURES: readonly string[] = ['auto', 'realigning', 'blocked'];
+
+function deliveryRetryPosture(value: string | undefined): DeliveryRetryPosture | undefined {
+  return value && DELIVERY_RETRY_POSTURES.includes(value)
+    ? (value as DeliveryRetryPosture)
+    : undefined;
+}
 
 export function sessionEventPayload(event: SessionEvent): UnknownRecord | undefined {
   return event.type === 'raw' ? asRecord(event.payload) : undefined;
@@ -623,9 +641,11 @@ export function projectChatEvent(
       // Previously dropped entirely (no `message`) — the relay durably had
       // the failure but the transcript never showed it and the approve
       // button never learned about it either.
+      const deliveryRetry = deliveryRetryPosture(sessionEventTagValue(event, 'retry'));
       return {
         ...(mergeTarget ? { mergeTarget } : {}),
         deliveryFailed: true,
+        ...(deliveryRetry ? { deliveryRetry } : {}),
         message: {
           id: eventId(event),
           text,

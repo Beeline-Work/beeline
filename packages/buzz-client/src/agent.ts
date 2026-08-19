@@ -482,18 +482,9 @@ export async function listAgents(
 /**
  * Unlink an agent from every Workspace channel and finally from the Workspace.
  *
- * The Workspace mutation is intentionally last: its disappearance is the
- * paired host's teardown signal, and `listAgents`/the Members screen key
- * off it, not off any one Room's projection.
- *
- * Per-channel cleanup is deliberately best-effort. A Room the agent is a
- * member of is never removed while its own daemon is alive to react, so an
- * OFFLINE/dormant agent is exactly the one most likely to be carrying stale
- * memberships in corners its daemon never got to archive — and this is an
- * admin-performed membership change, not a handshake with that daemon. One
- * straggler channel whose projection never confirms removal (relay lag, or a
- * genuinely orphaned corner) must not block every other channel or the
- * Workspace-level removal that actually makes the agent disappear.
+ * The Workspace mutation is intentionally last. Its disappearance is the
+ * paired host's teardown signal, so a partial Room-removal failure remains
+ * visible and retryable instead of claiming that the agent was deleted.
  */
 export async function removeAgent(
   ctx: ChannelOpsContext,
@@ -509,15 +500,11 @@ export async function removeAgent(
   }
 
   for (const channelId of await communityChannels(ctx, communityId)) {
-    try {
-      if (!(await isMember(ctx, channelId, agentPubkey))) continue;
-      await removeMember(ctx, channelId, agentPubkey, {
-        extraTags: [[TAG_COMMUNITY, communityId]],
-      });
-      await waitUntilNotMember(ctx, channelId, agentPubkey);
-    } catch {
-      // Best-effort: see the docstring above. Retryable on a later call.
-    }
+    if (!(await isMember(ctx, channelId, agentPubkey))) continue;
+    await removeMember(ctx, channelId, agentPubkey, {
+      extraTags: [[TAG_COMMUNITY, communityId]],
+    });
+    await waitUntilNotMember(ctx, channelId, agentPubkey);
   }
 
   if (!(await isMember(ctx, communityId, agentPubkey))) return;

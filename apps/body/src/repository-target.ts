@@ -52,13 +52,20 @@ export function parseNamedRepositoryTarget(value: string): NamedRepositoryTarget
   return { id, owner, repo, kind: 'github' };
 }
 
-function permissionStrings(value: unknown, depth = 0): string[] {
+/**
+ * Every string reachable inside an ACP permission payload, bounded in depth.
+ *
+ * Shared with `target-branch.ts`: both host-recognized native markers have to
+ * be found in the same places, because no adapter agrees on where a command
+ * line lands (`toolCall.title` for one, a nested `rawInput` field for another).
+ */
+export function permissionRequestStrings(value: unknown, depth = 0): string[] {
   if (depth > 4 || value === null || value === undefined) return [];
   if (typeof value === 'string') return [value];
-  if (Array.isArray(value)) return value.flatMap((item) => permissionStrings(item, depth + 1));
+  if (Array.isArray(value)) return value.flatMap((item) => permissionRequestStrings(item, depth + 1));
   if (typeof value !== 'object') return [];
   return Object.values(value as Record<string, unknown>).flatMap((item) =>
-    permissionStrings(item, depth + 1),
+    permissionRequestStrings(item, depth + 1),
   );
 }
 
@@ -74,7 +81,7 @@ export function namedRepositoryTargetFromPermission(
 ): NamedRepositoryTarget | undefined {
   const candidates = [
     permission.toolCall?.title,
-    ...permissionStrings(permission.toolCall?.rawInput),
+    ...permissionRequestStrings(permission.toolCall?.rawInput),
   ].filter((value): value is string => typeof value === 'string');
   const marker = new RegExp(
     String.raw`(?:^|\s)${NAMED_REPOSITORY_PERMISSION_COMMAND}\s+--repo(?:=|\s+)([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)(?:\s|$)`,

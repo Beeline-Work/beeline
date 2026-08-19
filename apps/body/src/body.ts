@@ -124,9 +124,11 @@ import {
 } from './repository-target.js';
 import { resolvePreviewUrl } from './preview-url.js';
 import {
+  TARGET_BRANCH_PROPOSAL_COMMAND,
   TARGET_BRANCH_PROPOSAL_TAG,
   shortBranchName,
   targetBranchChangeIntent,
+  targetBranchProposalFromPermission,
   targetBranchProposalText,
 } from './target-branch.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
@@ -671,6 +673,16 @@ export function roomEditPolicyInstructions(policy: RoomEditPolicy): string[] {
     'When the user asks for a concrete file change, attempt the appropriate write/edit tool.',
     'The host will turn that first mutating permission request into a human allow/deny prompt.',
     'Never claim that work started until the host transitions you into an edit session.',
+    // The branch a Room lands to is Room configuration signed by an admin, so
+    // the agent has no way to change it and no memory that could hold it. Left
+    // undocumented, a model answers the ask conversationally and invents one —
+    // the confirmed live failure was "it holds for this conversation; to make
+    // it stick it needs to go into memory". This is the one true answer.
+    'The branch this Room lands changes to is Room configuration. You cannot change it, and nothing you remember or write down can change it.',
+    `When someone asks for changes to land on a different branch from now on, attempt this exact native command: ${TARGET_BRANCH_PROPOSAL_COMMAND} --branch <branch>`,
+    'Replace <branch> with the exact branch name they asked for, and attempt it once. The host never runs that command: it rejects the command itself and posts a proposal card in this Room.',
+    'After attempting it, tell the person a Room admin has to confirm that card, and that corners already open keep landing to the current branch.',
+    'Never say a landing-target change is in effect, saved, remembered, or held for this conversation. Only an admin confirming that card changes it.',
   ];
 }
 
@@ -695,6 +707,8 @@ interface PendingRoomTurn {
   readOnlyInformationRequest: boolean;
   /** One read-only denial note per turn, not one per rejected tool call. */
   readOnlyDenialNoted?: boolean;
+  /** One target-branch proposal card per turn, however often the agent asks. */
+  targetBranchProposed?: boolean;
   /** Exact target written in this turn; absent stays fail-closed. */
   namedRepositoryTarget?: NamedRepositoryTarget;
 }
@@ -3869,6 +3883,56 @@ export class Body {
   }
 
   /**
+   * Answer the agent's `beeline-propose-target-branch --branch <name>` marker.
+   *
+   * This exists because the daemon's own recognizer
+   * (`targetBranchChangeIntent`) is a fixed set of phrasings and natural
+   * language is not: the confirmed live miss was "from now on land changes to
+   * a branch called staging instead of master", which read as ordinary chat
+   * and got a conversational answer claiming the change was held in memory.
+   * The recognizer covers that shape now; this marker is the general escape
+   * hatch for the ones it will never cover, and it is the ONLY thing the Room
+   * system prompt tells the agent to do about a landing-target change.
+   *
+   * It grants the agent no authority it did not already lack: the card is a
+   * proposal, a Room ADMIN's own key signs the binding, and one card per turn
+   * is the cap. A Room with no repository has nothing to repoint, so it is a
+   * plain read-only denial there.
+   */
+  private async handleTargetBranchProposalMarker(
+    tlcChannelId: string,
+    turn: PendingRoomTurn | undefined,
+    branch: string,
+  ): Promise<void> {
+    if (!turn || turn.targetBranchProposed) return;
+    const policy = turn.editPolicy ?? (turn.boundRepo ? 'repository' : 'direct-message');
+    if (policy !== 'repository' || !turn.boundRepo) return;
+    turn.targetBranchProposed = true;
+    try {
+      await this.publishTargetBranchProposal(tlcChannelId, turn.boundRepo, turn.request, branch);
+    } catch (error) {
+      turn.targetBranchProposed = false;
+      console.error('[body] failed to publish the agent-requested target-branch proposal:', error);
+      return;
+    }
+    // ACP's rejection carries no reason, so the outcome rides the durable
+    // conversation the agent's next session replays — same channel as the
+    // read-only steer, and for the same reason.
+    await this.durableState
+      .appendConversation(tlcChannelId, {
+        role: 'control',
+        text:
+          `Host posted a target-branch proposal card for ${branch} in this Room. The command itself ` +
+          'was rejected, as designed. A Room admin has to confirm the card before it applies; say so ' +
+          'and never claim the change is already in effect or remembered.',
+        at: new Date().toISOString(),
+      })
+      .catch((error) =>
+        console.error('[body] failed to record the target-branch proposal outcome:', error),
+      );
+  }
+
+  /**
    * A Room is read-only, and the ACP permission callback is where that is
    * ENFORCED rather than merely instructed. Every request that is not an exact
    * host-marked read-only MCP call is denied: file writes, edits, deletes,
@@ -3892,12 +3956,22 @@ export class Body {
     origin: 'harness' | 'host' = 'harness',
   ): Promise<AcpPermissionDecision> {
     if (isReadOnlyMcpPermissionRequest(permission)) return 'allow';
+    const turn = this.pendingRoomTurns.get(tlcChannelId);
+    // The agent's one prompt-documented way to raise a Room-config change it
+    // cannot make itself. Handled ahead of the read-only denial note because
+    // this command is not an attempted write and its steer ("open a corner
+    // instead") would be the wrong thing to put in the agent's context.
+    const proposedBranch = targetBranchProposalFromPermission(permission);
+    if (proposedBranch) {
+      await this.handleTargetBranchProposalMarker(tlcChannelId, turn, proposedBranch);
+      // The command itself never runs. The card is the whole effect.
+      return 'reject';
+    }
     // A host-synthesized request is the human's own explicit open-a-corner
     // command replayed through this path, not an agent trying to write.
     if (origin === 'harness' && classifyRoomPermission(permission).decision === 'deny') {
       await this.noteRoomReadOnlyDenial(tlcChannelId, permission);
     }
-    const turn = this.pendingRoomTurns.get(tlcChannelId);
     if (!turn || turn.permissionHandled || !isMutatingPermissionRequest(permission)) {
       return 'reject';
     }
@@ -6390,13 +6464,30 @@ export class Body {
     userPrompt: string,
     branch: string,
   ): Promise<boolean> {
-    const from = await this.currentRoomTargetBranch(tlcChannelId, boundRepo);
     await this.durableState.appendConversation(tlcChannelId, {
       role: 'user',
       text: userPrompt,
       eventId: request.eventId,
       at: new Date(request.createdAt * 1_000).toISOString(),
     });
+    return this.publishTargetBranchProposal(tlcChannelId, boundRepo, request, branch);
+  }
+
+  /**
+   * Publish the proposal card itself.
+   *
+   * Split from the caller above because it is reached two ways — the daemon
+   * recognizing the ask in the Room message, and the agent attempting
+   * `TARGET_BRANCH_PROPOSAL_COMMAND` mid-turn — and only the first of those
+   * owns appending the person's message to the durable conversation.
+   */
+  private async publishTargetBranchProposal(
+    tlcChannelId: string,
+    boundRepo: BoundRepo,
+    request: ChannelTaskRequest,
+    branch: string,
+  ): Promise<boolean> {
+    const from = await this.currentRoomTargetBranch(tlcChannelId, boundRepo);
     if (from === branch) {
       const reply = `This Room already lands to ${branch}, so there is nothing to change.`;
       await postAgentMessage(

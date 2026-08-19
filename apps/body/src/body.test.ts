@@ -7406,6 +7406,156 @@ describe('the Room target branch changes by admin confirm, never by the agent', 
     rmSync(workspaceRoot, { recursive: true, force: true });
   });
 
+  // The exact phrasing from the live report. Before this it matched nothing:
+  // the capture stopped on the article in "to a branch called staging", which
+  // `BRANCH_STOP_WORDS` refuses, so the ask ran as an ordinary Room turn and
+  // was answered conversationally with no card and nothing persisted.
+  it('answers the exact live phrasing with a proposal card', async () => {
+    const { body, workspaceRoot } = makeBody();
+    const published = stubRelay(roomId, 'master');
+    const open = vi.spyOn(body, 'openSubchannel');
+
+    await expect(
+      reply(
+        body,
+        roomId,
+        'from now on land changes to a branch called staging instead of master',
+        { repo: 'buzzy', repositoryKey, targetBranch: 'refs/heads/master' },
+      ),
+    ).resolves.toBe(false);
+
+    expect(open).not.toHaveBeenCalled();
+    const card = proposals(published);
+    expect(card).toHaveLength(1);
+    expect(card[0]!.content).toBe('Change target branch: master → staging');
+    expect(card[0]!.tags).toContainEqual(['from', 'master']);
+    expect(card[0]!.tags).toContainEqual(['to', 'staging']);
+    expect(published.filter((event) => event.kind === 30_078)).toHaveLength(0);
+    rmSync(workspaceRoot, { recursive: true, force: true });
+  });
+
+  describe('the agent has a prompt-documented way to raise the card itself', () => {
+    function permission(line: string) {
+      return { toolCall: { title: line, kind: 'execute', rawInput: { command: line } } };
+    }
+
+    function armTurn(body: Body, overrides: Record<string, unknown> = {}): void {
+      (
+        Reflect.get(body, 'pendingRoomTurns') as Map<string, Record<string, unknown>>
+      ).set(roomId, {
+        request: {
+          eventId: 'target-branch-request',
+          authorPubkey: admin.publicKey,
+          content: 'from now on put changes on staging please',
+          createdAt: 1,
+        },
+        boundRepo: { repo: 'buzzy', repositoryKey, targetBranch: 'refs/heads/master' },
+        editPolicy: 'repository',
+        permissionHandled: false,
+        transitionedToCorner: false,
+        readOnlyInformationRequest: false,
+        ...overrides,
+      });
+    }
+
+    function handle(body: Body, line: string): Promise<string> {
+      return Reflect.get(body, 'handleRoomPermissionRequest').call(
+        body,
+        roomId,
+        permission(line),
+        'repository',
+      ) as Promise<string>;
+    }
+
+    it('the Room system prompt names the exact command and forbids claiming the change', () => {
+      const instructions = roomEditPolicyInstructions('repository').join('\n');
+      expect(instructions).toContain('beeline-propose-target-branch --branch <branch>');
+      expect(instructions).toContain('a Room admin has to confirm that card');
+      expect(instructions).toMatch(/never say a landing-target change is in effect/i);
+    });
+
+    it('publishes the card, rejects the command, and never opens a corner', async () => {
+      const { body, workspaceRoot } = makeBody();
+      const published = stubRelay(roomId, 'master');
+      const open = vi.spyOn(body, 'openSubchannel');
+      armTurn(body);
+
+      await expect(handle(body, 'beeline-propose-target-branch --branch staging')).resolves.toBe(
+        'reject',
+      );
+
+      const card = proposals(published);
+      expect(card).toHaveLength(1);
+      expect(card[0]!.content).toBe('Change target branch: master → staging');
+      expect(card[0]!.tags).toContainEqual(['requester', admin.publicKey]);
+      // No corner, no write-permission card, and above all no binding.
+      expect(open).not.toHaveBeenCalled();
+      expect(
+        published.filter((event) =>
+          (event.tags ?? []).some(
+            (tag) => tag[0] === 't' && tag[1] === 'buzz-write-permission-request',
+          ),
+        ),
+      ).toHaveLength(0);
+      expect(published.filter((event) => event.kind === 30_078)).toHaveLength(0);
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    });
+
+    it('caps the card at one per turn however often the agent attempts it', async () => {
+      const { body, workspaceRoot } = makeBody();
+      const published = stubRelay(roomId, 'master');
+      armTurn(body);
+
+      await handle(body, 'beeline-propose-target-branch --branch staging');
+      await handle(body, 'beeline-propose-target-branch --branch staging');
+      await handle(body, 'beeline-propose-target-branch --branch other');
+
+      expect(proposals(published)).toHaveLength(1);
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    });
+
+    // A Room-config proposal is not editing, and `isReadOnlyInformationRequest`
+    // misreading the ask is one of the phrasing misses this marker exists for.
+    it('still raises the card on an information-only turn', async () => {
+      const { body, workspaceRoot } = makeBody();
+      const published = stubRelay(roomId, 'master');
+      armTurn(body, { readOnlyInformationRequest: true });
+
+      await handle(body, 'beeline-propose-target-branch --branch staging');
+
+      expect(proposals(published)).toHaveLength(1);
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    });
+
+    it('proposes nothing in a Room with no repository to repoint', async () => {
+      const { body, workspaceRoot } = makeBody();
+      const published = stubRelay(roomId, 'master');
+      armTurn(body, { boundRepo: undefined, editPolicy: 'direct-message' });
+
+      await expect(handle(body, 'beeline-propose-target-branch --branch staging')).resolves.toBe(
+        'reject',
+      );
+      expect(proposals(published)).toHaveLength(0);
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    });
+
+    // A marker with a shell payload chained onto it is not the marker: it falls
+    // through to the ordinary read-only path and proposes nothing.
+    // `permissionHandled` is pre-set only so that fall-through lands on the
+    // plain rejection instead of the (unrelated) write-permission ceremony.
+    it('is not a way to run a shell command', async () => {
+      const { body, workspaceRoot } = makeBody();
+      const published = stubRelay(roomId, 'master');
+      armTurn(body, { permissionHandled: true });
+
+      await expect(
+        handle(body, 'beeline-propose-target-branch --branch staging; rm -rf /tmp/x'),
+      ).resolves.toBe('reject');
+      expect(proposals(published)).toHaveLength(0);
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    });
+  });
+
   it('says nothing to propose when the Room already lands there', async () => {
     const { body, workspaceRoot } = makeBody();
     const published = stubRelay(roomId, 'staging');

@@ -12,9 +12,23 @@
  * it reaches the relay.
  */
 import { normalizeTargetBranchName } from '@beeline/buzz-client';
+import type { AcpPermissionRequest } from './acp.js';
+import { permissionRequestStrings } from './repository-target.js';
 
 /** `#t` marker of the proposal card the agent publishes into the Room. */
 export const TARGET_BRANCH_PROPOSAL_TAG = 'buzz-target-branch-proposal';
+
+/**
+ * The exact native command a Room agent attempts to ASK for the proposal card.
+ *
+ * It is never executed: the host recognizes it in the Room's ACP permission
+ * callback, rejects the invocation itself, and publishes the proposal. Same
+ * shape as `NAMED_REPOSITORY_PERMISSION_COMMAND` — a prompt-documented marker
+ * is the only escape hatch a natural-language phrasing the recognizer below
+ * misses can take, and unlike free-form agent text it carries exactly one
+ * typed argument this file validates.
+ */
+export const TARGET_BRANCH_PROPOSAL_COMMAND = 'beeline-propose-target-branch';
 
 /** A standing change ("from now on"), as opposed to one about this change. */
 const STANDING_CHANGE =
@@ -25,6 +39,17 @@ const TARGET_BRANCH_PHRASE = /\b(?:target|protected|default|base|landing)\s+bran
 
 /** A bare branch token: no whitespace, and never a trailing sentence mark. */
 const BRANCH_TOKEN = String.raw`[A-Za-z0-9._\/-]+`;
+
+/**
+ * The noun phrase people put between the preposition and the branch name:
+ * "land to **a branch called** staging", "land to **the branch** staging".
+ *
+ * Without this the capture stops on the article and resolves to `a`, which
+ * `BRANCH_STOP_WORDS` then correctly refuses — so the whole ask reads as
+ * ordinary chat and the agent answers it conversationally. That is the exact
+ * live gap this covers.
+ */
+const BRANCH_LEAD_IN = String.raw`(?:(?:a|an|the|our|its|my|this)\s+)?(?:new\s+)?(?:branch|ref)\s+(?:(?:called|named|titled|labelled|labeled)\s+)?`;
 
 /**
  * Tokens that can sit where a branch name would but never name one — the
@@ -79,7 +104,7 @@ export function targetBranchChangeIntent(content: string): { branch: string } | 
     branchFrom(
       text.match(
         new RegExp(
-          String.raw`(?:change|set|switch|point|move|update|repoint|retarget)\s+(?:the\s+|this\s+|our\s+|its\s+)?(?:room(?:['’]s)?\s+)?(?:target|protected|default|base|landing)\s+branch\s+(?:to|at|onto)\s+(?:the\s+)?(${BRANCH_TOKEN})`,
+          String.raw`(?:change|set|switch|point|move|update|repoint|retarget)\s+(?:the\s+|this\s+|our\s+|its\s+)?(?:room(?:['’]s)?\s+)?(?:target|protected|default|base|landing)\s+branch\s+(?:to|at|onto)\s+(?:the\s+)?(?:${BRANCH_LEAD_IN})?(${BRANCH_TOKEN})`,
           'i',
         ),
       ),
@@ -87,7 +112,7 @@ export function targetBranchChangeIntent(content: string): { branch: string } | 
     branchFrom(
       text.match(
         new RegExp(
-          String.raw`(?:target|protected|default|base|landing)\s+branch\s+(?:should\s+(?:now\s+)?be|is\s+now|becomes|=)\s+(?:the\s+)?(${BRANCH_TOKEN})`,
+          String.raw`(?:target|protected|default|base|landing)\s+branch\s+(?:should\s+(?:now\s+)?be|is\s+now|becomes|=)\s+(?:the\s+)?(?:${BRANCH_LEAD_IN})?(${BRANCH_TOKEN})`,
           'i',
         ),
       ),
@@ -106,7 +131,7 @@ export function targetBranchChangeIntent(content: string): { branch: string } | 
   const standing = branchFrom(
     text.match(
       new RegExp(
-        String.raw`\b(?:land|landing|merge|merging|ship|shipping|target|targeting|base|basing|branch)\b[^.?!]{0,60}?\b(?:to|on|onto|into|off\s+of|off|against|from)\s+(?:the\s+)?(${BRANCH_TOKEN})`,
+        String.raw`\b(?:land|landing|merge|merging|ship|shipping|target|targeting|base|basing|branch)\b[^.?!]{0,60}?\b(?:to|on|onto|into|off\s+of|off|against|from)\s+(?:the\s+)?(?:${BRANCH_LEAD_IN})?(${BRANCH_TOKEN})`,
         'i',
       ),
     ),
@@ -125,4 +150,35 @@ export function targetBranchProposalText(from: string, to: string): string {
 /** Short branch name for display/comparison, e.g. `refs/heads/main` → `main`. */
 export function shortBranchName(ref: string | undefined): string {
   return (ref ?? 'main').replace(/^refs\/heads\//, '');
+}
+
+/**
+ * The branch a Room agent's own native-command marker asks to repoint to.
+ *
+ * `beeline-propose-target-branch --branch staging`. This is the agent's ONLY
+ * way to raise the proposal card, and it raises nothing else: the command is
+ * never executed, the value is validated as a git branch name here, and the
+ * card it produces still has to be confirmed by a Room admin whose own key
+ * signs the binding. Anything unparseable returns undefined, so an
+ * unrecognized invocation falls through to the ordinary read-only denial.
+ */
+export function targetBranchProposalFromPermission(
+  permission: AcpPermissionRequest,
+): string | undefined {
+  const candidates = [
+    permission.toolCall?.title,
+    ...permissionRequestStrings(permission.toolCall?.rawInput),
+  ].filter((value): value is string => typeof value === 'string');
+  const marker = new RegExp(
+    // The branch name ends the command: nothing may follow it but closing
+    // quotes/parens from a harness's own wrapper. A chained shell payload
+    // (`--branch staging && rm -rf /`) is therefore not this marker at all and
+    // gets the ordinary read-only denial, exactly like any other command.
+    String.raw`(?:^|\s)${TARGET_BRANCH_PROPOSAL_COMMAND}\s+--branch(?:=|\s+)(['"\x60]?)([A-Za-z0-9._\/-]+)\1['"\x60)\s]*$`,
+  );
+  for (const candidate of candidates) {
+    const branch = normalizeTargetBranchName(candidate.match(marker)?.[2]);
+    if (branch) return branch;
+  }
+  return undefined;
 }

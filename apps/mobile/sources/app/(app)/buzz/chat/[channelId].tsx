@@ -37,7 +37,9 @@ import {
   type DirectMessage,
   type MergeTarget,
   type AttachmentReference,
+  type RoomRepository,
   AGENT_PRESENCE_STALE_MS,
+  parseGitRemoteInput,
   personHandle,
 } from '@beeline/buzz-client';
 import {
@@ -97,10 +99,16 @@ import { ledgerFingerprint, personIdentityLabel, shortMemberNpub } from '@/buzz/
 import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
 import {
   canRenameRoom,
+  canManageRoomRepository,
   canRemoveRoomParticipant,
   normalizedRoomRole,
   roomLifecycleAction,
 } from '@/buzz/room-management';
+import {
+  looksLikeCornerOpenIntent,
+  roomRepoChipLabel,
+  type RepoCandidate,
+} from '@/buzz/room-repo-picker';
 import {
   isPinnedCornerLive,
   isPinnedCornerReadyForReview,
@@ -158,6 +166,7 @@ import {
   LedgerSteer,
 } from '@/components/buzz/Ledger';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { RepoPicker } from '@/components/buzz/RepoPicker';
 import {
   HullSurface,
   MonoButton,
@@ -469,6 +478,15 @@ export default function BuzzChat() {
     initialChannelCache?.roomName ?? routeChannelTitle ?? null,
   );
   const [viewerChannelRole, setViewerChannelRole] = useState<ChannelRole | null>(null);
+  // The repo this Room owns, or `null` for a chat-only Room. Corners never
+  // read this — a corner has no room-repository binding of its own; the
+  // daemon resolves its working repo from its parent Room instead.
+  const [roomRepository, setRoomRepository] = useState<RoomRepository | null>(null);
+  const [showRoomRepoPicker, setShowRoomRepoPicker] = useState(false);
+  const [roomRepoCandidates, setRoomRepoCandidates] = useState<RepoCandidate[]>([]);
+  const [roomRepoBusy, setRoomRepoBusy] = useState(false);
+  const [roomRepoError, setRoomRepoError] = useState<string | null>(null);
+  const [cornerOpenRepoPrompt, setCornerOpenRepoPrompt] = useState(false);
   const [rosterVisible, setRosterVisible] = useState(false);
   const [roomActionsVisible, setRoomActionsVisible] = useState(false);
   const [cornerActionsVisible, setCornerActionsVisible] = useState(false);
@@ -1002,6 +1020,28 @@ export default function BuzzChat() {
     setHighlightedMentionIndex(0);
   }, [mentionMenuKey]);
 
+  // Off the enter-room fan-out on purpose: only a Room needs its repo chip
+  // and the corner-open lazy prompt, and a corner has no room-repository
+  // binding of its own to read.
+  useEffect(() => {
+    if (!decodedId || !transport || isCorner) {
+      setRoomRepository(null);
+      return;
+    }
+    let cancelled = false;
+    void transport
+      .roomRepositoryRead(decodedId)
+      .then((repo) => {
+        if (!cancelled) setRoomRepository(repo);
+      })
+      .catch(() => {
+        if (!cancelled) setRoomRepository(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [decodedId, isCorner, transport]);
+
   // Helper to add new messages, deduplicating by id.
   const addMessages = useCallback(
     (newMsgs: ChatDisplayMessage[]) => {
@@ -1387,6 +1427,20 @@ export default function BuzzChat() {
     // State updates are committed asynchronously. A ref closes the short
     // double-tap window before `sending` can disable the native control.
     if (sendInFlightRef.current || (!rawText && !pendingAttachment) || !transport || isArchived) return;
+    // The daemon already refuses corner-open on a repo-less Room; this is the
+    // friendly client-side path — catch the common phrasing before the
+    // message is sent (and the composer text lost) rather than after a
+    // doomed round-trip.
+    if (!isCorner && !roomRepository && looksLikeCornerOpenIntent(rawText)) {
+      setCornerOpenRepoPrompt(true);
+      if (activeCommunityId && roomRepoCandidates.length === 0) {
+        void transport
+          .workspaceRoomRepositoryCandidates(activeCommunityId)
+          .then(setRoomRepoCandidates)
+          .catch(() => undefined);
+      }
+      return;
+    }
     const text = replyTarget ? replyMessageText(rawText, replyTarget) : rawText;
 
     sendInFlightRef.current = true;
@@ -1472,17 +1526,21 @@ export default function BuzzChat() {
       setSending(false);
     }
   }, [
+    activeCommunityId,
     pendingAttachment,
     transport,
     decodedId,
     addMessages,
     isArchived,
+    isCorner,
     userPubkey,
     parentChannelId,
     mentionableAgents,
     cacheViewerPubkey,
     replyTarget,
     agentsOffline,
+    roomRepoCandidates.length,
+    roomRepository,
   ]);
 
   const pickPhoto = useCallback(async () => {
@@ -1807,6 +1865,80 @@ export default function BuzzChat() {
     transport,
     viewerChannelRole,
   ]);
+
+  const handleToggleRoomRepoPicker = useCallback(async () => {
+    setShowRoomRepoPicker((value) => !value);
+    if (showRoomRepoPicker || !transport || !activeCommunityId) return;
+    setRoomRepoError(null);
+    try {
+      const candidates = await transport.workspaceRoomRepositoryCandidates(activeCommunityId);
+      setRoomRepoCandidates(candidates);
+    } catch (err) {
+      setRoomRepoError(`Could not load repos: ${String(err)}`);
+    }
+  }, [activeCommunityId, showRoomRepoPicker, transport]);
+
+  const applyRoomRepository = useCallback(
+    async (input: RepoCandidate) => {
+      if (!transport || !input.remote || roomRepoBusy) return;
+      setRoomRepoBusy(true);
+      setRoomRepoError(null);
+      try {
+        const repo = await transport.roomRepositorySet(decodedId, {
+          key: input.key,
+          name: input.name,
+          remote: input.remote,
+          ...(activeCommunityId ? { communityId: activeCommunityId } : {}),
+        });
+        setRoomRepository(repo);
+        setShowRoomRepoPicker(false);
+        setCornerOpenRepoPrompt(false);
+      } catch (err) {
+        setRoomRepoError(`Could not link repo: ${String(err)}`);
+      } finally {
+        setRoomRepoBusy(false);
+      }
+    },
+    [activeCommunityId, decodedId, roomRepoBusy, transport],
+  );
+
+  // Changing the repo under a Room with open corners strands those corners on
+  // the old repo, so re-binding is confirmed like the other destructive Room
+  // actions (delete/leave) above, and skipped when there is nothing to strand.
+  const handleSelectRoomRepoCandidate = useCallback(
+    (candidate: RepoCandidate) => {
+      const hasOpenCorners = cornerLifecycle.some((corner) => isCornerActive(corner.status));
+      if (roomRepository && hasOpenCorners) {
+        Alert.alert(
+          `Change ${ROOM_LABEL} repo?`,
+          `This ${ROOM_LABEL} has ${CORNER_LABEL}s still open on ${roomRepository.binding.name}. Changing the repo will not move them — they stay bound to the old repo.`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Change anyway',
+              style: 'destructive',
+              onPress: () => void applyRoomRepository(candidate),
+            },
+          ],
+        );
+        return;
+      }
+      void applyRoomRepository(candidate);
+    },
+    [applyRoomRepository, cornerLifecycle, roomRepository],
+  );
+
+  const handleSubmitRoomRepoUrl = useCallback(
+    (url: string) => {
+      const input = parseGitRemoteInput(url);
+      if (!input) {
+        setRoomRepoError('That does not look like a git URL.');
+        return;
+      }
+      handleSelectRoomRepoCandidate(input);
+    },
+    [handleSelectRoomRepoCandidate],
+  );
 
   const handleStartDirectMessage = useCallback(
     async (option: RoomMemberOption) => {
@@ -2266,6 +2398,21 @@ export default function BuzzChat() {
                 {displayHeaderTitle}
               </Text>
             )}
+            {!isCorner && roomRepository && (
+              <TouchableOpacity
+                accessibilityLabel={`Repo ${roomRepoChipLabel(roomRepository)}. ${
+                  canManageRoomRepository(viewerChannelRole) ? 'View or change it' : 'View it'
+                }`}
+                accessibilityRole="button"
+                onPress={() => setRoomActionsVisible(true)}
+                style={styles.repoChip}
+                testID="room-repo-chip"
+              >
+                <Text numberOfLines={1} style={styles.repoChipText}>
+                  ▢ {roomRepoChipLabel(roomRepository)}
+                </Text>
+              </TouchableOpacity>
+            )}
             {isCorner ? (
               <View style={styles.cornerHeaderStatusRow}>
                 <Text numberOfLines={1} style={styles.cornerHeaderAgent}>
@@ -2588,6 +2735,38 @@ export default function BuzzChat() {
                     AND {mentionSuggestions.overflow} OTHERS
                   </Text>
                 )}
+              </View>
+            )}
+            {cornerOpenRepoPrompt && (
+              <View style={styles.repoPromptBanner} testID="corner-open-repo-prompt">
+                <Text style={styles.repoPromptTitle}>
+                  THIS {ROOM_LABEL.toUpperCase()} ISN’T LINKED TO A REPO
+                </Text>
+                <Text style={styles.repoPromptHint}>Pick one to open a {CORNER_LABEL}.</Text>
+                {canManageRoomRepository(viewerChannelRole) ? (
+                  <RepoPicker
+                    busy={roomRepoBusy}
+                    candidates={roomRepoCandidates}
+                    currentKey={null}
+                    error={roomRepoError}
+                    onSelect={handleSelectRoomRepoCandidate}
+                    onSubmitUrl={handleSubmitRoomRepoUrl}
+                    testIDPrefix="corner-open-repo-picker"
+                  />
+                ) : (
+                  <Text style={styles.repoPromptHint}>
+                    Ask a {ROOM_LABEL} admin to link one.
+                  </Text>
+                )}
+                <TouchableOpacity
+                  accessibilityLabel="Dismiss"
+                  accessibilityRole="button"
+                  onPress={() => setCornerOpenRepoPrompt(false)}
+                  style={styles.repoPromptDismiss}
+                  testID="corner-open-repo-prompt-dismiss"
+                >
+                  <Text style={styles.repoPromptDismissText}>DISMISS</Text>
+                </TouchableOpacity>
               </View>
             )}
             {replyTarget && (
@@ -3002,6 +3181,51 @@ export default function BuzzChat() {
                   <Text style={styles.roomLifecycleGlyph}>✎</Text>
                 </TouchableOpacity>
               ))}
+            {canManageRoomRepository(viewerChannelRole) ? (
+              <>
+                <TouchableOpacity
+                  accessibilityLabel={
+                    roomRepository ? `Change repo, currently ${roomRepository.binding.name}` : 'Link a repo'
+                  }
+                  accessibilityRole="button"
+                  disabled={roomRepoBusy}
+                  onPress={() => void handleToggleRoomRepoPicker()}
+                  style={styles.roomRenameAction}
+                  testID="room-repo-action"
+                >
+                  <View style={styles.roomLifecycleCopy}>
+                    <Text style={styles.roomLifecycleTitle}>
+                      REPO {roomRepository ? `· ${roomRepository.binding.name} · CHANGE` : '· NONE · LINK'}
+                    </Text>
+                    <Text style={styles.roomLifecycleHint}>
+                      {roomRepository
+                        ? `${CORNER_LABEL}s in this ${ROOM_LABEL} tree off this repo.`
+                        : `A ${ROOM_LABEL} needs a repo before a ${CORNER_LABEL} can open.`}
+                    </Text>
+                  </View>
+                  <Text style={styles.roomLifecycleGlyph}>{showRoomRepoPicker ? '⌄' : '▢'}</Text>
+                </TouchableOpacity>
+                {showRoomRepoPicker && (
+                  <RepoPicker
+                    busy={roomRepoBusy}
+                    candidates={roomRepoCandidates}
+                    currentKey={roomRepository?.binding.key ?? null}
+                    error={roomRepoError}
+                    onSelect={handleSelectRoomRepoCandidate}
+                    onSubmitUrl={handleSubmitRoomRepoUrl}
+                    testIDPrefix="room-repo-picker"
+                  />
+                )}
+              </>
+            ) : (
+              <View style={styles.roomRenameAction} testID="room-repo-readonly">
+                <View style={styles.roomLifecycleCopy}>
+                  <Text style={styles.roomLifecycleTitle}>
+                    REPO {roomRepository ? `· ${roomRepository.binding.name}` : '· NONE'}
+                  </Text>
+                </View>
+              </View>
+            )}
             {lifecycleAction === 'delete' ? (
               <TouchableOpacity
                 accessibilityLabel={`Delete ${ROOM_LABEL}`}
@@ -3313,6 +3537,12 @@ const styles = StyleSheet.create({
     borderRadius: groknight.radius,
   },
   cornerChannelNameSkeleton: { width: 108 },
+  repoChip: { alignSelf: 'flex-start', marginTop: 2, maxWidth: '100%' },
+  repoChipText: {
+    ...Typography.mono(),
+    fontSize: 11,
+    color: groknight.textMuted,
+  },
   headerMeta: {
     ...Typography.default(),
     fontSize: 11,
@@ -4207,6 +4437,33 @@ const styles = StyleSheet.create({
     ...Typography.default(),
     color: groknight.textSecondary,
     fontSize: 20,
+  },
+  repoPromptBanner: {
+    minWidth: 0,
+    marginBottom: 6,
+    padding: 10,
+    borderLeftWidth: 3,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    backgroundColor: groknight.bgHighlight,
+  },
+  repoPromptTitle: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 11,
+    letterSpacing: 0.35,
+  },
+  repoPromptHint: {
+    ...Typography.default(),
+    marginTop: 2,
+    color: groknight.textMuted,
+    fontSize: 12,
+  },
+  repoPromptDismiss: { alignSelf: 'flex-end', minHeight: 32, justifyContent: 'center' },
+  repoPromptDismissText: {
+    ...Typography.mono(),
+    color: groknight.textSecondary,
+    fontSize: 11,
   },
   pendingAttachment: {
     minWidth: 0,

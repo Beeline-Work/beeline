@@ -142,6 +142,11 @@ const monoStyles = new Set([
   'summaryAffordance',
   'modelAxisValue',
   'modelOptionText',
+  'repoRowLabel',
+  'repoRowValue',
+  'repoChipText',
+  'repoPromptTitle',
+  'repoPromptDismissText',
 ]);
 
 function styleDefinition(source: string, name: string): string {

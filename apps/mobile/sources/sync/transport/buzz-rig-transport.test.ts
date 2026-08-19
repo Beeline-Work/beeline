@@ -14,7 +14,12 @@ import {
   CHANGE_REVIEW_FILE_TAG,
   CHANGE_REVIEW_EVENT_KIND,
   CHANGE_REVIEW_MANIFEST_TAG,
+  KIND_CREATE_GROUP,
+  TAG_COMMUNITY,
+  TAG_PARENT,
+  TAG_DIRECT_MESSAGE,
   type Identity,
+  type RoomRepository,
 } from '@beeline/buzz-client';
 
 describe('Buzz branch-loop event projection', () => {
@@ -681,6 +686,110 @@ describe('Room-scoped Workspace membership', () => {
       created: false,
     });
     expect(client.resolveDirectMessage).toHaveBeenCalledWith('workspace-1', 'person-1');
+  });
+});
+
+describe('Room→repo transport', () => {
+  const identity = {
+    publicKey: 'a'.repeat(64),
+    secretKey: new Uint8Array(32).fill(1),
+    name: 'operator',
+  } as Identity;
+
+  it('reads the resolved room repository straight from the client', async () => {
+    const repo = {
+      channelId: 'room-1',
+      binding: { key: 'k', name: 'widget', remote: 'git://example.com/widget', localOnly: false },
+      source: 'config',
+    } as RoomRepository;
+    const client = { resolveRoomRepository: vi.fn(async () => repo) };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(transport.roomRepositoryRead('room-1')).resolves.toBe(repo);
+    expect(client.resolveRoomRepository).toHaveBeenCalledWith('room-1');
+  });
+
+  it('binds a repo through the client, forwarding the exact input', async () => {
+    const repo = {
+      channelId: 'room-1',
+      binding: { key: 'k', name: 'widget', remote: 'git://example.com/widget', localOnly: false },
+      source: 'config',
+    } as RoomRepository;
+    const client = { setRoomRepository: vi.fn(async () => repo) };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    const input = { key: 'k', name: 'widget', remote: 'git://example.com/widget', communityId: 'workspace-1' };
+    await expect(transport.roomRepositorySet('room-1', input)).resolves.toBe(repo);
+    expect(client.setRoomRepository).toHaveBeenCalledWith('room-1', input);
+  });
+
+  it('derives repo candidates from top-level Room bindings, excluding corners, DMs, and remote-less bindings', async () => {
+    const rawCreate = (h: string, extraTags: string[][] = []) => ({
+      id: `create-${h}`,
+      pubkey: 'b'.repeat(64),
+      created_at: 1,
+      kind: KIND_CREATE_GROUP,
+      tags: [['h', h], [TAG_COMMUNITY, 'workspace-1'], ...extraTags],
+      content: '',
+      sig: 'c'.repeat(128),
+    });
+    const query = vi.fn(async () => [
+      rawCreate('room-a'),
+      rawCreate('room-b'),
+      // Excluded: a corner (has a parent link)...
+      rawCreate('corner-1', [[TAG_PARENT, 'room-a']]),
+      // ...and a DM.
+      rawCreate('dm-1', [['t', TAG_DIRECT_MESSAGE]]),
+    ]);
+    const repos: Record<string, RoomRepository | null> = {
+      'room-a': {
+        channelId: 'room-a',
+        binding: { key: 'shared', name: 'widget', remote: 'git://example.com/widget', localOnly: false },
+        source: 'config',
+      } as RoomRepository,
+      // Same repo bound to a second Room: the candidate list dedupes by key.
+      'room-b': {
+        channelId: 'room-b',
+        binding: { key: 'shared', name: 'widget', remote: 'git://example.com/widget', localOnly: false },
+        source: 'config',
+      } as RoomRepository,
+    };
+    const resolveRoomRepository = vi.fn(async (id: string) => repos[id] ?? null);
+    const client = { query, resolveRoomRepository };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(transport.workspaceRoomRepositoryCandidates('workspace-1')).resolves.toEqual([
+      { key: 'shared', name: 'widget', remote: 'git://example.com/widget' },
+    ]);
+    expect(resolveRoomRepository).not.toHaveBeenCalledWith('corner-1');
+    expect(resolveRoomRepository).not.toHaveBeenCalledWith('dm-1');
+  });
+
+  it('drops a local-only (remote-less) genesis binding — setRoomRepository could never bind it anyway', async () => {
+    const query = vi.fn(async () => [
+      {
+        id: 'create-room-a',
+        pubkey: 'b'.repeat(64),
+        created_at: 1,
+        kind: KIND_CREATE_GROUP,
+        tags: [['h', 'room-a'], [TAG_COMMUNITY, 'workspace-1']],
+        content: '',
+        sig: 'c'.repeat(128),
+      },
+    ]);
+    const resolveRoomRepository = vi.fn(async () => ({
+      channelId: 'room-a',
+      binding: { key: 'local', name: 'local-repo', localOnly: true },
+      source: 'genesis',
+    }) as RoomRepository);
+    const client = { query, resolveRoomRepository };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(transport.workspaceRoomRepositoryCandidates('workspace-1')).resolves.toEqual([]);
   });
 });
 

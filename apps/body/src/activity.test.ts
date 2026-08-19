@@ -196,6 +196,116 @@ describe('projectActivity granularity', () => {
     ]);
   });
 
+  it("carries the agent's plan out on the receipt event it already publishes", async () => {
+    // The plan is the only source for the corner's pinned objective panel, and
+    // it reaches the wire on the `activity_summary` event that a batch already
+    // sends — never on a wire of its own. ACP's own `plan` update shape.
+    const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+
+    emit({
+      sessionUpdate: 'plan',
+      entries: [
+        { content: 'Find the renderer', status: 'completed' },
+        { content: 'Wire the highlighter', status: 'in_progress' },
+        { content: 'Add a test', status: 'pending' },
+      ],
+    });
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    unsubscribe();
+
+    expect(published).toHaveLength(1);
+    const content = JSON.parse(published[0]!.content) as {
+      update: { updates: Array<Record<string, unknown>> };
+    };
+    expect(content.update.updates).toEqual([
+      {
+        sessionUpdate: 'activity_summary',
+        content: { type: 'text', text: '' },
+        plan: {
+          items: [
+            { step: 'Find the renderer', status: 'completed' },
+            { step: 'Wire the highlighter', status: 'in_progress' },
+            { step: 'Add a test', status: 'pending' },
+          ],
+        },
+      },
+    ]);
+  });
+
+  it('re-sends the plan only when it actually changed', async () => {
+    // A ten-step checklist re-sent on every 5s batch is exactly the kind of
+    // per-pubkey relay-quota pressure the activity fold exists to avoid.
+    const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+
+    emit({ sessionUpdate: 'plan', entries: [{ content: 'Step one', status: 'in_progress' }] });
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    // Same plan, plus real work: the batch publishes, but without the plan.
+    emit({ sessionUpdate: 'plan', entries: [{ content: 'Step one', status: 'in_progress' }] });
+    emit(toolCall('edit-1', { kind: 'edit', title: 'str_replace', rawInput: { path: 'a.ts' } }));
+    emit(toolCallUpdate('edit-1', { status: 'completed' }));
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    // Progress: the plan changed, so it rides along again.
+    emit({ sessionUpdate: 'plan', entries: [{ content: 'Step one', status: 'completed' }] });
+    await vi.advanceTimersByTimeAsync(5_000);
+    unsubscribe();
+
+    const plans = published.map((event) => {
+      const content = JSON.parse(event.content) as {
+        update: { updates: Array<Record<string, unknown>> };
+      };
+      return content.update.updates.at(-1)!.plan;
+    });
+    expect(plans).toEqual([
+      { items: [{ step: 'Step one', status: 'in_progress' }] },
+      undefined,
+      { items: [{ step: 'Step one', status: 'completed' }] },
+    ]);
+  });
+
+  it('reads a plan modelled as an update_plan tool call, which is never load-bearing work', async () => {
+    // Not every harness sends ACP's `plan` update — some model the same thing
+    // as a tool call, which `isMajorUpdate` correctly refuses to project as a
+    // milestone. The plan still has to reach the objective panel.
+    const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+
+    emit(
+      toolCall('plan-1', {
+        kind: 'other',
+        title: 'update_plan',
+        rawInput: {
+          plan: [
+            { step: 'Trace the projection', status: 'completed' },
+            { step: 'Pin the objective', status: 'in_progress' },
+          ],
+        },
+      }),
+    );
+    emit(toolCallUpdate('plan-1', { status: 'completed' }));
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    unsubscribe();
+
+    expect(published).toHaveLength(1);
+    const content = JSON.parse(published[0]!.content) as {
+      update: { updates: Array<Record<string, unknown>> };
+    };
+    const summary = content.update.updates.at(-1)!;
+    expect(summary.sessionUpdate).toBe('activity_summary');
+    expect(summary.plan).toEqual({
+      items: [
+        { step: 'Trace the projection', status: 'completed' },
+        { step: 'Pin the objective', status: 'in_progress' },
+      ],
+    });
+    // The plan tool call itself is still not a milestone.
+    expect(content.update.updates.filter((u) => u.sessionUpdate === 'tool_activity')).toHaveLength(
+      0,
+    );
+  });
+
   it('publishes a bare tally, not silence, when a batch only observed', async () => {
     const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
 

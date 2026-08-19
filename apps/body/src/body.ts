@@ -1023,15 +1023,28 @@ export function isChannelWorkIntent(
 export const isChannelTaskRequest = isChannelWorkIntent;
 
 /** Create the relay-side child channel under the agent's own signing key. */
+/**
+ * `task` carries the corner's objective — the human's own request with the
+ * "open a corner" scaffolding peeled off (`taskDescriptionFromCornerRequest`).
+ * It rides the immutable kind:9007 create event rather than a transcript
+ * message on purpose: the corner's pinned objective panel must still be able
+ * to name the corner's objective after the transcript's cold-backfill window
+ * has scrolled past the corner's opening, and the create event is both
+ * permanent and already read (and cached) by every client that resolves the
+ * corner's parent. The channel `name` alone will not do — it is a 42-char
+ * slug.
+ */
 export function createAgentSubchannel(
   agentIdentity: Identity,
   parentChannelId: string,
   name: string,
   communityId?: string,
+  task?: string,
 ): Promise<string> {
   return createChannel(agentIdentity, name, {
     parentChannelId,
     ...(communityId ? { communityId } : {}),
+    ...(task ? { extraTags: [['task', task]] } : {}),
   });
 }
 
@@ -2115,12 +2128,16 @@ export class Body {
     await this.ensureAgentInChannel(tlcChannelId, agentId);
     const communityId = await this.channelCommunityId(tlcChannelId);
 
-    // 1. The agent itself creates/signs the child channel.
+    // 1. The agent itself creates/signs the child channel. The corner's name
+    // is a slug of the task; the full task description rides along as a tag so
+    // a reader gets the objective, not the slug.
+    const taskDescription = intent ? taskDescriptionFromCornerRequest(intent).slice(0, 320) : '';
     const subchannelId = await createAgentSubchannel(
       agentId,
       tlcChannelId,
       cornerNameForIntent(intent, tlcChannelId),
       communityId ?? undefined,
+      taskDescription || undefined,
     );
 
     // 2. Mirror parent members: query members of TLC, add each as member of subchannel.
@@ -3426,7 +3443,21 @@ export class Body {
         ).catch((statusError) =>
           console.error('[body] failed to publish direct corner navigation:', statusError),
         );
-        this.startAgentTask(info, turn.request.content);
+        // Same seeding as the explicit open-a-corner path: a corner reached
+        // through the write-permission escalation is still opened out of a
+        // Room conversation, and the request that triggered it is just as
+        // likely to omit the task ("go ahead", "yes do it") as an explicit
+        // open-corner command is. Without the preceding discussion the corner
+        // opens with nothing to implement.
+        this.startAgentTask(
+          info,
+          turn.request.content,
+          cornerOpenTaskPrompt(
+            await this.durableState.conversation(tlcChannelId),
+            turn.request.content,
+            turn.request.eventId,
+          ),
+        );
       } catch (error) {
         const detail = this.safePermissionFailure(error);
         await this.postWritePermissionStatus(

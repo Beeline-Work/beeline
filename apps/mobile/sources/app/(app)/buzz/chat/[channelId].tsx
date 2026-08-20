@@ -129,6 +129,7 @@ import {
   type PickedChatAttachment,
 } from '@/buzz/chat-attachment';
 import { describeWriteRequest } from '@/buzz/write-request-copy';
+import { availableSlashVerbs, slashVerbQuery, type BuiltInSlashVerbId } from '@/buzz/slash-verbs';
 import {
   cachedChannelKind,
   channelHeaderTitle,
@@ -175,6 +176,7 @@ import {
 } from '@/components/buzz/Ledger';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
+import { SlashVerbPicker } from '@/components/buzz/SlashVerbPicker';
 import {
   HullSurface,
   MonoButton,
@@ -441,6 +443,8 @@ export default function BuzzChat() {
   const [inputSelection, setInputSelection] = useState({ start: 0, end: 0 });
   const [highlightedMentionIndex, setHighlightedMentionIndex] = useState(0);
   const [dismissedMentionKey, setDismissedMentionKey] = useState<string | null>(null);
+  const [highlightedSlashVerbIndex, setHighlightedSlashVerbIndex] = useState(0);
+  const [dismissedSlashText, setDismissedSlashText] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [pendingAttachment, setPendingAttachment] = useState<PickedChatAttachment | null>(null);
   const [isArchived, setIsArchived] = useState(initialChannelCache?.archived ?? false);
@@ -537,6 +541,9 @@ export default function BuzzChat() {
   const [renameBusy, setRenameBusy] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [participantPickerVisible, setParticipantPickerVisible] = useState(false);
+  const [participantPickerKind, setParticipantPickerKind] = useState<'person' | 'agent' | null>(
+    null,
+  );
   const [membershipError, setMembershipError] = useState<string | null>(null);
   const [membershipActionPubkey, setMembershipActionPubkey] = useState<string | null>(null);
   const [roomLifecycleBusy, setRoomLifecycleBusy] = useState(false);
@@ -736,9 +743,16 @@ export default function BuzzChat() {
     () => memberOptions.filter((option) => participantPubkeys.has(option.pubkey)),
     [memberOptions, participantPubkeys],
   );
-  const roomRosterSections = useMemo(
-    () => sectionRoomRoster(memberOptions, roomMemberPubkeys),
-    [memberOptions, roomMemberPubkeys],
+  const participantPickerOptions = useMemo(
+    () =>
+      participantPickerKind
+        ? memberOptions.filter((option) => option.kind === participantPickerKind)
+        : memberOptions,
+    [memberOptions, participantPickerKind],
+  );
+  const participantPickerSections = useMemo(
+    () => sectionRoomRoster(participantPickerOptions, roomMemberPubkeys),
+    [participantPickerOptions, roomMemberPubkeys],
   );
   const visibleRosterSections = useMemo(
     () => sectionRoomParticipants(roomParticipants),
@@ -818,6 +832,69 @@ export default function BuzzChat() {
     mentionSuggestions.matches.length > 0,
   );
   const isCorner = Boolean(parentChannelId);
+  const isDirectMessage = Boolean(directMessage);
+  const currentSlashQuery = useMemo(() => slashVerbQuery(inputText), [inputText]);
+  const pendingCornerRequest = useMemo(() => {
+    for (let index = combinedMessages.length - 1; index >= 0; index -= 1) {
+      const message = combinedMessages[index];
+      if (message.writePermission?.status === 'pending' && message.writePermission.repository) {
+        return message;
+      }
+    }
+    return undefined;
+  }, [combinedMessages]);
+  const pendingTargetBranchProposal = useMemo(() => {
+    for (let index = combinedMessages.length - 1; index >= 0; index -= 1) {
+      const message = combinedMessages[index];
+      if (
+        message.targetBranchProposal &&
+        roomRepository?.targetBranch !== message.targetBranchProposal.to
+      ) {
+        return message;
+      }
+    }
+    return undefined;
+  }, [combinedMessages, roomRepository?.targetBranch]);
+  const slashVerbs = useMemo(
+    () =>
+      availableSlashVerbs(
+        {
+          canOpenCorner: Boolean(!isCorner && !viewerIsAgent && pendingCornerRequest),
+          canCloseCorner: isCorner && !viewerIsAgent,
+          canApprove: Boolean(
+            isCorner && !viewerIsAgent && mergeTarget && approvalState === 'none',
+          ),
+          canChangeTargetBranch: Boolean(
+            !isCorner &&
+            !viewerIsAgent &&
+            canManageRoomRepository(viewerChannelRole) &&
+            pendingTargetBranchProposal &&
+            !targetBranchActionId,
+          ),
+          canAddAgent: Boolean(!isCorner && !isDirectMessage && !viewerIsAgent),
+          canInvitePerson: Boolean(!isCorner && !isDirectMessage && !viewerIsAgent),
+        },
+        currentSlashQuery ?? '',
+      ),
+    [
+      approvalState,
+      currentSlashQuery,
+      isCorner,
+      isDirectMessage,
+      mergeTarget,
+      pendingCornerRequest,
+      pendingTargetBranchProposal,
+      targetBranchActionId,
+      viewerChannelRole,
+      viewerIsAgent,
+    ],
+  );
+  const slashMenuVisible = Boolean(
+    composerFocused && currentSlashQuery !== null && dismissedSlashText !== inputText,
+  );
+  useEffect(() => {
+    setHighlightedSlashVerbIndex(0);
+  }, [currentSlashQuery, slashVerbs.length]);
   // `null` means "show a skeleton": the channel kind or its name is still
   // resolving and no honest word exists yet. A corner never renders the Room
   // label as a stand-in for its own slug.
@@ -829,7 +906,6 @@ export default function BuzzChat() {
   // Room-lifecycle copy ("Delete <name>?") only ever runs on a Room, which by
   // then has a resolved name; the label is the safe fallback for the sentence.
   const roomName = headerTitle ?? ROOM_LABEL;
-  const isDirectMessage = Boolean(directMessage);
   // A DM's title is its peer's identity. Derived from cached state rather
   // than resolved inside the enter-room fetch chain, so it is right on the
   // first painted frame of a warm cache instead of several relay reads later.
@@ -2238,6 +2314,61 @@ export default function BuzzChat() {
     [decodedId],
   );
 
+  const clearSlashComposer = useCallback(() => {
+    inputTextRef.current = '';
+    setInputText('');
+    setInputSelection({ start: 0, end: 0 });
+    setComposerHeight(COMPOSER_MIN_HEIGHT);
+    setDismissedSlashText(null);
+    setHighlightedSlashVerbIndex(0);
+    requestAnimationFrame(() => composerRef.current?.focus());
+  }, []);
+
+  const dismissSlashMenu = useCallback(() => {
+    clearSlashComposer();
+    void Haptics.selectionAsync();
+  }, [clearSlashComposer]);
+
+  const runSlashVerb = useCallback(
+    (verb: BuiltInSlashVerbId) => {
+      clearSlashComposer();
+      void Haptics.selectionAsync();
+      switch (verb) {
+        case 'open-corner':
+          if (pendingCornerRequest) void handleWritePermission(pendingCornerRequest, 'allow');
+          return;
+        case 'close-corner':
+          void handleCloseCorner();
+          return;
+        case 'approve':
+          void handleApprove();
+          return;
+        case 'change-target-branch':
+          if (pendingTargetBranchProposal) {
+            void handleConfirmTargetBranch(pendingTargetBranchProposal);
+          }
+          return;
+        case 'add-agent':
+          setMembershipError(null);
+          setParticipantPickerKind('agent');
+          setParticipantPickerVisible(true);
+          return;
+        case 'invite':
+          setMembershipError(null);
+          setParticipantPickerKind('person');
+          setParticipantPickerVisible(true);
+      }
+    },
+    [
+      clearSlashComposer,
+      handleApprove,
+      handleCloseCorner,
+      handleConfirmTargetBranch,
+      handleWritePermission,
+      pendingCornerRequest,
+      pendingTargetBranchProposal,
+    ],
+  );
 
   const renderItem = useCallback(
     ({ item }: { item: ChatDisplayMessage }) => {
@@ -2730,6 +2861,7 @@ export default function BuzzChat() {
               accessibilityLabel={`Add people or Agents to this ${ROOM_LABEL}`}
               onPress={() => {
                 setMembershipError(null);
+                setParticipantPickerKind(null);
                 setParticipantPickerVisible(true);
               }}
               style={styles.addMembersButton}
@@ -3004,6 +3136,14 @@ export default function BuzzChat() {
           </View>
         ) : (
           <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+            {slashMenuVisible && (
+              <SlashVerbPicker
+                verbs={slashVerbs}
+                highlightedIndex={highlightedSlashVerbIndex}
+                onDismiss={dismissSlashMenu}
+                onSelect={runSlashVerb}
+              />
+            )}
             {mentionMenuVisible && (
               <View
                 accessibilityLabel="Mention a Room participant"
@@ -3180,6 +3320,27 @@ export default function BuzzChat() {
                   const action = mentionKeyboardAction(event.nativeEvent.key);
                   // Printable keys must never be prevented by the mention
                   // picker. In particular, `>` is ordinary composer text.
+                  if (slashMenuVisible) {
+                    if (!action) return;
+                    if (action === 'select') {
+                      event.preventDefault();
+                      const selected = slashVerbs[highlightedSlashVerbIndex];
+                      if (selected) runSlashVerb(selected.id);
+                    } else if (
+                      (action === 'next' || action === 'previous') &&
+                      slashVerbs.length
+                    ) {
+                      event.preventDefault();
+                      const direction = action === 'next' ? 1 : -1;
+                      setHighlightedSlashVerbIndex(
+                        (current) => (current + direction + slashVerbs.length) % slashVerbs.length,
+                      );
+                    } else {
+                      event.preventDefault();
+                      dismissSlashMenu();
+                    }
+                    return;
+                  }
                   if (!mentionMenuVisible || !action) return;
                   if (action === 'select') {
                     event.preventDefault();
@@ -3217,11 +3378,24 @@ export default function BuzzChat() {
               <TouchableOpacity
                 style={[
                   styles.sendButton,
-                  ((!inputText.trim() && !pendingAttachment) || sending) &&
+                  (slashMenuVisible
+                    ? slashVerbs.length === 0
+                    : (!inputText.trim() && !pendingAttachment) || sending) &&
                     styles.sendButtonDisabled,
                 ]}
-                onPress={handleSend}
-                disabled={(!inputText.trim() && !pendingAttachment) || sending}
+                onPress={
+                  slashMenuVisible
+                    ? () => {
+                        const selected = slashVerbs[highlightedSlashVerbIndex];
+                        if (selected) runSlashVerb(selected.id);
+                      }
+                    : handleSend
+                }
+                disabled={
+                  slashMenuVisible
+                    ? slashVerbs.length === 0
+                    : (!inputText.trim() && !pendingAttachment) || sending
+                }
                 testID="chat-send"
               >
                 <Text
@@ -3672,7 +3846,13 @@ export default function BuzzChat() {
           <HullSurface strength="raised" style={styles.memberModal}>
             <View style={styles.memberModalHeading}>
               <View style={styles.memberModalHeadingCopy}>
-                <Text style={styles.memberModalTitle}>Add people</Text>
+                <Text style={styles.memberModalTitle}>
+                  {participantPickerKind === 'agent'
+                    ? 'Add an Agent'
+                    : participantPickerKind === 'person'
+                      ? 'Invite a person'
+                      : 'Add people or Agents'}
+                </Text>
               </View>
               <TouchableOpacity
                 accessibilityLabel="Close Room member picker"
@@ -3688,11 +3868,11 @@ export default function BuzzChat() {
               showsVerticalScrollIndicator={false}
             >
               {[
-                { key: 'in-room', label: 'IN ROOM', options: roomRosterSections.inRoom },
+                { key: 'in-room', label: 'IN ROOM', options: participantPickerSections.inRoom },
                 {
                   key: 'addable',
                   label: 'ADD',
-                  options: roomRosterSections.addable,
+                  options: participantPickerSections.addable,
                 },
               ].map((section, sectionIndex) =>
                 section.options.length > 0 ? (
@@ -3777,7 +3957,7 @@ export default function BuzzChat() {
                   </View>
                 ) : null,
               )}
-              {memberOptions.length === 0 && (
+              {participantPickerOptions.length === 0 && (
                 <Text style={styles.memberPickerEmpty}>Workspace roster is empty</Text>
               )}
             </ScrollView>

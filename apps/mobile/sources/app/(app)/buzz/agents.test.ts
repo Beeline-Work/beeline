@@ -334,6 +334,13 @@ describe('Members screen', () => {
     expect(renderer.root.findAllByProps({ testID: 'model-axis-mode' })).toHaveLength(0);
 
     await act(async () => {
+      renderer.root.findByProps({ testID: 'model-axis-model' }).props.onPress();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'model-option-model-opus' }).props.onPress();
+      await Promise.resolve();
+    });
+    await act(async () => {
       renderer.root.findByProps({ testID: 'model-axis-effort' }).props.onPress();
     });
     await act(async () => {
@@ -341,7 +348,8 @@ describe('Members screen', () => {
       await Promise.resolve();
     });
 
-    expect(agentModelConfigSet).toHaveBeenCalledWith('workspace-1', agentPubkey, { effort: 'high' });
+    expect(agentModelConfigSet).toHaveBeenNthCalledWith(1, 'workspace-1', agentPubkey, { model: 'opus' });
+    expect(agentModelConfigSet).toHaveBeenNthCalledWith(2, 'workspace-1', agentPubkey, { effort: 'high' });
   });
 
   it('paints from the local Workspace roster cache before any network read resolves', async () => {

@@ -22,7 +22,7 @@ export function resolveAgentDisplayIdentity(
 ): AgentDisplayIdentity {
   const overlay = agent?.soulProfile;
   const name = resolveAgentName(overlay?.name ?? agent?.displayName, pubkey);
-  const overlayPersonality = overlay?.personality.trim();
+  const overlayPersonality = overlay?.soul.trim();
   // Once a human soul exists, its absent avatar explicitly selects the generated mark.
   const avatarUrl = overlay ? overlay.avatar?.trim() : agent?.avatar?.trim();
   return {

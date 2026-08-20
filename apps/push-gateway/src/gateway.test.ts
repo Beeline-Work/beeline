@@ -413,7 +413,7 @@ describe('PushGateway', () => {
           ['t', 'buzz-agent-soul'],
           ['community', communityId],
         ],
-        content: JSON.stringify({ name: 'Joy', personality: 'bright', avatarSeed: 'joy' }),
+        content: JSON.stringify({ name: 'Joy', soul: 'bright', avatarSeed: 'joy' }),
       },
       human.secretKey,
     );

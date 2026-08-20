@@ -6,6 +6,7 @@ import {
   OidcBindError,
   buildOidcBindEvent,
   finishOidcBind,
+  getAuthCapabilities,
   lookupRecovery,
   parseOidcBindCallback,
   startGitHubBind,
@@ -247,6 +248,22 @@ describe('OIDC device-key bind protocol', () => {
     expect((init.headers as Record<string, string>).authorization).not.toContain(
       identity.secretKey,
     );
+  });
+
+  it('reads the deployed provider gate without requiring a device identity', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValueOnce(
+        new Response(JSON.stringify({ github: false, oidc: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    );
+    await expect(getAuthCapabilities('https://relay.example')).resolves.toEqual({
+      github: false,
+      oidc: true,
+    });
   });
 
   it('exposes typed protocol errors', () => {

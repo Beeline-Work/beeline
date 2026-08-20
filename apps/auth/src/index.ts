@@ -2,6 +2,7 @@ import { buildAuthServer, type AuthTenant } from './server.js';
 import { OidcClient } from './oidc.js';
 import { AuthStore, PostgresDatabase } from './store.js';
 import { GitHubAppClient, GitHubOAuthClient } from './github.js';
+import { githubEnvironmentConfig } from './github-config.js';
 
 function required(name: string): string {
   const value = process.env[name];
@@ -49,29 +50,17 @@ async function main(): Promise<void> {
     throw new Error('BUZZY_AUTH_OIDC_CLIENT_SECRET is required in production');
   }
 
-  const githubConfigured = Boolean(
-    process.env.BUZZY_GITHUB_CLIENT_ID &&
-    process.env.BUZZY_GITHUB_CLIENT_SECRET &&
-    process.env.BUZZY_GITHUB_APP_ID &&
-    process.env.BUZZY_GITHUB_APP_SLUG &&
-    process.env.BUZZY_GITHUB_APP_PRIVATE_KEY,
-  );
-  if (process.env.NODE_ENV === 'production' && !githubConfigured) {
-    throw new Error(
-      'BUZZY_GITHUB_CLIENT_ID, BUZZY_GITHUB_CLIENT_SECRET, BUZZY_GITHUB_APP_ID, ' +
-        'BUZZY_GITHUB_APP_SLUG, and BUZZY_GITHUB_APP_PRIVATE_KEY are required in production',
-    );
-  }
-  const github = githubConfigured
+  const githubConfig = githubEnvironmentConfig(process.env);
+  const github = githubConfig
     ? {
         oauth: new GitHubOAuthClient({
-          clientId: process.env.BUZZY_GITHUB_CLIENT_ID!,
-          clientSecret: process.env.BUZZY_GITHUB_CLIENT_SECRET!,
+          clientId: githubConfig.BEELINE_GITHUB_CLIENT_ID,
+          clientSecret: githubConfig.BEELINE_GITHUB_CLIENT_SECRET,
         }),
         app: new GitHubAppClient({
-          appId: process.env.BUZZY_GITHUB_APP_ID!,
-          slug: process.env.BUZZY_GITHUB_APP_SLUG!,
-          privateKey: process.env.BUZZY_GITHUB_APP_PRIVATE_KEY!,
+          appId: githubConfig.BEELINE_GITHUB_APP_ID,
+          slug: githubConfig.BEELINE_GITHUB_APP_SLUG,
+          privateKey: githubConfig.BEELINE_GITHUB_APP_PRIVATE_KEY,
         }),
       }
     : undefined;

@@ -10,10 +10,10 @@ import { resolveAgentCommand } from './agent-command.js';
 import { findRuntimeConfigPaths, inspectLocalRepository, readRuntimeRecord } from './runtime.js';
 import { respondToWritePermission } from './write-permission.live-helper.js';
 
-const checkout = process.env.BUZZY_GITHUB_LIVE_CHECKOUT ?? '';
+const checkout = process.env.BEELINE_GITHUB_LIVE_CHECKOUT ?? '';
 const selectedAgent = process.env.BUZZY_LIVE_AGENT_KIND ?? 'codex';
 const appConfigured = Boolean(
-  process.env.BUZZY_GITHUB_APP_ID && process.env.BUZZY_GITHUB_APP_PRIVATE_KEY,
+  process.env.BEELINE_GITHUB_APP_ID && process.env.BEELINE_GITHUB_APP_PRIVATE_KEY,
 );
 let daemonPid: number | undefined;
 let humanClient: ReturnType<typeof createBuzzClient> | undefined;
@@ -229,9 +229,9 @@ describe.runIf(live)('GitHub-origin pair → conversation → human-approved lan
 
 if (!live) {
   describe('GitHub-origin pair → conversation → human-approved land (prerequisite)', () => {
-    it('SKIPPED — requires BUZZY_GITHUB_LIVE_CHECKOUT, GitHub App credentials, production relay, and Codex', () => {
+    it('SKIPPED — requires BEELINE_GITHUB_LIVE_CHECKOUT, GitHub App credentials, production relay, and Codex', () => {
       console.warn(
-        'Set BUZZY_GITHUB_LIVE_CHECKOUT plus BUZZY_GITHUB_APP_ID and BUZZY_GITHUB_APP_PRIVATE_KEY.',
+        'Set BEELINE_GITHUB_LIVE_CHECKOUT plus BEELINE_GITHUB_APP_ID and BEELINE_GITHUB_APP_PRIVATE_KEY.',
       );
     });
   });

@@ -49,6 +49,11 @@ read/write plus Metadata read permissions. Daemons mint one-hour installation
 tokens for Git smart-HTTP; they do not consult `gh`, credential helpers, or
 ambient Git configuration.
 
+GitHub ships dark until **all five** `BEELINE_GITHUB_*` values below are present.
+`GET /auth/capabilities` then reports `github: true`; without them it reports
+`github: false`, GitHub routes stay unavailable, and the existing Google OIDC
+sign-in remains the visible, unchanged mobile path.
+
 Required configuration:
 
 - `DATABASE_URL`
@@ -60,15 +65,15 @@ Required configuration:
 - `BUZZY_AUTH_OIDC_JWKS_URI`
 - `BUZZY_AUTH_OIDC_CLIENT_ID`
 - `BUZZY_AUTH_OIDC_CLIENT_SECRET` (mandatory when `NODE_ENV=production`)
-- `BUZZY_GITHUB_CLIENT_ID`
-- `BUZZY_GITHUB_CLIENT_SECRET`
-- `BUZZY_GITHUB_APP_ID`
-- `BUZZY_GITHUB_APP_SLUG`
-- `BUZZY_GITHUB_APP_PRIVATE_KEY` (PEM; `\\n`-escaped environment values are accepted)
+- `BEELINE_GITHUB_CLIENT_ID`
+- `BEELINE_GITHUB_CLIENT_SECRET`
+- `BEELINE_GITHUB_APP_ID`
+- `BEELINE_GITHUB_APP_SLUG`
+- `BEELINE_GITHUB_APP_PRIVATE_KEY` (PEM; `\\n`-escaped environment values are accepted)
 
 The GitHub App OAuth callback is `https://<tenant>/auth/github/callback`; its
 setup URL is `https://<tenant>/auth/github/install/callback`. Body daemons need
-the same `BUZZY_GITHUB_APP_ID` and `BUZZY_GITHUB_APP_PRIVATE_KEY` so all clone,
+the same `BEELINE_GITHUB_APP_ID` and `BEELINE_GITHUB_APP_PRIVATE_KEY` so all clone,
 fetch, push, land, rename, preview, and CI reads use installation authority.
 
 HTTP OIDC endpoints are accepted only for local emulators when

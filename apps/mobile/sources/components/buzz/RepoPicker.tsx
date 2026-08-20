@@ -46,9 +46,7 @@ export const RepoPicker = memo(function RepoPicker({
         </TouchableOpacity>
       ))}
       {!candidates.length && !error && (
-        <Text style={styles.empty}>
-          No repositories are available to this GitHub App installation.
-        </Text>
+        <Text style={styles.empty}>No repositories are available.</Text>
       )}
       {error && (
         <Text accessibilityRole="alert" style={styles.error}>

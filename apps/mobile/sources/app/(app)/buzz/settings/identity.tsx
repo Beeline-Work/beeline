@@ -20,6 +20,7 @@ import Svg, { Path, Rect } from 'react-native-svg';
 import {
   claimNip05Handle,
   fallbackPersonName,
+  getAuthCapabilities,
   lookupRecovery,
   Nip05ClaimError,
   normalizeNip05Identifier,
@@ -50,6 +51,7 @@ import { BuzzRigTransport } from '@/sync/transport';
 import { getBuzzPushEnabled, setBuzzPushEnabled } from '@/push/buzz-push-registration';
 import { getPushPermissionInfo, type PushPermissionInfo } from '@/sync/pushRegistration';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { nativeSignInProvider, type NativeSignInProvider } from '@/auth/sign-in-provider';
 
 const TYPED_CONFIRMATION = 'EXPORT';
 
@@ -132,7 +134,8 @@ export default function BuzzIdentitySettings() {
   const [pushEnabled, setPushEnabledState] = useState<boolean | null>(null);
   const [pushPermission, setPushPermission] = useState<PushPermissionInfo | null>(null);
   const [pushWorking, setPushWorking] = useState(false);
-  const [linkedGitHub, setLinkedGitHub] = useState<
+  const [signInProvider, setSignInProvider] = useState<NativeSignInProvider>('oidc');
+  const [linkedAccount, setLinkedAccount] = useState<
     'checking' | 'connected' | 'not-linked' | 'unavailable'
   >('checking');
   const nip05Status = useVerifiedNip05Status(profilePubkey ?? '', { nip05: savedProfileNip05 });
@@ -179,11 +182,20 @@ export default function BuzzIdentitySettings() {
           setPushPermission(permission);
         }
         try {
+          const capabilities = await getAuthCapabilities(getBuzzRuntimeConfig().relayUrl).catch(
+            () => undefined,
+          );
+          const provider = nativeSignInProvider(capabilities);
+          if (!cancelled) setSignInProvider(provider);
           const links = await lookupRecovery(getBuzzRuntimeConfig().relayUrl, identity);
-          const github = links.some((link) => link.provider === 'https://github.com');
-          if (!cancelled) setLinkedGitHub(github ? 'connected' : 'not-linked');
+          const linked = links.some((link) =>
+            provider === 'github'
+              ? link.provider === 'https://github.com'
+              : link.provider !== 'https://github.com',
+          );
+          if (!cancelled) setLinkedAccount(linked ? 'connected' : 'not-linked');
         } catch {
-          if (!cancelled) setLinkedGitHub('unavailable');
+          if (!cancelled) setLinkedAccount('unavailable');
         }
       } catch (caught) {
         if (!cancelled) setError(`Could not load your profile: ${String(caught)}`);
@@ -455,13 +467,14 @@ export default function BuzzIdentitySettings() {
           ? 'OS permission: not allowed yet'
           : 'OS permission: blocked in device settings'
     : 'Checking OS permission';
-  const linkedGitHubLabel =
-    linkedGitHub === 'connected'
-      ? 'GitHub account connected'
-      : linkedGitHub === 'not-linked'
-        ? 'No GitHub account linked'
-        : linkedGitHub === 'unavailable'
-          ? 'GitHub link unavailable while offline'
+  const signInProviderName = signInProvider === 'github' ? 'GitHub' : 'Google';
+  const linkedAccountLabel =
+    linkedAccount === 'connected'
+      ? `${signInProviderName} account connected`
+      : linkedAccount === 'not-linked'
+        ? `No ${signInProviderName} account linked`
+        : linkedAccount === 'unavailable'
+          ? `${signInProviderName} link unavailable while offline`
           : 'Checking linked account';
   const claimStatusLabel =
     claimStatus === 'claimed'
@@ -693,13 +706,13 @@ export default function BuzzIdentitySettings() {
           <Text style={styles.sectionLabel}>LINKED SIGN-IN</Text>
           <View style={styles.settingLine}>
             <View style={styles.linkedGlyph}>
-              <Text style={styles.linkedGlyphText}>GH</Text>
+              <Text style={styles.linkedGlyphText}>{signInProvider === 'github' ? 'GH' : 'G'}</Text>
             </View>
             <View style={styles.settingCopy}>
-              <Text style={styles.settingTitle}>GitHub</Text>
-              <Text style={styles.settingSubtitle}>{linkedGitHubLabel}</Text>
+              <Text style={styles.settingTitle}>{signInProviderName}</Text>
+              <Text style={styles.settingSubtitle}>{linkedAccountLabel}</Text>
             </View>
-            <Text style={styles.linkedState}>{linkedGitHub === 'connected' ? '✓' : '·'}</Text>
+            <Text style={styles.linkedState}>{linkedAccount === 'connected' ? '✓' : '·'}</Text>
           </View>
         </View>
 

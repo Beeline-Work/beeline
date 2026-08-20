@@ -18,7 +18,11 @@ vi.mock('react-native', async () => {
   };
 });
 
-import { LedgerEntry, LedgerGhostLine, LedgerMarginalia, LedgerSteer } from './Ledger';
+vi.mock('react-native-reanimated', () => ({
+  useReducedMotion: () => false,
+}));
+
+import { LedgerEntry, LedgerGhostLine, LedgerMarginalia, LedgerSteer, typewriterFrame } from './Ledger';
 
 const originalConsoleError = console.error;
 
@@ -75,6 +79,13 @@ function stylesOfType(renderer: ReactTestRenderer, type: string): Record<string,
 }
 
 describe('the ledger — an agent turn', () => {
+  it('can reveal a committed paragraph locally without changing its durable text', () => {
+    const paragraph = 'The relay committed this whole paragraph at once.';
+    expect(typewriterFrame(paragraph, 0)).toBe('');
+    expect(typewriterFrame(paragraph, 9)).toBe('The relay');
+    expect(typewriterFrame(paragraph, 999)).toBe(paragraph);
+  });
+
   it('writes a Corner turn as pure flowing prophecy, with no handle at all', () => {
     const renderer = render(
       React.createElement(LedgerEntry, {

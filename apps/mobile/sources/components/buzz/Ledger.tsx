@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useReducedMotion } from 'react-native-reanimated';
 import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
 import { MonoMarkdown } from './MonoMarkdown';
@@ -57,7 +58,61 @@ type LedgerBodyProps = {
   attachments?: React.ReactNode;
   /** The turn's tool run, collapsed — rendered under the prose it belongs to. */
   machineNoise?: React.ReactNode;
+  /** A just-committed agent paragraph can reveal locally, even though the
+   * relay publishes it atomically. */
+  typewriter?: boolean;
 };
+
+const TYPEWRITER_TICK_MS = 20;
+const TYPEWRITER_CHARS_PER_TICK = 2;
+
+/** The text shown at a typewriter frame. Exported so the reveal contract stays
+ * independently testable without pretending relay events arrive as tokens. */
+export function typewriterFrame(text: string, visibleCharacters: number): string {
+  return text.slice(0, Math.max(0, visibleCharacters));
+}
+
+function TypewriterMarkdown({
+  markdown,
+  textStyle,
+  leadingInline,
+  testID,
+}: {
+  markdown: string;
+  textStyle: React.ComponentProps<typeof MonoMarkdown>['textStyle'];
+  leadingInline?: React.ReactNode;
+  testID: string;
+}) {
+  const reducedMotion = useReducedMotion();
+  const [visibleCharacters, setVisibleCharacters] = useState(() =>
+    reducedMotion ? markdown.length : 0,
+  );
+
+  useEffect(() => {
+    if (reducedMotion) {
+      setVisibleCharacters(markdown.length);
+      return;
+    }
+    setVisibleCharacters(0);
+    const timer = setInterval(() => {
+      setVisibleCharacters((current) => {
+        const next = Math.min(markdown.length, current + TYPEWRITER_CHARS_PER_TICK);
+        if (next === markdown.length) clearInterval(timer);
+        return next;
+      });
+    }, TYPEWRITER_TICK_MS);
+    return () => clearInterval(timer);
+  }, [markdown, reducedMotion]);
+
+  return (
+    <MonoMarkdown
+      leadingInline={leadingInline}
+      markdown={typewriterFrame(markdown, visibleCharacters)}
+      testID={testID}
+      textStyle={textStyle}
+    />
+  );
+}
 
 /**
  * The ghosted margin: a fixed-width clock stamp, and (when a voice first
@@ -116,7 +171,13 @@ export function LedgerEntry({
   replyReference,
   attachments,
   machineNoise,
+  typewriter = false,
 }: LedgerBodyProps & { luminous?: boolean }) {
+  const leadingInline = handle ? (
+    <Text style={styles.handle} testID={`chat-handle-${itemId}`}>
+      {handle.toUpperCase()}{'  '}
+    </Text>
+  ) : null;
   return (
     <View
       style={[styles.entry, continued ? styles.entryContinued : styles.entryOpens]}
@@ -125,18 +186,21 @@ export function LedgerEntry({
       {marginalia}
       {replyReference}
       {bodyText ? (
-        <MonoMarkdown
-          markdown={bodyText}
-          textStyle={luminous ? styles.ledgerTextLuminous : styles.ledgerText}
-          leadingInline={
-            handle ? (
-              <Text style={styles.handle} testID={`chat-handle-${itemId}`}>
-                {handle.toUpperCase()}{'  '}
-              </Text>
-            ) : null
-          }
-          testID={bodyTestID}
-        />
+        typewriter ? (
+          <TypewriterMarkdown
+            leadingInline={leadingInline}
+            markdown={bodyText}
+            testID={bodyTestID}
+            textStyle={luminous ? styles.ledgerTextLuminous : styles.ledgerText}
+          />
+        ) : (
+          <MonoMarkdown
+            leadingInline={leadingInline}
+            markdown={bodyText}
+            testID={bodyTestID}
+            textStyle={luminous ? styles.ledgerTextLuminous : styles.ledgerText}
+          />
+        )
       ) : handle ? (
         <Text style={styles.handle} testID={`chat-handle-${itemId}`}>
           {handle.toUpperCase()}

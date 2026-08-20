@@ -20,6 +20,7 @@ import {
   StyleSheet,
   Platform,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -144,6 +145,8 @@ import {
 } from '@/buzz/corner-navigation';
 import { isNearChatBottom } from '@/buzz/chat-scroll';
 import { replyMessageText, type MessageReplyTarget } from '@/buzz/message-reply';
+import { mentionKeyboardAction } from '@/buzz/composer-keyboard';
+import { copyEntireTurn } from '@/buzz/message-copy';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
   presenceWithMessageLiveness,
@@ -344,15 +347,29 @@ function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
 function SwipeToReply({
   children,
   messageId,
+  onLongPress,
   onReply,
 }: {
   children: React.ReactNode;
   messageId: string;
+  onLongPress: () => void;
   onReply: () => void;
 }) {
   const swipeableRef = useRef<Swipeable | null>(null);
 
-  if (Platform.OS === 'web') return <>{children}</>;
+  const message = (
+    <Pressable
+      accessibilityHint="Long press to copy the entire message"
+      accessibilityLabel="Message"
+      delayLongPress={450}
+      onLongPress={onLongPress}
+      testID={`copy-message-${messageId}`}
+    >
+      {children}
+    </Pressable>
+  );
+
+  if (Platform.OS === 'web') return message;
 
   return (
     <Swipeable
@@ -377,7 +394,7 @@ function SwipeToReply({
       )}
       testID={`swipe-reply-${messageId}`}
     >
-      {children}
+      {message}
     </Swipeable>
   );
 }
@@ -2506,6 +2523,12 @@ export default function BuzzChat() {
       return (
         <SwipeToReply
           messageId={item.id}
+          onLongPress={() => {
+            // `item.text` is the durable turn body. The visible ledger can
+            // fold its machine footnote or animate its prose, but a long press
+            // always copies the complete committed turn, unchanged.
+            void copyEntireTurn(item.text, Clipboard.setStringAsync);
+          }}
           onReply={item.isAgentDraft ? () => undefined : () => beginReply(item)}
         >
           <NewMessageMaterialize enabled={Boolean(item.isNew)}>
@@ -2525,6 +2548,7 @@ export default function BuzzChat() {
                 handle={handle}
                 continued={attributionContinued}
                 luminous={speaksAsAgent}
+                typewriter={speaksAsAgent && Boolean(item.isNew)}
                 bodyText={ledgerText ? ledgerText.prose : item.text}
                 bodyTestID={`chat-message-text-${item.id}`}
                 marginalia={marginalia}
@@ -2962,9 +2986,6 @@ export default function BuzzChat() {
             Room can be thinking with no corner open, or hold an open corner
             with nothing being asked of it. Both may show at once; neither
             implies the other. */}
-        {!isArchived && turnProgressLabel && (
-          <TurnProgressLine label={turnProgressLabel} testID="turn-progress-line" />
-        )}
         {!isArchived && agentsOffline && (
           <View style={styles.agentOfflineHint} testID="agent-offline-hint">
             <Text style={styles.agentOfflineHintTitle}>□ AGENT OFFLINE</Text>
@@ -3117,6 +3138,12 @@ export default function BuzzChat() {
                 </TouchableOpacity>
               </View>
             )}
+            {/* Keep this in the composer stack, directly above the field. A
+                growing multiline field then takes room from the transcript,
+                never from the only live progress signal. */}
+            {!isArchived && turnProgressLabel && (
+              <TurnProgressLine label={turnProgressLabel} testID="turn-progress-line" />
+            )}
             <View
               style={[
                 styles.composer,
@@ -3150,20 +3177,22 @@ export default function BuzzChat() {
                 onFocus={() => setComposerFocused(true)}
                 onBlur={() => setComposerFocused(false)}
                 onKeyPress={(event) => {
-                  if (!mentionMenuVisible) return;
-                  const key = event.nativeEvent.key;
-                  if (key === 'Enter') {
+                  const action = mentionKeyboardAction(event.nativeEvent.key);
+                  // Printable keys must never be prevented by the mention
+                  // picker. In particular, `>` is ordinary composer text.
+                  if (!mentionMenuVisible || !action) return;
+                  if (action === 'select') {
                     event.preventDefault();
                     const selected = mentionSuggestions.matches[highlightedMentionIndex];
                     if (selected) selectMention(selected);
-                  } else if (key === 'ArrowDown' || key === 'ArrowUp') {
+                  } else if (action === 'next' || action === 'previous') {
                     event.preventDefault();
-                    const direction = key === 'ArrowDown' ? 1 : -1;
+                    const direction = action === 'next' ? 1 : -1;
                     setHighlightedMentionIndex((current) => {
                       const count = mentionSuggestions.matches.length;
                       return (current + direction + count) % count;
                     });
-                  } else if (key === 'Escape' || key === 'Esc') {
+                  } else {
                     event.preventDefault();
                     setDismissedMentionKey(mentionMenuKey);
                   }

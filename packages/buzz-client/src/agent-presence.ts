@@ -5,10 +5,29 @@
  * a 120s lease tolerates transient relay reconnects without leaving a dead
  * daemon looking online for long.
  */
+import { TAG_AGENT_PRESENCE } from './kinds.js';
+
 export const AGENT_PRESENCE_HEARTBEAT_MS = 45_000;
 export const AGENT_PRESENCE_STALE_MS = 120_000;
 
 export type AgentPresenceStatus = 'online' | 'offline';
+
+/**
+ * The `d` of an agent's presence record for one Room.
+ *
+ * Presence is a parameterized-replaceable kind:30078 event, and the relay
+ * indexes those by `d` — a `#h` filter over kind 30078 matches NOTHING, even
+ * though the record does carry an `h` tag. Every reader that got this right
+ * had spelled the key out by hand; the one that reached for `#h` (the
+ * Workspace-wide agents directory, which fans across every Room) therefore
+ * found no presence for any agent, ever, and showed a serving daemon with a
+ * four-second-old `online` heartbeat as OFFLINE.
+ *
+ * One builder so the publisher and every reader cannot drift again.
+ */
+export function agentPresenceKey(channelId: string): string {
+  return `${TAG_AGENT_PRESENCE}:${channelId}`;
+}
 
 export type AgentPresence = {
   agentPubkey: string;

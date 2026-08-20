@@ -109,6 +109,7 @@ export {
   AGENT_PRESENCE_STALE_MS,
   isAgentPresenceOnline,
   newerAgentPresence,
+  agentPresenceKey,
 } from './agent-presence.js';
 export type { AgentPresence, AgentPresenceStatus } from './agent-presence.js';
 

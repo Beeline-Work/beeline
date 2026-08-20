@@ -133,14 +133,36 @@ export async function setRoomRepository(
 }
 
 /**
+ * What a repository read is allowed to conclude.
+ *
+ * `none` and `unverified` used to be the same answer — `null` — and they are
+ * not remotely the same fact. A Room whose repository config exists but whose
+ * author does not currently read back as an admin is a Room whose binding we
+ * could not CONFIRM; reporting that as "this Room has no repository" told an
+ * admin their configured Room was unconfigured, and (worse) let
+ * `WorkspaceSupervisor.reconcile` silently reclassify a live repository Room
+ * as a repo-less one, mid-session, on the strength of one role projection that
+ * came back empty under load.
+ */
+export type RoomRepositoryResolution =
+  | { kind: 'repository'; repository: RoomRepository }
+  | { kind: 'none' }
+  | { kind: 'unverified'; reason: string };
+
+/**
  * Read the current admin-authored room-repository config, if any. Picks the
  * newest event whose author is *currently* a Room admin/owner — a member who
  * has since lost admin can no longer repoint the Room's repository.
+ *
+ * `unverified` when config events exist but none of their authors currently
+ * authorizes. That is deliberately NOT relaxed into "use it anyway": the
+ * admin check is the whole authority model here. It is only reported honestly
+ * so a caller can wait rather than act on an absence it never established.
  */
-export async function getRoomRepository(
+export async function readRoomRepositoryConfig(
   ctx: ChannelOpsContext,
   channelId: string,
-): Promise<RoomRepository | null> {
+): Promise<RoomRepositoryResolution> {
   const events = await query(ctx, [
     { kinds: [KIND_ROOM_REPOSITORY], '#d': [roomRepositoryKey(channelId)], limit: 20 },
   ]);
@@ -154,9 +176,25 @@ export async function getRoomRepository(
     );
   for (const candidate of candidates) {
     const role = await getChannelRole(ctx, channelId, candidate.authoredBy!);
-    if (role === 'owner' || role === 'admin') return candidate;
+    if (role === 'owner' || role === 'admin') return { kind: 'repository', repository: candidate };
   }
-  return null;
+  if (candidates.length > 0) {
+    return {
+      kind: 'unverified',
+      reason:
+        `this Room has ${candidates.length} repository configuration event(s), but none of ` +
+        'their authors currently reads back as a Room admin',
+    };
+  }
+  return { kind: 'none' };
+}
+
+export async function getRoomRepository(
+  ctx: ChannelOpsContext,
+  channelId: string,
+): Promise<RoomRepository | null> {
+  const resolution = await readRoomRepositoryConfig(ctx, channelId);
+  return resolution.kind === 'repository' ? resolution.repository : null;
 }
 
 /**
@@ -169,11 +207,31 @@ export async function resolveRoomRepository(
   ctx: ChannelOpsContext,
   channelId: string,
 ): Promise<RoomRepository | null> {
-  const config = await getRoomRepository(ctx, channelId);
-  if (config) return config;
+  const state = await resolveRoomRepositoryState(ctx, channelId);
+  return state.kind === 'repository' ? state.repository : null;
+}
+
+/**
+ * The same resolution, with "we could not tell" kept distinct from "there
+ * isn't one". Callers that will CHANGE what a Room is on the strength of the
+ * answer must use this one; `resolveRoomRepository` stays for the readers that
+ * only want the binding.
+ *
+ * The genesis binding is still consulted for an unverified config: an
+ * immutable repository named on the Room's own create event is a fact about
+ * the Room that no role projection can invalidate.
+ */
+export async function resolveRoomRepositoryState(
+  ctx: ChannelOpsContext,
+  channelId: string,
+): Promise<RoomRepositoryResolution> {
+  const config = await readRoomRepositoryConfig(ctx, channelId);
+  if (config.kind === 'repository') return config;
   const binding = await getChannelRepositoryBinding(ctx, channelId);
-  if (!binding) return null;
-  return { channelId, binding, source: 'genesis' };
+  if (binding) {
+    return { kind: 'repository', repository: { channelId, binding, source: 'genesis' } };
+  }
+  return config.kind === 'unverified' ? config : { kind: 'none' };
 }
 
 /**

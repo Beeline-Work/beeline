@@ -11,8 +11,10 @@ import {
   isAgentTurnActive,
   mergeAgentPresence,
   presenceMapFromSessionEvents,
+  presenceWithMessageLiveness,
   reconnectPresenceAfterForeground,
 } from './agent-presence';
+import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection';
 
 const agent = 'b'.repeat(64);
 
@@ -335,5 +337,107 @@ describe('recovering from a stale presence lease', () => {
     });
     expect(merged[agent]).toBe(fresh);
     expect(isAgentPresenceOnlineWithReconnectGrace(merged[agent], now)).toBe(true);
+  });
+});
+
+
+/**
+ * An agent's own visible output is evidence about the agent.
+ *
+ * The heartbeat is a best-effort publish: `publishEvent` does not retry a
+ * relay quota rejection, and the captain's daemon log opens with
+ * `agent presence online failed: HTTP 429 rate-limited`. Two of those against a
+ * 120s lease is enough to accuse an agent that is answering in the transcript
+ * at that very moment.
+ */
+describe('an agent message counts as liveness', () => {
+  const agentPubkeys = new Set([agent]);
+  function message(overrides: Partial<ChatDisplayMessage>): ChatDisplayMessage {
+    return {
+      id: 'm1',
+      text: 'here is the answer',
+      isUser: false,
+      timestamp: 0,
+      pubkey: agent,
+      isAgentAuthor: true,
+      ...overrides,
+    } as ChatDisplayMessage;
+  }
+
+  it('keeps an agent online whose heartbeat was swallowed but who just spoke', () => {
+    const now = 5_000_000;
+    const stale = {
+      [agent]: { agentPubkey: agent, status: 'online' as const, observedAt: now - 10 * 60_000 },
+    };
+    expect(isAgentPresenceOnlineWithReconnectGrace(stale[agent], now)).toBe(false);
+
+    const corrected = presenceWithMessageLiveness(
+      stale,
+      [message({ timestamp: now - 1_000 })],
+      agentPubkeys,
+    );
+    expect(isAgentPresenceOnlineWithReconnectGrace(corrected[agent], now)).toBe(true);
+  });
+
+  it('never lets an old message override a newer explicit offline marker', () => {
+    const now = 5_000_000;
+    const marked = {
+      [agent]: { agentPubkey: agent, status: 'offline' as const, observedAt: now - 1_000 },
+    };
+    const corrected = presenceWithMessageLiveness(
+      marked,
+      [message({ timestamp: now - 60_000 })],
+      agentPubkeys,
+    );
+    expect(corrected[agent]!.status).toBe('offline');
+  });
+
+  it('does let a message after an offline marker bring the agent back', () => {
+    const now = 5_000_000;
+    const marked = {
+      [agent]: { agentPubkey: agent, status: 'offline' as const, observedAt: now - 60_000 },
+    };
+    const corrected = presenceWithMessageLiveness(
+      marked,
+      [message({ timestamp: now - 1_000 })],
+      agentPubkeys,
+    );
+    expect(isAgentPresenceOnlineWithReconnectGrace(corrected[agent], now)).toBe(true);
+  });
+
+  it('ignores rows the agent did not sign', () => {
+    const now = 5_000_000;
+    const corrected = presenceWithMessageLiveness(
+      {},
+      [
+        // The client-only offline notice itself: rendered into the transcript
+        // by this device, never published by anyone.
+        message({ timestamp: now, isSystemNotice: true }),
+        // A person's message, and a message from an unrelated key.
+        message({ id: 'm2', timestamp: now, pubkey: 'c'.repeat(64), isAgentAuthor: false }),
+      ],
+      agentPubkeys,
+    );
+    expect(corrected[agent]).toBeUndefined();
+  });
+
+  it('is a no-op when the Room has no registered agents', () => {
+    const presences = {};
+    expect(presenceWithMessageLiveness(presences, [message({ timestamp: 1 })], new Set())).toBe(
+      presences,
+    );
+  });
+
+  it('takes the agent\'s most recent message, not the first one it finds', () => {
+    const now = 5_000_000;
+    const corrected = presenceWithMessageLiveness(
+      {},
+      [
+        message({ id: 'old', timestamp: now - 10 * 60_000 }),
+        message({ id: 'new', timestamp: now - 1_000 }),
+      ],
+      agentPubkeys,
+    );
+    expect(isAgentPresenceOnlineWithReconnectGrace(corrected[agent], now)).toBe(true);
   });
 });

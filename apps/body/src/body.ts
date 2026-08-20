@@ -104,6 +104,7 @@ import {
   type ChannelOpsContext,
   type AttachmentReference,
   type AgentModelConfigOption,
+  AGENT_PRESENCE_STALE_MS,
 } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
 import type { BodyConfig, SessionMode } from './config.js';
@@ -435,17 +436,41 @@ export function cornerArchiveSummary(
   return conciseCornerTurnSummary(candidate ?? '') || CORNER_ARCHIVE_FALLBACK_SUMMARY;
 }
 
+/**
+ * How long a Room's socket must stay down before the daemon will state, on the
+ * record, that its agent is offline.
+ *
+ * An explicit `offline` marker is authoritative: it beats a same-second
+ * heartbeat and no client may contradict it. Its only value over simply
+ * letting the presence lease expire is speed, and speed is exactly what makes
+ * it dangerous — a counted "three consecutive reconnect failures" is roughly
+ * SEVEN SECONDS of exponential backoff, so an ordinary blip published a
+ * standing lie about a daemon that was up the whole time and answering. The
+ * captain's own log shows these blips in pairs, minutes apart, all recovering
+ * within a second.
+ *
+ * Waiting out the lease itself means the marker can only ever confirm what the
+ * clients are about to conclude anyway, never pre-empt it with a guess.
+ */
+export const PRESENCE_OFFLINE_AFTER_OUTAGE_MS = AGENT_PRESENCE_STALE_MS;
+
 /** Bounded exponential spacing for one Room's failed request poll. */
 export class RoomPollBackoff {
   private failures = 0;
+  /** Wall-clock start of the current unbroken run of failures. */
+  private outageStartedAt: number | undefined;
+  private offlineAsserted = false;
 
   constructor(
     private readonly baseMs: number,
     private readonly maxMs = ROOM_POLL_FAILURE_BACKOFF_CAP_MS,
+    private readonly offlineAfterMs = PRESENCE_OFFLINE_AFTER_OUTAGE_MS,
+    private readonly now: () => number = Date.now,
   ) {}
 
   failed(error?: unknown): number {
     this.failures++;
+    this.outageStartedAt ??= this.now();
     const exponentialMs = Math.min(this.maxMs, this.baseMs * 2 ** (this.failures - 1));
     // A relay may advertise a delay beyond our steady-state cap. That explicit
     // quota instruction always wins: retrying earlier would recreate the storm.
@@ -455,17 +480,25 @@ export class RoomPollBackoff {
   recovered(): boolean {
     const wasFailing = this.failures > 0;
     this.failures = 0;
+    this.outageStartedAt = undefined;
+    this.offlineAsserted = false;
     return wasFailing;
   }
 
   /**
-   * A single reconnect blip (one failed attempt) should not assert the agent
-   * offline — the existing heartbeat lease (~120s) covers brief outages.
-   * Only consecutive failures beyond a brief window warrant an authoritative
-   * offline marker that clients cannot contradict.
+   * Whether to publish the authoritative offline marker for this outage.
+   *
+   * Measured in wall-clock time from the first failure of the current run, so
+   * it spans reconnect attempts rather than counting them, and answers true at
+   * most ONCE per outage — the marker is a statement, not a heartbeat, and
+   * republishing it every retry only spends relay quota the real heartbeat
+   * needs.
    */
   shouldMarkPresenceOffline(): boolean {
-    return this.failures >= 3;
+    if (this.offlineAsserted || this.outageStartedAt === undefined) return false;
+    if (this.now() - this.outageStartedAt < this.offlineAfterMs) return false;
+    this.offlineAsserted = true;
+    return true;
   }
 }
 

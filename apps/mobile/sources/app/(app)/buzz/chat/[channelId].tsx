@@ -147,6 +147,7 @@ import { replyMessageText, type MessageReplyTarget } from '@/buzz/message-reply'
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
   offlineNoticeForSend,
+  presenceWithMessageLiveness,
   isAgentPresenceOnlineWithReconnectGrace,
   isAgentOfflineAfterPresenceResolved,
   isAgentTurnActive,
@@ -508,6 +509,8 @@ export default function BuzzChat() {
   // read this — a corner has no room-repository binding of its own; the
   // daemon resolves its working repo from its parent Room instead.
   const [roomRepository, setRoomRepository] = useState<RoomRepository | null>(null);
+  /** False until a read has definitively established this Room's repository (or lack of one). */
+  const [roomRepositoryResolved, setRoomRepositoryResolved] = useState(false);
   const [showRoomRepoPicker, setShowRoomRepoPicker] = useState(false);
   const [roomRepoCandidates, setRoomRepoCandidates] = useState<RepoCandidate[]>([]);
   const [roomRepoBusy, setRoomRepoBusy] = useState(false);
@@ -535,13 +538,16 @@ export default function BuzzChat() {
     proposalId: string;
     text: string;
   } | null>(null);
-  const [agentPresences, setAgentPresences] = useState<Record<string, RoomAgentPresence>>({});
+  const [heartbeatPresences, setAgentPresences] = useState<Record<string, RoomAgentPresence>>({});
   const [presenceResolved, setPresenceResolved] = useState(false);
   const [presenceReconnectGrace, setPresenceReconnectGrace] = useState<Record<string, number>>({});
   const [presenceNow, setPresenceNow] = useState(Date.now());
-  const agentPresencesRef = useRef(agentPresences);
+  const agentPresencesRef = useRef(heartbeatPresences);
   const presenceReconnectGraceRef = useRef(presenceReconnectGrace);
-  agentPresencesRef.current = agentPresences;
+  // The ref is the *heartbeat* map, because it is what live presence events
+  // merge into and what the reconnect grace is keyed off. The derived map
+  // below is a read-only view for everything that decides "is it online".
+  agentPresencesRef.current = heartbeatPresences;
   presenceReconnectGraceRef.current = presenceReconnectGrace;
   const activeCacheViewer = useBuzzLocalCache((state) => state.activeViewerPubkey);
   const cacheViewerPubkey = userPubkey || activeCacheViewer || '';
@@ -646,6 +652,21 @@ export default function BuzzChat() {
   );
   const memberOptions = useMemo<RoomMemberOption[]>(() => {
     const options = new Map<string, RoomMemberOption>();
+    // The viewer, always and first. `availablePeople` is a Workspace roster
+    // read; until it lands (or if it comes back partial) the reader was absent
+    // from their own Room's participant list, because a roster entry is what
+    // the list is built from. A later real entry overwrites this one.
+    if (userPubkey) {
+      const selfProfileName = personProfileByPubkey.get(userPubkey)?.name;
+      options.set(userPubkey, {
+        pubkey: userPubkey,
+        name: 'You',
+        handle: selfProfileName
+          ? personHandle(selfProfileName, userPubkey)
+          : shortMemberNpub(userPubkey).replace(/[^a-zA-Z0-9_-]/g, ''),
+        kind: 'person',
+      });
+    }
     for (const person of availablePeople) {
       const shortNpub = shortMemberNpub(person.pubkey);
       const profileName = personProfileByPubkey.get(person.pubkey)?.name;
@@ -678,10 +699,25 @@ export default function BuzzChat() {
     () =>
       roomParticipantPubkeys(
         roomMemberPubkeys,
-        activeCommunityId ? availablePeople : undefined,
-        activeCommunityId ? availableAgents : undefined,
+        // Only filter by the Workspace roster once that roster has actually
+        // been read. `availablePeople`/`availableAgents` default to `[]`, and
+        // an empty list is indistinguishable from "nobody here is visible" —
+        // so during the window where the Room's own membership has landed but
+        // the Workspace roster has not (they are independent steps of the
+        // room-entry fan-out), every participant including the reader was
+        // filtered out of the Room's own roster.
+        activeCommunityId && participantsHydrated ? availablePeople : undefined,
+        activeCommunityId && participantsHydrated ? availableAgents : undefined,
+        userPubkey,
       ),
-    [activeCommunityId, availableAgents, availablePeople, roomMemberPubkeys],
+    [
+      activeCommunityId,
+      availableAgents,
+      availablePeople,
+      participantsHydrated,
+      roomMemberPubkeys,
+      userPubkey,
+    ],
   );
   const roomParticipants = useMemo(
     () => memberOptions.filter((option) => participantPubkeys.has(option.pubkey)),
@@ -699,6 +735,20 @@ export default function BuzzChat() {
   const roomAgents = useMemo(
     () => roomParticipants.filter((participant) => participant.kind === 'agent'),
     [roomParticipants],
+  );
+  // What the heartbeat stream says, corrected by what the agents have visibly
+  // said. A heartbeat is the weaker of the two signals — it is a best-effort
+  // publish the relay may reject on quota — so an agent that is answering in
+  // the transcript must never read offline. Every "is it online" decision
+  // below reads this map, not the raw heartbeat one.
+  const agentPresences = useMemo(
+    () =>
+      presenceWithMessageLiveness(
+        heartbeatPresences,
+        combinedMessages,
+        new Set(roomAgents.map((agent) => agent.pubkey)),
+      ),
+    [heartbeatPresences, combinedMessages, roomAgents],
   );
   const onlineAgentCount = roomAgents.filter((agent) =>
     isAgentPresenceOnlineWithReconnectGrace(
@@ -1075,16 +1125,24 @@ export default function BuzzChat() {
   useEffect(() => {
     if (!decodedId || !transport || isCorner) {
       setRoomRepository(null);
+      setRoomRepositoryResolved(false);
       return;
     }
     let cancelled = false;
     void transport
-      .roomRepositoryRead(decodedId)
-      .then((repo) => {
-        if (!cancelled) setRoomRepository(repo);
+      .roomRepositoryState(decodedId)
+      .then((state) => {
+        if (cancelled) return;
+        setRoomRepository(state.kind === 'repository' ? state.repository : null);
+        // Only a definite `none` licenses the app to say this Room has no
+        // repository. An error, or a config whose author could not be
+        // confirmed as an admin, is "not known yet" — telling an admin their
+        // configured Room is unconfigured because one relay read was slow is
+        // the failure this flag exists to prevent.
+        setRoomRepositoryResolved(state.kind !== 'unverified');
       })
       .catch(() => {
-        if (!cancelled) setRoomRepository(null);
+        if (!cancelled) setRoomRepositoryResolved(false);
       });
     return () => {
       cancelled = true;
@@ -1533,7 +1591,7 @@ export default function BuzzChat() {
     // friendly client-side path — catch the common phrasing before the
     // message is sent (and the composer text lost) rather than after a
     // doomed round-trip.
-    if (!isCorner && !roomRepository && looksLikeCornerOpenIntent(rawText)) {
+    if (!isCorner && !roomRepository && roomRepositoryResolved && looksLikeCornerOpenIntent(rawText)) {
       setCornerOpenRepoPrompt(true);
       if (activeCommunityId && roomRepoCandidates.length === 0) {
         void transport
@@ -1680,6 +1738,7 @@ export default function BuzzChat() {
     presenceResolved,
     presenceReconnectGrace,
     agentByPubkey,
+    roomRepositoryResolved,
   ]);
 
   const pickPhoto = useCallback(async () => {

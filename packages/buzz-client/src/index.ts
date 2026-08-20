@@ -248,9 +248,12 @@ export {
   parseRoomRepository,
   setRoomRepository,
   getRoomRepository,
+  readRoomRepositoryConfig,
   resolveRoomRepository,
+  resolveRoomRepositoryState,
   setRoomTargetBranch,
   normalizeTargetBranchName,
+  type RoomRepositoryResolution,
 } from './room-repository.js';
 
 export {

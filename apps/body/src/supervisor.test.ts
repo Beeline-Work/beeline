@@ -111,6 +111,7 @@ describe('WorkspaceSupervisor unbound channel policy', () => {
       getChannelCommunityId: vi.fn().mockResolvedValue(runtime.communityId),
       getParentChannelId: vi.fn().mockResolvedValue(null),
       resolveRoomRepository: vi.fn().mockResolvedValue(null),
+      resolveRoomRepositoryState: vi.fn().mockResolvedValue({ kind: 'none' }),
       getChannelRepositoryBinding: vi.fn().mockResolvedValue(null),
       getDirectMessage: vi.fn().mockResolvedValue({
         participants: [runtime.agent.publicKey, 'b'.repeat(64)],
@@ -136,6 +137,52 @@ describe('WorkspaceSupervisor unbound channel policy', () => {
     expect(disconnect).toHaveBeenCalledOnce();
   });
 
+  it('leaves a Room alone rather than serving it as repo-less when its repository is unconfirmable', async () => {
+    // A Room's repository config is authorized against the CURRENT admin
+    // projection, which is a separate relay read that comes back empty under
+    // load. Reported as `null` — "there is no repository" — that read decided
+    // what KIND of Room this is, and a Room served as `named-repository` tells
+    // anyone who asks for a corner that it has no repository linked.
+    //
+    // (A Room this daemon has already materialized is short-circuited earlier
+    // by `runtime.rooms` and was never exposed to this; the Rooms that are are
+    // the ones this daemon has not served before — a second agent paired into
+    // an existing Room, or a fresh runtime.)
+    const runtime = runtimeWithExistingRepo();
+    mocks.createBuzzClient.mockReturnValue({
+      isMember: vi.fn().mockResolvedValue(true),
+      listMyChannels: vi
+        .fn()
+        .mockResolvedValue([{ channelId: 'unconfirmable-room', event: { created_at: 20 } }]),
+      getChannelCommunityId: vi.fn().mockResolvedValue(runtime.communityId),
+      getParentChannelId: vi.fn().mockResolvedValue(null),
+      resolveRoomRepository: vi.fn().mockResolvedValue(null),
+      resolveRoomRepositoryState: vi
+        .fn()
+        .mockResolvedValue({ kind: 'unverified', reason: 'role projection came back empty' }),
+      getChannelRepositoryBinding: vi.fn().mockResolvedValue(null),
+      getDirectMessage: vi.fn().mockResolvedValue(null),
+      disconnect: vi.fn(),
+    });
+    const supervisor = new WorkspaceSupervisor(
+      runtime,
+      `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+    );
+    const startConversation = vi
+      .spyOn(supervisor as never, 'startConversationRoom' as never)
+      .mockImplementation(() => undefined as never);
+    const startRepository = vi
+      .spyOn(supervisor as never, 'startRepositoryRoom' as never)
+      .mockImplementation(() => undefined as never);
+
+    await expect(supervisor.reconcile()).resolves.toBe(true);
+
+    // Neither: "I could not tell" is not a licence to pick one.
+    expect(startConversation).not.toHaveBeenCalled();
+    expect(startRepository).not.toHaveBeenCalled();
+  });
+
   it('serves an ordinary repo-less Room with named-repository corner capability', async () => {
     const runtime = runtimeWithExistingRepo();
     mocks.createBuzzClient.mockReturnValue({
@@ -146,6 +193,7 @@ describe('WorkspaceSupervisor unbound channel policy', () => {
       getChannelCommunityId: vi.fn().mockResolvedValue(runtime.communityId),
       getParentChannelId: vi.fn().mockResolvedValue(null),
       resolveRoomRepository: vi.fn().mockResolvedValue(null),
+      resolveRoomRepositoryState: vi.fn().mockResolvedValue({ kind: 'none' }),
       getChannelRepositoryBinding: vi.fn().mockResolvedValue(null),
       getDirectMessage: vi.fn().mockResolvedValue(null),
       disconnect: vi.fn(),
@@ -785,6 +833,14 @@ describe('WorkspaceSupervisor per-Room discovery isolation', () => {
         channelId === 'unservable-room'
           ? { binding: { name: 'elsewhere', key: 'elsewhere', localOnly: true } }
           : null,
+      ),
+      resolveRoomRepositoryState: vi.fn(async (channelId: string) =>
+        channelId === 'unservable-room'
+          ? {
+              kind: 'repository',
+              repository: { binding: { name: 'elsewhere', key: 'elsewhere', localOnly: true } },
+            }
+          : { kind: 'none' },
       ),
       getChannelRepositoryBinding: vi.fn().mockResolvedValue(null),
       getDirectMessage: vi.fn(async (channelId: string) =>

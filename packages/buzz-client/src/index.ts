@@ -109,6 +109,7 @@ export {
   AGENT_PRESENCE_STALE_MS,
   isAgentPresenceOnline,
   newerAgentPresence,
+  agentPresenceKey,
 } from './agent-presence.js';
 export type { AgentPresence, AgentPresenceStatus } from './agent-presence.js';
 
@@ -248,9 +249,12 @@ export {
   parseRoomRepository,
   setRoomRepository,
   getRoomRepository,
+  readRoomRepositoryConfig,
   resolveRoomRepository,
+  resolveRoomRepositoryState,
   setRoomTargetBranch,
   normalizeTargetBranchName,
+  type RoomRepositoryResolution,
 } from './room-repository.js';
 
 export {

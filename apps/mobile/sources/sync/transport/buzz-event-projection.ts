@@ -873,6 +873,26 @@ export function upsertChatMessages(
     if (existing && !existing.isAgentDraft && message.isAgentDraft) {
       continue;
     }
+    // Two DIFFERENT agent messages must never share one bubble.
+    //
+    // A `#t=agent-message` that carries a NIP-10 reply-to claims the stable
+    // `agent-draft-<parent>` id so a streaming draft can become the final text
+    // in place. But a turn can publish more than one message answering the
+    // same request — the honest "still working on this" stall notice and then
+    // the reply itself, which is 13 of 50 reply-parents in the captain's Room
+    // — and each later one silently REPLACED the earlier. Reconciliation is
+    // for a draft becoming final; anything else keeps its own event id and its
+    // own bubble. A redelivery of the same event still updates in place,
+    // because it carries the same `relayId`.
+    if (
+      existing &&
+      !existing.isAgentDraft &&
+      !message.isAgentDraft &&
+      message.relayId &&
+      (existing.relayId ?? existing.id) !== message.relayId
+    ) {
+      message = { ...message, id: message.relayId };
+    }
     if (
       existing?.corner &&
       message.corner &&

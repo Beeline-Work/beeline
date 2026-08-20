@@ -53,7 +53,9 @@ import {
   type AgentModelCatalog,
   type AgentModelConfig,
   type AgentModelConfigInput,
+  TAG_AGENT_PRESENCE,
   type RoomRepository,
+  type RoomRepositoryResolution,
   type RoomRepositoryInput,
 } from '@beeline/buzz-client';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
@@ -105,18 +107,32 @@ function cornerSummaryFromEvents(
       createdAt: event.createdAt,
     }))
     .filter((entry): entry is { raw: string; createdAt: number } => Boolean(entry.raw));
-  const latestRawStatus = [...statusEntries].sort((a, b) => b.createdAt - a.createdAt)[0]?.raw;
-  const latestStatus = mapRawCornerStatusTag(latestRawStatus);
+  const latest = [...statusEntries].sort((a, b) => b.createdAt - a.createdAt)[0];
+  const latestStatus = mapRawCornerStatusTag(latest?.raw);
   // `closed` on a kind:39000 projection is NIP-29 invite-only access, not a
   // lifecycle state. Only an explicit archived boolean or a corner-scoped
   // archived status removes a corner from the live list.
   const archived =
     metadata?.archived === true || statusEntries.some((entry) => entry.raw === 'archived');
+  // A merge-ready is a REVIEW ANNOUNCEMENT, not a standing state, so it may
+  // only speak for the corner while nothing newer has spoken.
+  //
+  // It used to win outright — "a merge-ready appears anywhere in the last 50
+  // events" — which made a corner that published a review and then failed read
+  // as `open` for ever. `open` is not terminal, so it kept its place in the
+  // Room's pinned corner strip permanently. Three of the captain's corners are
+  // in exactly that state right now: their newest word is `failed`, and all
+  // three still report `open`.
+  const latestMergeReadyAt = events
+    .filter((event) => event.event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'))
+    .reduce<number | undefined>(
+      (newest, event) => (newest === undefined ? event.createdAt : Math.max(newest, event.createdAt)),
+      undefined,
+    );
   const reviewReady =
     latestStatus === 'open' ||
-    events.some((event) =>
-      event.event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
-    );
+    (latestMergeReadyAt !== undefined &&
+      (latest === undefined || latestMergeReadyAt >= latest.createdAt));
   const lastActivityAt = Math.max(
     create?.created_at ?? 0,
     ...events.map((event) => event.createdAt),
@@ -491,8 +507,28 @@ export class BuzzRigTransport implements RigTransport {
     const client = await this.getClient();
     const roomIds = await client.communityChannels(communityId);
     if (roomIds.length === 0) return [];
+    // Filtered by `#d`, NOT `#h`. Presence is a parameterized-replaceable
+    // kind:30078 record and the relay indexes those by `d`: a `#h` filter over
+    // kind 30078 matches nothing, even though the record carries an `h` tag.
+    // This read was the only presence reader that reached for `#h` — the
+    // per-Room reads always spelled the `d` key out — so it returned zero
+    // events for every Workspace, always, and this directory reported every
+    // agent OFFLINE regardless of what its daemon was doing. Confirmed against
+    // the live relay: `#h` → 0 events, `#d` → the same agent's four-second-old
+    // `online` heartbeat.
     const buzzEvents = await client.query([
-      { kinds: [KIND_AGENT_PRESENCE], '#h': roomIds, limit: Math.max(200, roomIds.length * 10) },
+      {
+        kinds: [KIND_AGENT_PRESENCE],
+        // Built from `TAG_AGENT_PRESENCE`, a long-standing export, rather
+        // than from the newer `agentPresenceKey` helper. Metro resolves
+        // `@beeline/buzz-client` to its BUILT `dist/`, so a mobile fix that
+        // reaches for a brand-new SDK symbol is `undefined` at runtime against
+        // a stale build — and this read is best-effort, so the resulting
+        // TypeError is swallowed and every agent reads OFFLINE. A fix must not
+        // depend on a rebuild it cannot verify.
+        '#d': roomIds.map((roomId) => `${TAG_AGENT_PRESENCE}:${roomId}`),
+        limit: Math.max(200, roomIds.length * 10),
+      },
     ]);
     return buzzEvents
       .map(toSessionEvent)
@@ -639,6 +675,20 @@ export class BuzzRigTransport implements RigTransport {
   // ── Room→repo (Stage 2 app UI over Stage 1's daemon/relay backbone) ─────
 
   /** Resolve the repository a Room owns, or `null` for a chat-only Room. */
+  /**
+   * The Room's repository, keeping "we could not tell" distinct from "there
+   * isn't one".
+   *
+   * `roomRepositoryRead` collapses both into `null`, and its caller then
+   * collapses a thrown error into `null` as well — so one slow or refused
+   * relay read made the app tell an admin their configured Room had no
+   * repository, and intercept their open-a-corner message to say so.
+   */
+  async roomRepositoryState(channelId: string): Promise<RoomRepositoryResolution> {
+    const client = await this.getClient();
+    return client.resolveRoomRepositoryState(channelId);
+  }
+
   async roomRepositoryRead(channelId: string): Promise<RoomRepository | null> {
     const client = await this.getClient();
     return client.resolveRoomRepository(channelId);

@@ -772,6 +772,53 @@ describe('Buzz Room screen event projection', () => {
     ]);
     expect(afterStaleDraft).toEqual(settled);
   });
+
+  it('never lets a second agent message on the same request replace the first', () => {
+    // Reconciliation exists for one draft becoming one final message. But a
+    // turn can publish more than one `#t=agent-message` answering the same
+    // request — the honest "still working on this" stall notice and then the
+    // reply itself — and they all claim the same `agent-draft-<parent>` id.
+    // In the captain's Room that is 13 of 50 reply-parents, and every later
+    // message silently replaced the earlier one.
+    const requestId = 'human-request-id';
+    const stall = projectChatEvent(
+      raw(
+        'stall-relay-id',
+        'Still working on this — my coding backend is taking longer than usual to respond.',
+        [
+          ['t', 'agent-message'],
+          ['e', requestId, '', 'reply'],
+        ],
+        20,
+      ),
+      viewer,
+      true,
+    ).message!;
+    const answer = projectChatEvent(
+      raw(
+        'answer-relay-id',
+        'Found it — the misdiagnosis was upstream, in the daemon.',
+        [
+          ['t', 'agent-message'],
+          ['e', requestId, '', 'reply'],
+        ],
+        21,
+      ),
+      viewer,
+      true,
+    ).message!;
+
+    const transcript = upsertChatMessages(upsertChatMessages([], [stall]), [answer]);
+
+    expect(transcript).toHaveLength(2);
+    expect(transcript.map((message) => message.relayId ?? message.id)).toEqual([
+      'stall-relay-id',
+      'answer-relay-id',
+    ]);
+    // Redelivery of the same event is still an update in place, not a third
+    // bubble: it carries the same relayId.
+    expect(upsertChatMessages(transcript, [answer])).toHaveLength(2);
+  });
 });
 
 describe('agent activity projection', () => {

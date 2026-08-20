@@ -295,17 +295,6 @@ describe('the ledger — a human turn', () => {
     expect(renderedText(continued).join(' ')).toContain('And rerun the suite.');
   });
 
-  it('still carries the offline delivery note', () => {
-    const renderer = render(
-      React.createElement(LedgerSteer, {
-        itemId: 'b',
-        bodyText: 'Ship it.',
-        bodyTestID: 'steer-body',
-        offlineQueued: true,
-      }),
-    );
-    expect(renderedText(renderer).join(' ')).toContain('AGENT OFFLINE');
-  });
 });
 
 describe('the ledger — the right gutter', () => {

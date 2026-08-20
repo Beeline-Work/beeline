@@ -10,6 +10,7 @@ vi.mock('react-native', async () => {
   return {
     Platform: { OS: 'android', select: (choices: Record<string, unknown>) => choices.default },
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
+    Pressable: host('Pressable'),
     Text: host('Text'),
     View: host('View'),
   };
@@ -46,19 +47,67 @@ const entries = [
   { id: 'b', text: 'I can colour them', timestamp: 2, pubkey: 'a1', isAgent: true },
 ];
 
+/**
+ * The flat string of one labelled Text. Read from `props.children` (the raw
+ * JSX children array) rather than serialised — `JSON.stringify` on a rendered
+ * node walks into the circular Fiber graph. See the mobile-test note in
+ * AGENTS.md.
+ */
+function summaryText(renderer: ReactTestRenderer, suffix: string): string {
+  const node = renderer.root
+    .findAllByType('Text')
+    .find((candidate: { props: { testID?: string } }) => candidate.props.testID?.endsWith(suffix));
+  const children = node?.props.children;
+  return (Array.isArray(children) ? children : [children])
+    .filter((part: unknown) => typeof part === 'string' || typeof part === 'number')
+    .join('');
+}
+
+/** Open the disclosure the way a reader does. */
+function expand(renderer: ReactTestRenderer): void {
+  const trigger = renderer.root.findByType('Pressable');
+  act(() => trigger.props.onPress());
+}
+
 describe('RoomContextPreamble', () => {
   it('renders nothing when the corner inherited no Room context', () => {
     expect(render(React.createElement(RoomContextPreamble, { entries: [] })).toJSON()).toBeNull();
   });
 
-  it('quotes the bounded window, attributed, at the ghost tier', () => {
+  it('opens collapsed, so a fresh corner does not lead with a dump of the Room', () => {
+    // A corner opened mid-conversation has almost no transcript of its own, so
+    // an expanded ten-line quote was the entire first screen — the reader
+    // arrived at their new corner and met an undigested replay of what they
+    // had just said, with the objective nowhere in sight.
+    const renderer = render(React.createElement(RoomContextPreamble, { entries }));
+    const quoted = renderer.root
+      .findAllByType('Text')
+      .filter((node: { props: { testID?: string } }) =>
+        node.props.testID?.endsWith('-entry'),
+      );
+    expect(quoted).toHaveLength(0);
+    expect(summaryText(renderer, '-summary')).toBe('⋯ 2 earlier messages from the Room');
+    expect(summaryText(renderer, '-affordance')).toContain('tap to expand');
+  });
+
+  it('says "message" for one and "messages" for more', () => {
+    const one = render(
+      React.createElement(RoomContextPreamble, { entries: [entries[0]] }),
+    );
+    expect(summaryText(one, '-summary')).toBe('⋯ 1 earlier message from the Room');
+  });
+
+  it('quotes the bounded window, attributed, at the ghost tier, once expanded', () => {
     const renderer = render(
       React.createElement(RoomContextPreamble, {
         entries,
         speakerLabel: (pubkey: string | undefined) => (pubkey === 'a1' ? 'BEEBEE' : 'CAPTAIN'),
       }),
     );
-    const rows = renderer.root.findAllByType('Text').slice(1); // [0] is the eyebrow
+    expand(renderer);
+    const rows = renderer.root
+      .findAllByType('Text')
+      .filter((node: { props: { testID?: string } }) => node.props.testID?.endsWith('-entry'));
     expect(rows).toHaveLength(2);
     expect(rows[0].props.children).toEqual(['CAPTAIN  ', 'the code blocks are unreadable']);
     expect(rows[1].props.children).toEqual(['BEEBEE  ', 'I can colour them']);
@@ -71,7 +120,20 @@ describe('RoomContextPreamble', () => {
 
   it('drops the attribution rather than inventing one when the speaker is unknown', () => {
     const renderer = render(React.createElement(RoomContextPreamble, { entries }));
-    const rows = renderer.root.findAllByType('Text').slice(1);
+    expand(renderer);
+    const rows = renderer.root
+      .findAllByType('Text')
+      .filter((node: { props: { testID?: string } }) => node.props.testID?.endsWith('-entry'));
     expect(rows[0].props.children).toEqual(['', 'the code blocks are unreadable']);
+  });
+
+  it('collapses again on a second tap', () => {
+    const renderer = render(React.createElement(RoomContextPreamble, { entries }));
+    expand(renderer);
+    expand(renderer);
+    const rows = renderer.root
+      .findAllByType('Text')
+      .filter((node: { props: { testID?: string } }) => node.props.testID?.endsWith('-entry'));
+    expect(rows).toHaveLength(0);
   });
 });

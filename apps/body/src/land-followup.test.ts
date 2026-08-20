@@ -416,4 +416,75 @@ describe('the CI report that follows a land', () => {
     // Threading the report to the recap is why the recap's id is passed here.
     expect(started[0]![2]).toBe(summary[0]!.id);
   });
+
+  it('tells a reader their own checkout is behind — after asking it, on a real land', async () => {
+    // The captain's Room is served out of the daemon's canonical clone while
+    // its runtime record's repo root is the operator's own tree, so a landed
+    // commit is genuinely absent from the checkout they are reading.
+    // `Landed on main at <sha>` alone never said that.
+    const fixture = corner();
+    const operator = resolve(fixture.root, 'operator-tree');
+    git(fixture.root, ['init', '-q', '-b', 'main', operator]);
+    fixture.info.boundRepo!.operatorCheckout = operator;
+    vi.spyOn(fixture.body as never, 'watchLandedCommitCi' as never).mockImplementation(
+      (() => undefined) as never,
+    );
+
+    const events = await land(fixture);
+    const summary = tagged(events, LAND_SUMMARY_TAG);
+    expect(summary).toHaveLength(1);
+    expect(summary[0]!.content).toContain('Landed on main at');
+    expect(summary[0]!.content).toContain(`${operator} has not fetched this yet`);
+  });
+
+  it('never claims a checkout is behind when it already has the commit', async () => {
+    const fixture = corner();
+    // The corner's own worktree certainly holds the landed tip.
+    fixture.info.boundRepo!.operatorCheckout = fixture.worktree;
+    vi.spyOn(fixture.body as never, 'watchLandedCommitCi' as never).mockImplementation(
+      (() => undefined) as never,
+    );
+
+    const events = await land(fixture);
+    const summary = tagged(events, LAND_SUMMARY_TAG);
+    expect(summary[0]!.content).not.toContain('has not fetched this yet');
+  });
+
+  it('carries the commit page for a GitHub remote, in the prose and on a tag', async () => {
+    // The land itself needs a pushable remote and a GitHub URL is not one, so
+    // this drives the recap the land calls rather than the push before it —
+    // the same function, the same corner state, one step later.
+    const fixture = corner({ remoteUrl: 'https://github.com/lunchboxfortwo/buzzy.git' });
+    const events = captureEvents();
+    const recap = Reflect.get(fixture.body, 'publishCornerLandSummary') as (
+      this: Body,
+      info: SubchannelInfo,
+      tip: string,
+      parentId: string,
+    ) => Promise<string | undefined>;
+    await recap.call(fixture.body, fixture.info, fixture.tip, 'room-channel');
+
+    const summary = tagged(events, LAND_SUMMARY_TAG);
+    expect(summary).toHaveLength(1);
+    expect(summary[0]!.content).toContain(
+      `https://github.com/lunchboxfortwo/buzzy/commit/${fixture.tip}`,
+    );
+    // On a tag too, so a client can render it as a link without parsing prose.
+    expect(summary[0]!.tags).toContainEqual([
+      'url',
+      `https://github.com/lunchboxfortwo/buzzy/commit/${fixture.tip}`,
+    ]);
+  });
+
+  it('publishes no commit URL for a repository GitHub does not host', async () => {
+    const fixture = corner();
+    vi.spyOn(fixture.body as never, 'watchLandedCommitCi' as never).mockImplementation(
+      (() => undefined) as never,
+    );
+
+    const events = await land(fixture);
+    const summary = tagged(events, LAND_SUMMARY_TAG);
+    expect(summary[0]!.content).not.toContain('https://');
+    expect(summary[0]!.tags.some((tag) => tag[0] === 'url')).toBe(false);
+  });
 });

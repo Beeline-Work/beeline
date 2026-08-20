@@ -102,25 +102,29 @@ const RoomRowMark = React.memo(function RoomRowMark({
   attention,
   glyph,
   live,
+  unread,
 }: {
   attention: boolean;
   glyph: string;
   live: boolean;
+  unread: boolean;
 }) {
   const mark = (
-    <Text
-      style={[
-        styles.roomGlyph,
-        attention && styles.roomGlyphAttention,
-        live && styles.roomGlyphLive,
-      ]}
-    >
-      {glyph}
-    </Text>
+    <View style={[styles.rowMark, unread && styles.rowMarkUnread]}>
+      <Text
+        style={[
+          styles.roomGlyph,
+          attention && styles.roomGlyphAttention,
+          live && styles.roomGlyphLive,
+        ]}
+      >
+        {glyph}
+      </Text>
+    </View>
   );
-  if (!live) return <View style={styles.rowMark}>{mark}</View>;
+  if (!live) return mark;
   return (
-    <HullLivePulse active style={styles.rowMark}>
+    <HullLivePulse active>
       {mark}
     </HullLivePulse>
   );
@@ -1151,7 +1155,12 @@ export default function BuzzChannels() {
                     style={styles.roomPrimary}
                     testID={`room-${item.id}`}
                   >
-                    <RoomRowMark attention={row.attention} glyph={row.glyph} live={row.live} />
+                    <RoomRowMark
+                      attention={row.attention}
+                      glyph={row.glyph}
+                      live={row.live}
+                      unread={unread}
+                    />
                     <View style={styles.rowCopy}>
                       <View style={styles.rowTitleLine}>
                         <Text
@@ -1521,6 +1530,13 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 20,
     textAlign: 'center',
+  },
+  // NEW is useful when a row is already in focus. This slim bright rail makes
+  // unread Rooms findable while scanning the whole list, without spending the
+  // reserved gold accent (which still means only live agent work).
+  rowMarkUnread: {
+    borderLeftWidth: 2,
+    borderLeftColor: groknight.ledgerBright,
   },
   /* The one accent on this screen, and only for genuinely live corner work —
    * redundant with the ◆ glyph it colors and with the LIVE wave in the heading. */

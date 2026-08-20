@@ -2,7 +2,11 @@ import React, { useMemo, useState } from 'react';
 import { Modal as RNModal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AgentActivityItem } from '@/sync/transport/rig-transport';
-import { buildTurnActivity, type TurnActivityAction } from '@/buzz/activity-timeline';
+import {
+  buildTurnActivity,
+  type TurnActivityAction,
+  type TurnActivityFile,
+} from '@/buzz/activity-timeline';
 import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
 import { darkTheme } from '@/theme';
@@ -77,39 +81,85 @@ function DetailText({ label, value }: { label: string; value?: string }) {
   );
 }
 
-function ActionDetail({ action, onBack }: { action: TurnActivityAction; onBack: () => void }) {
+function ActionDetail({
+  action,
+  file,
+  onBack,
+  onSelectFile,
+}: {
+  action: TurnActivityAction;
+  file: TurnActivityFile | null;
+  onBack: () => void;
+  onSelectFile: (file: TurnActivityFile) => void;
+}) {
+  if (file) {
+    return (
+      <View style={styles.detailView} testID="activity-file-detail">
+        <Pressable accessibilityRole="button" onPress={onBack} style={styles.backRow}>
+          <Text style={styles.backText}>‹ FILES</Text>
+        </Pressable>
+        <Text selectable style={styles.detailTitle}>{file.path}</Text>
+        <ScrollView nestedScrollEnabled style={styles.detailScroll}>
+          {file.diff ? (
+            <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
+              <View style={styles.diffBody}>
+                {file.diff.split('\n').map((line, index) => (
+                  <Text
+                    key={`${index}-${line.slice(0, 24)}`}
+                    selectable
+                    style={[
+                      styles.diffLine,
+                      line.startsWith('+') && !line.startsWith('+++')
+                        ? styles.diffAdded
+                        : line.startsWith('-') && !line.startsWith('---')
+                          ? styles.diffRemoved
+                          : line.startsWith('@@')
+                            ? styles.diffHeader
+                            : undefined,
+                    ]}
+                  >
+                    {line || ' '}
+                  </Text>
+                ))}
+              </View>
+            </ScrollView>
+          ) : (
+            <Text style={styles.emptyDetail}>No inline patch was supplied for this file.</Text>
+          )}
+        </ScrollView>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.detailView} testID={`activity-detail-${action.kind}`}>
       <Pressable accessibilityRole="button" onPress={onBack} style={styles.backRow}>
         <Text style={styles.backText}>‹ TOOL CALLS</Text>
       </Pressable>
       <Text selectable style={styles.detailTitle}>
-        {action.path ?? action.title}
+        {action.title}
       </Text>
       <ScrollView nestedScrollEnabled style={styles.detailScroll}>
-        {action.kind === 'file' && action.diff ? (
-          <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
-            <View style={styles.diffBody}>
-              {action.diff.split('\n').map((line, index) => (
-                <Text
-                  key={`${index}-${line.slice(0, 24)}`}
-                  selectable
-                  style={[
-                    styles.diffLine,
-                    line.startsWith('+') && !line.startsWith('+++')
-                      ? styles.diffAdded
-                      : line.startsWith('-') && !line.startsWith('---')
-                        ? styles.diffRemoved
-                        : line.startsWith('@@')
-                          ? styles.diffHeader
-                          : undefined,
-                  ]}
-                >
-                  {line || ' '}
-                </Text>
-              ))}
-            </View>
-          </ScrollView>
+        {action.files?.length ? (
+          <View testID="activity-file-list">
+            {action.files.map((candidate) => (
+              <Pressable
+                accessibilityLabel={`Inspect diff for ${candidate.path}`}
+                accessibilityRole="button"
+                key={candidate.path}
+                onPress={() => onSelectFile(candidate)}
+                style={styles.fileRow}
+                testID={`activity-file-${action.id}:${candidate.path}`}
+              >
+                <Text style={styles.fileGlyph}>▧</Text>
+                <Text numberOfLines={1} style={styles.filePath}>{candidate.path}</Text>
+                {candidate.status ? (
+                  <Text style={styles.mechanismMeta}>{candidate.status.toUpperCase()}</Text>
+                ) : null}
+                <Text style={styles.noteAffordance}>›</Text>
+              </Pressable>
+            ))}
+          </View>
         ) : (
           <>
             <DetailText label="COMMAND" value={action.command} />
@@ -117,9 +167,7 @@ function ActionDetail({ action, onBack }: { action: TurnActivityAction; onBack: 
             <DetailText label="OUTPUT" value={action.output} />
             {!action.command && !action.input && !action.output ? (
               <Text style={styles.emptyDetail}>
-                {action.kind === 'file'
-                  ? 'No inline patch was supplied for this edit.'
-                  : 'No additional detail was supplied.'}
+                No additional detail was supplied.
               </Text>
             ) : null}
           </>
@@ -174,11 +222,15 @@ function MechanismRow({
         numberOfLines={1}
         style={[styles.mechanismLabel, tone]}
       >
-        {action.path ?? action.title}
+        {action.title}
       </Text>
       {action.weight === 'failure' ? (
         <Text style={styles.mechanismMeta}>FAILED</Text>
-      ) : action.kind === 'file' && action.status ? (
+      ) : action.files?.length ? (
+        <Text style={styles.mechanismMeta}>
+          {action.files.length} {action.files.length === 1 ? 'FILE' : 'FILES'}
+        </Text>
+      ) : action.status ? (
         <Text style={styles.mechanismMeta}>{action.status.toUpperCase()}</Text>
       ) : null}
     </Pressable>
@@ -293,6 +345,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
   const turn = useMemo(() => buildTurnActivity(items), [items]);
   const [reviewing, setReviewing] = useState(false);
   const [selected, setSelected] = useState<TurnActivityAction | null>(null);
+  const [selectedFile, setSelectedFile] = useState<TurnActivityFile | null>(null);
   const insets = useSafeAreaInsets();
 
   // Newest first. The transcript's own FlatList is inverted, so walking a
@@ -327,8 +380,15 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
   if (!hasContent) return null;
 
   const closeReview = () => {
+    setSelectedFile(null);
     setSelected(null);
     setReviewing(false);
+  };
+
+  const inspectAction = (action: TurnActivityAction) => {
+    setSelectedFile(null);
+    setSelected(action);
+    setReviewing(true);
   };
 
   return (
@@ -353,7 +413,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
       ))}
 
       {turn.actions.map((action) => (
-        <MechanismRow key={action.id} action={action} onPress={() => setSelected(action)} />
+        <MechanismRow key={action.id} action={action} onPress={() => inspectAction(action)} />
       ))}
 
       {noteCopy || turn.thoughtMs ? (
@@ -402,7 +462,15 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
               </Pressable>
             </View>
             {selected ? (
-              <ActionDetail action={selected} onBack={() => setSelected(null)} />
+              <ActionDetail
+                action={selected}
+                file={selectedFile}
+                onBack={() => {
+                  if (selectedFile) setSelectedFile(null);
+                  else setSelected(null);
+                }}
+                onSelectFile={setSelectedFile}
+              />
             ) : (
               <ScrollView
                 contentContainerStyle={styles.reviewContent}
@@ -415,7 +483,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
                     key={`review-${action.id}`}
                     action={action}
                     idPrefix="activity-review-action"
-                    onPress={() => setSelected(action)}
+                    onPress={() => inspectAction(action)}
                   />
                 ))}
                 {!reviewRows.length && !turn.plan ? (
@@ -653,6 +721,31 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   detailScroll: { maxHeight: 360 },
+  fileRow: {
+    minHeight: 36,
+    minWidth: 0,
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.borderQuiet,
+  },
+  fileGlyph: {
+    ...Typography.mono(),
+    flexShrink: 0,
+    color: groknight.ledgerQuiet,
+    fontSize: 10,
+    lineHeight: 16,
+  },
+  filePath: {
+    ...Typography.mono(),
+    flex: 1,
+    minWidth: 0,
+    color: groknight.textSecondary,
+    fontSize: 10,
+    lineHeight: 16,
+  },
   detailBlock: { paddingHorizontal: 10, paddingBottom: 10 },
   detailLabel: {
     ...Typography.mono(),

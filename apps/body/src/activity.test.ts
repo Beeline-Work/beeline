@@ -233,6 +233,51 @@ describe('projectActivity granularity', () => {
     ]);
   });
 
+  it('publishes and advances a multi-step fallback plan even when the harness never plans', async () => {
+    const projection = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+
+    // This is the first agent-activity event of the corner turn. No ACP plan
+    // update is emitted anywhere in this proof: it models claude/deepseek
+    // adapters that do not volunteer one.
+    await projection.startPlan(`  **Fix** the corner checklist\nwithout echoing ${'x'.repeat(300)}  `);
+
+    emit(toolCall('search-plan', { kind: 'search', title: 'search_text' }));
+    emit(toolCallUpdate('search-plan', { status: 'completed' }));
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    emit(toolCall('edit-plan', { kind: 'edit', title: 'str_replace', rawInput: { path: 'a.ts' } }));
+    emit(toolCallUpdate('edit-plan', { status: 'completed' }));
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    emit(toolCall('test-plan', {
+      kind: 'execute',
+      title: 'shell',
+      rawInput: { command: 'npm test -- --run' },
+    }));
+    emit(toolCallUpdate('test-plan', { status: 'completed', output: '12 passed' }));
+    await vi.advanceTimersByTimeAsync(5_000);
+    await projection.completePlan();
+    projection();
+
+    const plans = published.flatMap((event) => {
+      const content = JSON.parse(event.content) as {
+        update: { updates: Array<{ plan?: Record<string, unknown> }> };
+      };
+      return content.update.updates.flatMap((update) => (update.plan ? [update.plan] : []));
+    }) as Array<{ objective?: string; items: Array<{ step: string; status: string }> }>;
+
+    expect(plans.map((plan) => plan.items.map((item) => item.status))).toEqual([
+      ['in_progress', 'pending', 'pending'],
+      ['completed', 'in_progress', 'pending'],
+      ['completed', 'completed', 'in_progress'],
+      ['completed', 'completed', 'completed'],
+    ]);
+    expect(plans[0]!.items).toHaveLength(3);
+    expect(plans[0]!.objective).not.toContain('\n');
+    expect(plans[0]!.objective).not.toContain('**');
+    expect(plans[0]!.objective!.length).toBeLessThanOrEqual(160);
+  });
+
   it('re-sends the plan only when it actually changed', async () => {
     // A ten-step checklist re-sent on every 5s batch is exactly the kind of
     // per-pubkey relay-quota pressure the activity fold exists to avoid.

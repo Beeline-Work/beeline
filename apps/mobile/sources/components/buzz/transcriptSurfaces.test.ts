@@ -408,9 +408,10 @@ describe('Machine noise', () => {
     expect(barSource).toContain('<HullLivePulse>{row}</HullLivePulse>');
     expect(barSource).not.toMatch(/segment|FlowSegment|withRepeat|translateX/);
 
-    // ...and every corner note it replaced is gone from the transcript scroll:
-    // the corner card outright, and the permission outcome's navigation.
-    expect(chatSource).toMatch(/if \(item\.corner\) \{[\s\S]{0,700}?\n        return null;\n      \}/);
+    // ...and every LIVE corner note it replaced is gone from the transcript
+    // scroll. The archived replacement is intentionally retained below as a
+    // bounded completion record.
+    expect(chatSource).toMatch(/if \(item\.corner\.status !== 'archived'\) return null;/);
     expect(chatSource).toMatch(
       /if \(permission\.status === 'allowed' && permission\.subchannelId\) return null;/,
     );
@@ -418,18 +419,19 @@ describe('Machine noise', () => {
     expect(chatSource).not.toMatch(/testID=\{`corner-status-\$\{item\.corner\.status\}`\}/);
   });
 
-  it('stamps no corner status into the transcript at all', () => {
+  it('stamps no live corner status into the transcript', () => {
     // "Alden ✕ FAILED" and "◇ OPEN" rows interrupted a live conversation with
     // a dead record, and duplicated the pinned indicator while they were at
     // it. A corner's status is state: it belongs to the pinned line above the
     // composer while it is active, and to the Room's corners view once it is
-    // not. Neither belongs in the scroll.
+    // not. The archived summary is a completion record, not live status.
     const branch = chatSource.slice(
       chatSource.indexOf('      if (item.corner) {'),
       chatSource.indexOf('      // ── Merge summary ──'),
     );
-    expect(branch).toContain('return null;');
-    expect(branch).not.toMatch(/cornerStatusPresentation|presentation\.(?:glyph|label)|<Text/);
+    expect(branch).toContain("item.corner.status !== 'archived'");
+    expect(branch).not.toMatch(/cornerStatusPresentation|presentation\.(?:glyph|label)/);
+    expect(branch).toContain('archived-corner-summary');
     // ...and the styles that drew it are gone with it, not left behind dead.
     for (const name of ['cornerStatusCard', 'cornerStatusLabel', 'cornerPresenceDot']) {
       expect(chatSource, `${name} should have been removed`).not.toContain(`  ${name}: {`);
@@ -502,10 +504,22 @@ describe('Machine noise', () => {
     expect(fn).toMatch(/activityRunOpen/);
     // A Room still refuses a Corner's own lifecycle cards...
     expect(fn).toMatch(/!isCorner && \(message\.isMergeSummary \|\| message\.isArchivedNotice\)/);
-    // ...and a corner status card never reaches either transcript. Dropping it
-    // at the funnel, not in `renderItem`, is what keeps it from spending a
-    // FlatList cell and a slot of the initial message window.
-    expect(fn).toMatch(/if \(message\.corner\) \{\n\s+activityRunOpen = false;\n\s+continue;/);
+    // Live status stays out of the transcript, but the archived replacement
+    // carries the agent's durable completion summary into the parent Room.
+    expect(fn).toMatch(/if \(!isCorner && message\.corner\.status === 'archived'\)/);
+    expect(fn).toContain('transcript.push({ ...message })');
+  });
+});
+
+describe('Archived corner record', () => {
+  it('keeps the archived completion summary as a tappable Room card', () => {
+    const branchStart = chatSource.indexOf('      if (item.corner) {');
+    expect(branchStart).toBeGreaterThanOrEqual(0);
+    const branch = chatSource.slice(branchStart, chatSource.indexOf('// ── Merge summary', branchStart));
+    expect(branch).toContain("item.corner.status !== 'archived'");
+    expect(branch).toContain('archived-corner-summary');
+    expect(branch).toContain('{summary}');
+    expect(branch).toContain('openCorner(item.corner!.subchannelId)');
   });
 });
 

@@ -17,6 +17,7 @@ const expectedToolNames = [
   'git_log',
   'git_show',
   'git_diff',
+  'git_status',
 ];
 
 const serverPath = fileURLToPath(new URL('./read-only-mcp.ts', import.meta.url));

@@ -166,6 +166,17 @@ import {
   legacyCornerWorktreePath,
 } from './corner-isolation.js';
 import {
+  duplicateCornerOpen,
+  duplicateCornerOpenRefusal,
+  type OpenCornerCandidate,
+} from './corner-open-guard.js';
+import {
+  cornerWorktreeSweepDecision,
+  probeCornerWorktree,
+  resolveTargetRefs,
+  type CornerWorktreeProbe,
+} from './corner-worktree-sweep.js';
+import {
   classifyCornerPermission,
   classifyRoomPermission,
   ROOM_READ_ONLY_STEER,
@@ -484,6 +495,12 @@ export interface SubchannelInfo {
   boundRepo?: BoundRepo;
   /** Human request that caused the agent to open this subchannel. */
   request?: ChannelTaskRequest;
+  /** Display name of this corner, as the Room sees it. */
+  cornerName?: string;
+  /** Distilled objective this corner was opened with; '' when it had none. */
+  taskDescription?: string;
+  /** When this corner was opened, in ms — used to spot a repeated open-a-corner. */
+  openedAt?: number;
   /** Exact target advertised to the human merge gate once work is pushed. */
   mergeTarget?: { repo: string; branch: string; tip: string };
   /** Latest agent-authored completion summary. */
@@ -503,6 +520,18 @@ export interface SubchannelInfo {
   pushedFeatureTip?: string;
   /** Approved tips already auto-realigned once after a moved-target refusal. */
   realignedTips?: Set<string>;
+  /**
+   * The last land refusal already told to the human, so an unchanged refusal
+   * is not restated on every maintenance tick.
+   *
+   * The land poll genuinely re-attempts the same approval each tick (that is
+   * what makes its `retry: auto` posture honest), and it published a card
+   * every time — observed live as 100+ byte-identical "couldn't land" cards
+   * over 100 minutes in one corner, and 117 in another. One statement of a
+   * standing condition is the message; the ninety-ninth is noise that buries
+   * the transcript the human has to read to understand it.
+   */
+  lastLandFailure?: { tip: string; reason: string };
   /** Automatic realigns run for this corner, capped at MAX_CORNER_REALIGN_ATTEMPTS. */
   realignAttempts?: number;
   /**
@@ -754,6 +783,17 @@ interface AgentExchangeEnvelope extends AgentExchangeAuthorization {
 
 /** @deprecated Explicit Start-work events are ordinary Room messages now. */
 export const AGENT_REQUEST_TAG = 'buzz-agent-request';
+/**
+ * Said once per corner whose worktree could not be restored OR rebuilt.
+ *
+ * Published only when the corner's own newest status card does not already
+ * carry it: a restart is not news, and eight identical cards across eight
+ * daemon rolls (observed live in five of the captain's corners) is the shape
+ * this constant exists to stop.
+ */
+export const CORNER_WORKTREE_UNRESTORABLE =
+  'Agent restart could not restore this corner worktree; no input was discarded.';
+
 export const MERGE_READY_TAG = 'merge-ready';
 export const LANDED_TAG = 'landed';
 /**
@@ -2324,29 +2364,58 @@ export class Body {
         // restore it there rather than orphaning in-flight work across upgrade.
         const isolatedWorktreePath = this.cornerWorktreePath(cornerRepo, subchannelId);
         const legacyWorktreePath = legacyCornerWorktreePath(this.config.workspaceRoot, subchannelId);
-        const worktreePath = existsSync(isolatedWorktreePath)
+        let worktreePath = existsSync(isolatedWorktreePath)
           ? isolatedWorktreePath
           : legacyWorktreePath;
         if (!existsSync(worktreePath)) {
-          await postControlMessage(
-            subchannelId,
-            this.agentIdentity,
-            'Agent restart could not restore this corner worktree; no input was discarded.',
-            [
-              ['status', 'failed'],
-              ['repo', this.repoId(cornerRepo)],
-              ['branch', cornerRepo.targetBranch ?? 'refs/heads/main'],
-            ],
-          ).catch(() => undefined);
-          this.markCornerAbandoned({
-            subchannelId,
-            parentChannelId,
-            reason: 'its worktree was missing after a restart',
-            boundRepo: cornerRepo,
+          // A missing worktree is not the same as missing work: the corner's
+          // commits live on its feature branch, and a worktree is a checkout
+          // of a branch, so it can simply be made again. Giving up here is
+          // what stranded the captain's approved corners — the approval was
+          // still valid and the branch still on the remote, but with no
+          // worktree the land path could not see the corner at all, and every
+          // restart only re-published the same card.
+          const rebuilt = this.rematerializeCornerWorktree(
+            cornerRepo,
+            isolatedWorktreePath,
             featureBranch,
-            worktreePath,
-          });
-          continue;
+          );
+          if (rebuilt) {
+            worktreePath = isolatedWorktreePath;
+            console.log(
+              `[body] rebuilt corner ${subchannelId} worktree at ${isolatedWorktreePath} ` +
+                `from ${featureBranch}`,
+            );
+          } else {
+            // Say it once, not once per restart. The corner's own newest
+            // agent-authored event already carrying this exact card means the
+            // human has been told and nothing has changed since.
+            const alreadyToldRecently = [...events]
+              .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))
+              .find((event) => event.tags.some((tag) => tag[0] === 'status'))
+              ?.content.startsWith(CORNER_WORKTREE_UNRESTORABLE);
+            if (!alreadyToldRecently) {
+              await postControlMessage(
+                subchannelId,
+                this.agentIdentity,
+                CORNER_WORKTREE_UNRESTORABLE,
+                [
+                  ['status', 'failed'],
+                  ['repo', this.repoId(cornerRepo)],
+                  ['branch', cornerRepo.targetBranch ?? 'refs/heads/main'],
+                ],
+              ).catch(() => undefined);
+            }
+            this.markCornerAbandoned({
+              subchannelId,
+              parentChannelId,
+              reason: 'its worktree was missing after a restart',
+              boundRepo: cornerRepo,
+              featureBranch,
+              worktreePath,
+            });
+            continue;
+          }
         }
         this.primeCodegraphIndex(worktreePath);
         // A corner whose ACP session refuses to come back must not abort the
@@ -2587,6 +2656,38 @@ export class Body {
    * 5. Post control message to TLC linking the subchannel.
    * 6. Start activity projection into the subchannel.
    */
+  /**
+   * The live corner a fresh open-a-corner command would duplicate, if any.
+   *
+   * Only corners of THIS Room that this daemon still runs and has not closed
+   * are candidates: an archived corner is not something new work can be folded
+   * into, and another agent's corner is not this agent's to redirect to.
+   */
+  private duplicateLiveCorner(
+    tlcChannelId: string,
+    intent: string,
+  ): OpenCornerCandidate | undefined {
+    const corners: OpenCornerCandidate[] = [...this.subchannels.values()]
+      .filter(
+        (info) =>
+          !info.archived &&
+          info.session.parentChannelId === tlcChannelId &&
+          info.openedAt !== undefined,
+      )
+      .map((info) => ({
+        subchannelId: info.subchannelId,
+        name: info.cornerName ?? info.featureBranch,
+        taskDescription: info.taskDescription ?? '',
+        openedAt: info.openedAt!,
+      }));
+    if (corners.length === 0) return undefined;
+    return duplicateCornerOpen({
+      taskDescription: taskDescriptionFromCornerRequest(intent),
+      now: Date.now(),
+      corners,
+    });
+  }
+
   async openSubchannel(
     tlcChannelId: string,
     roomRepo: BoundRepo,
@@ -2604,10 +2705,11 @@ export class Body {
     // is a slug of the task; the full task description rides along as a tag so
     // a reader gets the objective, not the slug.
     const taskDescription = intent ? taskDescriptionFromCornerRequest(intent).slice(0, 320) : '';
+    const cornerName = cornerNameForIntent(intent, tlcChannelId);
     const subchannelId = await createAgentSubchannel(
       agentId,
       tlcChannelId,
-      cornerNameForIntent(intent, tlcChannelId),
+      cornerName,
       communityId ?? undefined,
       taskDescription || undefined,
     );
@@ -2702,6 +2804,9 @@ export class Body {
       lastPolledAt: now,
       archived: false,
       boundRepo,
+      cornerName,
+      taskDescription,
+      openedAt: Date.now(),
       ...(request ? { request } : {}),
     };
 
@@ -3522,6 +3627,33 @@ export class Body {
       requestAuthor,
     );
     if (explicitCornerWork && boundRepo && editPolicy === 'repository') {
+      // Two open-a-corner commands for one piece of work must not become two
+      // corners racing on two branches. See `corner-open-guard.ts` — this is
+      // the live shape where a bare "@beebee open corner" fifty seconds after
+      // a described one opened an objective-less twin of the corner already
+      // running.
+      const duplicate = this.duplicateLiveCorner(tlcChannelId, request.content);
+      if (duplicate) {
+        await this.durableState.appendConversation(tlcChannelId, {
+          role: 'user',
+          text: userPrompt,
+          eventId: request.eventId,
+          at: new Date(request.createdAt * 1_000).toISOString(),
+        });
+        await postAgentMessage(
+          tlcChannelId,
+          this.agentIdentity,
+          duplicateCornerOpenRefusal(duplicate),
+          request.eventId,
+        ).catch((error) =>
+          console.error('[body] failed to publish duplicate-corner refusal:', error),
+        );
+        console.log(
+          `[body] refused a duplicate corner open in ${tlcChannelId}: ` +
+            `${duplicate.subchannelId} is already open for this`,
+        );
+        return false;
+      }
       await this.durableState.appendConversation(tlcChannelId, {
         role: 'user',
         text: userPrompt,
@@ -4723,6 +4855,9 @@ export class Body {
       ],
     );
     info.mergeTarget = target;
+    // A fresh review is a fresh land attempt: whatever the previous tip could
+    // not do is no longer the standing condition being reported.
+    info.lastLandFailure = undefined;
     await this.postParentCornerStatus(info, 'ready', 'Work is ready for review.');
     return true;
   }
@@ -4778,21 +4913,45 @@ export class Body {
     remote: string,
     target: NonNullable<SubchannelInfo['mergeTarget']>,
   ): LandOutcome {
-    const featureTip = gitWithUserCredentials(info.worktreePath, [
+    // `ls-remote` reaching the remote and `ls-remote` failing used to be the
+    // same answer here: both produced empty stdout, both compared unequal to
+    // the approved tip, and both returned `skip`. So a credential prompt, a
+    // DNS blip or a rate limit made an approved corner sit silently forever —
+    // no card, no log, nothing to distinguish it from "the feature ref hasn't
+    // caught up yet". Only a successful read may decide anything.
+    const featureLs = gitWithUserCredentials(info.worktreePath, [
       'ls-remote',
       remote,
       `refs/heads/${info.featureBranch}`,
-    ])
-      .stdout.trim()
-      .split(/\s+/)[0];
+    ]);
+    if (!featureLs.ok) {
+      return {
+        kind: 'failed',
+        reason: featureLs.stderr.trim() || `could not read ${remote} to check the approved change`,
+      };
+    }
+    const featureTip = featureLs.stdout.trim().split(/\s+/)[0];
+    if (!featureTip) {
+      // The remote has no such branch, so the approved commit was never
+      // published there. A later poll cannot change that on its own.
+      return {
+        kind: 'failed',
+        reason:
+          `The branch ${info.featureBranch} is no longer on ${remote}, ` +
+          'so the approved change has nothing to land from.',
+      };
+    }
     if (featureTip !== target.tip) return { kind: 'skip' };
-    const targetTip = gitWithUserCredentials(info.worktreePath, [
-      'ls-remote',
-      remote,
-      target.branch,
-    ])
-      .stdout.trim()
-      .split(/\s+/)[0];
+    const targetLs = gitWithUserCredentials(info.worktreePath, ['ls-remote', remote, target.branch]);
+    if (!targetLs.ok) {
+      return {
+        kind: 'failed',
+        reason:
+          targetLs.stderr.trim() ||
+          `could not read ${target.branch} on ${remote} to check whether it moved`,
+      };
+    }
+    const targetTip = targetLs.stdout.trim().split(/\s+/)[0];
     if (targetTip === target.tip) return { kind: 'skip' };
 
     // `--follow-tags` carries any ANNOTATED tag reachable from the approved
@@ -4895,10 +5054,21 @@ export class Body {
           await this.realignAfterMovedTarget(info, target);
           continue;
         }
+        // Say it once. The loop keeps retrying either way; restating an
+        // unchanged refusal every tick is what turned these corners into
+        // hundreds of identical cards.
+        const humanized = summarizeGitFailure(outcome.reason);
+        if (
+          info.lastLandFailure?.tip === target.tip &&
+          info.lastLandFailure.reason === humanized
+        ) {
+          continue;
+        }
+        info.lastLandFailure = { tip: target.tip, reason: humanized };
         await postControlMessage(
           info.subchannelId,
           this.agentIdentity,
-          `Couldn't land the approved change on ${target.branch.replace(/^refs\/heads\//, '')}: ${summarizeGitFailure(outcome.reason)}`,
+          `Couldn't land the approved change on ${target.branch.replace(/^refs\/heads\//, '')}: ${humanized}`,
           [
             ['status', 'failed'],
             // This loop genuinely re-attempts the same approval on the next
@@ -5023,6 +5193,7 @@ export class Body {
     // merge-ready publish is what restores a landable target.
     info.mergeTarget = undefined;
     info.humanMergeApproval = undefined;
+    info.lastLandFailure = undefined;
 
     if (alreadyRealigned || exhausted) {
       await postControlMessage(
@@ -5665,6 +5836,20 @@ export class Body {
       }
     };
     await guarded('stray worktree prune', () => this.pruneStrayCornerWorktrees(boundRepo));
+    // Landing runs BEFORE the corner member poll, and the ordering is
+    // load-bearing rather than cosmetic.
+    //
+    // `pollMembers` forwards a human's message into the corner's ACP session
+    // and AWAITS the whole turn (`promptNewTurn`), which is bounded only by
+    // the idle timeout and routinely runs for many minutes. Everything after
+    // it in this strictly sequential chain waited on it — so while any one
+    // corner in the Room had an agent working, no approved change anywhere in
+    // that Room could land. That is the "approvals sometimes don't land"
+    // report: nothing is broken about the land itself, it just never gets a
+    // turn. The land polls are pure git + relay work with their own bounded
+    // timeouts, so putting them first costs the member poll nothing.
+    await guarded('direct merge approval poll', () => this.pollDirectRemoteApprovals());
+    await guarded('merge completion poll', () => this.pollMergeCompletions());
     await guarded('corner member poll', async () => {
       const results = await Promise.allSettled(
         [...this.subchannels.keys()].map((subchannelId) => this.pollMembers(subchannelId)),
@@ -5740,8 +5925,9 @@ export class Body {
         }
       });
     }
-    await guarded('direct merge approval poll', () => this.pollDirectRemoteApprovals());
-    await guarded('merge completion poll', () => this.pollMergeCompletions());
+    // The merge gate above can land a relay-origin corner on this same tick;
+    // give its completion a chance to be recorded without waiting a whole tick.
+    if (mergeGate) await guarded('merge completion poll', () => this.pollMergeCompletions());
   }
 
   /**
@@ -6907,6 +7093,70 @@ export class Body {
    * Create a git worktree from the bound repo.
    * Fetches from relay, creates a feature branch, and adds the worktree.
    */
+  /**
+   * Re-create a corner's worktree from the branch that still holds its work.
+   *
+   * A corner's commits live on its feature branch, not in its directory, so a
+   * worktree that vanished — reaped by the old stray sweep, wiped with a
+   * `/tmp`, lost with a re-cloned canonical checkout — costs the corner only
+   * its checkout. Restoring it is `git worktree add` against a branch that
+   * already exists, locally or on the remote.
+   *
+   * Strictly best-effort and never destructive: it refuses unless the branch is
+   * genuinely resolvable, so a corner whose work really is gone still falls
+   * through to the abandoned path rather than being resurrected empty at a
+   * misleading base. Returns whether a usable worktree now exists.
+   */
+  private rematerializeCornerWorktree(
+    boundRepo: BoundRepo,
+    worktreePath: string,
+    featureBranch: string,
+  ): boolean {
+    const repoRoot =
+      boundRepo.localPath ??
+      (boundRepo.ownerHex
+        ? resolve(this.config.workspaceRoot, `.git-${boundRepo.repo}`)
+        : undefined);
+    if (!repoRoot || !existsSync(repoRoot)) return false;
+
+    const ref = `refs/heads/${featureBranch}`;
+    const hasLocal = git(repoRoot, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]).ok;
+    if (!hasLocal && boundRepo.remoteName) {
+      // The branch was pushed when the corner published its review, so the
+      // remote is the authority when the local ref is the piece that was lost.
+      const fetch = boundRepo.ownerHex
+        ? gitAuthed(repoRoot, this.agentIdentity, boundRepo.ownerHex, boundRepo.repo, [
+            'fetch',
+            boundRepo.remoteName,
+            `${ref}:${ref}`,
+          ])
+        : gitWithUserCredentials(repoRoot, ['fetch', boundRepo.remoteName, `${ref}:${ref}`]);
+      if (!fetch.ok) return false;
+    }
+    if (!git(repoRoot, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]).ok) return false;
+
+    // A stale registration for this exact path (the directory went, git's
+    // record of it did not) makes `worktree add` refuse; clearing it is
+    // administrative and touches no commit.
+    git(repoRoot, ['worktree', 'prune']);
+    try {
+      mkdirSync(resolve(worktreePath, '..'), { recursive: true });
+    } catch {
+      return false;
+    }
+    const added = git(repoRoot, ['worktree', 'add', worktreePath, featureBranch]);
+    if (!added.ok) {
+      console.warn(
+        `[body] could not rebuild corner worktree at ${worktreePath}: ${added.stderr.trim()}`,
+      );
+      return false;
+    }
+    git(worktreePath, ['config', 'user.name', this.agentIdentity.name || 'buzzy-agent']);
+    git(worktreePath, ['config', 'user.email', 'agent@buzzy.local']);
+    this.excludeCodegraphFromWorktreeStatus(worktreePath);
+    return true;
+  }
+
   private async createWorktree(
     boundRepo: BoundRepo,
     worktreePath: string,
@@ -7063,11 +7313,20 @@ export class Body {
     });
   }
 
-  /** Paths git currently registers as worktrees of `checkoutOrGitDir`. */
-  private registeredWorktrees(checkoutOrGitDir: string): Set<string> {
-    const paths = new Set<string>();
+  /**
+   * Paths git currently registers as worktrees of `checkoutOrGitDir`, or
+   * `undefined` when git could not be asked.
+   *
+   * The distinction is the whole point. This used to return an empty `Set` on
+   * failure, and the sweep below reads "registers nothing" as "every directory
+   * in the pool is an orphan" — so one failed `git worktree list` authorized
+   * deleting every corner worktree the daemon had not personally restored.
+   * A probe that did not answer must never be a licence to delete.
+   */
+  private registeredWorktrees(checkoutOrGitDir: string): Set<string> | undefined {
     const result = git(checkoutOrGitDir, ['worktree', 'list', '--porcelain']);
-    if (!result.ok) return paths;
+    if (!result.ok) return undefined;
+    const paths = new Set<string>();
     for (const line of result.stdout.split('\n')) {
       if (line.startsWith('worktree ')) paths.add(resolve(line.slice('worktree '.length).trim()));
     }
@@ -7090,6 +7349,14 @@ export class Body {
    * path for the normal case; this is throttled and deliberately conservative:
    * without a definitive git worktree registry it prunes nothing (never guesses
    * a live corner into deletion).
+   *
+   * Nothing is deleted on the strength of the registry alone any more. Every
+   * candidate is inspected first (`probeCornerWorktree`) and judged by
+   * `cornerWorktreeSweepDecision`, which keeps anything live, dirty,
+   * unlanded, still tracked, or simply unreadable, and every decision — reap,
+   * keep, or repair — is logged with its reason. See
+   * `corner-worktree-sweep.ts` for why: the old shape deleted the captain's
+   * corner worktrees out from under approvals that had not landed yet.
    */
   private async pruneStrayCornerWorktrees(boundRepo?: BoundRepo): Promise<void> {
     const now = Date.now();
@@ -7107,6 +7374,12 @@ export class Body {
 
     git(worktreeGitDir, ['worktree', 'prune']);
     const registered = this.registeredWorktrees(worktreeGitDir);
+    if (!registered) {
+      console.warn(
+        `[body] corner worktree sweep skipped: could not read the worktree registry at ${worktreeGitDir}`,
+      );
+      return;
+    }
     const live = new Set([...this.subchannels.values()].map((info) => resolve(info.worktreePath)));
 
     let entries: { name: string; isDirectory(): boolean }[];
@@ -7115,21 +7388,55 @@ export class Body {
     } catch {
       return;
     }
-    const archivedCandidates: { dir: string; subchannelId: string }[] = [];
+    // Resolving "archived?" costs a relay read per directory, so it is only
+    // asked for directories the on-disk checks have already cleared — a dirty
+    // or unlanded worktree is kept whatever the relay says about its corner.
+    const targetCandidates = [
+      boundRepo?.targetBranch,
+      boundRepo?.targetBranch?.replace(/^refs\/heads\//, 'refs/remotes/origin/'),
+      'refs/heads/main',
+      'refs/remotes/origin/main',
+      'refs/heads/master',
+      'refs/remotes/origin/master',
+    ].filter((ref): ref is string => Boolean(ref));
+    const pending: { dir: string; subchannelId: string; probe: CornerWorktreeProbe }[] = [];
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const dir = resolve(pool, entry.name);
-      if (live.has(dir)) continue;
-      if (!registered.has(dir)) {
-        // Orphan: no live corner, git no longer tracks it. Safe to reap.
+      // The dir basename is the subchannel id (see `cornerWorktreePath`).
+      const subchannelId = entry.name;
+      const dir = resolve(pool, subchannelId);
+      const probe = probeCornerWorktree(dir, resolveTargetRefs(dir, targetCandidates));
+      const decision = cornerWorktreeSweepDecision({
+        registered: registered.has(dir),
+        live: live.has(dir),
+        tracked: this.subchannels.has(subchannelId) || this.abandonedCorners.has(subchannelId),
+        // Left unasked on purpose. "Is the corner archived?" costs a relay read
+        // and is the LAST question, never an override: a directory only reaches
+        // it once every on-disk guard has already cleared it.
+        probe,
+      });
+      if (decision.action === 'reap') {
+        console.log(`[body] corner worktree sweep reaping ${dir}: ${decision.reason}`);
         await rm(dir, { recursive: true, force: true }).catch(() => undefined);
         continue;
       }
-      // Registered but not live: reap only if its corner is archived. The dir
-      // basename is the subchannel id (see cornerWorktreePath).
-      archivedCandidates.push({ dir, subchannelId: entry.name });
+      if (decision.action === 'repair') {
+        // A real worktree git stopped registering is the shape the old sweep
+        // deleted. Re-link it instead, so `restoreSubchannels` can find it.
+        const repair = git(worktreeGitDir, ['worktree', 'repair', dir]);
+        console.log(
+          `[body] corner worktree sweep repairing ${dir}: ${decision.reason}` +
+            (repair.ok ? '' : ` (repair failed: ${repair.stderr.trim()})`),
+        );
+        continue;
+      }
+      if (decision.action === 'ask') {
+        pending.push({ dir, subchannelId, probe });
+        continue;
+      }
+      console.log(`[body] corner worktree sweep keeping ${dir}: ${decision.reason}`);
     }
-    if (archivedCandidates.length === 0) return;
+    if (pending.length === 0) return;
 
     const client = createBuzzClient({
       baseUrl: this.config.relayBaseUrl,
@@ -7137,12 +7444,23 @@ export class Body {
       identity: this.agentIdentity,
     });
     try {
-      for (const { dir, subchannelId } of archivedCandidates) {
+      for (const { dir, subchannelId, probe } of pending) {
         const archived = await client
           .getChannelMetadata(subchannelId)
           .then((metadata) => metadata?.archived ?? false)
           .catch(() => false);
-        if (!archived) continue;
+        const decision = cornerWorktreeSweepDecision({
+          registered: true,
+          live: false,
+          tracked: false,
+          archived,
+          probe,
+        });
+        console.log(
+          `[body] corner worktree sweep ${decision.action === 'reap' ? 'reaping' : 'keeping'} ` +
+            `${dir}: ${decision.reason}`,
+        );
+        if (decision.action !== 'reap') continue;
         git(worktreeGitDir, ['worktree', 'remove', '--force', dir]);
         await rm(dir, { recursive: true, force: true }).catch(() => undefined);
       }

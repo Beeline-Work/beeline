@@ -20,6 +20,19 @@ import {
   type AgentModelConfigOption,
 } from '@beeline/buzz-client';
 
+/**
+ * The identifier a `configOptions` choice actually carries.
+ *
+ * Claude-agent-acp (and #226's fake pair-cli fixture) spell it `id`.
+ * Codex-acp spells it `value` and has no `id` at all — requiring `id` made a
+ * successful Codex catalog fetch look empty, so the pair pickers never ran.
+ */
+export function advertisedChoiceId(choice: Record<string, unknown>): string | undefined {
+  if (typeof choice.id === 'string' && choice.id.length > 0) return choice.id;
+  if (typeof choice.value === 'string' && choice.value.length > 0) return choice.value;
+  return undefined;
+}
+
 /** Parse every configOptions axis a raw `session/new` result advertised, unfiltered. */
 export function parseAdvertisedConfigOptions(raw: unknown): AgentModelConfigOption[] {
   const configOptions = (raw as { configOptions?: unknown } | undefined)?.configOptions;
@@ -32,15 +45,17 @@ export function parseAdvertisedConfigOptions(raw: unknown): AgentModelConfigOpti
     const category = record.category;
     if (typeof id !== 'string' || typeof category !== 'string') continue;
     const rawChoices = Array.isArray(record.options) ? record.options : [];
-    const choices = rawChoices
-      .filter(
-        (choice): choice is Record<string, unknown> =>
-          Boolean(choice) && typeof choice === 'object' && typeof (choice as any).id === 'string',
-      )
-      .map((choice) => ({
-        id: choice.id as string,
+    const choices: AgentModelConfigOption['options'] = [];
+    for (const rawChoice of rawChoices) {
+      if (!rawChoice || typeof rawChoice !== 'object') continue;
+      const choice = rawChoice as Record<string, unknown>;
+      const choiceId = advertisedChoiceId(choice);
+      if (!choiceId) continue;
+      choices.push({
+        id: choiceId,
         ...(typeof choice.name === 'string' ? { name: choice.name } : {}),
-      }));
+      });
+    }
     result.push({
       id,
       category,

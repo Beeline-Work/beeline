@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AGENT_PRESENCE_STALE_MS } from '@beeline/buzz-client';
+import { AGENT_PRESENCE_STALE_MS, isAgentPresenceOnline } from '@beeline/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
 import {
   agentPresenceFromSessionEvent,
@@ -111,6 +111,34 @@ describe('mobile agent presence projection', () => {
     expect(presenceMapFromSessionEvents([presence('offline', 4), presence('online', 4)])).toEqual({
       [agent]: { agentPubkey: agent, status: 'offline', observedAt: 4_000 },
     });
+  });
+
+  it('resolves a daemon-published kind:30078 heartbeat addressed by d, not h', () => {
+    // Presence is parameterized-replaceable: the relay indexes it by `d`.
+    // An `#h` filter matches nothing — that class already made the Members
+    // directory report every agent OFFLINE, including a live Codex daemon.
+    // The publisher (`postAgentPresence`) and this reader must share the
+    // `d=agent-presence:<channelId>` key; harness kind is not on the wire.
+    const now = Math.floor(Date.now() / 1000);
+    const published: SessionEvent = {
+      type: 'raw',
+      sessionId: 'codex-room',
+      payload: {
+        id: 'presence-1',
+        kind: 30078,
+        pubkey: agent,
+        created_at: now,
+        tags: [
+          ['d', 'agent-presence:codex-room'],
+          ['h', 'codex-room'],
+          ['t', 'agent-presence'],
+          ['agent', agent],
+          ['status', 'online'],
+        ],
+      },
+    };
+    const map = presenceMapFromSessionEvents([published]);
+    expect(isAgentPresenceOnline(map[agent])).toBe(true);
   });
 
   it('keeps last-known online through foreground reconnect without masking real offline', () => {

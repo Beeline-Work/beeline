@@ -27,11 +27,21 @@ export const EFFORT_AXIS_CATEGORIES = ['thought_level', 'effort', 'reasoning_eff
  * current default is pre-selected so pressing enter keeps the harness
  * default. A catalog fetch failure is a soft skip, not a pairing failure —
  * model/effort selection has always been optional.
+ *
+ * `flags.model` / `flags.effort` skip that axis's prompt (the matching CLI
+ * flag was already given). Passing both returns immediately without fetching
+ * the catalog — validation of flag values is the caller's job.
  */
 export async function pickModelAndEffort(
   agent: AgentCommand,
   agentEnv: Record<string, string>,
+  flags: { model?: string; effort?: string } = {},
 ): Promise<{ model?: string; effort?: string }> {
+  const selection: { model?: string; effort?: string } = {};
+  if (flags.model) selection.model = flags.model;
+  if (flags.effort) selection.effort = flags.effort;
+  if (selection.model && selection.effort) return selection;
+
   const spinner = clack.spinner();
   spinner.start(`Reading ${agent.kind}'s available models…`);
   let catalog: AgentModelConfigOption[];
@@ -41,12 +51,11 @@ export async function pickModelAndEffort(
   } catch (error) {
     spinner.stop('Could not read the catalog — skipping model/effort selection.');
     clack.log.warn(error instanceof Error ? error.message : String(error));
-    return {};
+    return selection;
   }
 
-  const selection: { model?: string; effort?: string } = {};
   const modelAxis = catalog.find((option) => option.category === 'model');
-  if (modelAxis && modelAxis.options.length > 0) {
+  if (!selection.model && modelAxis && modelAxis.options.length > 0) {
     const picked = await clack.select<string>({
       message: `Model for this ${agent.kind} agent?`,
       options: modelAxis.options.map((choice) => ({
@@ -61,7 +70,7 @@ export async function pickModelAndEffort(
   const effortAxis = catalog.find((option) =>
     (EFFORT_AXIS_CATEGORIES as readonly string[]).includes(option.category),
   );
-  if (effortAxis && effortAxis.options.length > 0) {
+  if (!selection.effort && effortAxis && effortAxis.options.length > 0) {
     const picked = await clack.select<string>({
       message: `Effort/thinking level for this ${agent.kind} agent?`,
       options: effortAxis.options.map((choice) => ({

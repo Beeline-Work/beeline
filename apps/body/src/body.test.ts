@@ -1366,9 +1366,18 @@ describe('Room poll resilience', () => {
       ).call(body, channelId, agentPubkey);
 
     // No presence published yet: offline, seeded by exactly one query and
-    // one subscribe for this Room.
+    // one subscribe for this Room. Presence is kind:30078 parameterized-
+    // replaceable — indexed by `#d`, never `#h` (an `#h` filter matches
+    // nothing, which is how a live Codex daemon read as OFFLINE).
     await expect(isOnline('room-a')).resolves.toBe(false);
     expect(seedQuery).toHaveBeenCalledOnce();
+    expect(seedQuery).toHaveBeenCalledWith([
+      expect.objectContaining({
+        kinds: [30078],
+        '#d': ['agent-presence:room-a'],
+      }),
+    ]);
+    expect(JSON.stringify(seedQuery.mock.calls[0])).not.toContain('"#h"');
     expect(fakeClient.agentPresenceSubscribe).toHaveBeenCalledOnce();
 
     // A live presence event updates the cache in place; a repeat check for

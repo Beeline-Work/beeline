@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   applyAgentModelSelection,
+  advertisedChoiceId,
   assertModelConfigOptionAllowed,
   assertModelSelectionAdvertised,
   DisallowedModelConfigOptionError,
@@ -9,6 +10,7 @@ import {
   parseAdvertisedConfigOptions,
 } from './model-config.js';
 import type { AgentModelConfigOption } from '@beeline/buzz-client';
+import { CODEX_ACP_SESSION_NEW_CONFIG_OPTIONS } from './fixtures/codex-acp-config-options.js';
 
 /** A raw `session/new` result shaped like claude-agent-acp's advertised catalog (report §3.1). */
 function claudeLikeRaw(): unknown {
@@ -54,6 +56,43 @@ describe('parseAdvertisedConfigOptions', () => {
   it('tolerates a raw result with no configOptions at all', () => {
     expect(parseAdvertisedConfigOptions({ sessionId: 'x' })).toEqual([]);
     expect(parseAdvertisedConfigOptions(undefined)).toEqual([]);
+  });
+
+  it('ingests Codex-acp choices spelled `value` instead of `id`', () => {
+    // Requiring `choice.id` produced empty option lists for a real Codex
+    // catalog, so the pair pickers loaded the catalog and then offered nothing.
+    expect(advertisedChoiceId({ value: 'gpt-5.6-sol', name: 'GPT-5.6-Sol' })).toBe('gpt-5.6-sol');
+    expect(advertisedChoiceId({ id: 'sonnet', name: 'Sonnet' })).toBe('sonnet');
+    expect(advertisedChoiceId({ name: 'orphan' })).toBeUndefined();
+
+    const parsed = parseAdvertisedConfigOptions(CODEX_ACP_SESSION_NEW_CONFIG_OPTIONS);
+    const model = parsed.find((option) => option.category === 'model');
+    const effort = parsed.find((option) => option.category === 'thought_level');
+    expect(model?.options.map((choice) => choice.id)).toEqual([
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna',
+      'gpt-5.5',
+      'gpt-5.4',
+      'gpt-5.4-mini',
+      'gpt-5.3-codex-spark',
+    ]);
+    expect(model?.options[0]?.name).toBe('GPT-5.6-Sol');
+    expect(effort?.options.map((choice) => choice.id)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultra',
+    ]);
+    expect(filterAllowedModelConfigOptions(parsed).map((option) => option.category)).toEqual([
+      'model',
+      'thought_level',
+    ]);
+    expect(() =>
+      assertModelSelectionAdvertised(parsed, { model: 'gpt-5.6-sol', effort: 'high' }),
+    ).not.toThrow();
   });
 });
 

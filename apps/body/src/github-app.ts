@@ -30,7 +30,7 @@ export class GitHubAppRuntime {
 
   constructor(config: GitHubAppRuntimeConfig) {
     if (!/^\d+$/.test(config.appId) || !config.privateKey.trim()) {
-      throw new Error('BUZZY_GITHUB_APP_ID and BUZZY_GITHUB_APP_PRIVATE_KEY are required');
+      throw new Error('BEELINE_GITHUB_APP_ID and BEELINE_GITHUB_APP_PRIVATE_KEY are required');
     }
     this.#config = {
       appId: config.appId,
@@ -41,8 +41,8 @@ export class GitHubAppRuntime {
   }
 
   static fromEnvironment(env: NodeJS.ProcessEnv = process.env): GitHubAppRuntime | undefined {
-    const appId = env.BUZZY_GITHUB_APP_ID?.trim();
-    const privateKey = env.BUZZY_GITHUB_APP_PRIVATE_KEY?.trim();
+    const appId = env.BEELINE_GITHUB_APP_ID?.trim();
+    const privateKey = env.BEELINE_GITHUB_APP_PRIVATE_KEY?.trim();
     return appId && privateKey ? new GitHubAppRuntime({ appId, privateKey }) : undefined;
   }
 

@@ -57,6 +57,7 @@ import {
   type RoomRepository,
   type RoomRepositoryResolution,
   type RoomRepositoryInput,
+  getAuthCapabilities,
   listGitHubRepositories,
 } from '@beeline/buzz-client';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
@@ -710,17 +711,43 @@ export class BuzzRigTransport implements RigTransport {
     return client.setRoomTargetBranch(channelId, targetBranch);
   }
 
-  /** Repositories granted to the account's single Beeline GitHub App installation. */
-  async workspaceRoomRepositoryCandidates(_communityId: string): Promise<RepoCandidate[]> {
-    const access = await listGitHubRepositories(this.baseUrl, this.identity);
+  /** App repositories when enabled; the unchanged connected-Room list while dark. */
+  async workspaceRoomRepositoryCandidates(communityId: string): Promise<RepoCandidate[]> {
+    const capabilities = await getAuthCapabilities(this.baseUrl).catch(() => undefined);
+    if (capabilities?.github) {
+      const access = await listGitHubRepositories(this.baseUrl, this.identity);
+      return dedupeRepoCandidates(
+        access.repositories.map((repo) => ({
+          key: `github:${repo.id}`,
+          name: repo.fullName,
+          remote: `git://github.com/${repo.fullName}`,
+          githubInstallationId: repo.installationId,
+          defaultBranch: repo.defaultBranch,
+        })),
+      );
+    }
+
+    const client = await this.getClient();
+    const creates = await client.query([{ kinds: [KIND_CREATE_GROUP], limit: 500 }]);
+    const roomIds = new Set<string>();
+    for (const create of creates) {
+      if (tagValue(create, TAG_COMMUNITY) !== communityId) continue;
+      if (tagValue(create, TAG_PARENT) || tagValues(create, 't').includes(TAG_DIRECT_MESSAGE))
+        continue;
+      const id = tagValue(create, 'h') ?? tagValue(create, 'd');
+      if (id && id !== communityId) roomIds.add(id);
+    }
+    const repos = await Promise.all(
+      [...roomIds].map((id) => client.resolveRoomRepository(id).catch(() => null)),
+    );
     return dedupeRepoCandidates(
-      access.repositories.map((repo) => ({
-        key: `github:${repo.id}`,
-        name: repo.fullName,
-        remote: `git://github.com/${repo.fullName}`,
-        githubInstallationId: repo.installationId,
-        defaultBranch: repo.defaultBranch,
-      })),
+      repos
+        .filter((repo): repo is RoomRepository => repo !== null && Boolean(repo.binding.remote))
+        .map((repo) => ({
+          key: repo.binding.key,
+          name: repo.binding.name,
+          remote: repo.binding.remote!,
+        })),
     );
   }
 

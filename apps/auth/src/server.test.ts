@@ -332,6 +332,16 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     return result.json<BindChallenge>();
   }
 
+  it('advertises GitHub only when its complete configuration is present', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/auth/capabilities',
+      headers: { host: alphaTenant.host },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ github: true, oidc: true });
+  });
+
   it('signs in with GitHub, binds the npub, installs once, and lists installation repositories', async () => {
     const identity = generateKeypair();
     const appState = 'a'.repeat(43);
@@ -769,6 +779,29 @@ describe('NIP-05 handle issuance', () => {
     await app.close();
     await database.close();
     await provider.close();
+  });
+
+  it('stays dark without GitHub config while the existing OIDC route remains live', async () => {
+    const capabilities = await app.inject({
+      method: 'GET',
+      url: '/auth/capabilities',
+      headers: { host: alphaTenant.host },
+    });
+    expect(capabilities.json()).toEqual({ github: false, oidc: true });
+
+    const github = await app.inject({
+      method: 'GET',
+      url: '/auth/github/start',
+      headers: { host: alphaTenant.host },
+    });
+    expect(github.statusCode).toBe(503);
+
+    const oidc = await app.inject({
+      method: 'GET',
+      url: '/auth/oidc/start',
+      headers: { host: alphaTenant.host },
+    });
+    expect(oidc.statusCode).toBe(302);
   });
 
   function claim(name: string, identity: Keypair, tenant = alphaTenant) {

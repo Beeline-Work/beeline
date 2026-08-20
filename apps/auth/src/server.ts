@@ -198,6 +198,13 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
 
   app.get('/health', async () => ({ ok: true }));
 
+  /** Public feature discovery. Missing GitHub config deliberately means dark. */
+  app.get('/auth/capabilities', async (request, reply) => {
+    tenantFor(request);
+    noStore(reply);
+    return reply.send({ github: Boolean(options.github), oidc: true });
+  });
+
   app.get('/.well-known/nostr.json', async (request, reply) => {
     const query = request.query as Record<string, unknown>;
     const name = typeof query.name === 'string' ? query.name : null;

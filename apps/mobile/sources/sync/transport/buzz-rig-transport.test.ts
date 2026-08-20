@@ -751,9 +751,10 @@ describe('Room→repo transport', () => {
   });
 
   it('lists exactly the repositories granted to the GitHub App installation', async () => {
-    const fetchMock = vi.fn(
-      async () =>
-        new Response(
+    const fetchMock = vi.fn(async (url: string | URL | Request) =>
+      String(url).endsWith('/auth/capabilities')
+        ? new Response(JSON.stringify({ github: true, oidc: true }), { status: 200 })
+        : new Response(
           JSON.stringify({
             installed: true,
             repositories: [
@@ -782,21 +783,64 @@ describe('Room→repo transport', () => {
         defaultBranch: 'trunk',
       },
     ]);
-    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     vi.unstubAllGlobals();
   });
 
   it('returns no candidates before the GitHub App is installed', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(
-        async () =>
-          new Response(JSON.stringify({ installed: false, repositories: [] }), { status: 200 }),
+      vi.fn(async (url: string | URL | Request) =>
+        String(url).endsWith('/auth/capabilities')
+          ? new Response(JSON.stringify({ github: true, oidc: true }), { status: 200 })
+          : new Response(JSON.stringify({ installed: false, repositories: [] }), { status: 200 }),
       ),
     );
     const transport = new BuzzRigTransport(identity, 'https://relay.test');
 
     await expect(transport.workspaceRoomRepositoryCandidates('workspace-1')).resolves.toEqual([]);
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps connected-Room repository discovery when GitHub is dark', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ github: false, oidc: true }), { status: 200 }),
+      ),
+    );
+    const create = {
+      id: 'create-room-a',
+      pubkey: 'b'.repeat(64),
+      created_at: 1,
+      kind: KIND_CREATE_GROUP,
+      tags: [['h', 'room-a'], [TAG_COMMUNITY, 'workspace-1']],
+      content: '',
+      sig: 'c'.repeat(128),
+    };
+    const client = {
+      query: vi.fn(async () => [create]),
+      resolveRoomRepository: vi.fn(async () => ({
+        channelId: 'room-a',
+        binding: {
+          key: 'legacy',
+          name: 'legacy/widget',
+          remote: 'git://example.com/legacy/widget',
+          localOnly: false,
+        },
+        source: 'config',
+      }) as RoomRepository),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(transport.workspaceRoomRepositoryCandidates('workspace-1')).resolves.toEqual([
+      {
+        key: 'legacy',
+        name: 'legacy/widget',
+        remote: 'git://example.com/legacy/widget',
+      },
+    ]);
     vi.unstubAllGlobals();
   });
 });

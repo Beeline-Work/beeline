@@ -37,6 +37,11 @@ export interface GitHubRepositoryAccess {
   defaultBranch: string;
 }
 
+export interface AuthCapabilities {
+  github: boolean;
+  oidc: boolean;
+}
+
 export interface OidcBindResult {
   linked: true;
   idempotent: boolean;
@@ -542,4 +547,28 @@ export async function listGitHubRepositories(
     return repo as unknown as GitHubRepositoryAccess;
   });
   return { installed: body.installed, repositories };
+}
+
+/** Discover which sign-in surface the deployed auth sidecar has enabled. */
+export async function getAuthCapabilities(baseUrl: string): Promise<AuthCapabilities> {
+  const url = endpoint(baseUrl, '/auth/capabilities').toString();
+  let response: Response;
+  try {
+    response = await fetch(url, { headers: { accept: 'application/json' } });
+  } catch (error) {
+    throw new OidcBindError(
+      'offline',
+      error instanceof Error ? error.message : 'auth service unavailable',
+    );
+  }
+  const body = await responseBody(response);
+  if (!response.ok) throw serviceError(body, response.status);
+  if (typeof body.github !== 'boolean' || typeof body.oidc !== 'boolean') {
+    throw new OidcBindError(
+      'invalid_response',
+      'auth service returned invalid capabilities',
+      response.status,
+    );
+  }
+  return { github: body.github, oidc: body.oidc };
 }

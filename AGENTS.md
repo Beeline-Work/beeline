@@ -140,7 +140,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 ## GitHub identity and repository authority
 
-- Authority and deployment shape: `apps/auth/README.md`. GitHub OAuth is the visible native sign-in path; the Google OIDC implementation remains available but hidden.
+- Authority and deployment shape: `apps/auth/README.md`. `/auth/capabilities` is the launch gate: GitHub OAuth is visible only when all five `BEELINE_GITHUB_*` values are configured; otherwise the existing Google OIDC path remains visible and unchanged.
 - `apps/body/src/repository-truth.ts` is the sole Room repository resolver and supersedes older Stage-1 repository-path notes elsewhere in this file. A remote binding is truth and its canonical checkout is a fetched cache; a `localOnly` binding seeds a separate canonical checkout once and that checkout becomes declared truth. Pairing `root` is private history used only by the opt-in, clean fast-forward post-land sync and must never reach an agent-visible surface.
 - One GitHub App installation supplies both picker visibility and repository access. Body mints short-lived installation tokens through `apps/body/src/github-app.ts`; GitHub clone/fetch/push/land paths must not consult ambient Git configuration, credential helpers, `gh`, or host tokens.
 - The auth service owns Authorization Code + PKCE and a PostgreSQL-backed, hashed, one-use signed binding ceremony. It never accepts a free-standing provider token or grants relay, Room, role, or merge authority.

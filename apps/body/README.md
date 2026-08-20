@@ -92,8 +92,8 @@ by projecting agent activity into the relay channel.
 | `BUZZ_AGENT_KEY`                    | No       | generated at pair       | Existing agent Nostr nsec/hex                                                                    |
 | `BUZZY_BODY_AUTO_APPROVE`           | No       | `1`                     | Auto-approve permissions inside edit corners only                                                |
 | `BUZZY_BODY_SANDBOX`                | No       | `bwrap`                 | `off` disables the bubblewrap OS sandbox for ACP children (overrides `runtime.json`'s `sandbox`) |
-| `BUZZY_GITHUB_APP_ID`               | GitHub   | —                       | Beeline GitHub App id                                                                            |
-| `BUZZY_GITHUB_APP_PRIVATE_KEY`      | GitHub   | —                       | App private key used only to mint installation tokens                                            |
+| `BEELINE_GITHUB_APP_ID`             | GitHub   | —                       | Beeline GitHub App id                                                                            |
+| `BEELINE_GITHUB_APP_PRIVATE_KEY`    | GitHub   | —                       | App private key used only to mint installation tokens                                            |
 | `BUZZY_BODY_SYNC_OPERATOR_CHECKOUT` | No       | `0`                     | `1` opts into clean, same-branch, fast-forward-only post-land pairing-checkout sync              |
 
 For a remote-backed Room, origin is truth and the checkout under the supervisor

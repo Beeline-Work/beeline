@@ -134,6 +134,10 @@ export {
   OIDC_BIND_MARKER,
   OidcBindError,
   startOidcBind,
+  startGitHubBind,
+  startGitHubInstallation,
+  listGitHubRepositories,
+  getAuthCapabilities,
   parseOidcBindCallback,
   buildOidcBindEvent,
   finishOidcBind,
@@ -144,6 +148,8 @@ export type {
   OidcBindStart,
   OidcBindResult,
   OidcIdentityLink,
+  GitHubRepositoryAccess,
+  AuthCapabilities,
 } from './oidc-bind.js';
 
 export { RelayWs, wsUrlFromHttp, wsQueryEvents } from './ws.js';

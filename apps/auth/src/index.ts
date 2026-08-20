@@ -1,6 +1,8 @@
 import { buildAuthServer, type AuthTenant } from './server.js';
 import { OidcClient } from './oidc.js';
 import { AuthStore, PostgresDatabase } from './store.js';
+import { GitHubAppClient, GitHubOAuthClient } from './github.js';
+import { githubEnvironmentConfig } from './github-config.js';
 
 function required(name: string): string {
   const value = process.env[name];
@@ -48,7 +50,28 @@ async function main(): Promise<void> {
     throw new Error('BUZZY_AUTH_OIDC_CLIENT_SECRET is required in production');
   }
 
-  const app = buildAuthServer({ store, oidc, tenants: tenantsFromEnvironment(), logger: true });
+  const githubConfig = githubEnvironmentConfig(process.env);
+  const github = githubConfig
+    ? {
+        oauth: new GitHubOAuthClient({
+          clientId: githubConfig.BEELINE_GITHUB_CLIENT_ID,
+          clientSecret: githubConfig.BEELINE_GITHUB_CLIENT_SECRET,
+        }),
+        app: new GitHubAppClient({
+          appId: githubConfig.BEELINE_GITHUB_APP_ID,
+          slug: githubConfig.BEELINE_GITHUB_APP_SLUG,
+          privateKey: githubConfig.BEELINE_GITHUB_APP_PRIVATE_KEY,
+        }),
+      }
+    : undefined;
+
+  const app = buildAuthServer({
+    store,
+    oidc,
+    ...(github ? { github } : {}),
+    tenants: tenantsFromEnvironment(),
+    logger: true,
+  });
   const port = Number(process.env.PORT ?? '8789');
   const host = process.env.BUZZY_AUTH_HOST ?? '127.0.0.1';
   await app.listen({ port, host });

@@ -6,10 +6,11 @@ import {
   waitForGoogleAuthCallback,
 } from './google-onboarding-state';
 
-describe('Google onboarding error states', () => {
+describe('provider onboarding error states', () => {
   it.each([
     ['browser_canceled', 'browser_canceled', false],
     ['oidc_denied', 'browser_canceled', false],
+    ['github_denied', 'browser_canceled', false],
     ['ticket_expired', 'token_expired', false],
     ['invalid_oidc_flow', 'token_expired', false],
     ['identity_conflict', 'link_conflict', false],
@@ -21,7 +22,7 @@ describe('Google onboarding error states', () => {
   });
 });
 
-describe('Google onboarding completion', () => {
+describe('provider onboarding completion', () => {
   it('keeps a successful HTTPS callback when Android reports the browser dismissed first', async () => {
     const redirectUri = 'https://relay.buzzrouter.com/auth/oidc/mobile-callback';
     const callbackUrl = `${redirectUri}?state=${'s'.repeat(43)}&ticket=${'t'.repeat(43)}`;

@@ -105,7 +105,7 @@ export async function clearBuzzIdentity(): Promise<void> {
   await secretRemove();
 }
 
-/** Generate a fresh device key. Google onboarding defers persistence until bind succeeds. */
+/** Generate a fresh device key. Provider onboarding defers persistence until bind succeeds. */
 export async function generateBuzzIdentity(
   name = 'buzzy-mobile',
   options: { persist?: boolean } = {},

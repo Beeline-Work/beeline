@@ -59,6 +59,8 @@ export interface RepositoryBinding {
   remote?: string;
   /** Local-only bindings deliberately do not converge across machines. */
   localOnly: boolean;
+  /** GitHub App installation that grants this Room access. Public, not a credential. */
+  githubInstallationId?: number;
 }
 
 /** Input for binding (or re-binding) a repository to a Room. */
@@ -71,6 +73,8 @@ export interface RoomRepositoryInput {
   remote: string;
   /** Optional protected/target branch short name (e.g. "main"). */
   targetBranch?: string;
+  /** GitHub App installation selected by the account-owned repo picker. */
+  githubInstallationId?: number;
 }
 
 /**

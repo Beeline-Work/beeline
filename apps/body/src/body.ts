@@ -53,8 +53,6 @@ import {
   DurableMergeGate,
   git,
   gitAuthed,
-  gitWithUserCredentials,
-  lsRemoteRef,
   isRegisteredAgentIdentity,
   APPROVAL_MARKER,
   authorizeReviewer,
@@ -104,6 +102,7 @@ import {
 } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
 import type { BodyConfig, SessionMode } from './config.js';
+import type { RepositoryTruth, RepositoryTruthCheckpoint } from './repository-truth.js';
 import {
   AccessRefusalLimiter,
   DEFAULT_ACCESS_AUTO_RESPONSE,
@@ -196,14 +195,10 @@ import {
   wrapAgentCommand,
   type SandboxSessionSpec,
 } from './bwrap-sandbox.js';
-import {
-  NO_PERSONAL_CONNECTORS_INSTRUCTION,
-  toolScopeWarning,
-} from './harness-tool-scope.js';
+import { NO_PERSONAL_CONNECTORS_INSTRUCTION, toolScopeWarning } from './harness-tool-scope.js';
 import {
   describeCiOutcome,
   resolveGitHubRepo,
-  resolveGitHubToken,
   watchCommitCi,
   type CiWatchOptions,
 } from './ci-watch.js';
@@ -566,7 +561,13 @@ export interface SubchannelInfo {
    * target ref has advanced to the landed tip (the review base and the tip
    * collapse onto each other), so the landed-work recap reads it from here.
    */
-  reviewedChange?: { base: string; tip: string; commitCount: number; fileCount: number; files: string[] };
+  reviewedChange?: {
+    base: string;
+    tip: string;
+    commitCount: number;
+    fileCount: number;
+    files: string[];
+  };
   /** Feature tip this corner last successfully pushed, so a realigned (rebased)
    *  history can be advertised with a compare-and-set force rather than being
    *  rejected as a non-fast-forward of the corner's own branch. */
@@ -691,6 +692,8 @@ export function assertRelayCornerArchiveTarget(
 }
 
 export interface BoundRepo {
+  /** Authoritative resolver result. Lifecycle readers consult this, never pairing root metadata. */
+  truth?: RepositoryTruth;
   /** Relay repository owner, when origin is a Buzz smart-HTTP remote. */
   ownerHex?: string;
   repo: string;
@@ -702,12 +705,8 @@ export interface BoundRepo {
   localOnly?: boolean;
   /** Exact owner/repo identity shown on permission, corner, and merge events. */
   repositoryId?: string;
-  /**
-   * The operator's own checkout, when the Room is served out of a DIFFERENT
-   * directory (the daemon's canonical clone). Absent when they are the same
-   * tree. Read only to tell a reader where a landed commit is not yet.
-   */
-  operatorCheckout?: string;
+  /** Current credential-free remote URL, refreshed through the truth resolver. */
+  remoteUrl?: string;
 }
 
 export type RoomEditPolicy = 'repository' | 'named-repository' | 'direct-message';
@@ -1287,17 +1286,66 @@ const REQUEST_SCAFFOLD_LEAD_STRIP = new RegExp(
   String.raw`^(?:(?:hey|hi|hello|yo|ok|okay|alright|so|now)\b[,:;-]*\s+|(?:please|kindly|just)\s+(?=[\p{L}\p{N}])|(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need)\s+you\s+to\s+|i(?:['’]d| would)\s+like\s+you\s+to\s+|(?:let['’]?s|lets)\s+(?=[\p{L}\p{N}])|go\s+(?:ahead\s+and\s+)?(?=[\p{L}\p{N}]))`,
   'iu',
 );
-const CORNER_MENTION_TRAIL_STRIP = /\s*\b(?:in|inside|within)\s+(?:a\s+|the\s+)?(?:new\s+)?corner\b\.?\s*$/i;
+const CORNER_MENTION_TRAIL_STRIP =
+  /\s*\b(?:in|inside|within)\s+(?:a\s+|the\s+)?(?:new\s+)?corner\b\.?\s*$/i;
 
 /** Words that name no work of their own. A remainder built only from these
  *  (a bare "go", "ok do it") is not a task description, so callers fall back
  *  to the generic corner name rather than slugifying filler. */
 const TASK_FILLER_WORDS = new Set([
-  'a', 'an', 'and', 'the', 'this', 'that', 'it', 'then', 'now', 'go', 'ok', 'okay', 'please',
-  'pls', 'plz', 'thanks', 'thank', 'ty', 'yes', 'yeah', 'sure', 'just', 'let', 'lets', 'us',
-  'me', 'you', 'your', 'start', 'begin', 'do', 'does', 'doing', 'done', 'work', 'working',
-  'corner', 'on', 'for', 'to', 'up', 'in', 'of', 'with', 'new', 'some', 'something', 'stuff',
-  'thing', 'things', 'task', 'if', 'so',
+  'a',
+  'an',
+  'and',
+  'the',
+  'this',
+  'that',
+  'it',
+  'then',
+  'now',
+  'go',
+  'ok',
+  'okay',
+  'please',
+  'pls',
+  'plz',
+  'thanks',
+  'thank',
+  'ty',
+  'yes',
+  'yeah',
+  'sure',
+  'just',
+  'let',
+  'lets',
+  'us',
+  'me',
+  'you',
+  'your',
+  'start',
+  'begin',
+  'do',
+  'does',
+  'doing',
+  'done',
+  'work',
+  'working',
+  'corner',
+  'on',
+  'for',
+  'to',
+  'up',
+  'in',
+  'of',
+  'with',
+  'new',
+  'some',
+  'something',
+  'stuff',
+  'thing',
+  'things',
+  'task',
+  'if',
+  'so',
 ]);
 
 function namesRealWork(text: string): boolean {
@@ -1624,6 +1672,17 @@ export class Body {
   private presenceGenerations = new Map<string, string>();
   private activeExchangeReplies = new Set<string>();
   private resolveNamedRepository?: (target: NamedRepositoryTarget) => Promise<BoundRepo>;
+  private refreshRepositoryTruth?: (
+    repo: BoundRepo,
+    checkpoint: RepositoryTruthCheckpoint,
+  ) => Promise<BoundRepo>;
+  private syncPairingCheckout?: (repo: BoundRepo, landedTip: string) => Promise<void>;
+  private runRepositoryGit?: (
+    repo: BoundRepo,
+    cwd: string,
+    args: string[],
+  ) => Promise<ReturnType<typeof git>>;
+  private repositoryAccessToken?: (repo: BoundRepo) => Promise<string | undefined>;
   /** Rate limiter for the access-policy auto-response: one refusal per sender per window. */
   private readonly accessRefusals = new AccessRefusalLimiter();
   /** Cached owner display name for the auto-response template. */
@@ -1658,6 +1717,17 @@ export class Body {
       scheduler?: SessionScheduler;
       statePath?: string;
       resolveNamedRepository?: (target: NamedRepositoryTarget) => Promise<BoundRepo>;
+      refreshRepositoryTruth?: (
+        repo: BoundRepo,
+        checkpoint: RepositoryTruthCheckpoint,
+      ) => Promise<BoundRepo>;
+      syncPairingCheckout?: (repo: BoundRepo, landedTip: string) => Promise<void>;
+      runRepositoryGit?: (
+        repo: BoundRepo,
+        cwd: string,
+        args: string[],
+      ) => Promise<ReturnType<typeof git>>;
+      repositoryAccessToken?: (repo: BoundRepo) => Promise<string | undefined>;
       onRoomPollSuccess?: (channelId: string) => void;
       onRoomPollFailure?: (channelId: string, retryInMs: number) => void;
       onRoomPresence?: (channelId: string, status: 'online' | 'offline') => void;
@@ -1682,6 +1752,10 @@ export class Body {
       });
     this.ownsScheduler = !services.scheduler;
     this.resolveNamedRepository = services.resolveNamedRepository;
+    this.refreshRepositoryTruth = services.refreshRepositoryTruth;
+    this.syncPairingCheckout = services.syncPairingCheckout;
+    this.runRepositoryGit = services.runRepositoryGit;
+    this.repositoryAccessToken = services.repositoryAccessToken;
     this.onRoomPollSuccess = services.onRoomPollSuccess;
     this.onRoomPollFailure = services.onRoomPollFailure;
     this.onRoomPresence = services.onRoomPresence;
@@ -1698,6 +1772,28 @@ export class Body {
 
   get agent(): Identity {
     return this.agentIdentity;
+  }
+
+  /** Remote git authority for this repository. GitHub production bindings are
+   * required to come through the supervisor's installation-token callback. */
+  private async remoteGit(
+    repo: BoundRepo,
+    cwd: string,
+    args: string[],
+  ): Promise<ReturnType<typeof git>> {
+    if (repo.ownerHex) {
+      return gitAuthed(cwd, this.agentIdentity, repo.ownerHex, repo.repo, args);
+    }
+    if (this.runRepositoryGit) return this.runRepositoryGit(repo, cwd, args);
+    if (repo.truth?.binding.remote?.startsWith('git://github.com/')) {
+      return {
+        ok: false,
+        status: 1,
+        stdout: '',
+        stderr: 'GitHub repository access requires a GitHub App installation token',
+      };
+    }
+    return git(cwd, args);
   }
 
   /**
@@ -1963,7 +2059,13 @@ export class Body {
           await activityProjection.startPlan(objective);
         }
         if (input.communityId) {
-          await this.applyModelConfigForSession(client, created.sessionId, input.communityId, created.raw, session);
+          await this.applyModelConfigForSession(
+            client,
+            created.sessionId,
+            input.communityId,
+            created.raw,
+            session,
+          );
         }
         return created.sessionId;
       },
@@ -2416,7 +2518,8 @@ export class Body {
     // completed turn as a failure to report.
     if (options.concise) reply = conciseCornerTurnSummary(reply) || fallback;
     if (!reply) throw new Error('agent returned an empty reply');
-    if (options.summaryOnly && !uploaded.attachments.length && !uploaded.errors.length) return reply;
+    if (options.summaryOnly && !uploaded.attachments.length && !uploaded.errors.length)
+      return reply;
     const createdAt =
       options.minCreatedAt !== undefined
         ? Math.max(Math.floor(Date.now() / 1_000), options.minCreatedAt + 1)
@@ -2534,7 +2637,10 @@ export class Body {
         // before this change lives at the legacy buried `.worktrees/<id>` path;
         // restore it there rather than orphaning in-flight work across upgrade.
         const isolatedWorktreePath = this.cornerWorktreePath(cornerRepo, subchannelId);
-        const legacyWorktreePath = legacyCornerWorktreePath(this.config.workspaceRoot, subchannelId);
+        const legacyWorktreePath = legacyCornerWorktreePath(
+          this.config.workspaceRoot,
+          subchannelId,
+        );
         let worktreePath = existsSync(isolatedWorktreePath)
           ? isolatedWorktreePath
           : legacyWorktreePath;
@@ -2546,7 +2652,7 @@ export class Body {
           // still valid and the branch still on the remote, but with no
           // worktree the land path could not see the corner at all, and every
           // restart only re-published the same card.
-          const rebuilt = this.rematerializeCornerWorktree(
+          const rebuilt = await this.rematerializeCornerWorktree(
             cornerRepo,
             isolatedWorktreePath,
             featureBranch,
@@ -2891,7 +2997,10 @@ export class Body {
   ): Promise<SubchannelInfo> {
     // Pick up an admin-confirmed target-branch change here and nowhere else:
     // this corner snapshots the target it opened with and keeps it for life.
-    const boundRepo = await this.cornerBoundRepo(tlcChannelId, roomRepo);
+    const freshRoomRepo = this.refreshRepositoryTruth
+      ? await this.refreshRepositoryTruth(roomRepo, 'corner-open')
+      : roomRepo;
+    const boundRepo = await this.cornerBoundRepo(tlcChannelId, freshRoomRepo);
     const agentId = this.agentIdentity;
     await this.ensureAgentInChannel(tlcChannelId, agentId);
     const communityId = await this.channelCommunityId(tlcChannelId);
@@ -3883,7 +3992,12 @@ export class Body {
     // corner-open command with the task already agreed. A bare confirmation
     // with no live proposal is nothing — it falls through to an ordinary turn.
     const proposal = this.liveReleaseProposal(tlcChannelId);
-    if (proposal && boundRepo && editPolicy === 'repository' && isReleaseConfirmation(request.content)) {
+    if (
+      proposal &&
+      boundRepo &&
+      editPolicy === 'repository' &&
+      isReleaseConfirmation(request.content)
+    ) {
       this.releaseProposals.delete(tlcChannelId);
       await this.durableState.appendConversation(tlcChannelId, {
         role: 'user',
@@ -3935,7 +4049,12 @@ export class Body {
         );
         await this.durableState.appendConversation(tlcChannelId, {
           role: 'agent',
-          text: attachmentPrompt(this.agentIdentity.publicKey, reply, [], this.ownRoomAttribution()),
+          text: attachmentPrompt(
+            this.agentIdentity.publicKey,
+            reply,
+            [],
+            this.ownRoomAttribution(),
+          ),
           at: new Date().toISOString(),
         });
         return false;
@@ -4080,23 +4199,23 @@ export class Body {
     const prompt = releaseContext
       ? [releaseContext, '', sharedPrompt].join('\n')
       : agentExchange
-      ? [
-          'Host boundary: the current human explicitly authorized one bounded live exchange with another Room agent.',
-          `Write only your first visible message to that peer. Each agent may send at most ${AGENT_EXCHANGE_MAX_MESSAGES} messages.`,
-          'The host will deliver real peer replies one turn at a time. Never invent, summarize, or claim a reply or completed exchange before it appears in the transcript.',
-          'This exchange is strictly read-only. Do not request editing, shell access, or a corner.',
-          '',
-          sharedPrompt,
-        ].join('\n')
-      : informationOnly
         ? [
-            'Host boundary: this is an information-only request.',
-            'Inspect with the read-only repository tools and answer conversationally in this Room.',
-            'Do not request editing, execute a native shell, open a corner, or change repository state.',
+            'Host boundary: the current human explicitly authorized one bounded live exchange with another Room agent.',
+            `Write only your first visible message to that peer. Each agent may send at most ${AGENT_EXCHANGE_MAX_MESSAGES} messages.`,
+            'The host will deliver real peer replies one turn at a time. Never invent, summarize, or claim a reply or completed exchange before it appears in the transcript.',
+            'This exchange is strictly read-only. Do not request editing, shell access, or a corner.',
             '',
             sharedPrompt,
           ].join('\n')
-        : sharedPrompt;
+        : informationOnly
+          ? [
+              'Host boundary: this is an information-only request.',
+              'Inspect with the read-only repository tools and answer conversationally in this Room.',
+              'Do not request editing, execute a native shell, open a corner, or change repository state.',
+              '',
+              sharedPrompt,
+            ].join('\n')
+          : sharedPrompt;
     const turn: PendingRoomTurn = {
       request,
       boundRepo,
@@ -4428,9 +4547,7 @@ export class Body {
     const permissionId = randomUUID();
     const tool = this.permissionToolLabel(permission);
     const isExecute = tool !== 'edit files' && isMutatingPermissionRequest(permission);
-    const description = isExecute
-      ? `the operation '${tool}'`
-      : `an edit corner`;
+    const description = isExecute ? `the operation '${tool}'` : `an edit corner`;
     await postControlMessage(
       tlcChannelId,
       this.agentIdentity,
@@ -4634,9 +4751,7 @@ export class Body {
         return undefined;
       }
       const members = new Set(
-        (await listMembers(this.agentClientContext(), tlcChannelId)).map(
-          (member) => member.pubkey,
-        ),
+        (await listMembers(this.agentClientContext(), tlcChannelId)).map((member) => member.pubkey),
       );
       if (!members.has(event.pubkey)) return undefined;
       if (await isRegisteredAgentIdentity(event.pubkey, this.agentRelay)) return undefined;
@@ -4912,7 +5027,12 @@ export class Body {
     try {
       const remote = git(info.worktreePath, ['remote', 'get-url', remoteName]);
       if (!remote.ok) return undefined;
-      return await resolvePreviewUrl({ remote: remote.stdout.trim(), tip });
+      const token = await this.repositoryAccessToken?.(boundRepo);
+      return await resolvePreviewUrl({
+        remote: remote.stdout.trim(),
+        tip,
+        ...(token ? { token } : {}),
+      });
     } catch (error) {
       console.error('[body] preview URL lookup failed (ignored):', error);
       return undefined;
@@ -4933,8 +5053,11 @@ export class Body {
     };
     const base = resolveReviewBaseTip(info.worktreePath, target.branch);
     const files = listChangeReviewFiles(info.worktreePath, base, tip);
-    const dirty = git(info.worktreePath, ['status', '--porcelain=v1', '--untracked-files=all'])
-      .stdout.trim();
+    const dirty = git(info.worktreePath, [
+      'status',
+      '--porcelain=v1',
+      '--untracked-files=all',
+    ]).stdout.trim();
     if (dirty || files.length === 0) {
       // Never advertise HEAD as reviewable when the agent's actual work is
       // uncommitted, or when it made no committed change. An older ready tip
@@ -4943,14 +5066,23 @@ export class Body {
       const detail = dirty
         ? 'The agent has uncommitted work. It must commit the change before it can be reviewed.'
         : 'The agent completed this turn without a committed change.';
-      await postControlMessage(info.subchannelId, this.agentIdentity, `Nothing ready to merge yet. ${detail}`, [
-        ['t', 'merge-not-ready'],
-        ['status', 'needs-attention'],
-        ['repo', target.repo],
-        ['branch', target.branch],
-        ['agent', this.agentIdentity.publicKey],
-      ]);
-      await this.postParentCornerStatus(info, 'needs-attention', 'Nothing committed is ready for review.');
+      await postControlMessage(
+        info.subchannelId,
+        this.agentIdentity,
+        `Nothing ready to merge yet. ${detail}`,
+        [
+          ['t', 'merge-not-ready'],
+          ['status', 'needs-attention'],
+          ['repo', target.repo],
+          ['branch', target.branch],
+          ['agent', this.agentIdentity.publicKey],
+        ],
+      );
+      await this.postParentCornerStatus(
+        info,
+        'needs-attention',
+        'Nothing committed is ready for review.',
+      );
       return false;
     }
     // Snapshot what this review actually contains while the base is still
@@ -4960,7 +5092,8 @@ export class Body {
       base,
       tip,
       commitCount:
-        Number(git(info.worktreePath, ['rev-list', '--count', `${base}..${tip}`]).stdout.trim()) || 0,
+        Number(git(info.worktreePath, ['rev-list', '--count', `${base}..${tip}`]).stdout.trim()) ||
+        0,
       fileCount: files.length,
       files: files.slice(0, 5).map((file) => file.path),
     };
@@ -4979,21 +5112,14 @@ export class Body {
     const forceArgs = rewritten
       ? [`--force-with-lease=refs/heads/${info.featureBranch}:${info.pushedFeatureTip}`]
       : [];
-    const push = boundRepo.ownerHex
-      ? gitAuthed(info.worktreePath, this.agentIdentity, boundRepo.ownerHex, boundRepo.repo, [
+    const push = boundRepo.remoteName
+      ? await this.remoteGit(boundRepo, info.worktreePath, [
           'push',
           ...forceArgs,
-          boundRepo.remoteName ?? 'origin',
-          `${info.featureBranch}:refs/heads/${info.featureBranch}`,
+          boundRepo.remoteName,
+          `${boundRepo.ownerHex ? info.featureBranch : tip}:refs/heads/${info.featureBranch}`,
         ])
-      : boundRepo.remoteName
-        ? gitWithUserCredentials(info.worktreePath, [
-            'push',
-            ...forceArgs,
-            boundRepo.remoteName,
-            `${tip}:refs/heads/${info.featureBranch}`,
-          ])
-        : { ok: true, status: 0, stdout: '', stderr: '' };
+      : { ok: true, status: 0, stdout: '', stderr: '' };
     if (!push.ok) {
       await postControlMessage(
         info.subchannelId,
@@ -5142,18 +5268,18 @@ export class Body {
    * `skip` means "nothing to do on this tick" (the feature ref hasn't caught
    * up, or the target already sits at the approved tip).
    */
-  private landOnDirectRemote(
+  private async landOnDirectRemote(
     info: SubchannelInfo,
     remote: string,
     target: NonNullable<SubchannelInfo['mergeTarget']>,
-  ): LandOutcome {
+  ): Promise<LandOutcome> {
     // `ls-remote` reaching the remote and `ls-remote` failing used to be the
     // same answer here: both produced empty stdout, both compared unequal to
     // the approved tip, and both returned `skip`. So a credential prompt, a
     // DNS blip or a rate limit made an approved corner sit silently forever —
     // no card, no log, nothing to distinguish it from "the feature ref hasn't
     // caught up yet". Only a successful read may decide anything.
-    const featureLs = gitWithUserCredentials(info.worktreePath, [
+    const featureLs = await this.remoteGit(info.boundRepo!, info.worktreePath, [
       'ls-remote',
       remote,
       `refs/heads/${info.featureBranch}`,
@@ -5176,7 +5302,11 @@ export class Body {
       };
     }
     if (featureTip !== target.tip) return { kind: 'skip' };
-    const targetLs = gitWithUserCredentials(info.worktreePath, ['ls-remote', remote, target.branch]);
+    const targetLs = await this.remoteGit(info.boundRepo!, info.worktreePath, [
+      'ls-remote',
+      remote,
+      target.branch,
+    ]);
     if (!targetLs.ok) {
       return {
         kind: 'failed',
@@ -5194,7 +5324,7 @@ export class Body {
     // reachable from the exact tip a human approved, only tags the remote does
     // not already have, and only annotated ones (a lightweight tag is left
     // behind on purpose, since it carries no authorship of its own).
-    const land = gitWithUserCredentials(info.worktreePath, [
+    const land = await this.remoteGit(info.boundRepo!, info.worktreePath, [
       'push',
       '--follow-tags',
       remote,
@@ -5231,12 +5361,18 @@ export class Body {
     const ref = `refs/heads/${branch}`;
     const current = git(localPath, ['rev-parse', '--verify', ref]);
     if (!current.ok) {
-      return { kind: 'failed', reason: `The ${branch} branch no longer exists in this repository.` };
+      return {
+        kind: 'failed',
+        reason: `The ${branch} branch no longer exists in this repository.`,
+      };
     }
     const targetTip = current.stdout.trim();
     if (targetTip === target.tip) return { kind: 'skip' };
     if (!git(localPath, ['cat-file', '-e', `${target.tip}^{commit}`]).ok) {
-      return { kind: 'failed', reason: 'The approved change is no longer present in this repository.' };
+      return {
+        kind: 'failed',
+        reason: 'The approved change is no longer present in this repository.',
+      };
     }
     // Fast-forward only — a diverged target is a moved target.
     if (!git(localPath, ['merge-base', '--is-ancestor', targetTip, target.tip]).ok) {
@@ -5268,16 +5404,24 @@ export class Body {
   private async pollDirectRemoteApprovals(): Promise<number> {
     let landed = 0;
     for (const info of this.subchannels.values()) {
-      const boundRepo = info.boundRepo;
-      const remote = boundRepo?.remoteName;
+      let boundRepo = info.boundRepo;
+      let remote = boundRepo?.remoteName;
       const target = info.mergeTarget;
       // Relay-origin repos land through the merge gate, never here.
       if (info.archived || !boundRepo || boundRepo.ownerHex || !target) continue;
       if (!remote && !boundRepo.localPath) continue;
       if (!(await this.findHumanMergeApproval(info))) continue;
 
+      if (this.refreshRepositoryTruth) {
+        boundRepo = await this.refreshRepositoryTruth(boundRepo, 'land');
+        // A corner keeps its approved branch/tip snapshot, but every git read
+        // and write below now uses the freshly synchronized canonical cache.
+        info.boundRepo = boundRepo;
+        remote = boundRepo.remoteName;
+      }
+
       const outcome = remote
-        ? this.landOnDirectRemote(info, remote, target)
+        ? await this.landOnDirectRemote(info, remote, target)
         : this.landInLocalCheckout(boundRepo.localPath!, target);
       if (outcome.kind === 'skip') continue;
       if (outcome.kind === 'failed') {
@@ -5292,10 +5436,7 @@ export class Body {
         // unchanged refusal every tick is what turned these corners into
         // hundreds of identical cards.
         const humanized = summarizeGitFailure(outcome.reason);
-        if (
-          info.lastLandFailure?.tip === target.tip &&
-          info.lastLandFailure.reason === humanized
-        ) {
+        if (info.lastLandFailure?.tip === target.tip && info.lastLandFailure.reason === humanized) {
           continue;
         }
         info.lastLandFailure = { tip: target.tip, reason: humanized };
@@ -5339,7 +5480,25 @@ export class Body {
       // `publishMergeReady` withdrew `mergeTarget` there was nothing left for
       // `confirmedLandedTip` to re-derive either: no recap, no summary, no
       // archive, forever. That is the live miss this ordering closes.
+      if (this.refreshRepositoryTruth) {
+        try {
+          boundRepo = await this.refreshRepositoryTruth(boundRepo, 'recap');
+          info.boundRepo = boundRepo;
+        } catch (error) {
+          // The push already landed. A failed cache refresh may delay local
+          // visibility, but it must not misreport or retry the land itself.
+          console.error(
+            `[body] post-land repository refresh failed for ${info.subchannelId}:`,
+            error,
+          );
+        }
+      }
       info.landedTip = target.tip;
+      if (this.syncPairingCheckout) {
+        await this.syncPairingCheckout(boundRepo, target.tip).catch((error) =>
+          console.error(`[body] pairing-checkout sync failed for ${info.subchannelId}:`, error),
+        );
+      }
       console.log(
         `[body] landed corner ${info.subchannelId} on ${target.branch} at ${target.tip.slice(0, 12)}`,
       );
@@ -5492,10 +5651,11 @@ export class Body {
     landedTip: string,
     parentId: string,
   ): Promise<string | undefined> {
-    const branch = (info.mergeTarget?.branch ?? info.boundRepo?.targetBranch ?? 'refs/heads/main').replace(
-      /^refs\/heads\//,
-      '',
-    );
+    const branch = (
+      info.mergeTarget?.branch ??
+      info.boundRepo?.targetBranch ??
+      'refs/heads/main'
+    ).replace(/^refs\/heads\//, '');
     const objective = info.request?.content
       ? taskDescriptionFromCornerRequest(info.request.content).slice(0, 240)
       : '';
@@ -5507,32 +5667,22 @@ export class Body {
           ? ` (${change.files.slice(0, 3).join(', ')}${change.fileCount > 3 ? ', …' : ''})`
           : '')
       : 'the work committed in this corner';
-    // Where it actually went. A land moves the REMOTE; the reader is usually
-    // looking at their own checkout, which is a different directory from the
-    // one this Room is served out of. See `land-destination.ts`.
-    const remoteUrl = (() => {
-      const remoteName = info.boundRepo?.remoteName;
-      if (!remoteName) return undefined;
-      const remote = git(info.worktreePath, ['remote', 'get-url', remoteName]);
-      return remote.ok ? remote.stdout.trim() : undefined;
-    })();
-    const operatorCheckout = info.boundRepo?.operatorCheckout;
+    // Where it actually went comes from the same truth object that supplied
+    // the session cwd, corner base, and land target. Pairing-root history is
+    // intentionally not an agent-visible recap input.
+    const remoteUrl =
+      info.boundRepo?.truth?.remoteUrl ??
+      info.boundRepo?.remoteUrl ??
+      (() => {
+        const remoteName = info.boundRepo?.remoteName;
+        if (!remoteName) return undefined;
+        const remote = git(info.worktreePath, ['remote', 'get-url', remoteName]);
+        return remote.ok ? remote.stdout.trim() : undefined;
+      })();
     const destination: LandDestination = {
       branch,
       tip: landedTip,
       ...(remoteUrl ? { remoteUrl } : {}),
-      ...(operatorCheckout
-        ? {
-            operatorCheckout,
-            // Asked, never assumed: an operator who fetches regularly must not
-            // be told their tree is behind when it is not.
-            operatorHasCommit: git(operatorCheckout, [
-              'cat-file',
-              '-e',
-              `${landedTip}^{commit}`,
-            ]).ok,
-          }
-        : {}),
     };
     const landedLine = landDestinationLines(destination).join('\n');
     const commitUrl = commitUrlForRemote(remoteUrl, landedTip);
@@ -5606,17 +5756,14 @@ export class Body {
     if (!repoRef) return;
     info.ciWatchStarted = true;
 
-    const branch = (info.mergeTarget?.branch ?? boundRepo.targetBranch ?? 'refs/heads/main').replace(
-      /^refs\/heads\//,
-      '',
-    );
+    const branch = (
+      info.mergeTarget?.branch ??
+      boundRepo.targetBranch ??
+      'refs/heads/main'
+    ).replace(/^refs\/heads\//, '');
     const subchannelId = info.subchannelId;
     const watch = (async () => {
-      // The same ambient credentials the land push just used. Resolved inside
-      // the async body because a credential helper is a subprocess: doing it
-      // on the caller's synchronous path would stall the maintenance tick that
-      // just landed the change.
-      const token = this.ciWatchOptions.token ?? resolveGitHubToken(repoDir);
+      const token = this.ciWatchOptions.token ?? (await this.repositoryAccessToken?.(boundRepo));
       const conclusion = await watchCommitCi(repoRef, landedTip, {
         pollMs: CI_WATCH_POLL_MS,
         timeoutMs: CI_WATCH_TIMEOUT_MS,
@@ -5627,14 +5774,21 @@ export class Body {
       });
       const message = describeCiOutcome(conclusion, { branch, tip: landedTip });
       if (!message) return;
-      await postAgentMessage(parentId, this.agentIdentity, message, replyTo, [], [
-        ['t', CI_RESULT_TAG],
-        ['subchannel', subchannelId],
-        ['branch', branch],
-        ['tip', landedTip],
-        ['ci', conclusion.kind],
-        ['agent', this.agentIdentity.publicKey],
-      ]);
+      await postAgentMessage(
+        parentId,
+        this.agentIdentity,
+        message,
+        replyTo,
+        [],
+        [
+          ['t', CI_RESULT_TAG],
+          ['subchannel', subchannelId],
+          ['branch', branch],
+          ['tip', landedTip],
+          ['ci', conclusion.kind],
+          ['agent', this.agentIdentity.publicKey],
+        ],
+      );
     })()
       .catch((error) => console.error(`[body] CI watch failed for ${subchannelId}:`, error))
       .finally(() => this.pendingCiWatches.delete(watch));
@@ -5698,25 +5852,19 @@ export class Body {
     const target = info.mergeTarget;
     if (!boundRepo || !target) return undefined;
     if (!(await this.findHumanMergeApproval(info))) return undefined;
-    const targetTip = boundRepo.ownerHex
-      ? lsRemoteRef(
-          info.worktreePath,
-          this.agentIdentity,
-          boundRepo.ownerHex,
-          boundRepo.repo,
-          target.branch,
-        )
-      : boundRepo.remoteName
-        ? gitWithUserCredentials(info.worktreePath, [
+    const targetTip = boundRepo.remoteName
+      ? (
+          await this.remoteGit(boundRepo, info.worktreePath, [
             'ls-remote',
             boundRepo.remoteName,
             target.branch,
           ])
-            .stdout.trim()
-            .split(/\s+/)[0]
-        : boundRepo.localPath
-          ? git(boundRepo.localPath, ['rev-parse', '--verify', target.branch]).stdout.trim()
-          : undefined;
+        ).stdout
+          .trim()
+          .split(/\s+/)[0]
+      : boundRepo.localPath
+        ? git(boundRepo.localPath, ['rev-parse', '--verify', target.branch]).stdout.trim()
+        : undefined;
     return targetTip === target.tip ? target.tip : undefined;
   }
 
@@ -5841,11 +5989,14 @@ export class Body {
         // staleness window (`DEFAULT_ROOM_WATCHDOG_STALE_MS`, 90s against a
         // 60s tick), which is what would turn spreading load into a
         // self-inflicted Room recycle.
-        maintenanceTimer = setTimeout(() => {
-          tick();
-          maintenanceTimer = setInterval(tick, tickMs);
-          maintenanceTimer.unref?.();
-        }, Math.round(tickMs * (0.5 + Math.random() * 0.5)));
+        maintenanceTimer = setTimeout(
+          () => {
+            tick();
+            maintenanceTimer = setInterval(tick, tickMs);
+            maintenanceTimer.unref?.();
+          },
+          Math.round(tickMs * (0.5 + Math.random() * 0.5)),
+        );
         maintenanceTimer.unref?.();
 
         await new Promise<void>((resolveWait) => {
@@ -6048,9 +6199,7 @@ export class Body {
     }
     // A corner with no live session has no member poll of its own, so this is
     // the only place its human close request is ever consumed.
-    await guarded('abandoned corner close watch', () =>
-      this.pollAbandonedCornerCloses(channelId),
-    );
+    await guarded('abandoned corner close watch', () => this.pollAbandonedCornerCloses(channelId));
     if (mergeGate) {
       await guarded('merge gate poll', async () => {
         const attempts = await mergeGate.poll();
@@ -6071,7 +6220,29 @@ export class Body {
             // `mergeTarget` is withdrawn between the two (see
             // `SubchannelInfo.landedTip`) would otherwise lose its recap and
             // its archive despite having genuinely landed.
-            if (info && !info.archived && info.mergeTarget) info.landedTip = info.mergeTarget.tip;
+            if (info && !info.archived && info.mergeTarget) {
+              info.landedTip = info.mergeTarget.tip;
+              if (this.refreshRepositoryTruth && info.boundRepo) {
+                try {
+                  info.boundRepo = await this.refreshRepositoryTruth(info.boundRepo, 'land');
+                } catch (error) {
+                  // The merge gate already proved the relay land. Cache
+                  // refresh is visibility/sync work and cannot undo it.
+                  console.error(
+                    `[body] post-gate repository refresh failed for ${info.subchannelId}:`,
+                    error,
+                  );
+                }
+              }
+              if (this.syncPairingCheckout && info.boundRepo) {
+                await this.syncPairingCheckout(info.boundRepo, info.mergeTarget.tip).catch((error) =>
+                  console.error(
+                    `[body] pairing-checkout sync failed for ${info.subchannelId}:`,
+                    error,
+                  ),
+                );
+              }
+            }
             continue;
           }
           if (!info || info.archived) continue;
@@ -6192,7 +6363,10 @@ export class Body {
     if (info.archived) {
       if (!info.archiveCompleted) {
         await this.archiveSubchannel(subchannelId).catch((error) =>
-          console.error(`[body] retrying incomplete archive of ${subchannelId}; will retry:`, error),
+          console.error(
+            `[body] retrying incomplete archive of ${subchannelId}; will retry:`,
+            error,
+          ),
         );
       }
       return 0;
@@ -6284,7 +6458,10 @@ export class Body {
             await this.archiveSubchannel(subchannelId);
           } catch (closeError) {
             await this.durableState.failed(subchannelId, evt.id, closeError);
-            console.error(`[body] pollMembers: corner close failed for event ${evt.id}:`, closeError);
+            console.error(
+              `[body] pollMembers: corner close failed for event ${evt.id}:`,
+              closeError,
+            );
             retryFrom = Math.min(retryFrom ?? evt.created_at, evt.created_at);
             continue;
           }
@@ -6517,7 +6694,10 @@ export class Body {
       try {
         session.unsubscribeActivity?.();
       } catch (error) {
-        console.error(`[body] archive ${subchannelId}: activity teardown failed; continuing:`, error);
+        console.error(
+          `[body] archive ${subchannelId}: activity teardown failed; continuing:`,
+          error,
+        );
       }
       try {
         await session.client.stop();
@@ -6825,12 +7005,9 @@ export class Body {
     // Consume the request: `delivered` advances the durable cursor, so the
     // same doomed close is not rediscovered after a restart either.
     await this.durableState.delivered(subchannelId, closeEventId).catch(() => undefined);
-    await postControlMessage(
-      subchannelId,
-      this.agentIdentity,
-      ABANDONED_CORNER_CLOSE_REFUSED,
-      [['status', 'failed']],
-    ).catch(() => undefined);
+    await postControlMessage(subchannelId, this.agentIdentity, ABANDONED_CORNER_CLOSE_REFUSED, [
+      ['status', 'failed'],
+    ]).catch(() => undefined);
   }
 
   /**
@@ -6990,10 +7167,7 @@ export class Body {
    * config event bound to a DIFFERENT repository is ignored outright (repo
    * hot-swap on a live Room is deliberately out of scope here).
    */
-  private async currentRoomTargetBranch(
-    channelId: string,
-    boundRepo: BoundRepo,
-  ): Promise<string> {
+  private async currentRoomTargetBranch(channelId: string, boundRepo: BoundRepo): Promise<string> {
     const fallback = shortBranchName(boundRepo.targetBranch);
     try {
       const config = await getRoomRepository(this.agentClientContext(), channelId);
@@ -7293,11 +7467,11 @@ export class Body {
    * through to the abandoned path rather than being resurrected empty at a
    * misleading base. Returns whether a usable worktree now exists.
    */
-  private rematerializeCornerWorktree(
+  private async rematerializeCornerWorktree(
     boundRepo: BoundRepo,
     worktreePath: string,
     featureBranch: string,
-  ): boolean {
+  ): Promise<boolean> {
     const repoRoot =
       boundRepo.localPath ??
       (boundRepo.ownerHex
@@ -7310,13 +7484,11 @@ export class Body {
     if (!hasLocal && boundRepo.remoteName) {
       // The branch was pushed when the corner published its review, so the
       // remote is the authority when the local ref is the piece that was lost.
-      const fetch = boundRepo.ownerHex
-        ? gitAuthed(repoRoot, this.agentIdentity, boundRepo.ownerHex, boundRepo.repo, [
-            'fetch',
-            boundRepo.remoteName,
-            `${ref}:${ref}`,
-          ])
-        : gitWithUserCredentials(repoRoot, ['fetch', boundRepo.remoteName, `${ref}:${ref}`]);
+      const fetch = await this.remoteGit(boundRepo, repoRoot, [
+        'fetch',
+        boundRepo.remoteName,
+        `${ref}:${ref}`,
+      ]);
       if (!fetch.ok) return false;
     }
     if (!git(repoRoot, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]).ok) return false;
@@ -7354,12 +7526,10 @@ export class Body {
     if (boundRepo.localPath) {
       await mkdir(resolve(worktreePath, '..'), { recursive: true });
       if (boundRepo.remoteName) {
-        const fetch = boundRepo.ownerHex
-          ? gitAuthed(boundRepo.localPath, this.agentIdentity, boundRepo.ownerHex, boundRepo.repo, [
-              'fetch',
-              boundRepo.remoteName,
-            ])
-          : gitWithUserCredentials(boundRepo.localPath, ['fetch', boundRepo.remoteName]);
+        const fetch = await this.remoteGit(boundRepo, boundRepo.localPath, [
+          'fetch',
+          boundRepo.remoteName,
+        ]);
         if (!fetch.ok) throw new Error(`git fetch failed: ${fetch.stderr}`);
       }
       const target = (boundRepo.targetBranch ?? 'refs/heads/main').replace(/^refs\/heads\//, '');

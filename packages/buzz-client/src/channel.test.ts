@@ -142,6 +142,84 @@ describe('listSubchannels', () => {
       ]),
     );
   });
+
+  it('pages past a full newest-N window instead of forgetting older corners', async () => {
+    // A Nostr `limit` returns the NEWEST N matches, and the kind:9007 scan is
+    // relay-wide because `parent` is a multi-character tag and so cannot be
+    // filtered on. This repository has now found the same bug three times in
+    // three places: an older corner simply falls out of the window and becomes
+    // invisible to everything that reads this list.
+    const parentChannelId = 'parent-room';
+    const roomCreatedAt = 1_700_000_000;
+    const create = (id: string, createdAt: number): NostrEvent =>
+      signEvent(
+        {
+          pubkey: identity.publicKey,
+          created_at: createdAt,
+          kind: KIND_CREATE_GROUP,
+          tags: [
+            ['h', id],
+            ['parent', parentChannelId],
+          ],
+          content: '',
+        },
+        identity.secretKey,
+      );
+    // A relay whose newest page is entirely other people's channels, with this
+    // Room's own corner one page further back.
+    const noise = Array.from({ length: 3 }, (_unused, index) =>
+      signEvent(
+        {
+          pubkey: identity.publicKey,
+          created_at: roomCreatedAt + 500 + index,
+          kind: KIND_CREATE_GROUP,
+          tags: [
+            ['h', `someone-elses-${index}`],
+            ['parent', 'another-room'],
+          ],
+          content: '',
+        },
+        identity.secretKey,
+      ),
+    );
+    const oldCorner = create('old-corner', roomCreatedAt + 10);
+    const roomCreate = signEvent(
+      {
+        pubkey: identity.publicKey,
+        created_at: roomCreatedAt,
+        kind: KIND_CREATE_GROUP,
+        tags: [['h', parentChannelId]],
+        content: '',
+      },
+      identity.secretKey,
+    );
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const filter = (JSON.parse(String(init?.body)) as Record<string, unknown>[])[0] ?? {};
+        if ((filter.kinds as number[])[0] !== KIND_CREATE_GROUP) {
+          return new Response(JSON.stringify([]), { status: 200 });
+        }
+        const scoped = (filter['#h'] as string[] | undefined)?.[0];
+        if (scoped === parentChannelId) {
+          return new Response(JSON.stringify([roomCreate]), { status: 200 });
+        }
+        const until = filter.until as number | undefined;
+        const limit = filter.limit as number;
+        const all = [...noise, oldCorner, roomCreate].sort((a, b) => b.created_at - a.created_at);
+        const page = all
+          .filter((event) => until === undefined || event.created_at <= until)
+          .slice(0, limit);
+        return new Response(JSON.stringify(page), { status: 200 });
+      }),
+    );
+
+    // A window of 3 cannot see `old-corner` in one read; paging back to the
+    // Room's own creation finds it. No child of a Room predates the Room, so
+    // that is the honest place to stop.
+    await expect(listSubchannels(ctx, parentChannelId, 3)).resolves.toEqual(['old-corner']);
+  });
 });
 
 describe('renameChannel', () => {

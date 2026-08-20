@@ -39,7 +39,11 @@ describe('Room→repo header chip', () => {
       "useEffect(() => {\n    if (!decodedId || !transport || isCorner) {",
       'room repository fetch effect',
     );
-    expect(effect).toContain('roomRepositoryRead');
+    // The tri-state read, not the collapsing one: an error and "this Room has
+    // no repository" are different answers, and only the second one licenses
+    // the prompt below.
+    expect(effect).toContain('roomRepositoryState');
+    expect(effect).toContain('setRoomRepositoryResolved');
   });
 });
 
@@ -47,7 +51,7 @@ describe('Room→repo corner-open lazy prompt', () => {
   it('short-circuits handleSend on a repo-less Room before the composer is cleared', () => {
     const handleSend = blockFrom(chatSource, 'const handleSend = useCallback(async () => {', 'handleSend');
     const guardIndex = handleSend.indexOf(
-      'if (!isCorner && !roomRepository && looksLikeCornerOpenIntent(rawText))',
+      'if (!isCorner && !roomRepository && roomRepositoryResolved && looksLikeCornerOpenIntent(rawText))',
     );
     expect(guardIndex).toBeGreaterThanOrEqual(0);
     // The composer must not be cleared before this guard — it sits before the

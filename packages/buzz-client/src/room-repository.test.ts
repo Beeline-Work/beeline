@@ -3,7 +3,9 @@ import { signEvent, type NostrEvent } from '@beeline/nostr';
 import {
   getRoomRepository,
   parseRoomRepository,
+  readRoomRepositoryConfig,
   resolveRoomRepository,
+  resolveRoomRepositoryState,
   setRoomRepository,
   setRoomTargetBranch,
   normalizeTargetBranchName,
@@ -230,6 +232,73 @@ describe('resolveRoomRepository', () => {
     const published: NostrEvent[] = [];
     stubRelay({ published, genesisRepo: false });
     await expect(resolveRoomRepository(ctx(admin), channelId)).resolves.toBeNull();
+  });
+});
+
+/**
+ * "We could not confirm it" and "there isn't one" were the same answer — the
+ * same `null` — and they are not the same fact. The admin projection is a
+ * separate relay read, and one that comes back empty under load used to tell an
+ * admin their configured Room had no repository, and (worse) let the supervisor
+ * reclassify a live repository Room as a repo-less one mid-session.
+ */
+describe('a repository that cannot be confirmed is not a repository that is absent', () => {
+  it('reports `none` only when the Room really has no repository anywhere', async () => {
+    const published: NostrEvent[] = [];
+    stubRelay({ published, genesisRepo: false });
+    await expect(resolveRoomRepositoryState(ctx(admin), channelId)).resolves.toEqual({
+      kind: 'none',
+    });
+  });
+
+  it('reports `unverified`, not `none`, when the config author no longer reads as an admin', async () => {
+    const published: NostrEvent[] = [];
+    stubRelay({ published });
+    await setRoomRepository(ctx(admin), channelId, {
+      key: 'repo-key',
+      name: 'buzzy',
+      remote: 'git://github.com/lunchboxfortwo/buzzy',
+    });
+    // The admin projection comes back without the author — a transient empty
+    // read is indistinguishable from a demotion, and both land here.
+    stubRelay({ published, admins: [], genesisRepo: false });
+
+    const state = await resolveRoomRepositoryState(ctx(admin), channelId);
+    expect(state.kind).toBe('unverified');
+    expect(state.kind === 'unverified' && state.reason).toContain('repository configuration event');
+    // And the compat reader still refuses it — the admin check is the whole
+    // authority model and is not relaxed by reporting the uncertainty.
+    await expect(getRoomRepository(ctx(admin), channelId)).resolves.toBeNull();
+  });
+
+  it('still resolves through the genesis binding when the config is unverified', async () => {
+    const published: NostrEvent[] = [];
+    stubRelay({ published });
+    await setRoomRepository(ctx(admin), channelId, {
+      key: 'repo-key',
+      name: 'buzzy',
+      remote: 'git://github.com/lunchboxfortwo/buzzy',
+    });
+    stubRelay({ published, admins: [], genesisRepo: true });
+
+    // An immutable repository named on the Room's own create event is a fact
+    // no role projection can invalidate.
+    await expect(resolveRoomRepositoryState(ctx(admin), channelId)).resolves.toMatchObject({
+      kind: 'repository',
+      repository: { source: 'genesis' },
+    });
+  });
+
+  it('separates the config read from the genesis fallback', async () => {
+    const published: NostrEvent[] = [];
+    stubRelay({ published, genesisRepo: true });
+    // `readRoomRepositoryConfig` speaks only for the mutable config, so a Room
+    // carrying only its genesis binding is `none` there and `repository` after
+    // the fallback.
+    await expect(readRoomRepositoryConfig(ctx(admin), channelId)).resolves.toEqual({ kind: 'none' });
+    await expect(resolveRoomRepositoryState(ctx(admin), channelId)).resolves.toMatchObject({
+      kind: 'repository',
+    });
   });
 });
 

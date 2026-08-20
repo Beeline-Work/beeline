@@ -557,30 +557,6 @@ describe('Leaving a corner', () => {
   });
 });
 
-describe('The offline-agent notice', () => {
-  it('is decided once, by the shared gate, never re-derived in the screen', () => {
-    // A bare `addressedAgentOfflineNotice(...)` call here is the shape that
-    // shipped: no "was this send addressed to that agent" test, no
-    // presence-resolved gate, and no memory of having already said it.
-    expect(chatSource).not.toContain('addressedAgentOfflineNotice(');
-    expect(chatSource).toContain('offlineNoticeForSend({');
-    expect(chatSource).toContain('presenceResolved,');
-  });
-
-  it('remembers who it already told, so a standing condition is stated once', () => {
-    expect(chatSource).toContain('noticedAt: offlineNoticedAtRef.current');
-    expect(chatSource).toMatch(
-      /offlineNoticedAtRef\.current\.set\(offlineNotice\.agentPubkey, Date\.now\(\)\)/,
-    );
-  });
-
-  it('judges the text that is actually sent, not the reply shortcut', () => {
-    // `mentionedAgent` folds in `replyTarget?.isAgent`, which addresses an
-    // agent the reader never named — it routes the p-tag and nothing else.
-    expect(chatSource).toMatch(/offlineNoticeForSend\(\{[\s\S]{0,200}sentText: text,/);
-    expect(chatSource).not.toMatch(/offlineNoticeForSend\(\{[\s\S]{0,400}mentionedAgent[,\s)]/);
-  });
-});
 
 describe('The corner review footer never claims a retry the daemon is not making', () => {
   /** The `approvalState === 'failed'` branch of the review panel. */
@@ -642,5 +618,84 @@ describe('The change-ready review card', () => {
   it('never guesses a file count before the manifest lands', () => {
     // "not loaded yet" and "nothing changed" are different answers.
     expect(chatSource).toContain("reviewFiles === null\n                          ? 'PREPARING YOUR REVIEW'");
+  });
+});
+
+/**
+ * The client-side "X seems offline" notice is DELETED, by the captain's order.
+ *
+ * It was a client-rendered guess about another machine, inserted into the
+ * reader's own transcript, and it fired twice on a live device for an agent
+ * the reader had not addressed. Every gate it grew — addressee, presence
+ * resolution, repeat window — narrowed when it lied without ever making it
+ * true. The Room's own OFFLINE banner and the per-agent presence dot remain:
+ * those report a lease the daemon itself publishes rather than inventing a
+ * message from its absence.
+ *
+ * A source assertion, because this feature is easiest to reintroduce by
+ * accident one helper at a time.
+ */
+describe('the client-side offline notice stays deleted', () => {
+  const screen = chatSource;
+  const presence = readFileSync(new URL('../../buzz/agent-presence.ts', import.meta.url), 'utf8');
+  const ledger = readFileSync(new URL('./Ledger.tsx', import.meta.url), 'utf8');
+
+  it('has no notice builder, gate, or repeat-window bookkeeping left', () => {
+    for (const symbol of [
+      'addressedAgentOfflineNotice',
+      'offlineNoticeForSend',
+      'offlineNoticeAddressee',
+      'OFFLINE_NOTICE_REPEAT_WINDOW_MS',
+      'offlineNoticedAtRef',
+    ]) {
+      expect(presence, `agent-presence.ts still defines ${symbol}`).not.toContain(symbol);
+      expect(screen, `the chat screen still uses ${symbol}`).not.toContain(symbol);
+    }
+  });
+
+  it('never writes the notice sentence into the transcript', () => {
+    // The rendered copy, not prose about it — the comments explaining why the
+    // feature is gone legitimately name the symptom it used to cause.
+    for (const source of [screen, presence]) {
+      expect(source).not.toContain('seems offline right now');
+      expect(source).not.toContain('its host machine may be off');
+    }
+  });
+
+  it('has no offline-queued marker on a human turn', () => {
+    expect(ledger).not.toContain('offlineQueued');
+    expect(ledger).not.toContain('AGENT OFFLINE');
+    expect(screen).not.toContain('offlineQueuedIds');
+  });
+});
+
+/**
+ * A control the reader can see must act, or say why it cannot.
+ *
+ * The chat screen paints from cache, so "■ CLOSE CORNER" is on screen well
+ * before `transport` exists — and the handler opened with
+ * `if (!transport) return`. Every press was then a silent no-op: nothing
+ * published, nothing said, nothing to retry. Measured on the captain's Room:
+ * the corner they pressed close on repeatedly had ZERO `buzz-corner-close`
+ * events on the relay, so the daemon never had anything to act on. The bug was
+ * never in the close path; it was that the close was never sent.
+ */
+describe('closing a corner never fails silently', () => {
+  const handler = chatSource.slice(
+    chatSource.indexOf('const handleCloseCorner = useCallback'),
+    chatSource.indexOf('const handleApprove = useCallback'),
+  );
+
+  it('does not return without publishing and without telling anyone', () => {
+    expect(handler).not.toContain('if (!transport) return;');
+  });
+
+  it('explains itself when the app has not connected yet', () => {
+    expect(handler).toContain('Modal.alert');
+    expect(handler).toMatch(/still connecting/i);
+  });
+
+  it('still reports a relay refusal rather than swallowing it', () => {
+    expect(handler).toContain('Could not close corner');
   });
 });

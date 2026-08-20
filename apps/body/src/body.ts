@@ -104,6 +104,7 @@ import {
   type ChannelOpsContext,
   type AttachmentReference,
   type AgentModelConfigOption,
+  AGENT_PRESENCE_STALE_MS,
 } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
 import type { BodyConfig, SessionMode } from './config.js';
@@ -165,6 +166,12 @@ import {
   cornersPoolRoot,
   legacyCornerWorktreePath,
 } from './corner-isolation.js';
+import { repriseSystemPromptBlock } from './session-reprime.js';
+import {
+  commitUrlForRemote,
+  landDestinationLines,
+  type LandDestination,
+} from './land-destination.js';
 import {
   duplicateCornerOpen,
   duplicateCornerOpenRefusal,
@@ -435,37 +442,79 @@ export function cornerArchiveSummary(
   return conciseCornerTurnSummary(candidate ?? '') || CORNER_ARCHIVE_FALLBACK_SUMMARY;
 }
 
+/**
+ * How long a Room's socket must stay down before the daemon will state, on the
+ * record, that its agent is offline.
+ *
+ * An explicit `offline` marker is authoritative: it beats a same-second
+ * heartbeat and no client may contradict it. Its only value over simply
+ * letting the presence lease expire is speed, and speed is exactly what makes
+ * it dangerous — a counted "three consecutive reconnect failures" is roughly
+ * SEVEN SECONDS of exponential backoff, so an ordinary blip published a
+ * standing lie about a daemon that was up the whole time and answering. The
+ * captain's own log shows these blips in pairs, minutes apart, all recovering
+ * within a second.
+ *
+ * Waiting out the lease itself means the marker can only ever confirm what the
+ * clients are about to conclude anyway, never pre-empt it with a guess.
+ */
+export const PRESENCE_OFFLINE_AFTER_OUTAGE_MS = AGENT_PRESENCE_STALE_MS;
+
 /** Bounded exponential spacing for one Room's failed request poll. */
 export class RoomPollBackoff {
   private failures = 0;
+  /** Wall-clock start of the current unbroken run of failures. */
+  private outageStartedAt: number | undefined;
+  private offlineAsserted = false;
 
   constructor(
     private readonly baseMs: number,
     private readonly maxMs = ROOM_POLL_FAILURE_BACKOFF_CAP_MS,
+    private readonly offlineAfterMs = PRESENCE_OFFLINE_AFTER_OUTAGE_MS,
+    private readonly now: () => number = Date.now,
+    private readonly random: () => number = Math.random,
   ) {}
 
   failed(error?: unknown): number {
     this.failures++;
+    this.outageStartedAt ??= this.now();
     const exponentialMs = Math.min(this.maxMs, this.baseMs * 2 ** (this.failures - 1));
     // A relay may advertise a delay beyond our steady-state cap. That explicit
     // quota instruction always wins: retrying earlier would recreate the storm.
-    return Math.max(exponentialMs, relayRetryAfterMs(error));
+    const advertised = relayRetryAfterMs(error);
+    if (advertised > exponentialMs) return advertised;
+    // Every Room this daemon serves loses its socket to the SAME relay event,
+    // so an exact schedule sends them all back at the same instant — and the
+    // relay's own log shows this as bursts of identical `reconnecting in
+    // 1000ms` lines. +/-25% spreads the arrivals without weakening the
+    // backoff, matching `agentPresenceRetryDelayMs`'s existing convention.
+    // A relay-advertised delay is never jittered downward: it is an
+    // instruction, not a schedule.
+    return Math.round(exponentialMs * (0.75 + this.random() * 0.5));
   }
 
   recovered(): boolean {
     const wasFailing = this.failures > 0;
     this.failures = 0;
+    this.outageStartedAt = undefined;
+    this.offlineAsserted = false;
     return wasFailing;
   }
 
   /**
-   * A single reconnect blip (one failed attempt) should not assert the agent
-   * offline — the existing heartbeat lease (~120s) covers brief outages.
-   * Only consecutive failures beyond a brief window warrant an authoritative
-   * offline marker that clients cannot contradict.
+   * Whether to publish the authoritative offline marker for this outage.
+   *
+   * Measured in wall-clock time from the first failure of the current run, so
+   * it spans reconnect attempts rather than counting them, and answers true at
+   * most ONCE per outage — the marker is a statement, not a heartbeat, and
+   * republishing it every retry only spends relay quota the real heartbeat
+   * needs.
    */
   shouldMarkPresenceOffline(): boolean {
-    return this.failures >= 3;
+    if (this.offlineAsserted || this.outageStartedAt === undefined) return false;
+    if (this.now() - this.outageStartedAt < this.offlineAfterMs) return false;
+    this.offlineAsserted = true;
+    return true;
   }
 }
 
@@ -653,6 +702,12 @@ export interface BoundRepo {
   localOnly?: boolean;
   /** Exact owner/repo identity shown on permission, corner, and merge events. */
   repositoryId?: string;
+  /**
+   * The operator's own checkout, when the Room is served out of a DIFFERENT
+   * directory (the daemon's canonical clone). Absent when they are the same
+   * tree. Read only to tell a reader where a landed commit is not yet.
+   */
+  operatorCheckout?: string;
 }
 
 export type RoomEditPolicy = 'repository' | 'named-repository' | 'direct-message';
@@ -791,6 +846,24 @@ export const AGENT_REQUEST_TAG = 'buzz-agent-request';
  * daemon rolls (observed live in five of the captain's corners) is the shape
  * this constant exists to stop.
  */
+/**
+ * Lifecycle word for a corner that hit a problem but is NOT over.
+ *
+ * `status: failed` on a corner-scoped control message is what drives the
+ * app's delivery-failure footer, so it has to stay — but the client also reads
+ * the newest status as the corner's LIFECYCLE state, where `failed` is
+ * terminal and terminal means "drop it from the Room's pinned corner strip".
+ * A land that will be retried, or a push that a person can unblock, is exactly
+ * the corner a person most needs to be able to find. `display-status` is read
+ * in preference to `status` (`mapRawCornerStatusTag`), so pairing the two says
+ * both true things at once: this delivery failed, and this corner is still
+ * open and waiting on you.
+ */
+export const RECOVERABLE_CORNER_FAILURE_TAGS: readonly string[][] = [
+  ['status', 'failed'],
+  ['display-status', 'needs-attention'],
+];
+
 export const CORNER_WORKTREE_UNRESTORABLE =
   'Agent restart could not restore this corner worktree; no input was discarded.';
 
@@ -1294,7 +1367,15 @@ export function taskDescriptionFromCornerRequest(content: string): string {
  *  carried no describable task (see `taskDescriptionFromCornerRequest`). */
 export function taskSlugForCornerIntent(intent: string | undefined): string {
   if (!intent) return '';
-  return taskDescriptionFromCornerRequest(intent)
+  return slugifyCornerTask(taskDescriptionFromCornerRequest(intent));
+}
+
+/** Slug half of {@link taskSlugForCornerIntent}, over an ALREADY distilled
+ *  objective — so a corner whose objective was recovered from the Room rather
+ *  than from its own trigger message still gets a name and branch that say
+ *  what it is for. */
+export function slugifyCornerTask(task: string): string {
+  return task
     .normalize('NFKD')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -1305,6 +1386,39 @@ export function taskSlugForCornerIntent(intent: string | undefined): string {
 
 export function cornerNameForIntent(intent: string | undefined, parentChannelId: string): string {
   return taskSlugForCornerIntent(intent) || `corner-${parentChannelId.slice(0, 8)}`;
+}
+
+/**
+ * The objective a corner carries when its own trigger message names none.
+ *
+ * "@beebee open corner", said right after describing the work, distils to
+ * nothing — correctly, since the imperative IS the whole message. But the
+ * corner then opened with no `task` tag, a generated `corner-<parent>` name,
+ * and therefore nothing at all in the app's objective pin: the entire top of
+ * the corner was the raw ten-message Room dump, which is exactly the
+ * "no goal summary, just a literal dump" report.
+ *
+ * The person's own most recent substantive words are the honest answer, and
+ * they are already durable — this is the same conversation `cornerOpenTaskPrompt`
+ * seeds the corner's first turn from, so the pin and the agent's brief agree by
+ * construction. Nothing is invented: entries that distil to nothing (the bare
+ * imperative itself, a greeting) are skipped, and when none qualifies the
+ * result is `''` and the corner is exactly as it was before.
+ */
+export function cornerObjectiveFromConversation(
+  entries: readonly { role: string; text: string }[],
+  limit = 12,
+): string {
+  for (const entry of [...entries].slice(-limit).reverse()) {
+    if (entry.role !== 'user') continue;
+    // The stored prompt can carry an attribution preamble; the objective is
+    // the person's own sentence, peeled the same way a trigger message is.
+    const distilled = taskDescriptionFromCornerRequest(
+      entry.text.replace(/^\s*[^\n]{0,80}?\bsays:\s*/i, '').trim(),
+    );
+    if (distilled) return distilled.slice(0, 320);
+  }
+  return '';
 }
 
 /**
@@ -1829,14 +1943,13 @@ export class Body {
           : undefined;
         await client.start();
         const transcript = await this.durableState.conversation(input.channelId);
-        const restored = transcript.length
-          ? [
-              '',
-              'This logical channel session was suspended while idle. Restore its single',
-              'continuous conversation from this ordered transcript; do not treat it as a new task:',
-              ...transcript.map((entry) => `[${entry.role}] ${entry.text}`),
-            ].join('\n')
-          : '';
+        // BOUNDED. This block goes into the session's SYSTEM PROMPT, which the
+        // harness re-sends on every request — so replaying the whole durable
+        // transcript costs its full weight per TURN, not per restart. The
+        // captain's Room carries 200 entries / ~114k characters (~29k tokens)
+        // of it, invisibly, on a daemon that restarted 14 times in a day.
+        // See `session-reprime.ts`.
+        const restored = repriseSystemPromptBlock(transcript);
         const created = await client.sessionNew({
           cwd: input.cwd,
           mcpServers: input.mcpServers,
@@ -2495,10 +2608,30 @@ export class Body {
           session.lastPolledAt = cursor.createdAt;
           this.registerSubchannel(info);
           this.abandonedCorners.delete(subchannelId);
-          if (request && !tip)
+          // Only ever START a corner's task, never RE-start it. This ran on
+          // every daemon restart for any corner that had not yet published a
+          // merge-ready, so a restart re-drove the original request from
+          // scratch — 14 restarts in a day meant 14 full agent tasks nobody
+          // asked for, which is the "dozens of tool calls doing nothing" the
+          // captain saw. `events` is this agent's own kind:9 history in the
+          // corner: anything beyond the opening control card means the task
+          // already ran, and the restored session continues it from the
+          // transcript instead.
+          const alreadyWorked = events.some((event) =>
+            event.tags.some(
+              (tag) =>
+                tag[0] === 't' && (tag[1] === 'agent-message' || tag[1] === 'agent-activity'),
+            ),
+          );
+          if (request && !tip && !alreadyWorked)
             this.startAgentTask(
               info,
               attachmentPrompt(request.authorPubkey, request.content, request.attachments ?? []),
+            );
+          else if (request && !tip)
+            console.log(
+              `[body] corner ${subchannelId} already has agent output; ` +
+                'restored without re-running its opening task',
             );
         } catch (restoreError) {
           console.error(`[body] could not restore corner ${subchannelId}:`, restoreError);
@@ -2704,8 +2837,19 @@ export class Body {
     // 1. The agent itself creates/signs the child channel. The corner's name
     // is a slug of the task; the full task description rides along as a tag so
     // a reader gets the objective, not the slug.
-    const taskDescription = intent ? taskDescriptionFromCornerRequest(intent).slice(0, 320) : '';
-    const cornerName = cornerNameForIntent(intent, tlcChannelId);
+    // A corner exists to do one named thing, and the reader has to be able to
+    // see what that is the moment it opens. When the trigger message names
+    // nothing on its own — a bare "open a corner" said right after describing
+    // the work — the person's own most recent substantive words in the Room
+    // are the objective. See `cornerObjectiveFromConversation`.
+    const statedTask = intent ? taskDescriptionFromCornerRequest(intent).slice(0, 320) : '';
+    const taskDescription =
+      statedTask ||
+      cornerObjectiveFromConversation(await this.durableState.conversation(tlcChannelId));
+    const taskSlug = statedTask
+      ? taskSlugForCornerIntent(intent)
+      : slugifyCornerTask(taskDescription);
+    const cornerName = taskSlug || `corner-${tlcChannelId.slice(0, 8)}`;
     const subchannelId = await createAgentSubchannel(
       agentId,
       tlcChannelId,
@@ -2725,9 +2869,8 @@ export class Body {
     // `.git`), so the agent's cd-to-project reflex lands inside the worktree
     // rather than the shared primary checkout. See `corner-isolation.ts`.
     const worktreePath = this.cornerWorktreePath(boundRepo, subchannelId);
-    const branchSlug = taskSlugForCornerIntent(intent);
-    const featureBranch = branchSlug
-      ? `feature/${branchSlug}-${subchannelId.slice(0, 8)}`
+    const featureBranch = taskSlug
+      ? `feature/${taskSlug}-${subchannelId.slice(0, 8)}`
       : `feature/${subchannelId.slice(0, 8)}`;
     await this.createWorktree(boundRepo, worktreePath, featureBranch);
 
@@ -4602,11 +4745,11 @@ export class Body {
           info.subchannelId,
           this.agentIdentity,
           `Agent task stopped before merge-ready: ${summarizeGitFailure(String(error))}`,
-          [['status', 'failed'], ...this.deliveryFailureTags(info)],
+          [...RECOVERABLE_CORNER_FAILURE_TAGS, ...this.deliveryFailureTags(info)],
         ).catch(() => undefined);
         await this.postParentCornerStatus(
           info,
-          'failed',
+          'needs-attention',
           'Work stopped. Open corner for details.',
         ).catch(() => undefined);
       } finally {
@@ -4770,11 +4913,16 @@ export class Body {
         info.subchannelId,
         this.agentIdentity,
         `Couldn't prepare this change for review: ${summarizeGitFailure(push.stderr)}`,
-        [['status', 'failed'], ['repo', target.repo], ['branch', target.branch], ['tip', target.tip]],
+        [
+          ...RECOVERABLE_CORNER_FAILURE_TAGS,
+          ['repo', target.repo],
+          ['branch', target.branch],
+          ['tip', target.tip],
+        ],
       );
       await this.postParentCornerStatus(
         info,
-        'failed',
+        'needs-attention',
         'Delivery failed. Open corner for details.',
         [['tip', target.tip]],
       );
@@ -5070,7 +5218,7 @@ export class Body {
           this.agentIdentity,
           `Couldn't land the approved change on ${target.branch.replace(/^refs\/heads\//, '')}: ${humanized}`,
           [
-            ['status', 'failed'],
+            ...RECOVERABLE_CORNER_FAILURE_TAGS,
             // This loop genuinely re-attempts the same approval on the next
             // maintenance tick, so an automatic-retry claim here is true.
             ['retry', 'auto' satisfies DeliveryRetryPosture],
@@ -5082,7 +5230,7 @@ export class Body {
         );
         await this.postParentCornerStatus(
           info,
-          'failed',
+          'needs-attention',
           'Human-approved delivery failed. Open corner for details.',
           [['tip', target.tip]],
         );
@@ -5203,7 +5351,7 @@ export class Body {
           `Nothing was lost: the work is committed on ${info.featureBranch}. ` +
           `Tell me here how you'd like to proceed — nothing is retrying on its own.`,
         [
-          ['status', 'failed'],
+          ...RECOVERABLE_CORNER_FAILURE_TAGS,
           ['retry', 'blocked' satisfies DeliveryRetryPosture],
           ...failureTags,
         ],
@@ -5229,7 +5377,7 @@ export class Body {
         `The approval you already gave no longer applies to this change.`,
       [
         ['t', MERGE_REALIGN_TAG],
-        ['status', 'failed'],
+        ...RECOVERABLE_CORNER_FAILURE_TAGS,
         ['retry', 'realigning' satisfies DeliveryRetryPosture],
         ...failureTags,
       ],
@@ -5341,7 +5489,35 @@ export class Body {
           ? ` (${change.files.slice(0, 3).join(', ')}${change.fileCount > 3 ? ', …' : ''})`
           : '')
       : 'the work committed in this corner';
-    const landedLine = `Landed on ${branch} at ${landedTip.slice(0, 12)}.`;
+    // Where it actually went. A land moves the REMOTE; the reader is usually
+    // looking at their own checkout, which is a different directory from the
+    // one this Room is served out of. See `land-destination.ts`.
+    const remoteUrl = (() => {
+      const remoteName = info.boundRepo?.remoteName;
+      if (!remoteName) return undefined;
+      const remote = git(info.worktreePath, ['remote', 'get-url', remoteName]);
+      return remote.ok ? remote.stdout.trim() : undefined;
+    })();
+    const operatorCheckout = info.boundRepo?.operatorCheckout;
+    const destination: LandDestination = {
+      branch,
+      tip: landedTip,
+      ...(remoteUrl ? { remoteUrl } : {}),
+      ...(operatorCheckout
+        ? {
+            operatorCheckout,
+            // Asked, never assumed: an operator who fetches regularly must not
+            // be told their tree is behind when it is not.
+            operatorHasCommit: git(operatorCheckout, [
+              'cat-file',
+              '-e',
+              `${landedTip}^{commit}`,
+            ]).ok,
+          }
+        : {}),
+    };
+    const landedLine = landDestinationLines(destination).join('\n');
+    const commitUrl = commitUrlForRemote(remoteUrl, landedTip);
 
     let recap = [
       objective ? `Set out to: ${objective}` : `Set out to finish the work in ${info.featureBranch}.`,
@@ -5395,6 +5571,7 @@ export class Body {
         ['feature', info.featureBranch],
         ['branch', branch],
         ['tip', landedTip],
+        ...(commitUrl ? [['url', commitUrl]] : []),
         ['agent', this.agentIdentity.publicKey],
       ],
     );
@@ -5665,10 +5842,25 @@ export class Body {
         // open, so the watchdog never mistakes silence for staleness while
         // a genuinely dead socket still ages out and gets recovered.
         void maintenance();
-        maintenanceTimer = setInterval(() => {
+        const tickMs = opts.pollMs ?? ROOM_WS_MAINTENANCE_TICK_MS;
+        const tick = () => {
           if (client?.socket?.connected) this.onRoomPollSuccess?.(channelId);
           void maintenance();
-        }, opts.pollMs ?? ROOM_WS_MAINTENANCE_TICK_MS);
+        };
+        // Phase-shift each Room's tick. Every Room this daemon serves
+        // subscribes within milliseconds of the others — especially right
+        // after a reconnect, when they all came back together — so an exact
+        // interval keeps their relay reads permanently in lockstep, one burst
+        // per minute for the life of the process. The shift is at most HALF a
+        // tick so the gap can never approach the supervisor's watchdog
+        // staleness window (`DEFAULT_ROOM_WATCHDOG_STALE_MS`, 90s against a
+        // 60s tick), which is what would turn spreading load into a
+        // self-inflicted Room recycle.
+        maintenanceTimer = setTimeout(() => {
+          tick();
+          maintenanceTimer = setInterval(tick, tickMs);
+          maintenanceTimer.unref?.();
+        }, Math.round(tickMs * (0.5 + Math.random() * 0.5)));
         maintenanceTimer.unref?.();
 
         await new Promise<void>((resolveWait) => {
@@ -5700,7 +5892,11 @@ export class Body {
         this.notifyAgentErrorStateOnce(channelId, 'relay-disconnected');
         await this.waitForPoll(delayMs, opts.signal);
       } finally {
-        if (maintenanceTimer) clearInterval(maintenanceTimer);
+        if (maintenanceTimer) {
+          // One-shot phase-shift timer until the first tick, an interval after.
+          clearTimeout(maintenanceTimer);
+          clearInterval(maintenanceTimer);
+        }
         offClose?.();
         // Drop this Room's REQ first; the shared socket keeps serving its
         // siblings, and only an owned socket is actually closed by release().
@@ -5896,7 +6092,7 @@ export class Body {
           }
           if (!info || info.archived) continue;
           const target = info.mergeTarget;
-          const failureTags: string[][] = [['status', 'failed']];
+          const failureTags: string[][] = [...RECOVERABLE_CORNER_FAILURE_TAGS];
           if (target) {
             failureTags.push(['repo', target.repo], ['branch', target.branch], ['tip', target.tip]);
           }
@@ -5913,7 +6109,7 @@ export class Body {
           );
           await this.postParentCornerStatus(
             info,
-            'failed',
+            'needs-attention',
             'Delivery failed. Open corner for details.',
             target ? [['tip', target.tip]] : [],
           ).catch((error) =>

@@ -105,6 +105,29 @@ const MIGRATIONS = [
   `CREATE INDEX IF NOT EXISTS beeline_bind_tickets_expiry_idx ON beeline_bind_tickets (expires_at)`,
   `CREATE INDEX IF NOT EXISTS beeline_nip98_replays_expiry_idx ON beeline_nip98_replays (expires_at)`,
   `CREATE INDEX IF NOT EXISTS beeline_nip05_names_pubkey_idx ON beeline_nip05_names (pubkey)`,
+  `CREATE TABLE IF NOT EXISTS beeline_github_install_flows (
+    state_hash CHAR(64) PRIMARY KEY,
+    community TEXT NOT NULL,
+    pubkey CHAR(64) NOT NULL,
+    redirect_uri TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    consumed_at TIMESTAMPTZ,
+    CHECK (pubkey ~ '^[0-9a-f]{64}$')
+  )`,
+  `CREATE TABLE IF NOT EXISTS beeline_github_installations (
+    community TEXT NOT NULL,
+    pubkey CHAR(64) NOT NULL,
+    account_id TEXT NOT NULL,
+    installation_id BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (community, pubkey),
+    UNIQUE (community, installation_id),
+    CHECK (pubkey ~ '^[0-9a-f]{64}$')
+  )`,
+  `CREATE INDEX IF NOT EXISTS beeline_github_install_flows_expiry_idx
+    ON beeline_github_install_flows (expires_at)`,
 ] as const;
 
 function asDate(value: unknown): Date {
@@ -174,6 +197,21 @@ export interface IdentityLink {
   subject: string;
   pubkey: string;
   createdAt: Date;
+}
+
+export interface GitHubInstallFlow {
+  community: string;
+  pubkey: string;
+  redirectUri: string;
+  createdAt: Date;
+  expiresAt: Date;
+}
+
+export interface GitHubInstallation {
+  community: string;
+  pubkey: string;
+  accountId: string;
+  installationId: number;
 }
 
 export type BindResult =
@@ -394,6 +432,94 @@ export class AuthStore {
       pubkey: row.pubkey,
       createdAt: asDate(row.created_at),
     }));
+  }
+
+  async githubSubjectForPubkey(community: string, pubkey: string): Promise<string | null> {
+    const result = await this.database.query<QueryResultRow & { subject: string }>(
+      `SELECT subject FROM beeline_identity_links
+       WHERE community = $1 AND pubkey = $2 AND issuer = 'https://github.com'
+       ORDER BY created_at DESC LIMIT 1`,
+      [community, pubkey],
+    );
+    return result.rows[0]?.subject ?? null;
+  }
+
+  async createGitHubInstallFlow(stateHash: string, flow: GitHubInstallFlow): Promise<void> {
+    await this.database.query(`DELETE FROM beeline_github_install_flows WHERE expires_at < $1`, [
+      flow.createdAt,
+    ]);
+    await this.database.query(
+      `INSERT INTO beeline_github_install_flows
+        (state_hash, community, pubkey, redirect_uri, created_at, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [stateHash, flow.community, flow.pubkey, flow.redirectUri, flow.createdAt, flow.expiresAt],
+    );
+  }
+
+  async consumeGitHubInstallFlow(stateHash: string, now: Date): Promise<GitHubInstallFlow | null> {
+    const result = await this.database.query<
+      QueryResultRow & {
+        community: string;
+        pubkey: string;
+        redirect_uri: string;
+        created_at: unknown;
+        expires_at: unknown;
+      }
+    >(
+      `UPDATE beeline_github_install_flows SET consumed_at = $2
+       WHERE state_hash = $1 AND consumed_at IS NULL AND expires_at >= $2
+       RETURNING community, pubkey, redirect_uri, created_at, expires_at`,
+      [stateHash, now],
+    );
+    const row = result.rows[0];
+    return row
+      ? {
+          community: row.community,
+          pubkey: row.pubkey,
+          redirectUri: row.redirect_uri,
+          createdAt: asDate(row.created_at),
+          expiresAt: asDate(row.expires_at),
+        }
+      : null;
+  }
+
+  async saveGitHubInstallation(installation: GitHubInstallation, now: Date): Promise<void> {
+    await this.database.query(
+      `INSERT INTO beeline_github_installations
+        (community, pubkey, account_id, installation_id, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $5)
+       ON CONFLICT (community, pubkey) DO UPDATE SET
+         account_id = EXCLUDED.account_id,
+         installation_id = EXCLUDED.installation_id,
+         updated_at = EXCLUDED.updated_at`,
+      [
+        installation.community,
+        installation.pubkey,
+        installation.accountId,
+        installation.installationId,
+        now,
+      ],
+    );
+  }
+
+  async githubInstallationForPubkey(
+    community: string,
+    pubkey: string,
+  ): Promise<GitHubInstallation | null> {
+    const result = await this.database.query<
+      QueryResultRow & { account_id: string; installation_id: string | number }
+    >(
+      `SELECT account_id, installation_id FROM beeline_github_installations
+       WHERE community = $1 AND pubkey = $2`,
+      [community, pubkey],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    const installationId = Number(row.installation_id);
+    if (!Number.isSafeInteger(installationId) || installationId <= 0) {
+      throw new Error('stored GitHub installation id is invalid');
+    }
+    return { community, pubkey, accountId: row.account_id, installationId };
   }
 
   /** First-come-first-served claim: inserts, or reports the existing owner on conflict. */

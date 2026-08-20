@@ -10,7 +10,12 @@ import {
   type RepositoryBinding,
   type RoomRepository,
 } from '@beeline/buzz-client';
-import { git, gitAuthed, gitWithUserCredentials, type Identity } from '@beeline/gate';
+import {
+  git,
+  gitAuthed,
+  type GitResult,
+  type Identity,
+} from '@beeline/gate';
 import { Body, type BoundRepo } from './body.js';
 import type { BodyConfig } from './config.js';
 import type { NamedRepositoryTarget } from './repository-target.js';
@@ -23,6 +28,12 @@ import {
   type RoomRuntimeRecord,
 } from './runtime.js';
 import { SharedRelaySocket } from './relay-socket.js';
+import {
+  RepositoryTruthResolver,
+  type RepositoryTruth,
+  type RepositoryTruthCheckpoint,
+} from './repository-truth.js';
+import { GitHubAppRuntime } from './github-app.js';
 import {
   DEFAULT_PER_ROOM_LIVE_SESSIONS,
   DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR,
@@ -60,23 +71,18 @@ function relayRepoFromBinding(
   return { ownerHex: match[1]!.toLowerCase(), repo: decodeURIComponent(match[2]!) };
 }
 
-function cloneUrl(binding: RepositoryBinding): string {
-  if (!binding.remote) throw new Error('repository Room has no cloneable remote');
-  if (binding.remote.startsWith('git://')) {
-    return `https://${binding.remote.slice('git://'.length)}.git`;
-  }
-  return binding.remote;
-}
-
-export function boundRepoFromRoom(room: RoomRuntimeRecord): BoundRepo {
+function boundRepoFromTruth(truth: RepositoryTruth, room?: RoomRuntimeRecord): BoundRepo {
   return {
-    repo: room.repo.relayRepo?.repo ?? room.repo.repository.name,
-    ...(room.repo.relayRepo ? { ownerHex: room.repo.relayRepo.ownerHex } : {}),
-    targetBranch: `refs/heads/${room.repo.targetBranch}`,
-    localPath: room.repo.root,
-    ...(room.repo.remoteName ? { remoteName: room.repo.remoteName } : {}),
-    repositoryKey: room.repo.repository.key,
-    localOnly: room.repo.repository.localOnly,
+    truth,
+    repo: truth.relayRepo?.repo ?? truth.binding.name,
+    ...(truth.relayRepo ? { ownerHex: truth.relayRepo.ownerHex } : {}),
+    targetBranch: `refs/heads/${truth.targetBranch}`,
+    localPath: truth.checkoutPath,
+    ...(truth.remoteName ? { remoteName: truth.remoteName } : {}),
+    ...(truth.remoteUrl ? { remoteUrl: truth.remoteUrl } : {}),
+    repositoryKey: truth.binding.key,
+    localOnly: truth.kind === 'local',
+    ...(room ? {} : { repositoryId: truth.binding.name }),
   };
 }
 
@@ -124,16 +130,15 @@ export class WorkspaceSupervisor {
    * NIP-01 subId onto it, instead of opening ~N+1 sockets on one agent pubkey.
    */
   private readonly relaySocket: SharedRelaySocket;
+  private readonly repositoryTruth: RepositoryTruthResolver;
+  private readonly githubApp: GitHubAppRuntime | undefined;
   private readonly namedRepositoryResolutions = new Map<string, Promise<BoundRepo>>();
   /**
    * Rooms whose join failed, keyed by channel id: when to try again, and the
    * last message logged for them. One unservable Room must cost exactly one
    * log line and its own retry cadence — never the whole discovery pass.
    */
-  private readonly roomDiscoveryFailures = new Map<
-    string,
-    { retryAt: number; message: string }
-  >();
+  private readonly roomDiscoveryFailures = new Map<string, { retryAt: number; message: string }>();
   private readonly now: () => number;
   private readonly watchdogStaleMs: number;
   private readonly reconcileHeartbeatMs: number;
@@ -158,8 +163,7 @@ export class WorkspaceSupervisor {
         process.env.BUZZY_BODY_MAX_SESSIONS_PER_ROOM ?? String(DEFAULT_PER_ROOM_LIVE_SESSIONS),
       ),
       workspaceFloor: Number(
-        process.env.BUZZY_BODY_MAX_SESSIONS_FLOOR ??
-          String(DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR),
+        process.env.BUZZY_BODY_MAX_SESSIONS_FLOOR ?? String(DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR),
       ),
       activeRoomCount: () => this.running.size,
       idleMs: Number(process.env.BUZZY_BODY_SESSION_IDLE_MS ?? String(5 * 60_000)),
@@ -171,6 +175,21 @@ export class WorkspaceSupervisor {
       ...(baseConfig.relayWsUrl ? { wsUrl: baseConfig.relayWsUrl } : {}),
       identity: this.agent,
       WebSocketImpl: WebSocket,
+    });
+    this.githubApp = GitHubAppRuntime.fromEnvironment();
+    this.repositoryTruth = new RepositoryTruthResolver({
+      repositoriesRoot: this.sharedRepositoriesRoot(),
+      relayBaseUrl: runtime.relayBaseUrl,
+      agent: this.agent,
+      syncOperatorCheckout: process.env.BUZZY_BODY_SYNC_OPERATOR_CHECKOUT === '1',
+      ...(this.githubApp
+        ? {
+            resolveRemoteIdentity: (binding: RepositoryBinding) =>
+              this.githubApp!.resolveIdentity(binding),
+            runRemoteGit: (cwd: string, args: string[], binding: RepositoryBinding) =>
+              this.githubApp!.git(cwd, args, binding),
+          }
+        : {}),
     });
     this.now = options.now ?? Date.now;
     this.watchdogStaleMs =
@@ -541,6 +560,10 @@ export class WorkspaceSupervisor {
         relaySocket: this.relaySocket,
         statePath: resolve(workspaceRoot, 'body-state.json'),
         resolveNamedRepository: (target) => this.resolveNamedRepository(target),
+        refreshRepositoryTruth: (repo, checkpoint) => this.refreshBoundRepo(repo, checkpoint),
+        syncPairingCheckout: (repo, tip) => this.syncPairingCheckout(repo, tip),
+        runRepositoryGit: (repo, cwd, args) => this.runRepositoryGit(repo, cwd, args),
+        repositoryAccessToken: (repo) => this.repositoryAccessToken(repo),
         onRoomPollSuccess: health.poll,
         onRoomPollFailure: health.failure,
         onRoomPresence: health.presence,
@@ -641,11 +664,23 @@ export class WorkspaceSupervisor {
             `${this.runtime.relayBaseUrl}/git/${target.relayOwnerHex}/${target.repo}`,
             root,
           ])
-        : gitWithUserCredentials(repositories, [
-            'clone',
-            `https://github.com/${target.owner}/${target.repo}.git`,
-            root,
-          ]);
+        : this.githubApp
+          ? await this.githubApp.git(
+              repositories,
+              ['clone', `https://github.com/${target.owner}/${target.repo}.git`, root],
+              {
+                key,
+                name: target.repo,
+                remote: `git://github.com/${target.owner}/${target.repo}`,
+                localOnly: false,
+              },
+            )
+          : {
+              ok: false,
+              status: 1,
+              stdout: '',
+              stderr: 'GitHub App credentials are not configured',
+            };
       if (!result.ok) {
         console.error(
           `[supervisor] named repository clone failed for ${target.id}:`,
@@ -670,16 +705,8 @@ export class WorkspaceSupervisor {
     if (!matchesTarget) {
       throw new Error(`repository clone did not match the approved target ${target.id}`);
     }
-    return {
-      repo: target.repo,
-      ...(target.relayOwnerHex ? { ownerHex: target.relayOwnerHex } : {}),
-      targetBranch: `refs/heads/${local.targetBranch}`,
-      localPath: local.root,
-      ...(local.remoteName ? { remoteName: local.remoteName } : {}),
-      repositoryKey: local.repository.key,
-      localOnly: false,
-      repositoryId: target.id,
-    };
+    const truth = await this.repositoryTruth.resolve(local, 'corner-open');
+    return { ...boundRepoFromTruth(truth), repositoryId: target.id };
   }
 
   /**
@@ -696,75 +723,9 @@ export class WorkspaceSupervisor {
     return resolve(this.runtime.supervisorRoot, 'beeline', 'repositories');
   }
 
-  /** Absolute path of this host's dedicated canonical checkout for a repo key. */
+  /** Kept as a test/introspection seam; path authority lives in the resolver. */
   private canonicalCheckoutPath(repositoryKey: string): string {
-    return resolve(this.sharedRepositoriesRoot(), repositoryKey);
-  }
-
-  /**
-   * Ensure beeline's OWN dedicated canonical checkout of a repository exists
-   * and tracks clean origin state, and return it as a `LocalRepositoryBinding`
-   * rooted there. NEVER the operator's working tree: that tree carries WIP and
-   * drifts (the confirmed operator-checkout leak), so the agent clones its own
-   * canonical from origin, keyed by repository key — one per repo per host,
-   * shared by every agent/room/corner, never per-agent or per-room.
-   *
-   * The binding IDENTITY (key/name/localOnly) is preserved from the caller's
-   * `binding`; only the checkout root and branch state are (re)materialized.
-   */
-  private async ensureCanonicalCheckout(input: {
-    binding: RepositoryBinding;
-    relayRepo?: { ownerHex: string; repo: string };
-    targetBranch?: string;
-  }): Promise<LocalRepositoryBinding> {
-    const { binding } = input;
-    if (binding.localOnly || !binding.remote) {
-      throw new Error(`repository ${binding.name} has no remote to clone a canonical checkout from`);
-    }
-    const relayRepo = input.relayRepo ?? relayRepoFromBinding(binding);
-    const repositories = this.sharedRepositoriesRoot();
-    const root = this.canonicalCheckoutPath(binding.key);
-    await mkdir(repositories, { recursive: true, mode: 0o700 });
-    if (!existsSync(root)) {
-      const result = relayRepo
-        ? gitAuthed(repositories, this.agent, relayRepo.ownerHex, relayRepo.repo, [
-            'clone',
-            `${this.runtime.relayBaseUrl}/git/${relayRepo.ownerHex}/${relayRepo.repo}`,
-            root,
-          ])
-        : gitWithUserCredentials(repositories, ['clone', cloneUrl(binding), root]);
-      if (!result.ok) {
-        throw new Error(`could not clone canonical checkout for ${binding.name}: ${result.stderr}`);
-      }
-    }
-    const local = inspectLocalRepository(root);
-    if (local.repository.key !== binding.key) {
-      throw new Error(`canonical checkout for ${binding.name} has a mismatched binding key`);
-    }
-    // Track clean origin state and pin the working tree to the target branch,
-    // so the read-only session reads exactly what origin holds — never WIP.
-    // Best-effort: corners use separate `git worktree` trees, so this never
-    // fights their edits, and every Room of one repo shares one target branch.
-    const target = input.targetBranch ?? local.targetBranch;
-    if (local.remoteName) {
-      const fetchResult = relayRepo
-        ? gitAuthed(root, this.agent, relayRepo.ownerHex, relayRepo.repo, ['fetch', local.remoteName])
-        : gitWithUserCredentials(root, ['fetch', local.remoteName]);
-      const remoteRef = `refs/remotes/${local.remoteName}/${target}`;
-      if (fetchResult.ok && git(root, ['rev-parse', '--verify', remoteRef]).ok) {
-        git(root, ['checkout', '-q', target]);
-        git(root, ['reset', '--hard', remoteRef]);
-      }
-    } else if (target !== local.targetBranch) {
-      git(root, ['checkout', '-q', target]);
-    }
-    // Preserve the room's binding identity; only the root/branch are canonical.
-    return {
-      ...local,
-      repository: binding,
-      ...(target ? { targetBranch: target } : {}),
-      ...(relayRepo ? { relayRepo } : {}),
-    };
+    return this.repositoryTruth.checkoutPath(repositoryKey);
   }
 
   /**
@@ -773,30 +734,63 @@ export class WorkspaceSupervisor {
    * local-only repo, which has no origin to clone) the stored binding as-is.
    */
   private async resolveServingRepo(room: RoomRuntimeRecord): Promise<BoundRepo> {
-    if (room.repo.repository.localOnly) return boundRepoFromRoom(room);
-    const canonical = await this.ensureCanonicalCheckout({
-      binding: room.repo.repository,
-      ...(room.repo.relayRepo ? { relayRepo: room.repo.relayRepo } : {}),
-      ...(room.repo.targetBranch ? { targetBranch: room.repo.targetBranch } : {}),
-    });
+    const truth = await this.repositoryTruth.resolve(room.repo, 'room-join');
+    if (
+      truth.binding.name !== room.repo.repository.name ||
+      truth.binding.remote !== room.repo.repository.remote ||
+      truth.binding.githubInstallationId !== room.repo.repository.githubInstallationId
+    ) {
+      room.repo.repository = truth.binding;
+      await writeRuntimeRecord(this.runtime);
+    }
+    return boundRepoFromTruth(truth, room);
+  }
+
+  private async runRepositoryGit(repo: BoundRepo, cwd: string, args: string[]): Promise<GitResult> {
+    if (repo.ownerHex) return gitAuthed(cwd, this.agent, repo.ownerHex, repo.repo, args);
+    const binding = repo.truth?.binding;
+    if (binding?.remote?.startsWith('git://github.com/')) {
+      if (!this.githubApp) throw new Error('GitHub App credentials are not configured');
+      return this.githubApp.git(cwd, args, binding);
+    }
+    return git(cwd, args);
+  }
+
+  private async repositoryAccessToken(repo: BoundRepo): Promise<string | undefined> {
+    const binding = repo.truth?.binding;
+    if (!binding?.remote?.startsWith('git://github.com/')) return undefined;
+    if (!this.githubApp) throw new Error('GitHub App credentials are not configured');
+    const remote = binding.remote.match(/^git:\/\/github\.com\/([^/]+)\/([^/]+)$/i);
+    if (!remote) return undefined;
+    const installationId =
+      binding.githubInstallationId ??
+      (await this.githubApp.installationForRepository(remote[1]!, remote[2]!));
+    return this.githubApp.installationToken(installationId);
+  }
+
+  private async refreshBoundRepo(
+    repo: BoundRepo,
+    checkpoint: RepositoryTruthCheckpoint,
+  ): Promise<BoundRepo> {
+    if (!repo.truth) return repo;
+    const refreshed = boundRepoFromTruth(
+      await this.repositoryTruth.refresh(repo.truth, checkpoint),
+    );
     return {
-      ...boundRepoFromRoom(room),
-      localPath: canonical.root,
-      remoteName: canonical.remoteName ?? 'origin',
-      // The operator's own tree, kept only when it is genuinely a DIFFERENT
-      // directory from the one this Room is served out of. That is the
-      // three-git-realities gap a land recap has to be able to name: the
-      // commit is on the remote and in the canonical checkout, and the person
-      // reading is looking at neither. `boundRepoFromRoom`'s `localPath` is
-      // overwritten just above, so this is the last point where the original
-      // is still known.
-      ...(room.repo.root && room.repo.root !== canonical.root
-        ? { operatorCheckout: room.repo.root }
-        : {}),
-      ...(canonical.targetBranch
-        ? { targetBranch: `refs/heads/${canonical.targetBranch}` }
-        : {}),
+      ...repo,
+      ...refreshed,
+      ...(repo.repositoryId ? { repositoryId: repo.repositoryId } : {}),
     };
+  }
+
+  private async syncPairingCheckout(repo: BoundRepo, landedTip: string): Promise<void> {
+    if (!repo.truth) return;
+    const result = await this.repositoryTruth.syncPairingCheckout(repo.truth, landedTip);
+    if (result.status === 'fast-forwarded') {
+      console.log(`[supervisor] pairing checkout fast-forwarded to ${landedTip.slice(0, 12)}`);
+    } else if (result.status === 'refused') {
+      console.warn(`[supervisor] pairing checkout sync refused: ${result.reason}`);
+    }
   }
 
   /**
@@ -814,14 +808,27 @@ export class WorkspaceSupervisor {
     if (binding.localOnly) {
       throw new Error(`invited Room ${channelId} is local-only on another checkout`);
     }
-    const local = await this.ensureCanonicalCheckout({
-      binding,
-      ...(relayRepoFromBinding(binding) ? { relayRepo: relayRepoFromBinding(binding)! } : {}),
-      ...(roomRepository.targetBranch ? { targetBranch: roomRepository.targetBranch } : {}),
-    });
+    const placeholderRoot = this.repositoryTruth.checkoutPath(binding.key);
+    const local = await this.repositoryTruth.resolve(
+      {
+        root: placeholderRoot,
+        gitCommonDir: resolve(placeholderRoot, '.git'),
+        targetBranch: roomRepository.targetBranch ?? 'main',
+        repository: binding,
+        ...(relayRepoFromBinding(binding) ? { relayRepo: relayRepoFromBinding(binding)! } : {}),
+      },
+      'room-join',
+    );
     return {
       channelId,
-      repo: local,
+      repo: {
+        root: local.checkoutPath,
+        gitCommonDir: local.gitCommonDir,
+        ...(local.remoteName ? { remoteName: local.remoteName } : {}),
+        targetBranch: local.targetBranch,
+        repository: local.binding,
+        ...(local.relayRepo ? { relayRepo: local.relayRepo } : {}),
+      },
       // Stamp the storage root explicitly so this Room stays put even if the
       // runtime record later moves.
       root: this.roomRoot(channelId),

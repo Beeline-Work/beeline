@@ -132,6 +132,9 @@ export async function createChannel(
     tags.push(['repo-name', opts.repository.name]);
     tags.push(['repo-scope', opts.repository.localOnly ? 'local' : 'remote']);
     if (opts.repository.remote) tags.push(['repo-remote', opts.repository.remote]);
+    if (opts.repository.githubInstallationId) {
+      tags.push(['repo-github-installation', String(opts.repository.githubInstallationId)]);
+    }
   }
   if (opts?.extraTags) tags.push(...opts.extraTags);
   const event = sign(ctx.identity, KIND_CREATE_GROUP, tags);
@@ -888,12 +891,18 @@ export async function getChannelRepositoryBinding(
     const scope = tagValue(event, 'repo-scope');
     if (!key || !name || (scope !== 'local' && scope !== 'remote')) continue;
     const remote = tagValue(event, 'repo-remote');
+    const installation = tagValue(event, 'repo-github-installation');
+    const githubInstallationId =
+      installation && /^\d+$/.test(installation) ? Number(installation) : undefined;
     if (scope === 'remote' && !remote) continue;
     return {
       key,
       name,
       localOnly: scope === 'local',
       ...(remote ? { remote } : {}),
+      ...(githubInstallationId && Number.isSafeInteger(githubInstallationId)
+        ? { githubInstallationId }
+        : {}),
     };
   }
   return null;

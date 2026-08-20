@@ -1,13 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  FlatList,
-  Share,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { FlatList, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,7 +10,6 @@ import {
   TAG_PARENT,
   tagValue,
   tagValues,
-  parseGitRemoteInput,
   type Community,
   type Identity,
   type PersonProfile,
@@ -411,7 +402,11 @@ export default function BuzzChannels() {
   const displayChannels = cachedListEntry?.channels ?? [];
   const directMessages = cachedListEntry?.directMessages ?? [];
   const roomIdsKey = useMemo(
-    () => displayChannels.map((channel) => channel.id).sort().join(','),
+    () =>
+      displayChannels
+        .map((channel) => channel.id)
+        .sort()
+        .join(','),
     [displayChannels],
   );
   const orderedChannels = useMemo(
@@ -787,17 +782,6 @@ export default function BuzzChannels() {
     setRepoPickerError(null);
   }, []);
 
-  const handleSubmitRepoUrl = useCallback((url: string) => {
-    const input = parseGitRemoteInput(url);
-    if (!input) {
-      setRepoPickerError('That does not look like a git URL.');
-      return;
-    }
-    setPendingRepo(input);
-    setShowRepoPicker(false);
-    setRepoPickerError(null);
-  }, []);
-
   const handleCreateChannel = useCallback(async () => {
     const name = channelName.trim();
     if (!name || !transport || !identity || viewerIsAgent) return;
@@ -815,6 +799,10 @@ export default function BuzzChannels() {
             key: pendingRepo.key,
             name: pendingRepo.name,
             remote: pendingRepo.remote,
+            ...(pendingRepo.githubInstallationId
+              ? { githubInstallationId: pendingRepo.githubInstallationId }
+              : {}),
+            ...(pendingRepo.defaultBranch ? { targetBranch: pendingRepo.defaultBranch } : {}),
             ...(activeCommunityId ? { communityId: activeCommunityId } : {}),
           });
         } catch (err) {
@@ -839,7 +827,15 @@ export default function BuzzChannels() {
     } finally {
       setCreatingChannel(false);
     }
-  }, [activeCommunityId, channelName, communities, identity, pendingRepo, transport, viewerIsAgent]);
+  }, [
+    activeCommunityId,
+    channelName,
+    communities,
+    identity,
+    pendingRepo,
+    transport,
+    viewerIsAgent,
+  ]);
 
   const handleInvitePeople = useCallback(async () => {
     if (!transport || !activeCommunityId || creatingInvite) return;
@@ -879,9 +875,10 @@ export default function BuzzChannels() {
       onAdd={() => router.push('/buzz/community' as Href)}
       onSettings={() => router.push('/buzz/settings' as Href)}
       onWorkspaceSettings={(communityId) =>
-        router.push(
-          { pathname: '/buzz/settings/workspace', params: { communityId } } as unknown as Href,
-        )
+        router.push({
+          pathname: '/buzz/settings/workspace',
+          params: { communityId },
+        } as unknown as Href)
       }
       canManageActiveCommunity={canEditWorkspaceAvatar}
       viewerPubkey={identity?.publicKey}
@@ -969,7 +966,6 @@ export default function BuzzChannels() {
                 currentKey={pendingRepo?.key ?? null}
                 error={repoPickerError}
                 onSelect={handleSelectRepoCandidate}
-                onSubmitUrl={handleSubmitRepoUrl}
                 testIDPrefix="create-room-repo-picker"
               />
             )}
@@ -1015,9 +1011,7 @@ export default function BuzzChannels() {
             orderedDirectMessages.length > 0 ? (
               <View style={styles.dmSection}>
                 <View style={styles.indexHeader}>
-                  <Text style={styles.indexLabel}>
-                    DIRECT · {orderedDirectMessages.length}
-                  </Text>
+                  <Text style={styles.indexLabel}>DIRECT · {orderedDirectMessages.length}</Text>
                 </View>
                 {orderedDirectMessages.map((dm) => {
                   const display = dm.peerAgent
@@ -1206,10 +1200,7 @@ export default function BuzzChannels() {
                         testID={`room-corners-toggle-${item.id}`}
                       >
                         <Text
-                          style={[
-                            styles.cornerPeekCount,
-                            row.live && styles.cornerPeekCountLive,
-                          ]}
+                          style={[styles.cornerPeekCount, row.live && styles.cornerPeekCountLive]}
                         >
                           {corners.length}
                         </Text>
@@ -1266,7 +1257,6 @@ export default function BuzzChannels() {
           refreshing={refreshing}
         />
       </View>
-
     </BuzzCommunityShell>
   );
 }

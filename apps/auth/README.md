@@ -1,7 +1,8 @@
 # `@beeline/auth`
 
-This is Beeline's narrow OIDC-to-Nostr-public-key binding service. It owns the
-Authorization Code + PKCE + nonce ceremony and a durable one-use binding
+This is Beeline's narrow OAuth/OIDC-to-Nostr-public-key binding service. GitHub
+is the shipped sign-in; the Google OIDC routes remain available but are hidden
+from the app. It owns the Authorization Code + PKCE ceremony and a durable one-use binding
 transaction. It does not issue relay credentials, grant roles or membership,
 participate in merge decisions, or accept a Nostr secret key.
 
@@ -35,10 +36,18 @@ merge gate.
 ## Deployment shape
 
 Run this as a small sidecar on the existing Beeline network with the existing
-PostgreSQL service, then route only `/auth/oidc/` to it from `relay-front` while
+PostgreSQL service, then route `/auth/` to it from `relay-front` while
 preserving the original `Host`. All other relay traffic remains on Buzz. Adding
-that production route, provisioning the real Google OAuth client, and deploying
-the service are intentionally deferred.
+that production route and deploying the service are intentionally deferred.
+
+GitHub follows the same bind-ticket transaction through `/auth/github/start`
+and `/auth/github/callback`. After binding, `/auth/github/install/start` opens
+the single Beeline GitHub App installation and `/auth/github/repos/:pubkey`
+lists only repositories granted to that installation. The app should be
+installed with **All repositories** (the endorsed default) and Contents
+read/write plus Metadata read permissions. Daemons mint one-hour installation
+tokens for Git smart-HTTP; they do not consult `gh`, credential helpers, or
+ambient Git configuration.
 
 Required configuration:
 
@@ -51,6 +60,16 @@ Required configuration:
 - `BUZZY_AUTH_OIDC_JWKS_URI`
 - `BUZZY_AUTH_OIDC_CLIENT_ID`
 - `BUZZY_AUTH_OIDC_CLIENT_SECRET` (mandatory when `NODE_ENV=production`)
+- `BUZZY_GITHUB_CLIENT_ID`
+- `BUZZY_GITHUB_CLIENT_SECRET`
+- `BUZZY_GITHUB_APP_ID`
+- `BUZZY_GITHUB_APP_SLUG`
+- `BUZZY_GITHUB_APP_PRIVATE_KEY` (PEM; `\\n`-escaped environment values are accepted)
+
+The GitHub App OAuth callback is `https://<tenant>/auth/github/callback`; its
+setup URL is `https://<tenant>/auth/github/install/callback`. Body daemons need
+the same `BUZZY_GITHUB_APP_ID` and `BUZZY_GITHUB_APP_PRIVATE_KEY` so all clone,
+fetch, push, land, rename, preview, and CI reads use installation authority.
 
 HTTP OIDC endpoints are accepted only for local emulators when
 `BUZZY_AUTH_ALLOW_INSECURE_OIDC=true` and `NODE_ENV` is not `production`.

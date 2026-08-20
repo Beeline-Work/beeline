@@ -40,7 +40,6 @@ import {
   type AttachmentReference,
   type RoomRepository,
   AGENT_PRESENCE_STALE_MS,
-  parseGitRemoteInput,
   personHandle,
 } from '@beeline/buzz-client';
 import {
@@ -305,7 +304,6 @@ const AgentPresenceLight = React.memo(function AgentPresenceLight({
     />
   );
 });
-
 function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
   const image = attachment.mimeType.startsWith('image/') && attachment.thumbnailUrl;
   const open = () => {
@@ -2164,6 +2162,10 @@ export default function BuzzChat() {
           key: input.key,
           name: input.name,
           remote: input.remote,
+          ...(input.githubInstallationId
+            ? { githubInstallationId: input.githubInstallationId }
+            : {}),
+          ...(input.defaultBranch ? { targetBranch: input.defaultBranch } : {}),
           ...(activeCommunityId ? { communityId: activeCommunityId } : {}),
         });
         setRoomRepository(repo);
@@ -2202,18 +2204,6 @@ export default function BuzzChat() {
       void applyRoomRepository(candidate);
     },
     [applyRoomRepository, cornerLifecycle, roomRepository],
-  );
-
-  const handleSubmitRoomRepoUrl = useCallback(
-    (url: string) => {
-      const input = parseGitRemoteInput(url);
-      if (!input) {
-        setRoomRepoError('That does not look like a git URL.');
-        return;
-      }
-      handleSelectRoomRepoCandidate(input);
-    },
-    [handleSelectRoomRepoCandidate],
   );
 
   const handleStartDirectMessage = useCallback(
@@ -3240,7 +3230,6 @@ export default function BuzzChat() {
                     currentKey={null}
                     error={roomRepoError}
                     onSelect={handleSelectRoomRepoCandidate}
-                    onSubmitUrl={handleSubmitRoomRepoUrl}
                     testIDPrefix="corner-open-repo-picker"
                   />
                 ) : (
@@ -3744,7 +3733,6 @@ export default function BuzzChat() {
                     currentKey={roomRepository?.binding.key ?? null}
                     error={roomRepoError}
                     onSelect={handleSelectRoomRepoCandidate}
-                    onSubmitUrl={handleSubmitRoomRepoUrl}
                     testIDPrefix="room-repo-picker"
                   />
                 )}

@@ -57,17 +57,14 @@ import {
   type RoomRepository,
   type RoomRepositoryResolution,
   type RoomRepositoryInput,
+  listGitHubRepositories,
 } from '@beeline/buzz-client';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { dedupeRepoCandidates } from '@/buzz/room-repo-picker';
 import type { NostrEvent } from '@beeline/nostr';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { cornerName, mapRawCornerStatusTag, type CornerSummary } from '@/buzz/corners';
-import {
-  projectChatEvent,
-  toRigEvent,
-  type ChatDisplayMessage,
-} from './buzz-event-projection';
+import { projectChatEvent, toRigEvent, type ChatDisplayMessage } from './buzz-event-projection';
 import {
   ROOM_CONTEXT_LIMIT,
   selectRoomContext,
@@ -126,7 +123,8 @@ function cornerSummaryFromEvents(
   const latestMergeReadyAt = events
     .filter((event) => event.event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'))
     .reduce<number | undefined>(
-      (newest, event) => (newest === undefined ? event.createdAt : Math.max(newest, event.createdAt)),
+      (newest, event) =>
+        newest === undefined ? event.createdAt : Math.max(newest, event.createdAt),
       undefined,
     );
   const reviewReady =
@@ -262,14 +260,10 @@ export class BuzzRigTransport implements RigTransport {
   ): Promise<NostrEvent> {
     const client = await this.getClient();
     const attachmentTags = buildAttachmentTags(input.attachments ?? []);
-    return client.buildMessage(
-      input.sessionId,
-      input.text,
-      {
-        ...(opts?.mentionAgent ? { mentionAgent: opts.mentionAgent } : {}),
-        ...(attachmentTags.length ? { extraTags: attachmentTags } : {}),
-      },
-    );
+    return client.buildMessage(input.sessionId, input.text, {
+      ...(opts?.mentionAgent ? { mentionAgent: opts.mentionAgent } : {}),
+      ...(attachmentTags.length ? { extraTags: attachmentTags } : {}),
+    });
   }
 
   /** Publish a prepared message at most once while it is in flight. */
@@ -716,39 +710,17 @@ export class BuzzRigTransport implements RigTransport {
     return client.setRoomTargetBranch(channelId, targetBranch);
   }
 
-  /**
-   * Distinct repos already bound to some top-level Room in this Workspace —
-   * the repo picker's "connected repos" candidate list. The app has no
-   * separate GitHub/connected-accounts source yet, so this is derived from
-   * existing Room→repo bindings; see the root `AGENTS.md`'s Room→repo
-   * assignment UI entry for the noted gap. Mirrors `settings/workspace.tsx`'s
-   * `loadWorkspaceRooms` room-create enumeration (exclude corners and DMs),
-   * then resolves each Room's repo.
-   */
-  async workspaceRoomRepositoryCandidates(communityId: string): Promise<RepoCandidate[]> {
-    const client = await this.getClient();
-    const creates = await client.query([{ kinds: [KIND_CREATE_GROUP], limit: 500 }]);
-    const roomIds = new Set<string>();
-    for (const create of creates) {
-      if (tagValue(create, TAG_COMMUNITY) !== communityId) continue;
-      if (tagValue(create, TAG_PARENT) || tagValues(create, 't').includes(TAG_DIRECT_MESSAGE)) continue;
-      const id = tagValue(create, 'h') ?? tagValue(create, 'd');
-      if (id && id !== communityId) roomIds.add(id);
-    }
-    const repos = await Promise.all(
-      [...roomIds].map((id) => client.resolveRoomRepository(id).catch(() => null)),
-    );
-    // `setRoomRepository` rejects a remote-less binding, so a local-only
-    // genesis binding can't be picked here — filter it out rather than offer
-    // a candidate that fails the moment it's selected.
+  /** Repositories granted to the account's single Beeline GitHub App installation. */
+  async workspaceRoomRepositoryCandidates(_communityId: string): Promise<RepoCandidate[]> {
+    const access = await listGitHubRepositories(this.baseUrl, this.identity);
     return dedupeRepoCandidates(
-      repos
-        .filter((repo): repo is RoomRepository => repo !== null && Boolean(repo.binding.remote))
-        .map((repo) => ({
-          key: repo.binding.key,
-          name: repo.binding.name,
-          remote: repo.binding.remote!,
-        })),
+      access.repositories.map((repo) => ({
+        key: `github:${repo.id}`,
+        name: repo.fullName,
+        remote: `git://github.com/${repo.fullName}`,
+        githubInstallationId: repo.installationId,
+        defaultBranch: repo.defaultBranch,
+      })),
     );
   }
 
@@ -905,11 +877,15 @@ export class BuzzRigTransport implements RigTransport {
    * (DESIGN.md: corner status is never inscribed there), so this is the only
    * place the human can learn why the review panel is empty.
    */
-  async getSubchannelMergeTarget(subchannelId: string): Promise<{
-    target: MergeTarget;
-    channelId: string;
-    authorPubkey: string;
-  } | { reason: string } | null> {
+  async getSubchannelMergeTarget(subchannelId: string): Promise<
+    | {
+        target: MergeTarget;
+        channelId: string;
+        authorPubkey: string;
+      }
+    | { reason: string }
+    | null
+  > {
     const client = await this.getClient();
     // Activity frames can push merge-ready outside the short transcript
     // backfill window. Fetch body controls directly so review and approval
@@ -917,7 +893,9 @@ export class BuzzRigTransport implements RigTransport {
     const events = await client.query([
       { kinds: [9], '#h': [subchannelId], '#t': ['body-control'], limit: 100 },
     ]);
-    for (const event of [...events].sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id)).reverse()) {
+    for (const event of [...events]
+      .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
+      .reverse()) {
       if ((event.tags ?? []).some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready')) {
         return event.content ? { reason: event.content } : null;
       }
@@ -1108,9 +1086,7 @@ export class BuzzRigTransport implements RigTransport {
             { kinds: [9007], '#h': allCornerIds, limit: Math.max(500, allCornerIds.length * 5) },
           ])
         : Promise.resolve([]),
-      client.query([
-        { kinds: [9], '#h': parentChannelIds, '#t': ['merge-summary'], limit: 500 },
-      ]),
+      client.query([{ kinds: [9], '#h': parentChannelIds, '#t': ['merge-summary'], limit: 500 }]),
     ]);
 
     const createsById = new Map<string, NostrEvent[]>();

@@ -1,4 +1,4 @@
-/** Native Google-first onboarding. OAuth proves lookup only; the Nostr key remains device-held. */
+/** Native GitHub-first onboarding. OAuth proves lookup only; the Nostr key remains device-held. */
 import React, { useEffect, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
@@ -17,7 +17,9 @@ import {
   finishOidcBind,
   lookupRecovery,
   parseOidcBindCallback,
-  startOidcBind,
+  startGitHubBind,
+  startGitHubInstallation,
+  listGitHubRepositories,
   type Identity,
   type OidcBindChallenge,
 } from '@beeline/buzz-client';
@@ -84,7 +86,7 @@ const WEB_NOTICE: GoogleOnboardingNotice = {
   status: 'idle',
   title: 'NATIVE ONLY',
   message:
-    'Continue with Google is available in the Android and iOS app. Web key storage is not hardened for this flow.',
+    'Sign in with GitHub is available in the Android and iOS app. Web key storage is not hardened for this flow.',
   retryable: false,
 };
 
@@ -99,7 +101,7 @@ export default function BuzzOnboarding() {
     Platform.OS === 'web' ? WEB_NOTICE : null,
   );
   const [loadingAction, setLoadingAction] = useState<
-    'google' | 'bind' | 'import' | 'name' | 'create' | 'enter' | null
+    'github' | 'bind' | 'import' | 'name' | 'create' | 'enter' | null
   >(null);
   const [newKey, setNewKey] = useState<NewKeyDraft | null>(null);
   const [newKeyRevealed, setNewKeyRevealed] = useState(false);
@@ -160,7 +162,10 @@ export default function BuzzOnboarding() {
           return;
         }
         const links = await lookupRecovery(getBuzzRuntimeConfig().relayUrl, identity);
-        if (!alive || links.length === 0) return;
+        const linkedGitHub = links.some((link) => link.provider === 'https://github.com');
+        if (!alive || !linkedGitHub) return;
+        const access = await listGitHubRepositories(getBuzzRuntimeConfig().relayUrl, identity);
+        if (!access.installed) return;
         await continueAfterIdentity(identity);
       })
       .catch((error: unknown) => {
@@ -190,9 +195,45 @@ export default function BuzzOnboarding() {
         await finishOidcBind(getBuzzRuntimeConfig().relayUrl, pending.challenge, event);
         pending.bound = true;
       }
-      // The key enters SecureStore only after the server confirms this exact pubkey.
+      // Once the server binds this exact public key, persist it before opening
+      // the separate App-install browser. Canceling installation must never
+      // orphan a newly linked GitHub identity on a key the device discarded.
       await markPersonNameOnboardingPending();
       await saveBuzzIdentity(pending.identity);
+      const currentAccess = await listGitHubRepositories(
+        getBuzzRuntimeConfig().relayUrl,
+        pending.identity,
+      );
+      if (!currentAccess.installed) {
+        const authBaseUrl = getBuzzRuntimeConfig().relayUrl;
+        const authOrigin = new URL(authBaseUrl);
+        const redirectUri =
+          authOrigin.protocol === 'https:'
+            ? `${authOrigin.origin}/auth/github/mobile-callback`
+            : Linking.createURL('buzz/github-installation');
+        const installationUrl = await startGitHubInstallation(
+          authBaseUrl,
+          pending.identity,
+          redirectUri,
+        );
+        const callbackUrl = await waitForGoogleAuthCallback({
+          redirectUri,
+          openAuthSession: () =>
+            WebBrowser.openAuthSessionAsync(
+              installationUrl,
+              redirectUri,
+              googleAuthSessionOptions(Platform.OS, redirectUri),
+            ),
+          subscribeToUrls: (listener) =>
+            Linking.addEventListener('url', ({ url }) => listener(url)),
+        });
+        if (new URL(callbackUrl).searchParams.get('installed') !== '1') {
+          throw new OidcBindError(
+            'invalid_installation',
+            'GitHub App installation did not complete',
+          );
+        }
+      }
       await registerBuzzPushNotifications(pending.identity);
       pendingBind.current = null;
       setStatus(nextGoogleOnboardingStatus('binding', 'bind_succeeded'));
@@ -215,13 +256,13 @@ export default function BuzzOnboarding() {
     }
   };
 
-  const handleGoogle = async () => {
+  const handleGitHub = async () => {
     if (Platform.OS === 'web') return;
     if (status === 'existing_device') {
       if (existingIdentity.current) await continueAfterIdentity(existingIdentity.current);
       return;
     }
-    setLoadingAction('google');
+    setLoadingAction('github');
     setStatus('opening_browser');
     setNotice(null);
     try {
@@ -230,9 +271,9 @@ export default function BuzzOnboarding() {
       const authOrigin = new URL(authBaseUrl);
       const redirectUri =
         authOrigin.protocol === 'https:'
-          ? `${authOrigin.origin}/auth/oidc/mobile-callback`
-          : Linking.createURL('buzz/oidc-callback');
-      const start = startOidcBind(authBaseUrl, { redirectUri, state });
+          ? `${authOrigin.origin}/auth/github/mobile-callback`
+          : Linking.createURL('buzz/github-callback');
+      const start = startGitHubBind(authBaseUrl, { redirectUri, state });
       const callbackUrl = await waitForGoogleAuthCallback({
         redirectUri: start.redirectUri,
         openAuthSession: () =>
@@ -246,7 +287,7 @@ export default function BuzzOnboarding() {
       setStatus(nextGoogleOnboardingStatus('opening_browser', 'callback_received'));
       const challenge = parseOidcBindCallback(callbackUrl, state);
       // Preserve upgraded users' existing device-held identity; only first-time
-      // devices create a candidate key after Google proof succeeds.
+      // devices create a candidate key after GitHub proof succeeds.
       const identity =
         existingIdentity.current ??
         (await generateBuzzIdentity('buzzy-mobile', { persist: false }));
@@ -427,7 +468,7 @@ export default function BuzzOnboarding() {
   };
 
   const canRetryBind = notice?.retryable === true && pendingBind.current !== null;
-  const googleLabel = status === 'existing_device' ? 'Open Workspace' : 'Continue with Google';
+  const githubLabel = status === 'existing_device' ? 'Open Workspace' : 'Sign in with GitHub';
 
   if (namingIdentity) {
     const normalized = normalizePersonName(nameInput);
@@ -507,8 +548,8 @@ export default function BuzzOnboarding() {
           </View>
           <Text style={styles.nameTitle}>Save your key</Text>
           <Text style={styles.nameBody}>
-            This key is your Beeline identity. It lives only on this device and Beeline cannot
-            reset it. Save it somewhere safe before you continue.
+            This key is your Beeline identity. It lives only on this device and Beeline cannot reset
+            it. Save it somewhere safe before you continue.
           </Text>
 
           <Text style={styles.sectionLabel}>PUBLIC · NPUB</Text>
@@ -527,7 +568,11 @@ export default function BuzzOnboarding() {
 
           <Text style={styles.sectionLabel}>SECRET · NSEC</Text>
           <HullSurface strength="code" style={styles.keyBox}>
-            <Text selectable={newKeyRevealed} style={styles.keyText} testID="onboarding-new-key-nsec">
+            <Text
+              selectable={newKeyRevealed}
+              style={styles.keyText}
+              testID="onboarding-new-key-nsec"
+            >
               {newKeyRevealed ? newKey.nsec : maskNsec(newKey.nsec)}
             </Text>
           </HullSurface>
@@ -636,7 +681,7 @@ export default function BuzzOnboarding() {
           <View style={styles.advancedDivider} />
           <Text style={styles.sectionLabel}>ADVANCED · EXISTING NOSTR KEY</Text>
           <Text style={styles.keyGuide}>
-            Your nostr key stays on this device and does not go to Google.
+            Your nostr key stays on this device and does not go to GitHub.
           </Text>
           <TextInput
             nativeID="buzz-secret-key"
@@ -668,6 +713,13 @@ export default function BuzzOnboarding() {
         </PixelGateReveal>
       )}
 
+      {!showAdvanced && status !== 'existing_device' && Platform.OS !== 'web' ? (
+        <Text style={styles.keyGuide}>
+          GitHub will ask you to install the Beeline GitHub App. Choose All repositories — the
+          recommended setup — so every repository you can use appears in the Room picker.
+        </Text>
+      ) : null}
+
       <View style={styles.actions}>
         {!showAdvanced && canRetryBind ? (
           <MonoButton
@@ -678,11 +730,11 @@ export default function BuzzOnboarding() {
           />
         ) : !showAdvanced && Platform.OS !== 'web' ? (
           <MonoButton
-            label={googleLabel}
+            label={githubLabel}
             loading={
-              loadingAction === 'google' || loadingAction === 'bind' || status === 'checking_device'
+              loadingAction === 'github' || loadingAction === 'bind' || status === 'checking_device'
             }
-            onPress={() => void handleGoogle()}
+            onPress={() => void handleGitHub()}
             disabled={loading || status === 'checking_device' || status === 'binding'}
           />
         ) : null}
@@ -697,7 +749,6 @@ export default function BuzzOnboarding() {
           testID="onboarding-advanced"
         />
       </View>
-
     </View>
   );
 }

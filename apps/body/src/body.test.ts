@@ -5164,10 +5164,17 @@ describe('graceful relay-failure confirmation', () => {
     const parentStatus = published.find(
       (event) =>
         event.tags.some((tag) => tag[0] === 'h' && tag[1] === 'room') &&
-        event.tags.some((tag) => tag[0] === 'subchannel' && tag[1] === 'corner-mergegate') &&
-        event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'failed'),
+        event.tags.some((tag) => tag[0] === 'subchannel' && tag[1] === 'corner-mergegate'),
     );
     expect(parentStatus).toBeDefined();
+    // `needs-attention`, not `failed`: the corner is still open and a person
+    // can act on it, and `failed` is a TERMINAL lifecycle word that drops the
+    // corner out of the Room's pinned strip — exactly when it most needs to be
+    // findable. The corner-scoped message keeps `status: failed` (that is what
+    // drives the delivery-failure footer); see `RECOVERABLE_CORNER_FAILURE_TAGS`.
+    expect(parentStatus!.tags).toContainEqual(['display-status', 'needs-attention']);
+    expect(cornerFailure!.tags).toContainEqual(['status', 'failed']);
+    expect(cornerFailure!.tags).toContainEqual(['display-status', 'needs-attention']);
   });
 });
 

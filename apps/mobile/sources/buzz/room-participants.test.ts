@@ -66,6 +66,25 @@ describe('Room participant presentation', () => {
     expect([...roomParticipantPubkeys(new Set(['human', 'guest']))]).toEqual(['human', 'guest']);
   });
 
+  it('always keeps the viewer, whatever the Workspace roster read says', () => {
+    // The visibility filter asks whether a key appears in the Workspace's
+    // people/agents lists — a SEPARATE relay read that can land slow, partial,
+    // or not at all. When it does, the filter quietly removes whoever is
+    // missing from it, which is how the captain came to be absent from the
+    // roster of their own Room. Being the viewer is direct evidence no roster
+    // read can outrank.
+    const roomMembers = new Set(['captain', 'agent', 'merge-worker']);
+
+    expect([
+      ...roomParticipantPubkeys(roomMembers, [], [{ pubkey: 'agent' }], 'captain'),
+    ]).toEqual(['captain', 'agent']);
+  });
+
+  it('still hides infrastructure keys that merely share the Room', () => {
+    const roomMembers = new Set(['captain', 'merge-worker']);
+    expect([...roomParticipantPubkeys(roomMembers, [], [], 'captain')]).toEqual(['captain']);
+  });
+
   it('maps a visible @Agent name to its pubkey without partial-name matches', () => {
     const agents = [
       { pubkey: 'agent-a', name: 'Brisk Pilot', handle: 'brisk-pilot' },

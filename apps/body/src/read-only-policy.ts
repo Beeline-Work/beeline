@@ -9,6 +9,7 @@ export const READ_ONLY_TOOL_NAMES = [
   'git_log',
   'git_show',
   'git_diff',
+  'git_status',
 ] as const;
 
 const READ_ONLY_PERMISSION_TITLES = new Set(

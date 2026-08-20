@@ -12,6 +12,7 @@ import type {
 } from '@beeline/buzz-client';
 import { cornerStatusPrecedence, type CornerStatus, type CornerSummary } from '@/buzz/corners';
 import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection';
+import { isRetiredAgentStateNotice } from './retired-agent-notices';
 import { upsertChatMessages } from '@/sync/transport/buzz-event-projection';
 import type { SessionSummary } from '@/sync/transport';
 
@@ -210,11 +211,19 @@ function restoreChannels(value: unknown): Record<string, ChannelCacheEntry> {
   return Object.fromEntries(
     Object.entries(recordOfEntries(value)).map(([key, entry]) => {
       const { messages, roomMembers, availablePeople, availableAgents, ...rest } = entry;
+      // A transcript cached by an older build still holds the retired daemon
+      // state notices (`retired-agent-notices.ts`). The projection drops them
+      // for every event that arrives from now on, but the cache is what paints
+      // the first frame, so the wall would survive here until a revalidation
+      // that never rewrites an already-stored row.
+      const kept = Array.isArray(messages)
+        ? messages.filter((message) => !isRetiredAgentStateNotice(message?.text ?? ''))
+        : undefined;
       return [
         key,
         {
           ...rest,
-          ...(Array.isArray(messages) ? { messages } : {}),
+          ...(kept ? { messages: kept } : {}),
           ...(Array.isArray(roomMembers) ? { roomMembers } : {}),
           ...(Array.isArray(availablePeople) ? { availablePeople } : {}),
           ...(Array.isArray(availableAgents) ? { availableAgents } : {}),

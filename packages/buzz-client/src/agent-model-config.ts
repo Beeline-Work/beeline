@@ -213,6 +213,12 @@ export async function setAgentModelConfig(
   if (!model && !effort) {
     throw new Error('agent model config requires a model or effort selection');
   }
+  // Each picker row updates one axis. Preserve the other axis from the latest
+  // human-authored selection so choosing effort after model does not erase the
+  // model (and vice versa).
+  const current = await getAgentModelConfig(ctx, communityId, agentPubkey);
+  const nextModel = model ?? current?.model;
+  const nextEffort = effort ?? current?.effort;
   const event = signEvent(
     {
       pubkey: ctx.identity.publicKey,
@@ -225,7 +231,10 @@ export async function setAgentModelConfig(
         ['t', TAG_AGENT_MODEL_CONFIG],
         [TAG_COMMUNITY, communityId],
       ],
-      content: JSON.stringify({ ...(model ? { model } : {}), ...(effort ? { effort } : {}) }),
+      content: JSON.stringify({
+        ...(nextModel ? { model: nextModel } : {}),
+        ...(nextEffort ? { effort: nextEffort } : {}),
+      }),
     },
     ctx.identity.secretKey,
   );

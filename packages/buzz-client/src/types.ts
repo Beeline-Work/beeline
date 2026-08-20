@@ -96,17 +96,14 @@ export interface RoomRepository {
 
 export interface AgentSoulInput {
   name: string;
-  personality: string;
-  /** Human-authored purpose supplied to the agent as session-scoped instructions. */
-  intent: string;
+  /** Human-authored instructions supplied to the agent as session-scoped instructions. */
+  soul: string;
   avatarSeed: string;
   /** Optional relay-media URL. Cosmetic only and human-authored. */
   avatar?: string;
 }
 
-export interface AgentSoulProfile extends Omit<AgentSoulInput, 'intent'> {
-  /** Absent only on legacy display-only overlays created before persona instructions. */
-  intent?: string;
+export interface AgentSoulProfile extends AgentSoulInput {
   communityId: string;
   agentPubkey: string;
   authoredBy: string;

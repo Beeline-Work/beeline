@@ -326,16 +326,23 @@ export function parseAgentSoul(event: NostrEvent): AgentSoulProfile | null {
     const name = optionalText(content.name);
     const personality = optionalText(content.personality);
     const intent = optionalText(content.intent);
+    // Older overlays split the same human-authored instruction across two
+    // fields. Keep both verbatim when reading them so the one-field migration
+    // never silently drops an agent's existing direction or character.
+    const legacySoul = [
+      ...(personality ? [`Personality: ${personality}`] : []),
+      ...(intent ? [`Intent: ${intent}`] : []),
+    ].join('\n\n');
+    const soul = optionalText(content.soul) ?? legacySoul;
     const avatarSeed = optionalText(content.avatarSeed);
     const avatar = optionalHttpUrl(content.avatar);
-    if (!name || !personality || !avatarSeed) return null;
+    if (!name || !soul || !avatarSeed) return null;
     return {
       communityId,
       agentPubkey,
       authoredBy: event.pubkey,
       name,
-      personality,
-      ...(intent ? { intent } : {}),
+      soul,
       avatarSeed,
       ...(avatar ? { avatar } : {}),
       updatedAt: event.created_at,
@@ -365,10 +372,9 @@ export async function setAgentSoul(
     throw new Error('agent identity not found in community');
   }
   const name = input.name.trim().slice(0, 32);
-  const personality = input.personality.trim().slice(0, 280);
-  const intent = input.intent.trim().slice(0, 500);
+  const soul = input.soul.trim().slice(0, 1_000);
   const avatarSeed = input.avatarSeed.trim().slice(0, 128);
-  if (!name || !personality || !avatarSeed) {
+  if (!name || !soul || !avatarSeed) {
     throw new Error('agent soul fields must not be empty');
   }
   if (!isSingleWordAgentName(name)) {
@@ -392,8 +398,7 @@ export async function setAgentSoul(
       ],
       content: JSON.stringify({
         name,
-        personality,
-        intent,
+        soul,
         avatarSeed,
         ...(avatar ? { avatar } : {}),
       }),
@@ -480,7 +485,7 @@ export async function listAgents(
         ? {
             ...agent,
             displayName: soulProfile.name,
-            personality: soulProfile.personality,
+            personality: soulProfile.soul,
             avatar: soulProfile.avatar ?? agent.avatar,
             soulProfile,
           }

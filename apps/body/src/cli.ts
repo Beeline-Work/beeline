@@ -50,6 +50,7 @@ import {
   findRuntimeConfigPaths,
   identityFromKey,
   launchRuntimeDaemon,
+  normalizeRelayBaseUrl,
   pairRepositoryAgent,
   readRuntimeRecord,
   removeAgentRuntime,
@@ -57,7 +58,9 @@ import {
   runtimeDaemonPid,
   runtimeAgentCommand,
   runtimeIdentity,
+  stopRuntimeDaemon,
   tryInspectLocalRepository,
+  updateRuntimeRelay,
   type AgentRuntimeRecord,
   type LocalRepositoryBinding,
   type PairRuntimeResult,
@@ -88,6 +91,8 @@ ${pc.dim('Usage:')}
   beeline start [agent-pubkey]              Restart this repo's (or, outside a
                                             repo, this host's) durable agent
   beeline start --agent <agent-pubkey>      Restart it from anywhere (no repo needed)
+  beeline relay set <url> [--agent <pubkey>|--all]
+                                            Repoint stored runtime(s) and restart cleanly
   beeline spend [--day YYYY-MM-DD] [--agent <pubkey>] [--json]
                                             Calls/tokens, causal turns, and restart re-primes
 
@@ -781,6 +786,77 @@ async function runSpendCommand(args: string[]): Promise<void> {
   }
 }
 
+async function runRelayCommand(args: string[]): Promise<void> {
+  if (args[1] !== 'set' || !args[2]) {
+    throw new Error('usage: beeline relay set <http-or-https-origin> [--agent <pubkey>|--all]');
+  }
+  const requestedRelay = normalizeRelayBaseUrl(args[2]);
+  const allFlag = args.includes('--all');
+  const agentFlag = args.indexOf('--agent');
+  const requestedPubkey = agentFlag >= 0 ? args[agentFlag + 1] : undefined;
+  if (agentFlag >= 0 && !requestedPubkey) throw new Error('--agent requires an agent pubkey');
+  if (allFlag && requestedPubkey) throw new Error('choose either --all or --agent, not both');
+
+  const knownValues = new Set([
+    'relay',
+    'set',
+    args[2],
+    '--all',
+    '--agent',
+    ...(requestedPubkey ? [requestedPubkey] : []),
+  ]);
+  const unknown = args.find((value) => !knownValues.has(value));
+  if (unknown) throw new Error(`unknown relay option: ${unknown}`);
+
+  const hostScope = allFlag || Boolean(requestedPubkey) || !tryInspectLocalRepository(process.cwd());
+  const configs = hostScope
+    ? await findAgentRuntimeConfigPaths()
+    : await findRuntimeConfigPaths(process.cwd());
+  const matching = requestedPubkey
+    ? configs.filter((path) => dirname(path).endsWith(requestedPubkey))
+    : configs;
+  const unique = [...new Set(matching)];
+  if (unique.length === 0) {
+    throw new Error(
+      requestedPubkey
+        ? `no paired agent runtime found for ${requestedPubkey}`
+        : hostScope
+          ? 'no paired agent runtime found on this host'
+          : 'no paired agent runtime found in this repository',
+    );
+  }
+  if (requestedPubkey && unique.length > 1) {
+    throw new Error('multiple paired agents match that pubkey; pass the full agent pubkey');
+  }
+
+  for (const path of unique) {
+    const configPath = await resolveRuntimeConfigPath(path);
+    const before = await readRuntimeRecord(configPath);
+    const stoppedPid = await stopRuntimeDaemon(configPath);
+    try {
+      await updateRuntimeRelay(configPath, requestedRelay.relayBaseUrl);
+    } catch (error) {
+      if (stoppedPid) await launchRuntimeDaemon(configPath).catch(() => undefined);
+      throw error;
+    }
+    let pid: number;
+    try {
+      pid = await launchRuntimeDaemon(configPath);
+    } catch (error) {
+      throw new Error(
+        `relay was updated to ${requestedRelay.relayBaseUrl}, but the daemon did not restart; ` +
+          `run \`beeline start --agent ${before.agent.publicKey}\`: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+      );
+    }
+    console.log(
+      `[buzz] agent ${before.agent.publicKey} relay: ${before.relayBaseUrl} -> ${requestedRelay.relayBaseUrl}`,
+    );
+    console.log(`[buzz] agent daemon restarted (pid ${pid})`);
+  }
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args.length === 0) usage();
@@ -818,6 +894,11 @@ async function main(): Promise<void> {
 
   if (command === 'spend') {
     await runSpendCommand(args);
+    return;
+  }
+
+  if (command === 'relay') {
+    await runRelayCommand(args);
     return;
   }
 

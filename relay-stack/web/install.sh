@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-base_url=${BEELINE_INSTALL_BASE_URL:-https://relay.buzzrouter.com}
+base_url=${BEELINE_INSTALL_BASE_URL:-https://usebeeline.app}
 base_url=${base_url%/}
 bin_dir=${BEELINE_INSTALL_DIR:-"$HOME/.local/bin"}
 lib_dir=${BEELINE_INSTALL_LIB_DIR:-"$(dirname "$bin_dir")/lib/beeline"}

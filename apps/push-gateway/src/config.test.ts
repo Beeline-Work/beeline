@@ -6,13 +6,13 @@ describe('loadPushGatewayConfig', () => {
     expect(
       loadPushGatewayConfig({
         BUZZY_RELAY_URL: 'http://127.0.0.1:3410',
-        BUZZY_RELAY_HOST: 'relay.buzzrouter.com',
-        BUZZY_RELAY_SUBSCRIPTION_URL: 'https://relay.buzzrouter.com',
+        BUZZY_RELAY_HOST: 'usebeeline.app',
+        BUZZY_RELAY_SUBSCRIPTION_URL: 'https://usebeeline.app',
       }),
     ).toMatchObject({
       queryRelayUrl: 'http://127.0.0.1:3410',
-      relayHost: 'relay.buzzrouter.com',
-      subscriptionRelayUrl: 'https://relay.buzzrouter.com',
+      relayHost: 'usebeeline.app',
+      subscriptionRelayUrl: 'https://usebeeline.app',
       deliveryStateFile: '.data/deliveries.json',
     });
   });

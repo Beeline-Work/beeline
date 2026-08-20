@@ -20,8 +20,10 @@ services:
       PORT: "8789"
       BUZZY_AUTH_HOST: 0.0.0.0
       DATABASE_URL: postgres://${POSTGRES_USER:-buzz}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-buzz}
+      # Both hosts intentionally share the original community namespace so
+      # existing identity links remain visible after the hostname migration.
       BUZZY_AUTH_TENANTS_JSON: >-
-        [{"host":"relay.buzzrouter.com","community":"relay.buzzrouter.com","origin":"https://relay.buzzrouter.com"}]
+        [{"host":"usebeeline.app","community":"relay.buzzrouter.com","origin":"https://usebeeline.app"},{"host":"relay.buzzrouter.com","community":"relay.buzzrouter.com","origin":"https://relay.buzzrouter.com"}]
       BUZZY_AUTH_OIDC_ISSUER: https://accounts.google.com
       BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT: https://accounts.google.com/o/oauth2/v2/auth
       BUZZY_AUTH_OIDC_TOKEN_ENDPOINT: https://oauth2.googleapis.com/token

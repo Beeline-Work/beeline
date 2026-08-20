@@ -27,7 +27,7 @@ describe('the commit URL', () => {
     expect(commitUrlForRemote(undefined, tip)).toBeUndefined();
     // A relay-origin remote is a Buzz smart-HTTP URL, not a browsable page.
     expect(
-      commitUrlForRemote('https://relay.buzzrouter.com/git/deadbeef/buzzy', tip),
+      commitUrlForRemote('https://usebeeline.app/git/deadbeef/buzzy', tip),
     ).toBeUndefined();
   });
 

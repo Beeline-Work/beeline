@@ -71,6 +71,8 @@ describe('relay invite web front', () => {
     expect(nginx).toContain("img-src 'self' data:");
     expect(compose).toContain('${BUZZ_HTTP_PORT:-3010}:3000');
     expect(compose).toContain('./web:/usr/share/nginx/html:ro');
+    expect(compose).toContain('"host":"usebeeline.app"');
+    expect(compose).toContain('"host":"relay.buzzrouter.com"');
     expect(landing).toContain("You're invited to a Workspace");
     expect(landing).toContain('rel="icon"');
     expect(landing).toContain('data:image/svg+xml');
@@ -145,7 +147,7 @@ describe('relay invite web front', () => {
       }),
     );
 
-    await expect(resolveWorkspaceName('https://relay.buzzrouter.com', INVITE_TOKEN)).resolves.toBe(
+    await expect(resolveWorkspaceName('https://usebeeline.app', INVITE_TOKEN)).resolves.toBe(
       'Test workspace 1',
     );
 
@@ -153,7 +155,7 @@ describe('relay invite web front', () => {
     const ephemeralPubkeys = requests.map(({ input, init }) => {
       const headers = init?.headers as Record<string, string>;
       const auth = decodeNip98Auth(headers.authorization);
-      expect(input).toBe('https://relay.buzzrouter.com/query');
+      expect(input).toBe('https://usebeeline.app/query');
       expect(headers.authorization).toMatch(/^Nostr /);
       expect(headers['x-pubkey']).toBe(auth.pubkey);
       expect(auth.pubkey).not.toBe(inviter.publicKey);
@@ -259,7 +261,7 @@ function invitePage() {
   const window = {
     location: {
       pathname: `/join/${INVITE_TOKEN}`,
-      origin: 'https://relay.buzzrouter.com',
+      origin: 'https://usebeeline.app',
       assign: vi.fn(),
     },
     setTimeout,

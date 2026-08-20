@@ -9,7 +9,7 @@ Captured from the signed production APK on the `buzzy_api36` emulator (Android A
 - [Space drawer open](02-space-drawer-open.png): tapping the Beeline mark reveals the overlaid
   community rail and scrim.
 - [Invite link ready](03-invite-link-ready.png): the visible `invite people` action minted a fresh
-  live `buzzrouter.com/join/...` URL with Share and Copy actions.
+  live `usebeeline.app/join/...` URL with Share and Copy actions.
 - [Standalone create-community path](04-standalone-create-community-path.png): the standalone
   invite affordance routes directly into the existing community creation flow.
 

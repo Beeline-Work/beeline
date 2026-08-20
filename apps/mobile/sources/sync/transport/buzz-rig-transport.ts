@@ -53,7 +53,7 @@ import {
   type AgentModelCatalog,
   type AgentModelConfig,
   type AgentModelConfigInput,
-  agentPresenceKey,
+  TAG_AGENT_PRESENCE,
   type RoomRepository,
   type RoomRepositoryResolution,
   type RoomRepositoryInput,
@@ -519,7 +519,14 @@ export class BuzzRigTransport implements RigTransport {
     const buzzEvents = await client.query([
       {
         kinds: [KIND_AGENT_PRESENCE],
-        '#d': roomIds.map((roomId) => agentPresenceKey(roomId)),
+        // Built from `TAG_AGENT_PRESENCE`, a long-standing export, rather
+        // than from the newer `agentPresenceKey` helper. Metro resolves
+        // `@beeline/buzz-client` to its BUILT `dist/`, so a mobile fix that
+        // reaches for a brand-new SDK symbol is `undefined` at runtime against
+        // a stale build — and this read is best-effort, so the resulting
+        // TypeError is swallowed and every agent reads OFFLINE. A fix must not
+        // depend on a rebuild it cannot verify.
+        '#d': roomIds.map((roomId) => `${TAG_AGENT_PRESENCE}:${roomId}`),
         limit: Math.max(200, roomIds.length * 10),
       },
     ]);

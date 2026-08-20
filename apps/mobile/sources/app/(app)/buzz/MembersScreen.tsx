@@ -142,10 +142,11 @@ export default function BuzzAgents() {
   // otherwise the reader is painted out of their own Workspace, and in a
   // Personal Workspace, where they are the only person, out of it entirely.
   // `viewerIsAgent` keeps an agent identity out of the people list.
+  const cachedViewerPubkey = initialCacheState.activeViewerPubkey;
   const initialCachedSeed = seedMembersFromWorkspaceCache(
     initialCachedList?.workspaceMembers ?? [],
-    initialCacheState.activeViewerPubkey && !initialCachedList?.viewerIsAgent
-      ? { pubkey: initialCacheState.activeViewerPubkey }
+    cachedViewerPubkey && !initialCachedList?.viewerIsAgent
+      ? { pubkey: cachedViewerPubkey }
       : undefined,
   );
   const initialCachedProfiles =
@@ -181,6 +182,17 @@ export default function BuzzAgents() {
     initialCachedList?.canEditWorkspaceAvatar ?? false,
   );
   const [agentPresences, setAgentPresences] = useState<Record<string, AgentPresence>>({});
+  /**
+   * False until a presence read has actually answered.
+   *
+   * An empty presence map is UNKNOWN, not an offline verdict — the same rule
+   * the Room banner already follows (`isAgentOfflineAfterPresenceResolved`).
+   * This screen asserted OFFLINE from an empty map, so an agent read as down
+   * whenever the read had not happened yet or had failed: a stalled mount
+   * effect, a thrown query, a relay blip. Saying nothing is the honest answer
+   * to a question nobody has asked the relay.
+   */
+  const [presenceResolved, setPresenceResolved] = useState(false);
   const [presenceNow, setPresenceNow] = useState(Date.now());
   const [modelCatalog, setModelCatalog] = useState<AgentModelConfigOption[] | null>(null);
   const [modelSelection, setModelSelection] = useState<AgentModelConfigInput | null>(null);
@@ -244,6 +256,39 @@ export default function BuzzAgents() {
     }
   }, []);
 
+  /**
+   * Who this screen lists under People — the read's answer, plus the reader.
+   *
+   * The viewer is a member of the Workspace they are reading: they are looking
+   * at it, and the relay's own projection lists them. But every INPUT to this
+   * list can independently fail to say so — the roster cache omits them by
+   * construction (it is built for the Rooms screen's "who else is here"), a
+   * mount effect that has not finished has not read anything yet, and a failed
+   * read leaves the previous answer standing. Two rounds of fixes went into
+   * those inputs and the surface still showed "People 0" to the owner of a
+   * Personal Workspace, where they are the only person and so the entire
+   * section.
+   *
+   * So the invariant is enforced HERE, where it is stated, rather than in one
+   * of the several places that feed it: identity is local and already loaded,
+   * `agents` says whether this identity is an agent rather than a person, and
+   * neither depends on a relay read landing.
+   */
+  const visiblePeople = useMemo<CommunityMember[]>(() => {
+    // `identity` is set BY the mount effect, so relying on it alone reproduces
+    // the very dependency this invariant exists to escape: a stalled effect
+    // means no identity means no viewer. The cache's active viewer is written
+    // at sign-in and is available synchronously on the first frame.
+    const viewerPubkey = identity?.publicKey ?? cachedViewerPubkey;
+    if (!viewerPubkey) return people;
+    if (people.some((person) => person.pubkey === viewerPubkey)) return people;
+    if (agents.some((agent) => agent.pubkey === viewerPubkey)) return people;
+    // Least-privileged until a real read says otherwise, matching the seed's
+    // own rule: a placeholder may under-grant an admin-gated action, never
+    // over-grant one.
+    return [{ pubkey: viewerPubkey, role: 'member' as const }, ...people];
+  }, [agents, cachedViewerPubkey, identity?.publicKey, people]);
+
   const refreshPeople = useCallback(async (
     currentTransport: BuzzRigTransport,
     id: string,
@@ -280,6 +325,10 @@ export default function BuzzAgents() {
       const events = await currentTransport.agentPresenceBackfillForWorkspace(id);
       setAgentPresences(presenceMapFromSessionEvents(events));
       setPresenceNow(Date.now());
+      // Only a read that actually answered may license an OFFLINE verdict.
+      // Deliberately after the await: a throw leaves this false, so a failed
+      // read reports "unknown" rather than accusing every agent of being down.
+      setPresenceResolved(true);
     },
     [],
   );
@@ -742,7 +791,9 @@ export default function BuzzAgents() {
           <View style={styles.memberSection} testID="members-people-section">
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>People</Text>
-              <Text style={styles.count}>{people.length}</Text>
+              <Text style={styles.count} testID="members-people-count">
+                {visiblePeople.length}
+              </Text>
               {canManageWorkspace && (
                 <MonoButton
                   label={working === 'invite-person' ? 'Creating invite' : 'Invite person'}
@@ -755,11 +806,11 @@ export default function BuzzAgents() {
                 />
               )}
             </View>
-            {people.length === 0 ? (
+            {visiblePeople.length === 0 ? (
               <Text style={styles.sectionEmpty}>No people in this Workspace yet.</Text>
             ) : (
               <View style={styles.peopleList}>
-                {people.map((person) => {
+                {visiblePeople.map((person) => {
                   const profile = profileByPubkey.get(person.pubkey);
                   const immutableOwner = person.pubkey === activeCommunity?.ownerPubkey;
                   const isSelf = person.pubkey === identity?.publicKey;
@@ -881,6 +932,7 @@ export default function BuzzAgents() {
             agents.map((agent) => {
               const display = resolveAgentDisplayIdentity(agent.pubkey, agent);
               const online = isAgentPresenceOnline(agentPresences[agent.pubkey], presenceNow);
+              const presenceKnown = presenceResolved || Boolean(agentPresences[agent.pubkey]);
               return (
                 <TouchableOpacity
                   key={agent.agentId}
@@ -924,7 +976,7 @@ export default function BuzzAgents() {
                       ]}
                       testID={`agent-${agent.pubkey}-presence-label`}
                     >
-                      {online ? 'ONLINE' : 'OFFLINE'}
+                      {online ? 'ONLINE' : presenceKnown ? 'OFFLINE' : '—'}
                     </Text>
                   </View>
                   <Text style={styles.chevron}>›</Text>
@@ -953,7 +1005,8 @@ export default function BuzzAgents() {
                   </Text>
                 </View>
               </View>
-              {!isAgentPresenceOnline(agentPresences[selected.pubkey], presenceNow) && (
+              {(presenceResolved || Boolean(agentPresences[selected.pubkey])) &&
+                !isAgentPresenceOnline(agentPresences[selected.pubkey], presenceNow) && (
                 <View style={styles.agentOfflineNotice} testID={`agent-${selected.pubkey}-offline-notice`}>
                   <Text style={styles.agentOfflineNoticeTitle}>○ OFFLINE</Text>
                   <Text style={styles.agentOfflineNoticeText}>

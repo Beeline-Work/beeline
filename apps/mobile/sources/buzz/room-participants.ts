@@ -82,6 +82,20 @@ export function roomParticipantPubkeys(
   roomMemberPubkeys: ReadonlySet<string>,
   workspacePeople?: readonly RoomRosterMember[],
   workspaceAgents?: readonly RoomRosterMember[],
+  /**
+   * The person reading the screen. They are in this Room — they are reading and
+   * writing in it — so no Workspace roster read is allowed to conclude
+   * otherwise.
+   *
+   * The visibility filter exists to hide infrastructure keys that hold Room
+   * authority without being a person or a registered agent, and it decides
+   * that by asking whether the key appears in the Workspace's people/agents
+   * lists. Those lists are a separate relay read: slow, partial or failed, and
+   * the filter quietly removes whoever is missing from them — which is how the
+   * captain came to be absent from the roster of their own Room. Being the
+   * viewer is direct evidence no roster can outrank.
+   */
+  viewerPubkey?: string,
 ): Set<string> {
   if (!workspacePeople && !workspaceAgents) return new Set(roomMemberPubkeys);
 
@@ -89,7 +103,11 @@ export function roomParticipantPubkeys(
     ...(workspacePeople ?? []).map((member) => member.pubkey),
     ...(workspaceAgents ?? []).map((agent) => agent.pubkey),
   ]);
-  return new Set([...roomMemberPubkeys].filter((pubkey) => visiblePubkeys.has(pubkey)));
+  return new Set(
+    [...roomMemberPubkeys].filter(
+      (pubkey) => visiblePubkeys.has(pubkey) || (Boolean(viewerPubkey) && pubkey === viewerPubkey),
+    ),
+  );
 }
 
 /** Keep one Workspace roster, ordered as current Room members followed by addable members. */

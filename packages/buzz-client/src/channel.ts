@@ -679,16 +679,81 @@ function latestMetadataEvent(events: NostrEvent[]): NostrEvent | undefined {
  * child `subchannel` tag; merge those links so invite-only corners remain
  * discoverable. `closed` is an access flag, never a lifecycle/archive signal.
  */
+/**
+ * How far back a windowed scan will page before giving up. A page is `limit`
+ * events, so this is a hard ceiling on the work one listing can do on a very
+ * busy relay; the normal terminator is reaching the Room's own creation.
+ */
+const SUBCHANNEL_SCAN_MAX_PAGES = 20;
+
+/**
+ * Walk a newest-first filter backwards until it reaches `stopAt`, runs out of
+ * events, or spends its page budget.
+ *
+ * A Nostr `limit` always returns the NEWEST N matches, so a single windowed
+ * read silently forgets everything older — which is why this repository keeps
+ * finding the same bug in different places (corners falling out of tracking, a
+ * Room's oldest corners vanishing from the list). Paging with `until` is the
+ * general answer, and a Room's own `created_at` is the honest terminator: no
+ * child of a Room can predate the Room.
+ */
+async function scanBack(
+  ctx: ChannelOpsContext,
+  filter: Record<string, unknown>,
+  limit: number,
+  stopAt: number,
+): Promise<NostrEvent[]> {
+  const collected = new Map<string, NostrEvent>();
+  let until: number | undefined;
+  for (let page = 0; page < SUBCHANNEL_SCAN_MAX_PAGES; page++) {
+    const events = await query(ctx, [
+      { ...filter, limit, ...(until === undefined ? {} : { until }) },
+    ]);
+    if (events.length === 0) break;
+    let oldest = Number.POSITIVE_INFINITY;
+    let fresh = 0;
+    for (const event of events) {
+      if (!collected.has(event.id)) fresh++;
+      collected.set(event.id, event);
+      oldest = Math.min(oldest, event.created_at);
+    }
+    // A full page that taught us nothing new, or one that has already reached
+    // past the Room's own creation, means there is nothing further back worth
+    // asking for. `fresh === 0` is also the guard against a same-second run
+    // wider than one page pinning `until` forever.
+    if (events.length < limit || oldest <= stopAt || fresh === 0) break;
+    until = oldest;
+  }
+  return [...collected.values()];
+}
+
 export async function listSubchannels(
   ctx: ChannelOpsContext,
   parentChannelId: string,
   limit = 500,
 ): Promise<string[]> {
+  // The Room's own create event bounds both scans. Unreadable (or a Room with
+  // no create event on this relay) falls back to 0, i.e. page the full budget
+  // rather than stop early on a guess.
+  const parentCreates = await query(ctx, [
+    { kinds: [KIND_CREATE_GROUP], '#h': [parentChannelId], limit: 5 },
+  ]);
+  const stopAt = parentCreates.reduce(
+    (oldest, event) => Math.min(oldest, event.created_at),
+    Number.POSITIVE_INFINITY,
+  );
+  const roomCreatedAt = Number.isFinite(stopAt) ? stopAt : 0;
+
   const [events, controlEvents] = await Promise.all([
-    query(ctx, [{ kinds: [KIND_CREATE_GROUP], limit }]),
-    query(ctx, [
-      { kinds: [KIND_STREAM_MESSAGE], '#h': [parentChannelId], '#t': ['body-control'], limit },
-    ]),
+    // Deliberately unscoped: `parent` is a multi-character tag and so is not
+    // relay-indexable, which is exactly why this scan needs paging.
+    scanBack(ctx, { kinds: [KIND_CREATE_GROUP] }, limit, roomCreatedAt),
+    scanBack(
+      ctx,
+      { kinds: [KIND_STREAM_MESSAGE], '#h': [parentChannelId], '#t': ['body-control'] },
+      limit,
+      roomCreatedAt,
+    ),
   ]);
   const ids = new Set<string>();
   for (const ev of events) {

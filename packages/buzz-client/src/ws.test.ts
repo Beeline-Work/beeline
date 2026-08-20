@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createIdentity } from './identity.js';
-import { RelayWs, wsQueryEvents } from './ws.js';
+import { RelayWs, reconnectDelayWithJitter, wsQueryEvents } from './ws.js';
 import type { NostrEvent } from '@beeline/nostr';
 
 class FakeWebSocket {
@@ -165,5 +165,46 @@ describe('wsQueryEvents', () => {
     expect(reqFramesFor(subId)).toHaveLength(1);
 
     ws.close();
+  });
+});
+
+
+/**
+ * Every client that loses its socket to the SAME relay event used to come back
+ * on the SAME schedule: 500ms, then 1s, 2s, 4s, exactly. That is a synchronised
+ * herd arriving precisely while the relay is least able to take it, and every
+ * failed round re-synchronises it. One daemon multiplies this by its Room count
+ * before any other client is counted.
+ */
+describe('reconnect spacing does not put every client back at the door together', () => {
+  it('spreads a round of reconnects across a window as wide as the delay', () => {
+    const delays = [0, 0.25, 0.5, 0.75, 0.999].map((roll) =>
+      reconnectDelayWithJitter(500, 0, 10_000, () => roll),
+    );
+    expect(new Set(delays).size).toBe(delays.length);
+    expect(Math.max(...delays) - Math.min(...delays)).toBeGreaterThanOrEqual(400);
+  });
+
+  it('never retries sooner than half the schedule, so backoff still backs off', () => {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const exact = Math.min(500 * 2 ** attempt, 10_000);
+      for (const roll of [0, 0.5, 0.999]) {
+        const delay = reconnectDelayWithJitter(500, attempt, 10_000, () => roll);
+        expect(delay).toBeGreaterThanOrEqual(Math.round(exact * 0.5));
+        expect(delay).toBeLessThanOrEqual(Math.round(exact * 1.5));
+      }
+    }
+  });
+
+  it('still grows with the attempt count and still respects the cap', () => {
+    const mid = (attempt: number) => reconnectDelayWithJitter(500, attempt, 10_000, () => 0.5);
+    expect(mid(1)).toBeGreaterThan(mid(0));
+    expect(mid(2)).toBeGreaterThan(mid(1));
+    // Capped before jitter, so the very longest wait stays bounded.
+    expect(reconnectDelayWithJitter(500, 20, 10_000, () => 0.999)).toBeLessThanOrEqual(15_000);
+  });
+
+  it('never returns a zero delay, which would be a busy loop', () => {
+    expect(reconnectDelayWithJitter(1, 0, 10_000, () => 0)).toBeGreaterThan(0);
   });
 });

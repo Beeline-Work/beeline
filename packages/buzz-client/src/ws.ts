@@ -48,6 +48,29 @@ function messageData(ev: unknown): string {
  * One authenticated WS connection to a Buzz relay.
  * Call `connect()` before subscribe/publish.
  */
+/**
+ * Reconnect spacing that does not put every client back at the door together.
+ *
+ * The schedule was `min(base * 2^n, 10s)` exactly — so every client that lost
+ * its socket to the SAME relay event retried at the same 500ms, then the same
+ * 1s, 2s, 4s: a synchronised herd, arriving in a burst precisely while the
+ * relay is least able to take it, and re-synchronised by every failure. One
+ * daemon multiplies this by its Room count all on its own.
+ *
+ * The spread is +/-50% of the intended delay, so the exponential guarantee
+ * survives (a retry is never sooner than half the schedule) while the arrivals
+ * fan out across a window as wide as the delay itself.
+ */
+export function reconnectDelayWithJitter(
+  baseDelayMs: number,
+  attempt: number,
+  capMs = 10_000,
+  random: () => number = Math.random,
+): number {
+  const exponential = Math.min(baseDelayMs * 2 ** Math.max(0, attempt), capMs);
+  return Math.max(1, Math.round(exponential * (0.5 + random())));
+}
+
 export class RelayWs {
   private ws: WebSocketLike | null = null;
   private readonly handlers = new Set<MessageHandler>();
@@ -361,7 +384,7 @@ export class RelayWs {
   private scheduleReconnect(): void {
     if (this.closed || this.reconnectTimer) return;
     const baseDelay = this.opts.reconnectDelayMs ?? 500;
-    const delay = Math.min(baseDelay * 2 ** this.reconnectAttempts, 10_000);
+    const delay = reconnectDelayWithJitter(baseDelay, this.reconnectAttempts);
     this.reconnectAttempts += 1;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
@@ -374,12 +397,27 @@ export class RelayWs {
   private startKeepalive(): void {
     this.stopKeepalive();
     const intervalMs = this.opts.keepaliveIntervalMs ?? 35_000;
-    this.keepaliveTimer = setInterval(() => this.sendKeepalive(), intervalMs);
+    // Phase-shift each socket's keepalive by up to one interval. Sockets that
+    // came back together after one relay event otherwise keep their pings in
+    // lockstep for as long as they live, which is the same herd the reconnect
+    // jitter above breaks up — just spread over the whole session instead of
+    // one moment.
+    this.keepaliveTimer = setTimeout(() => {
+      this.sendKeepalive();
+      this.keepaliveTimer = setInterval(() => this.sendKeepalive(), intervalMs);
+      this.keepaliveTimer.unref?.();
+    }, Math.round(intervalMs * (0.5 + Math.random() * 0.5)));
     this.keepaliveTimer.unref?.();
   }
 
   private stopKeepalive(): void {
-    if (this.keepaliveTimer) clearInterval(this.keepaliveTimer);
+    // The handle is a one-shot phase-shift timer until the first ping, an
+    // interval afterwards. Both id spaces are the same, but say so explicitly
+    // rather than rely on it.
+    if (this.keepaliveTimer) {
+      clearTimeout(this.keepaliveTimer);
+      clearInterval(this.keepaliveTimer);
+    }
     this.keepaliveTimer = null;
   }
 

@@ -14,6 +14,7 @@ import { publishEvent } from '@beeline/gate';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import {
   AGENT_PRESENCE_HEARTBEAT_MS,
+  agentPresenceKey,
   KIND_AGENT_DRAFT,
   KIND_AGENT_PRESENCE,
   TAG_AGENT_DRAFT,
@@ -1299,7 +1300,7 @@ export async function postAgentPresence(
       created_at: createdAt,
       kind: KIND_AGENT_PRESENCE,
       tags: [
-        ['d', `agent-presence:${channelId}`],
+        ['d', agentPresenceKey(channelId)],
         ['h', channelId],
         ['t', TAG_AGENT_PRESENCE],
         ['agent', owner.publicKey],

@@ -1,5 +1,5 @@
-import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
 import type { RoomContextEntry } from '@/buzz/corner-context';
@@ -22,6 +22,16 @@ import type { RoomContextEntry } from '@/buzz/corner-context';
  * not a second transcript — and the block carries no box, per DESIGN.md: a box
  * is for something the reader must act on.
  *
+ * **Collapsed by default, and that is the point.** A freshly opened corner has
+ * almost no transcript of its own, so ten quoted Room lines were the entire
+ * first screen — the reader arrived at their new corner and met an undigested
+ * dump of what they had just finished saying, with the corner's actual
+ * objective nowhere in sight. Reported as "at corner open there is no goal
+ * summary, just a literal dump of the last room turns, indecipherable". The
+ * block now opens as one ghost line in the same `⋯ … · tap to expand`
+ * vocabulary the transcript already uses for tool output, so the objective pin
+ * leads and the context is there for whoever wants it.
+ *
  * Rendered through the FlatList's `ListFooterComponent`, which on an inverted
  * list is the visual *top* (see the transcript-list note in AGENTS.md).
  */
@@ -35,19 +45,44 @@ export const RoomContextPreamble = React.memo(function RoomContextPreamble({
   speakerLabel?: (pubkey: string | undefined, isAgent: boolean) => string | undefined;
   testID?: string;
 }) {
+  const [expanded, setExpanded] = useState(false);
   if (!entries.length) return null;
+  const count = entries.length;
   return (
     <View style={styles.preamble} testID={testID}>
-      <Text style={styles.eyebrow}>FROM THE ROOM</Text>
-      {entries.map((entry) => {
-        const label = speakerLabel?.(entry.pubkey, entry.isAgent);
-        return (
-          <Text key={entry.id} numberOfLines={3} style={styles.line} testID={`${testID}-entry`}>
-            {label ? `${label}  ` : ''}
-            {entry.text}
-          </Text>
-        );
-      })}
+      <Pressable
+        accessibilityLabel={
+          expanded
+            ? 'Collapse the Room discussion this corner came from'
+            : `${count} earlier ${count === 1 ? 'message' : 'messages'} from the Room. Expand`
+        }
+        accessibilityRole="button"
+        onPress={() => setExpanded((open) => !open)}
+        style={styles.disclosureRow}
+        testID={`${testID}-disclosure`}
+      >
+        {/* Two Texts, one line, exactly as `LedgerGhostLine` does it: a single
+            truncating Text eats the affordance copy first, and the affordance
+            is the whole reason the collapsed line exists. */}
+        <Text numberOfLines={1} style={styles.disclosure} testID={`${testID}-summary`}>
+          ⋯ {count} earlier {count === 1 ? 'message' : 'messages'} from the Room
+        </Text>
+        <Text style={styles.disclosureAffordance} testID={`${testID}-affordance`}>
+          {' '}
+          · tap to {expanded ? 'collapse' : 'expand'}
+        </Text>
+      </Pressable>
+      {expanded
+        ? entries.map((entry) => {
+            const label = speakerLabel?.(entry.pubkey, entry.isAgent);
+            return (
+              <Text key={entry.id} numberOfLines={3} style={styles.line} testID={`${testID}-entry`}>
+                {label ? `${label}  ` : ''}
+                {entry.text}
+              </Text>
+            );
+          })
+        : null}
     </View>
   );
 });
@@ -59,12 +94,24 @@ const styles = StyleSheet.create({
     paddingBottom: 22,
     gap: 10,
   },
-  eyebrow: {
+  disclosureRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  disclosure: {
     ...Typography.mono(),
+    flexShrink: 1,
+    minWidth: 0,
     color: groknight.ledgerGhost,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 1.4,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  disclosureAffordance: {
+    ...Typography.mono(),
+    flexShrink: 0,
+    color: groknight.ledgerGhost,
+    fontSize: 11,
+    lineHeight: 16,
   },
   line: {
     ...Typography.ledger(),

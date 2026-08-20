@@ -41,7 +41,6 @@ import {
   conciseCornerTurnSummary,
   conciseLandSummary,
   isMovedTargetLandFailure,
-  MAX_CORNER_REALIGN_ATTEMPTS,
   cornerArchiveSummary,
   CORNER_CLOSE_TAG,
   CORNER_TURN_SUMMARY_INSTRUCTION,
@@ -65,7 +64,6 @@ import {
   isAcpPromptStallError,
   ROOM_AGENT_PROMPT_TIMEOUT_MS,
   ROOM_AGENT_STALL_NOTICE_MS,
-  ROOM_AGENT_STALL_MAX_ATTEMPTS,
   ROOM_POLL_FAILURE_BACKOFF_CAP_MS,
   RoomPollBackoff,
   codegraphMcpServer,
@@ -1517,7 +1515,12 @@ describe('Room poll resilience', () => {
         lifecycle: { activate: vi.fn().mockResolvedValue('hung-session'), suspend },
       } as never;
 
-      const prompt = Reflect.get(body, 'promptAgent').call(body, session, 'hello');
+      const prompt = Reflect.get(body, 'promptAgent').call(body, session, 'hello', {
+        channelId: 'hung-room',
+        requestId: 'hung-request',
+        originalRequestId: 'hung-request',
+        cause: 'room-message',
+      });
       const rejection = expect(prompt).rejects.toThrow(
         `ACP session/prompt timed out after ${ROOM_AGENT_PROMPT_TIMEOUT_MS}ms`,
       );
@@ -1530,7 +1533,7 @@ describe('Room poll resilience', () => {
         'hung-session',
         'hello',
         ROOM_AGENT_PROMPT_TIMEOUT_MS,
-        undefined,
+        expect.any(Function),
         expect.any(Function),
       );
       expect(sessionCancel).toHaveBeenCalledWith('hung-session');
@@ -1540,6 +1543,52 @@ describe('Room poll resilience', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('does not report a scheduler/session activation failure as a model call', async () => {
+    const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: '/tmp/buzzy-activation-spend',
+        relayBaseUrl: 'http://relay.test',
+        relayHost: 'relay.test',
+        relayScheme: 'http',
+        relayWsUrl: 'ws://relay.test',
+        autoApprovePermissions: true,
+      },
+      newIdentity('activation-spend-operator'),
+      newIdentity('activation-spend-agent'),
+      undefined,
+      { scheduler },
+    );
+    const sessionPrompt = vi.fn();
+    const session = {
+      channelId: 'activation-room',
+      sessionId: 'not-started',
+      mode: 'readonly',
+      client: { sessionPrompt, sessionCancel: vi.fn() },
+      lifecycle: {
+        activate: vi.fn().mockRejectedValue(new Error('adapter could not start')),
+        suspend: vi.fn().mockResolvedValue(undefined),
+      },
+    } as never;
+    const record = vi.spyOn(Reflect.get(body, 'durableState'), 'recordModelTurn');
+
+    await expect(
+      Reflect.get(body, 'promptAgent').call(body, session, 'hello', {
+        channelId: 'activation-room',
+        requestId: 'human-request',
+        originalRequestId: 'human-request',
+        cause: 'room-message',
+      }),
+    ).rejects.toThrow('adapter could not start');
+
+    expect(sessionPrompt).not.toHaveBeenCalled();
+    expect(record).not.toHaveBeenCalled();
+    await scheduler.dispose();
   });
 
   it('surfaces an honest stall notice well before the full idle-cancel window on a fully wedged backend', async () => {
@@ -1598,6 +1647,8 @@ describe('Room poll resilience', () => {
       const prompt = Reflect.get(body, 'promptAgent').call(body, session, 'hello', {
         channelId: 'stall-room',
         requestId: 'stall-request',
+        originalRequestId: 'stall-request',
+        cause: 'room-message',
       });
       const rejection = expect(prompt).rejects.toThrow('timed out after');
 
@@ -1691,6 +1742,8 @@ describe('Room poll resilience', () => {
       const prompt = Reflect.get(body, 'promptAgent').call(body, session, 'hello', {
         channelId: 'active-room',
         requestId: 'active-request',
+        originalRequestId: 'active-request',
+        cause: 'room-message',
       });
       await vi.advanceTimersByTimeAsync(15_000 * 5 + 5);
       const result = (await prompt) as { agentText: string };
@@ -1779,6 +1832,8 @@ describe('Room poll resilience', () => {
       const prompt = Reflect.get(body, 'promptAgent').call(body, session, 'hello', {
         channelId: 'the-corner',
         requestId: 'room-open-corner-event',
+        originalRequestId: 'room-open-corner-event',
+        cause: 'corner-opening',
       });
       const rejection = expect(prompt).rejects.toThrow('timed out after');
 
@@ -2263,10 +2318,11 @@ describe('Room conversation and permission-gated work intent', () => {
           createdAt: event.created_at + 2,
         },
       ),
-    ).rejects.toThrow('prompt cancelled');
+    ).resolves.toBe(false);
     expect(
-      published.slice(-2).map((item) => item.tags.find((tag) => tag[0] === 'status')?.[1]),
-    ).toEqual(['working', 'failed']);
+      published.slice(-3).map((item) => item.tags.find((tag) => tag[0] === 'status')?.[1]),
+    ).toEqual(['working', 'failed', undefined]);
+    expect(published.at(-1)?.content).toContain("won't retry it without another message");
   });
 
   it('recycles the read-only ACP generation after a handled edit permission', async () => {
@@ -2402,6 +2458,11 @@ describe('Room conversation and permission-gated work intent', () => {
       info,
       request.content,
       cornerOpenTaskPrompt([], request.content, request.eventId),
+      {
+        cause: 'corner-opening',
+        originalRequestId: request.eventId,
+        requestId: request.eventId,
+      },
     );
     expect(prompt).not.toHaveBeenCalled();
   });
@@ -2541,7 +2602,7 @@ describe('Room conversation and permission-gated work intent', () => {
     await rm('/tmp/buzzy-corner-dedup-unit', { recursive: true, force: true });
   });
 
-  it("bounds a stalled backend's blind retry loop and fails cleanly instead of retrying forever", async () => {
+  it("never retries a stalled backend without a new user message", async () => {
     const body = new Body({
       agentBinary: '/nonexistent',
       mcpBinary: '/nonexistent',
@@ -2582,23 +2643,8 @@ describe('Room conversation and permission-gated work intent', () => {
       Reflect.get(body, 'processChannelRequestEvents') as (...args: unknown[]) => Promise<number>
     ).bind(body);
 
-    // Every attempt short of the cap still throws (so it stays pending and
-    // is retried on the next poll), exactly like the pre-existing behavior.
-    for (let attempt = 1; attempt < ROOM_AGENT_STALL_MAX_ATTEMPTS; attempt++) {
-      await expect(
-        processChannelRequestEvents(
-          'parent-channel',
-          { repo: 'repo' },
-          'repository',
-          [event],
-          roomParticipants,
-        ),
-      ).rejects.toThrow('timed out after');
-    }
-    expect(sessionPromptSpy).toHaveBeenCalledTimes(ROOM_AGENT_STALL_MAX_ATTEMPTS - 1);
-
-    // The attempt that hits the cap resolves cleanly instead of throwing,
-    // and publishes an honest terminal failure instead of retrying again.
+    // The one user-authored event gets one model attempt. A timeout is
+    // terminal for that event: maintenance may report it, but never re-prompt.
     await expect(
       processChannelRequestEvents(
         'parent-channel',
@@ -2608,11 +2654,9 @@ describe('Room conversation and permission-gated work intent', () => {
         roomParticipants,
       ),
     ).resolves.toBe(0);
-    expect(sessionPromptSpy).toHaveBeenCalledTimes(ROOM_AGENT_STALL_MAX_ATTEMPTS);
+    expect(sessionPromptSpy).toHaveBeenCalledTimes(1);
     expect(
-      published.some((item) =>
-        item.content.includes("couldn't get a response from my coding backend"),
-      ),
+      published.some((item) => item.content.includes("won't retry it without another message")),
     ).toBe(true);
 
     // A later poll must not re-drive the backend a further time — the event
@@ -2703,6 +2747,11 @@ describe('Room conversation and permission-gated work intent', () => {
       info,
       request.content,
       expect.stringContaining('Recent Room transcript (oldest to newest):'),
+      {
+        cause: 'corner-opening',
+        originalRequestId: request.eventId,
+        requestId: request.eventId,
+      },
     );
     expect(start.mock.calls[0]![2]).toContain(request.content);
     expect(turn.transitionedToCorner).toBe(true);
@@ -4164,6 +4213,8 @@ describe('corner narrative persistence', () => {
     await Reflect.get(body, 'promptAgent').call(body, session, 'do the work', {
       channelId: 'corner-1',
       requestId: 'req-1',
+      originalRequestId: 'req-1',
+      cause: 'corner-follow-up',
     });
 
     expect(agentMessages(published)).toHaveLength(0);
@@ -4186,6 +4237,8 @@ describe('corner narrative persistence', () => {
     await Reflect.get(body, 'promptAgent').call(body, session, 'do the work', {
       channelId: 'corner-1',
       requestId: 'req-1',
+      originalRequestId: 'req-1',
+      cause: 'corner-follow-up',
       narrate: true,
     });
 
@@ -5601,6 +5654,111 @@ describe('closing a corner with no live session', () => {
     return published;
   }
 
+  it('resumes one commissioned corner once per daemon process and attributes it to the original request', async () => {
+    const agent = newIdentity('restart-continuation-agent');
+    const captain = newIdentity('restart-continuation-captain');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-restart-continuation-'));
+    const source = join(workspaceRoot, 'source');
+    const cornerPath = join(workspaceRoot, '.worktrees', 'corner-resume');
+    const gitRun = (cwd: string, args: string[]) => {
+      const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+      if (result.status !== 0) throw new Error(String(result.stderr));
+    };
+    try {
+      mkdirSync(source, { recursive: true });
+      gitRun(source, ['init', '-q', '-b', 'main']);
+      gitRun(source, ['config', 'user.name', 'Restart Test']);
+      gitRun(source, ['config', 'user.email', 'restart@test.invalid']);
+      writeFileSync(join(source, 'README.md'), 'commissioned\n');
+      gitRun(source, ['add', 'README.md']);
+      gitRun(source, ['commit', '-q', '-m', 'seed']);
+      gitRun(source, ['worktree', 'add', '-q', '-b', 'feature/resume', cornerPath, 'main']);
+
+      const request = signEvent(
+        {
+          pubkey: captain.publicKey,
+          created_at: 1,
+          kind: 9,
+          tags: [['h', 'room-resume']],
+          content: 'Finish the commissioned change.',
+        },
+        captain.secretKey,
+      );
+      const control = signEvent(
+        {
+          pubkey: agent.publicKey,
+          created_at: 2,
+          kind: 9,
+          tags: [
+            ['h', 'corner-resume'],
+            ['feature', 'feature/resume'],
+            ['parent', 'room-resume'],
+            ['request', request.id],
+          ],
+          content: 'corner opened',
+        },
+        agent.secretKey,
+      );
+      const create = cornerCreateEvent(agent, 'corner-resume', 'room-resume');
+      stubRelayHttp([create]);
+      mocks.createBuzzClient.mockReturnValue({
+        listSubchannels: async () => ['corner-resume'],
+        getChannelMetadata: async () => ({ archived: false }),
+        disconnect: () => undefined,
+      } as never);
+
+      const prepareBody = () => {
+        const body = newBody(agent, workspaceRoot);
+        vi.spyOn(body as never, 'channelCommunityId' as never).mockResolvedValue(undefined as never);
+        Reflect.set(body, 'agentRelay', {
+          queryEvents: vi.fn(async (filters: Array<Record<string, unknown>>) => {
+            const filter = filters[0] ?? {};
+            if ((filter.kinds as number[] | undefined)?.includes(9007)) return [create];
+            if ((filter['#h'] as string[] | undefined)?.includes('room-resume')) return [request];
+            return [control];
+          }),
+        });
+        vi.spyOn(body as never, 'createManagedSession' as never).mockResolvedValue({
+          channelId: 'corner-resume',
+          sessionId: 'restored-session',
+          client: {},
+          mode: 'edit',
+          parentChannelId: 'room-resume',
+          worktreePath: cornerPath,
+          featureBranch: 'feature/resume',
+        } as never);
+        const start = vi
+          .spyOn(body as never, 'startAgentTask' as never)
+          .mockImplementation(() => undefined as never);
+        return { body, start };
+      };
+
+      const first = prepareBody();
+      await Reflect.get(first.body, 'restoreSubchannels').call(first.body, 'room-resume', {
+        repo: 'proj',
+        targetBranch: 'refs/heads/main',
+      });
+      expect(first.start).toHaveBeenCalledOnce();
+      expect(first.start.mock.calls[0]![3]).toEqual({
+        requestId: request.id,
+        originalRequestId: request.id,
+        cause: 'restart-continuation',
+      });
+      expect(first.start.mock.calls[0]![2]).toContain('Continue from the existing worktree');
+
+      // A Room watchdog may construct another Body without restarting the
+      // daemon. The process-wide cap still forbids a second continuation.
+      const recycled = prepareBody();
+      await Reflect.get(recycled.body, 'restoreSubchannels').call(recycled.body, 'room-resume', {
+        repo: 'proj',
+        targetBranch: 'refs/heads/main',
+      });
+      expect(recycled.start).not.toHaveBeenCalled();
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   it('records a corner whose worktree is gone as abandoned, instead of leaving it in no map at all', async () => {
     const agent = newIdentity('restore-gap-agent');
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-restore-gap-'));
@@ -6317,12 +6475,16 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
       const running = Reflect.get(body, 'promptAgent').call(body, session, 'first', {
         channelId: 'fifo-room',
         requestId: 'req-1',
+        originalRequestId: 'req-1',
+        cause: 'room-message',
         replyToId: 'req-1',
       });
       // Issued while `running` still holds the session: this one only waits.
       const queued = Reflect.get(body, 'promptAgent').call(body, session, 'second', {
         channelId: 'fifo-room',
         requestId: 'req-2',
+        originalRequestId: 'req-2',
+        cause: 'room-message',
         replyToId: 'req-2',
       });
 
@@ -6386,6 +6548,8 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
       const prompt = Reflect.get(body, 'promptAgent').call(body, session, 'hello', {
         channelId: 'fresh-room',
         requestId: 'fresh-request',
+        originalRequestId: 'fresh-request',
+        cause: 'room-message',
       });
       const rejection = expect(prompt).rejects.toThrow('timed out after');
 
@@ -7078,9 +7242,6 @@ describe('moved-target land refusals are classified, and recaps stay readable', 
     expect(summary).toContain(`Landed at ${'a'.repeat(7)}.`);
   });
 
-  it('allows exactly two automatic realigns per corner', () => {
-    expect(MAX_CORNER_REALIGN_ATTEMPTS).toBe(2);
-  });
 });
 
 describe('the Room target branch changes by admin confirm, never by the agent', () => {

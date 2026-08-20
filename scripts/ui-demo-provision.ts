@@ -139,8 +139,7 @@ async function main() {
   await createAgent(agentContext, communityId, { displayName: 'Ada' });
   await setAgentSoul(channelContext, communityId, agent.publicKey, {
     name: 'Ada',
-    personality: 'Keeps the suite green and cuts dead code without ceremony.',
-    intent: 'Keep the test suite green and refactor mercilessly.',
+    soul: 'Keeps the suite green and cuts dead code without ceremony. Keep the test suite green and refactor mercilessly.',
     avatarSeed: 'ada-soul',
   });
   const parentChannelId = await buzzCreateChannel(channelContext, repo, {

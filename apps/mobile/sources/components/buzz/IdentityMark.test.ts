@@ -216,7 +216,7 @@ describe('one mark, everywhere', () => {
     expect(drawsAMark.length).toBeGreaterThanOrEqual(7);
   });
 
-  it('ignores a relay photo, so the deterministic mark can never be overridden', () => {
+  it('renders a persisted relay photo and keeps the generated mark as the fallback', () => {
     const renderer = render(
       React.createElement(IdentityMark, {
         seed: HUMAN,
@@ -225,9 +225,9 @@ describe('one mark, everywhere', () => {
         name: 'Joy',
       }),
     );
-    expect(renderer.root.findAllByType('Image')).toHaveLength(0);
-    expect(renderer.root.findAllByType('Circle').length).toBeGreaterThan(0);
-    expect(groknight.photoIdentityMarksEnabled).toBe(false);
+    expect(renderer.root.findAllByType('Image')).toHaveLength(1);
+    expect(renderer.root.findAllByType('Circle')).toHaveLength(0);
+    expect(groknight.photoIdentityMarksEnabled).toBe(true);
   });
 
   it('does not re-render when its own props are unchanged', () => {

@@ -67,7 +67,7 @@ describe('NotificationMetadataResolver', () => {
           ['t', 'buzz-agent-soul'],
           ['community', COMMUNITY_ID],
         ],
-        content: JSON.stringify({ name: 'Ada', personality: 'direct', avatarSeed: 'ada' }),
+        content: JSON.stringify({ name: 'Ada', soul: 'direct', avatarSeed: 'ada' }),
       },
       human.secretKey,
     );

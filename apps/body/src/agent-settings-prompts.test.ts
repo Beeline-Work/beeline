@@ -5,6 +5,7 @@ import { resolveAccessSettings } from './agent-settings-prompts.js';
 afterEach(() => {
   vi.restoreAllMocks();
   vi.doUnmock('@clack/prompts');
+  vi.doUnmock('./model-catalog.js');
   vi.resetModules();
 });
 
@@ -166,5 +167,113 @@ describe('pickAccessPolicy / pickAutoResponse — real clack wiring', () => {
     const result = await pickAutoResponse();
 
     expect(result).toBe('a bespoke refusal line');
+  });
+});
+
+describe('pickModelAndEffort — per-harness catalog pickers', () => {
+  const agent = { kind: 'codex' as const, command: 'codex-acp', args: [] };
+  const catalog = {
+    catalog: [
+      {
+        id: 'model',
+        category: 'model',
+        currentValue: 'gpt-5.6-sol',
+        options: [
+          { id: 'gpt-5.6-sol', name: 'GPT-5.6-Sol' },
+          { id: 'gpt-5.6-terra', name: 'GPT-5.6-Terra' },
+        ],
+      },
+      {
+        id: 'reasoning_effort',
+        category: 'thought_level',
+        currentValue: 'high',
+        options: [
+          { id: 'low', name: 'Low' },
+          { id: 'high', name: 'High' },
+        ],
+      },
+    ],
+    raw: [],
+  };
+
+  function mockCatalogAndClack(select: ReturnType<typeof vi.fn>) {
+    vi.doMock('./model-catalog.js', () => ({
+      fetchAgentModelCatalog: vi.fn(async () => catalog),
+    }));
+    vi.doMock('@clack/prompts', () => ({
+      select,
+      text: vi.fn(),
+      spinner: () => ({ start: vi.fn(), stop: vi.fn() }),
+      log: { warn: vi.fn() },
+      isCancel: () => false,
+      cancel: vi.fn(),
+    }));
+  }
+
+  it('offers a model picker then an effort picker from that harness catalog', async () => {
+    const select = vi
+      .fn()
+      .mockResolvedValueOnce('gpt-5.6-terra')
+      .mockResolvedValueOnce('low');
+    mockCatalogAndClack(select);
+
+    const { pickModelAndEffort } = await import('./agent-settings-prompts.js');
+    const result = await pickModelAndEffort(agent, {});
+
+    expect(select).toHaveBeenCalledTimes(2);
+    expect(select.mock.calls[0]![0]).toEqual(
+      expect.objectContaining({
+        message: 'Model for this codex agent?',
+        initialValue: 'gpt-5.6-sol',
+        options: [
+          { value: 'gpt-5.6-sol', label: 'GPT-5.6-Sol' },
+          { value: 'gpt-5.6-terra', label: 'GPT-5.6-Terra' },
+        ],
+      }),
+    );
+    expect(select.mock.calls[1]![0]).toEqual(
+      expect.objectContaining({
+        message: 'Effort/thinking level for this codex agent?',
+        initialValue: 'high',
+        options: [
+          { value: 'low', label: 'Low' },
+          { value: 'high', label: 'High' },
+        ],
+      }),
+    );
+    expect(result).toEqual({ model: 'gpt-5.6-terra', effort: 'low' });
+  });
+
+  it('skips only the axis whose flag was already given', async () => {
+    const select = vi.fn().mockResolvedValue('low');
+    mockCatalogAndClack(select);
+
+    const { pickModelAndEffort } = await import('./agent-settings-prompts.js');
+    const result = await pickModelAndEffort(agent, {}, { model: 'gpt-5.6-sol' });
+
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(select.mock.calls[0]![0].message).toContain('Effort/thinking');
+    expect(result).toEqual({ model: 'gpt-5.6-sol', effort: 'low' });
+  });
+
+  it('does not fetch or prompt when both flags were given', async () => {
+    const fetchAgentModelCatalog = vi.fn();
+    const select = vi.fn();
+    vi.doMock('./model-catalog.js', () => ({ fetchAgentModelCatalog }));
+    vi.doMock('@clack/prompts', () => ({
+      select,
+      text: vi.fn(),
+      spinner: () => ({ start: vi.fn(), stop: vi.fn() }),
+      log: { warn: vi.fn() },
+      isCancel: () => false,
+      cancel: vi.fn(),
+    }));
+
+    const { pickModelAndEffort } = await import('./agent-settings-prompts.js');
+    const result = await pickModelAndEffort(agent, {}, { model: 'gpt-5.6-sol', effort: 'high' });
+
+    expect(fetchAgentModelCatalog).not.toHaveBeenCalled();
+    expect(select).not.toHaveBeenCalled();
+    expect(result).toEqual({ model: 'gpt-5.6-sol', effort: 'high' });
   });
 });

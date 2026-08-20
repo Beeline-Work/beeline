@@ -453,17 +453,26 @@ async function pairOneAgent(input: {
     ...(input.llmEnvFile ? { llmEnvFile: input.llmEnvFile } : {}),
     agent: selectedAgent,
   });
-  let modelSelection = input.modelSelection;
-  if (modelSelection) {
+  const flagSelection = input.modelSelection;
+  let modelSelection = flagSelection;
+  // Each flag skips only its own prompt. `--model` alone must still offer the
+  // effort picker (and the reverse); both flags skip the pickers entirely.
+  const bothFlags = Boolean(flagSelection?.model && flagSelection?.effort);
+  if (input.interactiveUi && !bothFlags) {
+    const picked = await pickModelAndEffort(
+      selectedAgent,
+      localConfig.agentEnv,
+      flagSelection ?? {},
+    );
+    if (picked.model || picked.effort) modelSelection = picked;
+  }
+  if (flagSelection?.model || flagSelection?.effort) {
     await withSpinner(
       Boolean(input.interactiveUi),
       `Checking ${selectedAgent.kind}'s advertised models…`,
       'Model/effort selection checked.',
-      () => validateModelSelection(selectedAgent, localConfig.agentEnv, modelSelection!),
+      () => validateModelSelection(selectedAgent, localConfig.agentEnv, flagSelection),
     );
-  } else if (input.interactiveUi) {
-    const picked = await pickModelAndEffort(selectedAgent, localConfig.agentEnv);
-    if (picked.model || picked.effort) modelSelection = picked;
   }
   const { access, autoResponse } = await resolveAccessSettings({
     ...(input.access !== undefined ? { access: input.access } : {}),

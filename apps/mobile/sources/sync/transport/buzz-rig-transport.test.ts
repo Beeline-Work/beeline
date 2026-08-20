@@ -425,6 +425,17 @@ describe('Room-scoped agent presence transport', () => {
     expect(events).toEqual([expect.objectContaining({ type: 'raw', sessionId: 'room-2' })]);
   });
 
+  it('never writes an `#h` filter on the Workspace presence read', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const source = readFileSync(fileURLToPath(new URL('./buzz-rig-transport.ts', import.meta.url)), 'utf8');
+    const start = source.indexOf('async agentPresenceBackfillForWorkspace');
+    const end = source.indexOf('async agentPresenceSubscribeReady');
+    const fn = source.slice(start, end);
+    expect(fn).toContain("'#d'");
+    expect(fn).not.toContain("'#h'");
+  });
+
   it('reads no presence for a Workspace with no Rooms, without querying the relay', async () => {
     const client = {
       communityChannels: vi.fn(async () => []),

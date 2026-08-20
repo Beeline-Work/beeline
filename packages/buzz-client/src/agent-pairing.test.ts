@@ -3,6 +3,7 @@ import { signEvent, type NostrEvent } from '@beeline/nostr';
 import {
   createAgentPairingCode,
   listAgents,
+  parseAgentSoul,
   redeemAgentPairingCode,
   setAgentSoul,
 } from './agent.js';
@@ -186,8 +187,7 @@ describe('agent pairing and soul overlays', () => {
 
     const profile = await setAgentSoul(ctx(), communityId, agentIdentity.publicKey, {
       name: 'Ada',
-      personality: 'Keeps the suite green and refactors mercilessly.',
-      intent: 'Keep the test suite green and refactor mercilessly.',
+      soul: 'Keeps the suite green and refactors mercilessly. Keep the test suite green and refactor mercilessly.',
       avatarSeed: agentIdentity.publicKey,
       avatar: 'https://relay.test/media/ada.jpg',
     });
@@ -245,22 +245,49 @@ describe('agent pairing and soul overlays', () => {
         pubkey: agentIdentity.publicKey,
         displayName: 'Ada',
         avatar: 'https://relay.test/media/ada.jpg',
-        personality: 'Keeps the suite green and refactors mercilessly.',
+        personality: 'Keeps the suite green and refactors mercilessly. Keep the test suite green and refactor mercilessly.',
         soulProfile: {
           authoredBy: owner.publicKey,
-          intent: 'Keep the test suite green and refactor mercilessly.',
+          soul: 'Keeps the suite green and refactors mercilessly. Keep the test suite green and refactor mercilessly.',
         },
       },
     ]);
 
     const pictureOnlyProfile = await setAgentSoul(ctx(), communityId, agentIdentity.publicKey, {
       name: 'Ada',
-      personality: 'Keeps the suite green and refactors mercilessly.',
-      intent: '',
+      soul: 'Keeps the suite green and refactors mercilessly.',
       avatarSeed: agentIdentity.publicKey,
       avatar: 'https://relay.test/media/ada-updated.jpg',
     });
-    expect(pictureOnlyProfile.intent).toBeUndefined();
+    expect(pictureOnlyProfile.soul).toBe('Keeps the suite green and refactors mercilessly.');
     expect(pictureOnlyProfile.avatar).toBe('https://relay.test/media/ada-updated.jpg');
+  });
+
+  it('migrates legacy personality and intent into one soul without losing either text', () => {
+    const legacy = signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: 1_700_000_000,
+        kind: KIND_AGENT_SOUL,
+        tags: [
+          ['d', `${communityId}:${agentIdentity.publicKey}`],
+          ['h', communityId],
+          ['p', agentIdentity.publicKey],
+          ['t', TAG_AGENT_SOUL],
+          [TAG_COMMUNITY, communityId],
+        ],
+        content: JSON.stringify({
+          name: 'Ada',
+          personality: 'Keep code concise.',
+          intent: 'Protect the test suite.',
+          avatarSeed: agentIdentity.publicKey,
+        }),
+      },
+      owner.secretKey,
+    );
+
+    expect(parseAgentSoul(legacy)).toMatchObject({
+      soul: 'Personality: Keep code concise.\n\nIntent: Protect the test suite.',
+    });
   });
 });

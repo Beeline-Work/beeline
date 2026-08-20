@@ -171,6 +171,19 @@ describe('agent model/effort selection', () => {
     ).resolves.toMatchObject({ model: 'sonnet', authoredBy: owner.publicKey });
   });
 
+  it('preserves the selected model when a later effort picker write updates only effort', async () => {
+    const published: NostrEvent[] = [];
+    stubRelay(published);
+
+    await setAgentModelConfig(ctx(owner), communityId, agentIdentity.publicKey, { model: 'sonnet' });
+    await setAgentModelConfig(ctx(owner), communityId, agentIdentity.publicKey, { effort: 'high' });
+
+    await expect(
+      getAgentModelConfig(ctx(owner), communityId, agentIdentity.publicKey),
+    ).resolves.toMatchObject({ model: 'sonnet', effort: 'high' });
+    expect(JSON.parse(published.at(-1)?.content ?? '{}')).toEqual({ model: 'sonnet', effort: 'high' });
+  });
+
   it('publishes and reads back the agent-self-authored catalog, dropping any non-allow-listed axis', async () => {
     const published: NostrEvent[] = [];
     stubRelay(published);

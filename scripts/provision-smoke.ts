@@ -48,8 +48,7 @@ async function main() {
   await agentClient.createAgent(workspaceId, { displayName: 'Beebee' });
   await client.setAgentSoul(workspaceId, agentIdentity.publicKey, {
     name: 'Beebee',
-    personality: 'Relay fixture',
-    intent: 'Verify mobile message delivery.',
+    soul: 'Relay fixture. Verify mobile message delivery.',
     avatarSeed: 'smoke-beebee',
   });
   await client.addMember(channelId, agentIdentity.publicKey, 'member');
@@ -79,8 +78,7 @@ async function main() {
   await offlineAgentClient.createAgent(workspaceId, { displayName: 'Milo' });
   await client.setAgentSoul(workspaceId, offlineAgentIdentity.publicKey, {
     name: 'Milo',
-    personality: 'Offline relay fixture',
-    intent: 'Verify offline presence rendering.',
+    soul: 'Offline relay fixture. Verify offline presence rendering.',
     avatarSeed: 'smoke-milo',
   });
   await client.addMember(channelId, offlineAgentIdentity.publicKey, 'member');

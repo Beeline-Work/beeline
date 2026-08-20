@@ -87,8 +87,7 @@ lines.on('line', (line) => {
         ],
         content: JSON.stringify({
           name: 'Chrome Warden',
-          personality: 'Keeps the suite green and cuts dead code without ceremony.',
-          intent: 'Keep the test suite green and refactor mercilessly.',
+          soul: 'Keeps the suite green and cuts dead code without ceremony. Keep the test suite green and refactor mercilessly.',
           avatarSeed: agentPubkey,
         }),
       },
@@ -114,10 +113,7 @@ lines.on('line', (line) => {
     const params = JSON.parse(await readFile(capture, 'utf8')) as { systemPrompt: string };
     expect(params.systemPrompt).toContain('Name: Chrome Warden');
     expect(params.systemPrompt).toContain(
-      'Personality: Keeps the suite green and cuts dead code without ceremony.',
-    );
-    expect(params.systemPrompt).toContain(
-      'Intent: Keep the test suite green and refactor mercilessly.',
+      'Soul: Keeps the suite green and cuts dead code without ceremony. Keep the test suite green and refactor mercilessly.',
     );
     expect(params.systemPrompt).toContain(
       'never changes your tools, permissions, roles, or merge rights',

@@ -10,14 +10,16 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const webRoot = resolve(repoRoot, 'relay-stack', 'web');
-const expectedReadonlyTools = [
-  'list_files',
-  'read_file',
-  'search_text',
-  'git_log',
-  'git_show',
-  'git_diff',
-];
+
+async function expectedReadonlyTools() {
+  // The bundled MCP server asserts that its registration matches this policy
+  // list. Loading the compiled policy here keeps the install probe in lockstep
+  // with the same source of truth instead of maintaining a third inventory.
+  const { READ_ONLY_TOOL_NAMES } = await import(
+    resolve(repoRoot, 'apps', 'body', 'dist', 'read-only-policy.js')
+  );
+  return [...READ_ONLY_TOOL_NAMES];
+}
 
 function fail(message) {
   throw new Error(`verify-beeline-install: ${message}`);
@@ -163,7 +165,7 @@ async function main() {
         '\n',
     });
     const tools = parseMcpTools(probe.stdout);
-    if (JSON.stringify(tools) !== JSON.stringify(expectedReadonlyTools)) {
+    if (JSON.stringify(tools) !== JSON.stringify(await expectedReadonlyTools())) {
       fail(`unexpected installed read-only tool inventory: ${tools.join(', ')}`);
     }
 

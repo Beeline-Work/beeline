@@ -132,7 +132,7 @@ describe('Room list — Grok Mono Hull invariants', () => {
     // Room that is merely unread or merely busy can never pick it up.
     expect(source).toContain('live && styles.roomGlyphLive');
     expect(source).toContain('row.live && styles.cornerPeekCountLive');
-    expect(source).toContain('<RoomRowMark attention={row.attention} glyph={row.glyph} live={row.live} />');
+    expect(source).toContain('unread={unread}');
   });
 
   it('runs the live pulse only on a Room that is actually live', () => {
@@ -140,8 +140,8 @@ describe('Room list — Grok Mono Hull invariants', () => {
     // never uses, and the mark stays memoized so a list-level state change
     // (presence, the age tick) cannot rebuild every row's glyph.
     expect(source).toContain('const RoomRowMark = React.memo(');
-    expect(source).toContain('if (!live) return <View style={styles.rowMark}>{mark}</View>;');
-    expect(source).toContain('<HullLivePulse active style={styles.rowMark}>');
+    expect(source).toContain('if (!live) return mark;');
+    expect(source).toContain('<HullLivePulse active>');
   });
 
   it('reads on exactly three tones: name, activity line, gutter marginalia', () => {
@@ -214,6 +214,19 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(source).toContain('{corners.map((corner) => {');
     expect(source).not.toContain('roomListCorners(');
     expect(source).not.toMatch(/item\.corners(?:\s*\?\?\s*\[\])?\.length/);
+  });
+
+  it('opens a Room’s corners inline from its chevron control', () => {
+    expect(source).toContain('testID={`room-corners-toggle-${item.id}`}');
+    expect(source).toContain('accessibilityState={{ expanded }}');
+    expect(source).toContain('setExpandedRoomId((current) => (current === item.id ? null : item.id))');
+    expect(source).toContain('{expanded && (');
+    expect(source).toContain('{corners.map((corner) => {');
+  });
+
+  it('marks unread Rooms with a bright non-gold scanning rail', () => {
+    expect(styleBlock(source, 'rowMarkUnread')).toContain('groknight.ledgerBright');
+    expect(styleBlock(source, 'rowMarkUnread')).not.toContain('groknight.accent');
   });
 
   it('offers the full corner list as the way to reach excluded corners', () => {

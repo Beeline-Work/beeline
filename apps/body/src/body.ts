@@ -446,6 +446,16 @@ export class RoomPollBackoff {
     this.failures = 0;
     return wasFailing;
   }
+
+  /**
+   * A single reconnect blip (one failed attempt) should not assert the agent
+   * offline — the existing heartbeat lease (~120s) covers brief outages.
+   * Only consecutive failures beyond a brief window warrant an authoritative
+   * offline marker that clients cannot contradict.
+   */
+  shouldMarkPresenceOffline(): boolean {
+    return this.failures >= 3;
+  }
 }
 
 export interface SubchannelInfo {
@@ -4067,10 +4077,14 @@ export class Body {
     turn.permissionHandled = true;
     const permissionId = randomUUID();
     const tool = this.permissionToolLabel(permission);
+    const isExecute = tool !== 'edit files' && isMutatingPermissionRequest(permission);
+    const description = isExecute
+      ? `the operation '${tool}'`
+      : `an edit corner`;
     await postControlMessage(
       tlcChannelId,
       this.agentIdentity,
-      `${this.agentIdentity.name || 'Agent'} requests an edit corner on ${repository} — allow?`,
+      `${this.agentIdentity.name || 'Agent'} requests ${description} on ${repository} — allow?`,
       [
         ['t', WRITE_PERMISSION_REQUEST_TAG],
         ['permission', permissionId],
@@ -5505,7 +5519,9 @@ export class Body {
         if (opts.signal?.aborted || this.disposed) break;
         const delayMs = reconnectBackoff.failed(error);
         this.onRoomPollFailure?.(channelId, delayMs);
-        await presence.setStatus('offline');
+        if (reconnectBackoff.shouldMarkPresenceOffline()) {
+          await presence.setStatus('offline');
+        }
         console.error(`[body] Room WebSocket failed; reconnecting in ${delayMs}ms:`, error);
         // Fire-and-forget: this best-effort publish can itself retry for
         // seconds over HTTP (the WS reconnect it's reporting on may still be

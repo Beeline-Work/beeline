@@ -149,6 +149,18 @@ const TOOLS: ToolDefinition[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'git_status',
+    description:
+      'Read the working-tree state. Does not invoke textconv or external diff, so the security concerns that exclude git_diff for working-tree content do not apply.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Optional repository-relative path filter.' },
+      },
+      additionalProperties: false,
+    },
+  },
 ];
 
 // Nothing else ties TOOLS' names to READ_ONLY_TOOL_NAMES (the auto-allow
@@ -172,6 +184,23 @@ function configuredRoot(): string {
   const candidate = process.env.BUZZ_READONLY_ROOT?.trim() || process.cwd();
   return realpathSync(candidate);
 }
+
+/** Additional daemon-derived paths (e.g. corner worktrees) the read tools may
+ *  access. Never model-supplied. Semicolon-separated absolute paths. */
+const EXTRA_ROOTS: string[] = (
+  process.env.BUZZ_READONLY_EXTRA_ROOTS?.trim() ?? ''
+)
+  .split(';')
+  .map((p) => p.trim())
+  .filter(Boolean)
+  .map((p) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return '';
+    }
+  })
+  .filter(Boolean);
 
 const repositoryRoot = configuredRoot();
 const gitBinary = ['/usr/bin/git', '/bin/git'].find((candidate) => existsSync(candidate));
@@ -227,7 +256,12 @@ function assertRelativePath(input: string): string {
 
 function withinRepository(realPath: string): boolean {
   const rel = relative(repositoryRoot, realPath);
-  return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel));
+  if (rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))) return true;
+  // Also allow paths under any daemon-derived extra root (e.g. corner worktrees).
+  return EXTRA_ROOTS.some(
+    (extra) =>
+      realPath.startsWith(extra + sep) || realPath === extra,
+  );
 }
 
 function existingPath(input: string, expected: 'file' | 'directory' | 'either'): string {
@@ -481,6 +515,16 @@ function gitDiff(args: JsonObject): string {
   ]);
 }
 
+function gitStatus(args: JsonObject): string {
+  const path = optionalPath(args);
+  return runGit([
+    'status',
+    '--porcelain=v2',
+    '--no-ahead-behind',
+    ...(path ? ['--', path] : []),
+  ]);
+}
+
 function callTool(name: string, args: JsonObject): string {
   switch (name) {
     case 'list_files':
@@ -495,6 +539,8 @@ function callTool(name: string, args: JsonObject): string {
       return gitShow(args);
     case 'git_diff':
       return gitDiff(args);
+    case 'git_status':
+      return gitStatus(args);
     default:
       throw new Error(`tool is not available in read-only mode: ${name}`);
   }

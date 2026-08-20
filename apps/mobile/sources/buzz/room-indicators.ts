@@ -43,11 +43,11 @@ export type PinnedCornerInput = {
   /**
    * A corner a write-permission ALLOW just opened, which may still have no
    * status card and no lifecycle row of its own. Honoured only when *neither*
-   * source knows the corner yet — an ALLOW is a durable transcript event and
-   * stays readable long after the corner it opened has closed, which is
-   * exactly how an archived corner used to reach the pinned line.
+   * source knows the corner yet, AND the ALLOW event is recent — a stale ALLOW
+   * whose lifecycle cards scrolled out of the capped-recent window must not
+   * resurrect an archived corner.
    */
-  permittedCornerId?: string;
+  permittedCorner?: { cornerId: string; timestamp: number };
 };
 
 /** The most terminal status any source reports for a corner wins. A snapshot
@@ -104,12 +104,14 @@ export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | nul
   // ago and whose `starting` card is still in flight. Reporting it as `live`
   // is the honest reading, and it is only reachable once the lifecycle list
   // has answered — before that, "unknown" cannot be told from "archived".
+  // A stale ALLOW whose cards have scrolled out of the window must not
+  // resurrect an archived corner: the caller already filtered by recency.
   if (
-    input.permittedCornerId &&
+    input.permittedCorner?.cornerId &&
     input.lifecycleLoaded &&
-    !status.has(input.permittedCornerId)
+    !status.has(input.permittedCorner.cornerId)
   ) {
-    return { cornerId: input.permittedCornerId, status: 'live' };
+    return { cornerId: input.permittedCorner.cornerId, status: 'live' };
   }
 
   const candidates = [...status.entries()]

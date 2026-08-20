@@ -839,17 +839,25 @@ export default function BuzzChat() {
   // A corner that a permission ALLOW opened, before its own lifecycle card has
   // landed. The pinned live bar needs a destination from the instant the corner
   // exists, since the inline "corner open" note that used to carry that tap is
-  // gone from the transcript.
-  const permittedCornerId = useMemo(
-    () =>
-      [...messages]
-        .reverse()
-        .find(
-          (message) =>
-            message.writePermission?.status === 'allowed' && message.writePermission.subchannelId,
-        )?.writePermission?.subchannelId,
-    [messages],
-  );
+  // gone from the transcript. An ALLOW older than RECENT_ALLOW_CUTOFF_MS is
+  // stale — the corner may have been archived while the card scrolled out of
+  // the transcript window, and there is no sense pointing at a dead channel.
+  const RECENT_ALLOW_CUTOFF_MS = 15 * 60 * 1000;
+  const permittedCorner = useMemo(() => {
+    const message = [...messages]
+      .reverse()
+      .find(
+        (message) =>
+          message.writePermission?.status === 'allowed' && message.writePermission.subchannelId,
+      );
+    if (
+      message &&
+      Date.now() - message.timestamp <= RECENT_ALLOW_CUTOFF_MS
+    ) {
+      return { cornerId: message.writePermission.subchannelId!, timestamp: message.timestamp };
+    }
+    return undefined;
+  }, [messages]);
   // Every corner status card this Room's transcript carries, newest per corner
   // resolved downstream. This is corner state and only corner state — no turn
   // signal reaches it.
@@ -877,9 +885,9 @@ export default function BuzzChat() {
         signals: cornerSignals,
         lifecycle: cornerLifecycle,
         lifecycleLoaded: cornerLifecycleLoaded,
-        permittedCornerId,
+        permittedCorner,
       }),
-    [cornerLifecycle, cornerLifecycleLoaded, cornerSignals, permittedCornerId],
+    [cornerLifecycle, cornerLifecycleLoaded, cornerSignals, permittedCorner],
   );
   const pinnedCornerCard = useMemo(
     () =>
@@ -1201,6 +1209,12 @@ export default function BuzzChat() {
               setDeliveryRetry(projected.deliveryRetry);
             }
             applyAgentPresence(projected.agentPresence);
+            // A projected online presence proves the agent is alive and
+            // responding. Clear any offline-delivery notices: messages sent
+            // while the agent appeared offline no longer need that warning.
+            if (projected.agentPresence?.status === 'online') {
+              setOfflineQueuedIds(new Set());
+            }
           }
         };
         const handleLiveMessage = (event: Parameters<typeof cacheLiveSessionEvent>[2]) => {

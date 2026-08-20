@@ -646,7 +646,7 @@ describe('AcpClient failure reporting', () => {
   it('names the configured harness, not the OS sandbox wrapper, when the child dies', async () => {
     // Under `bwrap-sandbox.ts` the spawned command IS bwrap, so without an
     // explicit label every harness crash would be reported as a bwrap crash —
-    // and `classifyAgentErrorState` reads this text to tell a missing API key
+    // and the daemon's log reads this text to tell a missing API key
     // from an unavailable harness.
     const client = new AcpClient({
       agentCommand: '/bin/sh',
@@ -659,7 +659,7 @@ describe('AcpClient failure reporting', () => {
     // `start()` awaits the ACP `initialize` handshake, so a child that dies
     // instead of answering surfaces exactly here.
     await expect(client.start()).rejects.toThrow(/ACP agent pi-acp exited code=3/);
-    // The stderr tail rides along, which is what `classifyAgentErrorState` reads.
+    // The stderr tail rides along, so the log carries the real reason.
     await expect(client.start()).rejects.toThrow(/missing API key/);
   });
 

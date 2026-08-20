@@ -16,7 +16,7 @@
  */
 import { dirname, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
-import { unlink } from 'node:fs/promises';
+import { readdir, unlink } from 'node:fs/promises';
 import { stdin, stdout } from 'node:process';
 import * as clack from '@clack/prompts';
 import pc from 'picocolors';
@@ -63,6 +63,15 @@ import {
   type PairRuntimeResult,
 } from './runtime.js';
 import { detectBwrapSandbox } from './bwrap-sandbox.js';
+import { DurableBodyState } from './durable-state.js';
+import {
+  dailyAgentSpend,
+  dailyRestartReprimes,
+  formatAgentSpendReport,
+  formatReprimeReport,
+  type ModelTurnSpend,
+  type SessionReprimeRecord,
+} from './model-spend.js';
 
 function usage(exitCode = 1): void {
   console.error(`
@@ -79,6 +88,8 @@ ${pc.dim('Usage:')}
   beeline start [agent-pubkey]              Restart this repo's (or, outside a
                                             repo, this host's) durable agent
   beeline start --agent <agent-pubkey>      Restart it from anywhere (no repo needed)
+  beeline spend [--day YYYY-MM-DD] [--agent <pubkey>] [--json]
+                                            Calls/tokens, causal turns, and restart re-primes
 
 ${pc.dim('Options:')}
   --workspace-root <path>   Agent workspace (default: ./body-workspace)
@@ -715,6 +726,61 @@ async function startRuntime(
   report(`[buzz] agent daemon started (pid ${pid})`);
 }
 
+async function runtimeSpendStatePaths(
+  configPath: string,
+  runtime: AgentRuntimeRecord,
+): Promise<string[]> {
+  const paths = new Set<string>();
+  const runtimeRoot = dirname(configPath);
+  for (const room of runtime.rooms) {
+    paths.add(resolve(room.root ?? resolve(runtimeRoot, 'rooms', room.channelId), 'body-state.json'));
+  }
+  const roomsRoot = resolve(runtimeRoot, 'rooms');
+  const entries = await readdir(roomsRoot, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (entry.isDirectory()) paths.add(resolve(roomsRoot, entry.name, 'body-state.json'));
+  }
+  return [...paths];
+}
+
+async function runSpendCommand(args: string[]): Promise<void> {
+  const dayFlag = args.indexOf('--day');
+  const agentFlag = args.indexOf('--agent');
+  const day = dayFlag >= 0 ? args[dayFlag + 1] : new Date().toISOString().slice(0, 10);
+  const agent = agentFlag >= 0 ? args[agentFlag + 1] : undefined;
+  if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+    throw new Error('spend --day requires YYYY-MM-DD');
+  }
+  if (agentFlag >= 0 && !agent) throw new Error('spend --agent requires an agent pubkey');
+  const allowed = new Set(['spend', '--json', '--day', '--agent', day, ...(agent ? [agent] : [])]);
+  const unknown = args.find((value) => !allowed.has(value));
+  if (unknown) throw new Error(`unknown spend option: ${unknown}`);
+
+  const configs = [...new Set(await findAgentRuntimeConfigPaths())];
+  const turns: ModelTurnSpend[] = [];
+  const reprimes: SessionReprimeRecord[] = [];
+  const visitedStates = new Set<string>();
+  for (const configPath of configs) {
+    const runtime = await readRuntimeRecord(configPath);
+    if (agent && runtime.agent.publicKey !== agent) continue;
+    const statePaths = await runtimeSpendStatePaths(configPath, runtime);
+    for (const statePath of statePaths) {
+      if (!existsSync(statePath) || visitedStates.has(statePath)) continue;
+      visitedStates.add(statePath);
+      const state = new DurableBodyState(statePath);
+      turns.push(...(await state.modelTurns()));
+      reprimes.push(...(await state.sessionReprimes()));
+    }
+  }
+  const spendReport = dailyAgentSpend(turns, day);
+  const reprimeReport = dailyRestartReprimes(reprimes, day);
+  if (args.includes('--json')) {
+    console.log(JSON.stringify({ spend: spendReport, reprimes: reprimeReport }, null, 2));
+  } else {
+    console.log(`${formatAgentSpendReport(spendReport)}\n${formatReprimeReport(reprimeReport)}`);
+  }
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args.length === 0) usage();
@@ -747,6 +813,11 @@ async function main(): Promise<void> {
     const configPath = configFlag >= 0 ? args[configFlag + 1] : undefined;
     if (!configPath) throw new Error('daemon requires --config <runtime.json>');
     await runStoredDaemon(resolve(configPath));
+    return;
+  }
+
+  if (command === 'spend') {
+    await runSpendCommand(args);
     return;
   }
 

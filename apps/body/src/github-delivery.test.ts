@@ -187,13 +187,11 @@ describe('GitHub-origin delivery', () => {
 });
 
 /**
- * The captain repro: an approved corner whose target branch moved on between
- * approval and landing. The land is refused (correctly — the human approved an
- * exact tip), but the OLD behaviour stopped there: the approval stayed valid,
- * the same poll re-refused it on every maintenance tick, and the only way
- * forward was a person hand-driving a rebase. The corner dead-ended.
+ * A maintenance tick has no fresh user input. When an approved corner's target
+ * moves, the exact-tip approval is invalidated and Body reports the committed
+ * work, but it must not spend a model turn deciding or performing a rebase.
  */
-describe('a land refused because the target moved on self-heals', () => {
+describe('a land refused because the target moved waits for fresh user input', () => {
   async function approvedCornerWithMovedTarget(): Promise<{
     root: string;
     remote: string;
@@ -221,7 +219,8 @@ describe('a land refused because the target moved on self-heals', () => {
     vi.spyOn(body as never, 'findHumanMergeApproval' as never).mockResolvedValue(
       info.humanMergeApproval as never,
     );
-    // The corner's own agent turn: actually do the rebase the daemon asks for.
+    // Tripwire: any maintenance-initiated prompt would both spend tokens and
+    // mutate this real worktree, making the policy failure observable.
     const prompts: string[] = [];
     vi.spyOn(body as never, 'promptAgent' as never).mockImplementation((async (
       _session: unknown,
@@ -236,102 +235,53 @@ describe('a land refused because the target moved on self-heals', () => {
     return { root, remote, worktree, info, body, events, tip, moved, prompts };
   }
 
-  it('asks the corner agent to rebase, then republishes a fresh review on the new tip', async () => {
+  it('does not prompt or rebase, and invalidates the stale approval', async () => {
     const { root, remote, worktree, info, body, events, tip, moved, prompts } =
       await approvedCornerWithMovedTarget();
 
     await expect(Reflect.get(body, 'pollDirectRemoteApprovals').call(body)).resolves.toBe(0);
     await body.waitForAgentTasks();
 
-    // The protected branch is never advanced by the refusal or the self-heal.
+    // Neither the protected branch nor the corner worktree is changed.
     expect(run(root, ['ls-remote', remote, 'refs/heads/main'])).toContain(moved);
-    // The rebase was asked for as a real corner turn, naming the moved target.
-    expect(prompts.join('\n')).toContain('Rebase this corner');
-    expect(prompts.join('\n')).toContain('feature/corner');
-    const rebased = run(worktree, ['rev-parse', 'HEAD']);
-    expect(rebased).not.toBe(tip);
-    expect(run(worktree, ['merge-base', '--is-ancestor', moved, rebased])).toBe('');
+    expect(prompts).toEqual([]);
+    expect(run(worktree, ['rev-parse', 'HEAD'])).toBe(tip);
+    expect(info.mergeTarget).toBeUndefined();
+    expect(info.humanMergeApproval).toBeUndefined();
 
-    // ...and the human gets a brand-new review to approve on the rebased tip,
-    // which is what turns the dead end back into a next step.
+    // No model-driven rebase means no invented second review card.
     const ready = events.filter((event) =>
       event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
     );
-    expect(ready).toHaveLength(2);
-    expect(ready[1]!.tags).toContainEqual(['tip', rebased]);
-    expect(info.mergeTarget).toEqual({
-      repo: 'remote/github-scratch',
-      branch: 'refs/heads/main',
-      tip: rebased,
-    });
-    // The rewritten feature history reached the remote too — a plain push
-    // would have been rejected as a non-fast-forward of the corner's own ref.
-    expect(run(worktree, ['ls-remote', remote, 'refs/heads/feature/corner'])).toContain(rebased);
+    expect(ready).toHaveLength(1);
+    expect(run(worktree, ['ls-remote', remote, 'refs/heads/feature/corner'])).toContain(tip);
   });
 
-  it('says what is actually happening, and never claims a background retry', async () => {
+  it('says it is blocked on the human and never claims a background retry', async () => {
     const { body, events } = await approvedCornerWithMovedTarget();
 
     await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
     await body.waitForAgentTasks();
 
-    const realign = events.find((event) =>
-      event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-realigning'),
+    const blocked = events.find((event) =>
+      event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'blocked'),
     );
-    expect(realign).toBeDefined();
-    expect(realign!.tags).toContainEqual(['retry', 'realigning']);
-    // The one claim the corner may not make: that something is retrying on its
-    // own. It is waiting on a rebase and then on a fresh human approval.
-    expect(realign!.content).not.toMatch(/retry|retrying/i);
-    expect(realign!.content).toMatch(/fresh review to approve/i);
+    expect(blocked).toBeDefined();
+    expect(blocked!.content).toMatch(/tell me here|nothing is continuing on its own/i);
     // ...and no raw git plumbing reaches the transcript either.
-    expect(realign!.content).not.toMatch(/\bgit\b|hint:|non-fast-forward|\[rejected\]/i);
+    expect(blocked!.content).not.toMatch(/\bgit\b|hint:|non-fast-forward|\[rejected\]/i);
   });
 
-  it('bounds itself: a target that moves again stops and asks the human', async () => {
-    const { root, remote, worktree, info, body, events, tip } =
-      await approvedCornerWithMovedTarget();
-
+  it('does not re-prompt on later maintenance ticks', async () => {
+    const { body, events, prompts } = await approvedCornerWithMovedTarget();
     await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
-    await body.waitForAgentTasks();
-    const rebased = run(worktree, ['rev-parse', 'HEAD']);
-
-    // The human approves the rebased tip, and main moves on AGAIN.
-    info.humanMergeApproval = { id: 'second-approval', reviewer: 'human-admin', tip: rebased };
-    await writeFile(resolve(root, 'AGAIN.md'), 'and again\n');
-    run(root, ['add', 'AGAIN.md']);
-    run(root, ['commit', '-m', 'target moved on again']);
-    run(root, ['push', 'origin', 'main']);
-    const movedAgain = run(root, ['ls-remote', remote, 'refs/heads/main']).split(/\s+/)[0]!;
-
     await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
-    await body.waitForAgentTasks();
-    // Second realign is allowed (MAX_CORNER_REALIGN_ATTEMPTS = 2)...
-    const secondRebase = run(worktree, ['rev-parse', 'HEAD']);
-    expect(secondRebase).not.toBe(rebased);
-
-    // ...a third is not: it stops with a plain in-corner message instead.
-    info.humanMergeApproval = { id: 'third-approval', reviewer: 'human-admin', tip: secondRebase };
-    await writeFile(resolve(root, 'THIRD.md'), 'once more\n');
-    run(root, ['add', 'THIRD.md']);
-    run(root, ['commit', '-m', 'target moved on a third time']);
-    run(root, ['push', 'origin', 'main']);
     await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
-    await body.waitForAgentTasks();
-
-    expect(run(worktree, ['rev-parse', 'HEAD'])).toBe(secondRebase);
+    expect(prompts).toEqual([]);
     const blocked = events.filter((event) =>
       event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'blocked'),
     );
     expect(blocked).toHaveLength(1);
-    expect(blocked[0]!.content).toContain('feature/corner');
-    expect(blocked[0]!.content).toMatch(/nothing is retrying on its own/i);
-    // Nothing this corner ever prepared reached the protected branch.
-    const mainNow = run(root, ['ls-remote', remote, 'refs/heads/main']).split(/\s+/)[0]!;
-    expect(mainNow).not.toBe(tip);
-    expect(mainNow).not.toBe(rebased);
-    expect(mainNow).not.toBe(secondRebase);
-    expect(run(root, ['merge-base', '--is-ancestor', movedAgain, mainNow])).toBe('');
   });
 
   it('keeps the automatic-retry claim for a failure the land poll really does re-attempt', async () => {

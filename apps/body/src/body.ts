@@ -162,7 +162,12 @@ import {
   cornersPoolRoot,
   legacyCornerWorktreePath,
 } from './corner-isolation.js';
-import { repriseSystemPromptBlock } from './session-reprime.js';
+import { measureSessionReprime } from './session-reprime.js';
+import {
+  completedModelSpend,
+  failedModelSpend,
+  type ModelTurnAttribution,
+} from './model-spend.js';
 import {
   commitUrlForRemote,
   landDestinationLines,
@@ -252,6 +257,8 @@ export interface AgentSession {
    * `model-config.ts`.
    */
   modelConfigOptions?: AgentModelConfigOption[];
+  /** Observable system-prompt size used when ACP omits token accounting. */
+  systemPromptChars?: number;
 }
 
 /**
@@ -315,13 +322,10 @@ export const ROOM_AGENT_PROMPT_TIMEOUT_MS = 3 * 60_000;
  */
 export const ROOM_AGENT_STALL_NOTICE_MS = 20_000;
 
-/**
- * A turn that fails from genuine ACP backend inactivity (`isAcpPromptStallError`)
- * may be retried from scratch at most this many times (including the first
- * attempt) before the caller stops retrying and surfaces a clean failure
- * instead of silently re-driving a wedged backend forever.
- */
-export const ROOM_AGENT_STALL_MAX_ATTEMPTS = 3;
+/** Shared by every Room Body in one daemon process; changes on each restart. */
+const BODY_PROCESS_GENERATION = `${process.pid}-${Date.now()}`;
+/** Process-wide, so a Room watchdog recycle cannot spend a second continuation. */
+const BODY_RESTART_CONTINUATIONS = new Set<string>();
 
 /** True only for the exact idle-inactivity timeout `AcpClient.sessionPrompt` raises. */
 export function isAcpPromptStallError(error: unknown): boolean {
@@ -567,8 +571,6 @@ export interface SubchannelInfo {
    *  history can be advertised with a compare-and-set force rather than being
    *  rejected as a non-fast-forward of the corner's own branch. */
   pushedFeatureTip?: string;
-  /** Approved tips already auto-realigned once after a moved-target refusal. */
-  realignedTips?: Set<string>;
   /**
    * The last land refusal already told to the human, so an unchanged refusal
    * is not restated on every maintenance tick.
@@ -581,8 +583,6 @@ export interface SubchannelInfo {
    * the transcript the human has to read to understand it.
    */
   lastLandFailure?: { tip: string; reason: string };
-  /** Automatic realigns run for this corner, capped at MAX_CORNER_REALIGN_ATTEMPTS. */
-  realignAttempts?: number;
   /**
    * Tip this corner's approved work is CONFIRMED to sit at on the target ref.
    *
@@ -894,14 +894,7 @@ function cornerAlreadyReported(events: readonly NostrEvent[], prefix: string): b
 
 export const MERGE_READY_TAG = 'merge-ready';
 export const LANDED_TAG = 'landed';
-/**
- * A land was refused because the target branch moved on, and the corner's own
- * agent is bringing the change up to date rather than leaving it dead-ended.
- * Carried on the corner-scoped failure card so a client can say what is
- * actually happening instead of claiming a background retry.
- */
-export const MERGE_REALIGN_TAG = 'merge-realigning';
-/** Agent-authored recap posted to the PARENT Room when a corner's work lands. */
+/** Deterministic host recap posted to the PARENT Room when a corner's work lands. */
 export const LAND_SUMMARY_TAG = 'land-summary';
 /**
  * The one post-land CI verdict, threaded to the land recap above. Published
@@ -925,32 +918,11 @@ interface PendingReleaseProposal extends ReleaseCornerBrief {
 }
 /**
  * Truthful retry posture for a corner-scoped delivery failure. `auto` is the
- * only value that may claim the daemon keeps retrying on its own; `realigning`
- * means an agent turn is fixing it; `blocked` means nothing further happens
- * until a human says something. Never guess — a missing tag means "unknown",
- * which a client must render without any retry claim.
+ * only value that may claim the daemon keeps retrying on its own; `blocked`
+ * means nothing further happens until a human says something. Never guess — a
+ * missing tag means "unknown", which a client must render without any retry claim.
  */
-export type DeliveryRetryPosture = 'auto' | 'realigning' | 'blocked';
-/**
- * One automatic realign per approved tip, and never more than this many for a
- * single corner. A target that keeps moving under a corner is a person's
- * problem to sequence, not a loop for the daemon to run forever.
- */
-export const MAX_CORNER_REALIGN_ATTEMPTS = 2;
-
-/**
- * How long the landed-work recap will wait for the corner's own agent to write
- * it before falling back to the deterministic line.
- *
- * Deliberately far shorter than `ROOM_AGENT_PROMPT_TIMEOUT_MS`. This turn runs
- * INLINE on the maintenance tick, at the exact moment the archive is stopping
- * the session it is talking to, so "no answer" is the normal outcome of a race
- * the recap always loses — and every second spent waiting is a second this
- * corner's summary and archive, and every other corner's land behind it in the
- * same loop, do not happen. The recap's content is a nicety; its existence is
- * not, and the deterministic fallback is already a true record of the land.
- */
-export const LAND_SUMMARY_TURN_TIMEOUT_MS = 45_000;
+export type DeliveryRetryPosture = 'auto' | 'blocked';
 
 /**
  * Maintenance ticks a refused land recap may hold a landed corner's archive
@@ -962,28 +934,6 @@ export const MAX_LAND_SUMMARY_ATTEMPTS = 3;
 /** The message of a caught unknown, without a stack, for a one-line log. */
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-/**
- * Resolve `work`, or reject with `reason` once `ms` have passed.
- *
- * The loser is abandoned, not cancelled: an ACP request that never answers
- * keeps its own idle timer and rejects into a handler that no longer cares.
- */
-function withTimeout<T>(work: Promise<T>, ms: number, reason: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(reason)), ms);
-    work.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
 }
 
 /**
@@ -1967,21 +1917,37 @@ export class Body {
         // captain's Room carries 200 entries / ~114k characters (~29k tokens)
         // of it, invisibly, on a daemon that restarted 14 times in a day.
         // See `session-reprime.ts`.
-        const restored = repriseSystemPromptBlock(transcript);
+        const reprime = measureSessionReprime(transcript);
+        const restored = reprime.block;
+        const systemPrompt = [
+          appendPersonaSessionInstructions(input.systemPrompt, profile),
+          '',
+          `To share an image or file with the Room, include [[${AGENT_ATTACHMENT_DIRECTIVE}:path]] in your final response.`,
+          'The host removes that directive, uploads the file, and sends a link-only attachment card.',
+          'Never inline base64 or file bytes in the response. Generated ACP image outputs are attached automatically.',
+          restored,
+        ].join('\n');
+        session.systemPromptChars = systemPrompt.length;
         const created = await client.sessionNew({
           cwd: input.cwd,
           mcpServers: input.mcpServers,
-          systemPrompt: [
-            appendPersonaSessionInstructions(input.systemPrompt, profile),
-            '',
-            `To share an image or file with the Room, include [[${AGENT_ATTACHMENT_DIRECTIVE}:path]] in your final response.`,
-            'The host removes that directive, uploads the file, and sends a link-only attachment card.',
-            'Never inline base64 or file bytes in the response. Generated ACP image outputs are attached automatically.',
-            restored,
-          ].join('\n'),
+          systemPrompt,
           mode: input.mode,
         });
         session.sessionId = created.sessionId;
+        await this.durableState
+          .recordSessionReprime({
+            agentPubkey: this.agentIdentity.publicKey,
+            channelId: input.channelId,
+            processGeneration: BODY_PROCESS_GENERATION,
+            at: new Date().toISOString(),
+            entries: reprime.entries,
+            beforeChars: reprime.beforeChars,
+            afterChars: reprime.afterChars,
+            beforeTokens: reprime.beforeTokens,
+            afterTokens: reprime.afterTokens,
+          })
+          .catch((error) => console.error('[body] failed to record session re-prime:', error));
         session.unsubscribeActivity?.();
         const activityProjection = projectActivity(
           client,
@@ -2170,9 +2136,8 @@ export class Body {
   private async promptAgent(
     session: AgentSession,
     prompt: string,
-    stream?: {
+    turn: ModelTurnAttribution & {
       channelId: string;
-      requestId: string;
       narrate?: boolean;
       /**
        * The event a stall notice should thread as a reply, when one exists
@@ -2185,16 +2150,16 @@ export class Body {
       replyToId?: string;
     },
   ): Promise<PromptResult & { narrativeFloor?: number }> {
-    const draft = stream
+    const draft = turn
       ? createDraftStreamer(
-          stream.channelId,
+          turn.channelId,
           this.agentIdentity,
           session.logicalSessionId ?? session.sessionId,
-          stream.requestId,
+          turn.requestId,
         )
       : undefined;
-    const narrator = stream?.narrate
-      ? createNarrativeCommitter(stream.channelId, this.agentIdentity)
+    const narrator = turn.narrate
+      ? createNarrativeCommitter(turn.channelId, this.agentIdentity)
       : undefined;
     // Surface a stall well before ROOM_AGENT_PROMPT_TIMEOUT_MS elapses. Armed
     // on every ACP activity signal (`onActivity` below fires on every
@@ -2212,26 +2177,29 @@ export class Body {
     };
     const armStallTimer = () => {
       clearStallTimer();
-      if (!stream || stallNotified) return;
+      if (stallNotified) return;
       stallTimer = setTimeout(() => {
         // A new human message landed on this channel since the window opened.
         // The human is waiting on their own steer, not on backend silence —
         // answering that with "still working" is what made a mid-turn steer
         // read as swallowed. `acknowledgeQueuedSteer` owns that signal; push
         // the stall window out and re-measure from the newest message instead.
-        const seq = this.inboundMessageSeq.get(stream.channelId) ?? 0;
+        const seq = this.inboundMessageSeq.get(turn.channelId) ?? 0;
         if (seq !== stallBaselineSeq) {
           stallBaselineSeq = seq;
           armStallTimer();
           return;
         }
         stallNotified = true;
-        postAgentStallNotice(stream.channelId, this.agentIdentity, stream.replyToId).catch(
+        postAgentStallNotice(turn.channelId, this.agentIdentity, turn.replyToId).catch(
           (error) => console.error('[body] failed to publish agent stall notice:', error),
         );
       }, ROOM_AGENT_STALL_NOTICE_MS);
     };
     let result: PromptResult;
+    // Set only at the actual ACP invocation boundary. Scheduler/session
+    // activation failures spent no model call and must not appear as one.
+    let modelCallStartedAt: string | undefined;
     try {
       result = await this.runOnSession(session, () => {
         // Armed HERE, not before `runOnSession`: a turn queued behind another
@@ -2239,8 +2207,9 @@ export class Body {
         // a "my coding backend is taking longer than usual" notice fired while
         // merely waiting in that FIFO is simply false — and lands in the
         // transcript directly under the message that is still waiting its turn.
-        if (stream) stallBaselineSeq = this.inboundMessageSeq.get(stream.channelId) ?? 0;
+        stallBaselineSeq = this.inboundMessageSeq.get(turn.channelId) ?? 0;
         armStallTimer();
+        modelCallStartedAt = new Date().toISOString();
         return session.client.sessionPrompt(
           session.sessionId,
           prompt,
@@ -2253,7 +2222,48 @@ export class Body {
           armStallTimer,
         );
       });
+      // The backend turn is over. Persisting spend is bookkeeping, not model
+      // inactivity, and must never manufacture a stall notice while the next
+      // FIFO turn is already starting.
+      clearStallTimer();
+      await this.durableState
+        .recordModelTurn(
+          completedModelSpend({
+            result,
+            prompt,
+            systemPromptChars: session.systemPromptChars ?? 0,
+            attribution: {
+              requestId: turn.requestId,
+              originalRequestId: turn.originalRequestId,
+              cause: turn.cause,
+            },
+            agentPubkey: this.agentIdentity.publicKey,
+            channelId: turn.channelId,
+            startedAt: modelCallStartedAt!,
+          }),
+        )
+        .catch((error) => console.error('[body] failed to record model spend:', error));
     } catch (error) {
+      clearStallTimer();
+      if (modelCallStartedAt) {
+        await this.durableState
+          .recordModelTurn(
+            failedModelSpend({
+              prompt,
+              systemPromptChars: session.systemPromptChars ?? 0,
+              attribution: {
+                requestId: turn.requestId,
+                originalRequestId: turn.originalRequestId,
+                cause: turn.cause,
+              },
+              agentPubkey: this.agentIdentity.publicKey,
+              channelId: turn.channelId,
+              startedAt: modelCallStartedAt,
+              error,
+            }),
+          )
+          .catch((spendError) => console.error('[body] failed to record model spend:', spendError));
+      }
       if (isAcpPromptStallError(error)) {
         session.client.sessionCancel(session.sessionId);
         await this.scheduler.forceSuspend(session.channelId);
@@ -2271,7 +2281,8 @@ export class Body {
   }
 
   /**
-   * Publish the corner's mandatory multi-step plan before its prompt can run.
+   * Publish the corner's deterministic multi-step plan before its user-caused
+   * prompt can run.
    * A suspended ACP process has no projection yet, so activation consumes the
    * pending objective; a warm process publishes immediately. Either way the
    * checklist is the first agent-activity event of the turn.
@@ -2651,31 +2662,39 @@ export class Body {
           session.lastPolledAt = cursor.createdAt;
           this.registerSubchannel(info);
           this.abandonedCorners.delete(subchannelId);
-          // Only ever START a corner's task, never RE-start it. This ran on
-          // every daemon restart for any corner that had not yet published a
-          // merge-ready, so a restart re-drove the original request from
-          // scratch — 14 restarts in a day meant 14 full agent tasks nobody
-          // asked for, which is the "dozens of tool calls doing nothing" the
-          // captain saw. `events` is this agent's own kind:9 history in the
-          // corner: anything beyond the opening control card means the task
-          // already ran, and the restored session continues it from the
-          // transcript instead.
-          const alreadyWorked = events.some((event) =>
-            event.tags.some(
-              (tag) =>
-                tag[0] === 't' && (tag[1] === 'agent-message' || tag[1] === 'agent-activity'),
-            ),
-          );
-          if (request && !tip && !alreadyWorked)
+          // The original human request remains the authority for unfinished
+          // commissioned work. Resume it once for this daemon process, never
+          // re-run the opening prompt from scratch and never loop from a
+          // maintenance tick. A second restore call in the same process is a
+          // no-op; another daemon restart gets one new continuation attempt.
+          const restartContinuationKey = `${this.agentIdentity.publicKey}:${subchannelId}`;
+          if (request && !tip && !BODY_RESTART_CONTINUATIONS.has(restartContinuationKey)) {
+            BODY_RESTART_CONTINUATIONS.add(restartContinuationKey);
+            const originalPrompt = attachmentPrompt(
+              request.authorPubkey,
+              request.content,
+              request.attachments ?? [],
+            );
             this.startAgentTask(
               info,
-              attachmentPrompt(request.authorPubkey, request.content, request.attachments ?? []),
+              originalPrompt,
+              [
+                'Resume this human-commissioned corner after a daemon restart.',
+                'Continue from the existing worktree, commits, and bounded restored transcript.',
+                'Inspect what is already complete before acting; do not repeat finished work or start a second task.',
+                '',
+                originalPrompt,
+              ].join('\n'),
+              {
+                requestId: request.eventId,
+                originalRequestId: request.eventId,
+                cause: 'restart-continuation',
+              },
             );
-          else if (request && !tip)
             console.log(
-              `[body] corner ${subchannelId} already has agent output; ` +
-                'restored without re-running its opening task',
+              `[body] corner ${subchannelId} resumed once after restart for request ${request.eventId}`,
             );
+          }
         } catch (restoreError) {
           console.error(`[body] could not restore corner ${subchannelId}:`, restoreError);
           await postControlMessage(
@@ -3399,6 +3418,8 @@ export class Body {
         const result = await this.promptAgent(session, prompt, {
           channelId,
           requestId: request.eventId,
+          originalRequestId: envelope.authorizationEventId,
+          cause: 'agent-exchange',
           replyToId: request.eventId,
         });
         const reply = await this.publishAgentResult(
@@ -3438,7 +3459,24 @@ export class Body {
           'failed',
           this.presenceGenerations.get(channelId),
         ).catch(() => undefined);
-        throw error;
+        const failure =
+          "I couldn't continue the commissioned exchange. I won't retry it without a new human message.";
+        await postAgentMessage(
+          channelId,
+          this.agentIdentity,
+          failure,
+          envelope.authorizationEventId,
+          [],
+          [...agentExchangeTags(authorization, nextTurn, recipient, true)],
+        ).catch((publishError) =>
+          console.error('[body] failed to publish agent-exchange failure notice:', publishError),
+        );
+        await this.durableState.appendConversation(channelId, {
+          role: 'control',
+          text: failure,
+          at: new Date().toISOString(),
+        });
+        console.error('[body] agent exchange stopped without automatic retry:', error);
       }
     } finally {
       release();
@@ -3714,22 +3752,7 @@ export class Body {
           this.processedRequestIds.add(event.id);
           await this.durableState.delivered(tlcChannelId, event.id);
         } catch (error) {
-          const attempts = await this.durableState.failed(tlcChannelId, event.id, error);
-          // A genuinely wedged backend: stop blindly re-driving it from
-          // scratch on every later poll and surface a clean failure instead.
-          if (isAcpPromptStallError(error) && attempts >= ROOM_AGENT_STALL_MAX_ATTEMPTS) {
-            await postAgentMessage(
-              tlcChannelId,
-              this.agentIdentity,
-              "I couldn't get a response from my coding backend after several attempts — it looks unresponsive right now. Please try again later.",
-              event.id,
-            ).catch((publishError) =>
-              console.error('[body] failed to publish stalled-turn failure notice:', publishError),
-            );
-            this.processedRequestIds.add(event.id);
-            await this.durableState.delivered(tlcChannelId, event.id);
-            continue;
-          }
+          await this.durableState.failed(tlcChannelId, event.id, error);
           throw error;
         }
       } finally {
@@ -3827,7 +3850,11 @@ export class Body {
         displayPrompt,
         request.eventId,
       );
-      this.startAgentTask(info, displayPrompt, taskInstructions);
+      this.startAgentTask(info, displayPrompt, taskInstructions, {
+        requestId: request.eventId,
+        originalRequestId: request.eventId,
+        cause: 'corner-opening',
+      });
       return true;
     }
 
@@ -3870,7 +3897,11 @@ export class Body {
         releaseCornerIntent(proposal),
         request,
       );
-      this.startAgentTask(info, releaseCornerPrompt(proposal), releaseCornerTaskPrompt(proposal));
+      this.startAgentTask(info, releaseCornerPrompt(proposal), releaseCornerTaskPrompt(proposal), {
+        requestId: request.eventId,
+        originalRequestId: request.eventId,
+        cause: 'corner-opening',
+      });
       return true;
     }
 
@@ -4078,6 +4109,7 @@ export class Body {
         : {}),
     };
     this.pendingRoomTurns.set(tlcChannelId, turn);
+    let promptAttempted = false;
     try {
       await postAgentTurnStatus(
         tlcChannelId,
@@ -4087,9 +4119,12 @@ export class Body {
         'working',
         this.presenceGenerations.get(tlcChannelId),
       );
+      promptAttempted = true;
       const result = await this.promptAgent(session, prompt, {
         channelId: tlcChannelId,
         requestId: request.eventId,
+        originalRequestId: request.eventId,
+        cause: 'room-message',
         replyToId: request.eventId,
       });
       if (turn.transitionedToCorner) {
@@ -4148,6 +4183,29 @@ export class Body {
       ).catch((statusError) =>
         console.error('[body] failed to publish Room turn failure status:', statusError),
       );
+      if (promptAttempted) {
+        const failure =
+          "That turn stopped before I could deliver a reply. I won't retry it without another message from you.";
+        await postAgentMessage(
+          tlcChannelId,
+          this.agentIdentity,
+          failure,
+          request.eventId,
+          [],
+          [],
+          request.replyRootId,
+        ).catch((publishError) =>
+          console.error('[body] failed to publish Room turn failure notice:', publishError),
+        );
+        this.processedRequestIds.add(request.eventId);
+        await this.durableState.delivered(tlcChannelId, request.eventId);
+        await this.durableState.appendConversation(tlcChannelId, {
+          role: 'control',
+          text: failure,
+          at: new Date().toISOString(),
+        });
+        return false;
+      }
       throw error;
     } finally {
       this.pendingRoomTurns.delete(tlcChannelId);
@@ -4449,6 +4507,11 @@ export class Body {
             turn.request.content,
             turn.request.eventId,
           ),
+          {
+            requestId: turn.request.eventId,
+            originalRequestId: turn.request.eventId,
+            cause: 'corner-opening',
+          },
         );
       } catch (error) {
         const detail = this.safePermissionFailure(error);
@@ -4675,10 +4738,11 @@ export class Body {
   private startAgentTask(
     info: SubchannelInfo,
     prompt: string,
-    taskInstructions: string = prompt,
+    taskInstructions: string,
+    attribution: ModelTurnAttribution,
   ): void {
     const task = (async () => {
-      const requestId = info.request?.eventId ?? `corner-${info.subchannelId}`;
+      const requestId = attribution.requestId;
       const sessionId = info.session.logicalSessionId ?? info.session.sessionId;
       try {
         await this.postParentCornerStatus(info, 'working', `Agent is working on: ${prompt}`);
@@ -4712,7 +4776,11 @@ export class Body {
           // stall notice threaded to it would be rejected by the relay as a
           // cross-channel reply. This corner's opening turn has no
           // same-channel parent to thread to.
-          { channelId: info.subchannelId, requestId, narrate: true },
+          {
+            ...attribution,
+            channelId: info.subchannelId,
+            narrate: true,
+          },
         );
         await this.completeCornerPlan(info.session);
         // The corner may have been closed (archived) while this turn was
@@ -4898,10 +4966,9 @@ export class Body {
     };
     if (info.mergeTarget?.tip === tip) return true;
 
-    // A realign REWRITES this corner's feature history (rebase onto the moved
-    // target), so the next publish is not a fast-forward of the ref this
-    // corner last pushed and a plain push would be rejected — leaving the
-    // self-heal unable to advertise the change it just fixed. Force is scoped
+    // A human-commissioned rebase can rewrite this corner's feature history,
+    // so the next publish is not a fast-forward of the ref this corner last
+    // pushed and a plain push would be rejected. Force is scoped
     // as tightly as it can be: only when the new tip genuinely does not
     // descend from what THIS corner last pushed, and as a compare-and-set on
     // that exact sha, so anything else touching the feature ref aborts the
@@ -5218,7 +5285,7 @@ export class Body {
         // Hand it back to the corner's own session to rebase rather than
         // leaving the human with a dead-ended corner and no next step.
         if (isMovedTargetLandFailure(outcome.reason)) {
-          await this.realignAfterMovedTarget(info, target);
+          await this.blockMovedTarget(info, target);
           continue;
         }
         // Say it once. The loop keeps retrying either way; restating an
@@ -5321,35 +5388,15 @@ export class Body {
   }
 
   /**
-   * Self-heal a land refused because the target branch moved on since the
-   * human approved this exact tip.
-   *
-   * The old shape published the refusal and left everything else in place, so
-   * the approval stayed valid, the same poll re-refused it on every
-   * maintenance tick, and the corner dead-ended: the only way forward was a
-   * person noticing and hand-driving a rebase. Here the corner's OWN agent
-   * session is given the rebase as an ordinary turn, and `startAgentTask`'s
-   * existing tail re-runs `publishMergeReady`, so the human gets a fresh
-   * review to approve on the new tip.
-   *
-   * Bounded on purpose. The approved tip is cleared either way — it is not
-   * landable as it stands, and leaving it set is exactly what made the refusal
-   * repeat forever — and a second refusal for the SAME approved tip, or a
-   * corner that has already burned `MAX_CORNER_REALIGN_ATTEMPTS`, stops and
-   * says so in the corner instead of realigning again.
+   * Stop after a moved-target refusal and ask the human what to do next.
+   * Their approval authorized landing one exact tip; it did not commission an
+   * autonomous rebase turn from a later maintenance tick.
    */
-  private async realignAfterMovedTarget(
+  private async blockMovedTarget(
     info: SubchannelInfo,
     target: NonNullable<SubchannelInfo['mergeTarget']>,
   ): Promise<void> {
     const branch = target.branch.replace(/^refs\/heads\//, '');
-    // Never start a second turn on a session that is already running one.
-    // `mergeTarget` is deliberately left intact so the next tick retries this
-    // whole decision rather than silently dropping the approval.
-    if (this.runningAgentTasks.has(info.subchannelId)) return;
-
-    const alreadyRealigned = Boolean(info.realignedTips?.has(target.tip));
-    const exhausted = (info.realignAttempts ?? 0) >= MAX_CORNER_REALIGN_ATTEMPTS;
     const failureTags: string[][] = [
       ['repo', target.repo],
       ['branch', target.branch],
@@ -5361,85 +5408,37 @@ export class Body {
     info.mergeTarget = undefined;
     info.humanMergeApproval = undefined;
     info.lastLandFailure = undefined;
-
-    if (alreadyRealigned || exhausted) {
-      await postControlMessage(
-        info.subchannelId,
-        this.agentIdentity,
-        `Still couldn't land this change on ${branch} — it moved on again while the change was being brought up to date. ` +
-          `Nothing was lost: the work is committed on ${info.featureBranch}. ` +
-          `Tell me here how you'd like to proceed — nothing is retrying on its own.`,
-        [
-          ...RECOVERABLE_CORNER_FAILURE_TAGS,
-          ['retry', 'blocked' satisfies DeliveryRetryPosture],
-          ...failureTags,
-        ],
-      );
-      await this.postParentCornerStatus(
-        info,
-        'needs-attention',
-        `Couldn't land on ${branch}. Waiting on you.`,
-        [['tip', target.tip]],
-      );
-      return;
-    }
-
-    info.realignedTips = info.realignedTips ?? new Set();
-    info.realignedTips.add(target.tip);
-    info.realignAttempts = (info.realignAttempts ?? 0) + 1;
-
     await postControlMessage(
       info.subchannelId,
       this.agentIdentity,
       `Couldn't land this change on ${branch} — ${branch} moved on since you approved it. ` +
-        `I'm bringing the change up to date with ${branch} now, and you'll get a fresh review to approve when it's ready. ` +
-        `The approval you already gave no longer applies to this change.`,
+        `Nothing was lost: the work is committed on ${info.featureBranch}. ` +
+        `The approval you already gave no longer applies. Tell me here if you want this corner brought up to date; nothing is continuing on its own.`,
       [
-        ['t', MERGE_REALIGN_TAG],
         ...RECOVERABLE_CORNER_FAILURE_TAGS,
-        ['retry', 'realigning' satisfies DeliveryRetryPosture],
+        ['retry', 'blocked' satisfies DeliveryRetryPosture],
         ...failureTags,
       ],
     );
-    this.startAgentTask(
+    await this.postParentCornerStatus(
       info,
-      `bring this change up to date with ${branch} so it can land`,
-      this.realignTaskInstructions(info, target),
+      'needs-attention',
+      `Couldn't land on ${branch}. Waiting on you.`,
+      [['tip', target.tip]],
     );
   }
 
-  /** The rebase turn's own instructions — conflicts are resolved in the corner. */
-  private realignTaskInstructions(
-    info: SubchannelInfo,
-    target: NonNullable<SubchannelInfo['mergeTarget']>,
-  ): string {
-    const branch = target.branch.replace(/^refs\/heads\//, '');
-    const remote = info.boundRepo?.remoteName;
-    const base = remote ? `${remote}/${branch}` : branch;
-    return [
-      `The ${branch} branch moved on after this change was approved, so the change could not land.`,
-      remote
-        ? `Fetch the latest ${branch} first: git fetch ${remote} ${branch}`
-        : `The latest ${branch} is already present in this repository.`,
-      `Rebase this corner's branch ${info.featureBranch} onto ${base}, resolving any conflicts here in the corner.`,
-      'Keep the original intent of the change intact — do not drop work to make the rebase easier.',
-      `Commit the result on ${info.featureBranch}.`,
-      `Do not modify, merge into, or push ${branch}, and do not archive this corner.`,
-      'Then say in one or two sentences what you had to change to bring it up to date.',
-    ].join('\n');
-  }
-
   /**
-   * One agent-authored recap in the PARENT Room when a corner's work actually
-   * lands — the only way a Room reader learns what a corner delivered without
-   * opening it.
+   * One deterministic host recap in the PARENT Room when a corner's work
+   * actually lands — the only way a Room reader learns what a corner delivered
+   * without opening it, and never a maintenance-initiated model turn.
    *
    * Terminal land only: the caller has already confirmed the target ref sits
    * at the approved tip, which is true for every repo kind (relay-origin work
    * lands through the merge gate, direct/local work through
    * `pollDirectRemoteApprovals`, and both converge here). Exactly once per
-   * corner, and entirely best-effort — a dead ACP session or a failed publish
-   * must never hold up the archive that follows.
+   * corner, and entirely best-effort — a failed publish must never hold up the
+   * archive that follows.
    *
    * Returns the published event id so the CI report that follows the land can
    * be threaded to this recap rather than arriving in the Room as an orphan
@@ -5538,45 +5537,13 @@ export class Body {
     const landedLine = landDestinationLines(destination).join('\n');
     const commitUrl = commitUrlForRemote(remoteUrl, landedTip);
 
-    let recap = [
+    const recap = [
       objective ? `Set out to: ${objective}` : `Set out to finish the work in ${info.featureBranch}.`,
       `Landed: ${changeLine}.`,
     ].join('\n');
-    // The agent's own voice is the nice-to-have; the record is the point. A
-    // land is immediately followed by the archive that stops this very session,
-    // so asking it for prose is a request that can hang until the ACP idle
-    // budget expires — three minutes of a maintenance tick that is holding up
-    // this corner's own summary and archive, and every other corner's land
-    // behind it. Bounded here, and skipped outright once the corner is closing.
-    if (info.archived || info.session.archived) {
-      this.noteLandRecap(info, 'degraded', 'corner is closing; using the deterministic recap');
-    } else {
-      try {
-        const result = await withTimeout(
-          this.promptAgent(info.session, [
-            `This corner's change has landed on ${branch} at ${landedTip.slice(0, 12)}.`,
-            'Write a short recap for the people in the parent room, who did not watch this corner work.',
-            'Cover, in this order and in plain language:',
-            '- what this corner set out to do',
-            '- what actually landed, in one line',
-            '- anything you deliberately did NOT do',
-            'Under 6 lines. No code fences, no command output, no commit hashes — the commit id is appended for you.',
-            '',
-            `For reference — objective: ${objective || '(not recorded)'}; landed: ${changeLine}.`,
-          ].join('\n')),
-          LAND_SUMMARY_TURN_TIMEOUT_MS,
-          `the corner session did not answer within ${Math.round(LAND_SUMMARY_TURN_TIMEOUT_MS / 1000)}s`,
-        );
-        const authored = conciseLandSummary(stripAgentReplyPreamble(result.agentText));
-        if (authored) recap = authored;
-      } catch (error) {
-        this.noteLandRecap(
-          info,
-          'degraded',
-          `agent turn unavailable (${errorText(error)}); using the deterministic recap`,
-        );
-      }
-    }
+    // Recap composition is deterministic host work. A land often arrives on
+    // a maintenance tick, and no fresh human message authorized another model
+    // call merely to rewrite facts the host already has.
 
     const event = buildAgentMessage(
       parentId,
@@ -6335,6 +6302,7 @@ export class Body {
         // working" notice about the turn currently in flight would be
         // answering this message rather than describing the backend.
         this.noteInboundMessage(subchannelId);
+        let promptAttempted = false;
         try {
           let agentReply = '';
           let agentResult: (PromptResult & { narrativeFloor?: number }) | undefined;
@@ -6348,10 +6316,18 @@ export class Body {
               'working',
               this.presenceGenerations.get(subchannelId),
             );
+            promptAttempted = true;
             return this.promptAgent(
               session,
               `${prompt}\n\n${CORNER_TURN_SUMMARY_INSTRUCTION}`,
-              { channelId: subchannelId, requestId: evt.id, replyToId: evt.id, narrate: true },
+              {
+                channelId: subchannelId,
+                requestId: evt.id,
+                originalRequestId: evt.id,
+                cause: 'corner-follow-up',
+                replyToId: evt.id,
+                narrate: true,
+              },
             );
           };
           // A message that arrives mid-turn is never discarded. Live steering
@@ -6450,18 +6426,16 @@ export class Body {
             'failed',
             this.presenceGenerations.get(subchannelId),
           ).catch(() => undefined);
-          const attempts = await this.durableState.failed(subchannelId, evt.id, err);
+          await this.durableState.failed(subchannelId, evt.id, err);
           console.error(`[body] pollMembers: forwarding failed for event ${evt.id}:`, err);
-          // A genuinely wedged backend: stop blindly re-driving it from
-          // scratch on every later poll and surface a clean failure instead.
-          if (isAcpPromptStallError(err) && attempts >= ROOM_AGENT_STALL_MAX_ATTEMPTS) {
+          if (promptAttempted) {
             await postAgentMessage(
               subchannelId,
               this.agentIdentity,
-              "I couldn't get a response from my coding backend after several attempts — it looks unresponsive right now. Please try again later.",
+              "That turn stopped before I could deliver a reply. I won't retry it without another message from you.",
               evt.id,
             ).catch((publishError) =>
-              console.error('[body] failed to publish stalled-turn failure notice:', publishError),
+              console.error('[body] failed to publish corner turn failure notice:', publishError),
             );
             processed.add(evt.id);
             await this.durableState.delivered(subchannelId, evt.id);

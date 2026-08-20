@@ -108,4 +108,49 @@ describe('durable input inbox', () => {
     );
     expect(await restarted.latestAgentMessage('empty-corner')).toBeUndefined();
   });
+
+  it('keeps model-call attribution inspectable across restart', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-model-spend-'));
+    cleanup.push(root);
+    const path = resolve(root, 'state.json');
+    const first = new DurableBodyState(path);
+    await first.recordModelTurn({
+      agentPubkey: 'agent',
+      channelId: 'corner',
+      requestId: 'restart-1',
+      originalRequestId: 'human-request',
+      cause: 'restart-continuation',
+      startedAt: '2026-08-20T12:00:00.000Z',
+      status: 'complete',
+      inputTokens: 100,
+      outputTokens: 20,
+      totalTokens: 120,
+      tokenSource: 'estimated',
+      toolCalls: 3,
+    });
+
+    const restarted = new DurableBodyState(path);
+    expect(await restarted.modelTurns()).toEqual([
+      expect.objectContaining({
+        cause: 'restart-continuation',
+        originalRequestId: 'human-request',
+        totalTokens: 120,
+      }),
+    ]);
+    await first.recordSessionReprime({
+      agentPubkey: 'agent',
+      channelId: 'corner',
+      processGeneration: 'restart-1',
+      at: '2026-08-20T12:00:00.000Z',
+      entries: 200,
+      beforeChars: 114_000,
+      afterChars: 8_000,
+      beforeTokens: 28_500,
+      afterTokens: 2_000,
+    });
+    const restartedAgain = new DurableBodyState(path);
+    expect(await restartedAgain.sessionReprimes()).toEqual([
+      expect.objectContaining({ processGeneration: 'restart-1', afterTokens: 2_000 }),
+    ]);
+  });
 });

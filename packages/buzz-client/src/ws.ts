@@ -20,7 +20,7 @@ export interface RelayWsOptions {
   skipAuth?: boolean;
   connectTimeoutMs?: number;
   reconnectDelayMs?: number;
-  /** Idle-traffic keepalive cadence while connected (default 35s). */
+  /** Idle-traffic keepalive cadence while connected (default 30s). */
   keepaliveIntervalMs?: number;
 }
 
@@ -396,7 +396,7 @@ export class RelayWs {
 
   private startKeepalive(): void {
     this.stopKeepalive();
-    const intervalMs = this.opts.keepaliveIntervalMs ?? 35_000;
+    const intervalMs = this.opts.keepaliveIntervalMs ?? 30_000;
     // Phase-shift each socket's keepalive by up to one interval. Sockets that
     // came back together after one relay event otherwise keep their pings in
     // lockstep for as long as they live, which is the same herd the reconnect
@@ -422,10 +422,12 @@ export class RelayWs {
   }
 
   /**
-   * A no-op NIP-01 REQ/CLOSE round trip. Cloudflare's edge is documented to
-   * close a WS with no traffic in either direction for ~100s, independent of
-   * origin-side timeouts — this keeps bytes flowing on an otherwise-quiet
-   * subscription so a healthy Room doesn't get closed out from under it.
+   * A no-op NIP-01 REQ/CLOSE round trip. Browser and React Native WebSocket
+   * APIs do not expose protocol-level ping frames (they handle server pings and
+   * pongs internally), so portable clients keep the transport active with a
+   * valid application frame instead. Cloudflare's edge closes a WS with no
+   * traffic in either direction after roughly 90s; this keeps bytes flowing on
+   * an otherwise-quiet subscription so a healthy Room stays connected.
    */
   private sendKeepalive(): void {
     if (!this.connected) return;

@@ -208,3 +208,76 @@ describe('reconnect spacing does not put every client back at the door together'
     expect(reconnectDelayWithJitter(1, 0, 10_000, () => 0)).toBeGreaterThan(0);
   });
 });
+
+describe('idle WebSocket keepalive', () => {
+  it('emits traffic on the timer and stops it when the socket closes', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(1);
+    const ws = new RelayWs({
+      wsUrl: 'wss://relay.test',
+      identity: createIdentity('ws-keepalive'),
+      skipAuth: true,
+      WebSocketImpl: FakeWebSocket as unknown as typeof WebSocket,
+    });
+
+    const connecting = ws.connect();
+    await vi.advanceTimersByTimeAsync(0);
+    await connecting;
+    const socket = FakeWebSocket.instances[0]!;
+
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(socket.sent).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(1);
+    const subId = socket.sent[0]?.[1];
+    expect(subId).toMatch(/^keepalive-/);
+    expect(socket.sent).toEqual([
+      ['REQ', subId, { kinds: [0], limit: 0 }],
+      ['CLOSE', subId],
+    ]);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(socket.sent).toHaveLength(4);
+
+    ws.close();
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(socket.sent).toHaveLength(4);
+  });
+
+  it('replaces rather than multiplies the timer after reconnect', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0.999);
+    const ws = new RelayWs({
+      wsUrl: 'wss://relay.test',
+      identity: createIdentity('ws-keepalive-reconnect'),
+      skipAuth: true,
+      reconnectDelayMs: 1,
+      keepaliveIntervalMs: 100,
+      WebSocketImpl: FakeWebSocket as unknown as typeof WebSocket,
+    });
+
+    const connecting = ws.connect();
+    await vi.advanceTimersByTimeAsync(0);
+    await connecting;
+    const original = FakeWebSocket.instances[0]!;
+
+    await vi.advanceTimersByTimeAsync(50);
+    original.close();
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(0);
+    const replacement = FakeWebSocket.instances[1]!;
+
+    await vi.advanceTimersByTimeAsync(99);
+    expect(original.sent).toEqual([]);
+    expect(replacement.sent).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(original.sent).toEqual([]);
+    expect(replacement.sent).toHaveLength(2);
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(replacement.sent).toHaveLength(4);
+
+    ws.close();
+  });
+});

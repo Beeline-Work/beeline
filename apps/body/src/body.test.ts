@@ -1163,7 +1163,10 @@ describe('agentPresenceRetryDelayMs', () => {
 
 describe('Room poll resilience', () => {
   it('backs off one Room independently and resets immediately after a successful poll', () => {
-    const backoff = new RoomPollBackoff(1_000, 4_000);
+    // Jitter pinned at its midpoint so the schedule itself is visible; the
+    // spreading it provides is covered in `presence-truth.test.ts`.
+    const midpoint = () => 0.5;
+    const backoff = new RoomPollBackoff(1_000, 4_000, undefined, undefined, midpoint);
     expect(backoff.failed()).toBe(1_000);
     expect(backoff.failed()).toBe(2_000);
     expect(backoff.failed()).toBe(4_000);
@@ -1173,9 +1176,11 @@ describe('Room poll resilience', () => {
   });
 
   it('honors repeated relay 429 retry-after hints, then reaches a minutes-long cap', () => {
-    const backoff = new RoomPollBackoff(1_000);
+    const backoff = new RoomPollBackoff(1_000, undefined, undefined, undefined, () => 0.5);
     const rateLimited = new Error('HTTP 429 {"error":"rate-limited: quota exceeded; retry in 2s"}');
 
+    // A relay-advertised delay is an instruction, not a schedule, so it is
+    // taken exactly and never jittered downward.
     expect(backoff.failed(rateLimited)).toBe(2_000);
     expect(backoff.failed(rateLimited)).toBe(2_000);
     expect(backoff.failed(rateLimited)).toBe(4_000);

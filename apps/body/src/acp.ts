@@ -188,7 +188,7 @@ export class AcpClient extends EventEmitter {
   private alive = false;
   /** Bounded tail of recent stderr, so a spawn/exit failure's rejection text
    *  carries the real reason (e.g. a harness's own "missing API key" notice)
-   *  instead of just the bare exit code — see `classifyAgentErrorState`. */
+   *  instead of just the bare exit code, in the daemon's log. */
   private stderrTail = '';
   private agentEnv: Record<string, string>;
   private agentCommand: string;
@@ -208,7 +208,7 @@ export class AcpClient extends EventEmitter {
      * Human name for the harness in error text. When the daemon wraps the child
      * in an OS sandbox (`bwrap-sandbox.ts`), `agentCommand` is `bwrap` — but a
      * spawn/exit failure has to name the harness the operator configured, not
-     * the wrapper, or `classifyAgentErrorState` reports a crash in bubblewrap.
+     * the wrapper, or every harness crash is logged as a bubblewrap crash.
      */
     agentLabel?: string;
     agentEnv: Record<string, string>;

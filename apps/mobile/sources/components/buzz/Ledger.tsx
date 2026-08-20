@@ -165,8 +165,7 @@ export function LedgerSteer({
   marginalia,
   replyReference,
   attachments,
-  offlineQueued = false,
-}: Omit<LedgerBodyProps, 'handle' | 'machineNoise'> & { offlineQueued?: boolean }) {
+}: Omit<LedgerBodyProps, 'handle' | 'machineNoise'>) {
   return (
     <View
       style={[styles.entry, continued ? styles.entryContinued : styles.entryOpens]}
@@ -179,9 +178,6 @@ export function LedgerSteer({
           <MonoMarkdown markdown={bodyText} textStyle={styles.steerText} testID={bodyTestID} />
         ) : null}
         {attachments}
-        {offlineQueued ? (
-          <Text style={styles.steerNote}>SENT TO ROOM · AGENT OFFLINE</Text>
-        ) : null}
       </View>
     </View>
   );
@@ -327,15 +323,6 @@ const styles = StyleSheet.create({
     color: groknight.ledgerBody,
     fontSize: 14,
     lineHeight: 23,
-  },
-  steerNote: {
-    ...Typography.mono(),
-    marginTop: 8,
-    textAlign: 'right',
-    color: groknight.ledgerGhost,
-    fontSize: 9,
-    lineHeight: 13,
-    letterSpacing: 0.4,
   },
   ghostBlock: { width: '100%', minWidth: 0, marginTop: 6 },
   ghostRow: { minWidth: 0, flexDirection: 'row', alignItems: 'baseline' },

@@ -1163,7 +1163,10 @@ describe('agentPresenceRetryDelayMs', () => {
 
 describe('Room poll resilience', () => {
   it('backs off one Room independently and resets immediately after a successful poll', () => {
-    const backoff = new RoomPollBackoff(1_000, 4_000);
+    // Jitter pinned at its midpoint so the schedule itself is visible; the
+    // spreading it provides is covered in `presence-truth.test.ts`.
+    const midpoint = () => 0.5;
+    const backoff = new RoomPollBackoff(1_000, 4_000, undefined, undefined, midpoint);
     expect(backoff.failed()).toBe(1_000);
     expect(backoff.failed()).toBe(2_000);
     expect(backoff.failed()).toBe(4_000);
@@ -1173,9 +1176,11 @@ describe('Room poll resilience', () => {
   });
 
   it('honors repeated relay 429 retry-after hints, then reaches a minutes-long cap', () => {
-    const backoff = new RoomPollBackoff(1_000);
+    const backoff = new RoomPollBackoff(1_000, undefined, undefined, undefined, () => 0.5);
     const rateLimited = new Error('HTTP 429 {"error":"rate-limited: quota exceeded; retry in 2s"}');
 
+    // A relay-advertised delay is an instruction, not a schedule, so it is
+    // taken exactly and never jittered downward.
     expect(backoff.failed(rateLimited)).toBe(2_000);
     expect(backoff.failed(rateLimited)).toBe(2_000);
     expect(backoff.failed(rateLimited)).toBe(4_000);
@@ -5164,10 +5169,17 @@ describe('graceful relay-failure confirmation', () => {
     const parentStatus = published.find(
       (event) =>
         event.tags.some((tag) => tag[0] === 'h' && tag[1] === 'room') &&
-        event.tags.some((tag) => tag[0] === 'subchannel' && tag[1] === 'corner-mergegate') &&
-        event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'failed'),
+        event.tags.some((tag) => tag[0] === 'subchannel' && tag[1] === 'corner-mergegate'),
     );
     expect(parentStatus).toBeDefined();
+    // `needs-attention`, not `failed`: the corner is still open and a person
+    // can act on it, and `failed` is a TERMINAL lifecycle word that drops the
+    // corner out of the Room's pinned strip — exactly when it most needs to be
+    // findable. The corner-scoped message keeps `status: failed` (that is what
+    // drives the delivery-failure footer); see `RECOVERABLE_CORNER_FAILURE_TAGS`.
+    expect(parentStatus!.tags).toContainEqual(['display-status', 'needs-attention']);
+    expect(cornerFailure!.tags).toContainEqual(['status', 'failed']);
+    expect(cornerFailure!.tags).toContainEqual(['display-status', 'needs-attention']);
   });
 });
 

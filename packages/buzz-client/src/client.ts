@@ -4,6 +4,7 @@
  * Speaks only to real Buzz (HTTP bridge + WS + signed events). UI-agnostic.
  */
 import type { NostrEvent } from '@beeline/nostr';
+import { agentPresenceKey } from './agent-presence.js';
 import { buildMergeApproval } from './approval.js';
 import {
   abandonAgentPairing,
@@ -20,6 +21,7 @@ import { getAgentModelCatalog, getAgentModelConfig, setAgentModelConfig } from '
 import {
   getRoomRepository,
   resolveRoomRepository,
+  resolveRoomRepositoryState,
   setRoomRepository,
   setRoomTargetBranch,
 } from './room-repository.js';
@@ -357,6 +359,11 @@ export class BuzzClient {
     return resolveRoomRepository(this.ctx, channelId);
   }
 
+  /** Repository resolution that keeps "could not confirm" distinct from "none". */
+  resolveRoomRepositoryState(channelId: string) {
+    return resolveRoomRepositoryState(this.ctx, channelId);
+  }
+
   /** The mutable, admin-authored Room→repository binding, if any. */
   getRoomRepository(channelId: string): Promise<RoomRepository | null> {
     return getRoomRepository(this.ctx, channelId);
@@ -644,7 +651,7 @@ export class BuzzClient {
     return query(this.ctx, [
       {
         kinds: [KIND_AGENT_PRESENCE],
-        '#d': [`${TAG_AGENT_PRESENCE}:${channelId}`],
+        '#d': [agentPresenceKey(channelId)],
         limit: 20,
       },
     ]).then((events) =>
@@ -710,7 +717,7 @@ export class BuzzClient {
       [
         {
           kinds: [KIND_AGENT_PRESENCE],
-          '#d': [`${TAG_AGENT_PRESENCE}:${channelId}`],
+          '#d': [agentPresenceKey(channelId)],
         },
       ],
       (event) => {

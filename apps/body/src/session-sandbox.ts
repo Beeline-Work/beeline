@@ -39,9 +39,25 @@ import { classifyCornerCommand, shellCommandFromRawInput } from './corner-isolat
  * this reaches the agent through the Room system prompt and the durable
  * conversation transcript rather than through the rejection itself.
  */
+/**
+ * What a Room denial tells the agent.
+ *
+ * A denial that names only the rule invites the model to look for a way
+ * around it: refused `write` becomes `edit`, becomes `bash … > file`, becomes
+ * a patch tool — each attempt a full turn of tokens, none of which can ever
+ * succeed, because the boundary is on the ACTION and not on the tool that asks
+ * for it. That retry ladder is a measurable share of the captain's burn and it
+ * is entirely avoidable: the host knows no tool will work and can just say so.
+ *
+ * So the steer states the rule, states the ONE thing that does work, and
+ * explicitly closes the search — stop, do not try another tool.
+ */
 export const ROOM_READ_ONLY_STEER =
   'this Room is read-only; open a corner to make changes. ' +
-  'Files, shell commands, and git state cannot be modified from a Room.';
+  'Files, shell commands, and git state cannot be modified from a Room. ' +
+  'Do not retry with a different tool — every write, edit, move, delete and shell ' +
+  'command is refused here, whichever tool asks. Stop trying to make the change ' +
+  'and tell the person you need a corner opened for it.';
 
 export type SandboxDenyCode =
   'room-read-only' | 'path-escape' | 'command-write-escape' | 'persistent-cd' | 'git-escape';

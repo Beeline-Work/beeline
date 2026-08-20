@@ -272,6 +272,81 @@ describe('beeline pair — --model/--effort validation', () => {
     expect(stderr).toContain("not one of \"effort\"'s advertised options");
   });
 
+  it('accepts a Codex-shaped catalog that spells choices as `value`, not `id`', async () => {
+    // Real codex-acp advertises { value, name } with no `id`. The #226 pickers
+    // and --model/--effort check required `id`, so a live Codex catalog loaded
+    // and then offered nothing (and rejected every --model the harness actually
+    // advertises). This fake speaks that wire; the pairing code is malformed so
+    // we never touch the relay.
+    const gitRepo = await tmpDir('beeline-pair-cli-gitrepo-');
+    spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: gitRepo });
+    const stateHome = await tmpDir('beeline-pair-cli-state-');
+    const directory = await tmpDir('beeline-pair-cli-codex-');
+    const binary = resolve(directory, 'fake-codex-agent.mjs');
+    await writeFile(
+      binary,
+      `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+
+const lines = createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    send({
+      jsonrpc: '2.0',
+      id: message.id,
+      result: {
+        sessionId: 'session-1',
+        configOptions: [
+          {
+            id: 'model',
+            category: 'model',
+            currentValue: 'gpt-5.6-sol',
+            options: [{ value: 'gpt-5.6-sol', name: 'GPT-5.6-Sol' }, { value: 'gpt-5.6-terra', name: 'GPT-5.6-Terra' }],
+          },
+          {
+            id: 'reasoning_effort',
+            category: 'thought_level',
+            currentValue: 'high',
+            options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }],
+          },
+        ],
+      },
+    });
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+    );
+    await chmod(binary, 0o755);
+
+    const { status, stderr } = runPair(
+      [
+        'not-a-real-code',
+        '--repo',
+        gitRepo,
+        '--agent',
+        'custom',
+        '--agent-command',
+        binary,
+        '--model',
+        'gpt-5.6-sol',
+        '--effort',
+        'high',
+      ],
+      { cwd: gitRepo, env: { XDG_STATE_HOME: stateHome } },
+    );
+
+    expect(status).toBe(1);
+    expect(stderr).not.toContain('--model/--effort check failed');
+    expect(stderr).toContain('invalid agent pairing code');
+  });
+
   it('accepts an advertised model/effort pair and proceeds past validation to redemption', async () => {
     const gitRepo = await tmpDir('beeline-pair-cli-gitrepo-');
     spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: gitRepo });

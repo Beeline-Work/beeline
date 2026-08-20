@@ -20,6 +20,7 @@ import { getAgentModelCatalog, getAgentModelConfig, setAgentModelConfig } from '
 import {
   getRoomRepository,
   resolveRoomRepository,
+  resolveRoomRepositoryState,
   setRoomRepository,
   setRoomTargetBranch,
 } from './room-repository.js';
@@ -355,6 +356,11 @@ export class BuzzClient {
   /** The repository a Room owns, from published Room state (config → genesis). */
   resolveRoomRepository(channelId: string): Promise<RoomRepository | null> {
     return resolveRoomRepository(this.ctx, channelId);
+  }
+
+  /** Repository resolution that keeps "could not confirm" distinct from "none". */
+  resolveRoomRepositoryState(channelId: string) {
+    return resolveRoomRepositoryState(this.ctx, channelId);
   }
 
   /** The mutable, admin-authored Room→repository binding, if any. */

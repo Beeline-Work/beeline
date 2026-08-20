@@ -54,6 +54,7 @@ import {
   type AgentModelConfig,
   type AgentModelConfigInput,
   type RoomRepository,
+  type RoomRepositoryResolution,
   type RoomRepositoryInput,
 } from '@beeline/buzz-client';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
@@ -653,6 +654,20 @@ export class BuzzRigTransport implements RigTransport {
   // ── Room→repo (Stage 2 app UI over Stage 1's daemon/relay backbone) ─────
 
   /** Resolve the repository a Room owns, or `null` for a chat-only Room. */
+  /**
+   * The Room's repository, keeping "we could not tell" distinct from "there
+   * isn't one".
+   *
+   * `roomRepositoryRead` collapses both into `null`, and its caller then
+   * collapses a thrown error into `null` as well — so one slow or refused
+   * relay read made the app tell an admin their configured Room had no
+   * repository, and intercept their open-a-corner message to say so.
+   */
+  async roomRepositoryState(channelId: string): Promise<RoomRepositoryResolution> {
+    const client = await this.getClient();
+    return client.resolveRoomRepositoryState(channelId);
+  }
+
   async roomRepositoryRead(channelId: string): Promise<RoomRepository | null> {
     const client = await this.getClient();
     return client.resolveRoomRepository(channelId);

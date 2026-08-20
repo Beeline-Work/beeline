@@ -282,6 +282,23 @@ export class WorkspaceSupervisor {
     }
   }
 
+  /**
+   * The last classification this daemon actually CONFIRMED for a Room, so an
+   * unconfirmable read can carry it forward instead of downgrading the Room.
+   */
+  private readonly lastRoomClassification = new Map<string, DesiredChannel>();
+  /** De-dupe the unverified log to one line per Room per reason. */
+  private readonly roomRepositoryUnverified = new Map<string, string>();
+
+  private noteRoomRepositoryUnverified(channelId: string, reason: string): void {
+    if (this.roomRepositoryUnverified.get(channelId) === reason) return;
+    this.roomRepositoryUnverified.set(channelId, reason);
+    console.warn(
+      `[supervisor] Room ${channelId} repository could not be confirmed (${reason}); ` +
+        'keeping the last confirmed classification rather than treating it as repo-less',
+    );
+  }
+
   async reconcile(): Promise<boolean> {
     const client = createBuzzClient({
       baseUrl: this.runtime.relayBaseUrl,
@@ -321,23 +338,48 @@ export class WorkspaceSupervisor {
         // state (admin-authored config → immutable genesis binding), not from
         // this agent's own pairing binding — any agent joining the Room trees
         // off the same repo.
-        const roomRepository = await client.resolveRoomRepository(channelId);
-        if (roomRepository) {
-          desired.set(channelId, {
+        const resolution = await client.resolveRoomRepositoryState(channelId);
+        if (resolution.kind === 'repository') {
+          const entry: DesiredChannel = {
             membershipSince: membership.event.created_at,
             kind: 'repository',
-            roomRepository,
-          });
+            roomRepository: resolution.repository,
+          };
+          this.lastRoomClassification.set(channelId, entry);
+          desired.set(channelId, entry);
+          continue;
+        }
+        // "Could not confirm" must never become "there isn't one". A Room's
+        // repository config is authorized against the CURRENT admin
+        // projection, and that read comes back empty under relay load — which
+        // used to silently reclassify a live repository Room as a repo-less
+        // one, mid-session, so its own agent then told the admin the Room had
+        // no repository linked. Carry the last confirmed answer instead, and
+        // if there has never been one, leave the Room alone this pass rather
+        // than starting it as something it may not be.
+        if (resolution.kind === 'unverified') {
+          const known = this.lastRoomClassification.get(channelId);
+          if (known) {
+            desired.set(channelId, { ...known, membershipSince: membership.event.created_at });
+          } else if (this.running.has(channelId)) {
+            desired.set(channelId, {
+              membershipSince: membership.event.created_at,
+              kind: 'named-repository',
+            });
+          }
+          this.noteRoomRepositoryUnverified(channelId, resolution.reason);
           continue;
         }
         const dm = await client.getDirectMessage(channelId);
-        desired.set(channelId, {
+        const entry: DesiredChannel = {
           membershipSince: membership.event.created_at,
           kind:
             dm && dm.participants.includes(this.agent.publicKey)
               ? 'direct-message'
               : 'named-repository',
-        });
+        };
+        this.lastRoomClassification.set(channelId, entry);
+        desired.set(channelId, entry);
       }
 
       for (const [channelId, running] of [...this.running]) {

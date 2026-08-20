@@ -402,11 +402,11 @@ describe('the CI report that follows a land', () => {
   it('starts the watch from the land itself, on the landed tip and the recap it follows', async () => {
     const fixture = corner();
     const started: unknown[][] = [];
-    vi.spyOn(fixture.body as never, 'watchLandedCommitCi' as never).mockImplementation(
-      ((...args: unknown[]) => {
-        started.push(args);
-      }) as never,
-    );
+    vi.spyOn(fixture.body as never, 'watchLandedCommitCi' as never).mockImplementation(((
+      ...args: unknown[]
+    ) => {
+      started.push(args);
+    }) as never);
     const events = await land(fixture);
 
     const summary = tagged(events, LAND_SUMMARY_TAG);
@@ -417,15 +417,10 @@ describe('the CI report that follows a land', () => {
     expect(started[0]![2]).toBe(summary[0]!.id);
   });
 
-  it('tells a reader their own checkout is behind — after asking it, on a real land', async () => {
-    // The captain's Room is served out of the daemon's canonical clone while
-    // its runtime record's repo root is the operator's own tree, so a landed
-    // commit is genuinely absent from the checkout they are reading.
-    // `Landed on main at <sha>` alone never said that.
+  it('never exposes the pairing-history checkout in a land recap', async () => {
     const fixture = corner();
     const operator = resolve(fixture.root, 'operator-tree');
     git(fixture.root, ['init', '-q', '-b', 'main', operator]);
-    fixture.info.boundRepo!.operatorCheckout = operator;
     vi.spyOn(fixture.body as never, 'watchLandedCommitCi' as never).mockImplementation(
       (() => undefined) as never,
     );
@@ -434,13 +429,12 @@ describe('the CI report that follows a land', () => {
     const summary = tagged(events, LAND_SUMMARY_TAG);
     expect(summary).toHaveLength(1);
     expect(summary[0]!.content).toContain('Landed on main at');
-    expect(summary[0]!.content).toContain(`${operator} has not fetched this yet`);
+    expect(summary[0]!.content).not.toContain(operator);
   });
 
   it('never claims a checkout is behind when it already has the commit', async () => {
     const fixture = corner();
     // The corner's own worktree certainly holds the landed tip.
-    fixture.info.boundRepo!.operatorCheckout = fixture.worktree;
     vi.spyOn(fixture.body as never, 'watchLandedCommitCi' as never).mockImplementation(
       (() => undefined) as never,
     );

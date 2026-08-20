@@ -32,7 +32,14 @@ export {
 export { HOST, SCHEME, BASE_URL, resolveRelayConfig, gitRepoUrl } from './config.js';
 export type { RelayConfig } from './config.js';
 
-export { git, gitAuthed, gitWithUserCredentials, lsRemoteRef, type GitResult } from './git.js';
+export {
+  git,
+  gitAuthed,
+  gitWithUserCredentials,
+  gitWithInstallationToken,
+  lsRemoteRef,
+  type GitResult,
+} from './git.js';
 
 export {
   checkAgentNotPushAllowed,

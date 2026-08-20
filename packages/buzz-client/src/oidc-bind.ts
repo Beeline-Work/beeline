@@ -28,6 +28,20 @@ export interface OidcBindStart {
   state: string;
 }
 
+export interface GitHubRepositoryAccess {
+  id: number;
+  installationId: number;
+  name: string;
+  fullName: string;
+  remote: string;
+  defaultBranch: string;
+}
+
+export interface AuthCapabilities {
+  github: boolean;
+  oidc: boolean;
+}
+
 export interface OidcBindResult {
   linked: true;
   idempotent: boolean;
@@ -147,9 +161,10 @@ function assertChallenge(value: OidcBindChallenge): void {
 }
 
 /** Build the server-owned OAuth start URL. PKCE and nonce stay server-side. */
-export function startOidcBind(
+function startProviderBind(
   baseUrl: string,
   input: { redirectUri: string; state: string },
+  provider: 'oidc' | 'github',
 ): OidcBindStart {
   if (!TOKEN_RE.test(input.state)) {
     throw new OidcBindError('invalid_state', 'OIDC app state must be 32 random bytes');
@@ -159,7 +174,7 @@ export function startOidcBind(
   const isAssociatedLink =
     redirect.protocol === 'https:' &&
     redirect.origin === base.origin &&
-    redirect.pathname === '/auth/oidc/mobile-callback' &&
+    redirect.pathname === `/auth/${provider}/mobile-callback` &&
     !redirect.search &&
     !redirect.hash;
   const isLoopback = ['localhost', '127.0.0.1', '10.0.2.2'].includes(base.hostname);
@@ -175,10 +190,25 @@ export function startOidcBind(
       'OIDC completion must use the relay associated link (custom schemes are emulator-only)',
     );
   }
-  const url = endpoint(baseUrl, '/auth/oidc/start');
+  const url = endpoint(baseUrl, `/auth/${provider}/start`);
   url.searchParams.set('app_redirect', redirect.toString());
   url.searchParams.set('app_state', input.state);
   return { authorizationUrl: url.toString(), redirectUri: redirect.toString(), state: input.state };
+}
+
+export function startOidcBind(
+  baseUrl: string,
+  input: { redirectUri: string; state: string },
+): OidcBindStart {
+  return startProviderBind(baseUrl, input, 'oidc');
+}
+
+/** GitHub OAuth enters the exact same one-use npub bind protocol as OIDC. */
+export function startGitHubBind(
+  baseUrl: string,
+  input: { redirectUri: string; state: string },
+): OidcBindStart {
+  return startProviderBind(baseUrl, input, 'github');
 }
 
 /** Parse and strictly validate the native completion URL before any key signs it. */
@@ -197,7 +227,7 @@ export function parseOidcBindCallback(
     const message = url.searchParams.getAll('message');
     if (message.length > 1)
       throw new OidcBindError('invalid_callback', 'OIDC callback has duplicate message');
-    throw new OidcBindError(errors[0], message[0] || 'Google authorization did not complete');
+    throw new OidcBindError(errors[0], message[0] || 'Account authorization did not complete');
   }
   const allowed = new Set([
     'state',
@@ -425,4 +455,120 @@ export async function lookupRecovery(
     }
     return link as unknown as OidcIdentityLink;
   });
+}
+
+/** Begin the one-per-account Beeline GitHub App installation flow. */
+export async function startGitHubInstallation(
+  baseUrl: string,
+  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
+  redirectUri: string,
+): Promise<string> {
+  const url = endpoint(baseUrl, '/auth/github/install/start').toString();
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'POST'),
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ pubkey: identity.publicKey, redirect_uri: redirectUri }),
+    });
+  } catch (error) {
+    throw new OidcBindError(
+      'offline',
+      error instanceof Error ? error.message : 'auth service unavailable',
+    );
+  }
+  const body = await responseBody(response);
+  if (!response.ok) throw serviceError(body, response.status);
+  if (typeof body.authorization_url !== 'string') {
+    throw new OidcBindError(
+      'invalid_response',
+      'auth service returned an invalid GitHub App URL',
+      response.status,
+    );
+  }
+  return body.authorization_url;
+}
+
+/** Repositories granted by the account's Beeline GitHub App installation. */
+export async function listGitHubRepositories(
+  baseUrl: string,
+  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
+): Promise<{ installed: boolean; repositories: GitHubRepositoryAccess[] }> {
+  const url = endpoint(baseUrl, `/auth/github/repos/${identity.publicKey}`).toString();
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'GET'),
+      },
+    });
+  } catch (error) {
+    throw new OidcBindError(
+      'offline',
+      error instanceof Error ? error.message : 'auth service unavailable',
+    );
+  }
+  const body = await responseBody(response);
+  if (!response.ok) throw serviceError(body, response.status);
+  if (typeof body.installed !== 'boolean' || !Array.isArray(body.repositories)) {
+    throw new OidcBindError(
+      'invalid_response',
+      'auth service returned an invalid GitHub repository list',
+      response.status,
+    );
+  }
+  const repositories = body.repositories.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new OidcBindError(
+        'invalid_response',
+        'auth service returned an invalid GitHub repository',
+        response.status,
+      );
+    }
+    const repo = entry as Record<string, unknown>;
+    if (
+      typeof repo.id !== 'number' ||
+      typeof repo.installationId !== 'number' ||
+      !Number.isSafeInteger(repo.installationId) ||
+      typeof repo.name !== 'string' ||
+      typeof repo.fullName !== 'string' ||
+      typeof repo.remote !== 'string' ||
+      typeof repo.defaultBranch !== 'string'
+    ) {
+      throw new OidcBindError(
+        'invalid_response',
+        'auth service returned an invalid GitHub repository',
+        response.status,
+      );
+    }
+    return repo as unknown as GitHubRepositoryAccess;
+  });
+  return { installed: body.installed, repositories };
+}
+
+/** Discover which sign-in surface the deployed auth sidecar has enabled. */
+export async function getAuthCapabilities(baseUrl: string): Promise<AuthCapabilities> {
+  const url = endpoint(baseUrl, '/auth/capabilities').toString();
+  let response: Response;
+  try {
+    response = await fetch(url, { headers: { accept: 'application/json' } });
+  } catch (error) {
+    throw new OidcBindError(
+      'offline',
+      error instanceof Error ? error.message : 'auth service unavailable',
+    );
+  }
+  const body = await responseBody(response);
+  if (!response.ok) throw serviceError(body, response.status);
+  if (typeof body.github !== 'boolean' || typeof body.oidc !== 'boolean') {
+    throw new OidcBindError(
+      'invalid_response',
+      'auth service returned invalid capabilities',
+      response.status,
+    );
+  }
+  return { github: body.github, oidc: body.oidc };
 }

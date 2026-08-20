@@ -1,6 +1,7 @@
-import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { AuthStore } from './store.js';
 import { OidcClient } from './oidc.js';
+import { GitHubAppClient, GitHubOAuthClient, type GitHubIdentity } from './github.js';
 import {
   isValidNip05Name,
   normalizeHost,
@@ -25,6 +26,8 @@ export interface AuthTenant {
 export interface AuthServerOptions {
   store: AuthStore;
   oidc: OidcClient;
+  /** GitHub is the shipped sign-in and repository-access provider. */
+  github?: { oauth: GitHubOAuthClient; app: GitHubAppClient };
   tenants: AuthTenant[];
   now?: () => Date;
   flowTtlMs?: number;
@@ -138,6 +141,47 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     return target;
   };
 
+  const issueBindChallenge = async (
+    tenant: AuthTenant,
+    flow: { appRedirectUri: string | null; appState: string | null },
+    identity: { issuer: string; audience: string; subject: string },
+    reply: FastifyReply,
+  ) => {
+    const ticket = randomToken();
+    const challenge = randomToken();
+    const issuedAt = now();
+    const expiresAt = new Date(issuedAt.getTime() + ticketTtlMs);
+    await options.store.createTicket(sha256(ticket), {
+      challenge,
+      community: tenant.community,
+      issuer: identity.issuer,
+      audience: identity.audience,
+      subject: identity.subject,
+      createdAt: issuedAt,
+      expiresAt,
+      attemptCount: 0,
+      consumedAt: null,
+      boundPubkey: null,
+    });
+    noStore(reply);
+    const bindChallenge = {
+      protocol: 1,
+      kind: OIDC_BIND_KIND,
+      marker: OIDC_BIND_MARKER,
+      ticket,
+      challenge,
+      provider: identity.issuer,
+      audience: identity.audience,
+      subject: identity.subject,
+      community: tenant.community,
+      issued_at: Math.floor(issuedAt.getTime() / 1_000),
+      expires_at: Math.floor(expiresAt.getTime() / 1_000),
+    } as const;
+    const completion = nativeCompletion(flow, bindChallenge);
+    if (completion) return reply.redirect(completion.toString(), 302);
+    return reply.send(bindChallenge);
+  };
+
   const app = Fastify({ logger: options.logger ?? false, bodyLimit: 64 * 1024 });
 
   app.setErrorHandler((error, _request, reply) => {
@@ -153,6 +197,13 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
   });
 
   app.get('/health', async () => ({ ok: true }));
+
+  /** Public feature discovery. Missing GitHub config deliberately means dark. */
+  app.get('/auth/capabilities', async (request, reply) => {
+    tenantFor(request);
+    noStore(reply);
+    return reply.send({ github: Boolean(options.github), oidc: true });
+  });
 
   app.get('/.well-known/nostr.json', async (request, reply) => {
     const query = request.query as Record<string, unknown>;
@@ -227,6 +278,119 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       options.oidc.authorizationUrl({ state, nonce, codeChallenge, redirectUri }),
       302,
     );
+  });
+
+  app.get('/auth/github/start', async (request, reply) => {
+    if (!options.github)
+      throw new ProtocolError(503, 'github_unavailable', 'GitHub sign-in is not configured');
+    const tenant = tenantFor(request);
+    const query = request.query as Record<string, unknown>;
+    const appRedirect = query.app_redirect;
+    const appState = query.app_state;
+    if ((appRedirect === undefined) !== (appState === undefined)) {
+      throw new ProtocolError(
+        400,
+        'invalid_request',
+        'app redirect and state must be supplied together',
+      );
+    }
+    let appRedirectUri: string | null = null;
+    let boundAppState: string | null = null;
+    if (appRedirect !== undefined && appState !== undefined) {
+      const associatedRedirect = `${tenant.origin}/auth/github/mobile-callback`;
+      if (
+        typeof appRedirect !== 'string' ||
+        (appRedirect !== associatedRedirect && !nativeRedirectUris.has(appRedirect))
+      ) {
+        throw new ProtocolError(
+          400,
+          'invalid_request',
+          'native completion redirect is not allowed',
+        );
+      }
+      if (typeof appState !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(appState)) {
+        throw new ProtocolError(400, 'invalid_request', 'native completion state is invalid');
+      }
+      appRedirectUri = appRedirect;
+      boundAppState = appState;
+    }
+    const issuedAt = now();
+    const state = randomToken();
+    const verifier = randomToken();
+    const browserSession = randomToken();
+    const codeChallenge = Buffer.from(sha256Bytes(verifier)).toString('base64url');
+    const redirectUri = `${tenant.origin}/auth/github/callback`;
+    await options.store.createFlow(sha256(state), {
+      community: tenant.community,
+      issuer: 'https://github.com',
+      audience: options.github.oauth.config.clientId,
+      nonce: randomToken(),
+      pkceVerifier: verifier,
+      browserSessionHash: sha256(browserSession),
+      redirectUri,
+      appRedirectUri,
+      appState: boundAppState,
+      createdAt: issuedAt,
+      expiresAt: new Date(issuedAt.getTime() + flowTtlMs),
+    });
+    noStore(reply);
+    reply.header(
+      'set-cookie',
+      `${flowCookieName}=${browserSession}; Path=/; Max-Age=${Math.floor(flowTtlMs / 1_000)};${cookieSecurity} HttpOnly; SameSite=Lax`,
+    );
+    return reply.redirect(
+      options.github.oauth.authorizationUrl({ state, codeChallenge, redirectUri }),
+      302,
+    );
+  });
+
+  app.get('/auth/github/callback', async (request, reply) => {
+    if (!options.github)
+      throw new ProtocolError(503, 'github_unavailable', 'GitHub sign-in is not configured');
+    const tenant = tenantFor(request);
+    const query = request.query as Record<string, unknown>;
+    const state = requiredQueryString(query.state, 'state');
+    const browserSession = flowCookie(request, flowCookieName);
+    const flow = await options.store.consumeFlow(sha256(state), sha256(browserSession), now());
+    if (!flow)
+      throw new ProtocolError(
+        400,
+        'invalid_oauth_flow',
+        'GitHub flow is missing, expired, or already used',
+      );
+    reply.header(
+      'set-cookie',
+      `${flowCookieName}=; Path=/; Max-Age=0;${cookieSecurity} HttpOnly; SameSite=Lax`,
+    );
+    if (
+      flow.community !== tenant.community ||
+      flow.issuer !== 'https://github.com' ||
+      flow.audience !== options.github.oauth.config.clientId ||
+      flow.redirectUri !== `${tenant.origin}/auth/github/callback`
+    ) {
+      throw new ProtocolError(400, 'invalid_oauth_flow', 'GitHub flow tenant or provider mismatch');
+    }
+    if (typeof query.error === 'string') {
+      const completion = nativeCompletion(flow, {
+        error: 'github_denied',
+        message: 'GitHub authorization was canceled or denied',
+      });
+      if (completion) return reply.redirect(completion.toString(), 302);
+      throw new ProtocolError(401, 'github_denied', 'GitHub denied the authorization request');
+    }
+    const code = requiredQueryString(query.code, 'code');
+    let identity: GitHubIdentity;
+    try {
+      identity = await options.github.oauth.exchangeCode(code, flow.redirectUri, flow.pkceVerifier);
+    } catch {
+      const completion = nativeCompletion(flow, {
+        error: 'invalid_github_proof',
+        message: 'GitHub authorization expired or could not be verified',
+      });
+      if (completion) return reply.redirect(completion.toString(), 302);
+      throw new ProtocolError(401, 'invalid_github_proof', 'GitHub code exchange failed');
+    }
+    return issueBindChallenge(tenant, flow, identity, reply);
   });
 
   app.get('/auth/oidc/callback', async (request, reply) => {
@@ -436,6 +600,163 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     });
   });
 
+  app.post('/auth/github/install/start', async (request, reply) => {
+    if (!options.github)
+      throw new ProtocolError(503, 'github_unavailable', 'GitHub App is not configured');
+    const tenant = tenantFor(request);
+    if (!request.body || typeof request.body !== 'object') {
+      throw new ProtocolError(400, 'invalid_request', 'expected GitHub installation request');
+    }
+    const body = request.body as Record<string, unknown>;
+    const pubkey = typeof body.pubkey === 'string' ? body.pubkey : '';
+    const redirectUri = typeof body.redirect_uri === 'string' ? body.redirect_uri : '';
+    if (!/^[0-9a-f]{64}$/.test(pubkey))
+      throw new ProtocolError(400, 'invalid_pubkey', 'invalid public key');
+    let redirect: URL;
+    try {
+      redirect = new URL(redirectUri);
+    } catch {
+      throw new ProtocolError(400, 'invalid_redirect', 'invalid installation redirect');
+    }
+    const associatedRedirect = `${tenant.origin}/auth/github/mobile-callback`;
+    if (
+      (redirect.toString() !== associatedRedirect &&
+        !nativeRedirectUris.has(redirect.toString())) ||
+      redirect.username ||
+      redirect.password ||
+      redirect.search ||
+      redirect.hash
+    ) {
+      throw new ProtocolError(400, 'invalid_redirect', 'installation redirect is not allowed');
+    }
+    const auth = verifyNip98Header(
+      request.headers.authorization,
+      publicUrl(tenant, request),
+      'POST',
+      now(),
+    );
+    if (!auth.ok || auth.pubkey !== pubkey) {
+      throw new ProtocolError(
+        401,
+        'unauthorized',
+        auth.ok ? 'NIP-98 signer mismatch' : auth.reason,
+      );
+    }
+    const authNow = now();
+    const claimed = await options.store.claimNip98Event(
+      auth.eventId,
+      new Date(authNow.getTime() + 2 * 60_000),
+      authNow,
+    );
+    if (!claimed)
+      throw new ProtocolError(401, 'replayed_auth', 'NIP-98 authentication was already used');
+    if (!(await options.store.githubSubjectForPubkey(tenant.community, pubkey))) {
+      throw new ProtocolError(
+        409,
+        'github_not_linked',
+        'sign in with GitHub before installing the Beeline GitHub App',
+      );
+    }
+    const state = randomToken();
+    await options.store.createGitHubInstallFlow(sha256(state), {
+      community: tenant.community,
+      pubkey,
+      redirectUri: redirect.toString(),
+      createdAt: authNow,
+      expiresAt: new Date(authNow.getTime() + flowTtlMs),
+    });
+    noStore(reply);
+    return reply.send({ authorization_url: options.github.app.installationUrl(state) });
+  });
+
+  app.get('/auth/github/install/callback', async (request, reply) => {
+    if (!options.github)
+      throw new ProtocolError(503, 'github_unavailable', 'GitHub App is not configured');
+    const tenant = tenantFor(request);
+    const query = request.query as Record<string, unknown>;
+    const state = requiredQueryString(query.state, 'state');
+    const rawInstallationId = requiredQueryString(query.installation_id, 'installation_id');
+    const installationId = Number(rawInstallationId);
+    if (!Number.isSafeInteger(installationId) || installationId <= 0) {
+      throw new ProtocolError(400, 'invalid_installation', 'invalid GitHub installation id');
+    }
+    const flow = await options.store.consumeGitHubInstallFlow(sha256(state), now());
+    if (!flow || flow.community !== tenant.community) {
+      throw new ProtocolError(
+        400,
+        'invalid_installation_flow',
+        'GitHub installation flow is missing, expired, or already used',
+      );
+    }
+    const [linkedAccountId, installedAccountId] = await Promise.all([
+      options.store.githubSubjectForPubkey(tenant.community, flow.pubkey),
+      options.github.app.installationAccountId(installationId),
+    ]);
+    if (!linkedAccountId || linkedAccountId !== installedAccountId) {
+      throw new ProtocolError(
+        403,
+        'installation_account_mismatch',
+        'install the app on the GitHub account used to sign in',
+      );
+    }
+    await options.store.saveGitHubInstallation(
+      {
+        community: tenant.community,
+        pubkey: flow.pubkey,
+        accountId: installedAccountId,
+        installationId,
+      },
+      now(),
+    );
+    const completion = new URL(flow.redirectUri);
+    completion.searchParams.set('installed', '1');
+    return reply.redirect(completion.toString(), 302);
+  });
+
+  app.get<{ Params: { pubkey: string } }>('/auth/github/repos/:pubkey', async (request, reply) => {
+    if (!options.github)
+      throw new ProtocolError(503, 'github_unavailable', 'GitHub App is not configured');
+    const tenant = tenantFor(request);
+    const pubkey = request.params.pubkey;
+    if (!/^[0-9a-f]{64}$/.test(pubkey))
+      throw new ProtocolError(400, 'invalid_pubkey', 'invalid public key');
+    const auth = verifyNip98Header(
+      request.headers.authorization,
+      publicUrl(tenant, request),
+      'GET',
+      now(),
+    );
+    if (!auth.ok || auth.pubkey !== pubkey) {
+      throw new ProtocolError(
+        401,
+        'unauthorized',
+        auth.ok ? 'NIP-98 signer mismatch' : auth.reason,
+      );
+    }
+    const authNow = now();
+    if (
+      !(await options.store.claimNip98Event(
+        auth.eventId,
+        new Date(authNow.getTime() + 2 * 60_000),
+        authNow,
+      ))
+    ) {
+      throw new ProtocolError(401, 'replayed_auth', 'NIP-98 authentication was already used');
+    }
+    const installation = await options.store.githubInstallationForPubkey(tenant.community, pubkey);
+    if (!installation) {
+      noStore(reply);
+      return reply.send({ installed: false, repositories: [] });
+    }
+    const repositories = await options.github.app.listRepositories(installation.installationId);
+    noStore(reply);
+    return reply.send({
+      installed: true,
+      installation_id: installation.installationId,
+      repositories,
+    });
+  });
+
   app.post('/nip05/claim', async (request, reply) => {
     const tenant = tenantFor(request);
     if (!request.body || typeof request.body !== 'object') {
@@ -466,7 +787,8 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     if (!claimed)
       throw new ProtocolError(401, 'replayed_auth', 'NIP-98 authentication was already used');
     const outcome = await options.store.claimNip05Name(name, auth.pubkey, authNow);
-    if (outcome === 'taken') throw new ProtocolError(409, 'name_taken', 'handle is already claimed');
+    if (outcome === 'taken')
+      throw new ProtocolError(409, 'name_taken', 'handle is already claimed');
     noStore(reply);
     return reply.status(outcome === 'claimed' ? 201 : 200).send({
       claimed: true,

@@ -36,7 +36,10 @@ import type { RoomRepository, RoomRepositoryInput } from './types.js';
 let lastRoomRepositoryTimestamp = 0;
 
 function nextRoomRepositoryTimestamp(): number {
-  lastRoomRepositoryTimestamp = Math.max(Math.floor(Date.now() / 1000), lastRoomRepositoryTimestamp + 1);
+  lastRoomRepositoryTimestamp = Math.max(
+    Math.floor(Date.now() / 1000),
+    lastRoomRepositoryTimestamp + 1,
+  );
   return lastRoomRepositoryTimestamp;
 }
 
@@ -65,6 +68,12 @@ export function parseRoomRepository(event: NostrEvent): RoomRepository | null {
   const key = typeof content.key === 'string' ? content.key.trim() : '';
   const name = typeof content.name === 'string' ? content.name.trim() : '';
   const remote = typeof content.remote === 'string' ? content.remote.trim() : '';
+  const githubInstallationId =
+    typeof content.githubInstallationId === 'number' &&
+    Number.isSafeInteger(content.githubInstallationId) &&
+    content.githubInstallationId > 0
+      ? content.githubInstallationId
+      : undefined;
   // A published room-repo binding is remote-first: the remote is the source of
   // truth every daemon can clone. Local-only bindings are non-convergent and
   // stay on the genesis path, so a config event without a remote is invalid.
@@ -77,7 +86,13 @@ export function parseRoomRepository(event: NostrEvent): RoomRepository | null {
   return {
     channelId,
     ...(communityId ? { communityId } : {}),
-    binding: { key, name, remote, localOnly: false },
+    binding: {
+      key,
+      name,
+      remote,
+      localOnly: false,
+      ...(githubInstallationId ? { githubInstallationId } : {}),
+    },
     ...(targetBranch ? { targetBranch } : {}),
     source: 'config',
     authoredBy: event.pubkey,
@@ -106,7 +121,15 @@ export async function setRoomRepository(
   if (!key || !name) throw new Error('room repository requires a key and name');
   if (!remote) throw new Error('room repository requires a git remote URL');
   const targetBranch = input.targetBranch?.trim();
-  const communityId = input.communityId ?? (await getChannelCommunityId(ctx, channelId)) ?? undefined;
+  const githubInstallationId = input.githubInstallationId;
+  if (
+    githubInstallationId !== undefined &&
+    (!Number.isSafeInteger(githubInstallationId) || githubInstallationId <= 0)
+  ) {
+    throw new Error('GitHub installation id must be a positive integer');
+  }
+  const communityId =
+    input.communityId ?? (await getChannelCommunityId(ctx, channelId)) ?? undefined;
   const event = signEvent(
     {
       pubkey: ctx.identity.publicKey,
@@ -123,6 +146,7 @@ export async function setRoomRepository(
         name,
         remote,
         localOnly: false,
+        ...(githubInstallationId ? { githubInstallationId } : {}),
         ...(targetBranch ? { targetBranch } : {}),
       }),
     },
@@ -241,7 +265,10 @@ export async function resolveRoomRepositoryState(
  * branch name is refused rather than guessed at.
  */
 export function normalizeTargetBranchName(value: string | undefined | null): string | null {
-  const raw = (value ?? '').trim().replace(/^refs\/heads\//, '').replace(/^\/+|\/+$/g, '');
+  const raw = (value ?? '')
+    .trim()
+    .replace(/^refs\/heads\//, '')
+    .replace(/^\/+|\/+$/g, '');
   if (!raw || raw.length > 200) return null;
   if (/[\s~^:?*\[\\]/.test(raw)) return null;
   if (raw.includes('..') || raw.includes('@{') || raw.includes('//')) return null;
@@ -285,6 +312,7 @@ export async function setRoomTargetBranch(
     name: binding.name,
     remote: binding.remote,
     targetBranch: branch,
+    ...(binding.githubInstallationId ? { githubInstallationId: binding.githubInstallationId } : {}),
     ...(current.communityId ? { communityId: current.communityId } : {}),
   });
 }

@@ -699,15 +699,22 @@ describe('Buzz Room screen event projection', () => {
       timestamp: 5,
       corner: { subchannelId: 'corner-1', status: 'live' },
     };
+    const archivedCorner: ChatDisplayMessage = {
+      id: 'corner-2',
+      text: 'Implemented the fix and added regression tests.',
+      isUser: false,
+      timestamp: 6,
+      corner: { subchannelId: 'corner-2', status: 'archived' },
+    };
 
-    // A corner status card is dropped on BOTH surfaces: it is state, owned by
-    // the pinned line while live and by the corners view once terminal, so it
-    // must not spend a transcript cell on either.
-    expect(transcriptMessages([conversation, activity, merge, lifecycle, corner], false)).toEqual([
-      conversation,
-    ]);
+    // Live status is state and stays out of both transcripts. The archived
+    // parent card is durable history because its text is the completion
+    // summary Body wrote when it closed the corner.
     expect(
-      transcriptMessages([conversation, activity, merge, lifecycle, corner], true),
+      transcriptMessages([conversation, activity, merge, lifecycle, corner, archivedCorner], false),
+    ).toEqual([conversation, archivedCorner]);
+    expect(
+      transcriptMessages([conversation, activity, merge, lifecycle, corner, archivedCorner], true),
     ).toEqual([conversation, merge, lifecycle]);
   });
 

@@ -808,15 +808,15 @@ export function transcriptMessages(
       activityRunOpen = false;
       continue;
     }
-    // A corner's status is never inscribed into a transcript, on either
-    // surface: the pinned line above the composer owns it while it is live,
-    // and the Room's corners view owns it once it is not. Dropping it *here*
-    // rather than returning null from `renderItem` is the load-bearing part —
-    // a null-rendering row still occupies a FlatList cell and still spends the
-    // initial message window, so a Room with a long corner history opened
-    // half-empty. It stays a hard turn boundary, like lifecycle above.
+    // Live corner status is state and never spends a transcript row. An
+    // archived parent-Room card is the one exception: Body replaces its stable
+    // id with the bounded completion summary, so it is durable conversational
+    // history rather than a stale status snapshot.
     if (message.corner) {
       activityRunOpen = false;
+      if (!isCorner && message.corner.status === 'archived') {
+        transcript.push({ ...message });
+      }
       continue;
     }
     if (!isCorner && (message.isMergeSummary || message.isArchivedNotice)) {

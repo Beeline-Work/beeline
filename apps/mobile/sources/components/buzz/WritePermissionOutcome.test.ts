@@ -23,6 +23,10 @@ vi.mock('react-native', async () => {
   };
 });
 
+// This component only consumes the ledger's fixed gutter width. Keep the
+// source-level test out of Ledger's animation/native dependency graph.
+vi.mock('./Ledger', () => ({ LEDGER_MARGINALIA_WIDTH: 36 }));
+
 import { WritePermissionOutcome, writePermissionStatusLabel } from './WritePermissionOutcome';
 
 const originalConsoleError = console.error;

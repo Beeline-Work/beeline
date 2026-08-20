@@ -30,6 +30,21 @@ export {
 export { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 export { DurableBodyState, type EventCursor, type ConversationEntry } from './durable-state.js';
 export {
+  completedModelSpend,
+  dailyAgentSpend,
+  dailyRestartReprimes,
+  failedModelSpend,
+  formatAgentSpendReport,
+  formatReprimeReport,
+  reportedTokenUsage,
+  type AgentDailySpend,
+  type ModelTurnAttribution,
+  type ModelTurnCause,
+  type ModelTurnSpend,
+  type RestartReprimeSpend,
+  type SessionReprimeRecord,
+} from './model-spend.js';
+export {
   AcpClient,
   type McpServerWire,
   type SessionUpdate,

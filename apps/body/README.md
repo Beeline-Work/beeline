@@ -164,6 +164,13 @@ beeline pair BUZZ-XXXX-XXXX --agent custom \
 # Restart a previously-paired agent after a machine/process restart.
 beeline start
 
+# Inspect today's model calls/tokens, the user event that caused every turn,
+# and old-unbounded versus capped session re-prime tokens per daemon restart.
+# Adapter-reported usage is exact; fallback estimates are marked with `~`.
+beeline spend
+beeline spend --day 2026-08-20 --agent <agent-pubkey>
+beeline spend --day 2026-08-20 --json
+
 # Provision a read-only agent to a TLC channel
 npm run body -- provision <channel-uuid>
 
@@ -206,8 +213,13 @@ machine identities, known Room bindings, repo roots, and supervisor state live u
 `BUZZ_AGENT_KEY` is absent, `pair` generates the agent key there. The daemon is
 detached from the invoking terminal, retries transient loop failures, and can be
 relaunched with `beeline start`. A restart rediscovers Rooms, restores corner
-worktrees and durable inboxes, replays isolated conversation history into fresh
-ACP processes, and resumes undelivered input without duplicating handled events.
+worktrees and durable inboxes, replays only the capped recent conversation into
+fresh ACP processes, and resumes each unfinished human-commissioned corner at
+most once in that daemon process. Recaps, moved-target handling, idle ticks, and
+failed turns never start model work on their own; another attempt requires a new
+human message. `beeline spend` attributes a restart continuation to the original
+human request and groups re-prime counts and before/after token sizes by daemon
+process generation.
 
 The coding model always comes from the selected operator-owned coding agent. The
 explicit `reference` fallback instead uses the operator's local environment or

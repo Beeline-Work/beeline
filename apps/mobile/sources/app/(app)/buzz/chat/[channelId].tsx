@@ -850,11 +850,9 @@ export default function BuzzChat() {
         (message) =>
           message.writePermission?.status === 'allowed' && message.writePermission.subchannelId,
       );
-    if (
-      message &&
-      Date.now() - message.timestamp <= RECENT_ALLOW_CUTOFF_MS
-    ) {
-      return { cornerId: message.writePermission.subchannelId!, timestamp: message.timestamp };
+    const cornerId = message?.writePermission?.subchannelId;
+    if (cornerId && Date.now() - message!.timestamp <= RECENT_ALLOW_CUTOFF_MS) {
+      return { cornerId, timestamp: message!.timestamp };
     }
     return undefined;
   }, [messages]);

@@ -4,7 +4,7 @@ import { summarizeGitFailure } from './git-failure.js';
 const REAL_REJECTION_DUMP = [
   'Human-approved landing on refs/heads/main failed.',
   '! [rejected]        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -> main (fetch first)',
-  'error: failed to push some refs to \'https://relay.buzzrouter.com/git/owner/repo\'',
+  'error: failed to push some refs to \'https://usebeeline.app/git/owner/repo\'',
   "hint: Updates were rejected because the remote contains work that you do",
   "hint: not have locally. This is usually caused by another repository pushing",
   "hint: to the same ref. You may want to first integrate the remote changes",
@@ -60,7 +60,7 @@ describe('summarizeGitFailure', () => {
   });
 
   it('recognizes a network failure', () => {
-    expect(summarizeGitFailure('ssh: Could not resolve hostname relay.buzzrouter.com')).toBe(
+    expect(summarizeGitFailure('ssh: Could not resolve hostname usebeeline.app')).toBe(
       "Couldn't reach the repository. It will keep retrying automatically.",
     );
   });

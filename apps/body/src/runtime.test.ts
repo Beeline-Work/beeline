@@ -3,19 +3,22 @@ import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { newIdentity } from '@beeline/gate';
 import {
   canonicalizeOrigin,
   findAgentRuntimeConfigPaths,
   findRuntimeConfigPaths,
   inspectLocalRepository,
+  normalizeRelayBaseUrl,
   pairRepositoryAgent,
   tryInspectLocalRepository,
   readRuntimeRecord,
   removeAgentRuntime,
   resolveRuntimeConfigPath,
   runtimeAgentCommand,
+  stopRuntimeDaemon,
+  updateRuntimeRelay,
 } from './runtime.js';
 
 const cleanup: string[] = [];
@@ -148,6 +151,140 @@ describe('pairing with no repository', () => {
     expect(stored.rooms).toEqual([]);
     expect(stored.communityId).toBe('11111111-1111-4111-8111-111111111111');
     expect(stored.agent.publicKey).toBe(agent.publicKey);
+  });
+});
+
+describe('stored relay migration', () => {
+  it('preserves an old-host runtime until an explicit relay update', async () => {
+    const nonRepo = await mkdtemp(resolve(tmpdir(), 'beeline-relay-migration-'));
+    cleanup.push(nonRepo);
+    const supervisorRoot = await stateRoot();
+    const agent = newIdentity('agent');
+    const result = await pairRepositoryAgent(
+      {
+        code: 'BUZZ-ABCD-EFGH',
+        cwd: nonRepo,
+        repo: null,
+        relayBaseUrl: 'https://relay.buzzrouter.com',
+        relayHost: 'relay.buzzrouter.com',
+        agentBinary: '/usr/bin/agent',
+        mcpBinary: '/usr/bin/mcp',
+        agentIdentity: agent,
+        bodyIdentity: newIdentity('body'),
+        mergeWorkerIdentity: newIdentity('merge-worker'),
+        supervisorRoot,
+      },
+      {
+        redeem: async () => ({
+          communityId: '11111111-1111-4111-8111-111111111111',
+          pairedBy: 'a'.repeat(64),
+          joined: true,
+          agent: {
+            agentId: 'agent-id',
+            communityId: '11111111-1111-4111-8111-111111111111',
+            displayName: 'Agent',
+            pubkey: agent.publicKey,
+            createdAt: 1,
+            raw: {} as never,
+          },
+        }),
+        resolveRoom: async () => {
+          throw new Error('not called');
+        },
+        launch: async () => 4242,
+      },
+    );
+
+    const legacy = await readRuntimeRecord(result.configPath);
+    expect(legacy.relayBaseUrl).toBe('https://relay.buzzrouter.com');
+    expect(legacy.relayHost).toBe('relay.buzzrouter.com');
+
+    const misplacedConfigPath = resolve(nonRepo, 'misplaced-runtime.json');
+    await writeFile(misplacedConfigPath, await readFile(result.configPath, 'utf8'));
+    await expect(updateRuntimeRelay(misplacedConfigPath, 'https://usebeeline.app')).rejects.toThrow(
+      'outside its canonical path',
+    );
+    await expect(readRuntimeRecord(result.configPath)).resolves.toMatchObject({
+      relayBaseUrl: 'https://relay.buzzrouter.com',
+      relayHost: 'relay.buzzrouter.com',
+    });
+
+    const migrated = await updateRuntimeRelay(result.configPath, 'https://usebeeline.app/');
+    expect(migrated.runtime.relayBaseUrl).toBe('https://usebeeline.app');
+    expect(migrated.runtime.relayHost).toBe('usebeeline.app');
+    await expect(readRuntimeRecord(result.configPath)).resolves.toMatchObject({
+      relayBaseUrl: 'https://usebeeline.app',
+      relayHost: 'usebeeline.app',
+      communityId: legacy.communityId,
+      agent: legacy.agent,
+      rooms: legacy.rooms,
+    });
+  });
+
+  it('accepts only a relay origin and leaves invalid inputs unwritten', () => {
+    expect(normalizeRelayBaseUrl('https://usebeeline.app/')).toEqual({
+      relayBaseUrl: 'https://usebeeline.app',
+      relayHost: 'usebeeline.app',
+    });
+    expect(normalizeRelayBaseUrl('http://127.0.0.1:3010')).toEqual({
+      relayBaseUrl: 'http://127.0.0.1:3010',
+      relayHost: '127.0.0.1:3010',
+    });
+    expect(() => normalizeRelayBaseUrl('wss://usebeeline.app')).toThrow('HTTP or HTTPS');
+    expect(() => normalizeRelayBaseUrl('https://usebeeline.app/query')).toThrow(
+      'must be an origin',
+    );
+  });
+
+  it('waits for the previous daemon to stop before a replacement can launch', async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), 'beeline-daemon-stop-'));
+    cleanup.push(directory);
+    const configPath = resolve(directory, 'runtime.json');
+    await writeFile(configPath, '{}\n');
+    const child = spawn(
+      process.execPath,
+      [
+        '-e',
+        "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000)",
+        'daemon',
+        '--config',
+        configPath,
+      ],
+      { stdio: 'ignore' },
+    );
+    await new Promise<void>((resolveSpawn, rejectSpawn) => {
+      child.once('spawn', resolveSpawn);
+      child.once('error', rejectSpawn);
+    });
+    await new Promise((resolveReady) => setTimeout(resolveReady, 50));
+    await writeFile(resolve(directory, 'daemon.pid'), `${child.pid}\n`);
+
+    await expect(stopRuntimeDaemon(configPath, { timeoutMs: 2_000, pollMs: 10 })).resolves.toBe(
+      child.pid,
+    );
+    expect(() => process.kill(child.pid!, 0)).toThrow();
+  });
+
+  it('never signals an unrelated process referenced by a stale daemon pid file', async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), 'beeline-daemon-stale-pid-'));
+    cleanup.push(directory);
+    const configPath = resolve(directory, 'runtime.json');
+    await writeFile(configPath, '{}\n');
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      stdio: 'ignore',
+    });
+    await new Promise<void>((resolveSpawn, rejectSpawn) => {
+      child.once('spawn', resolveSpawn);
+      child.once('error', rejectSpawn);
+    });
+    await writeFile(resolve(directory, 'daemon.pid'), `${child.pid}\n`);
+
+    try {
+      await expect(stopRuntimeDaemon(configPath)).rejects.toThrow('refusing to stop it');
+      expect(() => process.kill(child.pid!, 0)).not.toThrow();
+    } finally {
+      child.kill('SIGKILL');
+    }
   });
 });
 

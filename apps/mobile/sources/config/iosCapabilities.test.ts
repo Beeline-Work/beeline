@@ -24,6 +24,7 @@ describe('production iOS capabilities', () => {
       },
     );
     const config = JSON.parse(output) as {
+      extra?: { app?: { buzzyRelayUrl?: string; buzzyPushGatewayUrl?: string } };
       ios?: { associatedDomains?: string[] };
       android?: {
         package?: string;
@@ -53,13 +54,33 @@ describe('production iOS capabilities', () => {
       ),
     ) as { applinks?: { details?: Array<{ paths?: string[] }> } };
 
-    expect(config.ios?.associatedDomains).toEqual(['applinks:relay.buzzrouter.com']);
+    expect(config.extra?.app?.buzzyRelayUrl).toBe('https://usebeeline.app');
+    expect(config.extra?.app?.buzzyPushGatewayUrl).toBe('https://push.buzzrouter.com');
+    expect(config.ios?.associatedDomains).toEqual([
+      'applinks:usebeeline.app',
+      'applinks:relay.buzzrouter.com',
+    ]);
     expect(config.android?.package).toBe('app.buzzy.mobile');
     expect(config.android?.intentFilters).toContainEqual(
       expect.objectContaining({
         action: 'VIEW',
         autoVerify: true,
         data: expect.arrayContaining([
+          {
+            scheme: 'https',
+            host: 'usebeeline.app',
+            pathPrefix: '/join/',
+          },
+          {
+            scheme: 'https',
+            host: 'usebeeline.app',
+            pathPrefix: '/auth/github/mobile-callback',
+          },
+          {
+            scheme: 'https',
+            host: 'usebeeline.app',
+            pathPrefix: '/auth/oidc/mobile-callback',
+          },
           {
             scheme: 'https',
             host: 'relay.buzzrouter.com',
@@ -80,6 +101,7 @@ describe('production iOS capabilities', () => {
     );
     expect(nativeIos?.entitlements).not.toHaveProperty('aps-environment');
     expect(nativeIos?.entitlements?.['com.apple.developer.associated-domains']).toEqual([
+      'applinks:usebeeline.app',
       'applinks:relay.buzzrouter.com',
     ]);
     expect(nativeIos?.infoPlist?.UIBackgroundModes).not.toContain('remote-notification');

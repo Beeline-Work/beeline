@@ -4,7 +4,7 @@ import { googleAuthSessionOptions } from './google-auth-session';
 describe('Google auth browser session', () => {
   it('bypasses Android’s retained Custom Tabs proxy for each fresh login', () => {
     expect(
-      googleAuthSessionOptions('android', 'https://relay.buzzrouter.com/auth/oidc/mobile-callback'),
+      googleAuthSessionOptions('android', 'https://usebeeline.app/auth/oidc/mobile-callback'),
     ).toEqual({
       preferUniversalLinks: true,
       createTask: true,

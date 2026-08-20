@@ -21,9 +21,11 @@ import {
   loadBuzzIdentity,
   loadBuzzIdentityNsecForExport,
   loadRelayUrl,
+  getEffectiveRelayUrl,
   saveBuzzIdentity,
   saveRelayUrl,
   generateBuzzIdentity,
+  DEFAULT_RELAY_URL,
 } from './buzz-identity-storage';
 
 describe('Buzz identity storage', () => {
@@ -46,6 +48,15 @@ describe('Buzz identity storage', () => {
     ];
     expect(keys).toEqual(['buzzy.identity.relayUrl', 'buzzy.identity.relayUrl']);
     for (const key of keys) expect(key).toMatch(/^[A-Za-z0-9._-]+$/);
+  });
+
+  it('defaults new devices to the usebeeline.app apex without rewriting stored URLs', async () => {
+    expect(DEFAULT_RELAY_URL).toBe('https://usebeeline.app');
+    await expect(getEffectiveRelayUrl()).resolves.toBe('https://usebeeline.app');
+
+    secureStore.getItemAsync.mockResolvedValue('https://relay.buzzrouter.com');
+    await expect(getEffectiveRelayUrl()).resolves.toBe('https://relay.buzzrouter.com');
+    expect(secureStore.setItemAsync).not.toHaveBeenCalled();
   });
 
   it('uses the same SecureStore-compatible key to save and load identities', async () => {

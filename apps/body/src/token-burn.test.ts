@@ -16,16 +16,19 @@
  * request, so the cost recurred per TURN, not per restart. Their claude daemon
  * restarted 14 times that day.
  *
- * Three separate sources, measured here rather than argued:
+ * Sources measured here rather than argued:
  *   1. the unbounded re-prime block;
- *   2. a corner's opening task re-run from scratch on every restart;
- *   3. a Room denial that names the rule but not "stop", inviting the model to
+ *   2. a Room denial that names the rule but not "stop", inviting the model to
  *      walk the tool ladder (write → edit → bash → patch), each rung a turn.
+ * Restart continuation is separately exercised through `restoreSubchannels`
+ * in `body.test.ts`: original authority, one process-wide attempt, bounded
+ * re-prime, and explicit spend attribution.
  */
 import { describe, expect, it } from 'vitest';
 import {
   SESSION_REPRIME_ELIDED_NOTE,
   SESSION_REPRIME_MAX_CHARS,
+  measureSessionReprime,
   repriseSystemPromptBlock,
   repriseTranscriptLines,
   type RepriseEntry,
@@ -43,22 +46,13 @@ function capturedRoomTranscript(): RepriseEntry[] {
   return entries;
 }
 
-/** The old behaviour, kept here so the saving is measured, not asserted. */
-function unboundedReplay(entries: readonly RepriseEntry[]): string {
-  return [
-    '',
-    'This logical channel session was suspended while idle. Restore its single',
-    'continuous conversation from this ordered transcript; do not treat it as a new task:',
-    ...entries.map((entry) => `[${entry.role}] ${entry.text}`),
-  ].join('\n');
-}
-
 describe('re-priming a session does not replay the whole Room', () => {
   const transcript = capturedRoomTranscript();
 
   it('measures the burn the captain was paying, per turn', () => {
-    const before = unboundedReplay(transcript);
-    const after = repriseSystemPromptBlock(transcript);
+    const measured = measureSessionReprime(transcript);
+    const before = 'x'.repeat(measured.beforeChars);
+    const after = measured.block;
     const tokens = (text: string) => Math.round(text.length / 4);
 
     // The captured size, to within rounding of the real file.
@@ -70,6 +64,9 @@ describe('re-priming a session does not replay the whole Room', () => {
     expect(tokens(after)).toBeLessThan(2_500);
     // Better than a 90% cut on every turn of every restored session.
     expect(after.length / before.length).toBeLessThan(0.1);
+    expect(measured).toMatchObject({ entries: 200 });
+    expect(measured.beforeTokens).toBeGreaterThan(27_000);
+    expect(measured.afterTokens).toBeLessThan(2_500);
   });
 
   it('keeps the NEWEST exchanges, because that is the thread being resumed', () => {
@@ -122,26 +119,5 @@ describe('a denial closes the search instead of inviting the next tool', () => {
     for (const action of ['write', 'edit', 'move', 'delete', 'shell']) {
       expect(ROOM_READ_ONLY_STEER.toLowerCase()).toContain(action);
     }
-  });
-});
-
-describe('a restart never re-runs work a corner already did', () => {
-  it('is decided from the corner’s own published output', () => {
-    // `restoreSubchannels` re-drove a corner's opening task on every restart
-    // whenever it had not yet published a merge-ready — 14 restarts in a day
-    // meant 14 unrequested runs of the same task. The corner's own kind:9
-    // history is the evidence that it already ran.
-    const alreadyWorked = (tags: string[][][]): boolean =>
-      tags.some((eventTags) =>
-        eventTags.some(
-          (tag) => tag[0] === 't' && (tag[1] === 'agent-message' || tag[1] === 'agent-activity'),
-        ),
-      );
-
-    // A corner that has only its opening control card: nothing has run yet.
-    expect(alreadyWorked([[['t', 'body-control'], ['status', 'live']]])).toBe(false);
-    // One that has spoken, or produced activity, has.
-    expect(alreadyWorked([[['t', 'body-control']], [['t', 'agent-message']]])).toBe(true);
-    expect(alreadyWorked([[['t', 'agent-activity']]])).toBe(true);
   });
 });

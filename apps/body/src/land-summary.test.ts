@@ -99,11 +99,9 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
 
   /** Approve + land the corner, exactly as the maintenance tick does. */
   async function landIt(
-    agent: ReturnType<typeof newIdentity>,
     body: Body,
     info: ReturnType<typeof cornerInfo>,
     tip: string,
-    recap: string,
   ): Promise<void> {
     Reflect.set(body, 'findHumanMergeApproval', async (target: typeof info) => {
       (target as { humanMergeApproval?: unknown }).humanMergeApproval = {
@@ -113,7 +111,13 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
       };
       return (target as { humanMergeApproval?: unknown }).humanMergeApproval;
     });
-    Reflect.set(body, 'promptAgent', async () => ({ agentText: recap, updates: [] }));
+    Reflect.set(
+      body,
+      'promptAgent',
+      vi.fn(async () => {
+        throw new Error('land recap must not start a model turn');
+      }),
+    );
     // Archival is a separate human-authorized effect with its own relay
     // authority reads; this suite is about the recap, not the teardown.
     Reflect.set(body, 'archiveSubchannel', async () => undefined);
@@ -122,7 +126,7 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
     await body.pollMergeCompletions();
   }
 
-  it('posts exactly one agent-authored recap naming objective, what landed, what did not, and the commit', async () => {
+  it('posts exactly one deterministic recap without starting a model turn', async () => {
     const agent = newIdentity('land-summary-agent');
     const { root, repoPath, cornerPath, tip } = localCorner();
     const published: NostrEvent[] = [];
@@ -138,17 +142,7 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
       const info = cornerInfo(agent, repoPath, cornerPath);
       body.registerSubchannel(info as never);
 
-      await landIt(
-        agent,
-        body,
-        info,
-        tip,
-        [
-          'Set out to add a haiku to the readme.',
-          'Landed one commit touching README.md.',
-          'Did not touch the build or add tests — the change is prose only.',
-        ].join('\n'),
-      );
+      await landIt(body, info, tip);
 
       expect(gitCommand(repoPath, ['rev-parse', 'refs/heads/master'])).toBe(tip);
       const summaries = published.filter((event) =>
@@ -156,16 +150,20 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
       );
       expect(summaries).toHaveLength(1);
       const summary = summaries[0]!;
-      // The agent's own voice, in the PARENT Room — not a corner status card.
+      // Host-derived facts in the PARENT Room — not a corner status card.
       expect(summary.tags).toContainEqual(['h', 'room-local']);
       expect(summary.tags).toContainEqual(['t', 'agent-message']);
       expect(summary.tags).toContainEqual(['subchannel', 'corner-land-summary']);
       expect(summary.tags).toContainEqual(['tip', tip]);
-      expect(summary.content).toContain('Set out to add a haiku');
-      expect(summary.content).toContain('README.md');
-      expect(summary.content).toContain('Did not touch the build');
-      expect(summary.content).toContain(`Landed on master at ${tip.slice(0, 12)}.`);
-      expect(summary.content.split('\n')).toHaveLength(4);
+      expect(summary.content).toBe(
+        [
+          'Set out to: add a haiku to the readme',
+          'Landed: 1 commit across 1 file (README.md).',
+          `Landed on master at ${tip.slice(0, 12)}.`,
+        ].join('\n'),
+      );
+      expect(Reflect.get(body, 'promptAgent')).not.toHaveBeenCalled();
+      expect(summary.content.split('\n')).toHaveLength(3);
       expect(summary.content.split('\n').length).toBeLessThanOrEqual(8);
       // No raw plumbing survives into a Room a person reads on their phone.
       expect(summary.content).not.toMatch(/\bgit\b|hint:|```/);
@@ -189,7 +187,7 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
       const body = newBody(agent, join(root, 'state.json'));
       const info = cornerInfo(agent, repoPath, cornerPath);
       body.registerSubchannel(info as never);
-      await landIt(agent, body, info, tip, 'Landed the haiku.');
+      await landIt(body, info, tip);
 
       await body.pollMergeCompletions();
       await body.pollMergeCompletions();
@@ -204,7 +202,7 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
     }
   });
 
-  it('falls back to a deterministic recap rather than losing the record when the agent cannot answer', async () => {
+  it('uses deterministic facts even when a corner session is unavailable', async () => {
     const agent = newIdentity('land-summary-fallback');
     const { root, repoPath, cornerPath, tip } = localCorner();
     const published: NostrEvent[] = [];
@@ -228,9 +226,13 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
         return (target as { humanMergeApproval?: unknown }).humanMergeApproval;
       });
       Reflect.set(body, 'archiveSubchannel', async () => undefined);
-      Reflect.set(body, 'promptAgent', async () => {
-        throw new Error('ACP session is gone');
-      });
+      Reflect.set(
+        body,
+        'promptAgent',
+        vi.fn(async () => {
+          throw new Error('ACP session is gone');
+        }),
+      );
       await Reflect.get(body, 'publishMergeReady').call(body, info);
       await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
       await body.pollMergeCompletions();
@@ -242,6 +244,7 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
       expect(summary!.content).toContain('add a haiku to the readme');
       expect(summary!.content).toContain('1 commit across 1 file (README.md)');
       expect(summary!.content).toContain(`Landed on master at ${tip.slice(0, 12)}.`);
+      expect(Reflect.get(body, 'promptAgent')).not.toHaveBeenCalled();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -270,7 +273,7 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
         };
         return (target as { humanMergeApproval?: unknown }).humanMergeApproval;
       });
-      Reflect.set(body, 'promptAgent', async () => ({ agentText: 'rebased', updates: [] }));
+      Reflect.set(body, 'promptAgent', vi.fn());
       await Reflect.get(body, 'publishMergeReady').call(body, info);
       // master moves on after the human approved this exact tip: the land is
       // refused, so nothing landed and nothing may be reported as landed.
@@ -287,12 +290,13 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
           event.tags.some((tag) => tag[0] === 't' && tag[1] === 'land-summary'),
         ),
       ).toHaveLength(0);
-      // ...and the refusal itself is the self-healing kind, not a dead end.
+      // ...and maintenance reports the block without starting a model turn.
       expect(
         published.some((event) =>
-          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-realigning'),
+          event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'blocked'),
         ),
       ).toBe(true);
+      expect(Reflect.get(body, 'promptAgent')).not.toHaveBeenCalled();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -409,7 +413,7 @@ describe('every land path recaps the corner exactly once', () => {
   }
 
   /** Approve the corner's exact tip, as a device-held human admin would. */
-  function approve(body: Body, tip: string, recap: string): void {
+  function approve(body: Body, tip: string): void {
     Reflect.set(body, 'findHumanMergeApproval', async (target: { humanMergeApproval?: unknown }) => {
       target.humanMergeApproval = {
         id: 'approval-1',
@@ -418,7 +422,13 @@ describe('every land path recaps the corner exactly once', () => {
       };
       return target.humanMergeApproval;
     });
-    Reflect.set(body, 'promptAgent', async () => ({ agentText: recap, updates: [] }));
+    Reflect.set(
+      body,
+      'promptAgent',
+      vi.fn(async () => {
+        throw new Error('land recap must not start a model turn');
+      }),
+    );
   }
 
   it('recaps a local-only fast-forward land from the land itself, with no completion poll', async () => {
@@ -432,7 +442,7 @@ describe('every land path recaps the corner exactly once', () => {
         targetBranch: 'refs/heads/master',
       });
       body.registerSubchannel(info as never);
-      approve(body, tip, 'Added a haiku to the readme. Did not touch the build.');
+      approve(body, tip);
 
       await Reflect.get(body, 'publishMergeReady').call(body, info);
       // The one poll the live tick ran before the recap went missing.
@@ -445,8 +455,9 @@ describe('every land path recaps the corner exactly once', () => {
       expect(summaries[0]!.tags).toContainEqual(['h', 'room-local']);
       expect(summaries[0]!.tags).toContainEqual(['subchannel', 'corner-land-paths']);
       expect(summaries[0]!.tags).toContainEqual(['tip', tip]);
-      expect(summaries[0]!.content).toContain('Added a haiku');
+      expect(summaries[0]!.content).toContain('Set out to: add a haiku to the readme');
       expect(summaries[0]!.content).toContain(`Landed on master at ${tip.slice(0, 12)}.`);
+      expect(Reflect.get(body, 'promptAgent')).not.toHaveBeenCalled();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -464,7 +475,7 @@ describe('every land path recaps the corner exactly once', () => {
         targetBranch: 'refs/heads/master',
       });
       body.registerSubchannel(info as never);
-      approve(body, tip, 'Added a haiku to the readme.');
+      approve(body, tip);
       Reflect.set(body, 'archiveSubchannel', async (id: string) => {
         archived.push(id);
       });
@@ -511,7 +522,7 @@ describe('every land path recaps the corner exactly once', () => {
         targetBranch: 'refs/heads/master',
       });
       body.registerSubchannel(info as never);
-      approve(body, tip, 'Added a haiku to the readme.');
+      approve(body, tip);
 
       await Reflect.get(body, 'publishMergeReady').call(body, info);
       const landed = await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);

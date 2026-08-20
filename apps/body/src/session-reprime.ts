@@ -105,3 +105,36 @@ export function repriseSystemPromptBlock(
     ...lines,
   ].join('\n');
 }
+
+export interface SessionReprimeSize {
+  entries: number;
+  beforeChars: number;
+  afterChars: number;
+  beforeTokens: number;
+  afterTokens: number;
+  block: string;
+}
+
+/** Measured old-vs-capped replay size for one physical session activation. */
+export function measureSessionReprime(
+  entries: readonly RepriseEntry[],
+  maxChars: number = SESSION_REPRIME_MAX_CHARS,
+): SessionReprimeSize {
+  const header = [
+    '',
+    'This logical channel session was suspended while idle. Restore its single',
+    'continuous conversation from this ordered transcript; do not treat it as a new task:',
+  ];
+  const before = entries.length
+    ? [...header, ...entries.map((entry) => `[${entry.role}] ${entry.text}`)].join('\n')
+    : '';
+  const block = repriseSystemPromptBlock(entries, maxChars);
+  return {
+    entries: entries.length,
+    beforeChars: before.length,
+    afterChars: block.length,
+    beforeTokens: Math.ceil(before.length / 4),
+    afterTokens: Math.ceil(block.length / 4),
+    block,
+  };
+}

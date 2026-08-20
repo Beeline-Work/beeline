@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import type { NostrEvent } from '@beeline/nostr';
+import type { ModelTurnSpend, SessionReprimeRecord } from './model-spend.js';
 
 export interface EventCursor {
   createdAt: number;
@@ -27,11 +28,16 @@ interface DurableBodyData {
   version: 1;
   inboxes: Record<string, { cursor: EventCursor; items: Record<string, InboxItem> }>;
   conversations: Record<string, ConversationEntry[]>;
+  /** Bounded local audit trail for `beeline spend`; never published to the Room. */
+  modelTurns?: ModelTurnSpend[];
+  sessionReprimes?: SessionReprimeRecord[];
 }
 
 function emptyData(): DurableBodyData {
-  return { version: 1, inboxes: {}, conversations: {} };
+  return { version: 1, inboxes: {}, conversations: {}, modelTurns: [], sessionReprimes: [] };
 }
+
+const MAX_MODEL_TURNS = 20_000;
 
 function compareEvents(a: NostrEvent, b: NostrEvent): number {
   return a.created_at - b.created_at || a.id.localeCompare(b.id);
@@ -56,6 +62,8 @@ export class DurableBodyState {
         throw new Error(`unsupported durable body state at ${this.path}`);
       }
       this.data = parsed;
+      this.data.modelTurns ??= [];
+      this.data.sessionReprimes ??= [];
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
@@ -155,6 +163,33 @@ export class DurableBodyState {
       .reverse()
       .find((entry) => entry.role === 'agent' && entry.text.trim())
       ?.text.trim();
+  }
+
+  /** Persist one inspectable model invocation, including the human event that authorized it. */
+  async recordModelTurn(turn: ModelTurnSpend): Promise<void> {
+    await this.load();
+    const turns = this.data.modelTurns ?? [];
+    turns.push(turn);
+    this.data.modelTurns = turns.slice(-MAX_MODEL_TURNS);
+    await this.save();
+  }
+
+  async modelTurns(): Promise<ModelTurnSpend[]> {
+    await this.load();
+    return [...(this.data.modelTurns ?? [])];
+  }
+
+  async recordSessionReprime(record: SessionReprimeRecord): Promise<void> {
+    await this.load();
+    const records = this.data.sessionReprimes ?? [];
+    records.push(record);
+    this.data.sessionReprimes = records.slice(-MAX_MODEL_TURNS);
+    await this.save();
+  }
+
+  async sessionReprimes(): Promise<SessionReprimeRecord[]> {
+    await this.load();
+    return [...(this.data.sessionReprimes ?? [])];
   }
 
   private inbox(channelId: string): DurableBodyData['inboxes'][string] {

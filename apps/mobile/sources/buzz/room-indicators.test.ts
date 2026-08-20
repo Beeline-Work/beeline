@@ -132,7 +132,7 @@ describe('selectPinnedCorner', () => {
 
   it('pins a just-permitted corner nobody has a status for yet', () => {
     expect(
-      selectPinnedCorner({ ...base, permittedCornerId: 'brand-new' }),
+      selectPinnedCorner({ ...base, permittedCorner: { cornerId: 'brand-new', timestamp: Date.now() } }),
     ).toEqual({ cornerId: 'brand-new', status: 'live' });
   });
 
@@ -142,14 +142,14 @@ describe('selectPinnedCorner', () => {
     expect(
       selectPinnedCorner({
         ...base,
-        permittedCornerId: 'honeybees',
+        permittedCorner: { cornerId: 'honeybees', timestamp: Date.now() },
         lifecycle: [corner('honeybees', 'archived')],
       }),
     ).toBeNull();
     expect(
       selectPinnedCorner({
         ...base,
-        permittedCornerId: 'honeybees',
+        permittedCorner: { cornerId: 'honeybees', timestamp: Date.now() },
         signals: [{ subchannelId: 'honeybees', status: 'archived', timestamp: 5 }],
       }),
     ).toBeNull();
@@ -159,7 +159,7 @@ describe('selectPinnedCorner', () => {
     // Before the read lands, "unknown corner" cannot be told from "archived
     // corner", so the line stays dark rather than guessing.
     expect(
-      selectPinnedCorner({ ...base, lifecycleLoaded: false, permittedCornerId: 'brand-new' }),
+      selectPinnedCorner({ ...base, lifecycleLoaded: false, permittedCorner: { cornerId: 'brand-new', timestamp: Date.now() } }),
     ).toBeNull();
   });
 

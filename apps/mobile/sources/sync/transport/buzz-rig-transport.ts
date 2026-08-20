@@ -105,18 +105,32 @@ function cornerSummaryFromEvents(
       createdAt: event.createdAt,
     }))
     .filter((entry): entry is { raw: string; createdAt: number } => Boolean(entry.raw));
-  const latestRawStatus = [...statusEntries].sort((a, b) => b.createdAt - a.createdAt)[0]?.raw;
-  const latestStatus = mapRawCornerStatusTag(latestRawStatus);
+  const latest = [...statusEntries].sort((a, b) => b.createdAt - a.createdAt)[0];
+  const latestStatus = mapRawCornerStatusTag(latest?.raw);
   // `closed` on a kind:39000 projection is NIP-29 invite-only access, not a
   // lifecycle state. Only an explicit archived boolean or a corner-scoped
   // archived status removes a corner from the live list.
   const archived =
     metadata?.archived === true || statusEntries.some((entry) => entry.raw === 'archived');
+  // A merge-ready is a REVIEW ANNOUNCEMENT, not a standing state, so it may
+  // only speak for the corner while nothing newer has spoken.
+  //
+  // It used to win outright — "a merge-ready appears anywhere in the last 50
+  // events" — which made a corner that published a review and then failed read
+  // as `open` for ever. `open` is not terminal, so it kept its place in the
+  // Room's pinned corner strip permanently. Three of the captain's corners are
+  // in exactly that state right now: their newest word is `failed`, and all
+  // three still report `open`.
+  const latestMergeReadyAt = events
+    .filter((event) => event.event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'))
+    .reduce<number | undefined>(
+      (newest, event) => (newest === undefined ? event.createdAt : Math.max(newest, event.createdAt)),
+      undefined,
+    );
   const reviewReady =
     latestStatus === 'open' ||
-    events.some((event) =>
-      event.event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
-    );
+    (latestMergeReadyAt !== undefined &&
+      (latest === undefined || latestMergeReadyAt >= latest.createdAt));
   const lastActivityAt = Math.max(
     create?.created_at ?? 0,
     ...events.map((event) => event.createdAt),

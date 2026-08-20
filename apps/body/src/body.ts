@@ -791,6 +791,24 @@ export const AGENT_REQUEST_TAG = 'buzz-agent-request';
  * daemon rolls (observed live in five of the captain's corners) is the shape
  * this constant exists to stop.
  */
+/**
+ * Lifecycle word for a corner that hit a problem but is NOT over.
+ *
+ * `status: failed` on a corner-scoped control message is what drives the
+ * app's delivery-failure footer, so it has to stay — but the client also reads
+ * the newest status as the corner's LIFECYCLE state, where `failed` is
+ * terminal and terminal means "drop it from the Room's pinned corner strip".
+ * A land that will be retried, or a push that a person can unblock, is exactly
+ * the corner a person most needs to be able to find. `display-status` is read
+ * in preference to `status` (`mapRawCornerStatusTag`), so pairing the two says
+ * both true things at once: this delivery failed, and this corner is still
+ * open and waiting on you.
+ */
+export const RECOVERABLE_CORNER_FAILURE_TAGS: readonly string[][] = [
+  ['status', 'failed'],
+  ['display-status', 'needs-attention'],
+];
+
 export const CORNER_WORKTREE_UNRESTORABLE =
   'Agent restart could not restore this corner worktree; no input was discarded.';
 
@@ -1294,7 +1312,15 @@ export function taskDescriptionFromCornerRequest(content: string): string {
  *  carried no describable task (see `taskDescriptionFromCornerRequest`). */
 export function taskSlugForCornerIntent(intent: string | undefined): string {
   if (!intent) return '';
-  return taskDescriptionFromCornerRequest(intent)
+  return slugifyCornerTask(taskDescriptionFromCornerRequest(intent));
+}
+
+/** Slug half of {@link taskSlugForCornerIntent}, over an ALREADY distilled
+ *  objective — so a corner whose objective was recovered from the Room rather
+ *  than from its own trigger message still gets a name and branch that say
+ *  what it is for. */
+export function slugifyCornerTask(task: string): string {
+  return task
     .normalize('NFKD')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -1305,6 +1331,39 @@ export function taskSlugForCornerIntent(intent: string | undefined): string {
 
 export function cornerNameForIntent(intent: string | undefined, parentChannelId: string): string {
   return taskSlugForCornerIntent(intent) || `corner-${parentChannelId.slice(0, 8)}`;
+}
+
+/**
+ * The objective a corner carries when its own trigger message names none.
+ *
+ * "@beebee open corner", said right after describing the work, distils to
+ * nothing — correctly, since the imperative IS the whole message. But the
+ * corner then opened with no `task` tag, a generated `corner-<parent>` name,
+ * and therefore nothing at all in the app's objective pin: the entire top of
+ * the corner was the raw ten-message Room dump, which is exactly the
+ * "no goal summary, just a literal dump" report.
+ *
+ * The person's own most recent substantive words are the honest answer, and
+ * they are already durable — this is the same conversation `cornerOpenTaskPrompt`
+ * seeds the corner's first turn from, so the pin and the agent's brief agree by
+ * construction. Nothing is invented: entries that distil to nothing (the bare
+ * imperative itself, a greeting) are skipped, and when none qualifies the
+ * result is `''` and the corner is exactly as it was before.
+ */
+export function cornerObjectiveFromConversation(
+  entries: readonly { role: string; text: string }[],
+  limit = 12,
+): string {
+  for (const entry of [...entries].slice(-limit).reverse()) {
+    if (entry.role !== 'user') continue;
+    // The stored prompt can carry an attribution preamble; the objective is
+    // the person's own sentence, peeled the same way a trigger message is.
+    const distilled = taskDescriptionFromCornerRequest(
+      entry.text.replace(/^\s*[^\n]{0,80}?\bsays:\s*/i, '').trim(),
+    );
+    if (distilled) return distilled.slice(0, 320);
+  }
+  return '';
 }
 
 /**
@@ -2704,8 +2763,19 @@ export class Body {
     // 1. The agent itself creates/signs the child channel. The corner's name
     // is a slug of the task; the full task description rides along as a tag so
     // a reader gets the objective, not the slug.
-    const taskDescription = intent ? taskDescriptionFromCornerRequest(intent).slice(0, 320) : '';
-    const cornerName = cornerNameForIntent(intent, tlcChannelId);
+    // A corner exists to do one named thing, and the reader has to be able to
+    // see what that is the moment it opens. When the trigger message names
+    // nothing on its own — a bare "open a corner" said right after describing
+    // the work — the person's own most recent substantive words in the Room
+    // are the objective. See `cornerObjectiveFromConversation`.
+    const statedTask = intent ? taskDescriptionFromCornerRequest(intent).slice(0, 320) : '';
+    const taskDescription =
+      statedTask ||
+      cornerObjectiveFromConversation(await this.durableState.conversation(tlcChannelId));
+    const taskSlug = statedTask
+      ? taskSlugForCornerIntent(intent)
+      : slugifyCornerTask(taskDescription);
+    const cornerName = taskSlug || `corner-${tlcChannelId.slice(0, 8)}`;
     const subchannelId = await createAgentSubchannel(
       agentId,
       tlcChannelId,
@@ -2725,9 +2795,8 @@ export class Body {
     // `.git`), so the agent's cd-to-project reflex lands inside the worktree
     // rather than the shared primary checkout. See `corner-isolation.ts`.
     const worktreePath = this.cornerWorktreePath(boundRepo, subchannelId);
-    const branchSlug = taskSlugForCornerIntent(intent);
-    const featureBranch = branchSlug
-      ? `feature/${branchSlug}-${subchannelId.slice(0, 8)}`
+    const featureBranch = taskSlug
+      ? `feature/${taskSlug}-${subchannelId.slice(0, 8)}`
       : `feature/${subchannelId.slice(0, 8)}`;
     await this.createWorktree(boundRepo, worktreePath, featureBranch);
 
@@ -4602,11 +4671,11 @@ export class Body {
           info.subchannelId,
           this.agentIdentity,
           `Agent task stopped before merge-ready: ${summarizeGitFailure(String(error))}`,
-          [['status', 'failed'], ...this.deliveryFailureTags(info)],
+          [...RECOVERABLE_CORNER_FAILURE_TAGS, ...this.deliveryFailureTags(info)],
         ).catch(() => undefined);
         await this.postParentCornerStatus(
           info,
-          'failed',
+          'needs-attention',
           'Work stopped. Open corner for details.',
         ).catch(() => undefined);
       } finally {
@@ -4770,11 +4839,16 @@ export class Body {
         info.subchannelId,
         this.agentIdentity,
         `Couldn't prepare this change for review: ${summarizeGitFailure(push.stderr)}`,
-        [['status', 'failed'], ['repo', target.repo], ['branch', target.branch], ['tip', target.tip]],
+        [
+          ...RECOVERABLE_CORNER_FAILURE_TAGS,
+          ['repo', target.repo],
+          ['branch', target.branch],
+          ['tip', target.tip],
+        ],
       );
       await this.postParentCornerStatus(
         info,
-        'failed',
+        'needs-attention',
         'Delivery failed. Open corner for details.',
         [['tip', target.tip]],
       );
@@ -5070,7 +5144,7 @@ export class Body {
           this.agentIdentity,
           `Couldn't land the approved change on ${target.branch.replace(/^refs\/heads\//, '')}: ${humanized}`,
           [
-            ['status', 'failed'],
+            ...RECOVERABLE_CORNER_FAILURE_TAGS,
             // This loop genuinely re-attempts the same approval on the next
             // maintenance tick, so an automatic-retry claim here is true.
             ['retry', 'auto' satisfies DeliveryRetryPosture],
@@ -5082,7 +5156,7 @@ export class Body {
         );
         await this.postParentCornerStatus(
           info,
-          'failed',
+          'needs-attention',
           'Human-approved delivery failed. Open corner for details.',
           [['tip', target.tip]],
         );
@@ -5203,7 +5277,7 @@ export class Body {
           `Nothing was lost: the work is committed on ${info.featureBranch}. ` +
           `Tell me here how you'd like to proceed — nothing is retrying on its own.`,
         [
-          ['status', 'failed'],
+          ...RECOVERABLE_CORNER_FAILURE_TAGS,
           ['retry', 'blocked' satisfies DeliveryRetryPosture],
           ...failureTags,
         ],
@@ -5229,7 +5303,7 @@ export class Body {
         `The approval you already gave no longer applies to this change.`,
       [
         ['t', MERGE_REALIGN_TAG],
-        ['status', 'failed'],
+        ...RECOVERABLE_CORNER_FAILURE_TAGS,
         ['retry', 'realigning' satisfies DeliveryRetryPosture],
         ...failureTags,
       ],
@@ -5896,7 +5970,7 @@ export class Body {
           }
           if (!info || info.archived) continue;
           const target = info.mergeTarget;
-          const failureTags: string[][] = [['status', 'failed']];
+          const failureTags: string[][] = [...RECOVERABLE_CORNER_FAILURE_TAGS];
           if (target) {
             failureTags.push(['repo', target.repo], ['branch', target.branch], ['tip', target.tip]);
           }
@@ -5913,7 +5987,7 @@ export class Body {
           );
           await this.postParentCornerStatus(
             info,
-            'failed',
+            'needs-attention',
             'Delivery failed. Open corner for details.',
             target ? [['tip', target.tip]] : [],
           ).catch((error) =>

@@ -1149,6 +1149,56 @@ describe('Buzz corner lifecycle projection', () => {
       expect.objectContaining({ '#h': ['room'], '#t': ['merge-summary'], limit: 500 }),
     ]);
   });
+
+  it('lets a newer status outrank a merge-ready the corner has moved past', async () => {
+    // Read off the captain's live Room: three corners published a review, then
+    // failed on a later restart, and all three still reported `open` — which is
+    // not terminal, so they kept their place in the Room's pinned corner strip
+    // permanently. A merge-ready is an announcement about one moment, not a
+    // standing state; it may only speak while nothing newer has.
+    const ids = ['stale-review', 'still-ready'];
+    const client = {
+      listSubchannels: vi.fn(async () => ids),
+      query: vi.fn(async (filters: Array<Record<string, unknown>>) => {
+        if ((filters[0]?.kinds as number[])[0] === 9) return [];
+        const id = (filters[0]?.['#h'] as string[])[0]!;
+        return [
+          {
+            id: `create-${id}`,
+            pubkey: 'f'.repeat(64),
+            created_at: 1,
+            kind: 9007,
+            tags: [
+              ['h', id],
+              ['name', `${id}-corner`],
+            ],
+            content: '',
+            sig: 'e'.repeat(128),
+          },
+        ];
+      }),
+      getChannelMetadata: vi.fn(async () => ({ archived: false })),
+      sessionEventsBackfill: vi.fn(async (id: string) => {
+        const ready = {
+          ...event(id, [
+            ['t', 'merge-ready'],
+            ['status', 'ready'],
+          ]),
+          createdAt: 100,
+        };
+        if (id === 'still-ready') return [ready];
+        // The review, and then a later word that the corner is not usable.
+        return [ready, { ...event(id, [['status', 'failed']]), createdAt: 200 }];
+      }),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(transport.listSubchannelLifecycle('stale-room')).resolves.toMatchObject([
+      { id: 'stale-review', status: 'failed' },
+      { id: 'still-ready', status: 'open' },
+    ]);
+  });
 });
 
 describe('Buzz cross-Room corner lifecycle batching', () => {

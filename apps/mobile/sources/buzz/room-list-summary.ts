@@ -1,5 +1,6 @@
 import type { SessionEvent } from '@/sync/transport';
 import { sessionEventHasTag, sessionEventPayload } from '@/sync/transport/buzz-event-projection';
+import { isRetiredAgentStateNotice } from './retired-agent-notices';
 
 const CONTROL_TEXT = /^Agent opened(?: #| a work branch for:)/;
 
@@ -146,6 +147,10 @@ function roomMessage(event: SessionEvent): RoomMessageSummary | null {
 
   const text = payload.content.trim();
   if (!text || CONTROL_TEXT.test(text)) return null;
+  // A retired daemon state notice still sitting in relay history. It reads as
+  // an ordinary agent message, so without this an index row would keep
+  // advertising a reconnect from months ago as the Room's latest word.
+  if (isRetiredAgentStateNotice(text)) return null;
   const preview = roomPreviewText(text);
   if (!preview) return null;
   return {

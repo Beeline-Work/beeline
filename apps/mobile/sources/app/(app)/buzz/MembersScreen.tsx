@@ -171,9 +171,8 @@ export default function BuzzAgents() {
   const [pairCommand, setPairCommand] = useState<string | null>(null);
   const [pairExpiresAt, setPairExpiresAt] = useState<number | null>(null);
   const [selectedPubkey, setSelectedPubkey] = useState<string | null>(null);
-  const [intent, setIntent] = useState('');
+  const [soul, setSoul] = useState('');
   const [name, setName] = useState('');
-  const [personality, setPersonality] = useState('');
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>();
   const [confirmingRemoval, setConfirmingRemoval] = useState(false);
   const [roleEditorPubkey, setRoleEditorPubkey] = useState<string | null>(null);
@@ -249,8 +248,7 @@ export default function BuzzAgents() {
         setSelectedPubkey(arrival.pubkey);
         const fallback = defaultAgentPersona(arrival.pubkey);
         setName(arrival.soulProfile?.name ?? fallback.name);
-        setPersonality(arrival.soulProfile?.personality ?? fallback.personality);
-        setIntent(arrival.soulProfile?.intent ?? '');
+        setSoul(arrival.soulProfile?.soul ?? fallback.soul);
         setAvatarUrl(arrival.soulProfile?.avatar ?? arrival.avatar);
       }
     }
@@ -518,8 +516,7 @@ export default function BuzzAgents() {
     setSelectedPubkey(agent.pubkey);
     const fallback = defaultAgentPersona(agent.pubkey);
     setName(agent.soulProfile?.name ?? fallback.name);
-    setPersonality(agent.soulProfile?.personality ?? fallback.personality);
-    setIntent(agent.soulProfile?.intent ?? '');
+    setSoul(agent.soulProfile?.soul ?? fallback.soul);
     setAvatarUrl(agent.soulProfile?.avatar ?? agent.avatar);
     setConfirmingRemoval(false);
     setError(null);
@@ -579,7 +576,7 @@ export default function BuzzAgents() {
   );
 
   const saveSoul = useCallback(
-    async (nextName = name, nextPersonality = personality) => {
+    async (nextName = name, nextSoul = soul) => {
       if (!selected || !canManageWorkspace) return;
       setWorking('save-soul');
       setError(null);
@@ -588,13 +585,12 @@ export default function BuzzAgents() {
         const client = await ready.ensureClient();
         await client.setAgentSoul(workspaceId, selected.pubkey, {
           name: nextName,
-          personality: nextPersonality,
-          intent,
+          soul: nextSoul,
           avatarSeed: selected.pubkey,
           ...(avatarUrl ? { avatar: avatarUrl } : {}),
         });
         setName(nextName);
-        setPersonality(nextPersonality);
+        setSoul(nextSoul);
         await refreshAgents(ready, workspaceId);
       } catch (caught) {
         setError(`Could not save soul: ${String(caught)}`);
@@ -602,7 +598,7 @@ export default function BuzzAgents() {
         setWorking(null);
       }
     },
-    [avatarUrl, canManageWorkspace, intent, name, personality, refreshAgents, requireConnection, selected],
+    [avatarUrl, canManageWorkspace, name, refreshAgents, requireConnection, selected, soul],
   );
 
   const changeAvatar = useCallback(async () => {
@@ -616,8 +612,7 @@ export default function BuzzAgents() {
       if (!nextAvatar) return;
       await client.setAgentSoul(workspaceId, selected.pubkey, {
         name,
-        personality,
-        intent,
+        soul,
         avatarSeed: selected.pubkey,
         avatar: nextAvatar,
       });
@@ -628,7 +623,7 @@ export default function BuzzAgents() {
     } finally {
       setWorking(null);
     }
-  }, [canManageWorkspace, intent, name, personality, refreshAgents, requireConnection, selected]);
+  }, [canManageWorkspace, name, refreshAgents, requireConnection, selected, soul]);
 
   const resetAvatar = useCallback(async () => {
     if (!selected || !canManageWorkspace) return;
@@ -639,8 +634,7 @@ export default function BuzzAgents() {
       const client = await ready.ensureClient();
       await client.setAgentSoul(workspaceId, selected.pubkey, {
         name,
-        personality,
-        intent,
+        soul,
         avatarSeed: selected.pubkey,
       });
       setAvatarUrl(undefined);
@@ -650,13 +644,13 @@ export default function BuzzAgents() {
     } finally {
       setWorking(null);
     }
-  }, [canManageWorkspace, intent, name, personality, refreshAgents, requireConnection, selected]);
+  }, [canManageWorkspace, name, refreshAgents, requireConnection, selected, soul]);
 
   const handleUseDefault = useCallback(() => {
     if (!selected) return;
     const fallback = defaultAgentPersona(selected.pubkey);
     setName(fallback.name);
-    setPersonality(fallback.personality);
+    setSoul(fallback.soul);
   }, [selected]);
 
   const removeSelectedAgent = useCallback(async () => {
@@ -668,9 +662,8 @@ export default function BuzzAgents() {
       const client = await ready.ensureClient();
       await client.removeAgent(workspaceId, selected.pubkey);
       setSelectedPubkey(null);
-      setIntent('');
+      setSoul('');
       setName('');
-      setPersonality('');
       setAvatarUrl(undefined);
       setConfirmingRemoval(false);
       await refreshAgents(ready, workspaceId);
@@ -1043,15 +1036,15 @@ export default function BuzzAgents() {
                   </TouchableOpacity>
                 )}
               </View>
-              <Text style={styles.label}>Intent</Text>
+              <Text style={styles.label}>Soul</Text>
               <TextInput
-                style={[styles.input, styles.intentInput]}
-                value={intent}
-                onChangeText={setIntent}
-                placeholder="keep the test suite green and refactor mercilessly"
+                style={[styles.input, styles.soulInput]}
+                value={soul}
+                onChangeText={setSoul}
+                placeholder="Keep the test suite green and refactor mercilessly. Be direct and practical."
                 placeholderTextColor={groknight.dim}
                 multiline
-                maxLength={500}
+                maxLength={1000}
               />
               <Text style={styles.label}>Name</Text>
               <TextInput
@@ -1066,21 +1059,12 @@ export default function BuzzAgents() {
                 One spoken word. Mention as @
                 {name.toLowerCase().replace(/[^a-z0-9]/g, '') || 'name'}.
               </Text>
-              <Text style={styles.label}>Personality</Text>
-              <TextInput
-                style={[styles.input, styles.personalityInput]}
-                value={personality}
-                onChangeText={setPersonality}
-                placeholderTextColor={groknight.dim}
-                multiline
-                maxLength={280}
-              />
               <View style={styles.editorActions}>
                 <MonoButton
                   label="Save"
                   style={[styles.primaryButton, styles.flexButton]}
                   disabled={
-                    !intent.trim() || !isSingleWordAgentName(name) || !personality.trim() || busy
+                    !soul.trim() || !isSingleWordAgentName(name) || busy
                   }
                   onPress={() => void saveSoul()}
                 />
@@ -1485,8 +1469,7 @@ const styles = StyleSheet.create({
     borderColor: groknight.border,
     backgroundColor: groknight.bgTerminal,
   },
-  intentInput: { minHeight: 72, textAlignVertical: 'top' },
-  personalityInput: { minHeight: 68, textAlignVertical: 'top' },
+  soulInput: { minHeight: 112, textAlignVertical: 'top' },
   primaryButton: {
     marginTop: 10,
   },

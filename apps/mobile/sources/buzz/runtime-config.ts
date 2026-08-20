@@ -1,6 +1,6 @@
 import { loadAppConfig } from '@/sync/appConfig';
 
-const DEFAULT_RELAY_URL = 'https://relay.buzzrouter.com';
+const DEFAULT_RELAY_URL = 'https://usebeeline.app';
 const DEFAULT_PUSH_GATEWAY_URL = 'https://push.buzzrouter.com';
 
 export interface BuzzRuntimeConfig {

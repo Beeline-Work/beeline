@@ -4,7 +4,7 @@
  * Two rounds of fixes for "People 0" and "agent OFFLINE" were reasoned from the
  * code and missed the surface. Everything below is instead the literal state of
  * the captain's Personal Workspace `6fd12761-…`, read off
- * `relay.buzzrouter.com` — the create event, the 39001/39002 projections, the
+ * `usebeeline.app` — the create event, the 39001/39002 projections, the
  * registered agent, and Lena's own presence record — so the test fails for the
  * same reason the device does.
  *

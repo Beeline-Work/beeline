@@ -214,7 +214,7 @@ export default function BuzzCommunityCreateOrJoin() {
                 autoCapitalize="none"
                 autoCorrect={false}
                 keyboardType="url"
-                placeholder="https://relay.buzzrouter.com/join/…"
+                placeholder="https://usebeeline.app/join/…"
                 placeholderTextColor={groknight.dim}
               />
               <MonoButton

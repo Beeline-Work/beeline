@@ -107,6 +107,6 @@ BUZZY_QUERY_NSEC=nsec1... node --import tsx src/provisioning.ts <ownerHex> <repo
 
 | Variable             | Default                | Meaning                                                       |
 | -------------------- | ---------------------- | ------------------------------------------------------------- |
-| `BUZZY_RELAY_HOST`   | `relay.buzzrouter.com` | Relay Host header + authority; live tests pin the local stack |
+| `BUZZY_RELAY_HOST`   | `usebeeline.app` | Relay Host header + authority; `relay.buzzrouter.com` stays an alias and live tests pin the local stack |
 | `BUZZY_RELAY_SCHEME` | `https`                | Relay HTTP scheme; live tests pin `http`                      |
 | `BUZZY_QUERY_NSEC`   | —                      | Signing key for provisioning CLI NIP-98 relay reads           |

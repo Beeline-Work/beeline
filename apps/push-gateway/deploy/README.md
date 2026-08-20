@@ -2,7 +2,8 @@
 
 Production separates event wakeups from message reads:
 
-- `https://relay.buzzrouter.com` remains the public, auth-enforced WebSocket origin.
+- `https://usebeeline.app` is the public, auth-enforced WebSocket origin.
+- `https://relay.buzzrouter.com` remains a permanent alias for shipped clients.
 - `http://127.0.0.1:3410` is a host-loopback-only `POST /query` origin.
 - The trusted relay replica binds its TCP app listener to container loopback and
   exposes a Unix socket only to the query-only Nginx sidecar. Both run as the

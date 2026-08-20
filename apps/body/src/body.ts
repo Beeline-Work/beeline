@@ -40,6 +40,7 @@ import {
   createDraftStreamer,
   createNarrativeCommitter,
   relayRetryAfterMs,
+  type ActivityProjectionController,
 } from './activity.js';
 import {
   createChannel,
@@ -233,6 +234,10 @@ export interface AgentSession {
   parentChannelId?: string;
   /** Unsubscribe from activity projection. */
   unsubscribeActivity?: () => void;
+  /** Corner-only plan boundary layered onto the activity projection. */
+  activityProjection?: ActivityProjectionController;
+  /** Distilled objective to publish when a lazily suspended session activates. */
+  pendingPlanObjective?: string;
   /** Last created_at timestamp when polling for member messages (subchannels only). */
   lastPolledAt?: number;
   /** Whether this subchannel has been archived. */
@@ -1978,12 +1983,19 @@ export class Body {
         });
         session.sessionId = created.sessionId;
         session.unsubscribeActivity?.();
-        session.unsubscribeActivity = projectActivity(
+        const activityProjection = projectActivity(
           client,
           input.channelId,
           this.agentIdentity,
           created.sessionId,
         );
+        session.activityProjection = activityProjection;
+        session.unsubscribeActivity = activityProjection;
+        if (session.pendingPlanObjective) {
+          const objective = session.pendingPlanObjective;
+          session.pendingPlanObjective = undefined;
+          await activityProjection.startPlan(objective);
+        }
         if (input.communityId) {
           await this.applyModelConfigForSession(client, created.sessionId, input.communityId, created.raw, session);
         }
@@ -1992,6 +2004,7 @@ export class Body {
       suspend: async () => {
         session.unsubscribeActivity?.();
         session.unsubscribeActivity = undefined;
+        session.activityProjection = undefined;
         if (client.isAlive) await client.stop();
       },
     };
@@ -2255,6 +2268,23 @@ export class Body {
     // time we read this, so lastCreatedAt() reflects the true final segment.
     const narrativeFloor = narrator?.lastCreatedAt();
     return { ...result, ...(narrativeFloor ? { narrativeFloor } : {}) };
+  }
+
+  /**
+   * Publish the corner's mandatory multi-step plan before its prompt can run.
+   * A suspended ACP process has no projection yet, so activation consumes the
+   * pending objective; a warm process publishes immediately. Either way the
+   * checklist is the first agent-activity event of the turn.
+   */
+  private async startCornerPlan(session: AgentSession, objective: string): Promise<void> {
+    session.pendingPlanObjective = objective;
+    if (!session.activityProjection) return;
+    session.pendingPlanObjective = undefined;
+    await session.activityProjection.startPlan(objective);
+  }
+
+  private async completeCornerPlan(session: AgentSession): Promise<void> {
+    await session.activityProjection?.completePlan();
   }
 
   private async candidateBytes(
@@ -2921,6 +2951,8 @@ export class Body {
         `Your feature branch is: ${featureBranch}`,
         'You have full shell and file editing tools available.',
         'You CAN create, edit, and delete files in this worktree.',
+        'Maintain a short multi-step plan for every turn. Update its statuses as you inspect, implement, and verify; keep exactly one item in progress until the turn is complete.',
+        'The host publishes a bounded fallback checklist before your first tool call, so replace it with your more specific plan whenever your harness supports plan updates.',
         'Commit your changes to the feature branch when appropriate.',
         'Never merge, push or change the target branch, or archive this corner. Stop after committing the feature branch; only a signed human approval may authorize landing and archive cleanup.',
         'A tool or skill can be unavailable or fail to initialize (for example codegraph before its index is ready). Treat that as a normal recoverable error for that one call and continue the task with what you have; never abort the task because a single tool or skill is missing.',
@@ -4658,6 +4690,7 @@ export class Body {
           'working',
           this.presenceGenerations.get(info.subchannelId),
         );
+        await this.startCornerPlan(info.session, info.taskDescription || prompt);
         await this.durableState.appendConversation(info.subchannelId, {
           role: 'user',
           text: prompt,
@@ -4681,6 +4714,7 @@ export class Body {
           // same-channel parent to thread to.
           { channelId: info.subchannelId, requestId, narrate: true },
         );
+        await this.completeCornerPlan(info.session);
         // The corner may have been closed (archived) while this turn was
         // in flight — closing kills the ACP session but cannot interrupt a
         // response that had already resolved. Never publish anything for an
@@ -6305,6 +6339,7 @@ export class Body {
           let agentReply = '';
           let agentResult: (PromptResult & { narrativeFloor?: number }) | undefined;
           const promptNewTurn = async (): Promise<PromptResult & { narrativeFloor?: number }> => {
+            await this.startCornerPlan(session, evt.content);
             await postAgentTurnStatus(
               subchannelId,
               this.agentIdentity,
@@ -6366,6 +6401,7 @@ export class Body {
           // running) archives the corner out of band. Never publish a turn
           // that resolved after that — closing must be terminal.
           if (agentResult && !info.archived) {
+            await this.completeCornerPlan(session);
             agentReply = await this.publishAgentResult(
               subchannelId,
               session,

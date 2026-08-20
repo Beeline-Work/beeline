@@ -26,9 +26,15 @@ export type ActivityTimelineEntry =
  */
 export type ActionWeight = 'mutation' | 'command' | 'failure' | 'observation';
 
+export type TurnActivityFile = {
+  path: string;
+  status?: string;
+  diff?: string;
+};
+
 export type TurnActivityAction = {
   id: string;
-  kind: 'file' | 'tool';
+  kind: 'tool';
   weight: ActionWeight;
   title: string;
   status?: string;
@@ -36,7 +42,7 @@ export type TurnActivityAction = {
   command?: string;
   input?: string;
   output?: string;
-  diff?: string;
+  files?: TurnActivityFile[];
 };
 
 export type TurnActivity = {
@@ -454,29 +460,22 @@ export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActi
   for (const [id, tool] of tools) {
     const weight = actionWeight(tool);
     const title = actionTitle(tool) ?? cleanTitle(tool.title) ?? 'Tool';
-    // A tool call that touched files *is* its files: one row per path, carrying
-    // the call's own command/output so the drill-down loses nothing. Emitting a
-    // parent row beside them printed the same edit twice.
+    // Keep the tool call as the transcript row and its files as the next level
+    // of the drill-down: tool -> file list -> patch. Flattening files onto the
+    // slab made a multi-file edit indistinguishable from several unrelated
+    // calls and left no way to understand which command produced which diff.
     if (tool.files?.length) {
-      for (const file of tool.files) {
-        const row: TurnActivityAction = {
-          id: `${id}:file:${file.path}`,
-          kind: 'file',
-          weight,
-          title: file.path.split('/').filter(Boolean).at(-1) ?? file.path,
-          path: file.path,
-          ...(file.status ?? tool.status ? { status: file.status ?? tool.status } : {}),
-          ...(file.diff ? { diff: file.diff } : {}),
-          ...(tool.command ? { command: tool.command } : {}),
-          ...(tool.input ? { input: tool.input } : {}),
-          ...((tool.output ?? tool.text) ? { output: tool.output ?? tool.text } : {}),
-        };
-        const existing = actions.findIndex(
-          (action) => action.kind === 'file' && action.path === file.path,
-        );
-        if (existing >= 0) actions[existing] = { ...actions[existing], ...row };
-        else actions.push(row);
-      }
+      actions.push({
+        id,
+        kind: 'tool',
+        weight,
+        title,
+        ...(tool.status ? { status: tool.status } : {}),
+        ...(tool.command ? { command: tool.command } : {}),
+        ...(tool.input ? { input: tool.input } : {}),
+        ...((tool.output ?? tool.text) ? { output: tool.output ?? tool.text } : {}),
+        files: tool.files.map((file) => ({ ...file })),
+      });
       continue;
     }
 

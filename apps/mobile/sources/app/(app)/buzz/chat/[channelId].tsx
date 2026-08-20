@@ -1146,18 +1146,23 @@ export default function BuzzChat() {
    * nothing else — no corner reaches it, exactly as no turn reaches the corner
    * line above.
    *
-   * A Corner has no line of its own here: its composer footer already carries
-   * `LIVE`, and its pinned line above already reports the same session.
+   * A Corner uses the same progress line while its own edit turn is working.
+   * The corner bar reports durable corner state; this transient line reports
+   * the unanswered turn, so both can be true without being duplicates.
    */
   const turnProgressLabel = useMemo(() => {
-    if (isCorner || agentsOffline) return null;
+    if (agentsOffline) return null;
+    if (isCorner) {
+      if (sessionState !== 'working') return null;
+      return `${cornerAgentDisplay?.name ?? 'agent'} thinking…`;
+    }
     const turn = activeAgentTurn?.agentTurn;
     if (!turn) return null;
     const subject = turn.agentPubkey
       ? resolveAgentDisplayIdentity(turn.agentPubkey, agentByPubkey.get(turn.agentPubkey)).name
       : 'agent';
     return `${subject} thinking…`;
-  }, [activeAgentTurn, agentByPubkey, agentsOffline, isCorner]);
+  }, [activeAgentTurn, agentByPubkey, agentsOffline, cornerAgentDisplay, isCorner, sessionState]);
 
   const activeActivityId = useMemo(() => {
     if (isCorner ? sessionState !== 'working' : !activeAgentTurn) return undefined;
@@ -2504,15 +2509,33 @@ export default function BuzzChat() {
       }
 
       if (item.corner) {
-        // A corner's status never appears inline. A corner being open is
-        // *state*, not an event — a note inscribed at the moment it opened
-        // scrolls away and then lies, and a terminal one ("✕ FAILED",
-        // "◇ OPEN") stamps a dead record across a live conversation. The
-        // Room has exactly one active-corner affordance, the pinned gold
-        // line above the composer, and every corner — live, failed, merged,
-        // archived — is listed in the Room's corners view, which is where a
-        // record belongs (`buzz/corners/[roomId].tsx`).
-        return null;
+        // Live status is state and belongs in the pinned corner bar. Archive
+        // is different: it is the durable end of the work, and Body replaces
+        // this stable card id with the agent's bounded completion summary.
+        // Keep that one terminal card in the Room so "what set out / what
+        // landed" survives after the corner becomes read-only.
+        if (item.corner.status !== 'archived') return null;
+        const summary = item.text.trim();
+        return (
+          <TouchableOpacity
+            accessibilityLabel={`Archived ${CORNER_LABEL}. ${summary}. View details`}
+            accessibilityRole="button"
+            onPress={() => openCorner(item.corner!.subchannelId)}
+            testID={`archived-corner-card-${item.corner.subchannelId}`}
+          >
+            <HullSurface strength="quiet" style={styles.archivedCornerCard}>
+              <View style={styles.archivedCornerHeading}>
+                <Text style={styles.archivedCornerTitle}>□ {CORNER_LABEL.toUpperCase()} ARCHIVED</Text>
+                <Text style={styles.archivedCornerAction}>VIEW ›</Text>
+              </View>
+              {summary ? (
+                <Text style={styles.archivedCornerSummary} testID="archived-corner-summary">
+                  {summary}
+                </Text>
+              ) : null}
+            </HullSurface>
+          </TouchableOpacity>
+        );
       }
 
       // ── Merge summary ────────────────────────────────────────────
@@ -4639,6 +4662,45 @@ const styles = StyleSheet.create({
     lineHeight: 15,
     color: groknight.ledgerGhost,
     marginTop: 3,
+  },
+
+  // ── Archived corner card ───────────────────────────────────────
+  archivedCornerCard: {
+    minWidth: 0,
+    marginBottom: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: groknight.borderQuiet,
+  },
+  archivedCornerHeading: {
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  archivedCornerTitle: {
+    ...Typography.default(),
+    flex: 1,
+    minWidth: 0,
+    color: groknight.ledgerQuiet,
+    fontSize: 10,
+    lineHeight: 15,
+    letterSpacing: 0.7,
+  },
+  archivedCornerAction: {
+    ...Typography.default(),
+    flexShrink: 0,
+    color: groknight.ledgerGhost,
+    fontSize: 9,
+    lineHeight: 15,
+  },
+  archivedCornerSummary: {
+    ...Typography.default(),
+    marginTop: 7,
+    color: groknight.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
   },
 
   // ── Archived notice ─────────────────────────────────────────────

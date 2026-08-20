@@ -489,8 +489,20 @@ export interface CompactActivityPlan {
   items: CompactActivityPlanItem[];
 }
 
+/**
+ * A corner plan cannot depend on a harness choosing to emit ACP `plan`
+ * updates. The projection owns a small agent-authored fallback checklist and
+ * exposes explicit turn boundaries so Body can publish it before the first
+ * tool call and close it when the turn settles.
+ */
+export type ActivityProjectionController = (() => void) & {
+  startPlan(objective: string): Promise<void>;
+  completePlan(): Promise<void>;
+};
+
 const MAX_ACTIVITY_DETAIL_CHARS = 12_000;
 const MAX_ACTIVITY_INPUT_CHARS = 4_000;
+const MAX_ACTIVITY_PLAN_OBJECTIVE_CHARS = 160;
 const SENSITIVE_ACTIVITY_KEY = /(?:authorization|cookie|password|passwd|secret|token|api[_-]?key)/i;
 
 function compactText(
@@ -753,7 +765,7 @@ export function projectActivity(
   channelId: string,
   channelOwner: Identity,
   sessionId: string,
-): () => void {
+): ActivityProjectionController {
   let pending: Record<string, unknown>[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   const toolCallKinds = new Map<string, ToolCallInfo>();
@@ -780,6 +792,72 @@ export function projectActivity(
   // 10-step checklist is not re-sent on every 5s batch.
   let currentPlan: CompactActivityPlan | undefined;
   let publishedPlanKey = '';
+  let usesFallbackPlan = false;
+  let publishTail: Promise<void> = Promise.resolve();
+  const publishBatch = (events: Record<string, unknown>[]): Promise<void> => {
+    const publish = () =>
+      emitActivityEvent(channelId, channelOwner, { sessionId, channelId, events });
+    // Keep plan snapshots and telemetry batches in the order Body produced
+    // them even when the relay is slow. A rejected publish must not poison all
+    // later progress updates.
+    publishTail = publishTail.then(publish, publish);
+    return publishTail;
+  };
+  const publishPlan = (plan: CompactActivityPlan): Promise<void> => {
+    publishedPlanKey = JSON.stringify(plan);
+    return publishBatch([
+      {
+        sessionUpdate: 'activity_summary',
+        content: { type: 'text', text: '' },
+        plan,
+      },
+    ]);
+  };
+  const safePlanObjective = (objective: string): string | undefined => {
+    const plain = objective
+      .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+      .replace(/\[([^\]]+)\]\([^\s)]+\)/g, '$1')
+      .replace(/[`*_#>|]/g, ' ')
+      .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!plain) return undefined;
+    if (plain.length <= MAX_ACTIVITY_PLAN_OBJECTIVE_CHARS) return plain;
+    return `${plain.slice(0, MAX_ACTIVITY_PLAN_OBJECTIVE_CHARS - 1).trimEnd()}…`;
+  };
+  const fallbackPlan = (objective: string): CompactActivityPlan => {
+    const distilled = safePlanObjective(objective);
+    return {
+      ...(distilled ? { objective: distilled } : {}),
+      items: [
+        { step: 'Inspect the relevant code', status: 'in_progress' },
+        { step: 'Implement the change', status: 'pending' },
+        { step: 'Verify and summarize the result', status: 'pending' },
+      ],
+    };
+  };
+  const advanceFallbackPlan = (labels: readonly string[], rollupTotal: number): void => {
+    if (!usesFallbackPlan || !currentPlan) return;
+    const enteredWork = rollupTotal > 0 || labels.length > 0;
+    if (!enteredWork) return;
+    const enteredVerification = labels.some((label) => /^Ran (?:the test suite|a build|lint checks|type checks)/.test(label));
+    currentPlan = {
+      ...currentPlan,
+      items: currentPlan.items.map((item, index) => ({
+        ...item,
+        status:
+          index === 0
+            ? 'completed'
+            : index === 1
+              ? enteredVerification
+                ? 'completed'
+                : 'in_progress'
+              : enteredVerification
+                ? 'in_progress'
+                : 'pending',
+      })),
+    };
+  };
   const flush = () => {
     if (timer) clearTimeout(timer);
     timer = undefined;
@@ -842,6 +920,7 @@ export function projectActivity(
       }
     }
     const rollupTotal = Object.values(rollup).reduce((sum, count) => sum + count, 0);
+    advanceFallbackPlan(labels, rollupTotal);
     // A plan change alone earns a flush. Without this a turn that opens by
     // planning and then only reads files would leave the objective panel
     // empty for the whole first batch — and a turn that does nothing but
@@ -877,11 +956,7 @@ export function projectActivity(
       ...(plan ? { plan } : {}),
     };
     if (plan) publishedPlanKey = planKey;
-    void emitActivityEvent(channelId, channelOwner, {
-      sessionId,
-      channelId,
-      events: [...major, summary],
-    });
+    void publishBatch([...major, summary]);
   };
   const onUpdate = (u: SessionUpdate) => {
     if (u.sessionId !== sessionId) return;
@@ -904,7 +979,10 @@ export function projectActivity(
       sanitized.rawInput,
       objectValue(sanitized.toolCall),
     );
-    if (updatePlan?.items.length) currentPlan = updatePlan;
+    if (updatePlan?.items.length) {
+      currentPlan = updatePlan;
+      usesFallbackPlan = false;
+    }
     trackToolCall(sanitized, toolCallKinds);
     const toolCallId = typeof sanitized.toolCallId === 'string' ? sanitized.toolCallId : undefined;
     if (toolCallId) toolCallRaw.set(toolCallId, { ...toolCallRaw.get(toolCallId), ...sanitized });
@@ -916,10 +994,31 @@ export function projectActivity(
   };
 
   client.on('session/update', onUpdate);
-  return () => {
+  const controller = (() => {
     client.off('session/update', onUpdate);
     flush();
+  }) as ActivityProjectionController;
+  controller.startPlan = async (objective: string) => {
+    currentPlan = fallbackPlan(objective);
+    usesFallbackPlan = true;
+    await publishPlan(currentPlan);
   };
+  controller.completePlan = async () => {
+    flush();
+    if (!currentPlan?.items.length) return;
+    const completed: CompactActivityPlan = {
+      ...currentPlan,
+      items: currentPlan.items.map((item) => ({ ...item, status: 'completed' })),
+    };
+    const key = JSON.stringify(completed);
+    currentPlan = completed;
+    if (key === publishedPlanKey) {
+      await publishTail;
+      return;
+    }
+    await publishPlan(completed);
+  };
+  return controller;
 }
 
 /** Publish a completed assistant turn as durable conversation, not telemetry. */

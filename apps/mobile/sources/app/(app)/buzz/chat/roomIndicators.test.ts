@@ -55,6 +55,13 @@ describe('the corner line and the turn indicator are independent', () => {
     expect(turn).toContain('activeAgentTurn');
   });
 
+  it('runs the same thinking indicator for an active turn inside a corner', () => {
+    const turn = memoBody('turnProgressLabel');
+    expect(turn).toContain("if (sessionState !== 'working') return null");
+    expect(turn).toContain("`${cornerAgentDisplay?.name ?? 'agent'} thinking…`");
+    expect(turn).not.toContain('if (isCorner || agentsOffline) return null');
+  });
+
   it('renders the two as separate, independently-gated lines', () => {
     // Neither is nested in the other's condition, so a Room can show one, the
     // other, both, or neither.

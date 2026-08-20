@@ -89,7 +89,7 @@ export async function waitForGoogleAuthCallback({
       }),
     ]);
     if (callbackUrl) return callbackUrl;
-    throw new OidcBindError('browser_canceled', 'Google authorization was canceled');
+    throw new OidcBindError('browser_canceled', 'Account authorization was canceled');
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
     subscription.remove();
@@ -102,7 +102,7 @@ export function noticeForOidcError(error: unknown): GoogleOnboardingNotice {
     return {
       status: 'token_expired',
       title: 'SESSION EXPIRED',
-      message: 'The one-time Google proof expired. Start again to get a new one.',
+      message: 'The one-time account proof expired. Start again to get a new one.',
       retryable: false,
     };
   }
@@ -111,15 +111,15 @@ export function noticeForOidcError(error: unknown): GoogleOnboardingNotice {
       status: 'link_conflict',
       title: 'LINK CONFLICT · RECOVERY NEEDED',
       message:
-        'This Google account already has a different device key. Recovery arrives in Phase 3; this key was not saved.',
+        'This sign-in account already has a different device key. Recovery is required; this key was not saved.',
       retryable: false,
     };
   }
-  if (code === 'oidc_denied' || code === 'browser_canceled') {
+  if (code === 'oidc_denied' || code === 'github_denied' || code === 'browser_canceled') {
     return {
       status: 'browser_canceled',
-      title: 'GOOGLE CANCELED',
-      message: 'Nothing changed on this device. Continue with Google when you are ready.',
+      title: 'SIGN-IN CANCELED',
+      message: 'Nothing changed on this device. Sign in again when you are ready.',
       retryable: false,
     };
   }

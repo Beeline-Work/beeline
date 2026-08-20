@@ -740,76 +740,108 @@ describe('Room→repo transport', () => {
     const transport = new BuzzRigTransport(identity, 'https://relay.test');
     (transport as unknown as { client: typeof client }).client = client;
 
-    const input = { key: 'k', name: 'widget', remote: 'git://example.com/widget', communityId: 'workspace-1' };
+    const input = {
+      key: 'k',
+      name: 'widget',
+      remote: 'git://example.com/widget',
+      communityId: 'workspace-1',
+    };
     await expect(transport.roomRepositorySet('room-1', input)).resolves.toBe(repo);
     expect(client.setRoomRepository).toHaveBeenCalledWith('room-1', input);
   });
 
-  it('derives repo candidates from top-level Room bindings, excluding corners, DMs, and remote-less bindings', async () => {
-    const rawCreate = (h: string, extraTags: string[][] = []) => ({
-      id: `create-${h}`,
+  it('lists exactly the repositories granted to the GitHub App installation', async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) =>
+      String(url).endsWith('/auth/capabilities')
+        ? new Response(JSON.stringify({ github: true, oidc: true }), { status: 200 })
+        : new Response(
+          JSON.stringify({
+            installed: true,
+            repositories: [
+              {
+                id: 42,
+                installationId: 7,
+                name: 'widget',
+                fullName: 'acme/widget',
+                remote: 'https://github.com/acme/widget.git',
+                defaultBranch: 'trunk',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+
+    await expect(transport.workspaceRoomRepositoryCandidates('workspace-1')).resolves.toEqual([
+      {
+        key: 'github:42',
+        name: 'acme/widget',
+        remote: 'git://github.com/acme/widget',
+        githubInstallationId: 7,
+        defaultBranch: 'trunk',
+      },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
+  });
+
+  it('returns no candidates before the GitHub App is installed', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL | Request) =>
+        String(url).endsWith('/auth/capabilities')
+          ? new Response(JSON.stringify({ github: true, oidc: true }), { status: 200 })
+          : new Response(JSON.stringify({ installed: false, repositories: [] }), { status: 200 }),
+      ),
+    );
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+
+    await expect(transport.workspaceRoomRepositoryCandidates('workspace-1')).resolves.toEqual([]);
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps connected-Room repository discovery when GitHub is dark', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ github: false, oidc: true }), { status: 200 }),
+      ),
+    );
+    const create = {
+      id: 'create-room-a',
       pubkey: 'b'.repeat(64),
       created_at: 1,
       kind: KIND_CREATE_GROUP,
-      tags: [['h', h], [TAG_COMMUNITY, 'workspace-1'], ...extraTags],
+      tags: [['h', 'room-a'], [TAG_COMMUNITY, 'workspace-1']],
       content: '',
       sig: 'c'.repeat(128),
-    });
-    const query = vi.fn(async () => [
-      rawCreate('room-a'),
-      rawCreate('room-b'),
-      // Excluded: a corner (has a parent link)...
-      rawCreate('corner-1', [[TAG_PARENT, 'room-a']]),
-      // ...and a DM.
-      rawCreate('dm-1', [['t', TAG_DIRECT_MESSAGE]]),
-    ]);
-    const repos: Record<string, RoomRepository | null> = {
-      'room-a': {
-        channelId: 'room-a',
-        binding: { key: 'shared', name: 'widget', remote: 'git://example.com/widget', localOnly: false },
-        source: 'config',
-      } as RoomRepository,
-      // Same repo bound to a second Room: the candidate list dedupes by key.
-      'room-b': {
-        channelId: 'room-b',
-        binding: { key: 'shared', name: 'widget', remote: 'git://example.com/widget', localOnly: false },
-        source: 'config',
-      } as RoomRepository,
     };
-    const resolveRoomRepository = vi.fn(async (id: string) => repos[id] ?? null);
-    const client = { query, resolveRoomRepository };
+    const client = {
+      query: vi.fn(async () => [create]),
+      resolveRoomRepository: vi.fn(async () => ({
+        channelId: 'room-a',
+        binding: {
+          key: 'legacy',
+          name: 'legacy/widget',
+          remote: 'git://example.com/legacy/widget',
+          localOnly: false,
+        },
+        source: 'config',
+      }) as RoomRepository),
+    };
     const transport = new BuzzRigTransport(identity, 'https://relay.test');
     (transport as unknown as { client: typeof client }).client = client;
 
     await expect(transport.workspaceRoomRepositoryCandidates('workspace-1')).resolves.toEqual([
-      { key: 'shared', name: 'widget', remote: 'git://example.com/widget' },
-    ]);
-    expect(resolveRoomRepository).not.toHaveBeenCalledWith('corner-1');
-    expect(resolveRoomRepository).not.toHaveBeenCalledWith('dm-1');
-  });
-
-  it('drops a local-only (remote-less) genesis binding — setRoomRepository could never bind it anyway', async () => {
-    const query = vi.fn(async () => [
       {
-        id: 'create-room-a',
-        pubkey: 'b'.repeat(64),
-        created_at: 1,
-        kind: KIND_CREATE_GROUP,
-        tags: [['h', 'room-a'], [TAG_COMMUNITY, 'workspace-1']],
-        content: '',
-        sig: 'c'.repeat(128),
+        key: 'legacy',
+        name: 'legacy/widget',
+        remote: 'git://example.com/legacy/widget',
       },
     ]);
-    const resolveRoomRepository = vi.fn(async () => ({
-      channelId: 'room-a',
-      binding: { key: 'local', name: 'local-repo', localOnly: true },
-      source: 'genesis',
-    }) as RoomRepository);
-    const client = { query, resolveRoomRepository };
-    const transport = new BuzzRigTransport(identity, 'https://relay.test');
-    (transport as unknown as { client: typeof client }).client = client;
-
-    await expect(transport.workspaceRoomRepositoryCandidates('workspace-1')).resolves.toEqual([]);
+    vi.unstubAllGlobals();
   });
 });
 
@@ -956,7 +988,14 @@ describe('Buzz change review metadata', () => {
   it('does not submit a second approval for the same committed corner target', async () => {
     const transport = new BuzzRigTransport(identity, 'https://relay.test');
     const submitMergeApproval = vi.fn();
-    (transport as unknown as { client: { query: ReturnType<typeof vi.fn>; submitMergeApproval: typeof submitMergeApproval } }).client = {
+    (
+      transport as unknown as {
+        client: {
+          query: ReturnType<typeof vi.fn>;
+          submitMergeApproval: typeof submitMergeApproval;
+        };
+      }
+    ).client = {
       query: vi.fn(async () => [
         rawEvent(
           [
@@ -1234,7 +1273,10 @@ describe('Buzz cross-Room corner lifecycle batching', () => {
       pubkey: 'b'.repeat(64),
       created_at: 1,
       kind: 9007,
-      tags: [['h', id], ['name', `${id}-corner`]],
+      tags: [
+        ['h', id],
+        ['name', `${id}-corner`],
+      ],
       content: '',
       sig: 'e'.repeat(128),
     };
@@ -1260,7 +1302,10 @@ describe('Buzz cross-Room corner lifecycle batching', () => {
     const transport = new BuzzRigTransport(identity, 'https://relay.test');
     (transport as unknown as { client: typeof client }).client = client;
 
-    const result = await transport.listSubchannelLifecycleForRooms(['batch-room-a', 'batch-room-b']);
+    const result = await transport.listSubchannelLifecycleForRooms([
+      'batch-room-a',
+      'batch-room-b',
+    ]);
 
     expect(result.get('batch-room-a')).toHaveLength(2);
     expect(result.get('batch-room-b')).toHaveLength(1);
@@ -1357,7 +1402,6 @@ describe('Buzz channel archive scope', () => {
     await expect(selfScoped.isChannelArchived('corner')).resolves.toBe(true);
   });
 });
-
 
 /**
  * Presence is a parameterized-replaceable kind:30078 record, and the relay

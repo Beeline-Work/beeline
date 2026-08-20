@@ -20,7 +20,7 @@ export {
   type ChannelTaskRequest,
   type RoomEditPolicy,
 } from './body.js';
-export { WorkspaceSupervisor, boundRepoFromRoom } from './supervisor.js';
+export { WorkspaceSupervisor } from './supervisor.js';
 export {
   NAMED_REPOSITORY_PERMISSION_COMMAND,
   namedRepositoryTargetFromPermission,

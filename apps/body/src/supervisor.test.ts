@@ -730,22 +730,31 @@ describe('WorkspaceSupervisor room owns the repo (Stage 1)', () => {
     });
   });
 
-  it('leaves a local-only Room on its stored checkout (no origin to clone a canonical from)', async () => {
+  it('seeds local-only truth into a canonical checkout and never serves the pairing root', async () => {
+    const tmp = mkdtempSync(resolve(tmpdir(), 'buzzy-local-canon-'));
+    const operatorCheckout = resolve(tmp, 'local-proj');
+    spawnSync('git', ['init', '-q', '-b', 'main', operatorCheckout], { encoding: 'utf8' });
+    spawnSync('git', ['-C', operatorCheckout, 'config', 'user.email', 't@t.local']);
+    spawnSync('git', ['-C', operatorCheckout, 'config', 'user.name', 'test']);
+    spawnSync('git', ['-C', operatorCheckout, 'commit', '-q', '--allow-empty', '-m', 'init']);
+    const binding = inspectLocalRepository(operatorCheckout);
     const room: RoomRuntimeRecord = {
       channelId: 'local-room',
-      repo: {
-        root: '/tmp/local-proj',
-        repository: { name: 'local-proj', key: 'local-key', localOnly: true },
-        targetBranch: 'main',
-      } as never,
+      repo: binding,
       membershipSince: 1,
       discoveredAt: new Date(0).toISOString(),
     };
-    const supervisor = supervisorFor('/tmp/beeline-local-host', [room]) as never as {
+    const supervisorRoot = resolve(tmp, 'state');
+    const supervisor = supervisorFor(supervisorRoot, [room]) as never as {
       resolveServingRepo(room: RoomRuntimeRecord): Promise<{ localPath?: string }>;
     };
     const bound = await supervisor.resolveServingRepo(room);
-    expect(bound.localPath).toBe('/tmp/local-proj');
+    expect(bound.localPath).toBe(
+      resolve(supervisorRoot, 'beeline', 'repositories', binding.repository.key),
+    );
+    expect(bound.localPath).not.toBe(operatorCheckout);
+    expect(inspectLocalRepository(bound.localPath!).repository.localOnly).toBe(true);
+    rmSync(tmp, { recursive: true, force: true });
   });
 });
 

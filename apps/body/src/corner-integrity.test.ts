@@ -550,8 +550,13 @@ describe('a corner whose worktree vanished is rebuilt, not written off', () => {
       repo: unknown,
       path: string,
       branch: string,
-    ) => boolean;
-    const ok = rebuilt.call(fixture.body, fixture.info.boundRepo, fixture.worktree, 'feature/corner');
+    ) => Promise<boolean>;
+    const ok = await rebuilt.call(
+      fixture.body,
+      fixture.info.boundRepo,
+      fixture.worktree,
+      'feature/corner',
+    );
 
     expect(ok).toBe(true);
     expect(existsSync(resolve(fixture.worktree, 'WORK.txt'))).toBe(true);
@@ -568,8 +573,13 @@ describe('a corner whose worktree vanished is rebuilt, not written off', () => {
       repo: unknown,
       path: string,
       branch: string,
-    ) => boolean;
-    const ok = rebuilt.call(fixture.body, fixture.info.boundRepo, fixture.worktree, 'feature/corner');
+    ) => Promise<boolean>;
+    const ok = await rebuilt.call(
+      fixture.body,
+      fixture.info.boundRepo,
+      fixture.worktree,
+      'feature/corner',
+    );
 
     expect(ok).toBe(true);
     expect(git(fixture.worktree, ['rev-parse', 'HEAD'])).toBe(fixture.tip);
@@ -586,9 +596,9 @@ describe('a corner whose worktree vanished is rebuilt, not written off', () => {
       repo: unknown,
       path: string,
       branch: string,
-    ) => boolean;
+    ) => Promise<boolean>;
     expect(
-      rebuilt.call(fixture.body, fixture.info.boundRepo, fixture.worktree, 'feature/corner'),
+      await rebuilt.call(fixture.body, fixture.info.boundRepo, fixture.worktree, 'feature/corner'),
     ).toBe(false);
     expect(existsSync(fixture.worktree)).toBe(false);
   });
@@ -652,7 +662,9 @@ describe('a second corner is never opened for work already running', () => {
   });
 
   it('does not consider an archived corner a duplicate (the daemon filters it out first)', () => {
-    expect(duplicateCornerOpen({ taskDescription: '', now: live.openedAt, corners: [] })).toBeUndefined();
+    expect(
+      duplicateCornerOpen({ taskDescription: '', now: live.openedAt, corners: [] }),
+    ).toBeUndefined();
   });
 });
 

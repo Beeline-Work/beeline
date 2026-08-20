@@ -6,8 +6,12 @@ import {
   OidcBindError,
   buildOidcBindEvent,
   finishOidcBind,
+  getAuthCapabilities,
   lookupRecovery,
   parseOidcBindCallback,
+  startGitHubBind,
+  startGitHubInstallation,
+  listGitHubRepositories,
   startOidcBind,
   type OidcBindChallenge,
 } from './oidc-bind.js';
@@ -74,6 +78,59 @@ describe('OIDC device-key bind protocol', () => {
         state: 's'.repeat(43),
       }).redirectUri,
     ).toBe('buzzy://buzz/oidc-callback');
+  });
+
+  it('uses the GitHub routes for sign-in, installation, and repository access', async () => {
+    const start = startGitHubBind('https://relay.example', {
+      redirectUri: 'https://relay.example/auth/github/mobile-callback',
+      state: 's'.repeat(43),
+    });
+    expect(new URL(start.authorizationUrl).pathname).toBe('/auth/github/start');
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            authorization_url: 'https://github.com/apps/beeline/installations/new',
+          }),
+          {
+            status: 200,
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            installed: true,
+            repositories: [
+              {
+                id: 42,
+                installationId: 7,
+                name: 'widget',
+                fullName: 'acme/widget',
+                remote: 'https://github.com/acme/widget.git',
+                defaultBranch: 'main',
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(
+      startGitHubInstallation(
+        'https://relay.example',
+        identity,
+        'https://relay.example/auth/github/mobile-callback',
+      ),
+    ).resolves.toContain('github.com/apps/beeline');
+    await expect(listGitHubRepositories('https://relay.example', identity)).resolves.toMatchObject({
+      installed: true,
+      repositories: [{ installationId: 7, fullName: 'acme/widget' }],
+    });
+    for (const [, init] of fetchMock.mock.calls) {
+      expect((init?.headers as Record<string, string>).authorization).toMatch(/^Nostr /);
+    }
   });
 
   it('strictly parses the callback and refuses missing, duplicate, or foreign state fields', () => {
@@ -191,6 +248,22 @@ describe('OIDC device-key bind protocol', () => {
     expect((init.headers as Record<string, string>).authorization).not.toContain(
       identity.secretKey,
     );
+  });
+
+  it('reads the deployed provider gate without requiring a device identity', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValueOnce(
+        new Response(JSON.stringify({ github: false, oidc: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    );
+    await expect(getAuthCapabilities('https://relay.example')).resolves.toEqual({
+      github: false,
+      oidc: true,
+    });
   });
 
   it('exposes typed protocol errors', () => {

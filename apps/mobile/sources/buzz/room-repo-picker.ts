@@ -10,11 +10,11 @@ export type RepoCandidate = {
   key: string;
   name: string;
   remote?: string;
+  githubInstallationId?: number;
+  defaultBranch?: string;
 };
 
-/** Distinct repos already bound to some Room in the Workspace — the fallback
- * "connected repos" source per the task brief, since the app has no separate
- * connected-repos list of its own. Keeps the first-seen name for a key. */
+/** Distinct repositories exposed by the account's GitHub App installation. */
 export function dedupeRepoCandidates(bindings: readonly RepoCandidate[]): RepoCandidate[] {
   const byKey = new Map<string, RepoCandidate>();
   for (const binding of bindings) {
@@ -25,7 +25,9 @@ export function dedupeRepoCandidates(bindings: readonly RepoCandidate[]): RepoCa
 }
 
 /** The header/settings chip's label, or `null` for a chat-only Room. */
-export function roomRepoChipLabel(repo: RoomRepository | Pick<RoomRepository, 'binding'> | null): string | null {
+export function roomRepoChipLabel(
+  repo: RoomRepository | Pick<RoomRepository, 'binding'> | null,
+): string | null {
   return repo?.binding.name.trim() || null;
 }
 

@@ -5,6 +5,7 @@ import {
   type CornerSummary,
 } from '@/buzz/corners';
 import { isMachinePreview, previewAuthorLabel } from '@/buzz/room-list-summary';
+import { isRetiredAgentStateNotice } from '@/buzz/retired-agent-notices';
 
 /**
  * Every presentational decision one Room row makes, derived once, off the
@@ -81,7 +82,8 @@ export function roomRowPresentation(
   // The stored preview was sanitized when it was written; this is the floor
   // for one written by an older build and still sitting in the local cache.
   const stored = room.latestMessage?.trim();
-  const preview = stored && !isMachinePreview(stored) ? stored : undefined;
+  const preview =
+    stored && !isMachinePreview(stored) && !isRetiredAgentStateNotice(stored) ? stored : undefined;
   return {
     glyph: signal ? cornerStatusPresentation(signal).glyph : preview ? '›' : '·',
     live: signal === 'live',

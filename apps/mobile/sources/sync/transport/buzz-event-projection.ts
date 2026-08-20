@@ -10,6 +10,7 @@ import { agentDraftFromSessionEvent } from '@/buzz/agent-draft';
 import { agentPresenceFromSessionEvent } from '@/buzz/agent-presence';
 import { cornerStatusPrecedence, mapRawCornerStatusTag, type CornerStatus } from '@/buzz/corners';
 import { decodePercentEncoding } from '@/buzz/ledger-text';
+import { isRetiredAgentStateNotice } from '@/buzz/retired-agent-notices';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -486,6 +487,12 @@ export function projectChatEvent(
     };
   }
   const text = eventText(event);
+  // A daemon state notice already on the relay (`retired-agent-notices.ts`).
+  // The publisher is deleted, but the events remain and there is no tag to
+  // recognize them by, so the whole sentence is the filter. Dropped before
+  // anything else reads it: these carried a NIP-10 reply-to, so left in place
+  // one of them would also claim a real turn's reconciled bubble id.
+  if (isRetiredAgentStateNotice(text)) return {};
   const pubkey = eventPubkey(event);
   const subchannelId = sessionEventTagValue(event, 'subchannel');
   const bodyControl = sessionEventHasTag(event, 't', 'body-control') || Boolean(subchannelId);

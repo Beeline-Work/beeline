@@ -12,8 +12,6 @@ import {
 } from '@beeline/buzz-client';
 import { git, gitAuthed, gitWithUserCredentials, type Identity } from '@beeline/gate';
 import { Body, type BoundRepo } from './body.js';
-import { postAgentMessage } from './activity.js';
-import { AGENT_ERROR_STATE_MESSAGES } from './agent-state-messages.js';
 import type { BodyConfig } from './config.js';
 import type { NamedRepositoryTarget } from './repository-target.js';
 import {
@@ -127,9 +125,6 @@ export class WorkspaceSupervisor {
    */
   private readonly relaySocket: SharedRelaySocket;
   private readonly namedRepositoryResolutions = new Map<string, Promise<BoundRepo>>();
-  /** Rooms already notified their repo can't be materialized — one notice per
-   *  transition into that state, not once per reconcile retry. */
-  private readonly repoUnavailableNotified = new Set<string>();
   /**
    * Rooms whose join failed, keyed by channel id: when to try again, and the
    * last message logged for them. One unservable Room must cost exactly one
@@ -514,7 +509,6 @@ export class WorkspaceSupervisor {
     let boundRepo: BoundRepo;
     try {
       boundRepo = await this.resolveServingRepo(room);
-      this.repoUnavailableNotified.delete(channelId);
     } catch (error) {
       // A room whose canonical checkout cannot be materialized cannot be
       // served yet. Leave it unstarted; the next reconcile retries.
@@ -522,18 +516,9 @@ export class WorkspaceSupervisor {
         `[supervisor] Room ${channelId} canonical checkout unavailable; will retry:`,
         error,
       );
-      // The Room itself never went silent on the daemon's console before —
-      // now it says so once, instead of just never coming alive.
-      if (!this.repoUnavailableNotified.has(channelId)) {
-        this.repoUnavailableNotified.add(channelId);
-        postAgentMessage(channelId, this.agent, AGENT_ERROR_STATE_MESSAGES['repo-unavailable']).catch(
-          (publishError) =>
-            console.error(
-              `[supervisor] failed to publish repo-unavailable notice for Room ${channelId}:`,
-              publishError,
-            ),
-        );
-      }
+      // Deliberately console-only: a Room the daemon cannot serve is the
+      // daemon's problem to report to its operator, not chatter to publish
+      // into the Room. The tombstone test next to this file says why.
       return;
     }
     const controller = new AbortController();

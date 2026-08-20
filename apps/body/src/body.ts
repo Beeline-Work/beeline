@@ -166,6 +166,7 @@ import {
   cornersPoolRoot,
   legacyCornerWorktreePath,
 } from './corner-isolation.js';
+import { repriseSystemPromptBlock } from './session-reprime.js';
 import {
   commitUrlForRemote,
   landDestinationLines,
@@ -1942,14 +1943,13 @@ export class Body {
           : undefined;
         await client.start();
         const transcript = await this.durableState.conversation(input.channelId);
-        const restored = transcript.length
-          ? [
-              '',
-              'This logical channel session was suspended while idle. Restore its single',
-              'continuous conversation from this ordered transcript; do not treat it as a new task:',
-              ...transcript.map((entry) => `[${entry.role}] ${entry.text}`),
-            ].join('\n')
-          : '';
+        // BOUNDED. This block goes into the session's SYSTEM PROMPT, which the
+        // harness re-sends on every request — so replaying the whole durable
+        // transcript costs its full weight per TURN, not per restart. The
+        // captain's Room carries 200 entries / ~114k characters (~29k tokens)
+        // of it, invisibly, on a daemon that restarted 14 times in a day.
+        // See `session-reprime.ts`.
+        const restored = repriseSystemPromptBlock(transcript);
         const created = await client.sessionNew({
           cwd: input.cwd,
           mcpServers: input.mcpServers,
@@ -2608,10 +2608,30 @@ export class Body {
           session.lastPolledAt = cursor.createdAt;
           this.registerSubchannel(info);
           this.abandonedCorners.delete(subchannelId);
-          if (request && !tip)
+          // Only ever START a corner's task, never RE-start it. This ran on
+          // every daemon restart for any corner that had not yet published a
+          // merge-ready, so a restart re-drove the original request from
+          // scratch — 14 restarts in a day meant 14 full agent tasks nobody
+          // asked for, which is the "dozens of tool calls doing nothing" the
+          // captain saw. `events` is this agent's own kind:9 history in the
+          // corner: anything beyond the opening control card means the task
+          // already ran, and the restored session continues it from the
+          // transcript instead.
+          const alreadyWorked = events.some((event) =>
+            event.tags.some(
+              (tag) =>
+                tag[0] === 't' && (tag[1] === 'agent-message' || tag[1] === 'agent-activity'),
+            ),
+          );
+          if (request && !tip && !alreadyWorked)
             this.startAgentTask(
               info,
               attachmentPrompt(request.authorPubkey, request.content, request.attachments ?? []),
+            );
+          else if (request && !tip)
+            console.log(
+              `[body] corner ${subchannelId} already has agent output; ` +
+                'restored without re-running its opening task',
             );
         } catch (restoreError) {
           console.error(`[body] could not restore corner ${subchannelId}:`, restoreError);

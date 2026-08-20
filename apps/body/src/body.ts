@@ -167,6 +167,11 @@ import {
   legacyCornerWorktreePath,
 } from './corner-isolation.js';
 import {
+  commitUrlForRemote,
+  landDestinationLines,
+  type LandDestination,
+} from './land-destination.js';
+import {
   duplicateCornerOpen,
   duplicateCornerOpenRefusal,
   type OpenCornerCandidate,
@@ -466,6 +471,7 @@ export class RoomPollBackoff {
     private readonly maxMs = ROOM_POLL_FAILURE_BACKOFF_CAP_MS,
     private readonly offlineAfterMs = PRESENCE_OFFLINE_AFTER_OUTAGE_MS,
     private readonly now: () => number = Date.now,
+    private readonly random: () => number = Math.random,
   ) {}
 
   failed(error?: unknown): number {
@@ -474,7 +480,16 @@ export class RoomPollBackoff {
     const exponentialMs = Math.min(this.maxMs, this.baseMs * 2 ** (this.failures - 1));
     // A relay may advertise a delay beyond our steady-state cap. That explicit
     // quota instruction always wins: retrying earlier would recreate the storm.
-    return Math.max(exponentialMs, relayRetryAfterMs(error));
+    const advertised = relayRetryAfterMs(error);
+    if (advertised > exponentialMs) return advertised;
+    // Every Room this daemon serves loses its socket to the SAME relay event,
+    // so an exact schedule sends them all back at the same instant — and the
+    // relay's own log shows this as bursts of identical `reconnecting in
+    // 1000ms` lines. +/-25% spreads the arrivals without weakening the
+    // backoff, matching `agentPresenceRetryDelayMs`'s existing convention.
+    // A relay-advertised delay is never jittered downward: it is an
+    // instruction, not a schedule.
+    return Math.round(exponentialMs * (0.75 + this.random() * 0.5));
   }
 
   recovered(): boolean {
@@ -686,6 +701,12 @@ export interface BoundRepo {
   localOnly?: boolean;
   /** Exact owner/repo identity shown on permission, corner, and merge events. */
   repositoryId?: string;
+  /**
+   * The operator's own checkout, when the Room is served out of a DIFFERENT
+   * directory (the daemon's canonical clone). Absent when they are the same
+   * tree. Read only to tell a reader where a landed commit is not yet.
+   */
+  operatorCheckout?: string;
 }
 
 export type RoomEditPolicy = 'repository' | 'named-repository' | 'direct-message';
@@ -5448,7 +5469,35 @@ export class Body {
           ? ` (${change.files.slice(0, 3).join(', ')}${change.fileCount > 3 ? ', …' : ''})`
           : '')
       : 'the work committed in this corner';
-    const landedLine = `Landed on ${branch} at ${landedTip.slice(0, 12)}.`;
+    // Where it actually went. A land moves the REMOTE; the reader is usually
+    // looking at their own checkout, which is a different directory from the
+    // one this Room is served out of. See `land-destination.ts`.
+    const remoteUrl = (() => {
+      const remoteName = info.boundRepo?.remoteName;
+      if (!remoteName) return undefined;
+      const remote = git(info.worktreePath, ['remote', 'get-url', remoteName]);
+      return remote.ok ? remote.stdout.trim() : undefined;
+    })();
+    const operatorCheckout = info.boundRepo?.operatorCheckout;
+    const destination: LandDestination = {
+      branch,
+      tip: landedTip,
+      ...(remoteUrl ? { remoteUrl } : {}),
+      ...(operatorCheckout
+        ? {
+            operatorCheckout,
+            // Asked, never assumed: an operator who fetches regularly must not
+            // be told their tree is behind when it is not.
+            operatorHasCommit: git(operatorCheckout, [
+              'cat-file',
+              '-e',
+              `${landedTip}^{commit}`,
+            ]).ok,
+          }
+        : {}),
+    };
+    const landedLine = landDestinationLines(destination).join('\n');
+    const commitUrl = commitUrlForRemote(remoteUrl, landedTip);
 
     let recap = [
       objective ? `Set out to: ${objective}` : `Set out to finish the work in ${info.featureBranch}.`,
@@ -5502,6 +5551,7 @@ export class Body {
         ['feature', info.featureBranch],
         ['branch', branch],
         ['tip', landedTip],
+        ...(commitUrl ? [['url', commitUrl]] : []),
         ['agent', this.agentIdentity.publicKey],
       ],
     );
@@ -5772,10 +5822,25 @@ export class Body {
         // open, so the watchdog never mistakes silence for staleness while
         // a genuinely dead socket still ages out and gets recovered.
         void maintenance();
-        maintenanceTimer = setInterval(() => {
+        const tickMs = opts.pollMs ?? ROOM_WS_MAINTENANCE_TICK_MS;
+        const tick = () => {
           if (client?.socket?.connected) this.onRoomPollSuccess?.(channelId);
           void maintenance();
-        }, opts.pollMs ?? ROOM_WS_MAINTENANCE_TICK_MS);
+        };
+        // Phase-shift each Room's tick. Every Room this daemon serves
+        // subscribes within milliseconds of the others — especially right
+        // after a reconnect, when they all came back together — so an exact
+        // interval keeps their relay reads permanently in lockstep, one burst
+        // per minute for the life of the process. The shift is at most HALF a
+        // tick so the gap can never approach the supervisor's watchdog
+        // staleness window (`DEFAULT_ROOM_WATCHDOG_STALE_MS`, 90s against a
+        // 60s tick), which is what would turn spreading load into a
+        // self-inflicted Room recycle.
+        maintenanceTimer = setTimeout(() => {
+          tick();
+          maintenanceTimer = setInterval(tick, tickMs);
+          maintenanceTimer.unref?.();
+        }, Math.round(tickMs * (0.5 + Math.random() * 0.5)));
         maintenanceTimer.unref?.();
 
         await new Promise<void>((resolveWait) => {
@@ -5807,7 +5872,11 @@ export class Body {
         this.notifyAgentErrorStateOnce(channelId, 'relay-disconnected');
         await this.waitForPoll(delayMs, opts.signal);
       } finally {
-        if (maintenanceTimer) clearInterval(maintenanceTimer);
+        if (maintenanceTimer) {
+          // One-shot phase-shift timer until the first tick, an interval after.
+          clearTimeout(maintenanceTimer);
+          clearInterval(maintenanceTimer);
+        }
         offClose?.();
         // Drop this Room's REQ first; the shared socket keeps serving its
         // siblings, and only an owned socket is actually closed by release().

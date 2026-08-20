@@ -798,6 +798,16 @@ export class WorkspaceSupervisor {
       ...boundRepoFromRoom(room),
       localPath: canonical.root,
       remoteName: canonical.remoteName ?? 'origin',
+      // The operator's own tree, kept only when it is genuinely a DIFFERENT
+      // directory from the one this Room is served out of. That is the
+      // three-git-realities gap a land recap has to be able to name: the
+      // commit is on the remote and in the canonical checkout, and the person
+      // reading is looking at neither. `boundRepoFromRoom`'s `localPath` is
+      // overwritten just above, so this is the last point where the original
+      // is still known.
+      ...(room.repo.root && room.repo.root !== canonical.root
+        ? { operatorCheckout: room.repo.root }
+        : {}),
       ...(canonical.targetBranch
         ? { targetBranch: `refs/heads/${canonical.targetBranch}` }
         : {}),

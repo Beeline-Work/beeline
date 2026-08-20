@@ -103,7 +103,7 @@ describe('Buzz root launch routing', () => {
 
     it('preserves a cold-start invite link instead of replacing it with the app root', async () => {
         const token = `bzi_${'ab'.repeat(32)}`;
-        linking.getInitialURL.mockResolvedValue(`https://relay.buzzrouter.com/join/${token}`);
+        linking.getInitialURL.mockResolvedValue(`https://usebeeline.app/join/${token}`);
         buzzIdentityStorage.loadBuzzIdentity.mockResolvedValue({ publicKey: 'buzz-user' });
 
         await renderHome();

@@ -52,6 +52,9 @@ export {
   DEFAULT_RELAY_SCHEME,
   DEFAULT_RELAY_BASE_URL,
   DEFAULT_RELAY_WS_URL,
+  LEGACY_RELAY_HOST,
+  PRODUCTION_RELAY_HOSTS,
+  isProductionRelayHost,
 } from './relay-config.js';
 
 export {

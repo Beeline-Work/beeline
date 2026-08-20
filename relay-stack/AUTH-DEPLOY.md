@@ -9,13 +9,19 @@ the existing catch-all route.
 
 Create a Google Web application OAuth client with:
 
-- Authorized redirect URI: `https://relay.buzzrouter.com/auth/oidc/callback`
+- Authorized redirect URI: `https://usebeeline.app/auth/oidc/callback`
+- Legacy redirect URI: `https://relay.buzzrouter.com/auth/oidc/callback` (keep registered)
 - Authorized JavaScript origins: none
 - Requested scope: `openid`
 
 The native app completion is the associated HTTPS link
-`https://relay.buzzrouter.com/auth/oidc/mobile-callback`. It is an app redirect,
-not a Google OAuth redirect URI.
+`https://usebeeline.app/auth/oidc/mobile-callback`. The shipped
+`https://relay.buzzrouter.com/auth/oidc/mobile-callback` remains associated as
+an alias. These are app redirects, not Google OAuth redirect URIs.
+
+The GitHub OAuth callback is `https://usebeeline.app/auth/github/callback`.
+Keep `https://relay.buzzrouter.com/auth/github/callback` registered for clients
+whose stored relay URL still uses the permanent alias.
 
 ## Secret file
 

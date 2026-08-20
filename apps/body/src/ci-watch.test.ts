@@ -53,7 +53,7 @@ describe('recognizing a GitHub remote', () => {
     for (const url of [
       '',
       'https://gitlab.com/acme/widgets.git',
-      'https://relay.buzzrouter.com/git/abc123/scratch',
+      'https://usebeeline.app/git/abc123/scratch',
       '/home/operator/proj-buzzy',
       'git@example.com:acme/widgets.git',
       'https://github.example.com/acme/widgets.git',

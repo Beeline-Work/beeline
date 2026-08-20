@@ -37,8 +37,8 @@ beforeEach(() => {
 
 describe('community invite links', () => {
   it('builds the public join URL from the configured relay origin', () => {
-    expect(buildCommunityInviteUrl(token, 'https://relay.buzzrouter.com')).toBe(
-      `https://relay.buzzrouter.com/join/${token}`,
+    expect(buildCommunityInviteUrl(token, 'https://usebeeline.app')).toBe(
+      `https://usebeeline.app/join/${token}`,
     );
     expect(buildCommunityInviteUrl(token, 'http://127.0.0.1:3010/')).toBe(
       `http://127.0.0.1:3010/join/${token}`,
@@ -52,14 +52,15 @@ describe('community invite links', () => {
       createCommunityInviteUrl(
         { createInvite },
         'community-123',
-        'https://relay.buzzrouter.com',
+        'https://usebeeline.app',
       ),
-    ).resolves.toBe(`https://relay.buzzrouter.com/join/${token}`);
+    ).resolves.toBe(`https://usebeeline.app/join/${token}`);
     expect(createInvite).toHaveBeenCalledWith('community-123');
   });
 
   it('accepts public, custom-scheme, and raw invite values', () => {
     expect(parseCommunityInviteToken(token)).toBe(token);
+    expect(parseCommunityInviteToken(`https://usebeeline.app/join/${token}`)).toBe(token);
     expect(parseCommunityInviteToken(`https://relay.buzzrouter.com/join/${token}`)).toBe(token);
     expect(parseCommunityInviteToken(`http://127.0.0.1:3010/join/${token}`)).toBe(token);
     expect(parseCommunityInviteToken(`buzzy://join/${token}`)).toBe(token);
@@ -71,7 +72,14 @@ describe('community invite links', () => {
     expect(parseCommunityInviteToken(undefined)).toBeNull();
   });
 
-  it('uses an HTTPS invite origin instead of a stale configured relay', () => {
+  it('uses either production invite origin instead of a stale configured relay', () => {
+    expect(
+      resolveCommunityInviteRelayUrl(
+        `https://usebeeline.app/join/${token}`,
+        token,
+        'https://relay.buzzrouter.com',
+      ),
+    ).toBe('https://usebeeline.app');
     expect(
       resolveCommunityInviteRelayUrl(
         `https://relay.buzzrouter.com/join/${token}`,
@@ -86,9 +94,9 @@ describe('community invite links', () => {
       resolveCommunityInviteRelayUrl(
         `https://relay.example/join/bzi_${'cd'.repeat(32)}`,
         token,
-        'https://relay.buzzrouter.com',
+        'https://usebeeline.app',
       ),
-    ).toBe('https://relay.buzzrouter.com');
+    ).toBe('https://usebeeline.app');
   });
 
   it('signs the initial invite preview query with its reader identity', async () => {

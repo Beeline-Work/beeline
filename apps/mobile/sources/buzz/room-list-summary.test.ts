@@ -106,8 +106,8 @@ describe('roomPreviewText', () => {
   });
 
   it('collapses a bare URL to its host', () => {
-    expect(roomPreviewText('deployed to https://relay.buzzrouter.com/health now')).toBe(
-      'deployed to relay.buzzrouter.com now',
+    expect(roomPreviewText('deployed to https://usebeeline.app/health now')).toBe(
+      'deployed to usebeeline.app now',
     );
   });
 

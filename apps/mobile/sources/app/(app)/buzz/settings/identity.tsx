@@ -300,7 +300,7 @@ export default function BuzzIdentitySettings() {
         profileIdentity,
         requested,
       );
-      const identifier = `${result.name}@buzzrouter.com`;
+      const identifier = `${result.name}@usebeeline.app`;
       await profileClient.setGlobalPersonProfile({
         name: normalizePersonName(savedProfileName) ?? undefined,
         handle: normalizePersonHandle(savedProfileHandle) ?? undefined,
@@ -645,7 +645,7 @@ export default function BuzzIdentitySettings() {
         <View style={styles.settingsSection} testID="claim-handle-setting">
           <Text style={styles.sectionLabel}>BEELINE HANDLE</Text>
           <Text style={styles.body}>
-            Claim a free handle at buzzrouter.com, first come first served.
+            Claim a free handle at usebeeline.app, first come first served.
           </Text>
           <View style={styles.claimRow}>
             <TextInput
@@ -666,7 +666,7 @@ export default function BuzzIdentitySettings() {
               testID="identity-claim-handle-input"
               value={claimName}
             />
-            <Text style={styles.claimSuffix}>@buzzrouter.com</Text>
+            <Text style={styles.claimSuffix}>@usebeeline.app</Text>
           </View>
           <View style={styles.nameMetaRow}>
             <Text style={styles.nameHandle} testID="identity-claim-handle-status">

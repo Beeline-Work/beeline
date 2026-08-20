@@ -24,7 +24,7 @@ describe('provider onboarding error states', () => {
 
 describe('provider onboarding completion', () => {
   it('keeps a successful HTTPS callback when Android reports the browser dismissed first', async () => {
-    const redirectUri = 'https://relay.buzzrouter.com/auth/oidc/mobile-callback';
+    const redirectUri = 'https://usebeeline.app/auth/oidc/mobile-callback';
     const callbackUrl = `${redirectUri}?state=${'s'.repeat(43)}&ticket=${'t'.repeat(43)}`;
     let onUrl: ((url: string) => void) | null = null;
 
@@ -50,7 +50,7 @@ describe('provider onboarding completion', () => {
   it('still treats a real browser close with no callback as cancellation', async () => {
     await expect(
       waitForGoogleAuthCallback({
-        redirectUri: 'https://relay.buzzrouter.com/auth/oidc/mobile-callback',
+        redirectUri: 'https://usebeeline.app/auth/oidc/mobile-callback',
         openAuthSession: async () => ({ type: 'dismiss' }),
         subscribeToUrls: () => ({ remove: () => undefined }),
         callbackGraceMs: 0,

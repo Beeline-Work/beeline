@@ -137,7 +137,17 @@ export default function BuzzAgents() {
     requestedCommunityId,
   );
   const initialCommunityId = requestedCommunityId ?? initialCachedList?.communityId ?? null;
-  const initialCachedSeed = seedMembersFromWorkspaceCache(initialCachedList?.workspaceMembers ?? []);
+  // The cached roster is built for the Rooms screen and omits the viewer by
+  // construction ("who else is here"), so the viewer is handed in explicitly —
+  // otherwise the reader is painted out of their own Workspace, and in a
+  // Personal Workspace, where they are the only person, out of it entirely.
+  // `viewerIsAgent` keeps an agent identity out of the people list.
+  const initialCachedSeed = seedMembersFromWorkspaceCache(
+    initialCachedList?.workspaceMembers ?? [],
+    initialCacheState.activeViewerPubkey && !initialCachedList?.viewerIsAgent
+      ? { pubkey: initialCacheState.activeViewerPubkey }
+      : undefined,
+  );
   const initialCachedProfiles =
     initialCacheState.activeViewerPubkey && initialCommunityId
       ? (initialCacheState.profiles[

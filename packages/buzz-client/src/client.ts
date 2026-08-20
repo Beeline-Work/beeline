@@ -4,6 +4,7 @@
  * Speaks only to real Buzz (HTTP bridge + WS + signed events). UI-agnostic.
  */
 import type { NostrEvent } from '@beeline/nostr';
+import { agentPresenceKey } from './agent-presence.js';
 import { buildMergeApproval } from './approval.js';
 import {
   abandonAgentPairing,
@@ -650,7 +651,7 @@ export class BuzzClient {
     return query(this.ctx, [
       {
         kinds: [KIND_AGENT_PRESENCE],
-        '#d': [`${TAG_AGENT_PRESENCE}:${channelId}`],
+        '#d': [agentPresenceKey(channelId)],
         limit: 20,
       },
     ]).then((events) =>
@@ -716,7 +717,7 @@ export class BuzzClient {
       [
         {
           kinds: [KIND_AGENT_PRESENCE],
-          '#d': [`${TAG_AGENT_PRESENCE}:${channelId}`],
+          '#d': [agentPresenceKey(channelId)],
         },
       ],
       (event) => {

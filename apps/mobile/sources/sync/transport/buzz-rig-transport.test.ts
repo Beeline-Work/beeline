@@ -410,8 +410,17 @@ describe('Room-scoped agent presence transport', () => {
     const events = await transport.agentPresenceBackfillForWorkspace('workspace-1');
 
     expect(client.communityChannels).toHaveBeenCalledWith('workspace-1');
+    // By `#d`, not `#h`. This assertion used to pin the `#h` form — it
+    // faithfully described what the code did and said nothing about whether
+    // the relay would answer it, which it never does for a
+    // parameterized-replaceable kind. A stub that returns events for any
+    // filter cannot tell the difference; the live relay can, and did.
     expect(client.query).toHaveBeenCalledWith([
-      { kinds: [30078], '#h': ['room-1', 'room-2'], limit: 200 },
+      {
+        kinds: [30078],
+        '#d': ['agent-presence:room-1', 'agent-presence:room-2'],
+        limit: 200,
+      },
     ]);
     expect(events).toEqual([expect.objectContaining({ type: 'raw', sessionId: 'room-2' })]);
   });
@@ -1335,5 +1344,80 @@ describe('Buzz channel archive scope', () => {
 
     await expect(metadataArchived.isChannelArchived('room')).resolves.toBe(true);
     await expect(selfScoped.isChannelArchived('corner')).resolves.toBe(true);
+  });
+});
+
+
+/**
+ * Presence is a parameterized-replaceable kind:30078 record, and the relay
+ * indexes those by `d`. A `#h` filter over kind 30078 matches NOTHING — even
+ * though the record does carry an `h` tag — so this read, the only presence
+ * reader that reached for `#h`, returned zero events for every Workspace,
+ * always. The directory therefore reported every agent OFFLINE no matter what
+ * its daemon was doing.
+ *
+ * Confirmed against the live relay before fixing: for an agent whose `online`
+ * heartbeat was four seconds old, `#h` returned 0 events and `#d` returned the
+ * record.
+ */
+describe('Workspace-wide agent presence', () => {
+  const identity = {
+    publicKey: 'a'.repeat(64),
+    secretKey: new Uint8Array(32).fill(1),
+    name: 'viewer',
+  } as Identity;
+
+  function presenceEvent(channelId: string, status: 'online' | 'offline') {
+    return {
+      id: `presence-${channelId}`,
+      pubkey: 'b'.repeat(64),
+      created_at: 1_787_195_367,
+      kind: 30078,
+      tags: [
+        ['d', `agent-presence:${channelId}`],
+        ['h', channelId],
+        ['t', 'agent-presence'],
+        ['agent', 'b'.repeat(64)],
+        ['status', status],
+      ],
+      content: status,
+      sig: 'e'.repeat(128),
+    };
+  }
+
+  it('asks by `#d`, so a serving agent is not reported offline', async () => {
+    const rooms = ['room-a', 'room-b'];
+    const filters: Array<Record<string, unknown>> = [];
+    const client = {
+      communityChannels: vi.fn(async () => rooms),
+      // A relay that indexes kind 30078 by `d` only — which is what the real
+      // one does. An `#h` filter here returns nothing, exactly as it did live.
+      query: vi.fn(async (requested: Array<Record<string, unknown>>) => {
+        const filter = requested[0] ?? {};
+        filters.push(filter);
+        const wanted = (filter['#d'] as string[] | undefined) ?? [];
+        return wanted.includes('agent-presence:room-b') ? [presenceEvent('room-b', 'online')] : [];
+      }),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    const events = await transport.agentPresenceBackfillForWorkspace('workspace');
+
+    expect(filters[0]!['#d']).toEqual(['agent-presence:room-a', 'agent-presence:room-b']);
+    expect(filters[0]).not.toHaveProperty('#h');
+    expect(events).toHaveLength(1);
+  });
+
+  it('still reads nothing for a Workspace with no Rooms', async () => {
+    const client = {
+      communityChannels: vi.fn(async () => []),
+      query: vi.fn(async () => []),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(transport.agentPresenceBackfillForWorkspace('workspace')).resolves.toEqual([]);
+    expect(client.query).not.toHaveBeenCalled();
   });
 });

@@ -53,6 +53,7 @@ import {
   type AgentModelCatalog,
   type AgentModelConfig,
   type AgentModelConfigInput,
+  agentPresenceKey,
   type RoomRepository,
   type RoomRepositoryResolution,
   type RoomRepositoryInput,
@@ -506,8 +507,21 @@ export class BuzzRigTransport implements RigTransport {
     const client = await this.getClient();
     const roomIds = await client.communityChannels(communityId);
     if (roomIds.length === 0) return [];
+    // Filtered by `#d`, NOT `#h`. Presence is a parameterized-replaceable
+    // kind:30078 record and the relay indexes those by `d`: a `#h` filter over
+    // kind 30078 matches nothing, even though the record carries an `h` tag.
+    // This read was the only presence reader that reached for `#h` — the
+    // per-Room reads always spelled the `d` key out — so it returned zero
+    // events for every Workspace, always, and this directory reported every
+    // agent OFFLINE regardless of what its daemon was doing. Confirmed against
+    // the live relay: `#h` → 0 events, `#d` → the same agent's four-second-old
+    // `online` heartbeat.
     const buzzEvents = await client.query([
-      { kinds: [KIND_AGENT_PRESENCE], '#h': roomIds, limit: Math.max(200, roomIds.length * 10) },
+      {
+        kinds: [KIND_AGENT_PRESENCE],
+        '#d': roomIds.map((roomId) => agentPresenceKey(roomId)),
+        limit: Math.max(200, roomIds.length * 10),
+      },
     ]);
     return buzzEvents
       .map(toSessionEvent)

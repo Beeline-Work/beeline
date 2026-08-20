@@ -253,9 +253,10 @@ describe('corner tool activity', () => {
   it('gives a mutation and an executed command their own lines', () => {
     const renderer = render(React.createElement(ActivityTimeline, { items: NOISY_TURN }));
 
-    // A file the agent changed keeps its own row and lifts a luminance step.
+    // The edit tool keeps one row and lifts a luminance step; its files live
+    // one tap deeper instead of being flattened into transcript rows.
     const edit = renderer.root.findByProps({
-      testID: 'activity-action-tool-2:file:sources/auth/oidc.ts',
+      testID: 'activity-action-tool-2',
     });
     expect(edit.findAllByType('Text')[0].props.children).toBe('▧');
     // ...and the command that ran keeps its own row too, distinct glyph.
@@ -264,7 +265,26 @@ describe('corner tool activity', () => {
 
     // Both are visible with nothing tapped; neither is inside the note.
     const collapsed = renderedText(renderer);
-    expect(collapsed).toContain('sources/auth/oidc.ts');
+    expect(collapsed).toContain('Updated a file');
+    expect(collapsed).not.toContain('sources/auth/oidc.ts');
+  });
+
+  it('drills from a tool line to its file list and then the selected diff', () => {
+    const renderer = render(React.createElement(ActivityTimeline, { items: NOISY_TURN }));
+
+    act(() => renderer.root.findByProps({ testID: 'activity-action-tool-2' }).props.onPress());
+    expect(renderer.root.findByType('Modal').props.visible).toBe(true);
+    expect(renderer.root.findByProps({ testID: 'activity-file-list' })).toBeTruthy();
+    expect(renderedText(renderer)).toContain('sources/auth/oidc.ts');
+    expect(renderedText(renderer)).not.toContain('+ retry()');
+
+    act(() =>
+      renderer.root
+        .findByProps({ testID: 'activity-file-tool-2:sources/auth/oidc.ts' })
+        .props.onPress(),
+    );
+    expect(renderer.root.findByProps({ testID: 'activity-file-detail' })).toBeTruthy();
+    expect(renderedText(renderer)).toContain('+ retry()');
   });
 
   it('opens the counted note into a bottom-up review, newest call first', () => {

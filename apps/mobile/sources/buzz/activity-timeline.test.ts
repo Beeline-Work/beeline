@@ -143,12 +143,16 @@ describe('buildTurnActivity', () => {
 
     // A mutation and a command each keep their own line, with their detail.
     expect(turn.actions).toMatchObject([
-      { kind: 'file', weight: 'mutation', path: 'apps/mobile/chat.tsx', diff: '+new line' },
+      {
+        kind: 'tool',
+        weight: 'mutation',
+        id: 'edit-1',
+        files: [{ path: 'apps/mobile/chat.tsx', diff: '+new line' }],
+      },
       { kind: 'tool', weight: 'command', id: 'test-1', command: 'npm test', output: '12 passed' },
     ]);
-    // ...and a tool call that touched files is *only* its files: no duplicate
-    // parent row printing the same edit a second time.
-    expect(turn.actions.filter((action) => action.id === 'edit-1')).toHaveLength(0);
+    // The edit stays one tool row; its files are the next drill-down level.
+    expect(turn.actions.filter((action) => action.id === 'edit-1')).toHaveLength(1);
     expect(turn.actions[0]?.output).toBe('Applied patch');
 
     // Three read-only calls become one counted note, never three rows.

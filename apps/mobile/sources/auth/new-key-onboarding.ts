@@ -1,13 +1,13 @@
 /**
  * "Create a new key" onboarding — the third way onto a device, alongside
- * Google-first bind and pasting an existing nsec.
+ * GitHub-first bind and pasting an existing nsec.
  *
  * The rule this module exists to hold: a key created here is **not persisted**
  * until the person has actually put it in front of themselves and said so. A
  * device-held Nostr key has no server-side recovery — an unbacked one that is
  * silently written to SecureStore is an identity the person can lose to a wiped
  * phone with nothing to restore from. So the draft is generated in memory
- * (`persist: false`, the same deferral the Google bind path uses), and only
+ * (`persist: false`, the same deferral the GitHub bind path uses), and only
  * `canEnterWithNewKey` opens the door.
  *
  * Two independent facts gate it, both required:

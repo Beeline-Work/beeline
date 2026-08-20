@@ -122,9 +122,9 @@ export default function BuzzIdentitySettings() {
   const [nip05Focused, setNip05Focused] = useState(false);
   const [claimName, setClaimName] = useState('');
   const [claimWorking, setClaimWorking] = useState(false);
-  const [claimStatus, setClaimStatus] = useState<'idle' | 'claimed' | 'taken' | 'invalid' | 'error'>(
-    'idle',
-  );
+  const [claimStatus, setClaimStatus] = useState<
+    'idle' | 'claimed' | 'taken' | 'invalid' | 'error'
+  >('idle');
   const [nameWorking, setNameWorking] = useState(false);
   const [nameFocused, setNameFocused] = useState(false);
   const [handleFocused, setHandleFocused] = useState(false);
@@ -132,7 +132,7 @@ export default function BuzzIdentitySettings() {
   const [pushEnabled, setPushEnabledState] = useState<boolean | null>(null);
   const [pushPermission, setPushPermission] = useState<PushPermissionInfo | null>(null);
   const [pushWorking, setPushWorking] = useState(false);
-  const [linkedGoogle, setLinkedGoogle] = useState<
+  const [linkedGitHub, setLinkedGitHub] = useState<
     'checking' | 'connected' | 'not-linked' | 'unavailable'
   >('checking');
   const nip05Status = useVerifiedNip05Status(profilePubkey ?? '', { nip05: savedProfileNip05 });
@@ -180,10 +180,10 @@ export default function BuzzIdentitySettings() {
         }
         try {
           const links = await lookupRecovery(getBuzzRuntimeConfig().relayUrl, identity);
-          const google = links.some((link) => link.provider.includes('google.com'));
-          if (!cancelled) setLinkedGoogle(google ? 'connected' : 'not-linked');
+          const github = links.some((link) => link.provider === 'https://github.com');
+          if (!cancelled) setLinkedGitHub(github ? 'connected' : 'not-linked');
         } catch {
-          if (!cancelled) setLinkedGoogle('unavailable');
+          if (!cancelled) setLinkedGitHub('unavailable');
         }
       } catch (caught) {
         if (!cancelled) setError(`Could not load your profile: ${String(caught)}`);
@@ -455,13 +455,13 @@ export default function BuzzIdentitySettings() {
           ? 'OS permission: not allowed yet'
           : 'OS permission: blocked in device settings'
     : 'Checking OS permission';
-  const linkedGoogleLabel =
-    linkedGoogle === 'connected'
-      ? 'Google account connected'
-      : linkedGoogle === 'not-linked'
-        ? 'No Google account linked'
-        : linkedGoogle === 'unavailable'
-          ? 'Google link unavailable while offline'
+  const linkedGitHubLabel =
+    linkedGitHub === 'connected'
+      ? 'GitHub account connected'
+      : linkedGitHub === 'not-linked'
+        ? 'No GitHub account linked'
+        : linkedGitHub === 'unavailable'
+          ? 'GitHub link unavailable while offline'
           : 'Checking linked account';
   const claimStatusLabel =
     claimStatus === 'claimed'
@@ -631,7 +631,9 @@ export default function BuzzIdentitySettings() {
         )}
         <View style={styles.settingsSection} testID="claim-handle-setting">
           <Text style={styles.sectionLabel}>BEELINE HANDLE</Text>
-          <Text style={styles.body}>Claim a free handle at buzzrouter.com, first come first served.</Text>
+          <Text style={styles.body}>
+            Claim a free handle at buzzrouter.com, first come first served.
+          </Text>
           <View style={styles.claimRow}>
             <TextInput
               accessibilityLabel="Desired Beeline handle"
@@ -691,13 +693,13 @@ export default function BuzzIdentitySettings() {
           <Text style={styles.sectionLabel}>LINKED SIGN-IN</Text>
           <View style={styles.settingLine}>
             <View style={styles.linkedGlyph}>
-              <Text style={styles.linkedGlyphText}>G</Text>
+              <Text style={styles.linkedGlyphText}>GH</Text>
             </View>
             <View style={styles.settingCopy}>
-              <Text style={styles.settingTitle}>Google</Text>
-              <Text style={styles.settingSubtitle}>{linkedGoogleLabel}</Text>
+              <Text style={styles.settingTitle}>GitHub</Text>
+              <Text style={styles.settingSubtitle}>{linkedGitHubLabel}</Text>
             </View>
-            <Text style={styles.linkedState}>{linkedGoogle === 'connected' ? '✓' : '·'}</Text>
+            <Text style={styles.linkedState}>{linkedGitHub === 'connected' ? '✓' : '·'}</Text>
           </View>
         </View>
 

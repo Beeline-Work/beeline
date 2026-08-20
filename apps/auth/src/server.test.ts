@@ -6,6 +6,7 @@ import { generateKeypair, nip98AuthHeader, signEvent, type Keypair } from '@beel
 import { exportJWK, generateKeyPair, SignJWT, type JWK, type KeyLike } from 'jose';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { OidcClient } from './oidc.js';
+import { GitHubAppClient, GitHubOAuthClient } from './github.js';
 import { OIDC_BIND_KIND, OIDC_BIND_MARKER } from './protocol.js';
 import { buildAuthServer, type AuthTenant } from './server.js';
 import {
@@ -247,6 +248,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
   let database: PgliteDatabase;
   let store: AuthStore;
   let app: FastifyInstance;
+  let githubState = '';
 
   beforeEach(async () => {
     provider = new DemoOidcProvider();
@@ -267,6 +269,36 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
         clientSecret: provider.clientSecret,
         allowInsecure: true,
       }),
+      github: {
+        oauth: {
+          config: { clientId: 'github-client' },
+          authorizationUrl: ({ state, redirectUri }: { state: string; redirectUri: string }) => {
+            githubState = state;
+            return `https://github.test/authorize?state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`;
+          },
+          exchangeCode: async () => ({
+            issuer: 'https://github.com' as const,
+            audience: 'github-client',
+            subject: '123',
+            login: 'octocat',
+          }),
+        } as unknown as GitHubOAuthClient,
+        app: {
+          installationUrl: (state: string) =>
+            `https://github.test/apps/beeline/installations/new?state=${state}`,
+          installationAccountId: async () => '123',
+          listRepositories: async (installationId: number) => [
+            {
+              id: 42,
+              installationId,
+              name: 'widget',
+              fullName: 'octocat/widget',
+              remote: 'https://github.com/octocat/widget.git',
+              defaultBranch: 'main',
+            },
+          ],
+        } as unknown as GitHubAppClient,
+      },
       tenants: [alphaTenant, betaTenant],
       nativeRedirectUris: ['buzzy://buzz/oidc-callback'],
     });
@@ -299,6 +331,83 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     expect(result.statusCode).toBe(200);
     return result.json<BindChallenge>();
   }
+
+  it('signs in with GitHub, binds the npub, installs once, and lists installation repositories', async () => {
+    const identity = generateKeypair();
+    const appState = 'a'.repeat(43);
+    const start = await app.inject({
+      method: 'GET',
+      url: `/auth/github/start?app_redirect=${encodeURIComponent('https://alpha.example/auth/github/mobile-callback')}&app_state=${appState}`,
+      headers: { host: alphaTenant.host },
+    });
+    expect(start.statusCode).toBe(302);
+    const callback = await app.inject({
+      method: 'GET',
+      url: `/auth/github/callback?code=github-code&state=${githubState}`,
+      headers: { host: alphaTenant.host, cookie: startCookie(start.headers['set-cookie']) },
+    });
+    expect(callback.statusCode).toBe(302);
+    const completion = new URL(callback.headers.location!);
+    const challenge = Object.fromEntries(completion.searchParams) as unknown as BindChallenge;
+    for (const key of ['protocol', 'kind', 'issued_at', 'expires_at'] as const) {
+      (challenge as unknown as Record<string, unknown>)[key] = Number(
+        completion.searchParams.get(key),
+      );
+    }
+    const bind = await app.inject({
+      method: 'POST',
+      url: '/auth/oidc/bind',
+      headers: { host: alphaTenant.host },
+      payload: { ticket: challenge.ticket, event: bindEvent(challenge, identity) },
+    });
+    expect(bind.statusCode).toBe(201);
+
+    const installStartUrl = 'https://alpha.example/auth/github/install/start';
+    const installStart = await app.inject({
+      method: 'POST',
+      url: '/auth/github/install/start',
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(
+          identity.secretKey,
+          identity.publicKey,
+          installStartUrl,
+          'POST',
+        ),
+      },
+      payload: {
+        pubkey: identity.publicKey,
+        redirect_uri: 'https://alpha.example/auth/github/mobile-callback',
+      },
+    });
+    expect(installStart.statusCode).toBe(200);
+    const installUrl = new URL(installStart.json().authorization_url);
+    const installed = await app.inject({
+      method: 'GET',
+      url: `/auth/github/install/callback?installation_id=77&state=${installUrl.searchParams.get('state')}`,
+      headers: { host: alphaTenant.host },
+    });
+    expect(installed.statusCode).toBe(302);
+    expect(installed.headers.location).toBe(
+      'https://alpha.example/auth/github/mobile-callback?installed=1',
+    );
+
+    const reposUrl = `https://alpha.example/auth/github/repos/${identity.publicKey}`;
+    const repos = await app.inject({
+      method: 'GET',
+      url: `/auth/github/repos/${identity.publicKey}`,
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, reposUrl, 'GET'),
+      },
+    });
+    expect(repos.statusCode).toBe(200);
+    expect(repos.json()).toMatchObject({
+      installed: true,
+      installation_id: 77,
+      repositories: [{ installationId: 77, fullName: 'octocat/widget' }],
+    });
+  });
 
   async function bind(
     challenge: BindChallenge,
@@ -732,7 +841,15 @@ describe('NIP-05 handle issuance', () => {
 
   it('rejects malformed and reserved handle names', async () => {
     const identity = generateKeypair();
-    for (const bad of ['Alice', 'has space', '-leading-dash', 'x'.repeat(31), 'admin', 'beeline', '_']) {
+    for (const bad of [
+      'Alice',
+      'has space',
+      '-leading-dash',
+      'x'.repeat(31),
+      'admin',
+      'beeline',
+      '_',
+    ]) {
       const response = await claim(bad, identity);
       expect(response.statusCode, bad).toBe(400);
       expect(response.json().error).toBe('invalid_name');

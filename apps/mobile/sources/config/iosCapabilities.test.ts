@@ -1,16 +1,28 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 describe('production iOS capabilities', () => {
   it('declares the relay invite domain without enabling push', () => {
     const projectRoot = new URL('../..', import.meta.url).pathname;
-    const output = execFileSync('npx', ['expo', 'config', '--type', 'introspect', '--json'], {
-      cwd: projectRoot,
-      encoding: 'utf8',
-      env: { ...process.env, APP_ENV: 'production' },
-    });
+    const { NODE_ENV: _nodeEnv, VITEST: _vitest, ...cliEnv } = process.env;
+    const output = execFileSync(
+      process.execPath,
+      [
+        resolve(projectRoot, 'node_modules/expo/bin/cli'),
+        'config',
+        '--type',
+        'introspect',
+        '--json',
+      ],
+      {
+        cwd: projectRoot,
+        encoding: 'utf8',
+        env: { ...cliEnv, APP_ENV: 'production' },
+      },
+    );
     const config = JSON.parse(output) as {
       ios?: { associatedDomains?: string[] };
       android?: {
@@ -47,7 +59,7 @@ describe('production iOS capabilities', () => {
       expect.objectContaining({
         action: 'VIEW',
         autoVerify: true,
-        data: [
+        data: expect.arrayContaining([
           {
             scheme: 'https',
             host: 'relay.buzzrouter.com',
@@ -56,9 +68,14 @@ describe('production iOS capabilities', () => {
           {
             scheme: 'https',
             host: 'relay.buzzrouter.com',
+            pathPrefix: '/auth/github/mobile-callback',
+          },
+          {
+            scheme: 'https',
+            host: 'relay.buzzrouter.com',
             pathPrefix: '/auth/oidc/mobile-callback',
           },
-        ],
+        ]),
       }),
     );
     expect(nativeIos?.entitlements).not.toHaveProperty('aps-environment');
@@ -67,7 +84,11 @@ describe('production iOS capabilities', () => {
     ]);
     expect(nativeIos?.infoPlist?.UIBackgroundModes).not.toContain('remote-notification');
     expect(relayAssociation.applinks?.details?.[0]?.paths).toEqual(
-      expect.arrayContaining(['/join/*', '/auth/oidc/mobile-callback']),
+      expect.arrayContaining([
+        '/join/*',
+        '/auth/github/mobile-callback',
+        '/auth/oidc/mobile-callback',
+      ]),
     );
   }, 15_000);
 });

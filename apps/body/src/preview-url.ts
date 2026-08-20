@@ -80,7 +80,9 @@ export function selectPreviewCheckRunUrl(
 }
 
 /** `owner/repo` of a GitHub git remote in any of its usual spellings. */
-export function parseGitHubRemote(remote: string | undefined): { owner: string; repo: string } | null {
+export function parseGitHubRemote(
+  remote: string | undefined,
+): { owner: string; repo: string } | null {
   const value = (remote ?? '').trim();
   if (!value) return null;
   const match = value.match(
@@ -122,7 +124,7 @@ export async function resolvePreviewUrl(
   if (!target || !/^[0-9a-f]{40}$/.test(options.tip)) return undefined;
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   if (typeof fetchImpl !== 'function') return undefined;
-  const token = options.token ?? process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+  const token = options.token;
   const headers: Record<string, string> = {
     accept: 'application/vnd.github+json',
     'user-agent': 'beeline-body',

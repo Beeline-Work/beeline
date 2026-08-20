@@ -146,6 +146,11 @@ export default {
                         {
                             "scheme": "https",
                             "host": "relay.buzzrouter.com",
+                            "pathPrefix": "/auth/github/mobile-callback"
+                        },
+                        {
+                            "scheme": "https",
+                            "host": "relay.buzzrouter.com",
                             "pathPrefix": "/auth/oidc/mobile-callback"
                         }
                     ],

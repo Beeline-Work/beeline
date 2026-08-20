@@ -12,6 +12,9 @@ import { respondToWritePermission } from './write-permission.live-helper.js';
 
 const checkout = process.env.BUZZY_GITHUB_LIVE_CHECKOUT ?? '';
 const selectedAgent = process.env.BUZZY_LIVE_AGENT_KIND ?? 'codex';
+const appConfigured = Boolean(
+  process.env.BUZZY_GITHUB_APP_ID && process.env.BUZZY_GITHUB_APP_PRIVATE_KEY,
+);
 let daemonPid: number | undefined;
 let humanClient: ReturnType<typeof createBuzzClient> | undefined;
 /** Machine-local agent state root; the runtime no longer lives in the repo. */
@@ -53,7 +56,7 @@ function localGit(args: string[]): string {
   return (result.stdout ?? '').trim();
 }
 
-const live = Boolean(checkout) && runtimeAvailable() && (await reachable());
+const live = Boolean(checkout) && appConfigured && runtimeAvailable() && (await reachable());
 
 describe.runIf(live)('GitHub-origin pair → conversation → human-approved land', () => {
   beforeAll(async () => {
@@ -73,7 +76,7 @@ describe.runIf(live)('GitHub-origin pair → conversation → human-approved lan
   });
 
   it(
-    'uses ambient user credentials only after a signed human-admin approval',
+    'uses GitHub App installation credentials only after a signed human-admin approval',
     async () => {
       const marker = `github-origin-${Date.now()}`;
       const human = newIdentity(`${marker}-human`);
@@ -226,8 +229,10 @@ describe.runIf(live)('GitHub-origin pair → conversation → human-approved lan
 
 if (!live) {
   describe('GitHub-origin pair → conversation → human-approved land (prerequisite)', () => {
-    it('SKIPPED — requires BUZZY_GITHUB_LIVE_CHECKOUT, production relay, and Codex', () => {
-      console.warn('Set BUZZY_GITHUB_LIVE_CHECKOUT to an ambient-auth GitHub checkout.');
+    it('SKIPPED — requires BUZZY_GITHUB_LIVE_CHECKOUT, GitHub App credentials, production relay, and Codex', () => {
+      console.warn(
+        'Set BUZZY_GITHUB_LIVE_CHECKOUT plus BUZZY_GITHUB_APP_ID and BUZZY_GITHUB_APP_PRIVATE_KEY.',
+      );
     });
   });
 }

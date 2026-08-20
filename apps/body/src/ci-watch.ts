@@ -77,35 +77,6 @@ export function resolveGitHubRepo(cwd: string, remoteName: string): GitHubRepoRe
   return parseGitHubRemoteUrl(result.stdout ?? '');
 }
 
-/**
- * A token for the GitHub API, or `undefined` to read anonymously.
- *
- * The land push this watch follows already used the operator's ambient git
- * credentials, so the same credentials are the honest source here: an explicit
- * token in the environment first, then whatever `git credential` already holds
- * for github.com (which is where `gh auth login` puts its token). Prompting is
- * disabled outright — a daemon has no terminal, and a helper that wants to ask
- * a question must fail rather than hang. A public repository needs no token at
- * all, so `undefined` stays a working answer.
- */
-export function resolveGitHubToken(
-  cwd: string,
-  env: NodeJS.ProcessEnv = process.env,
-): string | undefined {
-  const fromEnv = env.GITHUB_TOKEN?.trim() || env.GH_TOKEN?.trim();
-  if (fromEnv) return fromEnv;
-  const result = spawnSync('git', ['credential', 'fill'], {
-    cwd,
-    encoding: 'utf8',
-    input: 'protocol=https\nhost=github.com\n\n',
-    timeout: 5_000,
-    env: { ...env, GIT_TERMINAL_PROMPT: '0' },
-  });
-  if (result.status !== 0) return undefined;
-  const password = /^password=(.*)$/m.exec(result.stdout ?? '')?.[1]?.trim();
-  return password || undefined;
-}
-
 export interface CiStatusReadOptions {
   token?: string;
   fetchImpl?: typeof fetch;

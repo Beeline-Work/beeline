@@ -77,6 +77,27 @@ export function gitWithUserCredentials(cwd: string, args: string[]): GitResult {
 }
 
 /**
+ * Run GitHub smart-HTTP with a short-lived GitHub App installation token.
+ * Ambient helpers and host configuration stay disabled exactly as they are
+ * for relay auth; the token exists only in this invocation's HTTP header.
+ */
+export function gitWithInstallationToken(cwd: string, token: string, args: string[]): GitResult {
+  if (!token.trim()) throw new Error('GitHub installation token is required');
+  const basic = Buffer.from(`x-access-token:${token}`, 'utf8').toString('base64');
+  const res = spawnSync(
+    'git',
+    [...BASE_GIT_ARGS, '-c', `http.extraHeader=Authorization: Basic ${basic}`, ...args],
+    { cwd, env: BASE_ENV, encoding: 'utf8' },
+  );
+  return {
+    ok: res.status === 0,
+    status: res.status,
+    stdout: res.stdout ?? '',
+    stderr: res.stderr ?? '',
+  };
+}
+
+/**
  * Run a git command that talks to the relay as `identity`. The NIP-98 header
  * is bound to `ownerHex/repo`'s repo-root URL and signed fresh per call.
  */

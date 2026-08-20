@@ -7,7 +7,7 @@
 import { createBuzzClient, loadIdentityFromNsec } from '@beeline/buzz-client';
 
 const [agentNsec, roomId, cornerId] = process.argv.slice(2);
-const RELAY = process.env.RELAY_URL || 'https://relay.buzzrouter.com';
+const RELAY = process.env.RELAY_URL || 'https://usebeeline.app';
 
 if (!agentNsec || !roomId || !cornerId) {
   throw new Error('usage: publish-smoke-replies <agent-nsec> <room-id> <corner-id>');

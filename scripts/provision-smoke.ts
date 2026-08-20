@@ -12,7 +12,7 @@ import {
 } from '@beeline/buzz-client';
 import { signEvent } from '@beeline/nostr';
 
-const RELAY = process.env.RELAY_URL || 'https://relay.buzzrouter.com';
+const RELAY = process.env.RELAY_URL || 'https://usebeeline.app';
 
 async function main() {
   // 1. Create identity and persist to env for later import

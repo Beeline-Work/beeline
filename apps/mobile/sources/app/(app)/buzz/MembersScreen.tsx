@@ -39,7 +39,7 @@ import { Typography } from '@/constants/Typography';
 import { hairlineDivider, HullWaveSignal, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 
-const INSTALL_COMMAND = 'curl -fsSL https://relay.buzzrouter.com/install | sh';
+const INSTALL_COMMAND = 'curl -fsSL https://usebeeline.app/install | sh';
 /** Under the 45s daemon heartbeat so a just-started agent reads online promptly. */
 const AGENT_PRESENCE_REFRESH_MS = 30_000;
 /** How long an admin action waits for the connect handshake before failing honestly. */

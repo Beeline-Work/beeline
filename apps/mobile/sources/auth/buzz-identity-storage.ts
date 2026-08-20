@@ -27,7 +27,7 @@ const NSEC_STORAGE_OPTIONS: SecureStore.SecureStoreOptions = {
   keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
 };
 
-export const DEFAULT_RELAY_URL = 'https://relay.buzzrouter.com';
+export const DEFAULT_RELAY_URL = 'https://usebeeline.app';
 
 function isWeb(): boolean {
   return typeof window !== 'undefined' && typeof window.document !== 'undefined';

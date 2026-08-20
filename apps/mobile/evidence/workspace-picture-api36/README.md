@@ -21,7 +21,7 @@ production release APK, versionCode 17.
 
 Workspace `462055ab-d178-4753-9f41-a4c5310f5e54` projected:
 
-- Media URL: `https://relay.buzzrouter.com/media/617bf48352afca690b82c3cea72ed68690692f35f384c7c599601da9d96259ae.png`
+- Media URL: `https://usebeeline.app/media/617bf48352afca690b82c3cea72ed68690692f35f384c7c599601da9d96259ae.png`
 - Authenticated admin command: kind:9002,
   `df38a1e3a23902d3ef6c7b636b75a7e80b2dd0f80f2d8b64e6274ee2d53fb382`
 - Relay-signed replaceable projection: kind:39000,

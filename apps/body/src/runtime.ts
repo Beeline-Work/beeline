@@ -384,6 +384,56 @@ export async function writeRuntimeRecord(record: AgentRuntimeRecord): Promise<st
   return path;
 }
 
+export function normalizeRelayBaseUrl(value: string): {
+  relayBaseUrl: string;
+  relayHost: string;
+} {
+  let relay: URL;
+  try {
+    relay = new URL(value.trim());
+  } catch {
+    throw new Error('relay URL must be a valid HTTP or HTTPS origin');
+  }
+  if (relay.protocol !== 'https:' && relay.protocol !== 'http:') {
+    throw new Error('relay URL must use HTTP or HTTPS');
+  }
+  if (
+    relay.username ||
+    relay.password ||
+    (relay.pathname && relay.pathname !== '/') ||
+    relay.search ||
+    relay.hash
+  ) {
+    throw new Error('relay URL must be an origin without credentials, a path, query, or fragment');
+  }
+  return { relayBaseUrl: relay.origin, relayHost: relay.host };
+}
+
+/** Atomically repoint one explicitly-selected stored runtime. Never runs implicitly. */
+export async function updateRuntimeRelay(
+  pathOrPointer: string,
+  relayUrl: string,
+): Promise<{ configPath: string; runtime: AgentRuntimeRecord }> {
+  const configPath = await resolveRuntimeConfigPath(pathOrPointer);
+  const runtime = await readRuntimeRecord(configPath);
+  const relay = normalizeRelayBaseUrl(relayUrl);
+  const expectedConfigPath = resolve(
+    runtimeDirectory(runtime.supervisorRoot, runtime.agent.publicKey),
+    'runtime.json',
+  );
+  if (resolve(configPath) !== expectedConfigPath) {
+    throw new Error(`refusing to update a runtime outside its canonical path: ${configPath}`);
+  }
+  const updated: AgentRuntimeRecord = {
+    ...runtime,
+    relayBaseUrl: relay.relayBaseUrl,
+    relayHost: relay.relayHost,
+  };
+  const writtenPath = await writeRuntimeRecord(updated);
+  if (resolve(writtenPath) !== expectedConfigPath) throw new Error('runtime relay update failed');
+  return { configPath, runtime: updated };
+}
+
 /**
  * Fail BEFORE the one-shot pairing code is consumed if this host cannot
  * actually store the runtime.
@@ -604,6 +654,53 @@ export async function runtimeDaemonPid(configPath: string): Promise<number | nul
   } catch {
     return null;
   }
+}
+
+/** Gracefully stop a stored daemon and wait until it is safe to launch its replacement. */
+export async function stopRuntimeDaemon(
+  pathOrPointer: string,
+  opts: { timeoutMs?: number; pollMs?: number } = {},
+): Promise<number | null> {
+  const configPath = await resolveRuntimeConfigPath(pathOrPointer);
+  const pid = await runtimeDaemonPid(configPath);
+  if (!pid) return null;
+  let argumentsForPid: string[];
+  try {
+    argumentsForPid = (await readFile(`/proc/${pid}/cmdline`))
+      .toString('utf8')
+      .split('\0')
+      .filter(Boolean);
+  } catch {
+    throw new Error(
+      `cannot verify that pid ${pid} belongs to this Beeline runtime; refusing to stop it`,
+    );
+  }
+  const configFlag = argumentsForPid.lastIndexOf('--config');
+  const processConfigPath = argumentsForPid[configFlag + 1];
+  if (
+    configFlag < 1 ||
+    argumentsForPid[configFlag - 1] !== 'daemon' ||
+    !processConfigPath ||
+    resolve(processConfigPath) !== resolve(configPath)
+  ) {
+    throw new Error(
+      `pid ${pid} does not belong to the daemon for ${configPath}; refusing to stop it`,
+    );
+  }
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return pid;
+    throw error;
+  }
+
+  const deadline = Date.now() + (opts.timeoutMs ?? 10_000);
+  const pollMs = opts.pollMs ?? 100;
+  while (Date.now() < deadline) {
+    if ((await runtimeDaemonPid(configPath)) === null) return pid;
+    await new Promise((resolveWait) => setTimeout(resolveWait, pollMs));
+  }
+  throw new Error(`agent daemon ${pid} did not stop after ${opts.timeoutMs ?? 10_000}ms`);
 }
 
 export async function launchRuntimeDaemon(

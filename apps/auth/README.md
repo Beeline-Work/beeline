@@ -76,6 +76,10 @@ setup URL is `https://<tenant>/auth/github/install/callback`. Body daemons need
 the same `BEELINE_GITHUB_APP_ID` and `BEELINE_GITHUB_APP_PRIVATE_KEY` so all clone,
 fetch, push, land, rename, preview, and CI reads use installation authority.
 
+Production uses `https://usebeeline.app/auth/github/callback`; the tenant list
+also keeps `https://relay.buzzrouter.com/auth/github/callback` valid so stored
+legacy relay URLs continue their OAuth ceremony on the same origin where it began.
+
 HTTP OIDC endpoints are accepted only for local emulators when
 `BUZZY_AUTH_ALLOW_INSECURE_OIDC=true` and `NODE_ENV` is not `production`.
 

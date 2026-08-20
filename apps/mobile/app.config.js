@@ -32,7 +32,7 @@ const consoleLoggingDefault = {
     preview: true,
     production: false,
 }[variant];
-const buzzyRelayUrl = process.env.EXPO_PUBLIC_BUZZY_RELAY_URL || 'https://relay.buzzrouter.com';
+const buzzyRelayUrl = process.env.EXPO_PUBLIC_BUZZY_RELAY_URL || 'https://usebeeline.app';
 const buzzyPushGatewayUrl = process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL || 'https://push.buzzrouter.com';
 
 function git(args) {
@@ -84,7 +84,7 @@ export default {
             bundleIdentifier: bundleId,
             buildNumber: "1",
             ...(variant === 'production'
-                ? { associatedDomains: ["applinks:relay.buzzrouter.com"] }
+                ? { associatedDomains: ["applinks:usebeeline.app", "applinks:relay.buzzrouter.com"] }
                 : {}),
             config: {
                 usesNonExemptEncryption: false
@@ -138,6 +138,21 @@ export default {
                     "action": "VIEW",
                     "autoVerify": true,
                     "data": [
+                        {
+                            "scheme": "https",
+                            "host": "usebeeline.app",
+                            "pathPrefix": "/join/"
+                        },
+                        {
+                            "scheme": "https",
+                            "host": "usebeeline.app",
+                            "pathPrefix": "/auth/github/mobile-callback"
+                        },
+                        {
+                            "scheme": "https",
+                            "host": "usebeeline.app",
+                            "pathPrefix": "/auth/oidc/mobile-callback"
+                        },
                         {
                             "scheme": "https",
                             "host": "relay.buzzrouter.com",

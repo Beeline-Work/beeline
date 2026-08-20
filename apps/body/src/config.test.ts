@@ -17,8 +17,23 @@ describe('loadBodyConfig relay resolution', () => {
   it('uses production HTTP and WebSocket endpoints in a clean environment', () => {
     const config = loadBodyConfig({ workspaceRoot: '.', env: binaryEnv });
 
-    expect(config.relayHost).toBe('relay.buzzrouter.com');
+    expect(config.relayHost).toBe('usebeeline.app');
     expect(config.relayScheme).toBe('https');
+    expect(config.relayBaseUrl).toBe('https://usebeeline.app');
+    expect(config.relayWsUrl).toBe('wss://usebeeline.app');
+  });
+
+  it('keeps an explicitly configured legacy relay alias unchanged', () => {
+    const config = loadBodyConfig({
+      workspaceRoot: '.',
+      env: {
+        ...binaryEnv,
+        BUZZY_RELAY_HOST: 'relay.buzzrouter.com',
+        BUZZY_RELAY_URL: 'https://relay.buzzrouter.com',
+      },
+    });
+
+    expect(config.relayHost).toBe('relay.buzzrouter.com');
     expect(config.relayBaseUrl).toBe('https://relay.buzzrouter.com');
     expect(config.relayWsUrl).toBe('wss://relay.buzzrouter.com');
   });

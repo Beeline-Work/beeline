@@ -5,9 +5,9 @@ import { resolveRelayConfig } from './config.js';
 describe('resolveRelayConfig', () => {
   it('uses the production relay in a clean environment', () => {
     expect(resolveRelayConfig({})).toEqual({
-      host: 'relay.buzzrouter.com',
+      host: 'usebeeline.app',
       scheme: 'https',
-      baseUrl: 'https://relay.buzzrouter.com',
+      baseUrl: 'https://usebeeline.app',
     });
   });
 

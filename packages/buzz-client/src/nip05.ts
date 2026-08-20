@@ -129,7 +129,7 @@ async function claimResponseBody(response: Response): Promise<Record<string, unk
 }
 
 /**
- * Claim `<name>@buzzrouter.com` first-come-first-served against the deployed auth service.
+ * Claim `<name>@usebeeline.app` first-come-first-served against the deployed auth service.
  * Does not touch the person profile — the caller writes `nip05` on success.
  */
 export async function claimNip05Handle(

@@ -26,7 +26,7 @@ describe('parseGitHubRemote', () => {
   });
 
   it('is null for a non-GitHub or empty remote', () => {
-    expect(parseGitHubRemote('https://relay.buzzrouter.com/git/abc/repo')).toBeNull();
+    expect(parseGitHubRemote('https://usebeeline.app/git/abc/repo')).toBeNull();
     expect(parseGitHubRemote('/srv/repos/local.git')).toBeNull();
     expect(parseGitHubRemote(undefined)).toBeNull();
   });
@@ -110,7 +110,7 @@ describe('resolvePreviewUrl', () => {
       throw new Error('network down');
     }) as unknown as typeof fetch;
     await expect(
-      resolvePreviewUrl({ remote: 'https://relay.buzzrouter.com/git/o/r', tip, fetchImpl: boom }),
+      resolvePreviewUrl({ remote: 'https://usebeeline.app/git/o/r', tip, fetchImpl: boom }),
     ).resolves.toBeUndefined();
     await expect(
       resolvePreviewUrl({ remote: 'https://github.com/o/r', tip: 'not-a-tip', fetchImpl: boom }),

@@ -82,7 +82,7 @@ by projecting agent activity into the relay channel.
 | `BUZZ_AGENT_BIN`                    | No       | explicit reference only | Reference `buzz-agent` override                                                                  |
 | `BUZZ_DEV_MCP_BIN`                  | No       | auto-detect             | Path to `buzz-dev-mcp` binary                                                                    |
 | `BUZZ_READONLY_MCP_BIN`             | No       | bundled/auto-detect     | Path to Beeline's inspection-only MCP                                                            |
-| `BUZZY_RELAY_HOST`                  | No       | `relay.buzzrouter.com`  | Relay HTTP/WS host                                                                               |
+| `BUZZY_RELAY_HOST`                  | No       | `usebeeline.app`        | Relay HTTP/WS host (`relay.buzzrouter.com` remains an accepted alias)                             |
 | `BUZZY_RELAY_SCHEME`                | No       | `https`                 | Relay scheme                                                                                     |
 | `BUZZY_BODY_WORKSPACE`              | No       | `./body-workspace`      | Agent workspace root                                                                             |
 | `BUZZY_BODY_LLM_FILE`               | No       | —                       | Path to LLM credentials env file                                                                 |
@@ -123,7 +123,7 @@ Install the CLI and its agent runtimes without cloning this repository (requires
 Node.js 20.11 or newer):
 
 ```bash
-curl -fsSL https://relay.buzzrouter.com/install | sh
+curl -fsSL https://usebeeline.app/install | sh
 ```
 
 The installer selects the platform bundle, verifies its checksum, and installs
@@ -172,6 +172,11 @@ beeline pair BUZZ-XXXX-XXXX --agent custom \
 
 # Restart a previously-paired agent after a machine/process restart.
 beeline start
+
+# Explicitly migrate stored runtime(s) without re-pairing. Identities, Rooms,
+# and worktrees stay intact; each selected daemon stops and restarts cleanly.
+beeline relay set https://usebeeline.app --agent <full-agent-pubkey>
+beeline relay set https://usebeeline.app --all
 
 # Inspect today's model calls/tokens, the user event that caused every turn,
 # and old-unbounded versus capped session re-prime tokens per daemon restart.

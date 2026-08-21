@@ -50,15 +50,22 @@ const TRIANGLE_APEX_Y = 17.1;
 const TRIANGLE_BASE_Y = 82.9;
 const TRIANGLE_CENTROID_Y = (TRIANGLE_APEX_Y + TRIANGLE_BASE_Y * 2) / 3;
 const TRIANGLE = `50,${TRIANGLE_APEX_Y} 88,${TRIANGLE_BASE_Y} 12,${TRIANGLE_BASE_Y}`;
+const TRIANGLE_LEFT_HALF = `50,${TRIANGLE_APEX_Y} 50,${TRIANGLE_BASE_Y} 12,${TRIANGLE_BASE_Y}`;
 const TRIANGLE_RING = '50,6.1 97.5,88.4 2.5,88.4';
 
 const CIRCLE_RADIUS = 38;
+const CIRCLE_LEFT_HALF = `M 50,${50 - CIRCLE_RADIUS} A ${CIRCLE_RADIUS},${CIRCLE_RADIUS} 0 0 0 50,${50 + CIRCLE_RADIUS} Z`;
 
 const SQUARE_INSET = 12;
 const SQUARE_SIDE = 100 - SQUARE_INSET * 2;
 
 /** Scale a point about the triangle's centroid — how the mesh is inset. */
-function triangleScaled(scale: number): { apexY: number; baseY: number; left: number; right: number } {
+function triangleScaled(scale: number): {
+  apexY: number;
+  baseY: number;
+  left: number;
+  right: number;
+} {
   const at = (value: number, center: number) => center + (value - center) * scale;
   return {
     apexY: at(TRIANGLE_APEX_Y, TRIANGLE_CENTROID_Y),
@@ -90,9 +97,7 @@ function triangleMeshCells(): string[] {
     const cx = corners.reduce((sum, [x]) => sum + x, 0) / corners.length;
     const cy = corners.reduce((sum, [, y]) => sum + y, 0) / corners.length;
     return corners
-      .map(([x, y]) =>
-        `${(cx + (x - cx) * 0.82).toFixed(1)},${(cy + (y - cy) * 0.82).toFixed(1)}`,
-      )
+      .map(([x, y]) => `${(cx + (x - cx) * 0.82).toFixed(1)},${(cy + (y - cy) * 0.82).toFixed(1)}`)
       .join(' ');
   };
   const cells: string[] = [];
@@ -167,8 +172,11 @@ function plateRects(cell: CypherCell, index: number): Array<[number, number, num
   }
 }
 
-function cellFill(cell: CypherCell, palette: IdentityPalette): string | null {
-  if (cell.tone === 'void') return null;
+function cellFill(cell: CypherCell, palette: IdentityPalette): string {
+  // Hollow already has a deep field, where these pixels merge exactly as they
+  // did before the fill axis. Painting them explicitly preserves that same
+  // deep-tone cypher when the solid or half field behind it becomes lighter.
+  if (cell.tone === 'void') return palette.deep;
   return cell.tone === 'bright' ? palette.bright : palette.mid;
 }
 
@@ -195,11 +203,15 @@ export const IdentityMark = React.memo(function IdentityMark(props: IdentityMark
   const [failedAvatar, setFailedAvatar] = useState<string | null>(null);
   const showRelayAvatar =
     groknight.photoIdentityMarksEnabled && Boolean(avatarUrl && failedAvatar !== avatarUrl);
-  const { palette, cells, rotation } = identityMarkGeometry(seed, kind);
+  const { palette, fillState, cells, rotation } = identityMarkGeometry(seed, kind);
   // Below the cypher floor the colour and the silhouette *are* the identity,
   // so the mark goes solid rather than muddy.
   const detailed = size >= CYPHER_MIN_SIZE;
-  const bodyFill = detailed ? palette.deep : palette.mid;
+  // The fill axis needs a coarse field, not another small detail. Solid and
+  // hollow use the full silhouette; half overlays its left half. Below the
+  // cypher floor the mark keeps the existing solid-size fallback.
+  const visibleFillState = detailed ? fillState : 'solid';
+  const bodyFill = visibleFillState === 'solid' ? palette.mid : palette.deep;
   const frameStroke = selected ? palette.bright : detailed ? palette.mid : palette.bright;
   const frameWidth = selected ? 6 : 3.5;
 
@@ -224,9 +236,13 @@ export const IdentityMark = React.memo(function IdentityMark(props: IdentityMark
         <Svg width={size} height={size} viewBox="0 0 100 100">
           {kind === 'agent' && (
             <>
+              <Polygon points={TRIANGLE} fill={bodyFill} />
+              {visibleFillState === 'half' && (
+                <Polygon points={TRIANGLE_LEFT_HALF} fill={palette.mid} />
+              )}
               <Polygon
                 points={TRIANGLE}
-                fill={bodyFill}
+                fill="none"
                 stroke={frameStroke}
                 strokeWidth={frameWidth}
                 strokeLinejoin="miter"
@@ -235,7 +251,7 @@ export const IdentityMark = React.memo(function IdentityMark(props: IdentityMark
                 <G rotation={rotation * 120} origin={`50, ${TRIANGLE_CENTROID_Y}`}>
                   {TRIANGLE_MESH.map((points, index) => {
                     const fill = cellFill(cells[index]!, palette);
-                    return fill ? <Polygon key={points} points={points} fill={fill} /> : null;
+                    return <Polygon key={points} points={points} fill={fill} />;
                   })}
                 </G>
               )}
@@ -244,11 +260,13 @@ export const IdentityMark = React.memo(function IdentityMark(props: IdentityMark
 
           {kind === 'human' && (
             <>
+              <Circle cx="50" cy="50" r={CIRCLE_RADIUS} fill={bodyFill} />
+              {visibleFillState === 'half' && <Path d={CIRCLE_LEFT_HALF} fill={palette.mid} />}
               <Circle
                 cx="50"
                 cy="50"
                 r={CIRCLE_RADIUS}
-                fill={bodyFill}
+                fill="none"
                 stroke={frameStroke}
                 strokeWidth={frameWidth}
               />
@@ -256,7 +274,7 @@ export const IdentityMark = React.memo(function IdentityMark(props: IdentityMark
                 <G rotation={rotation * 30} origin="50, 50">
                   {RADIAL_MESH.map((d, index) => {
                     const fill = cellFill(cells[index]!, palette);
-                    return fill ? <Path key={d} d={d} fill={fill} /> : null;
+                    return <Path key={d} d={d} fill={fill} />;
                   })}
                 </G>
               )}
@@ -271,6 +289,22 @@ export const IdentityMark = React.memo(function IdentityMark(props: IdentityMark
                 width={SQUARE_SIDE}
                 height={SQUARE_SIDE}
                 fill={bodyFill}
+              />
+              {visibleFillState === 'half' && (
+                <Rect
+                  x={SQUARE_INSET}
+                  y={SQUARE_INSET}
+                  width={SQUARE_SIDE / 2}
+                  height={SQUARE_SIDE}
+                  fill={palette.mid}
+                />
+              )}
+              <Rect
+                x={SQUARE_INSET}
+                y={SQUARE_INSET}
+                width={SQUARE_SIDE}
+                height={SQUARE_SIDE}
+                fill="none"
                 stroke={frameStroke}
                 strokeWidth={frameWidth}
                 strokeLinejoin="miter"
@@ -279,7 +313,6 @@ export const IdentityMark = React.memo(function IdentityMark(props: IdentityMark
                 <G rotation={rotation * 90} origin="50, 50">
                   {cells.map((cell, index) => {
                     const fill = cellFill(cell, palette);
-                    if (!fill) return null;
                     return plateRects(cell, index).map(([x, y, width, height]) => (
                       <Rect
                         key={`${index}-${x}-${y}`}
@@ -312,8 +345,20 @@ export const IdentityMark = React.memo(function IdentityMark(props: IdentityMark
             {/* Gold means a live agent — the only kind `live` can name, by
                 type and by the defensive computation above — so the ring is
                 drawn in the triangle's own silhouette alone. */}
-            <Polygon points={TRIANGLE_RING} fill="none" stroke={groknight.accent} strokeWidth={8} opacity={0.14} />
-            <Polygon points={TRIANGLE_RING} fill="none" stroke={groknight.accent} strokeWidth={3} strokeLinejoin="miter" />
+            <Polygon
+              points={TRIANGLE_RING}
+              fill="none"
+              stroke={groknight.accent}
+              strokeWidth={8}
+              opacity={0.14}
+            />
+            <Polygon
+              points={TRIANGLE_RING}
+              fill="none"
+              stroke={groknight.accent}
+              strokeWidth={3}
+              strokeLinejoin="miter"
+            />
           </Svg>
         </HullLivePulse>
       )}

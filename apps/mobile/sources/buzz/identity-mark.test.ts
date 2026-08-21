@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   CYPHER_CELLS,
+  IDENTITY_FILL_STATES,
+  identityFillState,
   identityMarkGeometry,
   identityPalette,
   type IdentityKind,
@@ -12,7 +14,7 @@ const PUBKEYS = Array.from({ length: 48 }, (_, index) =>
 
 /** Shortest arc between two hues, in degrees. */
 function hueDistance(a: number, b: number): number {
-  return Math.abs((((a - b + 540) % 360) - 180));
+  return Math.abs(((a - b + 540) % 360) - 180);
 }
 
 describe('the signature colour is a memory hook', () => {
@@ -125,7 +127,9 @@ describe('the cypher is the uniqueness tiebreak', () => {
 
   it('re-rolls independently of the hue, so a shared colour still resolves', () => {
     const sameHue = PUBKEYS.filter(
-      (pubkey) => identityPalette(pubkey, 'agent').hueIndex === identityPalette(PUBKEYS[0]!, 'agent').hueIndex,
+      (pubkey) =>
+        identityPalette(pubkey, 'agent').hueIndex ===
+        identityPalette(PUBKEYS[0]!, 'agent').hueIndex,
     );
     const signatures = new Set(
       sameHue.map((pubkey) =>
@@ -142,5 +146,95 @@ describe('the cypher is the uniqueness tiebreak', () => {
       const { cells } = identityMarkGeometry(pubkey, 'workspace');
       expect(cells.some((cell) => cell.tone !== 'void')).toBe(true);
     }
+  });
+});
+
+describe('fill is the nameable collision axis', () => {
+  it('gives one identity the same fill state forever from an independent seed stream', () => {
+    const first = identityFillState(PUBKEYS[12]!, 'agent');
+    expect(identityFillState(PUBKEYS[12]!, 'agent')).toBe(first);
+    expect(IDENTITY_FILL_STATES).toContain(first);
+
+    const used = new Set(PUBKEYS.map((pubkey) => identityFillState(pubkey, 'agent')));
+    expect(used).toEqual(new Set(IDENTITY_FILL_STATES));
+  });
+
+  it('separates identities on the closest measured hue pair (100° / 120°, ΔE00 4.31)', () => {
+    const hundred = identityMarkGeometry('closest-isolated-10005', 'agent');
+    const hundredTwenty = identityMarkGeometry('closest-isolated-15422', 'agent');
+
+    expect([hundred.palette.hue, hundredTwenty.palette.hue]).toEqual([100, 120]);
+    expect([hundred.palette.mid, hundredTwenty.palette.mid]).toEqual(['#91c775', '#75c775']);
+    expect(hundred.fillState).not.toBe(hundredTwenty.fillState);
+    // Same register, rotation and visible agent-cypher tones: at dense-list
+    // size the new fill is the only non-colour cue separating this pair.
+    expect(hundred.rotation).toBe(hundredTwenty.rotation);
+    expect(hundred.cells.map(({ tone }) => tone)).toEqual(
+      hundredTwenty.cells.map(({ tone }) => tone),
+    );
+  });
+
+  it('reports hue × fill collision rates honestly through a 50-identity roster', () => {
+    const trials = 2_000;
+    const report = Object.fromEntries(
+      [4, 8, 17, 50].map((size) => {
+        let hueCollisions = 0;
+        let compositeCollisions = 0;
+        for (let trial = 0; trial < trials; trial += 1) {
+          const hues = new Set<number>();
+          const composites = new Set<string>();
+          let hueCollision = false;
+          let compositeCollision = false;
+          for (let member = 0; member < size; member += 1) {
+            const geometry = identityMarkGeometry(`roster-${trial}-${member}`, 'agent');
+            const hue = geometry.palette.hueIndex;
+            const composite = `${hue}:${geometry.fillState}`;
+            if (hues.has(hue)) hueCollision = true;
+            else hues.add(hue);
+            if (composites.has(composite)) compositeCollision = true;
+            else composites.add(composite);
+          }
+          if (hueCollision) hueCollisions += 1;
+          if (compositeCollision) compositeCollisions += 1;
+        }
+        return [
+          size,
+          {
+            hue: Number(((hueCollisions / trials) * 100).toFixed(1)),
+            hueAndFill: Number(((compositeCollisions / trials) * 100).toFixed(1)),
+          },
+        ];
+      }),
+    );
+
+    expect(report).toEqual({
+      4: { hue: 38, hueAndFill: 14.1 },
+      8: { hue: 91.5, hueAndFill: 51.9 },
+      17: { hue: 100, hueAndFill: 98.1 },
+      // Three fill states turn 16 hue families into 48 nameable pairs. Fifty
+      // identities therefore cannot all have unique pairs; report 100% rather
+      // than silently claiming the cypher-level uniqueness is nameable.
+      50: { hue: 100, hueAndFill: 100 },
+    });
+  });
+
+  it('keeps 50 full marks distinct after the nameable hue × fill space is exhausted', () => {
+    const geometries = Array.from({ length: 50 }, (_, index) =>
+      identityMarkGeometry(`fifty-${index}`, 'agent'),
+    );
+    const hueAndFill = new Set(
+      geometries.map(({ palette, fillState }) => `${palette.hueIndex}:${fillState}`),
+    );
+    const fullMarks = new Set(
+      geometries.map(
+        ({ palette, fillState, rotation, cells }) =>
+          `${palette.hueIndex}:${fillState}:${rotation}:${cells
+            .map(({ tone, primitive }) => `${tone}:${primitive}`)
+            .join('|')}`,
+      ),
+    );
+
+    expect(hueAndFill.size).toBe(31);
+    expect(fullMarks.size).toBe(50);
   });
 });

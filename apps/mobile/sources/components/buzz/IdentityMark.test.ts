@@ -46,7 +46,9 @@ vi.mock('expo-haptics', () => ({
 vi.mock('react-native-reanimated', async () => {
   const ReactModule = await import('react');
   return {
-    default: { View: (props: any) => ReactModule.createElement('AnimatedView', props, props.children) },
+    default: {
+      View: (props: any) => ReactModule.createElement('AnimatedView', props, props.children),
+    },
     Easing: { linear: 'linear', out: (fn: unknown) => fn, poly: (n: number) => n },
     ReduceMotion: { System: 'system' },
     useAnimatedStyle: (factory: () => unknown) => factory(),
@@ -60,7 +62,7 @@ vi.mock('react-native-reanimated', async () => {
 });
 
 import { groknight } from '@/buzz/groknight';
-import { identityPalette } from '@/buzz/identity-mark';
+import { identityMarkGeometry, identityPalette } from '@/buzz/identity-mark';
 import { IdentityMark } from './IdentityMark';
 
 const originalConsoleError = console.error;
@@ -95,16 +97,22 @@ function inks(renderer: ReactTestRenderer): string[] {
   return renderer.root
     .findAll((node: any) => typeof node.type === 'string')
     .flatMap((node: any) => [node.props.fill, node.props.stroke])
-    .filter((value: unknown): value is string => typeof value === 'string' && value.startsWith('#'));
+    .filter(
+      (value: unknown): value is string => typeof value === 'string' && value.startsWith('#'),
+    );
 }
 
 describe('shape reports the type', () => {
   it('draws △ for an agent, ○ for a human, ▢ for a workspace', () => {
-    const agent = render(React.createElement(IdentityMark, { seed: AGENT, kind: 'agent', size: 40 }));
+    const agent = render(
+      React.createElement(IdentityMark, { seed: AGENT, kind: 'agent', size: 40 }),
+    );
     expect(agent.root.findAllByType('Polygon').length).toBeGreaterThan(0);
     expect(agent.root.findAllByType('Circle')).toHaveLength(0);
 
-    const human = render(React.createElement(IdentityMark, { seed: HUMAN, kind: 'human', size: 40 }));
+    const human = render(
+      React.createElement(IdentityMark, { seed: HUMAN, kind: 'human', size: 40 }),
+    );
     expect(human.root.findAllByType('Circle').length).toBeGreaterThan(0);
     expect(human.root.findAllByType('Polygon')).toHaveLength(0);
 
@@ -126,7 +134,9 @@ describe('shape reports the type', () => {
 describe('colour is the memory hook', () => {
   it('paints one identity in its own signature colour, every time', () => {
     const palette = identityPalette(AGENT, 'agent');
-    const painted = inks(render(React.createElement(IdentityMark, { seed: AGENT, kind: 'agent', size: 40 })));
+    const painted = inks(
+      render(React.createElement(IdentityMark, { seed: AGENT, kind: 'agent', size: 40 })),
+    );
     expect(painted).toContain(palette.mid);
     expect(painted.every((ink) => [palette.mid, palette.bright, palette.deep].includes(ink))).toBe(
       true,
@@ -134,7 +144,9 @@ describe('colour is the memory hook', () => {
   });
 
   it('gives two identities visibly different signatures', () => {
-    const first = new Set(inks(render(React.createElement(IdentityMark, { seed: AGENT, kind: 'agent', size: 40 }))));
+    const first = new Set(
+      inks(render(React.createElement(IdentityMark, { seed: AGENT, kind: 'agent', size: 40 }))),
+    );
     const second = new Set(
       inks(render(React.createElement(IdentityMark, { seed: HUMAN, kind: 'agent', size: 40 }))),
     );
@@ -146,6 +158,44 @@ describe('colour is the memory hook', () => {
     // Frame only — no interior grid to turn to mud at presence-dot scale.
     expect(dot.root.findAllByType('G')).toHaveLength(0);
     expect(inks(dot)).toContain(identityPalette(AGENT, 'agent').mid);
+  });
+});
+
+describe('fill stays coarse and inside the silhouette', () => {
+  it('renders solid, hollow and half as full-field treatments at 26dp', () => {
+    const seeds = Array.from({ length: 48 }, (_, index) => `fill-state-${index}`);
+    const solidSeed = seeds.find(
+      (seed) => identityMarkGeometry(seed, 'agent').fillState === 'solid',
+    )!;
+    const hollowSeed = seeds.find(
+      (seed) => identityMarkGeometry(seed, 'agent').fillState === 'hollow',
+    )!;
+    const halfSeed = seeds.find(
+      (seed) => identityMarkGeometry(seed, 'agent').fillState === 'half',
+    )!;
+
+    const solid = render(
+      React.createElement(IdentityMark, { seed: solidSeed, kind: 'agent', size: 26 }),
+    );
+    const hollow = render(
+      React.createElement(IdentityMark, { seed: hollowSeed, kind: 'agent', size: 26 }),
+    );
+    const half = render(
+      React.createElement(IdentityMark, { seed: halfSeed, kind: 'agent', size: 26 }),
+    );
+
+    expect(solid.root.findAllByType('Polygon')[0]!.props.fill).toBe(
+      identityPalette(solidSeed, 'agent').mid,
+    );
+    expect(hollow.root.findAllByType('Polygon')[0]!.props.fill).toBe(
+      identityPalette(hollowSeed, 'agent').deep,
+    );
+    expect(half.root.findAllByType('Polygon')[0]!.props.fill).toBe(
+      identityPalette(halfSeed, 'agent').deep,
+    );
+    expect(half.root.findAllByType('Polygon')[1]!.props.fill).toBe(
+      identityPalette(halfSeed, 'agent').mid,
+    );
   });
 });
 
@@ -240,7 +290,10 @@ describe('one mark, everywhere', () => {
       'components/AvatarSkia.web.tsx',
     ];
     const unexempted = avatarFiles.filter(
-      (file) => !LEGACY_SESSION_AVATARS_PENDING_CAPTAIN_DECISION.some((legacy) => file.endsWith(`/${legacy}`)),
+      (file) =>
+        !LEGACY_SESSION_AVATARS_PENDING_CAPTAIN_DECISION.some((legacy) =>
+          file.endsWith(`/${legacy}`),
+        ),
     );
     expect(unexempted).toEqual([]);
     // The exemption list itself must stay honest: every named legacy file has

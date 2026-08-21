@@ -1,15 +1,17 @@
 /**
  * The identity-mark system: one deterministic mark per identity, built from
- * four independent axes so that recognising someone never depends on reading
+ * five independent axes so that recognising someone never depends on reading
  * a name.
  *
  *   1. SHAPE reports the *type*, instantly and pre-verbally.
  *        △ agent (angular, engineered)  ○ human (organic)  ▢ workspace (structural)
  *   2. COLOUR is the *memory* hook — "beebee is the amber one". One curated,
  *      well-separated, low-saturation palette, assigned deterministically.
- *   3. The CYPHER interior is the *uniqueness* tiebreak: a coarse hashed
+ *   3. FILL is the coarse, nameable collision axis — solid / hollow / half.
+ *      It is stable from the identity seed and still reads at dense-list size.
+ *   4. The CYPHER interior is the *uniqueness* tiebreak: a coarse hashed
  *      primitive grid, nine cells, drawn in tones of the signature colour.
- *   4. A gold RING means *alive* — an agent working right now. It is drawn
+ *   5. A gold RING means *alive* — an agent working right now. It is drawn
  *      outside the silhouette and never touches the identity colour, so
  *      "who this is" and "what it is doing" stay two separate reads.
  *
@@ -20,13 +22,22 @@
 
 export type IdentityKind = 'agent' | 'human' | 'workspace';
 
-/** A cell of the cypher grid. `void` is not drawn — the mark's own deep tone
- *  shows through, so a void reads as shadow rather than as a hole in the slab. */
+/** A cell of the cypher grid. `void` always resolves to the mark's own deep
+ *  tone, so it reads as shadow rather than as a hole in the slab. */
 export type CypherTone = 'void' | 'mid' | 'bright';
 
 /** Speakeasy's primitive vocabulary, used by the workspace square only: a
  *  machined plate, not a QR code. Adopted from `RoomMark.tsx`'s 3×3 approach. */
 export type CypherPrimitive = 'block' | 'slot-h' | 'slot-v' | 'cut';
+
+/**
+ * The nameable identity axis that separates otherwise similar colours at a
+ * glance. These are field treatments inside the unchanged silhouette, not new
+ * shapes: “the solid amber one”, “the hollow amber one”, “the half amber one”.
+ */
+// Order is part of the stable seed mapping. Never reorder existing values.
+export const IDENTITY_FILL_STATES = ['solid', 'hollow', 'half'] as const;
+export type IdentityFillState = (typeof IDENTITY_FILL_STATES)[number];
 
 export type CypherCell = {
   tone: CypherTone;
@@ -49,6 +60,7 @@ export type IdentityPalette = {
 export type IdentityMarkGeometry = {
   kind: IdentityKind;
   palette: IdentityPalette;
+  fillState: IdentityFillState;
   cells: CypherCell[];
   /** Quarter-turn steps applied to the cypher, so two identities sharing a
    *  hue and a similar cell run still resolve apart. */
@@ -106,7 +118,9 @@ function mulberry32(seed: number): () => number {
  * order, so even a seed distribution that correlates adjacent indices cannot
  * produce adjacent hues.
  */
-const HUE_WHEEL = [160, 20, 300, 100, 240, 60, 180, 0, 220, 330, 80, 270, 40, 200, 120, 140] as const;
+const HUE_WHEEL = [
+  160, 20, 300, 100, 240, 60, 180, 0, 220, 330, 80, 270, 40, 200, 120, 140,
+] as const;
 
 /** The anchors on the warm side of the wheel — red through amber, and
  *  magenta/rose the other way round — used only to WEIGHT which anchor a
@@ -126,7 +140,10 @@ function isWarmAnchor(hue: number): boolean {
  * `weightedHueIndex`. It never drives an anchor's odds to zero, so every
  * kind can still land anywhere on the wheel; it only leans the distribution.
  */
-const TEMPERAMENT: Record<IdentityKind, { warmBias: number; saturation: number; lightness: number }> = {
+const TEMPERAMENT: Record<
+  IdentityKind,
+  { warmBias: number; saturation: number; lightness: number }
+> = {
   agent: { warmBias: 2, saturation: 0.42, lightness: 0.62 },
   human: { warmBias: 0.5, saturation: 0.24, lightness: 0.6 },
   workspace: { warmBias: 1, saturation: 0.15, lightness: 0.58 },
@@ -204,6 +221,17 @@ export function identityPalette(seed: string, kind: IdentityKind): IdentityPalet
   };
 }
 
+/**
+ * A separate deterministic stream keeps fill stable forever without coupling
+ * it to colour or the cypher. The three values are equiprobable: every one is
+ * a complete, intentional mark treatment, so an identity does not acquire or
+ * lose decoration as Workspace membership changes.
+ */
+export function identityFillState(seed: string, kind: IdentityKind): IdentityFillState {
+  const random = mulberry32(fnv1a32(`${kind}:fill:${seed}`));
+  return IDENTITY_FILL_STATES[Math.floor(random() * IDENTITY_FILL_STATES.length)]!;
+}
+
 /** Nine cells for every shape — the triangular mesh, the radial rings, and the
  *  3×3 plate all carry the same amount of information, so no type is a weaker
  *  tiebreak than another. Deliberately coarse: it must survive 24px. */
@@ -213,6 +241,7 @@ const PRIMITIVES: readonly CypherPrimitive[] = ['block', 'slot-h', 'slot-v', 'cu
 
 export function identityMarkGeometry(seed: string, kind: IdentityKind): IdentityMarkGeometry {
   const palette = identityPalette(seed, kind);
+  const fillState = identityFillState(seed, kind);
   // A separate stream from the palette's, so hue and interior are independent:
   // two identities on the same hue get unrelated cypher grids.
   const random = mulberry32(fnv1a32(`${kind}:cypher:${seed}`));
@@ -224,7 +253,7 @@ export function identityMarkGeometry(seed: string, kind: IdentityKind): Identity
     const tone: CypherTone = roll < 0.28 ? 'void' : roll < 0.74 ? 'mid' : 'bright';
     cells.push({ tone, primitive: PRIMITIVES[Math.floor(random() * PRIMITIVES.length)]! });
   }
-  return { kind, palette, cells, rotation: Math.floor(random() * 4) };
+  return { kind, palette, fillState, cells, rotation: Math.floor(random() * 4) };
 }
 
 /**

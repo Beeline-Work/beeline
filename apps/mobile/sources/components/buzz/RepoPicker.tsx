@@ -2,8 +2,12 @@ import React, { memo, useMemo, useState } from 'react';
 import { Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { GitHubInstallationAccess } from '@beeline/buzz-client';
-import type { RepoCandidate } from '@/buzz/room-repo-picker';
-import { githubFullNameFromInput } from '@/buzz/room-repo-picker';
+import type { GitHubRepositoryLinkagePlan, RepoCandidate } from '@/buzz/room-repo-picker';
+import {
+  GITHUB_REPOSITORY_SELECTION_INSTRUCTION,
+  githubFullNameFromInput,
+  githubRepositoryLinkagePlan,
+} from '@/buzz/room-repo-picker';
 import { Typography } from '@/constants/Typography';
 
 export type RepoPickerProps = {
@@ -12,9 +16,10 @@ export type RepoPickerProps = {
   currentKey?: string | null;
   busy?: boolean;
   error?: string | null;
+  notice?: string | null;
   onSelect: (candidate: RepoCandidate) => void;
   onAddAccount?: (owner?: string) => void;
-  onManageInstallation?: (url: string) => void;
+  onManageInstallation?: (installation: GitHubInstallationAccess) => void;
   onCreateRepository?: (installationId: number, name: string) => Promise<void> | void;
   testIDPrefix?: string;
 };
@@ -25,6 +30,7 @@ export const RepoPicker = memo(function RepoPicker({
   currentKey,
   busy = false,
   error,
+  notice,
   onSelect,
   onAddAccount,
   onManageInstallation,
@@ -37,6 +43,9 @@ export const RepoPicker = memo(function RepoPicker({
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [createInstallationId, setCreateInstallationId] = useState<number | null>(null);
+  const [pendingLinkage, setPendingLinkage] = useState<
+    Exclude<GitHubRepositoryLinkagePlan, { kind: 'available' }> | null
+  >(null);
   const normalizedQuery = query.trim().toLowerCase();
   const visible = useMemo(
     () =>
@@ -62,7 +71,9 @@ export const RepoPicker = memo(function RepoPicker({
   const pastedOwner = pastedFullName?.split('/')[0];
   const ownerInstallation = pastedOwner
     ? installations.find(
-        (installation) => installation.accountLogin.toLowerCase() === pastedOwner.toLowerCase(),
+        (installation) =>
+          installation.status === 'active' &&
+          installation.accountLogin.toLowerCase() === pastedOwner.toLowerCase(),
       )
     : undefined;
 
@@ -89,7 +100,10 @@ export const RepoPicker = memo(function RepoPicker({
         autoCapitalize="none"
         autoCorrect={false}
         editable={!busy}
-        onChangeText={setQuery}
+        onChangeText={(value) => {
+          setQuery(value);
+          setPendingLinkage(null);
+        }}
         placeholder="Search repos or paste github.com/owner/repo"
         placeholderTextColor={groknight.dim}
         style={styles.search}
@@ -116,11 +130,13 @@ export const RepoPicker = memo(function RepoPicker({
         <TouchableOpacity
           accessibilityRole="button"
           onPress={() => {
-            if (ownerInstallation?.status === 'active') {
-              onManageInstallation?.(ownerInstallation.manageUrl);
-            } else {
-              onAddAccount?.(pastedOwner);
-            }
+            const plan = githubRepositoryLinkagePlan(
+              pastedFullName,
+              candidates,
+              installations,
+            );
+            if (plan.kind === 'available') onSelect(plan.candidate);
+            else setPendingLinkage(plan);
           }}
           style={styles.connectCard}
           testID={`${testIDPrefix}-connect-card`}
@@ -132,6 +148,34 @@ export const RepoPicker = memo(function RepoPicker({
               : `Connect ${pastedOwner} →`}
           </Text>
         </TouchableOpacity>
+      )}
+      {pendingLinkage && (
+        <View style={styles.instructionCard} testID={`${testIDPrefix}-link-instruction`}>
+          <Text style={styles.instructionTitle}>ON GITHUB</Text>
+          <Text style={styles.instructionText}>{GITHUB_REPOSITORY_SELECTION_INSTRUCTION}</Text>
+          <View style={styles.instructionActions}>
+            <TouchableOpacity
+              accessibilityRole="button"
+              onPress={() => setPendingLinkage(null)}
+              style={styles.instructionButton}
+            >
+              <Text style={styles.instructionCancel}>CANCEL</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              accessibilityRole="button"
+              onPress={() => {
+                const plan = pendingLinkage;
+                setPendingLinkage(null);
+                if (plan.kind === 'manage') onManageInstallation?.(plan.installation);
+                else onAddAccount?.(plan.owner || undefined);
+              }}
+              style={styles.instructionButton}
+              testID={`${testIDPrefix}-link-continue`}
+            >
+              <Text style={styles.instructionContinue}>CONTINUE TO GITHUB →</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       )}
       {!visible.length && !error && !pastedFullName && (
         <Text style={styles.empty}>No repositories match.</Text>
@@ -204,12 +248,17 @@ export const RepoPicker = memo(function RepoPicker({
         <TouchableOpacity
           accessibilityRole="button"
           disabled={busy}
-          onPress={() => onAddAccount()}
+          onPress={() => setPendingLinkage({ kind: 'install', owner: '', fullName: '' })}
           style={styles.actionRow}
           testID={`${testIDPrefix}-add-account`}
         >
           <Text style={styles.actionText}>＋ Add an account or organization</Text>
         </TouchableOpacity>
+      )}
+      {notice && !error && (
+        <Text accessibilityLiveRegion="polite" style={styles.notice}>
+          {notice}
+        </Text>
       )}
       {error && (
         <Text accessibilityRole="alert" style={styles.error}>
@@ -269,6 +318,19 @@ const styles = StyleSheet.create((theme) => {
   },
   connectTitle: { ...Typography.mono(), color: groknight.textPrimary, fontSize: 12 },
   connectAction: { ...Typography.default('semiBold'), color: groknight.accent, fontSize: 12 },
+  instructionCard: {
+    borderWidth: 1,
+    borderColor: groknight.accent,
+    padding: 12,
+    gap: 7,
+    marginVertical: 8,
+  },
+  instructionTitle: { ...Typography.mono(), color: groknight.accent, fontSize: 9 },
+  instructionText: { ...Typography.default(), color: groknight.textPrimary, fontSize: 12 },
+  instructionActions: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+  instructionButton: { minHeight: 36, justifyContent: 'center' },
+  instructionCancel: { ...Typography.mono(), color: groknight.textMuted, fontSize: 10 },
+  instructionContinue: { ...Typography.mono(), color: groknight.accent, fontSize: 10 },
   createForm: { gap: 8, paddingBottom: 12 },
   accountChoices: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   accountChoice: { paddingVertical: 4 },
@@ -290,6 +352,12 @@ const styles = StyleSheet.create((theme) => {
     ...Typography.mono(),
     color: groknight.danger,
     fontSize: 12,
+    paddingTop: 8,
+  },
+  notice: {
+    ...Typography.mono(),
+    color: groknight.textMuted,
+    fontSize: 11,
     paddingTop: 8,
   },
   });

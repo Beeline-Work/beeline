@@ -28,6 +28,16 @@ const FLOW_COOKIE = '__Host-beeline_oidc_flow';
 const GITHUB_SIGN_IN_DEEP_LINK = 'beeline://buzz/github-callback';
 const GITHUB_INSTALLATION_DEEP_LINK = 'beeline://buzz/github-installation';
 
+function githubInstallationManageUrl(installation: {
+  accountType: 'User' | 'Organization';
+  accountLogin: string;
+  installationId: number;
+}): string {
+  return installation.accountType === 'Organization'
+    ? `https://github.com/organizations/${encodeURIComponent(installation.accountLogin)}/settings/installations/${installation.installationId}`
+    : `https://github.com/settings/installations/${installation.installationId}`;
+}
+
 function exactRedirect(value: string, expected: string): boolean {
   return value === expected || (!expected.endsWith('/') && value === `${expected}/`);
 }
@@ -510,8 +520,14 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
   app.get('/auth/github/callback', async (request, reply) => {
     if (!options.github)
       throw new ProtocolError(503, 'github_unavailable', 'GitHub sign-in is not configured');
-    const tenant = tenantFor(request);
     const query = request.query as Record<string, unknown>;
+    // Request-user-authorization-on-install makes this the GitHub App's only
+    // post-install callback too. Repository selection updates carry the
+    // installation id/setup action instead of an ordinary sign-in code.
+    if (query.installation_id !== undefined || query.setup_action !== undefined) {
+      return completeGitHubInstallation(request, reply);
+    }
+    const tenant = tenantFor(request);
     const state = requiredQueryString(query.state, 'state');
     const browserSession = flowCookie(request, flowCookieName);
     const flow = await options.store.consumeFlow(sha256(state), sha256(browserSession), now());
@@ -779,6 +795,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     const body = request.body as Record<string, unknown>;
     const pubkey = typeof body.pubkey === 'string' ? body.pubkey : '';
     const redirectUri = typeof body.redirect_uri === 'string' ? body.redirect_uri : '';
+    const requestedInstallationId = body.installation_id;
     if (!/^[0-9a-f]{64}$/.test(pubkey))
       throw new ProtocolError(400, 'invalid_pubkey', 'invalid public key');
     let redirect: URL;
@@ -825,6 +842,31 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
         'sign in with GitHub before installing the Beeline GitHub App',
       );
     }
+    let requestedInstallation:
+      Awaited<ReturnType<typeof options.store.githubInstallationForPubkey>> | undefined;
+    if (requestedInstallationId !== undefined) {
+      if (
+        typeof requestedInstallationId !== 'number' ||
+        !Number.isSafeInteger(requestedInstallationId) ||
+        requestedInstallationId <= 0
+      ) {
+        throw new ProtocolError(400, 'invalid_installation', 'invalid GitHub installation id');
+      }
+      requestedInstallation = (
+        await options.store.githubInstallationsForPubkey(tenant.community, pubkey)
+      ).find(
+        (installation) =>
+          installation.installationId === requestedInstallationId &&
+          installation.status === 'active',
+      );
+      if (!requestedInstallation) {
+        throw new ProtocolError(
+          404,
+          'installation_not_found',
+          'the GitHub installation is not active for this Beeline identity',
+        );
+      }
+    }
     const state = randomToken();
     await options.store.createGitHubInstallFlow(sha256(state), {
       community: tenant.community,
@@ -834,10 +876,17 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       expiresAt: new Date(authNow.getTime() + flowTtlMs),
     });
     noStore(reply);
-    return reply.send({ authorization_url: options.github.app.installationUrl(state) });
+    const authorizationUrl = requestedInstallation
+      ? new URL(githubInstallationManageUrl(requestedInstallation))
+      : new URL(options.github.app.installationUrl(state));
+    authorizationUrl.searchParams.set('state', state);
+    return reply.send({ authorization_url: authorizationUrl.toString() });
   });
 
-  const completeGitHubInstallation = async (request: FastifyRequest, reply: FastifyReply) => {
+  async function completeGitHubInstallation(
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<FastifyReply> {
     if (!options.github)
       throw new ProtocolError(503, 'github_unavailable', 'GitHub App is not configured');
     const tenant = tenantFor(request);
@@ -906,10 +955,11 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     const completion = new URL(flow.redirectUri);
     completion.searchParams.set('installed', '1');
     return reply.redirect(completion.toString(), 302);
-  };
+  }
 
   app.get('/auth/github/install/callback', completeGitHubInstallation);
-  // Configure this as the GitHub App Setup URL. GitHub sends installation_id + state here.
+  // Backward-compatible aliases for installation links issued before the
+  // OAuth callback learned to dispatch installation/update returns itself.
   app.get('/auth/github/installed', completeGitHubInstallation);
 
   app.get<{ Params: { pubkey: string } }>('/auth/github/repos/:pubkey', async (request, reply) => {
@@ -942,13 +992,29 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     ) {
       throw new ProtocolError(401, 'replayed_auth', 'NIP-98 authentication was already used');
     }
-    const installations = await options.store.githubInstallationsForPubkey(
-      tenant.community,
-      pubkey,
-    );
+    let installations = await options.store.githubInstallationsForPubkey(tenant.community, pubkey);
     if (!installations.length) {
       noStore(reply);
       return reply.send({ installed: false, installations: [], repositories: [] });
+    }
+    const query = request.query as Record<string, unknown>;
+    if (query.refresh === '1') {
+      await Promise.all(
+        installations
+          .filter((installation) => installation.status === 'active')
+          .map(async (installation) => {
+            const repositories = await options.github!.app.listRepositories(
+              installation.installationId,
+            );
+            await options.store.replaceGitHubRepositories(
+              tenant.community,
+              installation.installationId,
+              repositories,
+              now(),
+            );
+          }),
+      );
+      installations = await options.store.githubInstallationsForPubkey(tenant.community, pubkey);
     }
     const repositories = await options.store.githubRepositoriesForPubkey(tenant.community, pubkey);
     noStore(reply);
@@ -965,10 +1031,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
         repositorySelection: installation.repositorySelection,
         status: installation.status,
         repositoryCount: installation.repositoryCount,
-        manageUrl:
-          installation.accountType === 'Organization'
-            ? `https://github.com/organizations/${encodeURIComponent(installation.accountLogin)}/settings/installations/${installation.installationId}`
-            : `https://github.com/settings/installations/${installation.installationId}`,
+        manageUrl: githubInstallationManageUrl(installation),
       })),
       repositories,
     });

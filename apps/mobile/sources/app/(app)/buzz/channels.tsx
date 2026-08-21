@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   SectionList,
+  AppState,
   Linking,
   Platform,
   Share,
@@ -33,6 +34,7 @@ import {
 } from '@/auth/buzz-identity-storage';
 import {
   githubInstallationRedirectUri,
+  githubRepositoryRefreshFeedback,
   resumeInitialGitHubInstallation,
   runGitHubInstallationSession,
 } from '@/auth/github-auth-session';
@@ -383,6 +385,7 @@ export default function BuzzChannels() {
   const [repoCandidates, setRepoCandidates] = useState<RepoCandidate[]>([]);
   const [githubInstallations, setGitHubInstallations] = useState<GitHubInstallationAccess[]>([]);
   const [repoPickerError, setRepoPickerError] = useState<string | null>(null);
+  const [repoPickerNotice, setRepoPickerNotice] = useState<string | null>(null);
   const [viewerIsAgent, setViewerIsAgent] = useState(initialListCache?.viewerIsAgent ?? false);
   const [viewerAvatarUrl, setViewerAvatarUrl] = useState<string | undefined>(
     initialListCache?.viewerAvatarUrl,
@@ -760,19 +763,31 @@ export default function BuzzChannels() {
     [activeCommunityId, identity],
   );
 
-  const loadRepoPicker = useCallback(async () => {
-    if (!transport || !activeCommunityId) return;
-    const access = await transport.workspaceGitHubAccess();
-    setRepoCandidates(access.candidates);
-    setGitHubInstallations(access.installations);
-  }, [activeCommunityId, transport]);
+  const loadRepoPicker = useCallback(
+    async (refresh = false) => {
+      if (!transport || !activeCommunityId) return;
+      const access = await transport.workspaceGitHubAccess({ refresh });
+      setRepoCandidates(access.candidates);
+      setGitHubInstallations(access.installations);
+    },
+    [activeCommunityId, transport],
+  );
+
+  const handleRepositoryRefreshPhase = useCallback(
+    (phase: Parameters<typeof githubRepositoryRefreshFeedback>[0]) => {
+      const feedback = githubRepositoryRefreshFeedback(phase);
+      setRepoPickerNotice(feedback.notice);
+      setRepoPickerError(feedback.error);
+    },
+    [],
+  );
 
   const handleToggleRepoPicker = useCallback(async () => {
     setShowRepoPicker((value) => !value);
     if (showRepoPicker || !transport || !activeCommunityId) return;
     setRepoPickerError(null);
     try {
-      await loadRepoPicker();
+      await loadRepoPicker(true);
     } catch (err) {
       setRepoPickerError(`Could not load repos: ${String(err)}`);
     }
@@ -781,6 +796,7 @@ export default function BuzzChannels() {
   const handleAddGitHubAccount = useCallback(async () => {
     if (!transport) return;
     setRepoPickerError(null);
+    setRepoPickerNotice(null);
     try {
       await runGitHubInstallationSession({
         returnPath: '/buzz/channels',
@@ -794,12 +810,46 @@ export default function BuzzChannels() {
           ),
         subscribeToUrls: (listener) =>
           Linking.addEventListener('url', ({ url }) => listener(url)),
+        subscribeToAppState: (listener) => AppState.addEventListener('change', listener),
+        refreshRepositories: () => loadRepoPicker(true),
+        onRefreshPhase: handleRepositoryRefreshPhase,
       });
-      await loadRepoPicker();
     } catch (err) {
       setRepoPickerError(`Could not connect GitHub: ${String(err)}`);
     }
-  }, [loadRepoPicker, transport]);
+  }, [handleRepositoryRefreshPhase, loadRepoPicker, transport]);
+
+  const handleManageGitHubInstallation = useCallback(
+    async (installation: GitHubInstallationAccess) => {
+      if (!transport) return;
+      setRepoPickerError(null);
+      setRepoPickerNotice(null);
+      try {
+        await runGitHubInstallationSession({
+          returnPath: '/buzz/channels',
+          startInstallation: () =>
+            transport.githubInstallationStart(
+              githubInstallationRedirectUri(),
+              installation.installationId,
+            ),
+          openAuthSession: (installationUrl, redirectUri) =>
+            WebBrowser.openAuthSessionAsync(
+              installationUrl,
+              redirectUri,
+              authSessionOptions(Platform.OS, redirectUri),
+            ),
+          subscribeToUrls: (listener) =>
+            Linking.addEventListener('url', ({ url }) => listener(url)),
+          subscribeToAppState: (listener) => AppState.addEventListener('change', listener),
+          refreshRepositories: () => loadRepoPicker(true),
+          onRefreshPhase: handleRepositoryRefreshPhase,
+        });
+      } catch (err) {
+        setRepoPickerError(`Could not connect GitHub: ${String(err)}`);
+      }
+    },
+    [handleRepositoryRefreshPhase, loadRepoPicker, transport],
+  );
 
   useEffect(() => {
     if (!transport || !activeCommunityId) return;
@@ -807,7 +857,7 @@ export default function BuzzChannels() {
       .then(async (completed) => {
         if (!completed) return;
         setShowRepoPicker(true);
-        await loadRepoPicker();
+        await loadRepoPicker(true);
       })
       .catch((err) => setRepoPickerError(`Could not connect GitHub: ${String(err)}`));
   }, [activeCommunityId, loadRepoPicker, transport]);
@@ -1022,11 +1072,12 @@ export default function BuzzChannels() {
                 installations={githubInstallations}
                 currentKey={pendingRepo?.key ?? null}
                 error={repoPickerError}
+                notice={repoPickerNotice}
                 onAddAccount={() => void handleAddGitHubAccount()}
                 onCreateRepository={handleCreateGitHubRepository}
-                onManageInstallation={(url) => {
-                  void WebBrowser.openBrowserAsync(url).then(() => loadRepoPicker());
-                }}
+                onManageInstallation={(installation) =>
+                  void handleManageGitHubInstallation(installation)
+                }
                 onSelect={handleSelectRepoCandidate}
                 testIDPrefix="create-room-repo-picker"
               />

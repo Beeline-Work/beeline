@@ -16,6 +16,7 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
 
 const {
   githubInstallationRedirectUri,
+  githubRepositoryRefreshFeedback,
   githubInstallationReturnPath,
   githubSignInRedirectUri,
   persistGitHubInstallationReturnPath,
@@ -169,6 +170,48 @@ describe('GitHub auth session redirects', () => {
       }),
     ).rejects.toMatchObject({ code: 'browser_canceled' });
     await expect(githubInstallationReturnPath()).resolves.toBeNull();
+  });
+
+  it('refreshes repositories on foreground return and treats dismissal as an unknown completion', async () => {
+    let onAppState: ((state: string) => void) | null = null;
+    let finishBrowser: ((result: { type: string }) => void) | null = null;
+    const refreshRepositories = vi.fn(async () => undefined);
+    const phases: string[] = [];
+    const session = runGitHubInstallationSession({
+      returnPath: '/buzz/channels',
+      startInstallation: async () => 'https://github.com/settings/installations/7',
+      openAuthSession: () =>
+        new Promise((resolve) => {
+          finishBrowser = resolve;
+        }),
+      subscribeToUrls: () => ({ remove: () => undefined }),
+      subscribeToAppState: (listener) => {
+        onAppState = listener;
+        return { remove: () => (onAppState = null) };
+      },
+      refreshRepositories,
+      onRefreshPhase: (phase) => phases.push(phase),
+      callbackGraceMs: 0,
+    });
+
+    await vi.waitFor(() => expect(onAppState).not.toBeNull());
+    onAppState?.('background');
+    onAppState?.('active');
+    await vi.waitFor(() => expect(refreshRepositories).toHaveBeenCalledTimes(1));
+    finishBrowser?.({ type: 'dismiss' });
+
+    await expect(session).resolves.toBeNull();
+    expect(phases).toContain('refreshed');
+    expect(refreshRepositories).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not report an awaiting or refreshing repository list as a configuration error', () => {
+    expect(githubRepositoryRefreshFeedback('awaiting_return')).toMatchObject({ error: null });
+    expect(githubRepositoryRefreshFeedback('refreshing')).toMatchObject({ error: null });
+    expect(githubRepositoryRefreshFeedback('refresh_failed')).toMatchObject({
+      notice: null,
+      error: expect.stringContaining('Could not refresh repositories'),
+    });
   });
 
   it('rejects an installation callback that does not report completion', async () => {

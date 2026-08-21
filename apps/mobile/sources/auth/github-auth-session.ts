@@ -1,10 +1,6 @@
 import * as Linking from 'expo-linking';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {
-  OidcBindError,
-  parseOidcBindCallback,
-  type OidcBindChallenge,
-} from '@beeline/buzz-client';
+import { OidcBindError, parseOidcBindCallback, type OidcBindChallenge } from '@beeline/buzz-client';
 import { waitForAuthCallbackResult } from './onboarding-state';
 
 const PENDING_SIGN_IN_STATE_KEY = 'buzzy.github-sign-in-state.v1';
@@ -21,12 +17,85 @@ interface GitHubAuthUrlSubscription {
   remove(): void;
 }
 
+interface GitHubAppStateSubscription {
+  remove(): void;
+}
+
+export type GitHubRepositoryRefreshPhase =
+  'awaiting_return' | 'refreshing' | 'refreshed' | 'refresh_failed';
+
+export function githubRepositoryRefreshFeedback(phase: GitHubRepositoryRefreshPhase): {
+  notice: string | null;
+  error: string | null;
+} {
+  if (phase === 'awaiting_return') {
+    return {
+      notice: 'Choose the repositories Beeline may access, then return.',
+      error: null,
+    };
+  }
+  if (phase === 'refreshing') {
+    return { notice: 'Refreshing repositories…', error: null };
+  }
+  if (phase === 'refreshed') {
+    return { notice: 'Repositories refreshed.', error: null };
+  }
+  return {
+    notice: null,
+    error: 'Could not refresh repositories. Return to Beeline and try again.',
+  };
+}
+
 interface GitHubInstallationSessionInput {
   returnPath: string;
   startInstallation(): Promise<string>;
   openAuthSession(installationUrl: string, redirectUri: string): Promise<GitHubAuthBrowserResult>;
   subscribeToUrls(listener: (url: string) => void): GitHubAuthUrlSubscription;
+  subscribeToAppState?: (listener: (state: string) => void) => GitHubAppStateSubscription;
+  refreshRepositories?: () => Promise<void>;
+  onRefreshPhase?: (phase: GitHubRepositoryRefreshPhase) => void;
   callbackGraceMs?: number;
+}
+
+function createRepositoryReturnMonitor(
+  subscribeToAppState: NonNullable<GitHubInstallationSessionInput['subscribeToAppState']>,
+  refreshRepositories: NonNullable<GitHubInstallationSessionInput['refreshRepositories']>,
+  onRefreshPhase: NonNullable<GitHubInstallationSessionInput['onRefreshPhase']>,
+): { refresh(): Promise<boolean>; remove(): void } {
+  let leftApp = false;
+  let refreshInFlight: Promise<boolean> | null = null;
+  let refreshResult: boolean | null = null;
+  const refresh = (): Promise<boolean> => {
+    if (refreshInFlight) return refreshInFlight;
+    if (refreshResult !== null) return Promise.resolve(refreshResult);
+    refreshInFlight = (async () => {
+      onRefreshPhase('refreshing');
+      try {
+        await refreshRepositories();
+        onRefreshPhase('refreshed');
+        refreshResult = true;
+        return true;
+      } catch {
+        onRefreshPhase('refresh_failed');
+        refreshResult = false;
+        return false;
+      } finally {
+        refreshInFlight = null;
+      }
+    })();
+    return refreshInFlight;
+  };
+  const subscription = subscribeToAppState((state) => {
+    if (state !== 'active') {
+      leftApp = true;
+      refreshResult = null;
+      return;
+    }
+    if (!leftApp) return;
+    leftApp = false;
+    void refresh();
+  });
+  return { refresh, remove: () => subscription.remove() };
 }
 
 export function githubSignInRedirectUri(): string {
@@ -157,12 +226,20 @@ export async function runGitHubInstallationSession({
   startInstallation,
   openAuthSession,
   subscribeToUrls,
+  subscribeToAppState,
+  refreshRepositories,
+  onRefreshPhase = () => undefined,
   callbackGraceMs,
-}: GitHubInstallationSessionInput): Promise<string> {
+}: GitHubInstallationSessionInput): Promise<string | null> {
   await persistGitHubInstallationReturnPath(returnPath);
   const redirectUri = githubInstallationRedirectUri();
+  const returnMonitor =
+    subscribeToAppState && refreshRepositories
+      ? createRepositoryReturnMonitor(subscribeToAppState, refreshRepositories, onRefreshPhase)
+      : null;
   try {
     const installationUrl = await startInstallation();
+    onRefreshPhase('awaiting_return');
     const callback = await waitForAuthCallbackResult({
       redirectUri,
       openAuthSession: () => openAuthSession(installationUrl, redirectUri),
@@ -170,11 +247,19 @@ export async function runGitHubInstallationSession({
       ...(callbackGraceMs === undefined ? {} : { callbackGraceMs }),
     });
     const callbackUrl = await completeGitHubInstallationCallback(callback.url);
+    await returnMonitor?.refresh();
     if (callback.source === 'browser') await clearPendingGitHubInstallation();
     return callbackUrl;
   } catch (error) {
+    if (returnMonitor && error instanceof OidcBindError && error.code === 'browser_canceled') {
+      await returnMonitor.refresh();
+      await clearPendingGitHubInstallation();
+      return null;
+    }
     await clearPendingGitHubInstallation();
     throw error;
+  } finally {
+    returnMonitor?.remove();
   }
 }
 

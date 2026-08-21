@@ -5,7 +5,7 @@ import type { AuthSessionOpenOptions } from 'expo-web-browser';
  * auth tab. Launching the next bind directly prevents that old proxy task from
  * swallowing the fresh, state-bound authorize URL.
  */
-export function googleAuthSessionOptions(
+export function authSessionOptions(
   platform: string,
   redirectUri: string,
 ): AuthSessionOpenOptions {

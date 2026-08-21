@@ -151,11 +151,6 @@ export default {
                         },
                         {
                             "scheme": "https",
-                            "host": "usebeeline.app",
-                            "pathPrefix": "/auth/oidc/mobile-callback"
-                        },
-                        {
-                            "scheme": "https",
                             "host": "relay.buzzrouter.com",
                             "pathPrefix": "/join/"
                         },
@@ -164,11 +159,6 @@ export default {
                             "host": "relay.buzzrouter.com",
                             "pathPrefix": "/auth/github/mobile-callback"
                         },
-                        {
-                            "scheme": "https",
-                            "host": "relay.buzzrouter.com",
-                            "pathPrefix": "/auth/oidc/mobile-callback"
-                        }
                     ],
                     "category": ["BROWSABLE", "DEFAULT"]
                 },

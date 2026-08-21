@@ -121,7 +121,12 @@ const app = buildAuthServer({
     allowInsecure: true,
   }),
   tenants: [
-    { host: '127.0.0.1:8789', community: 'emulated-workspace', origin: 'http://127.0.0.1:8789' },
+    {
+      host: '127.0.0.1:8789',
+      community: 'emulated-workspace',
+      roomCommunityId: 'emulated-workspace',
+      origin: 'http://127.0.0.1:8789',
+    },
   ],
   nativeRedirectUris: ['beeline://buzz/oidc-callback'],
   logger: true,

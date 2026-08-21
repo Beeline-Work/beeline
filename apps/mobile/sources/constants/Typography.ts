@@ -3,8 +3,9 @@ import { Platform } from 'react-native';
 /**
  * Typography system for Happy Coder app
  *
- * Default typography: IBM Plex Mono (Plex Terminal Ledger — full terminal hull)
+ * Default/prose typography: IBM Plex Sans
  * Monospace typography: IBM Plex Mono
+ * Editorial prose typography: IBM Plex Serif
  * Logo typography: Bricolage Grotesque (specific use only)
  *
  * Usage Examples:
@@ -31,11 +32,11 @@ import { Platform } from 'react-native';
 
 // Font family constants
 export const FontFamilies = {
-  // IBM Plex Mono (default typography — prose and machine labels share one family)
+  // IBM Plex Sans (default prose typography)
   default: {
-    regular: 'IBMPlexMono-Regular',
-    italic: 'IBMPlexMono-Italic',
-    semiBold: 'IBMPlexMono-SemiBold',
+    regular: 'IBMPlexSans-Regular',
+    italic: 'IBMPlexSans-Italic',
+    semiBold: 'IBMPlexSans-SemiBold',
   },
 
   // IBM Plex Mono (default monospace)
@@ -43,6 +44,13 @@ export const FontFamilies = {
     regular: 'IBMPlexMono-Regular',
     italic: 'IBMPlexMono-Italic',
     semiBold: 'IBMPlexMono-SemiBold',
+  },
+
+  // IBM Plex Serif (Editorial Ink prose)
+  serif: {
+    regular: 'IBMPlexSerif-Regular',
+    italic: 'IBMPlexSerif-Italic',
+    semiBold: 'IBMPlexSerif-SemiBold',
   },
   
   // Bricolage Grotesque (logo/special use only)
@@ -65,6 +73,10 @@ export const getMonoFont = (weight: 'regular' | 'italic' | 'semiBold' = 'regular
   return FontFamilies.mono[weight];
 };
 
+export const getSerifFont = (weight: 'regular' | 'italic' | 'semiBold' = 'regular') => {
+  return FontFamilies.serif[weight];
+};
+
 export const getLogoFont = () => {
   return FontFamilies.logo.bold;
 };
@@ -78,7 +90,7 @@ export const FontWeights = {
 
 // Style utilities for easy inline usage
 export const Typography = {
-  // Default font styles (IBM Plex Mono)
+  // Default font styles (IBM Plex Sans)
   default: (weight: 'regular' | 'italic' | 'semiBold' = 'regular') => ({
     fontFamily: getDefaultFont(weight),
   }),
@@ -88,22 +100,16 @@ export const Typography = {
     fontFamily: getMonoFont(weight),
   }),
 
+  serif: (weight: 'regular' | 'italic' | 'semiBold' = 'regular') => ({
+    fontFamily: getSerifFont(weight),
+  }),
+
   /**
-   * The inscription voice — the Buzz transcript's body type.
-   *
-   * Resolves to IBM Plex Mono like `mono()`, but it is a different semantic
-   * claim and must stay a separate seam: `mono()` marks a deliberate machine
-   * identifier (a command, a handle, a role) and is governed by an allowlist,
-   * while `ledger()` is *prose* set in the terminal face because the ledger is
-   * an inscription rather than a chat feed.
-   *
-   * It takes no weight argument on purpose. Emphasis inside the ledger comes
-   * from the `groknight.ledger*` luminance ladder and from indentation, never
-   * from weight — and regular is the readable floor for light-on-black at this
-   * size, so there is no lighter cut to reach for either (`DESIGN.md`, "Type").
+   * The semantic Buzz transcript voice. Obsidian uses the Sans default here;
+   * theme-aware transcript styles override it with Serif or Mono as needed.
    */
-  ledger: () => ({
-    fontFamily: getMonoFont('regular'),
+  ledger: (weight: 'regular' | 'italic' | 'semiBold' = 'regular') => ({
+    fontFamily: getDefaultFont(weight),
   }),
   
   // Logo font style (Bricolage Grotesque)
@@ -127,4 +133,4 @@ export const Typography = {
       fontFamily: FontFamilies.legacy.systemMono,
     }),
   }
-}; 
+};

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Community, Identity } from '@beeline/buzz-client';
@@ -7,7 +8,6 @@ import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-sto
 import { createCommunityInviteUrl, parseCommunityInviteToken } from '@/buzz/community-invite';
 import { loadActiveCommunityId, saveActiveCommunityId } from '@/buzz/community-storage';
 import { ensurePersonNameForWorkspace } from '@/buzz/person-name';
-import { groknight } from '@/buzz/groknight';
 import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
@@ -16,6 +16,7 @@ import { Typography } from '@/constants/Typography';
 import { HullSurface, MonoButton, PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
 
 export default function BuzzCommunityCreateOrJoin() {
+  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
@@ -189,7 +190,7 @@ export default function BuzzCommunityCreateOrJoin() {
                 editable={!working}
                 maxLength={80}
                 placeholder="Night shift"
-                placeholderTextColor={groknight.dim}
+                placeholderTextColor={theme.buzz.dim}
               />
               <MonoButton
                 label={working ? `Creating ${WORKSPACE_LABEL}` : `Create ${WORKSPACE_LABEL}`}
@@ -215,7 +216,7 @@ export default function BuzzCommunityCreateOrJoin() {
                 autoCorrect={false}
                 keyboardType="url"
                 placeholder="https://usebeeline.app/join/…"
-                placeholderTextColor={groknight.dim}
+                placeholderTextColor={theme.buzz.dim}
               />
               <MonoButton
                 label="Preview invite"
@@ -238,7 +239,9 @@ export default function BuzzCommunityCreateOrJoin() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => {
+  const groknight = theme.buzz;
+  return ({
   loading: {
     flex: 1,
     alignItems: 'center',
@@ -340,4 +343,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
+  });
 });

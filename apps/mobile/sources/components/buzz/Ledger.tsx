@@ -1,32 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { useReducedMotion } from 'react-native-reanimated';
-import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
 import { MonoMarkdown } from './MonoMarkdown';
 
 /**
- * The obsidian ledger — the one transcript primitive a Room and a Corner both
- * render.
- *
- * An alien prophecy inscribed on a single slab, not a chat app. Everything the
- * shape of a message — a bubble, a card, a frame, a rule between turns, a name
- * on its own row — is gone. What is left is one flowing column of terminal type
- * with a ghosted margin down its right edge.
- *
- * **Weight goes down; tone and indentation do all the work.** The whole ledger
- * is set at one size in one regular weight (`Typography.ledger()`), and every
- * distinction the reader needs is carried by the `groknight.ledger*` luminance
- * ladder and by where the block sits:
- *
- *   bright + bloom, left column   an agent writing — the prophecy
- *   mid-grey, left column         another person writing
- *   mid-grey, inset right         you, steering
- *   quiet                         the inline handle that opens a voice's run
- *   ghost                         the right-gutter stamp, collapsed machine noise
- *
- * Nothing here is loud by being fat. Bold is banned outright: it fought the
- * inscribed feel, and it is the one axis a light-on-black slab cannot spend.
+ * The one transcript primitive a Room and a Corner both render. Prose stays
+ * near-white and uses the active theme's prose family; commands and identity
+ * stay IBM Plex Mono. A semibold lead sentence, regular body, inter-turn air,
+ * and speaker rails carry hierarchy without message cards or dimming content.
  *
  * The surfaces differ in exactly one place, and it tracks a real difference
  * between them. A Corner has one administering agent (`openSubchannel` in
@@ -70,6 +53,22 @@ const TYPEWRITER_CHARS_PER_TICK = 2;
  * independently testable without pretending relay events arrive as tokens. */
 export function typewriterFrame(text: string, visibleCharacters: number): string {
   return text.slice(0, Math.max(0, visibleCharacters));
+}
+
+/** Split a turn into its semibold lead sentence and regular body copy. */
+export function splitLeadSentence(text: string): [string, string] {
+  const normalized = text.trim();
+  if (!normalized) return ['', ''];
+  if (normalized.startsWith('```')) return ['', normalized];
+  const newline = normalized.indexOf('\n');
+  const firstLine = newline >= 0 ? normalized.slice(0, newline) : normalized;
+  const match = firstLine.match(/^(.+?[.!?](?:["')\]]*)?)(?:\s+|$)(.*)$/);
+  if (!match) return [firstLine, newline >= 0 ? normalized.slice(newline + 1).trim() : ''];
+  const remainder = [match[2], newline >= 0 ? normalized.slice(newline + 1) : '']
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+  return [match[1], remainder];
 }
 
 function TypewriterMarkdown({
@@ -173,6 +172,9 @@ export function LedgerEntry({
   machineNoise,
   typewriter = false,
 }: LedgerBodyProps & { luminous?: boolean }) {
+  const [leadText, remainingText] = bodyText && !continued
+    ? splitLeadSentence(bodyText)
+    : ['', bodyText ?? ''];
   const leadingInline = handle ? (
     <Text style={styles.handle} testID={`chat-handle-${itemId}`}>
       {handle.toUpperCase()}{'  '}
@@ -180,28 +182,36 @@ export function LedgerEntry({
   ) : null;
   return (
     <View
-      style={[styles.entry, continued ? styles.entryContinued : styles.entryOpens]}
+      style={[styles.entry, styles.agentRail, continued ? styles.entryContinued : styles.entryOpens]}
       testID={`chat-message-${itemId}`}
     >
       {marginalia}
       {replyReference}
-      {bodyText ? (
+      {leadText ? (
+        <MonoMarkdown
+          leadingInline={leadingInline}
+          markdown={leadText}
+          testID={remainingText ? `${bodyTestID}-lead` : bodyTestID}
+          textStyle={styles.ledgerLead}
+        />
+      ) : null}
+      {remainingText ? (
         typewriter ? (
           <TypewriterMarkdown
-            leadingInline={leadingInline}
-            markdown={bodyText}
+            leadingInline={leadText ? undefined : leadingInline}
+            markdown={remainingText}
             testID={bodyTestID}
             textStyle={luminous ? styles.ledgerTextLuminous : styles.ledgerText}
           />
         ) : (
           <MonoMarkdown
-            leadingInline={leadingInline}
-            markdown={bodyText}
+            leadingInline={leadText ? undefined : leadingInline}
+            markdown={remainingText}
             testID={bodyTestID}
             textStyle={luminous ? styles.ledgerTextLuminous : styles.ledgerText}
           />
         )
-      ) : handle ? (
+      ) : !leadText && handle ? (
         <Text style={styles.handle} testID={`chat-handle-${itemId}`}>
           {handle.toUpperCase()}
         </Text>
@@ -230,17 +240,19 @@ export function LedgerSteer({
   replyReference,
   attachments,
 }: Omit<LedgerBodyProps, 'handle' | 'machineNoise'>) {
+  const [leadText, remainingText] = bodyText && !continued
+    ? splitLeadSentence(bodyText)
+    : ['', bodyText ?? ''];
   return (
     <View
-      style={[styles.entry, continued ? styles.entryContinued : styles.entryOpens]}
+      style={[styles.entry, styles.viewerRail, continued ? styles.entryContinued : styles.entryOpens]}
       testID={`chat-message-${itemId}`}
     >
       {marginalia}
       <View style={styles.steer}>
         {replyReference}
-        {bodyText ? (
-          <MonoMarkdown markdown={bodyText} textStyle={styles.steerText} testID={bodyTestID} />
-        ) : null}
+        {leadText ? <MonoMarkdown markdown={leadText} textStyle={styles.steerLead} testID={remainingText ? `${bodyTestID}-lead` : bodyTestID} /> : null}
+        {remainingText ? <MonoMarkdown markdown={remainingText} textStyle={styles.steerText} testID={bodyTestID} /> : null}
         {attachments}
       </View>
     </View>
@@ -293,100 +305,84 @@ export function LedgerGhostLine({
   );
 }
 
-const styles = StyleSheet.create({
-  /**
-   * Air is the only separator in the transcript — no rules, no dividers, no
-   * boxes between turns.
-   *
-   * `marginBottom` is the gap that appears *above* an entry on screen: the
-   * transcript FlatList is `inverted`, so each cell's own bottom margin lands
-   * at its visual top. `continued` describes the entry immediately above, so
-   * that is the side the run/stanza distinction has to be spent on.
-   */
+const styles = StyleSheet.create((theme) => ({
   entry: {
     width: '100%',
     minWidth: 0,
     paddingRight: LEDGER_MARGINALIA_WIDTH,
+    paddingLeft: theme.buzz.railInset,
+    paddingVertical: theme.buzz.turnPaddingVertical,
+    borderLeftWidth: theme.buzz.railWidth,
   },
-  entryContinued: { marginBottom: 9 },
-  entryOpens: { marginBottom: 27 },
-  /**
-   * The prophecy. Brightest tone on the slab plus a wide, low-alpha halo of its
-   * own tone at zero offset — a diffuse emission, not a drop shadow, so the
-   * text reads as lit from within rather than sitting on the surface. Luminance
-   * only: no hue and no extra weight enter the transcript.
-   */
+  agentRail: { borderLeftColor: theme.buzz.agentRail },
+  viewerRail: { borderLeftColor: theme.buzz.humanRail },
+  entryContinued: { marginBottom: theme.buzz.continuationGap },
+  entryOpens: { marginBottom: theme.buzz.turnGap },
+  ledgerLead: {
+    fontFamily: theme.buzz.proseSemibold,
+    width: '100%',
+    minWidth: 0,
+    color: theme.buzz.ledgerBright,
+    fontSize: theme.buzz.leadSize,
+    lineHeight: theme.buzz.leadLineHeight,
+  },
   ledgerTextLuminous: {
-    ...Typography.ledger(),
+    fontFamily: theme.buzz.proseRegular,
     width: '100%',
     minWidth: 0,
-    color: groknight.ledgerBright,
-    fontSize: 14,
-    lineHeight: 23,
-    textShadowColor: groknight.ledgerGlow,
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 7,
+    color: theme.buzz.ledgerBright,
+    fontSize: theme.buzz.proseSize,
+    lineHeight: theme.buzz.proseLineHeight,
   },
-  /** Everyone else in the left column: same face, same size, one step down. */
   ledgerText: {
-    ...Typography.ledger(),
+    fontFamily: theme.buzz.proseRegular,
     width: '100%',
     minWidth: 0,
-    color: groknight.ledgerBody,
-    fontSize: 14,
-    lineHeight: 23,
+    color: theme.buzz.ledgerBright,
+    fontSize: theme.buzz.proseSize,
+    lineHeight: theme.buzz.proseLineHeight,
   },
-  /**
-   * Inline with the prose, never a row of its own — nested inside the first
-   * paragraph's own `Text` so it wraps as part of the log line. (A `flex: 1`
-   * `Text` that only wraps other `Text` inside a row `View` renders blank on
-   * Android; this shape avoids that class of bug entirely.)
-   */
   handle: {
-    ...Typography.ledger(),
-    color: groknight.ledgerQuiet,
-    fontSize: 14,
-    lineHeight: 23,
-    letterSpacing: 0.6,
+    fontFamily: theme.buzz.monoSemibold,
+    color: theme.buzz.ledgerQuiet,
+    fontSize: Math.min(13, theme.buzz.proseSize),
+    lineHeight: theme.buzz.proseLineHeight,
+    letterSpacing: 0.8,
   },
-  /** Absolute, so the stamp can never reflow the column it annotates. */
   marginalia: {
     position: 'absolute',
-    top: 4,
+    top: theme.buzz.turnPaddingVertical + 2,
     right: 0,
     width: LEDGER_MARGINALIA_WIDTH,
     alignItems: 'flex-end',
   },
   marginaliaStamp: {
     ...Typography.mono(),
-    color: groknight.ledgerGhost,
+    color: theme.buzz.ledgerGhost,
     fontSize: 9,
     lineHeight: 12,
   },
   marginaliaDetail: {
     ...Typography.mono(),
     marginTop: 1,
-    color: groknight.ledgerGhost,
+    color: theme.buzz.ledgerGhost,
     fontSize: 8,
     lineHeight: 11,
   },
-  /**
-   * An explicit width, not shrink-to-fit: MonoMarkdown's own root is
-   * `width: '100%'`, so an auto-width parent would have nothing to size itself
-   * from and would collapse to a few characters wide.
-   */
-  steer: {
-    alignSelf: 'flex-end',
+  steer: { minWidth: 0, width: '100%' },
+  steerLead: {
+    fontFamily: theme.buzz.proseSemibold,
     minWidth: 0,
-    width: '86%',
+    color: theme.buzz.ledgerBright,
+    fontSize: theme.buzz.leadSize,
+    lineHeight: theme.buzz.leadLineHeight,
   },
-  /** Dimmer and inset. That is the whole signal; there is no label. */
   steerText: {
-    ...Typography.ledger(),
+    fontFamily: theme.buzz.proseRegular,
     minWidth: 0,
-    color: groknight.ledgerBody,
-    fontSize: 14,
-    lineHeight: 23,
+    color: theme.buzz.ledgerBright,
+    fontSize: theme.buzz.proseSize,
+    lineHeight: theme.buzz.proseLineHeight,
   },
   ghostBlock: { width: '100%', minWidth: 0, marginTop: 6 },
   ghostRow: { minWidth: 0, flexDirection: 'row', alignItems: 'baseline' },
@@ -394,22 +390,22 @@ const styles = StyleSheet.create({
     ...Typography.mono(),
     flexShrink: 1,
     minWidth: 0,
-    color: groknight.ledgerGhost,
+    color: theme.buzz.ledgerGhost,
     fontSize: 11,
     lineHeight: 20,
   },
   ghostAffordance: {
     ...Typography.mono(),
     flexShrink: 0,
-    color: groknight.ledgerGhost,
+    color: theme.buzz.ledgerGhost,
     fontSize: 11,
     lineHeight: 20,
   },
   ghostBody: {
     ...Typography.mono(),
     marginTop: 4,
-    color: groknight.ledgerGhost,
+    color: theme.buzz.ledgerGhost,
     fontSize: 10,
     lineHeight: 15,
   },
-});
+}));

@@ -73,7 +73,7 @@ describe('write permission corner outcome', () => {
       (Array.isArray(node.props.style) ? node.props.style : [node.props.style])
         .filter(Boolean)
         .reduce((merged: Record<string, unknown>, style: Record<string, unknown>) => ({ ...merged, ...style }), {});
-    expect(tone(status).color).toBe('#7c7c7c');
+    expect(tone(status).color).toBe('#83838d');
   });
 
   it('reports the decision and never navigates', () => {

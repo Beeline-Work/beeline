@@ -1,6 +1,7 @@
 /** Native GitHub-first onboarding. OAuth proves lookup only; the Nostr key remains device-held. */
 import React, { useEffect, useRef, useState } from 'react';
-import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -57,10 +58,8 @@ import {
   savePreferredPersonName,
 } from '@/buzz/person-name';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
-import { groknight } from '@/buzz/groknight';
 import { BeelineMark } from '@/components/buzz/BeelineMark';
 import {
-  hairlineDivider,
   HullSurface,
   MonoButton,
   PixelGateReveal,
@@ -95,6 +94,7 @@ const WEB_NOTICE: GoogleOnboardingNotice = {
 };
 
 export default function BuzzOnboarding() {
+  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const pendingBind = useRef<PendingBind | null>(null);
   const existingIdentity = useRef<Identity | null>(null);
@@ -536,7 +536,7 @@ export default function BuzzOnboarding() {
             onFocus={() => setNameFocused(true)}
             onSubmitEditing={() => void handleNameContinue()}
             placeholder="Ada"
-            placeholderTextColor={groknight.textDisabled}
+            placeholderTextColor={theme.buzz.textDisabled}
             returnKeyType="done"
             style={[styles.nameInput, nameFocused && styles.inputFocused]}
             testID="onboarding-person-name-input"
@@ -717,7 +717,7 @@ export default function BuzzOnboarding() {
             accessibilityLabel="Secret key"
             style={[styles.input, inputFocused && styles.inputFocused]}
             placeholder="nsec1…"
-            placeholderTextColor={groknight.textDisabled}
+            placeholderTextColor={theme.buzz.textDisabled}
             value={nsecInput}
             onChangeText={setNsecInput}
             onFocus={() => setInputFocused(true)}
@@ -785,7 +785,9 @@ export default function BuzzOnboarding() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => {
+  const groknight = theme.buzz;
+  return ({
   container: {
     flex: 1,
     paddingHorizontal: 24,
@@ -872,7 +874,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
   advancedDivider: {
-    ...hairlineDivider,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.border,
     marginTop: 16,
     marginBottom: 16,
   },
@@ -973,4 +976,5 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     textAlign: 'center',
   },
+  });
 });

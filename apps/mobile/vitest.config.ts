@@ -5,6 +5,7 @@ export default defineConfig({
     test: {
         globals: false,
         environment: 'node',
+        setupFiles: ['./sources/test/setupUnistyles.ts'],
         include: ['sources/**/*.{spec,test}.ts'],
         coverage: {
             provider: 'v8',

@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { Modal as RNModal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Modal as RNModal, Pressable, ScrollView, Text, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AgentActivityItem } from '@/sync/transport/rig-transport';
 import {
@@ -7,7 +8,6 @@ import {
   type TurnActivityAction,
   type TurnActivityFile,
 } from '@/buzz/activity-timeline';
-import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
 import { darkTheme } from '@/theme';
 import {
@@ -500,7 +500,9 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
   );
 });
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => {
+  const groknight = theme.buzz;
+  return ({
   timeline: {
     width: '100%',
     minWidth: 0,
@@ -785,4 +787,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 12,
   },
+  });
 });

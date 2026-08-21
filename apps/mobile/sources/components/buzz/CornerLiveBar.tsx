@@ -1,6 +1,6 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { groknight } from '@/buzz/groknight';
+import { Pressable, Text, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { HullLivePulse } from './MonoHull';
 
@@ -73,7 +73,9 @@ export function CornerLiveBar({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => {
+  const groknight = theme.buzz;
+  return ({
   /**
    * No border, no fill, no radius. A status light is not a control the reader
    * has to hunt for — it is always in the same place, so it needs no frame to
@@ -110,4 +112,5 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   enterLive: { color: groknight.accent },
+  });
 });

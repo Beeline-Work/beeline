@@ -148,6 +148,14 @@ describe('Buzz global Settings', () => {
       await renderer.root.findByProps({ testID: 'sign-out-setting' }).props.onPress();
     });
     expect(identityStorage.clearBuzzIdentity).not.toHaveBeenCalled();
+    const warning = renderer.root
+      .findAllByType('Text' as any)
+      .flatMap((node) => node.props.children)
+      .join(' ');
+    expect(warning).toContain('permanently erases');
+    expect(warning).toContain('cannot restore');
+    act(() => renderer.root.findByProps({ testID: 'backup-before-sign-out' }).props.onPress());
+    expect(navigation.push).toHaveBeenCalledWith('/buzz/settings/identity');
     await act(async () => {
       await renderer.root.findByProps({ testID: 'sign-out-setting' }).props.onPress();
     });

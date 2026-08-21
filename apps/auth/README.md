@@ -25,7 +25,17 @@ participate in merge decisions, or accept a Nostr secret key.
    inside its timestamp window. Ticket consumption and the
    create-only identity link happen in one PostgreSQL transaction. Five invalid
    signed-event attempts durably burn the ticket.
-4. `GET /auth/oidc/links/:pubkey` requires a fresh, exact-URL/method NIP-98
+4. A conflicting normal bind remains a `409 identity_conflict`; it never moves
+   the link. `POST /auth/oidc/recover` is the separate recovery ceremony. It
+   accepts only the same still-live OAuth ticket and signed candidate-key event
+   that already reached the conflict path, plus `confirm_replace: true`, then
+   atomically moves the identity link. This deliberately means an attacker who
+   controls the GitHub account can replace its Beeline device-key link after an
+   explicit recovery action, which a normal sign-in could not previously do.
+   That tradeoff is necessary for self-service loss recovery. It does not reveal
+   or transfer the old Nostr secret, Rooms, DMs, profile, memberships, roles, or
+   GitHub App repository approvals; those remain attached to the old key.
+5. `GET /auth/oidc/links/:pubkey` requires a fresh, exact-URL/method NIP-98
    header signed by that public key. Auth-event IDs are durably replay guarded.
    The response is tenant-scoped and never contains email.
 

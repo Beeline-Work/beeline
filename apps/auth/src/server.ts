@@ -89,7 +89,7 @@ function escapeHtml(value: string): string {
     .replaceAll("'", '&#39;');
 }
 
-function githubMobileReturnPage(target: URL): string {
+function nativeReturnPage(target: URL): string {
   const href = escapeHtml(target.toString());
   return `<!doctype html>
 <html lang="en">
@@ -106,7 +106,7 @@ function githubMobileReturnPage(target: URL): string {
   </head>
   <body>
     <main>
-      <h1>GitHub sign-in complete</h1>
+      <h1>Beeline sign-in complete</h1>
       <p>Beeline should open automatically.</p>
       <p><a href="${href}">Return to Beeline</a></p>
     </main>
@@ -284,6 +284,21 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     return target;
   };
 
+  const deliverNativeCompletion = (reply: FastifyReply, target: URL) => {
+    if (target.protocol === 'http:' || target.protocol === 'https:') {
+      return reply.redirect(target.toString(), 302);
+    }
+    noStore(reply);
+    reply.header(
+      'content-security-policy',
+      "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+    );
+    // Android Custom Tabs can briefly expose the terminal response while the
+    // app deep link is dispatched. Give that transition a real immediate
+    // handoff page instead of a blank document.
+    return reply.type('text/html; charset=utf-8').send(nativeReturnPage(target));
+  };
+
   const issueBindChallenge = async (
     tenant: AuthTenant,
     flow: { appRedirectUri: string | null; appState: string | null },
@@ -321,7 +336,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       expires_at: Math.floor(expiresAt.getTime() / 1_000),
     } as const;
     const completion = nativeCompletion(flow, bindChallenge);
-    if (completion) return reply.redirect(completion.toString(), 302);
+    if (completion) return deliverNativeCompletion(reply, completion);
     return reply.send(bindChallenge);
   };
 
@@ -375,7 +390,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       'content-security-policy',
       "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
     );
-    return reply.type('text/html; charset=utf-8').send(githubMobileReturnPage(target));
+    return reply.type('text/html; charset=utf-8').send(nativeReturnPage(target));
   });
 
   app.get('/.well-known/nostr.json', async (request, reply) => {
@@ -554,7 +569,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
         error: 'github_denied',
         message: 'GitHub authorization was canceled or denied',
       });
-      if (completion) return reply.redirect(completion.toString(), 302);
+      if (completion) return deliverNativeCompletion(reply, completion);
       throw new ProtocolError(401, 'github_denied', 'GitHub denied the authorization request');
     }
     const code = requiredQueryString(query.code, 'code');
@@ -566,7 +581,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
         error: 'invalid_github_proof',
         message: 'GitHub authorization expired or could not be verified',
       });
-      if (completion) return reply.redirect(completion.toString(), 302);
+      if (completion) return deliverNativeCompletion(reply, completion);
       throw new ProtocolError(401, 'invalid_github_proof', 'GitHub code exchange failed');
     }
     await options.store.saveGitHubUserToken(
@@ -607,7 +622,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
         error: 'oidc_denied',
         message: 'Google authorization was canceled or denied',
       });
-      if (completion) return reply.redirect(completion.toString(), 302);
+      if (completion) return deliverNativeCompletion(reply, completion);
       throw new ProtocolError(401, 'oidc_denied', 'OIDC provider denied the authorization request');
     }
     const code = requiredQueryString(query.code, 'code');
@@ -621,7 +636,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
         error: 'invalid_oidc_proof',
         message: 'Google authorization expired or could not be verified',
       });
-      if (completion) return reply.redirect(completion.toString(), 302);
+      if (completion) return deliverNativeCompletion(reply, completion);
       throw new ProtocolError(
         401,
         'invalid_oidc_proof',
@@ -660,7 +675,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       expires_at: Math.floor(expiresAt.getTime() / 1_000),
     } as const;
     const completion = nativeCompletion(flow, bindChallenge);
-    if (completion) return reply.redirect(completion.toString(), 302);
+    if (completion) return deliverNativeCompletion(reply, completion);
     return reply.send(bindChallenge);
   });
 
@@ -708,8 +723,25 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       if (ticket.boundPubkey !== verification.event.pubkey) {
         throw new ProtocolError(409, 'ticket_used', 'bind ticket already used');
       }
-      noStore(reply);
-      return reply.send({ linked: true, idempotent: true, pubkey: verification.event.pubkey });
+      const links = await options.store.linksForPubkey(
+        ticket.community,
+        verification.event.pubkey,
+      );
+      const actuallyLinked = links.some(
+        (link) =>
+          link.issuer === ticket.issuer &&
+          link.audience === ticket.audience &&
+          link.subject === ticket.subject,
+      );
+      if (actuallyLinked) {
+        noStore(reply);
+        return reply.send({ linked: true, idempotent: true, pubkey: verification.event.pubkey });
+      }
+      throw new ProtocolError(
+        409,
+        'identity_conflict',
+        'identity is already bound to another public key',
+      );
     }
 
     const result = await options.store.consumeTicketAndLink(
@@ -722,8 +754,25 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     if (result.status === 'used') {
       const raced = await options.store.findTicket(ticketHash);
       if (raced?.boundPubkey === verification.event.pubkey) {
-        noStore(reply);
-        return reply.send({ linked: true, idempotent: true, pubkey: verification.event.pubkey });
+        const links = await options.store.linksForPubkey(
+          raced.community,
+          verification.event.pubkey,
+        );
+        const actuallyLinked = links.some(
+          (link) =>
+            link.issuer === raced.issuer &&
+            link.audience === raced.audience &&
+            link.subject === raced.subject,
+        );
+        if (actuallyLinked) {
+          noStore(reply);
+          return reply.send({ linked: true, idempotent: true, pubkey: verification.event.pubkey });
+        }
+        throw new ProtocolError(
+          409,
+          'identity_conflict',
+          'identity is already bound to another public key',
+        );
       }
       throw new ProtocolError(409, 'ticket_used', 'bind ticket already used');
     }
@@ -741,6 +790,73 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     return reply.status(result.status === 'linked' ? 201 : 200).send({
       linked: true,
       idempotent: result.status === 'idempotent',
+      pubkey: result.link.pubkey,
+    });
+  });
+
+  app.post('/auth/oidc/recover', async (request, reply) => {
+    const tenant = tenantFor(request);
+    if (!request.body || typeof request.body !== 'object') {
+      throw new ProtocolError(400, 'invalid_recovery', 'expected recovery request object');
+    }
+    const body = request.body as Record<string, unknown>;
+    if (body.confirm_replace !== true) {
+      throw new ProtocolError(
+        400,
+        'recovery_confirmation_required',
+        'explicit device-key replacement confirmation is required',
+      );
+    }
+    const ticketValue = body.ticket;
+    if (typeof ticketValue !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(ticketValue)) {
+      throw new ProtocolError(400, 'invalid_recovery', 'invalid recovery ticket');
+    }
+    const ticketHash = sha256(ticketValue);
+    const ticket = await options.store.findTicket(ticketHash);
+    if (!ticket || ticket.community !== tenant.community) {
+      throw new ProtocolError(404, 'unknown_ticket', 'recovery ticket not found');
+    }
+    if (ticket.expiresAt.getTime() < now().getTime()) {
+      throw new ProtocolError(410, 'ticket_expired', 'recovery ticket expired');
+    }
+    const verification = verifyBindEvent(
+      body.event,
+      {
+        protocol: 1,
+        ticket: ticketValue,
+        challenge: ticket.challenge,
+        issuer: ticket.issuer,
+        audience: ticket.audience,
+        subject: ticket.subject,
+        community: ticket.community,
+        issuedAt: ticket.createdAt,
+        expiresAt: ticket.expiresAt,
+      },
+      now(),
+    );
+    if (!verification.ok) {
+      throw new ProtocolError(400, 'invalid_bind_event', verification.reason);
+    }
+
+    const result = await options.store.recoverConsumedTicketLink(
+      ticketHash,
+      verification.event.pubkey,
+      now(),
+    );
+    if (result.status === 'missing')
+      throw new ProtocolError(404, 'recovery_not_available', 'conflicting identity link not found');
+    if (result.status === 'unused')
+      throw new ProtocolError(409, 'recovery_not_available', 'normal device bind must be attempted first');
+    if (result.status === 'wrong_key')
+      throw new ProtocolError(409, 'ticket_used', 'recovery ticket belongs to another device key');
+    if (result.status === 'expired')
+      throw new ProtocolError(410, 'ticket_expired', 'recovery ticket expired');
+    if (!('link' in result)) throw new Error('unexpected recovery transaction result');
+
+    noStore(reply);
+    return reply.send({
+      linked: true,
+      replaced: result.status === 'replaced',
       pubkey: result.link.pubkey,
     });
   });

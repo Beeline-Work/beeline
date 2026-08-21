@@ -37,6 +37,16 @@ describe('provider onboarding error states', () => {
     },
   );
 
+  it('names both real ways out of a device-key conflict', () => {
+    const notice = noticeForAuthError(
+      new OidcBindError('identity_conflict', 'identity is already bound to another public key', 409),
+    );
+    expect(notice.title).toBe('DEVICE KEY ALREADY LINKED · IDENTITY_CONFLICT');
+    expect(notice.message).toContain('Replace it');
+    expect(notice.message).toContain('import your backed-up key');
+    expect(notice.message).not.toContain('Recovery is required');
+  });
+
   it('keeps unknown client failures distinct from retryable network failures', () => {
     const notice = noticeForAuthError(new OidcBindError('invalid_callback', 'Bad callback'));
     expect(notice).toEqual({

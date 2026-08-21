@@ -59,6 +59,11 @@ import {
   type RoomRepositoryInput,
   getAuthCapabilities,
   listGitHubRepositories,
+  startGitHubInstallation,
+  createGitHubRepository,
+  getGitHubRepositoryAccess,
+  type GitHubInstallationAccess,
+  type GitHubRepositoryAccessResult,
 } from '@beeline/buzz-client';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { dedupeRepoCandidates } from '@/buzz/room-repo-picker';
@@ -749,6 +754,51 @@ export class BuzzRigTransport implements RigTransport {
           remote: repo.binding.remote!,
         })),
     );
+  }
+
+  async workspaceGitHubAccess(): Promise<{
+    installed: boolean;
+    installations: GitHubInstallationAccess[];
+    candidates: RepoCandidate[];
+  }> {
+    const access = await listGitHubRepositories(this.baseUrl, this.identity);
+    return {
+      installed: access.installed,
+      installations: access.installations,
+      candidates: dedupeRepoCandidates(
+        access.repositories.map((repo) => ({
+          key: `github:${repo.id}`,
+          name: repo.fullName,
+          remote: `git://github.com/${repo.fullName}`,
+          githubInstallationId: repo.installationId,
+          defaultBranch: repo.defaultBranch,
+        })),
+      ),
+    };
+  }
+
+  async githubInstallationStart(redirectUri: string): Promise<string> {
+    return startGitHubInstallation(this.baseUrl, this.identity, redirectUri);
+  }
+
+  async githubRepositoryCreate(input: {
+    installationId: number;
+    name: string;
+    description?: string;
+    private?: boolean;
+  }): Promise<RepoCandidate> {
+    const repository = await createGitHubRepository(this.baseUrl, this.identity, input);
+    return {
+      key: `github:${repository.id}`,
+      name: repository.fullName,
+      remote: `git://github.com/${repository.fullName}`,
+      githubInstallationId: repository.installationId,
+      defaultBranch: repository.defaultBranch,
+    };
+  }
+
+  async githubRepositoryAccess(fullName: string): Promise<GitHubRepositoryAccessResult> {
+    return getGitHubRepositoryAccess(this.baseUrl, this.identity, fullName);
   }
 
   async permissionRespond(

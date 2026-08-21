@@ -140,6 +140,8 @@ export {
   startGitHubBind,
   startGitHubInstallation,
   listGitHubRepositories,
+  createGitHubRepository,
+  getGitHubRepositoryAccess,
   getAuthCapabilities,
   parseOidcBindCallback,
   buildOidcBindEvent,
@@ -152,6 +154,8 @@ export type {
   OidcBindResult,
   OidcIdentityLink,
   GitHubRepositoryAccess,
+  GitHubInstallationAccess,
+  GitHubRepositoryAccessResult,
   AuthCapabilities,
 } from './oidc-bind.js';
 

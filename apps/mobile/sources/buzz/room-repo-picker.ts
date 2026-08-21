@@ -43,3 +43,13 @@ export function roomRepoChipLabel(
 export function looksLikeCornerOpenIntent(text: string): boolean {
   return /\b(open|create|launch|start(?:\s+up)?)\b[^.!?]{0,40}\bcorner\b/i.test(text);
 }
+
+/** Accept a pasted GitHub URL, SSH remote, or owner/repo and return owner/repo. */
+export function githubFullNameFromInput(input: string): string | null {
+  const value = input.trim();
+  const match = value.match(
+    /^(?:https?:\/\/github\.com\/|git@github\.com:|git:\/\/github\.com\/)?([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i,
+  );
+  if (!match) return null;
+  return `${match[1]}/${match[2]}`;
+}

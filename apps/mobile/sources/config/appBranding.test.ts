@@ -35,8 +35,33 @@ type EasBuildProfile = {
   extends?: string;
   channel?: string;
   android?: { buildType?: string };
+  ios?: { credentialsSource?: 'local' | 'remote' };
   [key: string]: unknown;
 };
+
+type IosSubmissionConfig = {
+  ascAppId: string;
+  appName: string;
+  bundleIdentifier: string;
+};
+
+/**
+ * App Store Connect app IDs cannot change bundle identifiers. Keep this small
+ * registry beside the submission config so a stale record is caught before EAS
+ * uploads an archive to the wrong listing.
+ */
+const APP_STORE_CONNECT_BUNDLE_IDENTIFIERS: Record<string, string> = {
+  '6803948500': 'app.usebeeline.mobile',
+  '6799574618': 'app.buzzy.mobile',
+};
+
+function assertSubmissionMatchesAppStoreConnect(
+  submission: IosSubmissionConfig,
+): void {
+  expect(APP_STORE_CONNECT_BUNDLE_IDENTIFIERS[submission.ascAppId]).toBe(
+    submission.bundleIdentifier,
+  );
+}
 
 function resolveEasBuildProfile(
   profiles: Record<string, EasBuildProfile>,
@@ -81,9 +106,39 @@ describe('Beeline display branding', () => {
     expect(inviteScreen).not.toMatch(/Return to buzzy/i);
   });
 
-  it('uses the Beeline install identifiers and submit app name', () => {
-    expect(easConfig).toContain('"appName": "Beeline"');
-    expect(easConfig).toContain('"bundleIdentifier": "app.usebeeline.mobile"');
+  it('submits the Beeline bundle to its matching App Store Connect record', () => {
+    const iosSubmission = (
+      JSON.parse(easConfig) as { submit: { production: { ios: IosSubmissionConfig } } }
+    ).submit.production.ios;
+
+    expect(iosSubmission).toMatchObject({
+      ascAppId: '6803948500',
+      appName: 'Beeline - team workspaces',
+      bundleIdentifier: 'app.usebeeline.mobile',
+    });
+    assertSubmissionMatchesAppStoreConnect(iosSubmission);
+  });
+
+  it('rejects the former Buzzy App Store Connect record for the Beeline bundle', () => {
+    expect(() =>
+      assertSubmissionMatchesAppStoreConnect({
+        ascAppId: '6799574618',
+        appName: 'Beeline - team workspaces',
+        bundleIdentifier: 'app.usebeeline.mobile',
+      }),
+    ).toThrow();
+  });
+
+  it('uses local signing credentials for iOS only', () => {
+    const easBuildProfiles = JSON.parse(easConfig).build as Record<string, EasBuildProfile>;
+    const production = resolveEasBuildProfile(easBuildProfiles, 'production');
+    const productionApk = resolveEasBuildProfile(easBuildProfiles, 'production-apk');
+
+    expect(easBuildProfiles.production).not.toHaveProperty('credentialsSource');
+    expect(production.ios).toEqual({ credentialsSource: 'local' });
+    expect(productionApk.ios).toEqual({ credentialsSource: 'local' });
+    expect(production.android).toBeUndefined();
+    expect(productionApk.android).toEqual({ buildType: 'apk' });
   });
 
   it('produces one native identity regardless of local APP_ENV', () => {

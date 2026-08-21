@@ -71,7 +71,7 @@ describe('OIDC device-key bind protocol', () => {
         redirectUri: 'buzzy://buzz/oidc-callback',
         state: 's'.repeat(43),
       }),
-    ).toThrow('emulator-only');
+    ).toThrow('allowed associated link or app deep link');
     expect(
       startOidcBind('http://127.0.0.1:8789', {
         redirectUri: 'buzzy://buzz/oidc-callback',
@@ -82,10 +82,13 @@ describe('OIDC device-key bind protocol', () => {
 
   it('uses the GitHub routes for sign-in, installation, and repository access', async () => {
     const start = startGitHubBind('https://relay.example', {
-      redirectUri: 'https://relay.example/auth/github/mobile-callback',
+      redirectUri: 'buzzy://buzz/github-callback',
       state: 's'.repeat(43),
     });
     expect(new URL(start.authorizationUrl).pathname).toBe('/auth/github/start');
+    expect(new URL(start.authorizationUrl).searchParams.get('app_redirect')).toBe(
+      'buzzy://buzz/github-callback',
+    );
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(

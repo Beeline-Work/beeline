@@ -8,3 +8,8 @@ export function nativeSignInProvider(
 ): NativeSignInProvider {
   return capabilities?.github === true ? 'github' : 'oidc';
 }
+
+export function nativeSignInLabel(provider: NativeSignInProvider, existingDevice: boolean): string {
+  if (existingDevice) return 'Open Workspace';
+  return provider === 'github' ? 'Continue with GitHub' : 'Continue with Google';
+}

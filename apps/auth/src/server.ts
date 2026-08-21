@@ -24,6 +24,8 @@ import {
 const DEFAULT_FLOW_TTL_MS = 5 * 60_000;
 const DEFAULT_TICKET_TTL_MS = 2 * 60_000;
 const FLOW_COOKIE = '__Host-beeline_oidc_flow';
+const GITHUB_SIGN_IN_DEEP_LINK = 'buzzy://buzz/github-callback';
+const GITHUB_INSTALLATION_DEEP_LINK = 'buzzy://buzz/github-installation';
 
 export interface AuthTenant {
   host: string;
@@ -61,6 +63,40 @@ function noStore(reply: { header(name: string, value: string): unknown }): void 
   reply.header('cache-control', 'no-store');
   reply.header('pragma', 'no-cache');
   reply.header('referrer-policy', 'no-referrer');
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function githubMobileReturnPage(target: URL): string {
+  const href = escapeHtml(target.toString());
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="refresh" content="0;url=${href}">
+    <title>Return to Beeline</title>
+    <style>
+      body { background: #090909; color: #f2f2f2; font: 16px system-ui, sans-serif; margin: 0; }
+      main { box-sizing: border-box; margin: 0 auto; max-width: 36rem; padding: 20vh 1.5rem 3rem; }
+      a { color: #f2f2f2; font-weight: 700; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>GitHub sign-in complete</h1>
+      <p>Beeline should open automatically.</p>
+      <p><a href="${href}">Return to Beeline</a></p>
+    </main>
+  </body>
+</html>`;
 }
 
 function requiredQueryString(value: unknown, name: string): string {
@@ -150,7 +186,11 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
   const now = options.now ?? (() => new Date());
   const flowTtlMs = options.flowTtlMs ?? DEFAULT_FLOW_TTL_MS;
   const ticketTtlMs = options.ticketTtlMs ?? DEFAULT_TICKET_TTL_MS;
-  const nativeRedirectUris = new Set(options.nativeRedirectUris ?? []);
+  const nativeRedirectUris = new Set([
+    GITHUB_SIGN_IN_DEEP_LINK,
+    GITHUB_INSTALLATION_DEEP_LINK,
+    ...(options.nativeRedirectUris ?? []),
+  ]);
   const cookieSecurity = options.secureCookies === false ? '' : ' Secure;';
   const flowCookieName = options.secureCookies === false ? 'beeline_oidc_flow' : FLOW_COOKIE;
   const githubTokenKey = options.github
@@ -301,6 +341,23 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     tenantFor(request);
     noStore(reply);
     return reply.send({ github: Boolean(options.github), oidc: true });
+  });
+
+  app.get('/auth/github/mobile-callback', async (request, reply) => {
+    const tenant = tenantFor(request);
+    const callback = new URL(publicUrl(tenant, request));
+    const target = new URL(
+      callback.searchParams.get('installed') === '1'
+        ? GITHUB_INSTALLATION_DEEP_LINK
+        : GITHUB_SIGN_IN_DEEP_LINK,
+    );
+    target.search = callback.search;
+    noStore(reply);
+    reply.header(
+      'content-security-policy',
+      "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+    );
+    return reply.type('text/html; charset=utf-8').send(githubMobileReturnPage(target));
   });
 
   app.get('/.well-known/nostr.json', async (request, reply) => {

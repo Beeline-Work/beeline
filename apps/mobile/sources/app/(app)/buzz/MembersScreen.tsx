@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Share, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import * as Clipboard from 'expo-clipboard';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
@@ -21,7 +22,7 @@ import {
 } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { presenceMapFromSessionEvents } from '@/buzz/agent-presence';
-import { groknight } from '@/buzz/groknight';
+import type { BeelineThemeTokens } from '@/buzz/groknight';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
@@ -36,7 +37,7 @@ import { MEMBERS_GLYPH, MEMBERS_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
-import { hairlineDivider, HullWaveSignal, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
+import { HullWaveSignal, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 
 const INSTALL_COMMAND = 'curl -fsSL https://usebeeline.app/install | sh';
@@ -111,10 +112,10 @@ function roleLabel(role: CommunityRole): string {
 }
 
 /** Owner and admin each carry a distinct accent; member stays neutral. */
-function roleAccentColor(role: CommunityRole): string {
-  if (role === 'owner') return groknight.accent;
-  if (role === 'admin') return groknight.chrome;
-  return groknight.textMuted;
+function roleAccentColor(role: CommunityRole, palette: BeelineThemeTokens): string {
+  if (role === 'owner') return palette.accent;
+  if (role === 'admin') return palette.chrome;
+  return palette.textMuted;
 }
 
 function first(value: string | string[] | undefined): string | undefined {
@@ -122,6 +123,7 @@ function first(value: string | string[] | undefined): string | undefined {
 }
 
 export default function BuzzAgents() {
+  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const requestedCommunityId = first(
     useLocalSearchParams<{ communityId?: string | string[] }>().communityId,
@@ -872,7 +874,7 @@ export default function BuzzAgents() {
                             testID={`member-${person.pubkey}-role-label`}
                           >
                             <Text
-                              style={[styles.roleLabelText, { color: roleAccentColor(person.role) }]}
+                              style={[styles.roleLabelText, { color: roleAccentColor(person.role, theme.buzz) }]}
                             >
                               {roleLabel(person.role)}
                             </Text>
@@ -1042,7 +1044,7 @@ export default function BuzzAgents() {
                 value={soul}
                 onChangeText={setSoul}
                 placeholder="Keep the test suite green and refactor mercilessly. Be direct and practical."
-                placeholderTextColor={groknight.dim}
+                placeholderTextColor={theme.buzz.dim}
                 multiline
                 maxLength={1000}
               />
@@ -1051,7 +1053,7 @@ export default function BuzzAgents() {
                 style={styles.input}
                 value={name}
                 onChangeText={setName}
-                placeholderTextColor={groknight.dim}
+                placeholderTextColor={theme.buzz.dim}
                 maxLength={32}
                 autoCapitalize="words"
               />
@@ -1174,7 +1176,9 @@ export default function BuzzAgents() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => {
+  const groknight = theme.buzz;
+  return ({
   loading: {
     flex: 1,
     alignItems: 'center',
@@ -1188,7 +1192,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: groknight.bgTerminal,
-    ...hairlineDivider,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.border,
   },
   backButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   backText: { ...Typography.default(), color: groknight.chrome, fontSize: 30, fontWeight: '300' },
@@ -1207,7 +1212,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: groknight.border,
   },
-  pairNote: { ...Typography.default(), color: groknight.muted, fontSize: 13, lineHeight: 18 },
+  pairNote: { ...Typography.default(), fontFamily: groknight.proseRegular, color: groknight.textSecondary, fontSize: 13, lineHeight: 19 },
   stepLabel: {
     ...Typography.default('semiBold'),
     marginTop: 14,
@@ -1221,7 +1226,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
-    paddingVertical: 13,
+    paddingVertical: groknight.name === 'ledger' ? 8 : 13,
     backgroundColor: groknight.bgBase,
     borderWidth: 1,
     borderColor: groknight.borderStrong,
@@ -1289,7 +1294,7 @@ const styles = StyleSheet.create({
     borderBottomColor: groknight.border,
   },
   personCopy: { flex: 1, minWidth: 0 },
-  personName: { ...Typography.default('semiBold'), color: groknight.textPrimary, fontSize: 15 },
+  personName: { ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold, color: groknight.textPrimary, fontSize: groknight.name === 'ledger' ? 13 : 15 },
   personTrailing: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 4 },
   roleLabelButton: {
     minHeight: 28,
@@ -1352,8 +1357,9 @@ const styles = StyleSheet.create({
   },
   emptyCopy: {
     ...Typography.default(),
+    fontFamily: groknight.proseRegular,
     marginTop: 7,
-    color: groknight.steel,
+    color: groknight.textSecondary,
     fontSize: 12,
     lineHeight: 18,
     textAlign: 'center',
@@ -1363,7 +1369,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    paddingVertical: 13,
+    paddingVertical: groknight.name === 'ledger' ? 8 : 13,
     borderBottomWidth: 1,
     borderBottomColor: groknight.border,
   },
@@ -1371,11 +1377,13 @@ const styles = StyleSheet.create({
   agentCopy: { flex: 1, minWidth: 0 },
   agentName: {
     ...Typography.default('semiBold'),
+    fontFamily: groknight.proseSemibold,
     color: groknight.textPrimary,
     fontSize: 15,
   },
   personality: {
     ...Typography.default(),
+    fontFamily: groknight.proseRegular,
     marginTop: 3,
     color: groknight.textSecondary,
     fontSize: 11,
@@ -1410,8 +1418,9 @@ const styles = StyleSheet.create({
   },
   agentOfflineNoticeText: {
     ...Typography.default(),
+    fontFamily: groknight.proseRegular,
     marginTop: 3,
-    color: groknight.textMuted,
+    color: groknight.textSecondary,
     fontSize: 11,
     lineHeight: 15,
   },
@@ -1490,7 +1499,7 @@ const styles = StyleSheet.create({
   editorActions: { flexDirection: 'row', gap: 8 },
   flexButton: { flex: 1, minWidth: 0 },
   modelConfigSection: { marginTop: 12 },
-  modelAxisBlock: { ...hairlineDivider },
+  modelAxisBlock: { borderBottomWidth: 1, borderBottomColor: groknight.border },
   modelAxisRow: {
     minHeight: 44,
     flexDirection: 'row',
@@ -1576,4 +1585,5 @@ const styles = StyleSheet.create({
   },
   removeConfirmActions: { flexDirection: 'row', gap: 8, marginTop: 8 },
   disabled: { backgroundColor: groknight.bgBase },
+  });
 });

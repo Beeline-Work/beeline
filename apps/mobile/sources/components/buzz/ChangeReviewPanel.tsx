@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { FlatList, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import type { ChangedFile } from '@/sync/transport';
-import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
 import { BrittlePress, HullSurface, PixelLoader } from '@/components/buzz/MonoHull';
 import { darkTheme } from '@/theme';
@@ -336,19 +336,19 @@ export function ChangeReviewPanel({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   panel: {
     borderWidth: 1,
-    borderColor: groknight.border,
-    borderRadius: 3,
+    borderColor: theme.buzz.border,
+    borderRadius: theme.buzz.radius,
     overflow: 'hidden',
-    backgroundColor: groknight.bgTerminal,
+    backgroundColor: theme.buzz.bgTerminal,
   },
   loading: {
     minHeight: 72,
     borderWidth: 1,
-    borderColor: groknight.border,
-    borderRadius: 3,
+    borderColor: theme.buzz.border,
+    borderRadius: theme.buzz.radius,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
@@ -356,20 +356,20 @@ const styles = StyleSheet.create({
   },
   errorState: {
     borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    borderRadius: 3,
+    borderColor: theme.buzz.borderStrong,
+    borderRadius: theme.buzz.radius,
     padding: 12,
     gap: 5,
   },
   errorTitle: {
     ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
+    color: theme.buzz.textPrimary,
     fontSize: 11,
     lineHeight: 15,
   },
   mutedText: {
     ...Typography.mono(),
-    color: groknight.textMuted,
+    color: theme.buzz.textMuted,
     fontSize: 11,
     lineHeight: 15,
   },
@@ -381,7 +381,7 @@ const styles = StyleSheet.create({
   },
   retryText: {
     ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
+    color: theme.buzz.textPrimary,
     fontSize: 11,
   },
   summaryRow: {
@@ -391,16 +391,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
+    borderBottomColor: theme.buzz.border,
   },
   summaryTitle: {
     ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
+    color: theme.buzz.textPrimary,
     fontSize: 11,
   },
   summaryStats: {
     ...Typography.mono(),
-    color: groknight.textSecondary,
+    color: theme.buzz.textSecondary,
     fontSize: 11,
   },
   fileList: { maxHeight: 190 },
@@ -410,41 +410,41 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
+    borderBottomColor: theme.buzz.border,
     gap: 8,
   },
   statusBadge: {
     ...Typography.mono(),
     width: 18,
-    color: groknight.textPrimary,
+    color: theme.buzz.textPrimary,
     fontSize: 11,
     textAlign: 'center',
   },
   pathColumn: { flex: 1, minWidth: 0 },
   filePath: {
     ...Typography.mono(),
-    color: groknight.textSecondary,
+    color: theme.buzz.textSecondary,
     fontSize: 11,
   },
   previousPath: {
     ...Typography.mono(),
-    color: groknight.textMuted,
+    color: theme.buzz.textMuted,
     fontSize: 11,
     marginTop: 2,
   },
   fileStats: {
     ...Typography.mono(),
-    color: groknight.textMuted,
+    color: theme.buzz.textMuted,
     fontSize: 11,
   },
   chevron: {
     ...Typography.mono(),
-    color: groknight.steel,
+    color: theme.buzz.steel,
     fontSize: 16,
   },
   emptyText: {
     ...Typography.mono(),
-    color: groknight.textMuted,
+    color: theme.buzz.textMuted,
     fontSize: 11,
     padding: 12,
   },
@@ -455,21 +455,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
+    borderBottomColor: theme.buzz.border,
   },
   filesButton: { minHeight: 44, justifyContent: 'center', paddingRight: 8 },
   filesButtonText: {
     ...Typography.mono('semiBold'),
-    color: groknight.textSecondary,
+    color: theme.buzz.textSecondary,
     fontSize: 11,
   },
   selectedPath: {
     ...Typography.mono(),
-    color: groknight.textPrimary,
+    color: theme.buzz.textPrimary,
     fontSize: 11,
     flex: 1,
   },
-  diffScrollVertical: { height: 300, backgroundColor: groknight.bgTerminal },
+  diffScrollVertical: { height: 300, backgroundColor: theme.buzz.bgTerminal },
   diffLine: {
     ...Typography.mono(),
     paddingHorizontal: 9,
@@ -482,22 +482,22 @@ const styles = StyleSheet.create({
   // context lines stay on the neutral grayscale palette.
   diffHeaderLine: {
     ...Typography.mono('semiBold'),
-    color: groknight.textMuted,
-    backgroundColor: groknight.bgHover,
+    color: theme.buzz.textMuted,
+    backgroundColor: theme.buzz.bgHover,
   },
   diffAddedLine: {
     ...Typography.mono('semiBold'),
-    color: groknight.diffAdded,
+    color: theme.buzz.diffAdded,
     backgroundColor: diffColors.addedBg,
   },
   diffRemovedLine: {
-    color: groknight.diffRemoved,
+    color: theme.buzz.diffRemoved,
     backgroundColor: diffColors.removedBg,
   },
-  diffContextLine: { color: groknight.textSecondary, backgroundColor: groknight.bgTerminal },
+  diffContextLine: { color: theme.buzz.textSecondary, backgroundColor: theme.buzz.bgTerminal },
   diffTruncatedFooter: {
     ...Typography.mono(),
-    color: groknight.textMuted,
+    color: theme.buzz.textMuted,
     fontSize: 10,
     paddingHorizontal: 9,
     paddingVertical: 6,
@@ -511,7 +511,7 @@ const styles = StyleSheet.create({
   },
   binaryTitle: {
     ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
+    color: theme.buzz.textPrimary,
     fontSize: 12,
   },
-});
+}));

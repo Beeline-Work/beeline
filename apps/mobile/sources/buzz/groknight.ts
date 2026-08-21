@@ -1,112 +1,242 @@
 import brand from './brand.json';
 
 /**
- * Grok Build palette measured from the 1.0.3 terminal capture.
+ * Beeline's three app-wide visual themes. Components consume this one semantic
+ * token shape; changing themes never changes the component tree.
  *
- * State is encoded primarily with copy, luminance, shape, and motion. The
- * muted-gold accent is reserved for a single live or high-value element,
- * including the Agent identity system.
+ * Content colors are intentionally brighter than chrome colors. `textMuted`
+ * and the ledger quiet/ghost tiers are for labels and redundant metadata only,
+ * never for narration or human messages.
  */
-export const groknight = {
-  /** Backgrounds */
-  bgVoid: '#121212',
-  bgTerminal: '#121212',
-  bgBase: '#121212',
-  bgRaised: '#121212',
-  bgCode: '#121212',
-  bgHighlight: '#121212',
-  bgHover: '#181818',
-  bgPressed: '#1e1e1e',
-  bgTexturePeak: '#585858',
-  bgVisual: '#181818',
-
-  /** Text */
-  textPrimary: '#e4e4e4',
-  textSecondary: '#c9ccd1',
-  textMuted: '#767676',
-  textDisabled: '#6c6c6c',
-  textInverted: '#121212',
-
-  /** Semantic metal and state roles */
-  actionFill: '#e4e4e4',
-  chrome: '#e4e4e4',
-  steel: '#767676',
-  signalBright: '#c9ccd1',
-  signalMid: '#767676',
-  signalDim: '#585858',
-  danger: '#c9ccd1',
-  success: '#c9ccd1',
-  warning: '#d7af5f',
-  accent: '#d7af5f',
+const shared = {
   brandMark: brand.mark,
-
-  /** Diff view — the one sanctioned chroma exception to the zero-chroma
-   * rule (captain override), reused from the legacy diff renderer's
-   * dark-theme tokens so this file owns its own colors. */
   diffAdded: '#3FB950',
   diffRemoved: '#F85149',
-
-  /** The single corner-radius value. No other radius ships. */
-  radius: 3,
-
-  /**
-   * The ledger's luminance ladder — the transcript's ONLY hierarchy.
-   *
-   * Nothing in the transcript is loud by being fat; things are loud by being
-   * bright. Weight is fixed at regular across the whole ledger, so these four
-   * steps plus indentation carry every distinction the reader needs:
-   *
-   *   ledgerBright  the prophecy — live agent output, the lit layer
-   *   ledgerBody    ordinary text — a person's own steer, quoted prose
-   *   ledgerQuiet   handles, and the readable floor (4.5:1 on the slab)
-   *   ledgerGhost   marginalia and collapsed machine noise, the dimmest tier
-   *
-   * `ledgerGhost` sits below 4.5:1 on purpose: it is the "ghosted" register the
-   * brief asks for, and it reuses `textDisabled`'s exact value rather than
-   * inventing a dimmer one. Everything it carries is redundant — the ghost
-   * line's own `accessibilityLabel` states the full summary, and a gutter stamp
-   * repeats information the row already conveys by position.
-   */
-  ledgerBright: '#f4f4f4',
-  ledgerBody: '#b0b0b0',
-  ledgerQuiet: '#7c7c7c',
-  ledgerGhost: '#6c6c6c',
-
-  /**
-   * The transcript's luminous quality: agent output reads as lit from within
-   * against the obsidian rather than printed on it. `ledgerBright` at low
-   * alpha, used only as a zero-offset text shadow — a luminance value, not a
-   * new hue, so it stays inside the zero-chroma rule. A whisper, not neon: the
-   * radius is wide and the alpha low enough that the glow never thickens a
-   * stroke or costs legibility.
-   */
-  ledgerGlow: 'rgba(244, 244, 244, 0.16)',
-
-  /** Deterministic identity marks */
-  avatarGround: '#121212',
-  avatarInk: '#e4e4e4',
-  avatarSoft: '#767676',
-  avatarDim: '#4e4e4e',
-  agentAccent: '#d7af5f',
-
-  /** Human-selected profile pictures supplement the generated fallback mark. */
   photoIdentityMarksEnabled: true,
-
-  /** Borders and selection */
-  borderQuiet: '#4e4e4e',
-  border: '#4e4e4e',
-  borderStrong: '#4e4e4e',
-  focus: '#767676',
-  selectedBorder: '#767676',
-  selection: '#181818',
-
-  /** Compatibility aliases for non-semantic decoration only. */
-  muted: '#767676',
-  dim: '#767676',
-  gutter: '#6c6c6c',
-  faint: '#585858',
-  tertiary: '#6c6c6c',
-  borderActive: '#767676',
 } as const;
 
+export const beelineThemes = {
+  obsidian: {
+    ...shared,
+    name: 'obsidian',
+    label: 'Obsidian Refined',
+    description: 'Readable sans prose on a quiet obsidian field',
+    dark: true,
+    bgVoid: '#070708',
+    bgTerminal: '#070708',
+    bgBase: '#070708',
+    bgRaised: '#0c0c0f',
+    bgCode: '#0c0c0f',
+    bgHighlight: '#111114',
+    bgHover: '#141418',
+    bgPressed: '#1a1a1f',
+    bgTexturePeak: '#2e2e36',
+    bgVisual: '#0c0c0f',
+    textPrimary: '#f0f0f3',
+    textSecondary: '#c9c9d1',
+    textMuted: '#83838d',
+    textDisabled: '#6c6c76',
+    textInverted: '#111111',
+    actionFill: '#f0f0f3',
+    chrome: '#83838d',
+    steel: '#83838d',
+    signalBright: '#c9c9d1',
+    signalMid: '#83838d',
+    signalDim: '#6c6c76',
+    danger: '#f0f0f3',
+    success: '#f0f0f3',
+    warning: '#c9a24b',
+    accent: '#c9a24b',
+    humanRail: '#c9a24b',
+    agentRail: '#2e2e36',
+    radius: 8,
+    ledgerBright: '#f0f0f3',
+    ledgerBody: '#c9c9d1',
+    ledgerQuiet: '#83838d',
+    ledgerGhost: '#6c6c76',
+    ledgerGlow: 'transparent',
+    avatarGround: '#070708',
+    avatarInk: '#f0f0f3',
+    avatarSoft: '#83838d',
+    avatarDim: '#2e2e36',
+    agentAccent: '#c9a24b',
+    borderQuiet: '#1c1c21',
+    border: '#1c1c21',
+    borderStrong: '#2e2e36',
+    focus: '#83838d',
+    selectedBorder: '#83838d',
+    selection: '#111114',
+    muted: '#83838d',
+    dim: '#83838d',
+    gutter: '#6c6c76',
+    faint: '#2e2e36',
+    tertiary: '#6c6c76',
+    borderActive: '#83838d',
+    proseRegular: 'IBMPlexSans-Regular',
+    proseItalic: 'IBMPlexSans-Italic',
+    proseSemibold: 'IBMPlexSans-SemiBold',
+    monoRegular: 'IBMPlexMono-Regular',
+    monoItalic: 'IBMPlexMono-Italic',
+    monoSemibold: 'IBMPlexMono-SemiBold',
+    proseSize: 15,
+    proseLineHeight: 23,
+    leadSize: 16,
+    leadLineHeight: 23,
+    turnGap: 18,
+    continuationGap: 10,
+    turnPaddingVertical: 14,
+    railWidth: 2,
+    railInset: 12,
+  },
+  editorial: {
+    ...shared,
+    name: 'editorial',
+    label: 'Editorial Ink',
+    description: 'Warm near-black with bundled IBM Plex Serif prose',
+    dark: true,
+    bgVoid: '#14120e',
+    bgTerminal: '#14120e',
+    bgBase: '#14120e',
+    bgRaised: '#191612',
+    bgCode: '#191612',
+    bgHighlight: '#1f1b16',
+    bgHover: '#211d18',
+    bgPressed: '#29241d',
+    bgTexturePeak: '#3a342b',
+    bgVisual: '#191612',
+    textPrimary: '#f2ede3',
+    textSecondary: '#ddd5c7',
+    textMuted: '#8d8578',
+    textDisabled: '#746d62',
+    textInverted: '#14120e',
+    actionFill: '#f2ede3',
+    chrome: '#8d8578',
+    steel: '#8d8578',
+    signalBright: '#ddd5c7',
+    signalMid: '#8d8578',
+    signalDim: '#746d62',
+    danger: '#f2ede3',
+    success: '#f2ede3',
+    warning: '#d9b166',
+    accent: '#d9b166',
+    humanRail: '#d9b166',
+    agentRail: '#3a342b',
+    radius: 4,
+    ledgerBright: '#f2ede3',
+    ledgerBody: '#ddd5c7',
+    ledgerQuiet: '#8d8578',
+    ledgerGhost: '#746d62',
+    ledgerGlow: 'transparent',
+    avatarGround: '#14120e',
+    avatarInk: '#f2ede3',
+    avatarSoft: '#8d8578',
+    avatarDim: '#3a342b',
+    agentAccent: '#d9b166',
+    borderQuiet: '#2a261f',
+    border: '#2a261f',
+    borderStrong: '#3a342b',
+    focus: '#8d8578',
+    selectedBorder: '#8d8578',
+    selection: '#1f1b16',
+    muted: '#8d8578',
+    dim: '#8d8578',
+    gutter: '#746d62',
+    faint: '#3a342b',
+    tertiary: '#746d62',
+    borderActive: '#8d8578',
+    proseRegular: 'IBMPlexSerif-Regular',
+    proseItalic: 'IBMPlexSerif-Italic',
+    proseSemibold: 'IBMPlexSerif-SemiBold',
+    monoRegular: 'IBMPlexMono-Regular',
+    monoItalic: 'IBMPlexMono-Italic',
+    monoSemibold: 'IBMPlexMono-SemiBold',
+    proseSize: 16,
+    proseLineHeight: 27,
+    leadSize: 18,
+    leadLineHeight: 26,
+    turnGap: 20,
+    continuationGap: 12,
+    turnPaddingVertical: 16,
+    railWidth: 1,
+    railInset: 12,
+  },
+  ledger: {
+    ...shared,
+    name: 'ledger',
+    label: 'Ledger',
+    description: 'Dense mono with colored speaker rails for heavy use',
+    dark: true,
+    bgVoid: '#0b0d10',
+    bgTerminal: '#0b0d10',
+    bgBase: '#0b0d10',
+    bgRaised: '#0f1216',
+    bgCode: '#0f1216',
+    bgHighlight: '#14171c',
+    bgHover: '#14171c',
+    bgPressed: '#1a1e24',
+    bgTexturePeak: '#303742',
+    bgVisual: '#0f1216',
+    textPrimary: '#dfe4ea',
+    textSecondary: '#b3bac4',
+    textMuted: '#7f8997',
+    textDisabled: '#6f7885',
+    textInverted: '#0b0d10',
+    actionFill: '#dfe4ea',
+    chrome: '#7f8997',
+    steel: '#7f8997',
+    signalBright: '#b3bac4',
+    signalMid: '#7f8997',
+    signalDim: '#6f7885',
+    danger: '#dfe4ea',
+    success: '#dfe4ea',
+    warning: '#c9a24b',
+    accent: '#c9a24b',
+    humanRail: '#6f8fd0',
+    agentRail: '#5fae7a',
+    radius: 4,
+    ledgerBright: '#dfe4ea',
+    ledgerBody: '#b3bac4',
+    ledgerQuiet: '#7f8997',
+    ledgerGhost: '#6f7885',
+    ledgerGlow: 'transparent',
+    avatarGround: '#0b0d10',
+    avatarInk: '#dfe4ea',
+    avatarSoft: '#7f8997',
+    avatarDim: '#303742',
+    agentAccent: '#c9a24b',
+    borderQuiet: '#1a1e24',
+    border: '#1a1e24',
+    borderStrong: '#303742',
+    focus: '#7f8997',
+    selectedBorder: '#7f8997',
+    selection: '#14171c',
+    muted: '#7f8997',
+    dim: '#7f8997',
+    gutter: '#6f7885',
+    faint: '#303742',
+    tertiary: '#6f7885',
+    borderActive: '#7f8997',
+    proseRegular: 'IBMPlexMono-Regular',
+    proseItalic: 'IBMPlexMono-Italic',
+    proseSemibold: 'IBMPlexMono-SemiBold',
+    monoRegular: 'IBMPlexMono-Regular',
+    monoItalic: 'IBMPlexMono-Italic',
+    monoSemibold: 'IBMPlexMono-SemiBold',
+    proseSize: 13,
+    proseLineHeight: 19,
+    leadSize: 13,
+    leadLineHeight: 19,
+    turnGap: 11,
+    continuationGap: 6,
+    turnPaddingVertical: 8,
+    railWidth: 3,
+    railInset: 9,
+  },
+} as const;
+
+export type BeelineThemeName = keyof typeof beelineThemes;
+export type BeelineThemeTokens = (typeof beelineThemes)[BeelineThemeName];
+
+/** Backward-compatible name for the new default token set. */
+export const groknight = beelineThemes.obsidian;
 export type GrokNightToken = keyof typeof groknight;

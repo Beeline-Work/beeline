@@ -1,5 +1,15 @@
 import * as z from 'zod';
 
+export const THEME_PREFERENCES = ['obsidian', 'editorial', 'ledger'] as const;
+export type ThemePreference = (typeof THEME_PREFERENCES)[number];
+
+const ThemePreferenceSchema = z.preprocess(
+    // The previous light/dark/adaptive choices all migrate to the new default.
+    // This keeps the rest of a device's local settings intact during rollout.
+    (value) => value === 'light' || value === 'dark' || value === 'adaptive' ? 'obsidian' : value,
+    z.enum(THEME_PREFERENCES),
+);
+
 //
 // Schema
 //
@@ -10,7 +20,7 @@ export const LocalSettingsSchema = z.object({
     devModeEnabled: z.boolean().describe('Enable developer menu in settings'),
     voiceUpsellOverride: z.enum(['control', 'show-paywall-before-first-voice-chat', 'voice-onboarding-and-upsell']).nullable().describe('Developer-only local override for the voice-upsell PostHog flag'),
     commandPaletteEnabled: z.boolean().describe('Enable CMD+K command palette (web only)'),
-    themePreference: z.enum(['light', 'dark', 'adaptive']).describe('Theme preference: light, dark, or adaptive (follows system)'),
+    themePreference: ThemePreferenceSchema.describe('App-wide visual theme'),
     markdownCopyV2: z.boolean().describe('Replace native paragraph selection with long-press modal for full markdown copy'),
     consoleLoggingEnabled: z.boolean().describe('Enable console output in production builds'),
     verboseLogging: z.boolean().describe('Log all network requests and responses'),
@@ -43,7 +53,7 @@ export const localSettingsDefaults: LocalSettings = {
     devModeEnabled: false,
     voiceUpsellOverride: null,
     commandPaletteEnabled: false,
-    themePreference: 'adaptive',
+    themePreference: 'obsidian',
     markdownCopyV2: false,
     consoleLoggingEnabled: false,
     verboseLogging: false,

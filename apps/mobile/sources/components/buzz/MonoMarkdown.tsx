@@ -1,7 +1,7 @@
 import React, { useCallback, useMemo } from 'react';
-import { Linking, ScrollView, StyleSheet, Text, View, type TextStyle } from 'react-native';
+import { Linking, ScrollView, Text, View, type TextStyle } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { parseMarkdown, type MarkdownSpan } from '@/components/markdown/parseMarkdown';
-import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
 import { CodeHighlighter } from '@/components/buzz/CodeHighlighter';
 
@@ -201,9 +201,9 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
   );
 });
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   root: { width: '100%', minWidth: 0 },
-  block: { marginBottom: 7 },
+  block: { marginBottom: theme.buzz.name === 'ledger' ? 4 : 8 },
   lastBlock: { marginBottom: 0 },
   /**
    * Emphasis is a luminance step, never a heavier cut.
@@ -214,18 +214,19 @@ const styles = StyleSheet.create({
    * tier) and one real step up on everything else. Same for a heading, which
    * additionally gets air and tracking rather than mass.
    */
-  bold: { color: groknight.ledgerBright },
-  italic: { fontStyle: 'italic' },
-  inlineCode: { color: groknight.ledgerQuiet },
+  bold: { fontFamily: theme.buzz.proseSemibold, color: theme.buzz.ledgerBright },
+  italic: { fontFamily: theme.buzz.proseItalic },
+  inlineCode: { fontFamily: theme.buzz.monoRegular, color: theme.buzz.ledgerQuiet },
   link: { textDecorationLine: 'underline' },
   heading: {
-    color: groknight.ledgerBright,
+    fontFamily: theme.buzz.proseSemibold,
+    color: theme.buzz.ledgerBright,
     letterSpacing: 0.6,
     marginTop: 3,
   },
   list: { width: '100%', gap: 3 },
   listItem: { width: '100%' },
-  listGlyph: { color: groknight.ledgerQuiet },
+  listGlyph: { color: theme.buzz.ledgerQuiet },
   /**
    * A fenced block is code, not a card. It marks itself with one hairline
    * gutter and an indent — the same boxless vocabulary the rest of the
@@ -237,20 +238,20 @@ const styles = StyleSheet.create({
     paddingLeft: 10,
     paddingVertical: 2,
     borderLeftWidth: StyleSheet.hairlineWidth,
-    borderLeftColor: groknight.border,
+    borderLeftColor: theme.buzz.border,
   },
   codeLanguage: {
     ...Typography.mono(),
-    color: groknight.ledgerGhost,
+    color: theme.buzz.ledgerGhost,
     fontSize: 9,
     lineHeight: 12,
     marginBottom: 5,
   },
   codeBlock: {
     ...Typography.mono(),
-    color: groknight.ledgerQuiet,
+    color: theme.buzz.ledgerQuiet,
     fontSize: 12,
     lineHeight: 18,
   },
-  rule: { height: 1, backgroundColor: groknight.borderQuiet, marginVertical: 3 },
-});
+  rule: { height: 1, backgroundColor: theme.buzz.borderQuiet, marginVertical: 3 },
+}));

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useURL } from 'expo-linking';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -21,7 +22,6 @@ import {
   resolveOnboardingPersonName,
   savePreferredPersonName,
 } from '@/buzz/person-name';
-import { groknight } from '@/buzz/groknight';
 import { ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
@@ -29,6 +29,7 @@ import { Typography } from '@/constants/Typography';
 import { PixelLoader } from '@/components/buzz/MonoHull';
 
 export default function CommunityInviteJoin() {
+  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const { token: routeToken } = useLocalSearchParams<{ token?: string | string[] }>();
   const incomingUrl = useURL();
@@ -174,7 +175,7 @@ export default function CommunityInviteJoin() {
                     editable={!joining}
                     maxLength={60}
                     placeholder="Ada"
-                    placeholderTextColor={groknight.dim}
+                    placeholderTextColor={theme.buzz.dim}
                   />
                   <Text style={styles.identityHint}>
                     Your private identity key stays on this device.
@@ -226,7 +227,9 @@ export default function CommunityInviteJoin() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => {
+  const groknight = theme.buzz;
+  return ({
   container: { flex: 1, minWidth: 0, backgroundColor: groknight.bgTerminal },
   topbar: {
     minHeight: 58,
@@ -339,4 +342,5 @@ const styles = StyleSheet.create({
     color: groknight.textPrimary,
     fontSize: 20,
   },
+  });
 });

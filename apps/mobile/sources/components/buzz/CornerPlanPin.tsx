@@ -1,6 +1,6 @@
 import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { groknight } from '@/buzz/groknight';
+import { ScrollView, Text, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { HullLivePulse } from '@/components/buzz/MonoHull';
 import type { AgentActivityItem } from '@/sync/transport/rig-transport';
@@ -97,7 +97,9 @@ export const CornerPlanPin = React.memo(function CornerPlanPin({
   );
 });
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => {
+  const groknight = theme.buzz;
+  return ({
   pin: {
     paddingHorizontal: 12,
     paddingTop: 8,
@@ -148,4 +150,5 @@ const styles = StyleSheet.create({
   },
   stepDone: { color: groknight.textMuted, textDecorationLine: 'line-through' },
   stepActive: { color: groknight.accent },
+  });
 });

@@ -757,6 +757,18 @@ describe('Room→repo transport', () => {
         : new Response(
           JSON.stringify({
             installed: true,
+            installations: [
+              {
+                installationId: 7,
+                accountId: '1',
+                accountLogin: 'acme',
+                accountType: 'Organization',
+                repositorySelection: 'selected',
+                status: 'active',
+                repositoryCount: 1,
+                manageUrl: 'https://github.com/settings/installations/7',
+              },
+            ],
             repositories: [
               {
                 id: 42,
@@ -793,7 +805,9 @@ describe('Room→repo transport', () => {
       vi.fn(async (url: string | URL | Request) =>
         String(url).endsWith('/auth/capabilities')
           ? new Response(JSON.stringify({ github: true, oidc: true }), { status: 200 })
-          : new Response(JSON.stringify({ installed: false, repositories: [] }), { status: 200 }),
+          : new Response(JSON.stringify({ installed: false, installations: [], repositories: [] }), {
+              status: 200,
+            }),
       ),
     );
     const transport = new BuzzRigTransport(identity, 'https://relay.test');

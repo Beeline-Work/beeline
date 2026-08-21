@@ -9,8 +9,8 @@ import {
   type IdentityKind,
   type IdentityPalette,
 } from '@/buzz/identity-mark';
-import { groknight } from '@/buzz/groknight';
 import { HullLivePulse } from './MonoHull';
+import { useUnistyles } from 'react-native-unistyles';
 
 type IdentityMarkProps = {
   /** The identity's stable seed: a pubkey for an agent or a person, the
@@ -186,6 +186,8 @@ export const IdentityMark = React.memo(function IdentityMark({
   avatarUrl,
   testID,
 }: IdentityMarkProps) {
+  const { theme } = useUnistyles();
+  const groknight = theme.buzz;
   const [failedAvatar, setFailedAvatar] = useState<string | null>(null);
   const showRelayAvatar =
     groknight.photoIdentityMarksEnabled && Boolean(avatarUrl && failedAvatar !== avatarUrl);

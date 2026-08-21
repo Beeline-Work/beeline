@@ -3,13 +3,13 @@ import {
   AppState,
   Platform,
   ScrollView,
-  StyleSheet,
   Switch,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as LocalAuthentication from 'expo-local-authentication';
@@ -99,6 +99,7 @@ function QrCode({ value }: { value: string }) {
 }
 
 export default function BuzzIdentitySettings() {
+  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const [confirmationMethod, setConfirmationMethod] = useState<ConfirmationMethod>('checking');
   const [biometricLabel, setBiometricLabel] = useState('biometrics');
@@ -525,7 +526,7 @@ export default function BuzzIdentitySettings() {
                 onFocus={() => setNameFocused(true)}
                 onSubmitEditing={() => void saveName()}
                 placeholder="Ada"
-                placeholderTextColor={groknight.dim}
+                placeholderTextColor={theme.buzz.dim}
                 returnKeyType="done"
                 style={[styles.nameInput, nameFocused && styles.nameInputFocused]}
                 testID="identity-person-name-input"
@@ -547,7 +548,7 @@ export default function BuzzIdentitySettings() {
                   onFocus={() => setHandleFocused(true)}
                   onSubmitEditing={() => void saveName()}
                   placeholder={personHandle(profileName, profilePubkey)}
-                  placeholderTextColor={groknight.dim}
+                  placeholderTextColor={theme.buzz.dim}
                   returnKeyType="done"
                   style={styles.handleInput}
                   testID="identity-person-handle-input"
@@ -569,7 +570,7 @@ export default function BuzzIdentitySettings() {
                 onFocus={() => setNip05Focused(true)}
                 onSubmitEditing={() => void saveName()}
                 placeholder="name@your-domain.com (optional)"
-                placeholderTextColor={groknight.dim}
+                placeholderTextColor={theme.buzz.dim}
                 returnKeyType="done"
                 style={[styles.nameInput, nip05Focused && styles.nameInputFocused]}
                 testID="identity-person-nip05-input"
@@ -660,7 +661,7 @@ export default function BuzzIdentitySettings() {
               }}
               onSubmitEditing={() => void claimHandle()}
               placeholder="yourname"
-              placeholderTextColor={groknight.dim}
+              placeholderTextColor={theme.buzz.dim}
               returnKeyType="done"
               style={styles.claimInput}
               testID="identity-claim-handle-input"
@@ -695,8 +696,8 @@ export default function BuzzIdentitySettings() {
               disabled={pushEnabled === null || pushWorking}
               onValueChange={(enabled) => void togglePush(enabled)}
               testID="push-notifications-toggle"
-              thumbColor={groknight.textPrimary}
-              trackColor={{ false: groknight.bgRaised, true: groknight.chrome }}
+              thumbColor={theme.buzz.textPrimary}
+              trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.chrome }}
               value={pushEnabled ?? false}
             />
           </View>
@@ -747,7 +748,7 @@ export default function BuzzIdentitySettings() {
                   onBlur={() => setInputFocused(false)}
                   onSubmitEditing={() => void handleConfirm()}
                   placeholder={TYPED_CONFIRMATION}
-                  placeholderTextColor={groknight.dim}
+                  placeholderTextColor={theme.buzz.dim}
                   style={[styles.confirmInput, inputFocused && styles.confirmInputFocused]}
                   value={typedConfirmation}
                 />
@@ -826,7 +827,9 @@ export default function BuzzIdentitySettings() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => {
+  const groknight = theme.buzz;
+  return ({
   container: { flex: 1, backgroundColor: groknight.bgTerminal },
   header: {
     minHeight: 66,
@@ -1178,4 +1181,5 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     textAlign: 'center',
   },
+  });
 });

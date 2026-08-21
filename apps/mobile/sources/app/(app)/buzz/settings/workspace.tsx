@@ -1,12 +1,12 @@
 import React, { useCallback, useState } from 'react';
 import {
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useFocusEffect, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -22,7 +22,6 @@ import {
 
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
-import { groknight } from '@/buzz/groknight';
 import { MEMBERS_GLYPH, MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { HullSurface, MonoButton, PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
@@ -79,6 +78,7 @@ async function loadWorkspaceRooms(
 }
 
 export default function WorkspaceSettings() {
+  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ communityId?: string | string[] }>();
   const communityId = firstParam(params.communityId);
@@ -305,7 +305,7 @@ export default function WorkspaceSettings() {
               onChangeText={setWorkspaceName}
               onSubmitEditing={() => void saveWorkspaceName()}
               placeholder={`${WORKSPACE_LABEL} name`}
-              placeholderTextColor={groknight.dim}
+              placeholderTextColor={theme.buzz.dim}
               style={styles.input}
               testID="workspace-name-input"
               value={workspaceName}
@@ -418,7 +418,9 @@ export default function WorkspaceSettings() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => {
+  const groknight = theme.buzz;
+  return ({
   container: { flex: 1, backgroundColor: groknight.bgTerminal },
   center: { alignItems: 'center', justifyContent: 'center' },
   header: {
@@ -638,4 +640,5 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 17,
   },
+  });
 });

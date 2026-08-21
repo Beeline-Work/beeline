@@ -5,12 +5,12 @@ import {
   Pressable,
   type PressableProps,
   type StyleProp,
-  StyleSheet,
   Text,
   View,
   type ViewProps,
   type ViewStyle,
 } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import * as Haptics from 'expo-haptics';
 import Animated, {
   Easing,
@@ -567,7 +567,9 @@ function RevealStrip({ index, progress }: { index: number; progress: SharedValue
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => {
+  const groknight = theme.buzz;
+  return ({
   hullSurface: { position: 'relative', overflow: 'hidden' },
   textureLayer: { ...StyleSheet.absoluteFillObject, opacity: 1 },
   scratch: {
@@ -662,4 +664,5 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   revealStrip: { position: 'absolute', right: 0, left: 0, backgroundColor: groknight.bgRaised },
+  });
 });

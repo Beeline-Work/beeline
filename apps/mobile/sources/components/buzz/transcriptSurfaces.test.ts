@@ -83,19 +83,18 @@ describe('One ledger, both surfaces', () => {
     expect(group).not.toMatch(/backgroundColor/);
   });
 
-  it('puts no delimiter of any kind between turns', () => {
-    // Air and rhythm only. Nothing in the ledger draws an edge: no hairline
-    // between messages, no rule above a steer, no divider under a system row.
-    expect(ledgerSource).not.toMatch(/border(?:Top|Bottom|Left|Right)?(?:Width|Color)/);
-    expect(ledgerSource).not.toMatch(/hairline/i);
+  it('uses speaker rails and tokenized space rather than horizontal delimiters', () => {
+    const entry = styleDefinition(ledgerSource, 'entry');
+    expect(entry).toMatch(/borderLeftWidth:\s*theme\.buzz\.railWidth/);
+    expect(styleDefinition(ledgerSource, 'agentRail')).toMatch(/theme\.buzz\.agentRail/);
+    expect(styleDefinition(ledgerSource, 'viewerRail')).toMatch(/theme\.buzz\.humanRail/);
+    expect(ledgerSource).not.toMatch(/border(?:Top|Bottom|Right)(?:Width|Color)/);
     expect(ledgerSource).not.toMatch(/steerRule/);
 
-    // The rhythm that replaces them: a continuation flows, a new run opens.
     const opens = styleDefinition(ledgerSource, 'entryOpens');
     const continued = styleDefinition(ledgerSource, 'entryContinued');
-    const gap = (definition: string) => Number(definition.match(/marginBottom:\s*(\d+)/)![1]);
-    expect(gap(opens)).toBeGreaterThan(gap(continued));
-    expect(gap(opens)).toBeGreaterThanOrEqual(20);
+    expect(opens).toMatch(/theme\.buzz\.turnGap/);
+    expect(continued).toMatch(/theme\.buzz\.continuationGap/);
 
     // A system row in the flow is separated the same way — never framed off.
     for (const name of ['mergeSummaryBubble', 'replyReference']) {
@@ -105,9 +104,9 @@ describe('One ledger, both surfaces', () => {
     }
   });
 
-  it('identifies a human turn by inset and tone, with no caption', () => {
-    expect(styleDefinition(ledgerSource, 'steer')).toMatch(/alignSelf:\s*'flex-end'/);
-    expect(styleDefinition(ledgerSource, 'steerText')).toMatch(/color:\s*groknight\.ledgerBody/);
+  it('identifies the viewer with the sanctioned gold rail and no caption', () => {
+    expect(styleDefinition(ledgerSource, 'viewerRail')).toMatch(/theme\.buzz\.humanRail/);
+    expect(styleDefinition(ledgerSource, 'steerText')).toMatch(/color:\s*theme\.buzz\.ledgerBright/);
     // The "YOU" caption and its signature are gone from the ledger entirely.
     expect(ledgerSource).not.toMatch(/steerSignature/);
     expect(ledgerSource).not.toMatch(/chat-steer-by-/);
@@ -115,36 +114,16 @@ describe('One ledger, both surfaces', () => {
     expect(chatSource).not.toMatch(/'YOU'/);
   });
 
-  it('makes brightness the only hierarchy — never weight', () => {
+  it('splits prose from identity and makes weight carry content hierarchy', () => {
     const luminous = styleDefinition(ledgerSource, 'ledgerTextLuminous');
-    expect(luminous).toMatch(/color:\s*groknight\.ledgerBright/);
-    expect(luminous).toMatch(/textShadowColor:\s*groknight\.ledgerGlow/);
-    expect(luminous).toMatch(/textShadowRadius:\s*[1-9]/);
-    // A glow, not a drop shadow: no offset, so the halo is symmetric.
-    expect(luminous).toMatch(/textShadowOffset:\s*\{\s*width:\s*0,\s*height:\s*0\s*\}/);
-
-    // A person's turn is dimmer, never heavier, and never out-glows the ledger.
+    expect(luminous).toMatch(/fontFamily:\s*theme\.buzz\.proseRegular/);
+    expect(luminous).toMatch(/color:\s*theme\.buzz\.ledgerBright/);
     expect(styleDefinition(ledgerSource, 'steerText')).not.toMatch(/textShadow/);
     expect(styleDefinition(ledgerSource, 'ledgerText')).not.toMatch(/textShadow/);
-
-    // Bold is banned outright across the transcript's own components.
-    for (const source of [ledgerSource, markdownSource]) {
-      expect(source).not.toMatch(/'semiBold'/);
-      expect(source).not.toMatch(/fontWeight/);
-    }
-    // Markdown emphasis becomes a luminance step instead.
-    expect(styleDefinition(markdownSource, 'bold')).toMatch(/color:\s*groknight\.ledgerBright/);
-
-    // One face, one size, one weight for the whole ledger.
-    for (const name of ['ledgerTextLuminous', 'ledgerText', 'steerText', 'handle']) {
-      const definition = styleDefinition(ledgerSource, name);
-      expect(definition, `${name} must use the inscription voice`).toMatch(/Typography\.ledger\(\)/);
-      expect(definition, `${name} must stay on the ledger size`).toMatch(/fontSize:\s*14/);
-    }
-
-    // No hue enters the transcript: the glow is ledgerBright at low alpha.
-    const groknightSource = readFileSync(new URL('../../buzz/groknight.ts', import.meta.url), 'utf8');
-    expect(groknightSource).toMatch(/ledgerGlow:\s*'rgba\(244, 244, 244, 0\.\d+\)'/);
+    expect(styleDefinition(ledgerSource, 'ledgerLead')).toMatch(/fontFamily:\s*theme\.buzz\.proseSemibold/);
+    expect(styleDefinition(ledgerSource, 'handle')).toMatch(/fontFamily:\s*theme\.buzz\.monoSemibold/);
+    expect(styleDefinition(markdownSource, 'bold')).toMatch(/fontFamily:\s*theme\.buzz\.proseSemibold/);
+    expect(ledgerSource).toContain('splitLeadSentence(bodyText)');
     expect(ledgerSource).not.toMatch(/#[0-9a-fA-F]{3,8}/);
   });
 
@@ -158,7 +137,7 @@ describe('One ledger, both surfaces', () => {
       /paddingRight:\s*LEDGER_MARGINALIA_WIDTH/,
     );
     for (const name of ['marginaliaStamp', 'marginaliaDetail']) {
-      expect(styleDefinition(ledgerSource, name)).toMatch(/color:\s*groknight\.ledgerGhost/);
+      expect(styleDefinition(ledgerSource, name)).toMatch(/color:\s*theme\.buzz\.ledgerGhost/);
     }
   });
 });
@@ -321,11 +300,17 @@ describe('Speaker identity', () => {
     // placeholder instead of the seed fallback (`resolveAgentDisplayIdentity`'s
     // own placeholder) for a beat before snapping to the real name.
     expect(chatSource).not.toMatch(/fallbackAgentName\(/);
-    for (const site of [
-      'resolvePendingAgentDisplay(cornerAgentPubkey, agentByPubkey.get(cornerAgentPubkey), participantsHydrated)',
-      "resolvePendingAgentDisplay(item.pubkey ?? 'unknown-agent', knownAgent, participantsHydrated)",
+    for (const [label, site] of [
+      [
+        'corner header',
+        /resolvePendingAgentDisplay\(\s*cornerAgentPubkey,\s*agentByPubkey\.get\(cornerAgentPubkey\),\s*participantsHydrated,?\s*\)/,
+      ],
+      [
+        'transcript turn',
+        /resolvePendingAgentDisplay\(\s*item\.pubkey \?\? 'unknown-agent',\s*knownAgent,\s*participantsHydrated,?\s*\)/,
+      ],
     ]) {
-      expect(chatSource, `${site} must resolve through the roster`).toContain(site);
+      expect(chatSource, `${label} must resolve through the roster`).toMatch(site);
     }
   });
 

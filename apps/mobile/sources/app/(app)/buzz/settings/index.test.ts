@@ -112,7 +112,8 @@ describe('Buzz global Settings', () => {
     const rowStyle = source.slice(source.indexOf('  settingsRow: {'));
     const rowBlock = rowStyle.slice(0, rowStyle.indexOf('},') + 2);
     expect(rowBlock).not.toMatch(/borderWidth|borderRadius|backgroundColor/);
-    expect(rowBlock).toContain('...hairlineDivider');
+    expect(rowBlock).toMatch(/borderBottomWidth:\s*1/);
+    expect(rowBlock).toMatch(/borderBottomColor:\s*groknight\.border/);
     // Persistent chrome carries no lifted surface of its own.
     expect(source).not.toContain('<HullSurface');
     expect(source).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);

@@ -119,12 +119,52 @@ const MIGRATIONS = [
     community TEXT NOT NULL,
     pubkey CHAR(64) NOT NULL,
     account_id TEXT NOT NULL,
+    account_login TEXT NOT NULL DEFAULT '',
+    account_type TEXT NOT NULL DEFAULT 'User',
+    account_avatar_url TEXT,
     installation_id BIGINT NOT NULL,
+    repository_selection TEXT NOT NULL DEFAULT 'selected',
+    status TEXT NOT NULL DEFAULT 'active',
+    repository_count INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
-    PRIMARY KEY (community, pubkey),
+    PRIMARY KEY (community, pubkey, installation_id),
     UNIQUE (community, installation_id),
     CHECK (pubkey ~ '^[0-9a-f]{64}$')
+  )`,
+  `ALTER TABLE beeline_github_installations ADD COLUMN IF NOT EXISTS account_login TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE beeline_github_installations ADD COLUMN IF NOT EXISTS account_type TEXT NOT NULL DEFAULT 'User'`,
+  `ALTER TABLE beeline_github_installations ADD COLUMN IF NOT EXISTS account_avatar_url TEXT`,
+  `ALTER TABLE beeline_github_installations ADD COLUMN IF NOT EXISTS repository_selection TEXT NOT NULL DEFAULT 'selected'`,
+  `ALTER TABLE beeline_github_installations ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'`,
+  `ALTER TABLE beeline_github_installations ADD COLUMN IF NOT EXISTS repository_count INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE beeline_github_installations DROP CONSTRAINT IF EXISTS beeline_github_installations_pkey`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS beeline_github_installations_owner_idx
+    ON beeline_github_installations (community, pubkey, installation_id)`,
+  `CREATE TABLE IF NOT EXISTS beeline_github_repositories (
+    community TEXT NOT NULL,
+    installation_id BIGINT NOT NULL,
+    repository_id BIGINT NOT NULL,
+    name TEXT NOT NULL,
+    full_name TEXT NOT NULL,
+    remote TEXT NOT NULL,
+    default_branch TEXT NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (community, installation_id, repository_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS beeline_github_repositories_name_idx
+    ON beeline_github_repositories (community, lower(full_name))`,
+  `CREATE TABLE IF NOT EXISTS beeline_github_webhook_deliveries (
+    delivery_id TEXT PRIMARY KEY,
+    received_at TIMESTAMPTZ NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS beeline_github_user_tokens (
+    community TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    encrypted_token TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (community, subject)
   )`,
   `CREATE INDEX IF NOT EXISTS beeline_github_install_flows_expiry_idx
     ON beeline_github_install_flows (expires_at)`,
@@ -211,7 +251,22 @@ export interface GitHubInstallation {
   community: string;
   pubkey: string;
   accountId: string;
+  accountLogin: string;
+  accountType: 'User' | 'Organization';
+  accountAvatarUrl?: string;
   installationId: number;
+  repositorySelection: 'all' | 'selected';
+  status: 'active' | 'revoked' | 'suspended';
+  repositoryCount: number;
+}
+
+export interface StoredGitHubRepository {
+  id: number;
+  installationId: number;
+  name: string;
+  fullName: string;
+  remote: string;
+  defaultBranch: string;
 }
 
 export type BindResult =
@@ -486,40 +541,300 @@ export class AuthStore {
   async saveGitHubInstallation(installation: GitHubInstallation, now: Date): Promise<void> {
     await this.database.query(
       `INSERT INTO beeline_github_installations
-        (community, pubkey, account_id, installation_id, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $5)
-       ON CONFLICT (community, pubkey) DO UPDATE SET
+        (community, pubkey, account_id, account_login, account_type, account_avatar_url,
+         installation_id, repository_selection, status, repository_count, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
+       ON CONFLICT (community, installation_id) DO UPDATE SET
+         pubkey = EXCLUDED.pubkey,
          account_id = EXCLUDED.account_id,
-         installation_id = EXCLUDED.installation_id,
+         account_login = EXCLUDED.account_login,
+         account_type = EXCLUDED.account_type,
+         account_avatar_url = EXCLUDED.account_avatar_url,
+         repository_selection = EXCLUDED.repository_selection,
+         status = EXCLUDED.status,
+         repository_count = EXCLUDED.repository_count,
          updated_at = EXCLUDED.updated_at`,
       [
         installation.community,
         installation.pubkey,
         installation.accountId,
+        installation.accountLogin,
+        installation.accountType,
+        installation.accountAvatarUrl ?? null,
         installation.installationId,
+        installation.repositorySelection,
+        installation.status,
+        installation.repositoryCount,
         now,
       ],
     );
+  }
+
+  async githubInstallationsForPubkey(
+    community: string,
+    pubkey: string,
+  ): Promise<GitHubInstallation[]> {
+    const result = await this.database.query<
+      QueryResultRow & {
+        account_id: string;
+        account_login: string;
+        account_type: string;
+        account_avatar_url: string | null;
+        installation_id: string | number;
+        repository_selection: string;
+        status: string;
+        repository_count: number;
+      }
+    >(
+      `SELECT account_id, account_login, account_type, account_avatar_url, installation_id,
+              repository_selection, status, repository_count
+       FROM beeline_github_installations
+       WHERE community = $1 AND pubkey = $2
+       ORDER BY lower(account_login), installation_id`,
+      [community, pubkey],
+    );
+    return result.rows.map((row) => {
+      const installationId = Number(row.installation_id);
+      if (!Number.isSafeInteger(installationId) || installationId <= 0) {
+        throw new Error('stored GitHub installation id is invalid');
+      }
+      if (row.account_type !== 'User' && row.account_type !== 'Organization') {
+        throw new Error('stored GitHub account type is invalid');
+      }
+      if (row.repository_selection !== 'all' && row.repository_selection !== 'selected') {
+        throw new Error('stored GitHub repository selection is invalid');
+      }
+      if (row.status !== 'active' && row.status !== 'revoked' && row.status !== 'suspended') {
+        throw new Error('stored GitHub installation status is invalid');
+      }
+      return {
+        community,
+        pubkey,
+        accountId: row.account_id,
+        accountLogin: row.account_login,
+        accountType: row.account_type,
+        ...(row.account_avatar_url ? { accountAvatarUrl: row.account_avatar_url } : {}),
+        installationId,
+        repositorySelection: row.repository_selection,
+        status: row.status,
+        repositoryCount: row.repository_count,
+      };
+    });
   }
 
   async githubInstallationForPubkey(
     community: string,
     pubkey: string,
   ): Promise<GitHubInstallation | null> {
+    return (await this.githubInstallationsForPubkey(community, pubkey))[0] ?? null;
+  }
+
+  async replaceGitHubRepositories(
+    community: string,
+    installationId: number,
+    repositories: readonly StoredGitHubRepository[],
+    now: Date,
+  ): Promise<void> {
+    await this.database.transaction(async (transaction) => {
+      await transaction.query(
+        `UPDATE beeline_github_repositories SET active = FALSE, updated_at = $3
+         WHERE community = $1 AND installation_id = $2`,
+        [community, installationId, now],
+      );
+      for (const repository of repositories) {
+        await this.upsertGitHubRepository(transaction, community, repository, now);
+      }
+      await transaction.query(
+        `UPDATE beeline_github_installations
+         SET repository_count = $3, status = 'active', updated_at = $4
+         WHERE community = $1 AND installation_id = $2`,
+        [community, installationId, repositories.length, now],
+      );
+    });
+  }
+
+  private async upsertGitHubRepository(
+    executor: SqlExecutor,
+    community: string,
+    repository: StoredGitHubRepository,
+    now: Date,
+  ): Promise<void> {
+    await executor.query(
+      `INSERT INTO beeline_github_repositories
+        (community, installation_id, repository_id, name, full_name, remote, default_branch, active, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, $8)
+       ON CONFLICT (community, installation_id, repository_id) DO UPDATE SET
+         name = EXCLUDED.name, full_name = EXCLUDED.full_name, remote = EXCLUDED.remote,
+         default_branch = EXCLUDED.default_branch, active = TRUE, updated_at = EXCLUDED.updated_at`,
+      [
+        community,
+        repository.installationId,
+        repository.id,
+        repository.name,
+        repository.fullName,
+        repository.remote,
+        repository.defaultBranch,
+        now,
+      ],
+    );
+  }
+
+  async applyGitHubRepositoryChanges(
+    installationId: number,
+    added: readonly StoredGitHubRepository[],
+    removedIds: readonly number[],
+    now: Date,
+  ): Promise<void> {
+    const installations = await this.database.query<QueryResultRow & { community: string }>(
+      `SELECT community FROM beeline_github_installations WHERE installation_id = $1`,
+      [installationId],
+    );
+    for (const { community } of installations.rows) {
+      await this.database.transaction(async (transaction) => {
+        for (const repository of added) {
+          await this.upsertGitHubRepository(transaction, community, repository, now);
+        }
+        if (removedIds.length) {
+          await transaction.query(
+            `UPDATE beeline_github_repositories SET active = FALSE, updated_at = $3
+             WHERE community = $1 AND installation_id = $2 AND repository_id = ANY($4::bigint[])`,
+            [community, installationId, now, removedIds],
+          );
+        }
+        await transaction.query(
+          `UPDATE beeline_github_installations SET repository_count = (
+             SELECT count(*)::integer FROM beeline_github_repositories
+             WHERE community = $1 AND installation_id = $2 AND active = TRUE
+           ), status = 'active', updated_at = $3
+           WHERE community = $1 AND installation_id = $2`,
+          [community, installationId, now],
+        );
+      });
+    }
+  }
+
+  async markGitHubInstallationStatus(
+    installationId: number,
+    status: 'active' | 'revoked' | 'suspended',
+    now: Date,
+  ): Promise<void> {
+    await this.database.transaction(async (transaction) => {
+      await transaction.query(
+        `UPDATE beeline_github_installations SET status = $2, updated_at = $3
+         WHERE installation_id = $1`,
+        [installationId, status, now],
+      );
+      if (status === 'revoked') {
+        await transaction.query(
+          `UPDATE beeline_github_repositories SET active = FALSE, updated_at = $2
+           WHERE installation_id = $1`,
+          [installationId, now],
+        );
+      }
+    });
+  }
+
+  async githubRepositoriesForPubkey(
+    community: string,
+    pubkey: string,
+  ): Promise<StoredGitHubRepository[]> {
     const result = await this.database.query<
-      QueryResultRow & { account_id: string; installation_id: string | number }
+      QueryResultRow & {
+        repository_id: string | number;
+        installation_id: string | number;
+        name: string;
+        full_name: string;
+        remote: string;
+        default_branch: string;
+      }
     >(
-      `SELECT account_id, installation_id FROM beeline_github_installations
-       WHERE community = $1 AND pubkey = $2`,
+      `SELECT r.repository_id, r.installation_id, r.name, r.full_name, r.remote, r.default_branch
+       FROM beeline_github_repositories r
+       JOIN beeline_github_installations i
+         ON i.community = r.community AND i.installation_id = r.installation_id
+       WHERE i.community = $1 AND i.pubkey = $2 AND i.status = 'active' AND r.active = TRUE
+       ORDER BY lower(i.account_login), lower(r.name)`,
       [community, pubkey],
     );
+    return result.rows.map((row) => ({
+      id: Number(row.repository_id),
+      installationId: Number(row.installation_id),
+      name: row.name,
+      fullName: row.full_name,
+      remote: row.remote,
+      defaultBranch: row.default_branch,
+    }));
+  }
+
+  async githubRepositoryAccess(
+    community: string,
+    pubkey: string,
+    fullName: string,
+  ): Promise<{ accessible: boolean; installationId?: number; reason?: 'revoked' | 'not_granted' }> {
+    const result = await this.database.query<
+      QueryResultRow & { installation_id: string | number; status: string; active: boolean }
+    >(
+      `SELECT i.installation_id, i.status, COALESCE(r.active, FALSE) AS active
+       FROM beeline_github_installations i
+       LEFT JOIN beeline_github_repositories r
+         ON r.community = i.community AND r.installation_id = i.installation_id
+        AND lower(r.full_name) = lower($3)
+       WHERE i.community = $1 AND i.pubkey = $2
+         AND lower(split_part($3, '/', 1)) = lower(i.account_login)
+       ORDER BY (i.status = 'active' AND COALESCE(r.active, FALSE)) DESC
+       LIMIT 1`,
+      [community, pubkey, fullName],
+    );
     const row = result.rows[0];
-    if (!row) return null;
+    if (!row) return { accessible: false, reason: 'not_granted' };
     const installationId = Number(row.installation_id);
-    if (!Number.isSafeInteger(installationId) || installationId <= 0) {
-      throw new Error('stored GitHub installation id is invalid');
-    }
-    return { community, pubkey, accountId: row.account_id, installationId };
+    return row.status === 'active' && row.active
+      ? { accessible: true, installationId }
+      : {
+          accessible: false,
+          installationId,
+          reason: row.status === 'active' ? 'not_granted' : 'revoked',
+        };
+  }
+
+  async claimGitHubWebhookDelivery(deliveryId: string, now: Date): Promise<boolean> {
+    const result = await this.database.query(
+      `INSERT INTO beeline_github_webhook_deliveries (delivery_id, received_at)
+       VALUES ($1, $2) ON CONFLICT (delivery_id) DO NOTHING`,
+      [deliveryId, now],
+    );
+    return result.rowCount === 1;
+  }
+
+  async releaseGitHubWebhookDelivery(deliveryId: string): Promise<void> {
+    await this.database.query(
+      `DELETE FROM beeline_github_webhook_deliveries WHERE delivery_id = $1`,
+      [deliveryId],
+    );
+  }
+
+  async saveGitHubUserToken(
+    community: string,
+    subject: string,
+    encryptedToken: string,
+    now: Date,
+  ): Promise<void> {
+    await this.database.query(
+      `INSERT INTO beeline_github_user_tokens (community, subject, encrypted_token, updated_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (community, subject) DO UPDATE SET
+         encrypted_token = EXCLUDED.encrypted_token, updated_at = EXCLUDED.updated_at`,
+      [community, subject, encryptedToken, now],
+    );
+  }
+
+  async githubUserToken(community: string, subject: string): Promise<string | null> {
+    const result = await this.database.query<QueryResultRow & { encrypted_token: string }>(
+      `SELECT encrypted_token FROM beeline_github_user_tokens
+       WHERE community = $1 AND subject = $2`,
+      [community, subject],
+    );
+    return result.rows[0]?.encrypted_token ?? null;
   }
 
   /** First-come-first-served claim: inserts, or reports the existing owner on conflict. */

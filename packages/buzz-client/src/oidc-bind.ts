@@ -37,6 +37,24 @@ export interface GitHubRepositoryAccess {
   defaultBranch: string;
 }
 
+export interface GitHubInstallationAccess {
+  installationId: number;
+  accountId: string;
+  accountLogin: string;
+  accountType: 'User' | 'Organization';
+  accountAvatarUrl?: string;
+  repositorySelection: 'all' | 'selected';
+  status: 'active' | 'revoked' | 'suspended';
+  repositoryCount: number;
+  manageUrl: string;
+}
+
+export interface GitHubRepositoryAccessResult {
+  accessible: boolean;
+  installationId?: number;
+  reason?: 'revoked' | 'not_granted';
+}
+
 export interface AuthCapabilities {
   github: boolean;
   oidc: boolean;
@@ -496,7 +514,11 @@ export async function startGitHubInstallation(
 export async function listGitHubRepositories(
   baseUrl: string,
   identity: Pick<Identity, 'secretKey' | 'publicKey'>,
-): Promise<{ installed: boolean; repositories: GitHubRepositoryAccess[] }> {
+): Promise<{
+  installed: boolean;
+  installations: GitHubInstallationAccess[];
+  repositories: GitHubRepositoryAccess[];
+}> {
   const url = endpoint(baseUrl, `/auth/github/repos/${identity.publicKey}`).toString();
   let response: Response;
   try {
@@ -513,7 +535,11 @@ export async function listGitHubRepositories(
   }
   const body = await responseBody(response);
   if (!response.ok) throw serviceError(body, response.status);
-  if (typeof body.installed !== 'boolean' || !Array.isArray(body.repositories)) {
+  if (
+    typeof body.installed !== 'boolean' ||
+    !Array.isArray(body.installations) ||
+    !Array.isArray(body.repositories)
+  ) {
     throw new OidcBindError(
       'invalid_response',
       'auth service returned an invalid GitHub repository list',
@@ -546,7 +572,111 @@ export async function listGitHubRepositories(
     }
     return repo as unknown as GitHubRepositoryAccess;
   });
-  return { installed: body.installed, repositories };
+  const installations = body.installations.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new OidcBindError(
+        'invalid_response',
+        'auth service returned an invalid GitHub installation',
+        response.status,
+      );
+    }
+    const installation = entry as Record<string, unknown>;
+    if (
+      typeof installation.installationId !== 'number' ||
+      !Number.isSafeInteger(installation.installationId) ||
+      typeof installation.accountId !== 'string' ||
+      typeof installation.accountLogin !== 'string' ||
+      (installation.accountType !== 'User' && installation.accountType !== 'Organization') ||
+      (installation.repositorySelection !== 'all' &&
+        installation.repositorySelection !== 'selected') ||
+      (installation.status !== 'active' &&
+        installation.status !== 'revoked' &&
+        installation.status !== 'suspended') ||
+      typeof installation.repositoryCount !== 'number' ||
+      typeof installation.manageUrl !== 'string'
+    ) {
+      throw new OidcBindError(
+        'invalid_response',
+        'auth service returned an invalid GitHub installation',
+        response.status,
+      );
+    }
+    return installation as unknown as GitHubInstallationAccess;
+  });
+  return { installed: body.installed, installations, repositories };
+}
+
+export async function createGitHubRepository(
+  baseUrl: string,
+  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
+  input: { installationId: number; name: string; description?: string; private?: boolean },
+): Promise<GitHubRepositoryAccess> {
+  const url = endpoint(baseUrl, `/auth/github/repos/${identity.publicKey}`).toString();
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'POST'),
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        installation_id: input.installationId,
+        name: input.name,
+        ...(input.description ? { description: input.description } : {}),
+        ...(input.private !== undefined ? { private: input.private } : {}),
+      }),
+    });
+  } catch (error) {
+    throw new OidcBindError(
+      'offline',
+      error instanceof Error ? error.message : 'auth service unavailable',
+    );
+  }
+  const body = await responseBody(response);
+  if (!response.ok) throw serviceError(body, response.status);
+  const repository = body.repository;
+  if (!repository || typeof repository !== 'object' || Array.isArray(repository)) {
+    throw new OidcBindError(
+      'invalid_response',
+      'auth service returned an invalid GitHub repository',
+      response.status,
+    );
+  }
+  return repository as unknown as GitHubRepositoryAccess;
+}
+
+export async function getGitHubRepositoryAccess(
+  baseUrl: string,
+  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
+  fullName: string,
+): Promise<GitHubRepositoryAccessResult> {
+  const endpointUrl = endpoint(baseUrl, `/auth/github/repo-access/${identity.publicKey}`);
+  endpointUrl.searchParams.set('full_name', fullName);
+  const url = endpointUrl.toString();
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'GET'),
+      },
+    });
+  } catch (error) {
+    throw new OidcBindError(
+      'offline',
+      error instanceof Error ? error.message : 'auth service unavailable',
+    );
+  }
+  const body = await responseBody(response);
+  if (!response.ok) throw serviceError(body, response.status);
+  if (typeof body.accessible !== 'boolean') {
+    throw new OidcBindError(
+      'invalid_response',
+      'auth service returned an invalid repository access result',
+      response.status,
+    );
+  }
+  return body as unknown as GitHubRepositoryAccessResult;
 }
 
 /** Discover which sign-in surface the deployed auth sidecar has enabled. */

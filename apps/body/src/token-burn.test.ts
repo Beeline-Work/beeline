@@ -26,6 +26,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  CORNER_RESUME_MAX_TURNS,
   SESSION_REPRIME_ELIDED_NOTE,
   SESSION_REPRIME_MAX_CHARS,
   measureSessionReprime,
@@ -102,6 +103,15 @@ describe('re-priming a session does not replay the whole Room', () => {
     expect(lines.join('\n').length).toBeLessThanOrEqual(SESSION_REPRIME_MAX_CHARS);
     // …and the short entry beside it still survives.
     expect(lines.some((line) => line.includes('the question that matters'))).toBe(true);
+  });
+  it('resumes a corner from structured facts and only the recent tail', () => {
+    const turns = Array.from({ length: 20 }, (_, index) => ({ role: index % 2 ? 'agent' : 'user', text: `turn-${index} detail` }));
+    const measured = measureSessionReprime(turns, SESSION_REPRIME_MAX_CHARS, { objective: 'Preserve continuity', plan: { items: [{ step: 'Protect steers', status: 'in_progress' }] }, changedFiles: ['a.ts'], commits: ['abc123 change'] });
+    expect(measured.block).toContain('CORNER RESUME BRIEF');
+    expect(measured.block).toContain('[in_progress] Protect steers');
+    expect(measured.block).not.toContain('turn-0 ');
+    expect(measured.block).toContain(`turn-${20 - CORNER_RESUME_MAX_TURNS}`);
+    expect(measured.block.length).toBeLessThanOrEqual(SESSION_REPRIME_MAX_CHARS);
   });
 });
 

@@ -34,13 +34,16 @@ import {
   postAgentTurnStatus,
   postAgentStallNotice,
   postSteerQueuedNotice,
+  postCornerSessionStatus,
   postControlMessage,
   replyRootIdForEvent,
   stripAgentReplyPreamble,
   createDraftStreamer,
   createNarrativeCommitter,
   relayRetryAfterMs,
+  latestActivityPlanFromEvents,
   type ActivityProjectionController,
+  type CompactActivityPlan,
 } from './activity.js';
 import {
   createChannel,
@@ -57,6 +60,7 @@ import {
   APPROVAL_MARKER,
   authorizeReviewer,
   verifyApproval,
+  serializeRepoLanding,
   type Identity,
   type RelayClient,
 } from '@beeline/gate';
@@ -162,6 +166,7 @@ import {
   legacyCornerWorktreePath,
 } from './corner-isolation.js';
 import { measureSessionReprime } from './session-reprime.js';
+import { readCornerGitResumeState } from './corner-resume.js';
 import {
   completedModelSpend,
   failedModelSpend,
@@ -254,6 +259,10 @@ export interface AgentSession {
   modelConfigOptions?: AgentModelConfigOption[];
   /** Observable system-prompt size used when ACP omits token accounting. */
   systemPromptChars?: number;
+  resumePlan?: CompactActivityPlan;
+  activationCount?: number;
+  processState?: 'live' | 'suspended' | 'waiting-for-slot';
+  processStateSequence?: number;
 }
 
 /**
@@ -1953,6 +1962,10 @@ export class Body {
     worktreePath?: string;
     featureBranch?: string;
     communityId?: string;
+    resumeObjective?: string;
+    resumeTargetRef?: string;
+    resumeOnFirstActivation?: boolean;
+    resumePlan?: CompactActivityPlan;
   }): Promise<AgentSession> {
     let client = new AcpClient({
       agentCommand: this.config.agentCommand ?? this.config.agentBinary,
@@ -1971,6 +1984,8 @@ export class Body {
       ...(input.parentChannelId ? { parentChannelId: input.parentChannelId } : {}),
       ...(input.worktreePath ? { worktreePath: input.worktreePath } : {}),
       ...(input.featureBranch ? { featureBranch: input.featureBranch } : {}),
+      ...(input.resumePlan ? { resumePlan: input.resumePlan } : {}),
+      activationCount: 0,
     };
     const lifecycle: SessionLifecycle = {
       activate: async () => {
@@ -2013,7 +2028,9 @@ export class Body {
         // captain's Room carries 200 entries / ~114k characters (~29k tokens)
         // of it, invisibly, on a daemon that restarted 14 times in a day.
         // See `session-reprime.ts`.
-        const reprime = measureSessionReprime(transcript);
+        const resumingCorner = Boolean(input.parentChannelId) && (Boolean(input.resumeOnFirstActivation) || (session.activationCount ?? 0) > 0);
+        const gitState = resumingCorner && input.resumeTargetRef ? readCornerGitResumeState(input.cwd, input.resumeTargetRef) : undefined;
+        const reprime = measureSessionReprime(transcript, undefined, resumingCorner ? { objective: input.resumeObjective, plan: session.resumePlan, changedFiles: gitState?.changedFiles, commits: gitState?.commits } : undefined);
         const restored = reprime.block;
         const systemPrompt = [
           appendPersonaSessionInstructions(input.systemPrompt, profile),
@@ -2031,6 +2048,7 @@ export class Body {
           mode: input.mode,
         });
         session.sessionId = created.sessionId;
+        session.activationCount = (session.activationCount ?? 0) + 1;
         await this.durableState
           .recordSessionReprime({
             agentPubkey: this.agentIdentity.publicKey,
@@ -2070,13 +2088,22 @@ export class Body {
         return created.sessionId;
       },
       suspend: async () => {
+        const plan = session.activityProjection?.currentPlan();
+        if (plan) session.resumePlan = plan;
         session.unsubscribeActivity?.();
         session.unsubscribeActivity = undefined;
         session.activityProjection = undefined;
         if (client.isAlive) await client.stop();
       },
+      ...(input.parentChannelId ? { onStateChange: async (state: 'live' | 'suspended' | 'waiting-for-slot') => {
+        if (session.processState === state) return;
+        session.processState = state;
+        session.processStateSequence = Math.max(Date.now(), (session.processStateSequence ?? 0) + 1);
+        await postCornerSessionStatus(input.channelId, this.agentIdentity, session.logicalSessionId!, state, session.processStateSequence).catch((error) => console.error(`[body] failed to publish corner session state ${state}:`, error));
+      } } : {}),
     };
     session.lifecycle = lifecycle;
+    await lifecycle.onStateChange?.('suspended');
     // Every session — Room and corner alike — activates lazily, on its first
     // addressed turn. Provisioning N Rooms used to spawn N ACP processes up
     // front and immediately evict most of them, so a Workspace's oldest Rooms
@@ -2588,6 +2615,10 @@ export class Body {
             limit: 5_000,
           },
         ]);
+        const createEvents = await this.agentRelay.queryEvents([{ kinds: [9007], '#h': [subchannelId], limit: 5 }]);
+        const createEvent = createEvents.sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id)).find((event) => tagValue(event, 'parent') === parentChannelId);
+        const restoredTaskDescription = createEvent ? (tagValue(createEvent, 'task') ?? '') : '';
+        const restoredPlan = latestActivityPlanFromEvents(events.filter((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-activity')));
         const control = [...events]
           .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
           .find((event) => tagValue(event, 'feature') && tagValue(event, 'parent'));
@@ -2710,7 +2741,7 @@ export class Body {
               'You are a coding agent resuming one durable corner after a supervisor restart.',
               `You are working in a git worktree: ${worktreePath}`,
               `Your feature branch is: ${featureBranch}`,
-              'Continue the restored transcript on this branch. Never start a second context.',
+              'Continue from the structured resume brief and repository state. Never start a second task.',
               'Never merge, push or change the target branch, or archive this corner; only a signed human approval may authorize those effects.',
               'A tool or skill can be unavailable or fail to initialize (for example codegraph before its index is ready). Treat that as a normal recoverable error for that one call and continue the task with what you have; never abort the task because a single tool or skill is missing.',
               'You may call any skill available to you, but only when the current task explicitly calls for it or names it directly. Never auto-trigger a skill (e.g. a design/UX review skill) on routine or trivial work.',
@@ -2720,6 +2751,10 @@ export class Body {
             parentChannelId,
             worktreePath,
             featureBranch,
+            resumeObjective: restoredTaskDescription || undefined,
+            resumeTargetRef: cornerRepo.targetBranch ?? 'refs/heads/main',
+            resumeOnFirstActivation: true,
+            resumePlan: restoredPlan,
             ...(communityId ? { communityId } : {}),
           });
           const cursor = await this.durableState.cursor(subchannelId);
@@ -2753,6 +2788,7 @@ export class Body {
             lastPolledAt: cursor.createdAt,
             archived: false,
             boundRepo: cornerRepo,
+            taskDescription: restoredTaskDescription,
             ...(request ? { request } : {}),
             ...(tip
               ? {
@@ -2786,7 +2822,7 @@ export class Body {
               originalPrompt,
               [
                 'Resume this human-commissioned corner after a daemon restart.',
-                'Continue from the existing worktree, commits, and bounded restored transcript.',
+                'Continue from the existing worktree, commits, plan, and structured resume brief.',
                 'Inspect what is already complete before acting; do not repeat finished work or start a second task.',
                 '',
                 originalPrompt,
@@ -3102,6 +3138,8 @@ export class Body {
       parentChannelId: tlcChannelId,
       worktreePath,
       featureBranch,
+      resumeObjective: taskDescription || undefined,
+      resumeTargetRef: boundRepo.targetBranch ?? 'refs/heads/main',
       ...(communityId ? { communityId } : {}),
     });
 
@@ -5412,17 +5450,20 @@ export class Body {
       if (!remote && !boundRepo.localPath) continue;
       if (!(await this.findHumanMergeApproval(info))) continue;
 
-      if (this.refreshRepositoryTruth) {
-        boundRepo = await this.refreshRepositoryTruth(boundRepo, 'land');
-        // A corner keeps its approved branch/tip snapshot, but every git read
-        // and write below now uses the freshly synchronized canonical cache.
-        info.boundRepo = boundRepo;
-        remote = boundRepo.remoteName;
-      }
-
-      const outcome = remote
-        ? await this.landOnDirectRemote(info, remote, target)
-        : this.landInLocalCheckout(boundRepo.localPath!, target);
+      const landing = await serializeRepoLanding(this.repoId(boundRepo), async () => {
+        let currentRepo = boundRepo!;
+        let currentRemote = remote;
+        if (this.refreshRepositoryTruth) {
+          currentRepo = await this.refreshRepositoryTruth(currentRepo, 'land');
+          info.boundRepo = currentRepo;
+          currentRemote = currentRepo.remoteName;
+        }
+        const outcome = currentRemote ? await this.landOnDirectRemote(info, currentRemote, target) : this.landInLocalCheckout(currentRepo.localPath!, target);
+        return { boundRepo: currentRepo, remote: currentRemote, outcome };
+      });
+      boundRepo = landing.boundRepo;
+      remote = landing.remote;
+      const { outcome } = landing;
       if (outcome.kind === 'skip') continue;
       if (outcome.kind === 'failed') {
         // A target that moved on is the one land failure an agent can fix.

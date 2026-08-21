@@ -20,7 +20,6 @@ import Svg, { Path, Rect } from 'react-native-svg';
 import {
   claimNip05Handle,
   fallbackPersonName,
-  getAuthCapabilities,
   lookupRecovery,
   Nip05ClaimError,
   normalizeNip05Identifier,
@@ -51,7 +50,6 @@ import { BuzzRigTransport } from '@/sync/transport';
 import { getBuzzPushEnabled, setBuzzPushEnabled } from '@/push/buzz-push-registration';
 import { getPushPermissionInfo, type PushPermissionInfo } from '@/sync/pushRegistration';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
-import { nativeSignInProvider, type NativeSignInProvider } from '@/auth/sign-in-provider';
 
 const TYPED_CONFIRMATION = 'EXPORT';
 
@@ -135,7 +133,6 @@ export default function BuzzIdentitySettings() {
   const [pushEnabled, setPushEnabledState] = useState<boolean | null>(null);
   const [pushPermission, setPushPermission] = useState<PushPermissionInfo | null>(null);
   const [pushWorking, setPushWorking] = useState(false);
-  const [signInProvider, setSignInProvider] = useState<NativeSignInProvider>('oidc');
   const [linkedAccount, setLinkedAccount] = useState<
     'checking' | 'connected' | 'not-linked' | 'unavailable'
   >('checking');
@@ -183,17 +180,8 @@ export default function BuzzIdentitySettings() {
           setPushPermission(permission);
         }
         try {
-          const capabilities = await getAuthCapabilities(getBuzzRuntimeConfig().relayUrl).catch(
-            () => undefined,
-          );
-          const provider = nativeSignInProvider(capabilities);
-          if (!cancelled) setSignInProvider(provider);
           const links = await lookupRecovery(getBuzzRuntimeConfig().relayUrl, identity);
-          const linked = links.some((link) =>
-            provider === 'github'
-              ? link.provider === 'https://github.com'
-              : link.provider !== 'https://github.com',
-          );
+          const linked = links.some((link) => link.provider === 'https://github.com');
           if (!cancelled) setLinkedAccount(linked ? 'connected' : 'not-linked');
         } catch {
           if (!cancelled) setLinkedAccount('unavailable');
@@ -468,14 +456,13 @@ export default function BuzzIdentitySettings() {
           ? 'OS permission: not allowed yet'
           : 'OS permission: blocked in device settings'
     : 'Checking OS permission';
-  const signInProviderName = signInProvider === 'github' ? 'GitHub' : 'Google';
   const linkedAccountLabel =
     linkedAccount === 'connected'
-      ? `${signInProviderName} account connected`
+      ? 'GitHub account connected'
       : linkedAccount === 'not-linked'
-        ? `No ${signInProviderName} account linked`
+        ? 'No GitHub account linked'
         : linkedAccount === 'unavailable'
-          ? `${signInProviderName} link unavailable while offline`
+          ? 'GitHub link unavailable while offline'
           : 'Checking linked account';
   const claimStatusLabel =
     claimStatus === 'claimed'
@@ -707,10 +694,10 @@ export default function BuzzIdentitySettings() {
           <Text style={styles.sectionLabel}>LINKED SIGN-IN</Text>
           <View style={styles.settingLine}>
             <View style={styles.linkedGlyph}>
-              <Text style={styles.linkedGlyphText}>{signInProvider === 'github' ? 'GH' : 'G'}</Text>
+              <Text style={styles.linkedGlyphText}>GH</Text>
             </View>
             <View style={styles.settingCopy}>
-              <Text style={styles.settingTitle}>{signInProviderName}</Text>
+              <Text style={styles.settingTitle}>GitHub</Text>
               <Text style={styles.settingSubtitle}>{linkedAccountLabel}</Text>
             </View>
             <Text style={styles.linkedState}>{linkedAccount === 'connected' ? '✓' : '·'}</Text>

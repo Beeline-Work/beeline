@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { OidcBindError } from '@beeline/buzz-client';
 import {
-  nextGoogleOnboardingStatus,
-  noticeForOidcError,
-  waitForGoogleAuthCallback,
-} from './google-onboarding-state';
+  nextOnboardingStatus,
+  noticeForAuthError,
+  waitForAuthCallback,
+} from './onboarding-state';
 
 describe('provider onboarding error states', () => {
   it.each([
@@ -18,7 +18,7 @@ describe('provider onboarding error states', () => {
     ['internal_error', 'bind_retry', true],
   ])('maps %s to explicit %s state', (code, status, retryable) => {
     const error = new OidcBindError(code, code, code === 'internal_error' ? 500 : undefined);
-    const notice = noticeForOidcError(error);
+    const notice = noticeForAuthError(error);
     expect(notice).toMatchObject({ status, retryable });
     expect(notice.title).toContain(code.toUpperCase());
   });
@@ -26,7 +26,7 @@ describe('provider onboarding error states', () => {
   it.each(['invalid_redirect', 'invalid_configuration', 'invalid_state'])(
     'reports %s as a non-network configuration failure',
     (code) => {
-      const notice = noticeForOidcError(new OidcBindError(code, code));
+      const notice = noticeForAuthError(new OidcBindError(code, code));
       expect(notice).toMatchObject({
         status: 'bind_retry',
         retryable: false,
@@ -38,7 +38,7 @@ describe('provider onboarding error states', () => {
   );
 
   it('keeps unknown client failures distinct from retryable network failures', () => {
-    const notice = noticeForOidcError(new OidcBindError('invalid_callback', 'Bad callback'));
+    const notice = noticeForAuthError(new OidcBindError('invalid_callback', 'Bad callback'));
     expect(notice).toEqual({
       status: 'bind_retry',
       title: 'BIND FAILED · INVALID_CALLBACK',
@@ -54,7 +54,7 @@ describe('provider onboarding completion', () => {
     const callbackUrl = `${redirectUri}?state=${'s'.repeat(43)}`;
 
     await expect(
-      waitForGoogleAuthCallback({
+      waitForAuthCallback({
         redirectUri,
         openAuthSession: async () => ({ type: 'success', url: callbackUrl }),
         subscribeToUrls: () => ({ remove: () => undefined }),
@@ -63,11 +63,11 @@ describe('provider onboarding completion', () => {
   });
 
   it('keeps a successful HTTPS callback when Android reports the browser dismissed first', async () => {
-    const redirectUri = 'https://usebeeline.app/auth/oidc/mobile-callback';
+    const redirectUri = 'buzzy://buzz/github-callback';
     const callbackUrl = `${redirectUri}?state=${'s'.repeat(43)}&ticket=${'t'.repeat(43)}`;
     let onUrl: ((url: string) => void) | null = null;
 
-    const completion = waitForGoogleAuthCallback({
+    const completion = waitForAuthCallback({
       redirectUri,
       openAuthSession: async () => {
         queueMicrotask(() => onUrl?.(callbackUrl));
@@ -81,15 +81,15 @@ describe('provider onboarding completion', () => {
     });
 
     await expect(completion).resolves.toBe(callbackUrl);
-    const binding = nextGoogleOnboardingStatus('opening_browser', 'callback_received');
+    const binding = nextOnboardingStatus('opening_browser', 'callback_received');
     expect(binding).toBe('binding');
-    expect(nextGoogleOnboardingStatus(binding, 'bind_succeeded')).toBe('entering_workspace');
+    expect(nextOnboardingStatus(binding, 'bind_succeeded')).toBe('entering_workspace');
   });
 
   it('still treats a real browser close with no callback as cancellation', async () => {
     await expect(
-      waitForGoogleAuthCallback({
-        redirectUri: 'https://usebeeline.app/auth/oidc/mobile-callback',
+      waitForAuthCallback({
+        redirectUri: 'buzzy://buzz/github-callback',
         openAuthSession: async () => ({ type: 'dismiss' }),
         subscribeToUrls: () => ({ remove: () => undefined }),
         callbackGraceMs: 0,

@@ -1,9 +1,8 @@
 import { OidcBindError } from '@beeline/buzz-client';
 
-export type GoogleOnboardingStatus =
+export type OnboardingStatus =
   | 'idle'
   | 'checking_device'
-  | 'existing_device'
   | 'opening_browser'
   | 'binding'
   | 'entering_workspace'
@@ -13,54 +12,54 @@ export type GoogleOnboardingStatus =
   | 'offline'
   | 'link_conflict';
 
-export interface GoogleOnboardingNotice {
-  status: GoogleOnboardingStatus;
+export interface OnboardingNotice {
+  status: OnboardingStatus;
   title: string;
   message: string;
   retryable: boolean;
 }
 
-type GoogleOnboardingNoticeListener = (notice: GoogleOnboardingNotice) => void;
+type OnboardingNoticeListener = (notice: OnboardingNotice) => void;
 
-let pendingOnboardingNotice: GoogleOnboardingNotice | null = null;
-const onboardingNoticeListeners = new Set<GoogleOnboardingNoticeListener>();
+let pendingOnboardingNotice: OnboardingNotice | null = null;
+const onboardingNoticeListeners = new Set<OnboardingNoticeListener>();
 
 /**
  * Keep a callback failure visible when expo-router replaces the onboarding
  * component while the warm deep-link listener is still finishing the bind.
  */
-export function publishGoogleOnboardingNotice(notice: GoogleOnboardingNotice): void {
+export function publishOnboardingNotice(notice: OnboardingNotice): void {
   pendingOnboardingNotice = notice;
   for (const listener of onboardingNoticeListeners) listener(notice);
 }
 
-export function clearGoogleOnboardingNotice(): void {
+export function clearOnboardingNotice(): void {
   pendingOnboardingNotice = null;
 }
 
-export function subscribeToGoogleOnboardingNotices(
-  listener: GoogleOnboardingNoticeListener,
+export function subscribeToOnboardingNotices(
+  listener: OnboardingNoticeListener,
 ): () => void {
   onboardingNoticeListeners.add(listener);
   if (pendingOnboardingNotice) listener(pendingOnboardingNotice);
   return () => onboardingNoticeListeners.delete(listener);
 }
 
-type GoogleOnboardingEvent = 'callback_received' | 'bind_succeeded';
+type OnboardingEvent = 'callback_received' | 'bind_succeeded';
 
-interface GoogleAuthBrowserResult {
+interface AuthBrowserResult {
   type: string;
   url?: string;
 }
 
-interface GoogleAuthUrlSubscription {
+interface AuthUrlSubscription {
   remove(): void;
 }
 
-interface WaitForGoogleAuthCallbackInput {
+interface WaitForAuthCallbackInput {
   redirectUri: string;
-  openAuthSession(): Promise<GoogleAuthBrowserResult>;
-  subscribeToUrls(listener: (url: string) => void): GoogleAuthUrlSubscription;
+  openAuthSession(): Promise<AuthBrowserResult>;
+  subscribeToUrls(listener: (url: string) => void): AuthUrlSubscription;
   callbackGraceMs?: number;
 }
 
@@ -70,10 +69,10 @@ export interface AuthCallbackResult {
 }
 
 /** Keep the onboarding state transition explicit and independently testable. */
-export function nextGoogleOnboardingStatus(
-  current: GoogleOnboardingStatus,
-  event: GoogleOnboardingEvent,
-): GoogleOnboardingStatus {
+export function nextOnboardingStatus(
+  current: OnboardingStatus,
+  event: OnboardingEvent,
+): OnboardingStatus {
   if (event === 'callback_received' && current === 'opening_browser') return 'binding';
   if (event === 'bind_succeeded' && current === 'binding') return 'entering_workspace';
   return current;
@@ -88,12 +87,12 @@ function isExpectedCallback(url: string, redirectUri: string): boolean {
  * matching Linking event. Preserve that event when AppState wins by a few
  * milliseconds instead of reporting a successful OAuth round-trip as canceled.
  */
-export async function waitForGoogleAuthCallbackResult({
+export async function waitForAuthCallbackResult({
   redirectUri,
   openAuthSession,
   subscribeToUrls,
   callbackGraceMs = 1_500,
-}: WaitForGoogleAuthCallbackInput): Promise<AuthCallbackResult> {
+}: WaitForAuthCallbackInput): Promise<AuthCallbackResult> {
   let resolveObservedCallback: (result: AuthCallbackResult) => void = () => undefined;
   const observedCallback = new Promise<AuthCallbackResult>((resolve) => {
     resolveObservedCallback = resolve;
@@ -129,13 +128,13 @@ export async function waitForGoogleAuthCallbackResult({
   }
 }
 
-export async function waitForGoogleAuthCallback(
-  input: WaitForGoogleAuthCallbackInput,
+export async function waitForAuthCallback(
+  input: WaitForAuthCallbackInput,
 ): Promise<string> {
-  return (await waitForGoogleAuthCallbackResult(input)).url;
+  return (await waitForAuthCallbackResult(input)).url;
 }
 
-export function noticeForOidcError(error: unknown): GoogleOnboardingNotice {
+export function noticeForAuthError(error: unknown): OnboardingNotice {
   const code = error instanceof OidcBindError ? error.code : 'unknown';
   const codeLabel = (code.replace(/[^a-z0-9_-]/gi, '_').slice(0, 40) || 'unknown').toUpperCase();
   const titleWithCode = (title: string): string => `${title} · ${codeLabel}`;

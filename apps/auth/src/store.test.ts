@@ -96,4 +96,37 @@ describe('durable transactional identity-link store', () => {
     ]);
     await reopenedStore.close();
   }, 30_000);
+
+  it('reads the server-stamped Room tenant across the two-community production shape', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-auth-room-store-'));
+    directories.push(directory);
+    const database = new DurablePgliteDatabase(directory);
+    await database.client.waitReady;
+    await database.query(`CREATE TABLE channels (
+      id UUID PRIMARY KEY,
+      community_id UUID NOT NULL,
+      deleted_at TIMESTAMPTZ
+    )`);
+    await database.query(
+      `INSERT INTO channels (id, community_id) VALUES
+       ($1::uuid, $2::uuid),
+       ($3::uuid, $4::uuid)`,
+      [
+        'd2cddea6-3224-43e8-bd45-0da26d95d378',
+        '3a47eeff-fdff-4a1e-9eb9-b48cb4ed90ed',
+        '484556f2-7e81-4ad6-a851-0e57bdba6a67',
+        'e8299f28-f095-472f-941a-80d1195b9a24',
+      ],
+    );
+    const store = new AuthStore(database);
+
+    await expect(
+      store.relayCommunityIdForRoom('d2cddea6-3224-43e8-bd45-0da26d95d378'),
+    ).resolves.toBe('3a47eeff-fdff-4a1e-9eb9-b48cb4ed90ed');
+    await expect(
+      store.relayCommunityIdForRoom('484556f2-7e81-4ad6-a851-0e57bdba6a67'),
+    ).resolves.toBe('e8299f28-f095-472f-941a-80d1195b9a24');
+    await expect(store.relayCommunityIdForRoom('not-a-room-id')).resolves.toBeNull();
+    await database.close();
+  }, 30_000);
 });

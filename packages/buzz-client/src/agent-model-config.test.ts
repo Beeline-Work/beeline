@@ -225,4 +225,35 @@ describe('agent model/effort selection', () => {
     expect(parsed.options.map((option) => option.category)).not.toContain('mode');
     expect(parsed.options).toEqual(options);
   });
+
+  it('round-trips the agent-authored effective selection on a catalog, stripping record extras', async () => {
+    const published: NostrEvent[] = [];
+    stubRelay(published);
+
+    // Callers may hand a full persisted AgentModelConfig (raw/authoredBy/…);
+    // only the bare pair may reach the wire.
+    await publishAgentModelCatalog(
+      ctx(agentIdentity),
+      communityId,
+      [{ id: 'effort', category: 'effort', options: [{ id: 'low' }, { id: 'high' }] }],
+      {
+        model: 'gpt-5.1-codex',
+        effort: 'xhigh',
+        authoredBy: owner.publicKey,
+        communityId,
+        agentPubkey: agentIdentity.publicKey,
+        updatedAt: 1,
+      } as never,
+    );
+
+    await expect(
+      getAgentModelCatalog(ctx(owner), communityId, agentIdentity.publicKey),
+    ).resolves.toMatchObject({ selection: { model: 'gpt-5.1-codex', effort: 'xhigh' } });
+    const content = JSON.parse(published.at(-1)?.content ?? '{}') as { selection?: object };
+    expect(content.selection).toEqual({ model: 'gpt-5.1-codex', effort: 'xhigh' });
+
+    // A catalog with no selection still parses and reads back fine.
+    const bare = await publishAgentModelCatalog(ctx(agentIdentity), communityId, []);
+    expect(bare.selection).toBeUndefined();
+  });
 });

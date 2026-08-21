@@ -457,6 +457,103 @@ describe('Members screen', () => {
     });
   });
 
+  it('shows a CLI-configured agent its configured values from the published catalog', async () => {
+    // THE reported break: `beeline pair --model/--effort` wrote only to the
+    // local runtime record, so both rows rendered a dead `—` with no chevron.
+    // The daemon now publishes the effective selection on its catalog; the
+    // app must show it even with no human-authored config record at all.
+    const agentPubkey = '8'.repeat(64);
+    client.listAgents.mockResolvedValue([
+      { agentId: 'a8', communityId: 'workspace-1', displayName: 'joy', pubkey: agentPubkey, createdAt: 0, raw: {} },
+    ]);
+    agentModelCatalogRead.mockResolvedValue({
+      communityId: 'workspace-1',
+      agentPubkey,
+      options: [
+        { id: 'model', category: 'model', currentValue: 'default', options: [{ id: 'gpt-5.1-codex' }] },
+        { id: 'effort', category: 'effort', currentValue: 'default', options: [{ id: 'low' }, { id: 'xhigh' }] },
+      ],
+      selection: { model: 'gpt-5.1-codex', effort: 'xhigh' },
+      updatedAt: 0,
+      raw: {},
+    });
+    agentModelConfigRead.mockResolvedValue(null);
+    const renderer = await render();
+
+    await act(async () => {
+      ancestorButton(renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` })).props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      renderer.root.findByProps({ testID: 'model-axis-value-model' }).props.children,
+    ).toBe('gpt-5.1-codex');
+    expect(
+      renderer.root.findByProps({ testID: 'model-axis-value-effort' }).props.children,
+    ).toBe('xhigh');
+  });
+
+  it('renders the effort axis as selectable levels, never a free-text input', async () => {
+    // Effort values are a small fixed set, so a text field is the wrong
+    // affordance even when no catalog has advertised the harness's levels —
+    // the fallback offers the common levels instead.
+    const agentPubkey = '9'.repeat(64);
+    client.listAgents.mockResolvedValue([
+      { agentId: 'a9', communityId: 'workspace-1', displayName: 'joy', pubkey: agentPubkey, createdAt: 0, raw: {} },
+    ]);
+    const renderer = await render();
+
+    await act(async () => {
+      ancestorButton(renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` })).props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'model-axis-effort' }).props.onPress();
+    });
+    for (const level of ['low', 'medium', 'high']) {
+      expect(renderer.root.findByProps({ testID: `model-option-effort-${level}` })).toBeDefined();
+    }
+    // No custom text entry for effort — only the model axis keeps that escape.
+    expect(renderer.root.findAllByProps({ testID: 'model-custom-effort' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'model-custom-input-effort' })).toHaveLength(0);
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'model-option-effort-medium' }).props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(agentModelConfigSet).toHaveBeenCalledWith('workspace-1', agentPubkey, { effort: 'medium' });
+  });
+
+  it('never renders a dead row: an unknown value says so and every row stays tappable', async () => {
+    const agentPubkey = '11'.repeat(2) /* '1111…' */;
+    client.listAgents.mockResolvedValue([
+      { agentId: 'a11', communityId: 'workspace-1', displayName: 'joy', pubkey: agentPubkey, createdAt: 0, raw: {} },
+    ]);
+    const renderer = await render();
+
+    await act(async () => {
+      ancestorButton(renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` })).props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    for (const axis of ['model', 'effort']) {
+      expect(
+        renderer.root.findByProps({ testID: `model-axis-value-${axis}` }).props.children,
+      ).toBe('Not set — tap to choose');
+      // The chevron is the affordance; it must never disappear just because
+      // the axis has no advertised options.
+      const row = renderer.root.findByProps({ testID: `model-axis-${axis}` });
+      expect(row.props.children).toHaveLength(3);
+    }
+    // And the missing catalog is stated, not silent.
+    expect(renderer.root.findByProps({ testID: 'model-catalog-missing' })).toBeDefined();
+  });
+
   it('paints from the local Workspace roster cache before any network read resolves', async () => {
     const cachedAgentPubkey = '6'.repeat(64);
     const cachedPersonPubkey = '7'.repeat(64);

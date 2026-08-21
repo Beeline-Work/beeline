@@ -135,6 +135,7 @@ export {
   OIDC_BIND_PROTOCOL,
   OIDC_BIND_KIND,
   OIDC_BIND_MARKER,
+  MOBILE_APP_SCHEMES,
   OidcBindError,
   startOidcBind,
   startGitHubBind,

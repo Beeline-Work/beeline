@@ -4,6 +4,13 @@ import type { Identity } from './types.js';
 export const OIDC_BIND_PROTOCOL = 1 as const;
 export const OIDC_BIND_KIND = 24_250 as const;
 export const OIDC_BIND_MARKER = 'beeline-oidc-bind-v1' as const;
+// Exact native identities from apps/mobile/app.config.js. Keep this closed set in sync.
+export const MOBILE_APP_SCHEMES = ['buzzy-dev', 'buzzy-preview', 'buzzy'] as const;
+
+const MOBILE_APP_PROTOCOLS = new Set<string>(MOBILE_APP_SCHEMES.map((scheme) => `${scheme}:`));
+const GITHUB_SIGN_IN_DEEP_LINKS = MOBILE_APP_SCHEMES.map(
+  (scheme) => `${scheme}://buzz/github-callback`,
+);
 
 const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 const HEX_KEY_RE = /^[0-9a-f]{64}$/;
@@ -206,9 +213,10 @@ function startProviderBind(
     !redirect.search &&
     !redirect.hash;
   const isLoopback = ['localhost', '127.0.0.1', '10.0.2.2'].includes(base.hostname);
-  const isEmulatorScheme = isLoopback && redirect.protocol === 'buzzy:';
+  const isEmulatorScheme = isLoopback && MOBILE_APP_PROTOCOLS.has(redirect.protocol);
   const isGitHubAppScheme =
-    provider === 'github' && exactRedirect(input.redirectUri, 'buzzy://buzz/github-callback');
+    provider === 'github' &&
+    GITHUB_SIGN_IN_DEEP_LINKS.some((deepLink) => exactRedirect(input.redirectUri, deepLink));
   if (
     (!isAssociatedLink && !isEmulatorScheme && !isGitHubAppScheme) ||
     redirect.username ||

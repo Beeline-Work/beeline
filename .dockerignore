@@ -18,3 +18,9 @@ packages/nostr/*
 !packages/nostr/tsconfig.json
 !packages/nostr/src
 !packages/nostr/src/**
+!packages/buzz-client
+packages/buzz-client/*
+!packages/buzz-client/package.json
+!packages/buzz-client/tsconfig.json
+!packages/buzz-client/src
+!packages/buzz-client/src/**

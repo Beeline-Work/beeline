@@ -59,3 +59,5 @@ apps/mobile/.expo/
 apps/mobile/dist/
 apps/mobile/web-build/
 apps/mobile/.turbo/
+# Local iOS signing certificate/profile paths and password (EAS local credentials).
+apps/mobile/credentials.json

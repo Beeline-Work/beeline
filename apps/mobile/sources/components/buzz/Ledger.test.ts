@@ -206,6 +206,40 @@ describe('the ledger — an agent turn', () => {
 });
 
 describe('the ledger — a human turn', () => {
+  it('keeps resolved and unresolved mention messages at the same text size and weight', () => {
+    // In the reported sequence the resolved @codex message opened the captain's
+    // speaker run, while the immediately-following unresolved @ox message was
+    // classified as a continuation. Routing metadata never reaches LedgerSteer;
+    // run position must not make otherwise-identical human prose look different.
+    const resolved = render(
+      React.createElement(LedgerSteer, {
+        itemId: 'resolved',
+        bodyText: '@codex can you see this message',
+        bodyTestID: 'resolved-body',
+      }),
+    );
+    const unresolved = render(
+      React.createElement(LedgerSteer, {
+        itemId: 'unresolved',
+        continued: true,
+        bodyText: '@ox can you see this message',
+        bodyTestID: 'unresolved-body',
+      }),
+    );
+
+    const resolvedStyle = resolved.root.findByProps({
+      testID: 'resolved-body',
+    }).props.textStyle;
+    const unresolvedStyle = unresolved.root.findByProps({
+      testID: 'unresolved-body',
+    }).props.textStyle;
+    expect(unresolvedStyle).toMatchObject({
+      fontFamily: resolvedStyle.fontFamily,
+      fontSize: resolvedStyle.fontSize,
+      lineHeight: resolvedStyle.lineHeight,
+    });
+  });
+
   it('identifies your own turn with the sanctioned gold rail and no "YOU" label', () => {
     const agent = render(
       React.createElement(LedgerEntry, {

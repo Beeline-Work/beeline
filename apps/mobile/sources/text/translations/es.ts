@@ -167,15 +167,6 @@ export const es: TranslationStructure = {
         },
         alwaysShowContextSize: 'Mostrar siempre tamaño del contexto',
         alwaysShowContextSizeDescription: 'Mostrar uso del contexto incluso cuando no esté cerca del límite',
-        avatarStyle: 'Estilo de avatar',
-        avatarStyleDescription: 'Elige la apariencia del avatar de sesión',
-        avatarOptions: {
-            pixelated: 'Pixelado',
-            gradient: 'Gradiente',
-            brutalist: 'Brutalista',
-        },
-        showFlavorIcons: 'Mostrar íconos de proveedor de IA',
-        showFlavorIconsDescription: 'Mostrar íconos del proveedor de IA en los avatares de sesión',
     },
 
     settingsFeatures: {

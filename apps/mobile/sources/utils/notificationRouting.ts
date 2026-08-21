@@ -37,15 +37,15 @@ export function getBuzzChannelIdFromNotificationData(data: unknown): string | nu
     return typeof channelId === 'string' && channelId.trim() ? channelId : null;
 }
 
-function getSessionRouteFromUrl(url: string): `/session/${string}` | null {
+function hasLegacySessionUrl(url: string): boolean {
     const trimmedUrl = url.trim();
     if (!trimmedUrl) {
-        return null;
+        return false;
     }
 
     const match = trimmedUrl.match(/(?:^|\/)session\/([^/?#]+)/);
     if (!match) {
-        return null;
+        return false;
     }
 
     const encodedSessionId = match[1];
@@ -58,43 +58,31 @@ function getSessionRouteFromUrl(url: string): `/session/${string}` | null {
     })();
 
     const trimmedSessionId = sessionId.trim();
-    if (!trimmedSessionId) {
-        return null;
-    }
-
-    return `/session/${encodeURIComponent(trimmedSessionId)}`;
+    return Boolean(trimmedSessionId);
 }
 
-export function getSessionRouteFromNotificationData(data: unknown): `/session/${string}` | null {
+/** Detect a retired Happy-session push so it can fall back to the Room list. */
+export function isLegacySessionNotificationData(data: unknown): boolean {
     const normalizedData = normalizeNotificationData(data);
     if (!normalizedData || typeof normalizedData !== 'object' || Array.isArray(normalizedData)) {
-        return null;
+        return false;
     }
 
     const url = getObjectValue(normalizedData, 'url');
-    if (typeof url === 'string') {
-        const routeFromUrl = getSessionRouteFromUrl(url);
-        if (routeFromUrl) {
-            return routeFromUrl;
-        }
+    if (typeof url === 'string' && hasLegacySessionUrl(url)) {
+        return true;
     }
 
     const sessionId = getObjectValue(normalizedData, 'sessionId');
     if (typeof sessionId !== 'string') {
-        return null;
+        return false;
     }
-
-    const trimmedSessionId = sessionId.trim();
-    if (!trimmedSessionId) {
-        return null;
-    }
-
-    return `/session/${encodeURIComponent(trimmedSessionId)}`;
+    return Boolean(sessionId.trim());
 }
 
-export function getSessionRouteFromNotificationResponse(response: unknown): `/session/${string}` | null {
+export function isLegacySessionNotificationResponse(response: unknown): boolean {
     const contentData = getObjectValue(getObjectValue(getObjectValue(response, 'notification'), 'request'), 'content');
-    return getSessionRouteFromNotificationData(getObjectValue(contentData, 'data'));
+    return isLegacySessionNotificationData(getObjectValue(contentData, 'data'));
 }
 
 /**

@@ -169,15 +169,6 @@ export const zhHans: TranslationStructure = {
         },
         alwaysShowContextSize: '始终显示上下文大小',
         alwaysShowContextSizeDescription: '即使未接近限制时也显示上下文使用情况',
-        avatarStyle: '头像风格',
-        avatarStyleDescription: '选择会话头像外观',
-        avatarOptions: {
-            pixelated: '像素化',
-            gradient: '渐变',
-            brutalist: '粗糙风格',
-        },
-        showFlavorIcons: '显示 AI 提供商图标',
-        showFlavorIconsDescription: '在会话头像上显示 AI 提供商图标',
     },
 
     settingsFeatures: {

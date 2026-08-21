@@ -147,15 +147,6 @@ export const ru: TranslationStructure = {
         },
         alwaysShowContextSize: 'Всегда показывать размер контекста',
         alwaysShowContextSizeDescription: 'Отображать использование контекста даже когда не близко к лимиту',
-        avatarStyle: 'Стиль аватара',
-        avatarStyleDescription: 'Выберите внешний вид аватара сессии',
-        avatarOptions: {
-            pixelated: 'Пиксельная',
-            gradient: 'Градиентная',
-            brutalist: 'Бруталистская',
-        },
-        showFlavorIcons: 'Показывать иконки провайдеров ИИ',
-        showFlavorIconsDescription: 'Отображать иконки провайдеров ИИ на аватарах сессий',
     },
 
     settingsFeatures: {

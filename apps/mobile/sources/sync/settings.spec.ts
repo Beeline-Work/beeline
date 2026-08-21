@@ -97,7 +97,7 @@ describe('settings', () => {
         });
 
         it('should apply delta to existing settings', () => {
-            const currentSettings = makeSettings({ schemaVersion: 1, avatarStyle: 'gradient' });
+            const currentSettings = makeSettings({ schemaVersion: 1 });
             const delta: Partial<Settings> = { viewInline: true };
             expect(applySettings(currentSettings, delta)).toEqual({
                 ...currentSettings,
@@ -106,13 +106,13 @@ describe('settings', () => {
         });
 
         it('should merge with defaults', () => {
-            const currentSettings = makeSettings({ schemaVersion: 1, avatarStyle: 'gradient' });
+            const currentSettings = makeSettings({ schemaVersion: 1 });
             const delta: Partial<Settings> = {};
             expect(applySettings(currentSettings, delta)).toEqual(currentSettings);
         });
 
         it('should override existing values with delta', () => {
-            const currentSettings = makeSettings({ viewInline: true, avatarStyle: 'gradient' });
+            const currentSettings = makeSettings({ viewInline: true });
             const delta: Partial<Settings> = { viewInline: false };
             expect(applySettings(currentSettings, delta)).toEqual({
                 ...currentSettings,
@@ -121,7 +121,7 @@ describe('settings', () => {
         });
 
         it('should handle empty delta', () => {
-            const currentSettings = makeSettings({ viewInline: true, avatarStyle: 'gradient' });
+            const currentSettings = makeSettings({ viewInline: true });
             expect(applySettings(currentSettings, {})).toEqual(currentSettings);
         });
 
@@ -141,7 +141,7 @@ describe('settings', () => {
         });
 
         it('should handle extra fields in delta', () => {
-            const currentSettings = makeSettings({ viewInline: true, avatarStyle: 'gradient' });
+            const currentSettings = makeSettings({ viewInline: true });
             const delta: any = {
                 viewInline: false,
                 newField: 'new value'
@@ -186,8 +186,6 @@ describe('settings', () => {
                 experiments: false,
                 alwaysShowContextSize: false,
                 agentInputEnterToSend: true,
-                avatarStyle: 'brutalist',
-                showFlavorIcons: false,
                 userMessageBubbleColor: 'gray',
                 sessionStatusBarDisplay: 'hidden',
                 usageLimitShowRemaining: false,
@@ -217,9 +215,32 @@ describe('settings', () => {
             const parsed = settingsParse(settingsDefaults);
             expect(parsed).toEqual(settingsDefaults);
         });
+
+        it('drops retired avatar preferences from persisted settings', () => {
+            const parsed = settingsParse({
+                avatarStyle: 'gradient',
+                showFlavorIcons: true,
+                viewInline: true,
+            });
+
+            expect(parsed).not.toHaveProperty('avatarStyle');
+            expect(parsed).not.toHaveProperty('showFlavorIcons');
+            expect(parsed.viewInline).toBe(true);
+        });
     });
 
     describe('settingsToSyncPayload', () => {
+        it('does not sync retired avatar preferences from an older payload', () => {
+            const payload = settingsToSyncPayload({
+                ...settingsDefaults,
+                avatarStyle: 'pixelated',
+                showFlavorIcons: true,
+            } as Settings);
+
+            expect(payload).not.toHaveProperty('avatarStyle');
+            expect(payload).not.toHaveProperty('showFlavorIcons');
+        });
+
         it('omits empty agent default overrides', () => {
             expect(settingsToSyncPayload(settingsDefaults)).not.toHaveProperty('agentDefaultOverrides');
         });

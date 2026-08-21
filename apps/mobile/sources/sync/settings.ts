@@ -29,8 +29,6 @@ export const SettingsSchema = z.object({
     experiments: z.boolean().describe('Whether to enable experimental features'),
     alwaysShowContextSize: z.boolean().describe('Always show context size in agent input'),
     agentInputEnterToSend: z.boolean().describe('Whether pressing Enter submits/sends in the agent input (web)'),
-    avatarStyle: z.string().describe('Avatar display style'),
-    showFlavorIcons: z.boolean().describe('Whether to show AI provider icons in avatars'),
     userMessageBubbleColor: z.string().describe('User message bubble color preset'),
     sessionStatusBarDisplay: z.enum(SESSION_STATUS_BAR_DISPLAY_MODES).describe('Whether/where to show the branch, model, effort, and context status bar'),
     usageLimitShowRemaining: z.boolean().describe('Show plan rate limits as quota remaining instead of quota used'),
@@ -109,8 +107,6 @@ export const settingsDefaults: Settings = {
     experiments: false,
     alwaysShowContextSize: false,
     agentInputEnterToSend: true,
-    avatarStyle: 'brutalist',
-    showFlavorIcons: false,
     userMessageBubbleColor: DEFAULT_USER_MESSAGE_BUBBLE_COLOR,
     // Hidden everywhere by default — the context usage indicator is still too
     // raw to roll out; users can opt back in from appearance settings.
@@ -153,6 +149,8 @@ export function settingsParse(settings: unknown): Settings {
     if (!parsed.success) {
         // For invalid settings, preserve unknown fields but use defaults for known fields
         const unknownFields = { ...(settings as any) };
+        delete unknownFields.avatarStyle;
+        delete unknownFields.showFlavorIcons;
         // Remove all known schema fields from unknownFields
         const knownFields = Object.keys(SettingsSchema.shape);
         knownFields.forEach(key => delete unknownFields[key]);
@@ -167,6 +165,8 @@ export function settingsParse(settings: unknown): Settings {
 
     // Merge defaults, parsed settings, and preserve unknown fields
     const unknownFields = { ...(settings as any) };
+    delete unknownFields.avatarStyle;
+    delete unknownFields.showFlavorIcons;
     // Remove known fields from unknownFields to preserve only the unknown ones
     Object.keys(parsed.data).forEach(key => delete unknownFields[key]);
 
@@ -181,6 +181,8 @@ export function settingsParse(settings: unknown): Settings {
 export function applySettings(settings: Settings, delta: Partial<Settings>): Settings {
     // Original behavior: start with settings, apply delta, fill in missing with defaults
     const result = { ...settings, ...delta };
+    delete (result as Record<string, unknown>).avatarStyle;
+    delete (result as Record<string, unknown>).showFlavorIcons;
 
     // Fill in any missing fields with defaults
     Object.keys(settingsDefaults).forEach(key => {
@@ -194,6 +196,8 @@ export function applySettings(settings: Settings, delta: Partial<Settings>): Set
 
 export function settingsToSyncPayload(settings: Settings): Partial<Settings> {
     const result: Partial<Settings> = { ...settings };
+    delete (result as Record<string, unknown>).avatarStyle;
+    delete (result as Record<string, unknown>).showFlavorIcons;
     const compactAgentOverrides = Object.fromEntries(
         Object.entries(settings.agentDefaultOverrides ?? {}).filter(([, value]) => (
             value && typeof value === 'object' && Object.keys(value).length > 0

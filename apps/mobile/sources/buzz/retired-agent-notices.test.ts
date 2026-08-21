@@ -137,6 +137,6 @@ describe('the retired daemon state notices never reach a person', () => {
       { latestMessage: 'I lost my connection to the relay — reconnecting.' },
       new Map(),
     );
-    expect(row.preview).not.toContain('lost my connection');
+    expect(row.fact).not.toContain('lost my connection');
   });
 });

@@ -87,9 +87,7 @@ describe('Room list — Grok Mono Hull invariants', () => {
       expect(text, `${name} chrome should not mount HullSurface`).not.toContain('<HullSurface');
     }
     expect(styleBlock(source, 'header')).toMatch(/hairlineDivider/);
-    expect(styleBlock(railSource, 'rail')).toMatch(
-      /borderRightWidth: StyleSheet\.hairlineWidth/,
-    );
+    expect(styleBlock(railSource, 'rail')).toMatch(/borderRightWidth: StyleSheet\.hairlineWidth/);
     // A row declares no surface of its own either — the slab shows through.
     expect(styleBlock(source, 'roomCell')).not.toMatch(/backgroundColor/);
   });
@@ -110,12 +108,9 @@ describe('Room list — Grok Mono Hull invariants', () => {
     }
   });
 
-  it('spends the gold accent only on genuinely live agent work', () => {
-    // Gold means exactly one thing product-wide: an agent is alive and working.
-    // On this screen that is a Room with a live corner — the row's ◆ glyph, its
-    // corner count, the corner's own glyph in the dropdown, and the live tally
-    // in the section heading. Everything else, unread and needs-attention
-    // included, escalates on weight and luminance instead.
+  it('spends the gold accent on live work and the requested unread rail', () => {
+    // The Room-list brief deliberately adds a solid gold unread rail. All
+    // other uses remain redundant live-work signals.
     const accentStyles = [...source.matchAll(/ {2}([A-Za-z0-9_]+): \{[^}]*groknight\.accent/g)].map(
       (match) => match[1],
     );
@@ -124,15 +119,16 @@ describe('Room list — Grok Mono Hull invariants', () => {
       'cornerPeekCountLive',
       'indexSignalCount',
       'roomGlyphLive',
+      'unreadRail',
     ]);
-    for (const name of ['rowUnread', 'rowTitleUnread', 'roomGlyphAttention', 'rowAgeUnread']) {
+    for (const name of ['rowTitleUnread', 'roomGlyphAttention', 'rowAgeUnread']) {
       expect(styleBlock(source, name), `${name} must not take gold`).not.toMatch(/accent/);
     }
     // Every gold mark on a row is driven by the same derived `live` flag, so a
     // Room that is merely unread or merely busy can never pick it up.
     expect(source).toContain('live && styles.roomGlyphLive');
     expect(source).toContain('row.live && styles.cornerPeekCountLive');
-    expect(source).toContain('unread={unread}');
+    expect(source).toContain('unread && <View pointerEvents="none" style={styles.unreadRail} />');
   });
 
   it('runs the live pulse only on a Room that is actually live', () => {
@@ -155,9 +151,10 @@ describe('Room list — Grok Mono Hull invariants', () => {
         'groknight.ledgerGhost',
       );
     }
-    // Unread spends the index's one weight step plus one luminance step — it is
-    // the only place on this screen weight is spent at all.
-    expect(styleBlock(source, 'rowTitle')).toContain('Typography.default()');
+    // Names are always semibold; read Rooms dim one tone and unread Rooms stay
+    // at full luminance.
+    expect(styleBlock(source, 'rowTitle')).toContain("Typography.default('semiBold')");
+    expect(styleBlock(source, 'rowTitleRead')).toContain('groknight.textSecondary');
     expect(styleBlock(source, 'rowTitleUnread')).toContain("Typography.default('semiBold')");
     expect(styleBlock(source, 'rowTitleUnread')).toContain('groknight.ledgerBright');
   });
@@ -181,18 +178,18 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(source.match(/style=\{styles\.roomCell\}/g)).toHaveLength(2);
   });
 
-  it('shows a human preview line, never raw plumbing or a placeholder id', () => {
-    // The preview is whatever `roomPreviewText` sanitized at ingest; the row
-    // must not re-derive or re-format message content itself.
-    expect(source).toContain('{row.preview}');
+  it('shows the projected current fact, never raw plumbing or a placeholder id', () => {
+    // The projection chooses lifecycle truth first and a sanitized message
+    // only as its fallback; the row renders that answer directly.
+    expect(source).toContain('{row.fact}');
     // No slicing, splitting, or rewriting of message text on this screen — the
     // one sanitizer is `roomPreviewText`, applied where the preview is stored.
     expect(source).not.toMatch(/latestMessage[^\n]*\.(?:slice|split|replace|substring)\(/);
     expect(source).not.toMatch(/latestMessage[^\n]*(?:hint:|\[rejected\])/);
   });
 
-  it('attributes the preview with the same identity waterfall the rest of the app uses', () => {
-    expect(source).toContain('roomRowPresentation(item, authorNames)');
+  it('attributes lifecycle facts with the same identity waterfall the rest of the app uses', () => {
+    expect(source).toContain('roomListSections(displayChannels, authorNames)');
     expect(source).toContain("names.set(identity.publicKey, 'You')");
   });
 
@@ -219,14 +216,24 @@ describe('Room list — Grok Mono Hull invariants', () => {
   it('opens a Room’s corners inline from its chevron control', () => {
     expect(source).toContain('testID={`room-corners-toggle-${item.id}`}');
     expect(source).toContain('accessibilityState={{ expanded }}');
-    expect(source).toContain('setExpandedRoomId((current) => (current === item.id ? null : item.id))');
+    expect(source).toContain(
+      'setExpandedRoomId((current) => (current === item.id ? null : item.id))',
+    );
     expect(source).toContain('{expanded && (');
     expect(source).toContain('{corners.map((corner) => {');
   });
 
-  it('marks unread Rooms with a bright non-gold scanning rail', () => {
-    expect(styleBlock(source, 'rowMarkUnread')).toContain('groknight.ledgerBright');
-    expect(styleBlock(source, 'rowMarkUnread')).not.toContain('groknight.accent');
+  it('marks unread Rooms with the brief’s solid gold left rail and no NEW tag', () => {
+    expect(styleBlock(source, 'unreadRail')).toContain('groknight.accent');
+    expect(styleBlock(source, 'unreadRail')).toContain('left: 0');
+    expect(source).not.toContain('styles.rowUnread');
+  });
+
+  it('renders three non-sticky zones from the meaningful-event projection', () => {
+    expect(source).toContain('<SectionList');
+    expect(source).toContain('sections={roomSections}');
+    expect(source).toContain('stickySectionHeadersEnabled={false}');
+    expect(source).toContain("section.zone === 'working'");
   });
 
   it('offers the full corner list as the way to reach excluded corners', () => {
@@ -302,9 +309,7 @@ describe('Workspace rail and chrome — Grok Mono Hull invariants', () => {
     expect(railSource).toContain('!active && styles.railButtonIdle');
     expect(styleBlock(railSource, 'railButtonIdle')).toMatch(/opacity: 0\.\d+/);
     for (const name of ['railButton', 'railButtonIdle', 'railButtonSlot']) {
-      expect(styleBlock(railSource, name), `${name} must not fill`).not.toMatch(
-        /backgroundColor/,
-      );
+      expect(styleBlock(railSource, name), `${name} must not fill`).not.toMatch(/backgroundColor/);
     }
   });
 

@@ -12,14 +12,11 @@ import {
 import { HullLivePulse } from './MonoHull';
 import { useUnistyles } from 'react-native-unistyles';
 
-type IdentityMarkProps = {
+type IdentityMarkBaseProps = {
   /** The identity's stable seed: a pubkey for an agent or a person, the
    *  community id for a Workspace. Same seed, same mark, forever. */
   seed: string;
-  kind: IdentityKind;
   size?: number;
-  /** An agent working right now. Draws the gold ring; never touches colour. */
-  alive?: boolean;
   /** Workspace-rail selection: the mark's own heavier frame (`DESIGN.md`,
    *  "Index rows" — selection reads three redundant ways, none a box). */
   selected?: boolean;
@@ -27,6 +24,19 @@ type IdentityMarkProps = {
   avatarUrl?: string;
   testID?: string;
 };
+
+// Gold means ONE thing product-wide: a live agent. The discriminated union is
+// that rule enforced at the type level — no human or Workspace mark can carry
+// `alive`, so a future boolean pass cannot redefine gold without a type error.
+export type AgentIdentityMarkProps = IdentityMarkBaseProps & {
+  kind: 'agent';
+  /** An agent working right now. Draws the gold ring; never touches colour. */
+  alive?: boolean;
+};
+export type NonAgentIdentityMarkProps = IdentityMarkBaseProps & {
+  kind: Exclude<IdentityKind, 'agent'>;
+};
+export type IdentityMarkProps = AgentIdentityMarkProps | NonAgentIdentityMarkProps;
 
 // ── The three silhouettes, in one 0–100 viewBox ──────────────────────────────
 //
@@ -43,11 +53,9 @@ const TRIANGLE = `50,${TRIANGLE_APEX_Y} 88,${TRIANGLE_BASE_Y} 12,${TRIANGLE_BASE
 const TRIANGLE_RING = '50,6.1 97.5,88.4 2.5,88.4';
 
 const CIRCLE_RADIUS = 38;
-const CIRCLE_RING_RADIUS = 45.5;
 
 const SQUARE_INSET = 12;
 const SQUARE_SIDE = 100 - SQUARE_INSET * 2;
-const SQUARE_RING_INSET = 2.5;
 
 /** Scale a point about the triangle's centroid — how the mesh is inset. */
 function triangleScaled(scale: number): { apexY: number; baseY: number; left: number; right: number } {
@@ -176,16 +184,12 @@ function cellFill(cell: CypherCell, palette: IdentityPalette): string | null {
  * that froze the transcript. Every prop is a primitive, so a shallow compare
  * bails correctly.
  */
-export const IdentityMark = React.memo(function IdentityMark({
-  seed,
-  kind,
-  size = 40,
-  alive = false,
-  selected = false,
-  name,
-  avatarUrl,
-  testID,
-}: IdentityMarkProps) {
+export const IdentityMark = React.memo(function IdentityMark(props: IdentityMarkProps) {
+  const { seed, kind, size = 40, selected = false, name, avatarUrl, testID } = props;
+  // Defensive, not just typed: even a value smuggled past the union at runtime
+  // (an untyped caller, a stale bundle) can only ever light gold on an agent.
+  const alive = props.kind === 'agent' ? Boolean(props.alive) : false;
+  const live = kind === 'agent' && alive;
   const { theme } = useUnistyles();
   const groknight = theme.buzz;
   const [failedAvatar, setFailedAvatar] = useState<string | null>(null);
@@ -201,7 +205,7 @@ export const IdentityMark = React.memo(function IdentityMark({
 
   useEffect(() => setFailedAvatar(null), [avatarUrl]);
 
-  const label = `${name ?? identityKindLabel(kind)}, ${identityKindLabel(kind)}${alive ? ', working' : ''}`;
+  const label = `${name ?? identityKindLabel(kind)}, ${identityKindLabel(kind)}${live ? ', working' : ''}`;
 
   return (
     <View
@@ -302,45 +306,14 @@ export const IdentityMark = React.memo(function IdentityMark({
         clock, and is mounted only when something is genuinely live, so a
         quiet row pays for no animation at all.
       */}
-      {alive && (
+      {live && (
         <HullLivePulse style={styles.aliveRing}>
           <Svg width={size} height={size} viewBox="0 0 100 100">
-            {kind === 'agent' && (
-              <>
-                <Polygon points={TRIANGLE_RING} fill="none" stroke={groknight.accent} strokeWidth={8} opacity={0.14} />
-                <Polygon points={TRIANGLE_RING} fill="none" stroke={groknight.accent} strokeWidth={3} strokeLinejoin="miter" />
-              </>
-            )}
-            {kind === 'human' && (
-              <>
-                <Circle cx="50" cy="50" r={CIRCLE_RING_RADIUS} fill="none" stroke={groknight.accent} strokeWidth={8} opacity={0.14} />
-                <Circle cx="50" cy="50" r={CIRCLE_RING_RADIUS} fill="none" stroke={groknight.accent} strokeWidth={3} />
-              </>
-            )}
-            {kind === 'workspace' && (
-              <>
-                <Rect
-                  x={SQUARE_RING_INSET}
-                  y={SQUARE_RING_INSET}
-                  width={100 - SQUARE_RING_INSET * 2}
-                  height={100 - SQUARE_RING_INSET * 2}
-                  fill="none"
-                  stroke={groknight.accent}
-                  strokeWidth={8}
-                  opacity={0.14}
-                />
-                <Rect
-                  x={SQUARE_RING_INSET}
-                  y={SQUARE_RING_INSET}
-                  width={100 - SQUARE_RING_INSET * 2}
-                  height={100 - SQUARE_RING_INSET * 2}
-                  fill="none"
-                  stroke={groknight.accent}
-                  strokeWidth={3}
-                  strokeLinejoin="miter"
-                />
-              </>
-            )}
+            {/* Gold means a live agent — the only kind `live` can name, by
+                type and by the defensive computation above — so the ring is
+                drawn in the triangle's own silhouette alone. */}
+            <Polygon points={TRIANGLE_RING} fill="none" stroke={groknight.accent} strokeWidth={8} opacity={0.14} />
+            <Polygon points={TRIANGLE_RING} fill="none" stroke={groknight.accent} strokeWidth={3} strokeLinejoin="miter" />
           </Svg>
         </HullLivePulse>
       )}

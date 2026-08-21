@@ -177,11 +177,33 @@ describe('gold means alive, and only alive', () => {
       React.createElement(IdentityMark, { seed: AGENT, kind: 'agent', size: 40, alive: true }),
     );
     expect(agent.root.findAllByType('Circle')).toHaveLength(0);
+  });
+
+  it('never lets gold mean anything but a live agent', () => {
+    // The discriminated union refuses `alive` on non-agent marks at the type
+    // level; these render through the same escape hatch an untyped caller
+    // would use, and must still stay dark.
+    const human = render(
+      React.createElement(IdentityMark, {
+        seed: HUMAN,
+        kind: 'human',
+        size: 40,
+        alive: true,
+      } as never),
+    );
+    expect(inks(human)).not.toContain(groknight.accent);
+    expect(human.root.findAllByType('AnimatedView')).toHaveLength(0);
 
     const workspace = render(
-      React.createElement(IdentityMark, { seed: WORKSPACE, kind: 'workspace', size: 40, alive: true }),
+      React.createElement(IdentityMark, {
+        seed: WORKSPACE,
+        kind: 'workspace',
+        size: 40,
+        alive: true,
+      } as never),
     );
-    expect(workspace.root.findAllByType('Circle')).toHaveLength(0);
+    expect(inks(workspace)).not.toContain(groknight.accent);
+    expect(workspace.root.findAllByType('AnimatedView')).toHaveLength(0);
   });
 });
 
@@ -190,6 +212,12 @@ describe('one mark, everywhere', () => {
     // No per-surface reimplementation: every avatar, handle mark, rail tile,
     // presence dot and corner top-bar renders this one primitive. A second
     // `SomethingAvatar` component is exactly the drift this replaced.
+    //
+    // The detector must see every identity-rendering FILE NAME — including a
+    // bare `Avatar.tsx` and suffixed variants (`AvatarGradient`, …) — not just
+    // prefixed duplicates like `PersonAvatar`. The legacy session-avatar
+    // system below is the one EXPLICIT exemption, pending a captain decision;
+    // anything else that appears here fails this test.
     const root = new URL('../../', import.meta.url).pathname;
     const walk = (dir: string): string[] =>
       readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
@@ -201,7 +229,25 @@ describe('one mark, everywhere', () => {
       );
     const files = walk(root);
 
-    expect(files.filter((file) => /\/[A-Z]\w*Avatar\.tsx$/.test(file))).toEqual([]);
+    // Matches `Avatar.tsx`, `PersonAvatar.tsx`, `AvatarGradient.tsx`,
+    // `AvatarSkia.web.tsx` — any filename carrying the word anywhere.
+    const avatarFiles = files.filter((file) => /\/\w*Avatar\w*(\.\w+)?\.tsx$/.test(file));
+    const LEGACY_SESSION_AVATARS_PENDING_CAPTAIN_DECISION = [
+      'components/Avatar.tsx',
+      'components/AvatarBrutalist.tsx',
+      'components/AvatarGradient.tsx',
+      'components/AvatarSkia.tsx',
+      'components/AvatarSkia.web.tsx',
+    ];
+    const unexempted = avatarFiles.filter(
+      (file) => !LEGACY_SESSION_AVATARS_PENDING_CAPTAIN_DECISION.some((legacy) => file.endsWith(`/${legacy}`)),
+    );
+    expect(unexempted).toEqual([]);
+    // The exemption list itself must stay honest: every named legacy file has
+    // to exist, so pruning one without updating this test is caught too.
+    for (const legacy of LEGACY_SESSION_AVATARS_PENDING_CAPTAIN_DECISION) {
+      expect(avatarFiles.some((file) => file.endsWith(`/${legacy}`))).toBe(true);
+    }
     const usesLegacyMark = files.filter(
       (file) =>
         /\.tsx$/.test(file) &&
@@ -216,7 +262,12 @@ describe('one mark, everywhere', () => {
     expect(drawsAMark.length).toBeGreaterThanOrEqual(7);
   });
 
-  it('renders a persisted relay photo and keeps the generated mark as the fallback', () => {
+  it('never lets a relay photo remove the semantic silhouette', () => {
+    // DESIGN.md ("Identity"): `photoIdentityMarksEnabled` ships FALSE — a
+    // photo defeats every identity axis at once, so the gate stays off until
+    // a captain decides portraits may live inside the silhouette. Inverted
+    // from an older assertion that a photo suppresses the generated shape:
+    // that encoded the drift, not the contract.
     const renderer = render(
       React.createElement(IdentityMark, {
         seed: HUMAN,
@@ -225,9 +276,10 @@ describe('one mark, everywhere', () => {
         name: 'Joy',
       }),
     );
-    expect(renderer.root.findAllByType('Image')).toHaveLength(1);
-    expect(renderer.root.findAllByType('Circle')).toHaveLength(0);
-    expect(groknight.photoIdentityMarksEnabled).toBe(true);
+    expect(renderer.root.findAllByType('Image')).toHaveLength(0);
+    // The ○ silhouette — the type read — is still on screen.
+    expect(renderer.root.findAllByType('Circle').length).toBeGreaterThan(0);
+    expect(groknight.photoIdentityMarksEnabled).toBe(false);
   });
 
   it('does not re-render when its own props are unchanged', () => {

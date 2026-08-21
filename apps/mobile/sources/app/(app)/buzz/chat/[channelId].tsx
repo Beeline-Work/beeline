@@ -30,6 +30,7 @@ import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useNavigation, router, type Href } from 'expo-router';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
+import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { Modal } from '@/modal';
 import { BuzzRigTransport } from '@/sync/transport';
 import {
@@ -2232,8 +2233,7 @@ export default function BuzzChat() {
     if (!transport) return;
     setRoomRepoError(null);
     try {
-      const relayUrl = await getEffectiveRelayUrl();
-      const redirectUri = `${new URL(relayUrl).origin}/auth/github/mobile-callback`;
+      const redirectUri = githubInstallationRedirectUri();
       const installationUrl = await transport.githubInstallationStart(redirectUri);
       const result = await WebBrowser.openAuthSessionAsync(installationUrl, redirectUri);
       if (result.type === 'success') await loadRoomRepoPicker();

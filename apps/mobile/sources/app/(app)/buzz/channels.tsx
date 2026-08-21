@@ -30,6 +30,7 @@ import {
   getEffectiveRelayUrl,
   loadBuzzIdentity,
 } from '@/auth/buzz-identity-storage';
+import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { saveLastViewedChannel } from '@/buzz/community-storage';
 import { createCommunityInviteUrl } from '@/buzz/community-invite';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
@@ -775,8 +776,7 @@ export default function BuzzChannels() {
     if (!transport) return;
     setRepoPickerError(null);
     try {
-      const relayUrl = await getEffectiveRelayUrl();
-      const redirectUri = `${new URL(relayUrl).origin}/auth/github/mobile-callback`;
+      const redirectUri = githubInstallationRedirectUri();
       const installationUrl = await transport.githubInstallationStart(redirectUri);
       const result = await WebBrowser.openAuthSessionAsync(installationUrl, redirectUri);
       if (result.type === 'success') await loadRepoPicker();

@@ -353,6 +353,65 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     expect(response.json()).toEqual({ github: true, oidc: true });
   });
 
+  it('completes GitHub sign-in directly into the app deep link', async () => {
+    const appState = 'g'.repeat(43);
+    const redirectUri = 'buzzy://buzz/github-callback';
+    const start = await app.inject({
+      method: 'GET',
+      url: `/auth/github/start?app_redirect=${encodeURIComponent(redirectUri)}&app_state=${appState}`,
+      headers: { host: alphaTenant.host },
+    });
+    expect(start.statusCode).toBe(302);
+
+    const callback = await app.inject({
+      method: 'GET',
+      url: `/auth/github/callback?code=github-code&state=${githubState}`,
+      headers: { host: alphaTenant.host, cookie: startCookie(start.headers['set-cookie']) },
+    });
+    expect(callback.statusCode).toBe(302);
+    const completion = new URL(callback.headers.location!);
+    expect(`${completion.protocol}//${completion.host}${completion.pathname}`).toBe(redirectUri);
+    expect(completion.searchParams.get('state')).toBe(appState);
+    expect(completion.searchParams.get('ticket')).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(completion.searchParams.get('provider')).toBe('https://github.com');
+  });
+
+  it('serves the legacy GitHub mobile callback as a human app handoff, never a 404', async () => {
+    const appState = 'h'.repeat(43);
+    const associatedRedirect = `${alphaTenant.origin}/auth/github/mobile-callback`;
+    const start = await app.inject({
+      method: 'GET',
+      url: `/auth/github/start?app_redirect=${encodeURIComponent(associatedRedirect)}&app_state=${appState}`,
+      headers: { host: alphaTenant.host },
+    });
+    const callback = await app.inject({
+      method: 'GET',
+      url: `/auth/github/callback?code=github-code&state=${githubState}`,
+      headers: { host: alphaTenant.host, cookie: startCookie(start.headers['set-cookie']) },
+    });
+    const completion = new URL(callback.headers.location!);
+    const handoff = await app.inject({
+      method: 'GET',
+      url: `${completion.pathname}${completion.search}`,
+      headers: { host: alphaTenant.host },
+    });
+
+    expect(handoff.statusCode).toBe(200);
+    expect(handoff.headers['content-type']).toContain('text/html');
+    expect(handoff.body).toContain('Return to Beeline');
+    expect(handoff.body).toContain('buzzy://buzz/github-callback?state=');
+    expect(handoff.body).toContain(`state=${appState}`);
+    expect(handoff.body).not.toContain('Route GET:');
+
+    const installationHandoff = await app.inject({
+      method: 'GET',
+      url: '/auth/github/mobile-callback?installed=1',
+      headers: { host: alphaTenant.host },
+    });
+    expect(installationHandoff.statusCode).toBe(200);
+    expect(installationHandoff.body).toContain('buzzy://buzz/github-installation?installed=1');
+  });
+
   it('groups multiple installations, applies repository webhooks, and preserves revoked bindings', async () => {
     const identity = generateKeypair();
     const appState = 'a'.repeat(43);
@@ -398,7 +457,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       },
       payload: {
         pubkey: identity.publicKey,
-        redirect_uri: 'https://alpha.example/auth/github/mobile-callback',
+        redirect_uri: 'buzzy://buzz/github-installation',
       },
     });
     expect(installStart.statusCode).toBe(200);
@@ -409,9 +468,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       headers: { host: alphaTenant.host },
     });
     expect(installed.statusCode).toBe(302);
-    expect(installed.headers.location).toBe(
-      'https://alpha.example/auth/github/mobile-callback?installed=1',
-    );
+    expect(installed.headers.location).toBe('buzzy://buzz/github-installation?installed=1');
 
     await new Promise((resolve) => setTimeout(resolve, 1_050));
     const secondStart = await app.inject({

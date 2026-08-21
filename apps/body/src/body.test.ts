@@ -85,6 +85,7 @@ import {
   KIND_CREATE_GROUP,
   KIND_STREAM_MESSAGE,
   TAG_AGENT,
+  TAG_AGENT_MODEL_CATALOG,
   TAG_COMMUNITY,
 } from '@beeline/buzz-client';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
@@ -5456,6 +5457,109 @@ describe('per-agent model/effort persistence', () => {
     expect(setConfigOption).toHaveBeenCalledTimes(2);
     expect(setConfigOption).toHaveBeenCalledWith('sess-4', 'model', 'sonnet');
     expect(setConfigOption).toHaveBeenCalledWith('sess-4', 'effort', 'low');
+  });
+
+  it('publishes the effective selection on the catalog so a CLI-configured agent is visible in the app', async () => {
+    // THE reported break: `beeline pair --model/--effort` wrote only to the
+    // local runtime record. The catalog's harness-reported currentValue is
+    // the PRE-application default ('default'), so even after activation the
+    // app showed what the agent was about to override, and before activation
+    // it showed nothing at all.
+    const agentIdentity = newIdentity('model-config-agent-5');
+    const cfg = config();
+    cfg.modelSelection = { model: 'sonnet', effort: 'low' };
+    const body = new Body(cfg, undefined, agentIdentity);
+    const published: NostrEvent[] = [];
+    stubRelay(body, published);
+
+    await Reflect.get(body, 'applyModelConfigForSession').call(
+      body,
+      { setConfigOption: vi.fn().mockResolvedValue({}) },
+      'sess-5',
+      communityId,
+      rawSessionNew(),
+      { channelId: 'room-5' } as never,
+    );
+
+    const catalogEvent = published.find((event) =>
+      event.tags.some((tag) => tag[0] === 't' && tag[1] === TAG_AGENT_MODEL_CATALOG),
+    );
+    expect(catalogEvent).toBeDefined();
+    const content = JSON.parse(catalogEvent!.content) as {
+      options: Array<{ category: string; currentValue?: string }>;
+      selection?: { model?: string; effort?: string };
+    };
+    // The harness advertised currentValue 'default' for both axes; the
+    // published snapshot must name what the agent will actually run with.
+    expect(content.options.find((option) => option.category === 'model')?.currentValue).toBe('sonnet');
+    expect(content.options.find((option) => option.category === 'effort')?.currentValue).toBe('low');
+    expect(content.selection).toEqual({ model: 'sonnet', effort: 'low' });
+  });
+
+  it('publishes the pair-time default to the relay at Room start, before any session activates', async () => {
+    const agentIdentity = newIdentity('model-config-agent-6');
+    const cfg = config();
+    cfg.modelSelection = { model: 'gpt-5.1-codex', effort: 'xhigh' };
+    const body = new Body(cfg, undefined, agentIdentity);
+    const published: NostrEvent[] = [];
+    stubRelay(body, published);
+
+    // The live catalog probe cannot start '/nonexistent'; the sync must still
+    // publish the selection itself rather than nothing.
+    await expect(body.syncModelSelectionToRelay(communityId)).resolves.toBeUndefined();
+
+    const catalogEvents = published.filter(
+      (event) => event.kind === KIND_AGENT_MODEL_CATALOG && event.pubkey === body.agent.publicKey,
+    );
+    expect(catalogEvents).toHaveLength(1);
+    const content = JSON.parse(catalogEvents[0]!.content) as {
+      selection?: { model?: string; effort?: string };
+    };
+    expect(content.selection).toEqual({ model: 'gpt-5.1-codex', effort: 'xhigh' });
+
+    // Idempotent per process: a second Room (or a watchdog recycle) in the
+    // same Workspace must not republish the identical record.
+    await body.syncModelSelectionToRelay(communityId);
+    expect(published.filter((event) => event.kind === KIND_AGENT_MODEL_CATALOG)).toHaveLength(1);
+  });
+
+  it('skips the startup sync entirely when no pair-time default is configured', async () => {
+    const agentIdentity = newIdentity('model-config-agent-7');
+    const body = new Body(config(), undefined, agentIdentity);
+    const published: NostrEvent[] = [];
+    stubRelay(body, published);
+
+    await body.syncModelSelectionToRelay(communityId);
+    expect(published.filter((event) => event.kind === KIND_AGENT_MODEL_CATALOG)).toHaveLength(0);
+  });
+
+  it('a human pick wins over the pair-time default in the startup sync too', async () => {
+    const agentIdentity = newIdentity('model-config-agent-8');
+    const cfg = config();
+    cfg.modelSelection = { model: 'opus', effort: 'high' };
+    const body = new Body(cfg, undefined, agentIdentity);
+    const published: NostrEvent[] = [];
+    stubRelay(body, published);
+
+    await setAgentModelConfig(
+      { http: { baseUrl: 'http://relay.test', host: 'relay.test', identity: owner }, identity: owner },
+      communityId,
+      body.agent.publicKey,
+      { model: 'sonnet', effort: 'low' },
+    );
+
+    await body.syncModelSelectionToRelay(communityId);
+
+    const catalogEvent = published.find(
+      (event) => event.kind === KIND_AGENT_MODEL_CATALOG && event.pubkey === body.agent.publicKey,
+    );
+    expect(catalogEvent).toBeDefined();
+    expect(catalogEvent!.tags).toContainEqual(['t', TAG_AGENT_MODEL_CATALOG]);
+    const content = JSON.parse(catalogEvent!.content) as {
+      options: Array<{ category: string; currentValue?: string }>;
+      selection?: { model?: string; effort?: string };
+    };
+    expect(content.selection).toEqual({ model: 'sonnet', effort: 'low' });
   });
 });
 

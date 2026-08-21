@@ -32,8 +32,25 @@ describe('Beeline display branding', () => {
     expect(easConfig).toContain('"appName": "Buzzy"');
   });
 
-  it('binds each native variant to its matching EAS Updates channel', () => {
-    expect(appConfig).toContain('preview: "preview"');
+  it('keeps every build and publish path on the single preview EAS Updates channel', () => {
+    const easBuildProfiles = JSON.parse(easConfig).build as Record<string, { channel?: string }>;
+    const packageJson = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as { scripts?: Record<string, string> };
+
+    expect(Object.keys(easBuildProfiles)).not.toHaveLength(0);
+    for (const profile of Object.values(easBuildProfiles)) {
+      expect(profile.channel).toBe('preview');
+    }
+    for (const [name, script] of Object.entries(packageJson.scripts ?? {})) {
+      if (!script.includes('eas update')) continue;
+      expect(script, `${name} must publish to preview`).toMatch(/--(?:branch|channel)\s+preview\b/);
+      expect(script, `${name} must not publish to another channel`).not.toMatch(
+        /--(?:branch|channel)\s+(?!preview\b)\S+/,
+      );
+    }
+
+    expect(appConfig).toContain('const updatesChannel = "preview"');
     expect(appConfig).toContain('"expo-channel-name": updatesChannel');
     expect(appConfig).toContain('runtimeVersion: "21"');
     expect(appConfig).toContain("variant === 'preview' ? {} : { googleServicesFile");

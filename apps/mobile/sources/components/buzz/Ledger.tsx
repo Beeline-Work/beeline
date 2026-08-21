@@ -240,9 +240,14 @@ export function LedgerSteer({
   replyReference,
   attachments,
 }: Omit<LedgerBodyProps, 'handle' | 'machineNoise'>) {
-  const [leadText, remainingText] = bodyText && !continued
+  // `continued` controls only the air between consecutive turns. Applying it
+  // to typography made the first short message in a person's run 16px
+  // semibold and the next 15px regular, so two otherwise-identical mentions
+  // appeared to render differently depending on whether the first one reached
+  // an agent. Each human message owns its lead sentence independently.
+  const [leadText, remainingText] = bodyText
     ? splitLeadSentence(bodyText)
-    : ['', bodyText ?? ''];
+    : ['', ''];
   return (
     <View
       style={[styles.entry, styles.viewerRail, continued ? styles.entryContinued : styles.entryOpens]}

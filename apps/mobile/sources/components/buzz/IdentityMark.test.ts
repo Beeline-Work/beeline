@@ -265,9 +265,8 @@ describe('one mark, everywhere', () => {
     //
     // The detector must see every identity-rendering FILE NAME — including a
     // bare `Avatar.tsx` and suffixed variants (`AvatarGradient`, …) — not just
-    // prefixed duplicates like `PersonAvatar`. The legacy session-avatar
-    // system below is the one EXPLICIT exemption, pending a captain decision;
-    // anything else that appears here fails this test.
+    // prefixed duplicates like `PersonAvatar`. There are no exemptions: a
+    // second identity component means the product has drifted again.
     const root = new URL('../../', import.meta.url).pathname;
     const walk = (dir: string): string[] =>
       readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
@@ -282,25 +281,7 @@ describe('one mark, everywhere', () => {
     // Matches `Avatar.tsx`, `PersonAvatar.tsx`, `AvatarGradient.tsx`,
     // `AvatarSkia.web.tsx` — any filename carrying the word anywhere.
     const avatarFiles = files.filter((file) => /\/\w*Avatar\w*(\.\w+)?\.tsx$/.test(file));
-    const LEGACY_SESSION_AVATARS_PENDING_CAPTAIN_DECISION = [
-      'components/Avatar.tsx',
-      'components/AvatarBrutalist.tsx',
-      'components/AvatarGradient.tsx',
-      'components/AvatarSkia.tsx',
-      'components/AvatarSkia.web.tsx',
-    ];
-    const unexempted = avatarFiles.filter(
-      (file) =>
-        !LEGACY_SESSION_AVATARS_PENDING_CAPTAIN_DECISION.some((legacy) =>
-          file.endsWith(`/${legacy}`),
-        ),
-    );
-    expect(unexempted).toEqual([]);
-    // The exemption list itself must stay honest: every named legacy file has
-    // to exist, so pruning one without updating this test is caught too.
-    for (const legacy of LEGACY_SESSION_AVATARS_PENDING_CAPTAIN_DECISION) {
-      expect(avatarFiles.some((file) => file.endsWith(`/${legacy}`))).toBe(true);
-    }
+    expect(avatarFiles).toEqual([]);
     const usesLegacyMark = files.filter(
       (file) =>
         /\.tsx$/.test(file) &&

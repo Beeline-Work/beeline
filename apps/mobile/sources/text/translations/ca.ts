@@ -167,15 +167,6 @@ export const ca: TranslationStructure = {
         },
         alwaysShowContextSize: 'Mostra sempre la mida del context',
         alwaysShowContextSizeDescription: 'Mostra l\'ús del context fins i tot quan no estigui prop del límit',
-        avatarStyle: 'Estil d\'avatar',
-        avatarStyleDescription: 'Tria l\'aparença de l\'avatar de la sessió',
-        avatarOptions: {
-            pixelated: 'Pixelat',
-            gradient: 'Gradient',
-            brutalist: 'Brutalista',
-        },
-        showFlavorIcons: "Mostrar icones de proveïdors d'IA",
-        showFlavorIconsDescription: "Mostrar icones del proveïdor d'IA als avatars de sessió",
     },
 
     settingsFeatures: {

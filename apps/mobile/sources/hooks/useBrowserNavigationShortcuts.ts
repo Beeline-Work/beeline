@@ -1,5 +1,4 @@
 import { useModal } from '@/modal';
-import { useOverlayNav } from '@/-session/sessionOverlayNav';
 import {
     canRouteForward,
     canUseRouteBack,
@@ -66,7 +65,6 @@ export function useBrowserNavigationShortcuts() {
     const runBack = React.useCallback((options: { exitZen: boolean }) => {
         if (dismissTopModal()) return true;
         if (options.exitZen && exitZenMode()) return true;
-        if (useOverlayNav.getState().back()) return true;
         return runRouteBack(router);
     }, [dismissTopModal, router]);
 

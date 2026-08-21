@@ -38,6 +38,11 @@ interface WaitForGoogleAuthCallbackInput {
   callbackGraceMs?: number;
 }
 
+export interface AuthCallbackResult {
+  url: string;
+  source: 'browser' | 'linking';
+}
+
 /** Keep the onboarding state transition explicit and independently testable. */
 export function nextGoogleOnboardingStatus(
   current: GoogleOnboardingStatus,
@@ -57,18 +62,20 @@ function isExpectedCallback(url: string, redirectUri: string): boolean {
  * matching Linking event. Preserve that event when AppState wins by a few
  * milliseconds instead of reporting a successful OAuth round-trip as canceled.
  */
-export async function waitForGoogleAuthCallback({
+export async function waitForGoogleAuthCallbackResult({
   redirectUri,
   openAuthSession,
   subscribeToUrls,
   callbackGraceMs = 1_500,
-}: WaitForGoogleAuthCallbackInput): Promise<string> {
-  let resolveObservedCallback: (url: string) => void = () => undefined;
-  const observedCallback = new Promise<string>((resolve) => {
+}: WaitForGoogleAuthCallbackInput): Promise<AuthCallbackResult> {
+  let resolveObservedCallback: (result: AuthCallbackResult) => void = () => undefined;
+  const observedCallback = new Promise<AuthCallbackResult>((resolve) => {
     resolveObservedCallback = resolve;
   });
   const subscription = subscribeToUrls((url) => {
-    if (isExpectedCallback(url, redirectUri)) resolveObservedCallback(url);
+    if (isExpectedCallback(url, redirectUri)) {
+      resolveObservedCallback({ url, source: 'linking' });
+    }
   });
   let timeout: ReturnType<typeof setTimeout> | undefined;
 
@@ -79,21 +86,27 @@ export async function waitForGoogleAuthCallback({
       browserResult.url &&
       isExpectedCallback(browserResult.url, redirectUri)
     ) {
-      return browserResult.url;
+      return { url: browserResult.url, source: 'browser' };
     }
 
-    const callbackUrl = await Promise.race([
+    const callback = await Promise.race([
       observedCallback,
       new Promise<null>((resolve) => {
         timeout = setTimeout(() => resolve(null), callbackGraceMs);
       }),
     ]);
-    if (callbackUrl) return callbackUrl;
+    if (callback) return callback;
     throw new OidcBindError('browser_canceled', 'Account authorization was canceled');
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
     subscription.remove();
   }
+}
+
+export async function waitForGoogleAuthCallback(
+  input: WaitForGoogleAuthCallbackInput,
+): Promise<string> {
+  return (await waitForGoogleAuthCallbackResult(input)).url;
 }
 
 export function noticeForOidcError(error: unknown): GoogleOnboardingNotice {
@@ -114,6 +127,15 @@ export function noticeForOidcError(error: unknown): GoogleOnboardingNotice {
       title: titleWithCode('LINK CONFLICT · RECOVERY NEEDED'),
       message:
         'This sign-in account already has a different device key. Recovery is required; this key was not saved.',
+      retryable: false,
+    };
+  }
+  if (code === 'state_mismatch') {
+    return {
+      status: 'bind_retry',
+      title: titleWithCode('SIGN-IN REJECTED'),
+      message:
+        'This callback did not match the sign-in started on this device. Start again from Beeline.',
       retryable: false,
     };
   }

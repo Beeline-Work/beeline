@@ -30,7 +30,12 @@ import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useNavigation, router, type Href } from 'expo-router';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
-import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
+import {
+  githubInstallationRedirectUri,
+  resumeInitialGitHubInstallation,
+  runGitHubInstallationSession,
+} from '@/auth/github-auth-session';
+import { googleAuthSessionOptions } from '@/auth/google-auth-session';
 import { Modal } from '@/modal';
 import { BuzzRigTransport } from '@/sync/transport';
 import {
@@ -2233,14 +2238,35 @@ export default function BuzzChat() {
     if (!transport) return;
     setRoomRepoError(null);
     try {
-      const redirectUri = githubInstallationRedirectUri();
-      const installationUrl = await transport.githubInstallationStart(redirectUri);
-      const result = await WebBrowser.openAuthSessionAsync(installationUrl, redirectUri);
-      if (result.type === 'success') await loadRoomRepoPicker();
+      await runGitHubInstallationSession({
+        returnPath: `/buzz/chat/${encodeURIComponent(decodedId)}`,
+        startInstallation: () =>
+          transport.githubInstallationStart(githubInstallationRedirectUri()),
+        openAuthSession: (installationUrl, redirectUri) =>
+          WebBrowser.openAuthSessionAsync(
+            installationUrl,
+            redirectUri,
+            googleAuthSessionOptions(Platform.OS, redirectUri),
+          ),
+        subscribeToUrls: (listener) =>
+          Linking.addEventListener('url', ({ url }) => listener(url)),
+      });
+      await loadRoomRepoPicker();
     } catch (err) {
       setRoomRepoError(`Could not connect GitHub: ${String(err)}`);
     }
-  }, [loadRoomRepoPicker, transport]);
+  }, [decodedId, loadRoomRepoPicker, transport]);
+
+  useEffect(() => {
+    if (!transport || !activeCommunityId) return;
+    void resumeInitialGitHubInstallation(() => Linking.getInitialURL())
+      .then(async (completed) => {
+        if (!completed) return;
+        setShowRoomRepoPicker(true);
+        await loadRoomRepoPicker();
+      })
+      .catch((err) => setRoomRepoError(`Could not connect GitHub: ${String(err)}`));
+  }, [activeCommunityId, loadRoomRepoPicker, transport]);
 
   const applyRoomRepository = useCallback(
     async (input: RepoCandidate) => {

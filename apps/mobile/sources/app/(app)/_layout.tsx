@@ -73,6 +73,14 @@ export default function RootLayout() {
                 options={{ headerShown: false, statusBarStyle: 'light' }}
             />
             <Stack.Screen
+                name="buzz/github-callback"
+                options={{ headerShown: false, statusBarStyle: 'light' }}
+            />
+            <Stack.Screen
+                name="buzz/github-installation"
+                options={{ headerShown: false, statusBarStyle: 'light' }}
+            />
+            <Stack.Screen
                 name="buzz/channels"
                 options={{
                     headerShown: false,

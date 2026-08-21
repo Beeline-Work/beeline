@@ -578,12 +578,20 @@ export async function readRuntimeRecord(path: string): Promise<AgentRuntimeRecor
   return parsed;
 }
 
-/** Remove the exact machine-local runtime owned by one paired agent. */
+/**
+ * Retire one paired agent without destroying its identity.
+ *
+ * The runtime directory contains the agent's Nostr secret key, so teardown is
+ * a recoverable rename into the state root's `deleted-runtimes` directory,
+ * never a recursive delete. Repo-anchored link records contain no key and are
+ * removed after the archive succeeds so `beeline start` does not advertise a
+ * retired runtime.
+ */
 export async function removeAgentRuntime(
   configPath: string,
   expectedAgentPubkey: string,
   pointerRoots: string[] = [],
-): Promise<void> {
+): Promise<string> {
   const resolvedConfig = resolve(configPath);
   const directory = dirname(resolvedConfig);
   if (
@@ -593,7 +601,15 @@ export async function removeAgentRuntime(
   ) {
     throw new Error(`refusing to remove unexpected agent runtime path: ${resolvedConfig}`);
   }
-  await rm(directory, { recursive: true, force: true });
+  const stateRoot = dirname(dirname(dirname(directory)));
+  const trashRoot = resolve(stateRoot, 'deleted-runtimes');
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const archivedDirectory = resolve(trashRoot, `${expectedAgentPubkey}-${timestamp}`);
+  await mkdir(trashRoot, { recursive: true, mode: 0o700 });
+  await rename(directory, archivedDirectory);
+  // A restored archive must not inherit the retired daemon's PID and mistake
+  // an unrelated future process for an already-running agent.
+  await rm(resolve(archivedDirectory, 'daemon.pid'), { force: true });
   // Repo-anchored pointers would otherwise keep advertising a runtime that no
   // longer exists to `beeline start`.
   for (const pointerRoot of pointerRoots) {
@@ -606,6 +622,7 @@ export async function removeAgentRuntime(
       await rm(pointerDirectory, { recursive: true, force: true });
     }
   }
+  return archivedDirectory;
 }
 
 async function runtimeConfigPathsIn(agentsDir: string): Promise<string[]> {

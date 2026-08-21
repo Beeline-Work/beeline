@@ -402,12 +402,14 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         const result = await supervisor.run({ signal: controller.signal });
         if (result === 'agent-removed') {
           controller.abort();
-          await removeAgentRuntime(
+          const archivedRuntime = await removeAgentRuntime(
             configPath,
             runtime.agent.publicKey,
             runtime.rooms.map((room) => room.repo.gitCommonDir),
           );
-          console.log(`[buzz] agent ${runtime.agent.publicKey} removed; runtime deleted`);
+          console.log(
+            `[buzz] agent ${runtime.agent.publicKey} removed; runtime archived at ${archivedRuntime}`,
+          );
         }
       } catch (error) {
         if (controller.signal.aborted) throw error;

@@ -1,7 +1,13 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+
+const require = createRequire(import.meta.url);
+const { assertIosDisplayVersion } = require('../../scripts/check-release-version.cjs') as {
+  assertIosDisplayVersion(version: string): void;
+};
 
 function loadNativeIdentity(appEnv?: string): {
   scheme: string;
@@ -29,6 +35,22 @@ function loadNativeIdentity(appEnv?: string): {
     iosBundleIdentifier: string;
     androidPackage: string;
   };
+}
+
+function loadNativeVersion(): string {
+  const mobileRoot = fileURLToPath(new URL('../..', import.meta.url));
+  const output = execFileSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      '--input-type=module',
+      '--eval',
+      "import configModule from './app.config.js'; const config = configModule.default ?? configModule; process.stdout.write(config.expo.version);",
+    ],
+    { cwd: mobileRoot, encoding: 'utf8', env: process.env },
+  );
+  return output;
 }
 
 type EasBuildProfile = {
@@ -104,6 +126,19 @@ describe('Beeline display branding', () => {
     expect(channelsScreen).not.toContain("'buzzy home'");
     expect(inviteScreen).toContain('Return to Beeline');
     expect(inviteScreen).not.toMatch(/Return to buzzy/i);
+  });
+
+  it('uses an iOS-valid display version and rejects retired variant suffixes before builds', () => {
+    const packageJson = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as { version: string };
+
+    expect(packageJson.version).toBe('0.2.18');
+    expect(loadNativeVersion()).toBe(packageJson.version);
+    expect(() => assertIosDisplayVersion(packageJson.version)).not.toThrow();
+    expect(() => assertIosDisplayVersion('0.2.18-preview.1')).toThrow(
+      'must use an iOS display version',
+    );
   });
 
   it('submits the Beeline bundle to its matching App Store Connect record', () => {
@@ -201,7 +236,7 @@ describe('Beeline display branding', () => {
       androidPackage: 'app.usebeeline.mobile',
     });
     expect(packageJson.scripts?.['release:build:apk']).toBe(
-      'eas build --profile production-apk --platform android --no-wait --non-interactive',
+      'npm run version:check && eas build --profile production-apk --platform android --no-wait --non-interactive',
     );
   });
 

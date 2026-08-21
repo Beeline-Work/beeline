@@ -35,7 +35,7 @@ import {
   resumeInitialGitHubInstallation,
   runGitHubInstallationSession,
 } from '@/auth/github-auth-session';
-import { googleAuthSessionOptions } from '@/auth/google-auth-session';
+import { authSessionOptions } from '@/auth/auth-session';
 import { Modal } from '@/modal';
 import { BuzzRigTransport } from '@/sync/transport';
 import {
@@ -2246,7 +2246,7 @@ export default function BuzzChat() {
           WebBrowser.openAuthSessionAsync(
             installationUrl,
             redirectUri,
-            googleAuthSessionOptions(Platform.OS, redirectUri),
+            authSessionOptions(Platform.OS, redirectUri),
           ),
         subscribeToUrls: (listener) =>
           Linking.addEventListener('url', ({ url }) => listener(url)),

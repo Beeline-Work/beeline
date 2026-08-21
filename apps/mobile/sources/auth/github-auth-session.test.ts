@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
-import { noticeForOidcError } from './google-onboarding-state';
+import { noticeForAuthError } from './onboarding-state';
 
 const createURL = vi.hoisted(() => vi.fn((path: string) => `buzzy://${path}`));
 const storage = vi.hoisted(() => new Map<string, string>());
@@ -110,7 +110,7 @@ describe('GitHub auth session redirects', () => {
     );
 
     expect(error).toMatchObject({ code: 'ticket_expired' });
-    expect(noticeForOidcError(error)).toMatchObject({
+    expect(noticeForAuthError(error)).toMatchObject({
       status: 'token_expired',
       title: 'SESSION EXPIRED · TICKET_EXPIRED',
       retryable: false,

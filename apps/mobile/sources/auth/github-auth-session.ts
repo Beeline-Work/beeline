@@ -5,7 +5,7 @@ import {
   parseOidcBindCallback,
   type OidcBindChallenge,
 } from '@beeline/buzz-client';
-import { waitForGoogleAuthCallbackResult } from './google-onboarding-state';
+import { waitForAuthCallbackResult } from './onboarding-state';
 
 const PENDING_SIGN_IN_STATE_KEY = 'buzzy.github-sign-in-state.v1';
 const PENDING_INSTALLATION_RETURN_KEY = 'buzzy.github-installation-return.v1';
@@ -163,7 +163,7 @@ export async function runGitHubInstallationSession({
   const redirectUri = githubInstallationRedirectUri();
   try {
     const installationUrl = await startInstallation();
-    const callback = await waitForGoogleAuthCallbackResult({
+    const callback = await waitForAuthCallbackResult({
       redirectUri,
       openAuthSession: () => openAuthSession(installationUrl, redirectUri),
       subscribeToUrls,

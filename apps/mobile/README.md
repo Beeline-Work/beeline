@@ -82,9 +82,11 @@ is independently enabled for cacheable Android tasks. Expo 55/React Native 0.83
 currently starts Node processes during Gradle configuration, so configuration cache
 is deliberately not enabled; Gradle reports those processes as incompatible.
 
-The mobile package version is the release source of truth. `npm run version:check`
-prints it and rejects a build from a release-tagged commit unless the tag is exactly
-`v<package version>`; Expo uses it for Android `versionName`.
+The mobile package version is the release source of truth. It must use one to three
+numeric components (for example, `0.2.18`): Expo uses it for Android `versionName`
+and iOS `CFBundleShortVersionString`. `npm run version:check` runs before every
+native release build and rejects a release-tagged commit unless the tag is exactly
+`v<package version>`.
 
 ### Signing
 

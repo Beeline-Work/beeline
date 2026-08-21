@@ -42,6 +42,8 @@ import { BrowserNavigationShortcuts } from '@/hooks/useBrowserNavigationShortcut
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
 import { flushBuzzLocalCacheForBackground } from '@/buzz/local-cache';
+import { UpdateProvider } from '@/hooks/useUpdates';
+import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
 
 // Keep remote notifications visible while the app is foregrounded. The sender
 // may be writing in a different Room than the one currently on screen.
@@ -443,19 +445,22 @@ export default function RootLayout() {
                         : { flex: 1, backgroundColor: theme.colors.groupped.background }}
                 >
                     <AuthProvider initialCredentials={initState.credentials}>
-                        <ThemeProvider value={navigationTheme}>
-                            <StatusBarProvider />
-                            <ModalProvider>
-                                <BrowserNavigationShortcuts />
-                                <CommandPaletteProvider>
-                                    <RealtimeProvider>
-                                        <HorizontalSafeAreaWrapper>
-                                            <SidebarNavigator />
-                                        </HorizontalSafeAreaWrapper>
-                                    </RealtimeProvider>
-                                </CommandPaletteProvider>
-                            </ModalProvider>
-                        </ThemeProvider>
+                        <UpdateProvider>
+                            <ThemeProvider value={navigationTheme}>
+                                <StatusBarProvider />
+                                <ModalProvider>
+                                    <BrowserNavigationShortcuts />
+                                    <CommandPaletteProvider>
+                                        <RealtimeProvider>
+                                            <HorizontalSafeAreaWrapper>
+                                                <SidebarNavigator />
+                                            </HorizontalSafeAreaWrapper>
+                                        </RealtimeProvider>
+                                    </CommandPaletteProvider>
+                                </ModalProvider>
+                                <UpdateReadyPrompt />
+                            </ThemeProvider>
+                        </UpdateProvider>
                     </AuthProvider>
                 </GestureHandlerRootView>
             </KeyboardProvider>

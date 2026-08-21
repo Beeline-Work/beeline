@@ -1,7 +1,7 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
-import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
 import { LEDGER_MARGINALIA_WIDTH } from './Ledger';
 
@@ -55,7 +55,9 @@ export function WritePermissionOutcome(props: {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => {
+  const groknight = theme.buzz;
+  return ({
   /**
    * The prose margin, and the same reserved right gutter every ledger entry
    * keeps — so this line starts exactly where the words above it start and the
@@ -76,4 +78,5 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     letterSpacing: 0.5,
   },
+  });
 });

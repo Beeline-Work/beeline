@@ -17,9 +17,9 @@ import {
   ScrollView,
   TextInput,
   TouchableOpacity,
-  StyleSheet,
   Platform,
 } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
@@ -414,6 +414,7 @@ function SwipeToReply({
 }
 
 export default function BuzzChat() {
+  const { theme } = useUnistyles();
   // `parent`/`title` are hints, not authority: every surface that opens a
   // corner already knows both, so passing them makes the header correct on the
   // first frame instead of one relay round trip later. The screen's own reads
@@ -3528,7 +3529,7 @@ export default function BuzzChat() {
                   );
                 }}
                 placeholder="Message"
-                placeholderTextColor={groknight.dim}
+                placeholderTextColor={theme.buzz.dim}
                 multiline
                 numberOfLines={1}
                 returnKeyType="default"
@@ -4142,7 +4143,9 @@ export default function BuzzChat() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => {
+  const groknight = theme.buzz;
+  return ({
   container: {
     flex: 1,
     backgroundColor: groknight.bgTerminal,
@@ -5370,4 +5373,5 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   cornerArchivedInputText: { ...Typography.mono('italic'), color: groknight.textMuted },
+  });
 });

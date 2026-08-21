@@ -1,8 +1,7 @@
 import React, { memo, useMemo, useState } from 'react';
 import { Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { GitHubInstallationAccess } from '@beeline/buzz-client';
-import { groknight } from '@/buzz/groknight';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { githubFullNameFromInput } from '@/buzz/room-repo-picker';
 import { Typography } from '@/constants/Typography';
@@ -32,6 +31,8 @@ export const RepoPicker = memo(function RepoPicker({
   onCreateRepository,
   testIDPrefix = 'repo-picker',
 }: RepoPickerProps) {
+  const { theme } = useUnistyles();
+  const groknight = theme.buzz;
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
@@ -219,7 +220,9 @@ export const RepoPicker = memo(function RepoPicker({
   );
 });
 
-const styles = StyleSheet.create(() => ({
+const styles = StyleSheet.create((theme) => {
+  const groknight = theme.buzz;
+  return ({
   search: {
     ...Typography.mono(),
     minHeight: 42,
@@ -283,5 +286,11 @@ const styles = StyleSheet.create(() => ({
   },
   createButton: { minHeight: 40, justifyContent: 'center', paddingHorizontal: 10 },
   createButtonText: { ...Typography.mono(), color: groknight.textPrimary, fontSize: 10 },
-  error: { ...Typography.mono(), color: groknight.danger, fontSize: 12, paddingTop: 8 },
-}));
+  error: {
+    ...Typography.mono(),
+    color: groknight.danger,
+    fontSize: 12,
+    paddingTop: 8,
+  },
+  });
+});

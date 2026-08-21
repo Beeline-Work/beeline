@@ -1,7 +1,7 @@
 import React from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import type { BuiltInSlashVerb, BuiltInSlashVerbId } from '@/buzz/slash-verbs';
-import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
 
 export function SlashVerbPicker({
@@ -70,7 +70,9 @@ export function SlashVerbPicker({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => {
+  const groknight = theme.buzz;
+  return ({
   root: {
     maxHeight: 276,
     marginBottom: 8,
@@ -149,4 +151,5 @@ const styles = StyleSheet.create({
     color: groknight.textMuted,
     fontSize: 10,
   },
+  });
 });

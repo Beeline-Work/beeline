@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { groknight } from '@/buzz/groknight';
+import { Pressable, Text, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import type { RoomContextEntry } from '@/buzz/corner-context';
 
@@ -87,7 +87,9 @@ export const RoomContextPreamble = React.memo(function RoomContextPreamble({
   );
 });
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => {
+  const groknight = theme.buzz;
+  return ({
   preamble: {
     paddingHorizontal: 16,
     paddingTop: 18,
@@ -119,4 +121,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 22,
   },
+  });
 });

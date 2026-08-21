@@ -1,6 +1,7 @@
 import { MMKV } from 'react-native-mmkv';
 import { Settings, settingsDefaults, settingsParse, settingsToSyncPayload, SettingsSchema } from './settings';
 import { LocalSettings, localSettingsDefaults, localSettingsParse } from './localSettings';
+import type { ThemePreference } from './localSettings';
 import { Purchases, purchasesDefaults, purchasesParse } from './purchases';
 import { Profile, profileDefaults, profileParse } from './profile';
 import type { PermissionModeKey } from '@/components/PermissionModeSelector';
@@ -82,7 +83,7 @@ export function saveLocalSettings(settings: LocalSettings) {
     mmkv.set('local-settings', JSON.stringify(settings));
 }
 
-export function loadThemePreference(): 'light' | 'dark' | 'adaptive' {
+export function loadThemePreference(): ThemePreference {
     const localSettings = mmkv.getString('local-settings');
     if (localSettings) {
         try {

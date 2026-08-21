@@ -3,12 +3,12 @@ import {
   SectionList,
   Linking,
   Share,
-  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import * as WebBrowser from 'expo-web-browser';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -30,7 +30,6 @@ import {
   getEffectiveRelayUrl,
   loadBuzzIdentity,
 } from '@/auth/buzz-identity-storage';
-import { groknight } from '@/buzz/groknight';
 import { saveLastViewedChannel } from '@/buzz/community-storage';
 import { createCommunityInviteUrl } from '@/buzz/community-invite';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
@@ -73,7 +72,6 @@ import { afterInteractions } from '@/buzz/defer-interaction';
 import type { SessionEvent } from '@/sync/transport';
 import {
   BrittlePress,
-  hairlineDivider,
   HullLivePulse,
   HullWaveSignal,
   MonoButton,
@@ -342,6 +340,7 @@ async function loadDisplayChannels(
 }
 
 export default function BuzzChannels() {
+  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
     communityId?: string | string[];
@@ -967,7 +966,7 @@ export default function BuzzChannels() {
                 onChangeText={setChannelName}
                 onSubmitEditing={() => void handleCreateChannel()}
                 placeholder={`${ROOM_LABEL.toLowerCase()} name`}
-                placeholderTextColor={groknight.dim}
+                placeholderTextColor={theme.buzz.dim}
                 editable={!creatingChannel}
               />
               <MonoButton
@@ -1321,7 +1320,9 @@ const INDEX_ROW_HEIGHT = 72;
 /** Drops the gutter's first mark onto the same optical line as the row name. */
 const ROW_GUTTER_TOP = 14;
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => {
+  const groknight = theme.buzz;
+  return ({
   container: { flex: 1, minWidth: 0, backgroundColor: groknight.bgTerminal },
   center: { alignItems: 'center', justifyContent: 'center' },
   loadingText: {
@@ -1340,7 +1341,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: groknight.bgTerminal,
-    ...hairlineDivider,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.border,
   },
   headerAction: {
     minWidth: 44,
@@ -1362,7 +1364,8 @@ const styles = StyleSheet.create({
   actionPanel: {
     paddingHorizontal: SCREEN_INSET,
     paddingVertical: 14,
-    ...hairlineDivider,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.border,
     backgroundColor: groknight.bgTerminal,
   },
   panelTitle: {
@@ -1413,7 +1416,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: SCREEN_INSET,
     paddingTop: 12,
     paddingBottom: 14,
-    ...hairlineDivider,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.border,
   },
   errorLabel: {
     ...Typography.mono('semiBold'),
@@ -1459,10 +1463,11 @@ const styles = StyleSheet.create({
   dmSection: { marginTop: 4 },
   indexRow: {
     minWidth: 0,
-    minHeight: INDEX_ROW_HEIGHT,
+    minHeight: 44,
+    height: groknight.name === 'ledger' ? 52 : INDEX_ROW_HEIGHT,
     paddingLeft: SCREEN_INSET,
     paddingRight: SCREEN_INSET + ROW_GUTTER_WIDTH,
-    paddingVertical: 11,
+    paddingVertical: groknight.name === 'ledger' ? 6 : 11,
     flexDirection: 'row',
     alignItems: 'center',
     gap: ROW_GAP,
@@ -1476,6 +1481,7 @@ const styles = StyleSheet.create({
    * row previews the voice the transcript will show when it is opened. */
   rowTitle: {
     ...Typography.default('semiBold'),
+    fontFamily: groknight.proseSemibold,
     flexShrink: 1,
     color: groknight.textPrimary,
     fontSize: 15,
@@ -1484,7 +1490,7 @@ const styles = StyleSheet.create({
   rowTitleRead: { color: groknight.textSecondary },
   /* Every Room name is semibold. Unread stays at full luminance while a read
    * Room steps down one tone; the gold rail does the fast scanning work. */
-  rowTitleUnread: { ...Typography.default('semiBold'), color: groknight.ledgerBright },
+  rowTitleUnread: { ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold, color: groknight.ledgerBright },
   rowTitleArchived: { color: groknight.textMuted },
   rowFlag: {
     ...Typography.mono('semiBold'),
@@ -1510,13 +1516,18 @@ const styles = StyleSheet.create({
    * step; speaker prefixes never consume its narrow line. */
   rowPreview: {
     ...Typography.default(),
+    fontFamily: groknight.proseRegular,
     marginTop: 3,
     color: groknight.ledgerQuiet,
-    fontSize: 12,
-    lineHeight: 16,
+    fontSize: groknight.name === 'ledger' ? 11 : 13,
+    lineHeight: groknight.name === 'ledger' ? 15 : 18,
   },
   rowPreviewUnread: { color: groknight.ledgerBody },
-  roomCell: { position: 'relative', ...hairlineDivider },
+  roomCell: {
+    position: 'relative',
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.border,
+  },
   unreadRail: {
     position: 'absolute',
     zIndex: 1,
@@ -1669,4 +1680,5 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   emptyAction: { marginTop: 20 },
+  });
 });

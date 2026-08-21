@@ -1007,7 +1007,8 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
 
   it('requires a separate explicit confirmation before OAuth can replace a device key', async () => {
     const original = generateKeypair();
-    expect((await bind(await ceremony(), original)).statusCode).toBe(201);
+    const originalChallenge = await ceremony();
+    expect((await bind(originalChallenge, original)).statusCode).toBe(201);
 
     const replacement = generateKeypair();
     const recoveryChallenge = await ceremony();
@@ -1038,6 +1039,12 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       replaced: true,
       pubkey: replacement.publicKey,
     });
+    expect(await store.linksForPubkey(alphaTenant.community, original.publicKey)).toHaveLength(0);
+    expect(await store.linksForPubkey(alphaTenant.community, replacement.publicKey)).toHaveLength(1);
+
+    const staleSuccessfulTicket = await recover(originalChallenge, original, true);
+    expect(staleSuccessfulTicket.statusCode).toBe(409);
+    expect(staleSuccessfulTicket.json().error).toBe('recovery_not_available');
     expect(await store.linksForPubkey(alphaTenant.community, original.publicKey)).toHaveLength(0);
     expect(await store.linksForPubkey(alphaTenant.community, replacement.publicKey)).toHaveLength(1);
 

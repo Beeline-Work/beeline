@@ -11,6 +11,7 @@ import {
   getEffectiveRelayUrl,
   loadBuzzIdentity,
 } from '@/auth/buzz-identity-storage';
+import { clearPendingGitHubSignInState } from '@/auth/github-auth-session';
 import { clearBuzzLocalCache } from '@/buzz/local-cache';
 import { WORKSPACES_LABEL } from '@/buzz/vocabulary';
 import { PixelGateReveal } from '@/components/buzz/MonoHull';
@@ -51,7 +52,7 @@ export default function BuzzSettings() {
       setConfirmForget(true);
       return;
     }
-    await clearBuzzIdentity();
+    await Promise.all([clearBuzzIdentity(), clearPendingGitHubSignInState()]);
     clearBuzzLocalCache();
     router.replace('/buzz/onboarding');
   }, [confirmForget]);

@@ -12,10 +12,14 @@ const identityStorage = vi.hoisted(() => ({
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.example'),
 }));
 const localCache = vi.hoisted(() => ({ clearBuzzLocalCache: vi.fn() }));
+const authSession = vi.hoisted(() => ({
+  clearPendingGitHubSignInState: vi.fn(async () => undefined),
+}));
 
 vi.mock('expo-router', () => ({ router: navigation }));
 vi.mock('expo-updates', () => ({ updateId: 'ota-running-123', channel: 'preview' }));
 vi.mock('@/auth/buzz-identity-storage', () => identityStorage);
+vi.mock('@/auth/github-auth-session', () => authSession);
 vi.mock('@/buzz/local-cache', () => localCache);
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
@@ -160,6 +164,7 @@ describe('Buzz global Settings', () => {
       await renderer.root.findByProps({ testID: 'sign-out-setting' }).props.onPress();
     });
     expect(identityStorage.clearBuzzIdentity).toHaveBeenCalledOnce();
+    expect(authSession.clearPendingGitHubSignInState).toHaveBeenCalledOnce();
     expect(localCache.clearBuzzLocalCache).toHaveBeenCalledOnce();
     expect(navigation.replace).toHaveBeenCalledWith('/buzz/onboarding');
   });

@@ -386,6 +386,30 @@ describe('OIDC device-key bind protocol', () => {
     );
   });
 
+  it('preserves a Room-token broker 403 as an OidcBindError for the daemon', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: 'room_repository_unauthorized',
+            message: 'agent is not authorized for this Room repository',
+          }),
+          { status: 403, headers: { 'content-type': 'application/json' } },
+        ),
+      ),
+    );
+
+    await expect(
+      getGitHubRoomInstallationToken('https://relay.example', identity, 'room-1'),
+    ).rejects.toMatchObject({
+      name: 'OidcBindError',
+      code: 'room_repository_unauthorized',
+      status: 403,
+      retryable: false,
+    });
+  });
+
   it('surfaces callback cancellation/proof errors without constructing a challenge', () => {
     const url = new URL('beeline://buzz/oidc-callback');
     url.searchParams.set('state', 's'.repeat(43));

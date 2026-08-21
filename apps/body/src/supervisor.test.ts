@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { newIdentity } from '@beeline/gate';
+import { OidcBindError } from '@beeline/buzz-client';
 import type { BodyConfig } from './config.js';
 import {
   inspectLocalRepository,
@@ -1136,5 +1137,34 @@ describe('WorkspaceSupervisor per-Room discovery isolation', () => {
     await supervisor.reconcile();
     expect(materialize).toHaveBeenCalledTimes(2);
     expect(client.messageSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it('publishes the visible Room notice when the token broker returns its 403', async () => {
+    const runtime = runtimeNoRooms('broker-denied-agent');
+    const client = discoveryClient(runtime);
+    client.listMyChannels.mockResolvedValue([
+      { channelId: 'unservable-room', event: { created_at: 20 } },
+    ]);
+    mocks.createBuzzClient.mockReturnValue(client);
+    const supervisor = new WorkspaceSupervisor(
+      runtime,
+      `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+    );
+    vi.spyOn(supervisor as never, 'materializeRoom' as never).mockRejectedValue(
+      new OidcBindError(
+        'room_repository_unauthorized',
+        'agent is not authorized for this Room repository',
+        403,
+      ) as never,
+    );
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(supervisor.reconcile()).resolves.toBe('member');
+
+    expect(client.messageSubmit).toHaveBeenCalledWith(
+      'unservable-room',
+      expect.stringContaining("I could not access this Room's repository"),
+    );
   });
 });

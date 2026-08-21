@@ -41,12 +41,19 @@ export function createGitHubRoomTokenAuthority(): TokenAuthority {
       isMember(ctx, input.roomId, input.agentPubkey),
       resolveRoomRepository(ctx, input.roomId),
     ]);
-    if (communityId !== tenant.community || !member || !repository) return undefined;
+    if (communityId !== tenant.roomCommunityId) {
+      return { authorized: false, reason: 'tenant_room_community_mismatch' };
+    }
+    if (!member) return { authorized: false, reason: 'agent_not_room_member' };
+    if (!repository) return { authorized: false, reason: 'room_repository_missing' };
     const remote = repository.binding.remote?.match(/^git:\/\/github\.com\/([^/]+)\/([^/]+)$/i);
-    if (!remote) return undefined;
+    if (!remote) return { authorized: false, reason: 'room_repository_remote_malformed' };
     const authorizedBy = repository.authoredBy ?? (await getChannelCreator(ctx, input.roomId));
-    if (!authorizedBy) return undefined;
+    if (!authorizedBy) {
+      return { authorized: false, reason: 'room_repository_authority_missing' };
+    }
     return {
+      authorized: true,
       authorizedBy,
       fullName: `${remote[1]}/${remote[2]}`,
       ...(repository.binding.githubInstallationId

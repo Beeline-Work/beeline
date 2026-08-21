@@ -125,6 +125,8 @@ vi.mock('@/constants/Typography', () => ({
 }));
 
 const { persistGitHubSignInState } = await import('@/auth/github-auth-session');
+const { OidcBindError } = await import('@beeline/buzz-client');
+const { clearGoogleOnboardingNotice } = await import('@/auth/google-onboarding-state');
 const { default: BuzzOnboarding } = await import('./onboarding');
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -169,6 +171,7 @@ describe('GitHub callback delivery into onboarding', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     storage.clear();
+    clearGoogleOnboardingNotice();
     linking.initialUrl = null;
     linking.listener = null;
     identityStorage.load.mockResolvedValue(null);
@@ -230,5 +233,42 @@ describe('GitHub callback delivery into onboarding', () => {
 
     expect(sdk.finish).toHaveBeenCalledTimes(1);
     expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+  });
+
+  it('renders the bind failure notice after a warm deep link remounts onboarding', async () => {
+    let rejectBind!: (error: unknown) => void;
+    sdk.finish.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectBind = reject;
+        }),
+    );
+    browser.open.mockImplementation(async (authorizationUrl: string) => {
+      const state = new URL(authorizationUrl).searchParams.get('app_state')!;
+      queueMicrotask(() => linking.listener?.({ url: callbackUrl(state) }));
+      return { type: 'dismiss' };
+    });
+
+    const originalTree = await render();
+    const signIn = originalTree.root.find(
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
+    );
+
+    await act(async () => {
+      signIn.props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(sdk.finish).toHaveBeenCalledTimes(1);
+
+    await act(async () => originalTree.unmount());
+    const visibleTree = await render();
+    await act(async () => {
+      rejectBind(new OidcBindError('ticket_expired', 'The bind ticket expired', 410));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(noticeText(visibleTree)).toContain('SESSION EXPIRED · TICKET_EXPIRED');
   });
 });

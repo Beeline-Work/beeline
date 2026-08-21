@@ -160,7 +160,11 @@ export default function BuzzSettings() {
         >
           <View style={styles.rowCopy}>
             <Text style={styles.rowTitle}>{confirmForget ? '! Confirm sign out' : 'Sign out'}</Text>
-            <Text style={styles.rowSubtitle}>Remove this identity from this device</Text>
+            <Text style={styles.rowSubtitle}>
+              {confirmForget
+                ? 'Permanently erase this device’s identity key'
+                : 'Remove this identity from this device'}
+            </Text>
           </View>
           <View style={styles.rowGutter}>
             <Text style={styles.forgetGlyph}>⌫</Text>
@@ -173,9 +177,19 @@ export default function BuzzSettings() {
           <View accessibilityRole="alert">
             <PixelGateReveal style={styles.confirmPanel}>
               <Text style={styles.confirmText}>
-                This removes the local identity from this device. Continue only if your key is
-                backed up.
+                Signing out permanently erases this device’s copy of your identity key. Without an
+                exported key, you cannot return as this identity. GitHub can link a new key later,
+                but it cannot restore this identity’s Rooms, DMs, profile, or approvals.
               </Text>
+              <TouchableOpacity
+                accessibilityLabel="Back up key before signing out"
+                accessibilityRole="button"
+                onPress={() => router.push('/buzz/settings/identity' as Href)}
+                style={styles.cancelButton}
+                testID="backup-before-sign-out"
+              >
+                <Text style={styles.cancelText}>Back up key first</Text>
+              </TouchableOpacity>
               <TouchableOpacity
                 accessibilityRole="button"
                 onPress={() => setConfirmForget(false)}

@@ -7,6 +7,7 @@ import {
   OidcBindError,
   buildOidcBindEvent,
   finishOidcBind,
+  recoverOidcBind,
   getAuthCapabilities,
   lookupRecovery,
   parseOidcBindCallback,
@@ -417,6 +418,31 @@ describe('OIDC device-key bind protocol', () => {
     );
     await expect(finishOidcBind('https://relay.example', challenge, event)).rejects.toMatchObject({
       code: 'identity_conflict',
+    });
+  });
+
+  it('uses a separate explicit request to replace a conflicting device key', async () => {
+    const event = buildOidcBindEvent(challenge, identity, challenge.issued_at);
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ linked: true, replaced: true, pubkey: identity.publicKey }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(recoverOidcBind('https://relay.example', challenge, event)).resolves.toEqual({
+      linked: true,
+      replaced: true,
+      pubkey: identity.publicKey,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(url.toString()).toBe('https://relay.example/auth/oidc/recover');
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      ticket: challenge.ticket,
+      confirm_replace: true,
+      event: { pubkey: identity.publicKey },
     });
   });
 

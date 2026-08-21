@@ -353,7 +353,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     expect(response.json()).toEqual({ github: true, oidc: true });
   });
 
-  it('completes GitHub sign-in directly into the app deep link', async () => {
+  it('completes GitHub sign-in through a visible immediate app handoff', async () => {
     const appState = 'g'.repeat(43);
     const redirectUri = 'beeline://buzz/github-callback';
     const start = await app.inject({
@@ -368,8 +368,13 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       url: `/auth/github/callback?code=github-code&state=${githubState}`,
       headers: { host: alphaTenant.host, cookie: startCookie(start.headers['set-cookie']) },
     });
-    expect(callback.statusCode).toBe(302);
-    const completion = new URL(callback.headers.location!);
+    expect(callback.statusCode).toBe(200);
+    expect(callback.headers['content-type']).toContain('text/html');
+    expect(callback.body).toContain('Beeline sign-in complete');
+    expect(callback.body).toContain('http-equiv="refresh" content="0;url=beeline://');
+    const completionHref = callback.body.match(/<a href="([^"]+)">Return to Beeline<\/a>/)?.[1];
+    expect(completionHref).toBeDefined();
+    const completion = new URL(completionHref!.replaceAll('&amp;', '&'));
     expect(`${completion.protocol}//${completion.host}${completion.pathname}`).toBe(redirectUri);
     expect(completion.searchParams.get('state')).toBe(appState);
     expect(completion.searchParams.get('ticket')).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -637,6 +642,19 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       url: '/auth/oidc/bind',
       headers: { host: alphaTenant.host },
       payload: { ticket: challenge.ticket, event: bindEvent(challenge, identity), ...extra },
+    });
+  }
+
+  async function recover(challenge: BindChallenge, identity: Keypair, confirmReplace: unknown) {
+    return app.inject({
+      method: 'POST',
+      url: '/auth/oidc/recover',
+      headers: { host: alphaTenant.host },
+      payload: {
+        ticket: challenge.ticket,
+        event: bindEvent(challenge, identity),
+        confirm_replace: confirmReplace,
+      },
     });
   }
 
@@ -985,6 +1003,42 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     });
     expect(await store.linksForPubkey(alphaTenant.community, original.publicKey)).toHaveLength(1);
     expect(await store.linksForPubkey(alphaTenant.community, attacker.publicKey)).toHaveLength(0);
+  });
+
+  it('requires a separate explicit confirmation before OAuth can replace a device key', async () => {
+    const original = generateKeypair();
+    expect((await bind(await ceremony(), original)).statusCode).toBe(201);
+
+    const replacement = generateKeypair();
+    const recoveryChallenge = await ceremony();
+    const conflict = await bind(recoveryChallenge, replacement);
+    expect(conflict.statusCode).toBe(409);
+    expect(conflict.json().error).toBe('identity_conflict');
+    const replayedConflict = await bind(recoveryChallenge, replacement);
+    expect(replayedConflict.statusCode).toBe(409);
+    expect(replayedConflict.json().error).toBe('identity_conflict');
+
+    const unconfirmed = await recover(recoveryChallenge, replacement, false);
+    expect(unconfirmed.statusCode).toBe(400);
+    expect(unconfirmed.json().error).toBe('recovery_confirmation_required');
+    expect(await store.linksForPubkey(alphaTenant.community, original.publicKey)).toHaveLength(1);
+    expect(await store.linksForPubkey(alphaTenant.community, replacement.publicKey)).toHaveLength(0);
+
+    const confirmed = await recover(recoveryChallenge, replacement, true);
+    expect(confirmed.statusCode).toBe(200);
+    expect(confirmed.json()).toEqual({
+      linked: true,
+      replaced: true,
+      pubkey: replacement.publicKey,
+    });
+    expect(await store.linksForPubkey(alphaTenant.community, original.publicKey)).toHaveLength(0);
+    expect(await store.linksForPubkey(alphaTenant.community, replacement.publicKey)).toHaveLength(1);
+
+    const laterAttacker = generateKeypair();
+    const laterConflict = await bind(await ceremony(), laterAttacker);
+    expect(laterConflict.statusCode).toBe(409);
+    expect(await store.linksForPubkey(alphaTenant.community, replacement.publicKey)).toHaveLength(1);
+    expect(await store.linksForPubkey(alphaTenant.community, laterAttacker.publicKey)).toHaveLength(0);
   });
 
   it('allows exactly one winner when different keys race first bind', async () => {

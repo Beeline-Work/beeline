@@ -19,6 +19,7 @@ const {
   githubRepositoryRefreshFeedback,
   githubInstallationReturnPath,
   githubSignInRedirectUri,
+  loadPendingGitHubBindChallenge,
   persistGitHubInstallationReturnPath,
   persistGitHubSignInState,
   resumeInitialGitHubInstallation,
@@ -80,6 +81,10 @@ describe('GitHub auth session redirects', () => {
     const challenge = await resumeInitialGitHubSignIn(async () => bindCallback());
 
     expect(challenge).toMatchObject({
+      provider: 'https://github.com',
+      subject: '269599412',
+    });
+    await expect(loadPendingGitHubBindChallenge()).resolves.toMatchObject({
       provider: 'https://github.com',
       subject: '269599412',
     });

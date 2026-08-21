@@ -116,6 +116,32 @@ export const DEFAULT_RECONCILE_HEARTBEAT_MS = 60_000;
  */
 export const DEFAULT_ROOM_DISCOVERY_RETRY_MS = 10 * 60_000;
 
+/**
+ * A destructive removal needs repeated, successful agreement from the relay.
+ * One empty projection is not enough: an edge/cache cutover can return a
+ * valid-but-incomplete answer immediately after a failed query.
+ */
+export const REMOVAL_CONFIRMATION_READS = 3;
+
+/**
+ * Effective Workspace membership after transport failures and removal
+ * corroboration have been accounted for. Callers cannot accidentally treat a
+ * failed read as false because `unknown` is a distinct, required case.
+ */
+export type WorkspaceMembershipStatus = 'member' | 'not-member' | 'unknown';
+
+async function readWorkspaceMembership(
+  read: () => Promise<boolean>,
+  onUnknown: (error: unknown) => void,
+): Promise<WorkspaceMembershipStatus> {
+  try {
+    return (await read()) ? 'member' : 'not-member';
+  } catch (error) {
+    onUnknown(error);
+    return 'unknown';
+  }
+}
+
 /** One durable Workspace control plane multiplexing isolated Room bodies. */
 export class WorkspaceSupervisor {
   private runtime: AgentRuntimeRecord;
@@ -139,6 +165,10 @@ export class WorkspaceSupervisor {
    * log line and its own retry cadence — never the whole discovery pass.
    */
   private readonly roomDiscoveryFailures = new Map<string, { retryAt: number; message: string }>();
+  private workspaceRemovalConfirmations = 0;
+  private readonly roomRemovalConfirmations = new Map<string, number>();
+  /** Schedule another short-cadence read while a removal is being confirmed. */
+  private confirmationPending = false;
   private readonly now: () => number;
   private readonly watchdogStaleMs: number;
   private readonly reconcileHeartbeatMs: number;
@@ -256,8 +286,13 @@ export class WorkspaceSupervisor {
         if (wake || this.now() >= nextReconcileAt) {
           wake = false;
           try {
-            if (!(await this.reconcile())) return 'agent-removed';
-            nextReconcileAt = this.now() + this.reconcileHeartbeatMs;
+            const membership = await this.reconcile();
+            if (membership === 'not-member') return 'agent-removed';
+            nextReconcileAt =
+              this.now() +
+              (membership === 'unknown' || this.confirmationPending
+                ? watchdogTickMs
+                : this.reconcileHeartbeatMs);
           } catch (error) {
             // Membership discovery is a control-plane read. A transient relay
             // error must not tear down every active Room (and therefore restart
@@ -313,22 +348,49 @@ export class WorkspaceSupervisor {
     );
   }
 
-  async reconcile(): Promise<boolean> {
+  async reconcile(): Promise<WorkspaceMembershipStatus> {
     const client = createBuzzClient({
       baseUrl: this.runtime.relayBaseUrl,
       ...(this.runtime.relayHost ? { host: this.runtime.relayHost } : {}),
       identity: this.agent,
     });
     try {
-      // Workspace membership is the paired runtime's durable lease. A
-      // successful projection read showing removal is authoritative; transient
-      // relay failures still throw and retain the last known running set.
-      if (!(await client.isMember(this.runtime.communityId, this.agent.publicKey))) {
-        console.log(
-          `[supervisor] agent removed from Workspace ${this.runtime.communityId}; draining runtime`,
-        );
-        return false;
+      this.confirmationPending = false;
+      const membership = await readWorkspaceMembership(
+        () => client.isMember(this.runtime.communityId, this.agent.publicKey),
+        (error) =>
+          console.error(
+            `[supervisor] Workspace ${this.runtime.communityId} membership could not be ` +
+              'confirmed; keeping runtime and Rooms, then retrying:',
+            error,
+          ),
+      );
+      if (membership === 'unknown') {
+        // Corroboration must be consecutive successful reads. A failed read
+        // breaks the sequence and cannot move the daemon closer to teardown.
+        this.workspaceRemovalConfirmations = 0;
+        this.roomRemovalConfirmations.clear();
+        return 'unknown';
       }
+      if (membership === 'not-member') {
+        this.roomRemovalConfirmations.clear();
+        this.workspaceRemovalConfirmations += 1;
+        if (this.workspaceRemovalConfirmations < REMOVAL_CONFIRMATION_READS) {
+          this.confirmationPending = true;
+          console.warn(
+            `[supervisor] Workspace ${this.runtime.communityId} membership read says agent is ` +
+              `absent (${this.workspaceRemovalConfirmations}/${REMOVAL_CONFIRMATION_READS}); ` +
+              'keeping runtime and Rooms until successful reads corroborate removal',
+          );
+          return 'unknown';
+        }
+        console.log(
+          `[supervisor] agent removal from Workspace ${this.runtime.communityId} corroborated by ` +
+            `${REMOVAL_CONFIRMATION_READS} successful reads; draining runtime`,
+        );
+        return 'not-member';
+      }
+      this.workspaceRemovalConfirmations = 0;
       const memberships = await client.listMyChannels();
       const desired = new Map<string, DesiredChannel>();
       for (const membership of memberships) {
@@ -396,8 +458,21 @@ export class WorkspaceSupervisor {
         desired.set(channelId, entry);
       }
 
+      for (const channelId of desired.keys()) this.roomRemovalConfirmations.delete(channelId);
       for (const [channelId, running] of [...this.running]) {
         if (desired.has(channelId)) continue;
+        const confirmations = (this.roomRemovalConfirmations.get(channelId) ?? 0) + 1;
+        this.roomRemovalConfirmations.set(channelId, confirmations);
+        if (confirmations < REMOVAL_CONFIRMATION_READS) {
+          this.confirmationPending = true;
+          console.warn(
+            `[supervisor] Room ${channelId} is absent from the successful membership read ` +
+              `(${confirmations}/${REMOVAL_CONFIRMATION_READS}); keeping it running until ` +
+              'successful reads corroborate removal',
+          );
+          continue;
+        }
+        this.roomRemovalConfirmations.delete(channelId);
         // Stop intake first. Body drains accepted turns before dispose returns.
         running.controller.abort();
         await running.promise.catch(() => undefined);
@@ -443,7 +518,12 @@ export class WorkspaceSupervisor {
           this.noteRoomDiscoveryFailure(channelId, error);
         }
       }
-      return true;
+      return 'member';
+    } catch (error) {
+      // A partially completed discovery pass cannot count toward consecutive
+      // Room-removal proof. Keep every Room and start corroboration over.
+      this.roomRemovalConfirmations.clear();
+      throw error;
     } finally {
       client.disconnect();
     }

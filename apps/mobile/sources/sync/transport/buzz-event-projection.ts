@@ -279,6 +279,7 @@ export function toRigEvent(ev: BuzzSessionEvent): SessionEvent {
 }
 
 export type AgentTurnStatus = 'working' | 'complete' | 'failed';
+export type CornerProcessState = 'live' | 'suspended' | 'waiting-for-slot';
 
 export type ChatDisplayMessage = {
   id: string;
@@ -328,6 +329,7 @@ export type ChatDisplayMessage = {
     status: AgentTurnStatus;
     generationId?: string;
   };
+  cornerProcess?: { sessionId: string; agentPubkey: string; state: CornerProcessState; sequence: number };
   /**
    * A daemon-published proposal to repoint this Room's landing target. The
    * agent may only ever *propose* — the binding itself is republished under a
@@ -528,11 +530,20 @@ export function projectChatEvent(
   const isPermissionRequest = sessionEventHasTag(event, 't', 'buzz-write-permission-request');
   const isPermissionResponse = sessionEventHasTag(event, 't', 'buzz-write-permission-response');
   const isAgentTurn = sessionEventHasTag(event, 't', 'agent-turn');
+  const isCornerSession = sessionEventHasTag(event, 't', 'corner-session');
   const attachments = parseAttachmentTags(sessionEventTags(event));
   const replyToId = sessionEventTags(event).find(
     (tag) => tag[0] === 'e' && tag[1] && tag[3] === 'reply',
   )?.[1];
 
+  if (isCornerSession) {
+    const sessionId = sessionEventTagValue(event, 'session');
+    const agentPubkey = sessionEventTagValue(event, 'agent') ?? pubkey;
+    const state = sessionEventTagValue(event, 'status');
+    const sequence = Number(sessionEventTagValue(event, 'sequence') ?? '0');
+    if (sessionId && agentPubkey && (state === 'live' || state === 'suspended' || state === 'waiting-for-slot')) return { message: { id: `corner-session-${sessionId}`, text, isUser: false, timestamp: eventTimestamp(event), pubkey: agentPubkey, cornerProcess: { sessionId, agentPubkey, state, sequence: Number.isSafeInteger(sequence) && sequence >= 0 ? sequence : 0 }, ...(isNew ? { isNew: true } : {}) } };
+    return {};
+  }
   if (isAgentTurn) {
     const requestId = sessionEventTagValue(event, 'request');
     const agentPubkey = sessionEventTagValue(event, 'agent') ?? pubkey;
@@ -808,6 +819,7 @@ export function transcriptMessages(
       activityRunOpen = false;
       continue;
     }
+    if (message.cornerProcess) { activityRunOpen = false; continue; }
     // Live corner status is state and never spends a transcript row. An
     // archived parent-Room card is the one exception: Body replaces its stable
     // id with the bounded completion summary, so it is durable conversational
@@ -915,6 +927,7 @@ export function upsertChatMessages(
     ) {
       continue;
     }
+    if (existing?.cornerProcess && message.cornerProcess && message.cornerProcess.sequence < existing.cornerProcess.sequence) continue;
     if (existing?.writePermission && message.writePermission) {
       if (
         WRITE_PERMISSION_STATUS_ORDER[message.writePermission.status] <

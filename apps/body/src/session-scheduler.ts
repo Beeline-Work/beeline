@@ -1,7 +1,9 @@
 export interface SessionLifecycle {
   activate(): Promise<string>;
   suspend(): Promise<void>;
+  onStateChange?(state: SessionProcessState): Promise<void> | void;
 }
+export type SessionProcessState = 'live' | 'suspended' | 'waiting-for-slot';
 
 export type SessionRunPriority = 'interactive' | 'background';
 
@@ -149,6 +151,7 @@ export class SessionScheduler {
       .finally(() => {
         releaseTail();
         if (this.tails.get(key) === queuedTail) this.tails.delete(key);
+        this.wakeCapacityWaiters();
       });
   }
 
@@ -182,7 +185,7 @@ export class SessionScheduler {
   }
 
   async suspend(key: string): Promise<void> {
-    if (this.busy.has(key)) return;
+    if (this.busy.has(key) || this.tails.has(key)) return;
     const session = this.live.get(key);
     if (!session) return;
     this.live.delete(key);
@@ -234,6 +237,7 @@ export class SessionScheduler {
     this.suspending.add(session);
     try {
       await session.lifecycle.suspend();
+      await this.notifyState(session.lifecycle, 'suspended');
     } finally {
       this.suspending.delete(session);
       this.wakeCapacityWaiters();
@@ -300,6 +304,7 @@ export class SessionScheduler {
       }
 
       if (!reservation) {
+        await this.notifyState(lifecycle, 'waiting-for-slot');
         // A background waiter must not hold the capacity mutex while an
         // interactive Room turn can use the reserved slot.
         await waitForCapacity;
@@ -320,6 +325,7 @@ export class SessionScheduler {
         reservation.pending = false;
         reservation.physicalSessionId = physicalSessionId;
         reservation.lastUsedAt = Date.now();
+        await this.notifyState(lifecycle, 'live');
         const generations = this.physicalHistory.get(key) ?? [];
         generations.push(physicalSessionId);
         this.physicalHistory.set(key, generations);
@@ -340,7 +346,7 @@ export class SessionScheduler {
    */
   private claimIdleVictim(match: (session: LiveSession) => boolean): LiveSession | undefined {
     const victim = [...this.live.entries()]
-      .filter(([candidate, session]) => !this.busy.has(candidate) && match(session))
+      .filter(([candidate, session]) => !this.busy.has(candidate) && !this.tails.has(candidate) && match(session))
       .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt)[0];
     if (!victim) return undefined;
     this.live.delete(victim[0]);
@@ -351,12 +357,15 @@ export class SessionScheduler {
   private async sweepIdle(): Promise<void> {
     const cutoff = Date.now() - this.idleMs;
     for (const [key, session] of [...this.live.entries()]) {
-      if (!this.busy.has(key) && session.lastUsedAt <= cutoff) await this.suspend(key);
+      if (!this.busy.has(key) && !this.tails.has(key) && session.lastUsedAt <= cutoff) await this.suspend(key);
     }
   }
 
   private wakeCapacityWaiters(): void {
     const waiters = this.waiters.splice(0);
     for (const wake of waiters) wake();
+  }
+  private async notifyState(lifecycle: SessionLifecycle, state: SessionProcessState): Promise<void> {
+    await Promise.resolve(lifecycle.onStateChange?.(state)).catch(() => undefined);
   }
 }

@@ -29,6 +29,8 @@ export interface RepriseEntry {
   role: string;
   text: string;
 }
+export interface ResumePlanItem { step: string; status: 'pending' | 'in_progress' | 'completed'; }
+export interface CornerResumeContext { objective?: string; plan?: { objective?: string; items: readonly ResumePlanItem[] }; changedFiles?: readonly string[]; commits?: readonly string[]; }
 
 /**
  * Character budget for the restored transcript.
@@ -43,6 +45,7 @@ export const SESSION_REPRIME_MAX_CHARS = 8_000;
 
 /** No single entry may eat the whole budget. */
 export const SESSION_REPRIME_MAX_ENTRY_CHARS = 1_200;
+export const CORNER_RESUME_MAX_TURNS = 6;
 
 /** What the agent is told when older history was left out. */
 export const SESSION_REPRIME_ELIDED_NOTE =
@@ -106,6 +109,21 @@ export function repriseSystemPromptBlock(
   ].join('\n');
 }
 
+function boundedLines(lines: readonly string[], fallback: string, count: number, chars: number): string[] {
+  const clean = lines.map((line) => line.trim()).filter(Boolean);
+  return clean.length ? clean.slice(0, count).map((line) => `- ${line.slice(0, chars)}`) : [`- ${fallback}`];
+}
+
+export function cornerResumeSystemPromptBlock(entries: readonly RepriseEntry[], context: CornerResumeContext, maxChars: number = SESSION_REPRIME_MAX_CHARS): string {
+  const objective = context.objective?.trim() || context.plan?.objective?.trim() || 'Not recorded';
+  const plan = context.plan?.items.length ? context.plan.items.slice(0, 8).map((item) => `- [${item.status}] ${item.step.slice(0, 180)}`) : ['- No plan was recorded; reconstruct the next step from the repository state.'];
+  const fixed = ['', 'CORNER RESUME BRIEF', 'Resume this same durable corner. Do not restart the task or repeat settled exploration.', '', 'Objective:', objective.slice(0, 480), '', 'Current plan:', ...plan, '', 'Files changed so far:', ...boundedLines(context.changedFiles ?? [], 'No changed files detected.', 12, 180), '', 'Commits on this branch:', ...boundedLines(context.commits ?? [], 'No branch commits detected.', 8, 220), '', 'Last conversation turns:'];
+  const remaining = Math.max(0, maxChars - fixed.join('\n').length - 1);
+  const turns = repriseTranscriptLines(entries.slice(-CORNER_RESUME_MAX_TURNS), remaining);
+  const block = [...fixed, ...(turns.length ? turns : ['- No conversation turns recorded.'])].join('\n');
+  return block.length <= maxChars ? block : `${block.slice(0, Math.max(0, maxChars - 1))}…`;
+}
+
 export interface SessionReprimeSize {
   entries: number;
   beforeChars: number;
@@ -119,6 +137,7 @@ export interface SessionReprimeSize {
 export function measureSessionReprime(
   entries: readonly RepriseEntry[],
   maxChars: number = SESSION_REPRIME_MAX_CHARS,
+  cornerResume?: CornerResumeContext,
 ): SessionReprimeSize {
   const header = [
     '',
@@ -128,7 +147,7 @@ export function measureSessionReprime(
   const before = entries.length
     ? [...header, ...entries.map((entry) => `[${entry.role}] ${entry.text}`)].join('\n')
     : '';
-  const block = repriseSystemPromptBlock(entries, maxChars);
+  const block = cornerResume ? cornerResumeSystemPromptBlock(entries, cornerResume, maxChars) : repriseSystemPromptBlock(entries, maxChars);
   return {
     entries: entries.length,
     beforeChars: before.length,

@@ -47,7 +47,15 @@ import {
   type GoogleOnboardingStatus,
 } from '@/auth/google-onboarding-state';
 import { googleAuthSessionOptions } from '@/auth/google-auth-session';
-import { nativeSignInProvider, type NativeSignInProvider } from '@/auth/sign-in-provider';
+import {
+  githubInstallationRedirectUri,
+  githubSignInRedirectUri,
+} from '@/auth/github-auth-session';
+import {
+  nativeSignInLabel,
+  nativeSignInProvider,
+  type NativeSignInProvider,
+} from '@/auth/sign-in-provider';
 import {
   clearPersonNameOnboardingPending,
   isPersonNameOnboardingPending,
@@ -223,11 +231,7 @@ export default function BuzzOnboarding() {
         );
         if (!currentAccess.installed) {
           const authBaseUrl = getBuzzRuntimeConfig().relayUrl;
-          const authOrigin = new URL(authBaseUrl);
-          const redirectUri =
-            authOrigin.protocol === 'https:'
-              ? `${authOrigin.origin}/auth/github/mobile-callback`
-              : Linking.createURL('buzz/github-installation');
+          const redirectUri = githubInstallationRedirectUri();
           const installationUrl = await startGitHubInstallation(
             authBaseUrl,
             pending.identity,
@@ -288,11 +292,11 @@ export default function BuzzOnboarding() {
       const authBaseUrl = getBuzzRuntimeConfig().relayUrl;
       const authOrigin = new URL(authBaseUrl);
       const redirectUri =
-        authOrigin.protocol === 'https:'
-          ? `${authOrigin.origin}/auth/${signInProvider === 'github' ? 'github' : 'oidc'}/mobile-callback`
-          : Linking.createURL(
-              signInProvider === 'github' ? 'buzz/github-callback' : 'buzz/oidc-callback',
-            );
+        signInProvider === 'github'
+          ? githubSignInRedirectUri()
+          : authOrigin.protocol === 'https:'
+            ? `${authOrigin.origin}/auth/oidc/mobile-callback`
+            : Linking.createURL('buzz/oidc-callback');
       const start =
         signInProvider === 'github'
           ? startGitHubBind(authBaseUrl, { redirectUri, state })
@@ -491,12 +495,7 @@ export default function BuzzOnboarding() {
   };
 
   const canRetryBind = notice?.retryable === true && pendingBind.current !== null;
-  const signInLabel =
-    status === 'existing_device'
-      ? 'Open Workspace'
-      : signInProvider === 'github'
-        ? 'Sign in with GitHub'
-        : 'Continue with Google';
+  const signInLabel = nativeSignInLabel(signInProvider, status === 'existing_device');
 
   if (namingIdentity) {
     const normalized = normalizePersonName(nameInput);
@@ -741,16 +740,6 @@ export default function BuzzOnboarding() {
           </View>
         </PixelGateReveal>
       )}
-
-      {!showAdvanced &&
-      signInProvider === 'github' &&
-      status !== 'existing_device' &&
-      Platform.OS !== 'web' ? (
-        <Text style={styles.keyGuide}>
-          GitHub will ask you to install the Beeline GitHub App. Choose All repositories — the
-          recommended setup — so every repository you can use appears in the Room picker.
-        </Text>
-      ) : null}
 
       <View style={styles.actions}>
         {!showAdvanced && canRetryBind ? (

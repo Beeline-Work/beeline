@@ -1,22 +1,11 @@
 {
   "applinks": {
+    "apps": [],
     "details": [
       {
-        "appIDs": [
-          "466DQWDR8C.com.ex3ndr.happy"
-        ],
-        "components": [
-          {
-            "/": "*",
-            "comment": "Matches all routes"
-          }
-        ]
+        "appID": "89KT3SWYAF.app.usebeeline.mobile",
+        "paths": ["/join/*", "/auth/github/mobile-callback", "/auth/oidc/mobile-callback"]
       }
-    ]
-  },
-  "activitycontinuation": {
-    "apps": [
-      "466DQWDR8C.com.ex3ndr.happy"
     ]
   }
 }

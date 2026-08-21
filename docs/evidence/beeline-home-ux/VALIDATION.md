@@ -18,5 +18,5 @@ Additional release/emulator verification from the task worktree:
 | Command/check | Result |
 | --- | --- |
 | `npm run apk:release` | Signed release APK built successfully (296 MiB) |
-| APK metadata via `aapt dump badging` | package `app.buzzy.mobile`, label `Beeline`, compile SDK 36 |
+| APK metadata via `aapt dump badging` | Historical pre-rename package; rerun for `app.usebeeline.mobile` |
 | Install and live flow on `buzzy_api36` | Passed; screenshots are in this directory |

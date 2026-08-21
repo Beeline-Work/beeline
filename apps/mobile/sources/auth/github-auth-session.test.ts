@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { noticeForAuthError } from './onboarding-state';
 
-const createURL = vi.hoisted(() => vi.fn((path: string) => `buzzy://${path}`));
+const createURL = vi.hoisted(() => vi.fn((path: string) => `beeline://${path}`));
 const storage = vi.hoisted(() => new Map<string, string>());
 
 vi.mock('expo-linking', () => ({ createURL }));
@@ -43,7 +43,7 @@ function bindCallback(state = STATE, issuedAt = Math.floor(Date.now() / 1_000)):
     issued_at: String(issuedAt),
     expires_at: String(issuedAt + 120),
   });
-  return `buzzy://buzz/github-callback?${params}`;
+  return `beeline://buzz/github-callback?${params}`;
 }
 
 describe('GitHub auth session redirects', () => {
@@ -53,12 +53,12 @@ describe('GitHub auth session redirects', () => {
   });
 
   it('uses the installed app scheme for sign-in completion', () => {
-    expect(githubSignInRedirectUri()).toBe('buzzy://buzz/github-callback');
+    expect(githubSignInRedirectUri()).toBe('beeline://buzz/github-callback');
     expect(createURL).toHaveBeenCalledWith('buzz/github-callback');
   });
 
   it('uses the installed app scheme for GitHub App installation completion', () => {
-    expect(githubInstallationRedirectUri()).toBe('buzzy://buzz/github-installation');
+    expect(githubInstallationRedirectUri()).toBe('beeline://buzz/github-installation');
     expect(createURL).toHaveBeenCalledWith('buzz/github-installation');
   });
 
@@ -86,7 +86,7 @@ describe('GitHub auth session redirects', () => {
 
   it('ignores an unrelated cold-start URL', async () => {
     await expect(
-      resumeInitialGitHubSignIn(async () => 'buzzy://buzz/channels'),
+      resumeInitialGitHubSignIn(async () => 'beeline://buzz/channels'),
     ).resolves.toBeNull();
   });
 
@@ -122,7 +122,7 @@ describe('GitHub auth session redirects', () => {
 
   it('finishes installation from a warm Linking event when the browser reports dismiss', async () => {
     let onUrl: ((url: string) => void) | null = null;
-    const callbackUrl = 'buzzy://buzz/github-installation?installed=1';
+    const callbackUrl = 'beeline://buzz/github-installation?installed=1';
 
     await expect(
       runGitHubInstallationSession({
@@ -145,7 +145,7 @@ describe('GitHub auth session redirects', () => {
   });
 
   it('finishes installation from the direct browser return', async () => {
-    const callbackUrl = 'buzzy://buzz/github-installation?installed=1';
+    const callbackUrl = 'beeline://buzz/github-installation?installed=1';
 
     await expect(
       runGitHubInstallationSession({
@@ -176,7 +176,7 @@ describe('GitHub auth session redirects', () => {
 
     await expect(
       resumeInitialGitHubInstallation(async () =>
-        Promise.resolve('buzzy://buzz/github-installation?installed=0'),
+        Promise.resolve('beeline://buzz/github-installation?installed=0'),
       ),
     ).rejects.toMatchObject({ code: 'invalid_installation' });
   });
@@ -187,7 +187,7 @@ describe('GitHub auth session redirects', () => {
 
     await expect(
       resumeInitialGitHubInstallation(async () =>
-        Promise.resolve('buzzy://buzz/github-installation?installed=1'),
+        Promise.resolve('beeline://buzz/github-installation?installed=1'),
       ),
     ).resolves.toBe(true);
     await expect(githubInstallationReturnPath()).resolves.toBeNull();

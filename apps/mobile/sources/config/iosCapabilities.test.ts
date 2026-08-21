@@ -52,7 +52,13 @@ describe('production iOS capabilities', () => {
         ),
         'utf8',
       ),
-    ) as { applinks?: { details?: Array<{ paths?: string[] }> } };
+    ) as { applinks?: { details?: Array<{ appID?: string; paths?: string[] }> } };
+    const mobileAssociation = JSON.parse(
+      readFileSync(
+        new URL('../../public/.well-known/apple-app-site-association', import.meta.url),
+        'utf8',
+      ),
+    );
 
     expect(config.extra?.app?.buzzyRelayUrl).toBe('https://usebeeline.app');
     expect(config.extra?.app?.buzzyPushGatewayUrl).toBe('https://push.buzzrouter.com');
@@ -60,7 +66,7 @@ describe('production iOS capabilities', () => {
       'applinks:usebeeline.app',
       'applinks:relay.buzzrouter.com',
     ]);
-    expect(config.android?.package).toBe('app.buzzy.mobile');
+    expect(config.android?.package).toBe('app.usebeeline.mobile');
     expect(config.android?.intentFilters).toContainEqual(
       expect.objectContaining({
         action: 'VIEW',
@@ -95,6 +101,10 @@ describe('production iOS capabilities', () => {
       'applinks:relay.buzzrouter.com',
     ]);
     expect(nativeIos?.infoPlist?.UIBackgroundModes).not.toContain('remote-notification');
+    expect(mobileAssociation).toEqual(relayAssociation);
+    expect(relayAssociation.applinks?.details?.[0]?.appID).toBe(
+      '89KT3SWYAF.app.usebeeline.mobile',
+    );
     expect(relayAssociation.applinks?.details?.[0]?.paths).toEqual(
       expect.arrayContaining([
         '/join/*',

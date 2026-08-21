@@ -8,6 +8,9 @@
       "autoIncrement": true,
       "distribution": "store",
       "channel": "production",
+      "ios": {
+        "credentialsSource": "local"
+      },
       "env": {
         "SHARP_IGNORE_GLOBAL_LIBVIPS": "1"
       }
@@ -23,8 +26,8 @@
     "production": {
       "ios": {
         "appleTeamId": "89KT3SWYAF",
-        "ascAppId": "6799574618",
-        "appName": "Beeline",
+        "ascAppId": "6803948500",
+        "appName": "Beeline - team workspaces",
         "bundleIdentifier": "app.usebeeline.mobile",
         "ascApiKeyPath": "$EXPO_ASC_API_KEY_PATH",
         "ascApiKeyId": "$EXPO_ASC_KEY_ID",

@@ -20,7 +20,7 @@ import {
 } from './model-config.js';
 
 /**
- * `raw` is the unfiltered catalog (what `assertModelSelectionAdvertised`
+ * `raw` is the unfiltered catalog (what `unadvertisedModelSelectionValues`
  * checks against); `catalog` is the allow-list + credential filtered view
  * (#223's `filterAllowedModelConfigOptions`/`filterModelOptionsByCredentials`)
  * a human should actually be offered.

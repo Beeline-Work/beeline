@@ -154,13 +154,13 @@ type BuzzCacheState = PersistedBuzzCache & {
     channelId: string,
     update: (messages: ChatDisplayMessage[]) => ChatDisplayMessage[],
   ) => void;
-  /** Keep an already-listed room-list corner card current as archive/merge
-   * signals arrive live, without waiting for a full list reload. Never
-   * fabricates a new corner entry and never walks status backwards. */
+  /** Keep an already-listed room-list corner card's lifecycle and meaningful
+   * event time current without waiting for a full list reload. Never fabricates
+   * a new corner entry and never walks status or activity backwards. */
   patchCornerStatus: (
     viewerPubkey: string,
     roomId: string,
-    corner: { subchannelId: string; status: CornerStatus },
+    corner: { subchannelId: string; status: CornerStatus; lastActivityAt?: number },
   ) => void;
   replaceProfiles: (viewerPubkey: string, communityId: string, profiles: PersonProfile[]) => void;
   clear: () => void;
@@ -417,13 +417,14 @@ function updateListSummaries(
  * foregrounded) would otherwise keep showing its pre-archive status until the
  * next full reload. Only ever updates an already-listed corner in place —
  * never fabricates one from a bare status signal — and never walks its
- * status backwards (same precedence guard used for chat message cards).
+ * status or activity time backwards (same precedence guard used for chat
+ * message cards).
  */
 function updateListCornerStatus(
   lists: Record<string, ChannelListCacheEntry>,
   viewerPubkey: string,
   roomId: string,
-  corner: { subchannelId: string; status: CornerStatus },
+  corner: { subchannelId: string; status: CornerStatus; lastActivityAt?: number },
 ): Record<string, ChannelListCacheEntry> {
   let listsChanged = false;
   const next = Object.fromEntries(
@@ -436,13 +437,21 @@ function updateListCornerStatus(
         const corners = channel.corners.map((existing) => {
           if (
             existing.id !== corner.subchannelId ||
-            existing.status === corner.status ||
             cornerStatusPrecedence(corner.status) < cornerStatusPrecedence(existing.status)
           ) {
             return existing;
           }
+          const statusChanged = existing.status !== corner.status;
+          const activityChanged =
+            corner.lastActivityAt !== undefined &&
+            corner.lastActivityAt > (existing.lastActivityAt ?? existing.createdAt ?? 0);
+          if (!statusChanged && !activityChanged) return existing;
           changed = true;
-          return { ...existing, status: corner.status };
+          return {
+            ...existing,
+            status: corner.status,
+            ...(activityChanged ? { lastActivityAt: corner.lastActivityAt } : {}),
+          };
         });
         if (!changed) return channel;
         entryChanged = true;

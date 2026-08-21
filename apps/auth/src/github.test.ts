@@ -87,6 +87,22 @@ describe('GitHub-only account and repository access', () => {
     );
   });
 
+  it('keeps callback membership checks short-circuiting once the installation is found', async () => {
+    const { privateKey } = await generateKeyPair('RS256');
+    const privateKeyPem = await exportPKCS8(privateKey);
+    const installations = Array.from({ length: 100 }, (_, index) => ({ id: index + 1 }));
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ installations }), {
+        status: 200,
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new GitHubAppClient({ appId: '42', privateKey: privateKeyPem, slug: 'beeline' });
+
+    await expect(app.userCanAccessInstallation('user-token', 77)).resolves.toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('creates a repository in the selected installation account with administration:write', async () => {
     const { privateKey } = await generateKeyPair('RS256');
     const privateKeyPem = await exportPKCS8(privateKey);

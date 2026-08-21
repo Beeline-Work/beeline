@@ -924,11 +924,21 @@ export class AuthStore {
     community: string,
     pubkey: string,
     fullName: string,
-  ): Promise<{ accessible: boolean; installationId?: number; reason?: 'revoked' | 'not_granted' }> {
+  ): Promise<{
+    accessible: boolean;
+    installationId?: number;
+    repositoryId?: number;
+    reason?: 'revoked' | 'not_granted';
+  }> {
     const result = await this.database.query<
-      QueryResultRow & { installation_id: string | number; status: string; active: boolean }
+      QueryResultRow & {
+        installation_id: string | number;
+        repository_id: string | number | null;
+        status: string;
+        active: boolean;
+      }
     >(
-      `SELECT i.installation_id, i.status, COALESCE(r.active, FALSE) AS active
+      `SELECT i.installation_id, r.repository_id, i.status, COALESCE(r.active, FALSE) AS active
        FROM beeline_github_installations i
        LEFT JOIN beeline_github_repositories r
          ON r.community = i.community AND r.installation_id = i.installation_id
@@ -942,8 +952,9 @@ export class AuthStore {
     const row = result.rows[0];
     if (!row) return { accessible: false, reason: 'not_granted' };
     const installationId = Number(row.installation_id);
+    const repositoryId = Number(row.repository_id);
     return row.status === 'active' && row.active
-      ? { accessible: true, installationId }
+      ? { accessible: true, installationId, repositoryId }
       : {
           accessible: false,
           installationId,

@@ -63,6 +63,13 @@ export interface AuthServerOptions {
   nativeRedirectUris?: string[];
   /** Local device emulators only. Production browser-session cookies stay Secure. */
   secureCookies?: boolean;
+  /** Relay-backed proof that an agent currently belongs to a Room and that Room names this repo. */
+  authorizeGitHubRoomToken?: (
+    tenant: AuthTenant,
+    input: { agentPubkey: string; roomId: string; relayAuthorizations: readonly string[] },
+  ) => Promise<
+    { authorizedBy: string; fullName: string; githubInstallationId?: number } | undefined
+  >;
 }
 
 class ProtocolError extends Error {
@@ -780,10 +787,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       if (ticket.boundPubkey !== verification.event.pubkey) {
         throw new ProtocolError(409, 'ticket_used', 'bind ticket already used');
       }
-      const links = await options.store.linksForPubkey(
-        ticket.community,
-        verification.event.pubkey,
-      );
+      const links = await options.store.linksForPubkey(ticket.community, verification.event.pubkey);
       const actuallyLinked = links.some(
         (link) =>
           link.issuer === ticket.issuer &&
@@ -903,9 +907,17 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     if (result.status === 'missing')
       throw new ProtocolError(404, 'recovery_not_available', 'conflicting identity link not found');
     if (result.status === 'unused')
-      throw new ProtocolError(409, 'recovery_not_available', 'normal device bind must be attempted first');
+      throw new ProtocolError(
+        409,
+        'recovery_not_available',
+        'normal device bind must be attempted first',
+      );
     if (result.status === 'not_eligible')
-      throw new ProtocolError(409, 'recovery_not_available', 'device bind did not produce a conflict');
+      throw new ProtocolError(
+        409,
+        'recovery_not_available',
+        'device bind did not produce a conflict',
+      );
     if (result.status === 'wrong_key')
       throw new ProtocolError(409, 'ticket_used', 'recovery ticket belongs to another device key');
     if (result.status === 'expired')
@@ -1349,6 +1361,109 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       );
     },
   );
+
+  app.post('/auth/github/room-token', async (request, reply) => {
+    if (!options.github || !options.authorizeGitHubRoomToken) {
+      throw new ProtocolError(503, 'github_unavailable', 'GitHub repository access is unavailable');
+    }
+    const tenant = tenantFor(request);
+    if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body)) {
+      throw new ProtocolError(400, 'invalid_request', 'expected Room token request');
+    }
+    const body = request.body as Record<string, unknown>;
+    const pubkey = typeof body.pubkey === 'string' ? body.pubkey : '';
+    const roomId = typeof body.room_id === 'string' ? body.room_id : '';
+    const relayAuthorizations = Array.isArray(body.relay_authorizations)
+      ? body.relay_authorizations.filter((value): value is string => typeof value === 'string')
+      : [];
+    if (
+      !/^[0-9a-f]{64}$/.test(pubkey) ||
+      !roomId ||
+      roomId.length > 200 ||
+      relayAuthorizations.length !== 16 ||
+      relayAuthorizations.some((value) => !value || value.length > 4_096)
+    ) {
+      throw new ProtocolError(400, 'invalid_request', 'invalid Room token request');
+    }
+    const auth = verifyNip98Header(
+      request.headers.authorization,
+      publicUrl(tenant, request),
+      'POST',
+      now(),
+    );
+    if (!auth.ok || auth.pubkey !== pubkey) {
+      throw new ProtocolError(
+        401,
+        'unauthorized',
+        auth.ok ? 'NIP-98 signer mismatch' : auth.reason,
+      );
+    }
+    for (const relayAuthorization of relayAuthorizations) {
+      const relayAuth = verifyNip98Header(
+        relayAuthorization,
+        `${tenant.origin}/query`,
+        'POST',
+        now(),
+      );
+      if (!relayAuth.ok || relayAuth.pubkey !== pubkey) {
+        throw new ProtocolError(
+          401,
+          'unauthorized_relay_read',
+          relayAuth.ok ? 'relay NIP-98 signer mismatch' : relayAuth.reason,
+        );
+      }
+    }
+    const authNow = now();
+    if (
+      !(await options.store.claimNip98Event(
+        auth.eventId,
+        new Date(authNow.getTime() + 120_000),
+        authNow,
+      ))
+    ) {
+      throw new ProtocolError(401, 'replayed_auth', 'NIP-98 authentication was already used');
+    }
+    const authority = await options.authorizeGitHubRoomToken(tenant, {
+      agentPubkey: pubkey,
+      roomId,
+      relayAuthorizations,
+    });
+    if (!authority) {
+      throw new ProtocolError(
+        403,
+        'room_repository_unauthorized',
+        'agent is not authorized for this Room repository',
+      );
+    }
+    const access = await options.store.githubRepositoryAccess(
+      tenant.community,
+      authority.authorizedBy,
+      authority.fullName,
+    );
+    if (
+      !access.accessible ||
+      !access.installationId ||
+      !access.repositoryId ||
+      (authority.githubInstallationId !== undefined &&
+        authority.githubInstallationId !== access.installationId)
+    ) {
+      throw new ProtocolError(
+        403,
+        'repository_not_granted',
+        'Room repository is not granted to the Beeline GitHub App',
+      );
+    }
+    const installation = await options.github.app.installationToken(access.installationId, {
+      repositoryIds: [access.repositoryId],
+    });
+    noStore(reply);
+    return reply.send({
+      token: installation.token,
+      expires_at: installation.expiresAt,
+      installation_id: access.installationId,
+      full_name: authority.fullName,
+    });
+  });
 
   app.post('/auth/github/webhook', async (request, reply) => {
     if (!options.github?.webhookSecret) {

@@ -9,6 +9,7 @@ import {
   finishOidcBind,
   recoverOidcBind,
   getAuthCapabilities,
+  getGitHubRoomInstallationToken,
   lookupRecovery,
   parseOidcBindCallback,
   startGitHubBind,
@@ -356,6 +357,35 @@ describe('OIDC device-key bind protocol', () => {
     expect(() => parseOidcBindCallback(missing.toString(), 's'.repeat(43))).toThrow('missing');
   });
 
+  it('requests a Room-scoped GitHub token without letting the daemon choose a repository', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          token: 'room-token',
+          expires_at: '2030-01-01T00:00:00Z',
+          installation_id: 7,
+          full_name: 'acme/widget',
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      getGitHubRoomInstallationToken('https://relay.example', identity, 'room-1'),
+    ).resolves.toMatchObject({ token: 'room-token', fullName: 'acme/widget' });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      pubkey: identity.publicKey,
+      room_id: 'room-1',
+    });
+    expect(
+      JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).relay_authorizations,
+    ).toHaveLength(16);
+    expect((fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>).authorization).toMatch(
+      /^Nostr /,
+    );
+  });
+
   it('surfaces callback cancellation/proof errors without constructing a challenge', () => {
     const url = new URL('beeline://buzz/oidc-callback');
     url.searchParams.set('state', 's'.repeat(43));
@@ -424,10 +454,10 @@ describe('OIDC device-key bind protocol', () => {
   it('uses a separate explicit request to replace a conflicting device key', async () => {
     const event = buildOidcBindEvent(challenge, identity, challenge.issued_at);
     const fetchMock = vi.fn().mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({ linked: true, replaced: true, pubkey: identity.publicKey }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      ),
+      new Response(JSON.stringify({ linked: true, replaced: true, pubkey: identity.publicKey }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
     );
     vi.stubGlobal('fetch', fetchMock);
 

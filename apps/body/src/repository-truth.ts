@@ -10,12 +10,7 @@
 import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import {
-  git,
-  gitAuthed,
-  type GitResult,
-  type Identity,
-} from '@beeline/gate';
+import { git, gitAuthed, type GitResult, type Identity } from '@beeline/gate';
 import type { RepositoryBinding } from '@beeline/buzz-client';
 import { inspectLocalRepository, type LocalRepositoryBinding } from './runtime.js';
 
@@ -39,6 +34,8 @@ export interface RepositoryTruth {
   remoteName?: string;
   remoteUrl?: string;
   relayRepo?: { ownerHex: string; repo: string };
+  /** Room whose current relay binding authorizes remote credentials. */
+  roomId?: string;
   /** Pairing history only. Never project this into an agent-visible surface. */
   pairingCheckout?: string;
   /** Stable identity of that historical checkout, before provider refreshes. */
@@ -67,12 +64,14 @@ export interface RepositoryTruthResolverOptions {
   /** Provider lookup seam. GitHub App-backed callers use it to follow renames. */
   resolveRemoteIdentity?: (
     binding: RepositoryBinding,
+    roomId?: string,
   ) => Promise<RemoteRepositoryIdentity | undefined>;
   /** Credential seam. GitHub App-backed callers inject installation-token git here. */
   runRemoteGit?: (
     cwd: string,
     args: string[],
     binding: RepositoryBinding,
+    roomId?: string,
   ) => Promise<GitResult> | GitResult;
 }
 
@@ -142,9 +141,10 @@ export class RepositoryTruthResolver {
     cwd: string,
     args: string[],
     binding: RepositoryBinding,
+    roomId?: string,
   ): Promise<GitResult> {
     if (this.#options.runRemoteGit) {
-      return Promise.resolve(this.#options.runRemoteGit(cwd, args, binding));
+      return Promise.resolve(this.#options.runRemoteGit(cwd, args, binding, roomId));
     }
     const relay = relayRepo(binding);
     if (relay && this.#options.agent) {
@@ -165,6 +165,7 @@ export class RepositoryTruthResolver {
   async resolve(
     input: LocalRepositoryBinding,
     _checkpoint: RepositoryTruthCheckpoint,
+    roomId?: string,
   ): Promise<RepositoryTruth> {
     if (input.repository.localOnly || !input.repository.remote) {
       const source = resolve(input.root);
@@ -218,6 +219,7 @@ export class RepositoryTruthResolver {
         checkoutPath: root,
         gitCommonDir: local.gitCommonDir,
         targetBranch,
+        ...(roomId ? { roomId } : {}),
         ...(source !== root
           ? { pairingCheckout: source, pairingRepositoryKey: input.repository.key }
           : {}),
@@ -225,7 +227,9 @@ export class RepositoryTruthResolver {
     }
 
     const original = input.repository;
-    const refreshed = await this.#options.resolveRemoteIdentity?.(original).catch(() => undefined);
+    const refreshed = await this.#options
+      .resolveRemoteIdentity?.(original, roomId)
+      .catch(() => undefined);
     const binding: RepositoryBinding = refreshed
       ? { ...original, name: refreshed.name, remote: refreshed.remote, localOnly: false }
       : original;
@@ -237,6 +241,7 @@ export class RepositoryTruthResolver {
         this.#options.repositoriesRoot,
         ['clone', transportUrl, root],
         binding,
+        roomId,
       );
       if (!cloned.ok) {
         throw new Error(`could not clone canonical cache for ${binding.name}: ${cloned.stderr}`);
@@ -253,7 +258,12 @@ export class RepositoryTruthResolver {
       if (!setUrl.ok)
         throw new Error(`could not refresh ${binding.name} remote URL: ${setUrl.stderr}`);
     }
-    const fetched = await this.runRemoteGit(root, ['fetch', '--prune', remoteName], binding);
+    const fetched = await this.runRemoteGit(
+      root,
+      ['fetch', '--prune', remoteName],
+      binding,
+      roomId,
+    );
     if (!fetched.ok) {
       throw new Error(`could not fetch true tip for ${binding.name}: ${fetched.stderr}`);
     }
@@ -273,6 +283,7 @@ export class RepositoryTruthResolver {
       targetBranch,
       remoteName,
       remoteUrl: binding.remote,
+      ...(roomId ? { roomId } : {}),
       ...(input.relayRepo ? { relayRepo: input.relayRepo } : {}),
       ...(resolve(input.root) !== root
         ? { pairingCheckout: resolve(input.root), pairingRepositoryKey: original.key }
@@ -294,6 +305,7 @@ export class RepositoryTruthResolver {
         ...(truth.relayRepo ? { relayRepo: truth.relayRepo } : {}),
       },
       checkpoint,
+      truth.roomId,
     );
     if (truth.pairingCheckout) refreshed.pairingCheckout = truth.pairingCheckout;
     if (truth.pairingRepositoryKey) refreshed.pairingRepositoryKey = truth.pairingRepositoryKey;
@@ -329,8 +341,18 @@ export class RepositoryTruthResolver {
     const remoteName = local.remoteName ?? truth.remoteName ?? 'origin';
     const fetched =
       truth.kind === 'remote'
-        ? await this.runRemoteGit(checkout, ['fetch', '--prune', remoteName], truth.binding)
-        : git(checkout, ['fetch', '--no-tags', truth.checkoutPath, `refs/heads/${truth.targetBranch}`]);
+        ? await this.runRemoteGit(
+            checkout,
+            ['fetch', '--prune', remoteName],
+            truth.binding,
+            truth.roomId,
+          )
+        : git(checkout, [
+            'fetch',
+            '--no-tags',
+            truth.checkoutPath,
+            `refs/heads/${truth.targetBranch}`,
+          ]);
     if (!fetched.ok) return { status: 'refused', reason: 'fetch-failed' };
     const from = git(checkout, ['rev-parse', 'HEAD']).stdout.trim();
     if (from === landedTip) return { status: 'already-current' };

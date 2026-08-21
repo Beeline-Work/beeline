@@ -311,7 +311,11 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
         webhookSecret: 'webhook-secret',
       },
       tenants: [alphaTenant, betaTenant],
-      nativeRedirectUris: ['buzzy://buzz/oidc-callback'],
+      nativeRedirectUris: [
+        'buzzy-dev://buzz/oidc-callback',
+        'buzzy-preview://buzz/oidc-callback',
+        'buzzy://buzz/oidc-callback',
+      ],
     });
   });
 
@@ -700,6 +704,47 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       });
       expect(result.statusCode).toBe(400);
       expect(result.json().error).toBe('invalid_request');
+    }
+  });
+
+  it('allowlists every shipped native scheme and no caller-selected scheme', async () => {
+    const appState = 's'.repeat(43);
+    const pubkey = 'a'.repeat(64);
+    for (const scheme of ['buzzy-dev', 'buzzy-preview', 'buzzy']) {
+      const signInRedirect = `${scheme}://buzz/github-callback`;
+      const signIn = await app.inject({
+        method: 'GET',
+        url: `/auth/github/start?app_redirect=${encodeURIComponent(signInRedirect)}&app_state=${appState}`,
+        headers: { host: alphaTenant.host },
+      });
+      expect(signIn.statusCode, signInRedirect).toBe(302);
+
+      const installationRedirect = `${scheme}://buzz/github-installation`;
+      const installation = await app.inject({
+        method: 'POST',
+        url: '/auth/github/install/start',
+        headers: { host: alphaTenant.host },
+        payload: { pubkey, redirect_uri: installationRedirect },
+      });
+      expect(installation.statusCode, installationRedirect).toBe(401);
+    }
+
+    for (const path of ['github-callback', 'github-installation']) {
+      const redirectUri = `buzzy-nightly://buzz/${path}`;
+      const result =
+        path === 'github-callback'
+          ? await app.inject({
+              method: 'GET',
+              url: `/auth/github/start?app_redirect=${encodeURIComponent(redirectUri)}&app_state=${appState}`,
+              headers: { host: alphaTenant.host },
+            })
+          : await app.inject({
+              method: 'POST',
+              url: '/auth/github/install/start',
+              headers: { host: alphaTenant.host },
+              payload: { pubkey, redirect_uri: redirectUri },
+            });
+      expect(result.statusCode, redirectUri).toBe(400);
     }
   });
 

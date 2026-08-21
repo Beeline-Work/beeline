@@ -1,4 +1,9 @@
-import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import Fastify, {
+  type FastifyInstance,
+  type FastifyReply,
+  type FastifyRequest,
+  type FastifyServerOptions,
+} from 'fastify';
 import {
   createCipheriv,
   createDecipheriv,
@@ -45,9 +50,28 @@ function exactRedirect(value: string, expected: string): boolean {
 
 export interface AuthTenant {
   host: string;
+  /** Stable namespace for identity links. Kept across relay host aliases. */
   community: string;
+  /** Relay community UUID carried by Room create events. */
+  roomCommunityId: string;
   origin: string;
 }
+
+export type GitHubRoomTokenAuthorityFailureReason =
+  | 'tenant_room_community_mismatch'
+  | 'agent_not_room_member'
+  | 'room_repository_missing'
+  | 'room_repository_remote_malformed'
+  | 'room_repository_authority_missing';
+
+export type GitHubRoomTokenAuthorityResult =
+  | {
+      authorized: true;
+      authorizedBy: string;
+      fullName: string;
+      githubInstallationId?: number;
+    }
+  | { authorized: false; reason: GitHubRoomTokenAuthorityFailureReason };
 
 export interface AuthServerOptions {
   store: AuthStore;
@@ -58,7 +82,7 @@ export interface AuthServerOptions {
   now?: () => Date;
   flowTtlMs?: number;
   ticketTtlMs?: number;
-  logger?: boolean;
+  logger?: FastifyServerOptions['logger'];
   /** Exact native completion URLs; never accept an arbitrary OAuth open redirect. */
   nativeRedirectUris?: string[];
   /** Local device emulators only. Production browser-session cookies stay Secure. */
@@ -67,9 +91,7 @@ export interface AuthServerOptions {
   authorizeGitHubRoomToken?: (
     tenant: AuthTenant,
     input: { agentPubkey: string; roomId: string; relayAuthorizations: readonly string[] },
-  ) => Promise<
-    { authorizedBy: string; fullName: string; githubInstallationId?: number } | undefined
-  >;
+  ) => Promise<GitHubRoomTokenAuthorityResult>;
 }
 
 class ProtocolError extends Error {
@@ -307,6 +329,8 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     const host = normalizeHost(configured.host);
     if (!configured.community || configured.community.length > 512)
       throw new Error('invalid tenant community');
+    if (!configured.roomCommunityId || configured.roomCommunityId.length > 512)
+      throw new Error('invalid tenant Room community id');
     const origin = new URL(configured.origin);
     if (
       origin.username ||
@@ -320,7 +344,12 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     const normalizedOrigin = origin.origin;
     if (normalizeHost(origin.host) !== host) throw new Error('tenant origin and Host must match');
     if (tenants.has(host)) throw new Error(`duplicate auth tenant Host: ${host}`);
-    tenants.set(host, { host, community: configured.community, origin: normalizedOrigin });
+    tenants.set(host, {
+      host,
+      community: configured.community,
+      roomCommunityId: configured.roomCommunityId,
+      origin: normalizedOrigin,
+    });
   }
   if (tenants.size === 0) throw new Error('at least one auth tenant is required');
 
@@ -1428,7 +1457,32 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       roomId,
       relayAuthorizations,
     });
-    if (!authority) {
+    if (!authority.authorized) {
+      request.log.warn(
+        {
+          authorityReason: authority.reason,
+          roomId,
+          agentPubkey: pubkey,
+        },
+        'GitHub Room token authority refused request',
+      );
+      if (authority.reason === 'agent_not_room_member') {
+        throw new ProtocolError(
+          403,
+          'room_membership_required',
+          'agent is not a member of this Room',
+        );
+      }
+      if (
+        authority.reason === 'room_repository_missing' ||
+        authority.reason === 'room_repository_remote_malformed'
+      ) {
+        throw new ProtocolError(
+          403,
+          'room_repository_unresolvable',
+          'Room repository could not be resolved',
+        );
+      }
       throw new ProtocolError(
         403,
         'room_repository_unauthorized',

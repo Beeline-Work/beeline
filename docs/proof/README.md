@@ -21,3 +21,10 @@ display overlay and rendered the deterministic pubkey sigil.
 Fresh-clone verification of the feature commit completed with exit code 0 for
 root `npm install`, `npx turbo run build`, mobile `npm install`, the root
 typecheck and full tests, and the mobile full test suite.
+
+## Identity fill axis
+
+The [identity fill-axis proof](./identity-axis.md) renders the shipped
+`IdentityMark` at 26, 28, 30, 38, and 44dp across every kind and compares the
+chosen solid/hollow/half field against stroke weight, orientation, and interior
+density.

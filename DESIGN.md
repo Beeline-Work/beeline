@@ -252,7 +252,7 @@ only sign-out with it.
 
 ## Identity
 
-An identity mark answers four questions at once, on four independent axes, so
+An identity mark answers five questions at once, on five independent axes, so
 that recognising someone never depends on reading a name. Source of truth:
 `apps/mobile/sources/buzz/identity-mark.ts` (pure, testable, no React Native)
 drawn by `components/buzz/IdentityMark.tsx`, the **one** identity component in
@@ -274,11 +274,11 @@ the community id for a Workspace — and keeps it forever, everywhere.
 The palette is **curated, never hashed**. Sixteen hand-placed hues span the
 whole wheel with a hard 20° floor between neighbours; a raw `hash % 360` was
 tried and it clusters, putting three identities in one list on three
-near-identical purples. Here two identities are either the *same* signature or
-a clearly readable distance apart — "almost the same colour" is not a state
-this system can produce. The array is stored scrambled rather than in hue
-order, hue and cypher draw from independent PRNG streams, and a third
-luminance register separates two identities that do land on one hue.
+near-identical purples. The array is stored scrambled rather than in hue
+order, hue, fill, and cypher draw from independent PRNG streams, and a third
+luminance register helps two identities that do land on one hue. The hue
+anchors are not a uniqueness claim: the closest measured agent pair is 100° /
+120° at ΔE00 4.31, and exact hue repeats become likely in ordinary rosters.
 
 Saturation stays low so every mark sits inside the obsidian world rather than
 on top of it, and each type carries a temperament as a quiet second reading of
@@ -286,7 +286,17 @@ what the shape already states: agents warmer and a step more saturated, people
 cooler and greyer, Workspaces most neutral of all — structure should not
 compete with the people inside it.
 
-**3 · The cypher is the tiebreak.** Inside the silhouette, a hashed
+**3 · Fill is the nameable collision axis.** Each identity is **solid**,
+**hollow**, or **half-filled**, chosen from its seed on a stream independent of
+colour and kept forever across Workspaces. The treatment occupies the full
+interior field, so it survives at the shipped 26dp floor and can be said aloud:
+“the solid amber one” versus “the hollow amber one.” It never rotates or
+deforms the silhouette, and it stays inside the outer frame, away from the gold
+live ring. All three states are complete mark treatments rather than contextual
+decoration; a non-colliding identity therefore never changes appearance when a
+roster changes.
+
+**4 · The cypher is the tiebreak.** Inside the silhouette, a hashed
 nine-cell primitive grid drawn in tones of the signature colour (`void` /
 `mid` / `bright`, where a void shows the mark's own deep tone rather than a
 hole in the slab). One geometry per shape, all nine cells, so no type is a
@@ -296,12 +306,13 @@ sectors** for `○`, and speakeasy's **3×3 block/slot/cut/void plate** for `▢
 the tones are ours). Every cell is cut back from its neighbours — left
 edge-to-edge, two adjacent same-tone cells fuse and the cypher stops being one.
 
-The cypher is deliberately coarse, and below `CYPHER_MIN_SIZE` (24px) it is
-dropped entirely: at handle and presence-dot scale the mark goes solid, because
-there the colour and silhouette *are* the identity and nine cells of ~4px would
-only mud them. That is the design, not a degradation.
+The cypher is deliberately coarse, and below `CYPHER_MIN_SIZE` (24px) both the
+cypher and fill axis are dropped: at handle and presence-dot scale the mark goes
+solid, because there the colour and silhouette *are* the identity and nine
+cells of ~4px would only mud them. That is the design, not a degradation; all
+shipped identity surfaces are currently 26dp or larger.
 
-**4 · A gold ring means alive.** An agent working right now takes a gold ring
+**5 · A gold ring means alive.** An agent working right now takes a gold ring
 plus a wider low-alpha halo *outside* its silhouette, breathing on the shared
 live clock (`HullLivePulse`). It never touches the identity colour: who this is
 and what it is doing stay two separate reads, and a gold *fill* would have
@@ -312,7 +323,7 @@ live, so a quiet row pays for no clock.
 
 A relay `picture` field never overrides any of this: `groknight
 .photoIdentityMarksEnabled` gates the photo path for all three types in one
-place and ships `false`. A photo would defeat every axis above at once.
+place and ships `false`. A photo would defeat the identity axes above at once.
 
 One concept gets one glyph, product-wide. Members are `⌬` everywhere the members
 screen is reachable — the Room-list header, the Workspace settings section, the

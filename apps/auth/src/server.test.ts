@@ -249,6 +249,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
   let store: AuthStore;
   let app: FastifyInstance;
   let githubState = '';
+  let githubSubject: string;
   let githubUserInstallations: number[] | Error;
   let githubInstallationListCalls: number;
   let githubRepositoryListError: Error | undefined;
@@ -261,6 +262,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     database = new PgliteDatabase(pglite);
     store = new AuthStore(database);
     await store.migrate();
+    githubSubject = '123';
     githubUserInstallations = [];
     githubInstallationListCalls = 0;
     githubRepositoryListError = undefined;
@@ -285,7 +287,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
           exchangeCode: async () => ({
             issuer: 'https://github.com' as const,
             audience: 'github-client',
-            subject: '123',
+            subject: githubSubject,
             login: 'octocat',
             accessToken: 'github-user-token',
           }),
@@ -502,7 +504,72 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     ).resolves.toEqual([]);
     await expect(
       store.githubInstallationsForPubkey(alphaTenant.community, currentIdentity.publicKey),
-    ).resolves.toEqual([expect.objectContaining({ installationId: 77, accountId: '123' })]);
+    ).resolves.toEqual([
+      expect.objectContaining({
+        installationId: 77,
+        authorizedSubject: '123',
+        accountId: '123',
+      }),
+    ]);
+  });
+
+  it('moves an orphaned installation row only when the stable GitHub subject matches', async () => {
+    githubUserInstallations = [77];
+    const oldIdentity = generateKeypair();
+    await bindGitHubIdentity(oldIdentity, '3'.repeat(43));
+    await expect(
+      store.saveGitHubInstallation(
+        {
+          community: alphaTenant.community,
+          pubkey: oldIdentity.publicKey,
+          authorizedSubject: '123',
+          accountId: '123',
+          accountLogin: 'octocat',
+          accountType: 'User',
+          installationId: 77,
+          repositorySelection: 'all',
+          status: 'active',
+          repositoryCount: 0,
+        },
+        new Date(),
+      ),
+    ).resolves.toBe(true);
+    await database.query(
+      `DELETE FROM beeline_identity_links
+       WHERE community = $1 AND issuer = 'https://github.com' AND subject = $2`,
+      [alphaTenant.community, '123'],
+    );
+    const currentIdentity = generateKeypair();
+    await bindGitHubIdentity(currentIdentity, '4'.repeat(43));
+
+    const reposUrl = `https://alpha.example/auth/github/repos/${currentIdentity.publicKey}`;
+    const response = await app.inject({
+      method: 'GET',
+      url: `/auth/github/repos/${currentIdentity.publicKey}`,
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(
+          currentIdentity.secretKey,
+          currentIdentity.publicKey,
+          reposUrl,
+          'GET',
+        ),
+      },
+    });
+
+    expect(response.json()).toMatchObject({
+      installed: true,
+      installations: [{ installationId: 77 }],
+      repositories: [{ fullName: 'octocat/widget' }],
+    });
+    await expect(
+      store.githubInstallationsForPubkey(alphaTenant.community, oldIdentity.publicKey),
+    ).resolves.toEqual([]);
+    await expect(
+      store.githubInstallationsForPubkey(alphaTenant.community, currentIdentity.publicKey),
+    ).resolves.toEqual([
+      expect.objectContaining({ installationId: 77, authorizedSubject: '123' }),
+    ]);
   });
 
   it('returns the honest cached miss when GitHub installation reconciliation fails', async () => {
@@ -577,6 +644,63 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     expect(response.json()).toEqual({ installed: false, installations: [], repositories: [] });
     await expect(
       store.githubInstallationsForPubkey(alphaTenant.community, identity.publicKey),
+    ).resolves.toEqual([]);
+  });
+
+  it('does not transfer an organization installation between distinct GitHub subjects', async () => {
+    githubUserInstallations = [78];
+    const firstIdentity = generateKeypair();
+    await bindGitHubIdentity(firstIdentity, '1'.repeat(43));
+    const firstReposUrl = `https://alpha.example/auth/github/repos/${firstIdentity.publicKey}`;
+    const firstResponse = await app.inject({
+      method: 'GET',
+      url: `/auth/github/repos/${firstIdentity.publicKey}`,
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(
+          firstIdentity.secretKey,
+          firstIdentity.publicKey,
+          firstReposUrl,
+          'GET',
+        ),
+      },
+    });
+    expect(firstResponse.json()).toMatchObject({
+      installed: true,
+      installations: [{ installationId: 78 }],
+    });
+
+    githubSubject = '999';
+    const secondIdentity = generateKeypair();
+    await bindGitHubIdentity(secondIdentity, '2'.repeat(43));
+    const secondReposUrl = `https://alpha.example/auth/github/repos/${secondIdentity.publicKey}`;
+    const secondResponse = await app.inject({
+      method: 'GET',
+      url: `/auth/github/repos/${secondIdentity.publicKey}`,
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(
+          secondIdentity.secretKey,
+          secondIdentity.publicKey,
+          secondReposUrl,
+          'GET',
+        ),
+      },
+    });
+
+    expect(secondResponse.statusCode).toBe(200);
+    expect(secondResponse.json()).toEqual({
+      installed: false,
+      installations: [],
+      repositories: [],
+    });
+    await expect(
+      store.githubInstallationsForPubkey(alphaTenant.community, firstIdentity.publicKey),
+    ).resolves.toEqual([
+      expect.objectContaining({ installationId: 78, authorizedSubject: '123' }),
+    ]);
+    await expect(
+      store.githubInstallationsForPubkey(alphaTenant.community, secondIdentity.publicKey),
     ).resolves.toEqual([]);
   });
 

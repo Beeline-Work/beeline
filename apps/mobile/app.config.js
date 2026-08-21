@@ -13,6 +13,11 @@ const bundleId = {
     preview: "app.buzzy.mobile.preview",
     production: "app.buzzy.mobile"
 }[variant];
+const scheme = {
+    development: "buzzy-dev",
+    preview: "buzzy-preview",
+    production: "buzzy"
+}[variant];
 // Every installed variant receives OTA updates from the one surviving EAS
 // channel. APP_ENV still selects its native identity and runtime behavior.
 const updatesChannel = "preview";
@@ -73,7 +78,7 @@ export default {
         runtimeVersion: "21",
         orientation: "default",
         icon: "./sources/assets/images/icon.png",
-        scheme: "buzzy",
+        scheme,
         userInterfaceStyle: "automatic",
         ios: {
             supportsTablet: true,

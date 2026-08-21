@@ -472,7 +472,15 @@ describe('Buzz local cache', () => {
 
     expect(
       useBuzzLocalCache.getState().channelLists[`${viewer}:workspace`]?.channels[0]?.corners,
-    ).toEqual([{ id: 'corner-1', name: 'implement-this', openerPubkey: 'agent', status: 'archived' }]);
+    ).toEqual([
+      {
+        id: 'corner-1',
+        name: 'implement-this',
+        openerPubkey: 'agent',
+        status: 'archived',
+        lastActivityAt: 11,
+      },
+    ]);
   });
 
   it('never regresses or fabricates a sidebar corner card from an out-of-order or unlisted signal', () => {
@@ -690,17 +698,36 @@ describe('Buzz local cache', () => {
       expect(useBuzzLocalCache.getState().channelLists).toBe(before);
     });
 
+    it('moves a repeated lifecycle signal forward when its meaningful-event time advances', () => {
+      seedList();
+
+      useBuzzLocalCache.getState().patchCornerStatus(viewer, 'room', {
+        subchannelId: 'corner-1',
+        status: 'live',
+        lastActivityAt: 99,
+      });
+
+      expect(
+        useBuzzLocalCache.getState().channelLists[`${viewer}:workspace`]?.channels[0]?.corners?.[0],
+      ).toMatchObject({ status: 'live', lastActivityAt: 99 });
+    });
+
     it('still advances a corner whose status genuinely moved', () => {
       seedList();
       const before = useBuzzLocalCache.getState().channelLists;
 
-      useBuzzLocalCache
-        .getState()
-        .patchCornerStatus(viewer, 'room', { subchannelId: 'corner-1', status: 'archived' });
+      useBuzzLocalCache.getState().patchCornerStatus(viewer, 'room', {
+        subchannelId: 'corner-1',
+        status: 'archived',
+        lastActivityAt: 99,
+      });
 
       const after = useBuzzLocalCache.getState().channelLists;
       expect(after).not.toBe(before);
-      expect(after[`${viewer}:workspace`]?.channels[0]?.corners?.[0]?.status).toBe('archived');
+      expect(after[`${viewer}:workspace`]?.channels[0]?.corners?.[0]).toMatchObject({
+        status: 'archived',
+        lastActivityAt: 99,
+      });
     });
   });
 });

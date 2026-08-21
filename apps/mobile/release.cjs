@@ -41,12 +41,6 @@ const actions = [
     description: "Publish an update to the preview channel",
     scripts: ["release:ota:preview"],
   },
-  {
-    id: "ota-release",
-    label: "OTA (release)",
-    description: "Publish an update to the production channel",
-    scripts: ["release:ota:release"],
-  },
 ];
 
 const actionAliases = {
@@ -63,9 +57,6 @@ const actionAliases = {
   "ota-preview": "ota-preview",
   "ota:preview": "ota-preview",
   preview: "ota-preview",
-  "ota-release": "ota-release",
-  "ota:release": "ota-release",
-  production: "ota-release",
 };
 
 function findAction(input) {

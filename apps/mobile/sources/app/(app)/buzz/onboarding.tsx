@@ -16,13 +16,10 @@ import {
   type BuzzClient,
   buildOidcBindEvent,
   finishOidcBind,
-  getAuthCapabilities,
   lookupRecovery,
-  parseOidcBindCallback,
   startGitHubBind,
   startGitHubInstallation,
   listGitHubRepositories,
-  startOidcBind,
   type Identity,
   type OidcBindChallenge,
 } from '@beeline/buzz-client';
@@ -40,32 +37,26 @@ import {
   type NewKeyDraft,
 } from '@/auth/new-key-onboarding';
 import {
-  clearGoogleOnboardingNotice,
-  nextGoogleOnboardingStatus,
-  noticeForOidcError,
-  publishGoogleOnboardingNotice,
-  subscribeToGoogleOnboardingNotices,
-  waitForGoogleAuthCallback,
-  type GoogleOnboardingNotice,
-  type GoogleOnboardingStatus,
-} from '@/auth/google-onboarding-state';
-import { googleAuthSessionOptions } from '@/auth/google-auth-session';
+  clearOnboardingNotice,
+  nextOnboardingStatus,
+  noticeForAuthError,
+  publishOnboardingNotice,
+  subscribeToOnboardingNotices,
+  waitForAuthCallback,
+  type OnboardingNotice,
+  type OnboardingStatus,
+} from '@/auth/onboarding-state';
+import { authSessionOptions } from '@/auth/auth-session';
 import {
   clearPendingGitHubSignInState,
   githubInstallationRedirectUri,
   githubSignInRedirectUri,
-  isGitHubSignInCallbackUrl,
   persistGitHubSignInState,
   resumeGitHubSignInCallback,
   resumeInitialGitHubInstallation,
   resumeInitialGitHubSignIn,
   runGitHubInstallationSession,
 } from '@/auth/github-auth-session';
-import {
-  nativeSignInLabel,
-  nativeSignInProvider,
-  type NativeSignInProvider,
-} from '@/auth/sign-in-provider';
 import {
   clearPersonNameOnboardingPending,
   isPersonNameOnboardingPending,
@@ -93,7 +84,6 @@ interface PendingBind {
   challenge: OidcBindChallenge;
   identity: Identity;
   bound: boolean;
-  provider: NativeSignInProvider;
 }
 
 function randomState(): string {
@@ -103,7 +93,7 @@ function randomState(): string {
     .replace(/=/g, '');
 }
 
-const WEB_NOTICE: GoogleOnboardingNotice = {
+const WEB_NOTICE: OnboardingNotice = {
   status: 'idle',
   title: 'NATIVE ONLY',
   message:
@@ -118,9 +108,8 @@ export default function BuzzOnboarding() {
   const existingIdentity = useRef<Identity | null>(null);
   const [nsecInput, setNsecInput] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [status, setStatus] = useState<GoogleOnboardingStatus>('checking_device');
-  const [signInProvider, setSignInProvider] = useState<NativeSignInProvider>('oidc');
-  const [notice, setNotice] = useState<GoogleOnboardingNotice | null>(
+  const [status, setStatus] = useState<OnboardingStatus>('checking_device');
+  const [notice, setNotice] = useState<OnboardingNotice | null>(
     Platform.OS === 'web' ? WEB_NOTICE : null,
   );
   const [loadingAction, setLoadingAction] = useState<
@@ -141,7 +130,7 @@ export default function BuzzOnboarding() {
 
   useEffect(
     () =>
-      subscribeToGoogleOnboardingNotices((next) => {
+      subscribeToOnboardingNotices((next) => {
         setStatus(next.status);
         setNotice(next);
       }),
@@ -182,7 +171,7 @@ export default function BuzzOnboarding() {
   const finishPendingBind = async (pending: PendingBind) => {
     setLoadingAction('bind');
     setStatus('binding');
-    if (pending.provider === 'github') clearGoogleOnboardingNotice();
+    clearOnboardingNotice();
     setNotice(null);
     try {
       if (!pending.bound) {
@@ -192,42 +181,40 @@ export default function BuzzOnboarding() {
         const event = buildOidcBindEvent(pending.challenge, pending.identity);
         await finishOidcBind(getBuzzRuntimeConfig().relayUrl, pending.challenge, event);
         pending.bound = true;
-        if (pending.provider === 'github') await clearPendingGitHubSignInState();
+        await clearPendingGitHubSignInState();
       }
       // Once the server binds this exact public key, persist it before opening
       // the separate App-install browser. Canceling installation must never
       // orphan a newly linked GitHub identity on a key the device discarded.
       await markPersonNameOnboardingPending();
       await saveBuzzIdentity(pending.identity);
-      if (pending.provider === 'github') {
-        const currentAccess = await listGitHubRepositories(
-          getBuzzRuntimeConfig().relayUrl,
-          pending.identity,
-        );
-        if (!currentAccess.installed) {
-          const authBaseUrl = getBuzzRuntimeConfig().relayUrl;
-          await runGitHubInstallationSession({
-            returnPath: '/buzz/onboarding',
-            startInstallation: () =>
-              startGitHubInstallation(
-                authBaseUrl,
-                pending.identity,
-                githubInstallationRedirectUri(),
-              ),
-            openAuthSession: (installationUrl, redirectUri) =>
-              WebBrowser.openAuthSessionAsync(
-                installationUrl,
-                redirectUri,
-                googleAuthSessionOptions(Platform.OS, redirectUri),
-              ),
-            subscribeToUrls: (listener) =>
-              Linking.addEventListener('url', ({ url }) => listener(url)),
-          });
-        }
+      const currentAccess = await listGitHubRepositories(
+        getBuzzRuntimeConfig().relayUrl,
+        pending.identity,
+      );
+      if (!currentAccess.installed) {
+        const authBaseUrl = getBuzzRuntimeConfig().relayUrl;
+        await runGitHubInstallationSession({
+          returnPath: '/buzz/onboarding',
+          startInstallation: () =>
+            startGitHubInstallation(
+              authBaseUrl,
+              pending.identity,
+              githubInstallationRedirectUri(),
+            ),
+          openAuthSession: (installationUrl, redirectUri) =>
+            WebBrowser.openAuthSessionAsync(
+              installationUrl,
+              redirectUri,
+              authSessionOptions(Platform.OS, redirectUri),
+            ),
+          subscribeToUrls: (listener) =>
+            Linking.addEventListener('url', ({ url }) => listener(url)),
+        });
       }
       await registerBuzzPushNotifications(pending.identity);
       pendingBind.current = null;
-      setStatus(nextGoogleOnboardingStatus('binding', 'bind_succeeded'));
+      setStatus(nextOnboardingStatus('binding', 'bind_succeeded'));
       await continueAfterIdentity(pending.identity);
     } catch (error) {
       const normalized =
@@ -238,11 +225,11 @@ export default function BuzzOnboarding() {
               error instanceof Error ? error.message : String(error),
               500,
             );
-      const next = noticeForOidcError(normalized);
+      const next = noticeForAuthError(normalized);
       if (!next.retryable) pendingBind.current = null;
       setStatus(next.status);
       setNotice(next);
-      if (pending.provider === 'github') publishGoogleOnboardingNotice(next);
+      publishOnboardingNotice(next);
     } finally {
       setLoadingAction(null);
     }
@@ -257,11 +244,9 @@ export default function BuzzOnboarding() {
     const relayUrl = getBuzzRuntimeConfig().relayUrl;
     void (async () => {
       const initialUrl = await Linking.getInitialURL().catch(() => null);
-      if (isGitHubSignInCallbackUrl(initialUrl) && alive) setSignInProvider('github');
       const coldChallenge = await resumeInitialGitHubSignIn(() => Promise.resolve(initialUrl));
       if (coldChallenge) {
         if (!alive) return;
-        setSignInProvider('github');
         setStatus('binding');
         const identity =
           (await loadBuzzIdentity()) ??
@@ -271,7 +256,6 @@ export default function BuzzOnboarding() {
           challenge: coldChallenge,
           identity,
           bound: false,
-          provider: 'github',
         };
         pendingBind.current = pending;
         await finishPendingBind(pending);
@@ -294,31 +278,21 @@ export default function BuzzOnboarding() {
         return;
       }
 
-      const capabilities = await getAuthCapabilities(relayUrl).catch(() => ({
-        github: false,
-        oidc: true,
-      }));
-      const provider = nativeSignInProvider(capabilities);
-      if (alive) setSignInProvider(provider);
       const identity = await loadBuzzIdentity();
       if (!identity) return;
       existingIdentity.current = identity;
+      const links = await lookupRecovery(relayUrl, identity);
+      const hasGitHubLink = links.some((link) => link.provider === 'https://github.com');
       if (await isPersonNameOnboardingPending()) {
-        if (provider === 'github') {
+        if (hasGitHubLink) {
           const access = await listGitHubRepositories(relayUrl, identity);
           if (!access.installed) return;
         }
-        if (alive) await continueAfterIdentity(identity);
+        if (alive && links.length > 0) await continueAfterIdentity(identity);
         return;
       }
-      const links = await lookupRecovery(relayUrl, identity);
-      const linkedProvider = links.some((link) =>
-        provider === 'github'
-          ? link.provider === 'https://github.com'
-          : link.provider !== 'https://github.com',
-      );
-      if (!alive || !linkedProvider) return;
-      if (provider === 'github') {
+      if (!alive || links.length === 0) return;
+      if (hasGitHubLink) {
         const access = await listGitHubRepositories(relayUrl, identity);
         if (!access.installed) return;
       }
@@ -326,7 +300,7 @@ export default function BuzzOnboarding() {
     })()
       .catch((error: unknown) => {
         if (!alive) return;
-        const next = noticeForOidcError(error);
+        const next = noticeForAuthError(error);
         setNotice(next);
         setStatus(next.status);
       })
@@ -340,58 +314,42 @@ export default function BuzzOnboarding() {
 
   const handleSignIn = async () => {
     if (Platform.OS === 'web') return;
-    if (status === 'existing_device') {
-      if (existingIdentity.current) await continueAfterIdentity(existingIdentity.current);
-      return;
-    }
     setLoadingAction('github');
     setStatus('opening_browser');
-    clearGoogleOnboardingNotice();
+    clearOnboardingNotice();
     setNotice(null);
     try {
       const state = randomState();
       const authBaseUrl = getBuzzRuntimeConfig().relayUrl;
-      const authOrigin = new URL(authBaseUrl);
-      const redirectUri =
-        signInProvider === 'github'
-          ? githubSignInRedirectUri()
-          : authOrigin.protocol === 'https:'
-            ? `${authOrigin.origin}/auth/oidc/mobile-callback`
-            : Linking.createURL('buzz/oidc-callback');
-      const start =
-        signInProvider === 'github'
-          ? startGitHubBind(authBaseUrl, { redirectUri, state })
-          : startOidcBind(authBaseUrl, { redirectUri, state });
-      if (signInProvider === 'github') await persistGitHubSignInState(state);
-      const callbackUrl = await waitForGoogleAuthCallback({
+      const redirectUri = githubSignInRedirectUri();
+      const start = startGitHubBind(authBaseUrl, { redirectUri, state });
+      await persistGitHubSignInState(state);
+      const callbackUrl = await waitForAuthCallback({
         redirectUri: start.redirectUri,
         openAuthSession: () =>
           WebBrowser.openAuthSessionAsync(
             start.authorizationUrl,
             start.redirectUri,
-            googleAuthSessionOptions(Platform.OS, start.redirectUri),
+            authSessionOptions(Platform.OS, start.redirectUri),
           ),
         subscribeToUrls: (listener) => Linking.addEventListener('url', ({ url }) => listener(url)),
       });
-      setStatus(nextGoogleOnboardingStatus('opening_browser', 'callback_received'));
-      const challenge =
-        signInProvider === 'github'
-          ? await resumeGitHubSignInCallback(callbackUrl)
-          : parseOidcBindCallback(callbackUrl, state);
+      setStatus(nextOnboardingStatus('opening_browser', 'callback_received'));
+      const challenge = await resumeGitHubSignInCallback(callbackUrl);
       // Preserve upgraded users' existing device-held identity; only first-time
       // devices create a candidate key after GitHub proof succeeds.
       const identity =
         existingIdentity.current ??
         (await generateBuzzIdentity('buzzy-mobile', { persist: false }));
-      const pending = { challenge, identity, bound: false, provider: signInProvider };
+      const pending = { challenge, identity, bound: false };
       pendingBind.current = pending;
       await finishPendingBind(pending);
     } catch (error) {
-      if (signInProvider === 'github') await clearPendingGitHubSignInState();
-      const next = noticeForOidcError(error);
+      await clearPendingGitHubSignInState();
+      const next = noticeForAuthError(error);
       setStatus(next.status);
       setNotice(next);
-      if (signInProvider === 'github') publishGoogleOnboardingNotice(next);
+      publishOnboardingNotice(next);
     } finally {
       setLoadingAction(null);
     }
@@ -562,7 +520,7 @@ export default function BuzzOnboarding() {
   };
 
   const canRetryBind = notice?.retryable === true && pendingBind.current !== null;
-  const signInLabel = nativeSignInLabel(signInProvider, status === 'existing_device');
+  const signInLabel = 'Continue with GitHub';
 
   if (namingIdentity) {
     const normalized = normalizePersonName(nameInput);
@@ -775,8 +733,7 @@ export default function BuzzOnboarding() {
           <View style={styles.advancedDivider} />
           <Text style={styles.sectionLabel}>ADVANCED · EXISTING NOSTR KEY</Text>
           <Text style={styles.keyGuide}>
-            Your nostr key stays on this device and does not go to{' '}
-            {signInProvider === 'github' ? 'GitHub' : 'Google'}.
+            Your nostr key stays on this device and does not go to GitHub.
           </Text>
           <TextInput
             nativeID="buzz-secret-key"

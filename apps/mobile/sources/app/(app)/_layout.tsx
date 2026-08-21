@@ -69,10 +69,6 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
-                name="buzz/oidc-callback"
-                options={{ headerShown: false, statusBarStyle: 'light' }}
-            />
-            <Stack.Screen
                 name="buzz/github-callback"
                 options={{ headerShown: false, statusBarStyle: 'light' }}
             />

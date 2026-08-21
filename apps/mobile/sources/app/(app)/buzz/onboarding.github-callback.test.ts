@@ -17,7 +17,11 @@ const identityStorage = vi.hoisted(() => ({
 }));
 const sdk = vi.hoisted(() => ({
   finish: vi.fn(async () => ({ linked: true })),
+  getCapabilities: vi.fn(async () => ({ github: true, oidc: true })),
   listRepositories: vi.fn(async () => ({ installed: true, installations: [], repositories: [] })),
+  lookupRecovery: vi.fn(
+    async () => [] as { provider: string; subject: string; pubkey: string }[],
+  ),
 }));
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
@@ -33,9 +37,9 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
     ...actual,
     buildOidcBindEvent: vi.fn(() => ({ id: 'bind-event' })),
     finishOidcBind: sdk.finish,
-    getAuthCapabilities: vi.fn(async () => ({ github: true, oidc: true })),
+    getAuthCapabilities: sdk.getCapabilities,
     listGitHubRepositories: sdk.listRepositories,
-    lookupRecovery: vi.fn(async () => []),
+    lookupRecovery: sdk.lookupRecovery,
   };
 });
 vi.mock('expo-router', () => ({ router: navigation }));
@@ -126,7 +130,7 @@ vi.mock('@/constants/Typography', () => ({
 
 const { persistGitHubSignInState } = await import('@/auth/github-auth-session');
 const { OidcBindError } = await import('@beeline/buzz-client');
-const { clearGoogleOnboardingNotice } = await import('@/auth/google-onboarding-state');
+const { clearOnboardingNotice } = await import('@/auth/onboarding-state');
 const { default: BuzzOnboarding } = await import('./onboarding');
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -171,11 +175,65 @@ describe('GitHub callback delivery into onboarding', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     storage.clear();
-    clearGoogleOnboardingNotice();
+    clearOnboardingNotice();
     linking.initialUrl = null;
     linking.listener = null;
     identityStorage.load.mockResolvedValue(null);
+    sdk.getCapabilities.mockResolvedValue({ github: true, oidc: true });
     sdk.listRepositories.mockResolvedValue({ installed: true, installations: [], repositories: [] });
+    sdk.lookupRecovery.mockResolvedValue([]);
+  });
+
+  it('renders GitHub on the first frame without waiting for auth capabilities', () => {
+    sdk.getCapabilities.mockImplementation(
+      () => new Promise<{ github: boolean; oidc: boolean }>(() => undefined),
+    );
+    let tree!: ReactTestRenderer;
+    act(() => {
+      tree = create(React.createElement(BuzzOnboarding));
+    });
+
+    expect(
+      tree.root.findAll(
+        (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
+      ),
+    ).toHaveLength(1);
+    expect(sdk.getCapabilities).not.toHaveBeenCalled();
+    expect(noticeText(tree)).not.toContain(['Goo', 'gle'].join(''));
+    act(() => tree.unmount());
+  });
+
+  it('never consults capabilities or falls back to the legacy provider when the network fails', async () => {
+    sdk.getCapabilities.mockRejectedValue(new Error('offline'));
+    const tree = await render();
+    const signIn = tree.root.find(
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
+    );
+
+    await act(async () => {
+      await signIn.props.onPress();
+    });
+
+    expect(sdk.getCapabilities).not.toHaveBeenCalled();
+    expect(noticeText(tree)).not.toContain(['Goo', 'gle'].join(''));
+  });
+
+  it('keeps an existing device usable when its stored key has only a legacy recovery link', async () => {
+    const identity = { secretKey: '1'.repeat(64), publicKey: '2'.repeat(64) };
+    identityStorage.load.mockResolvedValue(identity);
+    sdk.lookupRecovery.mockResolvedValue([
+      {
+        provider: 'https://accounts.example',
+        subject: 'existing-account',
+        pubkey: identity.publicKey,
+      },
+    ]);
+
+    await render();
+
+    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+    expect(sdk.listRepositories).not.toHaveBeenCalled();
+    expect(browser.open).not.toHaveBeenCalled();
   });
 
   it('cold-starts, binds the proof, saves the identity, and enters the workspace', async () => {

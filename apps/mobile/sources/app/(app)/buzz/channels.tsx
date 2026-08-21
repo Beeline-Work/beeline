@@ -36,7 +36,7 @@ import {
   resumeInitialGitHubInstallation,
   runGitHubInstallationSession,
 } from '@/auth/github-auth-session';
-import { googleAuthSessionOptions } from '@/auth/google-auth-session';
+import { authSessionOptions } from '@/auth/auth-session';
 import { saveLastViewedChannel } from '@/buzz/community-storage';
 import { createCommunityInviteUrl } from '@/buzz/community-invite';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
@@ -790,7 +790,7 @@ export default function BuzzChannels() {
           WebBrowser.openAuthSessionAsync(
             installationUrl,
             redirectUri,
-            googleAuthSessionOptions(Platform.OS, redirectUri),
+            authSessionOptions(Platform.OS, redirectUri),
           ),
         subscribeToUrls: (listener) =>
           Linking.addEventListener('url', ({ url }) => listener(url)),

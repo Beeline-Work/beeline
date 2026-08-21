@@ -143,7 +143,7 @@ describe('onboarding — create a new key', () => {
   it('offers a create-new-key action beside the existing-key import', async () => {
     const tree = await render();
     // The dead end this closes: before Advanced was opened there is no key path
-    // at all for a non-Google user, and inside it there was only "Import key".
+    // at all for a new-key user, and inside it there was only "Import key".
     expect(nodes(tree, 'onboarding-create-key')).toHaveLength(0);
     await press(one(tree, 'onboarding-advanced'));
     expect(nodes(tree, 'onboarding-create-key')).toHaveLength(1);

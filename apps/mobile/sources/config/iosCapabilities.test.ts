@@ -78,11 +78,6 @@ describe('production iOS capabilities', () => {
           },
           {
             scheme: 'https',
-            host: 'usebeeline.app',
-            pathPrefix: '/auth/oidc/mobile-callback',
-          },
-          {
-            scheme: 'https',
             host: 'relay.buzzrouter.com',
             pathPrefix: '/join/',
           },
@@ -90,11 +85,6 @@ describe('production iOS capabilities', () => {
             scheme: 'https',
             host: 'relay.buzzrouter.com',
             pathPrefix: '/auth/github/mobile-callback',
-          },
-          {
-            scheme: 'https',
-            host: 'relay.buzzrouter.com',
-            pathPrefix: '/auth/oidc/mobile-callback',
           },
         ]),
       }),
@@ -109,6 +99,8 @@ describe('production iOS capabilities', () => {
       expect.arrayContaining([
         '/join/*',
         '/auth/github/mobile-callback',
+        // The auth service keeps this recovery-compatible server endpoint even
+        // though the mobile app no longer registers or routes it.
         '/auth/oidc/mobile-callback',
       ]),
     );

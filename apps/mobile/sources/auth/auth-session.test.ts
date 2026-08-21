@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { googleAuthSessionOptions } from './google-auth-session';
+import { authSessionOptions } from './auth-session';
 
-describe('Google auth browser session', () => {
+describe('auth browser session', () => {
   it('bypasses Android’s retained Custom Tabs proxy for each fresh login', () => {
     expect(
-      googleAuthSessionOptions('android', 'https://usebeeline.app/auth/oidc/mobile-callback'),
+      authSessionOptions('android', 'https://usebeeline.app/auth/github/mobile-callback'),
     ).toEqual({
       preferUniversalLinks: true,
       createTask: true,
@@ -13,7 +13,7 @@ describe('Google auth browser session', () => {
   });
 
   it('keeps the native browser defaults on non-Android platforms', () => {
-    expect(googleAuthSessionOptions('ios', 'buzzy://buzz/oidc-callback')).toEqual({
+    expect(authSessionOptions('ios', 'buzzy://buzz/github-callback')).toEqual({
       preferUniversalLinks: false,
     });
   });

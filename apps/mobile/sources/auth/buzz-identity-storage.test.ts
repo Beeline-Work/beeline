@@ -20,6 +20,7 @@ vi.mock('@beeline/buzz-client', () => buzzClient);
 import {
   loadBuzzIdentity,
   loadBuzzIdentityNsecForExport,
+  importBuzzIdentity,
   loadRelayUrl,
   getEffectiveRelayUrl,
   saveBuzzIdentity,
@@ -89,6 +90,26 @@ describe('Buzz identity storage', () => {
       options,
     );
     expect(secureStore.getItemAsync).toHaveBeenCalledWith('buzzy.identity.nsec', options);
+  });
+
+  it('round-trips an exported nsec through the Advanced import path', async () => {
+    const identity = { name: 'portable' };
+    buzzClient.loadIdentityFromNsec.mockReturnValue(identity);
+    buzzClient.identityNsec.mockReturnValue('nsec1portable');
+
+    await expect(importBuzzIdentity('nsec1portable')).resolves.toBe(identity);
+    expect(buzzClient.loadIdentityFromNsec).toHaveBeenCalledWith(
+      'nsec1portable',
+      'buzzy-mobile',
+    );
+    expect(secureStore.setItemAsync).toHaveBeenCalledWith(
+      'buzzy.identity.nsec',
+      'nsec1portable',
+      { keychainAccessible: 123 },
+    );
+
+    secureStore.getItemAsync.mockResolvedValue('nsec1portable');
+    await expect(loadBuzzIdentityNsecForExport()).resolves.toBe('nsec1portable');
   });
 
   it('propagates native write failures so onboarding can show them', async () => {

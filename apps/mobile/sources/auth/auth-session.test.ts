@@ -13,7 +13,7 @@ describe('auth browser session', () => {
   });
 
   it('keeps the native browser defaults on non-Android platforms', () => {
-    expect(authSessionOptions('ios', 'buzzy://buzz/github-callback')).toEqual({
+    expect(authSessionOptions('ios', 'beeline://buzz/github-callback')).toEqual({
       preferUniversalLinks: false,
     });
   });

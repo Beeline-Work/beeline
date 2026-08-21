@@ -25,18 +25,8 @@ const DEFAULT_FLOW_TTL_MS = 5 * 60_000;
 const DEFAULT_TICKET_TTL_MS = 2 * 60_000;
 const FLOW_COOKIE = '__Host-beeline_oidc_flow';
 // Exact native identities from apps/mobile/app.config.js. Never derive these from request input.
-const GITHUB_SIGN_IN_DEEP_LINKS = [
-  'buzzy-dev://buzz/github-callback',
-  'buzzy-preview://buzz/github-callback',
-  'buzzy://buzz/github-callback',
-] as const;
-const GITHUB_INSTALLATION_DEEP_LINKS = [
-  'buzzy-dev://buzz/github-installation',
-  'buzzy-preview://buzz/github-installation',
-  'buzzy://buzz/github-installation',
-] as const;
-const PRODUCTION_GITHUB_SIGN_IN_DEEP_LINK = 'buzzy://buzz/github-callback';
-const PRODUCTION_GITHUB_INSTALLATION_DEEP_LINK = 'buzzy://buzz/github-installation';
+const GITHUB_SIGN_IN_DEEP_LINK = 'beeline://buzz/github-callback';
+const GITHUB_INSTALLATION_DEEP_LINK = 'beeline://buzz/github-installation';
 
 function exactRedirect(value: string, expected: string): boolean {
   return value === expected || (!expected.endsWith('/') && value === `${expected}/`);
@@ -202,8 +192,8 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
   const flowTtlMs = options.flowTtlMs ?? DEFAULT_FLOW_TTL_MS;
   const ticketTtlMs = options.ticketTtlMs ?? DEFAULT_TICKET_TTL_MS;
   const nativeRedirectUris = new Set([
-    ...GITHUB_SIGN_IN_DEEP_LINKS,
-    ...GITHUB_INSTALLATION_DEEP_LINKS,
+    GITHUB_SIGN_IN_DEEP_LINK,
+    GITHUB_INSTALLATION_DEEP_LINK,
     ...(options.nativeRedirectUris ?? []),
   ]);
   const isAllowedAppRedirect = (value: string, associatedRedirect: string): boolean =>
@@ -366,8 +356,8 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     const callback = new URL(publicUrl(tenant, request));
     const target = new URL(
       callback.searchParams.get('installed') === '1'
-        ? PRODUCTION_GITHUB_INSTALLATION_DEEP_LINK
-        : PRODUCTION_GITHUB_SIGN_IN_DEEP_LINK,
+        ? GITHUB_INSTALLATION_DEEP_LINK
+        : GITHUB_SIGN_IN_DEEP_LINK,
     );
     target.search = callback.search;
     noStore(reply);

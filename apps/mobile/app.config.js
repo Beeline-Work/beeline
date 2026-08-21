@@ -1,38 +1,14 @@
 const { execFileSync } = require('node:child_process');
 const { version: releaseVersion } = require('./package.json');
 
-const variant = process.env.APP_ENV || 'development';
-// Buzzy fork of Happy (slopus/happy). Minimal rebrand — see README.md.
-const name = {
-    development: "Beeline (dev)",
-    preview: "Beeline (preview)",
-    production: "Beeline"
-}[variant];
-const bundleId = {
-    development: "app.buzzy.mobile.dev",
-    preview: "app.buzzy.mobile.preview",
-    production: "app.buzzy.mobile"
-}[variant];
-const scheme = {
-    development: "buzzy-dev",
-    preview: "buzzy-preview",
-    production: "buzzy"
-}[variant];
-// Every installed variant receives OTA updates from the one surviving EAS
-// channel. APP_ENV still selects its native identity and runtime behavior.
-const updatesChannel = "preview";
+const name = "Beeline";
+const bundleId = "app.usebeeline.mobile";
+const scheme = "beeline";
+const updatesChannel = "production";
 // const stagingElevenLabsAgentId = 'agent_7801k2c0r5hjfraa1kdbytpvs6yt';
 const productionElevenLabsAgentId = 'agent_6701k211syvvegba4kt7m68nxjmw';
-const elevenLabsAgentId = {
-    development: productionElevenLabsAgentId,
-    preview: productionElevenLabsAgentId,
-    production: productionElevenLabsAgentId,
-}[variant];
-const consoleLoggingDefault = {
-    development: true,
-    preview: true,
-    production: false,
-}[variant];
+const elevenLabsAgentId = productionElevenLabsAgentId;
+const consoleLoggingDefault = process.env.NODE_ENV !== 'production';
 const buzzyRelayUrl = process.env.EXPO_PUBLIC_BUZZY_RELAY_URL || 'https://usebeeline.app';
 const buzzyPushGatewayUrl = process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL || 'https://push.buzzrouter.com';
 
@@ -70,6 +46,8 @@ const buildMetadata = loadBuildMetadata();
 export default {
     expo: {
         name,
+        // The EAS project slug is operational metadata; native identity is
+        // fixed independently by the bundleId and scheme constants above.
         slug: "buzzy",
         // Android versionName and iOS CFBundleShortVersionString both derive
         // from this package's release version. `version:check` rejects a tag
@@ -84,9 +62,7 @@ export default {
             supportsTablet: true,
             bundleIdentifier: bundleId,
             buildNumber: "1",
-            ...(variant === 'production'
-                ? { associatedDomains: ["applinks:usebeeline.app", "applinks:relay.buzzrouter.com"] }
-                : {}),
+            associatedDomains: ["applinks:usebeeline.app", "applinks:relay.buzzrouter.com"],
             config: {
                 usesNonExemptEncryption: false
             },
@@ -99,10 +75,10 @@ export default {
                 //   addresses (e.g. self-hosted server at 192.168.x.y) without
                 //   forcing TLS. Production cloud server is HTTPS, so the
                 //   default policy still applies there.
-                // - In dev/preview only, allow arbitrary HTTP loads so a
+                // - In local development only, allow arbitrary HTTP loads so a
                 //   developer pointing the app at their machine doesn't have
                 //   to ship a TLS cert just to test attachment uploads.
-                NSAppTransportSecurity: variant === 'production'
+                NSAppTransportSecurity: process.env.NODE_ENV === 'production'
                     ? { NSAllowsLocalNetworking: true }
                     : { NSAllowsLocalNetworking: true, NSAllowsArbitraryLoads: true }
             }
@@ -129,11 +105,6 @@ export default {
                 "android.permission.READ_MEDIA_VIDEO",
             ],
             package: bundleId,
-            // The checked-in Firebase project provisions production and
-            // development package IDs. Preview is an OTA dogfood channel, so
-            // omit the Android service config instead of binding its distinct
-            // package ID to the wrong Firebase client.
-            ...(variant === 'preview' ? {} : { googleServicesFile: "./google-services.json" }),
             intentFilters: [
                 {
                     "action": "VIEW",
@@ -162,7 +133,6 @@ export default {
                     ],
                     "category": ["BROWSABLE", "DEFAULT"]
                 },
-                ...(variant === 'production' ? [
                 {
                     "action": "VIEW",
                     "autoVerify": true,
@@ -175,7 +145,6 @@ export default {
                     ],
                     "category": ["BROWSABLE", "DEFAULT"]
                 }
-                ] : [])
             ]
         },
         web: {

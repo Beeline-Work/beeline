@@ -86,7 +86,7 @@ export class OidcBindError extends Error {
   }
 
   get retryable(): boolean {
-    return this.status === undefined || this.status >= 500;
+    return this.code === 'offline' || (this.status !== undefined && this.status >= 500);
   }
 }
 
@@ -135,14 +135,24 @@ function normalizedIssuer(value: string): string {
   if (issuer.username || issuer.password || issuer.search || issuer.hash) {
     throw new OidcBindError('invalid_callback', 'OIDC provider URL is malformed');
   }
-  issuer.hostname = issuer.hostname.toLowerCase();
-  if (
+  const port =
     (issuer.protocol === 'https:' && issuer.port === '443') ||
-    (issuer.protocol === 'http:' && issuer.port === '80')
-  ) {
-    issuer.port = '';
-  }
-  return issuer.toString().replace(/\/$/, '');
+    (issuer.protocol === 'http:' && issuer.port === '80') ||
+    !issuer.port
+      ? ''
+      : `:${issuer.port}`;
+  return `${issuer.protocol}//${issuer.hostname.toLowerCase()}${port}${issuer.pathname}`.replace(
+    /\/$/,
+    '',
+  );
+}
+
+function exactRedirect(raw: string, expected: string): boolean {
+  return raw === expected || (!expected.endsWith('/') && raw === `${expected}/`);
+}
+
+function rawUrlHasCredentials(raw: string): boolean {
+  return /^([a-z][a-z\d+.-]*):\/\/([^/?#]*)/i.exec(raw)?.[2]?.includes('@') ?? false;
 }
 
 function assertChallenge(value: OidcBindChallenge): void {
@@ -189,20 +199,21 @@ function startProviderBind(
   }
   const base = endpoint(baseUrl, '/');
   const redirect = new URL(input.redirectUri);
+  const associatedRedirect = `${base.origin}/auth/${provider}/mobile-callback`;
   const isAssociatedLink =
     redirect.protocol === 'https:' &&
-    redirect.origin === base.origin &&
-    redirect.pathname === `/auth/${provider}/mobile-callback` &&
+    exactRedirect(input.redirectUri, associatedRedirect) &&
     !redirect.search &&
     !redirect.hash;
   const isLoopback = ['localhost', '127.0.0.1', '10.0.2.2'].includes(base.hostname);
   const isEmulatorScheme = isLoopback && redirect.protocol === 'buzzy:';
   const isGitHubAppScheme =
-    provider === 'github' && redirect.toString() === 'buzzy://buzz/github-callback';
+    provider === 'github' && exactRedirect(input.redirectUri, 'buzzy://buzz/github-callback');
   if (
     (!isAssociatedLink && !isEmulatorScheme && !isGitHubAppScheme) ||
     redirect.username ||
     redirect.password ||
+    rawUrlHasCredentials(input.redirectUri) ||
     ((isEmulatorScheme || isGitHubAppScheme) && (redirect.search || redirect.hash))
   ) {
     throw new OidcBindError(
@@ -211,9 +222,9 @@ function startProviderBind(
     );
   }
   const url = endpoint(baseUrl, `/auth/${provider}/start`);
-  url.searchParams.set('app_redirect', redirect.toString());
+  url.searchParams.set('app_redirect', input.redirectUri);
   url.searchParams.set('app_state', input.state);
-  return { authorizationUrl: url.toString(), redirectUri: redirect.toString(), state: input.state };
+  return { authorizationUrl: url.toString(), redirectUri: input.redirectUri, state: input.state };
 }
 
 export function startOidcBind(

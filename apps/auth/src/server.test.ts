@@ -249,6 +249,8 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
   let store: AuthStore;
   let app: FastifyInstance;
   let githubState = '';
+  let githubUserInstallations: number[] | Error;
+  let githubInstallationListCalls: number;
 
   beforeEach(async () => {
     provider = new DemoOidcProvider();
@@ -258,6 +260,8 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     database = new PgliteDatabase(pglite);
     store = new AuthStore(database);
     await store.migrate();
+    githubUserInstallations = [];
+    githubInstallationListCalls = 0;
     app = buildAuthServer({
       store,
       oidc: new OidcClient({
@@ -293,6 +297,11 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
             type: installationId === 77 ? ('User' as const) : ('Organization' as const),
             repositorySelection: 'all' as const,
           }),
+          listUserInstallationIds: async () => {
+            githubInstallationListCalls += 1;
+            if (githubUserInstallations instanceof Error) throw githubUserInstallations;
+            return githubUserInstallations;
+          },
           userCanAccessInstallation: async () => true,
           listRepositories: async (installationId: number) => [
             {
@@ -341,6 +350,36 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     });
     expect(result.statusCode).toBe(200);
     return result.json<BindChallenge>();
+  }
+
+  async function bindGitHubIdentity(identity: Keypair, appState: string): Promise<void> {
+    const redirectUri = 'beeline://buzz/github-callback';
+    const start = await app.inject({
+      method: 'GET',
+      url: `/auth/github/start?app_redirect=${encodeURIComponent(redirectUri)}&app_state=${appState}`,
+      headers: { host: alphaTenant.host },
+    });
+    expect(start.statusCode).toBe(302);
+    const callback = await app.inject({
+      method: 'GET',
+      url: `/auth/github/callback?code=github-code&state=${githubState}`,
+      headers: { host: alphaTenant.host, cookie: startCookie(start.headers['set-cookie']) },
+    });
+    expect(callback.statusCode).toBe(302);
+    const completion = new URL(callback.headers.location!);
+    const challenge = Object.fromEntries(completion.searchParams) as unknown as BindChallenge;
+    for (const key of ['protocol', 'kind', 'issued_at', 'expires_at'] as const) {
+      (challenge as unknown as Record<string, unknown>)[key] = Number(
+        completion.searchParams.get(key),
+      );
+    }
+    const bound = await app.inject({
+      method: 'POST',
+      url: '/auth/oidc/bind',
+      headers: { host: alphaTenant.host },
+      payload: { ticket: challenge.ticket, event: bindEvent(challenge, identity) },
+    });
+    expect(bound.statusCode).toBe(201);
   }
 
   it('advertises GitHub only when its complete configuration is present', async () => {
@@ -410,6 +449,100 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     });
     expect(installationHandoff.statusCode).toBe(200);
     expect(installationHandoff.body).toContain('beeline://buzz/github-installation?installed=1');
+  });
+
+  it('reconciles a missed GitHub installation callback onto the current identity after pubkey churn', async () => {
+    githubUserInstallations = [77];
+    const oldIdentity = generateKeypair();
+    await bindGitHubIdentity(oldIdentity, 'o'.repeat(43));
+    await database.query(
+      `DELETE FROM beeline_identity_links
+       WHERE community = $1 AND issuer = 'https://github.com' AND subject = $2`,
+      [alphaTenant.community, '123'],
+    );
+    const currentIdentity = generateKeypair();
+    await bindGitHubIdentity(currentIdentity, 'n'.repeat(43));
+
+    const reposUrl = `https://alpha.example/auth/github/repos/${currentIdentity.publicKey}`;
+    const response = await app.inject({
+      method: 'GET',
+      url: `/auth/github/repos/${currentIdentity.publicKey}`,
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(
+          currentIdentity.secretKey,
+          currentIdentity.publicKey,
+          reposUrl,
+          'GET',
+        ),
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      installed: true,
+      installations: [{ installationId: 77, accountId: '123' }],
+      repositories: [{ installationId: 77, fullName: 'octocat/widget' }],
+    });
+    expect(githubInstallationListCalls).toBe(1);
+    await expect(
+      store.githubInstallationsForPubkey(alphaTenant.community, oldIdentity.publicKey),
+    ).resolves.toEqual([]);
+    await expect(
+      store.githubInstallationsForPubkey(alphaTenant.community, currentIdentity.publicKey),
+    ).resolves.toEqual([expect.objectContaining({ installationId: 77, accountId: '123' })]);
+  });
+
+  it('returns the honest cached miss when GitHub installation reconciliation fails', async () => {
+    githubUserInstallations = new Error('GitHub rate limited');
+    const identity = generateKeypair();
+    await bindGitHubIdentity(identity, 'f'.repeat(43));
+
+    const reposUrl = `https://alpha.example/auth/github/repos/${identity.publicKey}`;
+    const response = await app.inject({
+      method: 'GET',
+      url: `/auth/github/repos/${identity.publicKey}`,
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, reposUrl, 'GET'),
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ installed: false, installations: [], repositories: [] });
+    expect(githubInstallationListCalls).toBe(1);
+
+    const throttledUrl = `${reposUrl}?retry=1`;
+    const throttled = await app.inject({
+      method: 'GET',
+      url: `/auth/github/repos/${identity.publicKey}?retry=1`,
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, throttledUrl, 'GET'),
+      },
+    });
+    expect(throttled.statusCode).toBe(200);
+    expect(throttled.json()).toEqual({ installed: false, installations: [], repositories: [] });
+    expect(githubInstallationListCalls).toBe(1);
+  });
+
+  it('keeps users with no GitHub App installation in the install flow', async () => {
+    const identity = generateKeypair();
+    await bindGitHubIdentity(identity, 'z'.repeat(43));
+
+    const reposUrl = `https://alpha.example/auth/github/repos/${identity.publicKey}`;
+    const response = await app.inject({
+      method: 'GET',
+      url: `/auth/github/repos/${identity.publicKey}`,
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, reposUrl, 'GET'),
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ installed: false, installations: [], repositories: [] });
+    expect(githubInstallationListCalls).toBe(1);
   });
 
   it('groups multiple installations, applies repository webhooks, and preserves revoked bindings', async () => {

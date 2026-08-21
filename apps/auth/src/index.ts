@@ -21,14 +21,22 @@ function tenantsFromEnvironment(): AuthTenant[] {
     if (
       typeof candidate.host !== 'string' ||
       typeof candidate.community !== 'string' ||
+      typeof candidate.roomCommunityId !== 'string' ||
       typeof candidate.origin !== 'string'
     ) {
-      throw new Error('each auth tenant needs host, community, and origin strings');
+      throw new Error(
+        'each auth tenant needs host, community, roomCommunityId, and origin strings',
+      );
     }
     if (process.env.NODE_ENV === 'production' && new URL(candidate.origin).protocol !== 'https:') {
       throw new Error('production auth tenant origins must use https');
     }
-    return { host: candidate.host, community: candidate.community, origin: candidate.origin };
+    return {
+      host: candidate.host,
+      community: candidate.community,
+      roomCommunityId: candidate.roomCommunityId,
+      origin: candidate.origin,
+    };
   });
 }
 

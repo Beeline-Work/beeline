@@ -205,11 +205,13 @@ interface BindChallenge {
 const alphaTenant: AuthTenant = {
   host: 'alpha.example',
   community: 'community-alpha',
+  roomCommunityId: '11111111-1111-4111-8111-111111111111',
   origin: 'https://alpha.example',
 };
 const betaTenant: AuthTenant = {
   host: 'beta.example',
   community: 'community-beta',
+  roomCommunityId: '22222222-2222-4222-8222-222222222222',
   origin: 'https://beta.example',
 };
 
@@ -257,6 +259,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     Parameters<typeof buildAuthServer>[0]['authorizeGitHubRoomToken']
   >;
   let roomTokenMint: { installationId: number; repositoryIds?: readonly number[] } | undefined;
+  let logLines: string[];
 
   beforeEach(async () => {
     provider = new DemoOidcProvider();
@@ -270,8 +273,12 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     githubUserInstallations = [];
     githubInstallationListCalls = 0;
     githubRepositoryListError = undefined;
-    roomTokenAuthority = async () => undefined;
+    roomTokenAuthority = async () => ({
+      authorized: false,
+      reason: 'agent_not_room_member',
+    });
     roomTokenMint = undefined;
+    logLines = [];
     app = buildAuthServer({
       store,
       oidc: new OidcClient({
@@ -341,6 +348,10 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       },
       tenants: [alphaTenant, betaTenant],
       authorizeGitHubRoomToken: (tenant, input) => roomTokenAuthority(tenant, input),
+      logger: {
+        level: 'warn',
+        stream: { write: (line: string) => logLines.push(line) },
+      },
       nativeRedirectUris: ['beeline://buzz/oidc-callback'],
     });
   });
@@ -451,11 +462,12 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     roomTokenAuthority = async (_tenant, input) =>
       input.agentPubkey === agent.publicKey && input.roomId === 'room-1'
         ? {
+            authorized: true,
             authorizedBy: owner.publicKey,
             fullName: 'octocat/widget',
             githubInstallationId: 77,
           }
-        : undefined;
+        : { authorized: false, reason: 'agent_not_room_member' };
     const url = `${alphaTenant.origin}/auth/github/room-token`;
     const relayAuthorizations = Array.from({ length: 16 }, () =>
       nip98AuthHeader(agent.secretKey, agent.publicKey, `${alphaTenant.origin}/query`, 'POST'),
@@ -482,29 +494,89 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     });
     expect(roomTokenMint).toEqual({ installationId: 77, repositoryIds: [42] });
 
-    const stranger = generateKeypair();
-    const strangerRelayAuthorizations = Array.from({ length: 16 }, () =>
-      nip98AuthHeader(
-        stranger.secretKey,
-        stranger.publicKey,
-        `${alphaTenant.origin}/query`,
-        'POST',
-      ),
+    const refusalCases = [
+      {
+        reason: 'tenant_room_community_mismatch',
+        response: {
+          error: 'room_repository_unauthorized',
+          message: 'agent is not authorized for this Room repository',
+        },
+      },
+      {
+        reason: 'agent_not_room_member',
+        response: {
+          error: 'room_membership_required',
+          message: 'agent is not a member of this Room',
+        },
+      },
+      {
+        reason: 'room_repository_missing',
+        response: {
+          error: 'room_repository_unresolvable',
+          message: 'Room repository could not be resolved',
+        },
+      },
+      {
+        reason: 'room_repository_remote_malformed',
+        response: {
+          error: 'room_repository_unresolvable',
+          message: 'Room repository could not be resolved',
+        },
+      },
+      {
+        reason: 'room_repository_authority_missing',
+        response: {
+          error: 'room_repository_unauthorized',
+          message: 'agent is not authorized for this Room repository',
+        },
+      },
+    ] as const;
+
+    for (const refusalCase of refusalCases) {
+      roomTokenAuthority = async () => ({
+        authorized: false,
+        reason: refusalCase.reason,
+      });
+      const refusedAgent = generateKeypair();
+      const refusedRoom = `private-${refusalCase.reason}`;
+      const refused = await app.inject({
+        method: 'POST',
+        url: '/auth/github/room-token',
+        headers: {
+          host: alphaTenant.host,
+          authorization: nip98AuthHeader(
+            refusedAgent.secretKey,
+            refusedAgent.publicKey,
+            url,
+            'POST',
+          ),
+        },
+        payload: {
+          pubkey: refusedAgent.publicKey,
+          room_id: refusedRoom,
+          relay_authorizations: Array.from({ length: 16 }, () =>
+            nip98AuthHeader(
+              refusedAgent.secretKey,
+              refusedAgent.publicKey,
+              `${alphaTenant.origin}/query`,
+              'POST',
+            ),
+          ),
+        },
+      });
+      expect(refused.statusCode).toBe(403);
+      expect(refused.json()).toEqual(refusalCase.response);
+      expect(refused.body).not.toContain(refusedAgent.publicKey);
+      expect(refused.body).not.toContain(refusedRoom);
+    }
+
+    const refusalLogs = logLines
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((line) => line.msg === 'GitHub Room token authority refused request');
+    expect(refusalLogs.map((line) => line.authorityReason)).toEqual(
+      refusalCases.map(({ reason }) => reason),
     );
-    const denied = await app.inject({
-      method: 'POST',
-      url: '/auth/github/room-token',
-      headers: {
-        host: alphaTenant.host,
-        authorization: nip98AuthHeader(stranger.secretKey, stranger.publicKey, url, 'POST'),
-      },
-      payload: {
-        pubkey: stranger.publicKey,
-        room_id: 'room-1',
-        relay_authorizations: strangerRelayAuthorizations,
-      },
-    });
-    expect(denied.statusCode).toBe(403);
+    expect(refusalLogs.every((line) => line.agentPubkey && line.roomId)).toBe(true);
   });
 
   it('completes GitHub sign-in through a visible immediate app handoff', async () => {

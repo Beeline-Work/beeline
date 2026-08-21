@@ -23,7 +23,7 @@ services:
       # Both hosts intentionally share the original community namespace so
       # existing identity links remain visible after the hostname migration.
       BUZZY_AUTH_TENANTS_JSON: >-
-        [{"host":"usebeeline.app","community":"relay.buzzrouter.com","origin":"https://usebeeline.app"},{"host":"relay.buzzrouter.com","community":"relay.buzzrouter.com","origin":"https://relay.buzzrouter.com"}]
+        [{"host":"usebeeline.app","community":"relay.buzzrouter.com","roomCommunityId":"745dae96-7501-4efc-92fa-824a40850235","origin":"https://usebeeline.app"},{"host":"relay.buzzrouter.com","community":"relay.buzzrouter.com","roomCommunityId":"745dae96-7501-4efc-92fa-824a40850235","origin":"https://relay.buzzrouter.com"}]
       BUZZY_AUTH_OIDC_ISSUER: https://accounts.google.com
       BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT: https://accounts.google.com/o/oauth2/v2/auth
       BUZZY_AUTH_OIDC_TOKEN_ENDPOINT: https://oauth2.googleapis.com/token

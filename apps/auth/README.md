@@ -73,7 +73,9 @@ Required configuration:
 
 - `DATABASE_URL`
 - `BUZZY_AUTH_TENANTS_JSON`, for example
-  `[{"host":"relay.example","community":"workspace-id","origin":"https://relay.example"}]`
+  `[{"host":"relay.example","community":"stable-identity-namespace","roomCommunityId":"relay-community-uuid","origin":"https://relay.example"}]`.
+  `community` namespaces durable identity links and may intentionally remain the old host across
+  aliases; `roomCommunityId` is the relay UUID carried by Room create events.
 - `BUZZY_AUTH_OIDC_ISSUER`
 - `BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT`
 - `BUZZY_AUTH_OIDC_TOKEN_ENDPOINT`

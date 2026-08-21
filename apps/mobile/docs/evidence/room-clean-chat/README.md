@@ -1,6 +1,6 @@
 # Room and Corner Grok Build alignment
 
-Captured from the signed `app.buzzy.mobile` release APK on Android API 36 (`emulator-5554`) against the relay-backed `Corners UX Review` fixture.
+Historical capture from the signed pre-rename release APK on Android API 36 (`emulator-5554`) against the relay-backed `Corners UX Review` fixture. Rerun it before treating it as evidence for `app.usebeeline.mobile`.
 
 ## Measured authority
 

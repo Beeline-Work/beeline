@@ -38,7 +38,7 @@ describe('relay invite web front', () => {
         apps: [],
         details: [
           {
-            appID: '89KT3SWYAF.app.buzzy.mobile',
+            appID: '89KT3SWYAF.app.usebeeline.mobile',
             paths: ['/join/*', '/auth/github/mobile-callback', '/auth/oidc/mobile-callback'],
           },
         ],
@@ -49,7 +49,7 @@ describe('relay invite web front', () => {
         relation: ['delegate_permission/common.handle_all_urls'],
         target: {
           namespace: 'android_app',
-          package_name: 'app.buzzy.mobile',
+          package_name: 'app.usebeeline.mobile',
           sha256_cert_fingerprints: [
             'F1:0A:CD:08:4A:67:32:53:9D:3C:72:27:9C:8D:64:97:EB:3F:3A:3D:C4:EB:FF:74:F9:6C:57:76:D9:99:72:18',
           ],
@@ -76,7 +76,7 @@ describe('relay invite web front', () => {
     expect(landing).toContain("You're invited to a Workspace");
     expect(landing).toContain('rel="icon"');
     expect(landing).toContain('data:image/svg+xml');
-    expect(script).toContain('buzzy://join/');
+    expect(script).toContain('beeline://join/');
   });
 
   it('renders one monochrome join action without exposing the invite token', () => {
@@ -210,7 +210,7 @@ describe('relay invite web front', () => {
     await vi.advanceTimersByTimeAsync(50);
 
     expect(openApp).toHaveBeenCalledWith(
-      'buzzy://join/bzi_cd2f4ae16feb43b42a6566ce72ed437b38d374397b0769307c9bdcc29cfb2b38',
+      'beeline://join/bzi_cd2f4ae16feb43b42a6566ce72ed437b38d374397b0769307c9bdcc29cfb2b38',
     );
     expect(page.join.textContent).toBe('Get Beeline');
     expect(page.join.href).toBe(APK_DOWNLOAD_URL);
@@ -220,7 +220,7 @@ describe('relay invite web front', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(page.join.textContent).toBe('Open Beeline and join');
-    expect(page.join.href).toContain('buzzy://join/bzi_');
+    expect(page.join.href).toContain('beeline://join/bzi_');
   });
 
   it('keeps the checked-in browser bundle in sync with its source', () => {

@@ -50,7 +50,7 @@ describe('provider onboarding error states', () => {
 
 describe('provider onboarding completion', () => {
   it('returns a matching custom-scheme callback directly from the browser result', async () => {
-    const redirectUri = 'buzzy://buzz/github-callback';
+    const redirectUri = 'beeline://buzz/github-callback';
     const callbackUrl = `${redirectUri}?state=${'s'.repeat(43)}`;
 
     await expect(
@@ -63,7 +63,7 @@ describe('provider onboarding completion', () => {
   });
 
   it('keeps a successful HTTPS callback when Android reports the browser dismissed first', async () => {
-    const redirectUri = 'buzzy://buzz/github-callback';
+    const redirectUri = 'beeline://buzz/github-callback';
     const callbackUrl = `${redirectUri}?state=${'s'.repeat(43)}&ticket=${'t'.repeat(43)}`;
     let onUrl: ((url: string) => void) | null = null;
 
@@ -89,7 +89,7 @@ describe('provider onboarding completion', () => {
   it('still treats a real browser close with no callback as cancellation', async () => {
     await expect(
       waitForAuthCallback({
-        redirectUri: 'buzzy://buzz/github-callback',
+        redirectUri: 'beeline://buzz/github-callback',
         openAuthSession: async () => ({ type: 'dismiss' }),
         subscribeToUrls: () => ({ remove: () => undefined }),
         callbackGraceMs: 0,

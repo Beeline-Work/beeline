@@ -4,75 +4,22 @@
     "appVersionSource": "remote"
   },
   "build": {
-    "development": {
-      "autoIncrement": true,
-      "developmentClient": true,
-      "distribution": "internal",
-      "channel": "preview",
-      "env": {
-        "APP_ENV": "development",
-        "SHARP_IGNORE_GLOBAL_LIBVIPS": "1"
-      }
-    },
-    "development-store": {
-      "autoIncrement": true,
-      "developmentClient": true,
-      "distribution": "store",
-      "channel": "preview",
-      "env": {
-        "APP_ENV": "development",
-        "SHARP_IGNORE_GLOBAL_LIBVIPS": "1"
-      }
-    },
-    "preview": {
-      "autoIncrement": true,
-      "distribution": "internal",
-      "channel": "preview",
-      "env": {
-        "APP_ENV": "preview",
-        "SHARP_IGNORE_GLOBAL_LIBVIPS": "1"
-      }
-    },
-    "preview-store": {
-      "autoIncrement": true,
-      "distribution": "store",
-      "channel": "preview",
-      "env": {
-        "APP_ENV": "preview",
-        "SHARP_IGNORE_GLOBAL_LIBVIPS": "1"
-      }
-    },
     "production": {
       "autoIncrement": true,
       "distribution": "store",
-      "channel": "preview",
+      "channel": "production",
       "env": {
-        "APP_ENV": "production",
         "SHARP_IGNORE_GLOBAL_LIBVIPS": "1"
       }
     }
   },
   "submit": {
-    "development-store": {
-      "ios": {
-        "appleId": "steve@bulkovo.com",
-        "ascAppId": "6748984254",
-        "appleTeamId": "466DQWDR8C"
-      }
-    },
-    "preview-store": {
-      "ios": {
-        "appleId": "steve@bulkovo.com",
-        "ascAppId": "6749025570",
-        "appleTeamId": "466DQWDR8C"
-      }
-    },
     "production": {
       "ios": {
         "appleTeamId": "89KT3SWYAF",
         "ascAppId": "6799574618",
-        "appName": "Buzzy",
-        "bundleIdentifier": "app.buzzy.mobile",
+        "appName": "Beeline",
+        "bundleIdentifier": "app.usebeeline.mobile",
         "ascApiKeyPath": "$EXPO_ASC_API_KEY_PATH",
         "ascApiKeyId": "$EXPO_ASC_KEY_ID",
         "ascApiKeyIssuerId": "$EXPO_ASC_ISSUER_ID"

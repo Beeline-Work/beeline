@@ -1,4 +1,4 @@
-appId: app.buzzy.mobile.preview
+appId: app.usebeeline.mobile
 name: Live chat stays pinned above a multiline composer
 env:
   LIVE_NSEC: ${LIVE_NSEC}

@@ -18,7 +18,33 @@ describe('provider onboarding error states', () => {
     ['internal_error', 'bind_retry', true],
   ])('maps %s to explicit %s state', (code, status, retryable) => {
     const error = new OidcBindError(code, code, code === 'internal_error' ? 500 : undefined);
-    expect(noticeForOidcError(error)).toMatchObject({ status, retryable });
+    const notice = noticeForOidcError(error);
+    expect(notice).toMatchObject({ status, retryable });
+    expect(notice.title).toContain(code.toUpperCase());
+  });
+
+  it.each(['invalid_redirect', 'invalid_configuration', 'invalid_state'])(
+    'reports %s as a non-network configuration failure',
+    (code) => {
+      const notice = noticeForOidcError(new OidcBindError(code, code));
+      expect(notice).toMatchObject({
+        status: 'bind_retry',
+        retryable: false,
+      });
+      expect(notice.title).toBe(`SIGN-IN CONFIG ERROR · ${code.toUpperCase()}`);
+      expect(notice.message).toContain('callback configuration');
+      expect(notice.message).not.toContain('connection');
+    },
+  );
+
+  it('keeps unknown client failures distinct from retryable network failures', () => {
+    const notice = noticeForOidcError(new OidcBindError('invalid_callback', 'Bad callback'));
+    expect(notice).toEqual({
+      status: 'bind_retry',
+      title: 'BIND FAILED · INVALID_CALLBACK',
+      message: 'Bad callback',
+      retryable: false,
+    });
   });
 });
 

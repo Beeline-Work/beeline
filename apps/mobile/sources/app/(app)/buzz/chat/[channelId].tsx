@@ -132,6 +132,7 @@ import { availableSlashVerbs, slashVerbQuery, type BuiltInSlashVerbId } from '@/
 import {
   cachedChannelKind,
   channelHeaderTitle,
+  cornerProcessState,
   cornerSessionState,
   changeReviewSummary,
   resolveCornerViewAgentPubkey,
@@ -925,6 +926,7 @@ export default function BuzzChat() {
   // peer is known, which the cached roster usually already answers.
   const displayHeaderTitle = dmPeerPubkey ? displayRoomName : headerTitle;
   const sessionState = isCorner ? cornerSessionState(messages) : 'idle';
+  const processState = isCorner ? cornerProcessState(messages) : undefined;
   const cornerAgentPubkey = useMemo(
     () => resolveCornerViewAgentPubkey(messages, (pubkey) => agentByPubkey.has(pubkey)),
     [agentByPubkey, messages],
@@ -1087,6 +1089,9 @@ export default function BuzzChat() {
       // reads this channel's `agent-turn` events, which is exactly "is this
       // edit session still moving."
       if (sessionState === 'working') return { label: named(subject, 'active', target), live: true };
+      if (processState === 'waiting-for-slot') return { label: named(subject, 'waiting for a slot', target), live: false };
+      if (processState === 'suspended') return { label: named(subject, 'suspended', target), live: false };
+      if (processState === 'live') return { label: named(subject, 'live', target), live: true };
       if (displayedCornerStatus && isCornerActive(displayedCornerStatus)) {
         return { label: named(subject, 'idle', target), live: false };
       }
@@ -1134,6 +1139,7 @@ export default function BuzzChat() {
     mergeTarget,
     pinnedCorner,
     pinnedCornerCard,
+    processState,
     sessionState,
   ]);
 
@@ -2788,7 +2794,7 @@ export default function BuzzChat() {
                 avatarUrl={cornerAgentDisplay?.avatarUrl}
                 name={cornerAgentDisplay?.name ?? 'Agent'}
                 size={26}
-                alive={sessionState === 'working'}
+                alive={sessionState === 'working' || processState === 'live'}
               />
             </View>
           )}

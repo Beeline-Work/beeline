@@ -23,6 +23,7 @@ import { APPROVAL_MARKER, verifyApproval, type MergeTarget } from './approval.js
 import { KIND_STREAM_MESSAGE } from './buzz.js';
 import { isRegisteredAgentIdentity } from './agent-identity.js';
 import { resolveChannelRole, type ChannelRole } from './provisioning.js';
+import { serializeRepoLanding } from './land-queue.js';
 
 export interface MergeRequest {
   /** Dedicated push-capable merge worker identity. */
@@ -387,7 +388,7 @@ export class DurableMergeGate {
         ) {
           continue;
         }
-        const outcome = await attemptMerge({
+        const outcome = await serializeRepoLanding(targetRepo, () => attemptMerge({
           worker: this.config.worker,
           ownerHex: this.config.ownerHex,
           trustedReviewer: approval.pubkey,
@@ -397,7 +398,7 @@ export class DurableMergeGate {
           targetBranch: shortTargetBranch(this.config.targetBranch),
           featureBranch: candidate.featureBranch,
           relay: this.relay,
-        });
+        }));
         attempts.push({
           candidate,
           approvalId: approval.id,

@@ -3,7 +3,7 @@
     "apps": [],
     "details": [
       {
-        "appID": "89KT3SWYAF.app.buzzy.mobile",
+        "appID": "89KT3SWYAF.app.usebeeline.mobile",
         "paths": ["/join/*", "/auth/github/mobile-callback", "/auth/oidc/mobile-callback"]
       }
     ]

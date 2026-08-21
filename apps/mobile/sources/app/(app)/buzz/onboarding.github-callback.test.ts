@@ -44,7 +44,7 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
 });
 vi.mock('expo-router', () => ({ router: navigation }));
 vi.mock('expo-linking', () => ({
-  createURL: (path: string) => `buzzy://${path}`,
+  createURL: (path: string) => `beeline://${path}`,
   getInitialURL: vi.fn(async () => linking.initialUrl),
   addEventListener: vi.fn((_name: string, listener: (event: { url: string }) => void) => {
     linking.listener = listener;
@@ -153,7 +153,7 @@ function callbackUrl(state = STATE, issuedAt = Math.floor(Date.now() / 1_000)): 
     issued_at: String(issuedAt),
     expires_at: String(issuedAt + 120),
   });
-  return `buzzy://buzz/github-callback?${params}`;
+  return `beeline://buzz/github-callback?${params}`;
 }
 
 async function render(): Promise<ReactTestRenderer> {

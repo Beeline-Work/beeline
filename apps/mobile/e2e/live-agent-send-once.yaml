@@ -1,4 +1,4 @@
-appId: app.buzzy.mobile.preview
+appId: app.usebeeline.mobile
 name: Live agent mention sends once
 env:
   LIVE_NSEC: ${LIVE_NSEC}

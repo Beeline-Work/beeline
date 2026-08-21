@@ -48,7 +48,7 @@ vi.mock('expo-web-browser', () => ({
   openAuthSessionAsync: vi.fn(),
   openBrowserAsync: vi.fn(),
 }));
-vi.mock('expo-linking', () => ({ createURL: (path: string) => `buzzy://${path}` }));
+vi.mock('expo-linking', () => ({ createURL: (path: string) => `beeline://${path}` }));
 vi.mock('@react-navigation/native', () => ({ useFocusEffect: () => undefined }));
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) }));
 vi.mock('@/auth/buzz-identity-storage', () => ({

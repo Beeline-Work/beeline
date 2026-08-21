@@ -1,4 +1,4 @@
-appId: app.buzzy.mobile
+appId: app.usebeeline.mobile
 name: Foreground mention delivery continuation
 ---
 # Run after smoke.yaml has backgrounded/resumed a real Room and re-entered it.

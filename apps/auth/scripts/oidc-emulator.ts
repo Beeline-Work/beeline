@@ -123,11 +123,7 @@ const app = buildAuthServer({
   tenants: [
     { host: '127.0.0.1:8789', community: 'emulated-workspace', origin: 'http://127.0.0.1:8789' },
   ],
-  nativeRedirectUris: [
-    'buzzy-dev://buzz/oidc-callback',
-    'buzzy-preview://buzz/oidc-callback',
-    'buzzy://buzz/oidc-callback',
-  ],
+  nativeRedirectUris: ['beeline://buzz/oidc-callback'],
   logger: true,
   secureCookies: false,
 });

@@ -311,11 +311,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
         webhookSecret: 'webhook-secret',
       },
       tenants: [alphaTenant, betaTenant],
-      nativeRedirectUris: [
-        'buzzy-dev://buzz/oidc-callback',
-        'buzzy-preview://buzz/oidc-callback',
-        'buzzy://buzz/oidc-callback',
-      ],
+      nativeRedirectUris: ['beeline://buzz/oidc-callback'],
     });
   });
 
@@ -359,7 +355,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
 
   it('completes GitHub sign-in directly into the app deep link', async () => {
     const appState = 'g'.repeat(43);
-    const redirectUri = 'buzzy://buzz/github-callback';
+    const redirectUri = 'beeline://buzz/github-callback';
     const start = await app.inject({
       method: 'GET',
       url: `/auth/github/start?app_redirect=${encodeURIComponent(redirectUri)}&app_state=${appState}`,
@@ -403,7 +399,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     expect(handoff.statusCode).toBe(200);
     expect(handoff.headers['content-type']).toContain('text/html');
     expect(handoff.body).toContain('Return to Beeline');
-    expect(handoff.body).toContain('buzzy://buzz/github-callback?state=');
+    expect(handoff.body).toContain('beeline://buzz/github-callback?state=');
     expect(handoff.body).toContain(`state=${appState}`);
     expect(handoff.body).not.toContain('Route GET:');
 
@@ -413,7 +409,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       headers: { host: alphaTenant.host },
     });
     expect(installationHandoff.statusCode).toBe(200);
-    expect(installationHandoff.body).toContain('buzzy://buzz/github-installation?installed=1');
+    expect(installationHandoff.body).toContain('beeline://buzz/github-installation?installed=1');
   });
 
   it('groups multiple installations, applies repository webhooks, and preserves revoked bindings', async () => {
@@ -461,7 +457,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       },
       payload: {
         pubkey: identity.publicKey,
-        redirect_uri: 'buzzy://buzz/github-installation',
+        redirect_uri: 'beeline://buzz/github-installation',
       },
     });
     expect(installStart.statusCode).toBe(200);
@@ -472,7 +468,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       headers: { host: alphaTenant.host },
     });
     expect(installed.statusCode).toBe(302);
-    expect(installed.headers.location).toBe('buzzy://buzz/github-installation?installed=1');
+    expect(installed.headers.location).toBe('beeline://buzz/github-installation?installed=1');
 
     await new Promise((resolve) => setTimeout(resolve, 1_050));
     const secondStart = await app.inject({
@@ -681,7 +677,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     const appState = 's'.repeat(43);
     for (const [providerName, appRedirect] of [
       ['oidc', `${alphaTenant.origin}/auth/oidc/mobile-callback/`],
-      ['github', 'buzzy://buzz/github-callback/'],
+      ['github', 'beeline://buzz/github-callback/'],
     ] as const) {
       const result = await app.inject({
         method: 'GET',
@@ -694,8 +690,8 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     for (const [providerName, appRedirect] of [
       ['oidc', `${alphaTenant.origin}/auth/oidc/mobile-callback//`],
       ['oidc', `${alphaTenant.origin}/auth/oidc/mobile-callback?next=evil`],
-      ['github', 'buzzy://buzz/github-callback//'],
-      ['github', 'buzzy://buzz/github-callback#evil'],
+      ['github', 'beeline://buzz/github-callback//'],
+      ['github', 'beeline://buzz/github-callback#evil'],
     ] as const) {
       const result = await app.inject({
         method: 'GET',
@@ -707,10 +703,10 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     }
   });
 
-  it('allowlists every shipped native scheme and no caller-selected scheme', async () => {
+  it('allowlists only the Beeline native scheme', async () => {
     const appState = 's'.repeat(43);
     const pubkey = 'a'.repeat(64);
-    for (const scheme of ['buzzy-dev', 'buzzy-preview', 'buzzy']) {
+    for (const scheme of ['beeline']) {
       const signInRedirect = `${scheme}://buzz/github-callback`;
       const signIn = await app.inject({
         method: 'GET',
@@ -727,24 +723,42 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
         payload: { pubkey, redirect_uri: installationRedirect },
       });
       expect(installation.statusCode, installationRedirect).toBe(401);
+
+      const oidcRedirect = `${scheme}://buzz/oidc-callback`;
+      const oidc = await app.inject({
+        method: 'GET',
+        url: `/auth/oidc/start?app_redirect=${encodeURIComponent(oidcRedirect)}&app_state=${appState}`,
+        headers: { host: alphaTenant.host },
+      });
+      expect(oidc.statusCode, oidcRedirect).toBe(302);
     }
 
-    for (const path of ['github-callback', 'github-installation']) {
-      const redirectUri = `buzzy-nightly://buzz/${path}`;
-      const result =
-        path === 'github-callback'
-          ? await app.inject({
-              method: 'GET',
-              url: `/auth/github/start?app_redirect=${encodeURIComponent(redirectUri)}&app_state=${appState}`,
-              headers: { host: alphaTenant.host },
-            })
-          : await app.inject({
-              method: 'POST',
-              url: '/auth/github/install/start',
-              headers: { host: alphaTenant.host },
-              payload: { pubkey, redirect_uri: redirectUri },
-            });
-      expect(result.statusCode, redirectUri).toBe(400);
+    for (const scheme of ['buzzy', 'buzzy-dev', 'buzzy-preview', 'buzzy-nightly', 'other']) {
+      for (const path of ['github-callback', 'github-installation']) {
+        const redirectUri = `${scheme}://buzz/${path}`;
+        const result =
+          path === 'github-callback'
+            ? await app.inject({
+                method: 'GET',
+                url: `/auth/github/start?app_redirect=${encodeURIComponent(redirectUri)}&app_state=${appState}`,
+                headers: { host: alphaTenant.host },
+              })
+            : await app.inject({
+                method: 'POST',
+                url: '/auth/github/install/start',
+                headers: { host: alphaTenant.host },
+                payload: { pubkey, redirect_uri: redirectUri },
+              });
+        expect(result.statusCode, redirectUri).toBe(400);
+      }
+
+      const oidcRedirect = `${scheme}://buzz/oidc-callback`;
+      const oidc = await app.inject({
+        method: 'GET',
+        url: `/auth/oidc/start?app_redirect=${encodeURIComponent(oidcRedirect)}&app_state=${appState}`,
+        headers: { host: alphaTenant.host },
+      });
+      expect(oidc.statusCode, oidcRedirect).toBe(400);
     }
   });
 

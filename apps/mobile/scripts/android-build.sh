@@ -36,7 +36,7 @@ else
 fi
 
 cd "$MOBILE_DIR"
-env APP_ENV=production ANDROID_HOME="$ANDROID_HOME" npx expo prebuild --platform android --clean
+env ANDROID_HOME="$ANDROID_HOME" npx expo prebuild --platform android --clean
 bash scripts/patch-android-signing.sh
 (
   cd android

@@ -60,7 +60,7 @@ content = content.replace(
 )
 
 open('$BUILD_GRADLE', 'w').write(content)
-print('Patched signing config; preserved Firebase google-services configuration.')
+print('Patched signing config.')
 
 # Sideload builds must support operator-provided HTTP relays on a LAN.
 manifest = 'android/app/src/main/AndroidManifest.xml'

@@ -5,7 +5,7 @@ export const OIDC_BIND_PROTOCOL = 1 as const;
 export const OIDC_BIND_KIND = 24_250 as const;
 export const OIDC_BIND_MARKER = 'beeline-oidc-bind-v1' as const;
 // Exact native identities from apps/mobile/app.config.js. Keep this closed set in sync.
-export const MOBILE_APP_SCHEMES = ['buzzy-dev', 'buzzy-preview', 'buzzy'] as const;
+export const MOBILE_APP_SCHEMES = ['beeline'] as const;
 
 const MOBILE_APP_PROTOCOLS = new Set<string>(MOBILE_APP_SCHEMES.map((scheme) => `${scheme}:`));
 const GITHUB_SIGN_IN_DEEP_LINKS = MOBILE_APP_SCHEMES.map(

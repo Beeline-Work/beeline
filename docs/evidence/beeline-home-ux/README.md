@@ -1,8 +1,8 @@
 # Beeline home UX, API 36 proof
 
-Captured from the signed production APK on the `buzzy_api36` emulator (Android API 36,
-1080 × 2400). The APK was built with `npm run apk:release` and installed over the existing
-`app.buzzy.mobile` package, preserving the install identifier.
+Historical capture from the signed production APK on the `buzzy_api36` emulator (Android API 36,
+1080 × 2400). It predates the current native identity; rerun this proof before treating it as
+evidence for `app.usebeeline.mobile`.
 
 - [Home, rail closed](01-home-rail-closed.png): `BEELINE HOME`, full-width channel list, and the
   standalone invite guidance.
@@ -13,9 +13,4 @@ Captured from the signed production APK on the `buzzy_api36` emulator (Android A
 - [Standalone create-community path](04-standalone-create-community-path.png): the standalone
   invite affordance routes directly into the existing community creation flow.
 
-Native APK metadata was also checked with Android build-tools `aapt`:
-
-```text
-package: name='app.buzzy.mobile' compileSdkVersion='36'
-application-label:'Beeline'
-```
+The original APK metadata check is superseded by the native identity rename.

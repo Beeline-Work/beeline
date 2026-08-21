@@ -301,6 +301,11 @@ export class GitHubAppClient {
   }
 
   async userCanAccessInstallation(accessToken: string, installationId: number): Promise<boolean> {
+    return (await this.listUserInstallationIds(accessToken)).includes(installationId);
+  }
+
+  async listUserInstallationIds(accessToken: string): Promise<number[]> {
+    const installationIds: number[] = [];
     for (let page = 1; ; page++) {
       const body = await jsonObject(
         await fetch(`${this.#config.apiBaseUrl}/user/installations?per_page=100&page=${page}`, {
@@ -310,15 +315,17 @@ export class GitHubAppClient {
       );
       if (!Array.isArray(body.installations))
         throw new Error('GitHub user installation list is invalid');
-      if (
-        body.installations.some((entry) => {
-          if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
-          return (entry as Record<string, unknown>).id === installationId;
-        })
-      ) {
-        return true;
+      for (const entry of body.installations) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+          throw new Error('GitHub user installation entry is invalid');
+        }
+        const id = (entry as Record<string, unknown>).id;
+        if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) {
+          throw new Error('GitHub user installation entry is invalid');
+        }
+        installationIds.push(id);
       }
-      if (body.installations.length < 100) return false;
+      if (body.installations.length < 100) return [...new Set(installationIds)];
     }
   }
 }

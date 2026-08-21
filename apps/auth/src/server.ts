@@ -23,6 +23,7 @@ import {
 
 const DEFAULT_FLOW_TTL_MS = 5 * 60_000;
 const DEFAULT_TICKET_TTL_MS = 2 * 60_000;
+const GITHUB_INSTALLATION_RECONCILE_INTERVAL_MS = 5 * 60_000;
 const FLOW_COOKIE = '__Host-beeline_oidc_flow';
 // Exact native identities from apps/mobile/app.config.js. Never derive these from request input.
 const GITHUB_SIGN_IN_DEEP_LINK = 'beeline://buzz/github-callback';
@@ -232,6 +233,61 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     const decipher = createDecipheriv('aes-256-gcm', githubTokenKey, parts[0]!);
     decipher.setAuthTag(parts[1]!);
     return Buffer.concat([decipher.update(parts[2]!), decipher.final()]).toString('utf8');
+  };
+  const reconcileGitHubInstallations = async (
+    community: string,
+    pubkey: string,
+    log: FastifyRequest['log'],
+  ): Promise<void> => {
+    try {
+      const subject = await options.store.githubSubjectForPubkey(community, pubkey);
+      if (!subject) return;
+      const sealedUserToken = await options.store.githubUserToken(community, subject);
+      if (!sealedUserToken) return;
+      const attemptedAt = now();
+      if (
+        !(await options.store.claimGitHubInstallationReconciliation(
+          community,
+          subject,
+          attemptedAt,
+          new Date(attemptedAt.getTime() - GITHUB_INSTALLATION_RECONCILE_INTERVAL_MS),
+        ))
+      ) {
+        return;
+      }
+      const installationIds = await options.github!.app.listUserInstallationIds(
+        decryptGitHubToken(sealedUserToken),
+      );
+      const verifiedInstallations = await Promise.all(
+        installationIds.map(async (installationId) => {
+          const [account, repositories] = await Promise.all([
+            options.github!.app.installationAccount(installationId),
+            options.github!.app.listRepositories(installationId),
+          ]);
+          return { installationId, account, repositories };
+        }),
+      );
+      for (const { installationId, account, repositories } of verifiedInstallations) {
+        await options.store.replaceGitHubInstallationSnapshot(
+          {
+            community,
+            pubkey,
+            accountId: account.id,
+            accountLogin: account.login,
+            accountType: account.type,
+            ...(account.avatarUrl ? { accountAvatarUrl: account.avatarUrl } : {}),
+            installationId,
+            repositorySelection: account.repositorySelection,
+            status: 'active',
+            repositoryCount: repositories.length,
+          },
+          repositories,
+          attemptedAt,
+        );
+      }
+    } catch (error) {
+      log.warn({ err: error, community, pubkey }, 'GitHub installation reconciliation failed');
+    }
   };
   if (flowTtlMs < 30_000 || flowTtlMs > 10 * 60_000)
     throw new Error('flow TTL is outside safe bounds');
@@ -994,8 +1050,12 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     }
     let installations = await options.store.githubInstallationsForPubkey(tenant.community, pubkey);
     if (!installations.length) {
-      noStore(reply);
-      return reply.send({ installed: false, installations: [], repositories: [] });
+      await reconcileGitHubInstallations(tenant.community, pubkey, request.log);
+      installations = await options.store.githubInstallationsForPubkey(tenant.community, pubkey);
+      if (!installations.length) {
+        noStore(reply);
+        return reply.send({ installed: false, installations: [], repositories: [] });
+      }
     }
     const query = request.query as Record<string, unknown>;
     if (query.refresh === '1') {

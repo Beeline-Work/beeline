@@ -166,6 +166,12 @@ const MIGRATIONS = [
     updated_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (community, subject)
   )`,
+  `CREATE TABLE IF NOT EXISTS beeline_github_installation_reconciliations (
+    community TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    attempted_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (community, subject)
+  )`,
   `CREATE INDEX IF NOT EXISTS beeline_github_install_flows_expiry_idx
     ON beeline_github_install_flows (expires_at)`,
 ] as const;
@@ -539,7 +545,15 @@ export class AuthStore {
   }
 
   async saveGitHubInstallation(installation: GitHubInstallation, now: Date): Promise<void> {
-    await this.database.query(
+    await this.upsertGitHubInstallation(this.database, installation, now);
+  }
+
+  private async upsertGitHubInstallation(
+    executor: SqlExecutor,
+    installation: GitHubInstallation,
+    now: Date,
+  ): Promise<void> {
+    await executor.query(
       `INSERT INTO beeline_github_installations
         (community, pubkey, account_id, account_login, account_type, account_avatar_url,
          installation_id, repository_selection, status, repository_count, created_at, updated_at)
@@ -636,21 +650,54 @@ export class AuthStore {
     now: Date,
   ): Promise<void> {
     await this.database.transaction(async (transaction) => {
-      await transaction.query(
-        `UPDATE beeline_github_repositories SET active = FALSE, updated_at = $3
-         WHERE community = $1 AND installation_id = $2`,
-        [community, installationId, now],
-      );
-      for (const repository of repositories) {
-        await this.upsertGitHubRepository(transaction, community, repository, now);
-      }
-      await transaction.query(
-        `UPDATE beeline_github_installations
-         SET repository_count = $3, status = 'active', updated_at = $4
-         WHERE community = $1 AND installation_id = $2`,
-        [community, installationId, repositories.length, now],
+      await this.replaceGitHubRepositoriesInTransaction(
+        transaction,
+        community,
+        installationId,
+        repositories,
+        now,
       );
     });
+  }
+
+  async replaceGitHubInstallationSnapshot(
+    installation: GitHubInstallation,
+    repositories: readonly StoredGitHubRepository[],
+    now: Date,
+  ): Promise<void> {
+    await this.database.transaction(async (transaction) => {
+      await this.upsertGitHubInstallation(transaction, installation, now);
+      await this.replaceGitHubRepositoriesInTransaction(
+        transaction,
+        installation.community,
+        installation.installationId,
+        repositories,
+        now,
+      );
+    });
+  }
+
+  private async replaceGitHubRepositoriesInTransaction(
+    transaction: SqlExecutor,
+    community: string,
+    installationId: number,
+    repositories: readonly StoredGitHubRepository[],
+    now: Date,
+  ): Promise<void> {
+    await transaction.query(
+      `UPDATE beeline_github_repositories SET active = FALSE, updated_at = $3
+       WHERE community = $1 AND installation_id = $2`,
+      [community, installationId, now],
+    );
+    for (const repository of repositories) {
+      await this.upsertGitHubRepository(transaction, community, repository, now);
+    }
+    await transaction.query(
+      `UPDATE beeline_github_installations
+       SET repository_count = $3, status = 'active', updated_at = $4
+       WHERE community = $1 AND installation_id = $2`,
+      [community, installationId, repositories.length, now],
+    );
   }
 
   private async upsertGitHubRepository(
@@ -835,6 +882,25 @@ export class AuthStore {
       [community, subject],
     );
     return result.rows[0]?.encrypted_token ?? null;
+  }
+
+  async claimGitHubInstallationReconciliation(
+    community: string,
+    subject: string,
+    now: Date,
+    retryAfter: Date,
+  ): Promise<boolean> {
+    const result = await this.database.query<QueryResultRow>(
+      `INSERT INTO beeline_github_installation_reconciliations
+        (community, subject, attempted_at)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (community, subject) DO UPDATE SET
+         attempted_at = EXCLUDED.attempted_at
+       WHERE beeline_github_installation_reconciliations.attempted_at <= $4
+       RETURNING subject`,
+      [community, subject, now, retryAfter],
+    );
+    return result.rowCount === 1;
   }
 
   /** First-come-first-served claim: inserts, or reports the existing owner on conflict. */

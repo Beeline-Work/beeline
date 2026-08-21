@@ -40,8 +40,11 @@ import {
   type NewKeyDraft,
 } from '@/auth/new-key-onboarding';
 import {
+  clearGoogleOnboardingNotice,
   nextGoogleOnboardingStatus,
   noticeForOidcError,
+  publishGoogleOnboardingNotice,
+  subscribeToGoogleOnboardingNotices,
   waitForGoogleAuthCallback,
   type GoogleOnboardingNotice,
   type GoogleOnboardingStatus,
@@ -136,6 +139,15 @@ export default function BuzzOnboarding() {
   const [nameInput, setNameInput] = useState('');
   const loading = loadingAction !== null;
 
+  useEffect(
+    () =>
+      subscribeToGoogleOnboardingNotices((next) => {
+        setStatus(next.status);
+        setNotice(next);
+      }),
+    [],
+  );
+
   const continueAfterIdentity = async (identity: Identity) => {
     setStatus('entering_workspace');
     try {
@@ -170,6 +182,7 @@ export default function BuzzOnboarding() {
   const finishPendingBind = async (pending: PendingBind) => {
     setLoadingAction('bind');
     setStatus('binding');
+    if (pending.provider === 'github') clearGoogleOnboardingNotice();
     setNotice(null);
     try {
       if (!pending.bound) {
@@ -229,6 +242,7 @@ export default function BuzzOnboarding() {
       if (!next.retryable) pendingBind.current = null;
       setStatus(next.status);
       setNotice(next);
+      if (pending.provider === 'github') publishGoogleOnboardingNotice(next);
     } finally {
       setLoadingAction(null);
     }
@@ -332,6 +346,7 @@ export default function BuzzOnboarding() {
     }
     setLoadingAction('github');
     setStatus('opening_browser');
+    clearGoogleOnboardingNotice();
     setNotice(null);
     try {
       const state = randomState();
@@ -376,6 +391,7 @@ export default function BuzzOnboarding() {
       const next = noticeForOidcError(error);
       setStatus(next.status);
       setNotice(next);
+      if (signInProvider === 'github') publishGoogleOnboardingNotice(next);
     } finally {
       setLoadingAction(null);
     }

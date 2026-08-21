@@ -20,6 +20,32 @@ export interface GoogleOnboardingNotice {
   retryable: boolean;
 }
 
+type GoogleOnboardingNoticeListener = (notice: GoogleOnboardingNotice) => void;
+
+let pendingOnboardingNotice: GoogleOnboardingNotice | null = null;
+const onboardingNoticeListeners = new Set<GoogleOnboardingNoticeListener>();
+
+/**
+ * Keep a callback failure visible when expo-router replaces the onboarding
+ * component while the warm deep-link listener is still finishing the bind.
+ */
+export function publishGoogleOnboardingNotice(notice: GoogleOnboardingNotice): void {
+  pendingOnboardingNotice = notice;
+  for (const listener of onboardingNoticeListeners) listener(notice);
+}
+
+export function clearGoogleOnboardingNotice(): void {
+  pendingOnboardingNotice = null;
+}
+
+export function subscribeToGoogleOnboardingNotices(
+  listener: GoogleOnboardingNoticeListener,
+): () => void {
+  onboardingNoticeListeners.add(listener);
+  if (pendingOnboardingNotice) listener(pendingOnboardingNotice);
+  return () => onboardingNoticeListeners.delete(listener);
+}
+
 type GoogleOnboardingEvent = 'callback_received' | 'bind_succeeded';
 
 interface GoogleAuthBrowserResult {

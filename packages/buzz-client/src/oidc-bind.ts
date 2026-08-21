@@ -62,6 +62,13 @@ export interface GitHubRepositoryAccessResult {
   reason?: 'revoked' | 'not_granted';
 }
 
+export interface GitHubRoomInstallationToken {
+  token: string;
+  expiresAt: string;
+  installationId: number;
+  fullName: string;
+}
+
 export interface AuthCapabilities {
   github: boolean;
   oidc: boolean;
@@ -759,6 +766,66 @@ export async function getGitHubRepositoryAccess(
     );
   }
   return body as unknown as GitHubRepositoryAccessResult;
+}
+
+/**
+ * Obtain an exact-repository installation token for a daemon that is a
+ * current member of the Room. The auth sidecar re-resolves Room state; callers
+ * cannot choose the repository or installation represented by the token.
+ */
+export async function getGitHubRoomInstallationToken(
+  baseUrl: string,
+  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
+  roomId: string,
+): Promise<GitHubRoomInstallationToken> {
+  const url = endpoint(baseUrl, '/auth/github/room-token').toString();
+  const relayQueryUrl = endpoint(baseUrl, '/query').toString();
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'POST'),
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        pubkey: identity.publicKey,
+        room_id: roomId,
+        relay_authorizations: Array.from({ length: 16 }, () =>
+          nip98AuthHeader(identity.secretKey, identity.publicKey, relayQueryUrl, 'POST'),
+        ),
+      }),
+    });
+  } catch (error) {
+    throw new OidcBindError(
+      'offline',
+      error instanceof Error ? error.message : 'auth service unavailable',
+    );
+  }
+  const body = await responseBody(response);
+  if (!response.ok) throw serviceError(body, response.status);
+  if (
+    typeof body.token !== 'string' ||
+    !body.token ||
+    typeof body.expires_at !== 'string' ||
+    !Number.isFinite(Date.parse(body.expires_at)) ||
+    typeof body.installation_id !== 'number' ||
+    !Number.isSafeInteger(body.installation_id) ||
+    typeof body.full_name !== 'string' ||
+    !/^[^/\s]+\/[^/\s]+$/.test(body.full_name)
+  ) {
+    throw new OidcBindError(
+      'invalid_response',
+      'auth service returned an invalid Room repository token',
+      response.status,
+    );
+  }
+  return {
+    token: body.token,
+    expiresAt: body.expires_at,
+    installationId: body.installation_id,
+    fullName: body.full_name,
+  };
 }
 
 /** Discover which sign-in surface the deployed auth sidecar has enabled. */

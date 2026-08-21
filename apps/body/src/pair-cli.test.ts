@@ -90,6 +90,19 @@ function runPair(
 }
 
 describe('beeline pair — repository resolution', () => {
+  it('never derives a repository binding from cwd when --repo is absent', async () => {
+    const source = await readFile(resolve(bodyDirectory, 'src/cli.ts'), 'utf8');
+    const resolver = source.slice(
+      source.indexOf('function resolvePairRepository('),
+      source.indexOf('/**\n * Check `--model`', source.indexOf('function resolvePairRepository(')),
+    );
+
+    expect(resolver).toContain('return { cwd: process.cwd(), repo: null }');
+    expect(resolver.indexOf('repo: null')).toBeLessThan(
+      resolver.indexOf('tryInspectLocalRepository'),
+    );
+  });
+
   it('pairs from a directory that is not a git repository: no repo is not an error', async () => {
     const nonRepo = await tmpDir('beeline-pair-cli-nonrepo-');
     const stateHome = await tmpDir('beeline-pair-cli-state-');

@@ -149,47 +149,13 @@ export default function RootLayout() {
             <Stack.Screen
                 name="settings/index"
                 options={{
-                    headerShown: true,
-                    headerTitle: t('settings.title'),
-                    headerBackTitle: t('common.home')
+                    headerShown: false,
                 }}
             />
             <Stack.Screen
-                name="session/[id]"
+                name="session/[...legacy]"
                 options={{
                     headerShown: false
-                }}
-            />
-            <Stack.Screen
-                name="session/[id]/message/[messageId]"
-                options={{
-                    headerShown: true,
-                    headerBackTitle: t('common.back'),
-                    headerTitle: t('common.message')
-                }}
-            />
-            <Stack.Screen
-                name="session/[id]/info"
-                options={{
-                    headerShown: true,
-                    headerTitle: '',
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
-                name="session/[id]/files"
-                options={{
-                    headerShown: true,
-                    headerTitle: t('common.files'),
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
-                name="session/[id]/file"
-                options={{
-                    headerShown: true,
-                    headerTitle: t('common.fileViewer'),
-                    headerBackTitle: t('common.files'),
                 }}
             />
             <Stack.Screen
@@ -229,8 +195,7 @@ export default function RootLayout() {
             <Stack.Screen
                 name="new/index"
                 options={{
-                    headerTitle: t('newSession.title'),
-                    headerBackTitle: t('common.back'),
+                    headerShown: false,
                 }}
             />
         </Stack>

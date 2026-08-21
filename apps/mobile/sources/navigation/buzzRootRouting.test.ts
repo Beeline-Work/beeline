@@ -30,11 +30,6 @@ vi.mock('@/components/RoundButton', async () => {
     return { RoundButton: (props: any) => ReactModule.createElement('RoundButton', props) };
 });
 
-vi.mock('@/components/MainView', async () => {
-    const ReactModule = await import('react');
-    return { MainView: (props: any) => ReactModule.createElement('MainView', props) };
-});
-
 vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));
 
 import Home from '../app/(app)/index';
@@ -71,10 +66,9 @@ describe('Buzz root launch routing', () => {
     it('routes a Happy-authenticated device without a Buzz identity to onboarding', async () => {
         auth.isAuthenticated = true;
 
-        const renderer = await renderHome();
+        await renderHome();
 
         expect(navigation.replace).toHaveBeenCalledWith('/buzz/onboarding');
-        expect(renderer.root.findAllByType('MainView' as any)).toHaveLength(0);
     });
 
     it('routes a device without credentials or a Buzz identity to onboarding', async () => {

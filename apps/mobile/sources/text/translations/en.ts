@@ -182,15 +182,6 @@ export const en: TranslationStructure = {
         },
         alwaysShowContextSize: 'Always Show Context Size',
         alwaysShowContextSizeDescription: 'Display context usage even when not near limit',
-        avatarStyle: 'Avatar Style',
-        avatarStyleDescription: 'Choose session avatar appearance',
-        avatarOptions: {
-            pixelated: 'Pixelated',
-            gradient: 'Gradient',
-            brutalist: 'Brutalist',
-        },
-        showFlavorIcons: 'Show AI Provider Icons',
-        showFlavorIconsDescription: 'Display AI provider icons on session avatars',
     },
 
     settingsFeatures: {

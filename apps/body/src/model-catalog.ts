@@ -26,7 +26,7 @@ import {
  * a human should actually be offered.
  */
 export async function fetchAgentModelCatalog(
-  agent: AgentCommand,
+  agent: Pick<AgentCommand, 'command' | 'args'>,
   agentEnv: Record<string, string>,
 ): Promise<{ raw: AgentModelConfigOption[]; catalog: AgentModelConfigOption[] }> {
   const scratchCwd = await mkdtemp(resolve(tmpdir(), 'beeline-pair-model-check-'));

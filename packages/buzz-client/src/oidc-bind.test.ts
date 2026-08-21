@@ -324,13 +324,20 @@ describe('OIDC device-key bind protocol', () => {
         'https://relay.example',
         identity,
         'https://relay.example/auth/github/mobile-callback',
+        7,
       ),
     ).resolves.toContain('github.com/apps/beeline');
-    await expect(listGitHubRepositories('https://relay.example', identity)).resolves.toMatchObject({
+    await expect(
+      listGitHubRepositories('https://relay.example', identity, { refresh: true }),
+    ).resolves.toMatchObject({
       installed: true,
       installations: [{ accountLogin: 'acme', repositoryCount: 1 }],
       repositories: [{ installationId: 7, fullName: 'acme/widget' }],
     });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      installation_id: 7,
+    });
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('refresh=1');
     for (const [, init] of fetchMock.mock.calls) {
       expect((init?.headers as Record<string, string>).authorization).toMatch(/^Nostr /);
     }

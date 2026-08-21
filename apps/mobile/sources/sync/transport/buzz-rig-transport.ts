@@ -756,12 +756,12 @@ export class BuzzRigTransport implements RigTransport {
     );
   }
 
-  async workspaceGitHubAccess(): Promise<{
+  async workspaceGitHubAccess(options: { refresh?: boolean } = {}): Promise<{
     installed: boolean;
     installations: GitHubInstallationAccess[];
     candidates: RepoCandidate[];
   }> {
-    const access = await listGitHubRepositories(this.baseUrl, this.identity);
+    const access = await listGitHubRepositories(this.baseUrl, this.identity, options);
     return {
       installed: access.installed,
       installations: access.installations,
@@ -777,8 +777,8 @@ export class BuzzRigTransport implements RigTransport {
     };
   }
 
-  async githubInstallationStart(redirectUri: string): Promise<string> {
-    return startGitHubInstallation(this.baseUrl, this.identity, redirectUri);
+  async githubInstallationStart(redirectUri: string, installationId?: number): Promise<string> {
+    return startGitHubInstallation(this.baseUrl, this.identity, redirectUri, installationId);
   }
 
   async githubRepositoryCreate(input: {

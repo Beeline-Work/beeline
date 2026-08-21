@@ -148,6 +148,7 @@ const monoStyles = new Set([
   'summaryAffordance',
   'modelAxisValue',
   'modelOptionText',
+  'modelCustomInput',
   'repoRowLabel',
   'repoRowValue',
   'repoChipText',

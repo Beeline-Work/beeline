@@ -270,7 +270,10 @@ describe('Members screen', () => {
     ).toBe('OFFLINE');
   });
 
-  it('hides the Model / Effort section when the agent has never published a catalog', async () => {
+  it('offers manual Model / Effort entry even when the agent has never published a catalog', async () => {
+    // A missing catalog used to hide the section outright, so a model the
+    // harness accepts but does not list could not be configured at all. The
+    // fallback axes render with manual entry instead.
     const agentPubkey = '2'.repeat(64);
     client.listAgents.mockResolvedValue([
       { agentId: 'a1', communityId: 'workspace-1', displayName: 'joy', pubkey: agentPubkey, createdAt: 0, raw: {} },
@@ -284,7 +287,31 @@ describe('Members screen', () => {
     });
 
     expect(agentModelCatalogRead).toHaveBeenCalledWith('workspace-1', agentPubkey);
-    expect(renderer.root.findAllByProps({ testID: `agent-${agentPubkey}-model-config` })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: `agent-${agentPubkey}-model-config` })).toBeDefined();
+    // Fallback axes only: model + effort, never a mode axis.
+    expect(renderer.root.findByProps({ testID: 'model-axis-model' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'model-axis-effort' })).toBeDefined();
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'model-axis-model' }).props.onPress();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'model-custom-model' }).props.onPress();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'model-custom-input-model' }).props.onChangeText(
+        'openrouter/stealth/ox-alpha',
+      );
+    });
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'model-custom-submit-model' }).props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(agentModelConfigSet).toHaveBeenCalledWith('workspace-1', agentPubkey, {
+      model: 'openrouter/stealth/ox-alpha',
+    });
   });
 
   it('lists the advertised model/effort catalog, never a mode axis, and lets you choose an option', async () => {
@@ -350,6 +377,84 @@ describe('Members screen', () => {
 
     expect(agentModelConfigSet).toHaveBeenNthCalledWith(1, 'workspace-1', agentPubkey, { model: 'opus' });
     expect(agentModelConfigSet).toHaveBeenNthCalledWith(2, 'workspace-1', agentPubkey, { effort: 'high' });
+  });
+
+  it('lets you enter a model id the catalog does not list, and keeps the effort axis alongside it', async () => {
+    const agentPubkey = '4'.repeat(64);
+    client.listAgents.mockResolvedValue([
+      { agentId: 'a3', communityId: 'workspace-1', displayName: 'joy', pubkey: agentPubkey, createdAt: 0, raw: {} },
+    ]);
+    agentModelCatalogRead.mockResolvedValue({
+      communityId: 'workspace-1',
+      agentPubkey,
+      options: [
+        {
+          id: 'model',
+          category: 'model',
+          currentValue: 'sonnet',
+          options: [{ id: 'sonnet' }],
+        },
+        {
+          id: 'effort',
+          category: 'effort',
+          currentValue: 'default',
+          options: [{ id: 'low' }, { id: 'high' }],
+        },
+      ],
+      updatedAt: 0,
+      raw: {},
+    });
+    agentModelConfigRead.mockResolvedValue({
+      communityId: 'workspace-1',
+      agentPubkey,
+      authoredBy: 'a'.repeat(64),
+      model: 'openrouter/stealth/ox-alpha',
+      effort: 'high',
+      updatedAt: 0,
+      raw: {},
+    });
+    const renderer = await render();
+
+    await act(async () => {
+      ancestorButton(renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` })).props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'model-axis-model' }).props.onPress();
+    });
+    // The custom escape exists even when the catalog has options.
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'model-custom-model' }).props.onPress();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'model-custom-input-model' }).props.onChangeText(
+        'openrouter/stealth/ox-alpha',
+      );
+    });
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'model-custom-submit-model' }).props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(agentModelConfigSet).toHaveBeenCalledWith('workspace-1', agentPubkey, {
+      model: 'openrouter/stealth/ox-alpha',
+    });
+
+    // The effort axis survives the custom model: it is still rendered and
+    // settable, and the persisted effort shows on the axis row.
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'model-axis-effort' }).props.onPress();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'model-option-effort-high' }).props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(agentModelConfigSet).toHaveBeenLastCalledWith('workspace-1', agentPubkey, {
+      effort: 'high',
+    });
   });
 
   it('paints from the local Workspace roster cache before any network read resolves', async () => {

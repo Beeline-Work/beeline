@@ -673,6 +673,36 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     expect(completion.searchParams.has('id_token')).toBe(false);
   });
 
+  it('accepts one callback slash but rejects any wider redirect variation', async () => {
+    const appState = 's'.repeat(43);
+    for (const [providerName, appRedirect] of [
+      ['oidc', `${alphaTenant.origin}/auth/oidc/mobile-callback/`],
+      ['github', 'buzzy://buzz/github-callback/'],
+    ] as const) {
+      const result = await app.inject({
+        method: 'GET',
+        url: `/auth/${providerName}/start?app_redirect=${encodeURIComponent(appRedirect)}&app_state=${appState}`,
+        headers: { host: alphaTenant.host },
+      });
+      expect(result.statusCode).toBe(302);
+    }
+
+    for (const [providerName, appRedirect] of [
+      ['oidc', `${alphaTenant.origin}/auth/oidc/mobile-callback//`],
+      ['oidc', `${alphaTenant.origin}/auth/oidc/mobile-callback?next=evil`],
+      ['github', 'buzzy://buzz/github-callback//'],
+      ['github', 'buzzy://buzz/github-callback#evil'],
+    ] as const) {
+      const result = await app.inject({
+        method: 'GET',
+        url: `/auth/${providerName}/start?app_redirect=${encodeURIComponent(appRedirect)}&app_state=${appState}`,
+        headers: { host: alphaTenant.host },
+      });
+      expect(result.statusCode).toBe(400);
+      expect(result.json().error).toBe('invalid_request');
+    }
+  });
+
   it('refuses arbitrary native completion redirects', async () => {
     const result = await app.inject({
       method: 'GET',

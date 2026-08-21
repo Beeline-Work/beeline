@@ -16,6 +16,81 @@ import {
   type OidcBindChallenge,
 } from './oidc-bind.js';
 
+const StandardURL = URL;
+
+/** The URL behavior shipped by React Native, limited to the surface this module uses. */
+class ReactNativeURLFixture {
+  readonly parsed: URL;
+
+  constructor(input: string | URL, base?: string | URL) {
+    const inputString = String(input);
+    let rendered: string;
+    if (base !== undefined && !/^https?:\/\//.test(inputString)) {
+      const baseString = String(base).replace(/\/$/, '');
+      const path = inputString.startsWith('/') ? inputString : `/${inputString}`;
+      rendered = baseString.endsWith(path) ? baseString : `${baseString}${path}`;
+    } else {
+      rendered = new StandardURL(inputString).toString();
+      if (!rendered.endsWith('/') && !rendered.includes('?') && !rendered.includes('#')) {
+        rendered += '/';
+      }
+    }
+    this.parsed = new StandardURL(rendered);
+  }
+
+  get protocol(): string {
+    return this.parsed.protocol;
+  }
+
+  get origin(): string {
+    return this.isHttp ? this.parsed.origin : '';
+  }
+
+  get hostname(): string {
+    return this.isHttp ? this.parsed.hostname : '';
+  }
+
+  get host(): string {
+    return this.isHttp ? this.parsed.host : '';
+  }
+
+  get pathname(): string {
+    return this.isHttp ? this.parsed.pathname : '/';
+  }
+
+  get username(): string {
+    return this.parsed.username;
+  }
+
+  get password(): string {
+    return this.parsed.password;
+  }
+
+  get port(): string {
+    return this.parsed.port;
+  }
+
+  get search(): string {
+    return this.parsed.search;
+  }
+
+  get hash(): string {
+    return this.parsed.hash;
+  }
+
+  get searchParams(): URLSearchParams {
+    return this.parsed.searchParams;
+  }
+
+  toString(): string {
+    return this.parsed.toString();
+  }
+
+  private get isHttp(): boolean {
+    return this.parsed.protocol === 'http:' || this.parsed.protocol === 'https:';
+  }
+}
+
 const identity = generateKeypair();
 const challenge: OidcBindChallenge = {
   protocol: 1,
@@ -55,6 +130,43 @@ function callbackUrl(overrides: Record<string, string> = {}): string {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('OIDC device-key bind protocol', () => {
+  it.each([
+    {
+      provider: 'GitHub',
+      start: startGitHubBind,
+      redirectUri: 'buzzy://buzz/github-callback',
+      startPath: '/auth/github/start',
+    },
+    {
+      provider: 'OIDC',
+      start: startOidcBind,
+      redirectUri: 'https://relay.example/auth/oidc/mobile-callback',
+      startPath: '/auth/oidc/start',
+    },
+  ])(
+    'starts the full $provider flow under React Native URL semantics',
+    ({ start, redirectUri, startPath }) => {
+      const reactNativeDeepLink = new ReactNativeURLFixture('buzzy://buzz/github-callback');
+      expect(reactNativeDeepLink.toString()).toBe('buzzy://buzz/github-callback/');
+      expect(reactNativeDeepLink).toMatchObject({ origin: '', host: '', pathname: '/' });
+      expect(
+        new ReactNativeURLFixture('https://relay.example/auth/oidc/mobile-callback').pathname,
+      ).toBe('/auth/oidc/mobile-callback/');
+      const completionUrl = callbackUrl();
+      vi.stubGlobal('URL', ReactNativeURLFixture);
+
+      const result = start('https://relay.example', {
+        redirectUri,
+        state: 's'.repeat(43),
+      });
+      const authorizationUrl = new StandardURL(result.authorizationUrl);
+      expect(authorizationUrl.pathname).toBe(startPath);
+      expect(authorizationUrl.searchParams.get('app_redirect')).toBe(redirectUri);
+      expect(result.redirectUri).toBe(redirectUri);
+      expect(parseOidcBindCallback(completionUrl, 's'.repeat(43))).toEqual(challenge);
+    },
+  );
+
   it('builds a native-only start URL with random app state', () => {
     const result = startOidcBind('https://relay.example', {
       redirectUri: 'https://relay.example/auth/oidc/mobile-callback',
@@ -78,6 +190,46 @@ describe('OIDC device-key bind protocol', () => {
         state: 's'.repeat(43),
       }).redirectUri,
     ).toBe('buzzy://buzz/oidc-callback');
+  });
+
+  it('allows one trailing slash without widening the redirect allowlist', () => {
+    for (const [start, redirectUri] of [
+      [startGitHubBind, 'buzzy://buzz/github-callback/'],
+      [startOidcBind, 'https://relay.example/auth/oidc/mobile-callback/'],
+    ] as const) {
+      const result = start('https://relay.example', {
+        redirectUri,
+        state: 's'.repeat(43),
+      });
+      expect(new StandardURL(result.authorizationUrl).searchParams.get('app_redirect')).toBe(
+        redirectUri,
+      );
+      expect(result.redirectUri).toBe(redirectUri);
+    }
+
+    for (const [start, redirectUri] of [
+      [startGitHubBind, 'buzzy://buzz/github-callback//'],
+      [startGitHubBind, 'buzzy://buzz/other'],
+      [startGitHubBind, 'buzzy://other/github-callback'],
+      [startGitHubBind, 'buzzy://buzz/github-callback?next=evil'],
+      [startGitHubBind, 'buzzy://buzz/github-callback#evil'],
+      [startOidcBind, 'https://relay.example/auth/oidc/mobile-callback//'],
+      [startOidcBind, 'https://other.example/auth/oidc/mobile-callback'],
+      [startOidcBind, 'https://relay.example/auth/oidc/other'],
+      [startOidcBind, 'https://relay.example/auth/oidc/mobile-callback?next=evil'],
+      [startOidcBind, 'https://relay.example/auth/oidc/mobile-callback#evil'],
+    ] as const) {
+      expect(() =>
+        start('https://relay.example', { redirectUri, state: 's'.repeat(43) }),
+      ).toThrowError(expect.objectContaining({ code: 'invalid_redirect' }));
+    }
+
+    expect(() =>
+      startOidcBind('http://127.0.0.1:8789', {
+        redirectUri: 'buzzy://user@buzz/oidc-callback',
+        state: 's'.repeat(43),
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'invalid_redirect' }));
   });
 
   it('uses the GitHub routes for sign-in, installation, and repository access', async () => {

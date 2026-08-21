@@ -27,6 +27,10 @@ const FLOW_COOKIE = '__Host-beeline_oidc_flow';
 const GITHUB_SIGN_IN_DEEP_LINK = 'buzzy://buzz/github-callback';
 const GITHUB_INSTALLATION_DEEP_LINK = 'buzzy://buzz/github-installation';
 
+function exactRedirect(value: string, expected: string): boolean {
+  return value === expected || (!expected.endsWith('/') && value === `${expected}/`);
+}
+
 export interface AuthTenant {
   host: string;
   community: string;
@@ -191,6 +195,9 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     GITHUB_INSTALLATION_DEEP_LINK,
     ...(options.nativeRedirectUris ?? []),
   ]);
+  const isAllowedAppRedirect = (value: string, associatedRedirect: string): boolean =>
+    exactRedirect(value, associatedRedirect) ||
+    [...nativeRedirectUris].some((nativeRedirect) => exactRedirect(value, nativeRedirect));
   const cookieSecurity = options.secureCookies === false ? '' : ' Secure;';
   const flowCookieName = options.secureCookies === false ? 'beeline_oidc_flow' : FLOW_COOKIE;
   const githubTokenKey = options.github
@@ -390,7 +397,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       const associatedRedirect = `${tenant.origin}/auth/oidc/mobile-callback`;
       if (
         typeof appRedirect !== 'string' ||
-        (appRedirect !== associatedRedirect && !nativeRedirectUris.has(appRedirect))
+        !isAllowedAppRedirect(appRedirect, associatedRedirect)
       ) {
         throw new ProtocolError(
           400,
@@ -455,7 +462,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       const associatedRedirect = `${tenant.origin}/auth/github/mobile-callback`;
       if (
         typeof appRedirect !== 'string' ||
-        (appRedirect !== associatedRedirect && !nativeRedirectUris.has(appRedirect))
+        !isAllowedAppRedirect(appRedirect, associatedRedirect)
       ) {
         throw new ProtocolError(
           400,
@@ -781,8 +788,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     }
     const associatedRedirect = `${tenant.origin}/auth/github/mobile-callback`;
     if (
-      (redirect.toString() !== associatedRedirect &&
-        !nativeRedirectUris.has(redirect.toString())) ||
+      !isAllowedAppRedirect(redirectUri, associatedRedirect) ||
       redirect.username ||
       redirect.password ||
       redirect.search ||

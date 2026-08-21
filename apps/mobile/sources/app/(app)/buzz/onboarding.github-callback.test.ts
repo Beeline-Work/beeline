@@ -14,9 +14,18 @@ const identityStorage = vi.hoisted(() => ({
   load: vi.fn(),
   save: vi.fn(async () => undefined),
   generate: vi.fn(async () => ({ secretKey: '1'.repeat(64), publicKey: '2'.repeat(64) })),
+  pending: null as { secretKey: string; publicKey: string } | null,
+  loadPending: vi.fn(async () => identityStorage.pending),
+  savePending: vi.fn(async (identity: { secretKey: string; publicKey: string }) => {
+    identityStorage.pending = identity;
+  }),
+  clearPending: vi.fn(async () => {
+    identityStorage.pending = null;
+  }),
 }));
 const sdk = vi.hoisted(() => ({
   finish: vi.fn(async () => ({ linked: true })),
+  recover: vi.fn(async () => ({ linked: true, replaced: true })),
   getCapabilities: vi.fn(async () => ({ github: true, oidc: true })),
   startInstallation: vi.fn(async () => 'https://github.test/apps/beeline/installations/new'),
   listRepositories: vi.fn(async () => ({ installed: true, installations: [], repositories: [] })),
@@ -36,8 +45,12 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@beeline/buzz-client')>();
   return {
     ...actual,
-    buildOidcBindEvent: vi.fn(() => ({ id: 'bind-event' })),
+    buildOidcBindEvent: vi.fn((_challenge, identity) => ({
+      id: 'bind-event',
+      pubkey: identity.publicKey,
+    })),
     finishOidcBind: sdk.finish,
+    recoverOidcBind: sdk.recover,
     getAuthCapabilities: sdk.getCapabilities,
     listGitHubRepositories: sdk.listRepositories,
     lookupRecovery: sdk.lookupRecovery,
@@ -60,9 +73,12 @@ vi.mock('expo-web-browser', () => ({
 vi.mock('expo-crypto', () => ({ getRandomBytes: (length: number) => new Uint8Array(length) }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
+  clearPendingGitHubIdentity: identityStorage.clearPending,
   generateBuzzIdentity: identityStorage.generate,
   importBuzzIdentity: vi.fn(),
   loadBuzzIdentity: identityStorage.load,
+  loadPendingGitHubIdentity: identityStorage.loadPending,
+  savePendingGitHubIdentity: identityStorage.savePending,
   saveBuzzIdentity: identityStorage.save,
 }));
 vi.mock('@/buzz/person-name', () => ({
@@ -180,7 +196,15 @@ describe('GitHub callback delivery into onboarding', () => {
     clearOnboardingNotice();
     linking.initialUrl = null;
     linking.listener = null;
+    identityStorage.pending = null;
     identityStorage.load.mockResolvedValue(null);
+    identityStorage.save.mockResolvedValue(undefined);
+    identityStorage.generate.mockResolvedValue({
+      secretKey: '1'.repeat(64),
+      publicKey: '2'.repeat(64),
+    });
+    sdk.finish.mockResolvedValue({ linked: true });
+    sdk.recover.mockResolvedValue({ linked: true, replaced: true });
     sdk.getCapabilities.mockResolvedValue({ github: true, oidc: true });
     sdk.listRepositories.mockResolvedValue({ installed: true, installations: [], repositories: [] });
     sdk.lookupRecovery.mockResolvedValue([]);
@@ -261,6 +285,27 @@ describe('GitHub callback delivery into onboarding', () => {
     expect(browser.open).not.toHaveBeenCalled();
   });
 
+  it('promotes a pending key when lookup proves the server already completed the bind', async () => {
+    const identity = { secretKey: '1'.repeat(64), publicKey: '2'.repeat(64) };
+    identityStorage.pending = identity;
+    sdk.lookupRecovery.mockResolvedValue([
+      {
+        provider: 'https://github.com',
+        subject: '269599412',
+        pubkey: identity.publicKey,
+      },
+    ]);
+
+    const tree = await render();
+
+    expect(identityStorage.save).toHaveBeenCalledWith(identity);
+    expect(identityStorage.clearPending).toHaveBeenCalledTimes(1);
+    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+    expect(browser.open).not.toHaveBeenCalled();
+    expect(sdk.finish).not.toHaveBeenCalled();
+    expect(noticeText(tree)).not.toContain('IDENTITY_CONFLICT');
+  });
+
   it('cold-starts, binds the proof, saves the identity, and enters the workspace', async () => {
     await persistGitHubSignInState(STATE);
     linking.initialUrl = callbackUrl();
@@ -318,6 +363,148 @@ describe('GitHub callback delivery into onboarding', () => {
 
     expect(sdk.finish).toHaveBeenCalledTimes(1);
     expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+  });
+
+  it('reuses the durable pending key when the callback remounts onboarding before a 201 is saved', async () => {
+    const firstIdentity = { secretKey: '1'.repeat(64), publicKey: '2'.repeat(64) };
+    const accidentalSecondIdentity = { secretKey: '3'.repeat(64), publicKey: '4'.repeat(64) };
+    identityStorage.generate
+      .mockResolvedValueOnce(firstIdentity)
+      .mockResolvedValueOnce(accidentalSecondIdentity);
+    let releaseFirstSave!: () => void;
+    identityStorage.save
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseFirstSave = resolve;
+          }),
+      )
+      .mockResolvedValue(undefined);
+    browser.open.mockImplementation(async (authorizationUrl: string) => {
+      const state = new URL(authorizationUrl).searchParams.get('app_state')!;
+      queueMicrotask(() => linking.listener?.({ url: callbackUrl(state) }));
+      return { type: 'dismiss' };
+    });
+
+    const firstTree = await render();
+    const firstSignIn = firstTree.root.find(
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
+    );
+    let firstAttempt!: Promise<void>;
+    act(() => {
+      firstAttempt = firstSignIn.props.onPress();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(sdk.finish).toHaveBeenCalledTimes(1);
+    expect(identityStorage.save).toHaveBeenCalledTimes(1);
+
+    await act(async () => firstTree.unmount());
+    const remountedTree = await render();
+    const retry = remountedTree.root.find(
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
+    );
+    await act(async () => {
+      await retry.props.onPress();
+    });
+
+    expect(sdk.finish).toHaveBeenCalledTimes(2);
+    expect(sdk.finish.mock.calls[1]?.[2]).toMatchObject({ pubkey: firstIdentity.publicKey });
+    expect(noticeText(remountedTree)).not.toContain('IDENTITY_CONFLICT');
+    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+
+    releaseFirstSave();
+    await act(async () => firstAttempt);
+  });
+
+  it('offers an explicit device-key replacement after OAuth proves the linked GitHub account', async () => {
+    sdk.finish.mockRejectedValueOnce(
+      new OidcBindError('identity_conflict', 'identity is already bound to another public key', 409),
+    );
+    browser.open.mockImplementation(async (authorizationUrl: string) => {
+      const state = new URL(authorizationUrl).searchParams.get('app_state')!;
+      queueMicrotask(() => linking.listener?.({ url: callbackUrl(state) }));
+      return { type: 'dismiss' };
+    });
+    const tree = await render();
+    const signIn = tree.root.find(
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
+    );
+
+    await act(async () => {
+      await signIn.props.onPress();
+    });
+
+    expect(noticeText(tree)).toContain('DEVICE KEY ALREADY LINKED · IDENTITY_CONFLICT');
+    const replace = tree.root.find(
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Replace device key',
+    );
+    await act(async () => {
+      await replace.props.onPress();
+    });
+
+    expect(sdk.recover).toHaveBeenCalledTimes(1);
+    expect(identityStorage.save).toHaveBeenCalledTimes(1);
+    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+    expect(noticeText(tree)).not.toContain('IDENTITY_CONFLICT');
+  });
+
+  it('keeps the replacement action available when the conflict callback remounts onboarding', async () => {
+    const conflict = new OidcBindError(
+      'identity_conflict',
+      'identity is already bound to another public key',
+      409,
+    );
+    let rejectOriginalBind!: (error: unknown) => void;
+    sdk.finish
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectOriginalBind = reject;
+          }),
+      )
+      .mockRejectedValueOnce(conflict);
+    browser.open.mockImplementation(async (authorizationUrl: string) => {
+      const state = new URL(authorizationUrl).searchParams.get('app_state')!;
+      queueMicrotask(() => linking.listener?.({ url: callbackUrl(state) }));
+      return { type: 'dismiss' };
+    });
+
+    const originalTree = await render();
+    const signIn = originalTree.root.find(
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
+    );
+    act(() => {
+      void signIn.props.onPress();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(sdk.finish).toHaveBeenCalledTimes(1);
+
+    await act(async () => originalTree.unmount());
+    const remountedTree = await render();
+    await act(async () => {
+      rejectOriginalBind(conflict);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const replace = remountedTree.root.find(
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Replace device key',
+    );
+    await act(async () => {
+      await replace.props.onPress();
+    });
+
+    expect(sdk.recover).toHaveBeenCalledTimes(1);
+    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+    expect(noticeText(remountedTree)).not.toContain('IDENTITY_CONFLICT');
   });
 
   it('opens exactly one browser during sign-in when GitHub repository access is not installed', async () => {

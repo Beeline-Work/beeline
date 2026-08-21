@@ -19,6 +19,7 @@ import * as SecureStore from 'expo-secure-store';
 
 // SecureStore on Android requires keys matching [A-Za-z0-9._-]+
 const BUZZ_NSEC_KEY = 'buzzy.identity.nsec';
+const PENDING_GITHUB_NSEC_KEY = 'buzzy.identity.githubPendingNsec';
 const BUZZ_RELAY_URL_KEY = 'buzzy.identity.relayUrl';
 
 const NSEC_STORAGE_OPTIONS: SecureStore.SecureStoreOptions = {
@@ -56,27 +57,39 @@ async function storageRemove(key: string): Promise<void> {
   await SecureStore.deleteItemAsync(key);
 }
 
-async function secretGet(): Promise<string | null> {
+async function secretGetAt(key: string): Promise<string | null> {
   if (isWeb()) {
-    return localStorage.getItem(BUZZ_NSEC_KEY);
+    return localStorage.getItem(key);
   }
-  return SecureStore.getItemAsync(BUZZ_NSEC_KEY, NSEC_STORAGE_OPTIONS);
+  return SecureStore.getItemAsync(key, NSEC_STORAGE_OPTIONS);
+}
+
+async function secretSetAt(key: string, value: string): Promise<void> {
+  if (isWeb()) {
+    localStorage.setItem(key, value);
+    return;
+  }
+  await SecureStore.setItemAsync(key, value, NSEC_STORAGE_OPTIONS);
+}
+
+async function secretRemoveAt(key: string): Promise<void> {
+  if (isWeb()) {
+    localStorage.removeItem(key);
+    return;
+  }
+  await SecureStore.deleteItemAsync(key, NSEC_STORAGE_OPTIONS);
+}
+
+async function secretGet(): Promise<string | null> {
+  return secretGetAt(BUZZ_NSEC_KEY);
 }
 
 async function secretSet(value: string): Promise<void> {
-  if (isWeb()) {
-    localStorage.setItem(BUZZ_NSEC_KEY, value);
-    return;
-  }
-  await SecureStore.setItemAsync(BUZZ_NSEC_KEY, value, NSEC_STORAGE_OPTIONS);
+  await secretSetAt(BUZZ_NSEC_KEY, value);
 }
 
 async function secretRemove(): Promise<void> {
-  if (isWeb()) {
-    localStorage.removeItem(BUZZ_NSEC_KEY);
-    return;
-  }
-  await SecureStore.deleteItemAsync(BUZZ_NSEC_KEY, NSEC_STORAGE_OPTIONS);
+  await secretRemoveAt(BUZZ_NSEC_KEY);
 }
 
 /** Load the stored Buzz identity (null if never set). */
@@ -100,9 +113,26 @@ export async function saveBuzzIdentity(identity: Identity): Promise<void> {
   await secretSet(nsec);
 }
 
+/**
+ * Keep the OAuth candidate key across deep-link remounts and process death.
+ * It is promoted to the primary identity only after the server link is proven.
+ */
+export async function savePendingGitHubIdentity(identity: Identity): Promise<void> {
+  await secretSetAt(PENDING_GITHUB_NSEC_KEY, identityNsec(identity));
+}
+
+export async function loadPendingGitHubIdentity(): Promise<Identity | null> {
+  const nsec = await secretGetAt(PENDING_GITHUB_NSEC_KEY);
+  return nsec ? loadIdentityFromNsec(nsec, 'buzzy-mobile') : null;
+}
+
+export async function clearPendingGitHubIdentity(): Promise<void> {
+  await secretRemoveAt(PENDING_GITHUB_NSEC_KEY);
+}
+
 /** Forget the stored identity (logout). */
 export async function clearBuzzIdentity(): Promise<void> {
-  await secretRemove();
+  await Promise.all([secretRemove(), secretRemoveAt(PENDING_GITHUB_NSEC_KEY)]);
 }
 
 /** Generate a fresh device key. Provider onboarding defers persistence until bind succeeds. */

@@ -464,11 +464,37 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     const installUrl = new URL(installStart.json().authorization_url);
     const installed = await app.inject({
       method: 'GET',
-      url: `/auth/github/install/callback?installation_id=77&state=${installUrl.searchParams.get('state')}`,
+      url: `/auth/github/callback?installation_id=77&setup_action=install&state=${installUrl.searchParams.get('state')}`,
       headers: { host: alphaTenant.host },
     });
     expect(installed.statusCode).toBe(302);
     expect(installed.headers.location).toBe('beeline://buzz/github-installation?installed=1');
+
+    const manageStartUrl = 'https://alpha.example/auth/github/install/start?intent=manage';
+    const manageStart = await app.inject({
+      method: 'POST',
+      url: '/auth/github/install/start?intent=manage',
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(
+          identity.secretKey,
+          identity.publicKey,
+          manageStartUrl,
+          'POST',
+        ),
+      },
+      payload: {
+        pubkey: identity.publicKey,
+        redirect_uri: 'beeline://buzz/github-installation',
+        installation_id: 77,
+      },
+    });
+    expect(manageStart.statusCode).toBe(200);
+    const manageUrl = new URL(manageStart.json().authorization_url);
+    expect(manageUrl.origin + manageUrl.pathname).toBe(
+      'https://github.com/settings/installations/77',
+    );
+    expect(manageUrl.searchParams.get('state')).toHaveLength(43);
 
     await new Promise((resolve) => setTimeout(resolve, 1_050));
     const secondStart = await app.inject({
@@ -491,7 +517,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     const secondUrl = new URL(secondStart.json().authorization_url);
     const secondInstalled = await app.inject({
       method: 'GET',
-      url: `/auth/github/installed?installation_id=78&state=${secondUrl.searchParams.get('state')}`,
+      url: `/auth/github/callback?installation_id=78&setup_action=update&state=${secondUrl.searchParams.get('state')}`,
       headers: { host: alphaTenant.host },
     });
     expect(secondInstalled.statusCode).toBe(302);
@@ -517,6 +543,23 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
         { installationId: 77, fullName: 'octocat/widget' },
       ],
     });
+
+    const refreshReposUrl = `${reposUrl}?refresh=1`;
+    const refreshedRepos = await app.inject({
+      method: 'GET',
+      url: `/auth/github/repos/${identity.publicKey}?refresh=1`,
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(
+          identity.secretKey,
+          identity.publicKey,
+          refreshReposUrl,
+          'GET',
+        ),
+      },
+    });
+    expect(refreshedRepos.statusCode).toBe(200);
+    expect(refreshedRepos.json().repositories).toHaveLength(2);
 
     const repositoryPayload = JSON.stringify({
       action: 'removed',

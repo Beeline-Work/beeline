@@ -3,9 +3,32 @@ import {
   roomCornerSignal,
   roomListCorners,
   type CornerSummary,
+  type CornerStatus,
 } from '@/buzz/corners';
-import { isMachinePreview, previewAuthorLabel } from '@/buzz/room-list-summary';
+import { isMachinePreview } from '@/buzz/room-list-summary';
 import { isRetiredAgentStateNotice } from '@/buzz/retired-agent-notices';
+
+export type RoomListZone = 'needs-you' | 'working' | 'quiet';
+
+export const ROOM_LIST_ZONE_LABELS: Record<RoomListZone, string> = {
+  'needs-you': 'NEEDS YOU',
+  working: 'WORKING',
+  quiet: 'QUIET',
+};
+
+const ROOM_LIST_ZONE_ORDER: readonly RoomListZone[] = ['needs-you', 'working', 'quiet'];
+const NEEDS_YOU_STATUSES: ReadonlySet<CornerStatus> = new Set([
+  'needs-attention',
+  'open',
+  'failed',
+]);
+const MEANINGFUL_CORNER_STATUSES: ReadonlySet<CornerStatus> = new Set([
+  ...NEEDS_YOU_STATUSES,
+  'live',
+  'merged',
+]);
+const LIVE_STATUSES: ReadonlySet<CornerStatus> = new Set(['live']);
+const FINISHED_STATUSES: ReadonlySet<CornerStatus> = new Set(['merged']);
 
 /**
  * Every presentational decision one Room row makes, derived once, off the
@@ -44,10 +67,12 @@ export type RoomRowPresentation = {
    * excluded outright and stay reachable through the full corner list.
    */
   corners: CornerSummary[];
-  /** The one human-readable activity line, sanitized where it was stored. */
-  preview: string;
-  /** Uppercase mono attribution, `''` when the author is off the roster. */
-  author: string;
+  /** Which of the three scan zones this Room belongs to. */
+  zone: RoomListZone;
+  /** Newest message or lifecycle event that should affect list ordering. */
+  meaningfulAt: number;
+  /** Current Room truth; only falls back to message text when no lifecycle fact exists. */
+  fact: string;
 };
 
 /**
@@ -67,10 +92,64 @@ export function isRoomAlive(corners: readonly CornerSummary[] | undefined): bool
 }
 
 export type RoomRowInput = {
+  id?: string;
+  title?: string;
   corners?: readonly CornerSummary[];
   latestMessage?: string;
+  latestMessageAt?: number;
   latestMessageAuthor?: string;
+  updatedAt?: number;
+  createdAt?: number;
 };
+
+export type RoomListSection<T extends RoomRowInput> = {
+  zone: RoomListZone;
+  title: string;
+  data: Array<{ item: T; row: RoomRowPresentation }>;
+};
+
+function cornerTimestamp(corner: CornerSummary): number {
+  return corner.lastActivityAt ?? corner.createdAt ?? 0;
+}
+
+function newestCorner(
+  corners: readonly CornerSummary[],
+  statuses: ReadonlySet<CornerStatus>,
+): CornerSummary | undefined {
+  return corners
+    .filter((corner) => statuses.has(corner.status))
+    .sort(
+      (a, b) =>
+        cornerTimestamp(b) - cornerTimestamp(a) ||
+        a.name.localeCompare(b.name) ||
+        a.id.localeCompare(b.id),
+    )[0];
+}
+
+function actorName(
+  corner: CornerSummary,
+  authorNames: ReadonlyMap<string, string>,
+  fallback: string,
+): string {
+  return authorNames.get(corner.openerPubkey)?.trim() || fallback;
+}
+
+function cornerFact(corner: CornerSummary, authorNames: ReadonlyMap<string, string>): string {
+  switch (corner.status) {
+    case 'live':
+      return `${actorName(corner, authorNames, 'Agent')} working · ${corner.name}`;
+    case 'needs-attention':
+      return `${actorName(corner, authorNames, 'Change')} · decision needed · ${corner.name}`;
+    case 'open':
+      return `${actorName(corner, authorNames, 'Change')} · ready for review · ${corner.name}`;
+    case 'failed':
+      return `${actorName(corner, authorNames, 'Change')} · failed · ${corner.name}`;
+    case 'merged':
+      return `${actorName(corner, authorNames, 'Change')} · landed · ${corner.name}`;
+    case 'archived':
+      return NO_ACTIVITY_PREVIEW;
+  }
+}
 
 export function roomRowPresentation(
   room: RoomRowInput,
@@ -78,20 +157,56 @@ export function roomRowPresentation(
 ): RoomRowPresentation {
   const all = room.corners ?? [];
   const corners = roomListCorners(all);
-  const signal = roomCornerSignal(all);
+  const needsYou = newestCorner(all, NEEDS_YOU_STATUSES);
+  const working = newestCorner(all, LIVE_STATUSES);
+  const finished = newestCorner(all, FINISHED_STATUSES);
+  const currentCorner = needsYou ?? working ?? finished;
+  const zone: RoomListZone = needsYou ? 'needs-you' : working ? 'working' : 'quiet';
   // The stored preview was sanitized when it was written; this is the floor
   // for one written by an older build and still sitting in the local cache.
   const stored = room.latestMessage?.trim();
   const preview =
     stored && !isMachinePreview(stored) && !isRetiredAgentStateNotice(stored) ? stored : undefined;
+  const messageAt = room.latestMessageAt ?? (preview ? room.updatedAt : undefined) ?? 0;
+  const meaningfulAt = Math.max(
+    messageAt,
+    ...all.filter((corner) => MEANINGFUL_CORNER_STATUSES.has(corner.status)).map(cornerTimestamp),
+    room.createdAt ?? 0,
+  );
   return {
-    glyph: signal ? cornerStatusPresentation(signal).glyph : preview ? '›' : '·',
-    live: signal === 'live',
-    attention: signal === 'needs-attention',
+    glyph: currentCorner
+      ? cornerStatusPresentation(currentCorner.status).glyph
+      : preview
+        ? '›'
+        : '·',
+    live: Boolean(working),
+    attention: Boolean(needsYou),
     corners,
-    preview: preview ?? NO_ACTIVITY_PREVIEW,
-    author: previewAuthorLabel(
-      room.latestMessageAuthor ? authorNames.get(room.latestMessageAuthor) : undefined,
-    ),
+    zone,
+    meaningfulAt,
+    fact: currentCorner ? cornerFact(currentCorner, authorNames) : (preview ?? NO_ACTIVITY_PREVIEW),
   };
+}
+
+/**
+ * Build the three non-empty index zones and sort every zone by its newest
+ * meaningful event. This is deliberately the only Room ordering function the
+ * screen consumes: lifecycle state, fact text, age, and placement all come
+ * from the same projection.
+ */
+export function roomListSections<T extends RoomRowInput>(
+  rooms: readonly T[],
+  authorNames: ReadonlyMap<string, string>,
+): RoomListSection<T>[] {
+  const projected = rooms.map((item) => ({ item, row: roomRowPresentation(item, authorNames) }));
+  return ROOM_LIST_ZONE_ORDER.flatMap((zone) => {
+    const data = projected
+      .filter((entry) => entry.row.zone === zone)
+      .sort(
+        (a, b) =>
+          b.row.meaningfulAt - a.row.meaningfulAt ||
+          (a.item.title ?? a.item.id ?? '').localeCompare(b.item.title ?? b.item.id ?? ''),
+      );
+    return data.length > 0 ? [{ zone, title: ROOM_LIST_ZONE_LABELS[zone], data }] : [];
+  });
 }

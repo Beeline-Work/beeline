@@ -111,7 +111,10 @@ function applyCornerStatusSignals(
   let invalidatedLifecycleCache = false;
   for (const message of messages) {
     if (message.corner) {
-      useBuzzLocalCache.getState().patchCornerStatus(viewerPubkey, roomId, message.corner);
+      useBuzzLocalCache.getState().patchCornerStatus(viewerPubkey, roomId, {
+        ...message.corner,
+        lastActivityAt: message.timestamp,
+      });
       if (!invalidatedLifecycleCache) {
         // Same signal as the sidebar patch above: a real status change
         // should not wait out `listSubchannelLifecycle`'s short-TTL cache.

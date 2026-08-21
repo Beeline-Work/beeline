@@ -1,5 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  SectionList,
+  Share,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,13 +38,8 @@ import { ensurePersonNameForWorkspace } from '@/buzz/person-name';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { isRoomUnread, roomReadAt, useRoomReadState } from '@/buzz/room-read-state';
-import { isRoomAlive, NO_ACTIVITY_PREVIEW, roomRowPresentation } from '@/buzz/room-list-row';
-import {
-  cornerStatusPresentation,
-  isCornerActive,
-  sortCorners,
-  type CornerSummary,
-} from '@/buzz/corners';
+import { NO_ACTIVITY_PREVIEW, roomListSections } from '@/buzz/room-list-row';
+import { cornerStatusPresentation, sortCorners, type CornerSummary } from '@/buzz/corners';
 import { cornerHref } from '@/buzz/corner-navigation';
 import {
   CHANGES_LABEL,
@@ -85,7 +88,7 @@ const AGE_TICK_MS = 60_000;
  * A Room row's leading mark. Memoized on primitives and mounted as a live
  * primitive *only* where there is life: an idle row renders a plain `View`, so
  * a list of twenty quiet Rooms costs twenty static glyphs and not twenty
- * animation clocks. The same lesson `TranscriptRow` learned — a FlatList
+ * animation clocks. The same lesson `TranscriptRow` learned — the virtualized list
  * re-invokes `renderItem` for every visible row on every list-level state
  * change, so a leaf that rebuilds work on each pass is felt as a freeze.
  */
@@ -93,15 +96,13 @@ const RoomRowMark = React.memo(function RoomRowMark({
   attention,
   glyph,
   live,
-  unread,
 }: {
   attention: boolean;
   glyph: string;
   live: boolean;
-  unread: boolean;
 }) {
   const mark = (
-    <View style={[styles.rowMark, unread && styles.rowMarkUnread]}>
+    <View style={styles.rowMark}>
       <Text
         style={[
           styles.roomGlyph,
@@ -114,11 +115,7 @@ const RoomRowMark = React.memo(function RoomRowMark({
     </View>
   );
   if (!live) return mark;
-  return (
-    <HullLivePulse active>
-      {mark}
-    </HullLivePulse>
-  );
+  return <HullLivePulse active>{mark}</HullLivePulse>;
 });
 
 function firstParam(value: string | string[] | undefined): string | undefined {
@@ -409,19 +406,6 @@ export default function BuzzChannels() {
         .join(','),
     [displayChannels],
   );
-  const orderedChannels = useMemo(
-    () =>
-      [...displayChannels].sort((a, b) => {
-        const aActive = a.corners?.some((corner) => isCornerActive(corner.status)) ? 1 : 0;
-        const bActive = b.corners?.some((corner) => isCornerActive(corner.status)) ? 1 : 0;
-        return (
-          bActive - aActive ||
-          (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0) ||
-          (a.title ?? a.id).localeCompare(b.title ?? b.id)
-        );
-      }),
-    [displayChannels],
-  );
   const orderedDirectMessages = useMemo(
     () =>
       [...directMessages].sort(
@@ -429,9 +413,7 @@ export default function BuzzChannels() {
       ),
     [directMessages],
   );
-  const hasConversations = orderedChannels.length > 0 || orderedDirectMessages.length > 0;
-  const liveRoomCount = orderedChannels.filter((channel) => isRoomAlive(channel.corners)).length;
-
+  const hasConversations = displayChannels.length > 0 || orderedDirectMessages.length > 0;
   const activeCommunity = useMemo(
     () => communities.find((community) => community.communityId === activeCommunityId) ?? null,
     [communities, activeCommunityId],
@@ -447,6 +429,10 @@ export default function BuzzChannels() {
     if (identity?.publicKey) names.set(identity.publicKey, 'You');
     return names;
   }, [cachedListEntry?.workspaceMembers, identity?.publicKey]);
+  const roomSections = useMemo(
+    () => roomListSections(displayChannels, authorNames),
+    [authorNames, displayChannels],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -987,26 +973,25 @@ export default function BuzzChannels() {
           </View>
         )}
 
-        <FlatList
+        <SectionList
           testID="room-list"
-          data={orderedChannels}
-          keyExtractor={(item) => item.id}
+          sections={roomSections}
+          keyExtractor={(entry) => entry.item.id}
           contentContainerStyle={hasConversations ? styles.listContent : styles.emptyContainer}
-          ListHeaderComponent={
-            orderedChannels.length > 0 ? (
-              <View style={styles.indexHeader}>
-                <Text style={styles.indexLabel}>
-                  {ROOMS_LABEL.toUpperCase()} · {orderedChannels.length}
-                </Text>
-                {liveRoomCount > 0 && (
-                  <View style={styles.indexSignal}>
-                    <HullWaveSignal compact label="LIVE" />
-                    <Text style={styles.indexSignalCount}>{liveRoomCount}</Text>
-                  </View>
-                )}
-              </View>
-            ) : null
-          }
+          stickySectionHeadersEnabled={false}
+          renderSectionHeader={({ section }) => (
+            <View style={styles.indexHeader}>
+              <Text style={styles.indexLabel}>
+                {section.title} · {section.data.length}
+              </Text>
+              {section.zone === 'working' && (
+                <View style={styles.indexSignal}>
+                  <HullWaveSignal compact label="LIVE" />
+                  <Text style={styles.indexSignalCount}>{section.data.length}</Text>
+                </View>
+              )}
+            </View>
+          )}
           ListFooterComponent={
             orderedDirectMessages.length > 0 ? (
               <View style={styles.dmSection}>
@@ -1024,6 +1009,7 @@ export default function BuzzChannels() {
                   const age = compactRelativeTime(dm.latestMessageAt ?? dm.updatedAt, ageNow);
                   return (
                     <View key={dm.id} style={styles.roomCell}>
+                      {unread && <View pointerEvents="none" style={styles.unreadRail} />}
                       <View style={styles.roomRow}>
                         <TouchableOpacity
                           accessibilityLabel={`Open direct message with ${dm.peerName}${
@@ -1056,11 +1042,13 @@ export default function BuzzChannels() {
                             <View style={styles.rowTitleLine}>
                               <Text
                                 numberOfLines={1}
-                                style={[styles.rowTitle, unread && styles.rowTitleUnread]}
+                                style={[
+                                  styles.rowTitle,
+                                  unread ? styles.rowTitleUnread : styles.rowTitleRead,
+                                ]}
                               >
                                 {dm.peerName}
                               </Text>
-                              {unread && <Text style={styles.rowUnread}>NEW</Text>}
                             </View>
                             <Text
                               numberOfLines={1}
@@ -1114,19 +1102,20 @@ export default function BuzzChannels() {
               </View>
             ) : null
           }
-          renderItem={({ item }) => {
-            const row = roomRowPresentation(item, authorNames);
+          renderItem={({ item: entry }) => {
+            const { item, row } = entry;
             const corners = row.corners;
             const canExpand = corners.length > 0;
             const title = item.title ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`;
             const expanded = canExpand && expandedRoomId === item.id;
             const unread = isRoomUnread(
               roomReadAt(readAt, identity?.publicKey, item.id),
-              item.latestMessageAt,
+              row.meaningfulAt,
             );
-            const age = compactRelativeTime(item.latestMessageAt ?? item.updatedAt, ageNow);
+            const age = compactRelativeTime(row.meaningfulAt, ageNow);
             return (
               <View style={styles.roomCell}>
+                {unread && <View pointerEvents="none" style={styles.unreadRail} />}
                 <View style={styles.roomRow}>
                   <BrittlePress
                     accessibilityHint={
@@ -1152,8 +1141,7 @@ export default function BuzzChannels() {
                     <RoomRowMark
                       attention={row.attention}
                       glyph={row.glyph}
-                      live={row.live}
-                      unread={unread}
+                      live={row.zone === 'working'}
                     />
                     <View style={styles.rowCopy}>
                       <View style={styles.rowTitleLine}>
@@ -1161,23 +1149,19 @@ export default function BuzzChannels() {
                           numberOfLines={1}
                           style={[
                             styles.rowTitle,
-                            unread && styles.rowTitleUnread,
+                            unread ? styles.rowTitleUnread : styles.rowTitleRead,
                             item.archived && styles.rowTitleArchived,
                           ]}
                         >
                           {title}
                         </Text>
                         {item.archived && <Text style={styles.rowFlag}>ARCHIVED</Text>}
-                        {unread && <Text style={styles.rowUnread}>NEW</Text>}
                       </View>
                       <Text
                         numberOfLines={1}
                         style={[styles.rowPreview, unread && styles.rowPreviewUnread]}
                       >
-                        {row.author !== '' && (
-                          <Text style={styles.rowPreviewAuthor}>{row.author} </Text>
-                        )}
-                        {row.preview}
+                        {row.fact}
                       </Text>
                     </View>
                   </BrittlePress>
@@ -1441,26 +1425,17 @@ const styles = StyleSheet.create({
    * gutter carries is ghosted. It is the ledger's ladder at index scale, so a
    * row previews the voice the transcript will show when it is opened. */
   rowTitle: {
-    ...Typography.default(),
+    ...Typography.default('semiBold'),
     flexShrink: 1,
     color: groknight.textPrimary,
     fontSize: 15,
     lineHeight: 20,
   },
-  /* Unread is weight plus one luminance step, in two places (the name and its
-   * age) plus a named mono flag — never gold. DESIGN.md fixes gold to agent
-   * identity, live presence, owner role, and merge approval; on this screen it
-   * means exactly one of those — an agent is working in this Room — and unread
-   * would be a fifth meaning with nothing to stay redundant against. */
+  rowTitleRead: { color: groknight.textSecondary },
+  /* Every Room name is semibold. Unread stays at full luminance while a read
+   * Room steps down one tone; the gold rail does the fast scanning work. */
   rowTitleUnread: { ...Typography.default('semiBold'), color: groknight.ledgerBright },
   rowTitleArchived: { color: groknight.textMuted },
-  rowUnread: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 0.8,
-  },
   rowFlag: {
     ...Typography.mono('semiBold'),
     color: groknight.textMuted,
@@ -1481,10 +1456,8 @@ const styles = StyleSheet.create({
   /* The index keeps weight as an unread signal — it is a scanning surface, not
    * the inscription. The ledger's no-weight rule governs the transcript. */
   rowAgeUnread: { ...Typography.mono('semiBold'), color: groknight.ledgerBody },
-  /* The index speaks the ledger's luminance ladder, so a preview reads as the
-   * same voice the transcript will show when the row is opened: the author
-   * handle sits on `ledgerQuiet` exactly as an inline handle does, and unread
-   * lifts the preview one step rather than thickening it. */
+  /* The current fact sits one tone below the Room name. Unread lifts it one
+   * step; speaker prefixes never consume its narrow line. */
   rowPreview: {
     ...Typography.default(),
     marginTop: 3,
@@ -1493,14 +1466,16 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   rowPreviewUnread: { color: groknight.ledgerBody },
-  rowPreviewAuthor: {
-    ...Typography.mono(),
-    color: groknight.ledgerQuiet,
-    fontSize: 10,
-    lineHeight: 16,
-    letterSpacing: 0.5,
+  roomCell: { position: 'relative', ...hairlineDivider },
+  unreadRail: {
+    position: 'absolute',
+    zIndex: 1,
+    top: 0,
+    bottom: 0,
+    left: 0,
+    width: 3,
+    backgroundColor: groknight.accent,
   },
-  roomCell: { ...hairlineDivider },
   roomRow: { position: 'relative', minWidth: 0, flexDirection: 'row', alignItems: 'stretch' },
   roomPrimary: { flex: 1, minWidth: 0 },
   /* Marginalia, not a third column of content: absolutely placed, fixed width,
@@ -1520,13 +1495,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 20,
     textAlign: 'center',
-  },
-  // NEW is useful when a row is already in focus. This slim bright rail makes
-  // unread Rooms findable while scanning the whole list, without spending the
-  // reserved gold accent (which still means only live agent work).
-  rowMarkUnread: {
-    borderLeftWidth: 2,
-    borderLeftColor: groknight.ledgerBright,
   },
   /* The one accent on this screen, and only for genuinely live corner work —
    * redundant with the ◆ glyph it colors and with the LIVE wave in the heading. */

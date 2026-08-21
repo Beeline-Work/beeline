@@ -301,10 +301,17 @@ export class GitHubAppClient {
   }
 
   async userCanAccessInstallation(accessToken: string, installationId: number): Promise<boolean> {
-    return (await this.listUserInstallationIds(accessToken)).includes(installationId);
+    return (await this.userInstallationIds(accessToken, installationId)).targetFound;
   }
 
   async listUserInstallationIds(accessToken: string): Promise<number[]> {
+    return (await this.userInstallationIds(accessToken)).installationIds;
+  }
+
+  private async userInstallationIds(
+    accessToken: string,
+    targetId?: number,
+  ): Promise<{ installationIds: number[]; targetFound: boolean }> {
     const installationIds: number[] = [];
     for (let page = 1; ; page++) {
       const body = await jsonObject(
@@ -325,7 +332,12 @@ export class GitHubAppClient {
         }
         installationIds.push(id);
       }
-      if (body.installations.length < 100) return [...new Set(installationIds)];
+      if (targetId !== undefined && installationIds.includes(targetId)) {
+        return { installationIds, targetFound: true };
+      }
+      if (body.installations.length < 100) {
+        return { installationIds: [...new Set(installationIds)], targetFound: false };
+      }
     }
   }
 }

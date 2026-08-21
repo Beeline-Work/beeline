@@ -251,6 +251,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
   let githubState = '';
   let githubUserInstallations: number[] | Error;
   let githubInstallationListCalls: number;
+  let githubRepositoryListError: Error | undefined;
 
   beforeEach(async () => {
     provider = new DemoOidcProvider();
@@ -262,6 +263,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     await store.migrate();
     githubUserInstallations = [];
     githubInstallationListCalls = 0;
+    githubRepositoryListError = undefined;
     app = buildAuthServer({
       store,
       oidc: new OidcClient({
@@ -303,19 +305,22 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
             return githubUserInstallations;
           },
           userCanAccessInstallation: async () => true,
-          listRepositories: async (installationId: number) => [
-            {
-              id: 42,
-              installationId,
-              name: 'widget',
-              fullName: installationId === 77 ? 'octocat/widget' : 'acme/widget',
-              remote:
-                installationId === 77
-                  ? 'https://github.com/octocat/widget.git'
-                  : 'https://github.com/acme/widget.git',
-              defaultBranch: 'main',
-            },
-          ],
+          listRepositories: async (installationId: number) => {
+            if (githubRepositoryListError) throw githubRepositoryListError;
+            return [
+              {
+                id: 42,
+                installationId,
+                name: 'widget',
+                fullName: installationId === 77 ? 'octocat/widget' : 'acme/widget',
+                remote:
+                  installationId === 77
+                    ? 'https://github.com/octocat/widget.git'
+                    : 'https://github.com/acme/widget.git',
+                defaultBranch: 'main',
+              },
+            ];
+          },
         } as unknown as GitHubAppClient,
         webhookSecret: 'webhook-secret',
       },
@@ -365,8 +370,10 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       url: `/auth/github/callback?code=github-code&state=${githubState}`,
       headers: { host: alphaTenant.host, cookie: startCookie(start.headers['set-cookie']) },
     });
-    expect(callback.statusCode).toBe(302);
-    const completion = new URL(callback.headers.location!);
+    expect(callback.statusCode).toBe(200);
+    const completionHref = callback.body.match(/<a href="([^"]+)">Return to Beeline<\/a>/)?.[1];
+    expect(completionHref).toBeDefined();
+    const completion = new URL(completionHref!.replaceAll('&amp;', '&'));
     const challenge = Object.fromEntries(completion.searchParams) as unknown as BindChallenge;
     for (const key of ['protocol', 'kind', 'issued_at', 'expires_at'] as const) {
       (challenge as unknown as Record<string, unknown>)[key] = Number(
@@ -548,6 +555,29 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ installed: false, installations: [], repositories: [] });
     expect(githubInstallationListCalls).toBe(1);
+  });
+
+  it('does not claim repository access when GitHub repository verification fails', async () => {
+    githubUserInstallations = [77];
+    githubRepositoryListError = new Error('repository listing failed');
+    const identity = generateKeypair();
+    await bindGitHubIdentity(identity, 'v'.repeat(43));
+
+    const reposUrl = `https://alpha.example/auth/github/repos/${identity.publicKey}`;
+    const response = await app.inject({
+      method: 'GET',
+      url: `/auth/github/repos/${identity.publicKey}`,
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, reposUrl, 'GET'),
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ installed: false, installations: [], repositories: [] });
+    await expect(
+      store.githubInstallationsForPubkey(alphaTenant.community, identity.publicKey),
+    ).resolves.toEqual([]);
   });
 
   it('groups multiple installations, applies repository webhooks, and preserves revoked bindings', async () => {

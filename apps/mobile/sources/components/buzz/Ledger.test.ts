@@ -171,7 +171,7 @@ describe('the ledger — an agent turn', () => {
     }
   });
 
-  it('reads as lit against the obsidian — a symmetric halo, no hue, no offset', () => {
+  it('renders content near-white without using glow as hierarchy', () => {
     const renderer = render(
       React.createElement(LedgerEntry, {
         itemId: 'msg-1',
@@ -181,44 +181,32 @@ describe('the ledger — an agent turn', () => {
       }),
     );
     const style = renderer.root.findByProps({ testID: 'body' }).props.textStyle;
-    expect(style.textShadowColor).toMatch(/^rgba\(244, 244, 244,/);
-    expect(style.textShadowOffset).toEqual({ width: 0, height: 0 });
-    expect(style.textShadowRadius).toBeGreaterThan(0);
-    // Restrained: a glow you feel, not neon.
-    expect(Number(style.textShadowColor.match(/([\d.]+)\)$/)![1])).toBeLessThan(0.25);
+    expect(style.color).toBe('#f0f0f3');
+    expect(style.textShadowColor).toBeUndefined();
   });
 
-  it('separates agent output from ordinary text by brightness, never by weight', () => {
+  it('uses a semibold lead sentence and regular Sans body', () => {
     const agent = render(
       React.createElement(LedgerEntry, {
         itemId: 'a',
         luminous: true,
-        bodyText: 'prophecy',
+        bodyText: 'Found the cause. The relay closes idle sockets after ninety seconds.',
         bodyTestID: 'lit',
       }),
     );
-    const person = render(
-      React.createElement(LedgerEntry, {
-        itemId: 'b',
-        bodyText: 'ordinary',
-        bodyTestID: 'plain',
-      }),
-    );
-    const lit = agent.root.findByProps({ testID: 'lit' }).props.textStyle;
-    const plain = person.root.findByProps({ testID: 'plain' }).props.textStyle;
-
-    expect(lit.color).toBe('#f4f4f4');
-    expect(plain.color).toBe('#b0b0b0');
-    // One face, one size, one weight across the whole ledger.
-    expect(lit.fontFamily).toBe(plain.fontFamily);
-    expect(lit.fontFamily).toBe('IBMPlexMono-Regular');
-    expect(lit.fontSize).toBe(plain.fontSize);
-    expect(plain.textShadowColor).toBeUndefined();
+    const blocks = [
+      ...agent.root.findAllByProps({ testID: 'lit-lead' }),
+      ...agent.root.findAllByProps({ testID: 'lit' }),
+    ];
+    const textStyles = blocks.map((block) => block.props.textStyle).filter(Boolean);
+    expect(textStyles.map((style) => style.fontFamily)).toContain('IBMPlexSans-SemiBold');
+    expect(textStyles.map((style) => style.fontFamily)).toContain('IBMPlexSans-Regular');
+    expect(textStyles.every((style) => style.color === '#f0f0f3')).toBe(true);
   });
 });
 
 describe('the ledger — a human turn', () => {
-  it('identifies your own turn by inset and tone alone — no "YOU" label', () => {
+  it('identifies your own turn with the sanctioned gold rail and no "YOU" label', () => {
     const agent = render(
       React.createElement(LedgerEntry, {
         itemId: 'a',
@@ -238,17 +226,15 @@ describe('the ledger — a human turn', () => {
     const agentStyle = agent.root.findByProps({ testID: 'agent-body' }).props.textStyle;
     const steerStyle = steer.root.findByProps({ testID: 'steer-body' }).props.textStyle;
 
-    // Dimmer, never heavier and never larger: the agent output stays the
-    // luminous layer, and weight is not an axis the ledger spends.
     expect(steerStyle.fontFamily).toBe(agentStyle.fontFamily);
     expect(steerStyle.fontSize).toBe(agentStyle.fontSize);
-    expect(steerStyle.color).toBe('#b0b0b0');
+    expect(steerStyle.color).toBe('#f0f0f3');
     expect(steerStyle.textShadowColor).toBeUndefined();
 
-    // ...and pulled out of the ledger column, at a width that does not depend
-    // on intrinsic sizing (MonoMarkdown's own root is width: '100%').
-    const inset = stylesOfType(steer, 'View').find((style) => style.alignSelf === 'flex-end');
-    expect(inset?.width).toBe('86%');
+    const steerRow = steer.root.findByProps({ testID: 'chat-message-b' });
+    const agentRow = agent.root.findByProps({ testID: 'chat-message-a' });
+    expect(steerRow.props.style.some((style: Record<string, unknown>) => style?.borderLeftColor === '#c9a24b')).toBe(true);
+    expect(agentRow.props.style.some((style: Record<string, unknown>) => style?.borderLeftColor === '#2e2e36')).toBe(true);
 
     // No caption of any kind survives.
     const text = renderedText(steer).join(' ');

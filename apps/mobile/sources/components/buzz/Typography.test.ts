@@ -56,6 +56,7 @@ const monoStyles = new Set([
   'memberPickerNpub',
   'memberKind',
   'messageButtonText',
+  'manageText',
   'mentionHandle',
   'nameHandle',
   'nameSaved',
@@ -182,7 +183,7 @@ describe('Buzz typography', () => {
         expect(primaryStyle, `${relativePath} has text without a named primary style`).toBeTruthy();
         const definition = styleDefinition(source, primaryStyle!);
         expect(definition, `${relativePath} styles.${primaryStyle} has no app font`).toMatch(
-          /Typography\.(?:default|mono|ledger|logo)\(/,
+          /Typography\.(?:default|mono|ledger|serif|logo)\(|fontFamily:\s*theme\.buzz\.(?:prose|mono)/,
         );
       }
 

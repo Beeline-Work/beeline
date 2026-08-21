@@ -1,4 +1,4 @@
-# Buzzy visual language — the Obsidian Ledger
+# Buzzy visual language — Obsidian Refined
 
 The phone is a single slab of obsidian. Beeline's output is logged across it.
 
@@ -7,14 +7,14 @@ interface recedes to almost nothing, so the agent's output *is* the screen. No
 cards, no bubbles, no per-message frames, no rules between turns — on any
 surface. One shape family, one voice, one accent used twice on purpose.
 
-It should read like an alien prophecy inscribed on a slab, not like a chat app.
-The single governing rule of the transcript follows from that: **weight goes
-down; tone and indentation do all the work.** Nothing in the ledger is loud by
-being fat. Things are loud by being bright.
+It should read like a focused technical conversation, not like a chat app. The
+governing readability rule is **content near-white, chrome dim — never the
+reverse**. Prose hierarchy uses weight: a semibold lead sentence or summary,
+then a regular body with tight line-height and visible space between turns.
 
 ## The slab
 
-Every Buzz surface is the same near-black (`#121212`), edge to edge, with no
+The default Buzz surface is near-black (`#070708`), edge to edge, with no
 second surface laid over it. Chrome — the Room-list header, the transcript
 header, the Workspace rail — carries no background, texture, or plate of its
 own: it is the same obsidian as the content it introduces, held apart by one
@@ -27,19 +27,13 @@ sheet, the merge-approval panel, the write-permission card. Persistent chrome
 never qualifies — if two adjacent regions of a screen are both permanent, they
 are one slab.
 
-Source of truth: `apps/mobile/sources/buzz/groknight.ts`. Borders run a single
-`#4e4e4e`, with `#767676` reserved for focus/selection. Chrome text runs
-`#e4e4e4` → `#c9ccd1` → `#767676` → `#6c6c6c`. One accent, `#d7af5f` (gold), and
-one sanctioned chroma exception, git-standard diff green/red inside diff views.
-
-The transcript runs its own four-step ladder on top of that, and it is the
-ledger's *only* hierarchy — `ledgerBright` `#f4f4f4` (live agent output, the
-prophecy), `ledgerBody` `#b0b0b0` (ordinary text), `ledgerQuiet` `#7c7c7c`
-(handles; also the 4.5:1 readable floor on the slab), `ledgerGhost` `#6c6c6c`
-(right-gutter marginalia and collapsed machine noise). `ledgerGhost` sits below
-4.5:1 deliberately — it is the ghosted register, it reuses the shipped
-`textDisabled` value rather than inventing a dimmer one, and everything it
-carries is redundant with copy the reader can reach another way.
+Source of truth: `apps/mobile/sources/buzz/groknight.ts`. It exports one
+semantic token shape and three sets: Obsidian Refined (default), Editorial Ink
+(warm near-black and IBM Plex Serif prose), and Ledger (dense IBM Plex Mono).
+Theme choice is device-local and app-wide. Obsidian content runs `#f0f0f3` /
+`#c9c9d1`; `#83838d` and `#6c6c76` are reserved for chrome, labels, timestamps,
+and redundant machine noise. Gold is `#c9a24b`; diff green/red remains the one
+domain-color exception.
 
 ## Shape
 
@@ -64,9 +58,10 @@ alike.
 
 A rule is not a box: one edge, no fill, no radius. It divides an *index* — the
 Room list, the member list — and nothing else. **The transcript has no
-delimiters at all:** no hairline between turns, none above a human's steer, none
-under a system row. Inside the ledger, separation is vertical rhythm, and only
-vertical rhythm.
+horizontal delimiters:** no hairline between turns, none above a human's steer,
+none under a system row. A hairline left speaker rail is the exception: gold
+for the viewer, neutral for agents (Ledger uses its blue/green speaker pair).
+Vertical rhythm still does the primary separation.
 
 ## The ledger
 
@@ -77,27 +72,18 @@ one branch in `buzz/chat/[channelId].tsx`. If a future change needs a shape only
 one surface has, that is a real design fork and needs its own pass, not a quiet
 second implementation.
 
-**One weight, one size, one face.** Every word of the transcript is IBM Plex
-Mono regular at 16/26 (`Typography.ledger()`) — agent output, a person's steer,
-a handle, all of it. Bold is banned outright: it fought the inscribed feel, and
-on a black slab a heavier cut reads as a smear rather than as importance. Even
-markdown `**strong**` and headings resolve to a luminance step instead of a
-weight (`MonoMarkdown`). Regular is also the readable floor here; there is no
-lighter cut to reach for, and there must not be.
+**Type follows content kind.** Agent narration and human messages use the active
+theme's prose family: IBM Plex Sans in Obsidian, IBM Plex Serif in Editorial,
+and IBM Plex Mono in Ledger. Commands, handles, file paths, hashes, diffs, tool
+rows, and corner names always use IBM Plex Mono. The first sentence of a turn
+uses the semibold prose cut; remaining paragraphs use regular. Content stays
+near-white on both sides of the conversation.
 
-**An agent turn is the luminous layer.** Plain flowing text on bare obsidian: no
-frame, no rule, no fill, no speaker glyph. It takes `ledgerBright` and a wide,
-low-alpha symmetric halo — a zero-offset text shadow of its own tone
-(`groknight.ledgerGlow`) — so it reads as lit from within rather than printed on
-top. A whisper of bloom, never neon; it must never cost legibility. Rhythm alone
-separates one paragraph from the next.
-
-**A human turn is found by geometry, not by volume.** Your own steer pulls to
-the right margin and drops one luminance step to `ledgerBody`. That is the whole
-signal. There is no "YOU" caption, no signature, and no rule above it — on a
-linear log, "the block that is inset and dim is mine" is learned once and never
-has to be restated. A steer never out-glows the output it interrupts, so the
-ledger keeps the light.
+**A turn is found by rail and rhythm.** Plain flowing text stays boxless. The
+viewer rail is gold and an agent rail is neutral; the dense Ledger theme uses
+its explicit human-blue and agent-green rails. There is no "YOU" caption and no
+dim-content trick. Tighter space within paragraphs and more space between turns
+make the transcript scannable without weakening the words.
 
 **A voice states its handle inline, once.** A speaker's turn begins with its
 handle set *into* the first line — dim, uppercase, immediately followed by the
@@ -356,28 +342,20 @@ names — that's someone else's product's convention.
 
 ## Type
 
-Three seams, one family in practice.
+Three semantic seams, with theme-selected prose.
 
-`Typography.ledger()` is the **inscription voice**: IBM Plex Mono regular, and
-the transcript's whole type system. It takes no weight argument, because the
-ledger has no weight axis to spend — emphasis is the luminance ladder and the
-indent, and regular is the readable floor for light type on black. It is set at
-16/26 throughout, one size for agent output, human steers, and handles alike.
-The size is deliberately generous for a phone: mono at 16px gives roughly 34
-characters to the line, which is short measure by the desktop rule and exactly
-right for an inscription read at arm's length.
+`Typography.ledger()` is the semantic transcript seam and defaults to IBM Plex
+Sans. Theme-aware transcript styles select Sans, Serif, or Mono from the token
+set and select the regular/semibold cut by hierarchy.
 
-`Typography.mono()` stays the marker for deliberate machine identifiers
-(commands, handles, roles, status, gutter stamps), enforced by an allowlist in
-`components/buzz/Typography.test.ts`. It resolves to the same family as
-`ledger()` — it is a semantic label, not a font switch, and the two must stay
-separate seams so "this is a machine identifier" and "this is inscribed prose"
-never collapse into one claim.
+`Typography.mono()` marks deliberate machine identifiers (commands, handles,
+roles, status, gutter stamps), enforced by an allowlist in
+`components/buzz/Typography.test.ts`. It always resolves to IBM Plex Mono,
+independent of theme.
 
-`Typography.default()` is everything outside the transcript, and the seam that
-carries the rest of the app onto one family the moment `FontFamilies.default`
-points at Plex Mono (the Plex Terminal Ledger change). Until that lands it is
-still IBM Plex Sans. Bricolage Grotesque is the logo lockup only.
+`Typography.default()` is IBM Plex Sans for prose outside theme-aware Buzz
+surfaces. IBM Plex Sans, Mono, and Serif are bundled and loaded explicitly;
+Bricolage Grotesque is the logo lockup only.
 
 ## Motion
 
@@ -408,10 +386,10 @@ sweeping band, a moving crest, a progress bar, or a row of dashes all read as
 make about an agent's turn, and at rest they read as broken chrome. Breathing
 says "still going" and claims nothing else.
 
-## The two color exceptions, stated so no one re-litigates them
+## Color exceptions, stated so no one re-litigates them
 
-1. **Gold (`#d7af5f`)** marks one idea — *an agent is alive* — plus the moment
-   you act on its work: the ring around a working agent's identity mark,
+1. **Gold (`#c9a24b` in Obsidian)** marks the viewer's transcript rail and the
+   moment you act on agent work: the ring around a working agent's identity mark,
    live/online presence (the Corner's LIVE wave, a presence dot, the pinned
    corner line, and a Room on the index with a live corner), owner role, and the
    merge-approval action. It is never the *only* signal for any of these — each
@@ -421,12 +399,13 @@ says "still going" and claims nothing else.
    that is true of every agent all the time, which is how an accent stops
    meaning anything. Do not add a second hue; do not let a further meaning
    attach to gold without checking whether it still needs to be redundant with
-   something else first. The ledger's glow is
-   not a third exception: it is `ledgerBright` at low alpha, luminance with no
-   hue. That is deliberate — this "better Matrix" is monochrome, never green.
+   something else first.
 2. **Diff green/red** (`#3FB950`/`#F85149`, `groknight.diffAdded`/
    `diffRemoved`) exist only inside diff/change-review views, redundant with
    `+`/`−` prefixes and `A`/`M`/`D` status letters. This was a deliberate
    captain override of the zero-chroma rule for one universally-understood
    convention — it is not an opening to add more domain-convention colors
    elsewhere without the same explicit sign-off.
+3. **Ledger speaker rails** use human blue and agent green only in the dense
+   Ledger theme. They are redundant with speaker position/identity and do not
+   authorize colored prose, chrome, or status decoration.

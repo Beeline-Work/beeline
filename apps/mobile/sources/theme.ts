@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { beelineThemes, type BeelineThemeTokens } from './buzz/groknight';
 
 // Shared spacing, sizing constants (DRY - used by both themes)
 const sharedSpacing = {
@@ -481,3 +482,69 @@ export const darkTheme = {
 } satisfies typeof lightTheme;
 
 export type Theme = typeof lightTheme;
+
+function createBeelineAppTheme(buzz: BeelineThemeTokens) {
+    return {
+        ...darkTheme,
+        colors: {
+            ...darkTheme.colors,
+            text: buzz.textPrimary,
+            textSecondary: buzz.textMuted,
+            textLink: buzz.accent,
+            warning: buzz.warning,
+            surface: buzz.bgBase,
+            surfacePressed: buzz.bgPressed,
+            surfaceSelected: buzz.bgHighlight,
+            surfacePressedOverlay: buzz.bgPressed,
+            surfaceHigh: buzz.bgRaised,
+            surfaceHighest: buzz.bgHighlight,
+            divider: buzz.border,
+            groupped: {
+                background: buzz.bgTerminal,
+                chevron: buzz.chrome,
+                sectionTitle: buzz.textMuted,
+            },
+            header: {
+                background: buzz.bgBase,
+                tint: buzz.textPrimary,
+            },
+            input: {
+                background: buzz.bgRaised,
+                text: buzz.textPrimary,
+                placeholder: buzz.textMuted,
+            },
+            button: {
+                ...darkTheme.colors.button,
+                primary: {
+                    background: buzz.accent,
+                    tint: buzz.textInverted,
+                    disabled: buzz.textDisabled,
+                },
+                secondary: { tint: buzz.textMuted },
+            },
+            radio: {
+                active: buzz.accent,
+                inactive: buzz.borderStrong,
+                dot: buzz.accent,
+            },
+            status: {
+                ...darkTheme.colors.status,
+                connecting: buzz.accent,
+                disconnected: buzz.textMuted,
+                default: buzz.textMuted,
+            },
+            userMessageBackground: buzz.bgHighlight,
+            userMessageText: buzz.textPrimary,
+            agentMessageText: buzz.textPrimary,
+            agentEventText: buzz.textMuted,
+            gitBranchText: buzz.textMuted,
+            gitFileCountText: buzz.textMuted,
+        },
+        buzz,
+    };
+}
+
+export const obsidianTheme = createBeelineAppTheme(beelineThemes.obsidian);
+export const editorialTheme = createBeelineAppTheme(beelineThemes.editorial);
+export const ledgerTheme = createBeelineAppTheme(beelineThemes.ledger);
+export type BeelineAppTheme = typeof obsidianTheme;

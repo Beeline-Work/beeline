@@ -44,6 +44,10 @@ vi.mock('expo-router', () => ({
   router: navigation,
   useLocalSearchParams: () => routeParams.current,
 }));
+vi.mock('expo-web-browser', () => ({
+  openAuthSessionAsync: vi.fn(),
+  openBrowserAsync: vi.fn(),
+}));
 vi.mock('@react-navigation/native', () => ({ useFocusEffect: () => undefined }));
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) }));
 vi.mock('@/auth/buzz-identity-storage', () => ({

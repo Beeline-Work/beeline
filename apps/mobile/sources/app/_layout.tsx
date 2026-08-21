@@ -136,6 +136,11 @@ async function loadFonts() {
                 'IBMPlexSans-Italic': require('@/assets/fonts/IBMPlexSans-Italic.ttf'),
                 'IBMPlexSans-SemiBold': require('@/assets/fonts/IBMPlexSans-SemiBold.ttf'),
 
+                // IBM Plex Serif family (Editorial Ink prose)
+                'IBMPlexSerif-Regular': require('@/assets/fonts/IBMPlexSerif-Regular.ttf'),
+                'IBMPlexSerif-Italic': require('@/assets/fonts/IBMPlexSerif-Italic.ttf'),
+                'IBMPlexSerif-SemiBold': require('@/assets/fonts/IBMPlexSerif-SemiBold.ttf'),
+
                 // IBM Plex Mono family  
                 'IBMPlexMono-Regular': require('@/assets/fonts/IBMPlexMono-Regular.ttf'),
                 'IBMPlexMono-Italic': require('@/assets/fonts/IBMPlexMono-Italic.ttf'),
@@ -156,6 +161,11 @@ async function loadFonts() {
                         'IBMPlexSans-Regular': require('@/assets/fonts/IBMPlexSans-Regular.ttf'),
                         'IBMPlexSans-Italic': require('@/assets/fonts/IBMPlexSans-Italic.ttf'),
                         'IBMPlexSans-SemiBold': require('@/assets/fonts/IBMPlexSans-SemiBold.ttf'),
+
+                        // IBM Plex Serif family (Editorial Ink prose)
+                        'IBMPlexSerif-Regular': require('@/assets/fonts/IBMPlexSerif-Regular.ttf'),
+                        'IBMPlexSerif-Italic': require('@/assets/fonts/IBMPlexSerif-Italic.ttf'),
+                        'IBMPlexSerif-SemiBold': require('@/assets/fonts/IBMPlexSerif-SemiBold.ttf'),
 
                         // IBM Plex Mono family  
                         'IBMPlexMono-Regular': require('@/assets/fonts/IBMPlexMono-Regular.ttf'),
@@ -256,7 +266,7 @@ export default function RootLayout() {
                 background: theme.colors.groupped.background,
             }
         };
-    }, [theme.dark]);
+    }, [theme]);
 
     //
     // Init sequence

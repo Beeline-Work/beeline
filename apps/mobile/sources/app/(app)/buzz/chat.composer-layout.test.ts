@@ -7,7 +7,7 @@ describe('Room composer status layout', () => {
   it('keeps turn progress inside the growing composer stack, above the field', () => {
     const inputBar = source.slice(source.indexOf('<View style={[styles.inputBar'));
     const progress = inputBar.indexOf('<TurnProgressLine');
-    const composer = inputBar.indexOf('<View\n              style={[\n                styles.composer');
+    const composer = inputBar.search(/<View\s+style=\{\[\s*styles\.composer/);
     expect(progress).toBeGreaterThanOrEqual(0);
     expect(composer).toBeGreaterThan(progress);
   });

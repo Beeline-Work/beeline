@@ -1,6 +1,6 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import { groknight } from '@/buzz/groknight';
+import { Text, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { HullLivePulse } from './MonoHull';
 
@@ -41,7 +41,9 @@ export function TurnProgressLine({ label, testID }: { label: string; testID?: st
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => {
+  const groknight = theme.buzz;
+  return ({
   // Same geometry as the pinned corner line, so the two never jump the
   // composer around when one replaces the other. No border, no fill: a status
   // light in a fixed place needs no frame to be found.
@@ -73,4 +75,5 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     letterSpacing: 0.4,
   },
+  });
 });

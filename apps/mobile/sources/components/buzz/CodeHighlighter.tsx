@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import type { TextStyle } from 'react-native';
-import { groknight } from '@/buzz/groknight';
 import { syntaxColors, type SyntaxToken } from '@/buzz/syntax-colors';
 import { tokenizeCode, type TokenizedLine, type HighlightToken } from '@/buzz/syntax-highlight';
 import { Typography } from '@/constants/Typography';
@@ -67,7 +67,9 @@ export function CodeHighlighter({ code, language, style }: CodeHighlighterProps)
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => {
+  const groknight = theme.buzz;
+  return ({
   codeText: {
     ...Typography.mono(),
     color: groknight.textSecondary,
@@ -75,4 +77,5 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   line: {},
+  });
 });

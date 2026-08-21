@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Linking, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Linking, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { router, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -10,9 +11,8 @@ import {
   loadBuzzIdentity,
 } from '@/auth/buzz-identity-storage';
 import { clearBuzzLocalCache } from '@/buzz/local-cache';
-import { groknight } from '@/buzz/groknight';
 import { WORKSPACES_LABEL } from '@/buzz/vocabulary';
-import { hairlineDivider, PixelGateReveal } from '@/components/buzz/MonoHull';
+import { PixelGateReveal } from '@/components/buzz/MonoHull';
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
 
@@ -125,6 +125,21 @@ export default function BuzzSettings() {
 
         <Text style={styles.sectionLabel}>THIS DEVICE</Text>
         <TouchableOpacity
+          accessibilityLabel="Open Appearance Settings"
+          accessibilityRole="button"
+          onPress={() => router.push('/settings/appearance' as Href)}
+          style={styles.settingsRow}
+          testID="appearance-setting"
+        >
+          <View style={styles.rowCopy}>
+            <Text style={styles.rowTitle}>Appearance</Text>
+            <Text style={styles.rowSubtitle}>Obsidian Refined, Editorial Ink, or dense Ledger</Text>
+          </View>
+          <View style={styles.rowGutter}>
+            <Text style={styles.rowChevron}>›</Text>
+          </View>
+        </TouchableOpacity>
+        <TouchableOpacity
           accessibilityLabel={confirmForget ? 'Confirm sign out' : 'Sign out on this device'}
           accessibilityRole="button"
           onPress={() => void handleForget()}
@@ -169,7 +184,9 @@ const SCREEN_INSET = 16;
  * Room row hang their trailing marks off one edge. */
 const ROW_GUTTER_WIDTH = 46;
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => {
+  const groknight = theme.buzz;
+  return ({
   container: { flex: 1, backgroundColor: groknight.bgTerminal },
   header: {
     minHeight: 64,
@@ -177,7 +194,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     flexDirection: 'row',
     alignItems: 'center',
-    ...hairlineDivider,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.border,
   },
   back: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   backText: { ...Typography.default(), color: groknight.chrome, fontSize: 28, lineHeight: 32 },
@@ -215,7 +233,8 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     flexDirection: 'row',
     alignItems: 'center',
-    ...hairlineDivider,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.border,
   },
   rowCopy: { flex: 1, minWidth: 0 },
   rowGutter: { width: ROW_GUTTER_WIDTH, alignItems: 'flex-end' },
@@ -271,4 +290,5 @@ const styles = StyleSheet.create({
     color: groknight.textSecondary,
     fontSize: 12,
   },
+  });
 });

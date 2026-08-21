@@ -1,21 +1,32 @@
 import { describe, expect, it } from 'vitest';
-import { groknight } from './groknight';
+import { beelineThemes, groknight } from './groknight';
 
-describe('Grok Build palette', () => {
-  it('keeps the measured terminal roles exact', () => {
+describe('Beeline appearance themes', () => {
+  it('ships Obsidian Refined as the default token set', () => {
     expect(groknight).toMatchObject({
-      bgTerminal: '#121212',
-      bgBase: '#121212',
-      textPrimary: '#e4e4e4',
-      textSecondary: '#c9ccd1',
-      textMuted: '#767676',
-      faint: '#585858',
-      tertiary: '#6c6c6c',
-      border: '#4e4e4e',
-      accent: '#d7af5f',
+      name: 'obsidian',
+      bgTerminal: '#070708',
+      bgBase: '#070708',
+      textPrimary: '#f0f0f3',
+      textSecondary: '#c9c9d1',
+      textMuted: '#83838d',
+      border: '#1c1c21',
+      accent: '#c9a24b',
       diffAdded: '#3FB950',
       diffRemoved: '#F85149',
-      radius: 3,
+      proseRegular: 'IBMPlexSans-Regular',
     });
+  });
+
+  it('keeps content brighter than chrome and reserves mono for identity in every theme', () => {
+    expect(Object.keys(beelineThemes)).toEqual(['obsidian', 'editorial', 'ledger']);
+    for (const theme of Object.values(beelineThemes)) {
+      expect(theme.textPrimary).not.toBe(theme.textMuted);
+      expect(theme.ledgerBright).toBe(theme.textPrimary);
+      expect(theme.monoRegular).toBe('IBMPlexMono-Regular');
+    }
+    expect(beelineThemes.editorial.proseRegular).toBe('IBMPlexSerif-Regular');
+    expect(beelineThemes.ledger.proseRegular).toBe('IBMPlexMono-Regular');
+    expect(beelineThemes.ledger.turnGap).toBeLessThan(beelineThemes.obsidian.turnGap);
   });
 });

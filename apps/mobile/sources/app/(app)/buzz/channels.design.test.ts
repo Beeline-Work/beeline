@@ -45,17 +45,16 @@ const REPEATING_ROW_STYLES = [
 
 describe('Room list — Grok Mono Hull invariants', () => {
   it('never draws a box around a repeating row, mark, or the corner dropdown', () => {
-    for (const name of REPEATING_ROW_STYLES) {
+    for (const name of REPEATING_ROW_STYLES.filter((name) => name !== 'roomCell')) {
       const block = styleBlock(source, name);
       expect(block, `${name} must not have a radius`).not.toMatch(/borderRadius/);
       expect(block, `${name} must not be a bordered container`).not.toMatch(/borderWidth/);
-      // A hairline divider is the one separator a list row may carry, and it is
-      // only ever the shared `hairlineDivider` — never a hand-rolled border.
-      expect(block, `${name} must use hairlineDivider, not an inline border`).not.toMatch(
+      expect(block, `${name} must not draw an inline border`).not.toMatch(
         /border(?:Top|Bottom|Left|Right)(?:Width|Color)/,
       );
     }
-    expect(source).toContain('...hairlineDivider');
+    expect(styleBlock(source, 'roomCell')).toMatch(/borderBottomWidth:\s*1/);
+    expect(styleBlock(source, 'roomCell')).toMatch(/borderBottomColor:\s*groknight\.border/);
   });
 
   it('routes buttons, reveal, press, and the live signal through shared MonoHull primitives', () => {
@@ -66,7 +65,6 @@ describe('Room list — Grok Mono Hull invariants', () => {
       'MonoButton',
       'PixelGateReveal',
       'PixelLoader',
-      'hairlineDivider',
     ]) {
       expect(source, `${primitive} should come from MonoHull`).toContain(primitive);
     }
@@ -86,8 +84,10 @@ describe('Room list — Grok Mono Hull invariants', () => {
     ] as const) {
       expect(text, `${name} chrome should not mount HullSurface`).not.toContain('<HullSurface');
     }
-    expect(styleBlock(source, 'header')).toMatch(/hairlineDivider/);
-    expect(styleBlock(railSource, 'rail')).toMatch(/borderRightWidth: StyleSheet\.hairlineWidth/);
+    expect(styleBlock(source, 'header')).toMatch(/borderBottomColor:\s*groknight\.border/);
+    expect(styleBlock(railSource, 'rail')).toMatch(
+      /borderRightWidth: StyleSheet\.hairlineWidth/,
+    );
     // A row declares no surface of its own either — the slab shows through.
     expect(styleBlock(source, 'roomCell')).not.toMatch(/backgroundColor/);
   });

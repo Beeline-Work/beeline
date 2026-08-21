@@ -1,7 +1,7 @@
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import type { Community } from '@beeline/buzz-client';
-import { groknight } from '@/buzz/groknight';
 import { MEMBERS_GLYPH, MEMBERS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { Typography } from '@/constants/Typography';
 
@@ -56,7 +56,9 @@ export function CommunityInviteEntry({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => {
+  const groknight = theme.buzz;
+  return ({
   communityEntry: {
     minHeight: 46,
     marginTop: 10,
@@ -83,4 +85,5 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   disabled: { backgroundColor: groknight.bgBase },
+  });
 });

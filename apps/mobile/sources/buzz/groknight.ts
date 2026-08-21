@@ -12,7 +12,12 @@ const shared = {
   brandMark: brand.mark,
   diffAdded: '#3FB950',
   diffRemoved: '#F85149',
-  photoIdentityMarksEnabled: true,
+  // DESIGN.md ("Identity → 4 · A gold ring means alive"): a relay photo
+  // defeats every identity axis at once — shape, signature colour, cypher —
+  // so the photo path in IdentityMark ships GATED OFF. The code stays dark
+  // but intact pending a captain decision on portraits clipped inside the
+  // silhouette; do not flip this back without one.
+  photoIdentityMarksEnabled: false,
 } as const;
 
 export const beelineThemes = {

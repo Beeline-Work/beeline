@@ -791,6 +791,55 @@ describe('runtime root migration', () => {
     expect(stored.rooms[0]!.root).toBeUndefined();
     // beeline start from the repo keeps finding it with no pointer present.
     expect(await findRuntimeConfigPaths(root)).toEqual([legacyPath]);
+    // Host-scoped commands also include a legacy runtime found from the
+    // current checkout, even when there is no machine-local state record.
+    expect(await findAgentRuntimeConfigPaths({ XDG_STATE_HOME: await stateRoot() }, root)).toEqual([
+      legacyPath,
+    ]);
+  });
+
+  it('finds legacy runtimes in repositories registered by state-home Room bindings', async () => {
+    const root = await repository('https://example.com/team/project.git');
+    const supervisorRoot = await stateRoot();
+    const stateRuntime = await pair(root, supervisorRoot, newIdentity('state-agent'));
+    const agent = newIdentity('legacy-agent');
+    const body = newIdentity('legacy-body');
+    const legacyPath = resolve(root, '.git', 'beeline', 'agents', agent.publicKey, 'runtime.json');
+    await mkdir(resolve(legacyPath, '..'), { recursive: true });
+    await writeFile(
+      legacyPath,
+      JSON.stringify({
+        version: 2,
+        communityId: '11111111-1111-4111-8111-111111111111',
+        pairedBy: 'a'.repeat(64),
+        agent: {
+          name: agent.name,
+          secretKeyHex: Buffer.from(agent.secretKey).toString('hex'),
+          publicKey: agent.publicKey,
+        },
+        body: {
+          name: body.name,
+          secretKeyHex: Buffer.from(body.secretKey).toString('hex'),
+          publicKey: body.publicKey,
+        },
+        rooms: [
+          {
+            channelId: '33333333-3333-4333-8333-333333333333',
+            repo: inspectLocalRepository(root),
+            membershipSince: 10,
+            discoveredAt: new Date(0).toISOString(),
+          },
+        ],
+        supervisorRoot: resolve(root, '.git'),
+        relayBaseUrl: 'http://relay.test',
+        agentBinary: '/usr/bin/agent',
+        mcpBinary: '/usr/bin/mcp',
+        createdAt: new Date(0).toISOString(),
+      }),
+    );
+
+    const configs = await findAgentRuntimeConfigPaths({ XDG_STATE_HOME: supervisorRoot }, supervisorRoot);
+    expect(new Set(configs)).toEqual(new Set([stateRuntime.configPath, legacyPath]));
   });
 
   it('removes the repo-anchored pointer along with the runtime it points at', async () => {

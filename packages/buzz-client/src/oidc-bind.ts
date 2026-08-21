@@ -73,6 +73,12 @@ export interface OidcBindResult {
   pubkey: string;
 }
 
+export interface OidcRecoveryResult {
+  linked: true;
+  replaced: boolean;
+  pubkey: string;
+}
+
 export interface OidcIdentityLink {
   community: string;
   provider: string;
@@ -435,6 +441,53 @@ export async function finishOidcBind(
     );
   }
   return body as unknown as OidcBindResult;
+}
+
+/**
+ * Deliberately replace an existing device-key link after the normal bind has
+ * returned identity_conflict. The short-lived OAuth ticket and signed event
+ * are reused, and replacement is a separate explicit protocol action.
+ */
+export async function recoverOidcBind(
+  baseUrl: string,
+  challenge: OidcBindChallenge,
+  event: NostrEvent,
+): Promise<OidcRecoveryResult> {
+  assertChallenge(challenge);
+  assertBindEvent(challenge, event);
+  let response: Response;
+  try {
+    response = await fetch(endpoint(baseUrl, '/auth/oidc/recover'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ticket: challenge.ticket,
+        event,
+        confirm_replace: true,
+      }),
+    });
+  } catch (error) {
+    throw new OidcBindError(
+      'offline',
+      error instanceof Error ? error.message : 'auth service unavailable',
+    );
+  }
+  const body = await responseBody(response);
+  if (!response.ok) throw serviceError(body, response.status);
+  if (
+    body.linked !== true ||
+    typeof body.replaced !== 'boolean' ||
+    typeof body.pubkey !== 'string' ||
+    !HEX_KEY_RE.test(body.pubkey) ||
+    body.pubkey !== event.pubkey
+  ) {
+    throw new OidcBindError(
+      'invalid_response',
+      'auth service returned an invalid recovery result',
+      response.status,
+    );
+  }
+  return body as unknown as OidcRecoveryResult;
 }
 
 /** Authenticated, tenant-scoped link lookup for a key already held on this device. */

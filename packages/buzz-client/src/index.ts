@@ -147,12 +147,14 @@ export {
   parseOidcBindCallback,
   buildOidcBindEvent,
   finishOidcBind,
+  recoverOidcBind,
   lookupRecovery,
 } from './oidc-bind.js';
 export type {
   OidcBindChallenge,
   OidcBindStart,
   OidcBindResult,
+  OidcRecoveryResult,
   OidcIdentityLink,
   GitHubRepositoryAccess,
   GitHubInstallationAccess,

@@ -149,9 +149,9 @@ export function noticeForAuthError(error: unknown): OnboardingNotice {
   if (code === 'identity_conflict') {
     return {
       status: 'link_conflict',
-      title: titleWithCode('LINK CONFLICT · RECOVERY NEEDED'),
+      title: titleWithCode('DEVICE KEY ALREADY LINKED'),
       message:
-        'This sign-in account already has a different device key. Recovery is required; this key was not saved.',
+        'This GitHub account is linked to another device key. Replace it to continue with a new identity, or import your backed-up key to keep the existing identity.',
       retryable: false,
     };
   }

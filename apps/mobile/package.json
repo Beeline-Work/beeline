@@ -17,6 +17,7 @@
     "release": "node ./release.cjs",
     "release:build:appstore": "sh ./release-production.sh",
     "release:build:appstore:interactive": "eas build --profile production --platform ios --auto-submit-with-profile=production --no-wait && eas build --profile production --platform android --auto-submit-with-profile=production --no-wait",
+    "release:build:apk": "eas build --profile production-apk --platform android --no-wait --non-interactive",
     "release:ota:release": "pnpm ota",
     "prebuild": "rm -rf android ios && expo prebuild",
     "ota": "NODE_ENV=production tsx sources/scripts/parseChangelog.ts && pnpm typecheck && eas update --branch production",

@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
-    getSessionRouteFromNotificationData,
-    getSessionRouteFromNotificationResponse,
+    isLegacySessionNotificationData,
+    isLegacySessionNotificationResponse,
     getBuzzChannelIdFromNotificationData,
     navigateToBuzzChannelFromNotification,
 } from './notificationRouting';
@@ -12,31 +12,27 @@ const buzzChatSource = readFileSync(
     'utf8',
 );
 
-describe('getSessionRouteFromNotificationData', () => {
-    it('returns a session route when sessionId exists', () => {
-        expect(getSessionRouteFromNotificationData({ sessionId: 'session-123' })).toBe('/session/session-123');
+describe('isLegacySessionNotificationData', () => {
+    it('recognizes a retired session notification by id', () => {
+        expect(isLegacySessionNotificationData({ sessionId: 'session-123' })).toBe(true);
     });
 
-    it('encodes session ids that contain spaces', () => {
-        expect(getSessionRouteFromNotificationData({ sessionId: 'session 123' })).toBe('/session/session%20123');
+    it('ignores notifications without a legacy session target', () => {
+        expect(isLegacySessionNotificationData({ kind: 'done' })).toBe(false);
     });
 
-    it('returns null when sessionId is missing', () => {
-        expect(getSessionRouteFromNotificationData({ kind: 'done' })).toBeNull();
+    it('ignores empty session ids', () => {
+        expect(isLegacySessionNotificationData({ sessionId: '   ' })).toBe(false);
     });
 
-    it('returns null for empty session ids', () => {
-        expect(getSessionRouteFromNotificationData({ sessionId: '   ' })).toBeNull();
-    });
-
-    it('uses a session url when present', () => {
-        expect(getSessionRouteFromNotificationData({ url: '/session/session-123' })).toBe('/session/session-123');
+    it('recognizes a retired session URL', () => {
+        expect(isLegacySessionNotificationData({ url: '/session/session-123' })).toBe(true);
     });
 });
 
-describe('getSessionRouteFromNotificationResponse', () => {
-    it('reads the route from content data', () => {
-        expect(getSessionRouteFromNotificationResponse({
+describe('isLegacySessionNotificationResponse', () => {
+    it('reads the legacy target from content data', () => {
+        expect(isLegacySessionNotificationResponse({
             notification: {
                 request: {
                     content: {
@@ -44,17 +40,17 @@ describe('getSessionRouteFromNotificationResponse', () => {
                     }
                 }
             }
-        })).toBe('/session/session-123');
+        })).toBe(true);
     });
 
-    it('returns null when content data is missing', () => {
-        expect(getSessionRouteFromNotificationResponse({
+    it('returns false when content data is missing', () => {
+        expect(isLegacySessionNotificationResponse({
             notification: {
                 request: {
                     content: {}
                 }
             }
-        })).toBeNull();
+        })).toBe(false);
     });
 });
 

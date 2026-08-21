@@ -1,3 +1,6 @@
-import { SettingsView } from "@/components/SettingsView";
+import { Redirect } from 'expo-router';
 
-export default SettingsView;
+/** Retained for old settings bookmarks; Beeline settings owns this destination. */
+export default function LegacySettingsRedirect() {
+    return <Redirect href="/buzz/settings" />;
+}

@@ -169,15 +169,6 @@ export const ja: TranslationStructure = {
         },
         alwaysShowContextSize: '常にコンテキストサイズを表示',
         alwaysShowContextSizeDescription: '上限に近づいていなくてもコンテキスト使用量を表示',
-        avatarStyle: 'アバタースタイル',
-        avatarStyleDescription: 'セッションアバターの外観を選択',
-        avatarOptions: {
-            pixelated: 'ピクセル',
-            gradient: 'グラデーション',
-            brutalist: 'ブルータリスト',
-        },
-        showFlavorIcons: 'AIプロバイダーアイコンを表示',
-        showFlavorIconsDescription: 'セッションアバターにAIプロバイダーアイコンを表示',
     },
 
     settingsFeatures: {

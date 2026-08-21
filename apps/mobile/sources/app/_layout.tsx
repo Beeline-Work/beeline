@@ -30,11 +30,10 @@ import { useLocalSetting } from '@/sync/storage';
 import { useUnistyles } from 'react-native-unistyles';
 import { AsyncLock } from '@/utils/lock';
 import {
-    getSessionRouteFromNotificationResponse,
+    isLegacySessionNotificationResponse,
     getBuzzChannelIdFromNotificationData,
     navigateToBuzzChannelFromNotification,
 } from '@/utils/notificationRouting';
-import { navigateToSession } from '@/hooks/useNavigateToSession';
 import { applyVoiceUpsellOverride } from '@/realtime/voiceExperiment';
 import { useTauriZoom } from '@/hooks/useTauriZoom';
 import { useTauriDrag } from '@/hooks/useTauriDrag';
@@ -352,23 +351,12 @@ export default function RootLayout() {
                 navigateToBuzzChannelFromNotification(router, buzzChannelId, responseId);
                 return;
             }
-            const route = getSessionRouteFromNotificationResponse(response);
-            console.log(`[PUSH ROUTING] Computed route: ${route ?? 'null'}`);
-            if (!route) {
-                console.log('[PUSH ROUTING] No session route found in notification.request.content.data');
+            if (!isLegacySessionNotificationResponse(response)) {
+                console.log('[PUSH ROUTING] No supported route found in notification.request.content.data');
                 return;
             }
-
-            const encodedSessionId = route.replace(/^\/session\//, '');
-            const sessionId = (() => {
-                try {
-                    return decodeURIComponent(encodedSessionId);
-                } catch {
-                    return encodedSessionId;
-                }
-            })();
-            console.log(`[PUSH ROUTING] Navigating to session: ${sessionId}`);
-            navigateToSession(router, sessionId);
+            console.log('[PUSH ROUTING] Retired session notification; navigating to Rooms');
+            router.replace('/buzz/channels');
         } finally {
             try {
                 await Notifications.clearLastNotificationResponseAsync();

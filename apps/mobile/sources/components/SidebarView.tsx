@@ -1,166 +1,221 @@
 import * as React from 'react';
-import { Text, View, Pressable } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
-import { useHeaderHeight } from '@/utils/responsive';
-import { VoiceAssistantStatusBar } from './VoiceAssistantStatusBar';
-import { useRealtimeStatus, useSettingMutable } from '@/sync/storage';
-import { MainView } from './MainView';
-import { StyleSheet } from 'react-native-unistyles';
-import { t } from '@/text';
+import { Pressable, ScrollView, Text, View } from 'react-native';
+import { type Href, usePathname, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Typography } from '@/constants/Typography';
-import { ShortcutHintBadge, useShortcutHints } from './ShortcutHints';
-import { useHasArchivedSessions } from '@/hooks/useVisibleSessionListViewData';
+import { StyleSheet } from 'react-native-unistyles';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useHeaderHeight } from '@/utils/responsive';
+import { selectChannelList, useBuzzLocalCache } from '@/buzz/local-cache';
+import { roomListSections } from '@/buzz/room-list-row';
+import { ROOM_LABEL, ROOMS_LABEL } from '@/buzz/vocabulary';
+
+function selectedRoomId(pathname: string): string | null {
+    const prefix = '/buzz/chat/';
+    if (!pathname.startsWith(prefix)) return null;
+    const encoded = pathname.slice(prefix.length).split('/')[0];
+    try {
+        return decodeURIComponent(encoded);
+    } catch {
+        return encoded;
+    }
+}
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        borderStyle: 'solid',
+        borderRightWidth: StyleSheet.hairlineWidth,
+        borderRightColor: theme.colors.divider,
         backgroundColor: theme.colors.groupped.background,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.divider,
     },
     topControls: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginHorizontal: 16,
-        marginTop: 8,
-        marginBottom: 4,
-        gap: 8,
+        justifyContent: 'space-between',
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: theme.colors.divider,
     },
-    newSessionButton: {
+    heading: {
+        color: theme.colors.text,
+        fontSize: 13,
+        fontFamily: 'IBMPlexMono-SemiBold',
+        letterSpacing: 1.2,
+    },
+    homeButton: {
+        padding: 6,
+    },
+    list: {
         flex: 1,
+    },
+    listContent: {
+        paddingVertical: 8,
+    },
+    section: {
+        paddingBottom: 8,
+    },
+    sectionLabel: {
+        paddingHorizontal: 14,
+        paddingVertical: 7,
+        color: theme.colors.textSecondary,
+        fontSize: 10,
+        fontFamily: 'IBMPlexMono-SemiBold',
+        letterSpacing: 1,
+    },
+    roomRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingVertical: 10,
-        paddingHorizontal: 14,
-        borderRadius: 10,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
-        gap: 8,
+        gap: 10,
+        minHeight: 48,
+        marginHorizontal: 8,
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+        borderRadius: 8,
     },
-    newSessionButtonPressed: {
-        backgroundColor: theme.colors.surfacePressed,
-    },
-    archiveButton: {
-        width: 40,
-        height: 40,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderRadius: 10,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
-    },
-    archiveButtonActive: {
+    roomRowSelected: {
         backgroundColor: theme.colors.surfaceSelected,
     },
-    shortcutTargetActive: {
-        backgroundColor: theme.colors.surfacePressed,
+    roomGlyph: {
+        width: 22,
+        color: theme.colors.textSecondary,
+        fontSize: 16,
+        fontFamily: 'IBMPlexMono-SemiBold',
+        textAlign: 'center',
     },
-    newSessionText: {
-        fontSize: 14,
-        fontWeight: '500',
+    roomGlyphLive: {
+        color: theme.colors.status.connected,
+    },
+    roomGlyphAttention: {
         color: theme.colors.text,
-        ...Typography.default('semiBold'),
+    },
+    roomCopy: {
+        flex: 1,
+        minWidth: 0,
+    },
+    roomTitle: {
+        color: theme.colors.text,
+        fontSize: 13,
+        fontFamily: 'IBMPlexSans-SemiBold',
+    },
+    roomFact: {
+        marginTop: 2,
+        color: theme.colors.textSecondary,
+        fontSize: 11,
+        fontFamily: 'IBMPlexMono-Regular',
+    },
+    empty: {
+        paddingHorizontal: 18,
+        paddingVertical: 24,
+        color: theme.colors.textSecondary,
+        fontSize: 12,
+        fontFamily: 'IBMPlexMono-Regular',
+        lineHeight: 18,
     },
     settingsRow: {
         flexDirection: 'row',
         alignItems: 'center',
+        gap: 10,
         paddingHorizontal: 16,
         paddingVertical: 14,
         borderTopWidth: StyleSheet.hairlineWidth,
         borderTopColor: theme.colors.divider,
-        gap: 10,
     },
     settingsText: {
-        fontSize: 14,
-        fontWeight: '500',
         color: theme.colors.text,
-        ...Typography.default(),
-    },
-    shortcutBadgeInline: {
-        marginLeft: 'auto',
+        fontSize: 13,
+        fontFamily: 'IBMPlexMono-SemiBold',
+        letterSpacing: 0.5,
     },
 }));
 
-export const SidebarView = React.memo(() => {
+/** Persistent tablet/desktop navigation for the Beeline surface. */
+export const SidebarView = React.memo(function SidebarView() {
     const styles = stylesheet;
     const safeArea = useSafeAreaInsets();
-    const router = useRouter();
     const headerHeight = useHeaderHeight();
-    const realtimeStatus = useRealtimeStatus();
-    const hasArchivedSessions = useHasArchivedSessions();
-    // Stored under its original `hideInactiveSessions` key — synced settings
-    // have no rename migration — but it hides archived sessions only.
-    const [hideArchivedSessions, setHideArchivedSessions] = useSettingMutable('hideInactiveSessions');
-    const { visible: shortcutHintsVisible } = useShortcutHints();
-
-    const handleNewSession = React.useCallback(() => {
-        router.navigate('/new');
-    }, [router]);
-    const handleArchiveVisibility = React.useCallback(() => {
-        setHideArchivedSessions(!hideArchivedSessions);
-    }, [hideArchivedSessions, setHideArchivedSessions]);
+    const router = useRouter();
+    const pathname = usePathname();
+    const activeRoomId = selectedRoomId(pathname);
+    const cachedList = useBuzzLocalCache((state) =>
+        selectChannelList(state, state.activeViewerPubkey),
+    );
+    const authorNames = React.useMemo(
+        () => new Map(
+            (cachedList?.workspaceMembers ?? []).map((member) => [member.peerPubkey, member.peerName]),
+        ),
+        [cachedList?.workspaceMembers],
+    );
+    const sections = React.useMemo(
+        () => roomListSections(cachedList?.channels ?? [], authorNames),
+        [authorNames, cachedList?.channels],
+    );
 
     return (
         <View style={[styles.container, { paddingTop: safeArea.top + headerHeight }]}>
             <View style={styles.topControls}>
+                <Text style={styles.heading}>{ROOMS_LABEL.toUpperCase()}</Text>
                 <Pressable
-                    onPress={handleNewSession}
-                    style={({ pressed }) => [
-                        styles.newSessionButton,
-                        shortcutHintsVisible && styles.shortcutTargetActive,
-                        pressed && styles.newSessionButtonPressed,
-                    ]}
+                    accessibilityLabel={`Open ${ROOMS_LABEL}`}
+                    accessibilityRole="button"
+                    hitSlop={8}
+                    onPress={() => router.navigate('/buzz/channels')}
+                    style={styles.homeButton}
                 >
-                    <Ionicons name="create-outline" size={16} color={stylesheet.newSessionText.color} />
-                    <Text style={styles.newSessionText}>{t('sidebar.newSession')}</Text>
-                    <ShortcutHintBadge shortcutKey="N" style={styles.shortcutBadgeInline} />
+                    <Ionicons name="grid-outline" size={17} color={stylesheet.heading.color} />
                 </Pressable>
-                {hasArchivedSessions && (
-                    <Pressable
-                        onPress={handleArchiveVisibility}
-                        accessibilityLabel={hideArchivedSessions
-                            ? t('sidebar.showArchived')
-                            : t('sidebar.hideArchived')}
-                        accessibilityRole="button"
-                        accessibilityState={{ selected: !hideArchivedSessions }}
-                        style={({ pressed }) => [
-                            styles.archiveButton,
-                            !hideArchivedSessions && styles.archiveButtonActive,
-                            pressed && styles.newSessionButtonPressed,
-                        ]}
-                    >
-                        <Ionicons
-                            name={hideArchivedSessions ? 'archive-outline' : 'archive'}
-                            size={18}
-                            color={stylesheet.newSessionText.color}
-                        />
-                    </Pressable>
-                )}
             </View>
 
-            {realtimeStatus !== 'disconnected' && (
-                <VoiceAssistantStatusBar variant="sidebar" />
-            )}
+            <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
+                {sections.length === 0 ? (
+                    <Text style={styles.empty}>
+                        Your {ROOMS_LABEL} will appear here after the workspace connects.
+                    </Text>
+                ) : sections.map((section) => (
+                    <View key={section.zone} style={styles.section}>
+                        <Text style={styles.sectionLabel}>
+                            {section.title} · {section.data.length}
+                        </Text>
+                        {section.data.map(({ item, row }) => (
+                            <Pressable
+                                key={item.id}
+                                accessibilityLabel={`Open ${ROOM_LABEL} ${item.title ?? item.id}`}
+                                accessibilityRole="button"
+                                onPress={() => router.push(`/buzz/chat/${encodeURIComponent(item.id)}` as Href)}
+                                style={({ pressed }) => [
+                                    styles.roomRow,
+                                    activeRoomId === item.id && styles.roomRowSelected,
+                                    pressed && styles.roomRowSelected,
+                                ]}
+                            >
+                                <Text
+                                    style={[
+                                        styles.roomGlyph,
+                                        row.live && styles.roomGlyphLive,
+                                        row.attention && styles.roomGlyphAttention,
+                                    ]}
+                                >
+                                    {row.glyph}
+                                </Text>
+                                <View style={styles.roomCopy}>
+                                    <Text numberOfLines={1} style={styles.roomTitle}>
+                                        {item.title ?? `${ROOM_LABEL} ${item.id.slice(0, 8)}`}
+                                    </Text>
+                                    <Text numberOfLines={1} style={styles.roomFact}>{row.fact}</Text>
+                                </View>
+                            </Pressable>
+                        ))}
+                    </View>
+                ))}
+            </ScrollView>
 
-            {/* Sessions list */}
-            <MainView variant="sidebar" />
-
-            {/* Settings at bottom */}
             <Pressable
-                onPress={() => router.push('/settings')}
-                style={[
-                    styles.settingsRow,
-                    shortcutHintsVisible && styles.shortcutTargetActive,
-                ]}
+                accessibilityLabel="Open Beeline settings"
+                accessibilityRole="button"
+                onPress={() => router.push('/buzz/settings' as Href)}
+                style={styles.settingsRow}
             >
                 <Ionicons name="settings-outline" size={18} color={stylesheet.settingsText.color} />
-                <Text style={styles.settingsText}>{t('settings.title')}</Text>
-                <ShortcutHintBadge shortcutKey="," style={styles.shortcutBadgeInline} />
+                <Text style={styles.settingsText}>SETTINGS</Text>
             </Pressable>
         </View>
     );

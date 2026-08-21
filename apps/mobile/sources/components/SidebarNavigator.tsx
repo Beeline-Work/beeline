@@ -12,7 +12,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { isTauri } from '@/utils/isTauri';
-import { useOverlayNav } from '@/-session/sessionOverlayNav';
 import { DEFAULT_APP_ZOOM } from '@/hooks/useTauriZoom';
 import { canRouteForward, canUseRouteBack, getNavigatorCanGoBack } from '@/navigation/browserNavigation';
 import { useBrowserNavigationStore } from '@/navigation/browserNavigationStore';
@@ -105,8 +104,6 @@ const PersistentHeader = React.memo(() => {
 
     const routeHistory = useBrowserNavigationStore((s) => s.routeHistory);
     const canGoForward = useBrowserNavigationStore((s) => s.routeHistory ? canRouteForward(s.routeHistory) : false);
-    const overlayCanBack = useOverlayNav((s) => s.canBack);
-    const overlayCanForward = useOverlayNav((s) => s.canForward);
     const canGoBack = routeHistory
         ? canUseRouteBack(routeHistory, getNavigatorCanGoBack(router))
         : false;
@@ -116,9 +113,6 @@ const PersistentHeader = React.memo(() => {
     }, [zenMode, setZenMode]);
 
     const handleBack = React.useCallback(() => {
-        // Intra-session overlay (file diff / file view) consumes back first,
-        // so the chat → diff → file flow can be unwound without a close X.
-        if (useOverlayNav.getState().back()) return;
         const nav = useBrowserNavigationStore.getState();
         if (!nav.routeHistory || !canUseRouteBack(nav.routeHistory, getNavigatorCanGoBack(router))) return;
         nav.markRouteBack();
@@ -126,7 +120,6 @@ const PersistentHeader = React.memo(() => {
     }, [router]);
 
     const handleForward = React.useCallback(() => {
-        if (useOverlayNav.getState().forward()) return;
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
             const nav = useBrowserNavigationStore.getState();
             if (!nav.routeHistory || !canRouteForward(nav.routeHistory)) return;
@@ -134,9 +127,6 @@ const PersistentHeader = React.memo(() => {
             window.history.forward();
         }
     }, []);
-
-    const canGoBackEffective = canGoBack || overlayCanBack;
-    const canGoForwardEffective = canGoForward || overlayCanForward;
 
     return (
         <View
@@ -175,11 +165,11 @@ const PersistentHeader = React.memo(() => {
                         tintColor={zenMode ? theme.colors.textLink : theme.colors.header.tint}
                     />
                 </Pressable>
-                <Pressable onPress={handleBack} disabled={!canGoBackEffective} hitSlop={10} style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center', opacity: canGoBackEffective ? 1 : 0.3 }}>
+                <Pressable onPress={handleBack} disabled={!canGoBack} hitSlop={10} style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center', opacity: canGoBack ? 1 : 0.3 }}>
                     <Ionicons name="chevron-back" size={20} color={theme.colors.header.tint} />
                 </Pressable>
                 {Platform.OS === 'web' && (
-                    <Pressable onPress={handleForward} disabled={!canGoForwardEffective} hitSlop={10} style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center', opacity: canGoForwardEffective ? 1 : 0.3 }}>
+                    <Pressable onPress={handleForward} disabled={!canGoForward} hitSlop={10} style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center', opacity: canGoForward ? 1 : 0.3 }}>
                         <Ionicons name="chevron-forward" size={20} color={theme.colors.header.tint} />
                     </Pressable>
                 )}

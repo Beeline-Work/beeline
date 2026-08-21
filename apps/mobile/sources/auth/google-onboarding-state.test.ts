@@ -49,6 +49,19 @@ describe('provider onboarding error states', () => {
 });
 
 describe('provider onboarding completion', () => {
+  it('returns a matching custom-scheme callback directly from the browser result', async () => {
+    const redirectUri = 'buzzy://buzz/github-callback';
+    const callbackUrl = `${redirectUri}?state=${'s'.repeat(43)}`;
+
+    await expect(
+      waitForGoogleAuthCallback({
+        redirectUri,
+        openAuthSession: async () => ({ type: 'success', url: callbackUrl }),
+        subscribeToUrls: () => ({ remove: () => undefined }),
+      }),
+    ).resolves.toBe(callbackUrl);
+  });
+
   it('keeps a successful HTTPS callback when Android reports the browser dismissed first', async () => {
     const redirectUri = 'https://usebeeline.app/auth/oidc/mobile-callback';
     const callbackUrl = `${redirectUri}?state=${'s'.repeat(43)}&ticket=${'t'.repeat(43)}`;

@@ -18,8 +18,6 @@ import {
   finishOidcBind,
   lookupRecovery,
   startGitHubBind,
-  startGitHubInstallation,
-  listGitHubRepositories,
   type Identity,
   type OidcBindChallenge,
 } from '@beeline/buzz-client';
@@ -49,13 +47,11 @@ import {
 import { authSessionOptions } from '@/auth/auth-session';
 import {
   clearPendingGitHubSignInState,
-  githubInstallationRedirectUri,
   githubSignInRedirectUri,
   persistGitHubSignInState,
   resumeGitHubSignInCallback,
   resumeInitialGitHubInstallation,
   resumeInitialGitHubSignIn,
-  runGitHubInstallationSession,
 } from '@/auth/github-auth-session';
 import {
   clearPersonNameOnboardingPending,
@@ -183,36 +179,13 @@ export default function BuzzOnboarding() {
         pending.bound = true;
         await clearPendingGitHubSignInState();
       }
-      // Once the server binds this exact public key, persist it before opening
-      // the separate App-install browser. Canceling installation must never
-      // orphan a newly linked GitHub identity on a key the device discarded.
+      // GitHub OAuth establishes the identity. Repository installation is a
+      // separate, user-triggered action in the workspace and Room repo pickers.
       await markPersonNameOnboardingPending();
       await saveBuzzIdentity(pending.identity);
-      const currentAccess = await listGitHubRepositories(
-        getBuzzRuntimeConfig().relayUrl,
-        pending.identity,
-      );
-      if (!currentAccess.installed) {
-        const authBaseUrl = getBuzzRuntimeConfig().relayUrl;
-        await runGitHubInstallationSession({
-          returnPath: '/buzz/onboarding',
-          startInstallation: () =>
-            startGitHubInstallation(
-              authBaseUrl,
-              pending.identity,
-              githubInstallationRedirectUri(),
-            ),
-          openAuthSession: (installationUrl, redirectUri) =>
-            WebBrowser.openAuthSessionAsync(
-              installationUrl,
-              redirectUri,
-              authSessionOptions(Platform.OS, redirectUri),
-            ),
-          subscribeToUrls: (listener) =>
-            Linking.addEventListener('url', ({ url }) => listener(url)),
-        });
-      }
-      await registerBuzzPushNotifications(pending.identity);
+      // Push registration is recoverable in-app. Once the key is saved, never
+      // turn optional setup work into a false sign-in failure.
+      await registerBuzzPushNotifications(pending.identity).catch(() => undefined);
       pendingBind.current = null;
       setStatus(nextOnboardingStatus('binding', 'bind_succeeded'));
       await continueAfterIdentity(pending.identity);
@@ -282,20 +255,11 @@ export default function BuzzOnboarding() {
       if (!identity) return;
       existingIdentity.current = identity;
       const links = await lookupRecovery(relayUrl, identity);
-      const hasGitHubLink = links.some((link) => link.provider === 'https://github.com');
       if (await isPersonNameOnboardingPending()) {
-        if (hasGitHubLink) {
-          const access = await listGitHubRepositories(relayUrl, identity);
-          if (!access.installed) return;
-        }
         if (alive && links.length > 0) await continueAfterIdentity(identity);
         return;
       }
       if (!alive || links.length === 0) return;
-      if (hasGitHubLink) {
-        const access = await listGitHubRepositories(relayUrl, identity);
-        if (!access.installed) return;
-      }
       await continueAfterIdentity(identity);
     })()
       .catch((error: unknown) => {

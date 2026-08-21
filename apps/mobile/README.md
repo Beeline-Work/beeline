@@ -1,7 +1,7 @@
-# Buzzy mobile client
+# Beeline mobile client
 
 Fork of **[Happy](https://github.com/slopus/happy)**'s Expo/React Native app
-(`packages/happy-app`) as Buzzy's client foundation (`spec.md` P1).
+(`packages/happy-app`) as Beeline's client foundation (`spec.md` P1).
 
 ## Attribution / license
 
@@ -12,8 +12,7 @@ Fork of **[Happy](https://github.com/slopus/happy)**'s Expo/React Native app
 - Happy's MIT license is preserved in [`LICENSE`](./LICENSE)
 - Also see [`UPSTREAM.md`](./UPSTREAM.md) for vendor provenance
 
-Buzzy rebrands the app name/scheme minimally ("Buzzy"); visual polish is
-intentionally deferred.
+The mobile app ships under one Beeline native identity and one production OTA channel.
 
 ## Monorepo integration (isolated install)
 
@@ -62,7 +61,7 @@ npm run apk:release
 
 This runs the full chain:
 
-1. `APP_ENV=production npx expo prebuild --platform android --clean` — generates the production Android project
+1. `npx expo prebuild --platform android --clean` — generates the Beeline Android project
 2. `scripts/patch-android-signing.sh` — applies release signing and permits operator-provided HTTP LAN relays
 3. Gradle builds the signed release APK with its build cache enabled
 4. `scripts/android-teardown.sh` stops the named emulator, adb server, and Gradle daemon

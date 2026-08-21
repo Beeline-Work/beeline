@@ -7,27 +7,15 @@ const workspaceRoot = __dirname;
 const actions = [
   {
     id: "all",
-    label: "All",
-    description: "Developer build and App Store build",
-    scripts: [
-      "release:build:developer",
-      "release:build:appstore",
-    ],
+    label: "Store build",
+    description: "Build and submit the single production app",
+    scripts: ["release:build:appstore"],
   },
   {
     id: "all-interactive",
     label: "All interactive",
-    description: "All build steps with interactive prompts when needed",
-    scripts: [
-      "release:build:developer:interactive",
-      "release:build:appstore:interactive",
-    ],
-  },
-  {
-    id: "developer-build",
-    label: "Developer build",
-    description: "Run development/preview builds plus TestFlight store submissions",
-    scripts: ["release:build:developer"],
+    description: "Build and submit the single production app with interactive prompts",
+    scripts: ["release:build:appstore:interactive"],
   },
   {
     id: "appstore-build",
@@ -36,10 +24,10 @@ const actions = [
     scripts: ["release:build:appstore"],
   },
   {
-    id: "ota-preview",
-    label: "OTA (preview)",
-    description: "Publish an update to the preview channel",
-    scripts: ["release:ota:preview"],
+    id: "ota-production",
+    label: "OTA (production)",
+    description: "Publish an update to the production channel",
+    scripts: ["release:ota:release"],
   },
 ];
 
@@ -48,15 +36,12 @@ const actionAliases = {
   interactive: "all-interactive",
   "all-interactive": "all-interactive",
   "all interactive": "all-interactive",
-  developer: "developer-build",
-  dev: "developer-build",
-  "developer-build": "developer-build",
   appstore: "appstore-build",
   store: "appstore-build",
   "appstore-build": "appstore-build",
-  "ota-preview": "ota-preview",
-  "ota:preview": "ota-preview",
-  preview: "ota-preview",
+  "ota-production": "ota-production",
+  "ota:production": "ota-production",
+  production: "ota-production",
 };
 
 function findAction(input) {

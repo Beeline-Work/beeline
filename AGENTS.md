@@ -203,6 +203,7 @@ When updating this file, preserve this bar for all agents and keep entries conci
 - `apps/mobile` is a **vendored Happy** Expo app, **isolated** from root npm workspaces.
 - Install: `npm run mobile:install` (or `cd apps/mobile && npm install`).
 - EAS installs this isolated app without a root `node_modules`; keep optional monorepo paths in `metro.config.js` existence-guarded, and build file-linked `@beeline/*` packages through `eas-build-post-install`. Regression coverage: `sources/config/*Config.test.ts`.
+- Mobile has one native identity (`app.usebeeline.mobile`, `beeline://`) and one EAS build/update channel (`production`); authority and regression guards are `apps/mobile/app.config.js`, `eas.json`, and `sources/config/appBranding.test.ts`. A package-matching Firebase `google-services.json` is not currently provisioned, so do not restore `googleServicesFile` with a client registered to another package. The association documents deployed at `usebeeline.app`/the relay alias come from `relay-stack/web/.well-known/`.
 - Typecheck: root `npm run typecheck` runs turbo + mobile tsc.
 - Web: `npm run mobile:web` / `cd apps/mobile && npx expo start --web`.
 - Buzz seam docs: `apps/mobile/BUZZ-SEAM.md`; interface: `sources/sync/transport/rig-transport.ts`.

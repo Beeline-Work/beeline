@@ -1,4 +1,4 @@
-appId: app.buzzy.mobile
+appId: app.usebeeline.mobile
 name: Workspace and chat smoke
 env:
   SMOKE_NSEC: ${SMOKE_NSEC}

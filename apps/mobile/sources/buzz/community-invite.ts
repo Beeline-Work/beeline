@@ -11,7 +11,7 @@ import { WORKSPACE_LABEL } from './vocabulary';
 
 const TOKEN_PATTERN = /^bzi_[0-9a-f]{64}$/;
 // Keep custom invite parsing aligned with the installed schemes in app.config.js.
-const MOBILE_APP_SCHEMES = ['buzzy-dev', 'buzzy-preview', 'buzzy'] as const;
+const MOBILE_APP_SCHEMES = ['beeline'] as const;
 
 export type CommunityInvitePreview = {
   community: Community;

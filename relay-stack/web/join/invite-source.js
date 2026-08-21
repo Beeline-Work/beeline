@@ -86,7 +86,7 @@ export function startInviteLanding({
   }
 
   const token = match[1];
-  const deepLink = `buzzy://join/${encodeURIComponent(token)}`;
+  const deepLink = `beeline://join/${encodeURIComponent(token)}`;
   let resolveAttempt = 0;
 
   function setAction(label, href, onClick) {

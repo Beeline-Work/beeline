@@ -847,6 +847,8 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       throw new ProtocolError(404, 'recovery_not_available', 'conflicting identity link not found');
     if (result.status === 'unused')
       throw new ProtocolError(409, 'recovery_not_available', 'normal device bind must be attempted first');
+    if (result.status === 'not_eligible')
+      throw new ProtocolError(409, 'recovery_not_available', 'device bind did not produce a conflict');
     if (result.status === 'wrong_key')
       throw new ProtocolError(409, 'ticket_used', 'recovery ticket belongs to another device key');
     if (result.status === 'expired')

@@ -512,7 +512,10 @@ export default function BuzzOnboarding() {
       await markPersonNameOnboardingPending();
       await saveBuzzIdentity(newKey.identity);
       identitySaved = true;
-      await clearPendingGitHubIdentity().catch(() => undefined);
+      await Promise.all([
+        clearPendingGitHubIdentity().catch(() => undefined),
+        clearPendingGitHubSignInState().catch(() => undefined),
+      ]);
       await registerBuzzPushNotifications(newKey.identity);
       const identity = newKey.identity;
       resetNewKey();

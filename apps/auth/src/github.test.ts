@@ -67,6 +67,29 @@ describe('GitHub-only account and repository access', () => {
     );
   });
 
+  it('asks GitHub to restrict a daemon token to the authorized repository id', async () => {
+    const { privateKey } = await generateKeyPair('RS256');
+    const privateKeyPem = await exportPKCS8(privateKey);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ token: 'scoped-token', expires_at: '2030-01-01T00:00:00Z' }),
+          { status: 201 },
+        ),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new GitHubAppClient({ appId: '42', privateKey: privateKeyPem, slug: 'beeline' });
+
+    await expect(app.installationToken(77, { repositoryIds: [9] })).resolves.toMatchObject({
+      token: 'scoped-token',
+    });
+    expect(fetchMock.mock.calls[0]![1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify({ repository_ids: [9] }),
+    });
+  });
+
   it('lists the installations visible to a GitHub user token', async () => {
     const { privateKey } = await generateKeyPair('RS256');
     const privateKeyPem = await exportPKCS8(privateKey);

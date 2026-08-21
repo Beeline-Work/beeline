@@ -118,12 +118,12 @@ describe('WorkspaceSupervisor removal lease', () => {
       const archived = readdirSync(resolve(stateRoot, 'deleted-runtimes'));
       expect(archived).toHaveLength(1);
       expect(archived[0]).toMatch(new RegExp(`^${runtime.agent.publicKey}-`));
-      expect(
-        existsSync(resolve(stateRoot, 'deleted-runtimes', archived[0]!, 'runtime.json')),
-      ).toBe(true);
-      expect(
-        existsSync(resolve(stateRoot, 'deleted-runtimes', archived[0]!, 'daemon.pid')),
-      ).toBe(false);
+      expect(existsSync(resolve(stateRoot, 'deleted-runtimes', archived[0]!, 'runtime.json'))).toBe(
+        true,
+      );
+      expect(existsSync(resolve(stateRoot, 'deleted-runtimes', archived[0]!, 'daemon.pid'))).toBe(
+        false,
+      );
     } finally {
       rmSync(stateRoot, { recursive: true, force: true });
     }
@@ -473,6 +473,10 @@ describe('WorkspaceSupervisor Room watchdog', () => {
         .mockResolvedValue(
           runtime.rooms.map((room) => ({ channelId: room.channelId, event: { created_at: 1 } })),
         ),
+      resolveRoomRepositoryState: vi.fn(async (channelId: string) => {
+        const room = runtime.rooms.find((candidate) => candidate.channelId === channelId)!;
+        return { kind: 'repository', repository: { channelId, binding: room.repo.repository } };
+      }),
       disconnect,
     });
     const supervisor = new WorkspaceSupervisor(
@@ -489,6 +493,51 @@ describe('WorkspaceSupervisor Room watchdog', () => {
     expect(start).toHaveBeenCalledWith(runtime.rooms[0], 'stale-room');
     expect(start).toHaveBeenCalledWith(runtime.rooms[1], 'healthy-room');
     expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it('repairs a stale runtime binding from the Room binding before restart join', async () => {
+    const runtime = runtimeWithRooms();
+    runtime.rooms = [runtime.rooms[0]!];
+    runtime.supervisorRoot = mkdtempSync(resolve(tmpdir(), 'beeline-runtime-repair-'));
+    const currentBinding = {
+      key: 'room-selected-key',
+      name: 'captain/selected',
+      remote: 'git://github.com/captain/selected',
+      localOnly: false,
+      githubInstallationId: 77,
+    };
+    mocks.createBuzzClient.mockReturnValue({
+      isMember: vi.fn().mockResolvedValue(true),
+      listMyChannels: vi
+        .fn()
+        .mockResolvedValue([{ channelId: 'stale-room', event: { created_at: 1 } }]),
+      resolveRoomRepositoryState: vi.fn().mockResolvedValue({
+        kind: 'repository',
+        repository: { channelId: 'stale-room', binding: currentBinding },
+      }),
+      disconnect: vi.fn(),
+    });
+    const supervisor = new WorkspaceSupervisor(
+      runtime,
+      resolve(runtime.supervisorRoot, 'runtime.json'),
+      {} as BodyConfig,
+    );
+    vi.spyOn(supervisor as never, 'materializeRoom' as never).mockResolvedValue({
+      ...runtime.rooms[0],
+      repo: { ...runtime.rooms[0]!.repo, repository: currentBinding },
+    } as never);
+    const start = vi
+      .spyOn(supervisor as never, 'startRepositoryRoom' as never)
+      .mockImplementation(() => undefined as never);
+
+    await expect(supervisor.reconcile()).resolves.toBe('member');
+
+    expect(runtime.rooms[0]!.repo.repository).toEqual(currentBinding);
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({ repo: expect.objectContaining({ repository: currentBinding }) }),
+      'stale-room',
+    );
+    rmSync(runtime.supervisorRoot, { recursive: true, force: true });
   });
 });
 
@@ -777,9 +826,11 @@ describe('WorkspaceSupervisor per-room storage and harness isolation', () => {
   }
 
   function roomRoot(supervisor: WorkspaceSupervisor, channelId: string, room?: unknown): string {
-    return (
-      Reflect.get(supervisor, 'roomRoot') as (id: string, record?: unknown) => string
-    ).call(supervisor, channelId, room);
+    return (Reflect.get(supervisor, 'roomRoot') as (id: string, record?: unknown) => string).call(
+      supervisor,
+      channelId,
+      room,
+    );
   }
 
   function agentHomeRoot(supervisor: WorkspaceSupervisor, workspaceRoot: string) {
@@ -862,7 +913,10 @@ describe('WorkspaceSupervisor room owns the repo (Stage 1)', () => {
     };
   }
 
-  function supervisorFor(supervisorRoot: string, rooms: RoomRuntimeRecord[] = []): WorkspaceSupervisor {
+  function supervisorFor(
+    supervisorRoot: string,
+    rooms: RoomRuntimeRecord[] = [],
+  ): WorkspaceSupervisor {
     const rt = runtime(supervisorRoot, rooms);
     return new WorkspaceSupervisor(
       rt,
@@ -911,11 +965,18 @@ describe('WorkspaceSupervisor room owns the repo (Stage 1)', () => {
 
     const supervisorRoot = resolve(tmp, 'state');
     const supervisor = supervisorFor(supervisorRoot, [room]) as never as {
-      resolveServingRepo(room: RoomRuntimeRecord): Promise<{ localPath?: string; targetBranch?: string }>;
+      resolveServingRepo(
+        room: RoomRuntimeRecord,
+      ): Promise<{ localPath?: string; targetBranch?: string }>;
     };
 
     return supervisor.resolveServingRepo(room).then((bound) => {
-      const canonical = resolve(supervisorRoot, 'beeline', 'repositories', opBinding.repository.key);
+      const canonical = resolve(
+        supervisorRoot,
+        'beeline',
+        'repositories',
+        opBinding.repository.key,
+      );
       expect(bound.localPath).toBe(canonical);
       // The load-bearing safety property: the agent NEVER serves from the
       // operator's working tree (which carries WIP and drifts).
@@ -1009,6 +1070,7 @@ describe('WorkspaceSupervisor per-Room discovery isolation', () => {
           ? { participants: [runtime.agent.publicKey, 'b'.repeat(64)] }
           : null,
       ),
+      messageSubmit: vi.fn().mockResolvedValue({}),
       disconnect: vi.fn(),
     };
   }
@@ -1036,7 +1098,8 @@ describe('WorkspaceSupervisor per-Room discovery isolation', () => {
 
   it('logs the unservable Room once and retries it on a long cadence, not every pass', async () => {
     const runtime = runtimeNoRooms('discovery-log-agent');
-    mocks.createBuzzClient.mockReturnValue(discoveryClient(runtime));
+    const client = discoveryClient(runtime);
+    mocks.createBuzzClient.mockReturnValue(client);
     let now = 1_000_000;
     const supervisor = new WorkspaceSupervisor(
       runtime,
@@ -1061,11 +1124,17 @@ describe('WorkspaceSupervisor per-Room discovery isolation', () => {
     expect(String(unservableLogs[0]![0])).toContain('could not be joined');
     // Parked, not re-attempted on every pass.
     expect(materialize).toHaveBeenCalledTimes(1);
+    expect(client.messageSubmit).toHaveBeenCalledTimes(1);
+    expect(client.messageSubmit).toHaveBeenCalledWith(
+      'unservable-room',
+      expect.stringContaining('I will retry automatically in 10 minutes'),
+    );
 
     // Past the retry cadence it is tried again — an operator who fixes the
     // underlying cause is still picked up, just not by polling every 5s.
     now += DEFAULT_ROOM_DISCOVERY_RETRY_MS + 1;
     await supervisor.reconcile();
     expect(materialize).toHaveBeenCalledTimes(2);
+    expect(client.messageSubmit).toHaveBeenCalledTimes(1);
   });
 });

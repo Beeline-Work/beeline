@@ -6,6 +6,7 @@ import { Text } from '@/components/StyledText';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
+import * as Updates from 'expo-updates';
 import { Item } from '@/components/Item';
 import { ItemGroup } from '@/components/ItemGroup';
 import { ItemList } from '@/components/ItemList';
@@ -69,6 +70,8 @@ export const SettingsView = React.memo(function SettingsView({
         .filter(Boolean)
         .join(' / ');
     const versionSubtitle = formatBuildSubtitle(getBuildConfig());
+    const otaUpdateId = Updates.updateId ?? 'embedded bundle';
+    const otaChannel = Updates.channel ?? 'not configured';
     const profile = useProfile();
     const displayName = getDisplayName(profile);
     const avatarUrl = getAvatarUrl(profile);
@@ -195,6 +198,14 @@ export const SettingsView = React.memo(function SettingsView({
                     detail={versionDetail}
                     icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.textSecondary} />}
                     showChevron={false}
+                />
+                <Item
+                    title="OTA update"
+                    subtitle={`Running update: ${otaUpdateId}\nChannel: ${otaChannel}`}
+                    subtitleLines={2}
+                    icon={<Ionicons name="cloud-download-outline" size={29} color={theme.colors.textSecondary} />}
+                    showChevron={false}
+                    copy={`${otaUpdateId} / ${otaChannel}`}
                 />
             </ItemGroup>
         </ItemList>

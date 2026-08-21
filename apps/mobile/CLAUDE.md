@@ -23,7 +23,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - No existing tests in the codebase yet
 
 ### Production
-- `pnpm ota` - Deploy over-the-air updates via EAS Update to production branch
+- `pnpm ota` - Deploy over-the-air updates via EAS Update to the `preview` channel
 
 ## Architecture Overview
 

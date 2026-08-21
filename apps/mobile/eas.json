@@ -8,7 +8,7 @@
       "autoIncrement": true,
       "developmentClient": true,
       "distribution": "internal",
-      "channel": "development",
+      "channel": "preview",
       "env": {
         "APP_ENV": "development",
         "SHARP_IGNORE_GLOBAL_LIBVIPS": "1"
@@ -18,7 +18,7 @@
       "autoIncrement": true,
       "developmentClient": true,
       "distribution": "store",
-      "channel": "development",
+      "channel": "preview",
       "env": {
         "APP_ENV": "development",
         "SHARP_IGNORE_GLOBAL_LIBVIPS": "1"
@@ -45,7 +45,7 @@
     "production": {
       "autoIncrement": true,
       "distribution": "store",
-      "channel": "production",
+      "channel": "preview",
       "env": {
         "APP_ENV": "production",
         "SHARP_IGNORE_GLOBAL_LIBVIPS": "1"

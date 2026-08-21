@@ -19,11 +19,14 @@ vi.mock('@beeline/buzz-client', () => buzzClient);
 
 import {
   loadBuzzIdentity,
+  loadPendingGitHubIdentity,
   loadBuzzIdentityNsecForExport,
   importBuzzIdentity,
   loadRelayUrl,
   getEffectiveRelayUrl,
   saveBuzzIdentity,
+  savePendingGitHubIdentity,
+  clearPendingGitHubIdentity,
   saveRelayUrl,
   generateBuzzIdentity,
   DEFAULT_RELAY_URL,
@@ -128,5 +131,28 @@ describe('Buzz identity storage', () => {
 
     expect(buzzClient.createIdentity).toHaveBeenCalledWith('pending');
     expect(secureStore.setItemAsync).not.toHaveBeenCalled();
+  });
+
+  it('seals a pending GitHub key separately so a callback remount can reuse it', async () => {
+    const identity = { name: 'pending' };
+    buzzClient.identityNsec.mockReturnValue('nsec1pending');
+    buzzClient.loadIdentityFromNsec.mockReturnValue(identity);
+
+    await savePendingGitHubIdentity(identity as never);
+    expect(secureStore.setItemAsync).toHaveBeenCalledWith(
+      'buzzy.identity.githubPendingNsec',
+      'nsec1pending',
+      { keychainAccessible: 123 },
+    );
+
+    secureStore.getItemAsync.mockResolvedValue('nsec1pending');
+    await expect(loadPendingGitHubIdentity()).resolves.toBe(identity);
+    expect(buzzClient.loadIdentityFromNsec).toHaveBeenCalledWith('nsec1pending', 'buzzy-mobile');
+
+    await clearPendingGitHubIdentity();
+    expect(secureStore.deleteItemAsync).toHaveBeenCalledWith(
+      'buzzy.identity.githubPendingNsec',
+      { keychainAccessible: 123 },
+    );
   });
 });

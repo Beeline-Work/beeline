@@ -4,6 +4,7 @@ import { OidcBindError, parseOidcBindCallback, type OidcBindChallenge } from '@b
 import { waitForAuthCallbackResult } from './onboarding-state';
 
 const PENDING_SIGN_IN_STATE_KEY = 'buzzy.github-sign-in-state.v1';
+const PENDING_SIGN_IN_CALLBACK_KEY = 'buzzy.github-sign-in-callback.v1';
 const PENDING_INSTALLATION_RETURN_KEY = 'buzzy.github-installation-return.v1';
 const PENDING_INSTALLATION_COMPLETED_KEY = 'buzzy.github-installation-completed.v1';
 const STATE_RE = /^[A-Za-z0-9_-]{43}$/;
@@ -126,11 +127,34 @@ export async function persistGitHubSignInState(state: string): Promise<void> {
   if (!STATE_RE.test(state)) {
     throw new OidcBindError('invalid_state', 'GitHub app state must be 32 random bytes');
   }
-  await AsyncStorage.setItem(PENDING_SIGN_IN_STATE_KEY, state);
+  await Promise.all([
+    AsyncStorage.setItem(PENDING_SIGN_IN_STATE_KEY, state),
+    AsyncStorage.removeItem(PENDING_SIGN_IN_CALLBACK_KEY),
+  ]);
 }
 
 export async function clearPendingGitHubSignInState(): Promise<void> {
-  await AsyncStorage.removeItem(PENDING_SIGN_IN_STATE_KEY);
+  await Promise.all([
+    AsyncStorage.removeItem(PENDING_SIGN_IN_STATE_KEY),
+    AsyncStorage.removeItem(PENDING_SIGN_IN_CALLBACK_KEY),
+  ]);
+}
+
+/** Reload the signed bind challenge if Expo Router remounted during callback handling. */
+export async function loadPendingGitHubBindChallenge(
+  nowSeconds = Math.floor(Date.now() / 1_000),
+): Promise<OidcBindChallenge | null> {
+  const [callbackUrl, expectedState] = await Promise.all([
+    AsyncStorage.getItem(PENDING_SIGN_IN_CALLBACK_KEY),
+    AsyncStorage.getItem(PENDING_SIGN_IN_STATE_KEY),
+  ]);
+  if (!callbackUrl || !expectedState || !STATE_RE.test(expectedState)) return null;
+  const challenge = parseOidcBindCallback(callbackUrl, expectedState);
+  if (challenge.expires_at <= nowSeconds) {
+    await clearPendingGitHubSignInState();
+    throw new OidcBindError('ticket_expired', 'The bind ticket expired', 410);
+  }
+  return challenge;
 }
 
 /**
@@ -167,6 +191,7 @@ export async function resumeGitHubSignInCallback(
     await clearPendingGitHubSignInState();
     throw new OidcBindError('ticket_expired', 'The bind ticket expired', 410);
   }
+  await AsyncStorage.setItem(PENDING_SIGN_IN_CALLBACK_KEY, callbackUrl);
   return challenge;
 }
 

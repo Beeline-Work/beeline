@@ -16,15 +16,19 @@ import {
   type BuzzClient,
   buildOidcBindEvent,
   finishOidcBind,
+  recoverOidcBind,
   lookupRecovery,
   startGitHubBind,
   type Identity,
   type OidcBindChallenge,
 } from '@beeline/buzz-client';
 import {
+  clearPendingGitHubIdentity,
   generateBuzzIdentity,
   importBuzzIdentity,
   loadBuzzIdentity,
+  loadPendingGitHubIdentity,
+  savePendingGitHubIdentity,
   saveBuzzIdentity,
 } from '@/auth/buzz-identity-storage';
 import {
@@ -48,6 +52,7 @@ import { authSessionOptions } from '@/auth/auth-session';
 import {
   clearPendingGitHubSignInState,
   githubSignInRedirectUri,
+  loadPendingGitHubBindChallenge,
   persistGitHubSignInState,
   resumeGitHubSignInCallback,
   resumeInitialGitHubInstallation,
@@ -109,7 +114,7 @@ export default function BuzzOnboarding() {
     Platform.OS === 'web' ? WEB_NOTICE : null,
   );
   const [loadingAction, setLoadingAction] = useState<
-    'github' | 'bind' | 'import' | 'name' | 'create' | 'enter' | null
+    'github' | 'bind' | 'recover' | 'import' | 'name' | 'create' | 'enter' | null
   >(null);
   const [newKey, setNewKey] = useState<NewKeyDraft | null>(null);
   const [newKeyRevealed, setNewKeyRevealed] = useState(false);
@@ -124,9 +129,45 @@ export default function BuzzOnboarding() {
   const [nameInput, setNameInput] = useState('');
   const loading = loadingAction !== null;
 
+  const restorePendingBind = async (): Promise<boolean> => {
+    const [challenge, identity] = await Promise.all([
+      loadPendingGitHubBindChallenge(),
+      loadBuzzIdentity().then(async (saved) => saved ?? (await loadPendingGitHubIdentity())),
+    ]);
+    if (!challenge || !identity) return false;
+    existingIdentity.current = identity;
+    pendingBind.current = { challenge, identity, bound: false };
+    return true;
+  };
+
   useEffect(
     () =>
       subscribeToOnboardingNotices((next) => {
+        if (next.status === 'link_conflict' && !pendingBind.current) {
+          void restorePendingBind()
+            .then((restored) => {
+              if (restored) {
+                setStatus(next.status);
+                setNotice(next);
+                return;
+              }
+              const expired = noticeForAuthError(
+                new OidcBindError(
+                  'ticket_expired',
+                  'The replacement proof is no longer available. Sign in again.',
+                  410,
+                ),
+              );
+              setStatus(expired.status);
+              setNotice(expired);
+            })
+            .catch((error: unknown) => {
+              const failed = noticeForAuthError(error);
+              setStatus(failed.status);
+              setNotice(failed);
+            });
+          return;
+        }
         setStatus(next.status);
         setNotice(next);
       }),
@@ -177,12 +218,15 @@ export default function BuzzOnboarding() {
         const event = buildOidcBindEvent(pending.challenge, pending.identity);
         await finishOidcBind(getBuzzRuntimeConfig().relayUrl, pending.challenge, event);
         pending.bound = true;
-        await clearPendingGitHubSignInState();
       }
+      await clearPendingGitHubSignInState();
       // GitHub OAuth establishes the identity. Repository installation is a
       // separate, user-triggered action in the workspace and Room repo pickers.
-      await markPersonNameOnboardingPending();
       await saveBuzzIdentity(pending.identity);
+      // Everything after the primary key save is recoverable in-app. Never
+      // report a false sign-in failure after the durable identity is present.
+      await clearPendingGitHubIdentity().catch(() => undefined);
+      await markPersonNameOnboardingPending().catch(() => undefined);
       // Push registration is recoverable in-app. Once the key is saved, never
       // turn optional setup work into a false sign-in failure.
       await registerBuzzPushNotifications(pending.identity).catch(() => undefined);
@@ -199,7 +243,7 @@ export default function BuzzOnboarding() {
               500,
             );
       const next = noticeForAuthError(normalized);
-      if (!next.retryable) pendingBind.current = null;
+      if (!next.retryable && normalized.code !== 'identity_conflict') pendingBind.current = null;
       setStatus(next.status);
       setNotice(next);
       publishOnboardingNotice(next);
@@ -217,13 +261,17 @@ export default function BuzzOnboarding() {
     const relayUrl = getBuzzRuntimeConfig().relayUrl;
     void (async () => {
       const initialUrl = await Linking.getInitialURL().catch(() => null);
-      const coldChallenge = await resumeInitialGitHubSignIn(() => Promise.resolve(initialUrl));
+      const coldChallenge =
+        (await resumeInitialGitHubSignIn(() => Promise.resolve(initialUrl))) ??
+        (await loadPendingGitHubBindChallenge());
       if (coldChallenge) {
         if (!alive) return;
         setStatus('binding');
         const identity =
           (await loadBuzzIdentity()) ??
+          (await loadPendingGitHubIdentity()) ??
           (await generateBuzzIdentity('buzzy-mobile', { persist: false }));
+        await savePendingGitHubIdentity(identity);
         existingIdentity.current = identity;
         const pending: PendingBind = {
           challenge: coldChallenge,
@@ -251,10 +299,18 @@ export default function BuzzOnboarding() {
         return;
       }
 
-      const identity = await loadBuzzIdentity();
+      const savedIdentity = await loadBuzzIdentity();
+      const identity = savedIdentity ?? (await loadPendingGitHubIdentity());
       if (!identity) return;
       existingIdentity.current = identity;
       const links = await lookupRecovery(relayUrl, identity);
+      if (!savedIdentity && links.length > 0) {
+        await saveBuzzIdentity(identity);
+        await clearPendingGitHubIdentity().catch(() => undefined);
+        await markPersonNameOnboardingPending().catch(() => undefined);
+        if (alive) await continueAfterIdentity(identity);
+        return;
+      }
       if (await isPersonNameOnboardingPending()) {
         if (alive && links.length > 0) await continueAfterIdentity(identity);
         return;
@@ -283,6 +339,12 @@ export default function BuzzOnboarding() {
     clearOnboardingNotice();
     setNotice(null);
     try {
+      const identity =
+        existingIdentity.current ??
+        (await loadPendingGitHubIdentity()) ??
+        (await generateBuzzIdentity('buzzy-mobile', { persist: false }));
+      await savePendingGitHubIdentity(identity);
+      existingIdentity.current = identity;
       const state = randomState();
       const authBaseUrl = getBuzzRuntimeConfig().relayUrl;
       const redirectUri = githubSignInRedirectUri();
@@ -300,16 +362,35 @@ export default function BuzzOnboarding() {
       });
       setStatus(nextOnboardingStatus('opening_browser', 'callback_received'));
       const challenge = await resumeGitHubSignInCallback(callbackUrl);
-      // Preserve upgraded users' existing device-held identity; only first-time
-      // devices create a candidate key after GitHub proof succeeds.
-      const identity =
-        existingIdentity.current ??
-        (await generateBuzzIdentity('buzzy-mobile', { persist: false }));
       const pending = { challenge, identity, bound: false };
       pendingBind.current = pending;
       await finishPendingBind(pending);
     } catch (error) {
       await clearPendingGitHubSignInState();
+      const next = noticeForAuthError(error);
+      setStatus(next.status);
+      setNotice(next);
+      publishOnboardingNotice(next);
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const handleReplaceDeviceKey = async () => {
+    const pending = pendingBind.current;
+    if (!pending || loading) return;
+    setLoadingAction('recover');
+    clearOnboardingNotice();
+    setNotice(null);
+    try {
+      if (pending.challenge.expires_at <= Math.floor(Date.now() / 1_000)) {
+        throw new OidcBindError('ticket_expired', 'The recovery ticket expired', 410);
+      }
+      const event = buildOidcBindEvent(pending.challenge, pending.identity);
+      await recoverOidcBind(getBuzzRuntimeConfig().relayUrl, pending.challenge, event);
+      pending.bound = true;
+      await finishPendingBind(pending);
+    } catch (error) {
       const next = noticeForAuthError(error);
       setStatus(next.status);
       setNotice(next);
@@ -337,6 +418,10 @@ export default function BuzzOnboarding() {
       await markPersonNameOnboardingPending();
       const identity = await importBuzzIdentity(trimmed);
       identitySaved = true;
+      await Promise.all([
+        clearPendingGitHubIdentity().catch(() => undefined),
+        clearPendingGitHubSignInState().catch(() => undefined),
+      ]);
       await registerBuzzPushNotifications(identity);
       await continueAfterIdentity(identity);
     } catch (error) {
@@ -427,6 +512,10 @@ export default function BuzzOnboarding() {
       await markPersonNameOnboardingPending();
       await saveBuzzIdentity(newKey.identity);
       identitySaved = true;
+      await Promise.all([
+        clearPendingGitHubIdentity().catch(() => undefined),
+        clearPendingGitHubSignInState().catch(() => undefined),
+      ]);
       await registerBuzzPushNotifications(newKey.identity);
       const identity = newKey.identity;
       resetNewKey();
@@ -730,7 +819,22 @@ export default function BuzzOnboarding() {
       )}
 
       <View style={styles.actions}>
-        {!showAdvanced && canRetryBind ? (
+        {!showAdvanced && notice?.status === 'link_conflict' && pendingBind.current ? (
+          <View style={styles.recoveryActions}>
+            <Text style={styles.recoveryWarning}>
+              Replacing the device key disconnects GitHub from the old key. Your old Rooms, DMs,
+              profile, and repository approvals do not transfer. If you backed up that key, import
+              it from Advanced instead.
+            </Text>
+            <MonoButton
+              label="Replace device key"
+              loading={loadingAction === 'recover'}
+              onPress={() => void handleReplaceDeviceKey()}
+              disabled={loading}
+              testID="onboarding-replace-device-key"
+            />
+          </View>
+        ) : !showAdvanced && canRetryBind ? (
           <MonoButton
             label="Retry device bind"
             loading={loadingAction === 'bind'}
@@ -841,6 +945,13 @@ const styles = StyleSheet.create((theme) => {
   inputFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 11 },
   importAction: { marginTop: 10 },
   actions: { gap: 10 },
+  recoveryActions: { gap: 10 },
+  recoveryWarning: {
+    ...Typography.default(),
+    color: groknight.textSecondary,
+    fontSize: 13,
+    lineHeight: 19,
+  },
   custodyNote: {
     ...Typography.default(),
     marginTop: 18,

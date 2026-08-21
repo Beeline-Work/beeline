@@ -77,8 +77,10 @@ const MIGRATIONS = [
     expires_at TIMESTAMPTZ NOT NULL,
     attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count BETWEEN 0 AND 5),
     consumed_at TIMESTAMPTZ,
-    bound_pubkey CHAR(64)
+    bound_pubkey CHAR(64),
+    recovery_eligible BOOLEAN NOT NULL DEFAULT FALSE
   )`,
+  `ALTER TABLE beeline_bind_tickets ADD COLUMN IF NOT EXISTS recovery_eligible BOOLEAN NOT NULL DEFAULT FALSE`,
   `CREATE TABLE IF NOT EXISTS beeline_identity_links (
     community TEXT NOT NULL,
     issuer TEXT NOT NULL,
@@ -215,6 +217,7 @@ interface TicketRow extends QueryResultRow {
   attempt_count: number;
   consumed_at: unknown | null;
   bound_pubkey: string | null;
+  recovery_eligible: boolean;
 }
 
 export interface BindTicket {
@@ -273,6 +276,10 @@ export type BindResult =
   | { status: 'linked' | 'idempotent'; link: IdentityLink }
   | { status: 'conflict'; existingPubkey: string }
   | { status: 'missing' | 'used' | 'expired' };
+
+export type RecoverBindResult =
+  | { status: 'replaced' | 'idempotent'; link: IdentityLink; previousPubkey: string }
+  | { status: 'missing' | 'unused' | 'not_eligible' | 'wrong_key' | 'expired' };
 
 function flowFromRow(row: FlowRow): OidcFlow {
   return {
@@ -375,7 +382,7 @@ export class AuthStore {
 
   async findTicket(ticketHash: string): Promise<BindTicket | null> {
     const result = await this.database.query<TicketRow>(
-      `SELECT challenge, community, issuer, audience, subject, created_at, expires_at, attempt_count, consumed_at, bound_pubkey
+      `SELECT challenge, community, issuer, audience, subject, created_at, expires_at, attempt_count, consumed_at, bound_pubkey, recovery_eligible
        FROM beeline_bind_tickets WHERE ticket_hash = $1`,
       [ticketHash],
     );
@@ -397,7 +404,7 @@ export class AuthStore {
   async consumeTicketAndLink(ticketHash: string, pubkey: string, now: Date): Promise<BindResult> {
     return this.database.transaction(async (transaction) => {
       const selected = await transaction.query<TicketRow>(
-        `SELECT challenge, community, issuer, audience, subject, created_at, expires_at, attempt_count, consumed_at, bound_pubkey
+        `SELECT challenge, community, issuer, audience, subject, created_at, expires_at, attempt_count, consumed_at, bound_pubkey, recovery_eligible
          FROM beeline_bind_tickets WHERE ticket_hash = $1 FOR UPDATE`,
         [ticketHash],
       );
@@ -436,7 +443,13 @@ export class AuthStore {
       );
       const linkRow = linked.rows[0];
       if (!linkRow) throw new Error('identity link transaction produced no mapping');
-      if (linkRow.pubkey !== pubkey) return { status: 'conflict', existingPubkey: linkRow.pubkey };
+      if (linkRow.pubkey !== pubkey) {
+        await transaction.query(
+          `UPDATE beeline_bind_tickets SET recovery_eligible = TRUE WHERE ticket_hash = $1`,
+          [ticketHash],
+        );
+        return { status: 'conflict', existingPubkey: linkRow.pubkey };
+      }
       return {
         status: inserted.rowCount === 1 ? 'linked' : 'idempotent',
         link: {
@@ -446,6 +459,71 @@ export class AuthStore {
           subject: linkRow.subject,
           pubkey: linkRow.pubkey,
           createdAt: asDate(linkRow.created_at),
+        },
+      };
+    });
+  }
+
+  /**
+   * Replace a conflicting link only after the normal bind path has consumed
+   * this exact OAuth-backed ticket for this exact candidate key.
+   */
+  async recoverConsumedTicketLink(
+    ticketHash: string,
+    pubkey: string,
+    now: Date,
+  ): Promise<RecoverBindResult> {
+    return this.database.transaction(async (transaction) => {
+      const selected = await transaction.query<TicketRow>(
+        `SELECT challenge, community, issuer, audience, subject, created_at, expires_at, attempt_count, consumed_at, bound_pubkey, recovery_eligible
+         FROM beeline_bind_tickets WHERE ticket_hash = $1 FOR UPDATE`,
+        [ticketHash],
+      );
+      const row = selected.rows[0];
+      if (!row) return { status: 'missing' };
+      const ticket = ticketFromRow(row);
+      if (ticket.expiresAt.getTime() < now.getTime()) return { status: 'expired' };
+      if (!ticket.consumedAt) return { status: 'unused' };
+      if (!row.recovery_eligible) return { status: 'not_eligible' };
+      if (ticket.boundPubkey !== pubkey) return { status: 'wrong_key' };
+
+      const linked = await transaction.query<
+        QueryResultRow & {
+          community: string;
+          issuer: string;
+          audience: string;
+          subject: string;
+          pubkey: string;
+          created_at: unknown;
+        }
+      >(
+        `SELECT community, issuer, audience, subject, pubkey, created_at
+         FROM beeline_identity_links
+         WHERE community = $1 AND issuer = $2 AND audience = $3 AND subject = $4
+         FOR UPDATE`,
+        [ticket.community, ticket.issuer, ticket.audience, ticket.subject],
+      );
+      const existing = linked.rows[0];
+      if (!existing) return { status: 'missing' };
+      const previousPubkey = existing.pubkey;
+      if (previousPubkey !== pubkey) {
+        await transaction.query(
+          `UPDATE beeline_identity_links
+           SET pubkey = $5, created_at = $6
+           WHERE community = $1 AND issuer = $2 AND audience = $3 AND subject = $4`,
+          [ticket.community, ticket.issuer, ticket.audience, ticket.subject, pubkey, now],
+        );
+      }
+      return {
+        status: previousPubkey === pubkey ? 'idempotent' : 'replaced',
+        previousPubkey,
+        link: {
+          community: existing.community,
+          issuer: existing.issuer,
+          audience: existing.audience,
+          subject: existing.subject,
+          pubkey,
+          createdAt: previousPubkey === pubkey ? asDate(existing.created_at) : now,
         },
       };
     });

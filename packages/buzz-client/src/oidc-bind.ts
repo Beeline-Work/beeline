@@ -197,15 +197,17 @@ function startProviderBind(
     !redirect.hash;
   const isLoopback = ['localhost', '127.0.0.1', '10.0.2.2'].includes(base.hostname);
   const isEmulatorScheme = isLoopback && redirect.protocol === 'buzzy:';
+  const isGitHubAppScheme =
+    provider === 'github' && redirect.toString() === 'buzzy://buzz/github-callback';
   if (
-    (!isAssociatedLink && !isEmulatorScheme) ||
+    (!isAssociatedLink && !isEmulatorScheme && !isGitHubAppScheme) ||
     redirect.username ||
     redirect.password ||
-    (isEmulatorScheme && (redirect.search || redirect.hash))
+    ((isEmulatorScheme || isGitHubAppScheme) && (redirect.search || redirect.hash))
   ) {
     throw new OidcBindError(
       'invalid_redirect',
-      'OIDC completion must use the relay associated link (custom schemes are emulator-only)',
+      'OIDC completion must use an allowed associated link or app deep link',
     );
   }
   const url = endpoint(baseUrl, `/auth/${provider}/start`);

@@ -253,6 +253,10 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
   let githubUserInstallations: number[] | Error;
   let githubInstallationListCalls: number;
   let githubRepositoryListError: Error | undefined;
+  let roomTokenAuthority: NonNullable<
+    Parameters<typeof buildAuthServer>[0]['authorizeGitHubRoomToken']
+  >;
+  let roomTokenMint: { installationId: number; repositoryIds?: readonly number[] } | undefined;
 
   beforeEach(async () => {
     provider = new DemoOidcProvider();
@@ -266,6 +270,8 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     githubUserInstallations = [];
     githubInstallationListCalls = 0;
     githubRepositoryListError = undefined;
+    roomTokenAuthority = async () => undefined;
+    roomTokenMint = undefined;
     app = buildAuthServer({
       store,
       oidc: new OidcClient({
@@ -323,10 +329,18 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
               },
             ];
           },
+          installationToken: async (
+            installationId: number,
+            options: { repositoryIds?: readonly number[] } = {},
+          ) => {
+            roomTokenMint = { installationId, ...options };
+            return { token: 'room-installation-token', expiresAt: '2030-01-01T00:00:00Z' };
+          },
         } as unknown as GitHubAppClient,
         webhookSecret: 'webhook-secret',
       },
       tenants: [alphaTenant, betaTenant],
+      authorizeGitHubRoomToken: (tenant, input) => roomTokenAuthority(tenant, input),
       nativeRedirectUris: ['beeline://buzz/oidc-callback'],
     });
   });
@@ -399,6 +413,98 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ github: true, oidc: true });
+  });
+
+  it('mints an exact-repository token only after Room authority accepts the agent', async () => {
+    const owner = generateKeypair();
+    const agent = generateKeypair();
+    await store.saveGitHubInstallation(
+      {
+        community: alphaTenant.community,
+        pubkey: owner.publicKey,
+        authorizedSubject: 'owner-subject',
+        accountId: '123',
+        accountLogin: 'octocat',
+        accountType: 'User',
+        installationId: 77,
+        repositorySelection: 'selected',
+        status: 'active',
+        repositoryCount: 1,
+      },
+      new Date(),
+    );
+    await store.replaceGitHubRepositories(
+      alphaTenant.community,
+      77,
+      [
+        {
+          id: 42,
+          installationId: 77,
+          name: 'widget',
+          fullName: 'octocat/widget',
+          remote: 'https://github.com/octocat/widget.git',
+          defaultBranch: 'main',
+        },
+      ],
+      new Date(),
+    );
+    roomTokenAuthority = async (_tenant, input) =>
+      input.agentPubkey === agent.publicKey && input.roomId === 'room-1'
+        ? {
+            authorizedBy: owner.publicKey,
+            fullName: 'octocat/widget',
+            githubInstallationId: 77,
+          }
+        : undefined;
+    const url = `${alphaTenant.origin}/auth/github/room-token`;
+    const relayAuthorizations = Array.from({ length: 16 }, () =>
+      nip98AuthHeader(agent.secretKey, agent.publicKey, `${alphaTenant.origin}/query`, 'POST'),
+    );
+    const response = await app.inject({
+      method: 'POST',
+      url: '/auth/github/room-token',
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(agent.secretKey, agent.publicKey, url, 'POST'),
+      },
+      payload: {
+        pubkey: agent.publicKey,
+        room_id: 'room-1',
+        relay_authorizations: relayAuthorizations,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      token: 'room-installation-token',
+      installation_id: 77,
+      full_name: 'octocat/widget',
+    });
+    expect(roomTokenMint).toEqual({ installationId: 77, repositoryIds: [42] });
+
+    const stranger = generateKeypair();
+    const strangerRelayAuthorizations = Array.from({ length: 16 }, () =>
+      nip98AuthHeader(
+        stranger.secretKey,
+        stranger.publicKey,
+        `${alphaTenant.origin}/query`,
+        'POST',
+      ),
+    );
+    const denied = await app.inject({
+      method: 'POST',
+      url: '/auth/github/room-token',
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(stranger.secretKey, stranger.publicKey, url, 'POST'),
+      },
+      payload: {
+        pubkey: stranger.publicKey,
+        room_id: 'room-1',
+        relay_authorizations: strangerRelayAuthorizations,
+      },
+    });
+    expect(denied.statusCode).toBe(403);
   });
 
   it('completes GitHub sign-in through a visible immediate app handoff', async () => {
@@ -567,9 +673,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     ).resolves.toEqual([]);
     await expect(
       store.githubInstallationsForPubkey(alphaTenant.community, currentIdentity.publicKey),
-    ).resolves.toEqual([
-      expect.objectContaining({ installationId: 77, authorizedSubject: '123' }),
-    ]);
+    ).resolves.toEqual([expect.objectContaining({ installationId: 77, authorizedSubject: '123' })]);
   });
 
   it('returns the honest cached miss when GitHub installation reconciliation fails', async () => {
@@ -696,9 +800,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     });
     await expect(
       store.githubInstallationsForPubkey(alphaTenant.community, firstIdentity.publicKey),
-    ).resolves.toEqual([
-      expect.objectContaining({ installationId: 78, authorizedSubject: '123' }),
-    ]);
+    ).resolves.toEqual([expect.objectContaining({ installationId: 78, authorizedSubject: '123' })]);
     await expect(
       store.githubInstallationsForPubkey(alphaTenant.community, secondIdentity.publicKey),
     ).resolves.toEqual([]);
@@ -1317,7 +1419,9 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     expect(unconfirmed.statusCode).toBe(400);
     expect(unconfirmed.json().error).toBe('recovery_confirmation_required');
     expect(await store.linksForPubkey(alphaTenant.community, original.publicKey)).toHaveLength(1);
-    expect(await store.linksForPubkey(alphaTenant.community, replacement.publicKey)).toHaveLength(0);
+    expect(await store.linksForPubkey(alphaTenant.community, replacement.publicKey)).toHaveLength(
+      0,
+    );
 
     const confirmed = await recover(recoveryChallenge, replacement, true);
     expect(confirmed.statusCode).toBe(200);
@@ -1327,19 +1431,27 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       pubkey: replacement.publicKey,
     });
     expect(await store.linksForPubkey(alphaTenant.community, original.publicKey)).toHaveLength(0);
-    expect(await store.linksForPubkey(alphaTenant.community, replacement.publicKey)).toHaveLength(1);
+    expect(await store.linksForPubkey(alphaTenant.community, replacement.publicKey)).toHaveLength(
+      1,
+    );
 
     const staleSuccessfulTicket = await recover(originalChallenge, original, true);
     expect(staleSuccessfulTicket.statusCode).toBe(409);
     expect(staleSuccessfulTicket.json().error).toBe('recovery_not_available');
     expect(await store.linksForPubkey(alphaTenant.community, original.publicKey)).toHaveLength(0);
-    expect(await store.linksForPubkey(alphaTenant.community, replacement.publicKey)).toHaveLength(1);
+    expect(await store.linksForPubkey(alphaTenant.community, replacement.publicKey)).toHaveLength(
+      1,
+    );
 
     const laterAttacker = generateKeypair();
     const laterConflict = await bind(await ceremony(), laterAttacker);
     expect(laterConflict.statusCode).toBe(409);
-    expect(await store.linksForPubkey(alphaTenant.community, replacement.publicKey)).toHaveLength(1);
-    expect(await store.linksForPubkey(alphaTenant.community, laterAttacker.publicKey)).toHaveLength(0);
+    expect(await store.linksForPubkey(alphaTenant.community, replacement.publicKey)).toHaveLength(
+      1,
+    );
+    expect(await store.linksForPubkey(alphaTenant.community, laterAttacker.publicKey)).toHaveLength(
+      0,
+    );
   });
 
   it('allows exactly one winner when different keys race first bind', async () => {

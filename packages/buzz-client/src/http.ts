@@ -15,6 +15,8 @@ export interface HttpBridgeOptions {
   host: string;
   /** Identity used only to sign short-lived, host-bound NIP-98 request auth. */
   identity?: Pick<Identity, 'secretKey' | 'publicKey'>;
+  /** Pre-signed exact-request NIP-98 proof, for a server relaying one authorized read. */
+  authorization?: string | (() => string);
   /** Coalesce same-turn reads into one multi-filter request. */
   batchQueries?: boolean;
 }
@@ -391,7 +393,10 @@ function bridgeHeaders(
     host: opts.host,
     'x-pubkey': pubkey,
   };
-  if (opts.identity) {
+  if (opts.authorization) {
+    headers.authorization =
+      typeof opts.authorization === 'function' ? opts.authorization() : opts.authorization;
+  } else if (opts.identity) {
     headers.authorization = nip98AuthHeader(
       opts.identity.secretKey,
       opts.identity.publicKey,

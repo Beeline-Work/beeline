@@ -58,9 +58,11 @@ snapshot for every installation linked to that identity. A deliberate
 `?refresh=1` after the GitHub browser returns re-reads each active installation
 so webhook timing cannot strand the picker. Installation callbacks verify
 membership with the encrypted GitHub user token captured during sign-in. The app needs Contents
-read/write, Metadata read, and Administration write permissions. Daemons mint
-one-hour installation tokens for Git smart-HTTP; they do not consult `gh`,
-credential helpers, or ambient Git configuration.
+read/write, Metadata read, and Administration write permissions. The auth
+sidecar mints exact-repository, one-hour installation tokens for Room-member
+daemons after re-checking current relay membership and the Room's admin-authored
+repository binding. Daemons never receive the App private key and do not
+consult `gh`, credential helpers, or ambient Git configuration.
 
 GitHub ships dark until **all six** `BEELINE_GITHUB_*` values below are present.
 `GET /auth/capabilities` then reports `github: true`; without them it reports
@@ -93,9 +95,9 @@ from installs and repository-selection updates before deep-linking to Beeline.
 The webhook URL is `https://<tenant>/auth/github/webhook` with the `installation`
 and `installation_repositories` events enabled. The older
 `/auth/github/installed` and `/auth/github/install/callback` routes remain only
-as compatibility aliases. Body daemons need
-the same `BEELINE_GITHUB_APP_ID` and `BEELINE_GITHUB_APP_PRIVATE_KEY` so all clone,
-fetch, push, land, rename, preview, and CI reads use installation authority.
+as compatibility aliases. Body daemons obtain short-lived tokens from this
+service for clone, fetch, push, land, rename, preview, and CI reads; the App
+private key stays here.
 
 Production uses `https://usebeeline.app/auth/github/callback`; the tenant list
 also keeps `https://relay.buzzrouter.com/auth/github/callback` valid so stored

@@ -636,13 +636,61 @@ export async function findRuntimeConfigPaths(cwd: string): Promise<string[]> {
 }
 
 /**
- * Runtimes in the machine-local agent state home, so starting an agent no
- * longer requires standing in the specific repository it was paired in.
+ * Runtimes reachable for host-scoped commands: the machine-local state home,
+ * legacy records in the optional current checkout, and repositories bound to
+ * a discovered runtime's Rooms. Passing no cwd preserves a state-home-only
+ * library scan for callers that do not have a command checkout.
  */
 export async function findAgentRuntimeConfigPaths(
   env: NodeJS.ProcessEnv = process.env,
+  cwd?: string,
 ): Promise<string[]> {
-  return runtimeConfigPathsIn(agentsDirectory(defaultSupervisorRoot(env)));
+  // The machine-local state home is the canonical location for new records,
+  // but older agents still own their record in a paired checkout's git common
+  // dir. Start from the state home, then use each stored Room binding to find
+  // those legacy records. Include the checkout the command was run from too:
+  // an all-legacy fleet has no state record from which to learn its repo.
+  const configs = new Set(await runtimeConfigPathsIn(agentsDirectory(defaultSupervisorRoot(env))));
+  const configQueue = [...configs];
+  const inspectedConfigs = new Set<string>();
+  const gitCommonDirs = new Set<string>();
+  const gitCommonDirQueue: string[] = [];
+  const addGitCommonDir = (gitCommonDir: string) => {
+    if (!gitCommonDirs.has(gitCommonDir)) {
+      gitCommonDirs.add(gitCommonDir);
+      gitCommonDirQueue.push(gitCommonDir);
+    }
+  };
+  const currentRepo = cwd ? tryInspectLocalRepository(cwd) : null;
+  if (currentRepo) addGitCommonDir(currentRepo.gitCommonDir);
+
+  // Walk the small graph of runtimes and their Room repositories. A legacy
+  // runtime found through one Room may itself name a second repository, so
+  // stopping after the first state-home scan would still leave part of a
+  // mixed-age fleet behind.
+  while (configQueue.length || gitCommonDirQueue.length) {
+    const configPath = configQueue.shift();
+    if (configPath && !inspectedConfigs.has(configPath)) {
+      inspectedConfigs.add(configPath);
+      const runtime = await readRuntimeRecord(configPath).catch(() => undefined);
+      for (const room of runtime?.rooms ?? []) {
+        if (typeof room.repo?.gitCommonDir === 'string' && room.repo.gitCommonDir) {
+          addGitCommonDir(room.repo.gitCommonDir);
+        }
+      }
+      continue;
+    }
+
+    const gitCommonDir = gitCommonDirQueue.shift();
+    if (!gitCommonDir) continue;
+    for (const discoveredPath of await runtimeConfigPathsIn(agentsDirectory(gitCommonDir))) {
+      if (!configs.has(discoveredPath)) {
+        configs.add(discoveredPath);
+        configQueue.push(discoveredPath);
+      }
+    }
+  }
+  return [...configs];
 }
 
 export async function runtimeDaemonPid(configPath: string): Promise<number | null> {

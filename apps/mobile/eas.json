@@ -11,6 +11,12 @@
       "env": {
         "SHARP_IGNORE_GLOBAL_LIBVIPS": "1"
       }
+    },
+    "production-apk": {
+      "extends": "production",
+      "android": {
+        "buildType": "apk"
+      }
     }
   },
   "submit": {

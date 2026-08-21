@@ -13,6 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@beeline/buzz-client": "*",
     "@beeline/nostr": "*",
     "fastify": "^5.1.0",
     "jose": "^4.15.4",

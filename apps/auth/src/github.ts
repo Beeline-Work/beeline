@@ -165,14 +165,23 @@ export class GitHubAppClient {
       .sign(key);
   }
 
-  async installationToken(installationId: number): Promise<GitHubInstallationToken> {
+  async installationToken(
+    installationId: number,
+    options: { repositoryIds?: readonly number[] } = {},
+  ): Promise<GitHubInstallationToken> {
     if (!Number.isSafeInteger(installationId) || installationId <= 0) {
       throw new Error('invalid GitHub installation id');
     }
     const body = await jsonObject(
       await fetch(`${this.#config.apiBaseUrl}/app/installations/${installationId}/access_tokens`, {
         method: 'POST',
-        headers: githubHeaders(await this.appJwt()),
+        headers: {
+          ...githubHeaders(await this.appJwt()),
+          ...(options.repositoryIds?.length ? { 'content-type': 'application/json' } : {}),
+        },
+        ...(options.repositoryIds?.length
+          ? { body: JSON.stringify({ repository_ids: options.repositoryIds }) }
+          : {}),
       }),
       'GitHub installation token',
     );

@@ -55,6 +55,15 @@ const MODEL_FALLBACK_AXES: AgentModelConfigOption[] = [
   { id: 'model', category: 'model', options: [] },
   { id: 'effort', category: 'effort', options: [] },
 ];
+/**
+ * Effort levels offered when the agent has advertised no effort/thought-level
+ * axis of its own. A level picker is the ONLY affordance an effort axis ever
+ * gets — free-text entry is the wrong shape for a small fixed set, so unlike
+ * the model axis there is no custom-id escape here. These three are the
+ * common denominator every shipped harness (claude/codex/pi/grok) accepts;
+ * once the daemon publishes a real catalog its own levels replace them.
+ */
+const EFFORT_FALLBACK_LEVELS = ['low', 'medium', 'high'];
 /** Under the 45s daemon heartbeat so a just-started agent reads online promptly. */
 const AGENT_PRESENCE_REFRESH_MS = 30_000;
 /** How long an admin action waits for the connect handshake before failing honestly. */
@@ -210,6 +219,9 @@ export default function BuzzAgents() {
   const [presenceResolved, setPresenceResolved] = useState(false);
   const [presenceNow, setPresenceNow] = useState(Date.now());
   const [modelCatalog, setModelCatalog] = useState<AgentModelConfigOption[] | null>(null);
+  /** The agent's own effective selection from its published catalog — this is
+   * where a CLI (`beeline pair --model/--effort`) configuration surfaces. */
+  const [agentSelection, setAgentSelection] = useState<AgentModelConfigInput | null>(null);
   const [modelSelection, setModelSelection] = useState<AgentModelConfigInput | null>(null);
   const [modelConfigWorking, setModelConfigWorking] = useState(false);
   const [openModelAxis, setOpenModelAxis] = useState<string | null>(null);
@@ -551,6 +563,7 @@ export default function BuzzAgents() {
     setCustomModelText('');
     if (!transport || !communityId || !selected) {
       setModelCatalog(null);
+      setAgentSelection(null);
       setModelSelection(null);
       return;
     }
@@ -563,10 +576,12 @@ export default function BuzzAgents() {
         ]);
         if (cancelled) return;
         setModelCatalog(catalog?.options ?? null);
+        setAgentSelection(catalog?.selection ? { model: catalog.selection.model, effort: catalog.selection.effort } : null);
         setModelSelection(config ? { model: config.model, effort: config.effort } : null);
       } catch {
         if (!cancelled) {
           setModelCatalog(null);
+          setAgentSelection(null);
           setModelSelection(null);
         }
       }
@@ -1103,9 +1118,26 @@ export default function BuzzAgents() {
               {selected && (
                 <View style={styles.modelConfigSection} testID={`agent-${selected.pubkey}-model-config`}>
                   <Text style={styles.label}>Model / Effort</Text>
+                  {!modelCatalog && (
+                    <Text style={styles.modelConfigHint} testID="model-catalog-missing">
+                      This agent has not reported its model catalog yet. You can still set a
+                      value by hand — it applies on the agent's next session.
+                    </Text>
+                  )}
                   {(modelCatalog && modelCatalog.length > 0 ? modelCatalog : MODEL_FALLBACK_AXES).map((axis) => {
                     const persisted = axis.category === 'model' ? modelSelection?.model : modelSelection?.effort;
-                    const currentValue = persisted ?? axis.currentValue;
+                    const configured = axis.category === 'model' ? agentSelection?.model : agentSelection?.effort;
+                    // A human in-app pick wins, then what the agent itself
+                    // reports running with (a CLI `beeline pair --model`/
+                    // `--effort` default), then the harness's own snapshot.
+                    const currentValue = persisted ?? configured ?? axis.currentValue;
+                    const isEffortAxis = axis.category !== 'model';
+                    const choices: Array<{ id: string; name?: string }> =
+                      axis.options.length > 0
+                        ? axis.options
+                        : isEffortAxis
+                          ? EFFORT_FALLBACK_LEVELS.map((id) => ({ id }))
+                          : [];
                     const isOpen = openModelAxis === axis.id;
                     const isCustomOpen = customModelAxis === axis.id;
                     return (
@@ -1121,15 +1153,22 @@ export default function BuzzAgents() {
                           testID={`model-axis-${axis.id}`}
                         >
                           <Text style={styles.modelAxisLabel}>
-                            {axis.category === 'model' ? 'Model' : 'Effort'}
+                            {isEffortAxis ? 'Effort' : 'Model'}
                           </Text>
-                          <Text style={styles.modelAxisValue} numberOfLines={1}>
-                            {currentValue ?? '—'}
+                          <Text
+                            style={[styles.modelAxisValue, !currentValue && styles.modelAxisValueUnset]}
+                            numberOfLines={1}
+                            testID={`model-axis-value-${axis.id}`}
+                          >
+                            {currentValue ?? 'Not set — tap to choose'}
                           </Text>
-                          {axis.options.length > 0 && <Text style={styles.chevron}>{isOpen ? '⌄' : '›'}</Text>}
+                          {/* Every row is tappable: an effort axis always offers
+                              its levels and the model axis always offers manual
+                              entry, even when no catalog has been advertised. */}
+                          <Text style={styles.chevron}>{isOpen ? '⌄' : '›'}</Text>
                         </TouchableOpacity>
                         {isOpen &&
-                          axis.options.map((choice) => (
+                          choices.map((choice) => (
                             <TouchableOpacity
                               key={choice.id}
                               style={styles.modelOptionRow}
@@ -1148,12 +1187,14 @@ export default function BuzzAgents() {
                               {choice.id === currentValue && <Text style={styles.modelOptionCheck}>✓</Text>}
                             </TouchableOpacity>
                           ))}
-                        {/* Custom-id escape: a catalog miss is not evidence a
-                            model is unusable — harnesses like pi accept unknown
-                            ids verbatim as custom model ids — so any id can be
-                            entered by hand and the harness's own response (even
-                            a warning) is what comes back at launch. */}
-                        {isOpen && (
+                        {/* Custom-id escape, MODEL ONLY: a catalog miss is not
+                            evidence a model is unusable — harnesses like pi
+                            accept unknown ids verbatim as custom model ids —
+                            so any id can be entered by hand and the harness's
+                            own response (even a warning) is what comes back at
+                            launch. Effort never gets this: its values are a
+                            small fixed set, so it is always a level picker. */}
+                        {isOpen && !isEffortAxis && (
                           <View style={styles.modelCustomBlock}>
                             <TouchableOpacity
                               style={styles.modelOptionRow}
@@ -1574,6 +1615,12 @@ const styles = StyleSheet.create((theme) => {
   editorActions: { flexDirection: 'row', gap: 8 },
   flexButton: { flex: 1, minWidth: 0 },
   modelConfigSection: { marginTop: 12 },
+  modelConfigHint: {
+    ...Typography.default(),
+    color: groknight.textMuted,
+    fontSize: 12,
+    paddingBottom: 8,
+  },
   modelAxisBlock: { borderBottomWidth: 1, borderBottomColor: groknight.border },
   modelAxisRow: {
     minHeight: 44,
@@ -1596,6 +1643,7 @@ const styles = StyleSheet.create((theme) => {
     color: groknight.textPrimary,
     fontSize: 12,
   },
+  modelAxisValueUnset: { color: groknight.textMuted },
   modelCustomBlock: { paddingBottom: 8 },
   modelCustomEntry: {
     flexDirection: 'row',

@@ -13,13 +13,9 @@ const bundleId = {
     preview: "app.buzzy.mobile.preview",
     production: "app.buzzy.mobile"
 }[variant];
-// Keep locally-built APKs aligned with their EAS profile: a preview install
-// must ask the preview branch for OTA updates, never production.
-const updatesChannel = {
-    development: "development",
-    preview: "preview",
-    production: "production",
-}[variant];
+// Every installed variant receives OTA updates from the one surviving EAS
+// channel. APP_ENV still selects its native identity and runtime behavior.
+const updatesChannel = "preview";
 // const stagingElevenLabsAgentId = 'agent_7801k2c0r5hjfraa1kdbytpvs6yt';
 const productionElevenLabsAgentId = 'agent_6701k211syvvegba4kt7m68nxjmw';
 const elevenLabsAgentId = {

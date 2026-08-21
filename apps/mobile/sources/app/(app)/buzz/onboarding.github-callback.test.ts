@@ -18,6 +18,7 @@ const identityStorage = vi.hoisted(() => ({
 const sdk = vi.hoisted(() => ({
   finish: vi.fn(async () => ({ linked: true })),
   getCapabilities: vi.fn(async () => ({ github: true, oidc: true })),
+  startInstallation: vi.fn(async () => 'https://github.test/apps/beeline/installations/new'),
   listRepositories: vi.fn(async () => ({ installed: true, installations: [], repositories: [] })),
   lookupRecovery: vi.fn(
     async () => [] as { provider: string; subject: string; pubkey: string }[],
@@ -40,6 +41,7 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
     getAuthCapabilities: sdk.getCapabilities,
     listGitHubRepositories: sdk.listRepositories,
     lookupRecovery: sdk.lookupRecovery,
+    startGitHubInstallation: sdk.startInstallation,
   };
 });
 vi.mock('expo-router', () => ({ router: navigation }));
@@ -236,6 +238,29 @@ describe('GitHub callback delivery into onboarding', () => {
     expect(browser.open).not.toHaveBeenCalled();
   });
 
+  it('enters with an existing GitHub-linked identity without requiring App installation', async () => {
+    const identity = { secretKey: '1'.repeat(64), publicKey: '2'.repeat(64) };
+    identityStorage.load.mockResolvedValue(identity);
+    sdk.lookupRecovery.mockResolvedValue([
+      {
+        provider: 'https://github.com',
+        subject: '269599412',
+        pubkey: identity.publicKey,
+      },
+    ]);
+    sdk.listRepositories.mockResolvedValue({
+      installed: false,
+      installations: [],
+      repositories: [],
+    });
+
+    await render();
+
+    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+    expect(sdk.listRepositories).not.toHaveBeenCalled();
+    expect(browser.open).not.toHaveBeenCalled();
+  });
+
   it('cold-starts, binds the proof, saves the identity, and enters the workspace', async () => {
     await persistGitHubSignInState(STATE);
     linking.initialUrl = callbackUrl();
@@ -244,6 +269,8 @@ describe('GitHub callback delivery into onboarding', () => {
 
     expect(sdk.finish).toHaveBeenCalledTimes(1);
     expect(identityStorage.save).toHaveBeenCalledTimes(1);
+    expect(sdk.listRepositories).not.toHaveBeenCalled();
+    expect(sdk.startInstallation).not.toHaveBeenCalled();
     expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
   });
 
@@ -291,6 +318,68 @@ describe('GitHub callback delivery into onboarding', () => {
 
     expect(sdk.finish).toHaveBeenCalledTimes(1);
     expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+  });
+
+  it('opens exactly one browser during sign-in when GitHub repository access is not installed', async () => {
+    sdk.listRepositories.mockResolvedValue({
+      installed: false,
+      installations: [],
+      repositories: [],
+    });
+    browser.open.mockImplementation(async (authorizationUrl: string) => {
+      if (browser.open.mock.calls.length === 1) {
+        const state = new URL(authorizationUrl).searchParams.get('app_state')!;
+        queueMicrotask(() => linking.listener?.({ url: callbackUrl(state) }));
+      }
+      return { type: 'dismiss' };
+    });
+    const tree = await render();
+    const signIn = tree.root.find(
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
+    );
+
+    await act(async () => {
+      await signIn.props.onPress();
+    });
+
+    expect(browser.open).toHaveBeenCalledTimes(1);
+    expect(sdk.finish).toHaveBeenCalledTimes(1);
+    expect(identityStorage.save).toHaveBeenCalledTimes(1);
+    expect(sdk.listRepositories).not.toHaveBeenCalled();
+    expect(sdk.startInstallation).not.toHaveBeenCalled();
+    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+  });
+
+  it('keeps a completed bind signed in when deferred GitHub installation would fail', async () => {
+    sdk.listRepositories.mockResolvedValue({
+      installed: false,
+      installations: [],
+      repositories: [],
+    });
+    sdk.startInstallation.mockRejectedValue(
+      new OidcBindError('browser_canceled', 'The installation browser was canceled'),
+    );
+    browser.open.mockImplementation(async (authorizationUrl: string) => {
+      const state = new URL(authorizationUrl).searchParams.get('app_state')!;
+      queueMicrotask(() => linking.listener?.({ url: callbackUrl(state) }));
+      return { type: 'dismiss' };
+    });
+    const tree = await render();
+    const signIn = tree.root.find(
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
+    );
+
+    await act(async () => {
+      await signIn.props.onPress();
+    });
+
+    expect(sdk.finish).toHaveBeenCalledTimes(1);
+    expect(identityStorage.save).toHaveBeenCalledTimes(1);
+    expect(browser.open).toHaveBeenCalledTimes(1);
+    expect(sdk.listRepositories).not.toHaveBeenCalled();
+    expect(sdk.startInstallation).not.toHaveBeenCalled();
+    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+    expect(noticeText(tree)).not.toContain('SIGN-IN CANCELED');
   });
 
   it('renders the bind failure notice after a warm deep link remounts onboarding', async () => {

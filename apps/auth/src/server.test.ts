@@ -1018,6 +1018,13 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     expect(replayedConflict.statusCode).toBe(409);
     expect(replayedConflict.json().error).toBe('identity_conflict');
 
+    const wrongKey = generateKeypair();
+    const wrongKeyRecovery = await recover(recoveryChallenge, wrongKey, true);
+    expect(wrongKeyRecovery.statusCode).toBe(409);
+    expect(wrongKeyRecovery.json().error).toBe('ticket_used');
+    expect(await store.linksForPubkey(alphaTenant.community, original.publicKey)).toHaveLength(1);
+    expect(await store.linksForPubkey(alphaTenant.community, wrongKey.publicKey)).toHaveLength(0);
+
     const unconfirmed = await recover(recoveryChallenge, replacement, false);
     expect(unconfirmed.statusCode).toBe(400);
     expect(unconfirmed.json().error).toBe('recovery_confirmation_required');

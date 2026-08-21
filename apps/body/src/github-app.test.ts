@@ -108,4 +108,41 @@ describe('daemon GitHub App runtime', () => {
       16,
     );
   });
+
+  it('propagates the auth service Room refusal to repository discovery', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: 'room_repository_unauthorized',
+            message: 'agent is not authorized for this Room repository',
+          }),
+          { status: 403, headers: { 'content-type': 'application/json' } },
+        ),
+      ),
+    );
+    const identity = newIdentity('agent');
+    const runtime = GitHubAppRuntime.fromEnvironment(
+      {},
+      { baseUrl: 'https://relay.example', identity },
+    )!;
+
+    await expect(
+      runtime.resolveIdentity(
+        {
+          key: 'github:42',
+          name: 'acme/widget',
+          remote: 'git://github.com/acme/widget',
+          githubInstallationId: 77,
+          localOnly: false,
+        },
+        'room-1',
+      ),
+    ).rejects.toMatchObject({
+      name: 'OidcBindError',
+      code: 'room_repository_unauthorized',
+      status: 403,
+    });
+  });
 });

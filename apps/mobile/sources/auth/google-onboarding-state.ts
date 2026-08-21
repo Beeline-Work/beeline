@@ -98,10 +98,12 @@ export async function waitForGoogleAuthCallback({
 
 export function noticeForOidcError(error: unknown): GoogleOnboardingNotice {
   const code = error instanceof OidcBindError ? error.code : 'unknown';
+  const codeLabel = (code.replace(/[^a-z0-9_-]/gi, '_').slice(0, 40) || 'unknown').toUpperCase();
+  const titleWithCode = (title: string): string => `${title} · ${codeLabel}`;
   if (code === 'ticket_expired' || code === 'unknown_ticket' || code === 'invalid_oidc_flow') {
     return {
       status: 'token_expired',
-      title: 'SESSION EXPIRED',
+      title: titleWithCode('SESSION EXPIRED'),
       message: 'The one-time account proof expired. Start again to get a new one.',
       retryable: false,
     };
@@ -109,7 +111,7 @@ export function noticeForOidcError(error: unknown): GoogleOnboardingNotice {
   if (code === 'identity_conflict') {
     return {
       status: 'link_conflict',
-      title: 'LINK CONFLICT · RECOVERY NEEDED',
+      title: titleWithCode('LINK CONFLICT · RECOVERY NEEDED'),
       message:
         'This sign-in account already has a different device key. Recovery is required; this key was not saved.',
       retryable: false,
@@ -118,15 +120,23 @@ export function noticeForOidcError(error: unknown): GoogleOnboardingNotice {
   if (code === 'oidc_denied' || code === 'github_denied' || code === 'browser_canceled') {
     return {
       status: 'browser_canceled',
-      title: 'SIGN-IN CANCELED',
+      title: titleWithCode('SIGN-IN CANCELED'),
       message: 'Nothing changed on this device. Sign in again when you are ready.',
+      retryable: false,
+    };
+  }
+  if (code === 'invalid_redirect' || code === 'invalid_configuration' || code === 'invalid_state') {
+    return {
+      status: 'bind_retry',
+      title: titleWithCode('SIGN-IN CONFIG ERROR'),
+      message: 'The app rejected its sign-in callback configuration. Update or reinstall the app.',
       retryable: false,
     };
   }
   if (code === 'offline' || (error instanceof OidcBindError && error.retryable)) {
     return {
       status: code === 'offline' ? 'offline' : 'bind_retry',
-      title: code === 'offline' ? 'OFFLINE' : 'BIND INTERRUPTED',
+      title: titleWithCode(code === 'offline' ? 'OFFLINE' : 'BIND INTERRUPTED'),
       message:
         'The device key is ready but could not be bound. Check the connection and retry before the proof expires.',
       retryable: true,
@@ -134,8 +144,8 @@ export function noticeForOidcError(error: unknown): GoogleOnboardingNotice {
   }
   return {
     status: 'bind_retry',
-    title: 'BIND INTERRUPTED',
+    title: titleWithCode('BIND FAILED'),
     message: error instanceof Error ? error.message : 'The device key could not be bound.',
-    retryable: true,
+    retryable: false,
   };
 }

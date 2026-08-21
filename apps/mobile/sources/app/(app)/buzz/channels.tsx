@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   SectionList,
   Linking,
+  Platform,
   Share,
   Text,
   TextInput,
@@ -30,7 +31,12 @@ import {
   getEffectiveRelayUrl,
   loadBuzzIdentity,
 } from '@/auth/buzz-identity-storage';
-import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
+import {
+  githubInstallationRedirectUri,
+  resumeInitialGitHubInstallation,
+  runGitHubInstallationSession,
+} from '@/auth/github-auth-session';
+import { googleAuthSessionOptions } from '@/auth/google-auth-session';
 import { saveLastViewedChannel } from '@/buzz/community-storage';
 import { createCommunityInviteUrl } from '@/buzz/community-invite';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
@@ -776,14 +782,35 @@ export default function BuzzChannels() {
     if (!transport) return;
     setRepoPickerError(null);
     try {
-      const redirectUri = githubInstallationRedirectUri();
-      const installationUrl = await transport.githubInstallationStart(redirectUri);
-      const result = await WebBrowser.openAuthSessionAsync(installationUrl, redirectUri);
-      if (result.type === 'success') await loadRepoPicker();
+      await runGitHubInstallationSession({
+        returnPath: '/buzz/channels',
+        startInstallation: () =>
+          transport.githubInstallationStart(githubInstallationRedirectUri()),
+        openAuthSession: (installationUrl, redirectUri) =>
+          WebBrowser.openAuthSessionAsync(
+            installationUrl,
+            redirectUri,
+            googleAuthSessionOptions(Platform.OS, redirectUri),
+          ),
+        subscribeToUrls: (listener) =>
+          Linking.addEventListener('url', ({ url }) => listener(url)),
+      });
+      await loadRepoPicker();
     } catch (err) {
       setRepoPickerError(`Could not connect GitHub: ${String(err)}`);
     }
   }, [loadRepoPicker, transport]);
+
+  useEffect(() => {
+    if (!transport || !activeCommunityId) return;
+    void resumeInitialGitHubInstallation(() => Linking.getInitialURL())
+      .then(async (completed) => {
+        if (!completed) return;
+        setShowRepoPicker(true);
+        await loadRepoPicker();
+      })
+      .catch((err) => setRepoPickerError(`Could not connect GitHub: ${String(err)}`));
+  }, [activeCommunityId, loadRepoPicker, transport]);
 
   const handleCreateGitHubRepository = useCallback(
     async (installationId: number, name: string) => {

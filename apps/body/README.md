@@ -235,6 +235,26 @@ human message. `beeline spend` attributes a restart continuation to the original
 human request and groups re-prime counts and before/after token sizes by daemon
 process generation.
 
+### Restore a removed agent runtime
+
+A corroborated Workspace removal stops the daemon but never deletes its identity.
+The complete runtime directory is moved to
+`<state-root>/deleted-runtimes/<agent-pubkey>-<timestamp>/`, and the daemon logs
+that exact archive path. The default `<state-root>` is `~/.local/state`; when
+`XDG_STATE_HOME` is set, it is that directory instead.
+
+To restore one, first make sure no newly paired runtime exists for the same
+pubkey. Move the archived directory back to
+`<state-root>/beeline/agents/<agent-pubkey>/`, then run
+`beeline start --agent <agent-pubkey>`. Repo-local compatibility pointers are
+not required for `--agent`; they remain absent until a later pairing or explicit
+maintenance step recreates them.
+
+```bash
+mv /path/to/state-root/deleted-runtimes/PUBKEY-TIMESTAMP /path/to/state-root/beeline/agents/PUBKEY
+beeline start --agent PUBKEY
+```
+
 The coding model always comes from the selected operator-owned coding agent. The
 explicit `reference` fallback instead uses the operator's local environment or
 `BUZZY_BODY_LLM_FILE`; pairing neither requests nor stores a Beeline LLM key.

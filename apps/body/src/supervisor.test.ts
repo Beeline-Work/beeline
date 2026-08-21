@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { newIdentity } from '@beeline/gate';
 import type { BodyConfig } from './config.js';
-import { inspectLocalRepository, type AgentRuntimeRecord, type RoomRuntimeRecord } from './runtime.js';
+import {
+  inspectLocalRepository,
+  removeAgentRuntime,
+  type AgentRuntimeRecord,
+  type RoomRuntimeRecord,
+} from './runtime.js';
 
 const mocks = vi.hoisted(() => ({
   createBuzzClient: vi.fn(),
@@ -36,7 +41,7 @@ function storedIdentity(name: string) {
 }
 
 describe('WorkspaceSupervisor removal lease', () => {
-  it('returns agent-removed when the Workspace membership projection drops the agent', async () => {
+  it('requires three successful membership reads before returning agent-removed', async () => {
     const agent = storedIdentity('agent');
     const body = storedIdentity('body');
     const disconnect = vi.fn();
@@ -64,11 +69,151 @@ describe('WorkspaceSupervisor removal lease', () => {
     );
 
     await expect(supervisor.run({ pollMs: 1 })).resolves.toBe('agent-removed');
+    expect(mocks.createBuzzClient.mock.results[0]?.value.isMember).toHaveBeenCalledTimes(3);
     expect(supervisor.activeRoomIds()).toEqual([]);
     // reconcile()'s own per-call client, plus the daemon's one shared relay
     // socket closed at teardown. This fixture returns the same mock object for
     // every createBuzzClient() call, so both land on this spy.
-    expect(disconnect).toHaveBeenCalledTimes(2);
+    expect(disconnect).toHaveBeenCalledTimes(4);
+  });
+
+  it('archives a corroborated removed runtime so its identity can be restored', async () => {
+    const stateRoot = mkdtempSync(resolve(tmpdir(), 'beeline-removal-archive-'));
+    try {
+      const agent = storedIdentity('archived-agent');
+      const body = storedIdentity('archived-body');
+      const runtime: AgentRuntimeRecord = {
+        version: 2,
+        communityId: '11111111-1111-4111-8111-111111111111',
+        pairedBy: 'a'.repeat(64),
+        agent: agent.stored,
+        body: body.stored,
+        rooms: [],
+        supervisorRoot: stateRoot,
+        relayBaseUrl: 'http://relay.test',
+        agentBinary: '/bin/true',
+        mcpBinary: '/bin/true',
+        createdAt: new Date(0).toISOString(),
+      };
+      const configPath = resolve(
+        stateRoot,
+        'beeline',
+        'agents',
+        runtime.agent.publicKey,
+        'runtime.json',
+      );
+      mkdirSync(dirname(configPath), { recursive: true });
+      writeFileSync(configPath, `${JSON.stringify(runtime)}\n`, { mode: 0o600 });
+      writeFileSync(resolve(dirname(configPath), 'daemon.pid'), '4242\n');
+      const isMember = vi.fn().mockResolvedValue(false);
+      mocks.createBuzzClient.mockReturnValue({ isMember, disconnect: vi.fn() });
+      const supervisor = new WorkspaceSupervisor(runtime, configPath, {} as BodyConfig);
+
+      await expect(supervisor.run({ pollMs: 1 })).resolves.toBe('agent-removed');
+      expect(isMember).toHaveBeenCalledTimes(3);
+
+      await removeAgentRuntime(configPath, runtime.agent.publicKey);
+
+      expect(existsSync(configPath)).toBe(false);
+      const archived = readdirSync(resolve(stateRoot, 'deleted-runtimes'));
+      expect(archived).toHaveLength(1);
+      expect(archived[0]).toMatch(new RegExp(`^${runtime.agent.publicKey}-`));
+      expect(
+        existsSync(resolve(stateRoot, 'deleted-runtimes', archived[0]!, 'runtime.json')),
+      ).toBe(true);
+      expect(
+        existsSync(resolve(stateRoot, 'deleted-runtimes', archived[0]!, 'daemon.pid')),
+      ).toBe(false);
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('requires the successful removal reads to be consecutive', async () => {
+    const agent = storedIdentity('consecutive-agent');
+    const body = storedIdentity('consecutive-body');
+    const runtime: AgentRuntimeRecord = {
+      version: 2,
+      communityId: '11111111-1111-4111-8111-111111111111',
+      pairedBy: 'a'.repeat(64),
+      agent: agent.stored,
+      body: body.stored,
+      rooms: [],
+      supervisorRoot: '/tmp/beeline-consecutive-test',
+      relayBaseUrl: 'http://relay.test',
+      agentBinary: '/bin/true',
+      mcpBinary: '/bin/true',
+      createdAt: new Date(0).toISOString(),
+    };
+    const isMember = vi
+      .fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockRejectedValueOnce(new Error('membership projection unavailable'))
+      .mockResolvedValue(false);
+    mocks.createBuzzClient.mockReturnValue({ isMember, disconnect: vi.fn() });
+    const supervisor = new WorkspaceSupervisor(
+      runtime,
+      `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+    );
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await expect(supervisor.reconcile()).resolves.toBe('unknown');
+    await expect(supervisor.reconcile()).resolves.toBe('unknown');
+    await expect(supervisor.reconcile()).resolves.toBe('unknown');
+    await expect(supervisor.reconcile()).resolves.toBe('unknown');
+    await expect(supervisor.reconcile()).resolves.toBe('unknown');
+    await expect(supervisor.reconcile()).resolves.toBe('not-member');
+  });
+
+  it('keeps a missing Room running until successful reads corroborate its removal', async () => {
+    const agent = storedIdentity('room-removal-agent');
+    const body = storedIdentity('room-removal-body');
+    const runtime: AgentRuntimeRecord = {
+      version: 2,
+      communityId: '11111111-1111-4111-8111-111111111111',
+      pairedBy: 'a'.repeat(64),
+      agent: agent.stored,
+      body: body.stored,
+      rooms: [],
+      supervisorRoot: '/tmp/beeline-room-removal-test',
+      relayBaseUrl: 'http://relay.test',
+      agentBinary: '/bin/true',
+      mcpBinary: '/bin/true',
+      createdAt: new Date(0).toISOString(),
+    };
+    mocks.createBuzzClient.mockReturnValue({
+      isMember: vi.fn().mockResolvedValue(true),
+      listMyChannels: vi.fn().mockResolvedValue([]),
+      disconnect: vi.fn(),
+    });
+    const supervisor = new WorkspaceSupervisor(
+      runtime,
+      `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+    );
+    const roomController = new AbortController();
+    const running = (supervisor as never).running as Map<string, unknown>;
+    running.set('missing-room', {
+      body: { forceRecoverRoom: vi.fn() },
+      controller: roomController,
+      promise: Promise.resolve(),
+      lastPollAt: Date.now(),
+      lastPresenceAt: Date.now(),
+      presence: 'online',
+      backoffUntil: 0,
+      recovering: false,
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await expect(supervisor.reconcile()).resolves.toBe('member');
+    expect(roomController.signal.aborted).toBe(false);
+    await expect(supervisor.reconcile()).resolves.toBe('member');
+    expect(roomController.signal.aborted).toBe(false);
+    await expect(supervisor.reconcile()).resolves.toBe('member');
+    expect(roomController.signal.aborted).toBe(true);
   });
 });
 
@@ -128,7 +273,7 @@ describe('WorkspaceSupervisor unbound channel policy', () => {
       .spyOn(supervisor as never, 'startRepositoryRoom' as never)
       .mockImplementation(() => undefined as never);
 
-    await expect(supervisor.reconcile()).resolves.toBe(true);
+    await expect(supervisor.reconcile()).resolves.toBe('member');
 
     expect(startConversation).toHaveBeenCalledWith('dm-channel', 'direct-message');
     expect(startRepository).not.toHaveBeenCalled();
@@ -174,7 +319,7 @@ describe('WorkspaceSupervisor unbound channel policy', () => {
       .spyOn(supervisor as never, 'startRepositoryRoom' as never)
       .mockImplementation(() => undefined as never);
 
-    await expect(supervisor.reconcile()).resolves.toBe(true);
+    await expect(supervisor.reconcile()).resolves.toBe('member');
 
     // Neither: "I could not tell" is not a licence to pick one.
     expect(startConversation).not.toHaveBeenCalled();
@@ -205,7 +350,7 @@ describe('WorkspaceSupervisor unbound channel policy', () => {
       .spyOn(supervisor as never, 'startConversationRoom' as never)
       .mockImplementation(() => undefined as never);
 
-    await expect(supervisor.reconcile()).resolves.toBe(true);
+    await expect(supervisor.reconcile()).resolves.toBe('member');
 
     expect(startConversation).toHaveBeenCalledWith('repo-less-room', 'named-repository');
   });
@@ -339,7 +484,7 @@ describe('WorkspaceSupervisor Room watchdog', () => {
       .spyOn(supervisor as never, 'startRepositoryRoom' as never)
       .mockImplementation(() => undefined as never);
 
-    await expect(supervisor.reconcile()).resolves.toBe(true);
+    await expect(supervisor.reconcile()).resolves.toBe('member');
 
     expect(start).toHaveBeenCalledWith(runtime.rooms[0], 'stale-room');
     expect(start).toHaveBeenCalledWith(runtime.rooms[1], 'healthy-room');
@@ -371,6 +516,57 @@ describe('WorkspaceSupervisor transient relay resilience', () => {
     // exhausts its own 5xx retry budget for a member/role-projection read.
     return new Error('queryEvents failed after 3 attempts: HTTP 502 Bad Gateway');
   }
+
+  function liveNonRetryableHtmlErrorFixture(): Error & { nonRetryable: true } {
+    // Captured production failure shape from the usebeeline.app cutover. The
+    // bridge attaches `nonRetryable` after exhausting the 5xx attempts, while
+    // the edge sends an HTML body instead of the relay's JSON response.
+    return Object.assign(
+      new Error(
+        'queryEvents failed: HTTP 503 <html><body>Please try again in a few minutes.</body></html>',
+      ),
+      { nonRetryable: true as const },
+    );
+  }
+
+  it('maps the live non-retryable HTML membership failure to unknown and keeps the runtime', async () => {
+    const stateRoot = mkdtempSync(resolve(tmpdir(), 'beeline-membership-unknown-'));
+    try {
+      const runtime = runtimeMinimal('html-error-agent');
+      runtime.supervisorRoot = stateRoot;
+      const configPath = resolve(
+        stateRoot,
+        'beeline',
+        'agents',
+        runtime.agent.publicKey,
+        'runtime.json',
+      );
+      mkdirSync(dirname(configPath), { recursive: true });
+      writeFileSync(configPath, `${JSON.stringify(runtime)}\n`, { mode: 0o600 });
+      const isMember = vi.fn().mockRejectedValue(liveNonRetryableHtmlErrorFixture());
+      mocks.createBuzzClient.mockReturnValue({ isMember, disconnect: vi.fn() });
+      const supervisor = new WorkspaceSupervisor(runtime, configPath, {} as BodyConfig);
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+      await expect(supervisor.reconcile()).resolves.toBe('unknown');
+
+      const controller = new AbortController();
+      const runPromise = supervisor.run({ pollMs: 1, signal: controller.signal });
+      while (isMember.mock.calls.length < 3) {
+        await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+      }
+
+      expect(existsSync(configPath)).toBe(true);
+      expect(existsSync(resolve(stateRoot, 'deleted-runtimes'))).toBe(false);
+      expect(errors.mock.calls.flat().join(' ')).toContain(
+        'membership could not be confirmed; keeping runtime and Rooms',
+      );
+      controller.abort();
+      await expect(runPromise).resolves.toBe('aborted');
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
 
   it('backs off and retries reconcile after a transient relay 502 instead of crash-looping', async () => {
     const runtime = runtimeMinimal('resilience-agent');
@@ -434,9 +630,9 @@ describe('WorkspaceSupervisor transient relay resilience', () => {
       recovering: false,
     });
 
-    // reconcile() itself still surfaces the failure (run() is what applies
-    // the backoff/retry); the corner must be untouched by the failed attempt.
-    await expect(supervisor.reconcile()).rejects.toThrow(/502/);
+    // The destructive membership boundary maps every read failure to the
+    // explicit unknown state; the corner must be untouched by the attempt.
+    await expect(supervisor.reconcile()).resolves.toBe('unknown');
 
     expect(supervisor.activeRoomIds()).toEqual(['active-corner']);
     expect(cornerController.signal.aborted).toBe(false);
@@ -831,7 +1027,7 @@ describe('WorkspaceSupervisor per-Room discovery isolation', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     // The pass completes rather than throwing...
-    await expect(supervisor.reconcile()).resolves.toBe(true);
+    await expect(supervisor.reconcile()).resolves.toBe('member');
 
     // ...and the two Rooms listed *after* the unservable one are still served.
     expect(startConversation).toHaveBeenCalledWith('good-dm', 'direct-message');

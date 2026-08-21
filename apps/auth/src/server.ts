@@ -272,6 +272,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
           {
             community,
             pubkey,
+            authorizedSubject: subject,
             accountId: account.id,
             accountLogin: account.login,
             accountType: account.type,
@@ -1105,10 +1106,11 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
         'the signed-in GitHub user cannot administer this installation',
       );
     }
-    await options.store.saveGitHubInstallation(
+    const installationSaved = await options.store.saveGitHubInstallation(
       {
         community: tenant.community,
         pubkey: flow.pubkey,
+        authorizedSubject: linkedAccountId,
         accountId: installedAccount.id,
         accountLogin: installedAccount.login,
         accountType: installedAccount.type,
@@ -1120,6 +1122,13 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       },
       now(),
     );
+    if (!installationSaved) {
+      throw new ProtocolError(
+        409,
+        'installation_account_mismatch',
+        'the GitHub installation is already linked through another GitHub account',
+      );
+    }
     await options.store.replaceGitHubRepositories(
       tenant.community,
       installationId,

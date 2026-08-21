@@ -1,14 +1,20 @@
-import React, { useCallback, useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Linking, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { router, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { clearBuzzIdentity } from '@/auth/buzz-identity-storage';
+import type { GitHubInstallationAccess } from '@beeline/buzz-client';
+import {
+  clearBuzzIdentity,
+  getEffectiveRelayUrl,
+  loadBuzzIdentity,
+} from '@/auth/buzz-identity-storage';
 import { clearBuzzLocalCache } from '@/buzz/local-cache';
 import { groknight } from '@/buzz/groknight';
 import { WORKSPACES_LABEL } from '@/buzz/vocabulary';
 import { hairlineDivider, PixelGateReveal } from '@/components/buzz/MonoHull';
 import { Typography } from '@/constants/Typography';
+import { BuzzRigTransport } from '@/sync/transport';
 
 /**
  * The account settings hub — the single surface the Workspace rail's YOU
@@ -23,6 +29,21 @@ import { Typography } from '@/constants/Typography';
 export default function BuzzSettings() {
   const insets = useSafeAreaInsets();
   const [confirmForget, setConfirmForget] = useState(false);
+  const [githubInstallations, setGitHubInstallations] = useState<GitHubInstallationAccess[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()])
+      .then(async ([identity, relayUrl]) => {
+        if (!identity) return;
+        const access = await new BuzzRigTransport(identity, relayUrl).workspaceGitHubAccess();
+        if (!cancelled) setGitHubInstallations(access.installations);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleForget = useCallback(async () => {
     if (!confirmForget) {
@@ -49,9 +70,7 @@ export default function BuzzSettings() {
         </TouchableOpacity>
         <View style={styles.headerCopy}>
           <Text style={styles.title}>Settings</Text>
-          <Text style={styles.headerMeta}>
-            ACCOUNT · ALL {WORKSPACES_LABEL.toUpperCase()}
-          </Text>
+          <Text style={styles.headerMeta}>ACCOUNT · ALL {WORKSPACES_LABEL.toUpperCase()}</Text>
         </View>
       </View>
 
@@ -72,6 +91,37 @@ export default function BuzzSettings() {
             <Text style={styles.rowChevron}>›</Text>
           </View>
         </TouchableOpacity>
+
+        <Text style={styles.sectionLabel}>CONNECTED ACCOUNTS</Text>
+        {githubInstallations.map((installation) => (
+          <TouchableOpacity
+            accessibilityLabel={`Manage ${installation.accountLogin} on GitHub`}
+            accessibilityRole="link"
+            key={installation.installationId}
+            onPress={() => void Linking.openURL(installation.manageUrl)}
+            style={styles.settingsRow}
+            testID={`github-installation-${installation.installationId}`}
+          >
+            <View style={styles.rowCopy}>
+              <Text style={styles.rowTitle}>{installation.accountLogin}</Text>
+              <Text style={styles.rowSubtitle}>
+                {installation.status === 'active'
+                  ? `${installation.repositoryCount} repositories`
+                  : `${installation.status} · reconnect required`}
+              </Text>
+            </View>
+            <View style={styles.rowGutter}>
+              <Text style={styles.manageText}>MANAGE ↗</Text>
+            </View>
+          </TouchableOpacity>
+        ))}
+        {!githubInstallations.length && (
+          <View style={styles.settingsRow} testID="github-installations-empty">
+            <View style={styles.rowCopy}>
+              <Text style={styles.rowSubtitle}>No GitHub accounts connected</Text>
+            </View>
+          </View>
+        )}
 
         <Text style={styles.sectionLabel}>THIS DEVICE</Text>
         <TouchableOpacity
@@ -189,6 +239,11 @@ const styles = StyleSheet.create({
     color: groknight.ledgerGhost,
     fontSize: 18,
     lineHeight: 20,
+  },
+  manageText: {
+    ...Typography.mono(),
+    color: groknight.textSecondary,
+    fontSize: 9,
   },
   forgetGlyph: {
     ...Typography.default(),

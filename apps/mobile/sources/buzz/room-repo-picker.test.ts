@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   dedupeRepoCandidates,
   looksLikeCornerOpenIntent,
+  githubFullNameFromInput,
   roomRepoChipLabel,
 } from './room-repo-picker';
 
@@ -23,11 +24,28 @@ describe('dedupeRepoCandidates', () => {
   });
 });
 
+describe('githubFullNameFromInput', () => {
+  it.each([
+    'acme/widget',
+    'https://github.com/acme/widget',
+    'https://github.com/acme/widget.git',
+    'git@github.com:acme/widget.git',
+    'git://github.com/acme/widget',
+  ])('normalizes %s for miss-triggered install cards', (input) => {
+    expect(githubFullNameFromInput(input)).toBe('acme/widget');
+  });
+
+  it('rejects non-GitHub and prose inputs', () => {
+    expect(githubFullNameFromInput('https://example.com/acme/widget')).toBeNull();
+    expect(githubFullNameFromInput('please use acme/widget')).toBeNull();
+  });
+});
+
 describe('roomRepoChipLabel', () => {
   it('returns the binding name for a bound Room', () => {
-    expect(
-      roomRepoChipLabel({ binding: { key: 'k', name: 'widget', localOnly: false } }),
-    ).toBe('widget');
+    expect(roomRepoChipLabel({ binding: { key: 'k', name: 'widget', localOnly: false } })).toBe(
+      'widget',
+    );
   });
 
   it('returns null for a chat-only Room', () => {

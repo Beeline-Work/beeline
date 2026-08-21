@@ -1,4 +1,12 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  createHmac,
+  randomBytes,
+  timingSafeEqual,
+} from 'node:crypto';
 import { AuthStore } from './store.js';
 import { OidcClient } from './oidc.js';
 import { GitHubAppClient, GitHubOAuthClient, type GitHubIdentity } from './github.js';
@@ -27,7 +35,7 @@ export interface AuthServerOptions {
   store: AuthStore;
   oidc: OidcClient;
   /** GitHub is the shipped sign-in and repository-access provider. */
-  github?: { oauth: GitHubOAuthClient; app: GitHubAppClient };
+  github?: { oauth: GitHubOAuthClient; app: GitHubAppClient; webhookSecret?: string };
   tenants: AuthTenant[];
   now?: () => Date;
   flowTtlMs?: number;
@@ -62,6 +70,61 @@ function requiredQueryString(value: unknown, name: string): string {
   return value;
 }
 
+function githubRepositoryFromPayload(
+  value: unknown,
+  installationId: number,
+): {
+  id: number;
+  installationId: number;
+  name: string;
+  fullName: string;
+  remote: string;
+  defaultBranch: string;
+} {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ProtocolError(400, 'invalid_webhook', 'invalid GitHub repository payload');
+  }
+  const repository = value as Record<string, unknown>;
+  const id = repository.id;
+  const name = repository.name;
+  const fullName = repository.full_name;
+  const remote = repository.clone_url;
+  const defaultBranch = repository.default_branch;
+  if (
+    typeof id !== 'number' ||
+    !Number.isSafeInteger(id) ||
+    typeof name !== 'string' ||
+    typeof fullName !== 'string' ||
+    typeof remote !== 'string' ||
+    typeof defaultBranch !== 'string'
+  ) {
+    throw new ProtocolError(400, 'invalid_webhook', 'invalid GitHub repository payload');
+  }
+  return { id, installationId, name, fullName, remote, defaultBranch };
+}
+
+function githubInstallationId(value: unknown): number {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ProtocolError(400, 'invalid_webhook', 'invalid GitHub installation payload');
+  }
+  const id = (value as Record<string, unknown>).id;
+  if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) {
+    throw new ProtocolError(400, 'invalid_webhook', 'invalid GitHub installation payload');
+  }
+  return id;
+}
+
+function verifyGitHubWebhookSignature(
+  secret: string,
+  rawBody: Buffer,
+  signature: unknown,
+): boolean {
+  if (typeof signature !== 'string' || !/^sha256=[0-9a-f]{64}$/.test(signature)) return false;
+  const expected = Buffer.from(createHmac('sha256', secret).update(rawBody).digest('hex'), 'hex');
+  const actual = Buffer.from(signature.slice(7), 'hex');
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
 function flowCookie(request: FastifyRequest, cookieName = FLOW_COOKIE): string {
   const matches = (request.headers.cookie ?? '')
     .split(';')
@@ -90,6 +153,28 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
   const nativeRedirectUris = new Set(options.nativeRedirectUris ?? []);
   const cookieSecurity = options.secureCookies === false ? '' : ' Secure;';
   const flowCookieName = options.secureCookies === false ? 'beeline_oidc_flow' : FLOW_COOKIE;
+  const githubTokenKey = options.github
+    ? createHash('sha256').update(options.github.oauth.config.clientSecret).digest()
+    : undefined;
+  const encryptGitHubToken = (token: string): string => {
+    if (!githubTokenKey) throw new Error('GitHub token encryption is unavailable');
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', githubTokenKey, iv);
+    const ciphertext = Buffer.concat([cipher.update(token, 'utf8'), cipher.final()]);
+    return [iv, cipher.getAuthTag(), ciphertext]
+      .map((part) => part.toString('base64url'))
+      .join('.');
+  };
+  const decryptGitHubToken = (sealed: string): string => {
+    if (!githubTokenKey) throw new Error('GitHub token encryption is unavailable');
+    const parts = sealed.split('.').map((part) => Buffer.from(part, 'base64url'));
+    if (parts.length !== 3 || parts[0]!.length !== 12 || parts[1]!.length !== 16) {
+      throw new Error('stored GitHub token is invalid');
+    }
+    const decipher = createDecipheriv('aes-256-gcm', githubTokenKey, parts[0]!);
+    decipher.setAuthTag(parts[1]!);
+    return Buffer.concat([decipher.update(parts[2]!), decipher.final()]).toString('utf8');
+  };
   if (flowTtlMs < 30_000 || flowTtlMs > 10 * 60_000)
     throw new Error('flow TTL is outside safe bounds');
   if (ticketTtlMs < 30_000 || ticketTtlMs > 5 * 60_000)
@@ -182,7 +267,20 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     return reply.send(bindChallenge);
   };
 
-  const app = Fastify({ logger: options.logger ?? false, bodyLimit: 64 * 1024 });
+  const app = Fastify({ logger: options.logger ?? false, bodyLimit: 1024 * 1024 });
+  app.removeContentTypeParser('application/json');
+  app.addContentTypeParser(
+    'application/json',
+    { parseAs: 'buffer' },
+    (request, body: Buffer, done) => {
+      (request as FastifyRequest & { rawBody?: Buffer }).rawBody = body;
+      try {
+        done(null, body.length ? JSON.parse(body.toString('utf8')) : {});
+      } catch (error) {
+        done(error as Error, undefined);
+      }
+    },
+  );
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ProtocolError) {
@@ -390,6 +488,12 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       if (completion) return reply.redirect(completion.toString(), 302);
       throw new ProtocolError(401, 'invalid_github_proof', 'GitHub code exchange failed');
     }
+    await options.store.saveGitHubUserToken(
+      tenant.community,
+      identity.subject,
+      encryptGitHubToken(identity.accessToken),
+      now(),
+    );
     return issueBindChallenge(tenant, flow, identity, reply);
   });
 
@@ -669,7 +773,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     return reply.send({ authorization_url: options.github.app.installationUrl(state) });
   });
 
-  app.get('/auth/github/install/callback', async (request, reply) => {
+  const completeGitHubInstallation = async (request: FastifyRequest, reply: FastifyReply) => {
     if (!options.github)
       throw new ProtocolError(503, 'github_unavailable', 'GitHub App is not configured');
     const tenant = tenantFor(request);
@@ -688,30 +792,61 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
         'GitHub installation flow is missing, expired, or already used',
       );
     }
-    const [linkedAccountId, installedAccountId] = await Promise.all([
+    const [linkedAccountId, installedAccount, repositories] = await Promise.all([
       options.store.githubSubjectForPubkey(tenant.community, flow.pubkey),
-      options.github.app.installationAccountId(installationId),
+      options.github.app.installationAccount(installationId),
+      options.github.app.listRepositories(installationId),
     ]);
-    if (!linkedAccountId || linkedAccountId !== installedAccountId) {
+    if (!linkedAccountId) {
+      throw new ProtocolError(
+        403,
+        'github_not_linked',
+        'sign in with GitHub before installing the Beeline GitHub App',
+      );
+    }
+    const sealedUserToken = await options.store.githubUserToken(tenant.community, linkedAccountId);
+    if (
+      !sealedUserToken ||
+      !(await options.github.app.userCanAccessInstallation(
+        decryptGitHubToken(sealedUserToken),
+        installationId,
+      ))
+    ) {
       throw new ProtocolError(
         403,
         'installation_account_mismatch',
-        'install the app on the GitHub account used to sign in',
+        'the signed-in GitHub user cannot administer this installation',
       );
     }
     await options.store.saveGitHubInstallation(
       {
         community: tenant.community,
         pubkey: flow.pubkey,
-        accountId: installedAccountId,
+        accountId: installedAccount.id,
+        accountLogin: installedAccount.login,
+        accountType: installedAccount.type,
+        ...(installedAccount.avatarUrl ? { accountAvatarUrl: installedAccount.avatarUrl } : {}),
         installationId,
+        repositorySelection: installedAccount.repositorySelection,
+        status: 'active',
+        repositoryCount: repositories.length,
       },
+      now(),
+    );
+    await options.store.replaceGitHubRepositories(
+      tenant.community,
+      installationId,
+      repositories,
       now(),
     );
     const completion = new URL(flow.redirectUri);
     completion.searchParams.set('installed', '1');
     return reply.redirect(completion.toString(), 302);
-  });
+  };
+
+  app.get('/auth/github/install/callback', completeGitHubInstallation);
+  // Configure this as the GitHub App Setup URL. GitHub sends installation_id + state here.
+  app.get('/auth/github/installed', completeGitHubInstallation);
 
   app.get<{ Params: { pubkey: string } }>('/auth/github/repos/:pubkey', async (request, reply) => {
     if (!options.github)
@@ -743,18 +878,231 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     ) {
       throw new ProtocolError(401, 'replayed_auth', 'NIP-98 authentication was already used');
     }
-    const installation = await options.store.githubInstallationForPubkey(tenant.community, pubkey);
-    if (!installation) {
+    const installations = await options.store.githubInstallationsForPubkey(
+      tenant.community,
+      pubkey,
+    );
+    if (!installations.length) {
       noStore(reply);
-      return reply.send({ installed: false, repositories: [] });
+      return reply.send({ installed: false, installations: [], repositories: [] });
     }
-    const repositories = await options.github.app.listRepositories(installation.installationId);
+    const repositories = await options.store.githubRepositoriesForPubkey(tenant.community, pubkey);
     noStore(reply);
     return reply.send({
       installed: true,
-      installation_id: installation.installationId,
+      installations: installations.map((installation) => ({
+        installationId: installation.installationId,
+        accountId: installation.accountId,
+        accountLogin: installation.accountLogin,
+        accountType: installation.accountType,
+        ...(installation.accountAvatarUrl
+          ? { accountAvatarUrl: installation.accountAvatarUrl }
+          : {}),
+        repositorySelection: installation.repositorySelection,
+        status: installation.status,
+        repositoryCount: installation.repositoryCount,
+        manageUrl:
+          installation.accountType === 'Organization'
+            ? `https://github.com/organizations/${encodeURIComponent(installation.accountLogin)}/settings/installations/${installation.installationId}`
+            : `https://github.com/settings/installations/${installation.installationId}`,
+      })),
       repositories,
     });
+  });
+
+  app.post<{ Params: { pubkey: string } }>('/auth/github/repos/:pubkey', async (request, reply) => {
+    if (!options.github)
+      throw new ProtocolError(503, 'github_unavailable', 'GitHub App is not configured');
+    const tenant = tenantFor(request);
+    const pubkey = request.params.pubkey;
+    const url = publicUrl(tenant, request);
+    const auth = verifyNip98Header(request.headers.authorization, url, 'POST', now());
+    if (!auth.ok || auth.pubkey !== pubkey) {
+      throw new ProtocolError(
+        401,
+        'unauthorized',
+        auth.ok ? 'NIP-98 signer mismatch' : auth.reason,
+      );
+    }
+    const authNow = now();
+    if (
+      !(await options.store.claimNip98Event(
+        auth.eventId,
+        new Date(authNow.getTime() + 120_000),
+        authNow,
+      ))
+    ) {
+      throw new ProtocolError(401, 'replayed_auth', 'NIP-98 authentication was already used');
+    }
+    if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body)) {
+      throw new ProtocolError(400, 'invalid_request', 'expected repository creation request');
+    }
+    const body = request.body as Record<string, unknown>;
+    const installationId = body.installation_id;
+    const name = body.name;
+    const description = body.description;
+    const isPrivate = body.private;
+    if (
+      typeof installationId !== 'number' ||
+      !Number.isSafeInteger(installationId) ||
+      typeof name !== 'string' ||
+      !/^[A-Za-z0-9._-]{1,100}$/.test(name) ||
+      (description !== undefined && typeof description !== 'string') ||
+      (isPrivate !== undefined && typeof isPrivate !== 'boolean')
+    ) {
+      throw new ProtocolError(400, 'invalid_request', 'invalid repository creation request');
+    }
+    const installation = (
+      await options.store.githubInstallationsForPubkey(tenant.community, pubkey)
+    ).find(
+      (candidate) => candidate.installationId === installationId && candidate.status === 'active',
+    );
+    if (!installation) {
+      throw new ProtocolError(
+        404,
+        'installation_unavailable',
+        'GitHub installation is unavailable',
+      );
+    }
+    let userAccessToken: string | undefined;
+    if (installation.accountType === 'User') {
+      const subject = await options.store.githubSubjectForPubkey(tenant.community, pubkey);
+      const sealed = subject
+        ? await options.store.githubUserToken(tenant.community, subject)
+        : null;
+      if (!sealed) {
+        throw new ProtocolError(
+          409,
+          'github_reauthorization_required',
+          'sign in with GitHub again before creating a personal repository',
+        );
+      }
+      userAccessToken = decryptGitHubToken(sealed);
+    }
+    const repository = await options.github.app.createRepository(
+      installationId,
+      { login: installation.accountLogin, type: installation.accountType },
+      {
+        name,
+        ...(typeof description === 'string' && description ? { description } : {}),
+        ...(typeof isPrivate === 'boolean' ? { private: isPrivate } : {}),
+      },
+      userAccessToken,
+    );
+    await options.store.applyGitHubRepositoryChanges(installationId, [repository], [], authNow);
+    noStore(reply);
+    return reply.code(201).send({ repository });
+  });
+
+  app.get<{ Params: { pubkey: string } }>(
+    '/auth/github/repo-access/:pubkey',
+    async (request, reply) => {
+      if (!options.github)
+        throw new ProtocolError(503, 'github_unavailable', 'GitHub App is not configured');
+      const tenant = tenantFor(request);
+      const pubkey = request.params.pubkey;
+      const auth = verifyNip98Header(
+        request.headers.authorization,
+        publicUrl(tenant, request),
+        'GET',
+        now(),
+      );
+      if (!auth.ok || auth.pubkey !== pubkey) {
+        throw new ProtocolError(
+          401,
+          'unauthorized',
+          auth.ok ? 'NIP-98 signer mismatch' : auth.reason,
+        );
+      }
+      const authNow = now();
+      if (
+        !(await options.store.claimNip98Event(
+          auth.eventId,
+          new Date(authNow.getTime() + 120_000),
+          authNow,
+        ))
+      ) {
+        throw new ProtocolError(401, 'replayed_auth', 'NIP-98 authentication was already used');
+      }
+      const query = request.query as Record<string, unknown>;
+      const fullName = requiredQueryString(query.full_name, 'full_name');
+      if (!/^[^/\s]+\/[^/\s]+$/.test(fullName)) {
+        throw new ProtocolError(400, 'invalid_repository', 'expected owner/repo');
+      }
+      noStore(reply);
+      return reply.send(
+        await options.store.githubRepositoryAccess(tenant.community, pubkey, fullName),
+      );
+    },
+  );
+
+  app.post('/auth/github/webhook', async (request, reply) => {
+    if (!options.github?.webhookSecret) {
+      throw new ProtocolError(503, 'github_unavailable', 'GitHub webhook is not configured');
+    }
+    tenantFor(request);
+    const rawBody = (request as FastifyRequest & { rawBody?: Buffer }).rawBody;
+    if (
+      !rawBody ||
+      !verifyGitHubWebhookSignature(
+        options.github.webhookSecret,
+        rawBody,
+        request.headers['x-hub-signature-256'],
+      )
+    ) {
+      throw new ProtocolError(401, 'invalid_signature', 'invalid GitHub webhook signature');
+    }
+    const deliveryId = request.headers['x-github-delivery'];
+    const event = request.headers['x-github-event'];
+    if (typeof deliveryId !== 'string' || !deliveryId || typeof event !== 'string') {
+      throw new ProtocolError(400, 'invalid_webhook', 'missing GitHub webhook headers');
+    }
+    if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body)) {
+      throw new ProtocolError(400, 'invalid_webhook', 'invalid GitHub webhook body');
+    }
+    const body = request.body as Record<string, unknown>;
+    if (event !== 'installation' && event !== 'installation_repositories') {
+      return reply.code(202).send({ accepted: true, ignored: true });
+    }
+    if (!(await options.store.claimGitHubWebhookDelivery(deliveryId, now()))) {
+      return reply.code(202).send({ accepted: true, duplicate: true });
+    }
+    try {
+      const installationId = githubInstallationId(body.installation);
+      const action = typeof body.action === 'string' ? body.action : '';
+      if (event === 'installation') {
+        if (action === 'deleted') {
+          await options.store.markGitHubInstallationStatus(installationId, 'revoked', now());
+        } else if (action === 'suspend') {
+          await options.store.markGitHubInstallationStatus(installationId, 'suspended', now());
+        } else if (action === 'unsuspend') {
+          await options.store.markGitHubInstallationStatus(installationId, 'active', now());
+        }
+      } else if (event === 'installation_repositories') {
+        const addedRaw = Array.isArray(body.repositories_added) ? body.repositories_added : [];
+        const removedRaw = Array.isArray(body.repositories_removed)
+          ? body.repositories_removed
+          : [];
+        const added = addedRaw.map((repository) =>
+          githubRepositoryFromPayload(repository, installationId),
+        );
+        const removedIds = removedRaw.map((repository) => {
+          if (!repository || typeof repository !== 'object' || Array.isArray(repository)) {
+            throw new ProtocolError(400, 'invalid_webhook', 'invalid removed repository payload');
+          }
+          const id = (repository as Record<string, unknown>).id;
+          if (typeof id !== 'number' || !Number.isSafeInteger(id)) {
+            throw new ProtocolError(400, 'invalid_webhook', 'invalid removed repository payload');
+          }
+          return id;
+        });
+        await options.store.applyGitHubRepositoryChanges(installationId, added, removedIds, now());
+      }
+    } catch (error) {
+      await options.store.releaseGitHubWebhookDelivery(deliveryId);
+      throw error;
+    }
+    return reply.code(202).send({ accepted: true });
   });
 
   app.post('/nip05/claim', async (request, reply) => {

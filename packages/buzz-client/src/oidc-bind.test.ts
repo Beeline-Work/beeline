@@ -102,6 +102,18 @@ describe('OIDC device-key bind protocol', () => {
         new Response(
           JSON.stringify({
             installed: true,
+            installations: [
+              {
+                installationId: 7,
+                accountId: '1',
+                accountLogin: 'acme',
+                accountType: 'Organization',
+                repositorySelection: 'selected',
+                status: 'active',
+                repositoryCount: 1,
+                manageUrl: 'https://github.com/organizations/acme/settings/installations/7',
+              },
+            ],
             repositories: [
               {
                 id: 42,
@@ -126,6 +138,7 @@ describe('OIDC device-key bind protocol', () => {
     ).resolves.toContain('github.com/apps/beeline');
     await expect(listGitHubRepositories('https://relay.example', identity)).resolves.toMatchObject({
       installed: true,
+      installations: [{ accountLogin: 'acme', repositoryCount: 1 }],
       repositories: [{ installationId: 7, fullName: 'acme/widget' }],
     });
     for (const [, init] of fetchMock.mock.calls) {

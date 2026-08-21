@@ -42,14 +42,16 @@ that production route and deploying the service are intentionally deferred.
 
 GitHub follows the same bind-ticket transaction through `/auth/github/start`
 and `/auth/github/callback`. After binding, `/auth/github/install/start` opens
-the single Beeline GitHub App installation and `/auth/github/repos/:pubkey`
-lists only repositories granted to that installation. The app should be
-installed with **All repositories** (the endorsed default) and Contents
-read/write plus Metadata read permissions. Daemons mint one-hour installation
-tokens for Git smart-HTTP; they do not consult `gh`, credential helpers, or
-ambient Git configuration.
+a Beeline GitHub App installation for a personal account or organization.
+`/auth/github/repos/:pubkey` reads the webhook-maintained repository snapshot
+for every installation linked to that identity; it never polls GitHub while
+rendering the picker. Installation callbacks verify membership with the
+encrypted GitHub user token captured during sign-in. The app needs Contents
+read/write, Metadata read, and Administration write permissions. Daemons mint
+one-hour installation tokens for Git smart-HTTP; they do not consult `gh`,
+credential helpers, or ambient Git configuration.
 
-GitHub ships dark until **all five** `BEELINE_GITHUB_*` values below are present.
+GitHub ships dark until **all six** `BEELINE_GITHUB_*` values below are present.
 `GET /auth/capabilities` then reports `github: true`; without them it reports
 `github: false`, GitHub routes stay unavailable, and the existing Google OIDC
 sign-in remains the visible, unchanged mobile path.
@@ -70,9 +72,12 @@ Required configuration:
 - `BEELINE_GITHUB_APP_ID`
 - `BEELINE_GITHUB_APP_SLUG`
 - `BEELINE_GITHUB_APP_PRIVATE_KEY` (PEM; `\\n`-escaped environment values are accepted)
+- `BEELINE_GITHUB_WEBHOOK_SECRET`
 
 The GitHub App OAuth callback is `https://<tenant>/auth/github/callback`; its
-setup URL is `https://<tenant>/auth/github/install/callback`. Body daemons need
+setup URL is `https://<tenant>/auth/github/installed`, and its webhook URL is
+`https://<tenant>/auth/github/webhook` with the `installation` and
+`installation_repositories` events enabled. Body daemons need
 the same `BEELINE_GITHUB_APP_ID` and `BEELINE_GITHUB_APP_PRIVATE_KEY` so all clone,
 fetch, push, land, rename, preview, and CI reads use installation authority.
 

@@ -68,7 +68,9 @@ async function main(): Promise<void> {
   const app = buildAuthServer({
     store,
     oidc,
-    ...(github ? { github } : {}),
+    ...(github
+      ? { github: { ...github, webhookSecret: githubConfig!.BEELINE_GITHUB_WEBHOOK_SECRET } }
+      : {}),
     tenants: tenantsFromEnvironment(),
     logger: true,
   });

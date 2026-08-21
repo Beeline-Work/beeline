@@ -24,6 +24,7 @@ import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
+import * as WebBrowser from 'expo-web-browser';
 import { KeyboardAvoidingView, useKeyboardState } from 'react-native-keyboard-controller';
 import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -39,6 +40,7 @@ import {
   type MergeTarget,
   type AttachmentReference,
   type RoomRepository,
+  type GitHubInstallationAccess,
   AGENT_PRESENCE_STALE_MS,
   personHandle,
 } from '@beeline/buzz-client';
@@ -109,6 +111,7 @@ import {
 } from '@/buzz/room-management';
 import {
   looksLikeCornerOpenIntent,
+  githubFullNameFromInput,
   roomRepoChipLabel,
   type RepoCandidate,
 } from '@/buzz/room-repo-picker';
@@ -221,13 +224,20 @@ function ledgerSpeakerKey(
   message: ChatDisplayMessage,
   agentByPubkey: Map<string, unknown>,
 ): string | null {
-  if (message.corner || message.isMergeSummary || message.isArchivedNotice || message.isSystemNotice)
+  if (
+    message.corner ||
+    message.isMergeSummary ||
+    message.isArchivedNotice ||
+    message.isSystemNotice
+  )
     return null;
   if (message.writePermission || message.targetBranchProposal) return null;
   const isAgent =
     message.isAgentAuthor ||
     message.isAgentActivity ||
-    Boolean(message.pubkey && (BODY_PUBKEYS.has(message.pubkey) || agentByPubkey.has(message.pubkey)));
+    Boolean(
+      message.pubkey && (BODY_PUBKEYS.has(message.pubkey) || agentByPubkey.has(message.pubkey)),
+    );
   if (isAgent) return `agent:${message.pubkey ?? 'unknown-agent'}`;
   // An optimistic own message has no pubkey until it reconciles, so it keys on
   // the viewer rather than on a shared "unknown" bucket.
@@ -300,7 +310,10 @@ const AgentPresenceLight = React.memo(function AgentPresenceLight({
     <View
       accessibilityLabel={online ? 'Agent online' : 'Agent offline'}
       accessibilityRole="image"
-      style={[styles.agentPresenceLight, online ? styles.agentPresenceOnline : styles.agentPresenceOffline]}
+      style={[
+        styles.agentPresenceLight,
+        online ? styles.agentPresenceOnline : styles.agentPresenceOffline,
+      ]}
       testID={testID}
     />
   );
@@ -529,9 +542,15 @@ export default function BuzzChat() {
   const [roomRepositoryResolved, setRoomRepositoryResolved] = useState(false);
   const [showRoomRepoPicker, setShowRoomRepoPicker] = useState(false);
   const [roomRepoCandidates, setRoomRepoCandidates] = useState<RepoCandidate[]>([]);
+  const [githubInstallations, setGitHubInstallations] = useState<GitHubInstallationAccess[]>([]);
   const [roomRepoBusy, setRoomRepoBusy] = useState(false);
   const [roomRepoError, setRoomRepoError] = useState<string | null>(null);
   const [cornerOpenRepoPrompt, setCornerOpenRepoPrompt] = useState(false);
+  const [roomRepoAccessIssue, setRoomRepoAccessIssue] = useState<{
+    fullName: string;
+    reason: 'revoked' | 'not_granted';
+    installationId?: number;
+  } | null>(null);
   const [rosterVisible, setRosterVisible] = useState(false);
   const [roomActionsVisible, setRoomActionsVisible] = useState(false);
   const [cornerActionsVisible, setCornerActionsVisible] = useState(false);
@@ -614,7 +633,9 @@ export default function BuzzChat() {
   const loadOlderTranscriptMessages = useCallback(() => {
     if (loadingOlderMessages) return;
     if (visibleMessageCount < combinedMessages.length) {
-      setVisibleMessageCount((count) => Math.min(combinedMessages.length, count + OLDER_MESSAGES_PAGE_SIZE));
+      setVisibleMessageCount((count) =>
+        Math.min(combinedMessages.length, count + OLDER_MESSAGES_PAGE_SIZE),
+      );
       return;
     }
     const oldest = combinedMessages[0];
@@ -932,15 +953,19 @@ export default function BuzzChat() {
     [agentByPubkey, messages],
   );
   const cornerAgentDisplay = cornerAgentPubkey
-    ? resolvePendingAgentDisplay(cornerAgentPubkey, agentByPubkey.get(cornerAgentPubkey), participantsHydrated)
+    ? resolvePendingAgentDisplay(
+        cornerAgentPubkey,
+        agentByPubkey.get(cornerAgentPubkey),
+        participantsHydrated,
+      )
     : undefined;
   const cornerAgentOnline = Boolean(
     cornerAgentPubkey &&
-      isAgentPresenceOnlineWithReconnectGrace(
-        agentPresences[cornerAgentPubkey],
-        presenceNow,
-        presenceReconnectGrace[cornerAgentPubkey],
-      ),
+    isAgentPresenceOnlineWithReconnectGrace(
+      agentPresences[cornerAgentPubkey],
+      presenceNow,
+      presenceReconnectGrace[cornerAgentPubkey],
+    ),
   );
   const visibleMessages = useMemo(
     () => transcriptMessages(messages, isCorner),
@@ -1185,8 +1210,8 @@ export default function BuzzChat() {
     // was typing, which made the foreground intermittently unresponsive.
     const now = Date.now();
     const deadlines = [
-      ...Object.values(agentPresences).map((presence) =>
-        presence.observedAt + AGENT_PRESENCE_STALE_MS,
+      ...Object.values(agentPresences).map(
+        (presence) => presence.observedAt + AGENT_PRESENCE_STALE_MS,
       ),
       ...Object.values(presenceReconnectGrace),
     ].filter((deadline) => Number.isFinite(deadline) && deadline > now);
@@ -1229,9 +1254,24 @@ export default function BuzzChat() {
     let cancelled = false;
     void transport
       .roomRepositoryState(decodedId)
-      .then((state) => {
+      .then(async (state) => {
         if (cancelled) return;
-        setRoomRepository(state.kind === 'repository' ? state.repository : null);
+        const repository = state.kind === 'repository' ? state.repository : null;
+        setRoomRepository(repository);
+        setRoomRepoAccessIssue(null);
+        const fullName = repository
+          ? githubFullNameFromInput(repository.binding.remote ?? repository.binding.name)
+          : null;
+        if (fullName && repository?.binding.githubInstallationId) {
+          const access = await transport.githubRepositoryAccess(fullName).catch(() => null);
+          if (!cancelled && access && !access.accessible) {
+            setRoomRepoAccessIssue({
+              fullName,
+              reason: access.reason ?? 'not_granted',
+              ...(access.installationId ? { installationId: access.installationId } : {}),
+            });
+          }
+        }
         // Only a definite `none` licenses the app to say this Room has no
         // repository. An error, or a config whose author could not be
         // confirmed as an admin, is "not known yet" — telling an admin their
@@ -1453,7 +1493,10 @@ export default function BuzzChat() {
           })();
           const installPresence = (async () => {
             try {
-              const stop = await t.agentPresenceSubscribeReady(presenceChannelId, handleLivePresence);
+              const stop = await t.agentPresenceSubscribeReady(
+                presenceChannelId,
+                handleLivePresence,
+              );
               if (cancelled) {
                 stop();
                 return;
@@ -1465,7 +1508,10 @@ export default function BuzzChat() {
                 error,
               );
               if (!cancelled) {
-                unsubscribePresence = t.agentPresenceSubscribe(presenceChannelId, handleLivePresence);
+                unsubscribePresence = t.agentPresenceSubscribe(
+                  presenceChannelId,
+                  handleLivePresence,
+                );
               }
             }
             const presenceEvents = await t.agentPresenceBackfill(presenceChannelId);
@@ -1516,8 +1562,7 @@ export default function BuzzChat() {
             client,
             transport: t,
             installLiveDelivery,
-            revalidateTranscript: () =>
-              revalidateCachedMessages(t, identity.publicKey, decodedId),
+            revalidateTranscript: () => revalidateCachedMessages(t, identity.publicKey, decodedId),
             isCancelled,
             afterInteractions: defer,
             viewerActiveCommunityId: () => loadActiveCommunityId(identity.publicKey),
@@ -1678,17 +1723,25 @@ export default function BuzzChat() {
     const rawText = inputTextRef.current.trim();
     // State updates are committed asynchronously. A ref closes the short
     // double-tap window before `sending` can disable the native control.
-    if (sendInFlightRef.current || (!rawText && !pendingAttachment) || !transport || isArchived) return;
+    if (sendInFlightRef.current || (!rawText && !pendingAttachment) || !transport || isArchived)
+      return;
     // The daemon already refuses corner-open on a repo-less Room; this is the
     // friendly client-side path — catch the common phrasing before the
     // message is sent (and the composer text lost) rather than after a
     // doomed round-trip.
-    if (!isCorner && !roomRepository && roomRepositoryResolved && looksLikeCornerOpenIntent(rawText)) {
+    if (
+      !isCorner &&
+      ((!roomRepository && roomRepositoryResolved) || roomRepoAccessIssue) &&
+      looksLikeCornerOpenIntent(rawText)
+    ) {
       setCornerOpenRepoPrompt(true);
       if (activeCommunityId && roomRepoCandidates.length === 0) {
         void transport
-          .workspaceRoomRepositoryCandidates(activeCommunityId)
-          .then(setRoomRepoCandidates)
+          .workspaceGitHubAccess()
+          .then((access) => {
+            setRoomRepoCandidates(access.candidates);
+            setGitHubInstallations(access.installations);
+          })
           .catch(() => undefined);
       }
       return;
@@ -1781,6 +1834,7 @@ export default function BuzzChat() {
     presenceReconnectGrace,
     agentByPubkey,
     roomRepositoryResolved,
+    roomRepoAccessIssue,
   ]);
 
   const pickPhoto = useCallback(async () => {
@@ -1836,7 +1890,11 @@ export default function BuzzChat() {
   const selectMention = useCallback(
     (participant: RoomMemberOption) => {
       if (!activeMention) return;
-      const inserted = replaceActiveMention(inputTextRef.current, activeMention, participant.handle);
+      const inserted = replaceActiveMention(
+        inputTextRef.current,
+        activeMention,
+        participant.handle,
+      );
       if (participant.kind === 'agent') {
         selectedAgentMentionsRef.current.set(participant.handle, participant.pubkey);
       }
@@ -2146,17 +2204,42 @@ export default function BuzzChat() {
     viewerChannelRole,
   ]);
 
+  const loadRoomRepoPicker = useCallback(async () => {
+    if (!transport || !activeCommunityId) return;
+    try {
+      const access = await transport.workspaceGitHubAccess();
+      setRoomRepoCandidates(access.candidates);
+      setGitHubInstallations(access.installations);
+    } catch {
+      setRoomRepoCandidates(await transport.workspaceRoomRepositoryCandidates(activeCommunityId));
+      setGitHubInstallations([]);
+    }
+  }, [activeCommunityId, transport]);
+
   const handleToggleRoomRepoPicker = useCallback(async () => {
     setShowRoomRepoPicker((value) => !value);
     if (showRoomRepoPicker || !transport || !activeCommunityId) return;
     setRoomRepoError(null);
     try {
-      const candidates = await transport.workspaceRoomRepositoryCandidates(activeCommunityId);
-      setRoomRepoCandidates(candidates);
+      await loadRoomRepoPicker();
     } catch (err) {
       setRoomRepoError(`Could not load repos: ${String(err)}`);
     }
-  }, [activeCommunityId, showRoomRepoPicker, transport]);
+  }, [activeCommunityId, loadRoomRepoPicker, showRoomRepoPicker, transport]);
+
+  const handleAddGitHubAccount = useCallback(async () => {
+    if (!transport) return;
+    setRoomRepoError(null);
+    try {
+      const relayUrl = await getEffectiveRelayUrl();
+      const redirectUri = `${new URL(relayUrl).origin}/auth/github/mobile-callback`;
+      const installationUrl = await transport.githubInstallationStart(redirectUri);
+      const result = await WebBrowser.openAuthSessionAsync(installationUrl, redirectUri);
+      if (result.type === 'success') await loadRoomRepoPicker();
+    } catch (err) {
+      setRoomRepoError(`Could not connect GitHub: ${String(err)}`);
+    }
+  }, [loadRoomRepoPicker, transport]);
 
   const applyRoomRepository = useCallback(
     async (input: RepoCandidate) => {
@@ -2184,6 +2267,26 @@ export default function BuzzChat() {
       }
     },
     [activeCommunityId, decodedId, roomRepoBusy, transport],
+  );
+
+  const handleCreateGitHubRepository = useCallback(
+    async (installationId: number, name: string) => {
+      if (!transport) return;
+      setRoomRepoError(null);
+      try {
+        const candidate = await transport.githubRepositoryCreate({
+          installationId,
+          name,
+          private: true,
+        });
+        setRoomRepoCandidates((current) => [...current, candidate]);
+        await applyRoomRepository(candidate);
+      } catch (err) {
+        setRoomRepoError(`Could not create repo: ${String(err)}`);
+        throw err;
+      }
+    },
+    [applyRoomRepository, transport],
   );
 
   // Changing the repo under a Room with open corners strands those corners on
@@ -2285,7 +2388,8 @@ export default function BuzzChat() {
     setApprovalError(null);
     try {
       const result = await transport.submitMergeApproval(decodedId, mergeTarget);
-      if (!result.success) throw new Error(result.message ?? 'Approval was not accepted by the relay');
+      if (!result.success)
+        throw new Error(result.message ?? 'Approval was not accepted by the relay');
       setApprovalState('delivering');
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
@@ -2521,7 +2625,9 @@ export default function BuzzChat() {
           >
             <HullSurface strength="quiet" style={styles.archivedCornerCard}>
               <View style={styles.archivedCornerHeading}>
-                <Text style={styles.archivedCornerTitle}>□ {CORNER_LABEL.toUpperCase()} ARCHIVED</Text>
+                <Text style={styles.archivedCornerTitle}>
+                  □ {CORNER_LABEL.toUpperCase()} ARCHIVED
+                </Text>
                 <Text style={styles.archivedCornerAction}>VIEW ›</Text>
               </View>
               {summary ? (
@@ -2577,7 +2683,11 @@ export default function BuzzChat() {
       const knownAgent = item.pubkey ? agentByPubkey.get(item.pubkey) : undefined;
       const isAgent = item.isAgentAuthor || item.isAgentActivity || isBody || Boolean(knownAgent);
       const display = isAgent
-        ? resolvePendingAgentDisplay(item.pubkey ?? 'unknown-agent', knownAgent, participantsHydrated)
+        ? resolvePendingAgentDisplay(
+            item.pubkey ?? 'unknown-agent',
+            knownAgent,
+            participantsHydrated,
+          )
         : null;
       const personName = item.pubkey ? personProfileByPubkey.get(item.pubkey)?.name : undefined;
 
@@ -2608,7 +2718,9 @@ export default function BuzzChat() {
       const isCornerAgent = isCorner && !isSelfSteer;
       const speaksAsAgent = isAgent || isCornerAgent;
       const voiceName = speaksAsAgent
-        ? (display ? display.name : (personName ?? shortMemberNpub(item.pubkey ?? '')))
+        ? display
+          ? display.name
+          : (personName ?? shortMemberNpub(item.pubkey ?? ''))
         : (personName ?? (item.pubkey ? shortMemberNpub(item.pubkey) : 'SOMEONE'));
       // Zero handles in a Corner, full stop — its one agent is named in the top
       // bar. None on your own inset block, and none on a continuation of the
@@ -2769,11 +2881,11 @@ export default function BuzzChat() {
       >
         {/* Header. No surface of its own — the chrome sits on the same
             obsidian as the transcript, parted only by a hairline. */}
-        <View
-          style={[styles.header, { minHeight: insets.top + 60, paddingTop: insets.top + 8 }]}
-        >
+        <View style={[styles.header, { minHeight: insets.top + 60, paddingTop: insets.top + 8 }]}>
           <TouchableOpacity
-            accessibilityLabel={isCorner ? `Back to this ${CORNER_LABEL}’s ${ROOM_LABEL}` : 'Back to Rooms'}
+            accessibilityLabel={
+              isCorner ? `Back to this ${CORNER_LABEL}’s ${ROOM_LABEL}` : 'Back to Rooms'
+            }
             onPress={handleBack}
             style={styles.backButton}
             testID="chat-back"
@@ -2847,16 +2959,9 @@ export default function BuzzChat() {
                   {(cornerAgentDisplay?.name ?? 'AGENT').toUpperCase()}
                 </Text>
                 {cornerAgentPubkey && (
-                  <AgentPresenceLight
-                    online={cornerAgentOnline}
-                    testID="corner-header-presence"
-                  />
+                  <AgentPresenceLight online={cornerAgentOnline} testID="corner-header-presence" />
                 )}
-                <Text
-                  numberOfLines={1}
-                  style={styles.cornerHeaderMeta}
-                  testID="corner-view-status"
-                >
+                <Text numberOfLines={1} style={styles.cornerHeaderMeta} testID="corner-view-status">
                   {/*
                     Same canonical status word as the Room-list dropdown, the
                     Room chat card, and the standalone Corners list.
@@ -2864,7 +2969,9 @@ export default function BuzzChat() {
                   {displayedCornerStatus
                     ? `·  ${cornerStatusPresentation(displayedCornerStatus).glyph} ${cornerStatusPresentation(displayedCornerStatus).label}`
                     : '·  …'}
-                  {participantsHydrated ? `  ·  ${formatRoomParticipantTotal(roomParticipantTotal)}` : ''}
+                  {participantsHydrated
+                    ? `  ·  ${formatRoomParticipantTotal(roomParticipantTotal)}`
+                    : ''}
                 </Text>
               </View>
             ) : (
@@ -3009,7 +3116,11 @@ export default function BuzzChat() {
                           transcript above already carries the turn's prose in
                           full, and echoing its summary here printed the same
                           sentences a third time. */}
-                      <Text style={styles.approvalBarText} numberOfLines={2} testID="change-review-summary">
+                      <Text
+                        style={styles.approvalBarText}
+                        numberOfLines={2}
+                        testID="change-review-summary"
+                      >
                         {changeReviewSummary(reviewFiles) ??
                           `${cornerAgentDisplay?.name ?? 'The agent'} committed work for review.`}
                       </Text>
@@ -3107,7 +3218,11 @@ export default function BuzzChat() {
                     ) : null}
                   </HullSurface>
                 ) : (
-                  <HullSurface strength="quiet" style={styles.nothingReady} testID="nothing-ready-panel">
+                  <HullSurface
+                    strength="quiet"
+                    style={styles.nothingReady}
+                    testID="nothing-ready-panel"
+                  >
                     <Text style={styles.nothingReadyTitle}>NOTHING READY TO MERGE YET</Text>
                     <Text style={styles.nothingReadyText} testID="nothing-ready-reason">
                       {mergeNotReadyReason ??
@@ -3127,9 +3242,7 @@ export default function BuzzChat() {
           <CornerLiveBar
             label={cornerLiveBar.label}
             live={cornerLiveBar.live}
-            onPress={
-              cornerLiveBar.cornerId ? () => openCorner(cornerLiveBar.cornerId!) : undefined
-            }
+            onPress={cornerLiveBar.cornerId ? () => openCorner(cornerLiveBar.cornerId!) : undefined}
             testID="corner-live-bar"
           />
         )}
@@ -3226,22 +3339,60 @@ export default function BuzzChat() {
             {cornerOpenRepoPrompt && (
               <View style={styles.repoPromptBanner} testID="corner-open-repo-prompt">
                 <Text style={styles.repoPromptTitle}>
-                  THIS {ROOM_LABEL.toUpperCase()} ISN’T LINKED TO A REPO
+                  {roomRepoAccessIssue
+                    ? roomRepoAccessIssue.reason === 'revoked'
+                      ? 'ACCESS TO THIS REPO WAS REVOKED'
+                      : 'THIS REPO ISN’T IN THE BEELINE INSTALLATION'
+                    : `THIS ${ROOM_LABEL.toUpperCase()} ISN’T LINKED TO A REPO`}
                 </Text>
-                <Text style={styles.repoPromptHint}>Pick one to open a {CORNER_LABEL}.</Text>
+                <Text style={styles.repoPromptHint}>
+                  {roomRepoAccessIssue
+                    ? `${roomRepoAccessIssue.fullName} must be reconnected before a ${CORNER_LABEL} can open.`
+                    : `Pick one to open a ${CORNER_LABEL}.`}
+                </Text>
+                {roomRepoAccessIssue && (
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    onPress={() => {
+                      const installation = githubInstallations.find(
+                        (candidate) =>
+                          candidate.installationId === roomRepoAccessIssue.installationId,
+                      );
+                      if (roomRepoAccessIssue.reason === 'not_granted' && installation) {
+                        void WebBrowser.openBrowserAsync(installation.manageUrl).then(() =>
+                          loadRoomRepoPicker(),
+                        );
+                      } else {
+                        void handleAddGitHubAccount();
+                      }
+                    }}
+                    style={styles.repoPromptConnect}
+                    testID="corner-open-repo-connect"
+                  >
+                    <Text style={styles.repoPromptConnectText}>
+                      {roomRepoAccessIssue.reason === 'not_granted'
+                        ? 'Add this repo to the Beeline installation →'
+                        : `Connect ${roomRepoAccessIssue.fullName.split('/')[0]} →`}
+                    </Text>
+                  </TouchableOpacity>
+                )}
                 {canManageRoomRepository(viewerChannelRole) ? (
                   <RepoPicker
                     busy={roomRepoBusy}
                     candidates={roomRepoCandidates}
+                    installations={githubInstallations}
                     currentKey={null}
                     error={roomRepoError}
+                    onAddAccount={() => void handleAddGitHubAccount()}
+                    onCreateRepository={handleCreateGitHubRepository}
+                    onManageInstallation={(url) => {
+                      void WebBrowser.openBrowserAsync(url).then(() => loadRoomRepoPicker());
+                    }}
                     onSelect={handleSelectRoomRepoCandidate}
                     testIDPrefix="corner-open-repo-picker"
                   />
                 ) : (
-                  <Text style={styles.repoPromptHint}>
-                    Ask a {ROOM_LABEL} admin to link one.
-                  </Text>
+                  <Text style={styles.repoPromptHint}>Ask a {ROOM_LABEL} admin to link one.</Text>
                 )}
                 <TouchableOpacity
                   accessibilityLabel="Dismiss"
@@ -3302,12 +3453,7 @@ export default function BuzzChat() {
             {!isArchived && turnProgressLabel && (
               <TurnProgressLine label={turnProgressLabel} testID="turn-progress-line" />
             )}
-            <View
-              style={[
-                styles.composer,
-                composerFocused && styles.composerFocused,
-              ]}
-            >
+            <View style={[styles.composer, composerFocused && styles.composerFocused]}>
               <TouchableOpacity
                 accessibilityLabel="Attach photo or document"
                 accessibilityRole="button"
@@ -3344,10 +3490,7 @@ export default function BuzzChat() {
                       event.preventDefault();
                       const selected = slashVerbs[highlightedSlashVerbIndex];
                       if (selected) runSlashVerb(selected.id);
-                    } else if (
-                      (action === 'next' || action === 'previous') &&
-                      slashVerbs.length
-                    ) {
+                    } else if ((action === 'next' || action === 'previous') && slashVerbs.length) {
                       event.preventDefault();
                       const direction = action === 'next' ? 1 : -1;
                       setHighlightedSlashVerbIndex(
@@ -3416,9 +3559,7 @@ export default function BuzzChat() {
                 }
                 testID="chat-send"
               >
-                <Text
-                  style={[styles.sendButtonText, mergeTarget && styles.sendButtonTextQuiet]}
-                >
+                <Text style={[styles.sendButtonText, mergeTarget && styles.sendButtonTextQuiet]}>
                   ⏎
                 </Text>
               </TouchableOpacity>
@@ -3604,10 +3745,7 @@ export default function BuzzChat() {
       >
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
-          style={[
-            styles.roomActionsModalRoot,
-            { paddingBottom: Math.max(insets.bottom, 18) },
-          ]}
+          style={[styles.roomActionsModalRoot, { paddingBottom: Math.max(insets.bottom, 18) }]}
         >
           <Pressable
             accessibilityLabel={`Close ${ROOM_LABEL} actions`}
@@ -3712,7 +3850,9 @@ export default function BuzzChat() {
               <>
                 <TouchableOpacity
                   accessibilityLabel={
-                    roomRepository ? `Change repo, currently ${roomRepository.binding.name}` : 'Link a repo'
+                    roomRepository
+                      ? `Change repo, currently ${roomRepository.binding.name}`
+                      : 'Link a repo'
                   }
                   accessibilityRole="button"
                   disabled={roomRepoBusy}
@@ -3722,7 +3862,10 @@ export default function BuzzChat() {
                 >
                   <View style={styles.roomLifecycleCopy}>
                     <Text style={styles.roomLifecycleTitle}>
-                      REPO {roomRepository ? `· ${roomRepository.binding.name} · CHANGE` : '· NONE · LINK'}
+                      REPO{' '}
+                      {roomRepository
+                        ? `· ${roomRepository.binding.name} · CHANGE`
+                        : '· NONE · LINK'}
                     </Text>
                     <Text style={styles.roomLifecycleHint}>
                       {roomRepository
@@ -3736,8 +3879,14 @@ export default function BuzzChat() {
                   <RepoPicker
                     busy={roomRepoBusy}
                     candidates={roomRepoCandidates}
+                    installations={githubInstallations}
                     currentKey={roomRepository?.binding.key ?? null}
                     error={roomRepoError}
+                    onAddAccount={() => void handleAddGitHubAccount()}
+                    onCreateRepository={handleCreateGitHubRepository}
+                    onManageInstallation={(url) => {
+                      void WebBrowser.openBrowserAsync(url).then(() => loadRoomRepoPicker());
+                    }}
                     onSelect={handleSelectRoomRepoCandidate}
                     testIDPrefix="room-repo-picker"
                   />
@@ -3802,15 +3951,17 @@ export default function BuzzChat() {
         transparent
         visible={cornerActionsVisible}
       >
-        <View
-          style={[styles.roomActionsModalRoot, { paddingBottom: Math.max(insets.bottom, 18) }]}
-        >
+        <View style={[styles.roomActionsModalRoot, { paddingBottom: Math.max(insets.bottom, 18) }]}>
           <Pressable
             accessibilityLabel={`Close ${CORNER_LABEL} actions`}
             onPress={() => setCornerActionsVisible(false)}
             style={StyleSheet.absoluteFill}
           />
-          <HullSurface strength="raised" style={styles.roomActionsModal} testID="corner-actions-sheet">
+          <HullSurface
+            strength="raised"
+            style={styles.roomActionsModal}
+            testID="corner-actions-sheet"
+          >
             <View style={styles.roomActionsModalHeading}>
               <View style={styles.roomActionsModalCopy}>
                 <Text style={styles.roomActionsModalEyebrow}>{CORNER_LABEL.toUpperCase()}</Text>
@@ -5101,6 +5252,12 @@ const styles = StyleSheet.create({
     ...Typography.default(),
     marginTop: 2,
     color: groknight.textMuted,
+    fontSize: 12,
+  },
+  repoPromptConnect: { minHeight: 40, justifyContent: 'center', marginTop: 6 },
+  repoPromptConnectText: {
+    ...Typography.default('semiBold'),
+    color: groknight.accent,
     fontSize: 12,
   },
   repoPromptDismiss: { alignSelf: 'flex-end', minHeight: 32, justifyContent: 'center' },

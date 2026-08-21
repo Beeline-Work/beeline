@@ -1,10 +1,53 @@
 import { describe, expect, it } from 'vitest';
 import {
   dedupeRepoCandidates,
+  githubRepositoryLinkagePlan,
   looksLikeCornerOpenIntent,
   githubFullNameFromInput,
   roomRepoChipLabel,
 } from './room-repo-picker';
+
+const installation = {
+  installationId: 7,
+  accountId: '1',
+  accountLogin: 'acme',
+  accountType: 'Organization' as const,
+  repositorySelection: 'selected' as const,
+  status: 'active' as const,
+  repositoryCount: 1,
+  manageUrl: 'https://github.com/organizations/acme/settings/installations/7',
+};
+
+describe('githubRepositoryLinkagePlan', () => {
+  it('uses an already-granted target without sending the user to a browser', () => {
+    const candidate = {
+      key: 'github:42',
+      name: 'acme/widget',
+      githubInstallationId: 7,
+    };
+
+    expect(githubRepositoryLinkagePlan('ACME/widget', [candidate], [installation])).toEqual({
+      kind: 'available',
+      candidate,
+    });
+  });
+
+  it('uses the matching installation settings when only repository access is missing', () => {
+    expect(githubRepositoryLinkagePlan('acme/widget', [], [installation])).toEqual({
+      kind: 'manage',
+      installation,
+      fullName: 'acme/widget',
+    });
+  });
+
+  it('starts installation only when the repository owner has no active installation', () => {
+    expect(githubRepositoryLinkagePlan('octocat/widget', [], [installation])).toEqual({
+      kind: 'install',
+      owner: 'octocat',
+      fullName: 'octocat/widget',
+    });
+  });
+});
 
 describe('dedupeRepoCandidates', () => {
   it('dedupes by key, keeping the first-seen name, sorted by name', () => {

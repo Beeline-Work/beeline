@@ -501,6 +501,7 @@ export async function startGitHubInstallation(
   baseUrl: string,
   identity: Pick<Identity, 'secretKey' | 'publicKey'>,
   redirectUri: string,
+  installationId?: number,
 ): Promise<string> {
   const url = endpoint(baseUrl, '/auth/github/install/start').toString();
   let response: Response;
@@ -511,7 +512,11 @@ export async function startGitHubInstallation(
         authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'POST'),
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ pubkey: identity.publicKey, redirect_uri: redirectUri }),
+      body: JSON.stringify({
+        pubkey: identity.publicKey,
+        redirect_uri: redirectUri,
+        ...(installationId === undefined ? {} : { installation_id: installationId }),
+      }),
     });
   } catch (error) {
     throw new OidcBindError(
@@ -535,12 +540,15 @@ export async function startGitHubInstallation(
 export async function listGitHubRepositories(
   baseUrl: string,
   identity: Pick<Identity, 'secretKey' | 'publicKey'>,
+  options: { refresh?: boolean } = {},
 ): Promise<{
   installed: boolean;
   installations: GitHubInstallationAccess[];
   repositories: GitHubRepositoryAccess[];
 }> {
-  const url = endpoint(baseUrl, `/auth/github/repos/${identity.publicKey}`).toString();
+  const endpointUrl = endpoint(baseUrl, `/auth/github/repos/${identity.publicKey}`);
+  if (options.refresh) endpointUrl.searchParams.set('refresh', '1');
+  const url = endpointUrl.toString();
   let response: Response;
   try {
     response = await fetch(url, {

@@ -4,7 +4,7 @@
  * is unit-testable with no React Native mocks, matching `corners.ts` /
  * `room-management.ts`.
  */
-import type { RoomRepository } from '@beeline/buzz-client';
+import type { GitHubInstallationAccess, RoomRepository } from '@beeline/buzz-client';
 
 export type RepoCandidate = {
   key: string;
@@ -13,6 +13,37 @@ export type RepoCandidate = {
   githubInstallationId?: number;
   defaultBranch?: string;
 };
+
+export type GitHubRepositoryLinkagePlan =
+  | { kind: 'available'; candidate: RepoCandidate }
+  | { kind: 'manage'; installation: GitHubInstallationAccess; fullName: string }
+  | { kind: 'install'; owner: string; fullName: string };
+
+/**
+ * Decide what GitHub work is actually required for one repository. A caller
+ * must execute this plan instead of blindly opening the GitHub App page.
+ */
+export function githubRepositoryLinkagePlan(
+  fullName: string,
+  candidates: readonly RepoCandidate[],
+  installations: readonly GitHubInstallationAccess[],
+): GitHubRepositoryLinkagePlan {
+  const normalized = fullName.trim().toLowerCase();
+  const candidate = candidates.find((entry) => entry.name.toLowerCase() === normalized);
+  if (candidate) return { kind: 'available', candidate };
+
+  const owner = fullName.split('/')[0]?.trim() ?? '';
+  const installation = installations.find(
+    (entry) =>
+      entry.status === 'active' && entry.accountLogin.toLowerCase() === owner.toLowerCase(),
+  );
+  return installation
+    ? { kind: 'manage', installation, fullName }
+    : { kind: 'install', owner, fullName };
+}
+
+export const GITHUB_REPOSITORY_SELECTION_INSTRUCTION =
+  'Choose the repositories Beeline may access, then return.';
 
 /** Distinct repositories exposed by the account's GitHub App installation. */
 export function dedupeRepoCandidates(bindings: readonly RepoCandidate[]): RepoCandidate[] {

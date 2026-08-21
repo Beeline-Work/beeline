@@ -32,6 +32,7 @@ import { useLocalSearchParams, useNavigation, router, type Href } from 'expo-rou
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
 import {
   githubInstallationRedirectUri,
+  githubRepositoryRefreshFeedback,
   resumeInitialGitHubInstallation,
   runGitHubInstallationSession,
 } from '@/auth/github-auth-session';
@@ -117,7 +118,9 @@ import {
 } from '@/buzz/room-management';
 import {
   looksLikeCornerOpenIntent,
+  GITHUB_REPOSITORY_SELECTION_INSTRUCTION,
   githubFullNameFromInput,
+  githubRepositoryLinkagePlan,
   roomRepoChipLabel,
   type RepoCandidate,
 } from '@/buzz/room-repo-picker';
@@ -552,6 +555,7 @@ export default function BuzzChat() {
   const [githubInstallations, setGitHubInstallations] = useState<GitHubInstallationAccess[]>([]);
   const [roomRepoBusy, setRoomRepoBusy] = useState(false);
   const [roomRepoError, setRoomRepoError] = useState<string | null>(null);
+  const [roomRepoNotice, setRoomRepoNotice] = useState<string | null>(null);
   const [cornerOpenRepoPrompt, setCornerOpenRepoPrompt] = useState(false);
   const [roomRepoAccessIssue, setRoomRepoAccessIssue] = useState<{
     fullName: string;
@@ -1744,7 +1748,7 @@ export default function BuzzChat() {
       setCornerOpenRepoPrompt(true);
       if (activeCommunityId && roomRepoCandidates.length === 0) {
         void transport
-          .workspaceGitHubAccess()
+          .workspaceGitHubAccess({ refresh: true })
           .then((access) => {
             setRoomRepoCandidates(access.candidates);
             setGitHubInstallations(access.installations);
@@ -2211,24 +2215,39 @@ export default function BuzzChat() {
     viewerChannelRole,
   ]);
 
-  const loadRoomRepoPicker = useCallback(async () => {
-    if (!transport || !activeCommunityId) return;
-    try {
-      const access = await transport.workspaceGitHubAccess();
-      setRoomRepoCandidates(access.candidates);
-      setGitHubInstallations(access.installations);
-    } catch {
-      setRoomRepoCandidates(await transport.workspaceRoomRepositoryCandidates(activeCommunityId));
-      setGitHubInstallations([]);
-    }
-  }, [activeCommunityId, transport]);
+  const loadRoomRepoPicker = useCallback(
+    async (refresh = false) => {
+      if (!transport || !activeCommunityId) return;
+      try {
+        const access = await transport.workspaceGitHubAccess({ refresh });
+        setRoomRepoCandidates(access.candidates);
+        setGitHubInstallations(access.installations);
+      } catch (error) {
+        if (refresh) throw error;
+        setRoomRepoCandidates(
+          await transport.workspaceRoomRepositoryCandidates(activeCommunityId),
+        );
+        setGitHubInstallations([]);
+      }
+    },
+    [activeCommunityId, transport],
+  );
+
+  const handleRepositoryRefreshPhase = useCallback(
+    (phase: Parameters<typeof githubRepositoryRefreshFeedback>[0]) => {
+      const feedback = githubRepositoryRefreshFeedback(phase);
+      setRoomRepoNotice(feedback.notice);
+      setRoomRepoError(feedback.error);
+    },
+    [],
+  );
 
   const handleToggleRoomRepoPicker = useCallback(async () => {
     setShowRoomRepoPicker((value) => !value);
     if (showRoomRepoPicker || !transport || !activeCommunityId) return;
     setRoomRepoError(null);
     try {
-      await loadRoomRepoPicker();
+      await loadRoomRepoPicker(true);
     } catch (err) {
       setRoomRepoError(`Could not load repos: ${String(err)}`);
     }
@@ -2237,6 +2256,7 @@ export default function BuzzChat() {
   const handleAddGitHubAccount = useCallback(async () => {
     if (!transport) return;
     setRoomRepoError(null);
+    setRoomRepoNotice(null);
     try {
       await runGitHubInstallationSession({
         returnPath: `/buzz/chat/${encodeURIComponent(decodedId)}`,
@@ -2250,12 +2270,46 @@ export default function BuzzChat() {
           ),
         subscribeToUrls: (listener) =>
           Linking.addEventListener('url', ({ url }) => listener(url)),
+        subscribeToAppState: (listener) => AppState.addEventListener('change', listener),
+        refreshRepositories: () => loadRoomRepoPicker(true),
+        onRefreshPhase: handleRepositoryRefreshPhase,
       });
-      await loadRoomRepoPicker();
     } catch (err) {
       setRoomRepoError(`Could not connect GitHub: ${String(err)}`);
     }
-  }, [decodedId, loadRoomRepoPicker, transport]);
+  }, [decodedId, handleRepositoryRefreshPhase, loadRoomRepoPicker, transport]);
+
+  const handleManageGitHubInstallation = useCallback(
+    async (installation: GitHubInstallationAccess) => {
+      if (!transport) return;
+      setRoomRepoError(null);
+      setRoomRepoNotice(null);
+      try {
+        await runGitHubInstallationSession({
+          returnPath: `/buzz/chat/${encodeURIComponent(decodedId)}`,
+          startInstallation: () =>
+            transport.githubInstallationStart(
+              githubInstallationRedirectUri(),
+              installation.installationId,
+            ),
+          openAuthSession: (installationUrl, redirectUri) =>
+            WebBrowser.openAuthSessionAsync(
+              installationUrl,
+              redirectUri,
+              authSessionOptions(Platform.OS, redirectUri),
+            ),
+          subscribeToUrls: (listener) =>
+            Linking.addEventListener('url', ({ url }) => listener(url)),
+          subscribeToAppState: (listener) => AppState.addEventListener('change', listener),
+          refreshRepositories: () => loadRoomRepoPicker(true),
+          onRefreshPhase: handleRepositoryRefreshPhase,
+        });
+      } catch (err) {
+        setRoomRepoError(`Could not connect GitHub: ${String(err)}`);
+      }
+    },
+    [decodedId, handleRepositoryRefreshPhase, loadRoomRepoPicker, transport],
+  );
 
   useEffect(() => {
     if (!transport || !activeCommunityId) return;
@@ -2263,7 +2317,7 @@ export default function BuzzChat() {
       .then(async (completed) => {
         if (!completed) return;
         setShowRoomRepoPicker(true);
-        await loadRoomRepoPicker();
+        await loadRoomRepoPicker(true);
       })
       .catch((err) => setRoomRepoError(`Could not connect GitHub: ${String(err)}`));
   }, [activeCommunityId, loadRoomRepoPicker, transport]);
@@ -2341,6 +2395,51 @@ export default function BuzzChat() {
     },
     [applyRoomRepository, cornerLifecycle, roomRepository],
   );
+
+  const handleReconnectRoomRepository = useCallback(async () => {
+    if (!roomRepoAccessIssue || !transport) return;
+    setRoomRepoError(null);
+    setRoomRepoNotice('Refreshing repositories…');
+    let candidates: RepoCandidate[];
+    let installations: GitHubInstallationAccess[];
+    try {
+      const access = await transport.workspaceGitHubAccess({ refresh: true });
+      candidates = access.candidates;
+      installations = access.installations;
+      setRoomRepoCandidates(candidates);
+      setGitHubInstallations(installations);
+      setRoomRepoNotice(null);
+    } catch {
+      setRoomRepoNotice(null);
+      setRoomRepoError('Could not refresh repositories. Return to Beeline and try again.');
+      return;
+    }
+    const plan = githubRepositoryLinkagePlan(
+      roomRepoAccessIssue.fullName,
+      candidates,
+      installations,
+    );
+    if (plan.kind === 'available') {
+      setRoomRepoAccessIssue(null);
+      setCornerOpenRepoPrompt(false);
+      return;
+    }
+    Alert.alert('Choose repositories on GitHub', GITHUB_REPOSITORY_SELECTION_INSTRUCTION, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Continue to GitHub',
+        onPress: () => {
+          if (plan.kind === 'manage') void handleManageGitHubInstallation(plan.installation);
+          else void handleAddGitHubAccount();
+        },
+      },
+    ]);
+  }, [
+    handleAddGitHubAccount,
+    handleManageGitHubInstallation,
+    roomRepoAccessIssue,
+    transport,
+  ]);
 
   const handleStartDirectMessage = useCallback(
     async (option: RoomMemberOption) => {
@@ -3380,19 +3479,7 @@ export default function BuzzChat() {
                 {roomRepoAccessIssue && (
                   <TouchableOpacity
                     accessibilityRole="button"
-                    onPress={() => {
-                      const installation = githubInstallations.find(
-                        (candidate) =>
-                          candidate.installationId === roomRepoAccessIssue.installationId,
-                      );
-                      if (roomRepoAccessIssue.reason === 'not_granted' && installation) {
-                        void WebBrowser.openBrowserAsync(installation.manageUrl).then(() =>
-                          loadRoomRepoPicker(),
-                        );
-                      } else {
-                        void handleAddGitHubAccount();
-                      }
-                    }}
+                    onPress={() => void handleReconnectRoomRepository()}
                     style={styles.repoPromptConnect}
                     testID="corner-open-repo-connect"
                   >
@@ -3410,11 +3497,12 @@ export default function BuzzChat() {
                     installations={githubInstallations}
                     currentKey={null}
                     error={roomRepoError}
+                    notice={roomRepoNotice}
                     onAddAccount={() => void handleAddGitHubAccount()}
                     onCreateRepository={handleCreateGitHubRepository}
-                    onManageInstallation={(url) => {
-                      void WebBrowser.openBrowserAsync(url).then(() => loadRoomRepoPicker());
-                    }}
+                    onManageInstallation={(installation) =>
+                      void handleManageGitHubInstallation(installation)
+                    }
                     onSelect={handleSelectRoomRepoCandidate}
                     testIDPrefix="corner-open-repo-picker"
                   />
@@ -3909,11 +3997,12 @@ export default function BuzzChat() {
                     installations={githubInstallations}
                     currentKey={roomRepository?.binding.key ?? null}
                     error={roomRepoError}
+                    notice={roomRepoNotice}
                     onAddAccount={() => void handleAddGitHubAccount()}
                     onCreateRepository={handleCreateGitHubRepository}
-                    onManageInstallation={(url) => {
-                      void WebBrowser.openBrowserAsync(url).then(() => loadRoomRepoPicker());
-                    }}
+                    onManageInstallation={(installation) =>
+                      void handleManageGitHubInstallation(installation)
+                    }
                     onSelect={handleSelectRoomRepoCandidate}
                     testIDPrefix="room-repo-picker"
                   />

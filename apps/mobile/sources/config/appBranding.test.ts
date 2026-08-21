@@ -31,6 +31,29 @@ function loadNativeIdentity(appEnv?: string): {
   };
 }
 
+type EasBuildProfile = {
+  extends?: string;
+  channel?: string;
+  android?: { buildType?: string };
+  [key: string]: unknown;
+};
+
+function resolveEasBuildProfile(
+  profiles: Record<string, EasBuildProfile>,
+  name: string,
+): EasBuildProfile {
+  const profile = profiles[name];
+  if (!profile) throw new Error(`Missing EAS build profile: ${name}`);
+  if (!profile.extends) return profile;
+
+  const parent = resolveEasBuildProfile(profiles, profile.extends);
+  return {
+    ...parent,
+    ...profile,
+    android: { ...parent.android, ...profile.android },
+  };
+}
+
 describe('Beeline display branding', () => {
   const appConfig = readFileSync(new URL('../../app.config.js', import.meta.url), 'utf8');
   const easConfig = readFileSync(new URL('../../eas.json', import.meta.url), 'utf8');
@@ -74,15 +97,15 @@ describe('Beeline display branding', () => {
     });
   });
 
-  it('keeps the sole build and every publish path on the production EAS Updates channel', () => {
-    const easBuildProfiles = JSON.parse(easConfig).build as Record<string, { channel?: string }>;
+  it('keeps every build and publish path on the production EAS Updates channel', () => {
+    const easBuildProfiles = JSON.parse(easConfig).build as Record<string, EasBuildProfile>;
     const packageJson = JSON.parse(
       readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
     ) as { scripts?: Record<string, string> };
 
-    expect(Object.keys(easBuildProfiles)).toEqual(['production']);
-    for (const profile of Object.values(easBuildProfiles)) {
-      expect(profile.channel).toBe('production');
+    expect(Object.keys(easBuildProfiles)).toEqual(['production', 'production-apk']);
+    for (const profileName of Object.keys(easBuildProfiles)) {
+      expect(resolveEasBuildProfile(easBuildProfiles, profileName).channel).toBe('production');
     }
     for (const [name, script] of Object.entries(packageJson.scripts ?? {})) {
       if (!script.includes('eas update')) continue;
@@ -98,6 +121,33 @@ describe('Beeline display branding', () => {
     expect(appConfig).toContain('"expo-channel-name": updatesChannel');
     expect(appConfig).toContain('runtimeVersion: "21"');
     expect(appConfig).not.toContain('googleServicesFile');
+  });
+
+  it('packages the production app as an APK without creating another app variant', () => {
+    const easBuildProfiles = JSON.parse(easConfig).build as Record<string, EasBuildProfile>;
+    const packageJson = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as { scripts?: Record<string, string> };
+    const production = resolveEasBuildProfile(easBuildProfiles, 'production');
+    const productionApk = resolveEasBuildProfile(easBuildProfiles, 'production-apk');
+
+    expect(easBuildProfiles['production-apk']).toEqual({
+      extends: 'production',
+      android: { buildType: 'apk' },
+    });
+    expect(productionApk).toEqual({
+      ...production,
+      extends: 'production',
+      android: { ...production.android, buildType: 'apk' },
+    });
+    expect(loadNativeIdentity()).toEqual({
+      scheme: 'beeline',
+      iosBundleIdentifier: 'app.usebeeline.mobile',
+      androidPackage: 'app.usebeeline.mobile',
+    });
+    expect(packageJson.scripts?.['release:build:apk']).toBe(
+      'eas build --profile production-apk --platform android --no-wait --non-interactive',
+    );
   });
 
   it('does not ship the package-mismatched Firebase client configuration', () => {

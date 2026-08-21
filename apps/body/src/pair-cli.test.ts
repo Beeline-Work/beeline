@@ -218,7 +218,11 @@ describe('beeline pair — one live spinner at a time', () => {
 });
 
 describe('beeline pair — --model/--effort validation', () => {
-  it('rejects a model the agent does not advertise, before ever touching the relay', async () => {
+  it('passes an unadvertised model through with a warning instead of blocking pairing', async () => {
+    // A catalog miss is not evidence a model is unusable (pi accepts unknown
+    // ids verbatim as custom model ids), so the old hard failure here was a
+    // false wall: the value warns and proceeds, and whatever the harness
+    // makes of it surfaces at launch with the value named.
     const gitRepo = await tmpDir('beeline-pair-cli-gitrepo-');
     spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: gitRepo });
     const stateHome = await tmpDir('beeline-pair-cli-state-');
@@ -226,7 +230,7 @@ describe('beeline pair — --model/--effort validation', () => {
 
     const { status, stderr } = runPair(
       [
-        'BUZZ-ABCD-EFGH',
+        'not-a-real-code',
         '--repo',
         gitRepo,
         '--agent',
@@ -240,13 +244,14 @@ describe('beeline pair — --model/--effort validation', () => {
     );
 
     expect(status).toBe(1);
-    expect(stderr).toContain('--model/--effort check failed');
-    expect(stderr).toContain("not one of \"model\"'s advertised options");
-    // Proves this failed before redemption: no relay/network error text.
-    expect(stderr).not.toContain('invalid agent pairing code');
+    expect(stderr).not.toContain('--model/--effort check failed');
+    expect(stderr).toContain('passed through as a custom id');
+    // Proves validation no longer blocks: the run reached redemption and
+    // failed on the malformed code, not on the model.
+    expect(stderr).toContain('invalid agent pairing code');
   });
 
-  it('rejects an effort the agent does not advertise, before ever touching the relay', async () => {
+  it('passes an unadvertised effort through with a warning instead of blocking pairing', async () => {
     const gitRepo = await tmpDir('beeline-pair-cli-gitrepo-');
     spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: gitRepo });
     const stateHome = await tmpDir('beeline-pair-cli-state-');
@@ -254,7 +259,7 @@ describe('beeline pair — --model/--effort validation', () => {
 
     const { status, stderr } = runPair(
       [
-        'BUZZ-ABCD-EFGH',
+        'not-a-real-code',
         '--repo',
         gitRepo,
         '--agent',
@@ -268,10 +273,11 @@ describe('beeline pair — --model/--effort validation', () => {
     );
 
     expect(status).toBe(1);
-    expect(stderr).toContain('--model/--effort check failed');
-    expect(stderr).toContain("not one of \"effort\"'s advertised options");
+    expect(stderr).not.toContain('--model/--effort check failed');
+    expect(stderr).toContain('effort "ultra-max" is not in');
+    expect(stderr).toContain('passed through as a custom id');
+    expect(stderr).toContain('invalid agent pairing code');
   });
-
   it('accepts a Codex-shaped catalog that spells choices as `value`, not `id`', async () => {
     // Real codex-acp advertises { value, name } with no `id`. The #226 pickers
     // and --model/--effort check required `id`, so a live Codex catalog loaded

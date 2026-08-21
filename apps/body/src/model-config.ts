@@ -178,25 +178,55 @@ function modelSelectionTargets(
 }
 
 /**
- * Validate a `{model, effort}` selection against a session's RAW advertised
- * catalog and throw a clear, specific error for the first axis that is
- * missing or whose value isn't advertised. Unlike `applyAgentModelSelection`
- * (which logs and skips so a bad in-app pick can never abort a live
- * session), this is for a context — pairing — where a bad selection must
- * fail loudly instead of silently launching with the wrong default.
+ * The set path's axis-level security gate: `configId` must exist in the raw
+ * advertised catalog AND its category must be picker allow-listed. Unlike
+ * `assertModelConfigOptionAllowed` it says nothing about the VALUE — a model
+ * id the harness does not list is a legitimate custom id (pi passes unknown
+ * ids through verbatim), while a `mode`/`fast-mode` axis is refused whatever
+ * value it would carry.
  */
-export function assertModelSelectionAdvertised(
+export function assertModelConfigAxisAllowed(
+  configId: string,
+  advertisedOptions: AgentModelConfigOption[],
+): void {
+  const axis = advertisedOptions.find((option) => option.id === configId);
+  if (!axis || !isAllowedAgentModelConfigCategory(axis.category)) {
+    throw new DisallowedModelConfigOptionError(configId);
+  }
+}
+
+/** One selection value the agent's own catalog does not list. */
+export interface UnadvertisedModelSelectionValue {
+  label: 'model' | 'effort';
+  value: string;
+  /** True when the harness advertises no selectable axis for this label at all. */
+  axisMissing: boolean;
+}
+
+/**
+ * Which values of a `{model, effort}` selection fall outside the RAW
+ * advertised catalog — i.e. which ones would be passed through as CUSTOM
+ * ids. A catalog miss is NOT evidence that a model is unusable (pi accepts
+ * unknown ids as custom model ids), so callers WARN on these instead of
+ * blocking; nothing here can be validated beyond what the catalog lists.
+ */
+export function unadvertisedModelSelectionValues(
   advertisedOptions: AgentModelConfigOption[],
   selection: { model?: string; effort?: string },
-): void {
+): UnadvertisedModelSelectionValue[] {
+  const result: UnadvertisedModelSelectionValue[] = [];
   for (const target of modelSelectionTargets(selection)) {
     if (!target.value) continue;
     const axis = advertisedOptions.find((option) => target.categories.includes(option.category));
     if (!axis) {
-      throw new Error(`this agent does not advertise a selectable ${target.label}`);
+      result.push({ label: target.label as 'model' | 'effort', value: target.value, axisMissing: true });
+      continue;
     }
-    assertModelConfigOptionAllowed(axis.id, target.value, advertisedOptions);
+    if (!axis.options.some((choice) => choice.id === target.value)) {
+      result.push({ label: target.label as 'model' | 'effort', value: target.value, axisMissing: false });
+    }
   }
+  return result;
 }
 
 /** Minimal shape `applyAgentModelSelection` needs from an ACP client. */
@@ -207,10 +237,15 @@ export interface ModelConfigSettable {
 /**
  * Apply a persisted `{model, effort}` selection to a live ACP session. Each
  * target category group is only ever searched among the RAW advertised
- * axes, and every candidate set is re-validated by
- * `assertModelConfigOptionAllowed` immediately before the call — a
- * disallowed or stale selection is skipped (logged), never thrown past this
- * point, so one bad axis can't abort session startup.
+ * axes, and the axis itself is re-validated against the category allow-list
+ * immediately before every call — a `mode`/`fast-mode` axis is refused here
+ * even if an upstream filtering step were skipped.
+ *
+ * A value the harness's catalog does NOT list is still passed through: a
+ * catalog miss is not evidence a model is unusable (pi accepts unknown ids
+ * verbatim as custom model ids). Such a set is best-effort — the harness's
+ * own refusal (or acceptance) is logged with the value named, never thrown
+ * past this point, so one bad axis can't abort session startup.
  */
 export async function applyAgentModelSelection(
   client: ModelConfigSettable,
@@ -221,13 +256,32 @@ export async function applyAgentModelSelection(
   for (const target of modelSelectionTargets(selection)) {
     if (!target.value) continue;
     const axis = advertisedOptions.find((option) => target.categories.includes(option.category));
-    if (!axis) continue;
+    if (!axis) {
+      console.error(
+        `[body] not applying ${target.label} "${target.value}": this harness advertises no selectable ${target.label} axis`,
+      );
+      continue;
+    }
     try {
-      assertModelConfigOptionAllowed(axis.id, target.value, advertisedOptions);
+      assertModelConfigAxisAllowed(axis.id, advertisedOptions);
     } catch (error) {
       console.error('[body] refusing to apply disallowed model config option:', error);
       continue;
     }
-    await client.setConfigOption(sessionId, axis.id, target.value);
+    const custom = !axis.options.some((choice) => choice.id === target.value);
+    try {
+      await client.setConfigOption(sessionId, axis.id, target.value);
+      if (custom) {
+        console.warn(
+          `[body] applied custom ${target.label} "${target.value}" — not in this harness's advertised catalog`,
+        );
+      }
+    } catch (error) {
+      console.error(
+        `[body] harness refused ${target.label} "${target.value}"${
+          custom ? ' (custom id)' : ''
+        }: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 }

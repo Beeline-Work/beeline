@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import type { CornerSummary, CornerStatus } from './corners';
-import { isRoomAlive, NO_ACTIVITY_PREVIEW, roomRowPresentation } from './room-list-row';
+import {
+  isRoomAlive,
+  NO_ACTIVITY_PREVIEW,
+  roomListSections,
+  roomRowPresentation,
+} from './room-list-row';
 
 function corner(status: CornerStatus, name = `corner-${status}`): CornerSummary {
-  return { id: `${status}-id`, name, openerPubkey: 'opener', status };
+  return { id: `${status}-id`, name, openerPubkey: 'opener', status, lastActivityAt: 10 };
 }
 
 const NO_NAMES = new Map<string, string>();
@@ -35,13 +40,22 @@ describe('Room row presentation', () => {
     expect(row).toMatchObject({ attention: true, live: false, glyph: '▲' });
   });
 
-  it('reports the loudest corner state when several are open at once', () => {
+  it('puts review-ready and failed work above live work, then leaves the rest quiet', () => {
+    expect(roomRowPresentation({ corners: [corner('open')] }, NO_NAMES).zone).toBe('needs-you');
+    expect(roomRowPresentation({ corners: [corner('failed')] }, NO_NAMES).zone).toBe('needs-you');
+    expect(roomRowPresentation({ corners: [corner('live')] }, NO_NAMES).zone).toBe('working');
+    expect(roomRowPresentation({ corners: [corner('merged')] }, NO_NAMES).zone).toBe('quiet');
+    expect(roomRowPresentation({}, NO_NAMES).zone).toBe('quiet');
+  });
+
+  it('reports action-needed before concurrent live work when several corners are open', () => {
     const row = roomRowPresentation(
       { corners: [corner('open'), corner('live'), corner('needs-attention')] },
       NO_NAMES,
     );
     expect(row.live).toBe(true);
-    expect(row.glyph).toBe('◆');
+    expect(row.glyph).toBe('▲');
+    expect(row.zone).toBe('needs-you');
     expect(row.corners).toHaveLength(3);
   });
 
@@ -62,24 +76,19 @@ describe('Room row presentation', () => {
       },
       NO_NAMES,
     );
-    expect(row.corners.map((entry) => entry.status)).toEqual([
-      'live',
-      'needs-attention',
-      'open',
-    ]);
+    expect(row.corners.map((entry) => entry.status)).toEqual(['live', 'needs-attention', 'open']);
   });
 
   it('falls back to the spoken-in / quiet glyphs when no corner reports', () => {
     expect(roomRowPresentation({ latestMessage: 'we shipped it' }, NO_NAMES).glyph).toBe('›');
     expect(roomRowPresentation({}, NO_NAMES).glyph).toBe('·');
-    // A corner that is merely open reports nothing: the leading mark is for
-    // work that is happening or stuck, and an idle corner is neither. It still
-    // counts in the gutter, so the expand affordance is unaffected.
+    // A review-ready corner is now a first-class Room fact, so it owns the
+    // leading mark instead of letting a message preview hide it.
     const idle = roomRowPresentation(
       { corners: [corner('open')], latestMessage: 'we shipped it' },
       NO_NAMES,
     );
-    expect(idle.glyph).toBe('›');
+    expect(idle.glyph).toBe('◇');
     expect(idle.corners).toHaveLength(1);
   });
 
@@ -88,36 +97,67 @@ describe('Room row presentation', () => {
     // written by an older build outlives the fix — the index must never print
     // `remote/1a2b3c4` while waiting for the revalidation that replaces it.
     for (const plumbing of ['remote/1a2b3c4', 'refs/heads/main', 'origin/main', '1a2b3c4d5e6']) {
-      expect(roomRowPresentation({ latestMessage: plumbing }, NO_NAMES).preview, plumbing).toBe(
+      expect(roomRowPresentation({ latestMessage: plumbing }, NO_NAMES).fact, plumbing).toBe(
         NO_ACTIVITY_PREVIEW,
       );
     }
     // Prose that merely mentions one is still the best thing the row has.
     expect(
-      roomRowPresentation({ latestMessage: 'pushed 1a2b3c4 to origin/main' }, NO_NAMES).preview,
+      roomRowPresentation({ latestMessage: 'pushed 1a2b3c4 to origin/main' }, NO_NAMES).fact,
     ).toBe('pushed 1a2b3c4 to origin/main');
   });
 
   it('states plainly when a Room holds nothing readable', () => {
-    expect(roomRowPresentation({}, NO_NAMES).preview).toBe(NO_ACTIVITY_PREVIEW);
+    expect(roomRowPresentation({}, NO_NAMES).fact).toBe(NO_ACTIVITY_PREVIEW);
     // `roomPreviewText` stores `''` for a message that was entirely plumbing,
     // so the row must treat an empty preview as "nothing said", never print it.
-    expect(roomRowPresentation({ latestMessage: '' }, NO_NAMES).preview).toBe(NO_ACTIVITY_PREVIEW);
-    expect(roomRowPresentation({ latestMessage: '   ' }, NO_NAMES).preview).toBe(
-      NO_ACTIVITY_PREVIEW,
-    );
+    expect(roomRowPresentation({ latestMessage: '' }, NO_NAMES).fact).toBe(NO_ACTIVITY_PREVIEW);
+    expect(roomRowPresentation({ latestMessage: '   ' }, NO_NAMES).fact).toBe(NO_ACTIVITY_PREVIEW);
   });
 
-  it('attributes the activity line only when the author is on the roster', () => {
-    const names = new Map([['author-1', 'Bobby']]);
+  it('states the current fact with the responsible agent and no speaker-prefixed fallback', () => {
+    const names = new Map([['opener', 'Lena']]);
+    expect(roomRowPresentation({ corners: [corner('open', 'login-fix')] }, names).fact).toBe(
+      'Lena · ready for review · login-fix',
+    );
+    expect(roomRowPresentation({ corners: [corner('live', 'rebase-main')] }, names).fact).toBe(
+      'Lena working · rebase-main',
+    );
     expect(
-      roomRowPresentation({ latestMessage: 'on it', latestMessageAuthor: 'author-1' }, names)
-        .author,
-    ).toBe('BOBBY');
+      roomRowPresentation(
+        { latestMessage: 'Can you check the API?', latestMessageAuthor: 'opener' },
+        names,
+      ).fact,
+    ).toBe('Can you check the API?');
+  });
+
+  it('sorts each zone by the newest meaningful event and omits empty zones', () => {
+    const sections = roomListSections(
+      [
+        { id: 'quiet', title: 'Quiet', latestMessage: 'old', latestMessageAt: 2 },
+        {
+          id: 'review-old',
+          title: 'Review old',
+          corners: [{ ...corner('open'), lastActivityAt: 4 }],
+        },
+        { id: 'live', title: 'Live', corners: [{ ...corner('live'), lastActivityAt: 8 }] },
+        {
+          id: 'review-new',
+          title: 'Review new',
+          corners: [{ ...corner('failed'), lastActivityAt: 9 }],
+        },
+        { id: 'landed', title: 'Landed', corners: [{ ...corner('merged'), lastActivityAt: 12 }] },
+      ],
+      NO_NAMES,
+    );
+
+    expect(sections.map((section) => section.title)).toEqual(['NEEDS YOU', 'WORKING', 'QUIET']);
+    expect(sections[0]?.data.map(({ item }) => item.id)).toEqual(['review-new', 'review-old']);
+    expect(sections[2]?.data.map(({ item }) => item.id)).toEqual(['landed', 'quiet']);
     expect(
-      roomRowPresentation({ latestMessage: 'on it', latestMessageAuthor: 'stranger' }, names)
-        .author,
-    ).toBe('');
-    expect(roomRowPresentation({ latestMessage: 'on it' }, names).author).toBe('');
+      roomListSections([{ id: 'only', latestMessage: 'hello', latestMessageAt: 1 }], NO_NAMES).map(
+        (section) => section.title,
+      ),
+    ).toEqual(['QUIET']);
   });
 });

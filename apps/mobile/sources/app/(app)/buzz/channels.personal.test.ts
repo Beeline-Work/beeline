@@ -136,8 +136,32 @@ vi.mock('react-native', async () => {
       (props.data ?? []).length === 0 ? props.ListEmptyComponent ?? null : null,
       props.ListFooterComponent ?? null,
     ]);
+  const SectionList = (props: any) => {
+    const sections = props.sections ?? [];
+    const rows = sections.flatMap((section: any) => [
+      ReactModule.createElement(
+        ReactModule.Fragment,
+        { key: `header-${section.zone}` },
+        props.renderSectionHeader?.({ section }) ?? null,
+      ),
+      ...section.data.map((item: unknown, index: number) =>
+        ReactModule.createElement(
+          ReactModule.Fragment,
+          { key: props.keyExtractor(item, index) },
+          props.renderItem({ item, index, section }),
+        ),
+      ),
+    ]);
+    return ReactModule.createElement('SectionList', props, [
+      props.ListHeaderComponent ?? null,
+      ...rows,
+      rows.length === 0 ? props.ListEmptyComponent ?? null : null,
+      props.ListFooterComponent ?? null,
+    ]);
+  };
   return {
     FlatList,
+    SectionList,
     Platform: { OS: 'ios', select: (o: Record<string, unknown>) => o.ios ?? o.default },
     RefreshControl: host('RefreshControl'),
     Share: { share: vi.fn() },
@@ -250,7 +274,7 @@ describe('one home surface for every Workspace kind', () => {
     }
     const text = visibleText(tree).join('');
     // Rooms index vocabulary and per-Room previews — not a bare "# name" list.
-    expect(text).toContain('ROOMS · 2');
+    expect(text).toContain('QUIET · 2');
     expect(text).toContain('Ledger rewrite');
     expect(text).toContain('beebee: pushed the branch');
     expect(text).toContain('＋ ROOM');
@@ -265,7 +289,7 @@ describe('one home surface for every Workspace kind', () => {
       expect(has(tree, id), `shared home is missing ${id}`).toBe(true);
     }
     const text = visibleText(tree).join('');
-    expect(text).toContain('ROOMS · 2');
+    expect(text).toContain('QUIET · 2');
     expect(text).toContain('＋ ROOM');
     expect(text).toContain('MEMBERS');
   });

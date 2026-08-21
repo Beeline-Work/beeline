@@ -41,6 +41,20 @@ import { HullWaveSignal, MonoButton, PixelLoader } from '@/components/buzz/MonoH
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 
 const INSTALL_COMMAND = 'curl -fsSL https://usebeeline.app/install | sh';
+
+/**
+ * Axes offered when the agent has published NO catalog yet (its session has
+ * never activated, or the read failed). A missing catalog must not remove
+ * the ability to configure a model deliberately — a catalog miss is not
+ * evidence a model is unusable (harnesses like pi pass unknown ids through
+ * verbatim as custom model ids) — so both axes render with manual entry and
+ * no preset options. Model/effort only: never `mode` (the read-only/edit
+ * boundary is not user-settable here).
+ */
+const MODEL_FALLBACK_AXES: AgentModelConfigOption[] = [
+  { id: 'model', category: 'model', options: [] },
+  { id: 'effort', category: 'effort', options: [] },
+];
 /** Under the 45s daemon heartbeat so a just-started agent reads online promptly. */
 const AGENT_PRESENCE_REFRESH_MS = 30_000;
 /** How long an admin action waits for the connect handshake before failing honestly. */
@@ -199,6 +213,9 @@ export default function BuzzAgents() {
   const [modelSelection, setModelSelection] = useState<AgentModelConfigInput | null>(null);
   const [modelConfigWorking, setModelConfigWorking] = useState(false);
   const [openModelAxis, setOpenModelAxis] = useState<string | null>(null);
+  /** Which axis has its free-text custom-id entry open, and what it holds. */
+  const [customModelAxis, setCustomModelAxis] = useState<string | null>(null);
+  const [customModelText, setCustomModelText] = useState('');
   const pairingBaseline = useRef<Set<string>>(new Set());
   const pairingPending = useRef(false);
   // The screen paints from the Workspace roster cache, so an owner's admin
@@ -526,9 +543,12 @@ export default function BuzzAgents() {
 
   // The runtime's advertised model/effort catalog + this agent's persisted
   // selection, if any. A session that has never activated yet has published
-  // no catalog — the section stays hidden rather than showing an error.
+  // no catalog — the section then renders the fallback manual-entry axes
+  // rather than disappearing: configuration stays possible either way.
   useEffect(() => {
     setOpenModelAxis(null);
+    setCustomModelAxis(null);
+    setCustomModelText('');
     if (!transport || !communityId || !selected) {
       setModelCatalog(null);
       setModelSelection(null);
@@ -568,6 +588,8 @@ export default function BuzzAgents() {
         await ready.agentModelConfigSet(workspaceId, selected.pubkey, input);
         setModelSelection((prev) => ({ ...prev, ...input }));
         setOpenModelAxis(null);
+        setCustomModelAxis(null);
+        setCustomModelText('');
       } catch (caught) {
         setError(`Could not set ${axis.category}: ${String(caught)}`);
       } finally {
@@ -1078,19 +1100,24 @@ export default function BuzzAgents() {
                   <Text style={styles.secondaryButtonText}>Suggest locally</Text>
                 </TouchableOpacity>
               </View>
-              {modelCatalog && modelCatalog.length > 0 && (
+              {selected && (
                 <View style={styles.modelConfigSection} testID={`agent-${selected.pubkey}-model-config`}>
                   <Text style={styles.label}>Model / Effort</Text>
-                  {modelCatalog.map((axis) => {
+                  {(modelCatalog && modelCatalog.length > 0 ? modelCatalog : MODEL_FALLBACK_AXES).map((axis) => {
                     const persisted = axis.category === 'model' ? modelSelection?.model : modelSelection?.effort;
                     const currentValue = persisted ?? axis.currentValue;
                     const isOpen = openModelAxis === axis.id;
+                    const isCustomOpen = customModelAxis === axis.id;
                     return (
                       <View key={axis.id} style={styles.modelAxisBlock}>
                         <TouchableOpacity
                           style={styles.modelAxisRow}
                           disabled={modelConfigWorking}
-                          onPress={() => setOpenModelAxis(isOpen ? null : axis.id)}
+                          onPress={() => {
+                            setOpenModelAxis(isOpen ? null : axis.id);
+                            setCustomModelAxis(null);
+                            setCustomModelText('');
+                          }}
                           testID={`model-axis-${axis.id}`}
                         >
                           <Text style={styles.modelAxisLabel}>
@@ -1099,29 +1126,77 @@ export default function BuzzAgents() {
                           <Text style={styles.modelAxisValue} numberOfLines={1}>
                             {currentValue ?? '—'}
                           </Text>
-                          <Text style={styles.chevron}>{isOpen ? '⌄' : '›'}</Text>
+                          {axis.options.length > 0 && <Text style={styles.chevron}>{isOpen ? '⌄' : '›'}</Text>}
                         </TouchableOpacity>
-                        {isOpen && (
-                          <View style={styles.modelOptionList}>
-                            {axis.options.map((choice) => (
-                              <TouchableOpacity
-                                key={choice.id}
-                                style={styles.modelOptionRow}
-                                disabled={modelConfigWorking}
-                                onPress={() => void chooseModelOption(axis, choice.id)}
-                                testID={`model-option-${axis.id}-${choice.id}`}
+                        {isOpen &&
+                          axis.options.map((choice) => (
+                            <TouchableOpacity
+                              key={choice.id}
+                              style={styles.modelOptionRow}
+                              disabled={modelConfigWorking}
+                              onPress={() => void chooseModelOption(axis, choice.id)}
+                              testID={`model-option-${axis.id}-${choice.id}`}
+                            >
+                              <Text
+                                style={[
+                                  styles.modelOptionText,
+                                  choice.id === currentValue && styles.modelOptionTextActive,
+                                ]}
                               >
-                                <Text
-                                  style={[
-                                    styles.modelOptionText,
-                                    choice.id === currentValue && styles.modelOptionTextActive,
-                                  ]}
+                                {choice.name ?? choice.id}
+                              </Text>
+                              {choice.id === currentValue && <Text style={styles.modelOptionCheck}>✓</Text>}
+                            </TouchableOpacity>
+                          ))}
+                        {/* Custom-id escape: a catalog miss is not evidence a
+                            model is unusable — harnesses like pi accept unknown
+                            ids verbatim as custom model ids — so any id can be
+                            entered by hand and the harness's own response (even
+                            a warning) is what comes back at launch. */}
+                        {isOpen && (
+                          <View style={styles.modelCustomBlock}>
+                            <TouchableOpacity
+                              style={styles.modelOptionRow}
+                              disabled={modelConfigWorking}
+                              onPress={() => {
+                                setCustomModelAxis(isCustomOpen ? null : axis.id);
+                                setCustomModelText('');
+                              }}
+                              testID={`model-custom-${axis.id}`}
+                            >
+                              <Text style={[styles.modelOptionText, isCustomOpen && styles.modelOptionTextActive]}>
+                                Enter a custom id…
+                              </Text>
+                            </TouchableOpacity>
+                            {isCustomOpen && (
+                              <View style={styles.modelCustomEntry}>
+                                <TextInput
+                                  style={styles.modelCustomInput}
+                                  value={customModelText}
+                                  onChangeText={setCustomModelText}
+                                  autoCapitalize="none"
+                                  autoCorrect={false}
+                                  placeholder={axis.category === 'model' ? 'provider/model-id' : 'low | medium | high | …'}
+                                  placeholderTextColor={theme.buzz.textMuted}
+                                  editable={!modelConfigWorking}
+                                  testID={`model-custom-input-${axis.id}`}
+                                />
+                                <TouchableOpacity
+                                  disabled={modelConfigWorking || customModelText.trim().length === 0}
+                                  onPress={() => void chooseModelOption(axis, customModelText.trim())}
+                                  testID={`model-custom-submit-${axis.id}`}
                                 >
-                                  {choice.name ?? choice.id}
-                                </Text>
-                                {choice.id === currentValue && <Text style={styles.modelOptionCheck}>✓</Text>}
-                              </TouchableOpacity>
-                            ))}
+                                  <Text
+                                    style={[
+                                      styles.modelCustomApply,
+                                      customModelText.trim().length > 0 && styles.modelOptionTextActive,
+                                    ]}
+                                  >
+                                    Apply
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
+                            )}
                           </View>
                         )}
                       </View>
@@ -1521,7 +1596,33 @@ const styles = StyleSheet.create((theme) => {
     color: groknight.textPrimary,
     fontSize: 12,
   },
-  modelOptionList: { paddingBottom: 8 },
+  modelCustomBlock: { paddingBottom: 8 },
+  modelCustomEntry: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingLeft: 12,
+    paddingRight: 12,
+    paddingBottom: 8,
+  },
+  modelCustomInput: {
+    ...Typography.mono(),
+    flex: 1,
+    minWidth: 0,
+    color: groknight.textPrimary,
+    fontSize: 12,
+    borderWidth: 1,
+    borderColor: groknight.border,
+    borderRadius: 3,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  modelCustomApply: {
+    ...Typography.default('semiBold'),
+    color: groknight.textMuted,
+    fontSize: 12,
+    paddingHorizontal: 4,
+  },
   modelOptionRow: {
     minHeight: 38,
     flexDirection: 'row',

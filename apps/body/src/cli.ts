@@ -28,8 +28,9 @@ import {
   isAgentAccessPolicy,
   type AgentAccessPolicy,
 } from './access-policy.js';
-import { assertModelSelectionAdvertised } from './model-config.js';
+import type { AgentModelConfigOption } from '@beeline/buzz-client';
 import { fetchAgentModelCatalog } from './model-catalog.js';
+import { unadvertisedModelSelectionValues } from './model-config.js';
 import { pickModelAndEffort, resolveAccessSettings } from './agent-settings-prompts.js';
 import { withSpinner } from './clack-support.js';
 import { Body } from './body.js';
@@ -294,11 +295,13 @@ function resolvePairRepository(repoFlag: string | undefined): {
 }
 
 /**
- * Validate `--model`/`--effort` against the agent's own live advertised
- * catalog before pairing commits to anything, and throw a clear error if
- * either value isn't one the agent actually offers. A no-op when neither
- * flag was passed. Picker-sourced selections skip this — they're already
- * drawn from the same live catalog, so they can't be invalid by construction.
+ * Check `--model`/`--effort` against the agent's own live advertised catalog
+ * and WARN about anything it does not list. A catalog miss is not evidence a
+ * model is unusable (pi passes unknown ids through verbatim as custom model
+ * ids), so an unadvertised value is never blocked here — the harness's own
+ * response at launch is the truth, and it surfaces with the value named.
+ * A failed catalog fetch warns too: a deliberate `--model` must survive a
+ * catalog outage. A no-op when neither flag was passed.
  */
 async function validateModelSelection(
   agent: AgentCommand,
@@ -306,13 +309,22 @@ async function validateModelSelection(
   selection: { model?: string; effort?: string },
 ): Promise<void> {
   if (!selection.model && !selection.effort) return;
+  let raw: AgentModelConfigOption[];
   try {
-    const { raw } = await fetchAgentModelCatalog(agent, agentEnv);
-    assertModelSelectionAdvertised(raw, selection);
+    ({ raw } = await fetchAgentModelCatalog(agent, agentEnv));
   } catch (error) {
-    throw new Error(
-      `--model/--effort check failed for ${formatAgentCommand(agent)}: ` +
-        (error instanceof Error ? error.message : String(error)),
+    console.warn(
+      `[beeline] could not read ${agent.kind}'s advertised model catalog (` +
+        `${error instanceof Error ? error.message : String(error)}); applying ` +
+        '--model/--effort anyway.',
+    );
+    return;
+  }
+  for (const miss of unadvertisedModelSelectionValues(raw, selection)) {
+    console.warn(
+      miss.axisMissing
+        ? `[beeline] ${agent.kind} does not advertise a selectable ${miss.label}; "${miss.value}" will be applied as a custom value.`
+        : `[beeline] ${miss.label} "${miss.value}" is not in ${agent.kind}'s advertised catalog; it will be passed through as a custom id, and the harness may refuse it at startup.`,
     );
   }
 }

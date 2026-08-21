@@ -21,16 +21,44 @@ import { fetchAgentModelCatalog } from './model-catalog.js';
 
 export const EFFORT_AXIS_CATEGORIES = ['thought_level', 'effort', 'reasoning_effort'] as const;
 
+/** Sentinel option value that switches the picker to a free-text model/effort id. */
+const CUSTOM_CHOICE = '__beeline-custom__';
+
+/**
+ * Free-text entry for a model/effort id the catalog does not contain. A
+ * catalog miss is NOT evidence a model is unusable — pi (among others)
+ * passes unknown ids through verbatim as custom model ids — so the value is
+ * taken as given and whatever the harness makes of it surfaces at runtime.
+ * Empty input (bare Enter) skips the axis entirely; Ctrl-C still cancels the
+ * whole pairing via `unwrapPrompt`.
+ */
+async function promptCustomValue(
+  message: string,
+  placeholder: string,
+): Promise<string | undefined> {
+  // No `validate`: bare Enter must SKIP the axis (that is what the message
+  // promises), so emptiness is resolved here rather than re-prompted.
+  const picked = await clack.text({ message, placeholder });
+  const value = unwrapPrompt(picked, 'Pairing cancelled.').trim();
+  return value.length > 0 ? value : undefined;
+}
+
 /**
  * Queries the agent's own LIVE catalog (never a hardcoded list); a picker
  * only appears for an axis the agent actually advertises, and each option's
  * current default is pre-selected so pressing enter keeps the harness
- * default. A catalog fetch failure is a soft skip, not a pairing failure —
- * model/effort selection has always been optional.
+ * default. Every picker also carries an explicit custom-id escape — a model
+ * absent from the catalog may still be perfectly usable (harnesses like pi
+ * accept unknown ids as custom model ids), so the user can type any id.
+ *
+ * A catalog fetch failure is NOT the end of selection either: with manual
+ * entry available, both axes fall back to free-text prompts so the user can
+ * still proceed deliberately instead of silently launching with the harness
+ * default.
  *
  * `flags.model` / `flags.effort` skip that axis's prompt (the matching CLI
  * flag was already given). Passing both returns immediately without fetching
- * the catalog — validation of flag values is the caller's job.
+ * the catalog — flag values are validated (warn-only) by the caller.
  */
 export async function pickModelAndEffort(
   agent: AgentCommand,
@@ -44,42 +72,83 @@ export async function pickModelAndEffort(
 
   const spinner = clack.spinner();
   spinner.start(`Reading ${agent.kind}'s available models…`);
-  let catalog: AgentModelConfigOption[];
+  let catalog: AgentModelConfigOption[] | null = null;
   try {
     catalog = (await fetchAgentModelCatalog(agent, agentEnv)).catalog;
     spinner.stop('Catalog loaded.');
   } catch (error) {
-    spinner.stop('Could not read the catalog — skipping model/effort selection.');
+    spinner.stop('Could not read the catalog — you can still enter model/effort manually.');
     clack.log.warn(error instanceof Error ? error.message : String(error));
-    return selection;
   }
 
-  const modelAxis = catalog.find((option) => option.category === 'model');
-  if (!selection.model && modelAxis && modelAxis.options.length > 0) {
-    const picked = await clack.select<string>({
-      message: `Model for this ${agent.kind} agent?`,
-      options: modelAxis.options.map((choice) => ({
-        value: choice.id,
-        label: choice.name ?? choice.id,
-      })),
-      ...(modelAxis.currentValue ? { initialValue: modelAxis.currentValue } : {}),
-    });
-    selection.model = unwrapPrompt(picked, 'Pairing cancelled.');
+  const modelAxis = catalog?.find((option) => option.category === 'model');
+  if (!selection.model) {
+    if (modelAxis && modelAxis.options.length > 0) {
+      const picked = await clack.select<string>({
+        message: `Model for this ${agent.kind} agent?`,
+        options: [
+          ...modelAxis.options.map((choice) => ({
+            value: choice.id,
+            label: choice.name ?? choice.id,
+          })),
+          {
+            value: CUSTOM_CHOICE,
+            label: 'Enter a custom model id…',
+            hint: 'any id the list does not show',
+          },
+        ],
+        ...(modelAxis.currentValue ? { initialValue: modelAxis.currentValue } : {}),
+      });
+      selection.model =
+        picked === CUSTOM_CHOICE
+          ? await promptCustomValue(
+              `Custom model id for this ${agent.kind} agent? (Enter to skip)`,
+              'provider/model-id',
+            )
+          : unwrapPrompt(picked, 'Pairing cancelled.');
+    } else {
+      // No usable catalog (fetch failed, or the harness advertised no model
+      // axis) — manual entry is the only path, and skipping stays allowed.
+      selection.model = await promptCustomValue(
+        `Model id for this ${agent.kind} agent? (Enter to skip)`,
+        'provider/model-id',
+      );
+    }
   }
 
-  const effortAxis = catalog.find((option) =>
+  const effortAxis = catalog?.find((option) =>
     (EFFORT_AXIS_CATEGORIES as readonly string[]).includes(option.category),
   );
-  if (!selection.effort && effortAxis && effortAxis.options.length > 0) {
-    const picked = await clack.select<string>({
-      message: `Effort/thinking level for this ${agent.kind} agent?`,
-      options: effortAxis.options.map((choice) => ({
-        value: choice.id,
-        label: choice.name ?? choice.id,
-      })),
-      ...(effortAxis.currentValue ? { initialValue: effortAxis.currentValue } : {}),
-    });
-    selection.effort = unwrapPrompt(picked, 'Pairing cancelled.');
+  if (!selection.effort) {
+    if (effortAxis && effortAxis.options.length > 0) {
+      const picked = await clack.select<string>({
+        message: `Effort/thinking level for this ${agent.kind} agent?`,
+        options: [
+          ...effortAxis.options.map((choice) => ({
+            value: choice.id,
+            label: choice.name ?? choice.id,
+          })),
+          {
+            value: CUSTOM_CHOICE,
+            label: 'Enter a custom level…',
+            hint: 'any level the list does not show',
+          },
+        ],
+        ...(effortAxis.currentValue ? { initialValue: effortAxis.currentValue } : {}),
+      });
+      selection.effort =
+        picked === CUSTOM_CHOICE
+          ? await promptCustomValue(
+              `Custom effort/thinking level for this ${agent.kind} agent? (Enter to skip)`,
+              'low | medium | high | …',
+            )
+          : unwrapPrompt(picked, 'Pairing cancelled.');
+    } else {
+      selection.effort = await promptCustomValue(
+        `Effort/thinking level for this ${agent.kind} agent? (Enter to skip)`,
+        'low | medium | high | …',
+      );
+    }
   }
 
   return selection;

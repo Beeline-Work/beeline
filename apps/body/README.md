@@ -82,7 +82,7 @@ by projecting agent activity into the relay channel.
 | `BUZZ_AGENT_BIN`                    | No       | explicit reference only | Reference `buzz-agent` override                                                                  |
 | `BUZZ_DEV_MCP_BIN`                  | No       | auto-detect             | Path to `buzz-dev-mcp` binary                                                                    |
 | `BUZZ_READONLY_MCP_BIN`             | No       | bundled/auto-detect     | Path to Beeline's inspection-only MCP                                                            |
-| `BUZZY_RELAY_HOST`                  | No       | `usebeeline.app`        | Relay HTTP/WS host (`relay.buzzrouter.com` remains an accepted alias)                             |
+| `BUZZY_RELAY_HOST`                  | No       | `usebeeline.app`        | Relay HTTP/WS host (`relay.buzzrouter.com` remains an accepted alias)                            |
 | `BUZZY_RELAY_SCHEME`                | No       | `https`                 | Relay scheme                                                                                     |
 | `BUZZY_BODY_WORKSPACE`              | No       | `./body-workspace`      | Agent workspace root                                                                             |
 | `BUZZY_BODY_LLM_FILE`               | No       | —                       | Path to LLM credentials env file                                                                 |
@@ -92,8 +92,6 @@ by projecting agent activity into the relay channel.
 | `BUZZ_AGENT_KEY`                    | No       | generated at pair       | Existing agent Nostr nsec/hex                                                                    |
 | `BUZZY_BODY_AUTO_APPROVE`           | No       | `1`                     | Auto-approve permissions inside edit corners only                                                |
 | `BUZZY_BODY_SANDBOX`                | No       | `bwrap`                 | `off` disables the bubblewrap OS sandbox for ACP children (overrides `runtime.json`'s `sandbox`) |
-| `BEELINE_GITHUB_APP_ID`             | GitHub   | —                       | Beeline GitHub App id                                                                            |
-| `BEELINE_GITHUB_APP_PRIVATE_KEY`    | GitHub   | —                       | App private key used only to mint installation tokens                                            |
 | `BUZZY_BODY_SYNC_OPERATOR_CHECKOUT` | No       | `0`                     | `1` opts into clean, same-branch, fast-forward-only post-land pairing-checkout sync              |
 
 For a remote-backed Room, origin is truth and the checkout under the supervisor
@@ -132,14 +130,17 @@ again and does not modify any existing `buzz` command. Ensure `~/.local/bin` is
 on `PATH`; the installer prints the exact export when it is not.
 
 ```bash
-# Supported user path: run once from the repository the agent will work in.
-# The command redeems the Workspace code, resolves or creates the repo's Room,
-# stores machine-only keys under .git, and launches the durable daemon.
+# Supported user path: pair the agent identity and launch its durable daemon.
+# The current directory is never treated as repository intent; Rooms already
+# carry their own selected repository binding.
 # With no --agent flag, Beeline detects Codex, Claude Code, Goose, and Pi.
 # Installed agents with a missing ACP adapter remain in the numbered menu and
 # offer to install it when selected. Non-interactive runs print the exact manual
 # install command and never install packages automatically.
 beeline pair BUZZ-XXXX-XXXX
+
+# Explicit opt-in only: create or join the Room for this repository at pair time.
+beeline pair BUZZ-XXXX-XXXX --repo /path/to/repo
 
 # Piped/non-interactive sessions with several matches must choose explicitly.
 beeline pair BUZZ-XXXX-XXXX --agent codex
@@ -203,12 +204,13 @@ npm run body -- create-and-provision "my-project"
 
 ```
 
-`pair` uses `origin` as the repository identity. HTTPS and SSH clone forms are
-normalized and credential material is discarded, so clones of the same remote
-in one Workspace converge on one Room. With no `origin`, pairing creates a
-local-only Room that deliberately does not converge across machines. A Room has
-one immutable repository binding; multiple paired agents in it create parallel
-feature branches of that repository.
+`pair --repo` uses `origin` as the repository identity. HTTPS and SSH clone
+forms are normalized and credential material is discarded, so clones of the
+same remote in one Workspace converge on one Room. With no `origin`, explicit
+`--repo` pairing creates a local-only Room that deliberately does not converge
+across machines. A bare `pair` never inspects cwd and creates no repository
+binding. A Room has one immutable repository binding; multiple paired agents in
+it create parallel feature branches of that repository.
 
 Pairing is Workspace-scoped, not Room-scoped. To serve another repository Room,
 open that Room in the mobile app and tap `＋ Agent`; the human-signed membership

@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 
 /**
- * The daemon-published agent state-notice feature is DELETED and must stay
- * deleted (captain's order).
+ * The broad daemon-published agent state-notice feature is DELETED and must
+ * stay deleted. Repository join refusal is the one narrow exception: if the
+ * daemon never joins, presence alone looks like an ignored mention, so the
+ * supervisor publishes one deduplicated, factual retry notice.
  *
  * `agent-state-messages.ts` (#231) mapped five real daemon states —
  * relay-disconnected, harness-auth-missing, harness-unavailable,
@@ -18,11 +20,10 @@ import { readFileSync, existsSync } from 'node:fs';
  *     daemon restarts produced a WALL of identical
  *     "I lost my connection to the relay — reconnecting." messages in the
  *     captain's live Room.
- *   - None of the five is something a person can act on from a chat
- *     transcript. A daemon's own health belongs in the daemon's log; what a
- *     Room needs is honest silence plus the signals that already exist — the
- *     presence lease (the OFFLINE banner, the per-agent dot) and the
- *     corner/turn state.
+ *   - The transient four are not something a person can act on from a chat
+ *     transcript. A daemon's own weather belongs in its log. Repository join
+ *     refusal differs because it prevents the daemon from establishing any of
+ *     the normal Room signals at all.
  *
  * The wanted machine-authored publishes are unaffected and deliberately out of
  * scope here: the land recap (`postCornerLandSummary`), CI results, and the
@@ -106,18 +107,14 @@ describe('the daemon-published agent state notices stay deleted', () => {
     expect(reconnectCatch).not.toContain('postControlMessage');
   });
 
-  /**
-   * A Room whose repository cannot be materialized never starts. That is a
-   * host problem the operator reads in the log; it was #231's one genuinely
-   * new signal and it is going with the rest.
-   */
-  it('leaves an unservable Room silent on the relay', () => {
-    const start = supervisor.slice(
-      supervisor.indexOf('private async startRepositoryRoom'),
-      supervisor.indexOf('canonical checkout unavailable') + 400,
+  it('uses one quiet supervisor notice for an unservable repository Room', () => {
+    const reconcile = supervisor.slice(
+      supervisor.indexOf('async reconcile('),
+      supervisor.indexOf('private roomRoot('),
     );
-    expect(start.length).toBeGreaterThan(0);
-    expect(start).toContain('console.error');
-    expect(start).not.toContain('postAgentMessage');
+    expect(reconcile.length).toBeGreaterThan(0);
+    expect(reconcile).toContain('.messageSubmit(');
+    expect(reconcile).toContain('I will retry automatically in 10 minutes.');
+    expect(reconcile).not.toContain("I can't get to this room's repo");
   });
 });

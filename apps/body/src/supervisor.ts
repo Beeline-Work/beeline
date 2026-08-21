@@ -71,6 +71,16 @@ function relayRepoFromBinding(
   return { ownerHex: match[1]!.toLowerCase(), repo: decodeURIComponent(match[2]!) };
 }
 
+function sameRepositoryBinding(left: RepositoryBinding, right: RepositoryBinding): boolean {
+  return (
+    left.key === right.key &&
+    left.name === right.name &&
+    left.remote === right.remote &&
+    left.localOnly === right.localOnly &&
+    left.githubInstallationId === right.githubInstallationId
+  );
+}
+
 function boundRepoFromTruth(truth: RepositoryTruth, room?: RoomRuntimeRecord): BoundRepo {
   return {
     truth,
@@ -206,7 +216,10 @@ export class WorkspaceSupervisor {
       identity: this.agent,
       WebSocketImpl: WebSocket,
     });
-    this.githubApp = GitHubAppRuntime.fromEnvironment();
+    this.githubApp = GitHubAppRuntime.fromEnvironment(process.env, {
+      baseUrl: runtime.relayBaseUrl,
+      identity: this.agent,
+    });
     this.repositoryTruth = new RepositoryTruthResolver({
       repositoriesRoot: this.sharedRepositoriesRoot(),
       relayBaseUrl: runtime.relayBaseUrl,
@@ -214,10 +227,24 @@ export class WorkspaceSupervisor {
       syncOperatorCheckout: process.env.BUZZY_BODY_SYNC_OPERATOR_CHECKOUT === '1',
       ...(this.githubApp
         ? {
-            resolveRemoteIdentity: (binding: RepositoryBinding) =>
-              this.githubApp!.resolveIdentity(binding),
-            runRemoteGit: (cwd: string, args: string[], binding: RepositoryBinding) =>
-              this.githubApp!.git(cwd, args, binding),
+            resolveRemoteIdentity: (binding: RepositoryBinding, roomId?: string) =>
+              binding.remote?.startsWith('git://github.com/')
+                ? this.githubApp!.resolveIdentity(binding, roomId)
+                : Promise.resolve(undefined),
+            runRemoteGit: (
+              cwd: string,
+              args: string[],
+              binding: RepositoryBinding,
+              roomId?: string,
+            ) => {
+              if (binding.remote?.startsWith('git://github.com/')) {
+                return this.githubApp!.git(cwd, args, binding, roomId);
+              }
+              const relay = relayRepoFromBinding(binding);
+              return relay
+                ? gitAuthed(cwd, this.agent, relay.ownerHex, relay.repo, args)
+                : git(cwd, args);
+            },
           }
         : {}),
     });
@@ -400,11 +427,18 @@ export class WorkspaceSupervisor {
         // from this list is the authoritative removal signal.
         const knownRoom = this.runtime.rooms.find((candidate) => candidate.channelId === channelId);
         if (knownRoom) {
+          const resolution = await client.resolveRoomRepositoryState(channelId);
           desired.set(channelId, {
             membershipSince: membership.event.created_at,
             kind: 'repository',
             repositoryRoom: knownRoom,
+            ...(resolution.kind === 'repository'
+              ? { roomRepository: resolution.repository }
+              : {}),
           });
+          if (resolution.kind === 'unverified') {
+            this.noteRoomRepositoryUnverified(channelId, resolution.reason);
+          }
           continue;
         }
         if ((await client.getChannelCommunityId(channelId)) !== this.runtime.communityId) continue;
@@ -491,6 +525,23 @@ export class WorkspaceSupervisor {
         try {
           if (target.kind === 'repository') {
             let room = this.runtime.rooms.find((candidate) => candidate.channelId === channelId);
+            if (
+              room &&
+              target.roomRepository &&
+              !sameRepositoryBinding(room.repo.repository, target.roomRepository.binding)
+            ) {
+              const replacement = await this.materializeRoom(
+                channelId,
+                target.membershipSince,
+                target.roomRepository,
+              );
+              replacement.root = room.root;
+              replacement.mergeWorker = room.mergeWorker;
+              const roomIndex = this.runtime.rooms.indexOf(room);
+              this.runtime.rooms[roomIndex] = replacement;
+              room = replacement;
+              await writeRuntimeRecord(this.runtime);
+            }
             if (!room) {
               const roomRepository =
                 target.roomRepository ?? (await client.resolveRoomRepository(channelId));
@@ -515,7 +566,20 @@ export class WorkspaceSupervisor {
           }
           this.roomDiscoveryFailures.delete(channelId);
         } catch (error) {
-          this.noteRoomDiscoveryFailure(channelId, error);
+          if (this.noteRoomDiscoveryFailure(channelId, error)) {
+            await client
+              .messageSubmit(
+                channelId,
+                "Agent unavailable: I could not access this Room's repository. " +
+                  'I will retry automatically in 10 minutes.',
+              )
+              .catch((noticeError: unknown) =>
+                console.warn(
+                  `[supervisor] Room ${channelId} join-status notice could not be sent:`,
+                  noticeError,
+                ),
+              );
+          }
         }
       }
       return 'member';
@@ -536,19 +600,20 @@ export class WorkspaceSupervisor {
    * durably unservable (a local-only repository bound on another checkout)
    * says so once, not every pass.
    */
-  private noteRoomDiscoveryFailure(channelId: string, error: unknown): void {
+  private noteRoomDiscoveryFailure(channelId: string, error: unknown): boolean {
     const message = error instanceof Error ? error.message : String(error);
     const previous = this.roomDiscoveryFailures.get(channelId);
     this.roomDiscoveryFailures.set(channelId, {
       retryAt: this.now() + DEFAULT_ROOM_DISCOVERY_RETRY_MS,
       message,
     });
-    if (previous?.message === message) return;
+    if (previous?.message === message) return false;
     console.error(
       `[supervisor] Room ${channelId} could not be joined; skipping it and retrying in ` +
         `${DEFAULT_ROOM_DISCOVERY_RETRY_MS}ms:`,
       error,
     );
+    return true;
   }
 
   /**
@@ -606,20 +671,7 @@ export class WorkspaceSupervisor {
     // can drift (the confirmed leak where the agent shared it); the agent must
     // read clean origin state and never touch the operator's tree.
     let boundRepo: BoundRepo;
-    try {
-      boundRepo = await this.resolveServingRepo(room);
-    } catch (error) {
-      // A room whose canonical checkout cannot be materialized cannot be
-      // served yet. Leave it unstarted; the next reconcile retries.
-      console.error(
-        `[supervisor] Room ${channelId} canonical checkout unavailable; will retry:`,
-        error,
-      );
-      // Deliberately console-only: a Room the daemon cannot serve is the
-      // daemon's problem to report to its operator, not chatter to publish
-      // into the Room. The tombstone test next to this file says why.
-      return;
-    }
+    boundRepo = await this.resolveServingRepo(room);
     const controller = new AbortController();
     const workspaceRoot = this.roomRoot(channelId, room);
     const config: BodyConfig = this.roomBodyConfig(workspaceRoot);
@@ -639,7 +691,7 @@ export class WorkspaceSupervisor {
         scheduler: this.scheduler,
         relaySocket: this.relaySocket,
         statePath: resolve(workspaceRoot, 'body-state.json'),
-        resolveNamedRepository: (target) => this.resolveNamedRepository(target),
+        resolveNamedRepository: (target) => this.resolveNamedRepository(channelId, target),
         refreshRepositoryTruth: (repo, checkpoint) => this.refreshBoundRepo(repo, checkpoint),
         syncPairingCheckout: (repo, tip) => this.syncPairingCheckout(repo, tip),
         runRepositoryGit: (repo, cwd, args) => this.runRepositoryGit(repo, cwd, args),
@@ -687,7 +739,7 @@ export class WorkspaceSupervisor {
       scheduler: this.scheduler,
       relaySocket: this.relaySocket,
       statePath: resolve(workspaceRoot, 'body-state.json'),
-      resolveNamedRepository: (target) => this.resolveNamedRepository(target),
+      resolveNamedRepository: (target) => this.resolveNamedRepository(channelId, target),
       onRoomPollSuccess: () => this.notePoll(channelId),
       onRoomPollFailure: (_roomId, retryInMs) => this.notePollFailure(channelId, retryInMs),
       onRoomPresence: (_roomId, status) => this.notePresence(channelId, status),
@@ -718,19 +770,26 @@ export class WorkspaceSupervisor {
     );
   }
 
-  private resolveNamedRepository(target: NamedRepositoryTarget): Promise<BoundRepo> {
-    const existing = this.namedRepositoryResolutions.get(target.id);
+  private resolveNamedRepository(
+    roomId: string,
+    target: NamedRepositoryTarget,
+  ): Promise<BoundRepo> {
+    const cacheKey = `${roomId}:${target.id}`;
+    const existing = this.namedRepositoryResolutions.get(cacheKey);
     if (existing) return existing;
-    const resolution = this.materializeNamedRepository(target).finally(() => {
-      if (this.namedRepositoryResolutions.get(target.id) === resolution) {
-        this.namedRepositoryResolutions.delete(target.id);
+    const resolution = this.materializeNamedRepository(roomId, target).finally(() => {
+      if (this.namedRepositoryResolutions.get(cacheKey) === resolution) {
+        this.namedRepositoryResolutions.delete(cacheKey);
       }
     });
-    this.namedRepositoryResolutions.set(target.id, resolution);
+    this.namedRepositoryResolutions.set(cacheKey, resolution);
     return resolution;
   }
 
-  private async materializeNamedRepository(target: NamedRepositoryTarget): Promise<BoundRepo> {
+  private async materializeNamedRepository(
+    roomId: string,
+    target: NamedRepositoryTarget,
+  ): Promise<BoundRepo> {
     const repositories = this.sharedRepositoriesRoot();
     const key = createHash('sha256')
       .update(`${target.kind}:${target.relayOwnerHex ?? target.owner}/${target.repo}`)
@@ -754,6 +813,7 @@ export class WorkspaceSupervisor {
                 remote: `git://github.com/${target.owner}/${target.repo}`,
                 localOnly: false,
               },
+              roomId,
             )
           : {
               ok: false,
@@ -785,7 +845,7 @@ export class WorkspaceSupervisor {
     if (!matchesTarget) {
       throw new Error(`repository clone did not match the approved target ${target.id}`);
     }
-    const truth = await this.repositoryTruth.resolve(local, 'corner-open');
+    const truth = await this.repositoryTruth.resolve(local, 'corner-open', roomId);
     return { ...boundRepoFromTruth(truth), repositoryId: target.id };
   }
 
@@ -814,7 +874,7 @@ export class WorkspaceSupervisor {
    * local-only repo, which has no origin to clone) the stored binding as-is.
    */
   private async resolveServingRepo(room: RoomRuntimeRecord): Promise<BoundRepo> {
-    const truth = await this.repositoryTruth.resolve(room.repo, 'room-join');
+    const truth = await this.repositoryTruth.resolve(room.repo, 'room-join', room.channelId);
     if (
       truth.binding.name !== room.repo.repository.name ||
       truth.binding.remote !== room.repo.repository.remote ||
@@ -831,7 +891,7 @@ export class WorkspaceSupervisor {
     const binding = repo.truth?.binding;
     if (binding?.remote?.startsWith('git://github.com/')) {
       if (!this.githubApp) throw new Error('GitHub App credentials are not configured');
-      return this.githubApp.git(cwd, args, binding);
+      return this.githubApp.git(cwd, args, binding, repo.truth?.roomId);
     }
     return git(cwd, args);
   }
@@ -840,12 +900,7 @@ export class WorkspaceSupervisor {
     const binding = repo.truth?.binding;
     if (!binding?.remote?.startsWith('git://github.com/')) return undefined;
     if (!this.githubApp) throw new Error('GitHub App credentials are not configured');
-    const remote = binding.remote.match(/^git:\/\/github\.com\/([^/]+)\/([^/]+)$/i);
-    if (!remote) return undefined;
-    const installationId =
-      binding.githubInstallationId ??
-      (await this.githubApp.installationForRepository(remote[1]!, remote[2]!));
-    return this.githubApp.installationToken(installationId);
+    return this.githubApp.repositoryInstallationToken(binding, repo.truth?.roomId);
   }
 
   private async refreshBoundRepo(
@@ -898,6 +953,7 @@ export class WorkspaceSupervisor {
         ...(relayRepoFromBinding(binding) ? { relayRepo: relayRepoFromBinding(binding)! } : {}),
       },
       'room-join',
+      channelId,
     );
     return {
       channelId,

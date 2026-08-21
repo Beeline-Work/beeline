@@ -38,6 +38,8 @@ export interface GitHubIdentity {
   audience: string;
   subject: string;
   login: string;
+  /** Server-side credential used to prove installation membership and create personal repos. */
+  accessToken: string;
 }
 
 /** GitHub OAuth is only an account lookup proof; the Nostr key bind stays unchanged. */
@@ -102,6 +104,7 @@ export class GitHubOAuthClient {
       audience: this.config.clientId,
       subject: String(id),
       login,
+      accessToken,
     };
   }
 }
@@ -125,6 +128,14 @@ export interface GitHubInstallationRepository {
   fullName: string;
   remote: string;
   defaultBranch: string;
+}
+
+export interface GitHubInstallationAccount {
+  id: string;
+  login: string;
+  type: 'User' | 'Organization';
+  avatarUrl?: string;
+  repositorySelection: 'all' | 'selected';
 }
 
 export class GitHubAppClient {
@@ -173,7 +184,7 @@ export class GitHubAppClient {
     return { token, expiresAt };
   }
 
-  async installationAccountId(installationId: number): Promise<string> {
+  async installationAccount(installationId: number): Promise<GitHubInstallationAccount> {
     const body = await jsonObject(
       await fetch(`${this.#config.apiBaseUrl}/app/installations/${installationId}`, {
         headers: githubHeaders(await this.appJwt()),
@@ -181,14 +192,38 @@ export class GitHubAppClient {
       'GitHub installation lookup',
     );
     const account = body.account;
-    const id =
+    const accountRecord =
       account && typeof account === 'object' && !Array.isArray(account)
-        ? (account as Record<string, unknown>).id
+        ? (account as Record<string, unknown>)
         : undefined;
+    const id = accountRecord?.id;
+    const login = accountRecord?.login;
+    const type = accountRecord?.type;
+    const avatarUrl = accountRecord?.avatar_url;
+    const repositorySelection = body.repository_selection;
     if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) {
       throw new Error('GitHub installation account is invalid');
     }
-    return String(id);
+    if (
+      typeof login !== 'string' ||
+      !login ||
+      (type !== 'User' && type !== 'Organization') ||
+      (repositorySelection !== 'all' && repositorySelection !== 'selected')
+    ) {
+      throw new Error('GitHub installation account is invalid');
+    }
+    return {
+      id: String(id),
+      login,
+      type,
+      ...(typeof avatarUrl === 'string' && avatarUrl ? { avatarUrl } : {}),
+      repositorySelection,
+    };
+  }
+
+  /** Compatibility helper for older callers. */
+  async installationAccountId(installationId: number): Promise<string> {
+    return (await this.installationAccount(installationId)).id;
   }
 
   async listRepositories(installationId: number): Promise<GitHubInstallationRepository[]> {
@@ -220,6 +255,70 @@ export class GitHubAppClient {
       });
       repositories.push(...parsed);
       if (body.repositories.length < 100) return repositories;
+    }
+  }
+
+  async createRepository(
+    installationId: number,
+    account: Pick<GitHubInstallationAccount, 'login' | 'type'>,
+    input: { name: string; description?: string; private?: boolean },
+    userAccessToken?: string,
+  ): Promise<GitHubInstallationRepository> {
+    const token =
+      account.type === 'User'
+        ? userAccessToken
+        : (await this.installationToken(installationId)).token;
+    if (!token)
+      throw new Error('GitHub user authorization is required to create a personal repository');
+    const path =
+      account.type === 'Organization'
+        ? `/orgs/${encodeURIComponent(account.login)}/repos`
+        : '/user/repos';
+    const body = await jsonObject(
+      await fetch(`${this.#config.apiBaseUrl}${path}`, {
+        method: 'POST',
+        headers: { ...githubHeaders(token), 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      }),
+      'GitHub repository creation',
+    );
+    const id = body.id;
+    const name = body.name;
+    const fullName = body.full_name;
+    const remote = body.clone_url;
+    const defaultBranch = body.default_branch;
+    if (
+      typeof id !== 'number' ||
+      !Number.isSafeInteger(id) ||
+      typeof name !== 'string' ||
+      typeof fullName !== 'string' ||
+      typeof remote !== 'string' ||
+      typeof defaultBranch !== 'string'
+    ) {
+      throw new Error('GitHub repository creation response is invalid');
+    }
+    return { id, installationId, name, fullName, remote, defaultBranch };
+  }
+
+  async userCanAccessInstallation(accessToken: string, installationId: number): Promise<boolean> {
+    for (let page = 1; ; page++) {
+      const body = await jsonObject(
+        await fetch(`${this.#config.apiBaseUrl}/user/installations?per_page=100&page=${page}`, {
+          headers: githubHeaders(accessToken),
+        }),
+        'GitHub user installations',
+      );
+      if (!Array.isArray(body.installations))
+        throw new Error('GitHub user installation list is invalid');
+      if (
+        body.installations.some((entry) => {
+          if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
+          return (entry as Record<string, unknown>).id === installationId;
+        })
+      ) {
+        return true;
+      }
+      if (body.installations.length < 100) return false;
     }
   }
 }

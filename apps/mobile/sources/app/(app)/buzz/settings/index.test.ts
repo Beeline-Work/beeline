@@ -6,12 +6,23 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
-const identityStorage = vi.hoisted(() => ({ clearBuzzIdentity: vi.fn(async () => undefined) }));
+const identityStorage = vi.hoisted(() => ({
+  clearBuzzIdentity: vi.fn(async () => undefined),
+  loadBuzzIdentity: vi.fn(async () => null),
+  getEffectiveRelayUrl: vi.fn(async () => 'https://relay.example'),
+}));
 const localCache = vi.hoisted(() => ({ clearBuzzLocalCache: vi.fn() }));
 
 vi.mock('expo-router', () => ({ router: navigation }));
 vi.mock('@/auth/buzz-identity-storage', () => identityStorage);
 vi.mock('@/buzz/local-cache', () => localCache);
+vi.mock('@/sync/transport', () => ({
+  BuzzRigTransport: class {
+    async workspaceGitHubAccess() {
+      return { installed: false, installations: [], candidates: [] };
+    }
+  },
+}));
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
@@ -21,6 +32,7 @@ vi.mock('react-native', async () => {
     ReactModule.createElement(name, props, props.children);
   return {
     Platform: { select: (choices: Record<string, unknown>) => choices.default },
+    Linking: { openURL: vi.fn(async () => undefined) },
     StyleSheet: { create: (styles: unknown) => styles },
     Text: host('Text'),
     TouchableOpacity: host('TouchableOpacity'),

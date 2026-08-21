@@ -21,11 +21,13 @@ function tenantsFromEnvironment(): AuthTenant[] {
     if (
       typeof candidate.host !== 'string' ||
       typeof candidate.community !== 'string' ||
-      typeof candidate.roomCommunityId !== 'string' ||
+      !Array.isArray(candidate.roomCommunityIds) ||
+      candidate.roomCommunityIds.length === 0 ||
+      candidate.roomCommunityIds.some((value) => typeof value !== 'string') ||
       typeof candidate.origin !== 'string'
     ) {
       throw new Error(
-        'each auth tenant needs host, community, roomCommunityId, and origin strings',
+        'each auth tenant needs host, community, non-empty roomCommunityIds, and origin',
       );
     }
     if (process.env.NODE_ENV === 'production' && new URL(candidate.origin).protocol !== 'https:') {
@@ -34,7 +36,7 @@ function tenantsFromEnvironment(): AuthTenant[] {
     return {
       host: candidate.host,
       community: candidate.community,
-      roomCommunityId: candidate.roomCommunityId,
+      roomCommunityIds: candidate.roomCommunityIds as string[],
       origin: candidate.origin,
     };
   });
@@ -81,7 +83,7 @@ async function main(): Promise<void> {
       ? { github: { ...github, webhookSecret: githubConfig!.BEELINE_GITHUB_WEBHOOK_SECRET } }
       : {}),
     tenants: tenantsFromEnvironment(),
-    authorizeGitHubRoomToken: createGitHubRoomTokenAuthority(),
+    authorizeGitHubRoomToken: createGitHubRoomTokenAuthority(store),
     logger: true,
   });
   const port = Number(process.env.PORT ?? '8789');

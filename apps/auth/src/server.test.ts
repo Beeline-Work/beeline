@@ -205,13 +205,13 @@ interface BindChallenge {
 const alphaTenant: AuthTenant = {
   host: 'alpha.example',
   community: 'community-alpha',
-  roomCommunityId: '11111111-1111-4111-8111-111111111111',
+  roomCommunityIds: ['11111111-1111-4111-8111-111111111111'],
   origin: 'https://alpha.example',
 };
 const betaTenant: AuthTenant = {
   host: 'beta.example',
   community: 'community-beta',
-  roomCommunityId: '22222222-2222-4222-8222-222222222222',
+  roomCommunityIds: ['22222222-2222-4222-8222-222222222222'],
   origin: 'https://beta.example',
 };
 
@@ -570,13 +570,57 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       expect(refused.body).not.toContain(refusedRoom);
     }
 
+    const ungrantedAgent = generateKeypair();
+    const ungrantedOwner = generateKeypair();
+    roomTokenAuthority = async () => ({
+      authorized: true,
+      authorizedBy: ungrantedOwner.publicKey,
+      fullName: 'octocat/widget',
+    });
+    const ungranted = await app.inject({
+      method: 'POST',
+      url: '/auth/github/room-token',
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(
+          ungrantedAgent.secretKey,
+          ungrantedAgent.publicKey,
+          url,
+          'POST',
+        ),
+      },
+      payload: {
+        pubkey: ungrantedAgent.publicKey,
+        room_id: 'room-with-ungranted-repository',
+        relay_authorizations: Array.from({ length: 16 }, () =>
+          nip98AuthHeader(
+            ungrantedAgent.secretKey,
+            ungrantedAgent.publicKey,
+            `${alphaTenant.origin}/query`,
+            'POST',
+          ),
+        ),
+      },
+    });
+    expect(ungranted.statusCode).toBe(403);
+    expect(ungranted.json()).toEqual({
+      error: 'repository_not_granted',
+      message: 'Room repository is not granted to the Beeline GitHub App',
+    });
+
     const refusalLogs = logLines
       .map((line) => JSON.parse(line) as Record<string, unknown>)
       .filter((line) => line.msg === 'GitHub Room token authority refused request');
-    expect(refusalLogs.map((line) => line.authorityReason)).toEqual(
-      refusalCases.map(({ reason }) => reason),
-    );
+    expect(refusalLogs.map((line) => line.authorityReason)).toEqual([
+      ...refusalCases.map(({ reason }) => reason),
+      'repository_not_granted',
+    ]);
     expect(refusalLogs.every((line) => line.agentPubkey && line.roomId)).toBe(true);
+    expect(refusalLogs.at(-1)).toMatchObject({
+      repositoryAccessReason: 'not_granted',
+      authorizedBy: ungrantedOwner.publicKey,
+      repository: 'octocat/widget',
+    });
   });
 
   it('completes GitHub sign-in through a visible immediate app handoff', async () => {

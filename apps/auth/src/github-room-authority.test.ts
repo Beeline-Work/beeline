@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const relay = vi.hoisted(() => ({
-  getChannelCommunityId: vi.fn(),
   getChannelCreator: vi.fn(),
   isMember: vi.fn(),
   resolveRoomRepository: vi.fn(),
@@ -12,23 +11,30 @@ vi.mock('@beeline/buzz-client', () => relay);
 import { createGitHubRoomTokenAuthority } from './github-room-authority.js';
 import type { AuthTenant } from './server.js';
 
-const roomCommunityId = '11111111-1111-4111-8111-111111111111';
+// Captured read-only from production on 2026-08-21. The relay hosts both SQL
+// communities, while this Room's client-authored kind:9007 `community` tag is
+// a6814772-1f7f-4a59-850b-5579039efb17 and is deliberately not an authority.
+const legacyRelayCommunityId = '3a47eeff-fdff-4a1e-9eb9-b48cb4ed90ed';
+const roomCommunityId = 'e8299f28-f095-472f-941a-80d1195b9a24';
+const roomId = '484556f2-7e81-4ad6-a851-0e57bdba6a67';
+const agentPubkey = 'a3447f1163edeb8dff75a67c3492c808821fe21b8a0c35d363769e45efeca601';
+const roomStore = { relayCommunityIdForRoom: vi.fn() };
 const tenant: AuthTenant = {
   host: 'relay.example',
   // This is deliberately not the Room UUID: production keeps its legacy
   // hostname here so identity links survive the public-host migration.
   community: 'legacy.relay.example',
-  roomCommunityId,
+  roomCommunityIds: [legacyRelayCommunityId, roomCommunityId],
   origin: 'https://relay.example',
 };
 const input = {
-  agentPubkey: 'a'.repeat(64),
-  roomId: 'room-1',
+  agentPubkey,
+  roomId,
   relayAuthorizations: Array.from({ length: 16 }, (_, index) => `proof-${index}`),
 };
 
 beforeEach(() => {
-  relay.getChannelCommunityId.mockReset().mockResolvedValue(roomCommunityId);
+  roomStore.relayCommunityIdForRoom.mockReset().mockResolvedValue(roomCommunityId);
   relay.isMember.mockReset().mockResolvedValue(true);
   relay.resolveRoomRepository.mockReset().mockResolvedValue({
     binding: {
@@ -44,12 +50,22 @@ beforeEach(() => {
 });
 
 describe('GitHub Room token authority', () => {
-  it('uses the relay Room UUID instead of the durable identity-link namespace', async () => {
-    await expect(createGitHubRoomTokenAuthority()(tenant, input)).resolves.toEqual({
+  it('uses the server-stamped SQL community instead of either client namespace', async () => {
+    await expect(createGitHubRoomTokenAuthority(roomStore)(tenant, input)).resolves.toEqual({
       authorized: true,
       authorizedBy: 'b'.repeat(64),
       fullName: 'acme/widget',
       githubInstallationId: 77,
+    });
+    expect(roomStore.relayCommunityIdForRoom).toHaveBeenCalledWith(roomId);
+  });
+
+  it('authorizes Rooms from either relay community served by one tenant', async () => {
+    roomStore.relayCommunityIdForRoom.mockResolvedValue(legacyRelayCommunityId);
+
+    await expect(createGitHubRoomTokenAuthority(roomStore)(tenant, input)).resolves.toMatchObject({
+      authorized: true,
+      fullName: 'acme/widget',
     });
   });
 
@@ -63,7 +79,7 @@ describe('GitHub Room token authority', () => {
       },
     });
 
-    await expect(createGitHubRoomTokenAuthority()(tenant, input)).resolves.toEqual({
+    await expect(createGitHubRoomTokenAuthority(roomStore)(tenant, input)).resolves.toEqual({
       authorized: true,
       authorizedBy: 'c'.repeat(64),
       fullName: 'acme/widget',
@@ -73,7 +89,12 @@ describe('GitHub Room token authority', () => {
   it.each([
     {
       name: 'Room belongs to another relay community',
-      arrange: () => relay.getChannelCommunityId.mockResolvedValue('another-community'),
+      arrange: () => roomStore.relayCommunityIdForRoom.mockResolvedValue('another-community'),
+      reason: 'tenant_room_community_mismatch',
+    },
+    {
+      name: 'Room has no authoritative relay row',
+      arrange: () => roomStore.relayCommunityIdForRoom.mockResolvedValue(null),
       reason: 'tenant_room_community_mismatch',
     },
     {
@@ -118,7 +139,7 @@ describe('GitHub Room token authority', () => {
   ])('returns a distinct reason when $name', async ({ arrange, reason }) => {
     arrange();
 
-    await expect(createGitHubRoomTokenAuthority()(tenant, input)).resolves.toEqual({
+    await expect(createGitHubRoomTokenAuthority(roomStore)(tenant, input)).resolves.toEqual({
       authorized: false,
       reason,
     });

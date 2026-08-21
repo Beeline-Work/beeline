@@ -20,10 +20,11 @@ services:
       PORT: "8789"
       BUZZY_AUTH_HOST: 0.0.0.0
       DATABASE_URL: postgres://${POSTGRES_USER:-buzz}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-buzz}
-      # Both hosts intentionally share the original community namespace so
-      # existing identity links remain visible after the hostname migration.
+      # Both hosts intentionally share the original identity namespace so
+      # existing links remain visible after the hostname migration. The Room
+      # allowlist uses server-stamped channels.community_id values instead.
       BUZZY_AUTH_TENANTS_JSON: >-
-        [{"host":"usebeeline.app","community":"relay.buzzrouter.com","roomCommunityId":"745dae96-7501-4efc-92fa-824a40850235","origin":"https://usebeeline.app"},{"host":"relay.buzzrouter.com","community":"relay.buzzrouter.com","roomCommunityId":"745dae96-7501-4efc-92fa-824a40850235","origin":"https://relay.buzzrouter.com"}]
+        [{"host":"usebeeline.app","community":"relay.buzzrouter.com","roomCommunityIds":["3a47eeff-fdff-4a1e-9eb9-b48cb4ed90ed","e8299f28-f095-472f-941a-80d1195b9a24"],"origin":"https://usebeeline.app"},{"host":"relay.buzzrouter.com","community":"relay.buzzrouter.com","roomCommunityIds":["3a47eeff-fdff-4a1e-9eb9-b48cb4ed90ed","e8299f28-f095-472f-941a-80d1195b9a24"],"origin":"https://relay.buzzrouter.com"}]
       BUZZY_AUTH_OIDC_ISSUER: https://accounts.google.com
       BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT: https://accounts.google.com/o/oauth2/v2/auth
       BUZZY_AUTH_OIDC_TOKEN_ENDPOINT: https://oauth2.googleapis.com/token

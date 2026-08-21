@@ -64,10 +64,13 @@ describe('community invite links', () => {
     expect(parseCommunityInviteToken(`https://relay.buzzrouter.com/join/${token}`)).toBe(token);
     expect(parseCommunityInviteToken(`http://127.0.0.1:3010/join/${token}`)).toBe(token);
     expect(parseCommunityInviteToken(`buzzy://join/${token}`)).toBe(token);
+    expect(parseCommunityInviteToken(`buzzy-preview://join/${token}`)).toBe(token);
+    expect(parseCommunityInviteToken(`buzzy-dev://join/${token}`)).toBe(token);
   });
 
   it('rejects unrelated routes and malformed tokens', () => {
     expect(parseCommunityInviteToken(`https://example.com/invite/${token}`)).toBeNull();
+    expect(parseCommunityInviteToken(`buzzy-nightly://join/${token}`)).toBeNull();
     expect(parseCommunityInviteToken('bzi_short')).toBeNull();
     expect(parseCommunityInviteToken(undefined)).toBeNull();
   });

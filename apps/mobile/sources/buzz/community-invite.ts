@@ -10,6 +10,8 @@ import {
 import { WORKSPACE_LABEL } from './vocabulary';
 
 const TOKEN_PATTERN = /^bzi_[0-9a-f]{64}$/;
+// Keep custom invite parsing aligned with the installed schemes in app.config.js.
+const MOBILE_APP_SCHEMES = ['buzzy-dev', 'buzzy-preview', 'buzzy'] as const;
 
 export type CommunityInvitePreview = {
   community: Community;
@@ -35,7 +37,10 @@ export function parseCommunityInviteToken(value: string | string[] | undefined):
     if (url.protocol === 'https:' || url.protocol === 'http:') {
       const match = url.pathname.match(/^\/join\/([^/]+)\/?$/);
       candidate = match?.[1] ?? '';
-    } else if (url.protocol === 'buzzy:' && url.hostname === 'join') {
+    } else if (
+      MOBILE_APP_SCHEMES.some((scheme) => url.protocol === `${scheme}:`) &&
+      url.hostname === 'join'
+    ) {
       candidate = url.pathname.replace(/^\//, '');
     }
     const decoded = decodeURIComponent(candidate);

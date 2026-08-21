@@ -4,6 +4,7 @@ export const GITHUB_CONFIG_KEYS = [
   'BEELINE_GITHUB_APP_ID',
   'BEELINE_GITHUB_APP_SLUG',
   'BEELINE_GITHUB_APP_PRIVATE_KEY',
+  'BEELINE_GITHUB_WEBHOOK_SECRET',
 ] as const;
 
 export type GitHubEnvironmentConfig = Record<(typeof GITHUB_CONFIG_KEYS)[number], string>;

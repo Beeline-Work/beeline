@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { PGlite, type PGliteInterface, type Transaction } from '@electric-sql/pglite';
@@ -271,7 +271,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       }),
       github: {
         oauth: {
-          config: { clientId: 'github-client' },
+          config: { clientId: 'github-client', clientSecret: 'github-secret' },
           authorizationUrl: ({ state, redirectUri }: { state: string; redirectUri: string }) => {
             githubState = state;
             return `https://github.test/authorize?state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`;
@@ -281,23 +281,34 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
             audience: 'github-client',
             subject: '123',
             login: 'octocat',
+            accessToken: 'github-user-token',
           }),
         } as unknown as GitHubOAuthClient,
         app: {
           installationUrl: (state: string) =>
             `https://github.test/apps/beeline/installations/new?state=${state}`,
-          installationAccountId: async () => '123',
+          installationAccount: async (installationId: number) => ({
+            id: installationId === 77 ? '123' : '456',
+            login: installationId === 77 ? 'octocat' : 'acme',
+            type: installationId === 77 ? ('User' as const) : ('Organization' as const),
+            repositorySelection: 'all' as const,
+          }),
+          userCanAccessInstallation: async () => true,
           listRepositories: async (installationId: number) => [
             {
               id: 42,
               installationId,
               name: 'widget',
-              fullName: 'octocat/widget',
-              remote: 'https://github.com/octocat/widget.git',
+              fullName: installationId === 77 ? 'octocat/widget' : 'acme/widget',
+              remote:
+                installationId === 77
+                  ? 'https://github.com/octocat/widget.git'
+                  : 'https://github.com/acme/widget.git',
               defaultBranch: 'main',
             },
           ],
         } as unknown as GitHubAppClient,
+        webhookSecret: 'webhook-secret',
       },
       tenants: [alphaTenant, betaTenant],
       nativeRedirectUris: ['buzzy://buzz/oidc-callback'],
@@ -342,7 +353,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     expect(response.json()).toEqual({ github: true, oidc: true });
   });
 
-  it('signs in with GitHub, binds the npub, installs once, and lists installation repositories', async () => {
+  it('groups multiple installations, applies repository webhooks, and preserves revoked bindings', async () => {
     const identity = generateKeypair();
     const appState = 'a'.repeat(43);
     const start = await app.inject({
@@ -402,6 +413,32 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       'https://alpha.example/auth/github/mobile-callback?installed=1',
     );
 
+    await new Promise((resolve) => setTimeout(resolve, 1_050));
+    const secondStart = await app.inject({
+      method: 'POST',
+      url: '/auth/github/install/start',
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(
+          identity.secretKey,
+          identity.publicKey,
+          installStartUrl,
+          'POST',
+        ),
+      },
+      payload: {
+        pubkey: identity.publicKey,
+        redirect_uri: 'https://alpha.example/auth/github/mobile-callback',
+      },
+    });
+    const secondUrl = new URL(secondStart.json().authorization_url);
+    const secondInstalled = await app.inject({
+      method: 'GET',
+      url: `/auth/github/installed?installation_id=78&state=${secondUrl.searchParams.get('state')}`,
+      headers: { host: alphaTenant.host },
+    });
+    expect(secondInstalled.statusCode).toBe(302);
+
     const reposUrl = `https://alpha.example/auth/github/repos/${identity.publicKey}`;
     const repos = await app.inject({
       method: 'GET',
@@ -414,9 +451,80 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     expect(repos.statusCode).toBe(200);
     expect(repos.json()).toMatchObject({
       installed: true,
-      installation_id: 77,
-      repositories: [{ installationId: 77, fullName: 'octocat/widget' }],
+      installations: [
+        { installationId: 78, accountLogin: 'acme', repositoryCount: 1 },
+        { installationId: 77, accountLogin: 'octocat', repositoryCount: 1 },
+      ],
+      repositories: [
+        { installationId: 78, fullName: 'acme/widget' },
+        { installationId: 77, fullName: 'octocat/widget' },
+      ],
     });
+
+    const repositoryPayload = JSON.stringify({
+      action: 'removed',
+      installation: { id: 77 },
+      repositories_added: [
+        {
+          id: 43,
+          name: 'fresh',
+          full_name: 'octocat/fresh',
+          clone_url: 'https://github.com/octocat/fresh.git',
+          default_branch: 'trunk',
+        },
+      ],
+      repositories_removed: [{ id: 42, full_name: 'octocat/widget' }],
+    });
+    const webhook = await app.inject({
+      method: 'POST',
+      url: '/auth/github/webhook',
+      headers: {
+        host: alphaTenant.host,
+        'content-type': 'application/json',
+        'x-github-event': 'installation_repositories',
+        'x-github-delivery': 'delivery-repositories-1',
+        'x-hub-signature-256': `sha256=${createHmac('sha256', 'webhook-secret').update(repositoryPayload).digest('hex')}`,
+      },
+      payload: repositoryPayload,
+    });
+    expect(webhook.statusCode).toBe(202);
+    const duplicateWebhook = await app.inject({
+      method: 'POST',
+      url: '/auth/github/webhook',
+      headers: {
+        host: alphaTenant.host,
+        'content-type': 'application/json',
+        'x-github-event': 'installation_repositories',
+        'x-github-delivery': 'delivery-repositories-1',
+        'x-hub-signature-256': `sha256=${createHmac('sha256', 'webhook-secret').update(repositoryPayload).digest('hex')}`,
+      },
+      payload: repositoryPayload,
+    });
+    expect(duplicateWebhook.json()).toMatchObject({ accepted: true, duplicate: true });
+    expect(
+      await store.githubRepositoriesForPubkey(alphaTenant.community, identity.publicKey),
+    ).toEqual([
+      expect.objectContaining({ installationId: 78, fullName: 'acme/widget' }),
+      expect.objectContaining({ installationId: 77, fullName: 'octocat/fresh' }),
+    ]);
+
+    const deletedPayload = JSON.stringify({ action: 'deleted', installation: { id: 77 } });
+    const deleted = await app.inject({
+      method: 'POST',
+      url: '/auth/github/webhook',
+      headers: {
+        host: alphaTenant.host,
+        'content-type': 'application/json',
+        'x-github-event': 'installation',
+        'x-github-delivery': 'delivery-installation-2',
+        'x-hub-signature-256': `sha256=${createHmac('sha256', 'webhook-secret').update(deletedPayload).digest('hex')}`,
+      },
+      payload: deletedPayload,
+    });
+    expect(deleted.statusCode).toBe(202);
+    await expect(
+      store.githubRepositoryAccess(alphaTenant.community, identity.publicKey, 'octocat/widget'),
+    ).resolves.toMatchObject({ accessible: false, installationId: 77, reason: 'revoked' });
   });
 
   async function bind(

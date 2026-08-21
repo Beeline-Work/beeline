@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   SectionList,
+  Linking,
   Share,
   StyleSheet,
   Text,
@@ -8,6 +9,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import * as WebBrowser from 'expo-web-browser';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -21,6 +23,7 @@ import {
   type Community,
   type Identity,
   type PersonProfile,
+  type GitHubInstallationAccess,
 } from '@beeline/buzz-client';
 import {
   DEFAULT_RELAY_URL,
@@ -372,6 +375,7 @@ export default function BuzzChannels() {
   const [showRepoPicker, setShowRepoPicker] = useState(false);
   const [pendingRepo, setPendingRepo] = useState<RepoCandidate | null>(null);
   const [repoCandidates, setRepoCandidates] = useState<RepoCandidate[]>([]);
+  const [githubInstallations, setGitHubInstallations] = useState<GitHubInstallationAccess[]>([]);
   const [repoPickerError, setRepoPickerError] = useState<string | null>(null);
   const [viewerIsAgent, setViewerIsAgent] = useState(initialListCache?.viewerIsAgent ?? false);
   const [viewerAvatarUrl, setViewerAvatarUrl] = useState<string | undefined>(
@@ -750,17 +754,57 @@ export default function BuzzChannels() {
     [activeCommunityId, identity],
   );
 
+  const loadRepoPicker = useCallback(async () => {
+    if (!transport || !activeCommunityId) return;
+    const access = await transport.workspaceGitHubAccess();
+    setRepoCandidates(access.candidates);
+    setGitHubInstallations(access.installations);
+  }, [activeCommunityId, transport]);
+
   const handleToggleRepoPicker = useCallback(async () => {
     setShowRepoPicker((value) => !value);
     if (showRepoPicker || !transport || !activeCommunityId) return;
     setRepoPickerError(null);
     try {
-      const candidates = await transport.workspaceRoomRepositoryCandidates(activeCommunityId);
-      setRepoCandidates(candidates);
+      await loadRepoPicker();
     } catch (err) {
       setRepoPickerError(`Could not load repos: ${String(err)}`);
     }
-  }, [activeCommunityId, showRepoPicker, transport]);
+  }, [activeCommunityId, loadRepoPicker, showRepoPicker, transport]);
+
+  const handleAddGitHubAccount = useCallback(async () => {
+    if (!transport) return;
+    setRepoPickerError(null);
+    try {
+      const relayUrl = await getEffectiveRelayUrl();
+      const redirectUri = `${new URL(relayUrl).origin}/auth/github/mobile-callback`;
+      const installationUrl = await transport.githubInstallationStart(redirectUri);
+      const result = await WebBrowser.openAuthSessionAsync(installationUrl, redirectUri);
+      if (result.type === 'success') await loadRepoPicker();
+    } catch (err) {
+      setRepoPickerError(`Could not connect GitHub: ${String(err)}`);
+    }
+  }, [loadRepoPicker, transport]);
+
+  const handleCreateGitHubRepository = useCallback(
+    async (installationId: number, name: string) => {
+      if (!transport) return;
+      setRepoPickerError(null);
+      try {
+        const candidate = await transport.githubRepositoryCreate({
+          installationId,
+          name,
+          private: true,
+        });
+        setRepoCandidates((current) => [...current, candidate]);
+        setPendingRepo(candidate);
+      } catch (err) {
+        setRepoPickerError(`Could not create repo: ${String(err)}`);
+        throw err;
+      }
+    },
+    [transport],
+  );
 
   const handleSelectRepoCandidate = useCallback((candidate: RepoCandidate) => {
     setPendingRepo(candidate);
@@ -949,8 +993,14 @@ export default function BuzzChannels() {
             {showRepoPicker && (
               <RepoPicker
                 candidates={repoCandidates}
+                installations={githubInstallations}
                 currentKey={pendingRepo?.key ?? null}
                 error={repoPickerError}
+                onAddAccount={() => void handleAddGitHubAccount()}
+                onCreateRepository={handleCreateGitHubRepository}
+                onManageInstallation={(url) => {
+                  void WebBrowser.openBrowserAsync(url).then(() => loadRepoPicker());
+                }}
                 onSelect={handleSelectRepoCandidate}
                 testIDPrefix="create-room-repo-picker"
               />

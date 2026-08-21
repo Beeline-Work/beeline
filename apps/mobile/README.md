@@ -92,6 +92,12 @@ The release keystore is at [`android-signing/release.keystore`](./android-signin
 Credentials are committed alongside it because this repo is private. **Rotate the
 keystore before any public distribution.**
 
+iOS production builds use local EAS credentials (`credentialsSource: "local"`).
+The distribution certificate and App Store provisioning profile were created through
+the App Store Connect API, so they are intentionally absent from `eas credentials`.
+Keep their absolute paths and password only in gitignored `credentials.json`; never
+commit that file or its credential material.
+
 ## On-device Maestro smoke tests
 
 The mobile harness uses [Maestro](https://maestro.mobile.dev/) against the existing

@@ -339,6 +339,29 @@ function ticketFromRow(row: TicketRow): BindTicket {
 export class AuthStore {
   constructor(private readonly database: TransactionalDatabase) {}
 
+  /**
+   * Resolve the relay's authoritative tenant stamp for a Room.
+   *
+   * The similarly named `community` tag on kind:9007 is client-authored
+   * application metadata. Buzz stamps `channels.community_id` from the
+   * request Host and treats that SQL column as the tenancy boundary.
+   */
+  async relayCommunityIdForRoom(roomId: string): Promise<string | null> {
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(roomId)
+    ) {
+      return null;
+    }
+    const result = await this.database.query<QueryResultRow & { community_id: string }>(
+      `SELECT community_id::text AS community_id
+       FROM channels
+       WHERE id = $1::uuid AND deleted_at IS NULL
+       LIMIT 1`,
+      [roomId],
+    );
+    return result.rows[0]?.community_id ?? null;
+  }
+
   async migrate(): Promise<void> {
     for (const migration of MIGRATIONS) await this.database.query(migration);
   }

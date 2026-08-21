@@ -52,8 +52,8 @@ export interface AuthTenant {
   host: string;
   /** Stable namespace for identity links. Kept across relay host aliases. */
   community: string;
-  /** Relay community UUID carried by Room create events. */
-  roomCommunityId: string;
+  /** Server-stamped relay community UUIDs whose Rooms this tenant may serve. */
+  roomCommunityIds: readonly string[];
   origin: string;
 }
 
@@ -329,8 +329,17 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     const host = normalizeHost(configured.host);
     if (!configured.community || configured.community.length > 512)
       throw new Error('invalid tenant community');
-    if (!configured.roomCommunityId || configured.roomCommunityId.length > 512)
-      throw new Error('invalid tenant Room community id');
+    if (
+      !Array.isArray(configured.roomCommunityIds) ||
+      configured.roomCommunityIds.length === 0 ||
+      configured.roomCommunityIds.length > 64 ||
+      configured.roomCommunityIds.some(
+        (communityId) =>
+          typeof communityId !== 'string' || !communityId || communityId.length > 512,
+      )
+    ) {
+      throw new Error('invalid tenant Room community ids');
+    }
     const origin = new URL(configured.origin);
     if (
       origin.username ||
@@ -347,7 +356,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     tenants.set(host, {
       host,
       community: configured.community,
-      roomCommunityId: configured.roomCommunityId,
+      roomCommunityIds: [...new Set(configured.roomCommunityIds)],
       origin: normalizedOrigin,
     });
   }
@@ -1501,6 +1510,17 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       (authority.githubInstallationId !== undefined &&
         authority.githubInstallationId !== access.installationId)
     ) {
+      request.log.warn(
+        {
+          authorityReason: 'repository_not_granted',
+          repositoryAccessReason: access.reason,
+          roomId,
+          agentPubkey: pubkey,
+          authorizedBy: authority.authorizedBy,
+          repository: authority.fullName,
+        },
+        'GitHub Room token authority refused request',
+      );
       throw new ProtocolError(
         403,
         'repository_not_granted',

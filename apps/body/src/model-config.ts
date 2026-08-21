@@ -157,6 +157,28 @@ export function assertModelConfigOptionAllowed(
 }
 
 /**
+ * The published catalog's per-axis `currentValue` must name what the agent
+ * will actually run with, not the harness's pre-application default: the
+ * daemon applies its selection AFTER `session/new` reports those values, so
+ * an un-overridden snapshot would show the app a value that is about to be
+ * replaced. Returns a shallow-copied option list with the effective
+ * selection's value stamped onto each matching axis.
+ */
+export function withEffectiveCurrentValues(
+  options: AgentModelConfigOption[],
+  selection: { model?: string; effort?: string } | null | undefined,
+): AgentModelConfigOption[] {
+  if (!selection || (!selection.model && !selection.effort)) return options;
+  return options.map((option) => {
+    const target = modelSelectionTargets(selection).find((entry) =>
+      entry.categories.includes(option.category),
+    );
+    if (!target?.value || option.currentValue === target.value) return option;
+    return { ...option, currentValue: target.value };
+  });
+}
+
+/**
  * Where a `{model, effort}` selection lands among a session's advertised
  * axes. `effort` is deliberately matched against whichever of
  * `thought_level`/`effort`/`reasoning_effort` a harness actually advertises

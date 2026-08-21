@@ -282,6 +282,16 @@ export class AcpClient extends EventEmitter {
     });
 
     this.child.on('error', (err) => {
+      // An ENOENT/unspawnable command never emits 'exit', so without this the
+      // in-flight `initialize` request (and every later one) would hang until
+      // its full timeout instead of failing now — which is what a catalog
+      // probe or a session spawn against a broken agent binary needs.
+      this.alive = false;
+      for (const [, p] of this.pending) {
+        clearTimeout(p.timer);
+        p.reject(err);
+      }
+      this.pending.clear();
       this.emit('error', err);
     });
 

@@ -137,15 +137,12 @@ plus a matching --agents list. Each agent gets its own fresh keypair/identity
 and its own daemon — three distinct agents live in one Room, each addressed by
 its own @-mention. Reusing an identity is refused (unset BUZZ_AGENT_KEY).
 
-Repository (optional): a repository belongs to a ROOM, not to an agent, so
-pairing without one is a valid configuration — the daemon materializes each
-Room's own repository on demand once a Room is bound to one. beeline pair
-resolves an optional initial binding in this order:
-  1. --repo <path>          explicit, works from any cwd (must be a git repo)
-  2. current directory      only if it IS a git repository
-  3. neither                pair with no repository; the agent serves the
-                            Rooms it is invited to and materializes each
-                            Room's repository when that Room has one
+Repository (optional): a repository belongs to a ROOM, not to an agent.
+Pairing never infers one from the current directory. Without --repo, the agent
+is paired with no repository and materializes each Room's existing binding on
+demand. --repo <path> is the explicit opt-in for creating or joining that
+repository's Room during pairing; it works from any cwd and must name a git
+repository.
 There is no way to infer an existing Room's bound repository from the pairing
 code alone (pairing codes are Workspace-scoped, not Room-scoped) — pass --repo
 to create/join that repository's Room at pair time from any directory.
@@ -264,8 +261,8 @@ function parsePairOptions(args: string[]): PairOptions {
 
 /**
  * Resolve the OPTIONAL repository binding `beeline pair` records at pair
- * time: explicit `--repo` first, else the cwd if it happens to be a git
- * repository, else none at all.
+ * time. Only an explicit `--repo` creates a binding; cwd is process context,
+ * never repository intent.
  *
  * `--repo` is an explicit statement of intent, so a path that doesn't exist
  * or isn't a git repository is fatal. A bare `beeline pair <code>` from a
@@ -280,8 +277,7 @@ function resolvePairRepository(repoFlag: string | undefined): {
   repo: LocalRepositoryBinding | null;
 } {
   if (!repoFlag) {
-    const cwd = process.cwd();
-    return { cwd, repo: tryInspectLocalRepository(cwd) };
+    return { cwd: process.cwd(), repo: null };
   }
   const resolved = resolve(repoFlag);
   if (!existsSync(resolved)) {

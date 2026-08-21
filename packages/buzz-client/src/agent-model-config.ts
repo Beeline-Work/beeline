@@ -32,6 +32,7 @@ import type {
   AgentModelConfig,
   AgentModelConfigInput,
   AgentModelConfigOption,
+  AgentModelSelection,
 } from './types.js';
 import type { ChannelOpsContext } from './channel.js';
 
@@ -107,10 +108,18 @@ export function parseAgentModelCatalog(event: NostrEvent): AgentModelCatalog | n
   if (event.pubkey !== agentPubkey) return null; // self-authored only
   try {
     const content = JSON.parse(event.content) as Record<string, unknown>;
+    let selection: AgentModelSelection | undefined;
+    if (content.selection && typeof content.selection === 'object') {
+      const raw = content.selection as Record<string, unknown>;
+      const model = typeof raw.model === 'string' ? raw.model : undefined;
+      const effort = typeof raw.effort === 'string' ? raw.effort : undefined;
+      if (model || effort) selection = { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
+    }
     return {
       communityId,
       agentPubkey,
       options: parseOptionEntries(content.options),
+      ...(selection ? { selection } : {}),
       updatedAt: event.created_at,
       raw: event,
     };
@@ -119,13 +128,29 @@ export function parseAgentModelCatalog(event: NostrEvent): AgentModelCatalog | n
   }
 }
 
-/** Publish the agent's own advertised model/effort catalog. Called by the daemon on session activation. */
+/**
+ * Publish the agent's own advertised model/effort catalog. Called by the daemon
+ * on session activation and at daemon start when a pair-time `--model`/
+ * `--effort` default exists. `selection` is the agent's own effective choice
+ * (a human pick when one exists, else that pair-time default) — it is what
+ * makes a CLI-configured selection visible to the app before any session has
+ * ever applied it.
+ */
 export async function publishAgentModelCatalog(
   ctx: ChannelOpsContext,
   communityId: string,
   options: AgentModelConfigOption[],
+  selection?: AgentModelSelection,
 ): Promise<AgentModelCatalog> {
   const agentPubkey = ctx.identity.publicKey;
+  // Normalize to the bare pair: callers may hand a full persisted record
+  // (with `raw`/`authoredBy`/…), and none of that belongs on the wire.
+  const cleanSelection = selection
+    ? {
+        ...(selection.model ? { model: selection.model } : {}),
+        ...(selection.effort ? { effort: selection.effort } : {}),
+      }
+    : undefined;
   const event = signEvent(
     {
       pubkey: agentPubkey,
@@ -138,7 +163,12 @@ export async function publishAgentModelCatalog(
         ['t', TAG_AGENT_MODEL_CATALOG],
         [TAG_COMMUNITY, communityId],
       ],
-      content: JSON.stringify({ options }),
+      content: JSON.stringify({
+        options,
+        ...(cleanSelection && (cleanSelection.model || cleanSelection.effort)
+          ? { selection: cleanSelection }
+          : {}),
+      }),
     },
     ctx.identity.secretKey,
   );

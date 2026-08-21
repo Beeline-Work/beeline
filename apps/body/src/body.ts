@@ -96,6 +96,7 @@ import {
   waitUntilMember,
   summarizeGitFailure,
   getAgentModelConfig,
+  getAgentModelCatalog,
   getRoomRepository,
   publishAgentModelCatalog,
   type AgentPresence,
@@ -158,7 +159,9 @@ import {
   filterAllowedModelConfigOptions,
   filterModelOptionsByCredentials,
   parseAdvertisedConfigOptions,
+  withEffectiveCurrentValues,
 } from './model-config.js';
+import { fetchAgentModelCatalog } from './model-catalog.js';
 import {
   assertCornerWorktreeIsolated,
   cornerWorktreePath,
@@ -330,6 +333,44 @@ export const ROOM_AGENT_STALL_NOTICE_MS = 20_000;
 const BODY_PROCESS_GENERATION = `${process.pid}-${Date.now()}`;
 /** Process-wide, so a Room watchdog recycle cannot spend a second continuation. */
 const BODY_RESTART_CONTINUATIONS = new Set<string>();
+
+/**
+ * One live-catalog probe per daemon process per agent command, shared by every
+ * Room Body: briefly starting the ACP harness just to read its advertised
+ * `session/new` `configOptions` is exactly what pair time does, but N Rooms
+ * starting at once must not spawn the harness N times.
+ */
+const MODEL_CATALOG_PROBES = new Map<string, Promise<AgentModelConfigOption[]>>();
+/** Selections this process has already synced, so N Rooms starting at once
+ * publish the same `(communityId, pubkey)` record once, not N times. */
+const MODEL_SELECTION_SYNCED = new Set<string>();
+
+/**
+ * Best-effort live read of this agent's advertised model/effort catalog, so a
+ * CLI-configured daemon can publish real picker options (effort levels!) to
+ * the relay before any session has ever activated. A missing/broken harness,
+ * or one that fails to advertise, resolves to an empty list — publishing the
+ * selection alone still beats publishing nothing.
+ */
+function probeAdvertisedModelCatalog(config: BodyConfig): Promise<AgentModelConfigOption[]> {
+  const command = config.agentCommand ?? config.agentBinary;
+  if (!command) return Promise.resolve([]);
+  const key = JSON.stringify([command, config.agentArgs ?? []]);
+  let probe = MODEL_CATALOG_PROBES.get(key);
+  if (!probe) {
+    probe = fetchAgentModelCatalog(
+      { command, args: config.agentArgs ?? [] },
+      config.agentEnv,
+    )
+      .then((result) => result.catalog)
+      .catch((error) => {
+        console.error('[body] could not probe the agent model catalog:', error);
+        return [] as AgentModelConfigOption[];
+      });
+    MODEL_CATALOG_PROBES.set(key, probe);
+  }
+  return probe;
+}
 
 /** True only for the exact idle-inactivity timeout `AcpClient.sessionPrompt` raises. */
 export function isAcpPromptStallError(error: unknown): boolean {
@@ -2134,13 +2175,6 @@ export class Body {
       this.config.agentEnv,
     );
     session.modelConfigOptions = catalogOptions;
-    if (catalogOptions.length) {
-      try {
-        await publishAgentModelCatalog(this.agentClientContext(), communityId, catalogOptions);
-      } catch (error) {
-        console.error('[body] failed to publish agent model catalog:', error);
-      }
-    }
     let selection: Awaited<ReturnType<typeof getAgentModelConfig>> = null;
     try {
       selection = await getAgentModelConfig(
@@ -2154,8 +2188,72 @@ export class Body {
     // A human's in-app pick (#223) always wins; the pair-time `--model`/
     // `--effort` default only fills in until one exists.
     const applied = selection ?? this.config.modelSelection;
+    if (catalogOptions.length) {
+      // Publish the catalog with the EFFECTIVE selection stamped onto it:
+      // the harness's raw `currentValue` is its pre-application default and
+      // would show the app a value this agent is about to override. The
+      // `selection` field is what makes a CLI-configured agent's choice
+      // visible in the app at all — without it a `beeline pair --model`
+      // default existed only in the local runtime record and every reader
+      // saw a dead `—` row.
+      try {
+        await publishAgentModelCatalog(
+          this.agentClientContext(),
+          communityId,
+          withEffectiveCurrentValues(catalogOptions, applied),
+          applied ?? undefined,
+        );
+      } catch (error) {
+        console.error('[body] failed to publish agent model catalog:', error);
+      }
+    }
     if (!applied) return;
     await applyAgentModelSelection(client, sessionId, rawConfigOptions, applied);
+  }
+
+  /**
+   * Publish this agent's pair-time `--model`/`--effort` default to the relay
+   * so the app can show it, WITHOUT waiting for a session to activate — the
+   * chain that made a CLI-configured agent render two dead `—` rows in the
+   * app: the selection lived only in the local runtime record, and both
+   * records the app reads (the self-authored catalog and the human-authored
+   * selection) are written only on session activation or an in-app pick.
+   *
+   * Preserves any already-published catalog's options (so a startup sync can
+   * never evict a richer snapshot) and stamps the effective selection (a
+   * human pick when one exists, else the pair-time default) onto it. When no
+   * catalog exists at all, probes the harness live once per process for real
+   * picker options. Skips silently when nothing is configured or the relay
+   * already agrees; every failure is logged, never thrown — Room serving must
+   * not wait on this.
+   */
+  async syncModelSelectionToRelay(communityId: string): Promise<void> {
+    if (!this.config.modelSelection?.model && !this.config.modelSelection?.effort) return;
+    const ctx = this.agentClientContext();
+    let human: Awaited<ReturnType<typeof getAgentModelConfig>> = null;
+    try {
+      human = await getAgentModelConfig(ctx, communityId, this.agentIdentity.publicKey);
+    } catch (error) {
+      console.error('[body] failed to read persisted agent model config:', error);
+    }
+    const applied = human ?? this.config.modelSelection;
+    const syncedKey = `${communityId}:${this.agentIdentity.publicKey}:${applied.model ?? ''}/${applied.effort ?? ''}`;
+    if (MODEL_SELECTION_SYNCED.has(syncedKey)) return;
+    let existing: Awaited<ReturnType<typeof getAgentModelCatalog>> = null;
+    try {
+      existing = await getAgentModelCatalog(ctx, communityId, this.agentIdentity.publicKey);
+    } catch (error) {
+      console.error('[body] failed to read published agent model catalog:', error);
+    }
+    const sameSelection =
+      existing?.selection &&
+      (existing.selection.model ?? undefined) === (applied.model ?? undefined) &&
+      (existing.selection.effort ?? undefined) === (applied.effort ?? undefined);
+    if (existing && sameSelection && existing.options.length > 0) return;
+    const options =
+      existing?.options.length ? existing.options : await probeAdvertisedModelCatalog(this.config);
+    await publishAgentModelCatalog(ctx, communityId, options, applied);
+    MODEL_SELECTION_SYNCED.add(syncedKey);
   }
 
   /**
@@ -6129,6 +6227,11 @@ export class Body {
     );
     this.presenceGenerations.set(channelId, stopPresence.generationId);
     try {
+      // Surface a pair-time --model/--effort default to the app immediately,
+      // before any turn runs. Fire-and-forget: Room serving never waits on it.
+      void this.channelCommunityId(channelId)
+        .then((communityId) => (communityId ? this.syncModelSelectionToRelay(communityId) : undefined))
+        .catch((error) => console.error('[body] model selection sync failed:', error));
       await this.provision(channelId, undefined, editPolicy);
       // A DM must not revive historical borrowed-repository corners. A normal
       // repo-less Room may resume only its already-approved named-repo corners.
@@ -6162,6 +6265,11 @@ export class Body {
     );
     this.presenceGenerations.set(channelId, stopPresence.generationId);
     try {
+      // Surface a pair-time --model/--effort default to the app immediately.
+      // Fire-and-forget for the same reason as the conversation loop above.
+      void this.syncModelSelectionToRelay(communityId).catch((error) =>
+        console.error('[body] model selection sync failed:', error),
+      );
       await this.assertRepositorySafety(channelId, boundRepo);
 
       const mergeGate =

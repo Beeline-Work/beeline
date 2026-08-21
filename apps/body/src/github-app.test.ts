@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { exportPKCS8, generateKeyPair } from 'jose';
+import { newIdentity } from '@beeline/gate';
 import { GitHubAppRuntime } from './github-app.js';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -54,5 +55,57 @@ describe('daemon GitHub App runtime', () => {
     expect(
       fetchMock.mock.calls.filter(([url]) => String(url).includes('/repos/acme/widget')),
     ).toHaveLength(2);
+  });
+
+  it('uses the auth service token broker when the daemon has no App private key', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            token: 'repo-scoped-token',
+            expires_at: '2030-01-01T01:00:00Z',
+            installation_id: 77,
+            full_name: 'acme/widget',
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            full_name: 'acme/widget',
+            clone_url: 'https://github.com/acme/widget.git',
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const identity = newIdentity('agent');
+    const runtime = GitHubAppRuntime.fromEnvironment(
+      {},
+      { baseUrl: 'https://relay.example', identity },
+    )!;
+
+    await expect(
+      runtime.resolveIdentity(
+        {
+          key: 'github:42',
+          name: 'acme/widget',
+          remote: 'git://github.com/acme/widget',
+          githubInstallationId: 77,
+          localOnly: false,
+        },
+        'room-1',
+      ),
+    ).resolves.toMatchObject({ name: 'acme/widget' });
+    expect(fetchMock.mock.calls[0]![0]).toBe('https://relay.example/auth/github/room-token');
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body))).toMatchObject({
+      pubkey: identity.publicKey,
+      room_id: 'room-1',
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body)).relay_authorizations).toHaveLength(
+      16,
+    );
   });
 });

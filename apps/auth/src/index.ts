@@ -1,4 +1,5 @@
 import { buildAuthServer, type AuthTenant } from './server.js';
+import { createGitHubRoomTokenAuthority } from './github-room-authority.js';
 import { OidcClient } from './oidc.js';
 import { AuthStore, PostgresDatabase } from './store.js';
 import { GitHubAppClient, GitHubOAuthClient } from './github.js';
@@ -72,6 +73,7 @@ async function main(): Promise<void> {
       ? { github: { ...github, webhookSecret: githubConfig!.BEELINE_GITHUB_WEBHOOK_SECRET } }
       : {}),
     tenants: tenantsFromEnvironment(),
+    authorizeGitHubRoomToken: createGitHubRoomTokenAuthority(),
     logger: true,
   });
   const port = Number(process.env.PORT ?? '8789');

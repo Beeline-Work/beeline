@@ -1,0 +1,22 @@
+name: Auth image
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/auth-image.yml'
+      - '.dockerignore'
+      - 'apps/auth/**'
+      - 'packages/buzz-client/**'
+      - 'packages/nostr/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.base.json'
+
+jobs:
+  build:
+    name: Build auth container
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build auth image
+        run: docker build -f apps/auth/Dockerfile .

@@ -50,6 +50,12 @@ function displaySequence(events: SessionEvent[]): ChatDisplayMessage[] {
 }
 
 describe('Buzz Room screen event projection', () => {
+  it('projects corner process state without a transcript row', () => {
+    const event = raw('state', 'waiting', [['t', 'body-control'], ['t', 'corner-session'], ['session', 'logical'], ['agent', agent], ['status', 'waiting-for-slot'], ['sequence', '2']], 1);
+    const message = projectChatEvent(event, viewer).message!;
+    expect(message.cornerProcess).toMatchObject({ state: 'waiting-for-slot', sequence: 2 });
+    expect(transcriptMessages([message], true)).toEqual([]);
+  });
   it('withdraws a stale merge target when Body reports uncommitted work', () => {
     expect(
       projectChatEvent(

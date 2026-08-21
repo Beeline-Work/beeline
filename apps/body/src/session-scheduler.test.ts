@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 
 function deferred(): { promise: Promise<void>; resolve(): void } {
@@ -10,6 +10,26 @@ function deferred(): { promise: Promise<void>; resolve(): void } {
 }
 
 describe('Workspace session scheduler', () => {
+  it('never suspends an in-flight turn with a queued steer', async () => {
+    const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
+    const release = deferred();
+    const suspend = vi.fn().mockResolvedValue(undefined);
+    const lifecycle = { activate: async () => 'physical', suspend };
+    const first = scheduler.run('corner', lifecycle, async () => release.promise);
+    const steer = scheduler.run('corner', lifecycle, async () => undefined);
+    await scheduler.suspend('corner');
+    expect(suspend).not.toHaveBeenCalled();
+    release.resolve(); await Promise.all([first, steer]); await scheduler.dispose();
+  });
+  it('reports waiting, live, and suspended in order', async () => {
+    const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
+    const release = deferred(); const states: string[] = [];
+    const first = scheduler.run('a', { activate: async () => 'a', suspend: async () => undefined }, async () => release.promise);
+    const second = scheduler.run('b', { activate: async () => 'b', suspend: async () => undefined, onStateChange: (state) => { states.push(state); } }, async () => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0)); expect(states).toEqual(['waiting-for-slot']);
+    release.resolve(); await Promise.all([first, second]); await scheduler.dispose();
+    expect(states).toEqual(['waiting-for-slot', 'live', 'suspended']);
+  });
   it('caps live ACP processes, evicts only idle owners, and preserves one pin per channel', async () => {
     const scheduler = new SessionScheduler({ maxLiveSessions: 2, idleMs: 60_000 });
     const active = new Set<string>();

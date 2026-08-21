@@ -168,15 +168,6 @@ export const zhHant: TranslationStructure = {
         },
         alwaysShowContextSize: '始終顯示上下文大小',
         alwaysShowContextSizeDescription: '即使未接近限制時也顯示上下文使用情況',
-        avatarStyle: '頭像風格',
-        avatarStyleDescription: '選擇工作階段頭像外觀',
-        avatarOptions: {
-            pixelated: '像素化',
-            gradient: '漸層',
-            brutalist: '粗獷風格',
-        },
-        showFlavorIcons: '顯示 AI 提供者圖示',
-        showFlavorIconsDescription: '在工作階段頭像上顯示 AI 提供者圖示',
     },
 
     settingsFeatures: {

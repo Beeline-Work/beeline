@@ -124,7 +124,7 @@ const app = buildAuthServer({
     {
       host: '127.0.0.1:8789',
       community: 'emulated-workspace',
-      roomCommunityId: 'emulated-workspace',
+      roomCommunityIds: ['emulated-workspace'],
       origin: 'http://127.0.0.1:8789',
     },
   ],

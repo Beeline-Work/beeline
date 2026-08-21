@@ -1,11 +1,11 @@
 import {
-  getChannelCommunityId,
   getChannelCreator,
   isMember,
   resolveRoomRepository,
   type ChannelOpsContext,
 } from '@beeline/buzz-client';
 import type { AuthServerOptions, AuthTenant } from './server.js';
+import type { AuthStore } from './store.js';
 
 type TokenAuthority = NonNullable<AuthServerOptions['authorizeGitHubRoomToken']>;
 
@@ -14,7 +14,9 @@ type TokenAuthority = NonNullable<AuthServerOptions['authorizeGitHubRoomToken']>
  * NIP-98 signature proves the agent key; this proves that key is currently in
  * the Room and that a human Room authority bound the exact GitHub repository.
  */
-export function createGitHubRoomTokenAuthority(): TokenAuthority {
+export function createGitHubRoomTokenAuthority(
+  roomStore: Pick<AuthStore, 'relayCommunityIdForRoom'>,
+): TokenAuthority {
   return async (tenant: AuthTenant, input) => {
     let relayAuthorizationIndex = 0;
     const identity = {
@@ -37,11 +39,11 @@ export function createGitHubRoomTokenAuthority(): TokenAuthority {
       },
     };
     const [communityId, member, repository] = await Promise.all([
-      getChannelCommunityId(ctx, input.roomId),
+      roomStore.relayCommunityIdForRoom(input.roomId),
       isMember(ctx, input.roomId, input.agentPubkey),
       resolveRoomRepository(ctx, input.roomId),
     ]);
-    if (communityId !== tenant.roomCommunityId) {
+    if (!communityId || !tenant.roomCommunityIds.includes(communityId)) {
       return { authorized: false, reason: 'tenant_room_community_mismatch' };
     }
     if (!member) return { authorized: false, reason: 'agent_not_room_member' };

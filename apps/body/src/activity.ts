@@ -28,6 +28,7 @@ import { sanitizeActivityUpdate } from './attachments.js';
 export const ACTIVITY_TAG = 'agent-activity';
 export const AGENT_MESSAGE_TAG = 'agent-message';
 export const AGENT_TURN_TAG = 'agent-turn';
+export const CORNER_SESSION_TAG = 'corner-session';
 /** Coalescing window for live draft-text publishes — bounds relay write rate
  *  regardless of ACP chunk frequency (mirrors the activity batch's quota concern). */
 export const AGENT_DRAFT_FLUSH_MS = 250;
@@ -498,6 +499,7 @@ export interface CompactActivityPlan {
 export type ActivityProjectionController = (() => void) & {
   startPlan(objective: string): Promise<void>;
   completePlan(): Promise<void>;
+  currentPlan(): CompactActivityPlan | undefined;
 };
 
 const MAX_ACTIVITY_DETAIL_CHARS = 12_000;
@@ -612,6 +614,17 @@ function activityPlan(...sources: unknown[]): CompactActivityPlan | undefined {
     if (items.length || objective) return { ...(objective ? { objective } : {}), items };
   }
   return undefined;
+}
+
+export function latestActivityPlanFromEvents(events: readonly Pick<NostrEvent, 'content' | 'created_at' | 'id'>[]): CompactActivityPlan | undefined {
+  let latest: CompactActivityPlan | undefined;
+  for (const event of [...events].sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))) {
+    try {
+      const batch = JSON.parse(event.content) as { update?: { updates?: unknown[] }; events?: unknown[] };
+      for (const update of batch.update?.updates ?? batch.events ?? []) latest = activityPlan(update) ?? latest;
+    } catch { /* non-activity prose shares the query */ }
+  }
+  return latest;
 }
 
 function activityFiles(...sources: unknown[]): CompactActivityFile[] {
@@ -1018,6 +1031,7 @@ export function projectActivity(
     }
     await publishPlan(completed);
   };
+  controller.currentPlan = () => currentPlan ? { ...currentPlan, items: currentPlan.items.map((item) => ({ ...item })) } : undefined;
   return controller;
 }
 
@@ -1326,6 +1340,13 @@ export function postAgentTurnStatus(
     ['mode', 'readonly'],
     ['status', status],
     ...(generationId ? [['generation', generationId]] : []),
+  ]);
+}
+
+export function postCornerSessionStatus(channelId: string, owner: Identity, sessionId: string, status: 'live' | 'suspended' | 'waiting-for-slot', sequence: number): Promise<void> {
+  return postControlMessage(channelId, owner, `Corner session ${status}.`, [
+    ['t', CORNER_SESSION_TAG], ['session', sessionId], ['agent', owner.publicKey],
+    ['status', status], ['sequence', String(sequence)],
   ]);
 }
 

@@ -3,12 +3,17 @@ import {
   cachedChannelKind,
   channelHeaderTitle,
   cornerSessionState,
+  cornerProcessState,
   changeReviewSummary,
   resolveCornerViewAgentPubkey,
 } from './corner-session';
 import { ROOM_LABEL } from './vocabulary';
 
 describe('corner session presentation', () => {
+  it('surfaces process state by monotonic sequence', () => {
+    const message = (state: 'live' | 'suspended' | 'waiting-for-slot', sequence: number) => ({ id: String(sequence), text: state, isUser: false, timestamp: 1, cornerProcess: { sessionId: 's', agentPubkey: 'a', state, sequence } });
+    expect(cornerProcessState([message('live', 3), message('suspended', 1)])).toBe('live');
+  });
   it('uses the corner turn lifecycle, not presence, for working, idle, and done', () => {
     expect(cornerSessionState([])).toBe('idle');
     expect(

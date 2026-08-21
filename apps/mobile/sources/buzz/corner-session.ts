@@ -1,7 +1,7 @@
 import { resolveCornerCardAgentPubkey } from '@/buzz/agent-display';
 import { cornerName } from '@/buzz/corners';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
-import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection';
+import type { ChatDisplayMessage, CornerProcessState } from '@/sync/transport/buzz-event-projection';
 
 export type CornerSessionState = 'working' | 'idle' | 'done';
 
@@ -84,6 +84,9 @@ export function cornerSessionState(messages: readonly ChatDisplayMessage[]): Cor
   if (!latestTurn) return 'idle';
   if (latestTurn.status === 'working') return 'working';
   return latestTurn.status === 'complete' ? 'done' : 'idle';
+}
+export function cornerProcessState(messages: readonly ChatDisplayMessage[]): CornerProcessState | undefined {
+  return [...messages].filter((message) => message.cornerProcess).sort((a, b) => (a.cornerProcess?.sequence ?? 0) - (b.cornerProcess?.sequence ?? 0) || a.timestamp - b.timestamp || a.id.localeCompare(b.id)).at(-1)?.cornerProcess?.state;
 }
 
 /** How many changed paths the review card names before it counts the rest. */

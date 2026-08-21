@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Linking, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, type Href } from 'expo-router';
+import * as Updates from 'expo-updates';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { GitHubInstallationAccess } from '@beeline/buzz-client';
@@ -139,6 +140,17 @@ export default function BuzzSettings() {
             <Text style={styles.rowChevron}>›</Text>
           </View>
         </TouchableOpacity>
+        <View style={styles.settingsRow} testID="ota-update-info">
+          <View style={styles.rowCopy}>
+            <Text style={styles.rowTitle}>OTA update</Text>
+            <Text style={styles.rowSubtitle} testID="ota-update-running-id">
+              Running update: {Updates.updateId ?? 'embedded bundle'}
+            </Text>
+            <Text style={styles.rowSubtitle} testID="ota-update-channel">
+              Channel: {Updates.channel ?? 'not configured'}
+            </Text>
+          </View>
+        </View>
         <TouchableOpacity
           accessibilityLabel={confirmForget ? 'Confirm sign out' : 'Sign out on this device'}
           accessibilityRole="button"

@@ -14,6 +14,7 @@ const identityStorage = vi.hoisted(() => ({
 const localCache = vi.hoisted(() => ({ clearBuzzLocalCache: vi.fn() }));
 
 vi.mock('expo-router', () => ({ router: navigation }));
+vi.mock('expo-updates', () => ({ updateId: 'ota-running-123', channel: 'preview' }));
 vi.mock('@/auth/buzz-identity-storage', () => identityStorage);
 vi.mock('@/buzz/local-cache', () => localCache);
 vi.mock('@/sync/transport', () => ({
@@ -77,6 +78,15 @@ function render(): ReactTestRenderer {
 }
 
 describe('Buzz global Settings', () => {
+  it('shows the running OTA id and channel on the device settings surface', () => {
+    const renderer = render();
+
+    expect(renderer.root.findByProps({ testID: 'ota-update-running-id' }).props.children)
+      .toEqual(['Running update: ', 'ota-running-123']);
+    expect(renderer.root.findByProps({ testID: 'ota-update-channel' }).props.children)
+      .toEqual(['Channel: ', 'preview']);
+  });
+
   it('is the one coherent account surface, reachable and not a dead end', () => {
     // The Workspace rail's YOU command opens this hub; every screen that
     // mounts the rail must route there rather than jumping past it into

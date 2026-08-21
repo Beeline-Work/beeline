@@ -1,14 +1,56 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { existsSync, readFileSync } from 'node:fs';
+import { noticeForOidcError } from './google-onboarding-state';
 
 const createURL = vi.hoisted(() => vi.fn((path: string) => `buzzy://${path}`));
+const storage = vi.hoisted(() => new Map<string, string>());
 
 vi.mock('expo-linking', () => ({ createURL }));
+vi.mock('@react-native-async-storage/async-storage', () => ({
+  default: {
+    getItem: vi.fn(async (key: string) => storage.get(key) ?? null),
+    setItem: vi.fn(async (key: string, value: string) => void storage.set(key, value)),
+    removeItem: vi.fn(async (key: string) => void storage.delete(key)),
+  },
+}));
 
-const { githubInstallationRedirectUri, githubSignInRedirectUri } =
-  await import('./github-auth-session');
+const {
+  githubInstallationRedirectUri,
+  githubInstallationReturnPath,
+  githubSignInRedirectUri,
+  persistGitHubInstallationReturnPath,
+  persistGitHubSignInState,
+  resumeInitialGitHubInstallation,
+  resumeInitialGitHubSignIn,
+  runGitHubInstallationSession,
+} = await import('./github-auth-session');
+
+const STATE = 's'.repeat(43);
+const OTHER_STATE = 'x'.repeat(43);
+
+function bindCallback(state = STATE, issuedAt = Math.floor(Date.now() / 1_000)): string {
+  const params = new URLSearchParams({
+    state,
+    protocol: '1',
+    kind: '24250',
+    marker: 'beeline-oidc-bind-v1',
+    ticket: 't'.repeat(43),
+    challenge: 'c'.repeat(43),
+    provider: 'https://github.com',
+    audience: 'beeline-mobile',
+    subject: '269599412',
+    community: 'relay.buzzrouter.com',
+    issued_at: String(issuedAt),
+    expires_at: String(issuedAt + 120),
+  });
+  return `buzzy://buzz/github-callback?${params}`;
+}
 
 describe('GitHub auth session redirects', () => {
-  beforeEach(() => createURL.mockClear());
+  beforeEach(() => {
+    createURL.mockClear();
+    storage.clear();
+  });
 
   it('uses the installed app scheme for sign-in completion', () => {
     expect(githubSignInRedirectUri()).toBe('buzzy://buzz/github-callback');
@@ -18,5 +60,136 @@ describe('GitHub auth session redirects', () => {
   it('uses the installed app scheme for GitHub App installation completion', () => {
     expect(githubInstallationRedirectUri()).toBe('buzzy://buzz/github-installation');
     expect(createURL).toHaveBeenCalledWith('buzz/github-installation');
+  });
+
+  it('registers both app-generated deep links as Expo Router screens', () => {
+    const signInRoute = new URL('../app/(app)/buzz/github-callback.tsx', import.meta.url);
+    const installationRoute = new URL('../app/(app)/buzz/github-installation.tsx', import.meta.url);
+    const layout = readFileSync(new URL('../app/(app)/_layout.tsx', import.meta.url), 'utf8');
+
+    expect(existsSync(signInRoute)).toBe(true);
+    expect(existsSync(installationRoute)).toBe(true);
+    expect(layout).toContain('name="buzz/github-callback"');
+    expect(layout).toContain('name="buzz/github-installation"');
+  });
+
+  it('cold-starts from getInitialURL and validates the persisted sign-in state', async () => {
+    await persistGitHubSignInState(STATE);
+
+    const challenge = await resumeInitialGitHubSignIn(async () => bindCallback());
+
+    expect(challenge).toMatchObject({
+      provider: 'https://github.com',
+      subject: '269599412',
+    });
+  });
+
+  it('ignores an unrelated cold-start URL', async () => {
+    await expect(
+      resumeInitialGitHubSignIn(async () => 'buzzy://buzz/channels'),
+    ).resolves.toBeNull();
+  });
+
+  it('rejects a cold callback whose state does not match without consuming the real state', async () => {
+    await persistGitHubSignInState(STATE);
+
+    await expect(
+      resumeInitialGitHubSignIn(async () => bindCallback(OTHER_STATE)),
+    ).rejects.toMatchObject({ code: 'state_mismatch' });
+    await expect(resumeInitialGitHubSignIn(async () => bindCallback())).resolves.toMatchObject({
+      subject: '269599412',
+    });
+  });
+
+  it('reports an expired cold callback as SESSION EXPIRED and clears it for a clean restart', async () => {
+    const now = Math.floor(Date.now() / 1_000);
+    await persistGitHubSignInState(STATE);
+
+    const error = await resumeInitialGitHubSignIn(async () => bindCallback(STATE, now - 121)).catch(
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toMatchObject({ code: 'ticket_expired' });
+    expect(noticeForOidcError(error)).toMatchObject({
+      status: 'token_expired',
+      title: 'SESSION EXPIRED · TICKET_EXPIRED',
+      retryable: false,
+    });
+    await expect(resumeInitialGitHubSignIn(async () => bindCallback())).rejects.toMatchObject({
+      code: 'state_mismatch',
+    });
+  });
+
+  it('finishes installation from a warm Linking event when the browser reports dismiss', async () => {
+    let onUrl: ((url: string) => void) | null = null;
+    const callbackUrl = 'buzzy://buzz/github-installation?installed=1';
+
+    await expect(
+      runGitHubInstallationSession({
+        returnPath: '/buzz/channels',
+        startInstallation: async () => 'https://github.com/apps/beeline/installations/new',
+        openAuthSession: async () => {
+          queueMicrotask(() => onUrl?.(callbackUrl));
+          return { type: 'dismiss' };
+        },
+        subscribeToUrls: (listener) => {
+          onUrl = listener;
+          return { remove: () => (onUrl = null) };
+        },
+        callbackGraceMs: 50,
+      }),
+    ).resolves.toBe(callbackUrl);
+    await expect(githubInstallationReturnPath()).resolves.toBe('/buzz/channels');
+    await expect(resumeInitialGitHubInstallation(async () => null)).resolves.toBe(true);
+    await expect(githubInstallationReturnPath()).resolves.toBeNull();
+  });
+
+  it('finishes installation from the direct browser return', async () => {
+    const callbackUrl = 'buzzy://buzz/github-installation?installed=1';
+
+    await expect(
+      runGitHubInstallationSession({
+        returnPath: '/buzz/channels',
+        startInstallation: async () => 'https://github.com/apps/beeline/installations/new',
+        openAuthSession: async () => ({ type: 'success', url: callbackUrl }),
+        subscribeToUrls: () => ({ remove: () => undefined }),
+      }),
+    ).resolves.toBe(callbackUrl);
+    await expect(githubInstallationReturnPath()).resolves.toBeNull();
+  });
+
+  it('clears installation resume state when the browser is canceled', async () => {
+    await expect(
+      runGitHubInstallationSession({
+        returnPath: '/buzz/channels',
+        startInstallation: async () => 'https://github.com/apps/beeline/installations/new',
+        openAuthSession: async () => ({ type: 'cancel' }),
+        subscribeToUrls: () => ({ remove: () => undefined }),
+        callbackGraceMs: 0,
+      }),
+    ).rejects.toMatchObject({ code: 'browser_canceled' });
+    await expect(githubInstallationReturnPath()).resolves.toBeNull();
+  });
+
+  it('rejects an installation callback that does not report completion', async () => {
+    await persistGitHubInstallationReturnPath('/buzz/channels');
+
+    await expect(
+      resumeInitialGitHubInstallation(async () =>
+        Promise.resolve('buzzy://buzz/github-installation?installed=0'),
+      ),
+    ).rejects.toMatchObject({ code: 'invalid_installation' });
+  });
+
+  it('resumes a cold installation callback at the repo picker that launched it', async () => {
+    await persistGitHubInstallationReturnPath('/buzz/chat/room-1');
+    expect(await githubInstallationReturnPath()).toBe('/buzz/chat/room-1');
+
+    await expect(
+      resumeInitialGitHubInstallation(async () =>
+        Promise.resolve('buzzy://buzz/github-installation?installed=1'),
+      ),
+    ).resolves.toBe(true);
+    await expect(githubInstallationReturnPath()).resolves.toBeNull();
   });
 });

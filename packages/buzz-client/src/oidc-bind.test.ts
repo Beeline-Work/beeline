@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   OIDC_BIND_KIND,
   OIDC_BIND_MARKER,
+  MOBILE_APP_SCHEMES,
   OidcBindError,
   buildOidcBindEvent,
   finishOidcBind,
@@ -227,6 +228,32 @@ describe('OIDC device-key bind protocol', () => {
     expect(() =>
       startOidcBind('http://127.0.0.1:8789', {
         redirectUri: 'buzzy://user@buzz/oidc-callback',
+        state: 's'.repeat(43),
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'invalid_redirect' }));
+  });
+
+  it('accepts every shipped app variant callback and rejects unshipped schemes', () => {
+    for (const scheme of MOBILE_APP_SCHEMES) {
+      const redirectUri = `${scheme}://buzz/github-callback`;
+      expect(
+        startGitHubBind('https://relay.example', {
+          redirectUri,
+          state: 's'.repeat(43),
+        }).redirectUri,
+      ).toBe(redirectUri);
+
+      expect(
+        startOidcBind('http://127.0.0.1:8789', {
+          redirectUri: `${scheme}://buzz/oidc-callback`,
+          state: 's'.repeat(43),
+        }).redirectUri,
+      ).toBe(`${scheme}://buzz/oidc-callback`);
+    }
+
+    expect(() =>
+      startGitHubBind('https://relay.example', {
+        redirectUri: 'buzzy-nightly://buzz/github-callback',
         state: 's'.repeat(43),
       }),
     ).toThrowError(expect.objectContaining({ code: 'invalid_redirect' }));

@@ -129,11 +129,21 @@ export interface AgentModelConfigOption {
   options: Array<{ id: string; name?: string }>;
 }
 
+/** The agent's own effective selection: a human pick when one exists, else its pair-time default. */
+export interface AgentModelSelection {
+  model?: string;
+  effort?: string;
+}
+
 /** Self-authored, per-(agent,Workspace) snapshot of what the runtime currently advertises. */
 export interface AgentModelCatalog {
   communityId: string;
   agentPubkey: string;
   options: AgentModelConfigOption[];
+  /** What the agent will actually run with, published by the agent itself so a
+   * CLI-configured (`beeline pair --model/--effort`) selection is visible to
+   * readers without waiting for a session activation or an in-app pick. */
+  selection?: AgentModelSelection;
   updatedAt: number;
   raw: NostrEvent;
 }

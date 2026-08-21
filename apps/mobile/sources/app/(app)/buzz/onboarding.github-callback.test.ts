@@ -285,6 +285,27 @@ describe('GitHub callback delivery into onboarding', () => {
     expect(browser.open).not.toHaveBeenCalled();
   });
 
+  it('promotes a pending key when lookup proves the server already completed the bind', async () => {
+    const identity = { secretKey: '1'.repeat(64), publicKey: '2'.repeat(64) };
+    identityStorage.pending = identity;
+    sdk.lookupRecovery.mockResolvedValue([
+      {
+        provider: 'https://github.com',
+        subject: '269599412',
+        pubkey: identity.publicKey,
+      },
+    ]);
+
+    const tree = await render();
+
+    expect(identityStorage.save).toHaveBeenCalledWith(identity);
+    expect(identityStorage.clearPending).toHaveBeenCalledTimes(1);
+    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+    expect(browser.open).not.toHaveBeenCalled();
+    expect(sdk.finish).not.toHaveBeenCalled();
+    expect(noticeText(tree)).not.toContain('IDENTITY_CONFLICT');
+  });
+
   it('cold-starts, binds the proof, saves the identity, and enters the workspace', async () => {
     await persistGitHubSignInState(STATE);
     linking.initialUrl = callbackUrl();

@@ -159,8 +159,8 @@ export async function pickAccessPolicy(): Promise<AgentAccessPolicy> {
   const picked = await clack.select<AgentAccessPolicy>({
     message: 'Who may address this agent?',
     options: [
-      { value: 'everyone', label: 'Everyone in the Room', hint: 'default' },
-      { value: 'creator', label: 'Just me — the inviting owner' },
+      { value: 'everyone', label: 'Everyone in the Room' },
+      { value: 'creator', label: 'Just me — the inviting owner', hint: 'default' },
     ],
     initialValue: DEFAULT_ACCESS_POLICY,
   });

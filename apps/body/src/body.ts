@@ -111,8 +111,8 @@ import type { RepositoryTruth, RepositoryTruthCheckpoint } from './repository-tr
 import {
   AccessRefusalLimiter,
   DEFAULT_ACCESS_AUTO_RESPONSE,
-  DEFAULT_ACCESS_POLICY,
   isSenderPermitted,
+  LEGACY_ACCESS_POLICY,
   renderAccessAutoResponse,
 } from './access-policy.js';
 import { DurableBodyState } from './durable-state.js';
@@ -3929,12 +3929,14 @@ export class Body {
   /**
    * Whether a message sender may drive this agent under the configured access
    * policy. Fail-closed via `isSenderPermitted`: an unknown/unmatched sender is
-   * NOT permitted. Defaults to `everyone` when no policy is configured (a
-   * standalone Body / pre-policy runtime), preserving the shipped behaviour.
+   * NOT permitted. Falls back to LEGACY_ACCESS_POLICY (`everyone`) when no
+   * policy is configured (a standalone Body / pre-policy runtime), preserving
+   * the shipped behaviour — never the new pairing default, which would
+   * silently re-gate an already-running agent.
    */
   private senderAccessAllowed(senderPubkey: string): boolean {
     return isSenderPermitted(
-      this.config.accessPolicy ?? DEFAULT_ACCESS_POLICY,
+      this.config.accessPolicy ?? LEGACY_ACCESS_POLICY,
       senderPubkey,
       this.config.accessOwnerPubkey,
     );

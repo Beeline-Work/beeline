@@ -221,6 +221,11 @@ import {
   type ReleaseCornerBrief,
   type ReleaseRoomIntent,
 } from './release-flow.js';
+import {
+  cornerMetadataPrompt,
+  parseCornerMetadata,
+  type CornerMetadata,
+} from './corner-metadata.js';
 
 /** Tracks a single agent session. */
 export interface AgentSession {
@@ -1565,8 +1570,8 @@ export const isChannelTaskRequest = isChannelWorkIntent;
  * to name the corner's objective after the transcript's cold-backfill window
  * has scrolled past the corner's opening, and the create event is both
  * permanent and already read (and cached) by every client that resolves the
- * corner's parent. The channel `name` alone will not do — it is a 42-char
- * slug.
+ * corner's parent. The bounded channel `name` alone will not do — it cannot
+ * carry the fuller objective.
  */
 export function createAgentSubchannel(
   agentIdentity: Identity,
@@ -1757,6 +1762,7 @@ export class Body {
    * summary nobody can still see. See `release-flow.ts`.
    */
   private readonly releaseProposals = new Map<string, PendingReleaseProposal>();
+  private generateCornerMetadata?: (prompt: string) => Promise<string>;
 
   constructor(
     config: BodyConfig,
@@ -1782,6 +1788,8 @@ export class Body {
       onRoomPollFailure?: (channelId: string, retryInMs: number) => void;
       onRoomPresence?: (channelId: string, status: 'online' | 'offline') => void;
       relaySocket?: SharedRelaySocket;
+      /** Test/embedding seam for the hidden metadata-only model turn. */
+      generateCornerMetadata?: (prompt: string) => Promise<string>;
     } = {},
   ) {
     this.config = config;
@@ -1810,6 +1818,7 @@ export class Body {
     this.onRoomPollFailure = services.onRoomPollFailure;
     this.onRoomPresence = services.onRoomPresence;
     this.sharedSocket = services.relaySocket;
+    this.generateCornerMetadata = services.generateCornerMetadata;
     this.durableState = new DurableBodyState(
       services.statePath ?? resolve(config.workspaceRoot, '.beeline-body-state.json'),
     );
@@ -1989,6 +1998,100 @@ export class Body {
       spec.gitCommonDir = gitCommonDir;
     }
     return wrapAgentCommand({ bwrapPath: this.config.bwrapPath, spec, command, args });
+  }
+
+  /**
+   * Run a short-lived ACP session with an empty MCP inventory. Its answer is
+   * never projected into the Room transcript; only validated title/objective
+   * strings survive. Any failure preserves the deterministic metadata path.
+   */
+  private async modelCornerMetadata(
+    channelId: string,
+    cwd: string,
+    request: ChannelTaskRequest,
+    conversation: readonly { role: string; text: string }[],
+  ): Promise<CornerMetadata | undefined> {
+    const prompt = cornerMetadataPrompt(request.content, conversation);
+    if (this.generateCornerMetadata) {
+      return parseCornerMetadata(await this.generateCornerMetadata(prompt));
+    }
+
+    await mkdir(cwd, { recursive: true });
+    const env = await this.sessionAgentEnv();
+    const spawnCommand = this.sessionSpawnCommand(
+      { mode: 'readonly', cwd, channelIdForLog: `${channelId}:corner-metadata` },
+      env,
+    );
+    const client = new AcpClient({
+      agentCommand: spawnCommand.command,
+      agentArgs: spawnCommand.args,
+      agentLabel: this.config.agentCommand ?? this.config.agentBinary,
+      agentEnv: env,
+      agentCwd: cwd,
+      autoApprovePermissions: false,
+      permissionHandler: async () => 'reject',
+    });
+    const startedAt = new Date().toISOString();
+    const systemPrompt =
+      'You are a metadata editor. You have no tools. Follow the requested JSON schema exactly.';
+    try {
+      await client.start();
+      const created = await client.sessionNew({
+        cwd,
+        mcpServers: [],
+        systemPrompt,
+        mode: 'readonly',
+      });
+      const rawOptions = parseAdvertisedConfigOptions(created.raw);
+      if (this.config.modelSelection) {
+        await applyAgentModelSelection(
+          client,
+          created.sessionId,
+          rawOptions,
+          this.config.modelSelection,
+        );
+      }
+      const result = await client.sessionPrompt(created.sessionId, prompt, 30_000);
+      await this.durableState.recordModelTurn(
+        completedModelSpend({
+          result,
+          prompt,
+          systemPromptChars: systemPrompt.length,
+          attribution: {
+            requestId: request.eventId,
+            originalRequestId: request.eventId,
+            cause: 'corner-metadata',
+          },
+          agentPubkey: this.agentIdentity.publicKey,
+          channelId,
+          startedAt,
+        }),
+      );
+      if (result.toolCalls.length > 0) return undefined;
+      return parseCornerMetadata(result.agentText);
+    } catch (error) {
+      await this.durableState
+        .recordModelTurn(
+          failedModelSpend({
+            prompt,
+            systemPromptChars: systemPrompt.length,
+            attribution: {
+              requestId: request.eventId,
+              originalRequestId: request.eventId,
+              cause: 'corner-metadata',
+            },
+            agentPubkey: this.agentIdentity.publicKey,
+            channelId,
+            startedAt,
+            error,
+          }),
+        )
+        .catch(() => undefined);
+      console.warn(`[body] corner metadata generation failed for ${channelId}; using fallback`);
+      return undefined;
+    } finally {
+      if (client.isAlive) await client.stop();
+    }
   }
 
   private async createManagedSession(input: {
@@ -3139,22 +3242,38 @@ export class Body {
     await this.ensureAgentInChannel(tlcChannelId, agentId);
     const communityId = await this.channelCommunityId(tlcChannelId);
 
-    // 1. The agent itself creates/signs the child channel. The corner's name
-    // is a slug of the task; the full task description rides along as a tag so
-    // a reader gets the objective, not the slug.
+    // 1. The agent itself creates/signs the child channel. Prefer the model's
+    // polished short title; the full objective rides along as a tag so a
+    // reader gets more than a compact display label.
     // A corner exists to do one named thing, and the reader has to be able to
     // see what that is the moment it opens. When the trigger message names
     // nothing on its own — a bare "open a corner" said right after describing
     // the work — the person's own most recent substantive words in the Room
     // are the objective. See `cornerObjectiveFromConversation`.
+    const conversation = await this.durableState.conversation(tlcChannelId);
     const statedTask = intent ? taskDescriptionFromCornerRequest(intent).slice(0, 320) : '';
-    const taskDescription =
-      statedTask ||
-      cornerObjectiveFromConversation(await this.durableState.conversation(tlcChannelId));
-    const taskSlug = statedTask
+    const fallbackObjective = statedTask || cornerObjectiveFromConversation(conversation);
+    let generated: CornerMetadata | undefined;
+    if (request) {
+      try {
+        generated = await this.modelCornerMetadata(
+          tlcChannelId,
+          this.config.workspaceRoot,
+          request,
+          conversation,
+        );
+      } catch {
+        console.warn(
+          `[body] corner metadata generation failed for ${tlcChannelId}; using fallback`,
+        );
+      }
+    }
+    const taskDescription = generated?.objective ?? fallbackObjective;
+    const fallbackSlug = statedTask
       ? taskSlugForCornerIntent(intent)
       : slugifyCornerTask(taskDescription);
-    const cornerName = taskSlug || `corner-${tlcChannelId.slice(0, 8)}`;
+    const taskSlug = generated ? slugifyCornerTask(generated.title) || fallbackSlug : fallbackSlug;
+    const cornerName = generated?.title ?? (taskSlug || `corner-${tlcChannelId.slice(0, 8)}`);
     const subchannelId = await createAgentSubchannel(
       agentId,
       tlcChannelId,

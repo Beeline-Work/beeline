@@ -197,8 +197,9 @@ async function main() {
   // MODULE_NOT_FOUND shape from the layout regression). Executed through the
   // installed forwarders, BEELINE_LIB_DIR is already exported by the
   // forwarder as the clean ANCHOR path (<prefix>/lib/beeline); executed
-  // directly inside a bundle, the wrapper computes its own release's lib the
-  // same cd+pwd way. See apps/body/src/self-update.ts, "THE CONTRACT".
+  // directly inside a bundle, the wrapper computes its release root while
+  // preserving BEELINE_LIB_DIR as that release's inner lib for self-update's
+  // legacy normalization. See apps/body/src/self-update.ts, "THE CONTRACT".
   const wrapperPrologue = [
     '#!/bin/sh',
     'set -eu',
@@ -206,19 +207,22 @@ async function main() {
     '  /*) script_path=$0 ;;',
     '  *) script_path=$(pwd -P)/$0 ;;',
     'esac',
-    'if [ -z "${BEELINE_LIB_DIR:-}" ]; then',
-    '  BEELINE_LIB_DIR=$(CDPATH= cd -- "$(dirname -- "$script_path")/.." && pwd -P)/lib/beeline',
+    'if [ -n "${BEELINE_LIB_DIR:-}" ]; then',
+    '  BEELINE_BUNDLE_ROOT=$BEELINE_LIB_DIR',
+    'else',
+    '  BEELINE_BUNDLE_ROOT=$(CDPATH= cd -- "$(dirname -- "$script_path")/.." && pwd -P)',
+    '  BEELINE_LIB_DIR=$BEELINE_BUNDLE_ROOT/lib/beeline',
     'fi',
     'export BEELINE_LIB_DIR',
   ].join('\n');
   await writeFile(
     resolve(staging, 'bin', 'buzz-readonly-mcp'),
-    `${wrapperPrologue}\nexec node "$BEELINE_LIB_DIR/beeline-readonly-mcp.mjs"\n`,
+    `${wrapperPrologue}\nexec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-readonly-mcp.mjs"\n`,
     { mode: 0o755 },
   );
   await writeFile(
     resolve(staging, 'bin', 'beeline'),
-    `${wrapperPrologue}\n: "\${BUZZ_AGENT_BIN:=$(dirname -- "$script_path")/buzz-agent}"\n: "\${BUZZ_DEV_MCP_BIN:=$(dirname -- "$script_path")/buzz-dev-mcp}"\n: "\${BUZZ_READONLY_MCP_BIN:=$(dirname -- "$script_path")/buzz-readonly-mcp}"\n# Self-update needs to know its own install anchor (import.meta.url is defined away inside the esbuild bundle).\nexport BUZZ_AGENT_BIN BUZZ_DEV_MCP_BIN BUZZ_READONLY_MCP_BIN\nexec node "$BEELINE_LIB_DIR/lib/beeline/beeline-cli.mjs" "$@"\n`,
+    `${wrapperPrologue}\n: "\${BUZZ_AGENT_BIN:=$(dirname -- "$script_path")/buzz-agent}"\n: "\${BUZZ_DEV_MCP_BIN:=$(dirname -- "$script_path")/buzz-dev-mcp}"\n: "\${BUZZ_READONLY_MCP_BIN:=$(dirname -- "$script_path")/buzz-readonly-mcp}"\n# Self-update needs to know its own install anchor (import.meta.url is defined away inside the esbuild bundle).\nexport BUZZ_AGENT_BIN BUZZ_DEV_MCP_BIN BUZZ_READONLY_MCP_BIN\nexec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-cli.mjs" "$@"\n`,
     { mode: 0o755 },
   );
 

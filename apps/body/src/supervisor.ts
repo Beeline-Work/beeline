@@ -17,6 +17,7 @@ import {
   type Identity,
 } from '@beeline/gate';
 import { Body, type BoundRepo } from './body.js';
+import { postAgentMessage } from './activity.js';
 import type { BodyConfig } from './config.js';
 import type { NamedRepositoryTarget } from './repository-target.js';
 import {
@@ -259,6 +260,37 @@ export class WorkspaceSupervisor {
 
   activeRoomIds(): string[] {
     return [...this.running.keys()].sort();
+  }
+
+  /**
+   * True when no Room this daemon serves is mid-work. The self-update busy
+   * gate (`self-update.ts`) polls this before restarting the daemon; it reads
+   * each Room Body's own turn state (`Body.isBusy` — the same state the
+   * queued-steer ack already trusts) and is a purely local read, so polling
+   * it costs no relay traffic.
+   */
+  isWorkspaceIdle(): boolean {
+    for (const room of this.running.values()) {
+      if (typeof room.body.isBusy === 'function' && room.body.isBusy()) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Publish one daemon-level notice into every Room this daemon currently
+   * serves (best-effort, never throws). The self-update path uses this so an
+   * applied update and a restart are visible to the humans in the Room
+   * through the existing agent-message path — no new event kind, no new
+   * channel.
+   */
+  async broadcastDaemonNotice(text: string): Promise<void> {
+    await Promise.allSettled(
+      [...this.running.entries()].map(([channelId, room]) =>
+        postAgentMessage(channelId, this.agent, text).catch(() => {
+          void room;
+        }),
+      ),
+    );
   }
 
   /**

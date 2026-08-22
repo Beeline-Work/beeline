@@ -2426,6 +2426,20 @@ export class Body {
     void this.acknowledgeQueuedSteer(channelId, event.id);
   }
 
+  /**
+   * Whether this Room is mid-work and must not be restarted under: an agent
+   * turn (Room, DM, or corner) is running, or an intake event is in flight
+   * about to start one. This is the daemon self-update's busy gate read
+   * (`self-update.ts`); it reuses the SAME state `channelTurnActive` above
+   * already trusts rather than inventing a parallel notion of busy. Deliberately
+   * cheap and local — no relay traffic — so the update loop can poll it.
+   */
+  isBusy(): boolean {
+    if (this.runningAgentTasks.size > 0) return true;
+    if (this.inFlightRequestIds.size > 0) return true;
+    return false;
+  }
+
   /** Whether an ACP turn is currently running on this channel's pinned session. */
   private channelTurnActive(channelId: string): boolean {
     if (this.runningAgentTasks.has(channelId)) return true;

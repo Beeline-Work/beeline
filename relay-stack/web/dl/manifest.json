@@ -1,24 +1,24 @@
 {
   "schemaVersion": 1,
-  "sourceCommit": "4477b96696ea36cd72ac452f905abdcf92997171",
-  "version": "0.0.8",
+  "sourceCommit": "bb52a764aef85ddcd996b9aa1b6e81603f5fa01f",
+  "version": "0.0.9",
   "bundles": {
     "darwin-arm64": {
       "file": "beeline-darwin-arm64.tar.gz",
-      "sha256": "1356bf680622e7c0c555eef6a21e873a35ebc9e0c62ad940cdcd5d87987ee219",
-      "bytes": 13005697,
+      "sha256": "b4491dfe6c29bf2926c3c3611912bd2af43c535b3d80daf146067da5c0fe91b6",
+      "bytes": 13005763,
       "node": ">=20.11.0",
-      "commit": "4477b96696ea36cd72ac452f905abdcf92997171",
-      "version": "0.0.8",
+      "commit": "bb52a764aef85ddcd996b9aa1b6e81603f5fa01f",
+      "version": "0.0.9",
       "verified": true
     },
     "linux-x64": {
       "file": "beeline-linux-x64.tar.gz",
-      "sha256": "9c77dbd2de69c484a246eeca119648593fbd66762fe1057245eea4f175dbebf6",
-      "bytes": 14289366,
+      "sha256": "1ad1b2f8e44c236a0ea93882220f449c6c4944079ba29c5f961a0f9aaa539d24",
+      "bytes": 14289408,
       "node": ">=20.11.0",
-      "commit": "4477b96696ea36cd72ac452f905abdcf92997171",
-      "version": "0.0.8",
+      "commit": "bb52a764aef85ddcd996b9aa1b6e81603f5fa01f",
+      "version": "0.0.9",
       "verified": true
     }
   }

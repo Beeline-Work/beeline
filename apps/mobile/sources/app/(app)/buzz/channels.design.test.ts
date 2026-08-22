@@ -204,10 +204,13 @@ describe('Room list — Grok Mono Hull invariants', () => {
     // Captain's hard requirement: only open/active corners are counted and
     // listed. `roomRowPresentation` resolves that one set through
     // `roomListCorners`, and both the count and the dropdown read its result —
-    // nothing on this screen may compute a corner total of its own.
+    // nothing on this screen may compute a corner total of its own. When no
+    // open work exists but recorded corners do, the control falls back to the
+    // room's total (what expanding then reveals: the All Corners link).
     expect(source).toContain('const corners = row.corners;');
-    expect(source).toContain('const canExpand = corners.length > 0;');
+    expect(source).toContain('const canExpand = row.totalCorners > 0;');
     expect(source).toContain('{corners.length}');
+    expect(source).toContain('{row.totalCorners}');
     expect(source).toContain('{corners.map((corner) => {');
     expect(source).not.toContain('roomListCorners(');
     expect(source).not.toMatch(/item\.corners(?:\s*\?\?\s*\[\])?\.length/);
@@ -221,6 +224,23 @@ describe('Room list — Grok Mono Hull invariants', () => {
     );
     expect(source).toContain('{expanded && (');
     expect(source).toContain('{corners.map((corner) => {');
+    // The All Corners link is present whenever the dropdown is expanded — not
+    // only when open rows exist above it — so a Room whose corners have all
+    // landed, failed, or been closed still reaches the full corner list.
+    const expandedStart = source.indexOf('{expanded && (');
+    const expandedBlock = source.slice(
+      expandedStart,
+      source.indexOf('</PixelGateReveal>', expandedStart),
+    );
+    expect(expandedBlock).toContain("testID={`room-all-corners-${item.id}`}");
+    // ...and it sits outside the open-corners map, so it renders even when
+    // that list is empty: the map closes before the All Corners control.
+    const mapStart = expandedBlock.indexOf('{corners.map((corner) => {');
+    const allCornersAt = expandedBlock.indexOf('room-all-corners');
+    expect(allCornersAt).toBeGreaterThan(mapStart);
+    const mapClose = expandedBlock.indexOf('})}', mapStart);
+    expect(mapClose).toBeGreaterThan(mapStart);
+    expect(allCornersAt).toBeGreaterThan(mapClose);
     expect(source).not.toContain('cornerPeekCaret');
     expect(styleBlock(source, 'cornerPeek')).toContain("flexDirection: 'row'");
     expect(styleBlock(source, 'cornerPeek')).toContain("alignItems: 'center'");

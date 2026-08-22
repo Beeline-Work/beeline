@@ -7,17 +7,57 @@
  * not widen any agent-facing write scope; only the daemon process itself
  * touches the install prefix, on its own trusted schedule.
  *
- * Install layout (the one `relay-stack/web/install.sh` produces):
- *   <prefix>/bin/beeline            sh wrapper
- *   <prefix>/bin/buzz-agent …       binaries / wrappers
- *   <prefix>/lib/beeline/           the running bundle (cli mjs files + bundle.json)
+ * Install layout — THE CONTRACT
+ * ============================
  *
- * After the first self-update the layout becomes release-based so that the
- * swap is a single atomic rename:
- *   <prefix>/lib/beeline-releases/<releaseId>/   full extracted bundles
- *   <prefix>/lib/beeline            SYMLINK → beeline-releases/<active>
- * The previous release is kept for rollback. A legacy install (real directory
- * at lib/beeline) is migrated in place on first activation.
+ * `<prefix>/lib/beeline` is the ACTIVE BUNDLE ANCHOR. One meaning, everywhere.
+ * It is either:
+ *   - a SYMLINK → `lib/beeline-releases/<activeReleaseId>` (every install
+ *     after its first activation — including everything the current installer
+ *     lays down), or
+ *   - a real directory on a never-updated legacy install, in one of two
+ *     content shapes: "flat" (installer v1 output: beeline-cli.mjs,
+ *     beeline-readonly-mcp.mjs and bundle.json directly inside) or already
+ *     release-shaped. Migration normalizes flat to release-shaped.
+ *
+ * A BUNDLE ROOT (what a published tar extracts, what a release dir contains)
+ * is always:
+ *   bin/<tools>  +  lib/beeline/{beeline-cli.mjs,beeline-readonly-mcp.mjs,bundle.json}
+ * so the canonical CLI entrypoint through the anchor is
+ *   <prefix>/lib/beeline/lib/beeline/beeline-cli.mjs
+ * with <anchor>/beeline-cli.mjs tolerated as the legacy-flat fallback.
+ *
+ * EVERY consumer of `<prefix>/lib/beeline`, so the two halves cannot drift:
+ *   1. relay-stack/web/install.sh      creates/maintains the anchor + stable
+ *                                      <prefix>/bin forwarders; converges
+ *                                      legacy and mid-migration hosts.
+ *   2. scripts/build-beeline-bundle.mjs  the IN-BUNDLE wrappers resolve $0
+ *                                      WITHOUT following symlinks so that
+ *                                      running them through the anchor keeps
+ *                                      the ANCHOR path in BEELINE_LIB_DIR.
+ *   3. self-update.ts beelineInstallLayout()  reads BEELINE_LIB_DIR and
+ *                                      normalizes any value found inside a
+ *                                      beeline-releases subtree back to the
+ *                                      prefix anchor (defence against wrappers
+ *                                      already shipped on hosts that resolved
+ *                                      symlinks).
+ *   4. self-update.ts activateRelease / rollbackToPreviousRelease /
+ *      launchReplacement / relaunchFromRelease / settlePendingUpdateOnStart /
+ *      stageRelease — swap the symlink atomically; resolve entrypoints
+ *      tolerantly (both shapes).
+ *   5. cli.ts (--version, and every command via repairInstallForwarders) and
+ *      self-update-cli.ts (update --status/--rollback) — read identity
+ *      through the anchor; repair stale <prefix>/bin forwarders at start.
+ *
+ * History: #310 made the relaunch path treat the anchor as a bundle root while
+ * the installed wrappers treated it as the lib directory itself, and the
+ * wrappers' pwd -P resolution leaked release-internal paths into
+ * BEELINE_LIB_DIR — after one update executed from a post-swap shell, a daemon
+ * computed its whole layout INSIDE the previous release (releases root,
+ * bin-dir and all), every subsequent activation patched that nested copy, the
+ * prefix-level bin entries were never rewritten, and a fresh-shell `beeline`
+ * died with MODULE_NOT_FOUND on <release-root>/beeline-cli.mjs. This block is
+ * the fix for that; keep all five consumers agreeing or amend them together.
  */
 import { createHash } from 'node:crypto';
 import {
@@ -67,14 +107,45 @@ export interface BeelineInstallLayout {
  * A dev checkout (npm link / tsx) has no layout and self-update reports that
  * honestly instead of guessing.
  */
-export function beelineInstallLayout(env: NodeJS.ProcessEnv = process.env): BeelineInstallLayout | undefined {
-  const libDir = env.BEELINE_LIB_DIR?.trim();
-  if (!libDir) return undefined;
+const RELEASES_SEGMENT = 'beeline-releases';
+
+/**
+ * Normalize whatever BEELINE_LIB_DIR a wrapper handed us into the stable
+ * prefix anchor (`<prefix>/lib/beeline`). Wrappers shipped before this
+ * contract existed exported the SYMLINK-RESOLVED path
+ * (`<prefix>/lib/beeline-releases/<id>/lib/beeline`), which would make every
+ * derivation below address one frozen release instead of the install — the
+ * exact drift behind the MODULE_NOT_FOUND regression. Detect that shape by
+ * path segments (not realpath: the anchor must stay unresolved) and climb
+ * back out to the prefix.
+ */
+function anchorLayout(rawLibDir: string): BeelineInstallLayout {
+  const libDir = resolve(rawLibDir);
+  const segments = libDir.split(/[/\\]/);
+  const idx = segments.lastIndexOf(RELEASES_SEGMENT);
+  if (idx >= 2 && segments[idx - 1] === 'lib') {
+    const prefix = segments.slice(0, idx - 1).join('/');
+    return {
+      binDir: `${prefix}/bin`,
+      libDir: `${prefix}/lib/beeline`,
+      releasesRoot: `${prefix}/lib/${RELEASES_SEGMENT}`,
+    };
+  }
   return {
-    binDir: resolve(libDir, '../bin'),
-    libDir: resolve(libDir),
-    releasesRoot: resolve(libDir, '../beeline-releases'),
+    // Two levels up from the anchor (<prefix>/lib/beeline): bin/ is the
+    // prefix's bin, NOT <prefix>/lib/bin — deriving it one level up was the
+    // defect that made activateRelease write its stable forwarders where
+    // nothing executed them, leaving stale raw wrappers in <prefix>/bin.
+    binDir: resolve(libDir, '../../bin'),
+    libDir,
+    releasesRoot: resolve(libDir, `../${RELEASES_SEGMENT}`),
   };
+}
+
+export function beelineInstallLayout(env: NodeJS.ProcessEnv = process.env): BeelineInstallLayout | undefined {
+  const raw = env.BEELINE_LIB_DIR?.trim();
+  if (!raw) return undefined;
+  return anchorLayout(raw);
 }
 
 /** Platform key matching build-beeline-bundle.mjs's supported set. */
@@ -97,13 +168,22 @@ interface BundleJson {
   version?: string;
 }
 
+/** Where bundle.json lives: release-shaped bundles nest it, legacy-flat ones keep it at the root. */
+function bundleJsonCandidates(bundleDir: string): string[] {
+  return [join(bundleDir, 'lib', 'beeline', 'bundle.json'), join(bundleDir, 'bundle.json')];
+}
+
 async function readBundleJson(bundleDir: string): Promise<InstalledBundleIdentity | undefined> {
-  let raw: string;
-  try {
-    raw = await readFile(join(bundleDir, 'bundle.json'), 'utf8');
-  } catch {
-    return undefined;
+  let raw: string | undefined;
+  for (const candidate of bundleJsonCandidates(bundleDir)) {
+    try {
+      raw = await readFile(candidate, 'utf8');
+      break;
+    } catch {
+      // try the next shape
+    }
   }
+  if (!raw) return undefined;
   try {
     const parsed = JSON.parse(raw) as BundleJson;
     return {
@@ -258,6 +338,29 @@ function run(command: string, args: string[], timeoutMs: number): Promise<{ stat
 
 const BUNDLE_ENTRYPOINT = 'lib/beeline/beeline-cli.mjs';
 
+/** Entrypoint candidates: release-shaped first, then the legacy-flat fallback. */
+function entrypointCandidates(bundleDir: string): string[] {
+  return [join(bundleDir, BUNDLE_ENTRYPOINT), join(bundleDir, 'beeline-cli.mjs')];
+}
+
+/**
+ * Resolve the runnable CLI entrypoint inside a bundle directory, tolerating
+ * both content shapes (see the layout contract above). Releases created by
+ * stageRelease are always release-shaped; releases preserved from a legacy
+ * migration may be flat until normalized.
+ */
+export async function resolveBundleEntrypoint(bundleDir: string): Promise<string | undefined> {
+  for (const candidate of entrypointCandidates(bundleDir)) {
+    try {
+      await access(candidate, fsConstants.F_OK);
+      return candidate;
+    } catch {
+      // next shape
+    }
+  }
+  return undefined;
+}
+
 /** Files whose presence makes an extracted bundle installable. */
 function requiredBundlePaths(): string[] {
   return [BUNDLE_ENTRYPOINT];
@@ -378,11 +481,22 @@ export async function stageRelease(
 const FORWARDER_TOOLS = ['beeline', 'buzz-agent', 'buzz-dev-mcp', 'buzz-readonly-mcp'] as const;
 
 function forwarderScript(tool: string): string {
+  // Must stay byte-identical with relay-stack/web/install.sh's forwarder
+  // heredocs — repairInstallForwarders compares file content against this
+  // exact text, and the two writers must never disagree about what a healthy
+  // forwarder looks like. The anchor is resolved with cd+pwd -P against REAL
+  // directories (prefix/bin), then exported so the bundle wrapper never has
+  // to hand node a '..' component through the symlinked anchor.
   return [
     '#!/bin/sh',
     'set -eu',
-    'bin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)',
-    `exec "$bin_dir/../lib/beeline/bin/${tool}" "$@"`,
+    'case $0 in',
+    '  /*) script_path=$0 ;;',
+    '  *) script_path=$(pwd -P)/$0 ;;',
+    'esac',
+    'prefix_dir=$(CDPATH= cd -- "$(dirname -- "$script_path")/.." && pwd -P)',
+    'export BEELINE_LIB_DIR="$prefix_dir/lib/beeline"',
+    `exec "$prefix_dir/lib/beeline/bin/${tool}" "$@"`,
     '',
   ].join('\n');
 }
@@ -433,8 +547,10 @@ export async function activateRelease(
       // Collision (same id already staged): keep both, suffix this one.
       previousReleaseId = `${legacyId}-${Date.now()}`;
       await rename(layout.libDir, join(layout.releasesRoot, previousReleaseId));
+      await normalizeLegacyBundleShape(join(layout.releasesRoot, previousReleaseId));
     } catch {
       await rename(layout.libDir, legacyDir);
+      await normalizeLegacyBundleShape(legacyDir);
       previousReleaseId = legacyId;
     }
   }
@@ -447,8 +563,58 @@ export async function activateRelease(
 
   // Stable forwarders in bin/ — identical across releases, so this is setup,
   // not per-update churn.
+  await writeBinForwarders(layout, releaseDir);
+
+  return { previousReleaseId };
+}
+
+/** Files a legacy-flat bundle keeps at its root; migration moves them into lib/beeline/. */
+const LEGACY_FLAT_BUNDLE_FILES = ['beeline-cli.mjs', 'beeline-readonly-mcp.mjs', 'bundle.json'];
+
+/**
+ * A real-directory install preserved from before self-update existed may hold
+ * the bundle FLAT (installer v1 wrote beeline-cli.mjs beside bundle.json).
+ * Move those files down into lib/beeline/ so the preserved copy is
+ * release-shaped and every consumer — the rollback entrypoint check, the
+ * relaunch path, identity reads — sees one shape. Deliberately tolerant of
+ * mid-migration directories that carry files at BOTH levels (a repair
+ * reinstall through the anchor symlink can produce exactly that): an inner
+ * file always wins, a missing inner file is filled from the root, and
+ * anything else at the root is left untouched.
+ */
+export async function normalizeLegacyBundleShape(bundleDir: string): Promise<void> {
+  const innerLib = join(bundleDir, 'lib', 'beeline');
+  let anyFlat = false;
+  for (const name of LEGACY_FLAT_BUNDLE_FILES) {
+    try {
+      await access(join(bundleDir, name), fsConstants.F_OK);
+      anyFlat = true;
+      break;
+    } catch {
+      // not flat here
+    }
+  }
+  if (!anyFlat) return;
+  await mkdir(innerLib, { recursive: true });
+  for (const name of LEGACY_FLAT_BUNDLE_FILES) {
+    try {
+      await access(join(innerLib, name), fsConstants.F_OK);
+      continue; // inner copy wins; leave the stray root copy alone
+    } catch {
+      // fill from the root
+    }
+    await rename(join(bundleDir, name), join(innerLib, name)).catch(() => undefined);
+  }
+}
+
+/**
+ * Rewrite `<prefix>/bin/*` as stable forwarders into the ACTIVE bundle root
+ * (`<prefix>/lib/beeline/bin/<tool>` — through the anchor, never a resolved
+ * release path). Used by activation and by repairInstallForwarders.
+ */
+async function writeBinForwarders(layout: BeelineInstallLayout, activeBundleRoot: string): Promise<void> {
   for (const tool of FORWARDER_TOOLS) {
-    const target = join(releaseDir, 'bin', tool);
+    const target = join(activeBundleRoot, 'bin', tool);
     try {
       await access(target, fsConstants.X_OK);
     } catch {
@@ -456,8 +622,40 @@ export async function activateRelease(
     }
     await replaceFile(join(layout.binDir, tool), forwarderScript(tool), 0o755);
   }
+}
 
-  return { previousReleaseId };
+/**
+ * Heal `<prefix>/bin/*` on installs where a stale or foreign writer left
+ * entries that do not follow the anchor contract — most notably installer v1's
+ * raw wrappers, whose `pwd -P` resolves the anchor symlink to the release ROOT
+ * and execs a path that is not there (the MODULE_NOT_FOUND regression). A
+ * daemon that survived the drift can still start (it is launched by node
+ * directly, not through the wrapper), so it repairs the shell entries at
+ * startup and every later fresh-shell invocation works again. Only meaningful
+ * once the install is release-based (anchor is a symlink); legacy real-dir
+ * installs are consistent by construction. Idempotent: a matching forwarder
+ * is left untouched.
+ */
+export async function repairInstallForwarders(
+  layout: BeelineInstallLayout,
+  opts: { logger?: (line: string) => void } = {},
+): Promise<boolean> {
+  if ((await pathKind(layout.libDir)) !== 'symlink') return false;
+  const forwarderPath = join(layout.binDir, 'beeline');
+  let current: string | undefined;
+  try {
+    current = await readFile(forwarderPath, 'utf8');
+  } catch {
+    current = undefined;
+  }
+  if (current === forwarderScript('beeline')) return false;
+  await mkdir(layout.binDir, { recursive: true });
+  // The anchor itself is the active bundle root; access() follows the symlink.
+  await writeBinForwarders(layout, layout.libDir);
+  opts.logger?.(
+    `[body] self-update: repaired <prefix>/bin forwarders to follow the active-bundle anchor (${layout.libDir})`,
+  );
+  return true;
 }
 
 /**
@@ -469,7 +667,10 @@ export async function rollbackToPreviousRelease(
   previousReleaseId: string,
 ): Promise<void> {
   const releaseDir = join(layout.releasesRoot, previousReleaseId);
-  await access(join(releaseDir, BUNDLE_ENTRYPOINT), fsConstants.F_OK);
+  const entrypoint = await resolveBundleEntrypoint(releaseDir);
+  if (!entrypoint) {
+    throw new Error(`release ${previousReleaseId} has no runnable CLI entrypoint`);
+  }
   const tempLink = `${layout.libDir}.rollback-${process.pid}`;
   await rm(tempLink, { force: true });
   await symlink(join('beeline-releases', previousReleaseId), tempLink);
@@ -732,14 +933,18 @@ export class SelfUpdateManager {
    * handover point.
    */
   async launchReplacement(configPath: string): Promise<number> {
-    const entrypoint = join(this.options.layout.libDir, BUNDLE_ENTRYPOINT);
+    const entrypoint =
+      (await resolveBundleEntrypoint(this.options.layout.libDir)) ??
+      join(this.options.layout.libDir, BUNDLE_ENTRYPOINT);
     const foreground = this.options.env.BEELINE_DAEMON_BACKGROUND !== '1';
     return launchRuntimeDaemon(configPath, { entrypoint, foreground });
   }
 
   /** Relaunch from a SPECIFIC release (rollback path). */
   async relaunchFromRelease(configPath: string, releaseId: string): Promise<number> {
-    const entrypoint = join(this.options.layout.releasesRoot, releaseId, BUNDLE_ENTRYPOINT);
+    const releaseDir = join(this.options.layout.releasesRoot, releaseId);
+    const entrypoint =
+      (await resolveBundleEntrypoint(releaseDir)) ?? join(releaseDir, BUNDLE_ENTRYPOINT);
     const foreground = this.options.env.BEELINE_DAEMON_BACKGROUND !== '1';
     return launchRuntimeDaemon(configPath, { entrypoint, foreground });
   }

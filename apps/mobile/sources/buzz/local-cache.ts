@@ -41,10 +41,6 @@ export type ChannelDisplayItem = SessionSummary & {
   latestMessageAt?: number;
   latestMessageAuthor?: string;
   participantCount?: number;
-  /** Human-facing name of the repository bound to this Room, when one resolves. */
-  repoName?: string;
-  /** Model id one of the Room's agents publishes in its catalog, if any. */
-  modelLabel?: string;
 };
 
 export type DirectMessageDisplayItem = {

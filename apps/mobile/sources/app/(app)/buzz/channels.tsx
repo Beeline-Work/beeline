@@ -69,7 +69,6 @@ import { Typography } from '@/constants/Typography';
 import {
   selectChannelList,
   channelListCacheKey,
-  getCachedChannel,
   mergeChannelBasicsWithCache,
   setActiveBuzzCacheViewer,
   useBuzzLocalCache,
@@ -77,14 +76,13 @@ import {
   type DirectMessageDisplayItem,
   type WorkspaceMemberDisplayItem,
 } from '@/buzz/local-cache';
-import { sessionEventHasTag, sessionEventTagValue } from '@/sync/transport/buzz-event-projection';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { cacheLiveSessionEvents, revalidateCachedMessages } from '@/buzz/local-cache-sync';
 import { afterInteractions } from '@/buzz/defer-interaction';
 import type { SessionEvent } from '@/sync/transport';
 import {
   BrittlePress,
-  HullDeckMark,
+  HullLivePulse,
   HullWaveSignal,
   MonoButton,
   PixelGateReveal,
@@ -97,37 +95,42 @@ import type { RepoCandidate } from '@/buzz/room-repo-picker';
  * one-minute tick while it is the focused screen and never on a render loop. */
 const AGE_TICK_MS = 60_000;
 
+/**
+ * A Room row's leading mark. Memoized on primitives and mounted as a live
+ * primitive *only* where there is life: an idle row renders a plain `View`, so
+ * a list of twenty quiet Rooms costs twenty static glyphs and not twenty
+ * animation clocks. The same lesson `TranscriptRow` learned — the virtualized list
+ * re-invokes `renderItem` for every visible row on every list-level state
+ * change, so a leaf that rebuilds work on each pass is felt as a freeze.
+ */
+const RoomRowMark = React.memo(function RoomRowMark({
+  attention,
+  glyph,
+  live,
+}: {
+  attention: boolean;
+  glyph: string;
+  live: boolean;
+}) {
+  const mark = (
+    <View style={styles.rowMark}>
+      <Text
+        style={[
+          styles.roomGlyph,
+          attention && styles.roomGlyphAttention,
+          live && styles.roomGlyphLive,
+        ]}
+      >
+        {glyph}
+      </Text>
+    </View>
+  );
+  if (!live) return mark;
+  return <HullLivePulse active>{mark}</HullLivePulse>;
+});
+
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
-}
-
-/** Case-insensitive substring match for the deck's search field. */
-function matchesSearch(text: string, query: string): boolean {
-  const needle = query.trim().toLocaleLowerCase();
-  if (!needle) return true;
-  return text.toLocaleLowerCase().includes(needle);
-}
-
-/**
- * How many person-facing messages this Room holds past the reader's mark, or
- * `null` when that answer is only "unread" — either there is no mark yet or
- * no local transcript to count against. The pill never invents a number.
- */
-function unreadCountFor(
-  room: ChannelDisplayItem,
-  viewerPubkey: string | undefined,
-  readAt: Record<string, number>,
-): number | null {
-  if (!viewerPubkey) return null;
-  const mark = roomReadAt(readAt, viewerPubkey, room.id);
-  if (mark === undefined || !room.latestMessageAt || room.latestMessageAt <= mark) return null;
-  const messages = getCachedChannel(viewerPubkey, room.id)?.messages;
-  if (!messages) return null;
-  const markMs = mark * 1000;
-  const count = messages.filter(
-    (message) => !message.isUser && !message.isSystemNotice && message.timestamp > markMs,
-  ).length;
-  return count > 0 ? count : null;
 }
 
 async function loadDisplayChannelBasics(
@@ -304,37 +307,12 @@ async function enrichDisplayChannels(
       .listSubchannelLifecycleForRooms(rooms.map((room) => room.id))
       .catch(() => new Map<string, CornerSummary[]>()),
   ]);
-  // One model-catalog read per registered Workspace agent (not per Room): the
-  // pill strip reports which model an agent in this Room runs, straight off
-  // the catalog the daemon itself publishes. Best-effort — a Room whose agents
-  // publish nothing simply carries no model pill.
-  const modelByAgent = new Map<string, string>();
-  if (activeCommunityId) {
-    await Promise.all(
-      (workspaceAgents ?? []).map(async (agent) => {
-        try {
-          const catalog = await client.getAgentModelCatalog(activeCommunityId, agent.pubkey);
-          const model = catalog?.selection?.model;
-          if (model) modelByAgent.set(agent.pubkey, model);
-        } catch {
-          // No catalog yet — leave the Room's pill off rather than guess.
-        }
-      }),
-    );
-  }
   const enriched = await Promise.all(
     rooms.map(async (room): Promise<ChannelDisplayItem> => {
-      const [synced, members, repo] = await Promise.allSettled([
+      const [synced, members] = await Promise.allSettled([
         revalidateCachedMessages(transport, viewerPubkey, room.id),
         client.listMembers(room.id),
-        // The repo name is published Room state (admin-authored binding),
-        // never derived from cwd or pairing history.
-        transport.roomRepositoryRead(room.id),
       ]);
-      const roomMemberPubkeys =
-        members.status === 'fulfilled'
-          ? members.value.map((member) => member.pubkey)
-          : [];
       return {
         ...room,
         corners: sortCorners(cornersByRoom.get(room.id) ?? []),
@@ -349,11 +327,12 @@ async function enrichDisplayChannels(
             : (room.createdAt ?? room.updatedAt),
         participantCount:
           members.status === 'fulfilled'
-            ? roomParticipantPubkeys(new Set(roomMemberPubkeys), workspacePeople, workspaceAgents)
-                .size
+            ? roomParticipantPubkeys(
+                new Set(members.value.map((member) => member.pubkey)),
+                workspacePeople,
+                workspaceAgents,
+              ).size
             : 0,
-        repoName: repo.status === 'fulfilled' ? (repo.value?.binding.name ?? undefined) : undefined,
-        modelLabel: roomMemberPubkeys.map((pubkey) => modelByAgent.get(pubkey)).find(Boolean),
       };
     }),
   );
@@ -422,16 +401,6 @@ export default function BuzzChannels() {
   const [readyInviteUrl, setReadyInviteUrl] = useState<string | undefined>(inviteUrl);
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
   const [ageNow, setAgeNow] = useState(() => Date.now());
-  // The deck's search field: filters Rooms (and DMs) by name without touching
-  // what is cached — a view over the same projection, never a second source.
-  const [searchQuery, setSearchQuery] = useState('');
-  /** Rooms where an agent turn is streaming RIGHT NOW, seen live by this
-   * screen's own event subscription. Corner turns are durable relay state
-   * (they arrive through `corners`); conversational Room turns only exist on
-   * the wire while they run, so they are tracked here from live events and
-   * deliberately reset when the subscription tears down.
-   */
-  const [liveTurnRooms, setLiveTurnRooms] = useState<ReadonlySet<string>>(() => new Set());
   const skipInitialFocusRefresh = useRef(true);
   const loadGeneration = useRef(0);
   const visibleRefreshGeneration = useRef<number | null>(null);
@@ -456,10 +425,10 @@ export default function BuzzChannels() {
   );
   const orderedDirectMessages = useMemo(
     () =>
-      [...directMessages]
-        .filter((dm) => matchesSearch(dm.peerName, searchQuery))
-        .sort((a, b) => b.updatedAt - a.updatedAt || a.peerName.localeCompare(b.peerName)),
-    [directMessages, searchQuery],
+      [...directMessages].sort(
+        (a, b) => b.updatedAt - a.updatedAt || a.peerName.localeCompare(b.peerName),
+      ),
+    [directMessages],
   );
   const hasConversations = displayChannels.length > 0 || orderedDirectMessages.length > 0;
   const activeCommunity = useMemo(
@@ -477,12 +446,10 @@ export default function BuzzChannels() {
     if (identity?.publicKey) names.set(identity.publicKey, 'You');
     return names;
   }, [cachedListEntry?.workspaceMembers, identity?.publicKey]);
-  const roomSections = useMemo(() => {
-    const visible = displayChannels
-      .filter((room) => matchesSearch(room.title ?? room.id, searchQuery))
-      .map((room) => ({ ...room, unreadNew: unreadCountFor(room, identity?.publicKey, readAt) }));
-    return roomListSections(visible, authorNames, { now: ageNow });
-  }, [ageNow, authorNames, displayChannels, identity?.publicKey, readAt, searchQuery]);
+  const roomSections = useMemo(
+    () => roomListSections(displayChannels, authorNames),
+    [authorNames, displayChannels],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -724,11 +691,6 @@ export default function BuzzChannels() {
   // Keep the list current while it is visible; cacheLiveSessionEvents also
   // writes the same fresh summary to MMKV on the next background transition.
   //
-  // The same stream also feeds the deck's WORKING state for conversational
-  // Room turns: an `agent-turn` working event (or a streaming draft) marks the
-  // Room live until its complete/failed lands. Corner turns need none of this
-  // — their lifecycle is durable relay state read through `corners`.
-  //
   // Coalesce per animation frame. A corner streaming its reply delivers one
   // raw event per token, and `cacheLiveSessionEvents` rebuilds and re-sorts
   // that Room's whole message array per call, then notifies every store
@@ -740,21 +702,6 @@ export default function BuzzChannels() {
       const pending = new Map<string, SessionEvent[]>();
       let flushScheduled = false;
       let stopped = false;
-      const noteTurnEvent = (channelId: string, event: SessionEvent) => {
-        const isTurn = sessionEventHasTag(event, 't', 'agent-turn');
-        const isDraft = sessionEventHasTag(event, 't', 'agent-draft');
-        if (!isTurn && !isDraft) return;
-        const status = sessionEventTagValue(event, 'status');
-        const finished = status === 'complete' || status === 'failed';
-        setLiveTurnRooms((current) => {
-          const has = current.has(channelId);
-          if (finished === !has) return current; // no change
-          const next = new Set(current);
-          if (finished) next.delete(channelId);
-          else next.add(channelId);
-          return next;
-        });
-      };
       const flush = () => {
         flushScheduled = false;
         if (stopped || pending.size === 0) return;
@@ -767,7 +714,6 @@ export default function BuzzChannels() {
       const unsubscribes = roomIdsKey.split(',').map((channelId) =>
         transport.sessionEventsSubscribe(channelId, (event) => {
           if (stopped) return;
-          noteTurnEvent(channelId, event);
           const queued = pending.get(channelId);
           if (queued) queued.push(event);
           else pending.set(channelId, [event]);
@@ -780,7 +726,6 @@ export default function BuzzChannels() {
       return () => {
         stopped = true;
         unsubscribes.forEach((unsubscribe) => unsubscribe());
-        setLiveTurnRooms(new Set());
       };
     }, [identity, roomIdsKey, transport]),
   );
@@ -1195,6 +1140,7 @@ export default function BuzzChannels() {
                   const age = compactRelativeTime(dm.latestMessageAt ?? dm.updatedAt, ageNow);
                   return (
                     <View key={dm.id} style={styles.roomCell}>
+                      {unread && <View pointerEvents="none" style={styles.unreadRail} />}
                       <View style={styles.roomRow}>
                         <TouchableOpacity
                           accessibilityLabel={`Open direct message with ${dm.peerName}${
@@ -1227,7 +1173,10 @@ export default function BuzzChannels() {
                             <View style={styles.rowTitleLine}>
                               <Text
                                 numberOfLines={1}
-                                style={[styles.rowTitle, !unread && styles.rowTitleRead]}
+                                style={[
+                                  styles.rowTitle,
+                                  unread ? styles.rowTitleUnread : styles.rowTitleRead,
+                                ]}
                               >
                                 {dm.peerName}
                               </Text>
@@ -1241,9 +1190,6 @@ export default function BuzzChannels() {
                           </View>
                         </TouchableOpacity>
                         <View pointerEvents="none" style={styles.rowGutter}>
-                          {/* DMs sit outside the deck's three states; their
-                              unread signal is luminance, never the accent. */}
-                          {unread && <Text style={[styles.rowFlag, styles.dmNew]}>NEW</Text>}
                           <Text style={[styles.rowAge, unread && styles.rowAgeUnread]}>{age}</Text>
                         </View>
                       </View>
@@ -1293,30 +1239,24 @@ export default function BuzzChannels() {
             const canExpand = corners.length > 0;
             const title = item.title ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`;
             const expanded = canExpand && expandedRoomId === item.id;
+            const unread = isRoomUnread(
+              roomReadAt(readAt, identity?.publicKey, item.id),
+              row.meaningfulAt,
+            );
             const age = compactRelativeTime(row.meaningfulAt, ageNow);
-            // One state per row, one visual language each: needs-you (brass),
-            // working (motion), idle (steel). The derivation lives in
-            // `roomRowPresentation`; this only picks which mark renders.
-            const deckState = row.attention
-              ? 'needs-you'
-              : row.zone === 'working'
-                ? 'working'
-                : 'idle';
             return (
               <View style={styles.roomCell}>
-                {/* The one brass edge on the deck, and only where a person
-                    must act — never for mere unread or busy-ness. */}
-                {row.attention && <View pointerEvents="none" style={styles.attnRail} />}
+                {unread && <View pointerEvents="none" style={styles.unreadRail} />}
                 <View style={styles.roomRow}>
                   <BrittlePress
                     accessibilityHint={
                       canExpand ? `Long press to reveal ${CORNER_LABEL.toLowerCase()}s` : undefined
                     }
-                    accessibilityLabel={`Open ${title}${
-                      row.attention ? ', needs your attention' : ''
-                    }${row.live && !row.attention ? ', agent working' : ''}, ${
-                      item.participantCount ?? 0
-                    } participants${canExpand ? `, ${corners.length} open ${CHANGES_LABEL}` : ''}`}
+                    accessibilityLabel={`Open ${title}${unread ? ', unread' : ''}${
+                      row.live ? ', agent working' : ''
+                    }, ${item.participantCount ?? 0} participants${
+                      canExpand ? `, ${corners.length} open ${CHANGES_LABEL}` : ''
+                    }`}
                     contentStyle={styles.indexRow}
                     delayLongPress={350}
                     onLongPress={
@@ -1329,52 +1269,38 @@ export default function BuzzChannels() {
                     style={styles.roomPrimary}
                     testID={`room-${item.id}`}
                   >
-                    <HullDeckMark state={deckState} />
+                    <RoomRowMark
+                      attention={row.attention}
+                      glyph={row.glyph}
+                      live={row.zone === 'working'}
+                    />
                     <View style={styles.rowCopy}>
                       <View style={styles.rowTitleLine}>
                         <Text
                           numberOfLines={1}
-                          style={[styles.rowTitle, item.archived && styles.rowTitleArchived]}
+                          style={[
+                            styles.rowTitle,
+                            unread ? styles.rowTitleUnread : styles.rowTitleRead,
+                            item.archived && styles.rowTitleArchived,
+                          ]}
                         >
                           {title}
                         </Text>
-                        {!!item.repoName && !item.archived && (
-                          <Text numberOfLines={1} style={styles.rowRepo}>
-                            {item.repoName}
-                          </Text>
-                        )}
                         {item.archived && <Text style={styles.rowFlag}>ARCHIVED</Text>}
                       </View>
                       <Text
                         numberOfLines={1}
-                        style={[styles.rowPreview, row.attention && styles.rowPreviewAttention]}
+                        style={[styles.rowPreview, unread && styles.rowPreviewUnread]}
                       >
                         {row.fact}
                       </Text>
-                      {row.pills.length > 0 && (
-                        <View style={styles.pillStrip}>
-                          {row.pills.map((pill, index) => (
-                            <Text
-                              key={`${pill.kind}-${index}`}
-                              style={[
-                                styles.rowPill,
-                                pill.kind === 'status'
-                                  ? styles.rowPillStatus
-                                  : pill.kind === 'unread' && styles.rowPillUnread,
-                              ]}
-                            >
-                              {pill.label.toUpperCase()}
-                            </Text>
-                          ))}
-                        </View>
-                      )}
                     </View>
                   </BrittlePress>
                   {/* The right gutter: a fixed marginalia column, laid over the
                       row rather than inside it, so an age stamp or a corner
                       count can never reflow the copy beside it. */}
                   <View pointerEvents="box-none" style={styles.rowGutter}>
-                    <Text style={styles.rowAge}>{age}</Text>
+                    <Text style={[styles.rowAge, unread && styles.rowAgeUnread]}>{age}</Text>
                     {canExpand && (
                       <TouchableOpacity
                         accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${corners.length} open ${
@@ -1389,10 +1315,7 @@ export default function BuzzChannels() {
                         testID={`room-corners-toggle-${item.id}`}
                       >
                         <Text
-                          style={[
-                            styles.cornerPeekCount,
-                            row.attention && styles.cornerPeekCountLive,
-                          ]}
+                          style={[styles.cornerPeekCount, row.live && styles.cornerPeekCountLive]}
                         >
                           {corners.length}
                         </Text>
@@ -1447,34 +1370,6 @@ export default function BuzzChannels() {
           onRefresh={() => void handleRefresh(true)}
           refreshing={refreshing}
         />
-
-        {/* The deck's footer: one search field and the brass ＋. The FAB is
-            the same affordance as the header's ＋ ROOM — one action, two
-            reaches — and the search filters the cached projection without
-            ever becoming a second source of rooms. */}
-        <View style={[styles.deckFoot, { paddingBottom: 12 + insets.bottom }]}>
-          <TextInput
-            accessibilityLabel={`Search ${ROOMS_LABEL.toLowerCase()}`}
-            autoCorrect={false}
-            onChangeText={setSearchQuery}
-            placeholder="Search rooms…"
-            placeholderTextColor={theme.buzz.dim}
-            style={styles.searchField}
-            testID="room-search"
-            value={searchQuery}
-          />
-          {!viewerIsAgent && (
-            <TouchableOpacity
-              accessibilityLabel={`Create ${ROOM_LABEL}`}
-              accessibilityRole="button"
-              onPress={() => setShowCreateChannel(true)}
-              style={styles.fab}
-              testID="create-room-fab"
-            >
-              <Text style={styles.fabGlyph}>＋</Text>
-            </TouchableOpacity>
-          )}
-        </View>
       </View>
     </BuzzCommunityShell>
   );
@@ -1660,7 +1555,7 @@ const styles = StyleSheet.create((theme) => {
   },
   rowMark: { width: ROW_MARK_WIDTH, alignItems: 'center', justifyContent: 'center' },
   rowCopy: { flex: 1, minWidth: 0 },
-  rowTitleLine: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+  rowTitleLine: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   /* The index reads on three tones and nothing else: the name is the brightest
    * thing on the row, the activity line sits a step down, and everything the
    * gutter carries is ghosted. It is the ledger's ladder at index scale, so a
@@ -1670,22 +1565,14 @@ const styles = StyleSheet.create((theme) => {
     fontFamily: groknight.proseSemibold,
     flexShrink: 1,
     color: groknight.textPrimary,
-    fontSize: 16,
-    lineHeight: 21,
+    fontSize: 15,
+    lineHeight: 20,
   },
   rowTitleRead: { color: groknight.textSecondary },
+  /* Every Room name is semibold. Unread stays at full luminance while a read
+   * Room steps down one tone; the gold rail does the fast scanning work. */
+  rowTitleUnread: { ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold, color: groknight.ledgerBright },
   rowTitleArchived: { color: groknight.textMuted },
-  /* The repo name rides the title line's right edge — mono micro-metadata,
-   * exactly what the mockup hangs there; never a second row of its own. */
-  rowRepo: {
-    ...Typography.mono(),
-    marginLeft: 'auto',
-    flexShrink: 0,
-    color: groknight.textMuted,
-    fontSize: 10,
-    lineHeight: 13,
-    letterSpacing: 0.3,
-  },
   rowFlag: {
     ...Typography.mono('semiBold'),
     color: groknight.textMuted,
@@ -1693,9 +1580,6 @@ const styles = StyleSheet.create((theme) => {
     lineHeight: 12,
     letterSpacing: 0.8,
   },
-  /* A DM's unread word: luminance, never the accent — DMs sit outside the
-   * deck's three-state language. */
-  dmNew: { color: groknight.textSecondary, textAlign: 'right' },
   /* Always rendered, even when a Room has no timestamp to show, so the mark
    * below it in the gutter never shifts up a line. */
   rowAge: {
@@ -1709,8 +1593,8 @@ const styles = StyleSheet.create((theme) => {
   /* The index keeps weight as an unread signal — it is a scanning surface, not
    * the inscription. The ledger's no-weight rule governs the transcript. */
   rowAgeUnread: { ...Typography.mono('semiBold'), color: groknight.ledgerBody },
-  /* The current fact sits one tone below the Room name — except on a needs-you
-   * row, where it takes the accent: the one place brass speaks on this screen. */
+  /* The current fact sits one tone below the Room name. Unread lifts it one
+   * step; speaker prefixes never consume its narrow line. */
   rowPreview: {
     ...Typography.default(),
     fontFamily: groknight.proseRegular,
@@ -1720,51 +1604,18 @@ const styles = StyleSheet.create((theme) => {
     lineHeight: groknight.name === 'ledger' ? 15 : 18,
   },
   rowPreviewUnread: { color: groknight.ledgerBody },
-  rowPreviewAttention: { color: groknight.accent },
-  /* The pill strip: quiet mono micro-labels carrying what you'd otherwise
-   * open the Room to learn. Only the status pill (needs-you) goes loud. */
-  pillStrip: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 9 },
-  rowPill: {
-    ...Typography.mono(),
-    borderWidth: 1,
-    borderColor: groknight.border,
-    borderRadius: 3,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    overflow: 'hidden',
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 0.4,
-  },
-  rowPillStatus: {
-    ...Typography.mono('semiBold'),
-    backgroundColor: groknight.accent,
-    borderColor: groknight.accent,
-    color: groknight.textInverted,
-    letterSpacing: 0.6,
-  },
-  /* Unread steps up one gray tier — it is attention-adjacent, but it is not
-   * brass, and the deck's whole point is that brass means only needs-you. */
-  rowPillUnread: {
-    ...Typography.mono('semiBold'),
-    borderColor: groknight.borderStrong,
-    color: groknight.textSecondary,
-  },
   roomCell: {
     position: 'relative',
     borderBottomWidth: 1,
     borderBottomColor: groknight.border,
   },
-  /* The one brass edge on the deck, gated on `row.attention` at every call
-   * site: an approval-pending or decision-needed Room, never mere unread. */
-  attnRail: {
+  unreadRail: {
     position: 'absolute',
     zIndex: 1,
     top: 0,
     bottom: 0,
     left: 0,
-    width: 2,
+    width: 3,
     backgroundColor: groknight.accent,
   },
   roomRow: { position: 'relative', minWidth: 0, flexDirection: 'row', alignItems: 'stretch' },
@@ -1780,6 +1631,19 @@ const styles = StyleSheet.create((theme) => {
     width: ROW_GUTTER_WIDTH,
     alignItems: 'flex-end',
   },
+  roomGlyph: {
+    ...Typography.default('semiBold'),
+    color: groknight.steel,
+    fontSize: 15,
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  /* The one accent on this screen, and only for genuinely live corner work —
+   * redundant with the ◆ glyph it colors and with the LIVE wave in the heading. */
+  roomGlyphLive: { color: groknight.accent },
+  /* Attention is the most action-worthy state here, so it takes the brightest
+   * gray rather than gold — gold stays exclusive to live work. */
+  roomGlyphAttention: { color: groknight.textPrimary },
   cornerPeek: {
     width: ROW_GUTTER_WIDTH,
     minHeight: 44,
@@ -1793,8 +1657,10 @@ const styles = StyleSheet.create((theme) => {
     fontSize: 11,
     lineHeight: 14,
   },
-  /* The gutter count takes the accent only when the Room itself is needs-you —
-   * the same brass rule as the rail and the status pill, one gate. */
+  /* The second of this screen's two accent marks, and the same claim as the
+   * first: work is happening in these corners right now. It is redundant with
+   * the row's own live ◆ and with the LIVE wave in the section heading, so the
+   * gold never carries the state by itself. */
   cornerPeekCountLive: { color: groknight.accent },
   /* ── expanded corners: a hairline rail, not a nested container ────────── */
   cornerDropdown: {
@@ -1857,48 +1723,6 @@ const styles = StyleSheet.create((theme) => {
     color: groknight.steel,
     fontSize: 14,
     lineHeight: 16,
-  },
-
-  /* ── the deck's footer: one search field, one brass ＋ ─────────────── */
-  deckFoot: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: SCREEN_INSET,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: groknight.border,
-    backgroundColor: groknight.bgTerminal,
-  },
-  searchField: {
-    ...Typography.mono(),
-    flex: 1,
-    minWidth: 0,
-    minHeight: 44,
-    paddingHorizontal: 13,
-    borderRadius: 3,
-    borderWidth: 1,
-    borderColor: groknight.border,
-    backgroundColor: groknight.bgRaised,
-    color: groknight.textSecondary,
-    fontSize: 12,
-  },
-  /* The FAB is a box that wraps something the user must find and act on —
-   * the one place DESIGN.md's shape rule admits a filled brass surface. */
-  fab: {
-    width: 44,
-    height: 44,
-    flexShrink: 0,
-    borderRadius: 3,
-    backgroundColor: groknight.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  fabGlyph: {
-    ...Typography.default(),
-    color: groknight.textInverted,
-    fontSize: 22,
-    lineHeight: 26,
   },
 
   /* ── empty state ─────────────────────────────────────────────────────── */

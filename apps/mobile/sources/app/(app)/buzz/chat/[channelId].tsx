@@ -2933,7 +2933,7 @@ export default function BuzzChat() {
           }}
           onReply={item.isAgentDraft ? () => undefined : () => beginReply(item)}
         >
-          <NewMessageMaterialize enabled={Boolean(item.isNew)}>
+          <NewMessageMaterialize enabled={Boolean(item.isNew)} messageId={item.id}>
             {isSelfSteer ? (
               <LedgerSteer
                 itemId={item.id}

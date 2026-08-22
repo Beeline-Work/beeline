@@ -48,6 +48,10 @@ import {
   type CompactActivityPlan,
 } from './activity.js';
 import {
+  createCornerRequestFilter,
+  type AgentCornerRequest,
+} from './corner-request.js';
+import {
   createChannel,
   setMemberRole,
   newIdentity,
@@ -1729,6 +1733,10 @@ export class Body {
    * with no turn running (i.e. the queue drained).
    */
   private steerQueuedChannels = new Set<string>();
+  /** Channels with an agent-initiated corner request awaiting a human
+   *  decision. One pending request per channel at a time; a second marker in
+   *  a later turn is ignored until the first resolves. */
+  private agentCornerRequestsInFlight = new Set<string>();
   private requestCursors = new Map<string, number>();
   /** Throttle for the periodic stray-corner-worktree prune (per Body). */
   private lastWorktreePruneAt = 0;
@@ -2545,8 +2553,16 @@ export class Body {
        * `requestId` across channels — see `postAgentStallNotice`.
        */
       replyToId?: string;
+      /**
+       * Room turns only: watch the growing reply for the agent-initiated
+       * edit-corner request marker (`corner-request.ts`) and strip it from
+       * everything downstream — live draft, narrative segments, final text.
+       */
+      cornerRequests?: boolean;
     },
-  ): Promise<PromptResult & { narrativeFloor?: number }> {
+  ): Promise<
+    PromptResult & { narrativeFloor?: number; cornerRequest?: AgentCornerRequest }
+  > {
     const draft = turn
       ? createDraftStreamer(
           turn.channelId,
@@ -2558,6 +2574,7 @@ export class Body {
     const narrator = turn.narrate
       ? createNarrativeCommitter(turn.channelId, this.agentIdentity)
       : undefined;
+    const cornerRequestFilter = turn.cornerRequests ? createCornerRequestFilter() : undefined;
     // Surface a stall well before ROOM_AGENT_PROMPT_TIMEOUT_MS elapses. Armed
     // on every ACP activity signal (`onActivity` below fires on every
     // session/update, the same trigger `AcpClient` uses to reset its own idle
@@ -2611,18 +2628,35 @@ export class Body {
           session.sessionId,
           prompt,
           ROOM_AGENT_PROMPT_TIMEOUT_MS,
-          (draft || narrator) &&
+          (draft || narrator || cornerRequestFilter) &&
             ((_delta, fullText) => {
-              draft?.onChunk(fullText);
-              narrator?.onChunk(fullText);
+              // The corner-request cut happens BEFORE any consumer so neither
+              // the live draft nor a durable narrative segment can leak the
+              // marker line (or anything after it) to the transcript.
+              const visible = cornerRequestFilter
+                ? cornerRequestFilter.onChunk(fullText)
+                : fullText;
+              draft?.onChunk(visible);
+              narrator?.onChunk(visible);
             }),
           armStallTimer,
         );
       });
+      clearStallTimer();
+      // End-of-turn corner-request extraction: the final text may carry the
+      // marker even when no streaming callback ever fired (a harness that
+      // emits one whole message chunk, or none — `agentText` is still built).
+      if (cornerRequestFilter) {
+        const extraction = cornerRequestFilter.finalize(result.agentText);
+        result = { ...result, agentText: extraction.visibleText };
+        if (extraction.request) {
+          (result as PromptResult & { cornerRequest?: AgentCornerRequest }).cornerRequest =
+            extraction.request;
+        }
+      }
       // The backend turn is over. Persisting spend is bookkeeping, not model
       // inactivity, and must never manufacture a stall notice while the next
       // FIFO turn is already starting.
-      clearStallTimer();
       await this.durableState
         .recordModelTurn(
           completedModelSpend({
@@ -4626,6 +4660,7 @@ export class Body {
         originalRequestId: request.eventId,
         cause: 'room-message',
         replyToId: request.eventId,
+        cornerRequests: editPolicy !== 'direct-message' && boundRepo !== undefined,
       } as const;
       let result = await this.promptAgent(session, prompt, promptOptions);
       // Some ACP adapters occasionally finish a turn successfully without
@@ -4637,7 +4672,8 @@ export class Body {
       if (
         !result.agentText.trim() &&
         result.updates.length === 0 &&
-        result.toolCalls.length === 0
+        result.toolCalls.length === 0 &&
+        !result.cornerRequest
       ) {
         result = await this.promptAgent(
           session,
@@ -4674,6 +4710,22 @@ export class Body {
           : undefined,
       });
       if (!reply) throw new Error('agent returned an empty Room reply');
+      // The agent asked for an edit corner in its own reply (a text marker —
+      // the only channel every harness, including pi-acp which never sends
+      // `session/request_permission`, shares). The humans decide; the corner
+      // opens only on a human ALLOW, and nothing the agent authored has
+      // claimed the corner exists before that. Fire-and-forget: the reply
+      // above must not block on a decision that can take minutes.
+      if (result.cornerRequest && boundRepo && editPolicy === 'repository') {
+        void this.handleAgentCornerRequest(
+          tlcChannelId,
+          boundRepo,
+          request,
+          result.cornerRequest.task,
+        ).catch((error) =>
+          console.error('[body] agent-initiated corner request failed:', error),
+        );
+      }
       // From this point a retry must replay the persisted event, never prompt
       // the model again. Lifecycle cosmetics cannot reopen the inbox item.
       this.processedRequestIds.add(request.eventId);
@@ -5127,6 +5179,126 @@ export class Body {
       ['status', status],
       ...(subchannelId ? [['subchannel', subchannelId]] : []),
     ]);
+  }
+
+  /**
+   * The human-approved half of an agent-initiated corner request
+   * (`corner-request.ts` for the marker half). Posts the SAME approve/deny
+   * card the write-permission ceremony uses — so mobile renders it with zero
+   * new UI — and reuses `waitForWritePermissionDecision`, whose authority is
+   * already fail-closed: a decision signed by this agent, by ANY registered
+   * agent identity, or by a non-member is ignored, exactly as for merges.
+   * Only a device-held human Room member's ALLOW opens the corner.
+   *
+   * Deliberately not awaited by the reply path: a decision can take minutes,
+   * and nothing the agent authored may claim the corner exists before the
+   * host's own post-creation status does. One pending request per channel;
+   * while one waits, later markers are dropped (the card is still on screen).
+   */
+  private async handleAgentCornerRequest(
+    tlcChannelId: string,
+    boundRepo: BoundRepo,
+    request: ChannelTaskRequest,
+    task: string,
+  ): Promise<void> {
+    if (this.agentCornerRequestsInFlight.has(tlcChannelId)) return;
+    this.agentCornerRequestsInFlight.add(tlcChannelId);
+    try {
+      const repository = this.repoId(boundRepo);
+      const permissionId = randomUUID();
+      const shortTask = task.length > 200 ? `${task.slice(0, 197)}…` : task;
+      await postControlMessage(
+        tlcChannelId,
+        this.agentIdentity,
+        `${this.agentIdentity.name || 'Agent'} requests an edit corner for: ${shortTask} — allow?`,
+        [
+          ['t', WRITE_PERMISSION_REQUEST_TAG],
+          ['permission', permissionId],
+          ['request', request.eventId],
+          ['requester', request.authorPubkey],
+          ['agent', this.agentIdentity.publicKey],
+          ['p', this.agentIdentity.publicKey],
+          ['tool', 'corner request'],
+          ['repo', repository],
+          ['status', 'pending'],
+        ],
+      );
+      const decision = await this.waitForWritePermissionDecision(
+        tlcChannelId,
+        permissionId,
+        request.eventId,
+        repository,
+      );
+      if (decision === 'allow') {
+        // Status first, then create. Nothing says "opening" until the host is
+        // about to actually open it, and the subchannel-bearing navigation
+        // status only goes out after creation SUCCEEDED — the agent-side rule
+        // (never claim the corner exists) holds for every host announcement
+        // too.
+        await this.postWritePermissionStatus(
+          tlcChannelId,
+          permissionId,
+          request.eventId,
+          'corner request',
+          repository,
+          'allowed',
+          `The corner request was approved. Opening an isolated corner for: ${shortTask}`,
+        ).catch((statusError) =>
+          console.error('[body] failed to publish corner-request allowed status:', statusError),
+        );
+        const info = await this.openSubchannel(tlcChannelId, boundRepo, task, request);
+        await this.postWritePermissionStatus(
+          tlcChannelId,
+          permissionId,
+          request.eventId,
+          'corner request',
+          repository,
+          'allowed',
+          `Editing ${repository} is isolated in the new corner. Open it to follow the work.`,
+          info.subchannelId,
+        ).catch((statusError) =>
+          console.error('[body] failed to publish corner-request navigation:', statusError),
+        );
+        // Same seeding as every other corner-open path: the corner starts out
+        // of the Room conversation, and the requested task is its objective.
+        this.startAgentTask(
+          info,
+          task,
+          cornerOpenTaskPrompt(
+            await this.durableState.conversation(tlcChannelId),
+            task,
+            request.eventId,
+          ),
+          {
+            requestId: request.eventId,
+            originalRequestId: request.eventId,
+            cause: 'corner-opening',
+          },
+        );
+      } else if (decision === 'deny') {
+        await this.postWritePermissionStatus(
+          tlcChannelId,
+          permissionId,
+          request.eventId,
+          'corner request',
+          repository,
+          'denied',
+          'The corner request was denied. The Agent remains read-only.',
+        );
+      } else {
+        await this.postWritePermissionStatus(
+          tlcChannelId,
+          permissionId,
+          request.eventId,
+          'corner request',
+          repository,
+          'expired',
+          'The corner request expired without a decision. The Agent remains read-only.',
+        );
+      }
+    } finally {
+      this.agentCornerRequestsInFlight.delete(tlcChannelId);
+    }
   }
 
   /**

@@ -1315,7 +1315,6 @@ export default function BuzzChannels() {
                         >
                           {corners.length}
                         </Text>
-                        <Text style={styles.cornerPeekCaret}>{expanded ? '⌃' : '⌄'}</Text>
                       </TouchableOpacity>
                     )}
                   </View>
@@ -1647,7 +1646,6 @@ const styles = StyleSheet.create((theme) => {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
-    gap: 4,
   },
   cornerPeekCount: {
     ...Typography.mono(),
@@ -1660,15 +1658,6 @@ const styles = StyleSheet.create((theme) => {
    * the row's own live ◆ and with the LIVE wave in the section heading, so the
    * gold never carries the state by itself. */
   cornerPeekCountLive: { color: groknight.accent },
-  /* Count and caret read as one disclosure control, so the caret sits on the
-   * count's own tone rather than trailing off as a stray mark beside it. */
-  cornerPeekCaret: {
-    ...Typography.default(),
-    color: groknight.ledgerGhost,
-    fontSize: 13,
-    lineHeight: 14,
-  },
-
   /* ── expanded corners: a hairline rail, not a nested container ────────── */
   cornerDropdown: {
     position: 'relative',

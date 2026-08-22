@@ -687,6 +687,45 @@ describe('agent identity boundary', () => {
         }),
       ).resolves.toBe('allow');
     });
+
+    it('allows an explicitly granted squire call only on a creator-scoped agent', async () => {
+      const request = {
+        toolCall: {
+          kind: 'other',
+          title: 'mcp__squire__list_credentials',
+          rawInput: {},
+        },
+      };
+      const creatorBody = new Body(
+        { ...config, accessPolicy: 'creator', externalMcpCapabilities: ['squire'] },
+        newIdentity('operator'),
+        newIdentity('agent'),
+      );
+      const everyoneBody = new Body(
+        { ...config, accessPolicy: 'everyone', externalMcpCapabilities: ['squire'] },
+        newIdentity('operator'),
+        newIdentity('agent'),
+      );
+      for (const body of [creatorBody, everyoneBody]) {
+        const durable = (body as unknown as { durableState: unknown }).durableState;
+        vi.spyOn(durable as never, 'appendConversation' as never).mockResolvedValue(undefined as never);
+      }
+
+      await expect(
+        Reflect.get(creatorBody, 'handleRoomPermissionRequest').call(
+          creatorBody,
+          'room-1',
+          request,
+        ),
+      ).resolves.toBe('allow');
+      await expect(
+        Reflect.get(everyoneBody, 'handleRoomPermissionRequest').call(
+          everyoneBody,
+          'room-1',
+          request,
+        ),
+      ).resolves.toBe('reject');
+    });
   });
 
   it('refuses to collapse the agent onto the operator identity', () => {
@@ -817,6 +856,45 @@ describe('agent identity boundary', () => {
       }),
     );
     expect(JSON.stringify(create.mock.calls)).not.toContain('buzz-dev-mcp');
+  });
+
+  it('adds only the explicitly granted squire profile to a creator Room', async () => {
+    const body = new Body({
+      ...config,
+      accessPolicy: 'creator',
+      externalMcpCapabilities: ['squire'],
+      readonlyMcpCommand: '/buzz-readonly-mcp',
+    });
+    vi.spyOn(body as never, 'ensureAgentInChannel' as never).mockResolvedValue(undefined as never);
+    vi.spyOn(body as never, 'ensureAgentEntity' as never).mockResolvedValue(undefined as never);
+    vi.spyOn(body as never, 'channelCommunityId' as never).mockResolvedValue(null as never);
+    const create = vi.spyOn(body as never, 'createManagedSession' as never).mockResolvedValue({
+      channelId: 'room-id',
+      sessionId: 'readonly-session',
+      client: new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} }),
+      mode: 'readonly',
+    } as never);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ accepted: true }), { status: 200 })),
+    );
+
+    await body.provision('room-id', { repo: 'repo', localPath: '/paired/repo' });
+
+    expect(create.mock.calls[0]![0].mcpServers).toEqual([
+      {
+        name: 'buzz-readonly-mcp',
+        command: '/buzz-readonly-mcp',
+        args: [],
+        env: [{ name: 'BUZZ_READONLY_ROOT', value: '/paired/repo' }],
+      },
+      {
+        name: 'squire',
+        command: 'npx',
+        args: ['-y', '@trusty-squire/mcp'],
+        env: [],
+      },
+    ]);
   });
 
   it('fails a research Room closed when buzz-readonly-mcp is unresolved', async () => {

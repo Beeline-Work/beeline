@@ -533,7 +533,11 @@ describe('multi-identity guard (S0) + access policy', () => {
     root: string,
     supervisorRoot: string,
     agent = newIdentity('agent'),
-    extra: { accessPolicy?: 'everyone' | 'creator'; accessAutoResponse?: string } = {},
+    extra: {
+      accessPolicy?: 'everyone' | 'creator';
+      accessAutoResponse?: string;
+      externalMcpCapabilities?: ['squire'];
+    } = {},
   ) {
     return pairRepositoryAgent(
       {
@@ -548,6 +552,9 @@ describe('multi-identity guard (S0) + access policy', () => {
         supervisorRoot,
         ...(extra.accessPolicy ? { accessPolicy: extra.accessPolicy } : {}),
         ...(extra.accessAutoResponse ? { accessAutoResponse: extra.accessAutoResponse } : {}),
+        ...(extra.externalMcpCapabilities
+          ? { externalMcpCapabilities: extra.externalMcpCapabilities }
+          : {}),
       },
       {
         redeem: async () => ({
@@ -614,6 +621,31 @@ describe('multi-identity guard (S0) + access policy', () => {
     expect(stored.accessPolicy).toBe('creator');
     expect(stored.accessAutoResponse).toBe('go away, wildling');
     expect(stored.pairedBy).toBe('f'.repeat(64));
+  });
+
+  it('persists a creator-only squire grant without credential material', async () => {
+    const root = await repository('https://example.com/team/project.git');
+    const supervisorRoot = await stateRoot();
+    const result = await pairAgent(root, supervisorRoot, newIdentity('agent'), {
+      accessPolicy: 'creator',
+      externalMcpCapabilities: ['squire'],
+    });
+    const stored = await readRuntimeRecord(result.configPath);
+    expect(stored.externalMcpCapabilities).toEqual(['squire']);
+    // The grant is only a profile name. Command details and provider auth are
+    // resolved at session start and never copied into the runtime record.
+    expect(Object.keys(stored)).not.toContain('externalMcpServers');
+  });
+
+  it('rejects an account capability under everyone access before redeeming', async () => {
+    const root = await repository('https://example.com/team/project.git');
+    const supervisorRoot = await stateRoot();
+    await expect(
+      pairAgent(root, supervisorRoot, newIdentity('agent'), {
+        accessPolicy: 'everyone',
+        externalMcpCapabilities: ['squire'],
+      }),
+    ).rejects.toThrow('external MCP capabilities require creator access');
   });
 
   it('defaults to no persisted access policy (everyone) when unset', async () => {

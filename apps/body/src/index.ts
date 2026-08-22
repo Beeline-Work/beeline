@@ -74,6 +74,14 @@ export {
   READ_ONLY_TOOL_NAMES,
 } from './read-only-policy.js';
 export {
+  EXTERNAL_MCP_CAPABILITIES,
+  authorizedExternalMcpServers,
+  externalMcpServers,
+  isExternalMcpCapability,
+  isExternalMcpPermissionRequest,
+  type ExternalMcpCapability,
+} from './external-mcp-capabilities.js';
+export {
   classifyCornerPermission,
   classifyRoomPermission,
   permissionTargetPaths,

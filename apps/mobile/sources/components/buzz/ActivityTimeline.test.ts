@@ -124,9 +124,11 @@ describe('corner narration', () => {
     // ...at the ledger's brightest tier and full width, exactly like an
     // ordinary agent turn — its transport must not change how it reads.
     expect(narration.props.textStyle.color).toBe(groknight.ledgerBright);
-    expect(narration.props.textStyle.fontSize).toBe(14);
+    // ONE message size (Editorial direction): narration matches the ledger
+    // body exactly, and glow is gone — hierarchy is weight, not bloom.
+    expect(narration.props.textStyle.fontSize).toBe(16);
     expect(narration.props.textStyle.width).toBe('100%');
-    expect(narration.props.textStyle.textShadowColor).toBe(groknight.ledgerGlow);
+    expect(narration.props.textStyle.textShadowColor).toBeUndefined();
   });
 
   it('never puts narration behind the collapse', () => {

@@ -6,6 +6,7 @@ import { Platform } from 'react-native';
  * Default/prose typography: IBM Plex Sans
  * Monospace typography: IBM Plex Mono
  * Editorial prose typography: IBM Plex Serif
+ * Transcript prose typography: Space Grotesk (the Editorial chat direction)
  * Logo typography: Bricolage Grotesque (specific use only)
  *
  * Usage Examples:
@@ -52,7 +53,13 @@ export const FontFamilies = {
     italic: 'IBMPlexSerif-Italic',
     semiBold: 'IBMPlexSerif-SemiBold',
   },
-  
+
+  // Space Grotesk (Editorial transcript prose)
+  grotesk: {
+    regular: 'SpaceGrotesk-Regular',
+    medium: 'SpaceGrotesk-Medium',
+    semiBold: 'SpaceGrotesk-SemiBold',
+  },
   // Bricolage Grotesque (logo/special use only)
   logo: {
     bold: 'BricolageGrotesque-Bold',
@@ -75,6 +82,10 @@ export const getMonoFont = (weight: 'regular' | 'italic' | 'semiBold' = 'regular
 
 export const getSerifFont = (weight: 'regular' | 'italic' | 'semiBold' = 'regular') => {
   return FontFamilies.serif[weight];
+};
+
+export const getGroteskFont = (weight: 'regular' | 'medium' | 'semiBold' = 'regular') => {
+  return FontFamilies.grotesk[weight];
 };
 
 export const getLogoFont = () => {
@@ -105,11 +116,17 @@ export const Typography = {
   }),
 
   /**
-   * The semantic Buzz transcript voice. Obsidian uses the Sans default here;
-   * theme-aware transcript styles override it with Serif or Mono as needed.
+   * The semantic Buzz transcript voice. The Editorial chat direction sets this
+   * to Space Grotesk; theme-aware transcript styles override it with the
+   * active theme's `prose*` families where a theme carries its own voice.
    */
-  ledger: (weight: 'regular' | 'italic' | 'semiBold' = 'regular') => ({
-    fontFamily: getDefaultFont(weight),
+  ledger: (weight: 'regular' | 'medium' | 'semiBold' = 'regular') => ({
+    fontFamily:
+      weight === 'medium'
+        ? getGroteskFont('medium')
+        : weight === 'semiBold'
+          ? getGroteskFont('semiBold')
+          : getGroteskFont('regular'),
   }),
   
   // Logo font style (Bricolage Grotesque)

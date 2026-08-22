@@ -519,18 +519,17 @@ const styles = StyleSheet.create((theme) => {
     width: '100%',
     minWidth: 0,
     color: groknight.ledgerBright,
-    fontSize: 14,
-    lineHeight: 23,
-    textShadowColor: groknight.ledgerGlow,
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 7,
+    // ONE message size: narration is message text, so it matches the ledger
+    // body exactly (Editorial direction — hierarchy by weight, not size).
+    fontSize: 16,
+    lineHeight: 25,
   },
   narrationHandle: {
-    ...Typography.ledger(),
-    color: groknight.ledgerQuiet,
-    fontSize: 14,
-    lineHeight: 23,
-    letterSpacing: 0.6,
+    ...Typography.ledger('medium'),
+    color: groknight.ledgerBright,
+    fontSize: 16,
+    lineHeight: 25,
+    letterSpacing: -0.1,
   },
   objective: {
     marginBottom: 8,

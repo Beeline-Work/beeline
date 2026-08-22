@@ -48,7 +48,7 @@ import {
   type CompactActivityPlan,
 } from './activity.js';
 import {
-  CORNER_REQUEST_INSTRUCTIONS,
+  PI_CORNER_REQUEST_INSTRUCTIONS,
   createCornerRequestFilter,
   type AgentCornerRequest,
 } from './corner-request.js';
@@ -210,7 +210,10 @@ import {
   classifyRoomPermission,
   ROOM_READ_ONLY_STEER,
 } from './session-sandbox.js';
-import { roomSandboxWarning } from './harness-capabilities.js';
+import {
+  roomSandboxWarning,
+  usesTextCornerRequestFallback,
+} from './harness-capabilities.js';
 import {
   harnessHomeStateDirs,
   resolveGitCommonDir,
@@ -829,7 +832,10 @@ export function codegraphMcpServer(config: BodyConfig): McpServerWire | undefine
   };
 }
 
-export function roomEditPolicyInstructions(policy: RoomEditPolicy): string[] {
+export function roomEditPolicyInstructions(
+  policy: RoomEditPolicy,
+  agentCommand?: string,
+): string[] {
   if (policy === 'direct-message') {
     return [
       'This direct message is strictly read-only and can never open an edit corner.',
@@ -847,11 +853,16 @@ export function roomEditPolicyInstructions(policy: RoomEditPolicy): string[] {
       'If no exact repository is known, ask for one and remain read-only.',
     ];
   }
+  const textCornerFallback = usesTextCornerRequestFallback(agentCommand);
   return [
-    'When the user asks for a concrete file change, attempt the appropriate write/edit tool.',
-    'The host will turn that first mutating permission request into a human allow/deny prompt.',
+    ...(textCornerFallback
+      ? PI_CORNER_REQUEST_INSTRUCTIONS
+      : [
+          'When the requested work requires repository changes, initiate the edit-corner request yourself: attempt the appropriate built-in write/edit tool once.',
+          'A permission-capable harness sends that attempt as session/request_permission before it runs. The host rejects the in-Room mutation and turns the request into a human allow/deny card.',
+          'Do not merely tell the human to ask for a corner separately. The native permission request is the action that asks for the corner.',
+        ]),
     'Never claim that work started until the host transitions you into an edit session.',
-    ...CORNER_REQUEST_INSTRUCTIONS,
     // The branch a Room lands to is Room configuration signed by an admin, so
     // the agent has no way to change it and no memory that could hold it. Left
     // undocumented, a model answers the ask conversationally and invents one —
@@ -1255,17 +1266,6 @@ function normalizeRoomRequest(content: string): string {
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/^@[\p{L}\p{N}_-]+[,:]?\s+/u, '');
-}
-
-function requestsMutationAfterNamedTarget(content: string, target: NamedRepositoryTarget): boolean {
-  const normalized = normalizeRoomRequest(content);
-  const targetOffset = normalized.toLowerCase().indexOf(target.id.toLowerCase());
-  if (targetOffset < 0) return false;
-  const afterTarget = normalized.slice(targetOffset + target.id.length);
-  return new RegExp(
-    String.raw`^[\s,:;()\[\]-]*(?:please\s+)?${REPOSITORY_MUTATION_VERB}\b`,
-    'i',
-  ).test(afterTarget);
 }
 
 /** Detect an explicit repository mutation before a DM turn can invent an escalation path. */
@@ -1735,7 +1735,7 @@ export class Body {
    * with no turn running (i.e. the queue drained).
    */
   private steerQueuedChannels = new Set<string>();
-  /** Channels with an agent-initiated corner request awaiting a human
+  /** pi-acp Rooms with a text-fallback corner request awaiting a human
    *  decision. One pending request per channel at a time; a second marker in
    *  a later turn is ignored until the first resolves. */
   private agentCornerRequestsInFlight = new Set<string>();
@@ -3261,9 +3261,12 @@ export class Body {
           'You CANNOT create, edit, or delete files until the host grants a human-approved edit session.',
           `The host DENIES every write, edit, delete, move, and shell/execute request in this Room, whatever path it names: ${ROOM_READ_ONLY_STEER}`,
           'Never attempt to reach outside this session by absolute path, and never run builds, tests, formatters, or git commands here.',
-          'An information-only request (analysis, explanation, summary, research, or a question) must be answered here and must never attempt editing. If inspection reveals a concrete follow-up edit, you may request a human-approved corner using the documented CORNER_REQUEST control.',
+          'An information-only request (analysis, explanation, summary, research, or a question) must be answered here and must never attempt editing unless the host prompt explicitly allows an edit-corner request.',
           'Never claim that an action, tool result, peer reply, or agent exchange happened unless the host-provided transcript or tool result shows it actually happened.',
-          ...roomEditPolicyInstructions(editPolicy),
+          ...roomEditPolicyInstructions(
+            editPolicy,
+            this.config.agentCommand ?? this.config.agentBinary,
+          ),
           ...(editPolicy === 'named-repository'
             ? [
                 'When the current human request explicitly says repository owner/repo, the host binds your first actual mutation request to that exact target. It never selects a repository for you.',
@@ -4513,59 +4516,6 @@ export class Body {
       editPolicy === 'named-repository'
         ? namedRepositoryTargetFromRoomRequest(request.content)
         : undefined;
-    const explicitBoundRepositoryMutation =
-      editPolicy === 'repository' &&
-      boundRepo !== undefined &&
-      !informationOnly &&
-      isRepositoryMutationRequest(request.content);
-    const explicitNamedRepositoryMutation =
-      namedRepositoryTarget !== undefined &&
-      !informationOnly &&
-      (isRepositoryMutationRequest(request.content) ||
-        requestsMutationAfterNamedTarget(request.content, namedRepositoryTarget));
-    if (explicitBoundRepositoryMutation || explicitNamedRepositoryMutation) {
-      await this.durableState.appendConversation(tlcChannelId, {
-        role: 'user',
-        text: userPrompt,
-        eventId: request.eventId,
-        at: new Date(request.createdAt * 1_000).toISOString(),
-      });
-      const turn: PendingRoomTurn = {
-        request,
-        boundRepo,
-        editPolicy,
-        namedRepositoryTarget,
-        permissionHandled: false,
-        transitionedToCorner: false,
-        readOnlyInformationRequest: false,
-      };
-      this.pendingRoomTurns.set(tlcChannelId, turn);
-      try {
-        await this.handleRoomPermissionRequest(
-          tlcChannelId,
-          {
-            toolCall: {
-              kind: 'execute',
-              title: `Request edit corner on ${
-                namedRepositoryTarget?.id ?? this.repoId(boundRepo!)
-              }`,
-              rawInput: {
-                command: namedRepositoryTarget
-                  ? `${NAMED_REPOSITORY_PERMISSION_COMMAND} --repo ${namedRepositoryTarget.id}`
-                  : 'beeline-request-edit-corner',
-              },
-            },
-          },
-          editPolicy,
-          'host',
-        );
-        await this.appendRoomPermissionOutcome(tlcChannelId, turn);
-        return turn.transitionedToCorner;
-      } finally {
-        this.pendingRoomTurns.delete(tlcChannelId);
-      }
-    }
-
     let session: AgentSession;
     try {
       session =
@@ -4634,7 +4584,13 @@ export class Body {
               'Host boundary: this is an information-only request.',
               'Inspect with the read-only repository tools and answer conversationally in this Room.',
               'Do not attempt editing, execute a native shell, open a corner yourself, or change repository state.',
-              'If inspection reveals a concrete follow-up edit, you may request human approval using the documented CORNER_REQUEST control.',
+              ...(usesTextCornerRequestFallback(
+                this.config.agentCommand ?? this.config.agentBinary,
+              )
+                ? [
+                    'If inspection reveals a concrete follow-up edit, you may request human approval using the documented pi-acp CORNER_REQUEST fallback.',
+                  ]
+                : []),
               '',
               sharedPrompt,
             ].join('\n')
@@ -4668,7 +4624,10 @@ export class Body {
         originalRequestId: request.eventId,
         cause: 'room-message',
         replyToId: request.eventId,
-        cornerRequests: editPolicy !== 'direct-message' && boundRepo !== undefined,
+        cornerRequests:
+          editPolicy !== 'direct-message' &&
+          boundRepo !== undefined &&
+          usesTextCornerRequestFallback(this.config.agentCommand ?? this.config.agentBinary),
       } as const;
       let result = await this.promptAgent(session, prompt, promptOptions);
       // Some ACP adapters occasionally finish a turn successfully without
@@ -4720,9 +4679,9 @@ export class Body {
           : undefined,
       });
       if (!reply) throw new Error('agent returned an empty Room reply');
-      // The agent asked for an edit corner in its own reply (a text marker —
-      // the only channel every harness, including pi-acp which never sends
-      // `session/request_permission`, shares). The humans decide; the corner
+      // A pi-acp agent asked for an edit corner through its text-only fallback.
+      // Permission-capable harnesses reach the native handler above and are
+      // never parsed for this marker. The humans decide; the corner
       // opens only on a human ALLOW, and nothing the agent authored has
       // claimed the corner exists before that. Fire-and-forget: the reply
       // above must not block on a decision that can take minutes.
@@ -4964,7 +4923,6 @@ export class Body {
     tlcChannelId: string,
     permission: AcpPermissionRequest,
     editPolicy?: RoomEditPolicy,
-    origin: 'harness' | 'host' = 'harness',
   ): Promise<AcpPermissionDecision> {
     if (isReadOnlyMcpPermissionRequest(permission)) return 'allow';
     if (
@@ -4984,9 +4942,7 @@ export class Body {
       // The command itself never runs. The card is the whole effect.
       return 'reject';
     }
-    // A host-synthesized request is the human's own explicit open-a-corner
-    // command replayed through this path, not an agent trying to write.
-    if (origin === 'harness' && classifyRoomPermission(permission).decision === 'deny') {
+    if (classifyRoomPermission(permission).decision === 'deny') {
       await this.noteRoomReadOnlyDenial(tlcChannelId, permission);
     }
     if (!turn || turn.permissionHandled || !isMutatingPermissionRequest(permission)) {

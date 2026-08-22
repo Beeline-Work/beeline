@@ -516,6 +516,34 @@ describe('Buzz Room screen event projection', () => {
     expect(displaySequence([event])).toHaveLength(1);
   });
 
+  it('renders the daemon’s unknown-slash-command marker as a quiet system line', () => {
+    // `postSlashCommandNotice` (apps/body/src/activity.ts): marks a message
+    // that began with a slash verb Beeline does not run, so a harness's own
+    // `/loop` vocabulary can no longer execute silently as if it were
+    // Beeline's. Same shape as the queued-steer ack: body-control, system
+    // line, never agent speech.
+    const event = raw(
+      'slash-notice-1',
+      '/loop is not a Beeline command. Beeline understands: /open-corner, /approve, /change-target-branch, /add-agent, /invite, /close-corner — sent from the composer\'s slash menu. Your message was still passed to the agent as an ordinary request.',
+      [
+        ['t', 'body-control'],
+        ['t', 'slash-command-notice'],
+        ['command', 'loop'],
+      ],
+      13,
+    );
+
+    const projection = projectChatEvent(event, viewer);
+    expect(projection.message).toMatchObject({
+      id: 'slash-notice-1',
+      isSystemNotice: true,
+      isUser: false,
+    });
+    expect(projection.message?.text).toContain('/loop is not a Beeline command');
+    expect(projection.message?.isAgentAuthor).toBeUndefined();
+    expect(displaySequence([event])).toHaveLength(1);
+  });
+
   it('does not confuse an archive notice or a parent-Room status card with a corner-scoped delivery failure', () => {
     // Archive notices also carry status=archived with no `subchannel` tag —
     // must not be misread as a delivery failure.

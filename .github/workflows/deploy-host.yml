@@ -30,6 +30,11 @@ on:
       # only for this exact branch name.
       - fm/beeline-host-deploy-on-merge
   workflow_dispatch:
+    inputs:
+      drill:
+        description: "Failure drill: 'fail-public' corrupts one staged file post-local-check to exercise the rollback path end-to-end"
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -49,3 +54,5 @@ jobs:
       - uses: actions/checkout@v4
       - name: Deploy whole web tree + auth image, verify public URL
         run: ./scripts/deploy-relay-host.sh
+        env:
+          BEELINE_DEPLOY_DRILL: ${{ inputs.drill || '' }}

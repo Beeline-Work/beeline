@@ -400,6 +400,32 @@ lines.on('line', (line) => {
 });
 
 describe('beeline pair — --access/--auto-response (non-interactive)', () => {
+  it('rejects squire unless the agent is creator-only', async () => {
+    const gitRepo = await tmpDir('beeline-pair-cli-gitrepo-');
+    spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: gitRepo });
+    const stateHome = await tmpDir('beeline-pair-cli-state-');
+    const agent = await fakeModelAgent();
+
+    const { status, stderr } = runPair(
+      [
+        'not-a-real-code',
+        '--repo',
+        gitRepo,
+        '--agent',
+        'custom',
+        '--agent-command',
+        agent,
+        '--mcp',
+        'squire',
+      ],
+      { cwd: gitRepo, env: { XDG_STATE_HOME: stateHome } },
+    );
+
+    expect(status).toBe(1);
+    expect(stderr).toContain('external MCP capabilities require --access creator');
+    expect(stderr).not.toContain('invalid agent pairing code');
+  });
+
   it('rejects an unrecognized --access value with a clear error, not a stack trace', async () => {
     const gitRepo = await tmpDir('beeline-pair-cli-gitrepo-');
     spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: gitRepo });

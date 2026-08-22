@@ -65,6 +65,10 @@ import {
 } from './runtime.js';
 import { runRelayCommand } from './relay-command.js';
 import { detectBwrapSandbox } from './bwrap-sandbox.js';
+import {
+  isExternalMcpCapability,
+  type ExternalMcpCapability,
+} from './external-mcp-capabilities.js';
 import { DurableBodyState } from './durable-state.js';
 import {
   dailyAgentSpend,
@@ -113,10 +117,12 @@ ${pc.dim('Usage:')}
   beeline pair <BUZZ-XXXX-XXXX> [--agent <codex|claude|goose|pi|reference|custom>]
                [--agent-command '<command> [args...]'] [--repo <path>]
                [--access <everyone|creator>] [--auto-response '<text>']
+               [--mcp <squire>]
                [--model <model>] [--effort <level>]
 
   beeline pair <CODE1> <CODE2> ... --agents <kind1,kind2,...> [--repo <path>]
                [--access <everyone|creator>] [--auto-response '<text>']
+               [--mcp <squire>]
                [--model <model>] [--effort <level>]
 
 Agent choices:
@@ -166,6 +172,10 @@ Access policy (per agent, set here at invite time):
   everyone  any Room member may address the agent (default)
   creator   only the inviting owner may; anyone else gets the auto-response
 
+External MCP capabilities: --mcp squire grants Trusty Squire to this agent.
+Account capabilities require --access creator and are mounted from a built-in
+profile; Beeline never imports the operator's other personal MCP servers.
+
 Interactive: on a real TTY, --access/--auto-response missing their flags are
 also offered as clack pickers (in that order, right after model/effort) —
 enter keeps everyone/the default auto-response. A non-terminal session never
@@ -191,6 +201,7 @@ interface PairOptions {
   autoResponse?: string;
   model?: string;
   effort?: string;
+  externalMcpCapabilities?: ExternalMcpCapability[];
 }
 
 function parsePairOptions(args: string[]): PairOptions {
@@ -204,6 +215,7 @@ function parsePairOptions(args: string[]): PairOptions {
   let autoResponse: string | undefined;
   let model: string | undefined;
   let effort: string | undefined;
+  let externalMcpCapabilities: ExternalMcpCapability[] | undefined;
   const flags = new Set([
     '--agent',
     '--agents',
@@ -213,6 +225,7 @@ function parsePairOptions(args: string[]): PairOptions {
     '--auto-response',
     '--model',
     '--effort',
+    '--mcp',
   ]);
   for (let index = 1; index < args.length; index += 1) {
     const token = args[index];
@@ -236,6 +249,12 @@ function parsePairOptions(args: string[]): PairOptions {
     else if (token === '--auto-response') autoResponse = value;
     else if (token === '--model') model = value;
     else if (token === '--effort') effort = value;
+    else if (token === '--mcp') {
+      const capabilities = value.split(',').map((entry) => entry.trim()).filter(Boolean);
+      const invalid = capabilities.find((capability) => !isExternalMcpCapability(capability));
+      if (invalid) throw new Error(`--mcp must contain only squire (got: ${invalid})`);
+      externalMcpCapabilities = capabilities as ExternalMcpCapability[];
+    }
     else if (token === '--access') {
       if (!isAgentAccessPolicy(value)) {
         throw new Error(`--access must be one of everyone|creator (got: ${value})`);
@@ -256,6 +275,7 @@ function parsePairOptions(args: string[]): PairOptions {
     ...(autoResponse !== undefined ? { autoResponse } : {}),
     ...(model !== undefined ? { model } : {}),
     ...(effort !== undefined ? { effort } : {}),
+    ...(externalMcpCapabilities?.length ? { externalMcpCapabilities } : {}),
   };
 }
 
@@ -386,6 +406,9 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   config.accessPolicy = runtime.accessPolicy ?? DEFAULT_ACCESS_POLICY;
   config.accessOwnerPubkey = runtime.pairedBy;
   if (runtime.accessAutoResponse) config.accessAutoResponse = runtime.accessAutoResponse;
+  if (runtime.externalMcpCapabilities) {
+    config.externalMcpCapabilities = [...runtime.externalMcpCapabilities];
+  }
   if (runtime.modelSelection) config.modelSelection = runtime.modelSelection;
   // OS sandbox for every ACP child (`bwrap-sandbox.ts`). Detected exactly once
   // here, at daemon start, so an unusable bwrap costs one advisory line rather
@@ -458,6 +481,7 @@ async function pairOneAgent(input: {
   access?: AgentAccessPolicy;
   autoResponse?: string;
   modelSelection?: { model?: string; effort?: string };
+  externalMcpCapabilities?: ExternalMcpCapability[];
   /** Offer the clack model/effort/access/auto-response pickers when their flags weren't given. */
   interactiveUi?: boolean;
 }): Promise<PairRuntimeResult> {
@@ -503,6 +527,9 @@ async function pairOneAgent(input: {
     ...(input.autoResponse !== undefined ? { autoResponse: input.autoResponse } : {}),
     interactiveUi: Boolean(input.interactiveUi),
   });
+  if (input.externalMcpCapabilities?.length && access !== 'creator') {
+    throw new Error('external MCP capabilities require --access creator');
+  }
   // Every question is answered — only now is one spinner alone on the line.
   const spinner = input.interactiveUi ? clack.spinner() : undefined;
   spinner?.start(input.progressLabel);
@@ -525,6 +552,9 @@ async function pairOneAgent(input: {
         accessPolicy: access,
         ...(autoResponse ? { accessAutoResponse: autoResponse } : {}),
         ...(modelSelection ? { modelSelection } : {}),
+        ...(input.externalMcpCapabilities?.length
+          ? { externalMcpCapabilities: input.externalMcpCapabilities }
+          : {}),
         mcpBinary: localConfig.mcpBinary,
       },
       {
@@ -584,6 +614,9 @@ function printPairResult(result: PairRuntimeResult): void {
   }
   console.log(`[buzz] agent pubkey: ${result.pairing.agent.pubkey}`);
   console.log(`[buzz] access policy: ${result.runtime.accessPolicy ?? DEFAULT_ACCESS_POLICY}`);
+  if (result.runtime.externalMcpCapabilities?.length) {
+    console.log(`[buzz] external MCP: ${result.runtime.externalMcpCapabilities.join(', ')}`);
+  }
   if (result.runtime.modelSelection) {
     console.log(
       `[buzz] model/effort default: ${pc.cyan(result.runtime.modelSelection.model ?? '(unset)')} / ${pc.cyan(
@@ -666,6 +699,7 @@ async function runPairCommand(
           ...(pairOptions.autoResponse ? { autoResponse: pairOptions.autoResponse } : {}),
           ...(flagModelSelection ? { modelSelection: flagModelSelection } : {}),
           interactiveUi,
+          externalMcpCapabilities: pairOptions.externalMcpCapabilities,
         });
         printPairResult(result);
       }
@@ -704,6 +738,7 @@ async function runPairCommand(
       ...(pairOptions.autoResponse ? { autoResponse: pairOptions.autoResponse } : {}),
       ...(flagModelSelection ? { modelSelection: flagModelSelection } : {}),
       interactiveUi,
+      externalMcpCapabilities: pairOptions.externalMcpCapabilities,
     });
     printPairResult(result);
     if (interactiveUi) clack.outro(pc.green('Done.'));

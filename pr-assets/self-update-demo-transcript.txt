@@ -1,0 +1,22 @@
+
+== 1. what is this daemon running? ==
+installed bundle: {"commit":"aaa111old","version":"2026.01.01"}
+
+== 2. agent work is running — the update must WAIT ==
+staged: true, swapped: false, restart requested: false
+
+== 3. work finished — swap atomically and restart onto the new bundle ==
+active release: bbb222new  (previous kept: true)
+room notice: Beeline bundle 2026.01.01 aaa111old -> 2026.02.05 bbb222new applied; the daemon is restarting now (previous release kept for rollback).
+replacement daemon pid 3476710 came up as commit bbb222new
+
+== 4. new bundle confirms healthy ==
+journal cleared: true, pending now: undefined
+
+== 5. corrupt/mismatched download aborts without touching the install ==
+[body] self-update: downloading bundle.tar.gz
+checksum mismatch for bundle.tar.gz: expected ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, got 13779a7ae8869e5a150ffd573937561d5454ff51b0844aa432d2bdb559f5972d — aborting without touching the installed bundle
+installed identity still: {"commit":"bbb222new","version":"2026.02.05"}
+
+== 6. an applied update that never starts is rolled back at next start ==
+settle verdict: rolled-back; active release restored to: aaa111old

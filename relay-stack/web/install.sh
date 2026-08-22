@@ -66,13 +66,14 @@ tar -tzf "$archive" | while IFS= read -r path; do
 done
 tar -xzf "$archive" -C "$temporary_dir"
 
-for path in bin/beeline bin/buzz-agent bin/buzz-dev-mcp bin/buzz-readonly-mcp lib/beeline/beeline-cli.mjs lib/beeline/beeline-readonly-mcp.mjs; do
+for path in bin/beeline bin/buzz-agent bin/buzz-dev-mcp bin/buzz-readonly-mcp lib/beeline/beeline-cli.mjs lib/beeline/beeline-readonly-mcp.mjs lib/beeline/bundle.json; do
   [ -f "$temporary_dir/$path" ] || fail "bundle is missing $path"
 done
 
 mkdir -p "$bin_dir" "$lib_dir"
 install -m 0644 "$temporary_dir/lib/beeline/beeline-cli.mjs" "$lib_dir/beeline-cli.mjs"
 install -m 0644 "$temporary_dir/lib/beeline/beeline-readonly-mcp.mjs" "$lib_dir/beeline-readonly-mcp.mjs"
+install -m 0644 "$temporary_dir/lib/beeline/bundle.json" "$lib_dir/bundle.json"
 install -m 0755 "$temporary_dir/bin/beeline" "$bin_dir/beeline"
 install -m 0755 "$temporary_dir/bin/buzz-agent" "$bin_dir/buzz-agent"
 install -m 0755 "$temporary_dir/bin/buzz-dev-mcp" "$bin_dir/buzz-dev-mcp"

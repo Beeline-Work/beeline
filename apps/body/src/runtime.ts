@@ -14,6 +14,10 @@ import type {
 import { AGENT_KINDS, type AgentCommand, type AgentKind } from './agent-command.js';
 import { isAgentAccessPolicy, type AgentAccessPolicy } from './access-policy.js';
 import { isSandboxPolicy, type SandboxPolicy } from './bwrap-sandbox.js';
+import {
+  isExternalMcpCapability,
+  type ExternalMcpCapability,
+} from './external-mcp-capabilities.js';
 
 export interface LocalRepositoryBinding {
   root: string;
@@ -50,6 +54,8 @@ export interface AgentRuntimeRecord {
   accessPolicy?: AgentAccessPolicy;
   /** Optional custom auto-response for a non-permitted questioner. */
   accessAutoResponse?: string;
+  /** Explicit external MCP grants. Profiles contain no credential material. */
+  externalMcpCapabilities?: ExternalMcpCapability[];
   /**
    * Pair-time default model/effort, set by `--model`/`--effort` and applied
    * by `Body.applyModelConfigForSession` (`body.ts`) whenever no human has
@@ -558,6 +564,10 @@ export async function readRuntimeRecord(path: string): Promise<AgentRuntimeRecor
     (parsed.agentKind !== undefined && !AGENT_KINDS.includes(parsed.agentKind)) ||
     (parsed.accessPolicy !== undefined && !isAgentAccessPolicy(parsed.accessPolicy)) ||
     (parsed.accessAutoResponse !== undefined && typeof parsed.accessAutoResponse !== 'string') ||
+    (parsed.externalMcpCapabilities !== undefined &&
+      (!Array.isArray(parsed.externalMcpCapabilities) ||
+        parsed.externalMcpCapabilities.some((capability) => !isExternalMcpCapability(capability)) ||
+        parsed.accessPolicy !== 'creator')) ||
     (parsed.sandbox !== undefined && !isSandboxPolicy(parsed.sandbox)) ||
     (parsed.modelSelection !== undefined &&
       (typeof parsed.modelSelection !== 'object' ||
@@ -822,6 +832,7 @@ export async function pairRepositoryAgent(
     agentArgs?: string[];
     accessPolicy?: AgentAccessPolicy;
     accessAutoResponse?: string;
+    externalMcpCapabilities?: ExternalMcpCapability[];
     modelSelection?: { model?: string; effort?: string };
     mcpBinary: string;
     agentIdentity: Identity;
@@ -852,6 +863,9 @@ export async function pairRepositoryAgent(
     abandonPairing?(pairing: RedeemAgentPairingResult): Promise<unknown>;
   },
 ): Promise<PairRuntimeResult> {
+  if (input.externalMcpCapabilities?.length && input.accessPolicy !== 'creator') {
+    throw new Error('external MCP capabilities require creator access');
+  }
   // The runtime root is machine-local agent state, deliberately not the paired
   // repository's `.git`. The repository binding for this Room is `repo` below.
   const supervisorRoot = input.supervisorRoot
@@ -921,6 +935,9 @@ export async function pairRepositoryAgent(
       ...(input.llmEnvFile ? { llmEnvFile: input.llmEnvFile } : {}),
       ...(input.accessPolicy ? { accessPolicy: input.accessPolicy } : {}),
       ...(input.accessAutoResponse ? { accessAutoResponse: input.accessAutoResponse } : {}),
+      ...(input.externalMcpCapabilities?.length
+        ? { externalMcpCapabilities: [...new Set(input.externalMcpCapabilities)] }
+        : {}),
       ...(input.modelSelection?.model || input.modelSelection?.effort
         ? { modelSelection: input.modelSelection }
         : {}),

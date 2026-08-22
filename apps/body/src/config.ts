@@ -17,6 +17,7 @@ import {
   type AgentKind,
 } from './agent-command.js';
 import type { AgentAccessPolicy } from './access-policy.js';
+import type { ExternalMcpCapability } from './external-mcp-capabilities.js';
 
 export type SessionMode = 'readonly' | 'edit';
 
@@ -96,6 +97,8 @@ export interface BodyConfig {
   accessPolicy?: AgentAccessPolicy;
   accessOwnerPubkey?: string;
   accessAutoResponse?: string;
+  /** Explicit account capabilities mounted for this agent; never inherited from operator config. */
+  externalMcpCapabilities?: ExternalMcpCapability[];
   /**
    * Pair-time default model/effort (`--model`/`--effort` at `beeline pair`),
    * injected from the runtime record by the daemon. Applied by

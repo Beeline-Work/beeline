@@ -270,6 +270,35 @@ describe('Members screen', () => {
     ).toBe('OFFLINE');
   });
 
+  it('accepts an operator-chosen compound agent name, not just one spoken word', async () => {
+    const agentPubkey = '4'.repeat(64);
+    client.listAgents.mockResolvedValue([
+      { agentId: 'a3', communityId: 'workspace-1', displayName: 'joy', pubkey: agentPubkey, createdAt: 0, raw: {} },
+    ]);
+    const renderer = await render();
+
+    await act(async () => {
+      ancestorButton(renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` })).props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const save = () => renderer.root.findByProps({ label: 'Save' });
+    // A single word still saves.
+    expect(save().props.disabled).toBe(false);
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'agent-soul-name' }).props.onChangeText('Quiet Keeper');
+    });
+    // A compound an operator actually chose is preserved, not gated out.
+    expect(save().props.disabled).toBe(false);
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'agent-soul-name' }).props.onChangeText('h4x0r');
+    });
+    expect(save().props.disabled).toBe(true);
+  });
+
   it('offers manual Model / Effort entry even when the agent has never published a catalog', async () => {
     // A missing catalog used to hide the section outright, so a model the
     // harness accepts but does not list could not be configured at all. The

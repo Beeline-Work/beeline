@@ -22,6 +22,7 @@ import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { cornerHref } from '@/buzz/corner-navigation';
 import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
+import { useAgentNameCache } from '@/buzz/agent-name-cache';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { HullSurface, PixelLoader } from '@/components/buzz/MonoHull';
@@ -157,7 +158,13 @@ export default function BuzzCorners() {
               return;
             }
             await Promise.all([
-              client.listAgents(communityId).then(setAgents, fail('agents')),
+              client
+                .listAgents(communityId)
+                .then((agents) => {
+                  // Warm the device-wide agent-name store.
+                  useAgentNameCache.getState().rememberAgents(agents);
+                  setAgents(agents);
+                }, fail('agents')),
               client
                 .getPersonProfile(communityId)
                 .then((profile) => setViewerAvatarUrl(profile?.avatar), fail('viewerProfile')),

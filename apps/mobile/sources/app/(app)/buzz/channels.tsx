@@ -47,6 +47,7 @@ import { roomParticipantPubkeys } from '@/buzz/room-participants';
 import { shortMemberNpub } from '@/buzz/member-display';
 import { ensurePersonNameForWorkspace } from '@/buzz/person-name';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
+import { useAgentNameCache } from '@/buzz/agent-name-cache';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { isRoomUnread, roomReadAt, useRoomReadState } from '@/buzz/room-read-state';
 import { NO_ACTIVITY_PREVIEW, roomListSections } from '@/buzz/room-list-row';
@@ -219,6 +220,9 @@ async function loadWorkspaceRoster(
     client.communityMembers(communityId),
     client.listAgents(communityId),
   ]);
+  // Warm the device-wide agent-name store: a name learned here names the
+  // agent in every Room, including ones whose own roster read never lands.
+  useAgentNameCache.getState().rememberAgents(agents);
   const agentsByPubkey = new Map(agents.map((agent) => [agent.pubkey, agent]));
   const people = workspaceMembers.filter(
     (member) => member.pubkey !== viewerPubkey && !agentsByPubkey.has(member.pubkey),

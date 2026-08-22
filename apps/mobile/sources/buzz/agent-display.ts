@@ -108,6 +108,16 @@ function namesItsAgent(agent: NameableAgent): boolean {
 }
 
 /**
+ * Whether this record can actually name its agent — a soul name, or a
+ * registered displayName that is not the seed placeholder. Shared by the
+ * Workspace-roster union above and the device-wide agent-name cache
+ * (`agent-name-cache.ts`), which must apply identical rules.
+ */
+export function canIdentifyAgent(agent: NameableAgent): boolean {
+  return namesItsAgent(agent);
+}
+
+/**
  * Fold rosters into one lookup, earlier rosters winning — per FIELD, not per
  * whole entry.
  *

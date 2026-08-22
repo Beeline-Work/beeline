@@ -77,6 +77,11 @@ describe('Room row presentation', () => {
       NO_NAMES,
     );
     expect(row.corners.map((entry) => entry.status)).toEqual(['live', 'needs-attention', 'open']);
+    // The dropdown CONTROL's visibility reads the total, not the listed set:
+    // a Room whose corners are all terminal still needs its path into the
+    // full corner list, even though none of them may be counted as open work.
+    expect(row.totalCorners).toBe(6);
+    expect(roomRowPresentation({ corners: [corner('merged')] }, NO_NAMES).totalCorners).toBe(1);
   });
 
   it('falls back to the spoken-in / quiet glyphs when no corner reports', () => {

@@ -57,9 +57,15 @@ jobs:
           node-version: '20.19'
       # apps/mobile is an isolated npm project (own lockfile, outside the root
       # workspaces); eas update exports its bundle from these dependencies.
-      - name: Install mobile dependencies
+      - name: Install mobile dependencies and build @beeline SDKs
         working-directory: apps/mobile
-        run: npm ci
+        # npm ci runs postinstall; eas-build-post-install then compiles the
+        # file-linked @beeline/* packages into their dist/ — the same step an
+        # EAS build runs, and just as required for `eas update`'s local export:
+        # without it Metro cannot resolve @beeline/buzz-client.
+        run: |
+          npm ci
+          npm run eas-build-post-install
       - name: Publish OTA update to channel production
         working-directory: apps/mobile
         env:

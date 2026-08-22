@@ -512,6 +512,12 @@ export function projectChatEvent(
   // own input, not the agent speaking, so it renders as a system line and
   // never joins the agent's attributed voice run.
   const isSteerQueued = bodyControl && !subchannelId && sessionEventHasTag(event, 't', 'steer-queued');
+  // The daemon's "that slash verb is not one of Beeline's commands" marker
+  // (`apps/body/src/body.ts`'s `markSlashCommandVocabulary`). Same shape as
+  // the queued-steer ack: a receipt about the human's own input, rendered as
+  // a system line, never as agent speech.
+  const isSlashCommandNotice =
+    bodyControl && !subchannelId && sessionEventHasTag(event, 't', 'slash-command-notice');
   const repo = sessionEventTagValue(event, 'repo');
   const branch = sessionEventTagValue(event, 'branch');
   const tip = sessionEventTagValue(event, 'tip');
@@ -700,7 +706,7 @@ export function projectChatEvent(
         },
       };
     }
-    if (isSteerQueued) {
+    if (isSteerQueued || isSlashCommandNotice) {
       return {
         message: {
           id: eventId(event),

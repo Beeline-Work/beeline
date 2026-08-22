@@ -46,3 +46,20 @@ describe('Buzz composer built-in slash verbs', () => {
     );
   });
 });
+
+describe('the composer verb list stays in sync with the daemon vocabulary', () => {
+  it('every Beeline command the daemon knows is a real composer verb', async () => {
+    const { BEELINE_SLASH_COMMANDS } = await import('@beeline/buzz-client');
+    const { availableSlashVerbs } = await import('./slash-verbs');
+    const commands = availableSlashVerbs(allAvailable, '').map((verb) => verb.command);
+    expect(commands).toEqual([...BEELINE_SLASH_COMMANDS]);
+    expect(commands).toEqual([
+      'open-corner',
+      'approve',
+      'change-target-branch',
+      'add-agent',
+      'invite',
+      'close-corner',
+    ]);
+  });
+});

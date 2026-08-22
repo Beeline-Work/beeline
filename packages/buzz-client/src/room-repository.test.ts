@@ -8,6 +8,7 @@ import {
   resolveRoomRepositoryState,
   setRoomRepository,
   setRoomTargetBranch,
+  setRoomGitHubEvents,
   normalizeTargetBranchName,
 } from './room-repository.js';
 import { createIdentity } from './identity.js';
@@ -392,6 +393,61 @@ describe('room target branch (chat-native change)', () => {
     stubRelay({ published: [], genesisRepo: false });
     await expect(setRoomTargetBranch(ctx(admin), channelId, 'staging')).rejects.toThrow(
       'no repository linked',
+    );
+  });
+});
+
+describe('per-Room GitHub activity toggle', () => {
+  it('round-trips through the room-config record and carries the binding forward', async () => {
+    const published: NostrEvent[] = [];
+    stubRelay({ published });
+    await setRoomRepository(ctx(admin), channelId, {
+      key: 'repo-key',
+      name: 'buzzy',
+      remote: 'git://github.com/lunchboxfortwo/buzzy',
+      targetBranch: 'main',
+    });
+
+    // Absent flag reads as enabled (default ON).
+    const initial = await getRoomRepository(ctx(admin), channelId);
+    expect(initial!.githubEventsEnabled).toBeUndefined();
+
+    const updated = await setRoomGitHubEvents(ctx(admin), channelId, false);
+    expect(updated.githubEventsEnabled).toBe(false);
+    // Binding identity and target branch carried forward untouched.
+    expect(updated.binding).toMatchObject({ key: 'repo-key', remote: 'git://github.com/lunchboxfortwo/buzzy' });
+    expect(updated.targetBranch).toBe('main');
+    await expect(getRoomRepository(ctx(admin), channelId)).resolves.toMatchObject({
+      githubEventsEnabled: false,
+    });
+
+    const reenabled = await setRoomGitHubEvents(ctx(admin), channelId, true);
+    expect(reenabled.githubEventsEnabled).toBe(true);
+  });
+
+  it('refuses a non-admin writer', async () => {
+    const published: NostrEvent[] = [];
+    stubRelay({ published, genesisRepo: true, admins: [admin.publicKey] });
+    await expect(setRoomGitHubEvents(ctx(member), channelId, false)).rejects.toThrow(
+      'only a Room admin',
+    );
+    expect(published).toHaveLength(0);
+  });
+
+  it('promotes a genesis-bound Room to a config event when toggling', async () => {
+    const published: NostrEvent[] = [];
+    stubRelay({ published, genesisRepo: true });
+    const updated = await setRoomGitHubEvents(ctx(admin), channelId, false);
+    expect(updated.source).toBe('config');
+    expect(updated.binding.key).toBe('genesis-key');
+    expect(updated.githubEventsEnabled).toBe(false);
+  });
+
+  it('refuses to toggle when the Room has no repository at all', async () => {
+    const published: NostrEvent[] = [];
+    stubRelay({ published });
+    await expect(setRoomGitHubEvents(ctx(admin), channelId, false)).rejects.toThrow(
+      /no repository linked/,
     );
   });
 });

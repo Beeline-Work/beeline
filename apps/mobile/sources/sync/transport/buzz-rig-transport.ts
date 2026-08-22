@@ -716,6 +716,17 @@ export class BuzzRigTransport implements RigTransport {
     return client.setRoomTargetBranch(channelId, targetBranch);
   }
 
+  /**
+   * Toggle whether this Room receives GitHub repository activity (stars,
+   * issues, pull requests on its bound repo). Same admin authority and
+   * carry-forward shape as the target-branch change above; absent/`undefined`
+   * reads as enabled — the shipped default is ON.
+   */
+  async roomGitHubEventsSet(channelId: string, enabled: boolean): Promise<RoomRepository> {
+    const client = await this.getClient();
+    return client.setRoomGitHubEvents(channelId, enabled);
+  }
+
   /** App repositories when enabled; the unchanged connected-Room list while dark. */
   async workspaceRoomRepositoryCandidates(communityId: string): Promise<RepoCandidate[]> {
     const capabilities = await getAuthCapabilities(this.baseUrl).catch(() => undefined);

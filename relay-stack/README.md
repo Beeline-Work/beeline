@@ -27,14 +27,15 @@ BUZZ_DEV_MCP_BIN=/path/to/darwin-arm64/buzz-dev-mcp \
 npm run bundle:beeline -- --platform darwin-arm64
 ```
 
-Each build updates `web/dl/manifest.json` and writes a checksum sidecar. Deploy
-the complete `relay-stack/` directory so nginx can serve:
+Each build updates `web/dl/manifest.json` and writes a checksum sidecar. CI
+(`.github/workflows/beeline-bundle.yml`) regenerates and commits this set on
+every push to `main`; deploy the complete `relay-stack/` directory so nginx can
+serve:
 
 - `/install` as `text/x-shellscript`
 - `/dl/beeline-<os>-<arch>.tar.gz` and its `.sha256` sidecar
-- `/dl/beeline/*` proxied to the auth service: the rolling "latest from main"
-  bundle channel published automatically by
-  `.github/workflows/beeline-bundle.yml` (see `docs/cli-bundle-channel.md`)
+- `/dl/manifest.json` — the rolling "latest from main" manifest consumed by
+  the daemon self-update flow (see `docs/cli-bundle-channel.md`)
 
 The invite landing page also expects the latest signed Android release APK at
 `web/dl/beeline-android.apk`. This stable deployment alias is not committed;

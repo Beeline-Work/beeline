@@ -2,30 +2,28 @@
 #
 # Every push to main builds the CLI bundle natively for each supported platform
 # (so scripts/verify-beeline-install.mjs really runs per platform) and publishes
-# a sha256-verifiable, commit-addressed asset set on a single rolling GitHub
-# release (tag `beeline-latest`). Publishing is idempotent per commit and flips
-# manifest.json only after all tarballs are uploaded, so a consumer can never
-# fetch a manifest that points at a missing tarball.
+# the bundle set to its existing home: relay-stack/web/dl/, served statically at
+# https://usebeeline.app/dl/ — exactly where apps/body/src/self-update-manifest.ts
+# reads it (DEFAULT_UPDATE_MANIFEST_URL). Tagged releases (`v0.2.x`) and the
+# from-source installer are untouched.
 #
 # ---------------------------------------------------------------------------
-# Manifest version/commit contract (consumed by the daemon self-update task;
-# full consumer docs live in docs/cli-bundle-channel.md):
+# Manifest contract (consumed by apps/body/src/self-update-manifest.ts):
 #
-#   schemaVersion : 2
-#   channel       : "main"
-#   version       : "<base>-main.<run_number>" — comparable across publishes;
-#                   run_number is GitHub's monotonic per-workflow counter, so a
-#                   larger numeric suffix always means a newer build.
-#   source.commit : the exact full SHA of the main commit built into the bundles
-#   source.builtAt: ISO timestamp of the build
-#   bundles[<platform>] : { file, sha256, bytes, node, verified } where file is
-#                   commit-addressed (beeline-<platform>-<shortsha>.tar.gz) and
-#                   verified is true only when the install probe ran on a native
-#                   runner for that platform.
+#   schemaVersion : 1
+#   sourceCommit  : full SHA of the main commit built into these bundles
+#                   (primary update-comparison identity)
+#   version       : comparable version (`0.0.<run_number>`; GitHub's monotonic
+#                   per-workflow counter — a larger number is always newer)
+#   bundles[<platform>] : { file, sha256, bytes, node, commit, version,
+#                           verified } where verified is true only when that
+#                   platform's install probe ran on a native runner.
 #
-# Assets are fetched without any GitHub credential through the auth service
-# pass-through: GET https://usebeeline.app/dl/beeline/manifest.json (NIP-98
-# authenticated). See apps/auth/src/bundle-delivery.ts.
+# Publish safety: filenames stay stable (beeline-<platform>.tar.gz); the whole
+# set lands as ONE git commit so consumers can never see a manifest pointing at
+# a missing tarball; same-commit re-runs no-op; the publisher's own commit
+# carries a [beeline-bundle-publish] marker and does not re-trigger this
+# workflow.
 # ---------------------------------------------------------------------------
 name: Beeline CLI bundle
 
@@ -49,6 +47,9 @@ concurrency:
 jobs:
   build:
     name: Build ${{ matrix.platform }} bundle
+    if: >-
+      github.event_name != 'push' ||
+      !contains(github.event.head_commit.message, '[beeline-bundle-publish]')
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -70,8 +71,8 @@ jobs:
       - name: Build and verify ${{ matrix.platform }} bundle
         run: npm run bundle:beeline -- --platform ${{ matrix.platform }}
         env:
-          BEELINE_BUNDLE_VERSION: 0.0.0-main.${{ github.run_number }}
           BEELINE_BUNDLE_COMMIT: ${{ github.sha }}
+          BEELINE_BUNDLE_VERSION: 0.0.${{ github.run_number }}
           BEELINE_BUNDLE_CREATED_AT: ${{ github.event.head_commit.timestamp }}
       - name: Collect build outputs
         run: |
@@ -86,19 +87,31 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish rolling latest release
+    name: Publish bundle set to relay-stack/web/dl
     needs: build
+    if: >-
+      github.event_name != 'push' ||
+      !contains(github.event.head_commit.message, '[beeline-bundle-publish]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: bundle
-      - name: Publish bundle set
-        run: node scripts/publish-beeline-release.mjs --dir bundle
+      - name: Assemble and publish the bundle set
+        run: node scripts/publish-beeline-dl.mjs --dir bundle
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_SHA: ${{ github.sha }}
-          GITHUB_RUN_NUMBER: ${{ github.run_number }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_REF: ${{ github.ref }}
+      - name: Commit the published set back to main
+        run: |
+          git config user.name "beeline-bundle-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add relay-stack/web/dl
+          if git diff --cached --quiet; then
+            echo "bundle set already current; nothing to commit"
+            exit 0
+          fi
+          git commit -m "chore(release): publish beeline CLI bundle [beeline-bundle-publish]" \
+            -m "sourceCommit: ${GITHUB_SHA}"
+          git push

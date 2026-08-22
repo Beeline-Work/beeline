@@ -204,7 +204,7 @@ async function main() {
   );
 
   await writeFile(
-    resolve(staging, 'bundle.json'),
+    resolve(staging, 'lib', 'beeline', 'bundle.json'),
     `${JSON.stringify(
       {
         schemaVersion: 1,
@@ -225,7 +225,7 @@ async function main() {
   const filename = `beeline-${platform}.tar.gz`;
   const archive = resolve(outputRoot, filename);
   await rm(archive, { force: true });
-  run('tar', ['-C', staging, '-czf', archive, 'bin', 'lib', 'bundle.json']);
+  run('tar', ['-C', staging, '-czf', archive, 'bin', 'lib']);
   const digest = await sha256(archive);
   await writeFile(`${archive}.sha256`, `${digest}  ${filename}\n`);
 

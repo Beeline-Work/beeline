@@ -32,8 +32,9 @@ semantic token shape and three sets: Obsidian Refined (default), Editorial Ink
 (warm near-black and IBM Plex Serif prose), and Ledger (dense IBM Plex Mono).
 Theme choice is device-local and app-wide. Obsidian content runs `#f0f0f3` /
 `#c9c9d1`; `#83838d` and `#6c6c76` are reserved for chrome, labels, timestamps,
-and redundant machine noise. Gold is `#c9a24b`; diff green/red remains the one
-domain-color exception.
+and redundant machine noise. Brass is `#b08a4a` in Obsidian (the Editorial
+direction's single accent; the older gold `#c9a24b` is retired); diff green/red
+remains the one domain-color exception.
 
 ## Shape
 
@@ -57,11 +58,11 @@ chat-app convention left in the product and they are gone from Rooms and Corners
 alike.
 
 A rule is not a box: one edge, no fill, no radius. It divides an *index* — the
-Room list, the member list — and nothing else. **The transcript has no
-horizontal delimiters:** no hairline between turns, none above a human's steer,
-none under a system row. A hairline left speaker rail is the exception: gold
-for the viewer, neutral for agents (Ledger uses its blue/green speaker pair).
-Vertical rhythm still does the primary separation.
+Room list, the member list — and nothing else. **Turns separate by one hairline
+divider** (`turnDivider`, `#0e0e12`) at the top of each opening turn, plus
+generous vertical padding; continuations of the same voice flow with no divider.
+The only other edges in the transcript are the quiet 2px left rules shared by
+code blocks, tool readouts, and system lines. No speaker rails anywhere.
 
 ## The ledger
 
@@ -72,43 +73,45 @@ one branch in `buzz/chat/[channelId].tsx`. If a future change needs a shape only
 one surface has, that is a real design fork and needs its own pass, not a quiet
 second implementation.
 
-**Type follows content kind.** Agent narration and human messages use the active
-theme's prose family: IBM Plex Sans in Obsidian, IBM Plex Serif in Editorial,
-and IBM Plex Mono in Ledger. Commands, handles, file paths, hashes, diffs, tool
-rows, and corner names always use IBM Plex Mono. The first sentence of a turn
-uses the semibold prose cut; remaining paragraphs use regular. Content stays
-near-white on both sides of the conversation.
+**Type follows content kind — at ONE size.** Every message renders at the same
+size (Space Grotesk 16 / lh ~1.55 in Obsidian); hierarchy on a long agent turn
+comes from weight and brightness, never size: the first line takes the medium
+weight at the primary tone, following paragraphs take regular at one step down.
+A human message is plain body text — regular weight, primary tone, same size as
+everything. It is NEVER bolded or enlarged; an earlier mockup auto-bolded user
+messages into headlines and was explicitly corrected by the captain. Commands,
+bylines, file paths, hashes, diffs, tool rows, and corner names always use IBM
+Plex Mono.
 
-**A turn is found by rail and rhythm.** Plain flowing text stays boxless. The
-viewer rail is gold and an agent rail is neutral; the dense Ledger theme uses
-its explicit human-blue and agent-green rails. There is no "YOU" caption and no
-dim-content trick. Tighter space within paragraphs and more space between turns
+**A turn is announced by its byline.** Each run opens with one mono line — a
+small square dot, NAME · role · HH:MM, uppercase and letterspaced. Brass
+(#b08a4a) dot and name mark the viewer alone: that accent is the ONLY thing
+distinguishing your own message, never weight, size, or geometry. Everyone else
+gets a steel dot. There is no "YOU" caption and no dim-content trick. Tighter space within paragraphs and more space between turns
 make the transcript scannable without weakening the words.
 
-**A voice states its handle inline, once.** A speaker's turn begins with its
-handle set *into* the first line — dim, uppercase, immediately followed by the
-words, which wrap beneath it. A log line, never a name on its own row. It repeats
-only on a speaker change: consecutive entries by the same voice inherit the
-announcement, and anything else (another person, a merge summary) ends the run
+**A voice states its name once per run, above the words.** A run's opening turn
+carries the byline; consecutive entries by the same voice inherit it, and
+anything else (another person, a merge summary) ends the run
 (`buzz/ledger-attribution.ts`).
 
 The two surfaces differ here, and only here, because they genuinely differ:
 
-- **A Corner carries no handle at all** — pure flowing prophecy. Its identity is
-  already in the top bar. This is derived from the surface, never from a lookup:
-  a Corner is one administering agent plus you, so *anything that is not your own
-  steer is that agent*. Deriving it any other way is a real bug, not a style
-  choice — `isAgent` depends on the roster, and a Corner that trusted it printed
-  the signer's bare npub as a handle and dropped the agent's own words to the
-  ordinary grey tier the moment the roster was empty or still loading.
-- **A Room holds several voices, so each keeps one whisper-dim inline handle**,
-  quiet enough to recede and legible enough to tell agents apart.
+- **A Corner carries no byline name at all** — the dot-and-stamp rhythm only. Its
+  identity is already in the top bar. This is derived from the surface, never
+  from a lookup: a Corner is one administering agent plus you, so *anything that
+  is not your own steer is that agent*. Deriving it any other way is a real bug,
+  not a style choice — `isAgent` depends on the roster, and a Corner that trusted
+  it printed the signer's bare npub as a handle and dropped the agent's own words
+  to the ordinary grey tier the moment the roster was empty or still loading.
+- **A Room holds several voices, so each run opens with its full byline** —
+  name, quiet `agent` role tag where applicable, stamp.
 
-**Metadata hangs in the right gutter as ghosted marginalia.** A fixed-width 24h
-stamp, and for a Room speaker the six discriminating characters of its npub
-(`ledgerFingerprint`), set at `ledgerGhost` in a 36px margin and absolutely
-positioned so they can never reflow the prose. Editor line numbers, verse
-numbers — there so the centre column stays clean, not there to be read.
+**Prose turns carry their stamp inside the byline.** Only the folded tool run
+keeps the wider right margin and hangs ghosted marginalia there — a fixed-width
+24h stamp, absolutely positioned so it can never reflow the prose. Editor line
+numbers, verse numbers — there so the centre column stays clean, not there to be
+read.
 
 **Machine noise collapses to one ghost line.** `⋯ <what happened> · tap to
 expand`, dimmest tier, on both surfaces. Two things feed it: a turn's tool run
@@ -122,7 +125,8 @@ blank-line-delimited block — a dump is usually written directly under the
 sentence introducing it, and a block rule would either swallow that sentence or
 miss the dump. The summary truncates; the disclosure copy beside it never does,
 because the affordance is the reason the line exists. A fenced code block marks
-itself with one hairline gutter and an indent, never a panel.
+itself with a 2px left rule in the theme's peak steel — the same vocabulary tool
+readouts use — never a panel.
 
 **A status is inscribed, never framed.** A status is not something the reader
 must find and act on, so it earns no box: one dim line in `ledgerQuiet`, at the
@@ -399,16 +403,16 @@ says "still going" and claims nothing else.
 
 ## Color exceptions, stated so no one re-litigates them
 
-1. **Gold (`#c9a24b` in Obsidian)** marks the viewer's transcript rail and the
-   moment you act on agent work: the ring around a working agent's identity mark,
-   live/online presence (the Corner's LIVE wave, a presence dot, the pinned
-   corner line, and a Room on the index with a live corner), owner role, and the
-   merge-approval action. It is never the *only* signal for any of these — each
-   is redundantly encoded by shape, glyph, or copy. Note what gold is *not*:
-   identity itself. An agent's mark carries its own signature colour, and gold
-   only rings it — a gold-filled mark would spend the one accent on something
-   that is true of every agent all the time, which is how an accent stops
-   meaning anything. Do not add a second hue; do not let a further meaning
+1. **Brass (`#b08a4a` in Obsidian)** marks the viewer's byline dot and name and
+   the moment you act on agent work: the ring around a working agent's identity
+   mark, live/online presence (the Corner's LIVE wave, a presence dot, the
+   pinned corner line, and a Room on the index with a live corner), owner role,
+   and the merge-approval action. It is never the *only* signal for any of
+   these — each is redundantly encoded by shape, glyph, or copy. Note what brass
+   is *not*: identity itself. An agent's mark carries its own signature colour,
+   and brass only rings it — a brass-filled mark would spend the one accent on
+   something that is true of every agent all the time, which is how an accent
+   stops meaning anything. Do not add a second hue; do not let a further meaning
    attach to gold without checking whether it still needs to be redundant with
    something else first.
 2. **Diff green/red** (`#3FB950`/`#F85149`, `groknight.diffAdded`/

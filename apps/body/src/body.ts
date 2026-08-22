@@ -4375,13 +4375,35 @@ export class Body {
         this.presenceGenerations.get(tlcChannelId),
       );
       promptAttempted = true;
-      const result = await this.promptAgent(session, prompt, {
+      const promptOptions = {
         channelId: tlcChannelId,
         requestId: request.eventId,
         originalRequestId: request.eventId,
         cause: 'room-message',
         replyToId: request.eventId,
-      });
+      } as const;
+      let result = await this.promptAgent(session, prompt, promptOptions);
+      // Some ACP adapters occasionally finish a turn successfully without
+      // emitting any text or tool activity. The old generic fallback claimed
+      // "No repository findings" even when the person had asked a greeting or
+      // an opinion, which made the agent look trapped behind an inspection-only
+      // template. A single read-only retry gives the adapter a chance to answer
+      // the actual message; staying silent twice is reported honestly below.
+      if (
+        !result.agentText.trim() &&
+        result.updates.length === 0 &&
+        result.toolCalls.length === 0
+      ) {
+        result = await this.promptAgent(
+          session,
+          [
+            'Your previous turn completed without a visible response.',
+            'Answer the latest human message directly and conversationally now.',
+            'Do not claim you inspected the repository or found nothing unless the request actually asked for that and your tool results support it.',
+          ].join('\n'),
+          promptOptions,
+        );
+      }
       if (turn.transitionedToCorner) {
         await this.appendRoomPermissionOutcome(tlcChannelId, turn);
         await postAgentTurnStatus(
@@ -4398,7 +4420,7 @@ export class Body {
         ? 'Editing was not allowed. I’ll stay in the read-only Room conversation.'
         : agentExchange
           ? "I don't have a grounded opening message, so I can't start the live exchange."
-          : 'No repository findings to report.';
+          : "I couldn't produce a response to that message; please try again.";
       const reply = await this.publishAgentResult(tlcChannelId, session, result, fallback, {
         replyTo: request.eventId,
         replyRootId: request.replyRootId,

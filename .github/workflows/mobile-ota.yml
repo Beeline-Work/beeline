@@ -78,6 +78,9 @@ jobs:
             echo "!!   ...or add EXPO_TOKEN to the self-hosted runner's .env and restart the runner service." >&2
             exit 1
           fi
+          # Private temp dir per run: the host /tmp carries other users'
+          # metro caches, which eas export's cache-clear cannot rmdir.
+          export TMPDIR="$(mktemp -d)"
           npx --yes eas-cli@latest update \
             --branch production \
             --environment production \

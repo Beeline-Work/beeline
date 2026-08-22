@@ -57,7 +57,7 @@ const STUB_VERSION_MARKER = /beeline-stub (\S+)/;
 /**
  * Mirror of the wrapper template in scripts/build-beeline-bundle.mjs: never
  * hand node a '..' component; trust BEELINE_LIB_DIR when a stable forwarder
- * exported it, else resolve our own release's lib with cd+pwd -P. Kept in
+ * exported it, else resolve our own release root with cd+pwd -P. Kept in
  * lockstep by the source assertions below.
  */
 function stubBeelineWrapper(): string {
@@ -68,11 +68,14 @@ function stubBeelineWrapper(): string {
     '  /*) script_path=$0 ;;',
     '  *) script_path=$(pwd -P)/$0 ;;',
     'esac',
-    'if [ -z "${BEELINE_LIB_DIR:-}" ]; then',
-    '  BEELINE_LIB_DIR=$(CDPATH= cd -- "$(dirname -- "$script_path")/.." && pwd -P)/lib/beeline',
+    'if [ -n "${BEELINE_LIB_DIR:-}" ]; then',
+    '  BEELINE_BUNDLE_ROOT=$BEELINE_LIB_DIR',
+    'else',
+    '  BEELINE_BUNDLE_ROOT=$(CDPATH= cd -- "$(dirname -- "$script_path")/.." && pwd -P)',
+    '  BEELINE_LIB_DIR=$BEELINE_BUNDLE_ROOT/lib/beeline',
     'fi',
     'export BEELINE_LIB_DIR',
-    'exec node "$BEELINE_LIB_DIR/lib/beeline/beeline-cli.mjs" "$@"',
+    'exec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-cli.mjs" "$@"',
     '',
   ].join('\n');
 }
@@ -222,6 +225,47 @@ function expectFreshShell(prefix: string, version: string): void {
     { status: run.status, stdout: run.stdout },
     `fresh-shell beeline --version failed\nstderr:\n${run.stderr}`,
   ).toMatchObject({ status: 0, stdout: expect.stringContaining(`beeline-stub ${version}`) });
+}
+
+/** Every stable prefix/bin forwarder must follow the anchor across swaps. */
+function expectInstalledHelperForwarders(prefix: string, version: string): void {
+  for (const tool of ['buzz-agent', 'buzz-dev-mcp']) {
+    const run = spawnSync(join(prefix, 'bin', tool), [], {
+      encoding: 'utf8',
+      timeout: 30_000,
+      env: { ...process.env, BEELINE_LIB_DIR: '' },
+    });
+    expect(
+      { status: run.status ?? -1, stdout: run.stdout ?? '' },
+      `fresh-shell ${tool} failed\nstderr:\n${run.stderr ?? ''}`,
+    ).toMatchObject({ status: 0, stdout: expect.stringContaining(`${tool}-stub ${version}`) });
+  }
+
+  const readonlyMcp = spawnSync(join(prefix, 'bin', 'buzz-readonly-mcp'), [], {
+    encoding: 'utf8',
+    timeout: 30_000,
+    env: { ...process.env, BEELINE_LIB_DIR: '' },
+  });
+  expect(
+    { status: readonlyMcp.status ?? -1, stderr: readonlyMcp.stderr ?? '' },
+    `fresh-shell buzz-readonly-mcp failed\nstderr:\n${readonlyMcp.stderr ?? ''}`,
+  ).toMatchObject({ status: 0 });
+
+  // Body gives buzz-agent the release wrapper path but an allowlisted env
+  // without BEELINE_LIB_DIR. That direct launch must resolve the same entry.
+  const directReadonlyMcp = spawnSync(
+    join(prefix, 'lib', 'beeline', 'bin', 'buzz-readonly-mcp'),
+    [],
+    {
+      encoding: 'utf8',
+      timeout: 30_000,
+      env: { ...process.env, BEELINE_LIB_DIR: '' },
+    },
+  );
+  expect(
+    { status: directReadonlyMcp.status ?? -1, stderr: directReadonlyMcp.stderr ?? '' },
+    `direct bundle buzz-readonly-mcp failed\nstderr:\n${directReadonlyMcp.stderr ?? ''}`,
+  ).toMatchObject({ status: 0 });
 }
 
 // ---------------------------------------------------------------------------
@@ -381,8 +425,11 @@ describe('<prefix>/lib/beeline anchor contract', () => {
     it('wrappers never hand node a .. component; forwarderScript and install.sh stay byte-identical', async () => {
       const source = await readFile(join(repoRoot, 'scripts', 'build-beeline-bundle.mjs'), 'utf8');
       expect(source).toContain("script_path=$(pwd -P)/$0"); // no pwd -P on $0 itself
-      expect(source).toContain('BEELINE_LIB_DIR=$(CDPATH= cd -- "$(dirname -- "$script_path")/.." && pwd -P)/lib/beeline');
-      expect(source).toContain('exec node "$BEELINE_LIB_DIR/lib/beeline/beeline-cli.mjs" "$@"');
+      expect(source).toContain('BEELINE_BUNDLE_ROOT=$(CDPATH= cd -- "$(dirname -- "$script_path")/.." && pwd -P)');
+      expect(source).toContain('BEELINE_LIB_DIR=$BEELINE_BUNDLE_ROOT/lib/beeline');
+      expect(source).toContain('exec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-cli.mjs" "$@"');
+      expect(source).toContain('exec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-readonly-mcp.mjs"');
+      expect(source).not.toContain('exec node "$BEELINE_LIB_DIR/beeline-readonly-mcp.mjs"');
       // The old resolution shape must not come back for the CLI wrapper.
       const wrapperBlock = source.slice(source.indexOf("resolve(staging, 'bin', 'beeline')"));
       expect(wrapperBlock).not.toContain('lib_dir=$(CDPATH= cd');
@@ -461,6 +508,7 @@ describe('self-update keeps fresh-shell invocations working across swaps', () =>
 
       // --- 2. fresh shell on release N ---------------------------------------
       expectFreshShell(prefix, '1.0.0');
+      expectInstalledHelperForwarders(prefix, '1.0.0');
 
       // --- 3. update N -> N+1 through the real swap, fresh shell --------------
       // (The acceptance shape: from a host at release N, apply an update,
@@ -470,6 +518,7 @@ describe('self-update keeps fresh-shell invocations working across swaps', () =>
       const manager1 = await stubManager(anchorLayout, remote.manifestUrl);
       await manager1.checkAndApply();
       expectFreshShell(prefix, '2.0.0');
+      expectInstalledHelperForwarders(prefix, '2.0.0');
 
       // --- 4. the DRIFTED-daemon update --------------------------------------
       // A daemon launched by a pre-contract wrapper inherits a symlink-
@@ -486,6 +535,7 @@ describe('self-update keeps fresh-shell invocations working across swaps', () =>
       await manager2.checkAndApply();
       expect(await activeReleaseId(anchorLayout)).toBe(v3.commit);
       expectFreshShell(prefix, '3.0.0');
+      expectInstalledHelperForwarders(prefix, '3.0.0');
 
       // --- 5. a pre-contract WRAPPER left at prefix/bin gets repaired --------
       // Model the captain's host: a raw pwd-P wrapper at <prefix>/bin while
@@ -507,6 +557,7 @@ describe('self-update keeps fresh-shell invocations working across swaps', () =>
       );
       await rollbackToPreviousRelease(anchorLayout, state.lastApplied.previousReleaseId);
       expectFreshShell(prefix, '2.0.0');
+      expectInstalledHelperForwarders(prefix, '2.0.0');
     } finally {
       await remote.close();
     }

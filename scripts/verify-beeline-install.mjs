@@ -185,6 +185,10 @@ async function main() {
     const acp = new AcpClient({
       agentBinary: resolve(binDir, 'buzz-agent'),
       agentEnv: {
+        // The probe must mirror a real host launch (a login shell with node on
+        // PATH): agentEnv is the ACP child's whole environment, and the
+        // buzz-readonly-mcp wrapper execs `node`.
+        PATH: process.env.PATH ?? '',
         BUZZ_AGENT_PROVIDER: 'openai',
         OPENAI_COMPAT_API_KEY: 'install-probe',
         OPENAI_COMPAT_MODEL: 'install-probe',

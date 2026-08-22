@@ -8,15 +8,15 @@ import {
 import { isMachinePreview } from '@/buzz/room-list-summary';
 import { isRetiredAgentStateNotice } from '@/buzz/retired-agent-notices';
 
-export type RoomListZone = 'needs-you' | 'working' | 'quiet';
+export type RoomListZone = 'needs-you' | 'working' | 'idle';
 
 export const ROOM_LIST_ZONE_LABELS: Record<RoomListZone, string> = {
   'needs-you': 'NEEDS YOU',
   working: 'WORKING',
-  quiet: 'QUIET',
+  idle: 'IDLE',
 };
 
-const ROOM_LIST_ZONE_ORDER: readonly RoomListZone[] = ['needs-you', 'working', 'quiet'];
+const ROOM_LIST_ZONE_ORDER: readonly RoomListZone[] = ['needs-you', 'working', 'idle'];
 const NEEDS_YOU_STATUSES: ReadonlySet<CornerStatus> = new Set([
   'needs-attention',
   'open',
@@ -31,33 +31,57 @@ const LIVE_STATUSES: ReadonlySet<CornerStatus> = new Set(['live']);
 const FINISHED_STATUSES: ReadonlySet<CornerStatus> = new Set(['merged']);
 
 /**
+ * The one loud word a needs-you Room is allowed to say. Each maps from the
+ * corner lifecycle state that put the Room in the zone, so the pill can never
+ * advertise an action the underlying state does not offer.
+ */
+const NEEDS_YOU_ACTION: Record<Exclude<CornerStatus, 'live' | 'merged' | 'archived'>, string> = {
+  open: 'APPROVE',
+  'needs-attention': 'DECIDE',
+  failed: 'BLOCKED',
+};
+
+/**
+ * One quiet micro-label on a Room row's pill strip. Every kind has its own
+ * mono style; only `status` (needs-you) may take the accent — the deck's
+ * whole point is that brass appears nowhere else.
+ */
+export type RoomRowPill =
+  | { kind: 'status'; label: string }
+  | { kind: 'model'; label: string }
+  | { kind: 'corner'; label: string }
+  | { kind: 'people'; label: string }
+  | { kind: 'unread'; label: string };
+
+/**
  * Every presentational decision one Room row makes, derived once, off the
  * data the index already holds.
  *
  * It lives outside `channels.tsx` because these are the decisions worth
- * proving: which corners the count and the dropdown agree on, when the row is
- * genuinely *alive* (the single condition on this screen that spends gold),
- * and what the activity line says when nothing readable has been said. The
- * screen renders the answer; it does not re-derive it.
+ * proving: which corners the count and the dropdown agree on, which of the
+ * deck's three states the row is in (and that the precedence between them is
+ * needs-you > working > idle), and what the activity line says when nothing
+ * readable has been said. The screen renders the answer; it does not
+ * re-derive it.
  */
 export type RoomRowPresentation = {
   /**
-   * The row's one leading mark. A Room reports corner state when it has
+   * The row's one leading mark glyph. A Room reports corner state when it has
    * reportable corner work (`cornerStatusPresentation` stays the single source
    * of those glyphs), and otherwise reports whether it has been spoken in.
+   * The supervision deck renders the mark as motion/brass/steel per zone; the
+   * tablet sidebar still reads this glyph.
    */
   glyph: string;
   /**
-   * An agent is working in this Room right now. DESIGN.md fixes gold to agent
-   * identity, live/online presence, owner role, and merge approval; a live
-   * Room is that same "an agent is alive here" meaning read at index scale, so
-   * it is the only state on this screen that takes the accent.
+   * An agent is working in this Room right now. On the deck this row's mark
+   * is MOTION (a spinner), never color.
    */
   live: boolean;
   /**
-   * A corner is waiting on a person. The most action-worthy state here, and
-   * deliberately *not* gold — it escalates on luminance (the brightest grey)
-   * so gold keeps meaning exactly one thing.
+   * A corner is waiting on a person. The most action-worthy state on the
+   * deck, and the ONLY state that spends the accent: brass dot, brass action
+   * pill, brass activity line.
    */
   attention: boolean;
   /**
@@ -73,6 +97,11 @@ export type RoomRowPresentation = {
   meaningfulAt: number;
   /** Current Room truth; only falls back to message text when no lifecycle fact exists. */
   fact: string;
+  /**
+   * The row's pill strip, in display order. Derived here — not in the screen —
+   * so the brass rule (only `kind: 'status'`) can be tested once.
+   */
+  pills: RoomRowPill[];
 };
 
 /**
@@ -84,7 +113,7 @@ export const NO_ACTIVITY_PREVIEW = 'Nothing said yet';
 
 /**
  * A Room is *alive* when an agent is working in one of its corners right now.
- * The single condition the index spends gold on, exported so the section
+ * The single condition the index spends motion on, exported so the section
  * heading's LIVE count and the rows it heads can never disagree about it.
  */
 export function isRoomAlive(corners: readonly CornerSummary[] | undefined): boolean {
@@ -101,7 +130,31 @@ export type RoomRowInput = {
   latestMessageAuthor?: string;
   updatedAt?: number;
   createdAt?: number;
+  /** Repository bound to the Room (`binding.name`), when one resolves. */
+  repoName?: string;
+  /** Model id of the Room's first configured agent, when one publishes a catalog. */
+  modelLabel?: string;
+  /** People+agents currently in the Room ("N here"). */
+  participantCount?: number;
+  /**
+   * Unread conversational messages, when the local transcript can count them;
+   * `null` means "unread but uncountable" (still shown, without a number).
+   */
+  unreadNew?: number | null;
+  /**
+   * An agent turn is streaming in this Room's own conversation right now —
+   * seen live by the index's event subscription. Corner turns arrive through
+   * `corners`; this carries the read-only conversational turn.
+   */
+  agentTurnWorking?: boolean;
 };
+
+/** Recency headings for idle rooms, oldest last. Deliberately coarse. */
+const QUIET_BUCKETS: readonly { title: string; maxAgeMs: number }[] = [
+  { title: 'TODAY', maxAgeMs: Number.POSITIVE_INFINITY },
+  { title: 'YESTERDAY', maxAgeMs: 24 * 60 * 60 * 1000 },
+  { title: 'EARLIER', maxAgeMs: Number.POSITIVE_INFINITY },
+];
 
 export type RoomListSection<T extends RoomRowInput> = {
   zone: RoomListZone;
@@ -152,6 +205,10 @@ function cornerFact(corner: CornerSummary, authorNames: ReadonlyMap<string, stri
   }
 }
 
+function needsYouAction(status: CornerStatus): string {
+  return NEEDS_YOU_ACTION[status as keyof typeof NEEDS_YOU_ACTION];
+}
+
 export function roomRowPresentation(
   room: RoomRowInput,
   authorNames: ReadonlyMap<string, string>,
@@ -162,42 +219,76 @@ export function roomRowPresentation(
   const working = newestCorner(all, LIVE_STATUSES);
   const finished = newestCorner(all, FINISHED_STATUSES);
   const currentCorner = needsYou ?? working ?? finished;
-  const zone: RoomListZone = needsYou ? 'needs-you' : working ? 'working' : 'quiet';
+  const turnWorking = Boolean(room.agentTurnWorking) && !needsYou;
+  const zone: RoomListZone = needsYou
+    ? 'needs-you'
+    : working || turnWorking
+      ? 'working'
+      : 'idle';
   // The stored preview was sanitized when it was written; this is the floor
   // for one written by an older build and still sitting in the local cache.
   const stored = room.latestMessage?.trim();
-  const preview =
-    stored && !isMachinePreview(stored) && !isRetiredAgentStateNotice(stored) ? stored : undefined;
-  const messageAt = room.latestMessageAt ?? (preview ? room.updatedAt : undefined) ?? 0;
+  const clean =
+    stored && !isMachinePreview(stored) && !isRetiredAgentStateNotice(stored)
+      ? stored
+      : undefined;
+  const messageAt = room.latestMessageAt ?? (clean ? room.updatedAt : undefined) ?? 0;
   const meaningfulAt = Math.max(
     messageAt,
     ...all.filter((corner) => MEANINGFUL_CORNER_STATUSES.has(corner.status)).map(cornerTimestamp),
     room.createdAt ?? 0,
   );
+  // The deck attributes idle previews with the same roster the lifecycle facts
+  // use ("you · let's ship it"), so a quiet row reads as history, not noise.
+  const speaker = room.latestMessageAuthor
+    ? (authorNames.get(room.latestMessageAuthor)?.trim() ?? undefined)
+    : undefined;
+  const previewFact = clean && speaker ? `${speaker} · ${clean}` : clean;
+  const pills: RoomRowPill[] = [];
+  if (needsYou) pills.push({ kind: 'status', label: needsYouAction(needsYou.status) });
+  if (room.modelLabel) pills.push({ kind: 'model', label: room.modelLabel });
+  if (corners.length > 0) {
+    pills.push({ kind: 'corner', label: `${corners.length} corner${corners.length === 1 ? '' : 's'} open` });
+  }
+  if ((room.participantCount ?? 0) > 0) {
+    pills.push({ kind: 'people', label: `${room.participantCount} here` });
+  }
+  if (room.unreadNew == null) {
+    if (room.unreadNew === null) {
+      // Unread but uncountable (no local transcript to count against).
+      pills.push({ kind: 'unread', label: 'new' });
+    }
+  } else if (room.unreadNew > 0) {
+    pills.push({ kind: 'unread', label: `${room.unreadNew} new` });
+  }
   return {
     glyph: currentCorner
       ? cornerStatusPresentation(currentCorner.status).glyph
-      : preview
+      : clean
         ? '›'
         : '·',
-    live: Boolean(working),
+    live: Boolean(working) || turnWorking,
     attention: Boolean(needsYou),
     corners,
     zone,
     meaningfulAt,
-    fact: currentCorner ? cornerFact(currentCorner, authorNames) : (preview ?? NO_ACTIVITY_PREVIEW),
+    fact: currentCorner
+      ? cornerFact(currentCorner, authorNames)
+      : (previewFact ?? NO_ACTIVITY_PREVIEW),
+    pills,
   };
 }
 
 /**
- * Build the three non-empty index zones and sort every zone by its newest
- * meaningful event. This is deliberately the only Room ordering function the
- * screen consumes: lifecycle state, fact text, age, and placement all come
- * from the same projection.
+ * Build the deck's sections: Needs you first, then Working, then idle rooms
+ * grouped by recency (Today / Yesterday / Earlier). This is deliberately the
+ * only Room ordering function the screen consumes: lifecycle state, fact text,
+ * age, and placement all come from the same projection.
  */
 export function roomListSections<T extends RoomRowInput>(
   rooms: readonly T[],
   authorNames: ReadonlyMap<string, string>,
+  options: { now?: number } = {},
 ): RoomListSection<T>[] {
   const visibleRooms = rooms.filter((item) => !item.archived);
   const titleCounts = new Map<string, number>();
@@ -216,16 +307,40 @@ export function roomListSections<T extends RoomRowInput>(
     return {
       item: displayItem,
       row,
+      bucket: row.zone === 'idle' ? quietBucket(row.meaningfulAt, options.now ?? Date.now()) : -1,
     };
   });
-  return ROOM_LIST_ZONE_ORDER.flatMap((zone) => {
-    const data = projected
-      .filter((entry) => entry.row.zone === zone)
-      .sort(
-        (a, b) =>
-          b.row.meaningfulAt - a.row.meaningfulAt ||
-          (a.item.title ?? a.item.id ?? '').localeCompare(b.item.title ?? b.item.id ?? ''),
-      );
-    return data.length > 0 ? [{ zone, title: ROOM_LIST_ZONE_LABELS[zone], data }] : [];
-  });
+  const byRecency = (
+    a: { item: T; row: RoomRowPresentation },
+    b: { item: T; row: RoomRowPresentation },
+  ) =>
+    b.row.meaningfulAt - a.row.meaningfulAt ||
+    (a.item.title ?? a.item.id ?? '').localeCompare(b.item.title ?? b.item.id ?? '');
+  const sections: RoomListSection<T>[] = [];
+  for (const zone of ROOM_LIST_ZONE_ORDER) {
+    if (zone !== 'idle') {
+      const data = projected.filter((entry) => entry.row.zone === zone).sort(byRecency);
+      if (data.length > 0) sections.push({ zone, title: ROOM_LIST_ZONE_LABELS[zone], data });
+      continue;
+    }
+    for (let bucket = 0; bucket < QUIET_BUCKETS.length; bucket += 1) {
+      const data = projected
+        .filter((entry) => entry.row.zone === 'idle' && entry.bucket === bucket)
+        .sort(byRecency);
+      if (data.length > 0) {
+        sections.push({ zone, title: QUIET_BUCKETS[bucket].title, data });
+      }
+    }
+  }
+  return sections;
+}
+
+/** Which recency heading an idle room belongs under. `-1` = not idle. */
+function quietBucket(meaningfulAtSeconds: number, nowMs: number): number {
+  const startOfToday = new Date(nowMs);
+  startOfToday.setHours(0, 0, 0, 0);
+  const at = meaningfulAtSeconds * 1000;
+  if (at >= startOfToday.getTime()) return 0;
+  if (at >= startOfToday.getTime() - QUIET_BUCKETS[1].maxAgeMs) return 1;
+  return 2;
 }

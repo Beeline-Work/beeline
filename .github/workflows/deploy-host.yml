@@ -1,0 +1,51 @@
+# Deploy the production relay host on merge ("latest from main" deploys).
+#
+# Every push to main lands BOTH the code and the live host: the self-hosted
+# runner (label: beeline-prod-host) executes ON the production host — the host
+# is not reachable from the internet (Cloudflare tunnel only, no inbound
+# ports), so a GitHub-hosted runner could never reach it and no server
+# credential is stored in GitHub. The job runs scripts/deploy-relay-host.sh,
+# which swaps in the WHOLE relay-stack/web/ tree and rebuilds/recreates the
+# auth container, then verifies the PUBLIC URL before declaring success.
+#
+# This workflow intentionally does NOT skip the beeline-bundle-bot commits
+# made by beeline-bundle.yml: those commits are how freshly built bundles
+# reach main, so they must deploy too. A normal merge therefore triggers two
+# serialized runs (the merge itself, then the bundle publish) and the second
+# one carries the fresh bundles; every run is idempotent.
+#
+# TRUST NOTE: a self-hosted runner means anyone who can merge to this repo
+# can execute code on the production host. Today that is the captain alone —
+# agents cannot merge — so the exposure is bounded, but it is a stated,
+# accepted trade, not an unremarked one.
+name: Deploy relay host
+
+on:
+  push:
+    branches:
+      - main
+      # Temporary pre-merge verification trigger, scoped to this feature
+      # branch so the pipeline can be proved end-to-end before landing
+      # (same precedent as beeline-bundle.yml). Harmless to keep: it fires
+      # only for this exact branch name.
+      - fm/beeline-host-deploy-on-merge
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-relay-host
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy web + auth to production host
+    # Only the dedicated runner on the production host may pick this up;
+    # a GitHub-hosted runner has no route to the target and must never try.
+    runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy whole web tree + auth image, verify public URL
+        run: ./scripts/deploy-relay-host.sh

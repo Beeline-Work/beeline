@@ -287,8 +287,11 @@ export {
 } from './git-url.js';
 
 export {
+  AGENT_NAME_MAX_LENGTH,
+  deriveAgentDisplayName,
   fallbackAgentName,
   fallbackPersonName,
+  isReasonableAgentName,
   isSingleWordAgentName,
   normalizePersonName,
   normalizePersonHandle,

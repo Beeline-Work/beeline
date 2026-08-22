@@ -19,7 +19,11 @@ import {
 } from './kinds.js';
 import { tagValue, tagValues } from './parse.js';
 import { query } from './query.js';
-import { fallbackAgentName, isSingleWordAgentName, resolveAgentName } from './display-name.js';
+import {
+  deriveAgentDisplayName,
+  fallbackAgentName,
+  isReasonableAgentName,
+} from './display-name.js';
 import { getDirectMessage } from './direct-message.js';
 import type {
   Agent,
@@ -170,7 +174,10 @@ async function createAgentRecord(
   }
 
   const agentId = options.agentId ?? newUuid();
-  const displayName = resolveAgentName(
+  // Deliberate naming, not silent masking: an authored name passes through,
+  // the daemon's generic `buzzy-agent` marker becomes "Buzzy", and only a
+  // genuinely absent name takes the deterministic pubkey-derived fallback.
+  const displayName = deriveAgentDisplayName(
     options.displayName ?? ctx.identity.name,
     ctx.identity.publicKey,
   );
@@ -377,8 +384,8 @@ export async function setAgentSoul(
   if (!name || !soul || !avatarSeed) {
     throw new Error('agent soul fields must not be empty');
   }
-  if (!isSingleWordAgentName(name)) {
-    throw new Error('agent soul name must be one word');
+  if (!isReasonableAgentName(name)) {
+    throw new Error('agent soul name must be a short spoken name');
   }
   const avatar = input.avatar?.trim().slice(0, 2048);
   if (avatar && !/^https?:\/\//i.test(avatar)) {

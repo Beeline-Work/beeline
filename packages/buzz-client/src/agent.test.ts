@@ -121,6 +121,67 @@ describe('agent entity model', () => {
     expect(parseAgent({ ...event, content: `${event.content}tampered` })).toBeNull();
   });
 
+  it('registers a compound daemon base name as "Buzzy", never a masked placeholder', async () => {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          return jsonResponse({ accepted: true });
+        }
+        const kind = (filterFrom(init).kinds as number[])[0];
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([communityCreate()]);
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          return jsonResponse([
+            signed(owner, KIND_CHANNEL_MEMBERS, [
+              ['d', communityId],
+              ['p', owner.publicKey],
+              ['p', daemonIdentity.publicKey],
+            ]),
+          ]);
+        }
+        if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([adminState()]);
+        return jsonResponse([]);
+      }),
+    );
+
+    // The daemon mints its identities with the generic `buzzy-agent` marker.
+    const daemonIdentity = createAgentIdentity('buzzy-agent');
+    const agent = await createAgent(ctx(daemonIdentity), communityId);
+
+    // Before this fix the hyphen failed the single-word rule and registration
+    // silently swapped in a pubkey-derived first name (e.g. "Pia").
+    expect(agent.displayName).toBe('Buzzy');
+    expect(published[0]!.tags).toContainEqual(['name', 'Buzzy']);
+  });
+
+  it('preserves an authored multi-word display name end to end', async () => {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          return jsonResponse({ accepted: true });
+        }
+        const kind = (filterFrom(init).kinds as number[])[0];
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([communityCreate()]);
+        if (kind === KIND_CHANNEL_MEMBERS) return jsonResponse([memberState()]);
+        if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([adminState()]);
+        return jsonResponse([]);
+      }),
+    );
+
+    const agent = await createAgent(ctx(), communityId, {
+      displayName: 'Quiet Keeper',
+    });
+
+    expect(agent.displayName).toBe('Quiet Keeper');
+    expect(published[0]!.tags).toContainEqual(['name', 'Quiet Keeper']);
+    expect(published[0]!.content).toContain('"displayName":"Quiet Keeper"');
+  });
+
   it('keeps the agent security marker latched even when record metadata is malformed', () => {
     const marker = signed(agentIdentity, KIND_STREAM_MESSAGE, [['t', TAG_AGENT]], '{}');
     expect(hasAgentIdentityMarker(marker)).toBe(true);

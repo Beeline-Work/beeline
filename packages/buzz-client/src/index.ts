@@ -298,6 +298,14 @@ export {
 export { summarizeGitFailure } from './git-failure.js';
 
 export {
+  BEELINE_SLASH_COMMANDS,
+  beelineSlashCommandList,
+  isBeelineSlashCommand,
+  matchSlashCommand,
+} from './slash-command.js';
+export type { BeelineSlashCommand, SlashCommandInput } from './slash-command.js';
+
+export {
   parsePersonProfile,
   parseGlobalPersonProfile,
   KIND_NOSTR_PROFILE,

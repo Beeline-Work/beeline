@@ -1381,6 +1381,9 @@ export function postAgentStallNotice(
 /** Marker tag on the quiet "your steer is queued" acknowledgement below. */
 export const STEER_QUEUED_TAG = 'steer-queued';
 
+/** Marker tag on the "that slash command is not a Beeline command" notice. */
+export const SLASH_COMMAND_NOTICE_TAG = 'slash-command-notice';
+
 /**
  * Immediate, lightweight acknowledgement that a message which arrived while a
  * turn was already running has been RECEIVED and will be delivered as the next
@@ -1404,6 +1407,28 @@ export function postSteerQueuedNotice(
     'Got it — queued. I’ll pick this up as soon as the current step finishes.',
     [['t', STEER_QUEUED_TAG], ['status', 'queued'], ...(requestId ? [['request', requestId]] : [])],
   );
+}
+
+/**
+ * Visible marker that a message began with a slash command Beeline does not
+ * run. Published as a `body-control` status event (like the queued-steer ack
+ * above) so it renders as a system line and never joins the agent's voice:
+ * it is a statement about the human's input, not agent speech.
+ *
+ * The marked message is still delivered to the agent as an ordinary request —
+ * this notice exists so nobody can mistake a harness's own `/verb` vocabulary
+ * for one of Beeline's composer commands, not to block the text.
+ */
+export function postSlashCommandNotice(
+  channelId: string,
+  owner: Identity,
+  message: string,
+  command: string,
+): Promise<void> {
+  return postControlMessage(channelId, owner, message, [
+    ['t', SLASH_COMMAND_NOTICE_TAG],
+    ['command', command],
+  ]);
 }
 
 /** Publish one signed, replaceable Room-scoped daemon presence marker. */

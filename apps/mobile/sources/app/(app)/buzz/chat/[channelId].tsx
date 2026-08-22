@@ -3395,6 +3395,7 @@ export default function BuzzChat() {
             {slashMenuVisible && (
               <SlashVerbPicker
                 verbs={slashVerbs}
+                query={currentSlashQuery ?? ''}
                 highlightedIndex={highlightedSlashVerbIndex}
                 onDismiss={dismissSlashMenu}
                 onSelect={runSlashVerb}
@@ -3603,6 +3604,10 @@ export default function BuzzChat() {
                       event.preventDefault();
                       const selected = slashVerbs[highlightedSlashVerbIndex];
                       if (selected) runSlashVerb(selected.id);
+                      // No Beeline verb matches the token: Enter sends it as
+                      // an ordinary message instead of dying as a dead end.
+                      // The daemon visibly marks such text on the other side.
+                      else handleSend();
                     } else if ((action === 'next' || action === 'previous') && slashVerbs.length) {
                       event.preventDefault();
                       const direction = action === 'next' ? 1 : -1;
@@ -3653,7 +3658,7 @@ export default function BuzzChat() {
                 style={[
                   styles.sendButton,
                   (slashMenuVisible
-                    ? slashVerbs.length === 0
+                    ? !inputText.trim()
                     : (!inputText.trim() && !pendingAttachment) || sending) &&
                     styles.sendButtonDisabled,
                 ]}
@@ -3662,12 +3667,16 @@ export default function BuzzChat() {
                     ? () => {
                         const selected = slashVerbs[highlightedSlashVerbIndex];
                         if (selected) runSlashVerb(selected.id);
+                        // An unrecognized slash token sends as an ordinary
+                        // message — visibly marked by the daemon — instead of
+                        // a silent dead send button.
+                        else handleSend();
                       }
                     : handleSend
                 }
                 disabled={
                   slashMenuVisible
-                    ? slashVerbs.length === 0
+                    ? !inputText.trim()
                     : (!inputText.trim() && !pendingAttachment) || sending
                 }
                 testID="chat-send"

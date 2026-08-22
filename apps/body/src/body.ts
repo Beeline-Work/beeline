@@ -34,6 +34,8 @@ import {
   postAgentTurnStatus,
   postAgentStallNotice,
   postSteerQueuedNotice,
+  postSlashCommandNotice,
+  SLASH_COMMAND_NOTICE_TAG,
   postCornerSessionStatus,
   postControlMessage,
   replyRootIdForEvent,
@@ -104,6 +106,9 @@ import {
   type AttachmentReference,
   type AgentModelConfigOption,
   AGENT_PRESENCE_STALE_MS,
+  matchSlashCommand,
+  isBeelineSlashCommand,
+  beelineSlashCommandList,
 } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
 import type { BodyConfig, SessionMode } from './config.js';
@@ -1589,6 +1594,27 @@ export function createAgentSubchannel(
     ...(communityId ? { communityId } : {}),
     ...(task ? { extraTags: [['task', task]] } : {}),
   });
+}
+
+/** Quiet window between repeat slash-command notices on one channel. */
+const SLASH_NOTICE_WINDOW_MS = 5 * 60_000;
+
+/**
+ * Rate-limits the "not a Beeline command" notice per (channel, command),
+ * shaped like `AccessRefusalLimiter`. The marked message is always delivered;
+ * only the marker is throttled, so a scripted loop of unknown verbs cannot
+ * turn into a relay write storm.
+ */
+class SlashCommandNoticeLimiter {
+  private readonly lastEmitted = new Map<string, number>();
+
+  shouldEmit(channelId: string, command: string, now: number = Date.now()): boolean {
+    const key = `${channelId}:${command.toLowerCase()}`;
+    const last = this.lastEmitted.get(key);
+    if (last !== undefined && now - last < SLASH_NOTICE_WINDOW_MS) return false;
+    this.lastEmitted.set(key, now);
+    return true;
+  }
 }
 
 /**
@@ -4167,6 +4193,38 @@ export class Body {
     return opened;
   }
 
+  /**
+   * One visible marker per (channel, command) per quiet window, so a person
+   * retrying a mistyped command is re-told once, not once per send. In-memory
+   * by design: this is conversational etiquette, not durable state.
+   */
+  private slashNoticeLimiter = new SlashCommandNoticeLimiter();
+
+  /**
+   * Post the visible "this is not one of Beeline's commands" notice when an
+   * addressed message begins with a slash-command-shaped token. Never blocks
+   * the message: prose that happens to start with a slash (a path, a URL
+   * fragment) keeps flowing as prose, and a genuine harness command still
+   * reaches the agent — visibly marked as passed through.
+   */
+  private async markSlashCommandVocabulary(
+    tlcChannelId: string,
+    content: string,
+  ): Promise<void> {
+    const matched = matchSlashCommand(content);
+    if (!matched) return;
+    if (!this.slashNoticeLimiter.shouldEmit(tlcChannelId, matched.command)) return;
+    const message = isBeelineSlashCommand(matched.command)
+      ? `/${matched.command} is one of Beeline's composer commands — run it from the slash menu above the message box, not as chat text. Your message was passed to the agent as an ordinary request.`
+      : `/${matched.command} is not a Beeline command. Beeline understands: ${beelineSlashCommandList()} — sent from the composer's slash menu. Your message was still passed to the agent as an ordinary request.`;
+    try {
+      await postSlashCommandNotice(tlcChannelId, this.agentIdentity, message, matched.command);
+    } catch (error) {
+      // The notice is additive marking; losing it must never lose the turn.
+      console.error('[body] failed to publish slash-command notice:', error);
+    }
+  }
+
   /** Run one addressed turn through the provisioned read-only Room session. */
   private async replyInRoom(
     tlcChannelId: string,
@@ -4177,6 +4235,12 @@ export class Body {
     agentExchange?: AgentExchangeAuthorization,
     cornerWorkIntent = explicitCornerWork,
   ): Promise<boolean> {
+    // Mark a slash-command-shaped message BEFORE anything else consumes it.
+    // Beeline's composer commands and a harness's own `/verb` vocabulary share
+    // one input box; an unrecognized verb used to pass through silently and be
+    // executed with the harness's meaning. The text still reaches the agent —
+    // this notice only makes whose command it is impossible to miss.
+    await this.markSlashCommandVocabulary(tlcChannelId, request.content);
     // A release ask is answered by summarizing and offering, never by editing:
     // it is read-only for the same reason an information request is, and the
     // corner it may lead to is opened by a person's confirmation, not here.
@@ -6809,6 +6873,10 @@ export class Body {
         // Forward the member's message into the active run when possible. If
         // the original task ended between polling and delivery, wait for its
         // cleanup and preserve this message as the next ordered prompt.
+        // A slash-command-shaped member message is marked visibly here too:
+        // corners share the composer, so the harness/Beeline vocabulary
+        // collision exists in both surfaces.
+        await this.markSlashCommandVocabulary(subchannelId, evt.content);
         const prompt = attachmentPrompt(evt.pubkey, evt.content, attachments);
         // A genuine human turn for this corner — from here on, any "still
         // working" notice about the turn currently in flight would be

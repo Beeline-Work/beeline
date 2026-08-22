@@ -6,11 +6,14 @@ import { Typography } from '@/constants/Typography';
 
 export function SlashVerbPicker({
   verbs,
+  query,
   highlightedIndex,
   onDismiss,
   onSelect,
 }: {
   verbs: readonly BuiltInSlashVerb[];
+  /** The slash token currently typed, without the leading `/` ('' when open on just '/'). */
+  query: string;
   highlightedIndex: number;
   onDismiss: () => void;
   onSelect: (id: BuiltInSlashVerbId) => void;
@@ -64,7 +67,19 @@ export function SlashVerbPicker({
           })}
         </ScrollView>
       ) : (
-        <Text style={styles.empty}>NO MATCHING COMMANDS</Text>
+        // An unrecognized verb is a NAMED dead end now: it used to just say
+        // NO MATCHING COMMANDS with send disabled, so nothing explained that
+        // `/loop` was never one of Beeline's words — and sending anyway is
+        // allowed, visibly marked by the daemon as passed through.
+        <View style={styles.emptyWrap} testID="slash-verb-no-match">
+          <Text style={styles.empty}>
+            {query ? `/${query} IS NOT A BEELINE COMMAND` : 'NO MATCHING COMMANDS'}
+          </Text>
+          <Text style={styles.emptyHint}>
+            Beeline runs its commands from this menu. Send your text anyway to pass it to the agent
+            as an ordinary message.
+          </Text>
+        </View>
       )}
     </View>
   );
@@ -147,9 +162,17 @@ const styles = StyleSheet.create((theme) => {
   empty: {
     ...Typography.mono(),
     paddingHorizontal: 12,
-    paddingVertical: 18,
+    paddingTop: 14,
     color: groknight.textMuted,
     fontSize: 10,
+  },
+  emptyWrap: { paddingHorizontal: 12, paddingVertical: 12 },
+  emptyHint: {
+    ...Typography.default(),
+    color: groknight.textMuted,
+    fontSize: 10,
+    lineHeight: 14,
+    marginTop: 4,
   },
   });
 });

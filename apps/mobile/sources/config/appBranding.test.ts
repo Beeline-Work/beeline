@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
@@ -51,6 +52,26 @@ function loadNativeVersion(): string {
     { cwd: mobileRoot, encoding: 'utf8', env: process.env },
   );
   return output;
+}
+
+function loadGoogleServicesFile(appEnv?: string): string | undefined {
+  const mobileRoot = fileURLToPath(new URL('../..', import.meta.url));
+  const output = execFileSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      '--input-type=module',
+      '--eval',
+      "import configModule from './app.config.js'; const config = configModule.default ?? configModule; process.stdout.write(config.expo.android.googleServicesFile ?? '');",
+    ],
+    {
+      cwd: mobileRoot,
+      encoding: 'utf8',
+      env: { ...process.env, ...(appEnv ? { APP_ENV: appEnv } : {}) },
+    },
+  );
+  return output || undefined;
 }
 
 type EasBuildProfile = {
@@ -210,7 +231,6 @@ describe('Beeline display branding', () => {
     expect(appConfig).toContain('const updatesChannel = "production"');
     expect(appConfig).toContain('"expo-channel-name": updatesChannel');
     expect(appConfig).toContain('runtimeVersion: "21"');
-    expect(appConfig).not.toContain('googleServicesFile');
   });
 
   it('packages the production app as an APK without creating another app variant', () => {
@@ -240,10 +260,30 @@ describe('Beeline display branding', () => {
     );
   });
 
-  it('does not ship the package-mismatched Firebase client configuration', () => {
-    const googleServicesPath = fileURLToPath(new URL('../../google-services.json', import.meta.url));
+  it('ships the registered Beeline Firebase client for every build path', () => {
+    const mobileRoot = fileURLToPath(new URL('../..', import.meta.url));
+    const configuredPaths = [undefined, 'development', 'preview', 'production'].map(
+      loadGoogleServicesFile,
+    );
 
-    expect(existsSync(googleServicesPath)).toBe(false);
-    expect(appConfig).not.toContain('googleServicesFile');
+    expect(new Set(configuredPaths)).toEqual(new Set(['./google-services.json']));
+
+    const googleServices = JSON.parse(
+      readFileSync(resolve(mobileRoot, configuredPaths[0]!), 'utf8'),
+    ) as {
+      client: Array<{
+        client_info: {
+          mobilesdk_app_id: string;
+          android_client_info: { package_name: string };
+        };
+      }>;
+    };
+    const beelineClient = googleServices.client.find(
+      (client) => client.client_info.android_client_info.package_name === 'app.usebeeline.mobile',
+    );
+
+    expect(beelineClient?.client_info.mobilesdk_app_id).toBe(
+      '1:31955293663:android:a08dd03afc4ea13503206a',
+    );
   });
 });

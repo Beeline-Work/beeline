@@ -23,6 +23,19 @@
 /** The exact marker token a Room agent writes to request an edit corner. */
 export const CORNER_REQUEST_MARKER = 'CORNER_REQUEST:';
 
+/**
+ * Harness-independent control exposed to every repository-backed Room agent.
+ * pi-acp only emits text, so the host recognizes this final reply line instead
+ * of relying on ACP's optional permission callback.
+ */
+export const CORNER_REQUEST_INSTRUCTIONS = [
+  'When repository inspection reveals a concrete edit worth making, you may ask the humans for an edit corner.',
+  'Briefly explain the proposed change, then end your reply with exactly: CORNER_REQUEST: <one-sentence task objective>',
+  'That final line requests approval only. The host removes it from chat and shows humans an allow/deny decision.',
+  'Never describe the corner as open, created, or started unless a later host message confirms successful creation.',
+  'Do not emit CORNER_REQUEST for information-only follow-up that does not need repository edits.',
+];
+
 /** Upper bound on a requested task; anything longer is truncated. */
 export const CORNER_REQUEST_TASK_MAX_CHARS = 500;
 
@@ -43,22 +56,18 @@ function markerRegex(): RegExp {
   return /^CORNER_REQUEST:[ \t]*(.*)$/gm;
 }
 
-function lastMarkerMatch(text: string): RegExpExecArray | undefined {
-  const regex = markerRegex();
-  let last: RegExpExecArray | undefined;
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(text)) !== null) last = match;
-  return last;
+function firstMarkerMatch(text: string): RegExpExecArray | undefined {
+  return markerRegex().exec(text) ?? undefined;
 }
 
 /**
  * Pull the corner request out of a completed agent reply. Everything from the
- * LAST marker line onward is treated as request payload rather than prose —
+ * FIRST marker line onward is treated as request payload rather than prose —
  * the prompt asks for the marker as the final line, so trailing text is part
  * of the request, never something a reader should see.
  */
 export function extractCornerRequest(text: string): CornerRequestExtraction {
-  const match = lastMarkerMatch(text);
+  const match = firstMarkerMatch(text);
   if (!match) return { visibleText: text };
   const visibleText = text.slice(0, match.index).trimEnd();
   const task = (match[1] ?? '').trim().slice(0, CORNER_REQUEST_TASK_MAX_CHARS);
@@ -84,55 +93,33 @@ export interface CornerRequestFilter {
  * committer) must never see the marker or anything after it.
  */
 export function createCornerRequestFilter(): CornerRequestFilter {
-  let markerSeen = false;
-  let task: string | undefined;
-
-  const apply = (fullText: string): CornerRequestExtraction => {
-    if (markerSeen) {
-      // The marker position is fixed once seen; recompute the cut so the
-      // returned prefix stays stable even though callers may pass the same
-      // growing text again.
-      const match = lastMarkerMatch(fullText);
-      const cutAt = match ? match.index : fullText.length;
-      return { visibleText: fullText.slice(0, cutAt).trimEnd(), ...(task ? { request: { task } } : {}) };
-    }
-    return extractCornerRequest(fullText);
-  };
+  let markerIndex: number | undefined;
 
   return {
     onChunk(fullText: string): string {
-      const extraction = apply(fullText);
-      if (extraction.request) {
-        markerSeen = true;
-        task = extraction.request.task;
-        return extraction.visibleText;
+      // Remember the FIRST complete marker as soon as its colon lands, even
+      // before the task text does. Otherwise a token boundary immediately
+      // after `CORNER_REQUEST:` would flash the control line in the draft.
+      markerIndex ??= firstMarkerMatch(fullText)?.index;
+      if (markerIndex !== undefined) {
+        return fullText.slice(0, markerIndex).trimEnd();
       }
-      if (markerSeen) return extraction.visibleText;
-      // A bare marker line with no task yet is not a request; leave the text
-      // alone rather than eating a line the model may still be writing.
-      if (!lastMarkerMatch(fullText)) {
-        // Withhold a trailing partial marker ("…\nCORNER_REQU") so a half-
-        // written marker never flashes in the live draft. Only worth doing
-        // while the incomplete tail could still become the marker.
-        const lastNewline = fullText.lastIndexOf('\n');
-        const tail = fullText.slice(lastNewline + 1);
-        if (
-          tail.length > 0 &&
-          tail.length < CORNER_REQUEST_MARKER.length &&
-          CORNER_REQUEST_MARKER.startsWith(tail)
-        ) {
-          return fullText.slice(0, lastNewline + 1);
-        }
+      // Withhold a trailing partial marker ("…\nCORNER_REQU") so a half-
+      // written marker never flashes in the live draft. Only worth doing
+      // while the incomplete tail could still become the marker.
+      const lastNewline = fullText.lastIndexOf('\n');
+      const tail = fullText.slice(lastNewline + 1);
+      if (
+        tail.length > 0 &&
+        tail.length < CORNER_REQUEST_MARKER.length &&
+        CORNER_REQUEST_MARKER.startsWith(tail)
+      ) {
+        return fullText.slice(0, lastNewline + 1);
       }
       return fullText;
     },
     finalize(fullText: string): CornerRequestExtraction {
-      const extraction = extractCornerRequest(fullText);
-      if (extraction.request) {
-        markerSeen = true;
-        task = extraction.request.task;
-      }
-      return extraction;
+      return extractCornerRequest(fullText);
     },
   };
 }

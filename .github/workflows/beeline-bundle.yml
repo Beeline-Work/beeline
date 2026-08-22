@@ -1,0 +1,104 @@
+# Beeline CLI bundle publishing ("latest from main" channel).
+#
+# Every push to main builds the CLI bundle natively for each supported platform
+# (so scripts/verify-beeline-install.mjs really runs per platform) and publishes
+# a sha256-verifiable, commit-addressed asset set on a single rolling GitHub
+# release (tag `beeline-latest`). Publishing is idempotent per commit and flips
+# manifest.json only after all tarballs are uploaded, so a consumer can never
+# fetch a manifest that points at a missing tarball.
+#
+# ---------------------------------------------------------------------------
+# Manifest version/commit contract (consumed by the daemon self-update task;
+# full consumer docs live in docs/cli-bundle-channel.md):
+#
+#   schemaVersion : 2
+#   channel       : "main"
+#   version       : "<base>-main.<run_number>" — comparable across publishes;
+#                   run_number is GitHub's monotonic per-workflow counter, so a
+#                   larger numeric suffix always means a newer build.
+#   source.commit : the exact full SHA of the main commit built into the bundles
+#   source.builtAt: ISO timestamp of the build
+#   bundles[<platform>] : { file, sha256, bytes, node, verified } where file is
+#                   commit-addressed (beeline-<platform>-<shortsha>.tar.gz) and
+#                   verified is true only when the install probe ran on a native
+#                   runner for that platform.
+#
+# Assets are fetched without any GitHub credential through the auth service
+# pass-through: GET https://usebeeline.app/dl/beeline/manifest.json (NIP-98
+# authenticated). See apps/auth/src/bundle-delivery.ts.
+# ---------------------------------------------------------------------------
+name: Beeline CLI bundle
+
+on:
+  push:
+    branches:
+      - main
+      # Temporary pre-merge verification trigger, scoped to this feature branch
+      # so the pipeline could be proved end-to-end before landing. Harmless to
+      # keep: it fires only for this exact branch name.
+      - fm/beeline-cli-publish
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: beeline-bundle-publish
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }} bundle
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            runner: ubuntu-latest
+          - platform: darwin-arm64
+            runner: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: npm ci
+      - name: Build and verify ${{ matrix.platform }} bundle
+        run: npm run bundle:beeline -- --platform ${{ matrix.platform }}
+        env:
+          BEELINE_BUNDLE_VERSION: 0.0.0-main.${{ github.run_number }}
+          BEELINE_BUNDLE_COMMIT: ${{ github.sha }}
+          BEELINE_BUNDLE_CREATED_AT: ${{ github.event.head_commit.timestamp }}
+      - name: Collect build outputs
+        run: |
+          mkdir -p out/${{ matrix.platform }}
+          cp relay-stack/web/dl/beeline-${{ matrix.platform }}.tar.gz out/${{ matrix.platform }}/
+          cp relay-stack/web/dl/beeline-${{ matrix.platform }}.tar.gz.sha256 out/${{ matrix.platform }}/
+          cp relay-stack/web/dl/manifest.json out/${{ matrix.platform }}/manifest.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}
+          path: out/${{ matrix.platform }}/
+          if-no-files-found: error
+
+  publish:
+    name: Publish rolling latest release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: bundle
+      - name: Publish bundle set
+        run: node scripts/publish-beeline-release.mjs --dir bundle
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_REF: ${{ github.ref }}

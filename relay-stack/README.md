@@ -32,6 +32,9 @@ the complete `relay-stack/` directory so nginx can serve:
 
 - `/install` as `text/x-shellscript`
 - `/dl/beeline-<os>-<arch>.tar.gz` and its `.sha256` sidecar
+- `/dl/beeline/*` proxied to the auth service: the rolling "latest from main"
+  bundle channel published automatically by
+  `.github/workflows/beeline-bundle.yml` (see `docs/cli-bundle-channel.md`)
 
 The invite landing page also expects the latest signed Android release APK at
 `web/dl/beeline-android.apk`. This stable deployment alias is not committed;

@@ -139,20 +139,24 @@ sudo -n /usr/bin/docker compose -p buzz-router-prod \
 # ---------------------------------------------------------------------------
 # 5. PUBLIC verification — the only proof that counts.
 # ---------------------------------------------------------------------------
+# Public bytes are compared against the CHECKOUT, never against the staged
+# copy — proving public==stage would bless any staging-step corruption (the
+# exact failure class that produced the stale hand-deployed install.sh).
 pub_sha() { curl -fsSL --max-time 120 "$1" | sha256sum | cut -d' ' -f1; }
+repo_sha() { sha256sum "$REPO_WEB/$1" | cut -d' ' -f1; }
 
 verify_public() {
   local failures=0
 
-  # install.sh byte-for-byte.
-  if [ "$(pub_sha "$PUBLIC_BASE/install")" != "$(sha256sum "$STAGE/web/install.sh" | cut -d' ' -f1)" ]; then
-    echo "!! public /install does not serve the deployed install.sh" >&2; failures=$((failures+1))
+  # install.sh byte-for-byte against the checkout.
+  if [ "$(pub_sha "$PUBLIC_BASE/install")" != "$(repo_sha install.sh)" ]; then
+    echo "!! public /install does not serve the merged install.sh" >&2; failures=$((failures+1))
   else log "public /install verified"; fi
 
-  # manifest byte-for-byte, plus both advertised bundles present at their
-  # real public URLs and matching BOTH their sidecar and the manifest entry.
-  if [ "$(pub_sha "$PUBLIC_BASE/dl/manifest.json")" != "$(sha256sum "$STAGE/web/dl/manifest.json" | cut -d' ' -f1)" ]; then
-    echo "!! public /dl/manifest.json does not serve the deployed manifest" >&2; failures=$((failures+1))
+  # manifest byte-for-byte, plus every advertised bundle present at its real
+  # public URL and matching BOTH its .sha256 sidecar and the manifest entry.
+  if [ "$(pub_sha "$PUBLIC_BASE/dl/manifest.json")" != "$(repo_sha dl/manifest.json)" ]; then
+    echo "!! public /dl/manifest.json does not serve the merged manifest" >&2; failures=$((failures+1))
   else log "public /dl/manifest.json verified"; fi
 
   node -e '
@@ -164,12 +168,13 @@ verify_public() {
       out.push(b.file+"\t"+b.sha256);
     }
     console.log(out.join("\n"));
-  ' "$STAGE/web/dl/manifest.json" > /tmp/beeline-manifest-bundles.txt || die "unreadable manifest"
+  ' "$REPO_WEB/dl/manifest.json" > /tmp/beeline-manifest-bundles.txt || die "unreadable manifest"
 
   while IFS=$'\t' read -r file want; do
     got=$(pub_sha "$PUBLIC_BASE/dl/$file")
-    if [ "$got" != "$want" ]; then
-      echo "!! public /dl/$file serves ${got:-nothing}, manifest says $want" >&2; failures=$((failures+1))
+    local_want=$(repo_sha "dl/$file")
+    if [ "$got" != "$want" ] || [ "$got" != "$local_want" ]; then
+      echo "!! public /dl/$file serves ${got:-nothing}, expected $want (checkout: $local_want)" >&2; failures=$((failures+1))
     else log "public bundle verified: $file"; fi
     side=$(curl -fsSL --max-time 60 "$PUBLIC_BASE/dl/$file.sha256" | awk '{print $1}')
     [ "$side" = "$want" ] || { echo "!! public .sha256 sidecar for $file disagrees with manifest" >&2; failures=$((failures+1)); }

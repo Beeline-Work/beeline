@@ -2,7 +2,7 @@
  * OS sandbox for ACP harness children — see `bwrap-sandbox.ts`.
  *
  * Two things are worth pinning here and nowhere else. The mount table is the
- * whole security property, so it is asserted as an exact argv rather than a
+ * whole enforcement mechanism, so it is asserted as an exact argv rather than a
  * "contains a bind" spot check: an accidental extra `--bind` is exactly the
  * regression that would quietly reopen the Room write boundary, and a missing
  * one silently breaks a corner's ability to commit. And the fallback must stay

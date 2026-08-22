@@ -10,6 +10,8 @@ const auth = vi.hoisted(() => ({
 }));
 const client = vi.hoisted(() => ({
   getCommunity: vi.fn(),
+  getChannelMetadata: vi.fn(),
+  getChannelRole: vi.fn(),
   communityMembers: vi.fn(),
   listAgents: vi.fn(async () => []),
   listPersonProfiles: vi.fn(async () => []),
@@ -88,7 +90,27 @@ beforeEach(() => {
     visibility: 'invite-only',
     ownerPubkey: 'b'.repeat(64),
   });
+  client.query.mockResolvedValue([]);
+  client.getChannelMetadata.mockResolvedValue(undefined);
+  client.getChannelRole.mockResolvedValue('owner');
 });
+
+function roomCreate(id: string, name: string, createdAt: number) {
+  return {
+    id: `create-${id}`,
+    kind: 9007,
+    pubkey: 'b'.repeat(64),
+    created_at: createdAt,
+    content: '',
+    sig: 'c'.repeat(128),
+    tags: [
+      ['h', id],
+      ['community', 'workspace-1'],
+      ['name', name],
+      ['visibility', 'open'],
+    ],
+  };
+}
 
 async function render(): Promise<ReactTestRenderer> {
   let renderer!: ReactTestRenderer;
@@ -129,5 +151,56 @@ describe('Workspace Settings authority', () => {
     });
 
     expect(navigation.push).toHaveBeenCalledWith({ pathname: '/buzz/members', params: { communityId: 'workspace-1' } });
+  });
+
+  it('does not show archived Rooms in the open-Room visibility section', async () => {
+    client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'owner' }]);
+    client.query.mockResolvedValue([
+      roomCreate('484556f2-archived', 'beeline', 1),
+      roomCreate('9d5e2285-live', 'beeline', 2),
+    ]);
+    client.getChannelMetadata.mockImplementation(async (id: string) => ({
+      channelId: id,
+      name: 'beeline',
+      visibility: 'public',
+      archived: id.startsWith('484556f2'),
+    }));
+
+    const renderer = await render();
+
+    expect(
+      renderer.root.findAll(
+        (node) =>
+          node.type === 'TouchableOpacity' &&
+          node.props.testID === 'room-visibility-484556f2-archived',
+      ),
+    ).toHaveLength(0);
+    expect(
+      renderer.root.findAll(
+        (node) =>
+          node.type === 'TouchableOpacity' &&
+          node.props.testID === 'room-visibility-9d5e2285-live',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('renders same-name Rooms with distinct visible identifiers', async () => {
+    client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'owner' }]);
+    client.query.mockResolvedValue([
+      roomCreate('11111111-room', 'beeline', 1),
+      roomCreate('22222222-room', 'beeline', 2),
+    ]);
+    client.getChannelMetadata.mockImplementation(async (id: string) => ({
+      channelId: id,
+      name: 'beeline',
+      visibility: 'public',
+      archived: false,
+    }));
+
+    const renderer = await render();
+    const visibleText = renderer.root.findAllByType('Text').map((node) => node.children.join(''));
+
+    expect(visibleText).toContain('ID 11111111');
+    expect(visibleText).toContain('ID 22222222');
   });
 });

@@ -160,4 +160,31 @@ describe('Room row presentation', () => {
       ),
     ).toEqual(['QUIET']);
   });
+
+  it('keeps archived Rooms out of every Room-list consumer, including the cached sidebar', () => {
+    const sections = roomListSections(
+      [
+        { id: 'archived', title: 'beeline', archived: true },
+        { id: 'live', title: 'beeline', archived: false },
+      ],
+      NO_NAMES,
+    );
+
+    expect(sections.flatMap((section) => section.data.map(({ item }) => item.id))).toEqual(['live']);
+  });
+
+  it('disambiguates same-name Rooms for both the Room index and cached sidebar', () => {
+    const sections = roomListSections(
+      [
+        { id: '11111111-room', title: 'beeline' },
+        { id: '22222222-room', title: 'Beeline' },
+      ],
+      NO_NAMES,
+    );
+
+    expect(sections[0]?.data.map(({ item }) => item.title)).toEqual([
+      'beeline · ID 11111111',
+      'Beeline · ID 22222222',
+    ]);
+  });
 });

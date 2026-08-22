@@ -39,7 +39,11 @@ import { useTauriZoom } from '@/hooks/useTauriZoom';
 import { useTauriDrag } from '@/hooks/useTauriDrag';
 import { BrowserNavigationShortcuts } from '@/hooks/useBrowserNavigationShortcuts';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
+import {
+    registerBuzzPushNotifications,
+    retryBuzzPushRegistration,
+} from '@/push/buzz-push-registration';
+import type { Identity } from '@beeline/buzz-client';
 import { flushBuzzLocalCacheForBackground } from '@/buzz/local-cache';
 import { UpdateProvider } from '@/hooks/useUpdates';
 import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
@@ -232,18 +236,56 @@ export default function RootLayout() {
         };
     }, []);
 
+    const pushIdentityRef = React.useRef<Identity | null>(null);
     React.useEffect(() => {
         // Refresh the FCM binding on every cold start. Firebase can rotate the
         // device token long after onboarding, so registration cannot be a
         // one-time side effect of importing or creating an identity.
         void loadBuzzIdentity()
-            .then((identity) => identity && registerBuzzPushNotifications(identity))
+            .then((identity) => {
+                if (!identity) return null;
+                pushIdentityRef.current = identity;
+                return registerBuzzPushNotifications(identity);
+            })
+            .then((result) => {
+                if (result && !result.registered) {
+                    console.warn(
+                        `[buzzy-push] startup registration not completed: phase=${result.phase}${result.message ? ` (${result.message})` : ''}`,
+                    );
+                }
+            })
             .catch((error: unknown) => {
                 console.warn(
                     '[buzzy-push] startup registration unavailable:',
                     error instanceof Error ? error.message : String(error),
                 );
             });
+        // A failed token acquisition or gateway POST retries with backoff when
+        // the app next reaches the foreground, instead of staying dead until a
+        // manual toggle. retryBuzzPushRegistration no-ops when the last attempt
+        // succeeded or its backoff window has not elapsed.
+        const subscription = AppState.addEventListener('change', (state) => {
+            if (state !== 'active') return;
+            const identity = pushIdentityRef.current;
+            if (!identity) return;
+            void retryBuzzPushRegistration(identity)
+                .then((result) => {
+                    if (result && !result.registered) {
+                        console.warn(
+                            `[buzzy-push] foreground retry did not register: phase=${result.phase}${result.message ? ` (${result.message})` : ''}`,
+                        );
+                    }
+                })
+                .catch((error: unknown) => {
+                    console.warn(
+                        '[buzzy-push] foreground retry unavailable:',
+                        error instanceof Error ? error.message : String(error),
+                    );
+                });
+        });
+        return () => {
+            subscription.remove();
+        };
     }, []);
 
     useTauriZoom();

@@ -47,7 +47,19 @@ import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { Typography } from '@/constants/Typography';
 import { HullSurface, MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
 import { BuzzRigTransport } from '@/sync/transport';
-import { getBuzzPushEnabled, setBuzzPushEnabled } from '@/push/buzz-push-registration';
+import {
+  getBuzzPushEnabled,
+  getBuzzPushRegistrationState,
+  registerBuzzPushNotifications,
+  setBuzzPushEnabled,
+  type BuzzPushRegistrationResult,
+  type BuzzPushRegistrationState,
+} from '@/push/buzz-push-registration';
+import {
+  buzzPushPhaseDetail,
+  pushStatusLabel,
+  pushSwitchValue,
+} from '@/push/buzz-push-status';
 import { getPushPermissionInfo, type PushPermissionInfo } from '@/sync/pushRegistration';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 
@@ -131,6 +143,7 @@ export default function BuzzIdentitySettings() {
   const [handleFocused, setHandleFocused] = useState(false);
   const [nameSaved, setNameSaved] = useState(false);
   const [pushEnabled, setPushEnabledState] = useState<boolean | null>(null);
+  const [pushRegistration, setPushRegistration] = useState<BuzzPushRegistrationState | null>(null);
   const [pushPermission, setPushPermission] = useState<PushPermissionInfo | null>(null);
   const [pushWorking, setPushWorking] = useState(false);
   const [linkedAccount, setLinkedAccount] = useState<
@@ -146,12 +159,13 @@ export default function BuzzIdentitySettings() {
         if (!identity) return;
         const transport = new BuzzRigTransport(identity, await getEffectiveRelayUrl());
         const client = await transport.ensureClient();
-        const [communities, activeCommunityId, preferredName, enabled, permission] =
+        const [communities, activeCommunityId, preferredName, enabled, registration, permission] =
           await Promise.all([
             client.listCommunities(identity.publicKey),
             loadActiveCommunityId(identity.publicKey),
             loadPreferredPersonName(identity.publicKey),
             getBuzzPushEnabled(identity.publicKey),
+            getBuzzPushRegistrationState(identity.publicKey),
             getPushPermissionInfo(),
           ]);
         const communityId = communities.some((item) => item.communityId === activeCommunityId)
@@ -177,6 +191,7 @@ export default function BuzzIdentitySettings() {
           setProfileNip05(profile?.nip05 ?? '');
           setSavedProfileNip05(profile?.nip05 ?? '');
           setPushEnabledState(enabled);
+          setPushRegistration(registration);
           setPushPermission(permission);
         }
         try {
@@ -322,23 +337,58 @@ export default function BuzzIdentitySettings() {
     savedProfileName,
   ]);
 
+  const applyPushResult = useCallback(
+    async (
+      identity: Identity,
+      result: BuzzPushRegistrationResult,
+      previous: BuzzPushRegistrationState | null,
+    ) => {
+      setPushRegistration({
+        ...result,
+        failedAttempts: result.registered
+          ? 0
+          : (previous?.failedAttempts ?? 0) + (result.retryable ? 1 : 0),
+        updatedAt: Date.now(),
+      });
+      setPushEnabledState(await getBuzzPushEnabled(identity.publicKey));
+      setPushPermission(await getPushPermissionInfo());
+    },
+    [],
+  );
+
   const togglePush = useCallback(
     async (enabled: boolean) => {
       if (!profileIdentity || pushWorking) return;
       setPushWorking(true);
       setError(null);
       try {
-        await setBuzzPushEnabled(profileIdentity, enabled);
-        setPushEnabledState(enabled);
-        setPushPermission(await getPushPermissionInfo());
+        // The switch reflects the REGISTRATION result, not merely the value
+        // the user requested — a failed token acquisition or POST leaves it
+        // visibly off with the failure named below.
+        const result = await setBuzzPushEnabled(profileIdentity, enabled);
+        await applyPushResult(profileIdentity, result, pushRegistration);
       } catch (caught) {
         setError(`Could not update notifications: ${String(caught)}`);
       } finally {
         setPushWorking(false);
       }
     },
-    [profileIdentity, pushWorking],
+    [applyPushResult, profileIdentity, pushRegistration, pushWorking],
   );
+
+  const retryPushRegistration = useCallback(async () => {
+    if (!profileIdentity || pushWorking) return;
+    setPushWorking(true);
+    setError(null);
+    try {
+      const result = await registerBuzzPushNotifications(profileIdentity);
+      await applyPushResult(profileIdentity, result, pushRegistration);
+    } catch (caught) {
+      setError(`Could not retry push registration: ${String(caught)}`);
+    } finally {
+      setPushWorking(false);
+    }
+  }, [applyPushResult, profileIdentity, pushRegistration, pushWorking]);
 
   const lockExport = useCallback(() => {
     setSecret(null);
@@ -456,6 +506,12 @@ export default function BuzzIdentitySettings() {
           ? 'OS permission: not allowed yet'
           : 'OS permission: blocked in device settings'
     : 'Checking OS permission';
+  const pushStatusLabelText = pushStatusLabel(pushPermissionLabel, pushEnabled, pushRegistration);
+  const pushRegistrationFailed =
+    pushEnabled === true &&
+    pushRegistration !== null &&
+    !pushRegistration.registered &&
+    buzzPushPhaseDetail(pushRegistration.phase) !== null;
   const linkedAccountLabel =
     linkedAccount === 'connected'
       ? 'GitHub account connected'
@@ -676,7 +732,7 @@ export default function BuzzIdentitySettings() {
           <View style={styles.settingLine}>
             <View style={styles.settingCopy}>
               <Text style={styles.settingTitle}>Push notifications</Text>
-              <Text style={styles.settingSubtitle}>{pushPermissionLabel}</Text>
+              <Text style={styles.settingSubtitle}>{pushStatusLabelText}</Text>
             </View>
             <Switch
               accessibilityLabel="Push notifications"
@@ -685,9 +741,21 @@ export default function BuzzIdentitySettings() {
               testID="push-notifications-toggle"
               thumbColor={theme.buzz.textPrimary}
               trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.chrome }}
-              value={pushEnabled ?? false}
+              value={pushSwitchValue(pushEnabled, pushRegistration)}
             />
           </View>
+          {pushRegistrationFailed ? (
+            <TouchableOpacity
+              disabled={pushWorking}
+              onPress={() => void retryPushRegistration()}
+              style={styles.pushRetryButton}
+              testID="push-retry-registration"
+            >
+              <Text style={styles.pushRetryText}>
+                {pushWorking ? 'RETRYING…' : 'RETRY NOW'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         <View style={styles.settingsSection} testID="linked-sign-in-setting">
@@ -984,6 +1052,18 @@ const styles = StyleSheet.create((theme) => {
     backgroundColor: groknight.bgBase,
   },
   settingCopy: { flex: 1, minWidth: 0, paddingVertical: 12 },
+  pushRetryButton: {
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    alignSelf: 'flex-start',
+  },
+  pushRetryText: {
+    ...Typography.default('semiBold'),
+    color: groknight.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
+  },
   settingTitle: {
     ...Typography.default('semiBold'),
     color: groknight.textPrimary,

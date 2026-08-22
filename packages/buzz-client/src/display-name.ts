@@ -125,10 +125,74 @@ export function isSingleWordAgentName(value: string): boolean {
   return /^\p{L}[\p{L}\p{M}'’]*$/u.test(value.trim());
 }
 
-/** Preserve a valid authored first name; legacy compound names fall back deterministically. */
+export const AGENT_NAME_MAX_LENGTH = 32;
+
+/**
+ * Generic identity names the system itself mints (`newIdentity('buzzy-agent')`,
+ * the daemon's `|| 'Agent'` guard). They are placeholders, never operator
+ * choices: publishing them verbatim or masking them with a pubkey-derived
+ * first name both misrepresent the agent. See `deriveAgentDisplayName`.
+ */
+const SYSTEM_AGENT_NAMES = new Set(['agent', 'buzzy-agent']);
+
+/**
+ * A reasonable authored agent name: spoken words separated by spaces or
+ * hyphens, with apostrophes, bounded in length. Deliberately wider than
+ * `isSingleWordAgentName` so an operator-chosen compound name survives
+ * registration and display instead of being swapped for a placeholder.
+ */
+export function isReasonableAgentName(value: string): boolean {
+  const normalized = normalizeAuthoredAgentName(value);
+  return (
+    normalized.length > 0 &&
+    normalized.length <= AGENT_NAME_MAX_LENGTH &&
+    /^\p{L}[\p{L}\p{M}'’ -]*$/u.test(normalized)
+  );
+
+}
+
+function normalizeAuthoredAgentName(value: string): string {
+  return value.trim().replace(/\s+/g, ' ');
+}
+
+/**
+ * Preserve a reasonable authored agent name — one spoken word ("Ada") or a
+ * compound an operator actually chose ("Quiet Keeper", "ox-prime"). Only a
+ * system-generic marker or a genuinely unusable value falls back to the
+ * deterministic pubkey-derived first name.
+ */
 export function resolveAgentName(value: string | undefined, pubkey: string): string {
   const authored = value?.trim();
-  return authored && isSingleWordAgentName(authored) ? authored : fallbackAgentName(pubkey);
+  if (
+    authored &&
+    !SYSTEM_AGENT_NAMES.has(authored.toLowerCase()) &&
+    isReasonableAgentName(authored)
+  ) {
+    return normalizeAuthoredAgentName(authored);
+  }
+  return fallbackAgentName(pubkey);
+}
+
+/**
+ * Writer-side display name for a freshly registered agent identity.
+ *
+ * The daemon mints its identities as `buzzy-agent`; registering that verbatim
+ * used to fail the old single-word rule and be silently replaced by a
+ * random-looking first name from the fallback pool ("Pia"), with nothing on
+ * any surface signalling it was generated. This resolves the base name
+ * deliberately instead:
+ * - an authored, reasonable name passes through untouched;
+ * - the generic `buzzy-agent` marker becomes "Buzzy" — stable, traceable to
+ *   the actual base name, and clearly not a human first name;
+ * - no name at all (or the bare "Agent" guard) falls back explicitly to the
+ *   deterministic pool, which then is the intended choice rather than masking.
+ */
+export function deriveAgentDisplayName(value: string | undefined | null, pubkey: string): string {
+  const authored = value?.trim();
+  if (!authored) return fallbackAgentName(pubkey);
+  const lower = authored.toLowerCase();
+  if (lower === 'buzzy-agent') return 'Buzzy';
+  return resolveAgentName(authored, pubkey);
 }
 
 export function agentHandle(name: string, pubkey: string): string {

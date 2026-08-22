@@ -281,8 +281,12 @@ describe('Speaker identity', () => {
     expect(roomEntrySource).toMatch(/live\(\(\) => handlers\.onAgents\?\.\(primary\)\)/);
     expect(roomEntrySource).toMatch(/live\(\(\) => handlers\.onAgents\?\.\(merged\)\)/);
     expect(chatSource).toMatch(
-      /onAgents: \(agents\) =>\s*\n?\s*patchChannelCache\(identity\.publicKey, \{ availableAgents: agents \}\)/,
+      /onAgents: \(agents\) => \{\s*\n\s*rememberKnownAgents\(agents\);\s*\n\s*patchChannelCache\(identity\.publicKey, \{ availableAgents: agents \}\);\s*\n\s*\}/,
     );
+    // One identity everywhere: the transcript folds the device-wide agent-name
+    // cache under its own roster, so a Room whose own read is stale or absent
+    // still renders the name the agent was given in any other Workspace.
+    expect(chatSource).toContain('withKnownAgentNames(knownAgentNames, channelCache?.availableAgents ?? [])');
 
     // ...and only the roster widens. Membership, roles, and profile writes are
     // authority-adjacent and stay on the channel's own community.

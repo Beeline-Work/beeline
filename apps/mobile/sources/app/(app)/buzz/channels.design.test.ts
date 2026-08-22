@@ -57,10 +57,10 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(styleBlock(source, 'roomCell')).toMatch(/borderBottomColor:\s*groknight\.border/);
   });
 
-  it('routes buttons, reveal, press, and the live signal through shared MonoHull primitives', () => {
+  it('routes buttons, reveal, press, and the deck mark through shared MonoHull primitives', () => {
     for (const primitive of [
       'BrittlePress',
-      'HullLivePulse',
+      'HullDeckMark',
       'HullWaveSignal',
       'MonoButton',
       'PixelGateReveal',
@@ -108,36 +108,40 @@ describe('Room list — Grok Mono Hull invariants', () => {
     }
   });
 
-  it('spends the gold accent on live work and the requested unread rail', () => {
-    // The Room-list brief deliberately adds a solid gold unread rail. All
-    // other uses remain redundant live-work signals.
+  it('spends brass ONLY on needs-you rows — the deck\u2019s whole point', () => {
+    // The supervision deck's one rule: the accent appears on a needs-you row's
+    // rail, its action pill, its activity line, and nowhere else. Working is
+    // motion; idle and unread are steel/luminance.
     const accentStyles = [...source.matchAll(/ {2}([A-Za-z0-9_]+): \{[^}]*groknight\.accent/g)].map(
       (match) => match[1],
     );
     expect(accentStyles.sort()).toEqual([
+      'attnRail',
       'cornerGlyphLive',
       'cornerPeekCountLive',
+      'fab',
       'indexSignalCount',
-      'roomGlyphLive',
-      'unreadRail',
+      'rowPillStatus',
+      'rowPreviewAttention',
     ]);
-    for (const name of ['rowTitleUnread', 'roomGlyphAttention', 'rowAgeUnread']) {
-      expect(styleBlock(source, name), `${name} must not take gold`).not.toMatch(/accent/);
-    }
-    // Every gold mark on a row is driven by the same derived `live` flag, so a
-    // Room that is merely unread or merely busy can never pick it up.
-    expect(source).toContain('live && styles.roomGlyphLive');
-    expect(source).toContain('row.live && styles.cornerPeekCountLive');
-    expect(source).toContain('unread && <View pointerEvents="none" style={styles.unreadRail} />');
+    // Every accent style on a ROW is gated by the derived needs-you flag (the
+    // FAB is an action surface, `indexSignalCount`/`cornerGlyphLive` are the
+    // heading's LIVE count and the corner dropdown's live glyph).
+    expect(source).toContain("row.attention && <View pointerEvents=\"none\" style={styles.attnRail} />");
+    expect(source).toContain('row.attention && styles.rowPreviewAttention');
+    expect(source).toContain('row.attention && styles.cornerPeekCountLive');
+    // Unread never picks up brass: the unread pill steps up a gray tier.
+    expect(styleBlock(source, 'rowPillUnread')).not.toMatch(/accent/);
+    expect(source).not.toContain('styles.unreadRail');
   });
 
-  it('runs the live pulse only on a Room that is actually live', () => {
-    // The gold ◆ breathes; a quiet row must not pay for an animation clock it
-    // never uses, and the mark stays memoized so a list-level state change
-    // (presence, the age tick) cannot rebuild every row's glyph.
-    expect(source).toContain('const RoomRowMark = React.memo(');
-    expect(source).toContain('if (!live) return mark;');
-    expect(source).toContain('<HullLivePulse active>');
+  it('renders the three deck states through one HullDeckMark driven by the projection', () => {
+    // needs-you > working > idle is decided in `roomRowPresentation`; the
+    // screen only maps the answer onto the shared three-state mark.
+    expect(source).toMatch(/row\.attention\s*\?\s*'needs-you'\s*:\s*row\.zone === 'working'\s*\?\s*'working'\s*:\s*'idle'/);
+    expect(source).toContain('<HullDeckMark state={deckState} />');
+    // No screen-local spinner or pulse: motion lives in MonoHull.
+    expect(source).not.toMatch(/withRepeat|useSharedValue/);
   });
 
   it('reads on exactly three tones: name, activity line, gutter marginalia', () => {
@@ -151,12 +155,13 @@ describe('Room list — Grok Mono Hull invariants', () => {
         'groknight.ledgerGhost',
       );
     }
-    // Names are always semibold; read Rooms dim one tone and unread Rooms stay
-    // at full luminance.
+    // Names are always semibold Space Grotesk 16; read DMs dim one tone.
     expect(styleBlock(source, 'rowTitle')).toContain("Typography.default('semiBold')");
+    expect(styleBlock(source, 'rowTitle')).toContain('fontSize: 16');
     expect(styleBlock(source, 'rowTitleRead')).toContain('groknight.textSecondary');
-    expect(styleBlock(source, 'rowTitleUnread')).toContain("Typography.default('semiBold')");
-    expect(styleBlock(source, 'rowTitleUnread')).toContain('groknight.ledgerBright');
+    // The pill strip is mono micro-labels; the repo tag rides the title line.
+    expect(styleBlock(source, 'rowPill')).toMatch(/Typography\.mono\(/);
+    expect(styleBlock(source, 'rowRepo')).toMatch(/Typography\.mono\(/);
   });
 
   it('hangs every row\u2019s metadata in one fixed right gutter', () => {
@@ -189,7 +194,7 @@ describe('Room list — Grok Mono Hull invariants', () => {
   });
 
   it('attributes lifecycle facts with the same identity waterfall the rest of the app uses', () => {
-    expect(source).toContain('roomListSections(displayChannels, authorNames)');
+    expect(source).toContain('roomListSections(visible, authorNames, { now: ageNow })');
     expect(source).toContain("names.set(identity.publicKey, 'You')");
   });
 
@@ -226,10 +231,25 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(styleBlock(source, 'cornerPeek')).toContain("alignItems: 'center'");
   });
 
-  it('marks unread Rooms with the brief’s solid gold left rail and no NEW tag', () => {
-    expect(styleBlock(source, 'unreadRail')).toContain('groknight.accent');
-    expect(styleBlock(source, 'unreadRail')).toContain('left: 0');
+  it('shows unread as a quiet gray pill, and reserves the left rail for needs-you', () => {
+    // The old solid-gold unread rail is gone: brass means only needs-you now.
+    // A needs-you Room carries the 2px accent edge instead, gated on the same
+    // derived flag as the status pill.
+    expect(styleBlock(source, 'attnRail')).toContain('groknight.accent');
+    expect(styleBlock(source, 'attnRail')).toContain('left: 0');
+    expect(styleBlock(source, 'attnRail')).not.toContain('width: 3');
     expect(source).not.toContain('styles.rowUnread');
+  });
+
+  it('closes the deck with a search field and the brass FAB, both wired', () => {
+    expect(source).toContain('testID="room-search"');
+    expect(source).toContain('testID="create-room-fab"');
+    expect(source).toContain('matchesSearch(dm.peerName, searchQuery)');
+    expect(source).toContain('matchesSearch(room.title ?? room.id, searchQuery)');
+    // The FAB opens the same create panel as the header affordance.
+    expect(source).toContain('onPress={() => setShowCreateChannel(true)}');
+    expect(styleBlock(source, 'searchField')).toMatch(/minHeight: 44/);
+    expect(styleBlock(source, 'fab')).toMatch(/(?:width|minHeight): 44/);
   });
 
   it('renders three non-sticky zones from the meaningful-event projection', () => {

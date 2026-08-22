@@ -82,10 +82,10 @@ export const CLAUDE_TOOL_SCOPE_SETTINGS = { disableClaudeAiConnectors: true } as
  */
 export const NO_PERSONAL_CONNECTORS_INSTRUCTION =
   'The only tools you have are the ones this host mounted for this session. ' +
-  'You have no personal, cloud, or account-linked connectors here — no email, drive, ' +
-  'calendar, design, docs, or ticketing integrations — and no way to authorize one. ' +
-  'Never claim such a tool is available or coming online, never offer to connect one, ' +
-  'and never tell anyone to change connector settings.';
+  'Other than an explicitly host-mounted account tool, you have no personal, cloud, or ' +
+  'account-linked connectors here — no email, drive, calendar, design, docs, or ticketing ' +
+  'integrations — and no way to authorize one. Never claim any unmounted tool is available ' +
+  'or coming online, never offer to connect one, and never tell anyone to change connector settings.';
 
 interface ToolScopeProfile {
   enforcement: ToolScopeEnforcement;

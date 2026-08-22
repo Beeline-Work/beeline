@@ -31,10 +31,12 @@
  *   1. relay-stack/web/install.sh      creates/maintains the anchor + stable
  *                                      <prefix>/bin forwarders; converges
  *                                      legacy and mid-migration hosts.
- *   2. scripts/build-beeline-bundle.mjs  the IN-BUNDLE wrappers resolve $0
- *                                      WITHOUT following symlinks so that
- *                                      running them through the anchor keeps
- *                                      the ANCHOR path in BEELINE_LIB_DIR.
+ *   2. scripts/build-beeline-bundle.mjs  the IN-BUNDLE CLI and read-only MCP
+ *                                      wrappers resolve $0 WITHOUT following
+ *                                      symlinks so that running them through
+ *                                      the anchor keeps the ANCHOR path in
+ *                                      BEELINE_LIB_DIR; both then resolve their
+ *                                      entrypoint under lib/beeline/.
  *   3. self-update.ts beelineInstallLayout()  reads BEELINE_LIB_DIR and
  *                                      normalizes any value found inside a
  *                                      beeline-releases subtree back to the

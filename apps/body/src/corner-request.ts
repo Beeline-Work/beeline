@@ -1,11 +1,10 @@
 /**
  * Agent-initiated edit-corner requests.
  *
- * A Room agent that has diagnosed concrete work but has no way to act on it
- * (the shipped pi-acp harness never sends `session/request_permission`, and
- * even permission-sending harnesses cannot invoke that channel on demand) can
- * ask the humans for an edit corner by ending a reply with a single marker
- * line:
+ * The shipped pi-acp harness never sends `session/request_permission`: it
+ * executes tools before the daemon sees them. A pi-backed Room agent therefore
+ * has one text-only compatibility channel for asking the humans for an edit
+ * corner: it ends a reply with a single marker line:
  *
  *   CORNER_REQUEST: <one-sentence description of the task>
  *
@@ -24,11 +23,12 @@
 export const CORNER_REQUEST_MARKER = 'CORNER_REQUEST:';
 
 /**
- * Harness-independent control exposed to every repository-backed Room agent.
- * pi-acp only emits text, so the host recognizes this final reply line instead
- * of relying on ACP's optional permission callback.
+ * pi-acp-only compatibility control. Permission-capable harnesses must use
+ * ACP's real `session/request_permission` path and are never prompted to emit
+ * or parsed for this marker.
  */
-export const CORNER_REQUEST_INSTRUCTIONS = [
+export const PI_CORNER_REQUEST_INSTRUCTIONS = [
+  'This session uses pi-acp, which cannot send a native permission request before a tool runs.',
   'When repository inspection reveals a concrete edit worth making, you may ask the humans for an edit corner.',
   'Briefly explain the proposed change, then end your reply with exactly: CORNER_REQUEST: <one-sentence task objective>',
   'That final line requests approval only. The host removes it from chat and shows humans an allow/deny decision.',

@@ -47,9 +47,9 @@ concurrency:
 jobs:
   build:
     name: Build ${{ matrix.platform }} bundle
-    if: >-
-      github.event_name != 'push' ||
-      !contains(github.event.head_commit.message, '[beeline-bundle-publish]')
+    # The publisher commits back with a dedicated bot identity; never
+    # re-trigger on our own publishes.
+    if: github.event.head_commit.author.username != 'beeline-bundle-bot'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -74,12 +74,15 @@ jobs:
           BEELINE_BUNDLE_COMMIT: ${{ github.sha }}
           BEELINE_BUNDLE_VERSION: 0.0.${{ github.run_number }}
           BEELINE_BUNDLE_CREATED_AT: ${{ github.event.head_commit.timestamp }}
+      # The build merges its bundle into the committed dl/manifest.json, which
+      # may already carry the OTHER platform's entry; extract exactly this
+      # platform so each artifact is a clean single-platform partial.
       - name: Collect build outputs
         run: |
           mkdir -p out/${{ matrix.platform }}
           cp relay-stack/web/dl/beeline-${{ matrix.platform }}.tar.gz out/${{ matrix.platform }}/
           cp relay-stack/web/dl/beeline-${{ matrix.platform }}.tar.gz.sha256 out/${{ matrix.platform }}/
-          cp relay-stack/web/dl/manifest.json out/${{ matrix.platform }}/manifest.json
+          node -e "const fs=require('fs');const p='${{ matrix.platform }}';const m=JSON.parse(fs.readFileSync('relay-stack/web/dl/manifest.json','utf8'));if(!m.bundles[p]||m.bundles[p].verified!==true)throw new Error(p+' missing or unverified in built manifest');fs.writeFileSync('out/'+p+'/manifest.json',JSON.stringify({schemaVersion:m.schemaVersion??1,sourceCommit:m.sourceCommit,version:m.version,bundles:{[p]:m.bundles[p]}},null,2)+'\n')" 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform }}
@@ -89,9 +92,7 @@ jobs:
   publish:
     name: Publish bundle set to relay-stack/web/dl
     needs: build
-    if: >-
-      github.event_name != 'push' ||
-      !contains(github.event.head_commit.message, '[beeline-bundle-publish]')
+    if: github.event.head_commit.author.username != 'beeline-bundle-bot'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -147,6 +147,13 @@ async function main() {
   assertBinaryPlatform(binaries.agent, platform);
   assertBinaryPlatform(binaries.mcp, platform);
 
+  const sourceCommit =
+    process.env.BEELINE_BUNDLE_COMMIT ?? capture('git', ['rev-parse', 'HEAD']) ?? '';
+  if (!sourceCommit) fail('could not determine the source commit (set BEELINE_BUNDLE_COMMIT)');
+  const buildVersion =
+    process.env.BEELINE_BUNDLE_VERSION ??
+    new Date().toISOString().slice(0, 10).replace(/-/g, '.');
+
   run('npm', ['run', 'build', '-w', '@beeline/nostr']);
   run('npm', ['run', 'build', '-w', '@beeline/buzz-client']);
   run('npm', ['run', 'build', '-w', '@beeline/gate']);
@@ -192,13 +199,27 @@ async function main() {
   );
   await writeFile(
     resolve(staging, 'bin', 'beeline'),
-    `#!/bin/sh\nset -eu\nbin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)\nlib_dir=$(CDPATH= cd -- "$bin_dir/../lib/beeline" && pwd -P)\n: "\${BUZZ_AGENT_BIN:=$bin_dir/buzz-agent}"\n: "\${BUZZ_DEV_MCP_BIN:=$bin_dir/buzz-dev-mcp}"\n: "\${BUZZ_READONLY_MCP_BIN:=$bin_dir/buzz-readonly-mcp}"\nexport BUZZ_AGENT_BIN BUZZ_DEV_MCP_BIN BUZZ_READONLY_MCP_BIN\nexec node "$lib_dir/beeline-cli.mjs" "$@"\n`,
+    `#!/bin/sh\nset -eu\nbin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)\nlib_dir=$(CDPATH= cd -- "$bin_dir/../lib/beeline" && pwd -P)\n: "\${BUZZ_AGENT_BIN:=$bin_dir/buzz-agent}"\n: "\${BUZZ_DEV_MCP_BIN:=$bin_dir/buzz-dev-mcp}"\n: "\${BUZZ_READONLY_MCP_BIN:=$bin_dir/buzz-readonly-mcp}"\n# Self-update needs to know its own install prefix (import.meta.url is defined away inside the esbuild bundle).\nexport BEELINE_LIB_DIR="$lib_dir" BEELINE_BIN_DIR="$bin_dir"\nexport BUZZ_AGENT_BIN BUZZ_DEV_MCP_BIN BUZZ_READONLY_MCP_BIN\nexec node "$lib_dir/beeline-cli.mjs" "$@"\n`,
     { mode: 0o755 },
   );
 
   await writeFile(
     resolve(staging, 'bundle.json'),
-    `${JSON.stringify({ schemaVersion: 1, name: 'beeline', platform, node: '>=20.11.0' }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        name: 'beeline',
+        platform,
+        node: '>=20.11.0',
+        // Self-update identity (self-update.ts reads this from the INSTALLED
+        // bundle — never from a checkout). version is a comparable
+        // YYYY.MM.DD build date; commit is the exact source revision.
+        commit: sourceCommit,
+        version: buildVersion,
+      },
+      null,
+      2,
+    )}\n`,
   );
 
   const filename = `beeline-${platform}.tar.gz`;
@@ -217,12 +238,16 @@ async function main() {
   }
   const archiveStat = await stat(archive);
   manifest.schemaVersion = 1;
+  manifest.sourceCommit = sourceCommit;
+  manifest.version = buildVersion;
   manifest.bundles ??= {};
   manifest.bundles[platform] = {
     file: filename,
     sha256: digest,
     bytes: archiveStat.size,
     node: '>=20.11.0',
+    commit: sourceCommit,
+    version: buildVersion,
   };
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 

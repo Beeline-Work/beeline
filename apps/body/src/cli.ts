@@ -16,7 +16,7 @@
  */
 import { dirname, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
-import { readdir, unlink } from 'node:fs/promises';
+import { readdir, readFile, unlink } from 'node:fs/promises';
 import { stdin, stdout } from 'node:process';
 import * as clack from '@clack/prompts';
 import pc from 'picocolors';
@@ -64,12 +64,25 @@ import {
   type PairRuntimeResult,
 } from './runtime.js';
 import { runRelayCommand } from './relay-command.js';
+import { runUpdateCommand } from './self-update-cli.js';
 import { detectBwrapSandbox } from './bwrap-sandbox.js';
 import {
   isExternalMcpCapability,
   type ExternalMcpCapability,
 } from './external-mcp-capabilities.js';
 import { DurableBodyState } from './durable-state.js';
+import {
+  SelfUpdateManager,
+  activeReleaseId,
+  beelineInstallLayout,
+  clearPendingUpdate,
+  confirmPendingUpdate,
+  describeIdentity,
+  readInstalledBundleIdentity,
+  readPendingUpdate,
+  rollbackToPreviousRelease,
+  settlePendingUpdateOnStart,
+} from './self-update.js';
 import {
   dailyAgentSpend,
   dailyRestartReprimes,
@@ -96,6 +109,8 @@ ${pc.dim('Usage:')}
   beeline start --agent <agent-pubkey>      Restart it from anywhere (no repo needed)
   beeline relay set <url> [--agent <pubkey>|--all]
                                             Repoint stored runtime(s) and restart cleanly
+  beeline update [--check|--status|--rollback|--force]
+                                            Self-update the installed bundle
   beeline spend [--day YYYY-MM-DD] [--agent <pubkey>] [--json]
                                             Calls/tokens, causal turns, and restart re-primes
 
@@ -420,6 +435,45 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   const stop = () => controller.abort();
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
+
+  // --- Self-update (see self-update.ts) -------------------------------------
+  // The daemon heals itself: it checks the published manifest on a cadence,
+  // stages + verifies a newer bundle, waits for agent work to finish (the
+  // busy gate), swaps atomically, and hands the process over. A pending
+  // update that never proves itself healthy is rolled back to the previous
+  // release — at startup (stale journal) or on a fatal supervisor failure
+  // inside the confirm window.
+  const runtimeDir = dirname(configPath);
+  const layout = beelineInstallLayout(process.env);
+  let selfUpdate: SelfUpdateManager | undefined;
+  let supervisorRef: WorkspaceSupervisor | undefined;
+  let confirmTimer: NodeJS.Timeout | undefined;
+  if (layout) {
+    const settle = await settlePendingUpdateOnStart(layout);
+    if (settle.kind === 'rolled-back') {
+      console.error(
+        `[body] self-update ROLLED BACK: bundle ${describeIdentity(settle.record.to)} never confirmed healthy; ` +
+          `restored ${settle.record.previousReleaseId ?? 'previous release'}`,
+      );
+    } else if (settle.kind === 'pending') {
+      const remaining = Math.max(1_000, settle.confirmAt - Date.now());
+      confirmTimer = setTimeout(() => {
+        void confirmPendingUpdate(layout).then((confirmed) => {
+          if (confirmed) console.log('[body] self-update: new bundle confirmed healthy; rollback journal cleared');
+        });
+      }, remaining);
+      confirmTimer.unref?.();
+    }
+    selfUpdate = new SelfUpdateManager({
+      layout,
+      watchRuntimeDirs: [runtimeDir],
+      isIdle: () => supervisorRef?.isWorkspaceIdle() ?? true,
+      notify: (text) => supervisorRef?.broadcastDaemonNotice(text) ?? Promise.resolve(),
+      requestRestart: () => controller.abort(),
+    });
+    selfUpdate.start();
+  }
+
   console.log(
     `[buzz] Workspace supervisor ${runtime.communityId} starting with ${runtime.rooms.length} Room binding(s)`,
   );
@@ -429,6 +483,8 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   try {
     while (!controller.signal.aborted) {
       const supervisor = new WorkspaceSupervisor(runtime, configPath, config);
+      supervisorRef = supervisor;
+      selfUpdate?.attachSupervisor(supervisor);
       try {
         const result = await supervisor.run({ signal: controller.signal });
         if (result === 'agent-removed') {
@@ -444,12 +500,48 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         }
       } catch (error) {
         if (controller.signal.aborted) throw error;
+        // A fatal failure while a freshly-applied update is still inside its
+        // confirm window is exactly the "bad publish bricked the daemon"
+        // case: restore the previous bundle and hand the process over to it.
+        if (selfUpdate?.hasUnconfirmedUpdate()) {
+          const journal = await readPendingUpdate(layout!);
+          if (journal?.previousReleaseId) {
+            await rollbackToPreviousRelease(layout!, journal.previousReleaseId);
+          }
+          await clearPendingUpdate(layout!);
+          const message = `Beeline self-update to ${describeIdentity(journal?.to)} failed to start; rolled back to ${journal?.previousReleaseId ?? 'the previous bundle'}.`;
+          console.error(`[body] ${message}`);
+          await selfUpdate.notifyRooms(message);
+          if (journal?.previousReleaseId) {
+            const pid = await selfUpdate.relaunchFromRelease(configPath, journal.previousReleaseId);
+            console.log(`[body] self-update: relaunched daemon on previous release (pid ${pid})`);
+          } else {
+            console.error('[body] self-update: no previous release recorded; leaving the current bundle in place');
+          }
+          selfUpdate.markUpdateConfirmed();
+          return;
+        }
         console.error('[buzz] Workspace supervisor stopped; retrying:', error);
         await waitToRestart(controller.signal);
       }
     }
+    // The update manager swapped the bundle while we ran and asked for a
+    // handover: launch the replacement from the ACTIVE bundle and exit.
+    if (selfUpdate?.restartPending) {
+      const pid = await selfUpdate.launchReplacement(configPath);
+      console.log(`[body] self-update: handed over to updated daemon (pid ${pid})`);
+      return;
+    }
   } finally {
-    await unlink(resolve(dirname(configPath), 'daemon.pid')).catch(() => undefined);
+    selfUpdate?.dispose();
+    if (confirmTimer) clearTimeout(confirmTimer);
+    // Only clear the pid file while it still names THIS process — a
+    // self-update handover has already written the replacement's pid there.
+    const pidPath = resolve(dirname(configPath), 'daemon.pid');
+    const recorded = Number((await readFile(pidPath, 'utf8').catch(() => '')).trim());
+    if (recorded === process.pid) {
+      await unlink(pidPath).catch(() => undefined);
+    }
   }
 }
 
@@ -850,6 +942,12 @@ async function main(): Promise<void> {
   if (command === '--version' || command === 'version') {
     const config = loadBodyConfig({ workspaceRoot, llmEnvFile });
     console.log(pc.bold('beeline 0.0.0'));
+    const layout = beelineInstallLayout(process.env);
+    if (layout) {
+      const identity = await readInstalledBundleIdentity(layout);
+      const active = await activeReleaseId(layout);
+      console.log(`${pc.dim('installed bundle:')} ${describeIdentity(identity)}${active ? ` (release ${active})` : ''}`);
+    }
     console.log(`${pc.dim('[body] agent binary:')} ${config.agentCommand ?? config.agentBinary}`);
     console.log(`${pc.dim('[body] mcp binary:')} ${config.mcpBinary}`);
     console.log(`${pc.dim('[body] read-only mcp:')} ${config.readonlyMcpCommand}`);
@@ -861,6 +959,11 @@ async function main(): Promise<void> {
     const configPath = configFlag >= 0 ? args[configFlag + 1] : undefined;
     if (!configPath) throw new Error('daemon requires --config <runtime.json>');
     await runStoredDaemon(resolve(configPath));
+    return;
+  }
+
+  if (command === 'update') {
+    await runUpdateCommand(args);
     return;
   }
 

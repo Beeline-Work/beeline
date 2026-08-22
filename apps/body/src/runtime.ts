@@ -780,12 +780,17 @@ export async function stopRuntimeDaemon(
 
 export async function launchRuntimeDaemon(
   configPath: string,
-  opts: { entrypoint?: string; execArgv?: string[]; env?: NodeJS.ProcessEnv } = {},
+  opts: { entrypoint?: string; execArgv?: string[]; env?: NodeJS.ProcessEnv; foreground?: boolean } = {},
 ): Promise<number> {
   const directory = dirname(configPath);
   const logPath = resolve(directory, 'daemon.log');
   const pidPath = resolve(directory, 'daemon.pid');
-  const output = openSync(logPath, 'a', 0o600);
+  // A foreground daemon (`beeline daemon --config …` on a tty) that hands over
+  // to a self-updated replacement must stay attached to its terminal: stdio
+  // inherits and the child is NOT detached, so Ctrl-C keeps reaching the
+  // daemon the operator is watching.
+  const foreground = opts.foreground === true;
+  const output = foreground ? 'inherit' : openSync(logPath, 'a', 0o600);
   const child = spawn(
     process.execPath,
     [
@@ -796,16 +801,16 @@ export async function launchRuntimeDaemon(
       configPath,
     ],
     {
-      detached: true,
+      detached: !foreground,
       stdio: ['ignore', output, output],
-      env: opts.env ?? process.env,
+      env: { ...(opts.env ?? process.env), BEELINE_DAEMON_BACKGROUND: '1' },
     },
   );
   await new Promise<void>((resolveSpawn, reject) => {
     child.once('spawn', resolveSpawn);
     child.once('error', reject);
   });
-  closeSync(output);
+  if (!foreground) closeSync(output as number);
   child.unref();
   await writeFile(pidPath, `${child.pid}\n`, { mode: 0o600 });
   return child.pid!;

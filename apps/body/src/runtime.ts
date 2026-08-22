@@ -3,7 +3,8 @@ import { closeSync, openSync } from 'node:fs';
 import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { decodeNsec, getPublicKey } from '@beeline/nostr';
 import { newIdentity, type Identity } from '@beeline/gate';
 import type {
@@ -12,6 +13,8 @@ import type {
   RepositoryRoomResult,
 } from '@beeline/buzz-client';
 import { AGENT_KINDS, type AgentCommand, type AgentKind } from './agent-command.js';
+
+const execFileAsync = promisify(execFile);
 import {
   DEFAULT_ACCESS_POLICY,
   isAgentAccessPolicy,
@@ -772,32 +775,56 @@ export async function runtimeDaemonPid(configPath: string): Promise<number | nul
 }
 
 /** Gracefully stop a stored daemon and wait until it is safe to launch its replacement. */
+/**
+ * Whether one live process is `beeline daemon --config <configPath>`.
+ *
+ * `/proc/<pid>/cmdline` (Linux) gives exact argv; macOS has no /proc, so fall
+ * back to a whole-command match against `ps -o command=` — the daemon is
+ * always launched with an absolute, resolved config path, so a substring
+ * match on it is sufficient identification there. Both sources fail closed:
+ * an unreadable answer returns false and the caller refuses to signal a
+ * process it could not identify.
+ */
+async function daemonIsThisRuntime(pid: number, configPath: string): Promise<boolean> {
+  let argumentsForPid: string[] | undefined;
+  try {
+    argumentsForPid = (await readFile(`/proc/${pid}/cmdline`, 'utf8')).split('\0').filter(Boolean);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return false;
+  }
+  const wanted = resolve(configPath);
+  if (!argumentsForPid) {
+    try {
+      const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'command=']);
+      const command = stdout.trim();
+      return command.includes(' daemon ') && command.includes('--config') && command.includes(wanted);
+    } catch {
+      return false;
+    }
+  }
+  const configFlag = argumentsForPid.lastIndexOf('--config');
+  const processConfigPath = argumentsForPid[configFlag + 1];
+  return Boolean(
+    configFlag >= 1 &&
+      argumentsForPid[configFlag - 1] === 'daemon' &&
+      processConfigPath &&
+      resolve(processConfigPath) === wanted,
+  );
+}
+
 export async function stopRuntimeDaemon(
   pathOrPointer: string,
-  opts: { timeoutMs?: number; pollMs?: number } = {},
+  opts: {
+    timeoutMs?: number;
+    pollMs?: number;
+    /** Invoked while waiting for the daemon to finish its graceful drain. */
+    onWait?: (pid: number, waitedMs: number) => void;
+  } = {},
 ): Promise<number | null> {
   const configPath = await resolveRuntimeConfigPath(pathOrPointer);
   const pid = await runtimeDaemonPid(configPath);
   if (!pid) return null;
-  let argumentsForPid: string[];
-  try {
-    argumentsForPid = (await readFile(`/proc/${pid}/cmdline`))
-      .toString('utf8')
-      .split('\0')
-      .filter(Boolean);
-  } catch {
-    throw new Error(
-      `cannot verify that pid ${pid} belongs to this Beeline runtime; refusing to stop it`,
-    );
-  }
-  const configFlag = argumentsForPid.lastIndexOf('--config');
-  const processConfigPath = argumentsForPid[configFlag + 1];
-  if (
-    configFlag < 1 ||
-    argumentsForPid[configFlag - 1] !== 'daemon' ||
-    !processConfigPath ||
-    resolve(processConfigPath) !== resolve(configPath)
-  ) {
+  if (!(await daemonIsThisRuntime(pid, configPath))) {
     throw new Error(
       `pid ${pid} does not belong to the daemon for ${configPath}; refusing to stop it`,
     );
@@ -810,9 +837,18 @@ export async function stopRuntimeDaemon(
   }
 
   const deadline = Date.now() + (opts.timeoutMs ?? 10_000);
+  const startedAt = Date.now();
   const pollMs = opts.pollMs ?? 100;
+  let lastWaitNoticeAt = startedAt;
   while (Date.now() < deadline) {
     if ((await runtimeDaemonPid(configPath)) === null) return pid;
+    // The daemon drains in-flight agent work before exiting (SIGTERM →
+    // supervisor stopAll → Body.dispose awaits every running turn), so a long
+    // wait is the restart NOT interrupting work — surface it, don't escalate.
+    if (opts.onWait && Date.now() - lastWaitNoticeAt >= 5_000) {
+      lastWaitNoticeAt = Date.now();
+      opts.onWait(pid, Date.now() - startedAt);
+    }
     await new Promise((resolveWait) => setTimeout(resolveWait, pollMs));
   }
   throw new Error(`agent daemon ${pid} did not stop after ${opts.timeoutMs ?? 10_000}ms`);

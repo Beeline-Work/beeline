@@ -146,7 +146,7 @@ describe('Room list — Grok Mono Hull invariants', () => {
     // right gutter carries is ghosted.
     expect(styleBlock(source, 'rowTitle')).toContain('groknight.textPrimary');
     expect(styleBlock(source, 'rowPreview')).toContain('groknight.ledgerQuiet');
-    for (const name of ['rowAge', 'cornerPeekCount', 'cornerPeekCaret']) {
+    for (const name of ['rowAge', 'cornerPeekCount']) {
       expect(styleBlock(source, name), `${name} belongs to the ghosted tier`).toContain(
         'groknight.ledgerGhost',
       );
@@ -213,7 +213,7 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(source).not.toMatch(/item\.corners(?:\s*\?\?\s*\[\])?\.length/);
   });
 
-  it('opens a Room’s corners inline from its chevron control', () => {
+  it('opens a Room’s corners inline from its contained count control', () => {
     expect(source).toContain('testID={`room-corners-toggle-${item.id}`}');
     expect(source).toContain('accessibilityState={{ expanded }}');
     expect(source).toContain(
@@ -221,6 +221,9 @@ describe('Room list — Grok Mono Hull invariants', () => {
     );
     expect(source).toContain('{expanded && (');
     expect(source).toContain('{corners.map((corner) => {');
+    expect(source).not.toContain('cornerPeekCaret');
+    expect(styleBlock(source, 'cornerPeek')).toContain("flexDirection: 'row'");
+    expect(styleBlock(source, 'cornerPeek')).toContain("alignItems: 'center'");
   });
 
   it('marks unread Rooms with the brief’s solid gold left rail and no NEW tag', () => {

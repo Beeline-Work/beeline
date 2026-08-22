@@ -2394,6 +2394,22 @@ export default function BuzzChat() {
     [applyRoomRepository, cornerLifecycle, roomRepository],
   );
 
+  /** Toggle ambient GitHub repository activity (stars/issues/PRs) for this Room. */
+  const handleToggleGitHubEvents = useCallback(async () => {
+    if (!transport || !roomRepository || roomRepoBusy) return;
+    const nextEnabled = roomRepository.githubEventsEnabled === false; // off → on
+    setRoomRepoBusy(true);
+    setRoomRepoError(null);
+    try {
+      const updated = await transport.roomGitHubEventsSet(decodedId, nextEnabled);
+      setRoomRepository(updated);
+    } catch {
+      setRoomRepoError('Could not change repository activity settings.');
+    } finally {
+      setRoomRepoBusy(false);
+    }
+  }, [decodedId, roomRepoBusy, roomRepository, transport]);
+
   const handleReconnectRoomRepository = useCallback(async () => {
     if (!roomRepoAccessIssue || !transport) return;
     setRoomRepoError(null);
@@ -4011,6 +4027,33 @@ export default function BuzzChat() {
                     onSelect={handleSelectRoomRepoCandidate}
                     testIDPrefix="room-repo-picker"
                   />
+                )}
+                {roomRepository && (
+                  <TouchableOpacity
+                    accessibilityLabel={
+                      roomRepository.githubEventsEnabled === false
+                        ? 'Turn repository activity notices on'
+                        : 'Turn repository activity notices off'
+                    }
+                    accessibilityRole="button"
+                    disabled={roomRepoBusy}
+                    onPress={() => void handleToggleGitHubEvents()}
+                    style={styles.roomRenameAction}
+                    testID="room-github-events-toggle"
+                  >
+                    <View style={styles.roomLifecycleCopy}>
+                      <Text style={styles.roomLifecycleTitle}>
+                        REPO ACTIVITY{'\u00b7'}
+                        {roomRepository.githubEventsEnabled === false ? ' OFF' : ' ON'}
+                      </Text>
+                      <Text style={styles.roomLifecycleHint}>
+                        Stars, issues, and pull requests posted here.
+                      </Text>
+                    </View>
+                    <Text style={styles.roomLifecycleGlyph}>
+                      {roomRepository.githubEventsEnabled === false ? '○' : '●'}
+                    </Text>
+                  </TouchableOpacity>
                 )}
               </>
             ) : (

@@ -9,8 +9,10 @@
  *
  * `creator` is the primary cost/safety lever: only the inviting owner may
  * address the agent, so no one else spends the operator's subscription or
- * triggers the owner's commands. `allowlist` is intentionally reserved here so
- * a future explicit-pubkey mode lands without a runtime-record migration.
+ * triggers the owner's commands. It is also the default for newly paired
+ * agents (see DEFAULT_ACCESS_POLICY below). `allowlist` is intentionally
+ * reserved here so a future explicit-pubkey mode lands without a
+ * runtime-record migration.
  */
 
 export type AgentAccessPolicy = 'everyone' | 'creator';
@@ -19,12 +21,28 @@ export type AgentAccessPolicy = 'everyone' | 'creator';
 export const AGENT_ACCESS_POLICIES = ['everyone', 'creator'] as const;
 
 /**
- * Default when a runtime record carries no policy (every pre-policy pairing,
- * and the deliberate "no gating, current behaviour" choice). `everyone`
- * preserves the shipped behaviour where any Room member may @-mention the
- * agent; opting into `creator` is what adds the boundary.
+ * Default for a NEWLY PAIRED agent: only the inviting owner may address it,
+ * so no other Room member can spend the operator's subscription or trigger
+ * the owner's commands. The inviter opts out explicitly by choosing
+ * `everyone` at pairing (`--access everyone` / the pairing prompt).
+ *
+ * This constant must NOT be used as a read-time fallback for a runtime record
+ * carrying no policy: every pre-policy pairing ran as `everyone`, and falling
+ * back to this constant would silently re-gate those agents. Read-time
+ * fallbacks use LEGACY_ACCESS_POLICY instead, and the one-time migration in
+ * `runtime.ts` (`migrateRuntimeRecordAccessPolicy`) stamps an explicit policy
+ * onto pre-existing records so they stop depending on any constant at all.
  */
-export const DEFAULT_ACCESS_POLICY: AgentAccessPolicy = 'everyone';
+export const DEFAULT_ACCESS_POLICY: AgentAccessPolicy = 'creator';
+
+/**
+ * The frozen pre-policy behaviour: `everyone`. Every agent paired before
+ * per-agent access policies shipped has been running with no gating, and an
+ * already-paired agent must keep answering exactly the senders it answered
+ * before. Used by the one-time record migration and by read-time fallbacks
+ * for records that carry no explicit policy — never for a new pairing.
+ */
+export const LEGACY_ACCESS_POLICY: AgentAccessPolicy = 'everyone';
 
 export function isAgentAccessPolicy(value: unknown): value is AgentAccessPolicy {
   return (AGENT_ACCESS_POLICIES as readonly string[]).includes(value as string);

@@ -2,13 +2,30 @@ import { describe, expect, it } from 'vitest';
 import {
   AccessRefusalLimiter,
   DEFAULT_ACCESS_AUTO_RESPONSE,
+  DEFAULT_ACCESS_POLICY,
   isAgentAccessPolicy,
   isSenderPermitted,
+  LEGACY_ACCESS_POLICY,
   renderAccessAutoResponse,
 } from './access-policy.js';
 
 const OWNER = 'a'.repeat(64);
 const STRANGER = 'b'.repeat(64);
+
+describe('access policy — defaults', () => {
+  it('defaults a NEW pairing to owner-only', () => {
+    expect(DEFAULT_ACCESS_POLICY).toBe('creator');
+  });
+
+  it('freezes the pre-policy behaviour as everyone for existing agents', () => {
+    expect(LEGACY_ACCESS_POLICY).toBe('everyone');
+  });
+
+  it('the legacy policy answers exactly what a pre-policy record answered', () => {
+    const owner = 'a'.repeat(64);
+    expect(isSenderPermitted(LEGACY_ACCESS_POLICY, 'b'.repeat(64), owner)).toBe(true);
+  });
+});
 
 describe('access policy — sender permission (fail-closed)', () => {
   it('everyone permits any sender', () => {

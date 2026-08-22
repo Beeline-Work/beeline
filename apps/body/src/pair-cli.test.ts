@@ -400,12 +400,43 @@ lines.on('line', (line) => {
 });
 
 describe('beeline pair — --access/--auto-response (non-interactive)', () => {
-  it('rejects squire unless the agent is creator-only', async () => {
+  it('rejects squire under an EXPLICIT everyone access before consuming the code', async () => {
     const gitRepo = await tmpDir('beeline-pair-cli-gitrepo-');
     spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: gitRepo });
     const stateHome = await tmpDir('beeline-pair-cli-state-');
     const agent = await fakeModelAgent();
 
+    const { status, stderr } = runPair(
+      [
+        'not-a-real-code',
+        '--repo',
+        gitRepo,
+        '--agent',
+        'custom',
+        '--agent-command',
+        agent,
+        '--access',
+        'everyone',
+        '--mcp',
+        'squire',
+      ],
+      { cwd: gitRepo, env: { XDG_STATE_HOME: stateHome } },
+    );
+
+    expect(status).toBe(1);
+    expect(stderr).toContain('external MCP capabilities require --access creator');
+    expect(stderr).not.toContain('invalid agent pairing code');
+  });
+
+  it('allows squire with no --access flag: the new owner-only default already is creator', async () => {
+    const gitRepo = await tmpDir('beeline-pair-cli-gitrepo-');
+    spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: gitRepo });
+    const stateHome = await tmpDir('beeline-pair-cli-state-');
+    const agent = await fakeModelAgent();
+
+    // No --access flag resolves to DEFAULT_ACCESS_POLICY ('creator'), which
+    // satisfies the squire precondition — the run proceeds past the check and
+    // fails later on the deliberately invalid pairing code instead.
     const { status, stderr } = runPair(
       [
         'not-a-real-code',
@@ -422,8 +453,8 @@ describe('beeline pair — --access/--auto-response (non-interactive)', () => {
     );
 
     expect(status).toBe(1);
-    expect(stderr).toContain('external MCP capabilities require --access creator');
-    expect(stderr).not.toContain('invalid agent pairing code');
+    expect(stderr).toContain('invalid agent pairing code');
+    expect(stderr).not.toContain('external MCP capabilities require --access creator');
   });
 
   it('rejects an unrecognized --access value with a clear error, not a stack trace', async () => {
@@ -470,7 +501,7 @@ describe('beeline pair — --access/--auto-response (non-interactive)', () => {
     expect(stderr).toContain('invalid agent pairing code');
   });
 
-  it('never prompts non-interactively with neither flag given: falls back to the everyone default', async () => {
+  it('never prompts non-interactively with neither flag given: falls back to the owner-only default', async () => {
     const gitRepo = await tmpDir('beeline-pair-cli-gitrepo-');
     spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: gitRepo });
     const stateHome = await tmpDir('beeline-pair-cli-state-');

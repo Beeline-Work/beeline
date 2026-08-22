@@ -12,7 +12,12 @@ import type {
   RepositoryRoomResult,
 } from '@beeline/buzz-client';
 import { AGENT_KINDS, type AgentCommand, type AgentKind } from './agent-command.js';
-import { isAgentAccessPolicy, type AgentAccessPolicy } from './access-policy.js';
+import {
+  DEFAULT_ACCESS_POLICY,
+  isAgentAccessPolicy,
+  LEGACY_ACCESS_POLICY,
+  type AgentAccessPolicy,
+} from './access-policy.js';
 import { isSandboxPolicy, type SandboxPolicy } from './bwrap-sandbox.js';
 import {
   isExternalMcpCapability,
@@ -589,6 +594,41 @@ export async function readRuntimeRecord(path: string): Promise<AgentRuntimeRecor
 }
 
 /**
+ * One-time, idempotent access-policy migration for pre-policy runtime records.
+ *
+ * `DEFAULT_ACCESS_POLICY` used to be `everyone`: any Room member could drive a
+ * paired agent. When the default became `creator`, every record carrying no
+ * explicit policy would silently have been re-gated at read time
+ * (`runtime.accessPolicy ?? …`) — an already-paired agent would have stopped
+ * answering the very senders it has always answered. This stamps the frozen
+ * pre-policy behaviour (`LEGACY_ACCESS_POLICY`, i.e. `everyone`) onto such a
+ * record so the behaviour becomes durable on disk and independent of whatever
+ * the constant says later. A record with ANY explicit policy — including one
+ * deliberately set to `creator` — is never touched, so running this twice
+ * changes nothing the second time.
+ */
+export async function migrateRuntimeRecordAccessPolicy(
+  pathOrPointer: string,
+): Promise<{ configPath: string; runtime: AgentRuntimeRecord; migrated: boolean }> {
+  const configPath = await resolveRuntimeConfigPath(pathOrPointer);
+  const runtime = await readRuntimeRecord(configPath);
+  if (runtime.accessPolicy) return { configPath, runtime, migrated: false };
+  // Only rewrite a canonical record. A pointer or stray copy may be read to
+  // serve the daemon, but nothing is written behind it — mirroring
+  // `updateRuntimeRelay`'s guard.
+  const canonicalConfigPath = resolve(
+    runtimeDirectory(runtime.supervisorRoot, runtime.agent.publicKey),
+    'runtime.json',
+  );
+  if (resolve(configPath) !== canonicalConfigPath) {
+    return { configPath, runtime, migrated: false };
+  }
+  const updated: AgentRuntimeRecord = { ...runtime, accessPolicy: LEGACY_ACCESS_POLICY };
+  await writeRuntimeRecord(updated);
+  return { configPath, runtime: updated, migrated: true };
+}
+
+/**
  * Retire one paired agent without destroying its identity.
  *
  * The runtime directory contains the agent's Nostr secret key, so teardown is
@@ -938,7 +978,10 @@ export async function pairRepositoryAgent(
       relayBaseUrl: input.relayBaseUrl,
       ...(input.relayHost ? { relayHost: input.relayHost } : {}),
       ...(input.llmEnvFile ? { llmEnvFile: input.llmEnvFile } : {}),
-      ...(input.accessPolicy ? { accessPolicy: input.accessPolicy } : {}),
+      // Every new pairing stores an EXPLICIT policy, defaulting to owner-only
+      // (DEFAULT_ACCESS_POLICY = 'creator'), so a record written from now on
+      // never depends on the constant at read time.
+      accessPolicy: input.accessPolicy ?? DEFAULT_ACCESS_POLICY,
       ...(input.accessAutoResponse ? { accessAutoResponse: input.accessAutoResponse } : {}),
       ...(input.externalMcpCapabilities?.length
         ? { externalMcpCapabilities: [...new Set(input.externalMcpCapabilities)] }

@@ -103,6 +103,18 @@ export function enforcesPermissionBoundary(agentCommand: string | undefined): bo
 }
 
 /**
+ * pi-acp is the one shipped harness that needs an agent-text control to ask
+ * for an edit corner. It executes tools without first sending
+ * `session/request_permission`, so there is no native request for Body to
+ * intercept. Unknown/custom harnesses do not inherit this escape hatch: the
+ * marker is a deliberately narrow compatibility protocol, not a second
+ * general corner API.
+ */
+export function usesTextCornerRequestFallback(agentCommand: string | undefined): boolean {
+  return Boolean(agentCommand && /(^|[/\\])pi-acp(\.[a-z]+)?$/i.test(agentCommand));
+}
+
+/**
  * One-line operator line about how a Room's read-only rule is actually held for
  * this harness, or `undefined` when nothing needs saying.
  *

@@ -7,6 +7,7 @@ import {
   enforcesPermissionBoundary,
   harnessEnforcement,
   roomSandboxWarning,
+  usesTextCornerRequestFallback,
 } from './harness-capabilities.js';
 
 describe('harness permission enforcement', () => {
@@ -25,6 +26,14 @@ describe('harness permission enforcement', () => {
     expect(harnessEnforcement(undefined).enforcement).toBe('unknown');
     expect(enforcesPermissionBoundary('goose')).toBe(false);
     expect(enforcesPermissionBoundary(undefined)).toBe(false);
+  });
+
+  it('scopes the text corner-request fallback to pi-acp only', () => {
+    expect(usesTextCornerRequestFallback('/usr/local/bin/pi-acp')).toBe(true);
+    expect(usesTextCornerRequestFallback('codex-acp')).toBe(false);
+    expect(usesTextCornerRequestFallback('claude-agent-acp')).toBe(false);
+    expect(usesTextCornerRequestFallback('some-unknown-acp')).toBe(false);
+    expect(usesTextCornerRequestFallback(undefined)).toBe(false);
   });
 
   it('warns only for a harness the daemon cannot actually hold to the boundary', () => {

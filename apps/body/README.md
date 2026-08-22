@@ -25,9 +25,12 @@ by projecting agent activity into the relay channel.
   exposes no shell, raw git arguments, filesystem mutation, package install, or
   server process. The agent converses normally. Pure analysis, explanation,
   summary, and research requests are locked to a Room answer and cannot become
-  an ALLOW prompt. For non-research work, the first actual mutating-tool request
-  becomes a signed Room prompt. An explicit human command to open a corner is
-  the only message that creates a corner directly.
+  an ALLOW prompt. For non-research work, codex-acp and claude-agent-acp agents
+  initiate the edit-corner request by attempting the required mutating tool;
+  their real `session/request_permission` becomes a signed Room prompt. pi-acp
+  cannot send that protocol request, so only pi-backed Rooms retain the
+  stripped `CORNER_REQUEST:` text fallback. An explicit human command to open a
+  corner is the only message that creates one without the approval card.
 - **Subchannel (edit):** ACP session with `buzz-dev-mcp` mounted, `cwd` set to
   a git worktree on a feature branch. Agent has full write access **only within
   the worktree**. Either an explicit open-a-corner command or a human member's
@@ -327,11 +330,14 @@ into the process environment.
   Room ALLOW never approves the original tool against the paired checkout; it
   opens an isolated worktree and replays the request in a new edit session.
   Explicit open-a-corner commands bypass that extra prompt by authorizing the
-  isolated worktree directly. Information-only turns reject any model-requested
-  mutation without projecting ALLOW. DMs are permanently read-only and cannot
-  request or open a corner. A repo-less normal Room may request a corner only by
-  naming an exact `owner/repo`; the signed human prompt displays and binds that
-  target, and clone/access failures leave the Room read-only. Agent completion
+  isolated worktree directly. Permission-capable agents initiate the request;
+  Body does not synthesize a permission request from mutation verbs in the
+  human's prose.
+  Information-only turns reject any model-requested mutation without projecting
+  ALLOW. DMs are permanently read-only and cannot request or open a corner. A
+  repo-less normal Room may request a corner only by naming an exact
+  `owner/repo`; the signed human prompt displays and binds that target, and
+  clone/access failures leave the Room read-only. Agent completion
   can publish only the feature ref and `merge-ready`; target landing and archive
   cleanup require an independently verified, exact-tip approval from a
   device-held human admin.

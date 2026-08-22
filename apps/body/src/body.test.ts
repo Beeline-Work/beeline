@@ -2048,12 +2048,20 @@ describe('Room conversation and permission-gated work intent', () => {
     );
   }
 
-  it('documents a text-only, non-slash corner request control for repository Rooms', () => {
-    const instructions = roomEditPolicyInstructions('repository').join('\n');
-    expect(instructions).toContain('CORNER_REQUEST: <one-sentence task objective>');
-    expect(instructions).toContain('human');
-    expect(instructions).toMatch(/never describe the corner as open/i);
-    expect(instructions).not.toContain('/CORNER_REQUEST');
+  it('documents native corner requests for capable harnesses and the text fallback only for pi', () => {
+    for (const harness of ['codex-acp', 'claude-agent-acp']) {
+      const instructions = roomEditPolicyInstructions('repository', harness).join('\n');
+      expect(instructions).toContain('session/request_permission');
+      expect(instructions).toMatch(/initiate the edit-corner request yourself/i);
+      expect(instructions).toMatch(/do not merely tell the human/i);
+      expect(instructions).not.toContain('CORNER_REQUEST');
+    }
+
+    const piInstructions = roomEditPolicyInstructions('repository', 'pi-acp').join('\n');
+    expect(piInstructions).toContain('CORNER_REQUEST: <one-sentence task objective>');
+    expect(piInstructions).toContain('human');
+    expect(piInstructions).toMatch(/never describe the corner as open/i);
+    expect(piInstructions).not.toContain('/CORNER_REQUEST');
   });
 
   it('extracts and stream-hides an agent corner request control line', () => {
@@ -3530,9 +3538,10 @@ describe('Room conversation and permission-gated work intent', () => {
     vi.useRealTimers();
   });
 
-  it('starts the bound-repository permission flow directly for explicit mutation intent', async () => {
+  it('lets a capable harness initiate the native permission flow for a plain mutation request', async () => {
     const body = new Body({
       agentBinary: '/nonexistent',
+      agentCommand: 'codex-acp',
       mcpBinary: '/nonexistent',
       agentEnv: {},
       workspaceRoot: '/tmp/buzzy-direct-bound-request-unit',
@@ -3542,20 +3551,68 @@ describe('Room conversation and permission-gated work intent', () => {
       relayWsUrl: 'ws://relay.test',
       autoApprovePermissions: true,
     });
-    const permission = vi
-      .spyOn(body as never, 'handleRoomPermissionRequest' as never)
-      .mockImplementation(async () => {
-        const turn = (
-          Reflect.get(body, 'pendingRoomTurns') as Map<string, { permissionHandled: boolean }>
-        ).get('parent-channel');
-        if (turn) turn.permissionHandled = true;
-        return 'reject' as never;
-      });
+    const client = new AcpClient({ agentCommand: 'codex-acp', agentEnv: {} });
+    body.registerSession({
+      channelId: 'parent-channel',
+      sessionId: 'codex-readonly-session',
+      client,
+      mode: 'readonly',
+    });
+    vi.spyOn(body as never, 'waitForWritePermissionDecision' as never).mockResolvedValue(
+      'allow' as never,
+    );
+    const editClient = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    const info = {
+      subchannelId: 'native-corner-id',
+      worktreePath: '/tmp/native-corner-worktree',
+      featureBranch: 'feature/native-corner',
+      role: body.agent,
+      session: {
+        channelId: 'native-corner-id',
+        sessionId: 'edit-session',
+        client: editClient,
+        mode: 'edit' as const,
+      },
+      lastPolledAt: 1,
+      archived: false,
+    };
+    const open = vi.spyOn(body, 'openSubchannel').mockResolvedValue(info);
+    const start = vi
+      .spyOn(body as never, 'startAgentTask' as never)
+      .mockImplementation(() => undefined as never);
+    const permission = vi.spyOn(body as never, 'handleRoomPermissionRequest' as never);
+    vi.spyOn(client, 'sessionPrompt').mockImplementation(async () => {
+      await Reflect.get(body, 'handleRoomPermissionRequest').call(
+        body,
+        'parent-channel',
+        {
+          sessionId: 'codex-readonly-session',
+          toolCall: { kind: 'edit', title: 'apply_patch PROOF.txt' },
+        },
+        'repository',
+      );
+      return {
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: 'I requested approval for the required edit.',
+        toolCalls: [],
+      };
+    });
     const provision = vi.spyOn(body, 'provision');
     const durableState = Reflect.get(body, 'durableState') as {
       appendConversation: (...args: unknown[]) => Promise<void>;
+      conversation: (...args: unknown[]) => Promise<unknown[]>;
     };
     vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
+    vi.spyOn(durableState, 'conversation').mockResolvedValue([]);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
 
     await expect(
       Reflect.get(body, 'replyInRoom').call(
@@ -3569,21 +3626,39 @@ describe('Room conversation and permission-gated work intent', () => {
           createdAt: 1,
         },
       ),
-    ).resolves.toBe(false);
+    ).resolves.toBe(true);
 
     expect(permission).toHaveBeenCalledWith(
       'parent-channel',
       expect.objectContaining({
         toolCall: expect.objectContaining({
-          title: 'Request edit corner on lunchboxfortwo/buzzy',
-          rawInput: { command: 'beeline-request-edit-corner' },
+          title: 'apply_patch PROOF.txt',
         }),
       }),
       'repository',
-      // The human's own open-a-corner command replayed through this path is
-      // host-originated, so it never records an agent read-only denial note.
-      'host',
     );
+    expect(open).toHaveBeenCalledWith(
+      'parent-channel',
+      { repo: 'buzzy', repositoryId: 'lunchboxfortwo/buzzy' },
+      'Create PROOF.txt and commit it.',
+      expect.objectContaining({ eventId: 'direct-bound-request' }),
+    );
+    expect(start).toHaveBeenCalledWith(
+      info,
+      'Create PROOF.txt and commit it.',
+      expect.stringContaining('Create PROOF.txt and commit it.'),
+      expect.objectContaining({ cause: 'corner-opening' }),
+    );
+    const pendingIndex = published.findIndex((event) =>
+      event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'pending'),
+    );
+    const allowedIndex = published.findIndex((event) =>
+      event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'allowed'),
+    );
+    expect(pendingIndex).toBeGreaterThanOrEqual(0);
+    expect(allowedIndex).toBeGreaterThan(pendingIndex);
+    expect(published[allowedIndex]?.tags).toContainEqual(['subchannel', 'native-corner-id']);
+    expect(published.every((event) => !event.content.includes('CORNER_REQUEST'))).toBe(true);
     expect(provision).not.toHaveBeenCalled();
   });
 
@@ -3630,9 +3705,10 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(turn.permissionHandled).toBe(false);
   });
 
-  it('starts the target-bound permission flow directly for an explicit repo-less edit request', async () => {
+  it('lets a repo-less Room agent initiate the target-bound native permission request', async () => {
     const body = new Body({
       agentBinary: '/nonexistent',
+      agentCommand: 'codex-acp',
       mcpBinary: '/nonexistent',
       agentEnv: {},
       workspaceRoot: '/tmp/buzzy-direct-named-request-unit',
@@ -3642,14 +3718,53 @@ describe('Room conversation and permission-gated work intent', () => {
       relayWsUrl: 'ws://relay.test',
       autoApprovePermissions: true,
     });
-    const permission = vi
-      .spyOn(body as never, 'handleRoomPermissionRequest' as never)
-      .mockResolvedValue('reject' as never);
+    const client = new AcpClient({ agentCommand: 'codex-acp', agentEnv: {} });
+    body.registerSession({
+      channelId: 'repo-less-room',
+      sessionId: 'codex-named-readonly-session',
+      client,
+      mode: 'readonly',
+    });
+    vi.spyOn(body as never, 'waitForWritePermissionDecision' as never).mockResolvedValue(
+      'deny' as never,
+    );
+    const permission = vi.spyOn(body as never, 'handleRoomPermissionRequest' as never);
+    vi.spyOn(client, 'sessionPrompt').mockImplementation(async () => {
+      await Reflect.get(body, 'handleRoomPermissionRequest').call(
+        body,
+        'repo-less-room',
+        {
+          sessionId: 'codex-named-readonly-session',
+          toolCall: {
+            kind: 'execute',
+            title: 'beeline-request-edit-corner --repo lunchboxfortwo/buzzy',
+            rawInput: {
+              command: 'beeline-request-edit-corner --repo lunchboxfortwo/buzzy',
+            },
+          },
+        },
+        'named-repository',
+      );
+      return {
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: 'I requested human approval for that repository.',
+        toolCalls: [],
+      };
+    });
     const provision = vi.spyOn(body, 'provision');
     const durableState = Reflect.get(body, 'durableState') as {
       appendConversation: (...args: unknown[]) => Promise<void>;
     };
     vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
 
     await expect(
       Reflect.get(body, 'replyInRoom').call(
@@ -3677,8 +3792,14 @@ describe('Room conversation and permission-gated work intent', () => {
         }),
       }),
       'named-repository',
-      'host',
     );
+    expect(
+      published.some(
+        (event) =>
+          event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'pending') &&
+          event.tags.some((tag) => tag[0] === 'repo' && tag[1] === 'lunchboxfortwo/buzzy'),
+      ),
+    ).toBe(true);
     expect(provision).not.toHaveBeenCalled();
   });
 

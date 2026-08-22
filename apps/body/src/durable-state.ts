@@ -31,6 +31,8 @@ interface DurableBodyData {
   /** Bounded local audit trail for `beeline spend`; never published to the Room. */
   modelTurns?: ModelTurnSpend[];
   sessionReprimes?: SessionReprimeRecord[];
+  /** Per-Room GitHub repository-event feed cursors (auth-service event ids). */
+  githubEventCursors?: Record<string, number>;
 }
 
 function emptyData(): DurableBodyData {
@@ -64,6 +66,7 @@ export class DurableBodyState {
       this.data = parsed;
       this.data.modelTurns ??= [];
       this.data.sessionReprimes ??= [];
+      this.data.githubEventCursors ??= {};
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
@@ -190,6 +193,19 @@ export class DurableBodyState {
   async sessionReprimes(): Promise<SessionReprimeRecord[]> {
     await this.load();
     return [...(this.data.sessionReprimes ?? [])];
+  }
+
+  /** The GitHub repository-event feed cursor for a Room; `undefined` = never bootstrapped. */
+  async githubEventCursor(channelId: string): Promise<number | undefined> {
+    await this.load();
+    return this.data.githubEventCursors?.[channelId];
+  }
+
+  async saveGitHubEventCursor(channelId: string, id: number): Promise<void> {
+    await this.load();
+    this.data.githubEventCursors ??= {};
+    this.data.githubEventCursors[channelId] = id;
+    await this.save();
   }
 
   private inbox(channelId: string): DurableBodyData['inboxes'][string] {

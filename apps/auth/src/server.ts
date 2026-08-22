@@ -15,6 +15,7 @@ import {
 import { AuthStore } from './store.js';
 import { OidcClient } from './oidc.js';
 import { GitHubAppClient, GitHubOAuthClient, type GitHubIdentity } from './github.js';
+import { extractGitHubRepoEvent } from './github-repo-events.js';
 import {
   isValidNip05Name,
   normalizeHost,
@@ -29,6 +30,14 @@ import {
 const DEFAULT_FLOW_TTL_MS = 5 * 60_000;
 const DEFAULT_TICKET_TTL_MS = 2 * 60_000;
 const GITHUB_INSTALLATION_RECONCILE_INTERVAL_MS = 5 * 60_000;
+/** Repository-activity event types the webhook stores for Room delivery. */
+export const GITHUB_REPO_EVENT_TYPES = new Set(['star', 'issues', 'pull_request']);
+/** Max stored events released per room-events read; a longer backlog needs more reads. */
+const GITHUB_REPO_EVENT_FETCH_LIMIT = 100;
+/** Hard ceiling on a room-events long-poll hold. */
+const GITHUB_REPO_EVENT_MAX_WAIT_MS = 25_000;
+/** How long a successful Room authority proof is reused before relay truth re-proves it. */
+const GITHUB_ROOM_AUTHORITY_CACHE_TTL_MS = 5 * 60_000;
 const FLOW_COOKIE = '__Host-beeline_oidc_flow';
 // Exact native identities from apps/mobile/app.config.js. Never derive these from request input.
 const GITHUB_SIGN_IN_DEEP_LINK = 'beeline://buzz/github-callback';
@@ -373,6 +382,50 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     if (!tenant) throw new ProtocolError(404, 'unknown_tenant', 'unknown tenant Host');
     return tenant;
   };
+
+  // Long-poll waiters for stored repository events, keyed by lowercased
+  // full_name. A verified webhook insert wakes every daemon parked on that
+  // repository so a Room sees a star/issue/PR within milliseconds of the
+  // delivery instead of on the next poll tick.
+  const githubRepoEventWaiters = new Map<string, Set<() => void>>();
+  const wakeGitHubRepoEventWaiters = (fullName: string): void => {
+    const waiters = githubRepoEventWaiters.get(fullName.toLowerCase());
+    if (!waiters) return;
+    githubRepoEventWaiters.delete(fullName.toLowerCase());
+    for (const waiter of waiters) waiter();
+  };
+  const waitForGitHubRepoEvent = (fullName: string, waitMs: number): Promise<void> => {
+    const key = fullName.toLowerCase();
+    let waiters = githubRepoEventWaiters.get(key);
+    if (!waiters) {
+      waiters = new Set();
+      githubRepoEventWaiters.set(key, waiters);
+    }
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        waiters!.delete(done);
+        resolve();
+      };
+      const timer = setTimeout(done, waitMs);
+      timer.unref?.();
+      waiters.add(done);
+    });
+  };
+
+  // A successful Room authority proof costs several authenticated relay reads.
+  // Reusing it for a short window keeps a long-polling daemon from re-reading
+  // relay state every request; the cache is authorized results only, so a
+  // refusal is always re-derived from current truth.
+  const roomAuthorityCache = new Map<
+    string,
+    {
+      authorizedBy: string;
+      fullName: string;
+      githubInstallationId?: number;
+      expiresAt: number;
+    }
+  >();
 
   const nativeCompletion = (
     flow: { appRedirectUri: string | null; appState: string | null },
@@ -1539,6 +1592,165 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     });
   });
 
+  /**
+   * Release stored GitHub repository activity to a daemon serving a Room that
+   * owns that repository.
+   *
+   * This is the outbound-only hop for repository events: webhooks land here
+   * (inbound-reachable infrastructure), while Room daemons only ever connect
+   * OUT to the relay, so events cannot be pushed to them directly. A daemon
+   * long-polls this endpoint per served Room; the response carries the stored
+   * events newer than its cursor. Authorization reuses exactly the Room-token
+   * authority: the NIP-98 signature proves the agent key, and current relay
+   * truth must show that key inside a Room whose admin-authored binding names
+   * this repository — the caller never chooses which repository it reads, so
+   * private repository activity can only reach Rooms bound to it.
+   */
+  app.post('/auth/github/room-events', async (request, reply) => {
+    if (!options.authorizeGitHubRoomToken) {
+      throw new ProtocolError(503, 'github_unavailable', 'GitHub repository access is unavailable');
+    }
+    const tenant = tenantFor(request);
+    if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body)) {
+      throw new ProtocolError(400, 'invalid_request', 'expected Room event request');
+    }
+    const body = request.body as Record<string, unknown>;
+    const pubkey = typeof body.pubkey === 'string' ? body.pubkey : '';
+    const roomId = typeof body.room_id === 'string' ? body.room_id : '';
+    const relayAuthorizations = Array.isArray(body.relay_authorizations)
+      ? body.relay_authorizations.filter((value): value is string => typeof value === 'string')
+      : [];
+    if (
+      !/^[0-9a-f]{64}$/.test(pubkey) ||
+      !roomId ||
+      roomId.length > 200 ||
+      relayAuthorizations.length !== 16 ||
+      relayAuthorizations.some((value) => !value || value.length > 4_096)
+    ) {
+      throw new ProtocolError(400, 'invalid_request', 'invalid Room event request');
+    }
+    const auth = verifyNip98Header(
+      request.headers.authorization,
+      publicUrl(tenant, request),
+      'POST',
+      now(),
+    );
+    if (!auth.ok || auth.pubkey !== pubkey) {
+      throw new ProtocolError(401, 'unauthorized', auth.ok ? 'NIP-98 signer mismatch' : auth.reason);
+    }
+    for (const relayAuthorization of relayAuthorizations) {
+      const relayAuth = verifyNip98Header(
+        relayAuthorization,
+        `${tenant.origin}/query`,
+        'POST',
+        now(),
+      );
+      if (!relayAuth.ok || relayAuth.pubkey !== pubkey) {
+        throw new ProtocolError(
+          401,
+          'unauthorized_relay_read',
+          relayAuth.ok ? 'relay NIP-98 signer mismatch' : relayAuth.reason,
+        );
+      }
+    }
+    const authNow = now();
+    if (
+      !(await options.store.claimNip98Event(
+        auth.eventId,
+        new Date(authNow.getTime() + 120_000),
+        authNow,
+      ))
+    ) {
+      throw new ProtocolError(401, 'replayed_auth', 'NIP-98 authentication was already used');
+    }
+    // Omitted `since` is the bootstrap read: "start from now" — the response
+    // carries no backlog, just the cursor to begin from. An explicit `since`
+    // releases everything stored after it (delivered late to a daemon that
+    // was offline when the events arrived), oldest first.
+    const sinceRaw = body.since;
+    let since:
+      | number
+      | undefined = typeof sinceRaw === 'number' && Number.isSafeInteger(sinceRaw) && sinceRaw >= 0
+      ? sinceRaw
+      : undefined;
+    const waitMsRaw = body.wait_ms;
+    const waitMs = Math.max(
+      0,
+      Math.min(
+        GITHUB_REPO_EVENT_MAX_WAIT_MS,
+        typeof waitMsRaw === 'number' && Number.isSafeInteger(waitMsRaw) ? waitMsRaw : 0,
+      ),
+    );
+
+    const cacheKey = `${tenant.community}:${roomId}:${pubkey}`;
+    const cachedAuthority = roomAuthorityCache.get(cacheKey);
+    const authority =
+      cachedAuthority && cachedAuthority.expiresAt > authNow.getTime()
+        ? {
+            authorized: true as const,
+            authorizedBy: cachedAuthority.authorizedBy,
+            fullName: cachedAuthority.fullName,
+            ...(cachedAuthority.githubInstallationId !== undefined
+              ? { githubInstallationId: cachedAuthority.githubInstallationId }
+              : {}),
+          }
+        : await options.authorizeGitHubRoomToken(tenant, {
+            agentPubkey: pubkey,
+            roomId,
+            relayAuthorizations,
+          });
+    if (!authority.authorized) {
+      roomAuthorityCache.delete(cacheKey);
+      request.log.warn(
+        { authorityReason: authority.reason, roomId, agentPubkey: pubkey },
+        'GitHub Room events authority refused request',
+      );
+      if (authority.reason === 'agent_not_room_member') {
+        throw new ProtocolError(403, 'room_membership_required', 'agent is not a member of this Room');
+      }
+      throw new ProtocolError(
+        403,
+        authority.reason === 'tenant_room_community_mismatch'
+          ? 'room_repository_unauthorized'
+          : 'room_repository_unresolvable',
+        'agent is not authorized for this Room repository',
+      );
+    }
+    roomAuthorityCache.set(cacheKey, {
+      authorizedBy: authority.authorizedBy,
+      fullName: authority.fullName,
+      ...(authority.githubInstallationId !== undefined
+        ? { githubInstallationId: authority.githubInstallationId }
+        : {}),
+      expiresAt: authNow.getTime() + GITHUB_ROOM_AUTHORITY_CACHE_TTL_MS,
+    });
+
+    let events =
+      since === undefined ? [] : await options.store.githubRepoEvents(authority.fullName, since, GITHUB_REPO_EVENT_FETCH_LIMIT);
+    if (since !== undefined && events.length === 0 && waitMs > 0) {
+      await waitForGitHubRepoEvent(authority.fullName, waitMs);
+      events = await options.store.githubRepoEvents(authority.fullName, since, GITHUB_REPO_EVENT_FETCH_LIMIT);
+    }
+    const head = await options.store.latestGitHubRepoEventId(authority.fullName);
+    noStore(reply);
+    return reply.send({
+      full_name: authority.fullName,
+      head,
+      cursor: events.length > 0 ? events[events.length - 1]!.id : head,
+      events: events.map((eventRecord) => ({
+        id: eventRecord.id,
+        type: eventRecord.eventType,
+        action: eventRecord.action,
+        actor: eventRecord.actor,
+        summary: eventRecord.summary,
+        received_at: eventRecord.receivedAt,
+        ...(eventRecord.number !== undefined ? { number: eventRecord.number } : {}),
+        ...(eventRecord.title ? { title: eventRecord.title } : {}),
+        ...(eventRecord.url ? { url: eventRecord.url } : {}),
+      })),
+    });
+  });
+
   app.post('/auth/github/webhook', async (request, reply) => {
     if (!options.github?.webhookSecret) {
       throw new ProtocolError(503, 'github_unavailable', 'GitHub webhook is not configured');
@@ -1564,11 +1776,28 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       throw new ProtocolError(400, 'invalid_webhook', 'invalid GitHub webhook body');
     }
     const body = request.body as Record<string, unknown>;
-    if (event !== 'installation' && event !== 'installation_repositories') {
+    const isRepoActivityEvent = GITHUB_REPO_EVENT_TYPES.has(event);
+    if (event !== 'installation' && event !== 'installation_repositories' && !isRepoActivityEvent) {
       return reply.code(202).send({ accepted: true, ignored: true });
     }
     if (!(await options.store.claimGitHubWebhookDelivery(deliveryId, now()))) {
       return reply.code(202).send({ accepted: true, duplicate: true });
+    }
+    if (isRepoActivityEvent) {
+      try {
+        const record = extractGitHubRepoEvent(event, body);
+        if (record) {
+          await options.store.saveGitHubRepoEvents(
+            [{ ...record, deliveryId }],
+            now(),
+          );
+          wakeGitHubRepoEventWaiters(record.fullName);
+        }
+      } catch (error) {
+        await options.store.releaseGitHubWebhookDelivery(deliveryId);
+        throw error;
+      }
+      return reply.code(202).send({ accepted: true });
     }
     try {
       const installationId = githubInstallationId(body.installation);

@@ -144,6 +144,7 @@ export {
   createGitHubRepository,
   getGitHubRepositoryAccess,
   getGitHubRoomInstallationToken,
+  getGitHubRoomEvents,
   getAuthCapabilities,
   parseOidcBindCallback,
   buildOidcBindEvent,
@@ -161,6 +162,8 @@ export type {
   GitHubInstallationAccess,
   GitHubRepositoryAccessResult,
   GitHubRoomInstallationToken,
+  GitHubRoomEvent,
+  GitHubRoomEventsResult,
   AuthCapabilities,
 } from './oidc-bind.js';
 
@@ -271,6 +274,7 @@ export {
   resolveRoomRepository,
   resolveRoomRepositoryState,
   setRoomTargetBranch,
+  setRoomGitHubEvents,
   normalizeTargetBranchName,
   type RoomRepositoryResolution,
 } from './room-repository.js';

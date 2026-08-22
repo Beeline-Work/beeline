@@ -69,6 +69,28 @@ export interface GitHubRoomInstallationToken {
   fullName: string;
 }
 
+/** One stored GitHub repository-activity event, released to an authorized daemon. */
+export interface GitHubRoomEvent {
+  id: number;
+  type: string;
+  action: string;
+  actor: string;
+  summary: string;
+  received_at: string;
+  number?: number;
+  title?: string;
+  url?: string;
+}
+
+export interface GitHubRoomEventsResult {
+  fullName: string;
+  /** The newest stored id for the repository (0 when none). */
+  head: number;
+  /** Pass this back as `since` to continue from where this read ended. */
+  cursor: number;
+  events: GitHubRoomEvent[];
+}
+
 export interface AuthCapabilities {
   github: boolean;
   oidc: boolean;
@@ -826,6 +848,72 @@ export async function getGitHubRoomInstallationToken(
     installationId: body.installation_id,
     fullName: body.full_name,
   };
+}
+
+/**
+ * Fetch stored GitHub repository activity for one Room, over the same
+ * authority as {@link getGitHubRoomInstallationToken}: the auth sidecar
+ * re-resolves Room state and releases only events for the repository that
+ * Room is bound to. Omitting `since` bootstraps ("start from now"); passing a
+ * previous result's `cursor` releases everything stored since, so a daemon
+ * that was offline catches up instead of being silently skipped. `waitMs`
+ * long-polls when there is nothing new yet.
+ */
+export async function getGitHubRoomEvents(
+  baseUrl: string,
+  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
+  roomId: string,
+  options: { since?: number; waitMs?: number } = {},
+): Promise<GitHubRoomEventsResult> {
+  const url = endpoint(baseUrl, '/auth/github/room-events').toString();
+  const relayQueryUrl = endpoint(baseUrl, '/query').toString();
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'POST'),
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        pubkey: identity.publicKey,
+        room_id: roomId,
+        relay_authorizations: Array.from({ length: 16 }, () =>
+          nip98AuthHeader(identity.secretKey, identity.publicKey, relayQueryUrl, 'POST'),
+        ),
+        ...(options.since !== undefined ? { since: options.since } : {}),
+        ...(options.waitMs !== undefined ? { wait_ms: Math.round(options.waitMs) } : {}),
+      }),
+    });
+  } catch (error) {
+    throw new OidcBindError(
+      'offline',
+      error instanceof Error ? error.message : 'auth service unavailable',
+    );
+  }
+  const body = await responseBody(response);
+  if (!response.ok) throw serviceError(body, response.status);
+  if (
+    typeof body.full_name !== 'string' ||
+    !/^[^/\s]+\/[^/\s]+$/.test(body.full_name) ||
+    typeof body.head !== 'number' ||
+    !Number.isSafeInteger(body.head) ||
+    typeof body.cursor !== 'number' ||
+    !Number.isSafeInteger(body.cursor) ||
+    !Array.isArray(body.events)
+  ) {
+    throw new OidcBindError(
+      'invalid_response',
+      'auth service returned an invalid Room event feed',
+      response.status,
+    );
+  }
+  return {
+    fullName: body.full_name,
+    head: body.head,
+    cursor: body.cursor,
+    events: body.events,
+  } as unknown as GitHubRoomEventsResult;
 }
 
 /** Discover which sign-in surface the deployed auth sidecar has enabled. */

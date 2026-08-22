@@ -82,6 +82,8 @@ export function parseRoomRepository(event: NostrEvent): RoomRepository | null {
     typeof content.targetBranch === 'string' && content.targetBranch.trim()
       ? content.targetBranch.trim()
       : undefined;
+  const githubEventsEnabled =
+    typeof content.githubEventsEnabled === 'boolean' ? content.githubEventsEnabled : undefined;
   const communityId = tagValue(event, TAG_COMMUNITY);
   return {
     channelId,
@@ -94,6 +96,7 @@ export function parseRoomRepository(event: NostrEvent): RoomRepository | null {
       ...(githubInstallationId ? { githubInstallationId } : {}),
     },
     ...(targetBranch ? { targetBranch } : {}),
+    ...(githubEventsEnabled === undefined ? {} : { githubEventsEnabled }),
     source: 'config',
     authoredBy: event.pubkey,
     updatedAt: event.created_at,
@@ -148,6 +151,9 @@ export async function setRoomRepository(
         localOnly: false,
         ...(githubInstallationId ? { githubInstallationId } : {}),
         ...(targetBranch ? { targetBranch } : {}),
+        ...(input.githubEventsEnabled === undefined
+          ? {}
+          : { githubEventsEnabled: input.githubEventsEnabled }),
       }),
     },
     ctx.identity.secretKey,
@@ -313,6 +319,41 @@ export async function setRoomTargetBranch(
     remote: binding.remote,
     targetBranch: branch,
     ...(binding.githubInstallationId ? { githubInstallationId: binding.githubInstallationId } : {}),
+    ...(current.communityId ? { communityId: current.communityId } : {}),
+  });
+}
+
+/**
+ * Toggle whether this Room receives GitHub repository activity (stars, issues,
+ * and pull requests on its bound repository). Same authority and carry-forward
+ * shape as {@link setRoomTargetBranch}: an admin's key republishes the current
+ * binding with only the flag new, and readers re-check authorship on every
+ * read. Absent/`undefined` means enabled — the shipped default is ON.
+ */
+export async function setRoomGitHubEvents(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  enabled: boolean,
+): Promise<RoomRepository> {
+  const role = await getChannelRole(ctx, channelId, ctx.identity.publicKey);
+  if (role !== 'owner' && role !== 'admin') {
+    throw new Error('only a Room admin can change GitHub activity settings');
+  }
+  const current = await resolveRoomRepository(ctx, channelId);
+  if (!current) {
+    throw new Error('this Room has no repository linked, so there is no repository activity to toggle');
+  }
+  const { binding } = current;
+  if (binding.localOnly || !binding.remote) {
+    throw new Error('a local-only Room repository has no GitHub activity to toggle');
+  }
+  return setRoomRepository(ctx, channelId, {
+    key: binding.key,
+    name: binding.name,
+    remote: binding.remote,
+    ...(current.targetBranch ? { targetBranch: current.targetBranch } : {}),
+    ...(binding.githubInstallationId ? { githubInstallationId: binding.githubInstallationId } : {}),
+    githubEventsEnabled: enabled,
     ...(current.communityId ? { communityId: current.communityId } : {}),
   });
 }

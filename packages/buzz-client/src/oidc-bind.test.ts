@@ -10,6 +10,7 @@ import {
   recoverOidcBind,
   getAuthCapabilities,
   getGitHubRoomInstallationToken,
+  getGitHubRoomEvents,
   lookupRecovery,
   parseOidcBindCallback,
   startGitHubBind,
@@ -384,6 +385,52 @@ describe('OIDC device-key bind protocol', () => {
     expect((fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>).authorization).toMatch(
       /^Nostr /,
     );
+  });
+
+  it('fetches Room repository events with since/wait options and validates the response', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          full_name: 'acme/widget',
+          head: 3,
+          cursor: 2,
+          events: [
+            { id: 2, type: 'star', action: 'created', actor: 'lena', summary: 'lena starred acme/widget', received_at: '2026-01-01T00:00:00Z' },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      getGitHubRoomEvents('https://relay.example', identity, 'room-1', { since: 1, waitMs: 25_000 }),
+    ).resolves.toMatchObject({ fullName: 'acme/widget', cursor: 2, events: [{ id: 2 }] });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      pubkey: identity.publicKey,
+      room_id: 'room-1',
+      since: 1,
+      wait_ms: 25_000,
+    });
+  });
+
+  it('preserves a Room-events authority refusal as an OidcBindError', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: 'room_membership_required',
+            message: 'agent is not a member of this Room',
+          }),
+          { status: 403, headers: { 'content-type': 'application/json' } },
+        ),
+      ),
+    );
+
+    await expect(
+      getGitHubRoomEvents('https://relay.example', identity, 'room-1'),
+    ).rejects.toMatchObject({ name: 'OidcBindError', code: 'room_membership_required' });
   });
 
   it('preserves a Room-token broker 403 as an OidcBindError for the daemon', async () => {

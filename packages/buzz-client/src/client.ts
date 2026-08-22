@@ -24,6 +24,7 @@ import {
   resolveRoomRepositoryState,
   setRoomRepository,
   setRoomTargetBranch,
+  setRoomGitHubEvents,
 } from './room-repository.js';
 import { WRITE_PERMISSION_RESPONSE_TAG, type WritePermissionDecision } from './write-permission.js';
 import {
@@ -384,6 +385,15 @@ export class BuzzClient {
    */
   setRoomTargetBranch(channelId: string, targetBranch: string): Promise<RoomRepository> {
     return setRoomTargetBranch(this.ctx, channelId, targetBranch);
+  }
+
+  /**
+   * Toggle whether this Room receives GitHub repository activity (stars,
+   * issues, and pull requests on its bound repo). Admin-only; absent reads as
+   * enabled — the shipped default is ON.
+   */
+  setRoomGitHubEvents(channelId: string, enabled: boolean): Promise<RoomRepository> {
+    return setRoomGitHubEvents(this.ctx, channelId, enabled);
   }
 
   // ── Community ops ───────────────────────────────────────────────────────

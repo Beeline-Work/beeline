@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
+import {
+  DEFAULT_PER_ROOM_LIVE_SESSIONS,
+  resolvePerRoomLiveSessions,
+  SessionScheduler,
+  type SessionLifecycle,
+} from './session-scheduler.js';
 
 function deferred(): { promise: Promise<void>; resolve(): void } {
   let resolve!: () => void;
@@ -10,6 +15,20 @@ function deferred(): { promise: Promise<void>; resolve(): void } {
 }
 
 describe('Workspace session scheduler', () => {
+  it('defaults each Room and a single-Room Workspace to ten live sessions', async () => {
+    const scheduler = new SessionScheduler({ idleMs: 60_000 });
+    expect(DEFAULT_PER_ROOM_LIVE_SESSIONS).toBe(10);
+    expect(scheduler.snapshot()).toMatchObject({ perRoom: 10, maxLive: 10 });
+    await scheduler.dispose();
+  });
+
+  it('accepts a positive per-Room env override and safely ignores invalid values', () => {
+    expect(resolvePerRoomLiveSessions({ BUZZY_BODY_MAX_SESSIONS_PER_ROOM: '7' })).toBe(7);
+    for (const value of ['', '0', '-1', '1.5', 'nope', 'Infinity']) {
+      expect(resolvePerRoomLiveSessions({ BUZZY_BODY_MAX_SESSIONS_PER_ROOM: value })).toBe(10);
+    }
+  });
+
   it('never suspends an in-flight turn with a queued steer', async () => {
     const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
     const release = deferred();
@@ -340,17 +359,65 @@ describe('Workspace session scheduler concurrency', () => {
     await scheduler.dispose();
   });
 
+  it('queues cleanly when an eleventh session exceeds the default per-Room ceiling', async () => {
+    const scheduler = new SessionScheduler({ idleMs: 60_000 });
+    const active = new Set<string>();
+    let maxActive = 0;
+    const lifecycle = (channel: string): SessionLifecycle => ({
+      activate: async () => {
+        active.add(channel);
+        maxActive = Math.max(maxActive, active.size);
+        return `${channel}-physical`;
+      },
+      suspend: async () => {
+        active.delete(channel);
+      },
+    });
+    const gates = Array.from({ length: 10 }, () => deferred());
+    const running = gates.map((gate, index) =>
+      scheduler.run(
+        `room-a:corner-${index + 1}`,
+        lifecycle(`room-a:corner-${index + 1}`),
+        async () => gate.promise,
+        { roomKey: 'room-a' },
+      ),
+    );
+    await vi.waitFor(() => expect(active.size).toBe(10));
+
+    const overflowStates: string[] = [];
+    const overflow = scheduler.run(
+      'room-a:corner-11',
+      {
+        ...lifecycle('room-a:corner-11'),
+        onStateChange: (state) => overflowStates.push(state),
+      },
+      async () => undefined,
+      { roomKey: 'room-a' },
+    );
+    await vi.waitFor(() => expect(overflowStates).toContain('waiting-for-slot'));
+    expect(scheduler.generations('room-a:corner-11')).toHaveLength(0);
+
+    gates[0]!.resolve();
+    await overflow;
+    expect(scheduler.generations('room-a:corner-11')).toHaveLength(1);
+    expect(maxActive).toBe(10);
+
+    for (const gate of gates.slice(1)) gate.resolve();
+    await Promise.all(running);
+    await scheduler.dispose();
+  });
+
   it('grows the Workspace ceiling with the number of Rooms the supervisor serves', async () => {
     let rooms = 1;
     const scheduler = new SessionScheduler({
-      perRoomLiveSessions: 2,
       workspaceFloor: 4,
       activeRoomCount: () => rooms,
       idleMs: 60_000,
     });
-    expect(scheduler.snapshot().maxLive).toBe(4);
-    rooms = 5;
+    // The floor need not rise with the default: max(4, 10 x 1) is already 10.
     expect(scheduler.snapshot().maxLive).toBe(10);
+    rooms = 5;
+    expect(scheduler.snapshot().maxLive).toBe(50);
     await scheduler.dispose();
   });
 });

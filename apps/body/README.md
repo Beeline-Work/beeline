@@ -89,7 +89,9 @@ by projecting agent activity into the relay channel.
 | `BUZZY_RELAY_SCHEME`                | No       | `https`                 | Relay scheme                                                                                     |
 | `BUZZY_BODY_WORKSPACE`              | No       | `./body-workspace`      | Agent workspace root                                                                             |
 | `BUZZY_BODY_LLM_FILE`               | No       | —                       | Path to LLM credentials env file                                                                 |
-| `BUZZY_BODY_MAX_SESSIONS`           | No       | `4`                     | Maximum live ACP processes                                                                       |
+| `BUZZY_BODY_MAX_SESSIONS`           | No       | dynamic                 | Optional fixed Workspace-wide live ACP process ceiling                                           |
+| `BUZZY_BODY_MAX_SESSIONS_PER_ROOM`  | No       | `10`                    | Per-Room live ACP ceiling; invalid values use 10. Higher values add resident-process RAM (typically hundreds of MB each) and can reach provider concurrency limits/HTTP 429 sooner; token spend is unchanged because queued corners do the same work |
+| `BUZZY_BODY_MAX_SESSIONS_FLOOR`     | No       | `4`                     | Minimum dynamic Workspace ceiling; actual ceiling is `max(floor, per-room × active Rooms)`       |
 | `BUZZY_BODY_SESSION_IDLE_MS`        | No       | `300000`                | Idle time before process suspension                                                              |
 | `BUZZ_BODY_KEY`                     | No       | auto                    | Body operator Nostr nsec/hex                                                                     |
 | `BUZZ_AGENT_KEY`                    | No       | generated at pair       | Existing agent Nostr nsec/hex                                                                    |

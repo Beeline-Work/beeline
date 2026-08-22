@@ -18,8 +18,23 @@ interface LiveSession {
   pending: boolean;
 }
 
-/** Concurrent live ACP processes one Room (its own session plus corners) may hold. */
-export const DEFAULT_PER_ROOM_LIVE_SESSIONS = 2;
+/**
+ * Concurrent live ACP processes one Room (its own session plus corners) may hold.
+ * Operators can override this with `BUZZY_BODY_MAX_SESSIONS_PER_ROOM`; invalid
+ * values fall back here. Raising the ceiling does not change token spend, but
+ * every live session is a resident ACP process (typically hundreds of MB), and
+ * more simultaneous turns can reach the model provider's concurrency limit
+ * sooner and receive HTTP 429 responses.
+ */
+export const DEFAULT_PER_ROOM_LIVE_SESSIONS = 10;
+
+/** Read the daemon's per-Room session ceiling without letting bad env crash startup. */
+export function resolvePerRoomLiveSessions(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.BUZZY_BODY_MAX_SESSIONS_PER_ROOM?.trim();
+  if (!raw) return DEFAULT_PER_ROOM_LIVE_SESSIONS;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : DEFAULT_PER_ROOM_LIVE_SESSIONS;
+}
 
 /**
  * Smallest Workspace-wide ceiling. The dynamic ceiling is
@@ -343,7 +358,7 @@ export class SessionScheduler {
    * Remove and return the least-recently-used idle candidate, under the lock.
    * It moves straight into `suspending` so the slot it still physically holds
    * keeps counting until its actual teardown resolves outside the lock.
-   */
+    */
   private claimIdleVictim(match: (session: LiveSession) => boolean): LiveSession | undefined {
     const victim = [...this.live.entries()]
       .filter(([candidate, session]) => !this.busy.has(candidate) && !this.tails.has(candidate) && match(session))

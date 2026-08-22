@@ -102,6 +102,20 @@ function reconcileRetryMs(error: unknown, pollMs: number): number {
   return match ? Math.max(pollMs, (Number(match[1]) + 1) * 1_000) : pollMs;
 }
 
+/**
+ * The relay's authoritative, terminal verdict that a channel is archived.
+ *
+ * Observed verbatim as a Room-serving failure:
+ * `publishEvent kind=9 failed: HTTP 400 {"error":"invalid: channel is archived"}`.
+ * A signed event has a stable id and an archived channel accepts no writes,
+ * so re-serving the Room can only produce the identical refusal — this is a
+ * fact about the Room, not a transient transport condition, and it must never
+ * be retried on a loop.
+ */
+export function isArchivedChannelError(error: unknown): boolean {
+  return /channel is archived/i.test(error instanceof Error ? error.message : String(error));
+}
+
 export const DEFAULT_ROOM_WATCHDOG_STALE_MS = 90_000;
 
 /**
@@ -176,6 +190,19 @@ export class WorkspaceSupervisor {
    * log line and its own retry cadence — never the whole discovery pass.
    */
   private readonly roomDiscoveryFailures = new Map<string, { retryAt: number; message: string }>();
+  /**
+   * Rooms the relay has authoritatively reported as ARCHIVED, held inert for
+   * this daemon process: never served again, never retried, and never even
+   * re-asked once the answer is in (the relay's archive verdict is terminal).
+   *
+   * Held inert rather than forgotten from `runtime.rooms` on purpose: the
+   * record is harmless local state, and the RELAY stays the authority on
+   * archived-ness. After a daemon restart the join path re-reads relay truth
+   * (`getChannelMetadata`) before serving anything, so a Room only ever comes
+   * back through a fresh authoritative answer that says it is NOT archived —
+   * never silently, and never by our own retry loop.
+   */
+  private readonly archivedRooms = new Map<string, { reason: string; at: number }>();
   private workspaceRemovalConfirmations = 0;
   private readonly roomRemovalConfirmations = new Map<string, number>();
   /** Schedule another short-cadence read while a removal is being confirmed. */
@@ -554,7 +581,21 @@ export class WorkspaceSupervisor {
         // forever.
         const failure = this.roomDiscoveryFailures.get(channelId);
         if (failure && this.now() < failure.retryAt) continue;
+        // An archived Room is never served again this process. The in-memory
+        // answer is a cache of the relay's own terminal verdict (see the
+        // quarantine handler and the proactive read below); while it stands,
+        // the Room costs discovery literally nothing — not even the read.
+        if (this.archivedRooms.has(channelId)) continue;
         try {
+          // Ask the relay BEFORE serving: an archived Room refuses every write
+          // a fresh Body would attempt, so the first serve cycle would only
+          // end in the identical HTTP 400 quarantine. One cheap metadata read
+          // on join turns that loop into a skip.
+          const metadata = await client.getChannelMetadata(channelId).catch(() => null);
+          if (metadata?.archived) {
+            this.noteArchivedRoom(channelId, 'the relay projection reports this Room archived');
+            continue;
+          }
           if (target.kind === 'repository') {
             let room = this.runtime.rooms.find((candidate) => candidate.channelId === channelId);
             if (
@@ -623,6 +664,38 @@ export class WorkspaceSupervisor {
     } finally {
       client.disconnect();
     }
+  }
+
+  /**
+   * Record the relay's terminal `channel is archived` verdict for one Room:
+   * logged once, then the Room is held inert — dropped from serving for the
+   * life of this daemon process and never re-attempted by discovery. See the
+   * `archivedRooms` docblock for why it is held rather than forgotten.
+   */
+  private noteArchivedRoom(channelId: string, reason: string): void {
+    if (this.archivedRooms.has(channelId)) return;
+    this.archivedRooms.set(channelId, { reason, at: this.now() });
+    this.roomDiscoveryFailures.delete(channelId);
+    console.error(
+      `[supervisor] Room ${channelId} is archived on the relay (${reason}); dropping it — ` +
+        'the daemon will not serve or retry it again',
+    );
+  }
+
+  /**
+   * One Room's serving loop died. A terminal archived-channel refusal is a
+   * fact about the Room and parks it forever; anything else stays an ordinary
+   * quarantine (the Room is retried when discovery next reaches it).
+   */
+  private handleQuarantinedRoom(channelId: string, error: unknown): void {
+    if (isArchivedChannelError(error)) {
+      this.noteArchivedRoom(
+        channelId,
+        'the relay refused writes to it: channel is archived',
+      );
+      return;
+    }
+    console.error(`[supervisor] Room ${channelId} quarantined:`, error);
   }
 
   /**
@@ -738,9 +811,7 @@ export class WorkspaceSupervisor {
         signal: controller.signal,
       })
       .catch((error) => {
-        if (!controller.signal.aborted) {
-          console.error(`[supervisor] Room ${channelId} quarantined:`, error);
-        }
+        if (!controller.signal.aborted) this.handleQuarantinedRoom(channelId, error);
       })
       .finally(async () => {
         await body.dispose();
@@ -779,9 +850,7 @@ export class WorkspaceSupervisor {
     const promise = body
       .runConversationRoomLoop(channelId, kind, { signal: controller.signal })
       .catch((error) => {
-        if (!controller.signal.aborted) {
-          console.error(`[supervisor] Room ${channelId} quarantined:`, error);
-        }
+        if (!controller.signal.aborted) this.handleQuarantinedRoom(channelId, error);
       })
       .finally(async () => {
         await body.dispose();

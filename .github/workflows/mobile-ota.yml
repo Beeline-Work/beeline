@@ -30,11 +30,6 @@ on:
   push:
     branches:
       - main
-      # Temporary pre-merge verification trigger, scoped to this feature
-      # branch so the pipeline can be proved end-to-end before landing
-      # (same precedent as deploy-host.yml / beeline-bundle.yml). Harmless to
-      # keep: it fires only for this exact branch name.
-      - fm/beeline-mobile-ota-pipeline
   workflow_dispatch:
 
 permissions:
@@ -50,6 +45,11 @@ jobs:
     # Same host runner convention as deploy-host.yml.
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 30
+    # Like deploy-host.yml this fires on the bundle bot's follow-up commit
+    # too; unlike a host deploy there is nothing to converge there (the bot
+    # touches relay-stack/web/dl only), so skip it instead of paying a
+    # ~7-minute export for byte-identical JS.
+    if: github.event.head_commit.author.username != 'beeline-bundle-bot'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

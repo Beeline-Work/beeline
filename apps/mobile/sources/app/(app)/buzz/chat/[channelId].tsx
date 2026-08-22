@@ -179,6 +179,7 @@ import { RoomContextPreamble } from '@/components/buzz/RoomContextPreamble';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome';
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
+import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
 import {
   LEDGER_MARGINALIA_WIDTH,
   LedgerEntry,
@@ -469,6 +470,7 @@ export default function BuzzChat() {
   const [dismissedSlashText, setDismissedSlashText] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [pendingAttachment, setPendingAttachment] = useState<PickedChatAttachment | null>(null);
+  const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
   const [isArchived, setIsArchived] = useState(initialChannelCache?.archived ?? false);
   const [userPubkey, setUserPubkey] = useState<string>('');
   const [mergeTarget, setMergeTarget] = useState<MergeTarget | null>(
@@ -1891,12 +1893,8 @@ export default function BuzzChat() {
   }, []);
 
   const chooseAttachment = useCallback(() => {
-    Alert.alert('Attach to message', 'Choose a photo or a document.', [
-      { text: 'Photo', onPress: () => void pickPhoto() },
-      { text: 'Document', onPress: () => void pickDocument() },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
-  }, [pickDocument, pickPhoto]);
+    setAttachmentPickerVisible(true);
+  }, []);
 
   const selectMention = useCallback(
     (participant: RoomMemberOption) => {
@@ -3682,6 +3680,13 @@ export default function BuzzChat() {
           </View>
         )}
       </KeyboardAvoidingView>
+
+      <AttachmentPickerSheet
+        visible={attachmentPickerVisible}
+        onClose={() => setAttachmentPickerVisible(false)}
+        onPickDocument={() => void pickDocument()}
+        onPickPhoto={() => void pickPhoto()}
+      />
 
       <RNModal
         animationType="fade"

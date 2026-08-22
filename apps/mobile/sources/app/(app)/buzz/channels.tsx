@@ -1235,8 +1235,11 @@ export default function BuzzChannels() {
           }
           renderItem={({ item: entry }) => {
             const { item, row } = entry;
+            // The dropdown lists open corner work, but the CONTROL exists for
+            // any Room with recorded corners: an all-terminal Room (landed,
+            // failed, closed) still needs its path into the full corner list.
             const corners = row.corners;
-            const canExpand = corners.length > 0;
+            const canExpand = row.totalCorners > 0;
             const title = item.title ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`;
             const expanded = canExpand && expandedRoomId === item.id;
             const unread = isRoomUnread(
@@ -1255,7 +1258,11 @@ export default function BuzzChannels() {
                     accessibilityLabel={`Open ${title}${unread ? ', unread' : ''}${
                       row.live ? ', agent working' : ''
                     }, ${item.participantCount ?? 0} participants${
-                      canExpand ? `, ${corners.length} open ${CHANGES_LABEL}` : ''
+                      canExpand
+                        ? corners.length > 0
+                          ? `, ${corners.length} open ${CHANGES_LABEL}`
+                          : `, ${row.totalCorners} recorded ${CHANGES_LABEL}`
+                        : ''
                     }`}
                     contentStyle={styles.indexRow}
                     delayLongPress={350}
@@ -1303,8 +1310,12 @@ export default function BuzzChannels() {
                     <Text style={[styles.rowAge, unread && styles.rowAgeUnread]}>{age}</Text>
                     {canExpand && (
                       <TouchableOpacity
-                        accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${corners.length} open ${
-                          corners.length === 1 ? CORNER_LABEL : CHANGES_LABEL
+                        accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${
+                          corners.length > 0
+                            ? `${corners.length} open ${
+                                corners.length === 1 ? CORNER_LABEL : CHANGES_LABEL
+                              }`
+                            : `${row.totalCorners} recorded ${CHANGES_LABEL}`
                         } in ${title}`}
                         accessibilityRole="button"
                         accessibilityState={{ expanded }}
@@ -1314,11 +1325,21 @@ export default function BuzzChannels() {
                         style={styles.cornerPeek}
                         testID={`room-corners-toggle-${item.id}`}
                       >
-                        <Text
-                          style={[styles.cornerPeekCount, row.live && styles.cornerPeekCountLive]}
-                        >
-                          {corners.length}
-                        </Text>
+                        {corners.length > 0 ? (
+                          <Text
+                            style={[
+                              styles.cornerPeekCount,
+                              row.live && styles.cornerPeekCountLive,
+                            ]}
+                          >
+                            {corners.length}
+                          </Text>
+                        ) : (
+                          /* No open work, but recorded corners exist: their
+                             total at the same ghosted tier — exactly what
+                             expanding reveals (no open rows + All Corners). */
+                          <Text style={styles.cornerPeekCount}>{row.totalCorners}</Text>
+                        )}
                       </TouchableOpacity>
                     )}
                   </View>
@@ -1350,6 +1371,9 @@ export default function BuzzChannels() {
                         </TouchableOpacity>
                       );
                     })}
+                    {/* Always present while expanded — including when no open
+                        work is listed — so every Room with recorded corners
+                        keeps one durable path into its full corner list. */}
                     <TouchableOpacity
                       accessibilityLabel={`All ${CHANGES_LABEL} in ${title}`}
                       accessibilityRole="button"

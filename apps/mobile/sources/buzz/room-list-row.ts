@@ -67,6 +67,16 @@ export type RoomRowPresentation = {
    * excluded outright and stay reachable through the full corner list.
    */
   corners: CornerSummary[];
+  /**
+   * Every corner the Room is known to hold, terminal ones included. The
+   * dropdown's control must exist whenever a Room has ANY recorded corner:
+   * gating it on open work alone left Rooms whose corners had all landed,
+   * failed, or been closed with no affordance at all — the ALL CORNERS link
+   * lived inside the expanded dropdown, so the row lost its only path to
+   * corner navigation. The count still reports open work only (the captain's
+   * hard requirement); this field decides visibility, not the number.
+   */
+  totalCorners: number;
   /** Which of the three scan zones this Room belongs to. */
   zone: RoomListZone;
   /** Newest message or lifecycle event that should affect list ordering. */
@@ -183,6 +193,7 @@ export function roomRowPresentation(
     live: Boolean(working),
     attention: Boolean(needsYou),
     corners,
+    totalCorners: all.length,
     zone,
     meaningfulAt,
     fact: currentCorner ? cornerFact(currentCorner, authorNames) : (preview ?? NO_ACTIVITY_PREVIEW),

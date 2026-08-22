@@ -100,6 +100,7 @@ import {
   stripAgentReplyPreamble,
   replyRootIdForEvent,
   STEER_QUEUED_TAG,
+  SLASH_COMMAND_NOTICE_TAG,
 } from './activity.js';
 import { isReadOnlyMcpPermissionRequest } from './read-only-policy.js';
 import {
@@ -7871,5 +7872,162 @@ describe('the Room target branch changes by admin confirm, never by the agent', 
       cornerBoundRepo.call(body, roomId, { repo: 'buzzy', targetBranch: 'refs/heads/main' }),
     ).resolves.toMatchObject({ targetBranch: 'refs/heads/main' });
     rmSync(workspaceRoot, { recursive: true, force: true });
+  });
+});
+
+describe('an unrecognized slash command is marked, never silently executed', () => {
+  const human = newIdentity('slash-human');
+
+  function requestEvent(content: string, createdAt = 1) {
+    return signEvent(
+      {
+        pubkey: human.publicKey,
+        created_at: createdAt,
+        kind: 9,
+        tags: [['h', 'parent-channel'], ['p', newIdentity('slash-agent').publicKey]],
+        content,
+      },
+      human.secretKey,
+    );
+  }
+
+  function newBody() {
+    return new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-slash-notice-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+  }
+
+  function stubPublishing(): NostrEvent[] {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    return published;
+  }
+
+  function stubRoomTurn(body: Body, reply: string) {
+    const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    const prompt = vi.spyOn(client, 'sessionPrompt').mockResolvedValue({
+      stopReason: 'end_turn',
+      updates: [],
+      agentText: reply,
+      toolCalls: [],
+    });
+    body.registerSession({
+      channelId: 'parent-channel',
+      sessionId: 'readonly-session',
+      client,
+      mode: 'readonly',
+    });
+    const durableState = Reflect.get(body, 'durableState') as {
+      appendConversation: (...args: unknown[]) => Promise<void>;
+    };
+    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
+    return { prompt };
+  }
+
+  async function runReplyInRoom(body: Body, content: string) {
+    const event = requestEvent(content);
+    return Reflect.get(body, 'replyInRoom').call(
+      body,
+      'parent-channel',
+      { repo: 'repo' },
+      {
+        eventId: event.id,
+        authorPubkey: event.pubkey,
+        content,
+        createdAt: event.created_at,
+      },
+    );
+  }
+
+  const slashNotices = (published: NostrEvent[]): NostrEvent[] =>
+    published.filter((event) =>
+      event.tags.some((tag) => tag[0] === 't' && tag[1] === SLASH_COMMAND_NOTICE_TAG),
+    );
+
+  it('marks an unknown verb as passed through to the agent, then still runs the turn', async () => {
+    const body = newBody();
+    const published = stubPublishing();
+    const { prompt } = stubRoomTurn(body, 'What should I loop on?');
+
+    await runReplyInRoom(body, '/loop');
+
+    // The notice is the FIRST thing published — the reader sees whose
+    // vocabulary `/loop` belongs to before any turn output.
+    expect(slashNotices(published)).toHaveLength(1);
+    const notice = slashNotices(published)[0]!;
+    expect(published[0]).toBe(notice);
+    expect(notice.tags).toContainEqual(['t', 'body-control']);
+    expect(notice.tags).toContainEqual(['t', SLASH_COMMAND_NOTICE_TAG]);
+    expect(notice.tags).toContainEqual(['command', 'loop']);
+    expect(notice.content).toContain('/loop is not a Beeline command');
+    expect(notice.content).toContain('/open-corner');
+    expect(notice.content).toContain('passed to the agent as an ordinary request');
+    // The text still reaches the session verbatim — prose keeps flowing.
+    expect(prompt).toHaveBeenCalledWith(
+      'readonly-session',
+      expect.stringContaining('/loop'),
+      ROOM_AGENT_PROMPT_TIMEOUT_MS,
+      expect.any(Function),
+      expect.any(Function),
+    );
+  });
+
+  it('tells the sender when typed text names a Beeline composer command', async () => {
+    const body = newBody();
+    const published = stubPublishing();
+    const { prompt } = stubRoomTurn(body, 'ok');
+
+    await runReplyInRoom(body, '/approve');
+
+    const notice = slashNotices(published)[0];
+    expect(slashNotices(published)).toHaveLength(1);
+    expect(notice!.tags).toContainEqual(['command', 'approve']);
+    expect(notice!.content).toContain('composer commands');
+    expect(prompt).toHaveBeenCalledWith(
+      'readonly-session',
+      expect.stringContaining('/approve'),
+      ROOM_AGENT_PROMPT_TIMEOUT_MS,
+      expect.any(Function),
+      expect.any(Function),
+    );
+  });
+
+  it.each([
+    '/etc/hosts is readable by everyone — is that intended?',
+    'The path is /usr/bin/env in the docs.',
+    'Did you check /var/log for the crash?',
+  ])('never marks prose that merely starts with a slash: %j', async (content) => {
+    const body = newBody();
+    const published = stubPublishing();
+    stubRoomTurn(body, 'ok');
+
+    await runReplyInRoom(body, content);
+
+    expect(slashNotices(published)).toHaveLength(0);
+  });
+
+  it('does not repeat the same notice inside its quiet window', async () => {
+    const body = newBody();
+    const published = stubPublishing();
+    stubRoomTurn(body, 'ok');
+
+    await runReplyInRoom(body, '/loop');
+    await runReplyInRoom(body, '/loop again');
+
+    expect(slashNotices(published)).toHaveLength(1);
   });
 });

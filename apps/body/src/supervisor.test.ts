@@ -188,6 +188,7 @@ describe('WorkspaceSupervisor removal lease', () => {
     mocks.createBuzzClient.mockReturnValue({
       isMember: vi.fn().mockResolvedValue(true),
       listMyChannels: vi.fn().mockResolvedValue([]),
+      getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect: vi.fn(),
     });
     const supervisor = new WorkspaceSupervisor(
@@ -260,6 +261,7 @@ describe('WorkspaceSupervisor unbound channel policy', () => {
       getDirectMessage: vi.fn().mockResolvedValue({
         participants: [runtime.agent.publicKey, 'b'.repeat(64)],
       }),
+      getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect,
     });
     const supervisor = new WorkspaceSupervisor(
@@ -306,6 +308,7 @@ describe('WorkspaceSupervisor unbound channel policy', () => {
         .mockResolvedValue({ kind: 'unverified', reason: 'role projection came back empty' }),
       getChannelRepositoryBinding: vi.fn().mockResolvedValue(null),
       getDirectMessage: vi.fn().mockResolvedValue(null),
+      getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect: vi.fn(),
     });
     const supervisor = new WorkspaceSupervisor(
@@ -340,6 +343,7 @@ describe('WorkspaceSupervisor unbound channel policy', () => {
       resolveRoomRepositoryState: vi.fn().mockResolvedValue({ kind: 'none' }),
       getChannelRepositoryBinding: vi.fn().mockResolvedValue(null),
       getDirectMessage: vi.fn().mockResolvedValue(null),
+      getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect: vi.fn(),
     });
     const supervisor = new WorkspaceSupervisor(
@@ -478,6 +482,7 @@ describe('WorkspaceSupervisor Room watchdog', () => {
         const room = runtime.rooms.find((candidate) => candidate.channelId === channelId)!;
         return { kind: 'repository', repository: { channelId, binding: room.repo.repository } };
       }),
+      getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect,
     });
     const supervisor = new WorkspaceSupervisor(
@@ -516,6 +521,7 @@ describe('WorkspaceSupervisor Room watchdog', () => {
         kind: 'repository',
         repository: { channelId: 'stale-room', binding: currentBinding },
       }),
+      getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect: vi.fn(),
     });
     const supervisor = new WorkspaceSupervisor(
@@ -629,6 +635,7 @@ describe('WorkspaceSupervisor transient relay resilience', () => {
     mocks.createBuzzClient.mockReturnValue({
       isMember,
       listMyChannels: vi.fn().mockResolvedValue([]),
+      getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect,
     });
     const supervisor = new WorkspaceSupervisor(
@@ -660,6 +667,7 @@ describe('WorkspaceSupervisor transient relay resilience', () => {
     const runtime = runtimeMinimal('corner-agent');
     mocks.createBuzzClient.mockReturnValue({
       isMember: vi.fn().mockRejectedValue(transient502()),
+      getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect: vi.fn(),
     });
     const supervisor = new WorkspaceSupervisor(
@@ -1072,6 +1080,7 @@ describe('WorkspaceSupervisor per-Room discovery isolation', () => {
           : null,
       ),
       messageSubmit: vi.fn().mockResolvedValue({}),
+      getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect: vi.fn(),
     };
   }
@@ -1166,5 +1175,160 @@ describe('WorkspaceSupervisor per-Room discovery isolation', () => {
       'unservable-room',
       expect.stringContaining("I could not access this Room's repository"),
     );
+  });
+});
+
+describe('WorkspaceSupervisor archived Room', () => {
+  function runtimeNoRooms(name: string): AgentRuntimeRecord {
+    const agent = storedIdentity(name);
+    const body = storedIdentity(`${name}-body`);
+    return {
+      version: 2,
+      communityId: '11111111-1111-4111-8111-111111111111',
+      pairedBy: 'a'.repeat(64),
+      agent: agent.stored,
+      body: body.stored,
+      rooms: [],
+      supervisorRoot: '/tmp/beeline-archived-room-test',
+      relayBaseUrl: 'http://relay.test',
+      agentBinary: '/bin/true',
+      mcpBinary: '/bin/true',
+      createdAt: new Date(0).toISOString(),
+    };
+  }
+
+  /** The verbatim refusal from the captain's daemon log (`daemon.log`). */
+  const ARCHIVED_QUARANTINE_ERROR = new Error(
+    'publishEvent kind=9 failed: HTTP 400 {"error":"invalid: channel is archived"}',
+  );
+
+  function twoRoomClient(runtime: AgentRuntimeRecord, metadataFor: (channelId: string) => unknown) {
+    return {
+      isMember: vi.fn().mockResolvedValue(true),
+      listMyChannels: vi.fn().mockResolvedValue([
+        { channelId: 'dead-room', event: { created_at: 20 } },
+        { channelId: 'live-room', event: { created_at: 21 } },
+      ]),
+      getChannelCommunityId: vi.fn().mockResolvedValue(runtime.communityId),
+      getParentChannelId: vi.fn().mockResolvedValue(null),
+      resolveRoomRepositoryState: vi.fn().mockResolvedValue({ kind: 'none' }),
+      getChannelRepositoryBinding: vi.fn().mockResolvedValue(null),
+      getDirectMessage: vi.fn().mockResolvedValue(null),
+      getChannelMetadata: vi.fn(async (channelId: string) => metadataFor(channelId)),
+      messageSubmit: vi.fn().mockResolvedValue({}),
+      disconnect: vi.fn(),
+    };
+  }
+
+  it('never serves a Room the relay reports as archived, and asks exactly once', async () => {
+    // The relay's `channel is archived` projection is authoritative and
+    // terminal. Serving the Room anyway can only end in the identical HTTP
+    // 400 quarantine — the captain's daemon re-served one archived Room 161
+    // times against 2 for its live Room. Discovery now reads the projection
+    // before serving and drops the Room, asking once per process.
+    const runtime = runtimeNoRooms('archived-proactive-agent');
+    const client = twoRoomClient(runtime, (channelId) =>
+      channelId === 'dead-room' ? { archived: true } : { archived: false },
+    );
+    mocks.createBuzzClient.mockReturnValue(client);
+    const supervisor = new WorkspaceSupervisor(
+      runtime,
+      `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+    );
+    const startConversation = vi
+      .spyOn(supervisor as never, 'startConversationRoom' as never)
+      .mockImplementation(() => undefined as never);
+    const startRepository = vi
+      .spyOn(supervisor as never, 'startRepositoryRoom' as never)
+      .mockImplementation(() => undefined as never);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(supervisor.reconcile()).resolves.toBe('member');
+    await expect(supervisor.reconcile()).resolves.toBe('member');
+    await expect(supervisor.reconcile()).resolves.toBe('member');
+
+    // The dead Room is never served...
+    const deadStarts = [
+      ...startConversation.mock.calls,
+      ...startRepository.mock.calls,
+    ].filter((call) => call[0] === 'dead-room');
+    expect(deadStarts).toHaveLength(0);
+    // ...the live Room is served on every pass...
+    expect(startConversation).toHaveBeenCalledWith('live-room', 'named-repository');
+    // ...the archived answer was read exactly ONCE across all three passes
+    // (held inert afterwards; not re-polled), and said so once.
+    expect(client.getChannelMetadata).toHaveBeenCalledWith('dead-room');
+    expect(
+      client.getChannelMetadata.mock.calls.filter((call) => call[0] === 'dead-room'),
+    ).toHaveLength(1);
+    const dropLogs = errors.mock.calls.filter((call) =>
+      String(call[0]).includes('dead-room') && String(call[0]).includes('archived'),
+    );
+    expect(dropLogs).toHaveLength(1);
+  });
+
+  it('treats an archived-channel quarantine as terminal and never retries it', async () => {
+    // The observed failure mode: the archive lands between discovery's
+    // metadata read and the first serve, so the Room is started and its loop
+    // dies on `publishEvent ... HTTP 400 channel is archived`. That answer is
+    // a fact about the Room, not a transient failure — quarantine must stop
+    // the retry outright instead of re-serving the Room every pass.
+    const runtime = runtimeNoRooms('archived-reactive-agent');
+    const client = twoRoomClient(runtime, () => null); // read answers nothing useful
+    mocks.createBuzzClient.mockReturnValue(client);
+    const supervisor = new WorkspaceSupervisor(
+      runtime,
+      `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+    );
+    const startConversation = vi
+      .spyOn(supervisor as never, 'startConversationRoom' as never)
+      .mockImplementation(() => undefined as never);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    // The serving loop died with the verbatim relay refusal:
+    (supervisor as never).handleQuarantinedRoom('dead-room', ARCHIVED_QUARANTINE_ERROR);
+
+    // ...and discovery must never pick it back up.
+    await expect(supervisor.reconcile()).resolves.toBe('member');
+    await expect(supervisor.reconcile()).resolves.toBe('member');
+    expect(client.getChannelMetadata).not.toHaveBeenCalledWith('dead-room');
+    const deadStarts = startConversation.mock.calls.filter((call) => call[0] === 'dead-room');
+    expect(deadStarts).toHaveLength(0);
+  });
+
+  it('keeps retrying a Room quarantined by an ordinary error', async () => {
+    // Only the archived verdict is terminal. Any other quarantine stays
+    // retryable — the pre-existing behaviour for transient Room failures.
+    const runtime = runtimeNoRooms('ordinary-quarantine-agent');
+    const client = twoRoomClient(runtime, () => ({ archived: false }));
+    mocks.createBuzzClient.mockReturnValue(client);
+    const supervisor = new WorkspaceSupervisor(
+      runtime,
+      `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+    ) as never as { handleQuarantinedRoom(id: string, error: unknown): void };
+
+    supervisor.handleQuarantinedRoom('live-room', new Error('relay socket hang up'));
+
+    await expect(
+      (supervisor as unknown as { reconcile(): Promise<string> }).reconcile(),
+    ).resolves.toBe('member');
+    // Not parked: the Room was still read and still offered for serving.
+    expect(client.getChannelMetadata).toHaveBeenCalledWith('live-room');
+  });
+
+  it('classifies only the archived-channel refusal as terminal', async () => {
+    const { isArchivedChannelError } = await import('./supervisor.js');
+    expect(isArchivedChannelError(ARCHIVED_QUARANTINE_ERROR)).toBe(true);
+    expect(isArchivedChannelError('HTTP 400 {"error":"invalid: Channel is Archived"}')).toBe(
+      true,
+    );
+    // Retryable codes and unrelated failures stay out.
+    expect(isArchivedChannelError(new Error('queryEvents failed: HTTP 429'))).toBe(false);
+    expect(isArchivedChannelError(new Error('HTTP 408 request timeout'))).toBe(false);
+    expect(isArchivedChannelError(new Error('HTTP 500 Bad Gateway'))).toBe(false);
+    expect(isArchivedChannelError(new Error('socket hang up'))).toBe(false);
   });
 });

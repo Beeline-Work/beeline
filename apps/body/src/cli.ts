@@ -51,13 +51,11 @@ import {
   findAgentRuntimeConfigPaths,
   findRuntimeConfigPaths,
   identityFromKey,
-  launchRuntimeDaemon,
   migrateRuntimeRecordAccessPolicy,
   pairRepositoryAgent,
   readRuntimeRecord,
   removeAgentRuntime,
   resolveRuntimeConfigPath,
-  runtimeDaemonPid,
   runtimeAgentCommand,
   runtimeIdentity,
   tryInspectLocalRepository,
@@ -66,6 +64,7 @@ import {
   type PairRuntimeResult,
 } from './runtime.js';
 import { runRelayCommand } from './relay-command.js';
+import { startStoredRuntime } from './start-command.js';
 import { runUpdateCommand } from './self-update-cli.js';
 import { detectBwrapSandbox } from './bwrap-sandbox.js';
 import {
@@ -106,9 +105,11 @@ ${pc.dim('Usage:')}
   beeline create-and-provision <name>       Create a new TLC + provision agent
   beeline pair <BUZZ-XXXX-XXXX> [options]   Pair an agent (optionally to this repo)
                                             and start its durable daemon
-  beeline start [agent-pubkey]              Restart this repo's (or, outside a
-                                            repo, this host's) durable agent
-  beeline start --agent <agent-pubkey>      Restart it from anywhere (no repo needed)
+  beeline start [agent-pubkey]              Start — or RESTART when already running,
+                                            stopping cleanly after in-flight work —
+                                            this repo's (or, outside a repo, this
+                                            host's) durable agent
+  beeline start --agent <agent-pubkey>      Same, from anywhere (no repo needed)
   beeline relay set <url> [--agent <pubkey>|--all]
                                             Repoint stored runtime(s) and restart cleanly
   beeline update [--check|--status|--rollback|--force]
@@ -850,7 +851,7 @@ async function runPairCommand(
   }
 }
 
-/** Launch one stored runtime daemon (or report it already running). */
+/** Launch one stored runtime daemon — restarting it when already running. */
 /**
  * `spinnerHandle`, when given (interactive `start` only), receives status
  * updates via `.message()` instead of `console.log` so they render inside
@@ -866,13 +867,7 @@ async function startRuntime(
   const selectedAgent = runtimeAgentCommand(runtime);
   await assertRuntimeSafe(runtime);
   report(`[body] agent ${runtime.agent.publicKey} binary: ${formatAgentCommand(selectedAgent)}`);
-  const existingPid = await runtimeDaemonPid(configPath);
-  if (existingPid) {
-    report(`[buzz] agent daemon is already running (pid ${existingPid})`);
-    return;
-  }
-  const pid = await launchRuntimeDaemon(configPath);
-  report(`[buzz] agent daemon started (pid ${pid})`);
+  await startStoredRuntime(configPath, { report });
 }
 
 async function runtimeSpendStatePaths(

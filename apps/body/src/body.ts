@@ -2555,6 +2555,8 @@ export class Body {
        * `requestId` across channels — see `postAgentStallNotice`.
        */
       replyToId?: string;
+      /** The NIP-10 root inherited from `replyToId`'s thread ancestry. */
+      replyRootId?: string;
       /**
        * Room turns only: watch the growing reply for the agent-initiated
        * edit-corner request marker (`corner-request.ts`) and strip it from
@@ -2607,7 +2609,12 @@ export class Body {
           return;
         }
         stallNotified = true;
-        postAgentStallNotice(turn.channelId, this.agentIdentity, turn.replyToId).catch(
+        postAgentStallNotice(
+          turn.channelId,
+          this.agentIdentity,
+          turn.replyToId,
+          turn.replyRootId,
+        ).catch(
           (error) => console.error('[body] failed to publish agent stall notice:', error),
         );
       }, ROOM_AGENT_STALL_NOTICE_MS);
@@ -3915,6 +3922,7 @@ export class Body {
           originalRequestId: envelope.authorizationEventId,
           cause: 'agent-exchange',
           replyToId: request.eventId,
+          replyRootId: request.replyRootId,
         });
         const reply = await this.publishAgentResult(
           channelId,
@@ -4624,6 +4632,7 @@ export class Body {
         originalRequestId: request.eventId,
         cause: 'room-message',
         replyToId: request.eventId,
+        replyRootId: request.replyRootId,
         cornerRequests:
           editPolicy !== 'direct-message' &&
           boundRepo !== undefined &&
@@ -7068,6 +7077,7 @@ export class Body {
                 originalRequestId: evt.id,
                 cause: 'corner-follow-up',
                 replyToId: evt.id,
+                replyRootId: replyRootIdForEvent(evt),
                 narrate: true,
               },
             );

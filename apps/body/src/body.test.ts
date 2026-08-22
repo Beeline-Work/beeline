@@ -1730,6 +1730,8 @@ describe('Room poll resilience', () => {
         requestId: 'stall-request',
         originalRequestId: 'stall-request',
         cause: 'room-message',
+        replyToId: 'stall-request',
+        replyRootId: 'stall-thread-root',
       });
       const rejection = expect(prompt).rejects.toThrow('timed out after');
 
@@ -1743,9 +1745,14 @@ describe('Room poll resilience', () => {
       // full ROOM_AGENT_PROMPT_TIMEOUT_MS idle-cancel window elapses.
       expect(ROOM_AGENT_STALL_NOTICE_MS).toBeLessThan(ROOM_AGENT_PROMPT_TIMEOUT_MS);
       await vi.advanceTimersByTimeAsync(2);
-      expect(
-        published.some((event) => event.content.includes('taking longer than usual')),
-      ).toBe(true);
+      const stallNotice = published.find((event) =>
+        event.content.includes('taking longer than usual'),
+      );
+      expect(stallNotice).toBeDefined();
+      expect(stallNotice!.tags.filter((tag) => tag[0] === 'e')).toEqual([
+        ['e', 'stall-thread-root', '', 'root'],
+        ['e', 'stall-request', '', 'reply'],
+      ]);
 
       await vi.advanceTimersByTimeAsync(ROOM_AGENT_PROMPT_TIMEOUT_MS);
       await rejection;

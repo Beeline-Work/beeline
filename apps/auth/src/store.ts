@@ -1,5 +1,8 @@
 import { Pool, type PoolClient, type QueryResultRow } from 'pg';
 
+/** How long a stored repository event remains fetchable by a late daemon. */
+export const GITHUB_REPO_EVENT_RETENTION_MS = 7 * 24 * 60 * 60_000;
+
 export interface SqlResult<Row extends QueryResultRow> {
   rows: Row[];
   rowCount: number | null;
@@ -193,6 +196,23 @@ const MIGRATIONS = [
   )`,
   `CREATE INDEX IF NOT EXISTS beeline_github_install_flows_expiry_idx
     ON beeline_github_install_flows (expires_at)`,
+  `CREATE TABLE IF NOT EXISTS beeline_github_repo_events (
+    id BIGSERIAL PRIMARY KEY,
+    full_name TEXT NOT NULL,
+    delivery_id TEXT NOT NULL UNIQUE,
+    event_type TEXT NOT NULL,
+    action TEXT NOT NULL DEFAULT '',
+    actor TEXT NOT NULL DEFAULT '',
+    number INTEGER,
+    title TEXT,
+    url TEXT,
+    summary TEXT NOT NULL,
+    received_at TIMESTAMPTZ NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS beeline_github_repo_events_name_idx
+    ON beeline_github_repo_events (full_name, id)`,
+  `CREATE INDEX IF NOT EXISTS beeline_github_repo_events_received_idx
+    ON beeline_github_repo_events (received_at)`,
 ] as const;
 
 function asDate(value: unknown): Date {
@@ -999,6 +1019,111 @@ export class AuthStore {
       `DELETE FROM beeline_github_webhook_deliveries WHERE delivery_id = $1`,
       [deliveryId],
     );
+  }
+
+  /** Store extracted repository-activity events; a repeated delivery is a no-op. */
+  async saveGitHubRepoEvents(
+    events: Array<{
+      fullName: string;
+      deliveryId: string;
+      eventType: string;
+      action: string;
+      actor: string;
+      number?: number;
+      title?: string;
+      url?: string;
+      summary: string;
+    }>,
+    now: Date,
+  ): Promise<void> {
+    for (const event of events) {
+      await this.database.query(
+        `INSERT INTO beeline_github_repo_events
+          (full_name, delivery_id, event_type, action, actor, number, title, url, summary, received_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (delivery_id) DO NOTHING`,
+        [
+          event.fullName,
+          event.deliveryId,
+          event.eventType,
+          event.action,
+          event.actor,
+          event.number ?? null,
+          event.title ?? null,
+          event.url ?? null,
+          event.summary,
+          now,
+        ],
+      );
+    }
+    // Bounded history: an offline daemon catches up within this window and no
+    // backlog can grow past it. Cheap enough to run on every insert batch.
+    await this.database.query(
+      `DELETE FROM beeline_github_repo_events WHERE received_at < $1`,
+      [new Date(now.getTime() - GITHUB_REPO_EVENT_RETENTION_MS)],
+    );
+  }
+
+  /** The stored activity for one repository newer than `sinceId`, oldest first. */
+  async githubRepoEvents(
+    fullName: string,
+    sinceId: number,
+    limit: number,
+  ): Promise<
+    Array<{
+      id: number;
+      fullName: string;
+      eventType: string;
+      action: string;
+      actor: string;
+      number?: number;
+      title?: string;
+      url?: string;
+      summary: string;
+      receivedAt: string;
+    }>
+  > {
+    const result = await this.database.query<QueryResultRow & {
+      id: string | number;
+      full_name: string;
+      event_type: string;
+      action: string;
+      actor: string;
+      number: number | null;
+      title: string | null;
+      url: string | null;
+      summary: string;
+      received_at: string | Date;
+    }>(
+      `SELECT id, full_name, event_type, action, actor, number, title, url, summary, received_at
+       FROM beeline_github_repo_events
+       WHERE full_name = $1 AND id > $2
+       ORDER BY id ASC
+       LIMIT $3`,
+      [fullName, sinceId, limit],
+    );
+    return result.rows.map((row) => ({
+      id: Number(row.id),
+      fullName: row.full_name,
+      eventType: row.event_type,
+      action: row.action,
+      actor: row.actor,
+      ...(row.number === null ? {} : { number: Number(row.number) }),
+      ...(row.title ? { title: row.title } : {}),
+      ...(row.url ? { url: row.url } : {}),
+      summary: row.summary,
+      receivedAt: new Date(row.received_at).toISOString(),
+    }));
+  }
+
+  /** The newest stored event id for a repository (0 when none) — the bootstrap cursor. */
+  async latestGitHubRepoEventId(fullName: string): Promise<number> {
+    const result = await this.database.query<QueryResultRow & { id: string | number }>(
+      `SELECT MAX(id) AS id FROM beeline_github_repo_events WHERE full_name = $1`,
+      [fullName],
+    );
+    const value = result.rows[0]?.id;
+    return value === null || value === undefined ? 0 : Number(value);
   }
 
   async saveGitHubUserToken(

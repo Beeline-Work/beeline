@@ -75,6 +75,8 @@ export interface RoomRepositoryInput {
   targetBranch?: string;
   /** GitHub App installation selected by the account-owned repo picker. */
   githubInstallationId?: number;
+  /** Room receives GitHub repository activity (stars/issues/PRs). Default true. */
+  githubEventsEnabled?: boolean;
 }
 
 /**
@@ -91,6 +93,8 @@ export interface RoomRepository {
   communityId?: string;
   binding: RepositoryBinding;
   targetBranch?: string;
+  /** Absent means enabled — the shipped default is ON for the three event types. */
+  githubEventsEnabled?: boolean;
   source: 'config' | 'genesis';
   /** Room admin who authored a `config` binding; absent for `genesis`. */
   authoredBy?: string;

@@ -94,6 +94,7 @@ export function isRoomAlive(corners: readonly CornerSummary[] | undefined): bool
 export type RoomRowInput = {
   id?: string;
   title?: string;
+  archived?: boolean;
   corners?: readonly CornerSummary[];
   latestMessage?: string;
   latestMessageAt?: number;
@@ -198,7 +199,25 @@ export function roomListSections<T extends RoomRowInput>(
   rooms: readonly T[],
   authorNames: ReadonlyMap<string, string>,
 ): RoomListSection<T>[] {
-  const projected = rooms.map((item) => ({ item, row: roomRowPresentation(item, authorNames) }));
+  const visibleRooms = rooms.filter((item) => !item.archived);
+  const titleCounts = new Map<string, number>();
+  for (const item of visibleRooms) {
+    const title = item.title?.trim().toLocaleLowerCase();
+    if (title) titleCounts.set(title, (titleCounts.get(title) ?? 0) + 1);
+  }
+  const projected = visibleRooms.map((item) => {
+    const row = roomRowPresentation(item, authorNames);
+    const title = item.title?.trim().toLocaleLowerCase();
+    const duplicateTitle = title ? (titleCounts.get(title) ?? 0) > 1 : false;
+    const displayItem =
+      duplicateTitle && item.id && item.title
+        ? { ...item, title: `${item.title} · ID ${item.id.slice(0, 8)}` }
+        : item;
+    return {
+      item: displayItem,
+      row,
+    };
+  });
   return ROOM_LIST_ZONE_ORDER.flatMap((zone) => {
     const data = projected
       .filter((entry) => entry.row.zone === zone)

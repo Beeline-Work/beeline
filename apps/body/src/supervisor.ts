@@ -36,8 +36,8 @@ import {
 } from './repository-truth.js';
 import { GitHubAppRuntime } from './github-app.js';
 import {
-  DEFAULT_PER_ROOM_LIVE_SESSIONS,
   DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR,
+  resolvePerRoomLiveSessions,
   SessionScheduler,
 } from './session-scheduler.js';
 
@@ -227,9 +227,7 @@ export class WorkspaceSupervisor {
     const fixedWorkspaceCeiling = process.env.BUZZY_BODY_MAX_SESSIONS;
     this.scheduler = new SessionScheduler({
       ...(fixedWorkspaceCeiling ? { maxLiveSessions: Number(fixedWorkspaceCeiling) } : {}),
-      perRoomLiveSessions: Number(
-        process.env.BUZZY_BODY_MAX_SESSIONS_PER_ROOM ?? String(DEFAULT_PER_ROOM_LIVE_SESSIONS),
-      ),
+      perRoomLiveSessions: resolvePerRoomLiveSessions(process.env),
       workspaceFloor: Number(
         process.env.BUZZY_BODY_MAX_SESSIONS_FLOOR ?? String(DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR),
       ),

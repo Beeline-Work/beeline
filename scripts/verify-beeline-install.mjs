@@ -36,6 +36,15 @@ function requestedPlatform() {
   return index >= 0 ? process.argv[index + 1] : hostPlatform();
 }
 
+/**
+ * picocolors enables color whenever CI is set, even piped, so CLI output can
+ * carry SGR sequences on a runner. Strip them before matching lines.
+ */
+function stripAnsi(text) {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\u001B\[[0-9;]*m/g, '');
+}
+
 function run(command, args, options = {}) {
   return new Promise((resolveRun, reject) => {
     const child = spawn(command, args, {
@@ -132,7 +141,7 @@ async function main() {
       cwd: bareCwd,
       env,
     });
-    if (!installed.stdout.includes('beeline, buzz-agent, buzz-dev-mcp, and buzz-readonly-mcp')) {
+    if (!stripAnsi(installed.stdout).includes('beeline, buzz-agent, buzz-dev-mcp, and buzz-readonly-mcp')) {
       fail(`installer success line omitted the read-only helper:\n${installed.stdout}`);
     }
 
@@ -142,7 +151,7 @@ async function main() {
       cwd: bareCwd,
       env: runtimeEnv,
     });
-    const match = version.stdout.match(/^\[body\] read-only mcp: (.+)$/m);
+    const match = stripAnsi(version.stdout).match(/^\[body\] read-only mcp: (.+)$/m);
     if (!match) fail(`beeline --version did not report the read-only MCP path:\n${version.stdout}`);
     await access(match[1], constants.X_OK);
 

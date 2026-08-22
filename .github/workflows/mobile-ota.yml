@@ -1,0 +1,85 @@
+# Mobile OTA publishing on merge ("latest from main" channel for app JS).
+#
+# Every push to main that changes mobile JavaScript publishes an expo-updates
+# update to the `production` branch, so channel-`production` installs (the
+# store AAB AND the `production-apk` sideload build — see apps/mobile/eas.json)
+# pick it up on next launch without a store round-trip. This is the mobile
+# counterpart of deploy-host.yml (web/auth) and beeline-bundle.yml (CLI): all
+# three ship surfaces land on merge, no human step.
+#
+# SCOPE — what OTA covers and what it cannot:
+#   - Covers JS/asset changes only. Anything native (a new native module, an
+#     app.config.js native prop, google-services.json, a NEW bundled font's
+#     native registration, a permission) needs a STORE/APK rebuild.
+#   - runtimeVersion (app.config.js, static "21") gates which binaries an
+#     update applies to. When a change needs a rebuild, bump runtimeVersion in
+#     the SAME commit so stale OTA is never served to an incompatible binary;
+#     the rebuilt binaries then receive only updates built against them.
+#
+# Credential: EAS publish authenticates with EXPO_TOKEN. It deliberately does
+# NOT live in this repo. Two supported sources, checked in order:
+#   1. a GitHub Actions secret named EXPO_TOKEN on this repo, or
+#   2. EXPO_TOKEN already present in the self-hosted runner's own service
+#      environment (actions-runner/.env).
+# /home/lunchbox/.secrets.env on the host is NOT readable by the runner user
+# (0600, lunchbox-owned), so neither step can source it from there directly.
+# If neither source is configured, the publish step fails loudly with the fix.
+name: Mobile OTA update
+
+on:
+  push:
+    branches:
+      - main
+      # Temporary pre-merge verification trigger, scoped to this feature
+      # branch so the pipeline can be proved end-to-end before landing
+      # (same precedent as deploy-host.yml / beeline-bundle.yml). Harmless to
+      # keep: it fires only for this exact branch name.
+      - fm/beeline-mobile-ota-pipeline
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-ota-publish
+  cancel-in-progress: false
+
+jobs:
+  ota:
+    name: Publish expo-updates update to production
+    # Same host runner convention as deploy-host.yml.
+    runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19'
+      # apps/mobile is an isolated npm project (own lockfile, outside the root
+      # workspaces); eas update exports its bundle from these dependencies.
+      - name: Install mobile dependencies
+        working-directory: apps/mobile
+        run: npm ci
+      - name: Publish OTA update to channel production
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN_SECRET: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Prefer the GitHub secret; fall back to an ambient token already in
+          # the runner's service environment. Never echo either value.
+          if [ -n "$EXPO_TOKEN_SECRET" ]; then
+            export EXPO_TOKEN="$EXPO_TOKEN_SECRET"
+          fi
+          if [ -z "${EXPO_TOKEN:-}" ]; then
+            echo "!! EXPO_TOKEN is unavailable to this runner." >&2
+            echo "!! Fix (either suffices):" >&2
+            echo "!!   gh secret set EXPO_TOKEN -R $GITHUB_REPOSITORY" >&2
+            echo "!!   ...or add EXPO_TOKEN to the self-hosted runner's .env and restart the runner service." >&2
+            exit 1
+          fi
+          npx --yes eas-cli@latest update \
+            --branch production \
+            --environment production \
+            --non-interactive \
+            --message "ota: ${GITHUB_SHA::7} ${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"

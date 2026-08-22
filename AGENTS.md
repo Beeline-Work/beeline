@@ -3,6 +3,7 @@
 This file is the project's committed home for project-intrinsic agent knowledge: build, test, release, architecture, and sharp-edge notes that should travel with the code.
 
 - Add durable project-specific notes here as they are discovered through real work.
+- **An empty ACP Room turn is not evidence about the repository.** `Body.replyInRoom` retries one truly empty, activity-free read-only turn with an explicit request for a direct conversational answer. If the adapter stays silent, the published fallback reports that no response was produced; it must never say "No repository findings to report" (or make any other domain claim), because the triggering message may be a greeting, opinion question, or correction unrelated to repository inspection. Coverage lives in `apps/body/src/body.test.ts`'s read-only Room reply test.
 
 ## Branch conventions
 

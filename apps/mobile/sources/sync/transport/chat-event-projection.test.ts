@@ -776,6 +776,7 @@ describe('Buzz Room screen event projection', () => {
       relayId: 'final-relay-event-id',
     });
     expect(settled[0]!.isAgentDraft).toBeUndefined();
+    expect(settled[0]!.isNew).toBeUndefined();
 
     // A late-delivered draft flush for the same request (the draft and the
     // final message arrive over independent subscriptions with no ordering

@@ -261,6 +261,15 @@ describe('agent pairing and soul overlays', () => {
     });
     expect(pictureOnlyProfile.soul).toBe('Keeps the suite green and refactors mercilessly.');
     expect(pictureOnlyProfile.avatar).toBe('https://relay.test/media/ada-updated.jpg');
+
+    // An operator-chosen compound name is a legitimate persona name now; only
+    // malformed values are refused.
+    const compoundNameProfile = await setAgentSoul(ctx(), communityId, agentIdentity.publicKey, {
+      name: 'Quiet Keeper',
+      soul: 'Keeps the suite green and refactors mercilessly.',
+      avatarSeed: agentIdentity.publicKey,
+    });
+    expect(compoundNameProfile.name).toBe('Quiet Keeper');
   });
 
   it('migrates legacy personality and intent into one soul without losing either text', () => {

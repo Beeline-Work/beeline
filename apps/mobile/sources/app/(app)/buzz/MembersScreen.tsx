@@ -6,9 +6,10 @@ import * as Clipboard from 'expo-clipboard';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
+  AGENT_NAME_MAX_LENGTH,
   AGENT_PRESENCE_STALE_MS,
   isAgentPresenceOnline,
-  isSingleWordAgentName,
+  isReasonableAgentName,
   type Agent,
   type AgentModelConfigInput,
   type AgentModelConfigOption,
@@ -24,6 +25,7 @@ import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-sto
 import { presenceMapFromSessionEvents } from '@/buzz/agent-presence';
 import type { BeelineThemeTokens } from '@/buzz/groknight';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
+import { useAgentNameCache } from '@/buzz/agent-name-cache';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { buildCommunityInviteUrl } from '@/buzz/community-invite';
@@ -269,6 +271,8 @@ export default function BuzzAgents() {
   const refreshAgents = useCallback(async (currentTransport: BuzzRigTransport, id: string) => {
     const client = await currentTransport.ensureClient();
     const next = await client.listAgents(id);
+    // Warm the device-wide agent-name store with the freshest souls.
+    useAgentNameCache.getState().rememberAgents(next);
     setAgents(next);
     if (pairingPending.current) {
       const arrival = next.find((agent) => !pairingBaseline.current.has(agent.pubkey));
@@ -1088,14 +1092,16 @@ export default function BuzzAgents() {
               <Text style={styles.label}>Name</Text>
               <TextInput
                 style={styles.input}
+                testID="agent-soul-name"
                 value={name}
                 onChangeText={setName}
                 placeholderTextColor={theme.buzz.dim}
-                maxLength={32}
+                maxLength={AGENT_NAME_MAX_LENGTH}
                 autoCapitalize="words"
               />
               <Text style={styles.fieldHint}>
-                One spoken word. Mention as @
+                A short spoken name — one word or a compound like "Quiet
+                Keeper". Mention as @
                 {name.toLowerCase().replace(/[^a-z0-9]/g, '') || 'name'}.
               </Text>
               <View style={styles.editorActions}>
@@ -1103,7 +1109,7 @@ export default function BuzzAgents() {
                   label="Save"
                   style={[styles.primaryButton, styles.flexButton]}
                   disabled={
-                    !soul.trim() || !isSingleWordAgentName(name) || busy
+                    !soul.trim() || !isReasonableAgentName(name) || busy
                   }
                   onPress={() => void saveSoul()}
                 />

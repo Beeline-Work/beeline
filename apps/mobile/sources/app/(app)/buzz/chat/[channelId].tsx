@@ -99,6 +99,7 @@ import {
   resolveCornerCardAgentPubkey,
   resolvePendingAgentDisplay,
 } from '@/buzz/agent-display';
+import { useAgentNameCache, withKnownAgentNames } from '@/buzz/agent-name-cache';
 import {
   cornerName,
   cornerStatusPresentation,
@@ -679,7 +680,15 @@ export default function BuzzChat() {
     transport,
     visibleMessageCount,
   ]);
-  const availableAgents = channelCache?.availableAgents ?? [];
+  const knownAgentNames = useAgentNameCache((state) => state.byPubkey);
+  const rememberKnownAgents = useAgentNameCache((state) => state.rememberAgents);
+  // The Room's own roster read wins field-per-field, but a name (soul) the
+  // agent was given in ANY Workspace survives: one identity everywhere, not
+  // per-Room placeholders when this channel's own read is stale or absent.
+  const availableAgents = useMemo(
+    () => withKnownAgentNames(knownAgentNames, channelCache?.availableAgents ?? []),
+    [knownAgentNames, channelCache?.availableAgents],
+  );
   const availablePeople = channelCache?.availablePeople ?? [];
   const roomMembers = channelCache?.roomMembers ?? [];
   const roomMemberPubkeys = useMemo(
@@ -1617,8 +1626,10 @@ export default function BuzzChat() {
             // belongs to, and land on their own — never behind the
             // person-profile read, whose failure used to leave the transcript
             // with no agent names at all until the screen remounted.
-            onAgents: (agents) =>
-              patchChannelCache(identity.publicKey, { availableAgents: agents }),
+            onAgents: (agents) => {
+              rememberKnownAgents(agents);
+              patchChannelCache(identity.publicKey, { availableAgents: agents });
+            },
             onRoster: ({ people, profiles, canManageWorkspace, communityId }) => {
               setCanManageWorkspace(canManageWorkspace);
               patchChannelCache(identity.publicKey, { availablePeople: people });

@@ -1364,17 +1364,25 @@ export function postCornerSessionStatus(channelId: string, owner: Identity, sess
  * turn is triggered by a Room event, not a corner one, so callers with no
  * same-channel parent to thread to must omit it rather than passing a
  * cross-channel id.
+ *
+ * `replyRootId` is the original NIP-10 thread root. Nested replies must carry
+ * it exactly like a completed agent reply does or the relay rejects the event
+ * because its root does not match the referenced parent's ancestry.
  */
 export function postAgentStallNotice(
   channelId: string,
   owner: Identity,
   replyTo?: string,
+  replyRootId?: string,
 ): Promise<void> {
   return postAgentMessage(
     channelId,
     owner,
     "Still working on this — my coding backend is taking longer than usual to respond.",
     replyTo,
+    [],
+    [],
+    replyRootId,
   );
 }
 

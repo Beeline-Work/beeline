@@ -2974,6 +2974,10 @@ export default function BuzzChat() {
                 byline={byline}
                 continued={attributionContinued}
                 luminous={speaksAsAgent}
+                // `item.isNew` is re-stamped by warm revalidation / WS replay
+                // on every room open; the consume-once gate (one type-out per
+                // message id per app session, shared with the entrance fade's
+                // registry) lives inside `LedgerEntry`.
                 typewriter={speaksAsAgent && Boolean(item.isNew)}
                 bodyText={ledgerText ? ledgerText.prose : item.text}
                 bodyTestID={`chat-message-text-${item.id}`}

@@ -1,0 +1,67 @@
+{
+  "project_info": {
+    "project_number": "31955293663",
+    "project_id": "buzzy-e11e7",
+    "storage_bucket": "buzzy-e11e7.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:31955293663:android:a08dd03afc4ea13503206a",
+        "android_client_info": {
+          "package_name": "app.usebeeline.mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC9SQjf-V5nLBKQmPWup_djWZ3pZh4Yz90"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:31955293663:android:2b6bec20d288821703206a",
+        "android_client_info": {
+          "package_name": "app.buzzy.mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC9SQjf-V5nLBKQmPWup_djWZ3pZh4Yz90"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:31955293663:android:0ad094d2cda447ce03206a",
+        "android_client_info": {
+          "package_name": "app.buzzy.mobile.dev"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC9SQjf-V5nLBKQmPWup_djWZ3pZh4Yz90"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

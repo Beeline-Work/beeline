@@ -26,6 +26,7 @@ import { selectPairAgentCommand } from './pair-agent-selection.js';
 import {
   DEFAULT_ACCESS_POLICY,
   isAgentAccessPolicy,
+  LEGACY_ACCESS_POLICY,
   type AgentAccessPolicy,
 } from './access-policy.js';
 import type { AgentModelConfigOption } from '@beeline/buzz-client';
@@ -51,6 +52,7 @@ import {
   findRuntimeConfigPaths,
   identityFromKey,
   launchRuntimeDaemon,
+  migrateRuntimeRecordAccessPolicy,
   pairRepositoryAgent,
   readRuntimeRecord,
   removeAgentRuntime,
@@ -397,7 +399,11 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // per-daemon path below (workspace, daemon.pid, Room roots) must hang off the
   // real runtime directory, not the pointer's.
   const configPath = await resolveRuntimeConfigPath(pathOrPointer);
-  const runtime = await readRuntimeRecord(configPath);
+  // One-time, idempotent migration: a runtime record that predates per-agent
+  // access policies gets an explicit `accessPolicy: 'everyone'` stamped on it,
+  // so flipping DEFAULT_ACCESS_POLICY to owner-only never re-gates an
+  // already-paired agent. A record with any explicit policy is untouched.
+  const { runtime } = await migrateRuntimeRecordAccessPolicy(configPath);
   const agent = runtimeAgentCommand(runtime);
   // This assertion deliberately sits outside the retry loop: unsafe branch
   // policy is a fatal startup error, not a transient Room-loop failure.
@@ -417,8 +423,11 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   });
   // Per-agent access policy is a property of the paired runtime, not the
   // process env, so inject it here where both are in hand. The supervisor's
-  // per-Room config spread carries it to every Body.
-  config.accessPolicy = runtime.accessPolicy ?? DEFAULT_ACCESS_POLICY;
+  // per-Room config spread carries it to every Body. A record still carrying
+  // no explicit policy at this point can only be pre-policy (the migration
+  // above stamps every canonical one), so it keeps the frozen legacy
+  // behaviour — never the new pairing default.
+  config.accessPolicy = runtime.accessPolicy ?? LEGACY_ACCESS_POLICY;
   config.accessOwnerPubkey = runtime.pairedBy;
   if (runtime.accessAutoResponse) config.accessAutoResponse = runtime.accessAutoResponse;
   if (runtime.externalMcpCapabilities) {

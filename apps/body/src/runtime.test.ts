@@ -6,10 +6,15 @@ import { resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { newIdentity } from '@beeline/gate';
 import {
+  DEFAULT_ACCESS_POLICY,
+  isSenderPermitted,
+} from './access-policy.js';
+import {
   canonicalizeOrigin,
   findAgentRuntimeConfigPaths,
   findRuntimeConfigPaths,
   inspectLocalRepository,
+  migrateRuntimeRecordAccessPolicy,
   normalizeRelayBaseUrl,
   pairRepositoryAgent,
   tryInspectLocalRepository,
@@ -648,13 +653,90 @@ describe('multi-identity guard (S0) + access policy', () => {
     ).rejects.toThrow('external MCP capabilities require creator access');
   });
 
-  it('defaults to no persisted access policy (everyone) when unset', async () => {
+  it('defaults a new pairing to an explicit owner-only policy when unset', async () => {
     const root = await repository('https://example.com/team/project.git');
     const supervisorRoot = await stateRoot();
     const result = await pairAgent(root, supervisorRoot);
     const stored = await readRuntimeRecord(result.configPath);
-    expect(stored.accessPolicy).toBeUndefined();
+    // A record written from now on never depends on the constant at read
+    // time: the default is stored explicitly. Owner-only means only the
+    // inviting owner may drive the agent.
+    expect(stored.accessPolicy).toBe('creator');
+    expect(stored.accessPolicy).toBe(DEFAULT_ACCESS_POLICY);
+    expect(isSenderPermitted(stored.accessPolicy!, 'b'.repeat(64), stored.pairedBy)).toBe(false);
+    expect(isSenderPermitted(stored.accessPolicy!, stored.pairedBy, stored.pairedBy)).toBe(true);
     expect(stored.accessAutoResponse).toBeUndefined();
+  });
+
+  it('still persists an inviter-set everyone policy verbatim', async () => {
+    const root = await repository('https://example.com/team/project.git');
+    const supervisorRoot = await stateRoot();
+    const result = await pairAgent(root, supervisorRoot, newIdentity('agent'), {
+      accessPolicy: 'everyone',
+    });
+    const stored = await readRuntimeRecord(result.configPath);
+    expect(stored.accessPolicy).toBe('everyone');
+  });
+
+  describe('access policy migration (pre-policy records)', () => {
+    /** Rewrites the stored record WITHOUT its access policy, exactly the shape
+     * every agent paired before per-agent access policies shipped has on disk. */
+    async function stripPolicy(configPath: string): Promise<void> {
+      const raw = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, unknown>;
+      delete raw.accessPolicy;
+      await writeFile(configPath, `${JSON.stringify(raw, null, 2)}\n`);
+    }
+
+    it('stamps an explicit everyone onto a pre-policy record, preserving behaviour', async () => {
+      const root = await repository('https://example.com/team/project.git');
+      const supervisorRoot = await stateRoot();
+      const result = await pairAgent(root, supervisorRoot);
+      await stripPolicy(result.configPath);
+      expect((await readRuntimeRecord(result.configPath)).accessPolicy).toBeUndefined();
+
+      const { runtime, migrated } = await migrateRuntimeRecordAccessPolicy(result.configPath);
+      expect(migrated).toBe(true);
+      // Behaviour, not just the field: a stranger may still drive the agent,
+      // exactly what this record answered before the default changed.
+      expect(runtime.accessPolicy).toBe('everyone');
+      const stranger = 'b'.repeat(64);
+      expect(isSenderPermitted(runtime.accessPolicy!, stranger, runtime.pairedBy)).toBe(true);
+      expect(isSenderPermitted(runtime.accessPolicy!, runtime.pairedBy, runtime.pairedBy)).toBe(
+        true,
+      );
+      // Durable: the explicit policy survives a re-read from disk.
+      expect((await readRuntimeRecord(result.configPath)).accessPolicy).toBe('everyone');
+    });
+
+    it('is idempotent: a second run changes nothing', async () => {
+      const root = await repository('https://example.com/team/project.git');
+      const supervisorRoot = await stateRoot();
+      const result = await pairAgent(root, supervisorRoot);
+      await stripPolicy(result.configPath);
+      const first = await migrateRuntimeRecordAccessPolicy(result.configPath);
+      expect(first.migrated).toBe(true);
+      const afterFirst = await readFile(first.configPath, 'utf8');
+
+      const second = await migrateRuntimeRecordAccessPolicy(result.configPath);
+      expect(second.migrated).toBe(false);
+      expect(second.runtime.accessPolicy).toBe('everyone');
+      expect(await readFile(second.configPath, 'utf8')).toBe(afterFirst);
+    });
+
+    it('never overwrites an explicit policy someone deliberately set', async () => {
+      const root = await repository('https://example.com/team/project.git');
+      const supervisorRoot = await stateRoot();
+      for (const explicit of ['creator', 'everyone'] as const) {
+        const result = await pairAgent(root, supervisorRoot, newIdentity(`agent-${explicit}`), {
+          accessPolicy: explicit,
+        });
+        const before = await readFile(result.configPath, 'utf8');
+        const { runtime, migrated } = await migrateRuntimeRecordAccessPolicy(result.configPath);
+        expect(migrated).toBe(false);
+        expect(runtime.accessPolicy).toBe(explicit);
+        expect(await readFile(result.configPath, 'utf8')).toBe(before);
+      }
+    });
   });
 
   it('round-trips the OS sandbox off-switch and rejects a bogus value', async () => {

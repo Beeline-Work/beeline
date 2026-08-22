@@ -116,7 +116,6 @@ vi.mock('@/components/buzz/MonoHull', async () => {
         props,
         typeof props.children === 'function' ? props.children(false) : props.children,
       ),
-    HullDeckMark: (props: any) => ReactModule.createElement('HullDeckMark', props),
     HullLivePulse: host('HullLivePulse'),
     HullSurface: host('HullSurface'),
     HullWaveSignal: host('HullWaveSignal'),
@@ -280,7 +279,7 @@ describe('one home surface for every Workspace kind', () => {
     }
     const text = visibleText(tree).join('');
     // Rooms index vocabulary and per-Room previews — not a bare "# name" list.
-    expect(text).toContain('EARLIER · 2');
+    expect(text).toContain('QUIET · 2');
     expect(text).toContain('Ledger rewrite');
     expect(text).toContain('beebee: pushed the branch');
     expect(text).toContain('＋ ROOM');
@@ -295,7 +294,7 @@ describe('one home surface for every Workspace kind', () => {
       expect(has(tree, id), `shared home is missing ${id}`).toBe(true);
     }
     const text = visibleText(tree).join('');
-    expect(text).toContain('EARLIER · 2');
+    expect(text).toContain('QUIET · 2');
     expect(text).toContain('＋ ROOM');
     expect(text).toContain('MEMBERS');
   });

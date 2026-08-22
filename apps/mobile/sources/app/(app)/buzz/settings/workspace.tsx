@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   ScrollView,
   Text,
@@ -57,10 +57,9 @@ async function loadWorkspaceRooms(
   }
   const rooms = await Promise.all(
     [...roomCreates.entries()].map(async ([id, create]) => {
-      const [metadata, role] = await Promise.all([
-        client.getChannelMetadata(id),
-        client.getChannelRole(id, viewerPubkey),
-      ]);
+      const metadata = await client.getChannelMetadata(id);
+      if (metadata?.archived) return null;
+      const role = await client.getChannelRole(id, viewerPubkey);
       const createdVisibility = tagValue(create, 'visibility');
       return {
         id,
@@ -74,7 +73,9 @@ async function loadWorkspaceRooms(
       } satisfies WorkspaceRoomSetting;
     }),
   );
-  return rooms.sort((a, b) => a.name.localeCompare(b.name));
+  return rooms
+    .filter((room): room is WorkspaceRoomSetting => room !== null)
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export default function WorkspaceSettings() {
@@ -91,6 +92,14 @@ export default function WorkspaceSettings() {
   const [error, setError] = useState<string | null>(null);
 
   const canManageWorkspace = isWorkspaceManagerRole(community?.viewerRole);
+  const duplicateRoomNames = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const room of rooms) {
+      const key = room.name.trim().toLocaleLowerCase();
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return new Set([...counts].filter(([, count]) => count > 1).map(([name]) => name));
+  }, [rooms]);
 
   useFocusEffect(
     useCallback(() => {
@@ -380,30 +389,34 @@ export default function WorkspaceSettings() {
                 <Text style={styles.textButtonLabel}>OPEN ROOMS</Text>
               </TouchableOpacity>
             </View>
-            {rooms.map((room) => (
-              <View key={room.id} style={styles.roomRow}>
-                <TouchableOpacity
-                  onPress={() => router.push(`/buzz/chat/${encodeURIComponent(room.id)}` as Href)}
-                  style={styles.roomCopy}
-                >
-                  <Text numberOfLines={1} style={styles.roomName}># {room.name}</Text>
-                  <Text style={styles.roomMeta}>
-                    {room.canManage ? 'Tap visibility to change' : 'Room owner controls visibility'}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  accessibilityState={{ disabled: !room.canManage }}
-                  disabled={!room.canManage || workingKey === `room-${room.id}`}
-                  onPress={() => void changeRoomVisibility(room)}
-                  style={[styles.visibilityButton, !room.canManage && styles.disabledButton]}
-                  testID={`room-visibility-${room.id}`}
-                >
-                  <Text style={styles.visibilityButtonText}>
-                    {room.visibility === 'public' ? 'PUBLIC' : 'INVITE-ONLY'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            ))}
+            {rooms.map((room) => {
+              const duplicateName = duplicateRoomNames.has(room.name.trim().toLocaleLowerCase());
+              return (
+                <View key={room.id} style={styles.roomRow}>
+                  <TouchableOpacity
+                    onPress={() => router.push(`/buzz/chat/${encodeURIComponent(room.id)}` as Href)}
+                    style={styles.roomCopy}
+                  >
+                    <Text numberOfLines={1} style={styles.roomName}># {room.name}</Text>
+                    {duplicateName && <Text style={styles.roomMeta}>ID {room.id.slice(0, 8)}</Text>}
+                    <Text style={styles.roomMeta}>
+                      {room.canManage ? 'Tap visibility to change' : 'Room owner controls visibility'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    accessibilityState={{ disabled: !room.canManage }}
+                    disabled={!room.canManage || workingKey === `room-${room.id}`}
+                    onPress={() => void changeRoomVisibility(room)}
+                    style={[styles.visibilityButton, !room.canManage && styles.disabledButton]}
+                    testID={`room-visibility-${room.id}`}
+                  >
+                    <Text style={styles.visibilityButtonText}>
+                      {room.visibility === 'public' ? 'PUBLIC' : 'INVITE-ONLY'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
           </View>
 
           {error && (

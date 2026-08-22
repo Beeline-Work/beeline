@@ -7936,6 +7936,9 @@ export class Body {
     await setMemberRole(this.bodyIdentity, communityId, this.agentIdentity.publicKey, 'member');
     await waitUntilMember(ctx, communityId, this.agentIdentity.publicKey);
     await createAgent(ctx, communityId, {
+      // The default identity name is the generic `buzzy-agent` marker.
+      // Registration resolves it deliberately (`deriveAgentDisplayName`):
+      // "Buzzy", not a random-looking pubkey-derived first name.
       displayName: this.agentIdentity.name || 'Agent',
     });
   }

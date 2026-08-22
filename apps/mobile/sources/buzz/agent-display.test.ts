@@ -49,7 +49,10 @@ describe('agent display identity', () => {
     });
   });
 
-  it('does not expose a legacy compound overlay as an agent handle', () => {
+  it('preserves an authored compound overlay as the agent name and handle', () => {
+    // Operator-chosen names are identity, not noise: a multi-word soul name
+    // renders verbatim and its handle strips only non-alphanumerics. The old
+    // single-word rule silently replaced it with a random first name.
     const pubkey = 'legacy-agent';
     const display = resolveAgentDisplayIdentity(pubkey, {
       pubkey,
@@ -64,9 +67,9 @@ describe('agent display identity', () => {
         raw: {} as never,
       },
     });
-    expect(display.name).toMatch(/^[A-Z][a-z]+$/);
-    expect(display.handle).not.toContain('chrome');
-    expect(display.hasSoul).toBe(false);
+    expect(display.name).toBe('Chrome Warden');
+    expect(display.handle).toBe('chromewarden');
+    expect(display.hasSoul).toBe(true);
   });
 
   it('produces different names across representative keys', () => {

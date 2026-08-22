@@ -297,80 +297,6 @@ function LoaderCell({
   return <Animated.View style={[styles.loaderCell, compact && styles.loaderCellCompact, style]} />;
 }
 
-export type HullDeckState = 'needs-you' | 'working' | 'idle';
-
-/**
- * The supervision deck's three-state leading mark — three visual languages,
- * no overlap:
- *
- *   - **working** is MOTION: a small spinner (a ring whose top arc carries the
- *     accent while it turns). Never a static color claim; the movement IS the
- *     state.
- *   - **needs-you** is the one loud brass mark: a solid dot, gently pulsing on
- *     the shared live clock.
- *   - **idle** is a quiet steel dot. Silence is a state.
- *
- * Reduced motion keeps all three distinguishable without animation: working
- * falls back to a hollow static ring (vs the needs-you SOLID brass dot and the
- * idle steel dot), and the pulse holds still — the fill difference alone still
- * separates needs-you from idle.
- */
-export function HullDeckMark({ state }: { state: HullDeckState }) {
-  const reducedMotion = useReducedMotion();
-  const rotation = useSharedValue(0);
-  const spin = useAnimatedStyle(() => ({
-    transform: [{ rotate: `${rotation.value * 360}deg` }],
-  }));
-
-  useEffect(() => {
-    if (state !== 'working' || reducedMotion) {
-      rotation.value = 0;
-      return;
-    }
-    rotation.value = withRepeat(
-      withTiming(1, {
-        duration: motionTokens.liveCycle,
-        easing: Easing.linear,
-        reduceMotion: ReduceMotion.System,
-      }),
-      -1,
-      false,
-    );
-  }, [rotation, reducedMotion, state]);
-
-  if (state === 'needs-you') {
-    const dot = <View style={styles.deckDotAttention} />;
-    return (
-      <View style={styles.deckMarkSlot}>
-        {reducedMotion ? dot : <HullLivePulse active>{dot}</HullLivePulse>}
-      </View>
-    );
-  }
-  if (state === 'working') {
-    if (reducedMotion) {
-      return (
-        <View style={styles.deckMarkSlot}>
-          <View style={styles.deckRingIdle} />
-        </View>
-      );
-    }
-    return (
-      <View style={styles.deckMarkSlot}>
-        <Animated.View
-          accessibilityLabel="Working"
-          accessibilityRole="progressbar"
-          style={[styles.deckRingWorking, spin]}
-        />
-      </View>
-    );
-  }
-  return (
-    <View style={styles.deckMarkSlot}>
-      <View style={styles.deckDotIdle} />
-    </View>
-  );
-}
-
 type HullWaveSignalProps = {
   active?: boolean;
   label: 'LIVE' | 'WAITING' | 'RUNNING';
@@ -740,37 +666,6 @@ const styles = StyleSheet.create((theme) => {
   },
   mechanismRailLive: { backgroundColor: groknight.accent },
   activityTip: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 5 },
-  /* ── HullDeckMark: the supervision deck's three-state column ─────── */
-  deckMarkSlot: { width: 26, alignItems: 'center', justifyContent: 'center' },
-  deckDotAttention: {
-    width: 9,
-    height: 9,
-    borderRadius: 5,
-    backgroundColor: groknight.accent,
-  },
-  deckDotIdle: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: groknight.bgTexturePeak,
-  },
-  deckRingWorking: {
-    width: 14,
-    height: 14,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: groknight.bgTexturePeak,
-    borderTopColor: groknight.accent,
-  },
-  /* Reduced-motion working: the same ring, held still and all-steel — hollow
-   * vs solid keeps it distinct from the needs-you dot without any motion. */
-  deckRingIdle: {
-    width: 14,
-    height: 14,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: groknight.steel,
-  },
   activityTipDot: { width: 5, height: 5, backgroundColor: groknight.accent },
   activityTipLabel: {
     ...Typography.mono(),

@@ -114,6 +114,7 @@ import {
 } from './fixtures/claude-agent-acp-permissions.js';
 import { ROOM_READ_ONLY_STEER } from './session-sandbox.js';
 import { SessionScheduler } from './session-scheduler.js';
+import { createCornerRequestFilter, extractCornerRequest } from './corner-request.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -2047,6 +2048,46 @@ describe('Room conversation and permission-gated work intent', () => {
     );
   }
 
+  it('documents a text-only, non-slash corner request control for repository Rooms', () => {
+    const instructions = roomEditPolicyInstructions('repository').join('\n');
+    expect(instructions).toContain('CORNER_REQUEST: <one-sentence task objective>');
+    expect(instructions).toContain('human');
+    expect(instructions).toMatch(/never describe the corner as open/i);
+    expect(instructions).not.toContain('/CORNER_REQUEST');
+  });
+
+  it('extracts and stream-hides an agent corner request control line', () => {
+    const text = [
+      'The retry loop can lose the final event. I recommend a small state fix.',
+      'CORNER_REQUEST: Fix the retry loop so it preserves the final event',
+    ].join('\n');
+    expect(extractCornerRequest(text)).toEqual({
+      visibleText: 'The retry loop can lose the final event. I recommend a small state fix.',
+      request: { task: 'Fix the retry loop so it preserves the final event' },
+    });
+
+    const filter = createCornerRequestFilter();
+    expect(filter.onChunk('Diagnosis complete.\nCORNER_REQU')).toBe('Diagnosis complete.\n');
+    expect(filter.onChunk(text)).toBe(
+      'The retry loop can lose the final event. I recommend a small state fix.',
+    );
+    expect(filter.onChunk(`${text}\nCORNER_REQUEST: A second task`)).toBe(
+      'The retry loop can lose the final event. I recommend a small state fix.',
+    );
+    expect(filter.finalize(`${text}\nCORNER_REQUEST: A second task`)).toEqual({
+      visibleText: 'The retry loop can lose the final event. I recommend a small state fix.',
+      request: { task: 'Fix the retry loop so it preserves the final event' },
+    });
+
+    const tokenBoundaryFilter = createCornerRequestFilter();
+    expect(tokenBoundaryFilter.onChunk('Diagnosis complete.\nCORNER_REQUEST:')).toBe(
+      'Diagnosis complete.',
+    );
+    expect(
+      tokenBoundaryFilter.onChunk('Diagnosis complete.\nCORNER_REQUEST: Fix the retry loop'),
+    ).toBe('Diagnosis complete.');
+  });
+
   it('replies to an @-addressed ordinary message without authorizing work', () => {
     const event = requestEvent([['p', agent.publicKey]]);
     expect(isChannelAddressedMessage(event, agent.publicKey)).toBe(true);
@@ -2449,6 +2490,216 @@ describe('Room conversation and permission-gated work intent', () => {
       published.slice(-3).map((item) => item.tags.find((tag) => tag[0] === 'status')?.[1]),
     ).toEqual(['working', 'failed', undefined]);
     expect(published.at(-1)?.content).toContain("won't retry it without another message");
+  });
+
+  it('accepts a pi-acp text-only corner request without any permission callback', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      agentCommand: 'pi-acp',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-pi-corner-request-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    const client = new AcpClient({ agentCommand: 'pi-acp', agentEnv: {} });
+    vi.spyOn(client, 'sessionPrompt').mockResolvedValue({
+      stopReason: 'end_turn',
+      updates: [],
+      agentText:
+        'I found a bounded retry bug worth fixing.\nCORNER_REQUEST: Preserve the final event in the retry loop',
+      toolCalls: [],
+    });
+    body.registerSession({
+      channelId: 'parent-channel',
+      sessionId: 'pi-readonly-session',
+      client,
+      mode: 'readonly',
+    });
+    const durableState = Reflect.get(body, 'durableState') as {
+      appendConversation: (...args: unknown[]) => Promise<void>;
+    };
+    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
+    const requestCorner = vi
+      .spyOn(body as never, 'handleAgentCornerRequest' as never)
+      .mockResolvedValue(undefined as never);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    await Reflect.get(body, 'replyInRoom').call(
+      body,
+      'parent-channel',
+      { repo: 'repo' },
+      {
+        eventId: 'pi-diagnosis',
+        authorPubkey: human.publicKey,
+        content: 'Diagnose why the retry loop loses its last event.',
+        createdAt: 1,
+      },
+    );
+
+    expect(requestCorner).toHaveBeenCalledWith(
+      'parent-channel',
+      { repo: 'repo' },
+      expect.objectContaining({ eventId: 'pi-diagnosis' }),
+      'Preserve the final event in the retry loop',
+    );
+    const reply = published.find((event) =>
+      event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message'),
+    );
+    expect(reply?.content).toBe('I found a bounded retry bug worth fixing.');
+    expect(published.every((event) => !event.content.includes('CORNER_REQUEST'))).toBe(true);
+  });
+
+  it('opens an agent-requested corner only after approval and successful creation', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-agent-corner-approval-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    const request = {
+      eventId: 'agent-corner-request',
+      authorPubkey: human.publicKey,
+      content: 'Diagnose the retry issue.',
+      createdAt: 1,
+    };
+    const task = 'Preserve the final event in the retry loop';
+    vi.spyOn(body as never, 'waitForWritePermissionDecision' as never).mockResolvedValue(
+      'allow' as never,
+    );
+    const durableState = Reflect.get(body, 'durableState') as {
+      conversation: (...args: unknown[]) => Promise<unknown[]>;
+    };
+    vi.spyOn(durableState, 'conversation').mockResolvedValue([]);
+    const editClient = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    const info = {
+      subchannelId: 'agent-corner-id',
+      worktreePath: '/tmp/agent-corner-worktree',
+      featureBranch: 'feature/agent-corner',
+      role: body.agent,
+      session: {
+        channelId: 'agent-corner-id',
+        sessionId: 'edit-session',
+        client: editClient,
+        mode: 'edit' as const,
+      },
+      lastPolledAt: 1,
+      archived: false,
+    };
+    let finishCreation!: (value: typeof info) => void;
+    const creation = new Promise<typeof info>((resolve) => {
+      finishCreation = resolve;
+    });
+    const open = vi.spyOn(body, 'openSubchannel').mockReturnValue(creation);
+    const start = vi
+      .spyOn(body as never, 'startAgentTask' as never)
+      .mockImplementation(() => undefined as never);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    const handling = Reflect.get(body, 'handleAgentCornerRequest').call(
+      body,
+      'parent-channel',
+      { repo: 'repo' },
+      request,
+      task,
+    ) as Promise<void>;
+    await vi.waitFor(() => expect(open).toHaveBeenCalledOnce());
+
+    expect(
+      published.filter((event) =>
+        event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'allowed'),
+      ),
+    ).toHaveLength(0);
+    expect(published.some((event) => event.content.includes('new corner'))).toBe(false);
+
+    finishCreation(info);
+    await handling;
+
+    expect(open).toHaveBeenCalledWith(
+      'parent-channel',
+      { repo: 'repo' },
+      task,
+      { ...request, content: task },
+      { objective: task },
+    );
+    expect(start).toHaveBeenCalledWith(
+      info,
+      task,
+      expect.stringContaining(task),
+      expect.objectContaining({ cause: 'corner-opening' }),
+    );
+    const created = published.find((event) =>
+      event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'allowed'),
+    );
+    expect(created?.tags).toContainEqual(['subchannel', 'agent-corner-id']);
+  });
+
+  it('does not open an agent-requested corner when a human denies it', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-agent-corner-deny-unit',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    vi.spyOn(body as never, 'waitForWritePermissionDecision' as never).mockResolvedValue(
+      'deny' as never,
+    );
+    const open = vi.spyOn(body, 'openSubchannel');
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    await Reflect.get(body, 'handleAgentCornerRequest').call(
+      body,
+      'parent-channel',
+      { repo: 'repo' },
+      {
+        eventId: 'agent-corner-denied',
+        authorPubkey: human.publicKey,
+        content: 'Diagnose the retry issue.',
+        createdAt: 1,
+      },
+      'Preserve the final event in the retry loop',
+    );
+
+    expect(open).not.toHaveBeenCalled();
+    expect(
+      published.find((event) =>
+        event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'denied'),
+      ),
+    ).toBeDefined();
   });
 
   it('recycles the read-only ACP generation after a handled edit permission', async () => {
@@ -3118,6 +3369,88 @@ describe('Room conversation and permission-gated work intent', () => {
     await expect(decisionPromise).resolves.toBe('allow');
     expect(unsubscribe).toHaveBeenCalledOnce();
     expect(backstopQueries).toBeLessThanOrEqual(1);
+  });
+
+  it('refuses an agent-signed corner approval and waits for a human decision', async () => {
+    const roomId = 'agent-approval-refused-room';
+    const permissionId = 'agent-approval-refused-permission';
+    const requestId = 'agent-approval-refused-request';
+    const repository = 'repo';
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: '/tmp/buzzy-agent-approval-refused-unit',
+        relayBaseUrl: 'http://relay.test',
+        relayHost: 'relay.test',
+        relayScheme: 'http',
+        relayWsUrl: 'ws://relay.test',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+    );
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const filter = (JSON.parse(String(init?.body)) as Record<string, unknown>[])[0]!;
+        return routeWritePermissionQuery(filter, roomId, () => []);
+      }),
+    );
+
+    let capturedHandler: ((event: NostrEvent) => void) | undefined;
+    const fakeSocket = {
+      connected: true,
+      subscribe: vi.fn((_filters: unknown, onEvent: (event: NostrEvent) => void) => {
+        capturedHandler = onEvent;
+        return vi.fn();
+      }),
+    };
+    (Reflect.get(body, 'roomSockets') as Map<string, unknown>).set(roomId, {
+      socket: fakeSocket,
+    });
+
+    let settled = false;
+    const decisionPromise = (
+      Reflect.get(body, 'waitForWritePermissionDecision').call(
+        body,
+        roomId,
+        permissionId,
+        requestId,
+        repository,
+      ) as Promise<'allow' | 'deny' | 'timeout'>
+    ).then((decision) => {
+      settled = true;
+      return decision;
+    });
+    const decisionEvent = (author: typeof agent, decision: 'allow' | 'deny') =>
+      signEvent(
+        {
+          pubkey: author.publicKey,
+          created_at: Math.floor(Date.now() / 1000),
+          kind: 9,
+          tags: [
+            ['h', roomId],
+            ['t', WRITE_PERMISSION_RESPONSE_TAG],
+            ['permission', permissionId],
+            ['request', requestId],
+            ['decision', decision],
+            ['repo', repository],
+            ['p', body.agent.publicKey],
+          ],
+          content: decision === 'allow' ? 'Allowed editing.' : 'Denied editing.',
+        },
+        author.secretKey,
+      );
+
+    capturedHandler!(decisionEvent(agent, 'allow'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    capturedHandler!(decisionEvent(human, 'deny'));
+    await expect(decisionPromise).resolves.toBe('deny');
   });
 
   it('falls back to the low-rate HTTP backstop poll when no Room WS is available', async () => {

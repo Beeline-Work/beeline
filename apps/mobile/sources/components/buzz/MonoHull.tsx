@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppState,
   type AppStateStatus,
@@ -25,6 +25,7 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated';
 import { groknight } from '@/buzz/groknight';
+import { hasMessageRevealed, markMessageRevealed } from '@/buzz/message-reveal';
 import { Typography } from '@/constants/Typography';
 
 export const motionTokens = {
@@ -537,11 +538,31 @@ export function PixelGateReveal({ children, style }: HullSurfaceProps) {
 export function NewMessageMaterialize({
   children,
   enabled = true,
+  messageId,
 }: {
   children: React.ReactNode;
   enabled?: boolean;
+  /** Stable message id. The entrance plays at most once per id per app
+   *  session — never again on re-render, scroll-back remount, or Room re-entry.
+   */
+  messageId?: string;
 }) {
-  if (!enabled) return <View>{children}</View>;
+  // Decided ONCE per mounted instance: a re-render while the entrance is
+  // playing (presence tick, roster update) must not flip the wrapper and cut
+  // the animation short. Cross-instance replay (FlatList recycling the row,
+  // navigating back into the Room) is closed by the session reveal registry.
+  const animateRef = useRef<boolean | null>(null);
+  if (animateRef.current === null) {
+    animateRef.current =
+      enabled && (messageId === undefined || !hasMessageRevealed(messageId));
+  }
+  const animate = animateRef.current;
+  // Mark after commit, not during render: a render that React discards must
+  // not spend the message's one entrance.
+  useEffect(() => {
+    if (animate && messageId !== undefined) markMessageRevealed(messageId);
+  }, [animate, messageId]);
+  if (!animate) return <View>{children}</View>;
   return (
     <Animated.View
       entering={FadeInDown.duration(140)

@@ -1,7 +1,7 @@
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
@@ -23,6 +23,7 @@ vi.mock('react-native-reanimated', () => ({
 }));
 
 import { LedgerEntry, LedgerGhostLine, LedgerMarginalia, LedgerSteer, typewriterFrame } from './Ledger';
+import { markMessageRevealed, resetMessageReveals } from '@/buzz/message-reveal';
 
 const originalConsoleError = console.error;
 
@@ -38,6 +39,7 @@ beforeAll(() => {
 });
 
 afterAll(() => vi.restoreAllMocks());
+afterEach(() => resetMessageReveals());
 
 function render(element: React.ReactElement): ReactTestRenderer {
   let renderer!: ReactTestRenderer;
@@ -392,5 +394,91 @@ describe('the ledger — machine noise', () => {
     });
     expect(renderedText(renderer).join('')).toContain('failed to push');
     expect(renderedText(renderer).join('')).toContain('tap to collapse');
+  });
+});
+
+describe('the ledger — the typewriter reveals each message at most once', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // `luminous` + a lead sentence: the lead renders immediately, the body is
+  // what the typewriter reveals — the exact shape the chat screen mounts for
+  // a new agent turn with `item.isNew` set.
+  const typeOut = (itemId: string) =>
+    React.createElement(LedgerEntry, {
+      itemId,
+      luminous: true,
+      bodyText: 'Found the cause. The relay closes idle sockets after ninety seconds.',
+      bodyTestID: 'body',
+      typewriter: true,
+    });
+
+  const treeText = (renderer: ReactTestRenderer) => renderedText(renderer).join('');
+
+  it('types a genuinely new message out once, then never again on remount', () => {
+    const first = render(typeOut('msg-1'));
+    // The reveal has not run yet: only the lead sentence is on the slab.
+    expect(treeText(first)).toContain('Found the cause.');
+    expect(treeText(first)).not.toContain('closes idle sockets');
+
+    act(() => {
+      vi.advanceTimersByTime(10_000);
+    });
+    expect(treeText(first)).toContain('closes idle sockets');
+    act(() => first.unmount());
+
+    // FlatList recycling the row / re-entering the Room: same id, already
+    // revealed this session — full prose immediately, no second type-out.
+    const second = render(typeOut('msg-1'));
+    expect(treeText(second)).toContain('closes idle sockets');
+    act(() => {
+      vi.advanceTimersByTime(10_000);
+    });
+    expect(treeText(second)).toContain('closes idle sockets');
+  });
+
+  it('shows an already-revealed message in full from the first frame', () => {
+    // The warm-revalidation re-stamp path: the id was revealed earlier in the
+    // session, then the room re-opened and `isNew` came back on the message.
+    markMessageRevealed('msg-2');
+    const renderer = render(typeOut('msg-2'));
+    expect(treeText(renderer)).toContain('closes idle sockets');
+  });
+
+  it('still gives a different message its own type-out', () => {
+    const first = render(typeOut('msg-3'));
+    act(() => {
+      vi.advanceTimersByTime(10_000);
+    });
+    act(() => first.unmount());
+
+    const second = render(typeOut('msg-4'));
+    expect(treeText(second)).not.toContain('closes idle sockets');
+    act(() => {
+      vi.advanceTimersByTime(10_000);
+    });
+    expect(treeText(second)).toContain('closes idle sockets');
+  });
+
+  it('a row without the typewriter renders in full and spends nothing', () => {
+    const plain = React.createElement(LedgerEntry, {
+      itemId: 'msg-5',
+      luminous: true,
+      bodyText: 'Found the cause. The relay closes idle sockets after ninety seconds.',
+      bodyTestID: 'body',
+      typewriter: false,
+    });
+    const renderer = render(plain);
+    expect(treeText(renderer)).toContain('closes idle sockets');
+    act(() => renderer.unmount());
+
+    // Nothing was marked, so a later typewriter mount still gets its reveal —
+    // the gate is spent only by a mount that actually revealed the prose.
+    const later = render(typeOut('msg-5'));
+    expect(treeText(later)).not.toContain('closes idle sockets');
   });
 });

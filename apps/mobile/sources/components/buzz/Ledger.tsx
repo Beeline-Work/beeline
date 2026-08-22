@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { useReducedMotion } from 'react-native-reanimated';
 import { Typography } from '@/constants/Typography';
+import { hasMessageRevealed, markMessageRevealed } from '@/buzz/message-reveal';
 import { MonoMarkdown } from './MonoMarkdown';
 
 /**
@@ -94,17 +95,44 @@ function TypewriterMarkdown({
   markdown,
   textStyle,
   testID,
+  revealId,
 }: {
   markdown: string;
   textStyle: React.ComponentProps<typeof MonoMarkdown>['textStyle'];
   testID: string;
+  /** Stable id of the message this prose belongs to. The type-out plays at
+   *  most once per id per app session — the SAME consume-once registry the
+   *  entrance fade uses (`NewMessageMaterialize`) — so warm revalidation or a
+   *  WS replay re-stamping `isNew` on room open cannot re-run it over
+   *  already-seen text.
+   */
+  revealId?: string;
 }) {
   const reducedMotion = useReducedMotion();
+  // Decided ONCE per mounted instance (same contract as `NewMessageMaterialize`):
+  // a re-render while the type-out is running — presence tick, roster update —
+  // must not flip the gate and cut the animation short. Cross-instance replay
+  // (FlatList recycling the row, re-entering the Room) is closed by the shared
+  // session reveal registry below.
+  const animateRef = useRef<boolean | null>(null);
+  if (animateRef.current === null) {
+    animateRef.current =
+      !reducedMotion && (revealId === undefined || !hasMessageRevealed(revealId));
+  }
+  const animate = animateRef.current;
   const [visibleCharacters, setVisibleCharacters] = useState(() =>
-    reducedMotion ? markdown.length : 0,
+    animate ? 0 : markdown.length,
   );
 
+  // Mark after commit, not during render: a render React discards must not
+  // spend the message's one type-out. Reduced motion shows everything at once,
+  // but the reveal still counts — the message was seen.
   useEffect(() => {
+    if (revealId !== undefined) markMessageRevealed(revealId);
+  }, [revealId]);
+
+  useEffect(() => {
+    if (!animate) return;
     if (reducedMotion) {
       setVisibleCharacters(markdown.length);
       return;
@@ -118,7 +146,7 @@ function TypewriterMarkdown({
       });
     }, TYPEWRITER_TICK_MS);
     return () => clearInterval(timer);
-  }, [markdown, reducedMotion]);
+  }, [markdown, reducedMotion, animate]);
 
   return (
     <MonoMarkdown
@@ -239,6 +267,7 @@ export function LedgerEntry({
             markdown={remainingText}
             testID={bodyTestID}
             textStyle={bodyTextStyle}
+            revealId={itemId}
           />
         ) : (
           <MonoMarkdown markdown={remainingText} testID={bodyTestID} textStyle={bodyTextStyle} />

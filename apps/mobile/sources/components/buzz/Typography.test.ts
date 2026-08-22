@@ -140,6 +140,7 @@ const monoStyles = new Set([
   'roomLifecycleTitle',
   'marginaliaStamp',
   'marginaliaDetail',
+  'bylineText',
   'steerNote',
   'ghostLine',
   'ghostAffordance',

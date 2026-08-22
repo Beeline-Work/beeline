@@ -107,7 +107,7 @@ import {
   type CornerStatus,
   type CornerSummary,
 } from '@/buzz/corners';
-import { ledgerFingerprint, personIdentityLabel, shortMemberNpub } from '@/buzz/member-display';
+import { personIdentityLabel, shortMemberNpub } from '@/buzz/member-display';
 import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
 import {
   canRenameRoom,
@@ -186,6 +186,7 @@ import {
   LedgerGhostLine,
   LedgerMarginalia,
   LedgerSteer,
+  type LedgerByline,
 } from '@/components/buzz/Ledger';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
@@ -2840,11 +2841,12 @@ export default function BuzzChat() {
       // difference between them:
       //
       //   · A Corner has one administering agent, named in its top bar, so its
-      //     agent turns carry no handle at all — pure flowing prophecy. A Room
-      //     holds several voices, so a voice states a whisper-dim handle inline
-      //     when it takes over, and only then (`continuedAttributionIds`).
-      //   · Your own turn is inset right and one tone down on either surface.
-      //     That geometry is the whole signal; there is no "YOU" caption.
+      //     turns carry no byline name — the dot-and-stamp rhythm only. A Room
+      //     holds several voices, so each run opens with a byline: dot, NAME,
+      //     quiet role tag, HH:MM.
+      //   · Your own turn's byline dot and name are brass, and nothing else
+      //     marks it: the message text is plain body — regular weight,
+      //     primary tone, one size — never bolded, never enlarged.
       const attributionContinued = continuedAttributionIds.has(item.id);
       // An agent viewing its own Room messages is both `isUser` and an agent;
       // the agent test wins, matching `ledgerSpeakerKey`'s own ordering.
@@ -2852,9 +2854,7 @@ export default function BuzzChat() {
       // A Corner is exactly one administering agent plus you, so anything that
       // is not your own steer is that agent — by the surface's definition, not
       // by a roster lookup. Deriving it structurally is what keeps a Corner
-      // correct when the roster is empty or still loading: `isAgent` goes false
-      // there, and a Corner that trusted it printed the signer's bare npub as a
-      // handle and dropped the agent's own words to the ordinary grey tier.
+      // correct when the roster is empty or still loading.
       const isCornerAgent = isCorner && !isSelfSteer;
       const speaksAsAgent = isAgent || isCornerAgent;
       const voiceName = speaksAsAgent
@@ -2862,14 +2862,22 @@ export default function BuzzChat() {
           ? display.name
           : (personName ?? shortMemberNpub(item.pubkey ?? ''))
         : (personName ?? (item.pubkey ? shortMemberNpub(item.pubkey) : 'SOMEONE'));
-      // Zero handles in a Corner, full stop — its one agent is named in the top
-      // bar. None on your own inset block, and none on a continuation of the
-      // voice directly above.
-      const handle = attributionContinued || isSelfSteer || isCorner ? undefined : voiceName;
+      // Zero byline names in a Corner — its one agent is named in the top bar
+      // — and none on a continuation of the voice directly above.
+      const byline: LedgerByline | undefined = attributionContinued
+        ? undefined
+        : {
+            name: isCorner ? undefined : isSelfSteer ? 'You' : voiceName,
+            role: speaksAsAgent && !isCorner ? 'agent' : undefined,
+            stamp: ledgerStamp(item.timestamp),
+            isViewer: isSelfSteer,
+          };
+      // The folded tool run keeps the wider right margin, so it alone still
+      // hangs a gutter stamp.
       const marginalia = (
         <LedgerMarginalia
           stamp={ledgerStamp(item.timestamp)}
-          detail={handle && !isAgent && item.pubkey ? ledgerFingerprint(item.pubkey) : null}
+          detail={null}
           testID={`chat-marginalia-${item.id}`}
         />
       );
@@ -2877,10 +2885,15 @@ export default function BuzzChat() {
       // Machine noise collapses the same way on both surfaces: one ghost line,
       // expandable, never a wall of output down the slab.
       if (item.isAgentActivity) {
+        // The tool run keeps its attribution: a Room interleaves voices, so a
+        // readout that opens a new agent's run still names them. Corners name
+        // nobody (the top bar owns identity).
+        const activityHandle =
+          !attributionContinued && speaksAsAgent && !isCorner ? voiceName : undefined;
         return (
           <LedgerActivity
             active={item.id === activeActivityId}
-            handle={handle}
+            handle={activityHandle}
             marginalia={marginalia}
             message={item}
           />
@@ -2938,23 +2951,21 @@ export default function BuzzChat() {
               <LedgerSteer
                 itemId={item.id}
                 continued={attributionContinued}
+                byline={byline}
                 bodyText={item.text}
                 bodyTestID={`chat-message-text-${item.id}`}
-                marginalia={marginalia}
                 replyReference={replyReference}
                 attachments={attachmentElements}
               />
             ) : (
               <LedgerEntry
                 itemId={item.id}
-                handle={handle}
+                byline={byline}
                 continued={attributionContinued}
                 luminous={speaksAsAgent}
                 typewriter={speaksAsAgent && Boolean(item.isNew)}
                 bodyText={ledgerText ? ledgerText.prose : item.text}
                 bodyTestID={`chat-message-text-${item.id}`}
-                marginalia={marginalia}
-                replyReference={replyReference}
                 machineNoise={machineNoise}
                 attachments={attachmentElements}
               />

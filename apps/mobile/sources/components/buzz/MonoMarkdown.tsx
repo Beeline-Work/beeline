@@ -228,17 +228,17 @@ const styles = StyleSheet.create((theme) => ({
   listItem: { width: '100%' },
   listGlyph: { color: theme.buzz.ledgerQuiet },
   /**
-   * A fenced block is code, not a card. It marks itself with one hairline
-   * gutter and an indent — the same boxless vocabulary the rest of the
-   * transcript uses — so a long snippet never lands on the slab as a lit
-   * panel (DESIGN.md, "The ledger").
+   * A fenced block is code, not a card. The Editorial direction marks it with
+   * a 2px left rule in the theme's peak steel — the same vocabulary tool
+   * readouts use — so code and machine output read as one family, clearly not
+   * conversation.
    */
   codeFrame: {
     maxWidth: '100%',
-    paddingLeft: 10,
-    paddingVertical: 2,
-    borderLeftWidth: StyleSheet.hairlineWidth,
-    borderLeftColor: theme.buzz.border,
+    paddingLeft: 13,
+    paddingVertical: 3,
+    borderLeftWidth: 2,
+    borderLeftColor: theme.buzz.bgTexturePeak,
   },
   codeLanguage: {
     ...Typography.mono(),

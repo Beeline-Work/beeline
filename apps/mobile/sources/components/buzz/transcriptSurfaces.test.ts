@@ -71,11 +71,18 @@ describe('One ledger, both surfaces', () => {
   });
 
   it('gives no transcript message a box on either surface', () => {
-    for (const name of ['entry', 'steer', 'marginalia', 'ghostBlock']) {
+    for (const name of ['entry', 'byline', 'marginalia', 'ghostBlock']) {
       const definition = styleDefinition(ledgerSource, name);
-      expect(definition, `${name} must stay boxless`).not.toMatch(/borderWidth/);
       expect(definition, `${name} must stay boxless`).not.toMatch(/borderRadius/);
       expect(definition, `${name} must stay boxless`).not.toMatch(/backgroundColor/);
+      // A quiet left rule is the Editorial readout vocabulary; a full frame is
+      // never allowed.
+      expect(definition, `${name} must stay boxless`).not.toMatch(/border(?:Top|Right)Width/);
+      if (name !== 'ghostBlock') {
+        expect(definition, `${name} must stay boxless`).not.toMatch(
+          /border(?:Top|Bottom|Left)(?:Width|Color)/,
+        );
+      }
     }
     // ...and the activity group the same, on both surfaces.
     const group = styleDefinition(chatSource, 'activityGroup');
@@ -83,18 +90,22 @@ describe('One ledger, both surfaces', () => {
     expect(group).not.toMatch(/backgroundColor/);
   });
 
-  it('uses speaker rails and tokenized space rather than horizontal delimiters', () => {
+  it('separates turns with a tokenized hairline divider, not rails or bubbles', () => {
+    // The Editorial direction removed the left author rails entirely; the
+    // only edges left in the ledger are the opening-turn divider and the
+    // machine-noise readout rule.
     const entry = styleDefinition(ledgerSource, 'entry');
-    expect(entry).toMatch(/borderLeftWidth:\s*theme\.buzz\.railWidth/);
-    expect(styleDefinition(ledgerSource, 'agentRail')).toMatch(/theme\.buzz\.agentRail/);
-    expect(styleDefinition(ledgerSource, 'viewerRail')).toMatch(/theme\.buzz\.humanRail/);
-    expect(ledgerSource).not.toMatch(/border(?:Top|Bottom|Right)(?:Width|Color)/);
-    expect(ledgerSource).not.toMatch(/steerRule/);
-
+    expect(entry).toMatch(/paddingVertical:\s*theme\.buzz\.turnPaddingVertical/);
     const opens = styleDefinition(ledgerSource, 'entryOpens');
     const continued = styleDefinition(ledgerSource, 'entryContinued');
+    expect(opens).toMatch(/borderBottomWidth:\s*StyleSheet\.hairlineWidth/);
+    expect(opens).toMatch(/borderBottomColor:\s*theme\.buzz\.turnDivider/);
     expect(opens).toMatch(/theme\.buzz\.turnGap/);
     expect(continued).toMatch(/theme\.buzz\.continuationGap/);
+    expect(continued).not.toMatch(/borderBottomWidth/);
+    // No speaker rail survives anywhere in the file.
+    expect(ledgerSource).not.toMatch(/styles\.agentRail|styles\.viewerRail/);
+    expect(ledgerSource).not.toMatch(/steerRule/);
 
     // A system row in the flow is separated the same way — never framed off.
     for (const name of ['mergeSummaryBubble', 'replyReference']) {
@@ -104,27 +115,52 @@ describe('One ledger, both surfaces', () => {
     }
   });
 
-  it('identifies the viewer with the sanctioned gold rail and no caption', () => {
-    expect(styleDefinition(ledgerSource, 'viewerRail')).toMatch(/theme\.buzz\.humanRail/);
-    expect(styleDefinition(ledgerSource, 'steerText')).toMatch(/color:\s*theme\.buzz\.ledgerBright/);
+  it('marks the viewer with the brass byline alone and no caption', () => {
+    // Brass #b08a4a is the single accent, and ownership reads ONLY from the
+    // byline dot and name — never from weight, size, or geometry.
+    expect(styleDefinition(ledgerSource, 'bylineDotViewer')).toMatch(
+      /backgroundColor:\s*theme\.buzz\.accent/,
+    );
+    expect(styleDefinition(ledgerSource, 'bylineNameViewer')).toMatch(
+      /color:\s*theme\.buzz\.accent/,
+    );
+    expect(styleDefinition(ledgerSource, 'bylineDot')).toMatch(
+      /backgroundColor:\s*theme\.buzz\.agentRail/,
+    );
     // The "YOU" caption and its signature are gone from the ledger entirely.
     expect(ledgerSource).not.toMatch(/steerSignature/);
-    expect(ledgerSource).not.toMatch(/chat-steer-by-/);
     expect(chatSource).not.toMatch(/steerSignature/);
     expect(chatSource).not.toMatch(/'YOU'/);
   });
 
-  it('splits prose from identity and makes weight carry content hierarchy', () => {
+  it('carries hierarchy by weight and brightness at ONE size, never size', () => {
     const luminous = styleDefinition(ledgerSource, 'ledgerTextLuminous');
     expect(luminous).toMatch(/fontFamily:\s*theme\.buzz\.proseRegular/);
-    expect(luminous).toMatch(/color:\s*theme\.buzz\.ledgerBright/);
-    expect(styleDefinition(ledgerSource, 'steerText')).not.toMatch(/textShadow/);
-    expect(styleDefinition(ledgerSource, 'ledgerText')).not.toMatch(/textShadow/);
-    expect(styleDefinition(ledgerSource, 'ledgerLead')).toMatch(/fontFamily:\s*theme\.buzz\.proseSemibold/);
-    expect(styleDefinition(ledgerSource, 'handle')).toMatch(/fontFamily:\s*theme\.buzz\.monoSemibold/);
+    // An agent's flowing prose sits one brightness step DOWN from its lead.
+    expect(luminous).toMatch(/color:\s*theme\.buzz\.ledgerBody/);
+    const lead = styleDefinition(ledgerSource, 'ledgerLead');
+    expect(lead).toMatch(/fontFamily:\s*theme\.buzz\.proseMedium/);
+    expect(lead).toMatch(/color:\s*theme\.buzz\.ledgerBright/);
+    // ONE size: lead and every body share the exact same tokens.
+    for (const name of ['ledgerLead', 'ledgerTextLuminous', 'ledgerText', 'steerText']) {
+      const definition = styleDefinition(ledgerSource, name);
+      expect(definition).toMatch(/fontSize:\s*theme\.buzz\.proseSize/);
+      expect(definition).toMatch(/lineHeight:\s*theme\.buzz\.proseLineHeight/);
+    }
+    // Your own message is plain body: regular face, primary tone — never the
+    // emphasized lead family, never enlarged (captain correction of the
+    // auto-bold mockup).
+    const steer = styleDefinition(ledgerSource, 'steerText');
+    expect(steer).toMatch(/fontFamily:\s*theme\.buzz\.proseRegular/);
+    expect(steer).toMatch(/color:\s*theme\.buzz\.ledgerBright/);
+    expect(styleDefinition(ledgerSource, 'bylineText')).toMatch(/Typography\.mono\(/);
     expect(styleDefinition(markdownSource, 'bold')).toMatch(/fontFamily:\s*theme\.buzz\.proseSemibold/);
     expect(ledgerSource).toContain('splitLeadSentence(bodyText)');
     expect(ledgerSource).not.toMatch(/#[0-9a-fA-F]{3,8}/);
+    // And the lead split belongs to agent turns alone: a steer never takes it.
+    expect(ledgerSource.slice(ledgerSource.indexOf('export function LedgerSteer'))).not.toContain(
+      'splitLeadSentence',
+    );
   });
 
   it('hangs metadata in the right gutter instead of setting it into the flow', () => {
@@ -132,8 +168,9 @@ describe('One ledger, both surfaces', () => {
     expect(marginalia).toMatch(/position:\s*'absolute'/);
     expect(marginalia).toMatch(/right:\s*0/);
     expect(marginalia).toMatch(/width:\s*LEDGER_MARGINALIA_WIDTH/);
-    // The column reserves that margin, so prose never runs under the stamp.
-    expect(styleDefinition(ledgerSource, 'entry')).toMatch(
+    // Prose turns carry their stamp inside the byline now; only the folded
+    // tool run keeps the wider margin that hosts the gutter stamp.
+    expect(styleDefinition(chatSource, 'activityGroup')).toMatch(
       /paddingRight:\s*LEDGER_MARGINALIA_WIDTH/,
     );
     for (const name of ['marginaliaStamp', 'marginaliaDetail']) {
@@ -216,36 +253,36 @@ describe('The obsidian slab', () => {
     expect(styleDefinition(chatSource, 'header')).toMatch(/hairlineDivider|borderBottom/);
   });
 
-  it('marks a fenced code block with a gutter, not a panel', () => {
+  it('marks a fenced code block with a steel rule, not a panel', () => {
     const markdownSource = readFileSync(new URL('./MonoMarkdown.tsx', import.meta.url), 'utf8');
     const frame = styleDefinition(markdownSource, 'codeFrame');
-    expect(frame).not.toMatch(/borderWidth/);
     expect(frame).not.toMatch(/backgroundColor/);
-    expect(frame).toMatch(/borderLeftWidth: StyleSheet\.hairlineWidth/);
+    expect(frame).not.toMatch(/borderRadius/);
+    // The Editorial readout vocabulary: a 2px left rule in the theme's peak
+    // steel, shared with tool output.
+    expect(frame).toMatch(/borderLeftWidth:\s*2/);
+    expect(frame).toMatch(/borderLeftColor:\s*theme\.buzz\.bgTexturePeak/);
   });
 });
 
 describe('Speaker identity', () => {
-  it('opens a Room voice with one whisper-dim handle, inline with the words', () => {
+  it('opens a Room run with one byline, above the words', () => {
     const branch = ledgerBranch();
     // One expression decides it for every shape, so prose, telemetry, and a
     // person's entry can never disagree about who is speaking.
-    expect(branch).toMatch(/const handle =\s*\n?\s*attributionContinued \|\| isSelfSteer \|\|/);
-    expect(branch).toMatch(/<LedgerActivity[\s\S]{0,200}handle=\{handle\}/);
-    expect(branch).toMatch(/<LedgerEntry[\s\S]{0,200}handle=\{handle\}/);
-    // ...and it is set inline, not as a row of its own.
-    expect(ledgerSource).toMatch(/leadingInline=\{/);
-    expect(markdownSource).toMatch(/leadingInline/);
+    expect(branch).toMatch(/const byline: LedgerByline \| undefined = attributionContinued/);
+    expect(branch).toMatch(/<LedgerEntry[\s\S]{0,200}byline=\{byline\}/);
+    expect(branch).toMatch(/<LedgerSteer[\s\S]{0,200}byline=\{byline\}/);
+    // The ledger renders it as a header row, never inline with the words.
+    expect(ledgerSource).toContain('<Byline byline={byline} />');
   });
 
-  it('gives a Corner zero handles, whatever the roster says', () => {
+  it('gives a Corner zero byline names, whatever the roster says', () => {
     const branch = ledgerBranch();
     // `isCorner` alone, not `isCorner && isAgent`: `isAgent` needs the roster,
     // and a Corner whose roster is empty or still loading used to print the
-    // signer's bare npub as a handle.
-    expect(branch).toMatch(
-      /const handle = attributionContinued \|\| isSelfSteer \|\| isCorner \? undefined : voiceName/,
-    );
+    // signer's bare npub as a name.
+    expect(branch).toMatch(/name: isCorner \? undefined : isSelfSteer \? 'You' : voiceName/);
     // A Corner is one agent plus you, so "not your own steer" *is* the agent —
     // derived from the surface, never from a lookup that can come back empty.
     expect(branch).toContain('const isCornerAgent = isCorner && !isSelfSteer');
@@ -257,9 +294,9 @@ describe('Speaker identity', () => {
     expect(chatSource).toContain('styles.cornerHeaderAgent');
   });
 
-  it('repeats no handle for a continued run, on either surface', () => {
-    expect(ledgerBranch()).toContain('const attributionContinued = continuedAttributionIds.has(item.id)');
-    expect(ledgerBranch()).toMatch(/attributionContinued \|\|/);
+  it('repeats no byline for a continued run, on either surface', () => {
+    expect(ledgerBranch()).toContain('const byline: LedgerByline | undefined = attributionContinued');
+    expect(ledgerBranch()).toMatch(/attributionContinued\s*\n\s*\? undefined/);
   });
 
   it('reads the agent roster the Members screen reads, so both name an agent the same', () => {
@@ -314,11 +351,12 @@ describe('Speaker identity', () => {
     }
   });
 
-  it('marks your own turn by geometry, never by a caption', () => {
+  it('marks your own turn by its brass byline, never by a caption or emphasis', () => {
     const branch = ledgerBranch();
     expect(branch).toContain('const isSelfSteer = isOwn && !isAgent');
     expect(branch).toMatch(/isSelfSteer \? \(\s*\n\s*<LedgerSteer/);
-    expect(branch).not.toMatch(/'YOU'/);
+    expect(branch).not.toMatch(/'YOU' \?/);
+    expect(branch).toMatch(/isViewer: isSelfSteer/);
     expect(branch).not.toMatch(/signature=/);
   });
 });
@@ -359,9 +397,11 @@ describe('Machine noise', () => {
     const narration = styleDefinition(activitySource, 'narration');
     expect(narration).toMatch(/Typography\.ledger\(\)/);
     expect(narration).toMatch(/color:\s*groknight\.ledgerBright/);
-    expect(narration).toMatch(/fontSize:\s*14/);
+    // ONE message size (Editorial direction): narration is message text, so
+    // it matches the ledger body exactly.
+    expect(narration).toMatch(/fontSize:\s*16/);
     expect(narration).toMatch(/width:\s*'100%'/);
-    expect(narration).toMatch(/textShadowColor:\s*groknight\.ledgerGlow/);
+    expect(narration).not.toMatch(/textShadow/);
     expect(narration).not.toMatch(/paddingLeft/);
     // Mechanism, by contrast, is indented and quiet.
     expect(styleDefinition(activitySource, 'mechanismRow')).toMatch(/paddingLeft:\s*12/);

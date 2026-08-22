@@ -73,7 +73,9 @@ log "live auth image id: ${OLD_AUTH_IMAGE_ID:-none}"
 # ---------------------------------------------------------------------------
 log "staging web tree"
 mkdir -p "$STAGE/web"
-rsync -a --delete "$REPO_WEB/" "$STAGE/web/"
+# --no-o/--no-g: the runner user must not try to preserve owner/group across
+# users; the live tree's setgid relay-web directories keep the shared group.
+rsync -a --no-o --no-g --delete "$REPO_WEB/" "$STAGE/web/"
 
 if ! diff -r --brief "$REPO_WEB" "$STAGE/web" >/tmp/beeline-stage-diff.txt 2>&1; then
   cat /tmp/beeline-stage-diff.txt >&2
@@ -113,15 +115,15 @@ tail -3 /tmp/beeline-auth-build.log
 mkdir -p "$BACKUP_ROOT"
 BAK=$BACKUP_ROOT/bak-$TS
 log "backing up live web tree to $BAK"
-rsync -a "$WEBROOT/" "$BAK/"
+rsync -a --no-o --no-g "$WEBROOT/" "$BAK/"
 
 log "swapping staged tree into $WEBROOT"
-rsync -a --delete "$STAGE/web/" "$WEBROOT/"
+rsync -a --no-o --no-g --delete "$STAGE/web/" "$WEBROOT/"
 
 # Local post-swap check before spending time on the public round-trips.
 diff -r --brief "$STAGE/web" "$WEBROOT" >/dev/null || {
   log "post-swap local mismatch — rolling back web tree"
-  rsync -a --delete "$BAK/" "$WEBROOT/"
+  rsync -a --no-o --no-g --delete "$BAK/" "$WEBROOT/"
   die "web swap failed locally; previous content restored"
 }
 
@@ -195,7 +197,7 @@ NEW_AUTH_IMAGE_ID=$(docker image inspect --format '{{.Id}}' beeline-auth:product
 
 rollback() {
   log "ROLLBACK: restoring previous web tree and auth image"
-  rsync -a --delete "$BAK/" "$WEBROOT/"
+  rsync -a --no-o --no-g --delete "$BAK/" "$WEBROOT/"
   if [ -n "$OLD_AUTH_IMAGE_ID" ] && [ "$OLD_AUTH_IMAGE_ID" != "$NEW_AUTH_IMAGE_ID" ]; then
     docker tag "$OLD_AUTH_IMAGE_ID" beeline-auth:rollback-prev 2>/dev/null || true
     docker tag "sha256:$OLD_AUTH_IMAGE_ID" beeline-auth:production 2>/dev/null || true

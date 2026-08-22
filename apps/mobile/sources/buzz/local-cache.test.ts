@@ -112,6 +112,27 @@ describe('Buzz local cache', () => {
     expect(mmkvWrites).toHaveBeenCalledTimes(1);
   });
 
+  it('never persists the transient new-message flag into the MMKV snapshot', () => {
+    const store = useBuzzLocalCache.getState();
+    // A live-arrived message carries `isNew` in memory — that is what drives
+    // its one entrance animation while the transcript is on screen.
+    store.upsertMessages(viewer, 'room', [{ ...message('fresh', 10), isNew: true }], 10);
+    expect(
+      useBuzzLocalCache
+        .getState()
+        .channels[`${viewer}:room`]?.messages?.find((m) => m.id === 'fresh')?.isNew,
+    ).toBe(true);
+
+    flushBuzzLocalCacheForBackground();
+    const persisted = JSON.parse(mmkvValues.get('buzz-local-cache-v2') ?? '{}');
+    const persistedMessage = persisted.channels[`${viewer}:room`].messages.find(
+      (m: { id: string }) => m.id === 'fresh',
+    );
+    // The flag must not survive serialization: a restored transcript that
+    // still carries it replays the new-message entrance on old messages.
+    expect(persistedMessage.isNew).toBeUndefined();
+  });
+
   it('keeps warm previews while refreshed channel basics are revalidated', () => {
     expect(
       mergeChannelBasicsWithCache(
@@ -276,6 +297,38 @@ describe('Buzz local cache', () => {
     expect(restored.channelLists.corrupt).toBeUndefined();
     expect(restored.channels.corrupt).toBeUndefined();
     expect(restored.profiles.corrupt).toBeUndefined();
+  });
+
+  it('strips stale new-message flags a pre-strip build persisted before they reach startup rendering', async () => {
+    mmkvValues.set(
+      'buzz-local-cache-v2',
+      JSON.stringify({
+        activeViewerPubkey: viewer,
+        activeListKeyByViewer: {},
+        channelLists: {},
+        channels: {
+          [`${viewer}:room`]: {
+            viewerPubkey: viewer,
+            channelId: 'room',
+            cursor: 10,
+            backfilled: true,
+            messages: [
+              { id: 'old-1', timestamp: 1, text: 'old one', isUser: false, isNew: true },
+              { id: 'old-2', timestamp: 2, text: 'old two', isUser: false },
+            ],
+          },
+        },
+        profiles: {},
+      }),
+    );
+
+    vi.resetModules();
+    const warm = await import('./local-cache');
+    const restoredMessages = warm.useBuzzLocalCache.getState().channels[`${viewer}:room`]?.messages;
+    expect(restoredMessages?.map((m) => m.id)).toEqual(['old-1', 'old-2']);
+    // Every restored row is history: none may enter the transcript claiming
+    // to be newly arrived, or its entrance animation replays on first paint.
+    expect(restoredMessages?.every((m) => m.isNew === undefined)).toBe(true);
   });
 
   it('uses a persisted cursor for delta revalidation and writes live events to the same cache', async () => {

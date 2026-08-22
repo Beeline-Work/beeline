@@ -216,8 +216,14 @@ function restoreChannels(value: unknown): Record<string, ChannelCacheEntry> {
       // for every event that arrives from now on, but the cache is what paints
       // the first frame, so the wall would survive here until a revalidation
       // that never rewrites an already-stored row.
+      // The same floor clears any stale `isNew` entrance-animation flag a
+      // pre-strip build persisted: the flag is transient "arrived this
+      // session" state (`message-reveal.ts`), and a restored one replays the
+      // new-message animation on old messages at first paint.
       const kept = Array.isArray(messages)
-        ? messages.filter((message) => !isRetiredAgentStateNotice(message?.text ?? ''))
+        ? messages
+            .filter((message) => !isRetiredAgentStateNotice(message?.text ?? ''))
+            .map(({ isNew: _staleNewFlag, ...message }) => message)
         : undefined;
       return [
         key,
@@ -293,7 +299,13 @@ function persisted(state: BuzzCacheState): PersistedBuzzCache {
         key,
         {
           ...entry,
-          messages: entry.messages?.filter((message) => !message.id.startsWith('optimistic-')),
+          // Optimistic rows are replaced by their confirmed event, and
+          // `isNew` is a transient "arrived while watching" signal owned by
+          // `message-reveal.ts` — persisting either replays the entrance
+          // animation on old messages after hydration.
+          messages: entry.messages
+            ?.filter((message) => !message.id.startsWith('optimistic-'))
+            .map(({ isNew: _transient, ...message }) => message),
         },
       ]),
     ),

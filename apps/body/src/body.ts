@@ -155,6 +155,10 @@ import {
 } from './attachments.js';
 import { isReadOnlyMcpPermissionRequest, READ_ONLY_MCP_SERVER_NAME } from './read-only-policy.js';
 import {
+  authorizedExternalMcpServers,
+  isExternalMcpPermissionRequest,
+} from './external-mcp-capabilities.js';
+import {
   applyAgentModelSelection,
   filterAllowedModelConfigOptions,
   filterModelOptionsByCredentials,
@@ -2933,6 +2937,12 @@ export class Body {
           ];
           const restoredCodegraphServer = codegraphMcpServer(this.config);
           if (restoredCodegraphServer) restoredMcpServers.push(restoredCodegraphServer);
+          restoredMcpServers.push(
+            ...authorizedExternalMcpServers(
+              this.config.accessPolicy,
+              this.config.externalMcpCapabilities,
+            ),
+          );
           const session = await this.createManagedSession({
             channelId: subchannelId,
             mode: 'edit',
@@ -3127,15 +3137,22 @@ export class Body {
     await this.ensureAgentEntity(tlcChannelId);
     const communityId = await this.channelCommunityId(tlcChannelId);
 
-    // The boundary remains the MCP mount: only Beeline's fixed inspection MCP
-    // is present here; buzz-dev-mcp and native permissions remain unavailable.
+    // The boundary remains the exact MCP mount: Beeline's fixed inspection MCP
+    // plus explicit creator-only account capabilities. Operator config is never inherited.
+    const roomMcpServers = [
+      readonlyServer,
+      ...authorizedExternalMcpServers(
+        this.config.accessPolicy,
+        this.config.externalMcpCapabilities,
+      ),
+    ];
     let session: AgentSession;
     try {
       session = await this.createManagedSession({
         channelId: tlcChannelId,
         mode: 'readonly',
         cwd: readonlyCwd,
-        mcpServers: [readonlyServer],
+        mcpServers: roomMcpServers,
         systemPrompt: [
           'You are a helpful coding assistant in a read-only conversation channel.',
           NO_PERSONAL_CONNECTORS_INSTRUCTION,
@@ -3317,6 +3334,12 @@ export class Body {
         env: [],
       },
     ];
+    mcpServers.push(
+      ...authorizedExternalMcpServers(
+        this.config.accessPolicy,
+        this.config.externalMcpCapabilities,
+      ),
+    );
     const codegraphServer = codegraphMcpServer(this.config);
     if (codegraphServer) mcpServers.push(codegraphServer);
 
@@ -4779,6 +4802,12 @@ export class Body {
     origin: 'harness' | 'host' = 'harness',
   ): Promise<AcpPermissionDecision> {
     if (isReadOnlyMcpPermissionRequest(permission)) return 'allow';
+    if (
+      this.config.accessPolicy === 'creator' &&
+      isExternalMcpPermissionRequest(permission, this.config.externalMcpCapabilities)
+    ) {
+      return 'allow';
+    }
     const turn = this.pendingRoomTurns.get(tlcChannelId);
     // The agent's one prompt-documented way to raise a Room-config change it
     // cannot make itself. Handled ahead of the read-only denial note because

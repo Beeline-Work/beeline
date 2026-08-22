@@ -892,6 +892,13 @@ export function upsertChatMessages(
     if (existing && !existing.isAgentDraft && message.isAgentDraft) {
       continue;
     }
+    // This bubble was already revealed by the live draft. The final event only
+    // settles its durable text/relay id; replaying the "new message" typewriter
+    // would first blank the complete draft and then write it all over again.
+    if (existing?.isAgentDraft && !message.isAgentDraft && message.relayId) {
+      const { isNew: _alreadyRevealed, ...settled } = message;
+      message = settled;
+    }
     // Two DIFFERENT agent messages must never share one bubble.
     //
     // A `#t=agent-message` that carries a NIP-10 reply-to claims the stable

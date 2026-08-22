@@ -6,34 +6,53 @@ import { Typography } from '@/constants/Typography';
 import { MonoMarkdown } from './MonoMarkdown';
 
 /**
- * The one transcript primitive a Room and a Corner both render. Prose stays
- * near-white and uses the active theme's prose family; commands and identity
- * stay IBM Plex Mono. A semibold lead sentence, regular body, inter-turn air,
- * and speaker rails carry hierarchy without message cards or dimming content.
+ * The one transcript primitive a Room and a Corner both render, in the
+ * approved Editorial direction: ONE message size everywhere (16/~1.55), Space
+ * Grotesk prose with IBM Plex Mono reserved for bylines, code, tool readouts,
+ * and system lines. Hierarchy on a long agent turn comes from weight and
+ * brightness — a medium-weight bright lead line, then regular secondary
+ * prose — never from size. Turns separate by a hairline divider plus generous
+ * vertical padding; there are no speaker rails, bubbles, or boxes.
+ *
+ * Identity lives in the byline above each run's first turn: a small square
+ * dot (brass for the viewer, steel for everyone else), then NAME · role ·
+ * HH:MM in uppercase mono. A human message is plain body text — regular
+ * weight, primary tone, same size as everything — so nothing but the brass
+ * byline marks it as the viewer's own.
  *
  * The surfaces differ in exactly one place, and it tracks a real difference
  * between them. A Corner has one administering agent (`openSubchannel` in
  * `apps/body/src/body.ts` signs every corner with a single identity), named
- * once in the top bar — so a Corner's agent turns carry no handle at all and
- * read as pure flowing text. A Room can hold several agents and several people,
- * so a voice states its handle inline, once, when it takes over. Same
- * component, one prop.
+ * once in the top bar — so a Corner's turns carry no byline name at all. A
+ * Room can hold several agents and several people, so each voice states its
+ * name in its opening byline. Same component, one prop.
  */
 
 /** The right margin the ghosted stamp hangs in, clear of the flowing column. */
 export const LEDGER_MARGINALIA_WIDTH = 36;
+
+/** The byline above a run's opening turn. */
+export type LedgerByline = {
+  /** The voice's display name. Omitted in a Corner (named in the top bar). */
+  name?: string;
+  /** A quiet role tag, e.g. `agent`. */
+  role?: string;
+  /** The 24h clock stamp, mono. */
+  stamp: string;
+  /** True only for the viewer's own turn — switches the dot and name to brass. */
+  isViewer?: boolean;
+};
 
 type LedgerBodyProps = {
   itemId: string;
   bodyText: string | undefined;
   bodyTestID: string;
   /**
-   * The voice's handle, set inline as the first thing on the first line so the
-   * entry reads as one log line rather than a name-on-its-own-row header.
-   * Omitted on a continuation of the same voice, and omitted entirely in a
-   * Corner, whose single agent is named in the top bar.
+   * The run's opening byline. Omitted on a continuation of the same voice,
+   * and the name is omitted entirely in a Corner, whose single agent is named
+   * in the top bar.
    */
-  handle?: string;
+  byline?: LedgerByline;
   /** A run's opening entry gets air above it; a continuation keeps flowing. */
   continued?: boolean;
   marginalia?: React.ReactNode;
@@ -55,7 +74,7 @@ export function typewriterFrame(text: string, visibleCharacters: number): string
   return text.slice(0, Math.max(0, visibleCharacters));
 }
 
-/** Split a turn into its semibold lead sentence and regular body copy. */
+/** Split a turn into its emphasized lead sentence and regular body copy. */
 export function splitLeadSentence(text: string): [string, string] {
   const normalized = text.trim();
   if (!normalized) return ['', ''];
@@ -74,12 +93,10 @@ export function splitLeadSentence(text: string): [string, string] {
 function TypewriterMarkdown({
   markdown,
   textStyle,
-  leadingInline,
   testID,
 }: {
   markdown: string;
   textStyle: React.ComponentProps<typeof MonoMarkdown>['textStyle'];
-  leadingInline?: React.ReactNode;
   testID: string;
 }) {
   const reducedMotion = useReducedMotion();
@@ -105,7 +122,6 @@ function TypewriterMarkdown({
 
   return (
     <MonoMarkdown
-      leadingInline={leadingInline}
       markdown={typewriterFrame(markdown, visibleCharacters)}
       testID={testID}
       textStyle={textStyle}
@@ -122,6 +138,10 @@ function TypewriterMarkdown({
  * positioned against the entry so it can never push the prose around, and it
  * takes the dimmest tier because none of it is information the reader is
  * looking for; it is information the reader occasionally checks.
+ *
+ * The Editorial direction folds the stamp into the byline for prose turns;
+ * this gutter survives for the rows that keep the wider margin (the folded
+ * tool run), where a stamp without a byline is still worth hanging.
  */
 export function LedgerMarginalia({
   stamp,
@@ -150,46 +170,64 @@ export function LedgerMarginalia({
   );
 }
 
+function Byline({ byline }: { byline: LedgerByline }) {
+  return (
+    <View style={styles.byline}>
+      <View
+        style={[styles.bylineDot, byline.isViewer && styles.bylineDotViewer]}
+        testID="chat-byline-dot"
+      />
+      <Text style={styles.bylineText}>
+        {byline.name ? (
+          <Text style={[styles.bylineText, byline.isViewer && styles.bylineNameViewer]}>
+            {byline.name}
+            {' · '}
+          </Text>
+        ) : null}
+        {byline.role ? `${byline.role} · ` : ''}
+        {byline.stamp}
+      </Text>
+    </View>
+  );
+}
+
 /**
- * One turn, written straight onto the slab.
+ * One turn, written straight onto the slab in the Editorial direction.
  *
- * `luminous` is the ladder's top step and belongs to the agent alone: its
- * output is the thing the slab exists to show, so it takes the brightest tone
- * and a whisper of bloom. Everyone else writing in the left column takes the
- * ordinary mid-grey. No frame, no rule, no glyph, no box — a run of entries is
- * separated from the next voice by air and nothing else.
+ * An agent turn (`luminous`) may lead with one medium-weight line in the
+ * primary tone — hierarchy by weight and brightness at the SAME size — then
+ * flows in regular secondary prose. Everyone else writes plain body text at
+ * the identical size. Turns separate by a hairline divider; a continuation of
+ * the voice directly above keeps flowing with no divider and no byline.
  */
 export function LedgerEntry({
   itemId,
   bodyText,
   bodyTestID,
-  handle,
+  byline,
   continued = false,
   luminous = false,
-  marginalia,
   replyReference,
   attachments,
   machineNoise,
   typewriter = false,
-}: LedgerBodyProps & { luminous?: boolean }) {
-  const [leadText, remainingText] = bodyText && !continued
+}: Omit<LedgerBodyProps, 'marginalia'> & { luminous?: boolean }) {
+  const [leadText, remainingText] = bodyText && !continued && luminous
     ? splitLeadSentence(bodyText)
     : ['', bodyText ?? ''];
-  const leadingInline = handle ? (
-    <Text style={styles.handle} testID={`chat-handle-${itemId}`}>
-      {handle.toUpperCase()}{'  '}
-    </Text>
-  ) : null;
+  const bodyTextStyle = luminous ? styles.ledgerTextLuminous : styles.ledgerText;
   return (
     <View
-      style={[styles.entry, styles.agentRail, continued ? styles.entryContinued : styles.entryOpens]}
+      style={[
+        styles.entry,
+        continued ? styles.entryContinued : styles.entryOpens,
+      ]}
       testID={`chat-message-${itemId}`}
     >
-      {marginalia}
+      {byline ? <Byline byline={byline} /> : null}
       {replyReference}
       {leadText ? (
         <MonoMarkdown
-          leadingInline={leadingInline}
           markdown={leadText}
           testID={remainingText ? `${bodyTestID}-lead` : bodyTestID}
           textStyle={styles.ledgerLead}
@@ -198,23 +236,13 @@ export function LedgerEntry({
       {remainingText ? (
         typewriter ? (
           <TypewriterMarkdown
-            leadingInline={leadText ? undefined : leadingInline}
             markdown={remainingText}
             testID={bodyTestID}
-            textStyle={luminous ? styles.ledgerTextLuminous : styles.ledgerText}
+            textStyle={bodyTextStyle}
           />
         ) : (
-          <MonoMarkdown
-            leadingInline={leadText ? undefined : leadingInline}
-            markdown={remainingText}
-            testID={bodyTestID}
-            textStyle={luminous ? styles.ledgerTextLuminous : styles.ledgerText}
-          />
+          <MonoMarkdown markdown={remainingText} testID={bodyTestID} textStyle={bodyTextStyle} />
         )
-      ) : !leadText && handle ? (
-        <Text style={styles.handle} testID={`chat-handle-${itemId}`}>
-          {handle.toUpperCase()}
-        </Text>
       ) : null}
       {machineNoise}
       {attachments}
@@ -225,41 +253,33 @@ export function LedgerEntry({
 /**
  * You, steering.
  *
- * Identified by geometry alone: pulled to the right margin and one luminance
- * step down from the agent output it interrupts. No caption, no signature, no
- * rule — on a linear log, "the block that is inset and dim is mine" is learned
- * once and never has to be restated. A run of your own messages keeps flowing
- * as one passage for the same reason a voice announces itself once.
+ * Under the Editorial direction your message is NOT emphasized: plain body
+ * text, regular weight, primary tone, one size — deliberately not bolded and
+ * not enlarged. The ONLY thing marking the turn as yours is the byline's
+ * brass dot and brass name. A run of your own messages keeps flowing as one
+ * passage: no repeated byline, no internal divider.
  */
 export function LedgerSteer({
   itemId,
   bodyText,
   bodyTestID,
+  byline,
   continued = false,
-  marginalia,
   replyReference,
   attachments,
-}: Omit<LedgerBodyProps, 'handle' | 'machineNoise'>) {
-  // `continued` controls only the air between consecutive turns. Applying it
-  // to typography made the first short message in a person's run 16px
-  // semibold and the next 15px regular, so two otherwise-identical mentions
-  // appeared to render differently depending on whether the first one reached
-  // an agent. Each human message owns its lead sentence independently.
-  const [leadText, remainingText] = bodyText
-    ? splitLeadSentence(bodyText)
-    : ['', ''];
+}: Omit<LedgerBodyProps, 'marginalia' | 'machineNoise' | 'typewriter'>) {
+  // Deliberately NO lead split here: a human message never takes the
+  // emphasized lead treatment. Weight, size, and tone are exactly the agent
+  // body's; ownership reads from the byline alone.
   return (
     <View
-      style={[styles.entry, styles.viewerRail, continued ? styles.entryContinued : styles.entryOpens]}
+      style={[styles.entry, continued ? styles.entryContinued : styles.entryOpens]}
       testID={`chat-message-${itemId}`}
     >
-      {marginalia}
-      <View style={styles.steer}>
-        {replyReference}
-        {leadText ? <MonoMarkdown markdown={leadText} textStyle={styles.steerLead} testID={remainingText ? `${bodyTestID}-lead` : bodyTestID} /> : null}
-        {remainingText ? <MonoMarkdown markdown={remainingText} textStyle={styles.steerText} testID={bodyTestID} /> : null}
-        {attachments}
-      </View>
+      {byline ? <Byline byline={byline} /> : null}
+      {replyReference}
+      {bodyText ? <MonoMarkdown markdown={bodyText} textStyle={styles.steerText} testID={bodyTestID} /> : null}
+      {attachments}
     </View>
   );
 }
@@ -267,9 +287,9 @@ export function LedgerSteer({
 /**
  * A wall of tool output, folded into one ghost line.
  *
- * The dimmest tier, one line, with its own disclosure — a `git push` rejection
- * dump, a stack trace, an npm error wall never prints down the slab. The label
- * says what happened and the body stays behind a tap
+ * The dimmest tier, one line over a quiet left rule, with its own disclosure —
+ * a `git push` rejection dump, a stack trace, an npm error wall never prints
+ * down the slab. The label says what happened and the body stays behind a tap
  * (`DESIGN.md`, "Machine noise").
  */
 export function LedgerGhostLine({
@@ -314,28 +334,55 @@ const styles = StyleSheet.create((theme) => ({
   entry: {
     width: '100%',
     minWidth: 0,
-    paddingRight: LEDGER_MARGINALIA_WIDTH,
-    paddingLeft: theme.buzz.railInset,
     paddingVertical: theme.buzz.turnPaddingVertical,
-    borderLeftWidth: theme.buzz.railWidth,
   },
-  agentRail: { borderLeftColor: theme.buzz.agentRail },
-  viewerRail: { borderLeftColor: theme.buzz.humanRail },
+  // Turn separation: a hairline divider at the top of each opening turn (the
+  // inverted list renders a cell's layout-bottom at its visual top), plus the
+  // generous vertical padding above. Continuations of the same voice flow on
+  // with no divider.
+  entryOpens: {
+    marginBottom: theme.buzz.turnGap,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.buzz.turnDivider,
+  },
   entryContinued: { marginBottom: theme.buzz.continuationGap },
-  entryOpens: { marginBottom: theme.buzz.turnGap },
+  byline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 9,
+  },
+  bylineDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 1.5,
+    backgroundColor: theme.buzz.agentRail,
+  },
+  bylineDotViewer: { backgroundColor: theme.buzz.accent },
+  bylineText: {
+    ...Typography.mono(),
+    color: theme.buzz.ledgerQuiet,
+    fontSize: 10,
+    lineHeight: 14,
+    letterSpacing: 0.9,
+    textTransform: 'uppercase',
+  },
+  bylineNameViewer: { color: theme.buzz.accent },
+  // ONE message size. The lead differs from the body by weight (medium) and
+  // brightness (primary), never by size.
   ledgerLead: {
-    fontFamily: theme.buzz.proseSemibold,
+    fontFamily: theme.buzz.proseMedium,
     width: '100%',
     minWidth: 0,
     color: theme.buzz.ledgerBright,
-    fontSize: theme.buzz.leadSize,
-    lineHeight: theme.buzz.leadLineHeight,
+    fontSize: theme.buzz.proseSize,
+    lineHeight: theme.buzz.proseLineHeight,
   },
   ledgerTextLuminous: {
     fontFamily: theme.buzz.proseRegular,
     width: '100%',
     minWidth: 0,
-    color: theme.buzz.ledgerBright,
+    color: theme.buzz.ledgerBody,
     fontSize: theme.buzz.proseSize,
     lineHeight: theme.buzz.proseLineHeight,
   },
@@ -347,12 +394,15 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.buzz.proseSize,
     lineHeight: theme.buzz.proseLineHeight,
   },
-  handle: {
-    fontFamily: theme.buzz.monoSemibold,
-    color: theme.buzz.ledgerQuiet,
-    fontSize: Math.min(13, theme.buzz.proseSize),
+  // Your own turn: plain body, regular weight, primary tone — never bolded,
+  // never enlarged, never inset. The byline carries the ownership signal.
+  steerText: {
+    fontFamily: theme.buzz.proseRegular,
+    minWidth: 0,
+    width: '100%',
+    color: theme.buzz.ledgerBright,
+    fontSize: theme.buzz.proseSize,
     lineHeight: theme.buzz.proseLineHeight,
-    letterSpacing: 0.8,
   },
   marginalia: {
     position: 'absolute',
@@ -374,22 +424,16 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: 8,
     lineHeight: 11,
   },
-  steer: { minWidth: 0, width: '100%' },
-  steerLead: {
-    fontFamily: theme.buzz.proseSemibold,
+  // Tool readouts take the quiet left-rule mono treatment — clearly not
+  // conversation.
+  ghostBlock: {
+    width: '100%',
     minWidth: 0,
-    color: theme.buzz.ledgerBright,
-    fontSize: theme.buzz.leadSize,
-    lineHeight: theme.buzz.leadLineHeight,
+    marginTop: 6,
+    borderLeftWidth: 2,
+    borderLeftColor: theme.buzz.agentRail,
+    paddingLeft: 13,
   },
-  steerText: {
-    fontFamily: theme.buzz.proseRegular,
-    minWidth: 0,
-    color: theme.buzz.ledgerBright,
-    fontSize: theme.buzz.proseSize,
-    lineHeight: theme.buzz.proseLineHeight,
-  },
-  ghostBlock: { width: '100%', minWidth: 0, marginTop: 6 },
   ghostRow: { minWidth: 0, flexDirection: 'row', alignItems: 'baseline' },
   ghostLine: {
     ...Typography.mono(),

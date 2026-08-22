@@ -11,10 +11,10 @@ describe('Beeline appearance themes', () => {
       textSecondary: '#c9c9d1',
       textMuted: '#83838d',
       border: '#1c1c21',
-      accent: '#c9a24b',
+      accent: '#b08a4a',
       diffAdded: '#3FB950',
       diffRemoved: '#F85149',
-      proseRegular: 'IBMPlexSans-Regular',
+      proseRegular: 'SpaceGrotesk-Regular',
     });
   });
 
@@ -27,6 +27,15 @@ describe('Beeline appearance themes', () => {
     }
     expect(beelineThemes.editorial.proseRegular).toBe('IBMPlexSerif-Regular');
     expect(beelineThemes.ledger.proseRegular).toBe('IBMPlexMono-Regular');
-    expect(beelineThemes.ledger.turnGap).toBeLessThan(beelineThemes.obsidian.turnGap);
+    // The Editorial direction is the most generous rhythm: one-size type with
+    // wide turn padding, while the dense mono theme stays tight.
+    expect(beelineThemes.ledger.turnPaddingVertical).toBeLessThan(
+      beelineThemes.obsidian.turnPaddingVertical,
+    );
+    // ONE message size holds in every theme: no lead/prose size split.
+    for (const theme of Object.values(beelineThemes)) {
+      expect(theme.leadSize).toBe(theme.proseSize);
+      expect(theme.proseMedium).toBeTruthy();
+    }
   });
 });

@@ -99,12 +99,27 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: bundle
+      # Re-runs of this job replay the original commit, whose checked-out tree
+      # predates the publisher's own commit; consult the REMOTE ref instead so
+      # a same-commit re-run is a true no-op.
+      - name: Skip if this commit is already published
+        run: |
+          git fetch --depth=1 origin "${GITHUB_REF}"
+          if git show "FETCH_HEAD:relay-stack/web/dl/manifest.json" 2>/dev/null | grep -q '"sourceCommit": "'"${GITHUB_SHA}"'"'; then
+            echo "already published by a previous run for ${GITHUB_SHA}"
+            echo "SKIP_PUBLISH=true" >> "$GITHUB_ENV"
+          fi
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF: ${{ github.ref }}
       - name: Assemble and publish the bundle set
+        if: env.SKIP_PUBLISH != 'true'
         run: node scripts/publish-beeline-dl.mjs --dir bundle
         env:
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_REF: ${{ github.ref }}
       - name: Commit the published set back to main
+        if: env.SKIP_PUBLISH != 'true'
         run: |
           git config user.name "beeline-bundle-bot"
           git config user.email "actions@users.noreply.github.com"

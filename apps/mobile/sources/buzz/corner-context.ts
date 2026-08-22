@@ -112,8 +112,9 @@ function unslug(name: string): string | undefined {
  *
  * Precedence is most-specific-first: a plan the agent published names its own
  * objective; failing that the human's own task from the corner's create event;
- * failing that the corner's name, which is a slug of that same task and is the
- * only source a corner opened before the `task` tag shipped can offer.
+ * failing that the corner's name, which is a short title (a slug on older
+ * corners) and is the only source a corner opened before the `task` tag
+ * shipped can offer.
  * `undefined` means "say nothing" — never a placeholder, and never raw text.
  */
 export function cornerObjectiveLine(input: {

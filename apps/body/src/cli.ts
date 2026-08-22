@@ -81,6 +81,7 @@ import {
   describeIdentity,
   readInstalledBundleIdentity,
   readPendingUpdate,
+  repairInstallForwarders,
   rollbackToPreviousRelease,
   settlePendingUpdateOnStart,
 } from './self-update.js';
@@ -931,6 +932,16 @@ async function main(): Promise<void> {
 
   const command = args[0];
   if (command === '--help' || command === '-h') usage(0);
+
+  // Heal <prefix>/bin forwarders left broken by pre-contract installs (see
+  // self-update.ts, "THE CONTRACT"): a daemon that survived the layout drift
+  // starts through node directly, so it — and every CLI command run on a
+  // healthy install — gets a free chance to make fresh-shell invocations work
+  // again. Best-effort; never blocks or fails a command.
+  const startupLayout = beelineInstallLayout(process.env);
+  if (startupLayout) {
+    await repairInstallForwarders(startupLayout).catch(() => undefined);
+  }
 
   // Every command below shares this: a real terminal on both ends gets clack
   // framing (intro/outro, spinners, clean cancel lines); a script/CI/piped

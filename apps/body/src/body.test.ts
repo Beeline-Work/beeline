@@ -2361,20 +2361,27 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(published[2]!.tags).toContainEqual(['t', 'agent-turn']);
     expect(published[2]!.tags).toContainEqual(['status', 'complete']);
 
-    prompt.mockResolvedValueOnce({
-      stopReason: 'end_turn',
-      updates: [],
-      agentText: '',
-      toolCalls: [],
-    });
+    prompt
+      .mockResolvedValueOnce({
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: '',
+        toolCalls: [],
+      })
+      .mockResolvedValueOnce({
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: "It looks like the other agent's adapter returned an empty turn.",
+        toolCalls: [],
+      });
     await Reflect.get(body, 'replyInRoom').call(
       body,
       'parent-channel',
       { repo: 'repo' },
       {
-        eventId: 'empty-research-result',
+        eventId: 'empty-conversation-result',
         authorPubkey: event.pubkey,
-        content: 'Research the repository and report any findings.',
+        content: 'What do you think about that response?',
         createdAt: event.created_at + 1,
       },
     );
@@ -2382,7 +2389,46 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(
       published.slice(-3).map((item) => item.tags.find((tag) => tag[0] === 'status')?.[1]),
     ).toEqual(['working', undefined, 'complete']);
-    expect(published.at(-2)?.content).toBe('No repository findings to report.');
+    expect(published.at(-2)?.content).toBe(
+      "It looks like the other agent's adapter returned an empty turn.",
+    );
+    expect(prompt).toHaveBeenLastCalledWith(
+      'readonly-session',
+      expect.stringContaining('Answer the latest human message directly and conversationally'),
+      ROOM_AGENT_PROMPT_TIMEOUT_MS,
+      expect.any(Function),
+      expect.any(Function),
+    );
+
+    prompt
+      .mockResolvedValueOnce({
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: '',
+        toolCalls: [],
+      })
+      .mockResolvedValueOnce({
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: '',
+        toolCalls: [],
+      });
+    await Reflect.get(body, 'replyInRoom').call(
+      body,
+      'parent-channel',
+      { repo: 'repo' },
+      {
+        eventId: 'twice-empty-conversation-result',
+        authorPubkey: event.pubkey,
+        content: 'What do you think?',
+        createdAt: event.created_at + 2,
+      },
+    );
+
+    expect(published.at(-2)?.content).toBe(
+      "I couldn't produce a response to that message; please try again.",
+    );
+    expect(published.at(-2)?.content).not.toContain('repository findings');
 
     prompt.mockRejectedValueOnce(new Error('prompt cancelled'));
     await expect(
@@ -2394,7 +2440,7 @@ describe('Room conversation and permission-gated work intent', () => {
           eventId: 'cancelled-research-result',
           authorPubkey: event.pubkey,
           content: 'Research this, but cancel the turn.',
-          createdAt: event.created_at + 2,
+          createdAt: event.created_at + 3,
         },
       ),
     ).resolves.toBe(false);
@@ -3919,12 +3965,14 @@ describe('first-class assistant messages', () => {
         'channel-id',
         { cwd: '/workspace' },
         { agentText: banner, updates: [] },
-        'No repository findings to report.',
+        "I couldn't produce a response to that message; please try again.",
         options,
       );
 
       expect(published).toHaveLength(1);
-      expect(published[0]!.content).toBe('No repository findings to report.');
+      expect(published[0]!.content).toBe(
+        "I couldn't produce a response to that message; please try again.",
+      );
       expect(published[0]!.content).not.toContain('pi v0.83.0');
       expect(published[0]!.content).not.toContain('New version available');
     },

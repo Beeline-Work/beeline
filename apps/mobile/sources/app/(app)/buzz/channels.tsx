@@ -80,7 +80,11 @@ import {
 } from '@/buzz/local-cache';
 import { sessionEventHasTag, sessionEventTagValue } from '@/sync/transport/buzz-event-projection';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
-import { cacheLiveSessionEvents, revalidateCachedMessages } from '@/buzz/local-cache-sync';
+import {
+  cacheLiveSessionEvents,
+  refreshRoomListCornersForUnknownSignals,
+  revalidateCachedMessages,
+} from '@/buzz/local-cache-sync';
 import { afterInteractions } from '@/buzz/defer-interaction';
 import type { SessionEvent } from '@/sync/transport';
 import {
@@ -763,7 +767,13 @@ export default function BuzzChannels() {
         const batches = [...pending.entries()];
         pending.clear();
         for (const [channelId, events] of batches) {
-          cacheLiveSessionEvents(identity.publicKey, channelId, events);
+          const projections = cacheLiveSessionEvents(identity.publicKey, channelId, events);
+          void refreshRoomListCornersForUnknownSignals(
+            transport,
+            identity.publicKey,
+            channelId,
+            projections,
+          );
         }
       };
       const unsubscribes = roomIdsKey.split(',').map((channelId) =>

@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hasWriteTools, inventoryForMcpServers } from './mcp-inventory.js';
 import { parseEnvFile, hasLlmCredentials, type BodyConfig } from './config.js';
+import { prepareCornerAgentPrivateState } from './agent-private-state.js';
 
 const mocks = vi.hoisted(() => ({
   createBuzzClient: vi.fn(),
@@ -5009,6 +5010,107 @@ describe('corner merge-ready surfaces a real committed change', () => {
     }
   });
 
+  it('publishes merge-ready when the only worktree dirt is the Body-owned private-state link', async () => {
+    const agent = newIdentity('merge-ready-private-state-agent');
+    const body = newBody(agent);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const worktreePath = committedFeatureWorktree();
+    const privateState = mkdtempSync(join(tmpdir(), 'buzzy-agent-private-'));
+    try {
+      const agentPrivateState = await prepareCornerAgentPrivateState({
+        root: privateState,
+        worktreePath,
+        channelId: 'corner-merge-ready-private-state',
+      });
+      mkdirSync(join(agentPrivateState.worktreePath, 'memory'), { recursive: true });
+      writeFileSync(
+        join(agentPrivateState.worktreePath, 'memory/charles_episodes.json'),
+        '{"pond":true}\n',
+      );
+      expect(gitCommand(worktreePath, ['status', '--porcelain=v1'])).toBe('');
+      expect(gitCommand(worktreePath, ['status', '--ignored', '--short'])).toContain(
+        '!! .beeline-agent-private-',
+      );
+      const info = {
+        subchannelId: 'corner-merge-ready-private-state',
+        worktreePath,
+        featureBranch: 'feature/ready',
+        role: agent,
+        session: {
+          channelId: 'corner-merge-ready-private-state',
+          sessionId: 'session',
+          agentPrivateState,
+        } as never,
+        lastPolledAt: 0,
+        archived: false,
+        boundRepo: { repo: 'repo', targetBranch: 'refs/heads/main' },
+      };
+      body.registerSubchannel(info);
+
+      const ready = await Reflect.get(body, 'publishMergeReady').call(body, info);
+
+      expect(ready).toBe(true);
+      expect(
+        published.some((event) =>
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+        ),
+      ).toBe(true);
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+      await rm(privateState, { recursive: true, force: true });
+    }
+  });
+
+  it('does not mistake a project-owned memory path for agent-private state', async () => {
+    const agent = newIdentity('merge-not-ready-project-memory-agent');
+    const body = newBody(agent);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const worktreePath = committedFeatureWorktree();
+    try {
+      mkdirSync(join(worktreePath, 'memory'), { recursive: true });
+      writeFileSync(join(worktreePath, 'memory/project-index.json'), '{"project":true}\n');
+      const info = {
+        subchannelId: 'corner-project-memory-dirty',
+        worktreePath,
+        featureBranch: 'feature/ready',
+        role: agent,
+        session: {
+          channelId: 'corner-project-memory-dirty',
+          sessionId: 'session',
+        } as never,
+        lastPolledAt: 0,
+        archived: false,
+        boundRepo: { repo: 'repo', targetBranch: 'refs/heads/main' },
+      };
+      body.registerSubchannel(info);
+
+      const ready = await Reflect.get(body, 'publishMergeReady').call(body, info);
+
+      expect(ready).toBe(false);
+      expect(
+        published.find((event) =>
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
+        )?.content,
+      ).toContain('uncommitted work');
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
   it('publishes a non-empty reason when the worktree still has uncommitted work, for the mobile review panel to show', async () => {
     const agent = newIdentity('merge-not-ready-agent');
     const body = newBody(agent);
@@ -5022,8 +5124,13 @@ describe('corner merge-ready surfaces a real committed change', () => {
     );
     const worktreePath = committedFeatureWorktree();
     try {
-      // An unstaged edit to an already-tracked file: real, incomplete work.
-      writeFileSync(join(worktreePath, 'README.md'), '# After\n\nUnsaved edit\n');
+      // A project-owned lessons path is still real project content, not persona
+      // scratch merely because of its name. Leave a tracked edit uncommitted.
+      mkdirSync(join(worktreePath, 'lessons'), { recursive: true });
+      writeFileSync(join(worktreePath, 'lessons/bank.json'), '{"project":"baseline"}\n');
+      gitCommand(worktreePath, ['add', 'lessons/bank.json']);
+      gitCommand(worktreePath, ['commit', '-m', 'add project lessons']);
+      writeFileSync(join(worktreePath, 'lessons/bank.json'), '{"project":"unfinished"}\n');
       const info = {
         subchannelId: 'corner-merge-not-ready',
         worktreePath,

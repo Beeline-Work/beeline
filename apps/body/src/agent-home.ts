@@ -21,6 +21,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, symlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
+import { AGENT_PRIVATE_STATE_ENV } from './agent-private-state.js';
 
 /**
  * Credential files shared back into an isolated harness state directory,
@@ -106,6 +107,7 @@ export const HARNESS_STATE_ENV_VARS = [
   'CODEX_HOME',
   'XDG_STATE_HOME',
   'XDG_CACHE_HOME',
+  AGENT_PRIVATE_STATE_ENV,
 ] as const;
 
 export function harnessStateDirsFromEnv(env: Record<string, string | undefined>): {

@@ -57,8 +57,11 @@ a Beeline GitHub App installation for a personal account or organization.
 snapshot for every installation linked to that identity. A deliberate
 `?refresh=1` after the GitHub browser returns re-reads each active installation
 so webhook timing cannot strand the picker. Installation callbacks verify
-membership with the encrypted GitHub user token captured during sign-in. The app needs Contents
-read/write, Metadata read, and Administration write permissions. The auth
+membership with the encrypted GitHub user token captured during sign-in. The app's exact required
+permissions and events live in one place — `REQUIRED_GITHUB_APP_PERMISSIONS` and
+`REQUIRED_GITHUB_APP_EVENTS` in `apps/auth/src/github-manifest.ts` (contents write, pull_requests
+write, issues read, metadata read, administration write, checks read, statuses read, workflows
+write; events `star`, `issues`, `pull_request`) — and the startup drift check enforces them. The auth
 sidecar mints exact-repository, one-hour installation tokens for Room-member
 daemons after re-checking current relay membership and the Room's admin-authored
 repository binding. Daemons never receive the App private key and do not
@@ -90,6 +93,39 @@ Required configuration:
 - `BEELINE_GITHUB_APP_SLUG`
 - `BEELINE_GITHUB_APP_PRIVATE_KEY` (PEM; `\\n`-escaped environment values are accepted)
 - `BEELINE_GITHUB_WEBHOOK_SECRET`
+- `BUZZY_AUTH_SETUP_TOKEN` (optional) — shared secret that gates the GitHub App
+  manifest setup page (`/auth/github/app-setup`) and the on-demand drift
+  endpoint (`/auth/github/app-drift`). When unset both surfaces refuse; they
+  are operator-only, never public.
+
+### Creating the GitHub App: use the manifest setup page
+
+THE way to create the Beeline GitHub App is the manifest flow — do not
+hand-assemble checkboxes on github.com. A hand-created app once shipped with
+`"events": []`: webhook URL and secret were right, but GitHub delivered
+nothing and the repository-activity feed was silently dead.
+
+1. Set `BUZZY_AUTH_SETUP_TOKEN` on the auth service and open
+   `https://<tenant>/auth/github/app-setup?token=<BUZZY_AUTH_SETUP_TOKEN>`.
+2. Submit the form. It POSTs a prebuilt manifest to GitHub's
+   `github.com/settings/apps/new` with everything preconfigured: the webhook
+   URL (`https://<tenant>/auth/github/webhook`), the events the product
+   consumes (`star`, `issues`, `pull_request`), and exactly the permission set
+   the code paths need (`apps/auth/src/github-manifest.ts` documents each one).
+   GitHub generates the webhook secret during creation.
+3. GitHub redirects back to the same page with a one-time code; the service
+   exchanges it via `POST /app-manifests/{code}/conversions` and renders a
+   copy-paste `BEELINE_GITHUB_*` environment block. The block is shown once
+   and never logged — copy it into the auth env and restart.
+4. Install the App on your account or organization from the link on the page.
+
+The startup drift check compares the live App (`GET /app`) against the same
+required events + permissions every time the service boots and logs one plain,
+actionable line naming anything missing plus the fix URL
+(`https://github.com/settings/apps/<slug>/permissions`); the same check runs
+on demand at `/auth/github/app-drift?token=<BUZZY_AUTH_SETUP_TOKEN>`. The
+check is best-effort — an unreachable api.github.com logs one line and never
+crashes the service.
 
 The GitHub App requests user authorization during installation, so its User
 authorization callback is `https://<tenant>/auth/github/callback` and GitHub's

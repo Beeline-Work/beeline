@@ -5,12 +5,23 @@ import type { NostrEvent } from '@beeline/nostr';
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
+  /** When > 0, the next N connections are refused (error+close, never open). */
+  static refuseNext = 0;
   readyState = 0;
   readonly sent: unknown[][] = [];
   private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
 
   constructor(_url: string) {
     FakeWebSocket.instances.push(this);
+    if (FakeWebSocket.refuseNext > 0) {
+      FakeWebSocket.refuseNext -= 1;
+      queueMicrotask(() => {
+        this.emit('error', {});
+        this.readyState = 3;
+        this.emit('close', {});
+      });
+      return;
+    }
     queueMicrotask(() => {
       this.readyState = 1;
       this.emit('open', {});
@@ -29,6 +40,11 @@ class FakeWebSocket {
 
   send(data: string): void {
     this.sent.push(JSON.parse(data) as unknown[]);
+  }
+
+  /** Simulate a transport error WITHOUT a clean close (e.g. half-open TCP). */
+  failWithoutClose(): void {
+    this.emit('error', {});
   }
 
   close(): void {
@@ -69,6 +85,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
   FakeWebSocket.instances = [];
+  FakeWebSocket.refuseNext = 0;
 });
 
 describe('wsQueryEvents', () => {
@@ -279,5 +296,114 @@ describe('idle WebSocket keepalive', () => {
     expect(replacement.sent).toHaveLength(4);
 
     ws.close();
+  });
+});
+
+/**
+ * Reproduction of the 2026-08-23 production darkness: a relay restart severs
+ * every daemon socket, and the client must re-dial forever, replay its live
+ * subscriptions on the replacement socket, and deliver events that arrive only
+ * after the relay comes back.
+ */
+describe('relay connection loss is retried forever', () => {
+  const waitFor = async (check: () => boolean, label: string, timeoutMs = 2_000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (check()) return;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+    }
+    throw new Error(`timed out waiting for ${label}`);
+  };
+
+  function lastSocket(): FakeWebSocket {
+    const socket = FakeWebSocket.instances.at(-1);
+    if (!socket) throw new Error('no FakeWebSocket instance');
+    return socket;
+  }
+
+  async function connectedWs(): Promise<{ ws: RelayWs; identity: ReturnType<typeof createIdentity> }> {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const identity = createIdentity('ws-reconnect');
+    const ws = new RelayWs({
+      wsUrl: 'ws://relay.test',
+      identity,
+      skipAuth: true,
+      reconnectDelayMs: 5,
+    });
+    await ws.connect();
+    return { ws, identity };
+  }
+
+  it('re-dials after a server restart, replays the REQ, and delivers a post-reconnect event', async () => {
+    const { ws } = await connectedWs();
+    const received: NostrEvent[] = [];
+    ws.subscribe([{ kinds: [9], '#h': ['room'] }], (event) => received.push(event));
+    const initialReq = lastSocket().sent.find((frame) => frame[0] === 'REQ');
+    lastSocket().receive(['EVENT', initialReq![1] as string, fakeEvent('before')]);
+    expect(received.map((event) => event.id)).toEqual(['before']);
+
+    try {
+      // The relay restarts: a clean server-side close.
+      lastSocket().close();
+
+      // The client must dial again on its own — no external connect() call.
+      await waitFor(() => FakeWebSocket.instances.length >= 2 && ws.connected, 're-dial');
+      const replacement = lastSocket();
+      expect(replacement).not.toBe(FakeWebSocket.instances[0]);
+
+      // The live subscription is replayed on the replacement socket.
+      const replayedReq = replacement.sent.find((frame) => frame[0] === 'REQ');
+      expect(replayedReq).toEqual(['REQ', expect.any(String), { kinds: [9], '#h': ['room'] }]);
+
+      // An event that arrives only after the reconnect is delivered.
+      replacement.receive(['EVENT', replayedReq![1] as string, fakeEvent('after')]);
+      expect(received.map((event) => event.id)).toEqual(['before', 'after']);
+    } finally {
+      ws.close();
+    }
+  });
+
+  it('keeps dialing through refused connections and recovers when the relay returns', async () => {
+    const { ws } = await connectedWs();
+    const received: NostrEvent[] = [];
+    ws.subscribe([{ kinds: [9], '#h': ['room'] }], (event) => received.push(event));
+    try {
+      // The outage: this close and the next three dials all fail.
+      lastSocket().close();
+      FakeWebSocket.refuseNext = 3;
+
+      // The relay comes back after the refused window; the schedule is bounded
+      // (5ms base here) so recovery happens without an unbounded wait, and the
+      // attempts NEVER stop in between.
+      await waitFor(
+        () => FakeWebSocket.instances.length >= 5 && ws.connected,
+        'recovery past refused dials',
+        5_000,
+      );
+      const req = lastSocket().sent.find((frame) => frame[0] === 'REQ');
+      expect(req).toBeDefined();
+      lastSocket().receive(['EVENT', req![1] as string, fakeEvent('back')]);
+      expect(received.map((event) => event.id)).toEqual(['back']);
+    } finally {
+      ws.close();
+    }
+  });
+
+  it('treats a transport error on a live socket as connection loss and reconnects', async () => {
+    const { ws } = await connectedWs();
+    const received: NostrEvent[] = [];
+    ws.subscribe([{ kinds: [9], '#h': ['room'] }], (event) => received.push(event));
+    try {
+      // Half-open TCP: the peer vanished without any close frame reaching us.
+      lastSocket().failWithoutClose();
+
+      await waitFor(() => FakeWebSocket.instances.length >= 2 && ws.connected, 'post-error re-dial');
+      const req = lastSocket().sent.find((frame) => frame[0] === 'REQ');
+      expect(req).toBeDefined();
+      lastSocket().receive(['EVENT', req![1] as string, fakeEvent('resurrected')]);
+      expect(received.map((event) => event.id)).toEqual(['resurrected']);
+    } finally {
+      ws.close();
+    }
   });
 });

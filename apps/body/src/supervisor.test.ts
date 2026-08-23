@@ -22,7 +22,12 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => ({
   createBuzzClient: mocks.createBuzzClient,
 }));
 
-import { DEFAULT_ROOM_DISCOVERY_RETRY_MS, WorkspaceSupervisor } from './supervisor.js';
+import {
+  DEFAULT_ROOM_DISCOVERY_RETRY_MS,
+  DEFAULT_ROOM_DISCOVERY_TRANSIENT_RETRY_MS,
+  isDurableRoomJoinFailure,
+  WorkspaceSupervisor,
+} from './supervisor.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -1024,6 +1029,23 @@ describe('WorkspaceSupervisor room owns the repo (Stage 1)', () => {
   });
 });
 
+describe('Room join-failure classification', () => {
+  it('treats known-durable reasons as durable and transport-shaped failures as transient', () => {
+    expect(isDurableRoomJoinFailure(new Error('invited Room x is local-only on another checkout'))).toBe(true);
+    expect(isDurableRoomJoinFailure(new Error('publishEvent kind=9 failed: HTTP 400 {"error":"invalid: channel is archived"}'))).toBe(true);
+    // Everything else retries short: the cost of a wrong guess is one join
+    // attempt per pass against an unservable Room; the cost of parking a
+    // recoverable Room for ten minutes is an agent that reads as dead.
+    expect(isDurableRoomJoinFailure(new Error('queryEvents failed: HTTP 502 bad gateway'))).toBe(false);
+    expect(
+      isDurableRoomJoinFailure(
+        new OidcBindError('room_repository_unauthorized', 'agent is not authorized', 403),
+      ),
+    ).toBe(false);
+    expect(isDurableRoomJoinFailure(new Error('fetch failed'))).toBe(false);
+  });
+});
+
 describe('WorkspaceSupervisor per-Room discovery isolation', () => {
   function runtimeNoRooms(name: string): AgentRuntimeRecord {
     const agent = storedIdentity(name);
@@ -1146,6 +1168,42 @@ describe('WorkspaceSupervisor per-Room discovery isolation', () => {
     await supervisor.reconcile();
     expect(materialize).toHaveBeenCalledTimes(2);
     expect(client.messageSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a transient join failure on the short cadence instead of the ten-minute park', async () => {
+    // The 2026-08-23 production darkness: a relay outage got a Room
+    // watchdog-recycled, and the recovery join then failed on a transient
+    // authority error while the auth service was itself mid-rollout. Parking
+    // that Room for ten minutes per attempt kept the agent dark long after
+    // the relay was back.
+    const runtime = runtimeNoRooms('transient-join-agent');
+    const client = discoveryClient(runtime);
+    mocks.createBuzzClient.mockReturnValue(client);
+    let now = 1_000_000;
+    const supervisor = new WorkspaceSupervisor(
+      runtime,
+      `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+      { now: () => now },
+    );
+    vi.spyOn(supervisor as never, 'startConversationRoom' as never).mockImplementation(
+      () => undefined as never,
+    );
+    const materialize = vi
+      .spyOn(supervisor as never, 'materializeRoom' as never)
+      .mockRejectedValue(new Error('queryEvents failed: HTTP 502 bad gateway') as never);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await supervisor.reconcile();
+    expect(client.messageSubmit).toHaveBeenCalledWith(
+      'unservable-room',
+      expect.stringContaining('I will retry automatically in 30 seconds.'),
+    );
+
+    // Past the SHORT cadence it is tried again — not held for ten minutes.
+    now += DEFAULT_ROOM_DISCOVERY_TRANSIENT_RETRY_MS + 1;
+    await supervisor.reconcile();
+    expect(materialize).toHaveBeenCalledTimes(2);
   });
 
   it('publishes the visible Room notice when the token broker returns its 403', async () => {

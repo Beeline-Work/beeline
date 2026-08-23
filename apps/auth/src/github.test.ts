@@ -113,7 +113,9 @@ describe('GitHub-only account and repository access', () => {
   it('lists every installation of the App with its own JWT, skipping suspended ones', async () => {
     const { privateKey } = await generateKeyPair('RS256');
     const privateKeyPem = await exportPKCS8(privateKey);
-    // Page 1 is full so a second page is fetched; page 2 closes the loop.
+    // GET /app/installations answers a BARE JSON ARRAY of installation
+    // objects — unlike GET /user/installations' {total_count, installations}
+    // envelope. Page 1 is full so a second page is fetched; page 2 closes it.
     const pageOne = Array.from({ length: 100 }, (_, index) => ({
       id: index + 1,
       account: { id: 500, login: 'acme', type: 'Organization', avatar_url: 'https://a/p' },
@@ -121,24 +123,22 @@ describe('GitHub-only account and repository access', () => {
     }));
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ installations: pageOne }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(pageOne), { status: 200 }))
       .mockResolvedValueOnce(
         new Response(
-          JSON.stringify({
-            installations: [
-              {
-                id: 900,
-                account: { id: 123, login: 'octocat', type: 'User' },
-                repository_selection: 'selected',
-              },
-              {
-                id: 901,
-                suspended_at: '2026-08-01T00:00:00Z',
-                account: { id: 789, login: 'gone', type: 'User' },
-                repository_selection: 'all',
-              },
-            ],
-          }),
+          JSON.stringify([
+            {
+              id: 900,
+              account: { id: 123, login: 'octocat', type: 'User' },
+              repository_selection: 'selected',
+            },
+            {
+              id: 901,
+              suspended_at: '2026-08-01T00:00:00Z',
+              account: { id: 789, login: 'gone', type: 'User' },
+              repository_selection: 'all',
+            },
+          ]),
           { status: 200 },
         ),
       );
@@ -223,5 +223,40 @@ describe('GitHub-only account and repository access', () => {
       ),
     ).resolves.toMatchObject({ installationId: 77, fullName: 'acme/new-repo' });
     expect(fetchMock.mock.calls[1]![0]).toBe('https://api.github.com/orgs/acme/repos');
+  });
+
+  it('parses GET /app/installations as the bare array GitHub actually returns, never an envelope', async () => {
+    const { privateKey } = await generateKeyPair('RS256');
+    const privateKeyPem = await exportPKCS8(privateKey);
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          {
+            id: 155845498,
+            account: {
+              id: 2_000_001,
+              login: 'Beeline-Work',
+              type: 'Organization',
+            },
+            repository_selection: 'selected',
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new GitHubAppClient({ appId: '42', privateKey: privateKeyPem, slug: 'beeline' });
+
+    await expect(app.listInstallations()).resolves.toEqual([
+      {
+        installationId: 155845498,
+        account: {
+          id: '2000001',
+          login: 'Beeline-Work',
+          type: 'Organization',
+          repositorySelection: 'selected',
+        },
+      },
+    ]);
   });
 });

@@ -36,6 +36,7 @@ import { pickModelAndEffort, resolveAccessSettings } from './agent-settings-prom
 import { withSpinner } from './clack-support.js';
 import { readOperatorMcpServers } from './operator-mcp.js';
 import { Body } from './body.js';
+import { runCornerGitCredentialCommand } from './corner-git-credential.js';
 import { WorkspaceSupervisor } from './supervisor.js';
 import {
   assertAgentNotPushAllowed,
@@ -117,6 +118,7 @@ ${pc.dim('Usage:')}
                                             Self-update the installed bundle
   beeline spend [--day YYYY-MM-DD] [--agent <pubkey>] [--json]
                                             Calls/tokens, causal turns, and restart re-primes
+  beeline corner-git-credential (internal)  Git credential helper: read-only repo token for corners
 
 ${pc.dim('Options:')}
   --workspace-root <path>   Agent workspace (default: ./body-workspace)
@@ -441,6 +443,10 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // restart, like the rest of the runtime record.
   config.operatorMcpServers = readOperatorMcpServers(dirname(configPath));
   if (runtime.modelSelection) config.modelSelection = runtime.modelSelection;
+  // Pinned so corner-session git credential helpers (`corner-read-token.ts`)
+  // can exec this bundle's CLI against the exact runtime record — no state-home
+  // discovery inside the sandbox, where XDG dirs are deliberately relocated.
+  config.runtimeConfigPath = configPath;
   // OS sandbox for every ACP child (`bwrap-sandbox.ts`). Detected exactly once
   // here, at daemon start, so an unusable bwrap costs one advisory line rather
   // than a failed spawn per session — and so the operator learns the state of
@@ -1002,6 +1008,15 @@ async function main(): Promise<void> {
 
   if (command === 'spend') {
     await runSpendCommand(args);
+    return;
+  }
+
+  // Git credential-helper backend wired into corner sessions for private-repo
+  // READS (`corner-read-token.ts`). Non-interactive by construction: git is
+  // never a human at a keyboard. Mints only ever carry read-only permissions
+  // pinned to one repository id — never a push-capable credential (#376).
+  if (command === 'corner-git-credential') {
+    process.exitCode = await runCornerGitCredentialCommand(args.slice(1));
     return;
   }
 

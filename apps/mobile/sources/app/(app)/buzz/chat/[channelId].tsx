@@ -2880,6 +2880,23 @@ export default function BuzzChat() {
         : (personName ?? (item.pubkey ? shortMemberNpub(item.pubkey) : 'SOMEONE'));
       // Zero byline names in a Corner — its one agent is named in the top bar
       // — and none on a continuation of the voice directly above.
+      //
+      // The byline's leading indicator is the speaker's EXISTING identity mark
+      // (buzz/identity-mark.ts), at transcript scale, so several people and
+      // agents in one Room read apart at a glance — no new vocabulary. An
+      // agent carries the gold ring only while its presence lease says it is
+      // working; an optimistic own message keys its seed on the viewer so the
+      // mark survives reconciliation unchanged.
+      const markSeed =
+        item.pubkey ?? (isSelfSteer ? cacheViewerPubkey || 'self' : 'unknown-person');
+      const speakerAlive =
+        speaksAsAgent &&
+        Boolean(item.pubkey) &&
+        isAgentPresenceOnlineWithReconnectGrace(
+          item.pubkey ? agentPresences[item.pubkey] : undefined,
+          presenceNow,
+          item.pubkey ? presenceReconnectGrace[item.pubkey] : undefined,
+        );
       const byline: LedgerByline | undefined = attributionContinued
         ? undefined
         : {
@@ -2887,6 +2904,11 @@ export default function BuzzChat() {
             role: speaksAsAgent && !isCorner ? 'agent' : undefined,
             stamp: ledgerStamp(item.timestamp),
             isViewer: isSelfSteer,
+            mark: {
+              seed: markSeed,
+              kind: speaksAsAgent ? 'agent' : 'human',
+              ...(speaksAsAgent ? { alive: speakerAlive } : {}),
+            },
           };
       // The folded tool run keeps the wider right margin, so it alone still
       // hangs a gutter stamp.
@@ -3005,6 +3027,7 @@ export default function BuzzChat() {
       participantsHydrated,
       permissionActionId,
       personProfileByPubkey,
+      cacheViewerPubkey,
       roomRepository,
       targetBranchActionId,
       targetBranchNotice,

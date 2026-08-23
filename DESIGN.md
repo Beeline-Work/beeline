@@ -337,6 +337,13 @@ live, so a quiet row pays for no clock.
 A relay `picture` field never overrides any of this: `groknight
 .photoIdentityMarksEnabled` gates the photo path for all three types in one
 place and ships `false`. A photo would defeat the identity axes above at once.
+**Photo overrides are darkflighted entirely (owner decision, 2026-08-23):**
+identity marks are the ONLY avatars. Every picture-*setting* surface (Identity
+settings' "Your picture", Workspace Settings' Picture block, the Members agent
+editor's picture buttons) gates on `PHOTO_OVERRIDES_ENABLED`
+(`apps/mobile/sources/buzz/photo-overrides.ts`, ships `false`) and renders
+nothing; stored photos are inert data, never rendered, and the upload/plumbing
+stays intact so a flip of that one flag revives it all.
 
 One concept gets one glyph, product-wide. Members are `⌬` everywhere the members
 screen is reachable — the Room-list header, the Workspace settings section, the

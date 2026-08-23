@@ -142,6 +142,32 @@ describe('Workspace Settings authority', () => {
     expect(renderer.root.findByProps({ testID: 'channel-visibility-settings' })).toBeDefined();
   });
 
+  it('darkflights the picture block, even for an owner with a stored photo', async () => {
+    // Photo-override darkflight (owner decision, 2026-08-23): identity marks
+    // are the only avatars. The Picture block — redundant 'Picture'/'Set
+    // picture' labels included — renders nothing, and stored photos summon no
+    // setting back.
+    client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'owner' }]);
+    client.getCommunity.mockResolvedValue({
+      communityId: 'workspace-1',
+      name: 'Hull',
+      visibility: 'invite-only',
+      ownerPubkey: 'b'.repeat(64),
+      avatar: 'https://example.test/hull.png',
+    });
+    const renderer = await render();
+
+    expect(renderer.root.findByProps({ testID: 'workspace-overview-settings' })).toBeDefined();
+    expect(renderer.root.findAllByProps({ testID: 'workspace-picture-change' })).toHaveLength(0);
+    const text = renderer.root
+      .findAllByType('Text')
+      .map((node: any) => (typeof node.props.children === 'string' ? node.props.children : ''))
+      .join(' ');
+    expect(text).not.toContain('Picture');
+    expect(text).not.toContain('Set picture');
+    expect(text).not.toContain('Use generated mark');
+  });
+
   it('opens the unified Members page', async () => {
     client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'owner' }]);
     const renderer = await render();

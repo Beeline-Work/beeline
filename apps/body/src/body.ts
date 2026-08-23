@@ -119,6 +119,7 @@ import {
   type CornerLifecycleStatus,
 } from '@beeline/buzz-client';
 import { verifyEvent, type NostrEvent } from '@beeline/nostr';
+import { performBrokeredPush } from './push-broker.js';
 import type { BodyConfig, SessionMode } from './config.js';
 import { publishCritical } from './publish-delivery.js';
 import {
@@ -235,6 +236,7 @@ import {
   usesTextCornerRequestFallback,
 } from './harness-capabilities.js';
 import {
+  credentialMaskPaths,
   harnessHomeStateDirs,
   mergeGateStateDirs,
   resolveGitCommonDir,
@@ -2205,6 +2207,9 @@ export class Body {
       cwd: input.cwd,
       harnessStateDirs: stateDirs,
       harnessHomeStateDirs: homeStateDirs,
+      // Credential masks (built-in known stores + owner-configured extras) in
+      // BOTH modes: a session that can read a credential can use it out-of-band.
+      maskPaths: credentialMaskPaths(this.config.sandboxMaskPaths),
       ...(tmpDir ? { tmpDir } : {}),
       ...(input.worktreePath ? { worktreePath: input.worktreePath } : {}),
     };
@@ -6101,14 +6106,22 @@ export class Body {
     const forceArgs = rewritten
       ? [`--force-with-lease=refs/heads/${info.featureBranch}:${info.pushedFeatureTip}`]
       : [];
+    // The feature-branch publish is a brokered push: classified (this corner's
+    // own branch → allowed), audited, then performed by the daemon with its
+    // own credentials. A refusal never reaches git at all.
     const push = boundRepo.remoteName
-      ? await this.remoteGit(boundRepo, info.worktreePath, [
-          'push',
-          ...forceArgs,
-          boundRepo.remoteName,
-          `${boundRepo.ownerHex ? info.featureBranch : tip}:refs/heads/${info.featureBranch}`,
-        ])
-      : { ok: true, status: 0, stdout: '', stderr: '' };
+      ? await performBrokeredPush({
+          remote: boundRepo.remoteName,
+          refspecs: [
+            `${boundRepo.ownerHex ? info.featureBranch : tip}:refs/heads/${info.featureBranch}`,
+          ],
+          policy: { featureBranch: info.featureBranch, protectedRefs: [target.branch] },
+          ...(forceArgs.length ? { extraArgs: forceArgs } : {}),
+          cornerId: info.subchannelId,
+          sessionId: info.session.logicalSessionId ?? info.session.sessionId,
+          runGit: async (args) => await this.remoteGit(boundRepo!, info.worktreePath, args),
+        })
+      : { ok: true as const, status: 0, stdout: '', stderr: '' };
     if (!push.ok) {
       await postControlMessage(
         info.subchannelId,
@@ -6460,12 +6473,30 @@ export class Body {
     // reachable from the exact tip a human approved, only tags the remote does
     // not already have, and only annotated ones (a lightweight tag is left
     // behind on purpose, since it carries no authorship of its own).
-    const land = await this.remoteGit(info.boundRepo!, info.worktreePath, [
-      'push',
-      '--follow-tags',
+    //
+    // This is THE protected-ref brokered push: the approval was verified by
+    // `findHumanMergeApproval` (signature, human-admin authority, and this
+    // exact repo+branch+tip binding) before we got here, and the broker
+    // re-checks that same binding against the refspec before performing the
+    // push with the daemon's credentials.
+    const land = await performBrokeredPush({
       remote,
-      `${target.tip}:${target.branch}`,
-    ]);
+      refspecs: [`${target.tip}:${target.branch}`],
+      policy: { featureBranch: info.featureBranch, protectedRefs: [target.branch] },
+      extraArgs: ['--follow-tags'],
+      approval: {
+        verified: true,
+        approval: {
+          repo: target.repo,
+          branch: target.branch,
+          tip: target.tip,
+          reviewerPubkey: info.humanMergeApproval?.reviewer ?? '',
+        },
+      },
+      cornerId: info.subchannelId,
+      sessionId: info.session.logicalSessionId ?? info.session.sessionId,
+      runGit: async (args) => await this.remoteGit(info.boundRepo!, info.worktreePath, args),
+    });
     return land.ok ? { kind: 'landed' } : { kind: 'failed', reason: land.stderr };
   }
 

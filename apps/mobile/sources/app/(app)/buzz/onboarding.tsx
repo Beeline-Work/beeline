@@ -627,6 +627,7 @@ export default function BuzzOnboarding() {
             </View>
           )}
           <MonoButton
+            labelStyle={styles.buttonLabel}
             disabled={!normalized || loading}
             label="Enter Workspace"
             loading={loadingAction === 'name'}
@@ -733,6 +734,7 @@ export default function BuzzOnboarding() {
           )}
 
           <MonoButton
+            labelStyle={styles.buttonLabel}
             disabled={!canEnter || loading}
             label="Enter Beeline"
             loading={loadingAction === 'enter'}
@@ -740,6 +742,7 @@ export default function BuzzOnboarding() {
             testID="onboarding-new-key-enter"
           />
           <MonoButton
+            labelStyle={styles.buttonLabel}
             disabled={loading}
             label="Discard this key"
             onPress={resetNewKey}
@@ -756,8 +759,10 @@ export default function BuzzOnboarding() {
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <View style={styles.brandSurface}>
         <BeelineMark shimmer />
-        <Text style={styles.title}>beeline</Text>
-        <Text style={styles.subtitle}>workspace for all intelligence</Text>
+        <Text style={styles.title} testID="onboarding-wordmark">
+          beeline<Text style={styles.titlePeriod}>.</Text>
+        </Text>
+        <Text style={styles.subtitle} testID="onboarding-tagline">workspace for all intelligence</Text>
       </View>
 
       {notice && (
@@ -775,6 +780,7 @@ export default function BuzzOnboarding() {
           </Text>
           <View style={styles.importAction}>
             <MonoButton
+              labelStyle={styles.buttonLabel}
               label="Create a new key"
               loading={loadingAction === 'create'}
               variant="secondary"
@@ -807,6 +813,7 @@ export default function BuzzOnboarding() {
           />
           <View style={styles.importAction}>
             <MonoButton
+              labelStyle={styles.buttonLabel}
               label="Import key"
               loading={loadingAction === 'import'}
               variant="secondary"
@@ -827,6 +834,7 @@ export default function BuzzOnboarding() {
               it from Advanced instead.
             </Text>
             <MonoButton
+              labelStyle={styles.buttonLabel}
               label="Replace device key"
               loading={loadingAction === 'recover'}
               onPress={() => void handleReplaceDeviceKey()}
@@ -836,6 +844,7 @@ export default function BuzzOnboarding() {
           </View>
         ) : !showAdvanced && canRetryBind ? (
           <MonoButton
+            labelStyle={styles.buttonLabel}
             label="Retry device bind"
             loading={loadingAction === 'bind'}
             onPress={() => pendingBind.current && void finishPendingBind(pendingBind.current)}
@@ -843,6 +852,7 @@ export default function BuzzOnboarding() {
           />
         ) : !showAdvanced && Platform.OS !== 'web' ? (
           <MonoButton
+            labelStyle={styles.buttonLabel}
             label={signInLabel}
             loading={
               loadingAction === 'github' || loadingAction === 'bind' || status === 'checking_device'
@@ -852,6 +862,7 @@ export default function BuzzOnboarding() {
           />
         ) : null}
         <MonoButton
+          labelStyle={styles.buttonLabel}
           label={showAdvanced ? 'Hide Advanced' : 'Advanced'}
           variant="secondary"
           onPress={() => {
@@ -877,7 +888,10 @@ const styles = StyleSheet.create((theme) => {
   },
   brandSurface: { alignItems: 'center', marginBottom: 28 },
   title: {
-    ...Typography.logo(),
+    // Canonical brand family (theme prose voice, Space Grotesk) — the login
+    // wordmark is a brand surface, not a logo-font exception.
+    ...Typography.default('semiBold'),
+    fontFamily: groknight.proseSemibold,
     fontSize: 28,
     lineHeight: 32,
     color: groknight.textPrimary,
@@ -885,6 +899,16 @@ const styles = StyleSheet.create((theme) => {
     marginTop: 2,
     marginBottom: 8,
   },
+  // The trailing period of the `beeline.` wordmark is the one brass glyph.
+  // Same canonical family as the title it nests inside, per the typography
+  // governor (every Text style names an app font).
+  titlePeriod: {
+    ...Typography.default('semiBold'),
+    fontFamily: groknight.proseSemibold,
+    color: groknight.accent,
+  },
+  // Canonical brand family on the login buttons' labels (theme prose voice).
+  buttonLabel: { fontFamily: groknight.proseSemibold },
   subtitle: {
     ...Typography.default(), fontFamily: groknight.proseRegular,
     maxWidth: 320,

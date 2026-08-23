@@ -5,12 +5,94 @@ import {
   isCornerActive,
   isCornerTerminal,
   mapRawCornerStatusTag,
+  resolveCornerLifecycle,
   resolveCornerLifecycleStatus,
   roomCornerSignal,
   roomListCorners,
   sortCorners,
+  type CornerLifecycleFact,
   type CornerSummary,
 } from './corners';
+
+describe('resolveCornerLifecycle (attention lifecycle, one oracle)', () => {
+  const status = (raw: string, createdAt: number): CornerLifecycleFact => ({
+    createdAt,
+    rawStatus: raw,
+  });
+  const work = (createdAt: number): CornerLifecycleFact => ({ createdAt, isWorkSignal: true });
+  const review = (createdAt: number): CornerLifecycleFact => ({
+    createdAt,
+    isMergeReady: true,
+  });
+
+  it('resolves a needs-decision card once the corner has worked again', () => {
+    // The poisoned-history shape: a gate-outage-era decision card with hours
+    // of agent narration and turn lifecycle after it. The card described one
+    // moment; the work consumed whatever it was waiting for.
+    expect(resolveCornerLifecycle([status('needs-attention', 100), work(200), work(300)])).toBe(
+      'live',
+    );
+    expect(resolveCornerLifecycle([status('needs-attention', 100), review(50), work(200)])).toBe(
+      'live',
+    );
+  });
+
+  it('keeps a genuinely pending decision gold while it is the newest word', () => {
+    expect(resolveCornerLifecycle([work(100), status('needs-attention', 300)])).toBe(
+      'needs-attention',
+    );
+    expect(resolveCornerLifecycle([status('needs-attention', 300)])).toBe('needs-attention');
+  });
+
+  it('never lets a human message or system notice resolve a pending decision', () => {
+    // Only agent-authored work signals count; anything else in the channel
+    // (a person's steer, a body-control receipt) leaves the card standing.
+    const humanMessage: CornerLifecycleFact = { createdAt: 400 };
+    expect(resolveCornerLifecycle([status('needs-attention', 300), humanMessage])).toBe(
+      'needs-attention',
+    );
+  });
+
+  it('keeps a review open until consumed, then reads working again', () => {
+    expect(resolveCornerLifecycle([review(100)])).toBe('open');
+    expect(resolveCornerLifecycle([review(100), status('ready', 150)])).toBe('open');
+    // Work after the announcement means the review window moved on.
+    expect(resolveCornerLifecycle([review(100), work(200)])).toBe('live');
+    // A newer status still outranks an older merge-ready (existing rule).
+    expect(resolveCornerLifecycle([review(100), status('failed', 200)])).toBe('failed');
+  });
+
+  it('resolves a recoverable failure card once realign work starts', () => {
+    expect(resolveCornerLifecycle([status('failed', 100), work(200)])).toBe('live');
+    // A second failure newer than the work speaks again.
+    expect(resolveCornerLifecycle([status('failed', 100), work(200), status('failed', 300)])).toBe(
+      'failed',
+    );
+  });
+
+  it('never resurrects a merged or archived corner, whatever came after', () => {
+    expect(resolveCornerLifecycle([work(500)], { merged: true })).toBe('merged');
+    expect(
+      resolveCornerLifecycle([status('needs-attention', 100), work(200)], { archived: true }),
+    ).toBe('archived');
+  });
+
+  it('answers live for a history with no status word at all', () => {
+    expect(resolveCornerLifecycle([work(10), work(20)])).toBe('live');
+    expect(resolveCornerLifecycle([])).toBe('live');
+  });
+
+  it('is stable under the newest-N backfill window', () => {
+    // The same append-only history read through two different windows — one
+    // that still holds the old card, one where busy corners evicted it — must
+    // answer identically, or the deck flips between cold cache and warm
+    // refetch. This is the cold/warm parity property.
+    const fullWindow: CornerLifecycleFact[] = [status('needs-attention', 100), ...Array.from({ length: 49 }, (_, i) => work(200 + i))];
+    const evictedWindow: CornerLifecycleFact[] = Array.from({ length: 50 }, (_, i) => work(200 + i));
+    expect(resolveCornerLifecycle(fullWindow)).toBe('live');
+    expect(resolveCornerLifecycle(evictedWindow)).toBe('live');
+  });
+});
 
 describe('corner navigation model', () => {
   const corners: CornerSummary[] = [

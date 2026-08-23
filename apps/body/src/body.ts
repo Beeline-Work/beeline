@@ -7388,7 +7388,11 @@ export class Body {
    * session takes its teardown the moment the scheduler reports `suspended`
    * (the authoritative "retired" signal — runs regardless of whether the word
    * changed, so a redundant notification cannot strand the archive), then the
-   * state is published to the corner as a `corner-session` control event.
+   * state is published to the corner as a `corner-session` control event —
+   * EXCEPT for the two planned-pause shapes that must stay silent: a session's
+   * initial creation-time `suspended` and any suspension driven by
+   * `Body.dispose()` (see below). A genuine mid-run suspension (idle eviction,
+   * capacity wait, watchdog force-suspend) still publishes.
    *
    * An archived channel refusing that publish is the EXPECTED terminal shape
    * (a landed corner archived while its session was mid-retire), not a
@@ -7399,13 +7403,22 @@ export class Body {
     channelId: string,
     state: 'live' | 'suspended' | 'waiting-for-slot',
   ): Promise<void> {
+    // A session's FIRST state is always the scheduler's `suspended` bookkeeping
+    // at creation (sessions activate lazily), and a suspension reached through
+    // `Body.dispose()` is the planned shutdown/restart itself. Neither is news
+    // about the corner: publishing either made every daemon restart stamp each
+    // restored corner "suspended" — agent trouble invented by our own
+    // housekeeping. The state is still tracked locally (the #369
+    // transition-only guard and #381's archive deferral both read it); only
+    // the wire card is skipped.
+    const initialSuspended = session.processState === undefined && state === 'suspended';
     const changed = session.processState !== state;
     if (changed) {
       session.processState = state;
       session.processStateSequence = Math.max(Date.now(), (session.processStateSequence ?? 0) + 1);
     }
     if (state === 'suspended') await this.runDeferredLandArchive(channelId);
-    if (!changed) return;
+    if (!changed || initialSuspended || this.disposed) return;
     await postCornerSessionStatus(
       channelId,
       this.agentIdentity,
@@ -7675,13 +7688,12 @@ export class Body {
     boundRepo: BoundRepo,
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<void> {
-    const stopPresence = startAgentPresence(
-      tlcChannelId,
-      this.agentIdentity,
-      undefined,
-      (status) => this.onRoomPresence?.(tlcChannelId, status),
-      'offline',
-    );
+    // Initial status 'online' (the default): the first heartbeat publishes as
+    // soon as the loop starts, so a restart handover re-establishes presence
+    // promptly instead of inheriting an aging lease. See startAgentPresence.
+    const stopPresence = startAgentPresence(tlcChannelId, this.agentIdentity, undefined, (
+      status,
+    ) => this.onRoomPresence?.(tlcChannelId, status));
     this.presenceGenerations.set(tlcChannelId, stopPresence.generationId);
     try {
       await this.assertRepositorySafety(tlcChannelId, boundRepo);
@@ -7709,12 +7721,9 @@ export class Body {
     editPolicy: Exclude<RoomEditPolicy, 'repository'>,
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<void> {
-    const stopPresence = startAgentPresence(
-      channelId,
-      this.agentIdentity,
-      undefined,
-      (status) => this.onRoomPresence?.(channelId, status),
-      'offline',
+    // See runChannelLoop: prompt first heartbeat for restart handover.
+    const stopPresence = startAgentPresence(channelId, this.agentIdentity, undefined, (status) =>
+      this.onRoomPresence?.(channelId, status),
     );
     this.presenceGenerations.set(channelId, stopPresence.generationId);
     try {
@@ -7747,12 +7756,9 @@ export class Body {
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<void> {
     if (!boundRepo.repositoryKey) throw new Error('paired Room is missing its repository key');
-    const stopPresence = startAgentPresence(
-      channelId,
-      this.agentIdentity,
-      undefined,
-      (status) => this.onRoomPresence?.(channelId, status),
-      'offline',
+    // See runChannelLoop: prompt first heartbeat for restart handover.
+    const stopPresence = startAgentPresence(channelId, this.agentIdentity, undefined, (status) =>
+      this.onRoomPresence?.(channelId, status),
     );
     this.presenceGenerations.set(channelId, stopPresence.generationId);
     try {

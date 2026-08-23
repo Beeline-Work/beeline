@@ -26,7 +26,7 @@ The service account file stays outside the repository. Do not log or commit it.
 | `BUZZY_RELAY_HOST`               | subscription origin host               | Relay tenant authority sent to the private query origin                            |
 | `BUZZY_RELAY_SUBSCRIPTION_URL`   | same as `BUZZY_RELAY_URL`              | Authenticated WebSocket event-wakeup origin                                        |
 | `BUZZY_PUSH_HOST`                | `127.0.0.1`                            | Registration HTTP bind host                                                        |
-| `PORT`                           | `8788`                                 | Registration HTTP port (the public tunnel targets this port)                       |
+| `PORT`                           | `8788`                                 | Registration HTTP port (Compose-internal in production)                            |
 | `BUZZY_PUSH_REGISTRY_FILE`       | `.data/registrations.json`             | Local token registry path                                                          |
 | `BUZZY_PUSH_DELIVERY_STATE_FILE` | registry directory + `deliveries.json` | Durable event-id ledger and recipient cursors                                      |
 | `BUZZY_PUSH_POLL_INTERVAL_MS`    | `1500`                                 | ACL-scoped relay poll interval                                                     |
@@ -69,6 +69,7 @@ Changes under this service require a push-gateway redeploy. Changes to the
 Android notification channel label require a new APK; the application label is
 already Beeline.
 
-The production deployment uses a loopback-only query origin and the public,
-auth-enforced relay only for its authenticated WebSocket wakeup. See
-[`deploy/README.md`](deploy/README.md).
+The production deployment runs this service beside relay-front and the relay in
+the Compose stack. Port 8788 stays internal, the FCM credential is mounted
+read-only, and the registry plus delivery ledger share a durable host-mounted
+state directory. See [`deploy/README.md`](deploy/README.md).

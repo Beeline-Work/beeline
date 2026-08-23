@@ -28,6 +28,7 @@ import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { useAgentNameCache } from '@/buzz/agent-name-cache';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
+import { PHOTO_OVERRIDES_ENABLED } from '@/buzz/photo-overrides';
 import { buildCommunityInviteUrl } from '@/buzz/community-invite';
 import { profileCacheKey, selectChannelList, useBuzzLocalCache } from '@/buzz/local-cache';
 import { seedMembersFromWorkspaceCache } from '@/buzz/members-cache';
@@ -1060,6 +1061,10 @@ export default function BuzzAgents() {
                 >
                   <Text style={styles.secondaryButtonText}>Message</Text>
                 </TouchableOpacity>
+                {/* Photo-override darkflight: the Agent picture buttons render
+                    nothing while PHOTO_OVERRIDES_ENABLED is false. changeAvatar/
+                    resetAvatar stay intact for revival. */}
+                {PHOTO_OVERRIDES_ENABLED && (
                 <TouchableOpacity
                   style={styles.secondaryButton}
                   disabled={busy}
@@ -1069,7 +1074,8 @@ export default function BuzzAgents() {
                     {avatarUrl ? 'Change picture' : 'Set picture'}
                   </Text>
                 </TouchableOpacity>
-                {avatarUrl && (
+                )}
+                {PHOTO_OVERRIDES_ENABLED && avatarUrl && (
                   <TouchableOpacity
                     style={styles.avatarReset}
                     disabled={busy}

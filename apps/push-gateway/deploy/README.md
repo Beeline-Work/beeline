@@ -2,8 +2,11 @@
 
 Production separates event wakeups from message reads:
 
-- `https://usebeeline.app` is the public, auth-enforced WebSocket origin.
+- `https://usebeeline.app` is the public, auth-enforced WebSocket origin and
+  serves the push gateway under `/push/`.
 - `https://relay.buzzrouter.com` remains a permanent alias for shipped clients.
+- `https://push.buzzrouter.com` remains a permanent push-gateway alias for
+  clients that already stored or shipped that base URL.
 - `http://127.0.0.1:3410` is a host-loopback-only `POST /query` origin.
 - The trusted relay replica binds its TCP app listener to container loopback and
   exposes a Unix socket only to the query-only Nginx sidecar. Both run as the
@@ -15,6 +18,48 @@ Production separates event wakeups from message reads:
 The extra relay process is a normal horizontally-scaled replica sharing the
 production Postgres and Redis services. Its huddle-audio path is disabled, and
 its trusted HTTP surface cannot publish events or reach the public tunnel.
+
+## Public registration route
+
+The mobile default is `https://usebeeline.app/push`, and the app appends
+`/registrations`. The gateway itself matches the exact path `/registrations`,
+so the public relay front must strip the `/push/` prefix. Its exact route is:
+
+```nginx
+location /push/ {
+  proxy_pass http://push-host:8788/;
+  proxy_http_version 1.1;
+  proxy_set_header Host $http_host;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto $scheme;
+  proxy_request_buffering off;
+  proxy_buffering off;
+}
+```
+
+`push-host` is the Docker host-gateway alias declared on `relay-front` in
+`relay-stack/compose.yml`; port `8788` is the separate
+`buzzy-push-gateway.service`, not the auth service on `8789`. The gateway binds
+`0.0.0.0` so the relay-front container can reach the host-gateway address. The
+production host has no directly published ingress ports, so nginx remains the
+only public route to this listener.
+
+For the live checkout at `/home/lunchbox/buzz-router-relay-prod`, apply all
+three checked-in deployment pieces before restarting only the affected
+services:
+
+1. Copy the `location /push/` block into `relay-front/nginx.conf` before the
+   catch-all `location /`.
+2. Add `extra_hosts: ["push-host:host-gateway"]` to the `relay-front` Compose
+   service and recreate that container so the alias is installed.
+3. Install the updated `buzzy-push-gateway.service`, run
+   `systemctl --user daemon-reload`, and restart that service so it listens on
+   the host-gateway interface.
+
+The production nginx file is a read-only single-file bind, so an atomic
+host-side replacement requires recreating `relay-front`; an nginx reload alone
+will retain the old inode. Validate the candidate with the command in
+`relay-stack/AUTH-DEPLOY.md` before recreating the front.
 
 ## Install or update
 
@@ -38,6 +83,7 @@ must be enabled so the service starts on boot.
 ```sh
 curl -fsS http://127.0.0.1:3410/health
 curl -fsS http://127.0.0.1:8788/health
+curl -fsS https://usebeeline.app/push/health
 curl -fsS https://push.buzzrouter.com/health
 systemctl --user status buzzy-push-gateway.service
 ```

@@ -140,6 +140,52 @@ lines.on('line', (line) => {
   return binary;
 }
 
+async function fakeAutonomyAgent(
+  fileName: 'codex-acp.mjs' | 'claude-agent-acp.mjs' | 'pi-acp.mjs',
+  availableModes: string[],
+  expectedMode?: string,
+): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-autonomy-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, fileName);
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+
+const availableModes = ${JSON.stringify(availableModes)};
+const expectedMode = ${JSON.stringify(expectedMode)};
+const lines = createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    send({
+      jsonrpc: '2.0',
+      id: message.id,
+      result: {
+        sessionId: 'autonomy-session',
+        modes: {
+          currentModeId: 'default',
+          availableModes: availableModes.map((id) => ({ id })),
+        },
+      },
+    });
+  } else if (message.method === 'session/set_mode') {
+    if (!expectedMode || message.params.modeId !== expectedMode) process.exit(71);
+    send({ jsonrpc: '2.0', id: message.id, result: {} });
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
 async function fakePermissionAgent(): Promise<string> {
   const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-permission-'));
   temporaryDirectories.push(directory);
@@ -486,6 +532,25 @@ describe('AcpClient live steering', () => {
     expect(client.isAlive).toBe(true);
     await client.stop();
   });
+
+  it.each([
+    ['codex-acp.mjs', ['agent', 'agent-full-access'], 'agent-full-access'],
+    ['claude-agent-acp.mjs', ['default', 'acceptEdits', 'bypassPermissions'], 'bypassPermissions'],
+    ['pi-acp.mjs', ['high', 'medium'], undefined],
+  ] as const)(
+    'puts edit sessions into the %s no-prompt mode',
+    async (fileName, availableModes, expectedMode) => {
+      const client = new AcpClient({
+        agentCommand: await fakeAutonomyAgent(fileName, [...availableModes], expectedMode),
+        agentEnv: {},
+      });
+      await client.start();
+      await expect(client.sessionNew({ cwd: process.cwd(), mode: 'edit' })).resolves.toMatchObject({
+        sessionId: 'autonomy-session',
+      });
+      await client.stop();
+    },
+  );
 
   it('carries the child process stderr tail into a spawn/exit failure', async () => {
     const client = new AcpClient({

@@ -198,6 +198,11 @@ import {
   NewMessageMaterialize,
   PixelLoader,
 } from '@/components/buzz/MonoHull';
+import {
+  APPROVAL_ACK_TIMEOUT_MS,
+  approvalTimeoutMessage,
+  nextApprovalState,
+} from '@/buzz/approval-state';
 
 type RoomMemberOption = {
   pubkey: string;
@@ -495,6 +500,11 @@ export default function BuzzChat() {
   const [approvalState, setApprovalState] = useState<
     'none' | 'sending' | 'delivering' | 'failed' | 'merged'
   >('none');
+  // The daemon confirmed it CONSUMED the signed approval (`decision=accepted`
+  // ack) and is landing it. This is what lets DELIVERING resolve on evidence:
+  // before this existed, a missed archive event or silent daemon left the
+  // spinner up forever. Cleared whenever the panel reopens for a new review.
+  const [approvalAcked, setApprovalAcked] = useState(false);
   // The daemon's own posture after a failed land. This screen used to hard-code
   // "RETRYING AUTOMATICALLY", which is false for a land the daemon has stopped
   // re-attempting (a moved target being rebased, or one it has given up on) —
@@ -1394,6 +1404,10 @@ export default function BuzzChat() {
           pendingLiveEvents = [];
           const projections = cacheLiveSessionEvents(identity.publicKey, decodedId, batch);
           for (const projected of projections) {
+            // One reducer owns every transition out of sending/delivering —
+            // rejection ack, landed card, archive notice, delivery failure —
+            // so the approve panel can never hang on an unbounded claim.
+            setApprovalState((current) => nextApprovalState(current, projected));
             if (projected.mergeTarget) {
               // A merge-ready on a DIFFERENT tip is a new change to review —
               // it supersedes whatever happened to the previous approval, so
@@ -1405,6 +1419,7 @@ export default function BuzzChat() {
                 mergeTargetTipRef.current !== projected.mergeTarget.tip
               ) {
                 setApprovalState((current) => (current === 'merged' ? current : 'none'));
+                setApprovalAcked(false);
                 setDeliveryRetry(undefined);
               }
               mergeTargetTipRef.current = projected.mergeTarget.tip;
@@ -1418,6 +1433,7 @@ export default function BuzzChat() {
               mergeTargetTipRef.current = null;
               setMergeTarget(null);
               setPreviewUrl(null);
+              setApprovalAcked(false);
             }
             if (projected.archiveChannel) {
               setIsArchived(true);
@@ -1429,6 +1445,16 @@ export default function BuzzChat() {
             if (projected.deliveryFailed) {
               setApprovalState((current) => (current === 'merged' ? current : 'failed'));
               setDeliveryRetry(projected.deliveryRetry);
+            }
+            // The daemon's receipt for THIS signed approval: accepted (it is
+            // landing the approved tip — stop claiming "delivering", which no
+            // one was answering for) or rejected with its plain reason.
+            if (projected.approvalAck?.decision === 'accepted') {
+              setApprovalAcked(true);
+              setApprovalError(null);
+            } else if (projected.approvalAck?.decision === 'rejected') {
+              setApprovalAcked(false);
+              setDeliveryRetry(undefined);
             }
             applyAgentPresence(projected.agentPresence);
           }
@@ -2539,6 +2565,19 @@ export default function BuzzChat() {
     }
   }, [decodedId, handleBack, transport]);
 
+  // An approval that was accepted by the relay but never acknowledged by the
+  // daemon resolves ITSELF here. The signed approval stays on the relay and a
+  // reconnecting daemon will honor it — the message says exactly that, so an
+  // approval can never hang silently again (the 2026-08-23 live defect).
+  useEffect(() => {
+    if (approvalState !== 'delivering' || approvalAcked) return;
+    const timer = setTimeout(() => {
+      setApprovalState((current) => (current === 'delivering' ? 'failed' : current));
+      setApprovalError(approvalTimeoutMessage());
+    }, APPROVAL_ACK_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [approvalState, approvalAcked]);
+
   const handleApprove = useCallback(async () => {
     if (!transport || !mergeTarget) return;
     setApprovalState('sending');
@@ -2547,6 +2586,7 @@ export default function BuzzChat() {
       const result = await transport.submitMergeApproval(decodedId, mergeTarget);
       if (!result.success)
         throw new Error(result.message ?? 'Approval was not accepted by the relay');
+      setApprovalAcked(false);
       setApprovalState('delivering');
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
@@ -3380,10 +3420,17 @@ export default function BuzzChat() {
                       // Approval accepted by the relay — landing/confirming
                       // is still in progress. Must never read the same as
                       // MERGED: that word describes only a durably confirmed
-                      // outcome (the archiveChannel projection below).
+                      // outcome (the archiveChannel projection below). Once
+                      // the daemon's ack arrives the claim narrows to what
+                      // someone actually took custody of; before that, the
+                      // ack timeout below resolves the state honestly.
                       <View style={styles.approvalPending} testID="approve-corner-delivering">
                         <PixelLoader compact />
-                        <Text style={styles.approvalStateText}>✓ APPROVAL SENT · DELIVERING…</Text>
+                        <Text style={styles.approvalStateText}>
+                          {approvalAcked
+                            ? '✓ APPROVAL RECEIVED · LANDING…'
+                            : '✓ APPROVAL SENT · DELIVERING…'}
+                        </Text>
                       </View>
                     ) : approvalState === 'failed' ? (
                       // Only ever claim what the daemon actually told us it is

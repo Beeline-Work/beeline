@@ -42,9 +42,12 @@ describe('the members mark', () => {
 
   it('is visually distinct from every corner lifecycle glyph', () => {
     // A diamond on any Buzz surface means live corner work, never people.
+    // Corner state glyphs are the diamond family (◆ live, ◇ otherwise) —
+    // distinctness across corner states comes from the LABEL, never from
+    // borrowing identity shapes.
     const cornerGlyphs = CORNER_STATUSES.map((status) => cornerStatusPresentation(status).glyph);
     expect(cornerGlyphs).not.toContain(MEMBERS_GLYPH);
-    expect(new Set(cornerGlyphs).size).toBe(cornerGlyphs.length);
+    expect(new Set(cornerGlyphs)).toEqual(new Set(['◆', '◇']));
   });
 
   it('names the destination the same way everywhere', () => {

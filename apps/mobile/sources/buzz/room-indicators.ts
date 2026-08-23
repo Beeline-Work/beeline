@@ -1,6 +1,7 @@
 import {
   cornerStatusPrecedence,
   isCornerTerminal,
+  mergeCornerStatuses,
   type CornerActivitySignal,
   type CornerStatus,
   type CornerSummary,
@@ -50,17 +51,6 @@ export type PinnedCornerInput = {
   permittedCorner?: { cornerId: string; timestamp: number };
 };
 
-/** The most terminal status any source reports for a corner wins. A snapshot
- * fetched before the corner closed must never re-open it. */
-function mostTerminal(
-  left: CornerStatus | undefined,
-  right: CornerStatus | undefined,
-): CornerStatus | undefined {
-  if (!left) return right;
-  if (!right) return left;
-  return cornerStatusPrecedence(right) > cornerStatusPrecedence(left) ? right : left;
-}
-
 /**
  * Which qualifying corner to pin when more than one is open at once. This is
  * a *selection* priority, deliberately not `cornerStatusPrecedence` (which
@@ -92,11 +82,11 @@ export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | nul
   const seenAt = new Map<string, number>();
 
   for (const corner of input.lifecycle) {
-    status.set(corner.id, mostTerminal(status.get(corner.id), corner.status)!);
+    status.set(corner.id, mergeCornerStatuses(status.get(corner.id), corner.status)!);
     seenAt.set(corner.id, Math.max(seenAt.get(corner.id) ?? 0, corner.lastActivityAt ?? corner.createdAt ?? 0));
   }
   for (const signal of input.signals) {
-    status.set(signal.subchannelId, mostTerminal(status.get(signal.subchannelId), signal.status)!);
+    status.set(signal.subchannelId, mergeCornerStatuses(status.get(signal.subchannelId), signal.status)!);
     seenAt.set(signal.subchannelId, Math.max(seenAt.get(signal.subchannelId) ?? 0, signal.timestamp));
   }
 

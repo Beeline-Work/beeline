@@ -178,7 +178,14 @@ describe('a landed corner is recapped even when the relay or the session misbeha
     const { root, repoPath, cornerPath, tip } = localOnlyCorner();
     // The live window's relay churn, aimed at the first publish the land makes
     // after the branch has already moved: the corner's `landed` status card.
-    const published = capturePublishes((event) => hasTag(event, 't', 'landed'));
+    // ONE refused attempt — a transient blip, which the critical-publish loop
+    // now rides out instead of dropping the card silently.
+    let landedCardRefusals = 1;
+    const published = capturePublishes((event) => {
+      if (!hasTag(event, 't', 'landed') || landedCardRefusals <= 0) return false;
+      landedCardRefusals--;
+      return true;
+    });
     const archived: string[] = [];
     try {
       const body = newBody(agent, join(root, 'state.json'));

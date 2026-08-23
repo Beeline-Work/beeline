@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { basename, resolve } from 'node:path';
@@ -93,5 +93,30 @@ describe('corner agent-private state', () => {
     expect(projectDirtyStatus(worktree, `?? ${basename(state.worktreePath)}\0`, state)).toEqual([
       `?? ${basename(state.worktreePath)}`,
     ]);
+  });
+
+  it('never reads a Body-seeded node_modules symlink as project dirt, but a real directory still is', async () => {
+    const { worktree } = await fixture();
+    // Body seeds dependencies by symlinking the source checkout's
+    // node_modules into the worktree (corner-toolchain.ts). In a repository
+    // that does not ignore node_modules this shows up untracked and must not
+    // block merge readiness — but only while it really is the seeded link.
+    await symlink(resolve(worktree, '..', 'source-deps'), resolve(worktree, 'node_modules'), 'dir');
+    await mkdir(resolve(worktree, 'apps', 'mobile'), { recursive: true });
+    await symlink(
+      resolve(worktree, '..', 'source-deps-mobile'),
+      resolve(worktree, 'apps', 'mobile', 'node_modules'),
+      'dir',
+    );
+    // A REAL directory with the same name stays dirt: only the link is ours.
+    const real = resolve(worktree, 'packages', 'thing');
+    await mkdir(resolve(real, 'node_modules'), { recursive: true });
+    expect(
+      projectDirtyStatus(
+        worktree,
+        '?? node_modules\0?? apps/mobile/node_modules\0?? packages/thing/node_modules\0',
+        undefined,
+      ),
+    ).toEqual(['?? packages/thing/node_modules']);
   });
 });

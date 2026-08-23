@@ -89,6 +89,7 @@ import { afterInteractions } from '@/buzz/defer-interaction';
 import type { SessionEvent } from '@/sync/transport';
 import {
   BrittlePress,
+  CornerGlyph,
   HullDeckMark,
   HullWaveSignal,
   MonoButton,
@@ -1438,14 +1439,7 @@ export default function BuzzChannels() {
                           }
                           style={styles.cornerRow}
                         >
-                          <Text
-                            style={[
-                              styles.cornerGlyph,
-                              corner.status === 'live' && styles.cornerGlyphLive,
-                            ]}
-                          >
-                            {status.glyph}
-                          </Text>
+                          <CornerGlyph status={corner.status} style={styles.cornerGlyph} />
                           <Text numberOfLines={1} style={styles.cornerName}>
                             {corner.name}
                           </Text>
@@ -1821,7 +1815,6 @@ const styles = StyleSheet.create((theme) => {
     fontSize: 11,
     lineHeight: 15,
   },
-  cornerGlyphLive: { color: groknight.accent },
   cornerName: {
     ...Typography.default(),
     flex: 1,

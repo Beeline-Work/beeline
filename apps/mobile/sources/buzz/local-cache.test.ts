@@ -133,6 +133,58 @@ describe('Buzz local cache', () => {
     expect(persistedMessage.isNew).toBeUndefined();
   });
 
+  it('does not mark an already-cached message as new when warm revalidation re-fetches it', async () => {
+    // Reproduction of the replay bug: a room's cold open hydrates the cache,
+    // then warm delta revalidation re-fetches from the persisted cursor. That
+    // cursor is inclusive, so the SAME event id comes back — and warm
+    // revalidation projects every fetched event as `isNew`. If the upsert
+    // merge let that flag through, an already-known message would flip to the
+    // typewriter/entrance path on every room open.
+    useBuzzLocalCache.getState().setChannelList({
+      viewerPubkey: viewer,
+      communityId: 'workspace',
+      channels: [{ id: 'room', active: true, title: 'Room' }],
+      directMessages: [],
+      workspaceMembers: [],
+      communities: [],
+      personalWorkspaceId: null,
+      viewerIsAgent: false,
+      canEditWorkspaceAvatar: false,
+      updatedAt: Date.now(),
+      lastAccessedAt: Date.now(),
+    });
+    const sessionEventsBackfill = vi
+      .fn()
+      .mockResolvedValueOnce([event('known', 10)])
+      // Warm pass: inclusive cursor edge re-delivers the known event AND a
+      // genuinely new one that arrived while the room stayed open.
+      .mockResolvedValueOnce([event('known', 10), event('arrived', 11)]);
+    const transport = { sessionEventsBackfill };
+
+    await revalidateCachedMessages(transport as never, viewer, 'room'); // cold hydrate
+    await revalidateCachedMessages(transport as never, viewer, 'room'); // warm refetch
+
+    const cached = useBuzzLocalCache.getState().channels[channelCacheKey(viewer, 'room')];
+    expect(cached?.messages?.map((m) => m.id)).toEqual(['known', 'arrived']);
+    // A known id re-fetched must NOT carry the new-arrival trigger...
+    expect(cached?.messages?.find((m) => m.id === 'known')?.isNew).toBeUndefined();
+    // ...while a first-insertion id still animates exactly once.
+    expect(cached?.messages?.find((m) => m.id === 'arrived')?.isNew).toBe(true);
+  });
+
+  it('does not mark a cached message new when live delivery replays its event id', () => {
+    // Simulate a restored transcript: the known id is in the cache WITHOUT
+    // the transient flag (persist() strips it). A WS resubscribe replay that
+    // re-delivers that same event id must not turn it into a new arrival.
+    useBuzzLocalCache.getState().replaceMessages(viewer, 'room', [message('replayed', 20)], 20);
+    cacheLiveSessionEvent(viewer, 'room', event('replayed', 20));
+    cacheLiveSessionEvent(viewer, 'room', event('fresh-live', 21));
+    const cached = useBuzzLocalCache.getState().channels[channelCacheKey(viewer, 'room')];
+    expect(cached?.messages?.map((m) => m.id)).toEqual(['replayed', 'fresh-live']);
+    expect(cached?.messages?.find((m) => m.id === 'replayed')?.isNew).toBeUndefined();
+    expect(cached?.messages?.find((m) => m.id === 'fresh-live')?.isNew).toBe(true);
+  });
+
   it('keeps warm previews while refreshed channel basics are revalidated', () => {
     expect(
       mergeChannelBasicsWithCache(

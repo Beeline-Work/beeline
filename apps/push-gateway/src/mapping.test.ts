@@ -1,6 +1,13 @@
+import { fallbackPersonName } from '@beeline/buzz-client';
 import { describe, expect, it } from 'vitest';
 import type { NostrEvent } from '@beeline/nostr';
-import { isSuppressedFixtureNotification, mapEventToNotification } from './mapping.js';
+import {
+  isSuppressedFixtureNotification,
+  mapEventToNotification,
+  mapMembershipJoinToNotification,
+  membershipJoin,
+  mentionsMember,
+} from './mapping.js';
 
 function event(tags: string[][], content = '  Ship the preview now.  '): NostrEvent {
   return {
@@ -288,5 +295,101 @@ describe('mapEventToNotification', () => {
         persistentWorkspaceRoom: true,
       }),
     ).toBe(true);
+  });
+});
+
+describe('mention and member-join mapping', () => {
+  const ROOM_CONTEXT = {
+    roomName: 'Roadmap',
+    workspaceName: 'Product Engineering',
+    persistentWorkspaceRoom: true,
+  };
+
+  it('detects the app p-tag mention encoding for a kind:9 recipient', () => {
+    const mentioned = event([
+      ['h', 'room'],
+      ['p', 'a'.repeat(64)],
+      ['t', 'agent-message'],
+    ]);
+    expect(mentionsMember(mentioned, 'a'.repeat(64))).toBe(true);
+    expect(mentionsMember(mentioned, 'b'.repeat(64))).toBe(false);
+    // Mentions are a chat-message concept; a put-user p tag is not one.
+    expect(mentionsMember({ ...mentioned, kind: 9000 }, 'a'.repeat(64))).toBe(false);
+  });
+
+  it('renders higher-signal mention copy while keeping the room title', () => {
+    const relayEvent = event([
+      ['h', 'room'],
+      ['p', 'a'.repeat(64)],
+      ['t', 'agent-message'],
+    ]);
+    expect(
+      mapEventToNotification(relayEvent, { ...ROOM_CONTEXT, senderName: 'Ada' }, {
+        recipientMentioned: true,
+      }),
+    ).toMatchObject({
+      title: '#Roadmap',
+      body: 'Ada mentioned you: Ship the preview now.',
+      data: { type: 'mention', channelId: 'room' },
+    });
+    expect(
+      mapEventToNotification(
+        { ...relayEvent, content: '' },
+        { ...ROOM_CONTEXT, senderName: 'Ada', isDirectMessage: true },
+        { recipientMentioned: true },
+      ),
+    ).toMatchObject({
+      title: 'Ada',
+      body: 'Ada mentioned you',
+      data: { type: 'mention' },
+    });
+  });
+
+  it('keeps plain-chat copy when the message is not a mention', () => {
+    const relayEvent = event([['h', 'room'], ['t', 'agent-message']]);
+    expect(mapEventToNotification(relayEvent, { ...ROOM_CONTEXT, senderName: 'Ada' })).toMatchObject({
+      title: '#Roadmap',
+      body: 'Ada: Ship the preview now.',
+      data: { type: 'channel-activity' },
+    });
+  });
+
+  it('parses a real-shaped NIP-29 join and maps the bounded card', () => {
+    const join = membershipJoin({
+      id: 'a'.repeat(64),
+      pubkey: 'c'.repeat(64),
+      created_at: 1,
+      kind: 9000,
+      tags: [
+        ['h', 'room-1234'],
+        ['p', 'd'.repeat(64)],
+        ['role', 'member'],
+      ],
+      content: '',
+      sig: 'e'.repeat(128),
+    });
+    expect(join).toEqual({ channelId: 'room-1234', joinerPubkey: 'd'.repeat(64), role: 'member' });
+    expect(membershipJoin(event([['h', 'room']]))).toBeNull();
+    expect(membershipJoin({ ...event([['h', 'room']]), kind: 9000 })).toBeNull();
+
+    expect(mapMembershipJoinToNotification({ ...event([]), kind: 9000 }, ROOM_CONTEXT)).toBeNull();
+    expect(
+      mapMembershipJoinToNotification(
+        { ...event([['h', 'room-1234'], ['p', 'd'.repeat(64)], ['role', 'member']]), kind: 9000 },
+        ROOM_CONTEXT,
+        'Nova',
+      ),
+    ).toEqual({
+      channelId: 'room-1234',
+      title: '#Roadmap',
+      body: 'Nova joined Roadmap',
+      data: { channelId: 'room-1234', roomName: 'Roadmap', type: 'member-join' },
+    });
+    // A missing name falls back to the deterministic seed name, never blank.
+    const fallback = mapMembershipJoinToNotification(
+      { ...event([['h', 'room'], ['p', 'd'.repeat(64)]]), kind: 9000 },
+      ROOM_CONTEXT,
+    );
+    expect(fallback?.body).toBe(`${fallbackPersonName('d'.repeat(64))} joined Roadmap`);
   });
 });

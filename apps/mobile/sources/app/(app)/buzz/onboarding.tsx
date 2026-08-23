@@ -886,7 +886,7 @@ const styles = StyleSheet.create((theme) => {
     marginBottom: 8,
   },
   subtitle: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     maxWidth: 320,
     fontSize: 14,
     lineHeight: 20,
@@ -909,7 +909,7 @@ const styles = StyleSheet.create((theme) => {
     marginBottom: 4,
   },
   noticeText: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     color: groknight.textSecondary,
     fontSize: 14,
     lineHeight: 20,
@@ -924,7 +924,7 @@ const styles = StyleSheet.create((theme) => {
     marginBottom: 4,
   },
   keyGuide: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     color: groknight.textSecondary,
     fontSize: 14,
     lineHeight: 20,
@@ -947,13 +947,13 @@ const styles = StyleSheet.create((theme) => {
   actions: { gap: 10 },
   recoveryActions: { gap: 10 },
   recoveryWarning: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     color: groknight.textSecondary,
     fontSize: 13,
     lineHeight: 19,
   },
   custodyNote: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     marginTop: 18,
     color: groknight.textMuted,
     fontSize: 11,
@@ -982,7 +982,7 @@ const styles = StyleSheet.create((theme) => {
     justifyContent: 'center',
   },
   keyActionText: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     color: groknight.chrome,
     fontSize: 12,
   },
@@ -995,7 +995,7 @@ const styles = StyleSheet.create((theme) => {
     lineHeight: 18,
   },
   warningText: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     flex: 1,
     minWidth: 0,
     color: groknight.textSecondary,
@@ -1010,7 +1010,7 @@ const styles = StyleSheet.create((theme) => {
     lineHeight: 20,
   },
   confirmText: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     flex: 1,
     minWidth: 0,
     color: groknight.textPrimary,
@@ -1019,7 +1019,7 @@ const styles = StyleSheet.create((theme) => {
   },
   confirmTextIdle: { color: groknight.textDisabled },
   confirmHint: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     marginBottom: 10,
     color: groknight.textMuted,
     fontSize: 12,
@@ -1028,14 +1028,14 @@ const styles = StyleSheet.create((theme) => {
   namePanel: { width: '100%', maxWidth: 420, alignSelf: 'center' },
   nameAvatar: { alignItems: 'center', marginTop: 18, marginBottom: 18 },
   nameTitle: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     color: groknight.textPrimary,
     fontSize: 26,
     lineHeight: 32,
     textAlign: 'center',
   },
   nameBody: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     marginTop: 10,
     marginBottom: 18,
     color: groknight.textSecondary,
@@ -1044,7 +1044,7 @@ const styles = StyleSheet.create((theme) => {
     textAlign: 'center',
   },
   nameInput: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     minHeight: 52,
     borderWidth: 1,
     borderColor: groknight.border,

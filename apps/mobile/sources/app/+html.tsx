@@ -34,6 +34,7 @@ body {
 }
 @media (prefers-color-scheme: dark) {
   body {
-    background-color: #000;
+    /* Speakeasy brand canvas — the same value the unistyles themes carry. */
+    background-color: #14091A;
   }
 }`;

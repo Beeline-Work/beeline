@@ -22,7 +22,14 @@ vi.mock('react-native', async () => {
 });
 
 vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (factory: any) => factory({ colors: { text: 'text', textSecondary: 'secondary' } }) },
+    StyleSheet: {
+        create: (factory: any) =>
+            factory({
+                colors: { text: 'text', textSecondary: 'secondary' },
+                // index.tsx reads the Beeline typography tokens for its prose.
+                buzz: { proseRegular: 'proseRegular', proseSemibold: 'proseSemibold' },
+            }),
+    },
 }));
 
 vi.mock('@/components/RoundButton', async () => {

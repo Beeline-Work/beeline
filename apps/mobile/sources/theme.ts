@@ -532,6 +532,24 @@ function createBeelineAppTheme(buzz: BeelineThemeTokens) {
                 connecting: buzz.accent,
                 disconnected: buzz.textMuted,
                 default: buzz.textMuted,
+                // Live/online is brass product-wide (DESIGN.md color exception
+                // #1) — the legacy iOS green never ships on a Beeline surface.
+                connected: buzz.accent,
+            },
+            // Settings toggles read as Beeline chrome, not iOS defaults: the
+            // track spends the same brass as every other live/affirmative
+            // state, and the thumb carries canvas ink on it (Speakeasy's
+            // accent.foreground relationship).
+            switch: {
+                ...darkTheme.colors.switch,
+                track: {
+                    active: buzz.accent,
+                    inactive: buzz.bgTexturePeak,
+                },
+                thumb: {
+                    active: buzz.bgTerminal,
+                    inactive: buzz.textMuted,
+                },
             },
             userMessageBackground: buzz.bgHighlight,
             userMessageText: buzz.textPrimary,

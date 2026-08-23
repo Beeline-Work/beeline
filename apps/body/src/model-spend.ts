@@ -6,6 +6,7 @@ export type ModelTurnCause =
   | 'corner-metadata'
   | 'corner-opening'
   | 'corner-follow-up'
+  | 'corner-conclude'
   | 'target-sync'
   | 'restart-continuation'
   | 'agent-exchange';

@@ -108,6 +108,10 @@ import {
 } from './activity.js';
 import { isReadOnlyMcpPermissionRequest } from './read-only-policy.js';
 import {
+  CONCLUDE_NUDGE_SPACING_MS,
+  MAX_CONCLUDE_NUDGES_PER_EPISODE,
+} from './conclude-watch.js';
+import {
   CLAUDE_ACP_MCP_GIT_LOG_PERMISSION,
   CLAUDE_ACP_MCP_GIT_SHOW_PERMISSION,
   CLAUDE_ACP_MCP_READ_FILE_PERMISSION,
@@ -5035,30 +5039,32 @@ describe('first-class assistant messages', () => {
     ).toHaveLength(1);
   });
 
-  it('both corner turn call sites share the narrated-summary suppression at the merge gate', () => {
-    // Both the corner-open and corner-follow-up paths funnel through one gate
-    // helper, which keys `summaryOnly` off the narrator's own floor. A harness
-    // that streamed nothing still gets its one end-of-turn transcript message.
+  it('all corner turn call sites share the narrated-summary suppression at the merge gate', () => {
+    // Every corner turn driver — corner-open, corner-follow-up, and the
+    // conclude watch's nudge turn — funnels through one gate helper, which
+    // keys `summaryOnly` off the narrator's own floor. A harness that
+    // streamed nothing still gets its one end-of-turn transcript message.
     const source = readFileSync(new URL('./body.ts', import.meta.url), 'utf8');
     const summaryPolicy = source.match(/withheldMergeClaim !== true/g) ?? [];
     const gateCallSites = source.match(/this\.finishCornerTurnAgainstMergeGate\(/g) ?? [];
     expect(summaryPolicy).toHaveLength(1);
-    expect(gateCallSites).toHaveLength(2);
+    expect(gateCallSites).toHaveLength(3);
   });
 
-  it('the corner merge-gate instruction carries the external-gate failure-honesty rule at both turn call sites', () => {
+  it('the corner merge-gate instruction carries the external-gate failure-honesty rule at every turn call site', () => {
     // Live reproduction (corner "Fix-corner-open-to-use-model-summary", Ox,
     // 2026-08-23): an external gate that could not initialize left the review
     // panel empty while the agent told the human to approve. The one shared
-    // instruction must say what to do instead, and both corner call sites
-    // (opening turn + follow-ups) must carry it — a claim of readiness with no
-    // published review target sends the human's approval nowhere.
+    // instruction must say what to do instead, and every corner turn call site
+    // (opening turn + follow-ups + the conclude nudge) must carry it — a claim
+    // of readiness with no published review target sends the human's approval
+    // nowhere.
     const source = readFileSync(new URL('./body.ts', import.meta.url), 'utf8');
     expect(source).toMatch(
       /fails to initialize or run[^']*quote its exact error[^']*never ask for approval/,
     );
-    // Declaration plus exactly the two corner turn prompts.
-    expect(source.match(/CORNER_MERGE_GATE_INSTRUCTION/g)).toHaveLength(3);
+    // Declaration plus exactly the three corner turn prompts.
+    expect(source.match(/CORNER_MERGE_GATE_INSTRUCTION/g)).toHaveLength(4);
   });
 
   it('makes target synchronization standing permission for every corner turn and restored session', () => {
@@ -5067,9 +5073,9 @@ describe('first-class assistant messages', () => {
       /always implied for every corner and every agent/i,
     );
     expect(CORNER_TARGET_SYNC_INSTRUCTION).toMatch(/without asking the human again/i);
-    // Declaration, new/restored system prompts, opening/follow-up turns, and
-    // the automatic moved-target recovery task.
-    expect(source.match(/CORNER_TARGET_SYNC_INSTRUCTION/g)).toHaveLength(6);
+    // Declaration, new/restored system prompts, opening/follow-up turns, the
+    // automatic moved-target recovery task, and the conclude watch's nudge.
+    expect(source.match(/CORNER_TARGET_SYNC_INSTRUCTION/g)).toHaveLength(7);
   });
 
   it('strips only a leading Codex skill-budget warning', () => {
@@ -10035,5 +10041,393 @@ describe('harness-independent corner commit watch', () => {
     expect(memberPoll).toBeGreaterThan(watchStep);
     expect(landPoll).toBeGreaterThan(-1);
     expect(landPoll).toBeLessThan(watchStep);
+  });
+});
+
+describe('never-idle conclude watch', () => {
+  const CORNER_ID = 'corner-conclude';
+  const ROOM_ID = 'room-conclude';
+
+  function newBody(agent: ReturnType<typeof newIdentity>) {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'buzzy-conclude-watch-'));
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot,
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+    );
+    return { body, workspaceRoot };
+  }
+
+  /** Records every publish; `/query` answers with the given events. */
+  function stubRelay(queryResults: NostrEvent[]): NostrEvent[] {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        if (String(_input).endsWith('/query')) {
+          return new Response(JSON.stringify(queryResults), { status: 200 });
+        }
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    return published;
+  }
+
+  type ConcludeFixture = Parameters<Body['registerSubchannel']>[0];
+
+  function registerCorner(
+    body: Body,
+    agent: ReturnType<typeof newIdentity>,
+    overrides: Record<string, unknown> = {},
+  ): ConcludeFixture {
+    const info = {
+      subchannelId: CORNER_ID,
+      worktreePath: '/tmp/does-not-matter',
+      featureBranch: 'feature/conclude',
+      role: agent,
+      session: {
+        channelId: CORNER_ID,
+        sessionId: 'session',
+        logicalSessionId: `${agent.publicKey}:${CORNER_ID}`,
+        parentChannelId: ROOM_ID,
+        processState: 'live',
+        client: { activeRunId: () => undefined },
+      },
+      lastPolledAt: 0,
+      archived: false,
+      ...overrides,
+    } as unknown as ConcludeFixture;
+    body.registerSubchannel(info);
+    return info;
+  }
+
+  function quietJustNow(): Record<string, unknown> {
+    return {
+      conclude: {
+        quietSince: Date.now() - CONCLUDE_NUDGE_SPACING_MS - 1,
+        nudges: 0,
+      },
+    };
+  }
+
+  function spyConcludeTurn(
+    body: Body,
+    ready = false,
+    { realPersistence = false }: { realPersistence?: boolean } = {},
+  ) {
+    if (!realPersistence) {
+      // Keep fire-and-forget episode writes from racing the tmpdir cleanup.
+      const durableState = Reflect.get(body, 'durableState') as {
+        saveConcludeEpisode: (...args: unknown[]) => Promise<void>;
+      };
+      vi.spyOn(durableState, 'saveConcludeEpisode').mockResolvedValue(undefined);
+    }
+    const promptAgent = vi
+      .spyOn(body as never, 'promptAgent' as never)
+      .mockResolvedValue({
+        agentText: 'pure narration, nothing concluded',
+        updates: [],
+        toolCalls: [],
+        stopReason: 'end_turn',
+      } as never);
+    const finishGate = vi
+      .spyOn(body as never, 'finishCornerTurnAgainstMergeGate' as never)
+      .mockResolvedValue(ready as never);
+    return { promptAgent, finishGate };
+  }
+
+  function needsAttentionCards(published: NostrEvent[]): NostrEvent[] {
+    return published.filter(
+      (event) =>
+        event.kind === 9 &&
+        event.tags?.some((tag) => tag[0] === 'display-status' && tag[1] === 'needs-attention'),
+    );
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('a quiet turn end gets exactly one bounded conclude steer', async () => {
+    const agent = newIdentity('conclude-agent');
+    const { body, workspaceRoot } = newBody(agent);
+    try {
+      stubRelay([]);
+      const info = registerCorner(body, agent, quietJustNow());
+      const { promptAgent } = spyConcludeTurn(body);
+
+      await Reflect.get(body, 'pollConcludeWatch').call(body);
+
+      expect(promptAgent).toHaveBeenCalledTimes(1);
+      expect(String(promptAgent.mock.calls[0]![1])).toContain('Do exactly one of the following');
+      // The nudge rides the same attribution discipline as any model turn.
+      expect(promptAgent.mock.calls[0]![2]).toMatchObject({ cause: 'corner-conclude' });
+      expect(info.conclude?.nudges).toBe(1);
+      // The nudge turn itself ended quietly again (the spy never presents),
+      // so a fresh quiet window opened — with the spent budget standing.
+      expect(info.conclude?.quietSince).toBeDefined();
+
+      // Inside the spacing window a second tick does not double-prompt.
+      await Reflect.get(body, 'pollConcludeWatch').call(body);
+      expect(promptAgent).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('an agent that presents work resolves the episode with no further nudges', async () => {
+    const agent = newIdentity('conclude-review-agent');
+    const { body, workspaceRoot } = newBody(agent);
+    try {
+      stubRelay([]);
+      const tip = 'a'.repeat(40);
+      const info = registerCorner(body, agent, {
+        ...quietJustNow(),
+        mergeTarget: { repo: 'repo', branch: 'refs/heads/main', tip },
+      });
+      const { promptAgent } = spyConcludeTurn(body);
+
+      await Reflect.get(body, 'pollConcludeWatch').call(body);
+
+      expect(promptAgent).not.toHaveBeenCalled();
+      expect(info.conclude?.nudges).toBe(0);
+      expect(info.conclude?.quietSince).toBeUndefined();
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('committed-but-unreviewed work stays the commit watch business, not a nudge', async () => {
+    const agent = newIdentity('conclude-commits-agent');
+    const { body, workspaceRoot } = newBody(agent);
+    const directory = mkdtempSync(join(tmpdir(), 'buzzy-conclude-commits-'));
+    const gitCommand = (args: string[]) => {
+      const result = spawnSync('git', args, { cwd: directory, encoding: 'utf8' });
+      if (result.status !== 0) throw new Error(result.stderr);
+      return result.stdout.trim();
+    };
+    try {
+      gitCommand(['init', '-b', 'main']);
+      gitCommand(['config', 'user.name', 'Conclude Watch Test']);
+      gitCommand(['config', 'user.email', 'conclude@test.invalid']);
+      writeFileSync(join(directory, 'README.md'), '# Base\n');
+      gitCommand(['add', '.']);
+      gitCommand(['commit', '-m', 'base']);
+      gitCommand(['checkout', '-b', 'feature/conclude']);
+      writeFileSync(join(directory, 'README.md'), '# Work\n');
+      gitCommand(['add', 'README.md']);
+      gitCommand(['commit', '-m', 'committed work awaiting review']);
+      stubRelay([]);
+      registerCorner(body, agent, {
+        ...quietJustNow(),
+        worktreePath: directory,
+        boundRepo: { repo: 'repo', targetBranch: 'refs/heads/main' },
+      });
+      const { promptAgent } = spyConcludeTurn(body);
+
+      await Reflect.get(body, 'pollConcludeWatch').call(body);
+
+      // The commit watch runs earlier in the same chain and owns this outcome.
+      expect(promptAgent).not.toHaveBeenCalled();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it(`silence through the bound of ${MAX_CONCLUDE_NUDGES_PER_EPISODE} nudges parks exactly one stalled needs-attention card`, async () => {
+    const agent = newIdentity('conclude-stalled-agent');
+    const { body, workspaceRoot } = newBody(agent);
+    try {
+      const published = stubRelay([]);
+      const info = registerCorner(body, agent, {
+        conclude: {
+          quietSince: Date.now() - CONCLUDE_NUDGE_SPACING_MS - 1,
+          nudges: MAX_CONCLUDE_NUDGES_PER_EPISODE,
+        },
+      });
+      spyConcludeTurn(body);
+
+      await Reflect.get(body, 'pollConcludeWatch').call(body);
+
+      const cards = needsAttentionCards(published);
+      expect(cards).toHaveLength(1);
+      expect(cards[0]!.content).toContain('stalled without concluding');
+      expect(info.conclude?.stalledNotified).toBe(true);
+      expect(info.conclude?.quietSince).toBeUndefined();
+
+      // Parked: further ticks never republish and never re-nudge.
+      await Reflect.get(body, 'pollConcludeWatch').call(body);
+      expect(needsAttentionCards(published)).toHaveLength(1);
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('a restart mid-episode resumes the spent budget without duplicate nudges', async () => {
+    const agent = newIdentity('conclude-restart-agent');
+    const { body, workspaceRoot } = newBody(agent);
+    try {
+      stubRelay([]);
+      const info = registerCorner(body, agent, quietJustNow());
+      const { promptAgent } = spyConcludeTurn(body, false, { realPersistence: true });
+
+      // Episode spends its first nudge before the restart...
+      await Reflect.get(body, 'pollConcludeWatch').call(body);
+      expect(info.conclude?.nudges).toBe(1);
+      // ...and the durable state flushes to disk (what `dispose` waits out).
+      const durableState = Reflect.get(body, 'durableState') as {
+        saveConcludeEpisode: (...args: unknown[]) => Promise<void>;
+      };
+      await durableState.saveConcludeEpisode(CORNER_ID, info.conclude);
+
+      // A fresh daemon process reads the SAME durable state file.
+      const restarted = new Body(
+        {
+          agentBinary: '/nonexistent',
+          mcpBinary: '/nonexistent',
+          agentEnv: {},
+          workspaceRoot,
+          relayBaseUrl: 'https://relay.example',
+          relayHost: 'relay.example',
+          relayScheme: 'https',
+          relayWsUrl: 'wss://relay.example',
+          autoApprovePermissions: true,
+        },
+        undefined,
+        agent,
+      );
+      const restoredDurable = Reflect.get(restarted, 'durableState') as {
+        concludeEpisode: (id: string) => Promise<Record<string, unknown> | undefined>;
+      };
+      const restored = await restoredDurable.concludeEpisode(CORNER_ID);
+      expect(restored?.nudges).toBe(1);
+
+      // restoreSubchannels hydrates exactly this record onto the corner.
+      stubRelay([]);
+      const { promptAgent: restartedPrompt } = spyConcludeTurn(restarted);
+      const rehydrated = registerCorner(restarted, agent);
+      rehydrated.conclude = restored as never;
+
+      // Still inside the spacing window: no immediate re-nudge on resume.
+      await Reflect.get(restarted, 'pollConcludeWatch').call(restarted);
+      expect(restartedPrompt).not.toHaveBeenCalled();
+      // Past the spacing window the episode CONTINUES rather than resetting:
+      // this is the second and last nudge of the same episode, not the first
+      // of a fresh one.
+      rehydrated.conclude!.lastNudgeAt = Date.now() - CONCLUDE_NUDGE_SPACING_MS - 1;
+      await Reflect.get(restarted, 'pollConcludeWatch').call(restarted);
+      expect(restartedPrompt).toHaveBeenCalledTimes(1);
+      expect(rehydrated.conclude?.nudges).toBe(MAX_CONCLUDE_NUDGES_PER_EPISODE);
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('a corner holding a standing unanswered ask is never nudged', async () => {
+    const agent = newIdentity('conclude-ask-agent');
+    const { body, workspaceRoot } = newBody(agent);
+    try {
+      stubRelay([
+        {
+          id: 'ask-event',
+          pubkey: agent.publicKey,
+          created_at: Math.floor(Date.now() / 1000),
+          content: 'Should I split this into two commits?',
+          tags: [['t', 'agent-message']],
+        } as unknown as NostrEvent,
+      ]);
+      const info = registerCorner(body, agent, quietJustNow());
+      const { promptAgent } = spyConcludeTurn(body);
+
+      await Reflect.get(body, 'pollConcludeWatch').call(body);
+
+      // State 2 holds — an ask IS a terminal outcome. Episode resolved.
+      expect(promptAgent).not.toHaveBeenCalled();
+      expect(info.conclude?.quietSince).toBeUndefined();
+      expect(info.conclude?.nudges).toBe(0);
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('merged and archived corners are never nudged', async () => {
+    const agent = newIdentity('conclude-terminal-agent');
+    const { body, workspaceRoot } = newBody(agent);
+    try {
+      stubRelay([]);
+      for (const overrides of [
+        { archived: true },
+        { landedTip: 'b'.repeat(40) },
+        {
+          // Landed but archive held for the live session (#375/#384).
+          landedTip: 'c'.repeat(40),
+          archiveWhenSessionRetires: true,
+        },
+      ]) {
+        registerCorner(body, agent, {
+          subchannelId: `corner-${JSON.stringify(overrides).length}-${Math.random()}`,
+          ...quietJustNow(),
+          ...overrides,
+        });
+      }
+      const { promptAgent } = spyConcludeTurn(body);
+
+      await Reflect.get(body, 'pollConcludeWatch').call(body);
+
+      expect(promptAgent).not.toHaveBeenCalled();
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('a suspended session (planned pause / restart park) is not woken just to be nudged', async () => {
+    const agent = newIdentity('conclude-suspended-agent');
+    const { body, workspaceRoot } = newBody(agent);
+    try {
+      stubRelay([]);
+      registerCorner(body, agent, {
+        session: {
+          channelId: CORNER_ID,
+          sessionId: 'session',
+          logicalSessionId: `${agent.publicKey}:${CORNER_ID}`,
+          parentChannelId: ROOM_ID,
+          processState: 'suspended',
+          client: { activeRunId: () => undefined },
+        },
+        ...quietJustNow(),
+      });
+      const { promptAgent } = spyConcludeTurn(body);
+
+      await Reflect.get(body, 'pollConcludeWatch').call(body);
+
+      expect(promptAgent).not.toHaveBeenCalled();
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('runs from the Room maintenance chain after the member poll', () => {
+    // Source assertion: ordering is load-bearing. A queued human message must
+    // start its own real turn before the conclude watch decides anything, and
+    // the commit watch must have had its pass so presented work is already in
+    // `mergeTarget`.
+    const source = readFileSync(new URL('./body.ts', import.meta.url), 'utf8');
+    const maintenance = source.slice(source.indexOf('private async pollRoomMaintenance'));
+    const memberPoll = maintenance.indexOf("guarded('corner member poll'");
+    const commitWatch = maintenance.indexOf("guarded('corner commit watch'");
+    const concludeWatch = maintenance.indexOf("guarded('corner conclude watch'");
+    expect(concludeWatch).toBeGreaterThan(-1);
+    expect(memberPoll).toBeGreaterThan(commitWatch);
+    expect(concludeWatch).toBeGreaterThan(memberPoll);
   });
 });

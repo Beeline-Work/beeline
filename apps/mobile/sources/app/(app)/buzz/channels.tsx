@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   SectionList,
   AppState,
+  Alert,
   Linking,
   Platform,
   Share,
@@ -429,6 +430,7 @@ export default function BuzzChannels() {
     initialListCache?.canEditWorkspaceAvatar ?? false,
   );
   const [creatingInvite, setCreatingInvite] = useState(false);
+  const [leavingWorkspaceId, setLeavingWorkspaceId] = useState<string | null>(null);
   const [readyInviteUrl, setReadyInviteUrl] = useState<string | undefined>(inviteUrl);
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
   const [ageNow, setAgeNow] = useState(() => Date.now());
@@ -638,6 +640,66 @@ export default function BuzzChannels() {
       params: { communityId },
     });
   }, []);
+
+  /** Exit one Workspace from the rail's long-press affordance. The relay does
+   * the real work — the SDK leaves this member's top-level Rooms best-effort,
+   * then publishes the self-authored Workspace removal and waits for the
+   * projection to drop it, so a refusal (e.g. the sole owner of a Workspace)
+   * surfaces here as an honest dialog instead of a silent no-op. */
+  const handleLeaveWorkspace = useCallback(
+    (communityId: string) => {
+      const community = communities.find((entry) => entry.communityId === communityId);
+      Alert.alert(
+        `Exit ${community?.name ?? WORKSPACE_LABEL}?`,
+        `Leaving removes this ${WORKSPACE_LABEL} from your list. Its ${ROOMS_LABEL.toLowerCase()} and agents are unaffected for other members, and you can be re-invited later.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Exit',
+            style: 'destructive',
+            onPress: () => {
+              if (!transport || !identity || leavingWorkspaceId) return;
+              setLeavingWorkspaceId(communityId);
+              void transport
+                .leaveWorkspace(communityId)
+                .then(() => {
+                  const remaining = communities.filter(
+                    (entry) => entry.communityId !== communityId,
+                  );
+                  setCommunities(remaining);
+                  const nextActive =
+                    activeCommunityId === communityId
+                      ? remaining[0]?.communityId ?? null
+                      : activeCommunityId;
+                  if (nextActive) {
+                    useBuzzLocalCache
+                      .getState()
+                      .patchChannelList(identity.publicKey, nextActive, {
+                        communities: remaining,
+                      });
+                  }
+                  if (activeCommunityId === communityId) {
+                    setExpandedRoomId(null);
+                    router.replace({
+                      pathname: '/buzz/channels',
+                      ...(nextActive ? { params: { communityId: nextActive } } : {}),
+                    });
+                  }
+                })
+                .catch((err) => {
+                  Alert.alert(
+                    `Could not exit ${community?.name ?? WORKSPACE_LABEL}`,
+                    String(err),
+                  );
+                })
+                .finally(() => setLeavingWorkspaceId(null));
+            },
+          },
+        ],
+      );
+    },
+    [activeCommunityId, communities, identity, leavingWorkspaceId, transport],
+  );
 
   const handleRefresh = useCallback(
     async (showSpinner: boolean) => {
@@ -1077,6 +1139,7 @@ export default function BuzzChannels() {
         } as unknown as Href)
       }
       canManageActiveCommunity={canEditWorkspaceAvatar}
+      onLeaveWorkspace={handleLeaveWorkspace}
       viewerPubkey={identity?.publicKey}
       viewerAvatarUrl={viewerAvatarUrl}
     >

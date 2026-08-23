@@ -36,9 +36,13 @@ import {
   getChannelRole,
   isMember,
   isMembershipProjectionTimeout,
+  leaveRoom,
+  listMembers,
+  removeMember,
   setMemberRole,
   waitForRelayProjection,
   waitUntilMember,
+  waitUntilNotMember,
   type ChannelOpsContext,
 } from './channel.js';
 import { isRoomUnmigratable, markRoomUnmigratable } from './unmigratable-rooms.js';
@@ -618,6 +622,61 @@ async function isRegisteredAgentIdentity(ctx: ChannelOpsContext, pubkey: string)
     (event) =>
       event.pubkey === pubkey && verifyEvent(event) && tagValues(event, 't').includes(TAG_AGENT),
   );
+}
+
+/**
+ * Leave a Workspace as the signed-in member: a self-authored kind:9001 removal
+ * plus the projection wait.
+ *
+ * The relay accepts self-removal from an ordinary member — the same shape
+ * `abandonAgentPairing` uses for its undo — so leaving is one membership write.
+ * Two rules are enforced before anything is published:
+ *
+ * - Leaving is idempotent: an already-absent member resolves quietly.
+ * - The SOLE owner cannot leave. With no other owner there is no remaining
+ *   authority to administer or delete the Workspace, so this refuses up front
+ *   with an actionable message rather than depending on relay-side refusal
+ *   behaviour for elevated roles. A non-sole owner or admin attempts the same
+ *   self-removal as a member; if the relay declines it, `waitUntilNotMember`
+ *   surfaces that honestly instead of reporting success.
+ *
+ * Rooms are left first, best-effort, mirroring `removeAgent`'s ordering:
+ * Workspace joins mirror humans into every top-level Room, so a clean exit
+ * drops those projections too. `leaveRoom`'s own rule skips Rooms this identity
+ * administers. The Workspace mutation is last — its projection dropping is what
+ * makes the Workspace disappear from discovery.
+ */
+export async function leaveCommunity(
+  ctx: ChannelOpsContext,
+  communityId: string,
+  opts?: { leaveRooms?: boolean; timeoutMs?: number },
+): Promise<void> {
+  const pubkey = ctx.identity.publicKey;
+  const members = await listMembers(ctx, communityId);
+  const self = members.find((member) => member.pubkey === pubkey);
+  if (!self) return;
+  if (
+    self.role === 'owner' &&
+    !members.some((member) => member.role === 'owner' && member.pubkey !== pubkey)
+  ) {
+    throw new Error(
+      'You are the only owner of this Workspace. Promote another member to owner before leaving.',
+    );
+  }
+  if (opts?.leaveRooms !== false) {
+    for (const channelId of await communityRoomIds(ctx, communityId)) {
+      try {
+        if (!(await isMember(ctx, channelId, pubkey))) continue;
+        await leaveRoom(ctx, channelId);
+      } catch {
+        // Best-effort: the authoritative exit is the Workspace membership.
+      }
+    }
+  }
+  await removeMember(ctx, communityId, pubkey, {
+    extraTags: [[TAG_COMMUNITY, communityId]],
+  });
+  await waitUntilNotMember(ctx, communityId, pubkey, { timeoutMs: opts?.timeoutMs });
 }
 
 /** Repair missing direct Room projections for the current human Workspace member. */

@@ -97,6 +97,7 @@ const monoStyles = new Set([
   'rowPreviewAuthor',
   'railCommandLabel',
   'cornerPeekCount',
+  'cornerPeekChevron',
   'cornerStatus',
   'cornerStatusLabel',
   'openCornerText',

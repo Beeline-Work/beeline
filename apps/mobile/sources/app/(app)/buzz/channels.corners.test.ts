@@ -325,6 +325,7 @@ describe('room-list corner dropdown', () => {
       const pushed = navigation.push.mock.calls[0][0];
       expect(String(pushed?.params?.channelId ?? '')).toBe(id.padEnd(64, '0'));
       expect(pushed?.params?.parent).toBe('room-1');
+      expect(pushed?.params?.returnTo).toBe('room-list');
       navigation.push.mockClear();
     }
 

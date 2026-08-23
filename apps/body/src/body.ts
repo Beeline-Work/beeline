@@ -2204,18 +2204,26 @@ export class Body {
    * The ACP child's spawn command for one session, wrapped in bwrap when the
    * daemon detected a working one at start-up.
    *
-   * A Room gets a read-only filesystem plus a private temp; a corner adds its
-   * own worktree, this Room's harness state directories, the git common
-   * directory its linked worktree commits through, and the merge gate's state
-   * root. See `bwrap-sandbox.ts`.
+   * A Room gets a read-only filesystem plus a private temp. A corner gets a
+   * writable root with shared checkouts, sibling corners, daemon state, and
+   * credentials protected; its own worktree and granted capabilities are
+   * restored writable after those overlays. See `bwrap-sandbox.ts`.
    *
    * Fails open on purpose: an edit session whose git common directory cannot be
    * resolved would be sandboxed into a worktree it could edit but never commit
    * from, which is a worse outcome than today's unwrapped spawn — so it says so
-   * and spawns unwrapped, leaving `session-sandbox.ts`'s cd-guard in place.
+   * and spawns unwrapped, leaving `session-sandbox.ts`'s denylist callback as
+   * the best-effort backstop for harnesses that send permission requests.
    */
   private sessionSpawnCommand(
-    input: { mode: SessionMode; cwd: string; worktreePath?: string; channelIdForLog?: string },
+    input: {
+      mode: SessionMode;
+      cwd: string;
+      worktreePath?: string;
+      protectedPaths?: string[];
+      additionalWritablePaths?: string[];
+      channelIdForLog?: string;
+    },
     env: Record<string, string>,
   ): { command: string; args: string[] } {
     const command = this.config.agentCommand ?? this.config.agentBinary;
@@ -2243,6 +2251,10 @@ export class Body {
       maskPaths: credentialMaskPaths(this.config.sandboxMaskPaths),
       ...(tmpDir ? { tmpDir } : {}),
       ...(input.worktreePath ? { worktreePath: input.worktreePath } : {}),
+      ...(input.protectedPaths ? { protectedPaths: input.protectedPaths } : {}),
+      ...(input.additionalWritablePaths
+        ? { additionalWritablePaths: input.additionalWritablePaths }
+        : {}),
     };
     if (input.mode === 'edit') {
       const gitCommonDir = resolveGitCommonDir(input.worktreePath ?? input.cwd);
@@ -2385,6 +2397,8 @@ export class Body {
     permissionHandler?: AcpPermissionHandler;
     parentChannelId?: string;
     worktreePath?: string;
+    protectedPaths?: string[];
+    additionalWritablePaths?: string[];
     featureBranch?: string;
     communityId?: string;
     resumeObjective?: string;
@@ -2429,6 +2443,10 @@ export class Body {
             mode: input.mode,
             cwd: input.cwd,
             ...(input.worktreePath ? { worktreePath: input.worktreePath } : {}),
+            ...(input.protectedPaths ? { protectedPaths: input.protectedPaths } : {}),
+            ...(input.additionalWritablePaths
+              ? { additionalWritablePaths: input.additionalWritablePaths }
+              : {}),
             channelIdForLog: input.channelId,
           },
           sessionEnv,
@@ -3309,6 +3327,11 @@ export class Body {
         }
         this.primeCodegraphIndex(worktreePath);
         const agentPrivateState = await this.cornerAgentPrivateState(worktreePath, subchannelId);
+        const cornerFilesystem = this.cornerFilesystemPolicy(
+          cornerRepo,
+          worktreePath,
+          agentPrivateState?.root,
+        );
         // A corner whose ACP session refuses to come back must not abort the
         // restore of every corner behind it in this loop, and must stay
         // reachable by the sessionless close path — a dead session is exactly
@@ -3343,11 +3366,13 @@ export class Body {
             autoApprovePermissions: true,
             permissionHandler: this.cornerPermissionHandler(
               worktreePath,
-              cornerRepo.localPath,
-              agentPrivateState?.root,
+              cornerFilesystem.protectedPaths,
+              cornerFilesystem.writablePaths,
             ),
             parentChannelId,
             worktreePath,
+            protectedPaths: cornerFilesystem.protectedPaths,
+            additionalWritablePaths: cornerFilesystem.additionalWritablePaths,
             featureBranch,
             resumeObjective: restoredTaskDescription || undefined,
             resumeTargetRef: cornerRepo.targetBranch ?? 'refs/heads/main',
@@ -3747,6 +3772,11 @@ export class Body {
     // they're ready. Never blocks or fails corner creation.
     this.primeCodegraphIndex(worktreePath);
     const agentPrivateState = await this.cornerAgentPrivateState(worktreePath, subchannelId);
+    const cornerFilesystem = this.cornerFilesystemPolicy(
+      boundRepo,
+      worktreePath,
+      agentPrivateState?.root,
+    );
 
     // 5. Start edit-mode ACP session.
     const mcpServers: McpServerWire[] = [
@@ -3805,11 +3835,13 @@ export class Body {
       // the shared checkout, even if the harness leaks past cwd isolation.
       permissionHandler: this.cornerPermissionHandler(
         worktreePath,
-        boundRepo.localPath,
-        agentPrivateState?.root,
+        cornerFilesystem.protectedPaths,
+        cornerFilesystem.writablePaths,
       ),
       parentChannelId: tlcChannelId,
       worktreePath,
+      protectedPaths: cornerFilesystem.protectedPaths,
+      additionalWritablePaths: cornerFilesystem.additionalWritablePaths,
       featureBranch,
       resumeObjective: taskDescription || undefined,
       resumeTargetRef: boundRepo.targetBranch ?? 'refs/heads/main',
@@ -9189,24 +9221,58 @@ export class Body {
   }
 
   /**
-   * Worktree guard for an edit session: deny a tool call that would move the
-   * corner out of its isolated worktree (the cd-guard) or mutate outside the
-   * worktree and its one Body-owned private-state root. Absolute paths, `..`
-   * climbs, and symlink escapes are resolved physically before comparison.
-   * Reads outside stay allowed; everything else in a corner is auto-approved.
-   * See `session-sandbox.ts` and `corner-isolation.ts`.
+   * A corner is writable by default. These are the shared and daemon-owned
+   * surfaces overlaid read-only, plus the narrow capabilities restored writable
+   * inside protected parents. Credential paths are included for the ACP
+   * fallback as well as being masked entirely by bubblewrap.
+   */
+  private cornerFilesystemPolicy(
+    boundRepo: BoundRepo,
+    worktreePath: string,
+    agentPrivateStateRoot?: string,
+  ): {
+    protectedPaths: string[];
+    writablePaths: string[];
+    additionalWritablePaths: string[];
+  } {
+    const gitCommonDir = resolveGitCommonDir(worktreePath);
+    const additionalWritablePaths = agentPrivateStateRoot ? [agentPrivateStateRoot] : [];
+    return {
+      protectedPaths: [
+        this.config.workspaceRoot,
+        this.cornersPoolRoot(boundRepo),
+        ...(boundRepo.localPath ? [boundRepo.localPath] : []),
+        ...(this.config.agentHomeRoot ? [this.config.agentHomeRoot] : []),
+        ...(this.config.agentPrivateRoot ? [this.config.agentPrivateRoot] : []),
+        ...credentialMaskPaths(this.config.sandboxMaskPaths).map((mask) => mask.path),
+      ],
+      writablePaths: [
+        worktreePath,
+        ...(gitCommonDir ? [gitCommonDir] : []),
+        ...mergeGateStateDirs(),
+        ...additionalWritablePaths,
+      ],
+      additionalWritablePaths,
+    };
+  }
+
+  /**
+   * Permission-callback backstop for adapters that still ask despite their
+   * autonomy mode: deny writes into protected shared/daemon paths, allow every
+   * other action immediately. Bubblewrap remains the actual containment for
+   * adapters (such as pi) that never ask.
    */
   private cornerPermissionHandler(
     worktreePath: string,
-    primaryCheckout?: string,
-    agentPrivateStateRoot?: string,
+    protectedPaths: readonly string[],
+    writablePaths: readonly string[],
   ): AcpPermissionHandler {
     return async (request) => {
       const verdict = classifyCornerPermission(
         request,
         worktreePath,
-        primaryCheckout,
-        agentPrivateStateRoot ? [agentPrivateStateRoot] : [],
+        protectedPaths,
+        writablePaths,
       );
       if (verdict.decision === 'deny') {
         console.warn(

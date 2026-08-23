@@ -70,18 +70,31 @@ describe('Room sessions are read-only, whatever path a tool names', () => {
   });
 });
 
-describe('Corner sessions may only mutate inside their own worktree', () => {
+describe('Corner sessions are writable by default except for the hygiene denylist', () => {
   let root: string;
   let worktree: string;
   let operator: string;
+  let cornerPool: string;
+  let siblingCorner: string;
+  let daemonState: string;
+  let credentialStore: string;
+  let protectedPaths: string[];
 
   beforeEach(async () => {
     root = realpathSync(await mkdtemp(resolve(tmpdir(), 'buzzy-sandbox-')));
-    worktree = resolve(root, '.beeline-corners/proj/c1');
+    cornerPool = resolve(root, '.beeline-corners/proj');
+    worktree = resolve(cornerPool, 'c1');
+    siblingCorner = resolve(cornerPool, 'c2');
     operator = resolve(root, 'proj-buzzy');
+    daemonState = resolve(root, 'daemon-state');
+    credentialStore = resolve(root, 'home/.ssh');
     await mkdir(resolve(worktree, 'src'), { recursive: true });
+    await mkdir(siblingCorner, { recursive: true });
     await mkdir(resolve(operator, 'apps'), { recursive: true });
+    await mkdir(daemonState, { recursive: true });
+    await mkdir(credentialStore, { recursive: true });
     await writeFile(resolve(operator, 'apps/target.ts'), 'export const x = 1;\n');
+    protectedPaths = [cornerPool, operator, daemonState, credentialStore];
   });
 
   afterEach(async () => {
@@ -91,53 +104,75 @@ describe('Corner sessions may only mutate inside their own worktree', () => {
   const edit = (rawInput: unknown) => ({ toolCall: { kind: 'edit', title: 'Write', rawInput } });
 
   it('allows a write inside the worktree', () => {
-    expect(classifyCornerPermission(edit({ path: 'src/a.ts' }), worktree, operator).decision).toBe(
-      'allow',
-    );
+    expect(
+      classifyCornerPermission(edit({ path: 'src/a.ts' }), worktree, protectedPaths).decision,
+    ).toBe('allow');
     expect(
       classifyCornerPermission(
         edit({ file_path: resolve(worktree, 'src/a.ts') }),
         worktree,
-        operator,
+        protectedPaths,
       ).decision,
     ).toBe('allow');
   });
 
-  it('denies a write to an absolute path outside the worktree', () => {
-    const verdict = classifyCornerPermission(
-      edit({ file_path: resolve(operator, 'apps/target.ts') }),
-      worktree,
-      operator,
-    );
-    expect(verdict.decision).toBe('deny');
-    if (verdict.decision === 'deny') expect(verdict.code).toBe('path-escape');
+  it('allows normal writes outside the worktree for caches, builds, and toolchains', () => {
+    for (const path of [
+      resolve(root, 'home/.cache/pkg/index'),
+      resolve(root, 'toolchains/node/download'),
+      '/tmp/corner-build/output.js',
+    ]) {
+      expect(
+        classifyCornerPermission(edit({ file_path: path }), worktree, protectedPaths).decision,
+      ).toBe('allow');
+    }
+    for (const command of [
+      `mkdir -p ${resolve(root, 'home/.cache/pkg')}`,
+      `npm install --prefix ${resolve(root, 'toolchains/project')}`,
+      'echo built > /tmp/corner-build.txt',
+      'cd /tmp && npm run build',
+    ]) {
+      expect(
+        classifyCornerPermission(
+          { toolCall: { kind: 'execute', rawInput: { command } } },
+          worktree,
+          protectedPaths,
+        ).decision,
+        command,
+      ).toBe('allow');
+    }
   });
 
-  it('allows writes only to the explicitly mounted agent-private state root', async () => {
-    const agentPrivateState = resolve(root, 'room-state/agent-private');
+  it('denies canonical checkout, sibling-corner, daemon-state, and credential writes', () => {
+    for (const path of [
+      resolve(operator, 'apps/target.ts'),
+      resolve(siblingCorner, 'README.md'),
+      resolve(daemonState, 'body-state.json'),
+      resolve(credentialStore, 'config'),
+    ]) {
+      const verdict = classifyCornerPermission(edit({ file_path: path }), worktree, protectedPaths);
+      expect(verdict.decision, path).toBe('deny');
+      if (verdict.decision === 'deny') expect(verdict.code).toBe('path-escape');
+    }
+  });
+
+  it('allows explicitly granted capabilities nested inside daemon state', async () => {
+    const agentPrivateState = resolve(daemonState, 'agent-private');
     await mkdir(agentPrivateState, { recursive: true });
     const allowed = classifyCornerPermission(
       edit({ file_path: resolve(agentPrivateState, 'memory/episode.json') }),
       worktree,
-      operator,
+      protectedPaths,
       [agentPrivateState],
     );
-    const unrelated = classifyCornerPermission(
-      edit({ file_path: resolve(root, 'other-state/memory/episode.json') }),
-      worktree,
-      operator,
-      [agentPrivateState],
-    );
-
     expect(allowed.decision).toBe('allow');
-    expect(unrelated.decision).toBe('deny');
   });
 
   it('denies a `..` traversal out of the worktree', () => {
     const verdict = classifyCornerPermission(
       edit({ path: '../../../proj-buzzy/apps/target.ts' }),
       worktree,
-      operator,
+      protectedPaths,
     );
     expect(verdict.decision).toBe('deny');
     if (verdict.decision === 'deny') expect(verdict.code).toBe('path-escape');
@@ -148,7 +183,7 @@ describe('Corner sessions may only mutate inside their own worktree', () => {
     const verdict = classifyCornerPermission(
       edit({ path: 'escape/apps/target.ts' }),
       worktree,
-      operator,
+      protectedPaths,
     );
     expect(verdict.decision).toBe('deny');
     if (verdict.decision === 'deny') expect(verdict.code).toBe('path-escape');
@@ -160,7 +195,7 @@ describe('Corner sessions may only mutate inside their own worktree', () => {
       toolCall: { kind: 'edit', title: 'Editing files' },
       _meta: { codex: { params: { changes: [{ path: resolve(operator, 'apps/target.ts') }] } } },
     };
-    expect(classifyCornerPermission(codex, worktree, operator).decision).toBe('deny');
+    expect(classifyCornerPermission(codex, worktree, protectedPaths).decision).toBe('deny');
 
     // A tracked tool_call's `content` diff rows and `locations` are merged in
     // by AcpClient before the handler runs.
@@ -171,10 +206,10 @@ describe('Corner sessions may only mutate inside their own worktree', () => {
         locations: [{ path: resolve(operator, 'apps/target.ts') }],
       },
     };
-    expect(classifyCornerPermission(located, worktree, operator).decision).toBe('deny');
+    expect(classifyCornerPermission(located, worktree, protectedPaths).decision).toBe('deny');
   });
 
-  it('denies a shell command that writes outside the worktree', () => {
+  it('denies shell writes aimed at protected paths', () => {
     for (const command of [
       `echo hi > ${resolve(operator, 'apps/target.ts')}`,
       `cp src/a.ts ${resolve(operator, 'apps/target.ts')}`,
@@ -187,26 +222,13 @@ describe('Corner sessions may only mutate inside their own worktree', () => {
       const verdict = classifyCornerPermission(
         { toolCall: { kind: 'execute', rawInput: { command } } },
         worktree,
-        operator,
+        protectedPaths,
       );
       expect(verdict.decision, command).toBe('deny');
     }
   });
 
-  it('keeps the cd-guard, and keeps ordinary in-worktree work working', () => {
-    const escape = classifyCornerPermission(
-      {
-        toolCall: {
-          kind: 'execute',
-          rawInput: { command: `cd ${operator} && git commit -am wip` },
-        },
-      },
-      worktree,
-      operator,
-    );
-    expect(escape.decision).toBe('deny');
-    if (escape.decision === 'deny') expect(escape.code).toBe('persistent-cd');
-
+  it('keeps ordinary in-worktree work working', () => {
     for (const command of [
       'git commit -am wip',
       'npm run typecheck',
@@ -223,7 +245,7 @@ describe('Corner sessions may only mutate inside their own worktree', () => {
         classifyCornerPermission(
           { toolCall: { kind: 'execute', rawInput: { command } } },
           worktree,
-          operator,
+          protectedPaths,
         ).decision,
         command,
       ).toBe('allow');
@@ -241,7 +263,7 @@ describe('Corner sessions may only mutate inside their own worktree', () => {
           },
         },
         worktree,
-        operator,
+        protectedPaths,
       ).decision,
     ).toBe('allow');
   });

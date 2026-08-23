@@ -21,6 +21,7 @@
     "stack:up": "docker compose -f relay-stack/compose.yml up -d",
     "stack:down": "docker compose -f relay-stack/compose.yml down -v",
     "smoke": "node --import tsx scripts/smoke.ts",
+    "test:deploy": "node --test scripts/deploy-relay-host.test.mjs",
     "prove": "node --import tsx scripts/money-shot.ts",
     "install:beeline": "bash scripts/install-beeline.sh",
     "bundle:beeline": "node scripts/build-beeline-bundle.mjs",

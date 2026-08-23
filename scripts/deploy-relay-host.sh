@@ -15,6 +15,13 @@
 #      others.
 #   2. apps/auth Dockerfile -> beeline-auth:production -> `docker compose up`
 #      for the auth service only.
+#   3. the TRACKED production stack config (relay-stack/prod/{compose.yml,
+#      nginx.conf}) -> /home/lunchbox/buzz-router-relay-prod/{compose.yml,
+#      relay-front/nginx.conf}, followed by `docker compose up -d` for the
+#      full stack when (and only when) the config actually changed. Before
+#      this existed, production's compose/nginx were hand-maintained on the
+#      host and infra merges (e.g. the #340 push gateway) silently landed
+#      nowhere.
 #
 # Discipline inherited from deploy-beeline-cli.sh and extended:
 #   - back up everything replaced before replacing it
@@ -35,9 +42,17 @@
 #                                     path end-to-end.
 #
 # Privileges: runs as the runner user. Web-tree writes go through the shared
-# `relay-web` group; docker through the `docker` group; the single privileged
-# step (`compose up`, which must read lunchbox-owned env files) goes through a
-# fixed-argument passwordless sudo rule installed on the host.
+# `relay-web` group; docker through the `docker` group; the privileged steps
+# (which must read lunchbox-owned env files or replace lunchbox-owned config
+# files) go through fixed-argument passwordless sudo rules installed on the
+# host. The stack rollout (step 3) requires these rules IN ADDITION to the
+# original auth-only rule — if they are missing, the deploy fails LOUDLY at
+# the placement/up step, never silently:
+#
+#   beeline-runner ALL=(root) NOPASSWD: /usr/bin/install -o lunchbox -g lunchbox -m 644 /home/beeline-runner/beeline-deploy-stage/compose.yml /home/lunchbox/buzz-router-relay-prod/compose.yml
+#   beeline-runner ALL=(root) NOPASSWD: /usr/bin/install -o lunchbox -g lunchbox -m 644 /home/beeline-runner/beeline-deploy-stage/nginx.conf /home/lunchbox/buzz-router-relay-prod/relay-front/nginx.conf
+#   beeline-runner ALL=(root) NOPASSWD: /usr/bin/docker compose -p buzz-router-prod --env-file /home/lunchbox/buzz-router-relay-prod/.env -f /home/lunchbox/buzz-router-relay-prod/compose.yml up -d
+#
 set -euo pipefail
 
 PROJECT_DIR=${BEELINE_PROD_DIR:-/home/lunchbox/buzz-router-relay-prod}
@@ -49,6 +64,7 @@ DRILL=${BEELINE_DEPLOY_DRILL:-}
 
 CHECKOUT=$(git rev-parse --show-toplevel)
 REPO_WEB=$CHECKOUT/relay-stack/web
+REPO_STACK=$CHECKOUT/relay-stack/prod
 
 log() { echo ">> $*"; }
 die() { echo "!! $*" >&2; exit "${2:-1}"; }
@@ -77,8 +93,8 @@ mkdir -p "$STAGE/web"
 # users; the live tree's setgid relay-web directories keep the shared group.
 rsync -a -O --no-p --no-o --no-g --delete "$REPO_WEB/" "$STAGE/web/"
 
-if ! diff -r --brief "$REPO_WEB" "$STAGE/web" >/tmp/beeline-stage-diff.txt 2>&1; then
-  cat /tmp/beeline-stage-diff.txt >&2
+if ! diff -r --brief "$REPO_WEB" "$STAGE/web" >$STAGE/stage-diff.txt 2>&1; then
+  cat $STAGE/stage-diff.txt >&2
   die "staged copy differs from checkout — aborting before anything was touched"
 fi
 
@@ -102,8 +118,15 @@ fi
 # ---------------------------------------------------------------------------
 log "building beeline-auth:production"
 docker build -f "$CHECKOUT/apps/auth/Dockerfile" -t beeline-auth:production "$CHECKOUT" \
-  >/tmp/beeline-auth-build.log 2>&1 || { tail -40 /tmp/beeline-auth-build.log >&2; die "auth image build failed"; }
-tail -3 /tmp/beeline-auth-build.log
+  >$STAGE/auth-build.log 2>&1 || { tail -40 $STAGE/auth-build.log >&2; die "auth image build failed"; }
+tail -3 $STAGE/auth-build.log
+
+# Same discipline for the push-gateway image (#340): built BEFORE anything
+# live is touched, so a build failure costs nothing.
+log "building beeline-push-gateway:production"
+docker build -f "$CHECKOUT/apps/push-gateway/Dockerfile" -t beeline-push-gateway:production "$CHECKOUT" \
+  >$STAGE/push-build.log 2>&1 || { tail -40 $STAGE/push-build.log >&2; die "push-gateway image build failed"; }
+tail -3 $STAGE/push-build.log
 
 # ---------------------------------------------------------------------------
 # 3. Back up the current web tree, then swap the staged one in IN PLACE.
@@ -137,6 +160,144 @@ sudo -n /usr/bin/docker compose -p buzz-router-prod \
   || { sudo -n /usr/bin/docker compose -p buzz-router-prod --env-file "$PROJECT_DIR/.env" -f "$PROJECT_DIR/compose.yml" up -d --no-deps auth 2>&1 | tail -20; die "compose up auth failed"; }
 
 # ---------------------------------------------------------------------------
+# 4b. Roll out the TRACKED production stack config (compose.yml + nginx.conf).
+#     relay-stack/{compose.yml,nginx.conf} are the ISOLATED gate stack
+#     (name: buzzy-gate); production is tracked under relay-stack/prod/.
+#     Same discipline as the web swap: verify staged bytes against the
+#     checkout, back up everything replaced (timestamped, beside the web
+#     backups), apply idempotently (an unchanged merge restarts NOTHING), and
+#     roll the config files back if anything below fails. A stack failure
+#     must never cost the web deploy its rollback ability: the web backups
+#     stay on disk and public verification still runs afterwards.
+# ---------------------------------------------------------------------------
+LIVE_COMPOSE=$PROJECT_DIR/compose.yml
+LIVE_NGINX=$PROJECT_DIR/relay-front/nginx.conf
+STACK_STAGE_DIR=${BEELINE_STACK_STAGE_DIR:-$HOME/beeline-deploy-stage}
+STACK_DEPLOYED=0
+STACK_FAILED=0
+
+[ -f "$REPO_STACK/compose.yml" ] || die "no relay-stack/prod/compose.yml in checkout ($CHECKOUT)"
+[ -f "$REPO_STACK/nginx.conf" ] || die "no relay-stack/prod/nginx.conf in checkout ($CHECKOUT)"
+
+log "staging production stack config"
+mkdir -p "$STAGE/stack"
+cp "$REPO_STACK/compose.yml" "$REPO_STACK/nginx.conf" "$STAGE/stack/"
+for f in compose.yml nginx.conf; do
+  cmp -s "$REPO_STACK/$f" "$STAGE/stack/$f" || die "staged $f differs from checkout — aborting before anything was touched"
+done
+
+# Validate the composed config WITHOUT touching real secrets: a throwaway
+# .env satisfies the compose file's :? guards; the host's real .env is never
+# read outside the sudo'd `compose up` (which runs as root).
+cat > "$STAGE/stack/.env" <<'EOF'
+POSTGRES_PASSWORD=stage-dummy
+POSTGRES_USER=buzz
+POSTGRES_DB=buzz
+REDIS_PASSWORD=stage-dummy
+BUZZ_S3_ACCESS_KEY=stage-dummy
+BUZZ_S3_SECRET_KEY=stage-dummy
+EOF
+docker compose -f "$STAGE/stack/compose.yml" --env-file "$STAGE/stack/.env" config --quiet \
+  || die "staged compose.yml does not parse — aborting before anything was touched"
+
+# nginx -t in a throwaway container; the network aliases satisfy the upstream
+# lookups nginx performs while loading the config (relay/auth/push-gateway).
+docker network create beeline-nginx-test >/dev/null 2>&1 || true
+if ! docker run --rm --network beeline-nginx-test \
+      --network-alias relay --network-alias auth --network-alias push-gateway \
+      -v "$STAGE/stack/nginx.conf:/etc/nginx/nginx.conf:ro" \
+      nginx:1.27-alpine nginx -t >/dev/null 2>&1; then
+  docker network rm beeline-nginx-test >/dev/null 2>&1 || true
+  die "staged nginx.conf fails nginx -t — aborting before anything was touched"
+fi
+docker network rm beeline-nginx-test >/dev/null 2>&1 || true
+
+COMPOSE_CHANGED=0
+NGINX_CHANGED=0
+cmp -s "$STAGE/stack/compose.yml" "$LIVE_COMPOSE" || COMPOSE_CHANGED=1
+cmp -s "$STAGE/stack/nginx.conf" "$LIVE_NGINX" || NGINX_CHANGED=1
+GATEWAY_RUNNING=$(docker ps -q --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=push-gateway)
+
+# place_stack_file <name> <live-dest>: copy the staged file over the live one
+# through the fixed-argument sudo rule. Used for BOTH apply and rollback
+# (rollback copies the backup into the stage slot first) because the live
+# files are lunchbox-owned and the runner user cannot write them directly.
+place_stack_file() {
+  sudo -n /usr/bin/install -o lunchbox -g lunchbox -m 644 "$STACK_STAGE_DIR/$1" "$2" \
+    || { echo "!! sudo install of $1 failed — is the fixed-argument sudoers rule installed? See the header of scripts/deploy-relay-host.sh" >&2; return 1; }
+}
+
+# Plain-docker nginx reload (the runner is in the docker group; no sudo):
+# swapping the bind-mounted nginx.conf does NOT restart relay-front, and a
+# compose-level recreate is unnecessary downtime for a content-only change.
+reload_relay_front_nginx() {
+  local cid
+  cid=$(docker ps -q --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=relay-front)
+  [ -n "$cid" ] || { echo "!! relay-front container not found — cannot reload nginx" >&2; return 1; }
+  docker kill -s HUP "$cid" >/dev/null 2>&1 || { echo "!! nginx HUP reload failed" >&2; return 1; }
+  log "relay-front nginx reloaded (HUP)"
+}
+
+rollback_stack_config() {
+  local bk="$BACKUP_ROOT/config-$TS"
+  [ -d "$bk" ] || return 0
+  if [ -f "$bk/compose.yml" ]; then
+    cp "$bk/compose.yml" "$STACK_STAGE_DIR/compose.yml"
+    place_stack_file compose.yml "$LIVE_COMPOSE" || true
+  fi
+  if [ -f "$bk/relay-front/nginx.conf" ]; then
+    cp "$bk/relay-front/nginx.conf" "$STACK_STAGE_DIR/nginx.conf"
+    place_stack_file nginx.conf "$LIVE_NGINX" || true
+  fi
+}
+
+# Converge the RUNNING stack to whatever compose.yml is currently on disk.
+# Best-effort: used after a rollback, never hides a primary failure.
+converge_stack_runtime() {
+  sudo -n /usr/bin/docker compose -p buzz-router-prod --env-file "$PROJECT_DIR/.env" \
+    -f "$LIVE_COMPOSE" up -d >>$STAGE/stack-up.log 2>&1 \
+    || echo "!! converge 'compose up -d' failed after config restore — INSPECT MANUALLY" >&2
+  reload_relay_front_nginx || true
+}
+
+if [ "$COMPOSE_CHANGED" = 0 ] && [ "$NGINX_CHANGED" = 0 ] && [ -n "$GATEWAY_RUNNING" ]; then
+  log "production stack unchanged — nothing to roll out"
+else
+  mkdir -p "$STACK_STAGE_DIR" "$BACKUP_ROOT/config-$TS/relay-front"
+  [ "$COMPOSE_CHANGED" = 1 ] && cp -p "$LIVE_COMPOSE" "$BACKUP_ROOT/config-$TS/compose.yml"
+  [ "$NGINX_CHANGED" = 1 ] && cp -p "$LIVE_NGINX" "$BACKUP_ROOT/config-$TS/relay-front/nginx.conf"
+  cp "$STAGE/stack/compose.yml" "$STAGE/stack/nginx.conf" "$STACK_STAGE_DIR/"
+
+  ok=1
+  if [ "$COMPOSE_CHANGED" = 1 ]; then place_stack_file compose.yml "$LIVE_COMPOSE" || ok=0; fi
+  if [ "$ok" = 1 ] && [ "$NGINX_CHANGED" = 1 ]; then place_stack_file nginx.conf "$LIVE_NGINX" || ok=0; fi
+
+  if [ "$ok" = 1 ]; then
+    # Full `up -d` only when the compose config changed or the gateway has
+    # never come up (e.g. the very first rollout after adoption, or a
+    # manually stopped container). An nginx-content-only change is applied
+    # with a zero-downtime HUP reload instead of any container churn.
+    if [ "$COMPOSE_CHANGED" = 1 ] || [ -z "$GATEWAY_RUNNING" ]; then
+      log "applying production stack (docker compose up -d)"
+      sudo -n /usr/bin/docker compose -p buzz-router-prod \
+        --env-file "$PROJECT_DIR/.env" -f "$LIVE_COMPOSE" up -d \
+        >$STAGE/stack-up.log 2>&1 || { tail -20 $STAGE/stack-up.log >&2; ok=0; }
+    fi
+    if [ "$ok" = 1 ] && [ "$NGINX_CHANGED" = 1 ]; then reload_relay_front_nginx || ok=0; fi
+  fi
+
+  if [ "$ok" = 1 ]; then
+    STACK_DEPLOYED=1
+    log "production stack rolled out"
+  else
+    STACK_FAILED=1
+    echo "!! STACK ROLLOUT FAILED — restoring previous stack config" >&2
+    rollback_stack_config
+    converge_stack_runtime
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # 5. PUBLIC verification — the only proof that counts.
 # ---------------------------------------------------------------------------
 # Public bytes are compared against the CHECKOUT, never against the staged
@@ -168,7 +329,7 @@ verify_public() {
       out.push(b.file+"\t"+b.sha256);
     }
     console.log(out.join("\n"));
-  ' "$REPO_WEB/dl/manifest.json" > /tmp/beeline-manifest-bundles.txt || die "unreadable manifest"
+  ' "$REPO_WEB/dl/manifest.json" > $STAGE/manifest-bundles.txt || die "unreadable manifest"
 
   while IFS=$'\t' read -r file want; do
     got=$(pub_sha "$PUBLIC_BASE/dl/$file")
@@ -178,13 +339,27 @@ verify_public() {
     else log "public bundle verified: $file"; fi
     side=$(curl -fsSL --max-time 60 "$PUBLIC_BASE/dl/$file.sha256" | awk '{print $1}')
     [ "$side" = "$want" ] || { echo "!! public .sha256 sidecar for $file disagrees with manifest" >&2; failures=$((failures+1)); }
-  done < /tmp/beeline-manifest-bundles.txt
+  done < $STAGE/manifest-bundles.txt
 
   # Well-known association documents must still resolve.
   for wk in apple-app-site-association assetlinks.json; do
     code=$(curl -fsS -o /dev/null -w '%{http_code}' --max-time 30 "$PUBLIC_BASE/.well-known/$wk" || true)
     [ "$code" = "200" ] || { echo "!! /.well-known/$wk returned ${code:-error}" >&2; failures=$((failures+1)); }
   done
+
+  # Push gateway healthy through the front — only asserted when THIS deploy
+  # rolled the stack forward; after a stack failure+restore the old (possibly
+  # gateway-less) config is deliberately what public verification should see.
+  if [ "${STACK_DEPLOYED:-0}" = "1" ]; then
+    local tries_p=0 code_push=""
+    while [ $tries_p -lt 12 ]; do
+      code_push=$(curl -fsS -o /dev/null -w '%{http_code}' --max-time 15 "$PUBLIC_BASE/push/health" || true)
+      [ "$code_push" = "200" ] && break
+      tries_p=$((tries_p+1)); sleep 5
+    done
+    [ "$code_push" = "200" ] || { echo "!! /push/health did not return 200 (last: ${code_push:-error})" >&2; failures=$((failures+1)); }
+    log "public /push/health verified"
+  fi
 
   # Auth service healthy through the front (container may need a moment).
   local tries=0 code_auth=""
@@ -201,13 +376,20 @@ verify_public() {
 NEW_AUTH_IMAGE_ID=$(docker image inspect --format '{{.Id}}' beeline-auth:production | cut -d: -f2)
 
 rollback() {
-  log "ROLLBACK: restoring previous web tree and auth image"
+  log "ROLLBACK: restoring previous web tree, auth image, and stack config"
   rsync -a -O --no-p --no-o --no-g --delete "$BAK/" "$WEBROOT/"
   if [ -n "$OLD_AUTH_IMAGE_ID" ] && [ "$OLD_AUTH_IMAGE_ID" != "$NEW_AUTH_IMAGE_ID" ]; then
     docker tag "$OLD_AUTH_IMAGE_ID" beeline-auth:rollback-prev 2>/dev/null || true
     docker tag "sha256:$OLD_AUTH_IMAGE_ID" beeline-auth:production 2>/dev/null || true
     sudo -n /usr/bin/docker compose -p buzz-router-prod --env-file "$PROJECT_DIR/.env" \
       -f "$PROJECT_DIR/compose.yml" up -d --no-deps auth || echo "!! rollback compose up failed — inspect manually" >&2
+  fi
+  if [ "${STACK_DEPLOYED:-0}" = "1" ]; then
+    rollback_stack_config
+    converge_stack_runtime
+    # Post-rollback public verification must judge the RESTORED config —
+    # which may legitimately have no gateway — not the rolled-forward one.
+    STACK_DEPLOYED=0
   fi
 }
 
@@ -230,10 +412,17 @@ if [ $verified -ne 1 ]; then
   fi
 fi
 
+if [ "$STACK_FAILED" = "1" ]; then
+  die "web+auth deployed and verified, but the STACK ROLLOUT FAILED and was rolled back — see the stack-up log tail above and the sudoers note in scripts/deploy-relay-host.sh" 1
+fi
+
 # ---------------------------------------------------------------------------
 # 6. Prune old backups.
 # ---------------------------------------------------------------------------
-ls -1dt "$BACKUP_ROOT"/bak-* 2>/dev/null | tail -n +$((BACKUP_KEEP+1)) | while read -r old; do rm -rf "$old"; done
+# '|| true' keeps an unmatched glob (no backups yet) from tripping
+# pipefail+set -e; pruning is housekeeping, never worth failing a deploy.
+ls -1dt "$BACKUP_ROOT"/bak-* 2>/dev/null | tail -n +$((BACKUP_KEEP+1)) | while read -r old; do rm -rf "$old"; done || true
+ls -1dt "$BACKUP_ROOT"/config-* 2>/dev/null | tail -n +$((BACKUP_KEEP+1)) | while read -r old; do rm -rf "$old"; done || true
 
 log "OK: public origin serves this deploy (checkout $(git -C "$CHECKOUT" rev-parse HEAD))"
 log "done."

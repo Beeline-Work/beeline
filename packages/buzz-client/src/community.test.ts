@@ -10,6 +10,7 @@ import {
   findCommunityInvite,
   getCommunity,
   inviteTokenHash,
+  leaveCommunity,
   listCommunityInvites,
   listCommunities,
   parseCommunityInvite,
@@ -29,6 +30,7 @@ import {
   KIND_CREATE_GROUP,
   KIND_EDIT_METADATA,
   KIND_PUT_USER,
+  KIND_REMOVE_USER,
   KIND_STREAM_MESSAGE,
   TAG_AGENT,
   TAG_COMMUNITY,
@@ -603,6 +605,160 @@ describe('community model', () => {
 
     await expect(repairCommunityRoomMemberships(ctx(invitee), communityId)).resolves.toEqual([]);
     expect(published).toEqual([]);
+  });
+});
+
+describe('leaveCommunity (workspace exit)', () => {
+  function roomCreate(): NostrEvent {
+    return signed(owner, KIND_CREATE_GROUP, [
+      ['h', channelId],
+      ['name', 'general'],
+      [TAG_COMMUNITY, communityId],
+    ]);
+  }
+
+  function stubLeaveRelay(options: {
+    selfLeavesWorkspace: boolean;
+    selfLeavesRoom: boolean;
+    includeSelfInWorkspace: boolean;
+    includeSelfInRoom: boolean;
+    /** When false, publishes are accepted but the projections never change. */
+    dropOnPublish?: boolean;
+    workspaceMembers?: NostrEvent;
+  }) {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          const event = JSON.parse(String(init?.body)) as NostrEvent;
+          published.push(event);
+          if (options.dropOnPublish !== false) {
+            if (event.kind === KIND_REMOVE_USER && tagValue(event, 'h') === channelId) {
+              options.selfLeavesRoom = true;
+            }
+            if (event.kind === KIND_REMOVE_USER && tagValue(event, 'h') === communityId) {
+              options.selfLeavesWorkspace = true;
+            }
+          }
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        const requestedId = ((filter['#h'] ?? filter['#d']) as string[] | undefined)?.[0];
+        if (kind === KIND_CREATE_GROUP) {
+          return requestedId === channelId
+            ? jsonResponse([roomCreate()])
+            : jsonResponse([roomCreate()]);
+        }
+        if (kind === KIND_CHANNEL_ADMINS) {
+          return requestedId === communityId ? jsonResponse([adminState()]) : jsonResponse([]);
+        }
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          if (requestedId === communityId) {
+            return jsonResponse([
+              options.workspaceMembers ??
+                signed(owner, KIND_CHANNEL_MEMBERS, [
+                  ['d', communityId],
+                  ['p', owner.publicKey],
+                  ...(options.includeSelfInWorkspace && !options.selfLeavesWorkspace
+                    ? [['p', invitee.publicKey]]
+                    : []),
+                ] as string[][]),
+            ]);
+          }
+          if (requestedId === channelId) {
+            return jsonResponse([
+              signed(owner, KIND_CHANNEL_MEMBERS, [
+                ['d', channelId],
+                ['p', owner.publicKey],
+                ...(options.includeSelfInRoom && !options.selfLeavesRoom
+                  ? [['p', invitee.publicKey]]
+                  : []),
+              ]),
+            ]);
+          }
+        }
+        return jsonResponse([]);
+      }),
+    );
+    return published;
+  }
+
+  it('a member leaves via a self-authored removal after dropping Room memberships', async () => {
+    const state = {
+      selfLeavesWorkspace: false,
+      selfLeavesRoom: false,
+      includeSelfInWorkspace: true,
+      includeSelfInRoom: true,
+    };
+    const published = stubLeaveRelay(state);
+
+    await expect(
+      leaveCommunity(ctx(invitee), communityId, { timeoutMs: 1_000 }),
+    ).resolves.toBeUndefined();
+
+    const roomLeave = published.find(
+      (event) => event.kind === KIND_REMOVE_USER && tagValue(event, 'h') === channelId,
+    );
+    expect(roomLeave?.pubkey).toBe(invitee.publicKey);
+
+    const workspaceLeave = published.find(
+      (event) => event.kind === KIND_REMOVE_USER && tagValue(event, 'h') === communityId,
+    );
+    expect(workspaceLeave?.pubkey).toBe(invitee.publicKey);
+    expect(tagValue(workspaceLeave!, TAG_COMMUNITY)).toBe(communityId);
+
+    // The Workspace mutation comes last — Rooms drop first.
+    const roomIndex = published.indexOf(roomLeave!);
+    const workspaceIndex = published.indexOf(workspaceLeave!);
+    expect(roomIndex).toBeGreaterThanOrEqual(0);
+    expect(workspaceIndex).toBeGreaterThan(roomIndex);
+  });
+
+  it('refuses the sole owner up front with an actionable message and publishes nothing', async () => {
+    const state = {
+      selfLeavesWorkspace: false,
+      selfLeavesRoom: false,
+      includeSelfInWorkspace: true,
+      includeSelfInRoom: true,
+    };
+    const published = stubLeaveRelay(state);
+
+    await expect(leaveCommunity(ctx(owner), communityId, { timeoutMs: 200 })).rejects.toThrow(
+      /only owner/,
+    );
+    expect(published).toEqual([]);
+  });
+
+  it('is idempotent when the member is already absent from the projection', async () => {
+    const state = {
+      selfLeavesWorkspace: true,
+      selfLeavesRoom: false,
+      includeSelfInWorkspace: false,
+      includeSelfInRoom: false,
+    };
+    const published = stubLeaveRelay(state);
+
+    await expect(
+      leaveCommunity(ctx(invitee), communityId, { timeoutMs: 200 }),
+    ).resolves.toBeUndefined();
+    expect(published).toEqual([]);
+  });
+
+  it('surfaces an honest error when the relay never drops the membership projection', async () => {
+    const state = {
+      selfLeavesWorkspace: false,
+      selfLeavesRoom: false,
+      includeSelfInWorkspace: true,
+      includeSelfInRoom: false,
+      dropOnPublish: false,
+    };
+    stubLeaveRelay(state);
+
+    await expect(
+      leaveCommunity(ctx(invitee), communityId, { leaveRooms: false, timeoutMs: 300 }),
+    ).rejects.toThrow(/membership still visible/);
   });
 });
 

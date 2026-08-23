@@ -101,13 +101,6 @@ function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-/** Case-insensitive substring match for the deck's search field. */
-function matchesSearch(text: string, query: string): boolean {
-  const needle = query.trim().toLocaleLowerCase();
-  if (!needle) return true;
-  return text.toLocaleLowerCase().includes(needle);
-}
-
 /**
  * How many person-facing messages this Room holds past the reader's mark, or
  * `null` when that answer is only "unread" — either there is no mark yet or
@@ -422,9 +415,6 @@ export default function BuzzChannels() {
   const [readyInviteUrl, setReadyInviteUrl] = useState<string | undefined>(inviteUrl);
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
   const [ageNow, setAgeNow] = useState(() => Date.now());
-  // The deck's search field: filters Rooms (and DMs) by name without touching
-  // what is cached — a view over the same projection, never a second source.
-  const [searchQuery, setSearchQuery] = useState('');
   /** Rooms where an agent turn is streaming RIGHT NOW, seen live by this
    * screen's own event subscription. Corner turns are durable relay state
    * (they arrive through `corners`); conversational Room turns only exist on
@@ -456,10 +446,10 @@ export default function BuzzChannels() {
   );
   const orderedDirectMessages = useMemo(
     () =>
-      [...directMessages]
-        .filter((dm) => matchesSearch(dm.peerName, searchQuery))
-        .sort((a, b) => b.updatedAt - a.updatedAt || a.peerName.localeCompare(b.peerName)),
-    [directMessages, searchQuery],
+      [...directMessages].sort(
+        (a, b) => b.updatedAt - a.updatedAt || a.peerName.localeCompare(b.peerName),
+      ),
+    [directMessages],
   );
   const hasConversations = displayChannels.length > 0 || orderedDirectMessages.length > 0;
   const activeCommunity = useMemo(
@@ -478,11 +468,12 @@ export default function BuzzChannels() {
     return names;
   }, [cachedListEntry?.workspaceMembers, identity?.publicKey]);
   const roomSections = useMemo(() => {
-    const visible = displayChannels
-      .filter((room) => matchesSearch(room.title ?? room.id, searchQuery))
-      .map((room) => ({ ...room, unreadNew: unreadCountFor(room, identity?.publicKey, readAt) }));
+    const visible = displayChannels.map((room) => ({
+      ...room,
+      unreadNew: unreadCountFor(room, identity?.publicKey, readAt),
+    }));
     return roomListSections(visible, authorNames, { now: ageNow });
-  }, [ageNow, authorNames, displayChannels, identity?.publicKey, readAt, searchQuery]);
+  }, [ageNow, authorNames, displayChannels, identity?.publicKey, readAt]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1364,23 +1355,13 @@ export default function BuzzChannels() {
                       >
                         {row.fact}
                       </Text>
-                      {row.pills.length > 0 && (
-                        <View style={styles.pillStrip}>
-                          {row.pills.map((pill, index) => (
-                            <Text
-                              key={`${pill.kind}-${index}`}
-                              style={[
-                                styles.rowPill,
-                                pill.kind === 'status'
-                                  ? styles.rowPillStatus
-                                  : pill.kind === 'unread' && styles.rowPillUnread,
-                              ]}
-                            >
-                              {pill.label.toUpperCase()}
-                            </Text>
-                          ))}
-                        </View>
-                      )}
+                      {/* The cell carries four things and nothing else: the
+                          status mark, the name, the last-message fact, and the
+                          corner count in the gutter. The old pill strip (model,
+                          participants, corners-open, needs-you) was redundant —
+                          the brass mark plus the accent fact already say
+                          "needs you," and the gutter already carries the corner
+                          count — so it is gone. */}
                     </View>
                   </BrittlePress>
                   {/* The right gutter: a fixed marginalia column IN FLOW (a
@@ -1417,8 +1398,7 @@ export default function BuzzChannels() {
                           </Text>
                         ) : (
                           /* No open work, but recorded corners exist: their
-                             total at the same ghosted tier — exactly what
-                             expanding reveals (no open rows + All Corners). */
+                             total at the same ghosted tier. */
                           <Text style={styles.cornerPeekCount}>{row.totalCorners}</Text>
                         )}
                       </TouchableOpacity>
@@ -1452,21 +1432,10 @@ export default function BuzzChannels() {
                         </TouchableOpacity>
                       );
                     })}
-                    {/* Always present while expanded — including when no open
-                        work is listed — so every Room with recorded corners
-                        keeps one durable path into its full corner list. */}
-                    <TouchableOpacity
-                      accessibilityLabel={`All ${CHANGES_LABEL} in ${title}`}
-                      accessibilityRole="button"
-                      onPress={() =>
-                        router.push(`/buzz/corners/${encodeURIComponent(item.id)}` as Href)
-                      }
-                      style={styles.cornerRow}
-                      testID={`room-all-corners-${item.id}`}
-                    >
-                      <Text style={styles.cornerAllText}>ALL {CHANGES_LABEL.toUpperCase()}</Text>
-                      <Text style={styles.cornerAllCaret}>›</Text>
-                    </TouchableOpacity>
+                    {/* No "all corners" row: the expansion IS the full list, so
+                        a separate link into it was redundant. When a Room grows
+                        past a sensible inline cap we surface "+N more" there —
+                        the only case that route earns its place. */}
                   </PixelGateReveal>
                 )}
               </View>
@@ -1476,21 +1445,11 @@ export default function BuzzChannels() {
           refreshing={refreshing}
         />
 
-        {/* The deck's footer: one search field and the brass ＋. The FAB is
-            the same affordance as the header's ＋ ROOM — one action, two
-            reaches — and the search filters the cached projection without
-            ever becoming a second source of rooms. */}
+        {/* The deck's footer: just the brass ＋. The captain removed the
+            search field — a supervision deck holds few rooms, and a phone
+            index never needed filtering. The FAB is the same affordance as
+            the header's ＋ ROOM. */}
         <View style={[styles.deckFoot, { paddingBottom: 12 + insets.bottom }]}>
-          <TextInput
-            accessibilityLabel={`Search ${ROOMS_LABEL.toLowerCase()}`}
-            autoCorrect={false}
-            onChangeText={setSearchQuery}
-            placeholder="Search rooms…"
-            placeholderTextColor={theme.buzz.dim}
-            style={styles.searchField}
-            testID="room-search"
-            value={searchQuery}
-          />
           {!viewerIsAgent && (
             <TouchableOpacity
               accessibilityLabel={`Create ${ROOM_LABEL}`}
@@ -1531,8 +1490,8 @@ const ROW_GUTTER_WIDTH = 46;
  * The row's MINIMUM height, not its height: every row must reserve this much
  * so the gutter can hold both of its marks — the age stamp on the name's line,
  * the corner count below it at a full 44pt touch target — but a row carrying
- * pills or wrapped preview lines grows past it instead of overflowing into
- * its neighbour. A fixed `height` here was the overlap defect that sank the
+ * a wrapped preview line grows past it instead of overflowing into its
+ * neighbour. A fixed `height` here was the overlap defect that sank the
  * first ship of this deck.
  */
 const INDEX_ROW_HEIGHT = 72;
@@ -1694,9 +1653,10 @@ const styles = StyleSheet.create((theme) => {
     alignItems: 'flex-start',
     gap: ROW_GAP,
   },
-  /* Fixed-width leading mark column — a flex child, not an overlay. Top
-   * padding drops the dot/ring/mark onto the name's optical line. */
-  rowMark: { width: ROW_MARK_WIDTH, alignItems: 'center', paddingTop: 4 },
+  /* Fixed-width leading mark column — a flex child, not an overlay. Its box is
+   * the exact height of the name's line and the mark is centered in it, so the
+   * dot/ring/mark lands AT the name's height instead of floating above it. */
+  rowMark: { width: ROW_MARK_WIDTH, height: 21, alignItems: 'center', justifyContent: 'center' },
   rowCopy: { flex: 1, minWidth: 0 },
   rowTitleLine: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
   /* The index reads on three tones and nothing else: the name is the brightest
@@ -1759,36 +1719,6 @@ const styles = StyleSheet.create((theme) => {
   },
   rowPreviewUnread: { color: groknight.ledgerBody },
   rowPreviewAttention: { color: groknight.accent },
-  /* The pill strip: quiet mono micro-labels carrying what you'd otherwise
-   * open the Room to learn. Only the status pill (needs-you) goes loud. */
-  pillStrip: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 9 },
-  rowPill: {
-    ...Typography.mono(),
-    borderWidth: 1,
-    borderColor: groknight.border,
-    borderRadius: 3,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    overflow: 'hidden',
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 0.4,
-  },
-  rowPillStatus: {
-    ...Typography.mono('semiBold'),
-    backgroundColor: groknight.accent,
-    borderColor: groknight.accent,
-    color: groknight.textInverted,
-    letterSpacing: 0.6,
-  },
-  /* Unread steps up one gray tier — it is attention-adjacent, but it is not
-   * brass, and the deck's whole point is that brass means only needs-you. */
-  rowPillUnread: {
-    ...Typography.mono('semiBold'),
-    borderColor: groknight.borderStrong,
-    color: groknight.textSecondary,
-  },
   roomCell: {
     position: 'relative',
     borderBottomWidth: 1,
@@ -1882,46 +1812,17 @@ const styles = StyleSheet.create((theme) => {
     lineHeight: 12,
     letterSpacing: 0.6,
   },
-  cornerAllText: {
-    ...Typography.mono('semiBold'),
-    flex: 1,
-    minWidth: 0,
-    marginLeft: 20,
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 0.8,
-  },
-  cornerAllCaret: {
-    ...Typography.default('semiBold'),
-    color: groknight.steel,
-    fontSize: 14,
-    lineHeight: 16,
-  },
 
-  /* ── the deck's footer: one search field, one brass ＋ ─────────────── */
+  /* ── the deck's footer: one brass ＋ ───────────────────── */
   deckFoot: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    justifyContent: 'flex-end',
     paddingHorizontal: SCREEN_INSET,
     paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: groknight.border,
     backgroundColor: groknight.bgTerminal,
-  },
-  searchField: {
-    ...Typography.mono(),
-    flex: 1,
-    minWidth: 0,
-    minHeight: 44,
-    paddingHorizontal: 13,
-    borderRadius: 3,
-    borderWidth: 1,
-    borderColor: groknight.border,
-    backgroundColor: groknight.bgRaised,
-    color: groknight.textSecondary,
-    fontSize: 12,
   },
   /* The FAB is a box that wraps something the user must find and act on —
    * the one place DESIGN.md's shape rule admits a filled brass surface. */

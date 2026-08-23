@@ -1979,6 +1979,8 @@ export class Body {
     args: string[],
   ) => Promise<ReturnType<typeof git>>;
   private repositoryAccessToken?: (repo: BoundRepo) => Promise<string | undefined>;
+  /** Binding author's current key after succession (auth-service answer). */
+  private resolveBindingOwnerKey?: (repo: BoundRepo) => Promise<string | undefined>;
   /** Rate limiter for the access-policy auto-response: one refusal per sender per window. */
   private readonly accessRefusals = new AccessRefusalLimiter();
   /** Cached owner display name for the auto-response template. */
@@ -2040,6 +2042,7 @@ export class Body {
         args: string[],
       ) => Promise<ReturnType<typeof git>>;
       repositoryAccessToken?: (repo: BoundRepo) => Promise<string | undefined>;
+      resolveBindingOwnerKey?: (repo: BoundRepo) => Promise<string | undefined>;
       onRoomPollSuccess?: (channelId: string) => void;
       onRoomPollFailure?: (channelId: string, retryInMs: number) => void;
       onRoomPresence?: (channelId: string, status: 'online' | 'offline') => void;
@@ -2070,6 +2073,7 @@ export class Body {
     this.syncPairingCheckout = services.syncPairingCheckout;
     this.runRepositoryGit = services.runRepositoryGit;
     this.repositoryAccessToken = services.repositoryAccessToken;
+    this.resolveBindingOwnerKey = services.resolveBindingOwnerKey;
     this.onRoomPollSuccess = services.onRoomPollSuccess;
     this.onRoomPollFailure = services.onRoomPollFailure;
     this.onRoomPresence = services.onRoomPresence;
@@ -6460,6 +6464,33 @@ export class Body {
    * the relay, verified fine against the repo+branch binding, and was skipped
    * by nothing but a quiet `continue`.
    */
+  /**
+   * Key succession (auth-service answer, no ledger knowledge here): when the
+   * signer is not itself a channel admin, an approval may still be
+   * owner-signed — if it comes from the CURRENT key of the identity that
+   * authored the Room's repository binding. The auth service resolves that
+   * key for us in its room-token answer (`resolveBindingOwnerKey`), so a
+   * replaced device key keeps approval authority over rooms its predecessor
+   * set up. The registered-agent refusal is re-checked fail-closed first:
+   * succession only ever moves authority between human-held keys.
+   */
+  private async isBindingOwnerSuccessor(pubkey: string, info: SubchannelInfo): Promise<boolean> {
+    if (!info.boundRepo || !this.resolveBindingOwnerKey) return false;
+    try {
+      const agentSigner = await isRegisteredAgentIdentity(pubkey, this.agentRelay);
+      if (agentSigner) return false;
+    } catch {
+      return false; // cannot prove the signer is human → fail closed
+    }
+    try {
+      const ownerKey = await this.resolveBindingOwnerKey(info.boundRepo);
+      return Boolean(ownerKey) && ownerKey === pubkey;
+    } catch (error) {
+      console.error('[body] binding-owner resolution failed; approval refused:', error);
+      return false;
+    }
+  }
+
   private async findHumanMergeApproval(
     info: SubchannelInfo,
   ): Promise<SubchannelInfo['humanMergeApproval']> {
@@ -6498,7 +6529,10 @@ export class Body {
         channelId: info.subchannelId,
         custody: 'device',
       });
-      if (!authority.authorized) continue;
+      if (!authority.authorized) {
+        const viaSuccession = await this.isBindingOwnerSuccessor(approval.pubkey, info);
+        if (!viaSuccession) continue;
+      }
       info.humanMergeApproval = {
         id: approval.id,
         reviewer: approval.pubkey,
@@ -6558,7 +6592,10 @@ export class Body {
       channelId: info.subchannelId,
       custody: 'device',
     });
-    if (!authority.authorized) return;
+    if (!authority.authorized) {
+      const viaSuccession = await this.isBindingOwnerSuccessor(approval.pubkey, info);
+      if (!viaSuccession) return;
+    }
     const branch = target.branch.replace(/^refs\/heads\//, '');
     const published = await publishCritical(
       () =>

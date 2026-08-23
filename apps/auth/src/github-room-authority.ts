@@ -15,7 +15,7 @@ type TokenAuthority = NonNullable<AuthServerOptions['authorizeGitHubRoomToken']>
  * the Room and that a human Room authority bound the exact GitHub repository.
  */
 export function createGitHubRoomTokenAuthority(
-  roomStore: Pick<AuthStore, 'relayCommunityIdForRoom'>,
+  roomStore: Pick<AuthStore, 'relayCommunityIdForRoom' | 'resolveCurrentPubkey'>,
 ): TokenAuthority {
   return async (tenant: AuthTenant, input) => {
     let relayAuthorizationIndex = 0;
@@ -54,9 +54,25 @@ export function createGitHubRoomTokenAuthority(
     if (!authorizedBy) {
       return { authorized: false, reason: 'room_repository_authority_missing' };
     }
+    // Key succession: the binding may have been authored by a key that has
+    // since been replaced (device lost, identity recovered onto a new key).
+    // Authority stays with the IDENTITY, so the author resolves to its
+    // current key; callers compare/look up against the resolved value. The
+    // relay-truth author pubkey still rides along as `authorizedBy`.
+    let currentAuthorizedBy = authorizedBy;
+    try {
+      currentAuthorizedBy = await roomStore.resolveCurrentPubkey(
+        tenant.community,
+        authorizedBy,
+      );
+    } catch {
+      // Resolution is an enrichment, not the authority proof itself — on a
+      // lookup failure fall back to the raw author (pre-succession behavior).
+    }
     return {
       authorized: true,
       authorizedBy,
+      currentAuthorizedBy,
       fullName: `${remote[1]}/${remote[2]}`,
       ...(repository.binding.githubInstallationId
         ? { githubInstallationId: repository.binding.githubInstallationId }

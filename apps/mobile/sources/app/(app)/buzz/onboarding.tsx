@@ -829,9 +829,9 @@ export default function BuzzOnboarding() {
         {!showAdvanced && notice?.status === 'link_conflict' && pendingBind.current ? (
           <View style={styles.recoveryActions}>
             <Text style={styles.recoveryWarning}>
-              Replacing the device key disconnects GitHub from the old key. Your old Rooms, DMs,
-              profile, and repository approvals do not transfer. If you backed up that key, import
-              it from Advanced instead.
+              Replacing the device key moves this GitHub link to your new key. Your Workspaces,
+              Rooms, and repository approvals follow this account — agents and people you work
+              with keep working with you, no re-invites.
             </Text>
             <MonoButton
               labelStyle={styles.buttonLabel}

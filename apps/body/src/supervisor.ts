@@ -860,6 +860,7 @@ export class WorkspaceSupervisor {
         syncPairingCheckout: (repo, tip) => this.syncPairingCheckout(repo, tip),
         runRepositoryGit: (repo, cwd, args) => this.runRepositoryGit(repo, cwd, args),
         repositoryAccessToken: (repo) => this.repositoryAccessToken(repo),
+        resolveBindingOwnerKey: (repo) => this.resolveBindingOwnerKey(repo),
         onRoomPollSuccess: health.poll,
         onRoomPollFailure: health.failure,
         onRoomPresence: health.presence,
@@ -1073,6 +1074,18 @@ export class WorkspaceSupervisor {
     if (!binding?.remote?.startsWith('git://github.com/')) return undefined;
     if (!this.githubApp) throw new Error('GitHub App credentials are not configured');
     return this.githubApp.repositoryInstallationToken(binding, repo.truth?.roomId);
+  }
+
+  /**
+   * The Room binding author's CURRENT key after succession (auth-service
+   * answer; undefined when unknown/non-GitHub). Lets Body accept a merge
+   * approval signed by the successor of the identity that authored the
+   * binding without teaching the daemon the succession ledger.
+   */
+  private async resolveBindingOwnerKey(repo: BoundRepo): Promise<string | undefined> {
+    const binding = repo.truth?.binding;
+    if (!binding?.remote?.startsWith('git://github.com/')) return undefined;
+    return this.githubApp?.bindingOwnerKey(binding, repo.truth?.roomId);
   }
 
   private async refreshBoundRepo(

@@ -67,6 +67,7 @@ import {
   listCommunities,
   renameCommunity,
   repairCommunityRoomMemberships,
+  migrateSuccessorMemberships,
   redeemInvite,
   revokeCommunityInvite,
   setCommunityAvatar,
@@ -426,10 +427,22 @@ export class BuzzClient {
   /**
    * Communities for any pubkey; defaults to this client's restored identity.
    * Self-listing also repairs missing direct Room projections for human members.
+   *
+   * With `predecessors` (this identity's key-succession chain, oldest first),
+   * self-listing first migrates this key into the Workspaces and top-level
+   * Rooms its predecessors held — at their role — so a replaced device key
+   * rediscovers everything with zero re-inviting.
    */
-  async listCommunities(pubkey = this.identity.publicKey): Promise<Community[]> {
-    const communities = await listCommunities(this.ctx, pubkey);
-    if (pubkey !== this.identity.publicKey) return communities;
+  async listCommunities(
+    pubkey: string = this.identity.publicKey,
+    predecessors?: readonly string[],
+  ): Promise<Community[]> {
+    const self = pubkey === this.identity.publicKey;
+    if (self && predecessors && predecessors.length > 0) {
+      await migrateSuccessorMemberships(this.ctx, predecessors);
+    }
+    const communities = await listCommunities(this.ctx, pubkey, 50, self ? predecessors ?? [] : []);
+    if (!self) return communities;
     for (const community of communities) {
       await repairCommunityRoomMemberships(this.ctx, community.communityId);
     }

@@ -41,6 +41,7 @@ export class GitHubAppRuntime {
     string,
     CachedToken & { installationId: number; fullName: string }
   >();
+  readonly #bindingOwnerKeys = new Map<string, string | undefined>();
 
   constructor(config: GitHubAppRuntimeConfig | GitHubTokenBrokerConfig) {
     if ('identity' in config) {
@@ -181,11 +182,30 @@ export class GitHubAppRuntime {
       installationId: granted.installationId,
       fullName: granted.fullName,
     });
+    this.#bindingOwnerKeys.set(cacheKey, granted.authorizedBy);
     return {
       token: granted.token,
       installationId: granted.installationId,
       fullName: granted.fullName,
     };
+  }
+
+  /**
+   * The Room binding author's CURRENT device key after succession (from the
+   * auth service's room-token answer), or undefined when unknown. The daemon
+   * accepts an exact-tip merge approval signed by this key as owner-signed
+   * without ever consulting the succession ledger itself.
+   */
+  async bindingOwnerKey(binding: RepositoryBinding, roomId?: string): Promise<string | undefined> {
+    const repository = githubRepository(binding.remote);
+    if (!this.#broker || !roomId || !repository) return undefined;
+    const cacheKey = `${roomId}:${binding.remote?.toLowerCase() ?? ''}`;
+    const cached = this.#brokerTokens.get(cacheKey);
+    if (cached && cached.expiresAt - this.#now() > 5 * 60_000) {
+      return this.#bindingOwnerKeys.get(cacheKey);
+    }
+    await this.repositoryToken(binding, roomId);
+    return this.#bindingOwnerKeys.get(cacheKey);
   }
 
   async repositoryInstallationToken(binding: RepositoryBinding, roomId?: string): Promise<string> {

@@ -92,6 +92,12 @@ const monoStyles = new Set([
   'rowFlag',
   'rowAge',
   'rowAgeUnread',
+  // The supervision deck's mono micro-metadata: repo tag, pill strip, search.
+  'rowRepo',
+  'rowPill',
+  'rowPillStatus',
+  'rowPillUnread',
+  'searchField',
   'rowPreviewAuthor',
   'cornerAllText',
   'railCommandLabel',

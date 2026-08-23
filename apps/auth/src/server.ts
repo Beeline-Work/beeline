@@ -300,7 +300,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       // org install behind exactly that blindness. The App JWT sees every
       // installation, so an install whose callback never persisted is
       // discovered here without the owner re-running the install flow.
-      const installations = await options.github!.app.listInstallations();
+      const installations = await options.github!.app.listInstallations();;
       // One user-token listing answers "which installations does this user
       // administer" for every candidate at once; computed only when a
       // not-yet-recorded installation actually needs the ownership gate.
@@ -331,7 +331,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
           // follows the install-callback precedent — GitHub's state-bound
           // redirect is absent here, but an unavailable listing is logged
           // and proceeded with, while a definitive denial refuses.
-          const administered = await administeredByUser();
+          const administered = await administeredByUser();;
           if (administered !== 'unavailable') {
             if (!administered.has(installationId)) continue;
           } else if (account.type !== 'Organization') {
@@ -1653,11 +1653,27 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       // App can enumerate its own installations server-side. Reconcile once
       // (rate-limited), re-resolve, and only then refuse with the actionable
       // message.
-      const owner = (access.movedTo ?? authority.fullName).split('/')[0] ?? '';
-      if (
-        owner &&
-        !(await options.store.githubActiveInstallationCoversAccount(tenant.community, owner))
-      ) {
+      //
+      // When the repository MOVED, its destination is usually unknown at this
+      // point: GitHub only honours the rename redirect for viewers an
+      // installation already covers, so a transfer to an account whose install
+      // was never recorded leaves movedTo empty and the OLD owner's name as
+      // the only visible one. Gating reconcile on that old owner's coverage
+      // optimizes away the exact healing case — a stale-but-active install on
+      // the previous owner then suppresses reconciliation forever while the
+      // unrecorded destination install sits undiscovered on GitHub. So an
+      // unusable resolution with NO known destination reconciles
+      // unconditionally (the enumeration is rate-limited inside); a known
+      // destination keeps the owner-coverage check on ITS owner.
+      const destinationOwnerUncovered = async (): Promise<boolean> => {
+        const owner = access.movedTo?.split('/')[0];
+        if (!owner) return false;
+        return !(await options.store.githubActiveInstallationCoversAccount(
+          tenant.community,
+          owner,
+        ));
+      };
+      if (!access.movedTo || (await destinationOwnerUncovered())) {
         await reconcileGitHubInstallations(tenant.community, authority.authorizedBy, request.log);
         access = await resolveGitHubRepositoryAccess(
           { app: options.github.app, store: options.store },

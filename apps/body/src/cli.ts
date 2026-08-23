@@ -103,7 +103,6 @@ ${pc.dim('Usage:')}
   beeline serve <channel-uuid> <owner> <repo>  Internal: serve one explicitly-wired Room
   beeline open <channel-uuid> <owner> <repo>  Open subchannel + edit session
   beeline archive <subchannel-uuid>         Archive subchannel
-  beeline create-and-provision <name>       Create a new TLC + provision agent
   beeline pair <BUZZ-XXXX-XXXX> [options]   Pair an agent (optionally to this repo)
                                             and start its durable daemon
   beeline start [agent-pubkey]              Start — or RESTART when already running,
@@ -1164,30 +1163,6 @@ async function main(): Promise<void> {
           body.archiveSubchannel(subchannelId),
         );
         console.log(`[body] archived: subchannel=${subchannelId}`);
-        break;
-      }
-
-      case 'create-and-provision': {
-        const name = args[1] ?? 'buzzy-tlc';
-        const channelId = await withSpinner(
-          interactiveUi,
-          `Creating ${name}…`,
-          'Created.',
-          () => createChannel(bodyIdentity, name),
-        );
-        console.log(`[body] created TLC: ${channelId} name=${name}`);
-
-        // Add agent as member.
-        await setMemberRole(bodyIdentity, channelId, agentIdentity.publicKey, 'member');
-
-        const session = await withSpinner(
-          interactiveUi,
-          `Provisioning ${channelId}…`,
-          'Provisioned.',
-          () => body.provision(channelId),
-        );
-        console.log(`[body] provisioned: session=${session.sessionId}`);
-        console.log(`CHANNEL=${channelId}`);
         break;
       }
 

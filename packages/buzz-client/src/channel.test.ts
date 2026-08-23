@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import {
+  createChannel,
   isMember,
   getChannelMetadata,
   listChannelsForPubkey,
@@ -618,5 +619,92 @@ describe('waitUntilMember (WS-driven)', () => {
     await expect(
       waitUntilMember(wsCtx, channelId, recruit.publicKey, { timeoutMs: 80, intervalMs: 20 }),
     ).rejects.toThrow(/membership not visible/);
+  });
+});
+
+describe('top-level Room creation is human-only', () => {
+  const agent = createIdentity('agent-creator');
+  const human = createIdentity('human-creator');
+
+  /** The durable self-signed first-class agent record (`#t=buzz-agent`). */
+  function agentRecord(): NostrEvent {
+    return signEvent(
+      {
+        pubkey: agent.publicKey,
+        created_at: Math.floor(Date.now() / 1000),
+        kind: KIND_STREAM_MESSAGE,
+        tags: [['t', 'buzz-agent']],
+        content: '',
+      },
+      agent.secretKey,
+    );
+  }
+
+  function stubRelay(): NostrEvent[] {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith('/events')) {
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+        }
+        const filter = (JSON.parse(String(init?.body)) as Record<string, unknown>[])[0] ?? {};
+        if ((filter.kinds as number[] | undefined)?.[0] === KIND_STREAM_MESSAGE) {
+          const authors = (filter.authors as string[]) ?? [];
+          return new Response(
+            JSON.stringify(authors.includes(agent.publicKey) ? [agentRecord()] : []),
+            { status: 200 },
+          );
+        }
+        return new Response('[]', { status: 200 });
+      }),
+    );
+    return published;
+  }
+
+  it('refuses a registered agent identity as the creator of a Room', async () => {
+    const published = stubRelay();
+
+    await expect(createChannel({ http: { ...http, identity: agent }, identity: agent }, 'firstmate'))
+      .rejects.toThrow('room creation is a human action');
+    // The refusal happens before any kind:9007 write leaves the client.
+    expect(published).toEqual([]);
+  });
+
+  it('still creates a Room when the creator has no agent record (human)', async () => {
+    const published = stubRelay();
+    const humanCtx: ChannelOpsContext = { http: { ...http, identity: human }, identity: human };
+
+    const channelId = await createChannel(humanCtx, 'beeline');
+    expect(channelId).toBeTruthy();
+    expect(published).toHaveLength(1);
+    expect(published[0]!.kind).toBe(KIND_CREATE_GROUP);
+    expect(published[0]!.pubkey).toBe(human.publicKey);
+  });
+
+  it('never consults the agent registry for a corner (child channel)', async () => {
+    const published = stubRelay();
+    let registryQueries = 0;
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/events')) {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }
+      registryQueries += 1;
+      return new Response('[]', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const channelId = await createChannel(
+      { http: { ...http, identity: agent }, identity: agent },
+      'fix-the-thing',
+      { parentChannelId: 'parent-room' },
+    );
+    expect(channelId).toBeTruthy();
+    expect(registryQueries).toBe(0);
+    expect(published[0]!.tags).toContainEqual(['parent', 'parent-room']);
   });
 });

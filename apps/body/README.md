@@ -203,17 +203,16 @@ npm run body -- open <tlc-uuid> <repo-owner-hex> <repo-name>
 
 # Archive a subchannel
 npm run body -- archive <subchannel-uuid>
-
-# Create a new TLC + provision agent (all-in-one)
-npm run body -- create-and-provision "my-project"
-
 ```
 
 `pair --repo` uses `origin` as the repository identity. HTTPS and SSH clone
 forms are normalized and credential material is discarded, so clones of the
-same remote in one Workspace converge on one Room. With no `origin`, explicit
-`--repo` pairing creates a local-only Room that deliberately does not converge
-across machines. A bare `pair` never inspects cwd and creates no repository
+same remote in one Workspace converge on one Room. Room creation is a human
+action: `pair --repo` JOINS the Room already bound to that repository and
+fails with an actionable message when none exists — it never creates one (a
+human creates Rooms, and binds repositories to them, from the app). With no
+`origin`, explicit `--repo` pairing joins a local-only Room bound to that
+repository. A bare `pair` never inspects cwd and creates no repository
 binding. A Room has one immutable repository binding; multiple paired agents in
 it create parallel feature branches of that repository.
 

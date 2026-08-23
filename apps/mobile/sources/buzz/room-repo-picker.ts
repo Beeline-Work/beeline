@@ -45,6 +45,49 @@ export function githubRepositoryLinkagePlan(
 export const GITHUB_REPOSITORY_SELECTION_INSTRUCTION =
   'Choose the repositories Beeline may access, then return.';
 
+/**
+ * Case-insensitive live filter behind the picker's search field. Every
+ * whitespace-separated token must appear as a substring of the candidate's
+ * owner/name, its remote URL, or its owning installation's account login —
+ * so "acme wid" narrows to acme/wid* and "octo" still finds repos grouped
+ * under the octocat installation whose local name omits the owner.
+ * Empty/whitespace query matches everything.
+ */
+export function matchesRepoQuery(
+  candidate: Pick<RepoCandidate, 'name' | 'remote'>,
+  query: string,
+  extraFields?: readonly (string | undefined)[],
+): boolean {
+  const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return true;
+  const haystack = [candidate.name, candidate.remote, ...(extraFields ?? [])]
+    .filter((field): field is string => typeof field === 'string' && field.length > 0)
+    .join('\n')
+    .toLowerCase();
+  return tokens.every((token) => haystack.includes(token));
+}
+
+/** Filter candidates for the picker's live search (see {@link matchesRepoQuery}). */
+export function filterRepoCandidates(
+  candidates: readonly RepoCandidate[],
+  query: string,
+  installations?: readonly Pick<GitHubInstallationAccess, 'installationId' | 'accountLogin'>[],
+): RepoCandidate[] {
+  if (!query.trim()) return [...candidates];
+  const loginByInstallationId = new Map(
+    (installations ?? []).map((installation) => [
+      installation.installationId,
+      installation.accountLogin,
+    ]),
+  );
+  return candidates.filter((candidate) => {
+    const login = candidate.githubInstallationId
+      ? loginByInstallationId.get(candidate.githubInstallationId)
+      : undefined;
+    return matchesRepoQuery(candidate, query, [login]);
+  });
+}
+
 /** Distinct repositories exposed by the account's GitHub App installation. */
 export function dedupeRepoCandidates(bindings: readonly RepoCandidate[]): RepoCandidate[] {
   const byKey = new Map<string, RepoCandidate>();

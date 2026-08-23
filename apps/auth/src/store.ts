@@ -196,6 +196,7 @@ const MIGRATIONS = [
     updated_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (community, subject)
   )`,
+  `ALTER TABLE beeline_github_user_tokens ADD COLUMN IF NOT EXISTS stale_at TIMESTAMPTZ`,
   `CREATE TABLE IF NOT EXISTS beeline_github_installation_reconciliations (
     community TEXT NOT NULL,
     subject TEXT NOT NULL,
@@ -1080,7 +1081,7 @@ export class AuthStore {
        LEFT JOIN beeline_github_repositories r
          ON r.community = i.community AND r.installation_id = i.installation_id
        WHERE i.community = $1 AND i.pubkey = $2 ${condition}
-       ORDER BY (i.status = 'active' AND COALESCE(r.active, FALSE)) DESC
+       ORDER BY (i.status = 'active' AND COALESCE(r.active, FALSE)) DESC, r.updated_at DESC NULLS LAST
        LIMIT 1`,
       values,
     );
@@ -1253,10 +1254,11 @@ export class AuthStore {
     now: Date,
   ): Promise<void> {
     await this.database.query(
-      `INSERT INTO beeline_github_user_tokens (community, subject, encrypted_token, updated_at)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO beeline_github_user_tokens (community, subject, encrypted_token, updated_at, stale_at)
+       VALUES ($1, $2, $3, $4, NULL)
        ON CONFLICT (community, subject) DO UPDATE SET
-         encrypted_token = EXCLUDED.encrypted_token, updated_at = EXCLUDED.updated_at`,
+         encrypted_token = EXCLUDED.encrypted_token, updated_at = EXCLUDED.updated_at,
+         stale_at = NULL`,
       [community, subject, encryptedToken, now],
     );
   }
@@ -1268,6 +1270,37 @@ export class AuthStore {
       [community, subject],
     );
     return result.rows[0]?.encrypted_token ?? null;
+  }
+
+  /** A stored user token GitHub answered 401/403 with — the app can silently re-auth. */
+  async markGitHubUserTokenStale(community: string, subject: string, now: Date): Promise<void> {
+    // Only the FIRST observation is interesting; a newer credential that has
+    // not been replaced yet keeps its original stale-since stamp.
+    await this.database.query(
+      `UPDATE beeline_github_user_tokens SET stale_at = COALESCE(stale_at, $3)
+       WHERE community = $1 AND subject = $2`,
+      [community, subject, now],
+    );
+  }
+
+  async clearGitHubUserTokenStale(community: string, subject: string): Promise<void> {
+    await this.database.query(
+      `UPDATE beeline_github_user_tokens SET stale_at = NULL
+       WHERE community = $1 AND subject = $2 AND stale_at IS NOT NULL`,
+      [community, subject],
+    );
+  }
+
+  async githubUserTokenStaleAt(community: string, subject: string): Promise<Date | null> {
+    const result = await this.database.query<QueryResultRow & { stale_at: string | Date | null }>(
+      `SELECT stale_at FROM beeline_github_user_tokens
+       WHERE community = $1 AND subject = $2`,
+      [community, subject],
+    );
+    const raw = result.rows[0]?.stale_at;
+    if (!raw) return null;
+    const date = raw instanceof Date ? raw : new Date(raw);
+    return Number.isNaN(date.getTime()) ? null : date;
   }
 
   async claimGitHubInstallationReconciliation(

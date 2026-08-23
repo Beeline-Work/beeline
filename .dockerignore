@@ -10,6 +10,12 @@ apps/auth/*
 !apps/auth/tsconfig.json
 !apps/auth/src
 !apps/auth/src/**
+!apps/push-gateway
+apps/push-gateway/*
+!apps/push-gateway/package.json
+!apps/push-gateway/tsconfig.json
+!apps/push-gateway/src
+!apps/push-gateway/src/**
 !packages
 packages/*
 !packages/nostr

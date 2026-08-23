@@ -8,6 +8,7 @@ registry_source=${BUZZ_PUSH_REGISTRY_SOURCE:?set BUZZ_PUSH_REGISTRY_SOURCE}
 service_account_source=${BUZZ_PUSH_SA_SOURCE:?set BUZZ_PUSH_SA_SOURCE}
 release_id=$(git -C "$repo_root" rev-parse --short=12 HEAD)
 release_dir="$install_dir/releases/$release_id"
+image=${BUZZY_PUSH_IMAGE:-beeline-push-gateway:local}
 
 if [[ "$install_dir" == /tmp/* || "$install_dir" == *'/.treehouse/'* || "$install_dir" == *'/firstmate2/'* ]]; then
   echo "refusing ephemeral install directory: $install_dir" >&2
@@ -30,19 +31,13 @@ node -e '
   }
 ' "$registry_source"
 
-install -d -m 700 "$install_dir" "$install_dir/bin" "$install_dir/releases" "$install_dir/secrets" "$install_dir/state"
+install -d -m 700 "$install_dir" "$install_dir/releases" "$install_dir/secrets" "$install_dir/state"
 if [[ ! -d "$release_dir" ]]; then
   install -d -m 755 "$release_dir"
   git -C "$repo_root" archive HEAD | tar -x -C "$release_dir"
-  npm ci --prefix "$release_dir"
-  npm run build -w @beeline/nostr --prefix "$release_dir"
-  npm run build -w @beeline/buzz-client --prefix "$release_dir"
-  npm run build -w @beeline/push-gateway --prefix "$release_dir"
-  npm prune --omit=dev --prefix "$release_dir"
 fi
 
 ln -sfn "$release_dir" "$install_dir/current"
-ln -sfn "$(readlink -f "$(command -v node)")" "$install_dir/bin/node"
 service_account_target="$install_dir/secrets/fcm-service-account.json"
 if [[ "$(readlink -f "$service_account_source")" != "$(readlink -f "$service_account_target")" ]]; then
   install -m 600 "$service_account_source" "$service_account_target"
@@ -53,28 +48,22 @@ if [[ ! -e "$install_dir/state/registrations.json" ]]; then
   install -m 600 "$registry_source" "$install_dir/state/registrations.json"
 fi
 
-install -d -m 700 "$HOME/.config/systemd/user"
-install -m 644 "$repo_root/apps/push-gateway/deploy/buzzy-push-gateway.service" "$HOME/.config/systemd/user/buzzy-push-gateway.service"
+docker build -t "$image" -f "$release_dir/apps/push-gateway/Dockerfile" "$release_dir"
 
-export BUZZ_PUSH_INSTALL_DIR="$install_dir"
-docker compose \
-  -f "$relay_compose_dir/compose.yml" \
-  -f "$release_dir/apps/push-gateway/deploy/compose.trusted-read.yml" \
-  --project-directory "$relay_compose_dir" \
-  config --quiet
-docker compose \
-  -f "$relay_compose_dir/compose.yml" \
-  -f "$release_dir/apps/push-gateway/deploy/compose.trusted-read.yml" \
-  --project-directory "$relay_compose_dir" \
-  up -d trusted-read-relay trusted-read-front
-# The Nginx config is a single-file bind. Recreate the front so Docker follows
-# the new release symlink instead of retaining the previous inode.
-docker compose \
-  -f "$relay_compose_dir/compose.yml" \
-  -f "$release_dir/apps/push-gateway/deploy/compose.trusted-read.yml" \
-  --project-directory "$relay_compose_dir" \
-  up -d --force-recreate --no-deps trusted-read-front
+export BUZZY_PUSH_IMAGE="$image"
+export BUZZY_PUSH_SA_HOST_FILE="$service_account_target"
+export BUZZY_PUSH_STATE_DIR="$install_dir/state"
+compose=(docker compose -f "$relay_compose_dir/compose.yml" --project-directory "$relay_compose_dir")
+"${compose[@]}" config --quiet
+"${compose[@]}" config --services | grep -qx push-gateway
 
-systemctl --user daemon-reload
-systemctl --user enable buzzy-push-gateway.service
-systemctl --user restart buzzy-push-gateway.service
+# Only one poller may own the durable delivery ledger. Stop the legacy unit
+# immediately before starting the replacement container.
+if systemctl --user is-active --quiet buzzy-push-gateway.service \
+  || systemctl --user is-enabled --quiet buzzy-push-gateway.service; then
+  systemctl --user disable --now buzzy-push-gateway.service
+fi
+"${compose[@]}" up -d --no-deps push-gateway
+# relay-front's nginx config is a read-only single-file bind. Recreate it so
+# Docker follows an atomically replaced host file instead of the old inode.
+"${compose[@]}" up -d --force-recreate --no-deps relay-front

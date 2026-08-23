@@ -9,9 +9,7 @@ WorkingDirectory=%h/buzzy-push-gateway/current
 Environment=BUZZY_RELAY_URL=http://127.0.0.1:3410
 Environment=BUZZY_RELAY_HOST=usebeeline.app
 Environment=BUZZY_RELAY_SUBSCRIPTION_URL=https://usebeeline.app
-# relay-front reaches this host service through Docker's host-gateway mapping.
-# Production has no directly published ingress ports; public access remains nginx-only.
-Environment=BUZZY_PUSH_HOST=0.0.0.0
+Environment=BUZZY_PUSH_HOST=127.0.0.1
 Environment=PORT=8788
 Environment=BUZZY_PUSH_SA_FILE=%h/buzzy-push-gateway/secrets/fcm-service-account.json
 Environment=BUZZY_PUSH_REGISTRY_FILE=%h/buzzy-push-gateway/state/registrations.json

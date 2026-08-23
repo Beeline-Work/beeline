@@ -14,8 +14,8 @@ import { useUnistyles } from 'react-native-unistyles';
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 
-// THE ALLOY — canonical coin geometry (semicircle + half-square fused, triangle cut as
-// negative space via evenodd). The group shift optically centers the enlarged triangle.
+// The original continuous-line loop — canonical geometry (see sources/assets/images/mark.svg,
+// do not redesign). The group transform places the path on its 240-unit canvas.
 const MARK_PATH = beelineMark.path;
 const MARK_VIEWBOX = beelineMark.viewBox;
 const MARK_TRANSFORM = beelineMark.transform;

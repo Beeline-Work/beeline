@@ -34,6 +34,7 @@ import { fetchAgentModelCatalog } from './model-catalog.js';
 import { unadvertisedModelSelectionValues } from './model-config.js';
 import { pickModelAndEffort, resolveAccessSettings } from './agent-settings-prompts.js';
 import { withSpinner } from './clack-support.js';
+import { readOperatorMcpServers } from './operator-mcp.js';
 import { Body } from './body.js';
 import { WorkspaceSupervisor } from './supervisor.js';
 import {
@@ -434,6 +435,11 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   if (runtime.externalMcpCapabilities) {
     config.externalMcpCapabilities = [...runtime.externalMcpCapabilities];
   }
+  // Operator-authored MCP tool servers for corners (`operator-mcp.json` in the
+  // runtime directory — the same directory `runtimeDir` below derives). Read
+  // at daemon start so editing the file takes effect on the next daemon
+  // restart, like the rest of the runtime record.
+  config.operatorMcpServers = readOperatorMcpServers(dirname(configPath));
   if (runtime.modelSelection) config.modelSelection = runtime.modelSelection;
   // OS sandbox for every ACP child (`bwrap-sandbox.ts`). Detected exactly once
   // here, at daemon start, so an unusable bwrap costs one advisory line rather

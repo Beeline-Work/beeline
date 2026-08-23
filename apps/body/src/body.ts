@@ -20,6 +20,7 @@ import WebSocket from 'ws';
 import {
   AcpClient,
   isMutatingPermissionRequest,
+  type AcpAvailableCommand,
   type AcpPermissionDecision,
   type AcpPermissionHandler,
   type AcpPermissionRequest,
@@ -47,6 +48,7 @@ import {
   type ActivityProjectionController,
   type CompactActivityPlan,
 } from './activity.js';
+import { createAgentCommandPublisher } from './agent-commands-publish.js';
 import {
   PI_CORNER_REQUEST_INSTRUCTIONS,
   createCornerRequestFilter,
@@ -104,6 +106,7 @@ import {
   summarizeGitFailure,
   getAgentModelConfig,
   getAgentModelCatalog,
+  publishAgentCommands,
   getRoomRepository,
   publishAgentModelCatalog,
   type AgentPresence,
@@ -189,6 +192,7 @@ import {
   authorizedExternalMcpServers,
   isExternalMcpPermissionRequest,
 } from './external-mcp-capabilities.js';
+import { operatorMcpServersForCorners } from './operator-mcp.js';
 import {
   applyAgentModelSelection,
   filterAllowedModelConfigOptions,
@@ -295,6 +299,8 @@ export interface AgentSession {
   parentChannelId?: string;
   /** Unsubscribe from activity projection. */
   unsubscribeActivity?: () => void;
+  /** Unsubscribe from harness command-list capture (relay republish). */
+  unsubscribeCommands?: () => void;
   /** Corner-only plan boundary layered onto the activity projection. */
   activityProjection?: ActivityProjectionController;
   /** Task-authored opening plan to publish when a lazily suspended session activates. */
@@ -409,6 +415,13 @@ const MODEL_CATALOG_PROBES = new Map<string, Promise<AgentModelConfigOption[]>>(
 /** Selections this process has already synced, so N Rooms starting at once
  * publish the same `(communityId, pubkey)` record once, not N times. */
 const MODEL_SELECTION_SYNCED = new Set<string>();
+
+/**
+ * Command-list publishes are deduped per process by exact list signature, so a
+ * burst of identical `available_commands_update` pushes (session re-activations,
+ * several Rooms sharing one harness) costs one relay write, not one each.
+ */
+const PUBLISHED_COMMAND_SIGNATURES = new Set<string>();
 
 /**
  * Best-effort live read of this agent's advertised model/effort catalog, so a
@@ -777,6 +790,22 @@ export interface SubchannelInfo {
    * which archives as soon as neither reports activity.
    */
   archiveWhenSessionRetires?: boolean;
+  /**
+   * Newest feature-branch tip the harness-independent commit watch has already
+   * evaluated through `publishMergeReady`.
+   *
+   * The turn tail (`finishCornerTurnAgainstMergeGate`) only runs when an ACP
+   * turn actually RESOLVES — and harnesses differ in what that takes. pi-acp
+   * executes reads/writes/shell before the daemon ever sees them, so any turn
+   * that dies mid-flight (stall timeout, process exit, relay outage during the
+   * completion publish) leaves committed work on the corner branch with no
+   * review card and no retry until a human sends another message. The commit
+   * watch closes that gap from signals every harness produces identically:
+   * commits appearing on the branch in a clean worktree. Set only after
+   * `publishMergeReady` resolves (never on entry), so a transient failure is
+   * re-attempted on the next maintenance tick for the same tip.
+   */
+  observedReviewTip?: string;
 }
 
 /** Fail closed unless an archive target is the exact relay-linked child session. */
@@ -2486,6 +2515,8 @@ export class Body {
             created.raw,
             session,
           );
+          session.unsubscribeCommands?.();
+          session.unsubscribeCommands = this.attachAgentCommandPublisher(client, input.communityId);
         }
         return created.sessionId;
       },
@@ -2494,6 +2525,8 @@ export class Body {
         if (plan) session.resumePlan = plan;
         session.unsubscribeActivity?.();
         session.unsubscribeActivity = undefined;
+        session.unsubscribeCommands?.();
+        session.unsubscribeCommands = undefined;
         session.activityProjection = undefined;
         if (client.isAlive) await client.stop();
       },
@@ -2565,6 +2598,33 @@ export class Body {
     }
     if (!applied) return;
     await applyAgentModelSelection(client, sessionId, rawConfigOptions, applied);
+  }
+
+  /**
+   * Capture this agent's harness-advertised slash commands/skills and republish
+   * them as the durable `(communityId, agentPubkey)` record the mobile composer
+   * renders its palette from. Adapters push `available_commands_update` at
+   * session start and on mid-session change, so a plain event listener covers
+   * both. Best-effort and display-only: never blocks session startup, never
+   * carries authority. An empty list is not published — record absence IS the
+   * "does not advertise" signal. Mechanics: `agent-commands-publish.ts`.
+   */
+  private attachAgentCommandPublisher(client: AcpClient, communityId: string): () => void {
+    const publisher = createAgentCommandPublisher({
+      publish: async (commands) => {
+        await publishAgentCommands(this.agentClientContext(), communityId, commands);
+      },
+      publishedSignatures: PUBLISHED_COMMAND_SIGNATURES,
+      dedupeKeyPrefix: communityId,
+    });
+    const onCommands = ({ commands }: { commands: AcpAvailableCommand[] }) => {
+      publisher.onCommands(commands);
+    };
+    client.on('commands', onCommands);
+    return () => {
+      client.off('commands', onCommands);
+      publisher.dispose();
+    };
   }
 
   /**
@@ -3703,6 +3763,11 @@ export class Body {
         this.config.externalMcpCapabilities,
       ),
     );
+    // Operator-authored tool servers (`operator-mcp.json`), same `creator`
+    // authorization shape as the capability profiles above. pi ignores this
+    // wire field entirely (it loads the operator's own global extensions), so
+    // for pi these are additive documentation — see `operator-mcp.ts`.
+    mcpServers.push(...operatorMcpServersForCorners(this.config.accessPolicy, this.config.operatorMcpServers));
     const codegraphServer = codegraphMcpServer(this.config);
     if (codegraphServer) mcpServers.push(codegraphServer);
 
@@ -7692,6 +7757,102 @@ export class Body {
   }
 
   /**
+   * Harness-independent merge-present watch.
+   *
+   * The ONLY trigger for publishing a review card used to be a completed ACP
+   * turn (`finishCornerTurnAgainstMergeGate`). That shape silently favours
+   * harnesses whose turn lifecycle the daemon can fully observe: codex-acp
+   * routes every tool through `session/request_permission`, so the daemon sees
+   * each step and the turn resolves through the protocol. pi-acp runs
+   * reads/writes/edits/shell BEFORE the daemon sees them and emits them as
+   * post-hoc `tool_call` telemetry — when one of those turns dies before its
+   * final response (idle-timeout cancel, adapter exit, a relay refusal during
+   * the completion publish), the commits it already made sit on the feature
+   * branch with no review card and no retry until a human sends another
+   * message. Observed live on the owner's host: pi corners holding real
+   * committed work whose parent Room only ever showed "Nothing committed is
+   * ready for review" / "Work stopped" cards, never a review target.
+   *
+   * The fix reads the one signal every harness produces identically — the git
+   * worktree itself. When a served corner holds committed work beyond its
+   * target branch in a clean tree, and no turn is running that would publish
+   * its own tail, this evaluates the same `publishMergeReady` gate the turn
+   * tail uses. It is deliberately BOUNDED to new tips (see
+   * `SubchannelInfo.observedReviewTip`) so a corner mid-task is never nagged:
+   * dirty trees and tips already reviewed or landed are skipped before any
+   * relay write, and the not-ready card publishes once per tip.
+   */
+  private async pollCornerCommitWatch(): Promise<void> {
+    for (const info of [...this.subchannels.values()]) {
+      try {
+        await this.observeCornerCommits(info);
+      } catch (error) {
+        // One corner's failed observation must not starve the corners behind
+        // it; the tip stays unmarked in `observedReviewTip`, so the next tick
+        // retries the same evaluation.
+        console.error(
+          `[body] corner ${info.subchannelId} commit watch failed; will retry:`,
+          error,
+        );
+      }
+    }
+  }
+
+  private async observeCornerCommits(info: SubchannelInfo): Promise<void> {
+    if (!info.boundRepo || info.archived || info.landedTip) return;
+    // An in-flight turn owns its own merge-present tail — both the success
+    // path and the merge-gate feedback loop. Watching underneath it would
+    // publish half-finished work or race the tail's own verdict.
+    if (this.runningAgentTasks.has(info.subchannelId)) return;
+    if (info.session.client?.activeRunId?.(info.session.sessionId)) return;
+    const tip = git(info.worktreePath, ['rev-parse', 'HEAD']).stdout.trim();
+    if (!/^[0-9a-f]{40}$/.test(tip)) return;
+    if (
+      info.observedReviewTip === tip ||
+      info.mergeTarget?.tip === tip ||
+      info.landedTip === tip
+    ) {
+      return;
+    }
+
+    // Cheap local pre-checks so a mid-work worktree never reaches the gate
+    // from this path. The authoritative remote-target check still happens
+    // inside `publishMergeReady` — these are guards, not the verdict. If the
+    // local target ref cannot be resolved at all, stay silent: the turn tail
+    // remains the authority for shapes this cheap read cannot see.
+    const status = git(info.worktreePath, [
+      'status',
+      '--porcelain=v1',
+      '--untracked-files=all',
+      '-z',
+    ]).stdout;
+    if (projectDirtyStatus(info.worktreePath, status, info.session.agentPrivateState).length > 0) {
+      return;
+    }
+    const targetBranch = info.boundRepo.targetBranch ?? 'refs/heads/main';
+    const baseTip = git(info.worktreePath, ['rev-parse', '--verify', targetBranch]).stdout.trim();
+    if (!/^[0-9a-f]{40}$/.test(baseTip)) return;
+    if (!git(info.worktreePath, ['merge-base', '--is-ancestor', baseTip, tip]).ok) return;
+    const ahead =
+      Number(git(info.worktreePath, ['rev-list', '--count', `${baseTip}..${tip}`]).stdout.trim()) ||
+      0;
+    if (ahead === 0) return;
+
+    const ready = await this.publishMergeReady(info);
+    // Settled: mark the tip evaluated so this exact tip is never re-driven
+    // from the watch (the ready card's idempotency lives in
+    // `publishMergeTarget`; the not-ready card must state once per tip, not
+    // once per tick). A throw above skips this line, so transient failures
+    // retry next tick.
+    info.observedReviewTip = tip;
+    console.log(
+      `[body] corner ${info.subchannelId} commit watch: ${
+        ready ? 'published review' : 'evaluated, not ready'
+      } at ${tip.slice(0, 12)}`,
+    );
+  }
+
+  /**
    * Keep optional Room maintenance from terminating the request loop. A failed
    * child poll or merge check is retried on this Room's next tick; it cannot
    * dispose this Room or interfere with another Room's Body instance.
@@ -7730,6 +7891,13 @@ export class Body {
     if (boundRepo) {
       await guarded('foreign merge-land watch', () => this.pollForeignMergeLands(channelId));
     }
+    // Harness-independent review publication: committed work on a corner branch
+    // presents for review even when its harness produced no completable turn
+    // for the daemon to observe (pi-acp bypasses ACP-observed tool calls
+    // entirely). Runs after the land polls so an already-landed corner is
+    // skipped via `landedTip`, and before the member poll so a review card is
+    // on the wire before any queued steer starts a new turn.
+    await guarded('corner commit watch', () => this.pollCornerCommitWatch());
     await guarded('corner member poll', async () => {
       const results = await Promise.allSettled(
         [...this.subchannels.keys()].map((subchannelId) => this.pollMembers(subchannelId)),
@@ -8258,6 +8426,14 @@ export class Body {
       } catch (error) {
         console.error(
           `[body] archive ${subchannelId}: activity teardown failed; continuing:`,
+          error,
+        );
+      }
+      try {
+        session.unsubscribeCommands?.();
+      } catch (error) {
+        console.error(
+          `[body] archive ${subchannelId}: command-list teardown failed; continuing:`,
           error,
         );
       }

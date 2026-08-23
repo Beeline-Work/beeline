@@ -70,6 +70,45 @@ export function slashVerbQuery(text: string): string | null {
   return match ? match[1].toLowerCase() : null;
 }
 
+/** One command an agent's harness advertises, as the composer palette renders it. */
+export type AgentPaletteCommand = {
+  name: string;
+  description?: string;
+  inputHint?: string;
+};
+
+/**
+ * A slash token typed right after a completed @Agent mention, e.g.
+ * `@lena /lo`. The palette then shows THAT agent's advertised commands;
+ * `null` when the composer is not in that shape (the plain whole-text slash
+ * query above still governs the built-in-verbs path).
+ */
+export type AgentMentionSlash = {
+  /** The mention token immediately before the slash (without `@`). */
+  mention: string;
+  /** The slash token typed so far, without the leading `/` ('' when just '/'). */
+  query: string;
+};
+
+const AGENT_MENTION_SLASH_PATTERN = /(?:^|[\s])@(\S+)[ \t]+\/([a-z0-9-]*)$/i;
+
+/** Detect `@mention /query` at the end of the composer text (a trailing space closes it). */
+export function agentMentionSlashQuery(text: string): AgentMentionSlash | null {
+  const match = AGENT_MENTION_SLASH_PATTERN.exec(text);
+  if (!match) return null;
+  return { mention: match[1] ?? '', query: (match[2] ?? '').toLowerCase() };
+}
+
+/** Match a palette query against a command's name, description, or hint. */
+export function matchesAgentCommand(command: AgentPaletteCommand, query: string): boolean {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return true;
+  return (
+    command.name.toLowerCase().startsWith(normalizedQuery) ||
+    (command.description?.toLowerCase().includes(normalizedQuery) ?? false)
+  );
+}
+
 export function availableSlashVerbs(
   availability: SlashVerbAvailability,
   query: string,

@@ -43,7 +43,7 @@ import { saveLastViewedChannel } from '@/buzz/community-storage';
 import { createCommunityInviteUrl } from '@/buzz/community-invite';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
-import { roomParticipantPubkeys } from '@/buzz/room-participants';
+import { formatRoomParticipantTotal, roomParticipantPubkeys } from '@/buzz/room-participants';
 import { shortMemberNpub } from '@/buzz/member-display';
 import { ensurePersonNameForWorkspace } from '@/buzz/person-name';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
@@ -1334,8 +1334,8 @@ export default function BuzzChannels() {
                     accessibilityLabel={`Open ${title}${
                       row.attention ? ', needs your attention' : ''
                     }${row.live && !row.attention ? ', agent working' : ''}, ${
-                      item.participantCount ?? 0
-                    } participants${
+                      formatRoomParticipantTotal(item.participantCount ?? 0)
+                    }${
                       canExpand ? `, ${corners.length} open ${CHANGES_LABEL}` : ''
                     }`}
                     contentStyle={styles.indexRow}

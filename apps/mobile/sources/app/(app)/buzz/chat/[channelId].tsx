@@ -3075,12 +3075,6 @@ export default function BuzzChat() {
     ],
   );
 
-  // The Workspace this Room belongs to, for the header's leading identity
-  // mark — the same mark the rail and the workspace drawer trigger draw.
-  const headerCommunity = activeCommunityId
-    ? (communities.find((community) => community.communityId === activeCommunityId) ?? null)
-    : null;
-
   if (channelCache?.messages === undefined && initialChannelCache?.messages === undefined) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
@@ -3145,22 +3139,11 @@ export default function BuzzChat() {
               />
             </HeaderIdentitySlot>
           )}
-          {!isCorner && !isDirectMessage && (
-            <HeaderIdentitySlot testID="room-header-workspace-mark">
-              <IdentityMark
-                kind="workspace"
-                seed={activeCommunityId ?? 'workspace-loading'}
-                avatarUrl={headerCommunity?.avatar}
-                name={headerCommunity?.name}
-                size={26}
-              />
-            </HeaderIdentitySlot>
-          )}
           <TouchableOpacity
             accessibilityLabel={
               isCorner
                 ? `${cornerAgentDisplay?.name ?? 'Agent'}’s ${CORNER_LABEL}. View ${formatRoomParticipantTotal(roomParticipantTotal)}`
-                : `View ${formatRoomParticipantTotal(roomParticipantTotal)} in this ${ROOM_LABEL}`
+                : `View ${formatRoomParticipantTotal(roomParticipantTotal)}`
             }
             accessibilityRole="button"
             disabled={!participantsHydrated}
@@ -3195,7 +3178,7 @@ export default function BuzzChat() {
                 testID="room-repo-chip"
               >
                 <HeaderMetaCaps testID="room-repo-chip-text">
-                  REPO · {roomRepoChipLabel(roomRepository)}
+                  {roomRepoChipLabel(roomRepository)}
                 </HeaderMetaCaps>
               </TouchableOpacity>
             )}
@@ -3223,7 +3206,7 @@ export default function BuzzChat() {
             ) : (
               <HeaderMetaCaps testID="room-header-meta">
                 {participantsHydrated
-                  ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ·  IN THIS ROOM  ›`
+                  ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ›`
                   : 'LOADING MEMBERS'}
               </HeaderMetaCaps>
             )}
@@ -3978,7 +3961,7 @@ export default function BuzzChat() {
                 ) : null,
               )}
               {roomParticipantTotal === 0 && (
-                <Text style={styles.rosterEmpty}>No visible participants</Text>
+                <Text style={styles.rosterEmpty}>No visible members</Text>
               )}
             </ScrollView>
             {membershipError && (

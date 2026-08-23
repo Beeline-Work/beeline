@@ -1159,7 +1159,7 @@ export default function BuzzChat() {
         : undefined,
     [messages, pinnedCorner],
   );
-  // cornerLifecycleStatus is a one-time snapshot fetched at mount; isArchived
+  // displayedCornerStatus is a one-time snapshot fetched at mount; isArchived
   // is kept live by several independent update paths (live archive signal,
   // revalidated cache, fresh isChannelArchived check). A confirmed archive
   // that resolves after mount must never leave this badge showing a stale
@@ -1167,6 +1167,15 @@ export default function BuzzChat() {
   const displayedCornerStatus = useMemo(
     () => resolveCornerLifecycleStatus(cornerLifecycleStatus, isArchived),
     [cornerLifecycleStatus, isArchived],
+  );
+  // This corner's own agent-presence verdict, from the same lifecycle snapshot
+  // the deck golds: when the oracle says STALLED (agent provably offline past
+  // its lease), the header badge says STALLED — never "NEEDS HUMAN" waiting
+  // on you. Absent = unknown = today's presentation.
+  const cornerAgentOffline = useMemo(
+    () =>
+      cornerLifecycle.find((corner) => corner.id === decodedId)?.agentOffline === true,
+    [cornerLifecycle, decodedId],
   );
   // The corner action area's card, from the SAME verdict the deck golds. One
   // derivation (`corner-attention.ts`); the screen renders the answer and
@@ -3356,8 +3365,13 @@ export default function BuzzChat() {
                     Same canonical status word as the Room-list dropdown, the
                     Room chat card, and the standalone Corners list.
                   */}
-                  {displayedCornerStatus
-                    ? `·  ${cornerStatusPresentation(displayedCornerStatus).glyph} ${cornerStatusPresentation(displayedCornerStatus).label}`
+                  {displayedCornerStatus || cornerAgentOffline
+                    ? `·  ${(() => {
+                        const p = cornerStatusPresentation(displayedCornerStatus, {
+                          agentOffline: cornerAgentOffline,
+                        });
+                        return `${p.glyph} ${p.label}`;
+                      })()}`
                     : '·  …'}
                   {participantsHydrated
                     ? `  ·  ${formatRoomParticipantTotal(roomParticipantTotal)}`

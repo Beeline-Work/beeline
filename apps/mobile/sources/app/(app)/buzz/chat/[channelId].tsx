@@ -1315,6 +1315,11 @@ export default function BuzzChat() {
     (newMsgs: ChatDisplayMessage[]) => {
       const viewerPubkey = useBuzzLocalCache.getState().activeViewerPubkey;
       if (!viewerPubkey) return;
+      // `isNew` here is safe precisely because this path only ever sees the
+      // optimistic send's fresh id — a genuine first insertion. Warm
+      // revalidation / WS replay do NOT flow through here; they go through
+      // `upsertChatMessages`, whose merge strips the flag from any id the
+      // cache already holds (the replay bug's actual funnel).
       useBuzzLocalCache.getState().upsertMessages(
         viewerPubkey,
         decodedId,

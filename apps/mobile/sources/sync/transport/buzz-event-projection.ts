@@ -883,7 +883,18 @@ const WRITE_PERMISSION_STATUS_ORDER: Record<
   failed: 2,
 };
 
-/** Stable-id upsert keeps lifecycle cards monotonic across replay order. */
+/**
+ * Stable-id upsert keeps lifecycle cards monotonic across replay order.
+ *
+ * This merge is also the AUTHORITY on `isNew`: a message id that already
+ * exists in the prior list is by definition not a new arrival, no matter
+ * which producer stamped the flag. Warm revalidation re-projects every
+ * fetched event as new (its cursor is inclusive, so known ids come back),
+ * and live WS resubscribes replay ids too — letting those through is what
+ * replayed the typewriter/entrance animations on every room open. Only an
+ * id entering the list for the first time keeps the flag, so a genuinely
+ * new live message still animates exactly once.
+ */
 export function upsertChatMessages(
   current: ChatDisplayMessage[],
   incoming: ChatDisplayMessage[],
@@ -960,6 +971,14 @@ export function upsertChatMessages(
             message.writePermission.subchannelId ?? existing.writePermission.subchannelId,
         },
       };
+    }
+    // Newness authority (see docblock): the flag survives only a FIRST
+    // insertion of this id. Checked here — after any re-id above, against the
+    // live map (prior cache + earlier entries in this same batch) — so every
+    // producer is covered by one rule.
+    if (message.isNew && byId.has(message.id)) {
+      const { isNew: _alreadyKnown, ...known } = message;
+      message = known;
     }
     byId.set(message.id, message);
   }

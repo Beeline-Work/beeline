@@ -186,9 +186,22 @@ for f in compose.yml nginx.conf; do
   cmp -s "$REPO_STACK/$f" "$STAGE/stack/$f" || die "staged $f differs from checkout — aborting before anything was touched"
 done
 
-# Validate the composed config WITHOUT touching real secrets: a throwaway
-# .env satisfies the compose file's :? guards; the host's real .env is never
-# read outside the sudo'd `compose up` (which runs as root).
+# Validate WITHOUT touching real secrets — and without letting compose read
+# them either: compose resolves env_file paths itself as the INVOKING user,
+# and the auth service's env_file entries point at lunchbox-owned secret
+# files the runner cannot read (this failed run 32615214417 with "open
+# /home/lunchbox/buzzy-auth/oidc.env: permission denied"). So validation runs
+# against a TRANSFORMED COPY whose env_file list items are rewritten to the
+# throwaway .env; the real compose.yml is only ever parsed by root via sudo.
+awk '
+  /^[[:space:]]*env_file:/ { print; inlist=1; next }
+  inlist && /^[[:space:]]*-[[:space:]]/ {
+    match($0, /^[[:space:]]*/)
+    print substr($0, RSTART, RLENGTH) "- .env"
+    next
+  }
+  { inlist=0; print }
+' "$STAGE/stack/compose.yml" > "$STAGE/stack/compose.validate.yml"
 cat > "$STAGE/stack/.env" <<'EOF'
 POSTGRES_PASSWORD=stage-dummy
 POSTGRES_USER=buzz
@@ -197,7 +210,7 @@ REDIS_PASSWORD=stage-dummy
 BUZZ_S3_ACCESS_KEY=stage-dummy
 BUZZ_S3_SECRET_KEY=stage-dummy
 EOF
-docker compose -f "$STAGE/stack/compose.yml" --env-file "$STAGE/stack/.env" config --quiet \
+docker compose -f "$STAGE/stack/compose.validate.yml" --env-file "$STAGE/stack/.env" config --quiet \
   || die "staged compose.yml does not parse — aborting before anything was touched"
 
 # nginx -t in a throwaway container; the network aliases satisfy the upstream

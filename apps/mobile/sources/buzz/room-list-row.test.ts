@@ -150,7 +150,9 @@ describe('Room row presentation', () => {
   it('counts exactly the corners the dropdown will list', () => {
     // The count and the expand must agree: terminal and failed corners are
     // excluded outright rather than dimmed, so a person is never offered a
-    // number that expands into fewer rows.
+    // number that expands into fewer rows. Finished corners are represented
+    // nowhere — there is no recorded-total fallback: a Room whose corners all
+    // landed or closed carries no corner affordance at all.
     const row = roomRowPresentation(
       {
         corners: [
@@ -165,11 +167,8 @@ describe('Room row presentation', () => {
       NO_NAMES,
     );
     expect(row.corners.map((entry) => entry.status)).toEqual(['live', 'needs-attention', 'open']);
-    // The dropdown CONTROL's visibility reads the total, not the listed set:
-    // a Room whose corners are all terminal still needs its path into the
-    // full corner list, even though none of them may be counted as open work.
-    expect(row.totalCorners).toBe(6);
-    expect(roomRowPresentation({ corners: [corner('merged')] }, NO_NAMES).totalCorners).toBe(1);
+    expect(roomRowPresentation({ corners: [corner('merged')] }, NO_NAMES).corners).toEqual([]);
+    expect(roomRowPresentation({ corners: [corner('archived')] }, NO_NAMES).corners).toEqual([]);
   });
 
   it('falls back to the spoken-in / quiet glyphs when no corner reports', () => {

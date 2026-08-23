@@ -18,6 +18,7 @@ import {
 } from './agent-command.js';
 import type { AgentAccessPolicy } from './access-policy.js';
 import type { ExternalMcpCapability } from './external-mcp-capabilities.js';
+import type { McpServerWire } from './acp.js';
 
 export type SessionMode = 'readonly' | 'edit';
 
@@ -102,6 +103,13 @@ export interface BodyConfig {
   /** Explicit account capabilities mounted for this agent; never inherited from operator config. */
   externalMcpCapabilities?: ExternalMcpCapability[];
   /**
+   * Operator-authored MCP tool servers (`<runtimeDir>/operator-mcp.json`, see
+   * `operator-mcp.ts`) mounted for CORNER edit sessions in addition to
+   * Beeline's own inventory — still gated on the `creator` access policy like
+   * the account-backed capability profiles. Empty/unset mounts nothing.
+   */
+  operatorMcpServers?: McpServerWire[];
+  /**
    * Pair-time default model/effort (`--model`/`--effort` at `beeline pair`),
    * injected from the runtime record by the daemon. Applied by
    * `Body.applyModelConfigForSession` only when no human has yet set an
@@ -116,6 +124,15 @@ export interface BodyConfig {
    * the pre-sandbox behaviour with `session-sandbox.ts` as the only boundary.
    */
   bwrapPath?: string;
+  /**
+   * Extra filesystem paths whose contents are masked ABSENT from sandboxed ACP
+   * children, on top of the built-in known credential homes
+   * (`bwrap-sandbox.ts` KNOWN_CREDENTIAL_MASK_PATHS). Sourced from the runtime
+   * record's `sandboxMaskPaths` and/or `BUZZY_BODY_SANDBOX_MASK`
+   * (comma-separated absolute paths). Only load-bearing while the OS sandbox
+   * is enabled; with `sandbox: 'off'` nothing is masked.
+   */
+  sandboxMaskPaths?: string[];
 }
 
 function firstExisting(paths: string[]): string | undefined {
@@ -385,6 +402,28 @@ function isPassthroughName(name: string, extra: Set<string>): boolean {
 }
 
 /**
+ * Push-capable repository credential variables NEVER handed to an ACP child,
+ * even when a passthrough prefix (`GH_`, `GITHUB_`) or an explicit
+ * `BUZZY_BODY_AGENT_ENV_PASSTHROUGH` entry would otherwise carry them.
+ *
+ * This is the structural half of "an agent can never land on main without
+ * the owner's signed approval": sessions get git access only through the
+ * daemon's ref-policy broker (`push-broker.ts`), never through a token of
+ * their own. The denylist is applied LAST, after every other rule, so no
+ * configuration can re-introduce one; reads keep working unauthenticated for
+ * public repos, and private-repo fetches are performed by the daemon.
+ */
+export const REPO_PUSH_CREDENTIAL_ENV_DENYLIST = [
+  'GH_TOKEN',
+  'GH_ENTERPRISE_TOKEN',
+  'GITHUB_TOKEN',
+  // An ssh-agent socket is a keyring: reachable inside the mount namespace
+  // (connecting is not a filesystem write), so it hands over exactly the
+  // push capability this list exists to remove.
+  'SSH_AUTH_SOCK',
+] as const;
+
+/**
  * Build the env map for an ACP agent child process.
  * Maps `BUZZY_LLM_*` (egress helper) onto `OPENAI_COMPAT_*` + `BUZZ_AGENT_PROVIDER=openai`.
  * Never logs secret values.
@@ -420,6 +459,10 @@ export function buildAgentEnv(
   for (const [name, value] of Object.entries(merged)) {
     if (isPassthroughName(name, extraPassthrough)) agentEnv[name] = value;
   }
+  // Structural, last-word credential removal — see the denylist above. Runs
+  // after EVERY other source so neither the host env nor an operator's
+  // passthrough extension can hand a session a push-capable token.
+  for (const name of REPO_PUSH_CREDENTIAL_ENV_DENYLIST) delete agentEnv[name];
   // Values the child always needs a defined answer for.
   agentEnv.PATH = merged.PATH ?? process.env.PATH ?? '';
   agentEnv.HOME = merged.HOME ?? process.env.HOME ?? '';
@@ -501,7 +544,24 @@ export function loadBodyConfig(opts: {
     relayScheme: scheme,
     relayWsUrl: ws,
     autoApprovePermissions: env.BUZZY_BODY_AUTO_APPROVE !== '0',
+    ...(parseSandboxMaskEnv(env) ? { sandboxMaskPaths: parseSandboxMaskEnv(env)! } : {}),
   };
+}
+
+/**
+ * Owner-configurable sandbox mask list: `BUZZY_BODY_SANDBOX_MASK=/path/a,/path/b`.
+ * Complements the runtime record field of the same name; both are unioned at
+ * spawn time. Entries are resolved against `$HOME` lazily by
+ * `credentialMaskPaths` only if they are not already absolute.
+ */
+export function parseSandboxMaskEnv(env: NodeJS.ProcessEnv): string[] | undefined {
+  const raw = env.BUZZY_BODY_SANDBOX_MASK;
+  if (!raw?.trim()) return undefined;
+  const entries = raw
+    .split(/[,\n]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return entries.length ? entries : undefined;
 }
 
 export { HOST, SCHEME, BASE_URL };

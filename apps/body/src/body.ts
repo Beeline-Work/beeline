@@ -122,6 +122,7 @@ import {
   type CornerLifecycleStatus,
 } from '@beeline/buzz-client';
 import { verifyEvent, type NostrEvent } from '@beeline/nostr';
+import { performBrokeredPush } from './push-broker.js';
 import type { BodyConfig, SessionMode } from './config.js';
 import { publishCritical } from './publish-delivery.js';
 import {
@@ -190,6 +191,7 @@ import {
   authorizedExternalMcpServers,
   isExternalMcpPermissionRequest,
 } from './external-mcp-capabilities.js';
+import { operatorMcpServersForCorners } from './operator-mcp.js';
 import {
   applyAgentModelSelection,
   filterAllowedModelConfigOptions,
@@ -237,6 +239,7 @@ import {
   usesTextCornerRequestFallback,
 } from './harness-capabilities.js';
 import {
+  credentialMaskPaths,
   harnessHomeStateDirs,
   mergeGateStateDirs,
   resolveGitCommonDir,
@@ -768,6 +771,22 @@ export interface SubchannelInfo {
   ciWatchStarted?: boolean;
   /** Successfully forwarded member events, preventing same-second relay replays. */
   processedMemberEventIds?: Set<string>;
+  /**
+   * Newest feature-branch tip the harness-independent commit watch has already
+   * evaluated through `publishMergeReady`.
+   *
+   * The turn tail (`finishCornerTurnAgainstMergeGate`) only runs when an ACP
+   * turn actually RESOLVES — and harnesses differ in what that takes. pi-acp
+   * executes reads/writes/shell before the daemon ever sees them, so any turn
+   * that dies mid-flight (stall timeout, process exit, relay outage during the
+   * completion publish) leaves committed work on the corner branch with no
+   * review card and no retry until a human sends another message. The commit
+   * watch closes that gap from signals every harness produces identically:
+   * commits appearing on the branch in a clean worktree. Set only after
+   * `publishMergeReady` resolves (never on entry), so a transient failure is
+   * re-attempted on the next maintenance tick for the same tip.
+   */
+  observedReviewTip?: string;
 }
 
 /** Fail closed unless an archive target is the exact relay-linked child session. */
@@ -2200,6 +2219,9 @@ export class Body {
       cwd: input.cwd,
       harnessStateDirs: stateDirs,
       harnessHomeStateDirs: homeStateDirs,
+      // Credential masks (built-in known stores + owner-configured extras) in
+      // BOTH modes: a session that can read a credential can use it out-of-band.
+      maskPaths: credentialMaskPaths(this.config.sandboxMaskPaths),
       ...(tmpDir ? { tmpDir } : {}),
       ...(input.worktreePath ? { worktreePath: input.worktreePath } : {}),
     };
@@ -3727,6 +3749,11 @@ export class Body {
         this.config.externalMcpCapabilities,
       ),
     );
+    // Operator-authored tool servers (`operator-mcp.json`), same `creator`
+    // authorization shape as the capability profiles above. pi ignores this
+    // wire field entirely (it loads the operator's own global extensions), so
+    // for pi these are additive documentation — see `operator-mcp.ts`.
+    mcpServers.push(...operatorMcpServersForCorners(this.config.accessPolicy, this.config.operatorMcpServers));
     const codegraphServer = codegraphMcpServer(this.config);
     if (codegraphServer) mcpServers.push(codegraphServer);
 
@@ -6122,14 +6149,22 @@ export class Body {
     const forceArgs = rewritten
       ? [`--force-with-lease=refs/heads/${info.featureBranch}:${info.pushedFeatureTip}`]
       : [];
+    // The feature-branch publish is a brokered push: classified (this corner's
+    // own branch → allowed), audited, then performed by the daemon with its
+    // own credentials. A refusal never reaches git at all.
     const push = boundRepo.remoteName
-      ? await this.remoteGit(boundRepo, info.worktreePath, [
-          'push',
-          ...forceArgs,
-          boundRepo.remoteName,
-          `${boundRepo.ownerHex ? info.featureBranch : tip}:refs/heads/${info.featureBranch}`,
-        ])
-      : { ok: true, status: 0, stdout: '', stderr: '' };
+      ? await performBrokeredPush({
+          remote: boundRepo.remoteName,
+          refspecs: [
+            `${boundRepo.ownerHex ? info.featureBranch : tip}:refs/heads/${info.featureBranch}`,
+          ],
+          policy: { featureBranch: info.featureBranch, protectedRefs: [target.branch] },
+          ...(forceArgs.length ? { extraArgs: forceArgs } : {}),
+          cornerId: info.subchannelId,
+          sessionId: info.session.logicalSessionId ?? info.session.sessionId,
+          runGit: async (args) => await this.remoteGit(boundRepo!, info.worktreePath, args),
+        })
+      : { ok: true as const, status: 0, stdout: '', stderr: '' };
     if (!push.ok) {
       await postControlMessage(
         info.subchannelId,
@@ -6481,12 +6516,30 @@ export class Body {
     // reachable from the exact tip a human approved, only tags the remote does
     // not already have, and only annotated ones (a lightweight tag is left
     // behind on purpose, since it carries no authorship of its own).
-    const land = await this.remoteGit(info.boundRepo!, info.worktreePath, [
-      'push',
-      '--follow-tags',
+    //
+    // This is THE protected-ref brokered push: the approval was verified by
+    // `findHumanMergeApproval` (signature, human-admin authority, and this
+    // exact repo+branch+tip binding) before we got here, and the broker
+    // re-checks that same binding against the refspec before performing the
+    // push with the daemon's credentials.
+    const land = await performBrokeredPush({
       remote,
-      `${target.tip}:${target.branch}`,
-    ]);
+      refspecs: [`${target.tip}:${target.branch}`],
+      policy: { featureBranch: info.featureBranch, protectedRefs: [target.branch] },
+      extraArgs: ['--follow-tags'],
+      approval: {
+        verified: true,
+        approval: {
+          repo: target.repo,
+          branch: target.branch,
+          tip: target.tip,
+          reviewerPubkey: info.humanMergeApproval?.reviewer ?? '',
+        },
+      },
+      cornerId: info.subchannelId,
+      sessionId: info.session.logicalSessionId ?? info.session.sessionId,
+      runGit: async (args) => await this.remoteGit(info.boundRepo!, info.worktreePath, args),
+    });
     return land.ok ? { kind: 'landed' } : { kind: 'failed', reason: land.stderr };
   }
 
@@ -7584,6 +7637,102 @@ export class Body {
   }
 
   /**
+   * Harness-independent merge-present watch.
+   *
+   * The ONLY trigger for publishing a review card used to be a completed ACP
+   * turn (`finishCornerTurnAgainstMergeGate`). That shape silently favours
+   * harnesses whose turn lifecycle the daemon can fully observe: codex-acp
+   * routes every tool through `session/request_permission`, so the daemon sees
+   * each step and the turn resolves through the protocol. pi-acp runs
+   * reads/writes/edits/shell BEFORE the daemon sees them and emits them as
+   * post-hoc `tool_call` telemetry — when one of those turns dies before its
+   * final response (idle-timeout cancel, adapter exit, a relay refusal during
+   * the completion publish), the commits it already made sit on the feature
+   * branch with no review card and no retry until a human sends another
+   * message. Observed live on the owner's host: pi corners holding real
+   * committed work whose parent Room only ever showed "Nothing committed is
+   * ready for review" / "Work stopped" cards, never a review target.
+   *
+   * The fix reads the one signal every harness produces identically — the git
+   * worktree itself. When a served corner holds committed work beyond its
+   * target branch in a clean tree, and no turn is running that would publish
+   * its own tail, this evaluates the same `publishMergeReady` gate the turn
+   * tail uses. It is deliberately BOUNDED to new tips (see
+   * `SubchannelInfo.observedReviewTip`) so a corner mid-task is never nagged:
+   * dirty trees and tips already reviewed or landed are skipped before any
+   * relay write, and the not-ready card publishes once per tip.
+   */
+  private async pollCornerCommitWatch(): Promise<void> {
+    for (const info of [...this.subchannels.values()]) {
+      try {
+        await this.observeCornerCommits(info);
+      } catch (error) {
+        // One corner's failed observation must not starve the corners behind
+        // it; the tip stays unmarked in `observedReviewTip`, so the next tick
+        // retries the same evaluation.
+        console.error(
+          `[body] corner ${info.subchannelId} commit watch failed; will retry:`,
+          error,
+        );
+      }
+    }
+  }
+
+  private async observeCornerCommits(info: SubchannelInfo): Promise<void> {
+    if (!info.boundRepo || info.archived || info.landedTip) return;
+    // An in-flight turn owns its own merge-present tail — both the success
+    // path and the merge-gate feedback loop. Watching underneath it would
+    // publish half-finished work or race the tail's own verdict.
+    if (this.runningAgentTasks.has(info.subchannelId)) return;
+    if (info.session.client?.activeRunId?.(info.session.sessionId)) return;
+    const tip = git(info.worktreePath, ['rev-parse', 'HEAD']).stdout.trim();
+    if (!/^[0-9a-f]{40}$/.test(tip)) return;
+    if (
+      info.observedReviewTip === tip ||
+      info.mergeTarget?.tip === tip ||
+      info.landedTip === tip
+    ) {
+      return;
+    }
+
+    // Cheap local pre-checks so a mid-work worktree never reaches the gate
+    // from this path. The authoritative remote-target check still happens
+    // inside `publishMergeReady` — these are guards, not the verdict. If the
+    // local target ref cannot be resolved at all, stay silent: the turn tail
+    // remains the authority for shapes this cheap read cannot see.
+    const status = git(info.worktreePath, [
+      'status',
+      '--porcelain=v1',
+      '--untracked-files=all',
+      '-z',
+    ]).stdout;
+    if (projectDirtyStatus(info.worktreePath, status, info.session.agentPrivateState).length > 0) {
+      return;
+    }
+    const targetBranch = info.boundRepo.targetBranch ?? 'refs/heads/main';
+    const baseTip = git(info.worktreePath, ['rev-parse', '--verify', targetBranch]).stdout.trim();
+    if (!/^[0-9a-f]{40}$/.test(baseTip)) return;
+    if (!git(info.worktreePath, ['merge-base', '--is-ancestor', baseTip, tip]).ok) return;
+    const ahead =
+      Number(git(info.worktreePath, ['rev-list', '--count', `${baseTip}..${tip}`]).stdout.trim()) ||
+      0;
+    if (ahead === 0) return;
+
+    const ready = await this.publishMergeReady(info);
+    // Settled: mark the tip evaluated so this exact tip is never re-driven
+    // from the watch (the ready card's idempotency lives in
+    // `publishMergeTarget`; the not-ready card must state once per tip, not
+    // once per tick). A throw above skips this line, so transient failures
+    // retry next tick.
+    info.observedReviewTip = tip;
+    console.log(
+      `[body] corner ${info.subchannelId} commit watch: ${
+        ready ? 'published review' : 'evaluated, not ready'
+      } at ${tip.slice(0, 12)}`,
+    );
+  }
+
+  /**
    * Keep optional Room maintenance from terminating the request loop. A failed
    * child poll or merge check is retried on this Room's next tick; it cannot
    * dispose this Room or interfere with another Room's Body instance.
@@ -7622,6 +7771,13 @@ export class Body {
     if (boundRepo) {
       await guarded('foreign merge-land watch', () => this.pollForeignMergeLands(channelId));
     }
+    // Harness-independent review publication: committed work on a corner branch
+    // presents for review even when its harness produced no completable turn
+    // for the daemon to observe (pi-acp bypasses ACP-observed tool calls
+    // entirely). Runs after the land polls so an already-landed corner is
+    // skipped via `landedTip`, and before the member poll so a review card is
+    // on the wire before any queued steer starts a new turn.
+    await guarded('corner commit watch', () => this.pollCornerCommitWatch());
     await guarded('corner member poll', async () => {
       const results = await Promise.allSettled(
         [...this.subchannels.keys()].map((subchannelId) => this.pollMembers(subchannelId)),

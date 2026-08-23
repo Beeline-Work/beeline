@@ -1,7 +1,7 @@
 import { loadAppConfig } from '@/sync/appConfig';
 
 const DEFAULT_RELAY_URL = 'https://usebeeline.app';
-const DEFAULT_PUSH_GATEWAY_URL = 'https://push.buzzrouter.com';
+const DEFAULT_PUSH_GATEWAY_URL = 'https://usebeeline.app/push';
 
 export interface BuzzRuntimeConfig {
   relayUrl: string;

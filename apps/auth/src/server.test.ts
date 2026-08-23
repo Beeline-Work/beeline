@@ -862,6 +862,68 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     expect(JSON.stringify(logged[0])).toContain('HTTP 502');
   });
 
+  it('answers a stateless (share-link/marketplace) install return with a friendly landing and no side effects', async () => {
+    // A foreign install carries installation_id/setup_action but NO state
+    // marker minted by an in-app flow. The install itself succeeded on
+    // GitHub's side; the return must be a human-readable confirmation, never
+    // raw JSON, and must bind no session and mint no token.
+    const response = await app.inject({
+      method: 'GET',
+      url: '/auth/github/callback?installation_id=77&setup_action=install',
+      headers: { host: alphaTenant.host },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/html');
+    expect(response.body).toContain('GitHub connected');
+    expect(response.body).not.toContain('"error"');
+    // Purely informational: no session binding, no token minting, no flow
+    // cookie, no installation persisted under any identity.
+    expect(response.headers['set-cookie']).toBeUndefined();
+    expect(roomTokenMint).toBeUndefined();
+    await expect(
+      store.githubInstallation(alphaTenant.community, 77),
+    ).resolves.toBeNull();
+  });
+
+  it('answers a stateless install return on the legacy alias routes too', async () => {
+    const installed = await app.inject({
+      method: 'GET',
+      url: '/auth/github/installed?installation_id=77&setup_action=install',
+      headers: { host: alphaTenant.host },
+    });
+    expect(installed.statusCode).toBe(200);
+    expect(installed.headers['content-type']).toContain('text/html');
+    expect(installed.body).toContain('GitHub connected');
+
+    const viaCallbackAlias = await app.inject({
+      method: 'GET',
+      url: '/auth/github/install/callback?installation_id=90&setup_action=install',
+      headers: { host: alphaTenant.host },
+    });
+    expect(viaCallbackAlias.statusCode).toBe(200);
+    expect(viaCallbackAlias.body).toContain('GitHub connected');
+  });
+
+  it('answers a present-but-invalid install state with a readable error page, not raw JSON', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/auth/github/callback?installation_id=77&setup_action=install&state=wrongstate',
+      headers: { host: alphaTenant.host },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.headers['content-type']).toContain('text/html');
+    expect(response.body).toContain('connection link');
+    expect(response.body).not.toContain('invalid_request');
+    expect(() => JSON.parse(response.body)).toThrow();
+    // Still no session or token side effects on the failed path.
+    expect(roomTokenMint).toBeUndefined();
+    await expect(
+      store.githubInstallation(alphaTenant.community, 77),
+    ).resolves.toBeNull();
+  });
+
   it('re-mints Room tokens for a repository that transferred after its Room binding was written', async () => {
     const owner = generateKeypair();
     const agent = generateKeypair();

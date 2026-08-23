@@ -80,3 +80,47 @@ describe('Workspace bootstrap', () => {
     expect(client.createCommunity).not.toHaveBeenCalled();
   });
 });
+
+describe('Workspace bootstrap with key-succession predecessors', () => {
+  function workspaceClient() {
+    return {
+      listCommunities: vi.fn().mockResolvedValue([]),
+      getCommunity: vi.fn(),
+      createCommunity: vi.fn(),
+      waitUntilMember: vi.fn().mockResolvedValue(undefined),
+    } as any;
+  }
+
+  it('passes the loaded predecessor chain to every Workspace discovery read', async () => {
+    const inherited = workspace('inherited-1', 'Old Rooms');
+    const client = workspaceClient();
+    // First discovery is empty (the successor has nothing of their own yet),
+    // the re-list after personal-Workspace resolution sees the migrated rooms.
+    client.listCommunities.mockResolvedValueOnce([]).mockResolvedValueOnce([inherited]);
+    const memory = storage({ loadPersonalId: vi.fn().mockResolvedValue('inherited-1') });
+    client.getCommunity = vi.fn().mockResolvedValue(inherited);
+    const loadPredecessors = vi.fn().mockResolvedValue(['old-key-hex']);
+
+    await prepareWorkspaceContext(client, 'successor-key', undefined, memory, {
+      loadPredecessors,
+    });
+
+    expect(loadPredecessors).toHaveBeenCalledTimes(1);
+    expect(client.listCommunities).toHaveBeenNthCalledWith(1, 'successor-key', [
+      'old-key-hex',
+    ]);
+    // The re-list after personal-Workspace resolution carries the chain too.
+    expect(client.listCommunities).toHaveBeenNthCalledWith(2, 'successor-key', [
+      'old-key-hex',
+    ]);
+  });
+
+  it('never passes a predecessor chain when no loader is given', async () => {
+    const client = workspaceClient();
+    client.listCommunities.mockResolvedValue([workspace('ws-1')]);
+
+    await prepareWorkspaceContext(client, 'person-pubkey', undefined, storage());
+
+    expect(client.listCommunities).toHaveBeenCalledWith('person-pubkey', []);
+  });
+});

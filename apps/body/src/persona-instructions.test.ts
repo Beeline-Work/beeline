@@ -13,6 +13,7 @@ import {
 import { signEvent } from '@beeline/nostr';
 import { AcpClient } from './acp.js';
 import { appendPersonaSessionInstructions } from './persona-instructions.js';
+import { AGENT_PRIVATE_STATE_ENV, agentPrivateStateInstructions } from './agent-private-state.js';
 
 const temporaryDirectories: string[] = [];
 
@@ -29,6 +30,7 @@ describe('Workspace persona session instructions', () => {
     const temporaryDirectory = await mkdtemp(resolve(tmpdir(), 'beeline-persona-'));
     temporaryDirectories.push(temporaryDirectory);
     const repository = resolve(temporaryDirectory, 'repository');
+    const privateState = resolve(temporaryDirectory, 'agent-private');
     const capture = resolve(temporaryDirectory, 'session-new.json');
     const binary = resolve(temporaryDirectory, 'fake-agent.mjs');
     await mkdir(repository);
@@ -51,7 +53,8 @@ describe('Workspace persona session instructions', () => {
     await writeFile(
       binary,
       `#!/usr/bin/env node
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 const lines = createInterface({ input: process.stdin });
 const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
@@ -61,6 +64,9 @@ lines.on('line', (line) => {
     send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
   } else if (message.method === 'session/new') {
     writeFileSync(process.env.PERSONA_CAPTURE, JSON.stringify(message.params));
+    const memory = resolve(process.env.${AGENT_PRIVATE_STATE_ENV}, 'memory');
+    mkdirSync(memory, { recursive: true });
+    writeFileSync(resolve(memory, 'chrome-warden.json'), '{"lesson":"keep it green"}\\n');
     send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'persona-session' } });
   } else if (message.method === 'shutdown') {
     process.exit(0);
@@ -98,13 +104,16 @@ lines.on('line', (line) => {
 
     const client = new AcpClient({
       agentBinary: binary,
-      agentEnv: { PERSONA_CAPTURE: capture },
+      agentEnv: { PERSONA_CAPTURE: capture, [AGENT_PRIVATE_STATE_ENV]: privateState },
     });
     await client.start();
     try {
       await client.sessionNew({
         cwd: repository,
-        systemPrompt: appendPersonaSessionInstructions('Base session boundary.', savedProfile!),
+        systemPrompt: [
+          appendPersonaSessionInstructions('Base session boundary.', savedProfile!),
+          agentPrivateStateInstructions({ root: privateState, worktreePath: privateState }),
+        ].join('\n'),
       });
     } finally {
       await client.stop();
@@ -122,5 +131,8 @@ lines.on('line', (line) => {
       execFileSync('git', ['-C', repository, 'status', '--porcelain'], { encoding: 'utf8' }),
     ).toBe('');
     expect((await readdir(repository)).sort()).toEqual(['.git', 'README.md']);
+    expect(await readFile(resolve(privateState, 'memory/chrome-warden.json'), 'utf8')).toContain(
+      'keep it green',
+    );
   });
 });

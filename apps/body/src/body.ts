@@ -147,6 +147,13 @@ import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import type { RelaySocketLease, SharedRelaySocket } from './relay-socket.js';
 import { appendPersonaSessionInstructions } from './persona-instructions.js';
 import {
+  AGENT_PRIVATE_STATE_ENV,
+  agentPrivateStateInstructions,
+  prepareCornerAgentPrivateState,
+  projectDirtyStatus,
+  type CornerAgentPrivateState,
+} from './agent-private-state.js';
+import {
   chunkChangeReviewPatch,
   listChangeReviewFiles,
   postChangeReviewMetadata,
@@ -266,6 +273,8 @@ export interface AgentSession {
   cwd?: string;
   /** Feature branch name (edit mode only). */
   featureBranch?: string;
+  /** Body-owned state mount for persona memory/lessons outside the repository. */
+  agentPrivateState?: CornerAgentPrivateState;
   /** Parent TLC channel ID (subchannels only). */
   parentChannelId?: string;
   /** Unsubscribe from activity projection. */
@@ -2031,6 +2040,25 @@ export class Body {
   }
 
   /**
+   * Prepare the one Body-owned, provenance-verifiable path a corner may use
+   * for persona bookkeeping. Failure leaves the old strict worktree boundary
+   * intact and is advisory; it must never prevent a commissioned corner.
+   */
+  private async cornerAgentPrivateState(
+    worktreePath: string,
+    channelId: string,
+  ): Promise<CornerAgentPrivateState | undefined> {
+    const root = this.config.agentPrivateRoot;
+    if (!root) return undefined;
+    try {
+      return await prepareCornerAgentPrivateState({ root, worktreePath, channelId });
+    } catch (error) {
+      console.warn(`[body] agent-private state unavailable for ${channelId}:`, error);
+      return undefined;
+    }
+  }
+
+  /**
    * The ACP child's spawn command for one session, wrapped in bwrap when the
    * daemon detected a working one at start-up.
    *
@@ -2193,6 +2221,7 @@ export class Body {
     resumeTargetRef?: string;
     resumeOnFirstActivation?: boolean;
     resumePlan?: CompactActivityPlan;
+    agentPrivateState?: CornerAgentPrivateState;
   }): Promise<AgentSession> {
     let client = new AcpClient({
       agentCommand: this.config.agentCommand ?? this.config.agentBinary,
@@ -2211,6 +2240,7 @@ export class Body {
       ...(input.parentChannelId ? { parentChannelId: input.parentChannelId } : {}),
       ...(input.worktreePath ? { worktreePath: input.worktreePath } : {}),
       ...(input.featureBranch ? { featureBranch: input.featureBranch } : {}),
+      ...(input.agentPrivateState ? { agentPrivateState: input.agentPrivateState } : {}),
       ...(input.resumePlan ? { resumePlan: input.resumePlan } : {}),
       activationCount: 0,
     };
@@ -2220,7 +2250,10 @@ export class Body {
         // The ACP session cwd is also the child's process cwd, so a harness
         // that keys per-project state off its own cwd matches this session.
         await mkdir(input.cwd, { recursive: true });
-        const sessionEnv = await this.sessionAgentEnv();
+        const baseSessionEnv = await this.sessionAgentEnv();
+        const sessionEnv = input.agentPrivateState
+          ? { ...baseSessionEnv, [AGENT_PRIVATE_STATE_ENV]: input.agentPrivateState.root }
+          : baseSessionEnv;
         const spawnCommand = this.sessionSpawnCommand(
           {
             mode: input.mode,
@@ -2261,6 +2294,7 @@ export class Body {
         const restored = reprime.block;
         const systemPrompt = [
           appendPersonaSessionInstructions(input.systemPrompt, profile),
+          agentPrivateStateInstructions(input.agentPrivateState),
           '',
           `To share an image or file with the Room, include [[${AGENT_ATTACHMENT_DIRECTIVE}:path]] in your final response.`,
           'The host removes that directive, uploads the file, and sends a link-only attachment card.',
@@ -3073,6 +3107,7 @@ export class Body {
           }
         }
         this.primeCodegraphIndex(worktreePath);
+        const agentPrivateState = await this.cornerAgentPrivateState(worktreePath, subchannelId);
         // A corner whose ACP session refuses to come back must not abort the
         // restore of every corner behind it in this loop, and must stay
         // reachable by the sessionless close path — a dead session is exactly
@@ -3104,7 +3139,11 @@ export class Body {
               'You may call any skill available to you, but only when the current task explicitly calls for it or names it directly. Never auto-trigger a skill (e.g. a design/UX review skill) on routine or trivial work.',
             ].join('\n'),
             autoApprovePermissions: true,
-            permissionHandler: this.cornerPermissionHandler(worktreePath, cornerRepo.localPath),
+            permissionHandler: this.cornerPermissionHandler(
+              worktreePath,
+              cornerRepo.localPath,
+              agentPrivateState?.root,
+            ),
             parentChannelId,
             worktreePath,
             featureBranch,
@@ -3112,6 +3151,7 @@ export class Body {
             resumeTargetRef: cornerRepo.targetBranch ?? 'refs/heads/main',
             resumeOnFirstActivation: true,
             resumePlan: restoredPlan,
+            ...(agentPrivateState ? { agentPrivateState } : {}),
             ...(communityId ? { communityId } : {}),
           });
           const cursor = await this.durableState.cursor(subchannelId);
@@ -3478,6 +3518,7 @@ export class Body {
     // worktree so codegraph MCP tools have something to query as soon as
     // they're ready. Never blocks or fails corner creation.
     this.primeCodegraphIndex(worktreePath);
+    const agentPrivateState = await this.cornerAgentPrivateState(worktreePath, subchannelId);
 
     // 5. Start edit-mode ACP session.
     const mcpServers: McpServerWire[] = [
@@ -3528,12 +3569,17 @@ export class Body {
       autoApprovePermissions: true,
       // cd-guard backstop: deny a command that would escape the worktree into
       // the shared checkout, even if the harness leaks past cwd isolation.
-      permissionHandler: this.cornerPermissionHandler(worktreePath, boundRepo.localPath),
+      permissionHandler: this.cornerPermissionHandler(
+        worktreePath,
+        boundRepo.localPath,
+        agentPrivateState?.root,
+      ),
       parentChannelId: tlcChannelId,
       worktreePath,
       featureBranch,
       resumeObjective: taskDescription || undefined,
       resumeTargetRef: boundRepo.targetBranch ?? 'refs/heads/main',
+      ...(agentPrivateState ? { agentPrivateState } : {}),
       ...(communityId ? { communityId } : {}),
     });
 
@@ -5682,11 +5728,17 @@ export class Body {
     };
     const base = resolveReviewBaseTip(info.worktreePath, target.branch);
     const files = listChangeReviewFiles(info.worktreePath, base, tip);
-    const dirty = git(info.worktreePath, [
+    const status = git(info.worktreePath, [
       'status',
       '--porcelain=v1',
       '--untracked-files=all',
-    ]).stdout.trim();
+      '-z',
+    ]).stdout;
+    const dirty = projectDirtyStatus(
+      info.worktreePath,
+      status,
+      info.session.agentPrivateState,
+    ).length > 0;
     if (dirty || files.length === 0) {
       // Never advertise HEAD as reviewable when the agent's actual work is
       // uncommitted, or when it made no committed change. An older ready tip
@@ -8164,18 +8216,24 @@ export class Body {
 
   /**
    * Worktree guard for an edit session: deny a tool call that would move the
-   * corner out of its isolated worktree (the cd-guard) or that would write,
-   * delete, move, or execute against a path resolving outside it — absolute
-   * paths, `..` climbs, and symlink escapes alike, resolved physically before
-   * comparison. Reads outside the worktree stay allowed; everything else in a
-   * corner is auto-approved. See `session-sandbox.ts` and `corner-isolation.ts`.
+   * corner out of its isolated worktree (the cd-guard) or mutate outside the
+   * worktree and its one Body-owned private-state root. Absolute paths, `..`
+   * climbs, and symlink escapes are resolved physically before comparison.
+   * Reads outside stay allowed; everything else in a corner is auto-approved.
+   * See `session-sandbox.ts` and `corner-isolation.ts`.
    */
   private cornerPermissionHandler(
     worktreePath: string,
     primaryCheckout?: string,
+    agentPrivateStateRoot?: string,
   ): AcpPermissionHandler {
     return async (request) => {
-      const verdict = classifyCornerPermission(request, worktreePath, primaryCheckout);
+      const verdict = classifyCornerPermission(
+        request,
+        worktreePath,
+        primaryCheckout,
+        agentPrivateStateRoot ? [agentPrivateStateRoot] : [],
+      );
       if (verdict.decision === 'deny') {
         console.warn(
           `[body] corner sandbox blocked a tool call [${verdict.code}]: ${verdict.reason}`,

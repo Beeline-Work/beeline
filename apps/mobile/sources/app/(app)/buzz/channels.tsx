@@ -1407,8 +1407,7 @@ export default function BuzzChannels() {
                           </Text>
                         ) : (
                           /* No open work, but recorded corners exist: their
-                             total at the same ghosted tier — exactly what
-                             expanding reveals (no open rows + All Corners). */
+                             total at the same ghosted tier. */
                           <Text style={styles.cornerPeekCount}>{row.totalCorners}</Text>
                         )}
                       </TouchableOpacity>
@@ -1510,8 +1509,8 @@ const ROW_GUTTER_WIDTH = 46;
  * The row's MINIMUM height, not its height: every row must reserve this much
  * so the gutter can hold both of its marks — the age stamp on the name's line,
  * the corner count below it at a full 44pt touch target — but a row carrying
- * pills or wrapped preview lines grows past it instead of overflowing into
- * its neighbour. A fixed `height` here was the overlap defect that sank the
+ * a wrapped preview line grows past it instead of overflowing into its
+ * neighbour. A fixed `height` here was the overlap defect that sank the
  * first ship of this deck.
  */
 const INDEX_ROW_HEIGHT = 72;
@@ -1739,36 +1738,6 @@ const styles = StyleSheet.create((theme) => {
   },
   rowPreviewUnread: { color: groknight.ledgerBody },
   rowPreviewAttention: { color: groknight.accent },
-  /* The pill strip: quiet mono micro-labels carrying what you'd otherwise
-   * open the Room to learn. Only the status pill (needs-you) goes loud. */
-  pillStrip: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 9 },
-  rowPill: {
-    ...Typography.mono(),
-    borderWidth: 1,
-    borderColor: groknight.border,
-    borderRadius: 3,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    overflow: 'hidden',
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 0.4,
-  },
-  rowPillStatus: {
-    ...Typography.mono('semiBold'),
-    backgroundColor: groknight.accent,
-    borderColor: groknight.accent,
-    color: groknight.textInverted,
-    letterSpacing: 0.6,
-  },
-  /* Unread steps up one gray tier — it is attention-adjacent, but it is not
-   * brass, and the deck's whole point is that brass means only needs-you. */
-  rowPillUnread: {
-    ...Typography.mono('semiBold'),
-    borderColor: groknight.borderStrong,
-    color: groknight.textSecondary,
-  },
   roomCell: {
     position: 'relative',
     borderBottomWidth: 1,
@@ -1861,22 +1830,6 @@ const styles = StyleSheet.create((theme) => {
     fontSize: 9,
     lineHeight: 12,
     letterSpacing: 0.6,
-  },
-  cornerAllText: {
-    ...Typography.mono('semiBold'),
-    flex: 1,
-    minWidth: 0,
-    marginLeft: 20,
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 0.8,
-  },
-  cornerAllCaret: {
-    ...Typography.default('semiBold'),
-    color: groknight.steel,
-    fontSize: 14,
-    lineHeight: 16,
   },
 
   /* ── the deck's footer: one search field, one brass ＋ ─────────────── */

@@ -1140,11 +1140,14 @@ describe('Buzz corner lifecycle projection', () => {
     name: 'reviewer',
   } as Identity;
 
-  function event(channel: string, tags: string[][], content = '') {
+  // Near-now timestamp: the oracle's liveness window is wall-clock, so
+  // lifecycle fixtures must be fresh to read as working.
+  const NOW_S = Math.floor(Date.now() / 1000);
+  function event(channel: string, tags: string[][], content = '', createdAt = NOW_S) {
     const raw = {
       id: `${channel}-${tags.flat().join('-')}`,
       pubkey: 'd'.repeat(64),
-      created_at: 42,
+      created_at: createdAt,
       kind: 9,
       tags: [['h', channel], ...tags],
       content,
@@ -1288,16 +1291,17 @@ describe('Buzz corner lifecycle projection', () => {
       sessionEventsBackfill: vi.fn(async (id: string) => {
         const card = {
           ...event(id, [['display-status', 'needs-attention']]),
-          createdAt: 100,
+          createdAt: NOW_S - 7200,
         };
         if (id === 'pending-decision') return [card];
-        // Work resumed hours after the decision card: narration segments and
-        // a turn lifecycle, exactly what a working corner publishes.
+        // Work resumed after the decision card: narration segments and a
+        // turn lifecycle, exactly what a working corner publishes — recent
+        // enough to be inside the liveness window.
         return [
           card,
-          { ...event(id, [['t', 'agent-turn'], ['status', 'working']]), createdAt: 5000 },
-          { ...event(id, [['t', 'agent-message']]), createdAt: 5100 },
-          { ...event(id, [['t', 'agent-activity']]), createdAt: 5200 },
+          { ...event(id, [['t', 'agent-turn'], ['status', 'working']]), createdAt: NOW_S - 30 },
+          { ...event(id, [['t', 'agent-message']]), createdAt: NOW_S - 20 },
+          { ...event(id, [['t', 'agent-activity']]), createdAt: NOW_S - 10 },
         ];
       }),
     };
@@ -1315,11 +1319,11 @@ describe('Buzz corner lifecycle projection', () => {
     // derivations of the same relay history, so the row presentation they feed
     // must agree — no visible working→needs-you flip seconds after open.
     const backfill = [
-      { ...event('c1', [['display-status', 'needs-attention']]), createdAt: 100 },
-      { ...event('c1', [['t', 'agent-message']]), createdAt: 9000 },
+      { ...event('c1', [['display-status', 'needs-attention']]), createdAt: NOW_S - 7200 },
+      { ...event('c1', [['t', 'agent-message']]), createdAt: NOW_S - 10 },
       // A review announced and then consumed by resumed work — not pending.
-      { ...event('c2', [['t', 'merge-ready'], ['status', 'ready']]), createdAt: 200 },
-      { ...event('c2', [['t', 'agent-turn']]), createdAt: 8000 },
+      { ...event('c2', [['t', 'merge-ready'], ['status', 'ready']]), createdAt: NOW_S - 7200 },
+      { ...event('c2', [['t', 'agent-turn']]), createdAt: NOW_S - 10 },
     ];
     const client = {
       listSubchannels: vi.fn(async () => ['c1', 'c2']),

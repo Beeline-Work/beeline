@@ -37,6 +37,7 @@ import {
 import { groknight } from '@/buzz/groknight';
 import { loadActiveCommunityId } from '@/buzz/community-storage';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
+import { PHOTO_OVERRIDES_ENABLED } from '@/buzz/photo-overrides';
 import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
 import {
   ensurePersonNameForWorkspace,
@@ -649,6 +650,10 @@ export default function BuzzIdentitySettings() {
                 style={styles.nameButton}
               />
             </View>
+            {/* Photo-override darkflight: the picture-setting block renders
+                nothing while PHOTO_OVERRIDES_ENABLED is false. The handlers and
+                plumbing above stay intact for revival. */}
+            {PHOTO_OVERRIDES_ENABLED && (
             <View style={styles.avatarSection}>
               <IdentityMark
                 kind="human"
@@ -684,6 +689,7 @@ export default function BuzzIdentitySettings() {
                 </View>
               </View>
             </View>
+            )}
           </View>
         )}
         <View style={styles.settingsSection} testID="claim-handle-setting">

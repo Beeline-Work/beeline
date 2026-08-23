@@ -60,6 +60,14 @@ export interface GitHubRepositoryAccessResult {
   accessible: boolean;
   installationId?: number;
   reason?: 'revoked' | 'not_granted';
+  /**
+   * The repository is NOT covered by the App and never was (distinct from a
+   * move): only its owner can install the App, so the caller surfaces
+   * `installUrl` as a shareable call to action instead of an error wall.
+   */
+  grantNeeded?: boolean;
+  /** The App's state-less public install URL, present when `grantNeeded`. */
+  installUrl?: string;
 }
 
 export interface GitHubRoomInstallationToken {
@@ -122,6 +130,8 @@ export class OidcBindError extends Error {
     readonly code: string,
     message: string,
     readonly status?: number,
+    /** Machine-readable extras from typed service errors (e.g. install URLs). */
+    readonly details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = 'OidcBindError';
@@ -430,7 +440,17 @@ function serviceError(body: Record<string, unknown>, status: number): OidcBindEr
   const code = typeof body.error === 'string' ? body.error : 'auth_service_error';
   const message =
     typeof body.message === 'string' ? body.message : `auth service returned HTTP ${status}`;
-  return new OidcBindError(code, message, status);
+  // Typed error bodies may carry actionable extras (e.g. owner_grant_needed's
+  // shareable install URL); pass through the known fields only.
+  const details: Record<string, unknown> = {};
+  if (typeof body.install_url === 'string') details.installUrl = body.install_url;
+  if (typeof body.repository === 'string') details.repository = body.repository;
+  return new OidcBindError(
+    code,
+    message,
+    status,
+    Object.keys(details).length > 0 ? details : undefined,
+  );
 }
 
 /** Submit the signed challenge. The Nostr secret never enters the request body. */
@@ -787,7 +807,12 @@ export async function getGitHubRepositoryAccess(
       response.status,
     );
   }
-  return body as unknown as GitHubRepositoryAccessResult;
+  const installUrl = typeof body.install_url === 'string' ? body.install_url : undefined;
+  return {
+    ...(body as unknown as GitHubRepositoryAccessResult),
+    ...(body.grant_needed === true ? { grantNeeded: true } : {}),
+    ...(installUrl ? { installUrl } : {}),
+  } as GitHubRepositoryAccessResult;
 }
 
 /**

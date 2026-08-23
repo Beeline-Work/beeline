@@ -27,6 +27,8 @@ type CommunityRailProps = {
   onAdd: () => void;
   onSettings: () => void;
   onWorkspaceSettings?: (communityId: string) => void;
+  /** Long-press a Workspace tile to arm its exit affordance; confirm from there. */
+  onLeaveWorkspace?: (communityId: string) => void;
   canManageActiveCommunity?: boolean;
   viewerPubkey?: string;
   viewerAvatarUrl?: string;
@@ -37,6 +39,9 @@ type RailButtonProps = {
   label: string;
   children: React.ReactNode;
   onPress: () => void;
+  onLongPress?: () => void;
+  exitArmed?: boolean;
+  onExitPress?: () => void;
   testID?: string;
 };
 
@@ -47,7 +52,16 @@ type RailButtonProps = {
  * rather than the one you are in lighting up. A column of identical marks at
  * identical luminance was the thing that made the rail hard to read.
  */
-function RailButton({ active, label, children, onPress, testID }: RailButtonProps) {
+function RailButton({
+  active,
+  label,
+  children,
+  onPress,
+  onLongPress,
+  exitArmed = false,
+  onExitPress,
+  testID,
+}: RailButtonProps) {
   return (
     <View style={styles.railButtonSlot}>
       {active && <View style={styles.selectionBar} />}
@@ -57,10 +71,22 @@ function RailButton({ active, label, children, onPress, testID }: RailButtonProp
         accessibilityState={{ selected: active }}
         testID={testID}
         onPress={onPress}
+        onLongPress={onLongPress}
         style={[styles.railButton, !active && styles.railButtonIdle]}
       >
         {children}
       </TouchableOpacity>
+      {exitArmed && (
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel={`Exit ${label}`}
+          testID={`workspace-exit-${testID?.replace('community-rail-', '') ?? ''}`}
+          onPress={onExitPress}
+          style={styles.exitAffordance}
+        >
+          <Text style={styles.exitAffordanceGlyph}>×</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -108,11 +134,14 @@ export function CommunityRail({
   onAdd,
   onSettings,
   onWorkspaceSettings,
+  onLeaveWorkspace,
   canManageActiveCommunity = false,
   viewerPubkey,
   viewerAvatarUrl,
 }: CommunityRailProps) {
   const insets = useSafeAreaInsets();
+  // Long-press arms ONE tile's exit affordance; any other tap dismisses it.
+  const [exitArmedId, setExitArmedId] = useState<string | null>(null);
   const activeCommunity =
     communities.find((community) => community.communityId === activeCommunityId) ?? null;
   const showsWorkspaceSettings = Boolean(
@@ -132,12 +161,33 @@ export function CommunityRail({
       >
         {communities.map((community) => {
           const active = activeCommunityId === community.communityId;
+          const exitArmed = exitArmedId === community.communityId;
           return (
             <RailButton
               active={active}
               key={community.communityId}
               label={community.name}
-              onPress={() => onSelect(community.communityId)}
+              onPress={() => {
+                if (exitArmedId) {
+                  // A tap anywhere while the X is showing just dismisses it.
+                  setExitArmedId(null);
+                  return;
+                }
+                onSelect(community.communityId);
+              }}
+              onLongPress={
+                onLeaveWorkspace
+                  ? () => {
+                      void Haptics.selectionAsync();
+                      setExitArmedId(community.communityId);
+                    }
+                  : undefined
+              }
+              exitArmed={exitArmed}
+              onExitPress={() => {
+                setExitArmedId(null);
+                onLeaveWorkspace?.(community.communityId);
+              }}
               testID={`community-rail-${community.communityId}`}
             >
               <IdentityMark
@@ -254,6 +304,7 @@ export function BuzzCommunityShell({
   onAdd,
   onSettings,
   onWorkspaceSettings,
+  onLeaveWorkspace,
   canManageActiveCommunity,
   viewerPubkey,
   viewerAvatarUrl,
@@ -351,6 +402,7 @@ export function BuzzCommunityShell({
                 onAdd={addAndClose}
                 onSettings={settingsAndClose}
                 onWorkspaceSettings={workspaceSettingsAndClose}
+                onLeaveWorkspace={onLeaveWorkspace}
                 canManageActiveCommunity={canManageActiveCommunity}
                 viewerPubkey={viewerPubkey}
                 viewerAvatarUrl={viewerAvatarUrl}
@@ -407,6 +459,27 @@ const styles = StyleSheet.create((theme) => {
    * one you are in. The rail is a quiet column you glance at, not a row of
    * competing badges. */
   railButtonIdle: { opacity: 0.5 },
+  /* Exit affordance: one close glyph hung at the tile's own top-right corner,
+   * on the same quiet chrome tier as every other rail glyph. It appears only
+   * while a long-press has armed it. */
+  exitAffordance: {
+    position: 'absolute',
+    top: 2,
+    right: 4,
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 3,
+    backgroundColor: groknight.bgHover,
+  },
+  exitAffordanceGlyph: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 14,
+    lineHeight: 16,
+    textAlign: 'center',
+  },
   selectionBar: {
     position: 'absolute',
     top: 9,

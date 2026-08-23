@@ -392,6 +392,18 @@ export class BuzzRigTransport implements RigTransport {
     await client.archiveRoom(channelId);
   }
 
+  /**
+   * Leave a Workspace as the signed-in member. The SDK drops this identity's
+   * top-level Room memberships first (best-effort), then publishes the
+   * self-authored Workspace removal and waits for the projection to drop it —
+   * so a relay refusal for elevated roles surfaces here instead of silently
+   * leaving the Workspace on the device.
+   */
+  async leaveWorkspace(communityId: string): Promise<void> {
+    const client = await this.getClient();
+    await client.leaveWorkspace(communityId);
+  }
+
   /** Create or reopen the unique private Room for two Workspace members. */
   async resolveDirectMessage(
     communityId: string,

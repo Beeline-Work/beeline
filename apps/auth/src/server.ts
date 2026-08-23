@@ -90,6 +90,10 @@ export type GitHubRoomTokenAuthorityResult =
   | {
       authorized: true;
       authorizedBy: string;
+      /** The binding author's CURRENT key after key succession (equal to
+       * `authorizedBy` when no succession recorded). Pubkey-keyed lookups
+       * (GitHub installations, owner comparisons) use this value. */
+      currentAuthorizedBy?: string;
       fullName: string;
       githubInstallationId?: number;
     }
@@ -643,6 +647,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     string,
     {
       authorizedBy: string;
+      currentAuthorizedBy?: string;
       fullName: string;
       githubInstallationId?: number;
       expiresAt: number;
@@ -1305,6 +1310,44 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     });
   });
 
+  /**
+   * The key-succession chain BELOW this key: the device keys that previously
+   * held this identity, oldest first. Served only to the key itself (NIP-98
+   * signer must equal the requested pubkey) so a successor client can
+   * rediscover the Workspaces its predecessor's key authored/joined and
+   * migrate its own memberships in — zero re-inviting after a replace.
+   */
+  app.get<{ Params: { pubkey: string } }>('/auth/oidc/predecessors/:pubkey', async (request, reply) => {
+    const tenant = tenantFor(request);
+    const pubkey = request.params.pubkey;
+    if (!/^[0-9a-f]{64}$/.test(pubkey))
+      throw new ProtocolError(400, 'invalid_pubkey', 'invalid public key');
+    const auth = verifyNip98Header(
+      request.headers.authorization,
+      publicUrl(tenant, request),
+      'GET',
+      now(),
+    );
+    if (!auth.ok || auth.pubkey !== pubkey) {
+      throw new ProtocolError(
+        401,
+        'unauthorized',
+        auth.ok ? 'NIP-98 signer mismatch' : auth.reason,
+      );
+    }
+    const authNow = now();
+    const claimed = await options.store.claimNip98Event(
+      auth.eventId,
+      new Date(authNow.getTime() + 2 * 60_000),
+      authNow,
+    );
+    if (!claimed)
+      throw new ProtocolError(401, 'replayed_auth', 'NIP-98 authentication was already used');
+    const predecessors = await options.store.successionPredecessors(tenant.community, pubkey);
+    noStore(reply);
+    return reply.send({ predecessors });
+  });
+
   app.post('/auth/github/install/start', async (request, reply) => {
     if (!options.github)
       throw new ProtocolError(503, 'github_unavailable', 'GitHub App is not configured');
@@ -1908,12 +1951,19 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     // claimed (production, 2026-08). Authority is unchanged: the store only
     // resolves installations recorded for the authorizing pubkey, and the
     // mint below is scoped to the exact healed repository id.
+    // Key succession: pubkey-keyed lookups (installation resolution,
+    // reconciliation, pending-link recording) run against the binding
+    // author's CURRENT key, so a replaced device key keeps full repository
+    // authority over bindings its predecessor authored. The daemon also
+    // learns the resolved owner key here (`authorized_by`) so merge-approval
+    // verification can accept the successor without knowing the ledger.
+    const ownerPubkey = authority.currentAuthorizedBy ?? authority.authorizedBy;
     const usable = (candidate: typeof access): boolean =>
       candidate.accessible && !!candidate.installationId && !!candidate.repositoryId;
     let access = await resolveGitHubRepositoryAccess(
       { app: options.github.app, store: options.store },
       tenant.community,
-      authority.authorizedBy,
+      ownerPubkey,
       authority.fullName,
       now(),
     );
@@ -1944,11 +1994,11 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
         ));
       };
       if (!access.movedTo || (await destinationOwnerUncovered())) {
-        await reconcileGitHubInstallations(tenant.community, authority.authorizedBy, request.log);
+        await reconcileGitHubInstallations(tenant.community, ownerPubkey, request.log);
         access = await resolveGitHubRepositoryAccess(
           { app: options.github.app, store: options.store },
           tenant.community,
-          authority.authorizedBy,
+          ownerPubkey,
           authority.fullName,
           now(),
         );
@@ -1970,7 +2020,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
             tenant.community,
             roomId,
             repository,
-            authority.authorizedBy,
+            ownerPubkey,
             now(),
           );
         } catch (error) {
@@ -2030,6 +2080,9 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       expires_at: installation.expiresAt,
       installation_id: access.installationId,
       full_name: resolvedFullName,
+      // The binding author's current key after succession — the daemon treats
+      // an exact-tip approval signed by this key as owner-signed.
+      authorized_by: ownerPubkey,
     });
   });
 
@@ -2130,6 +2183,9 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
         ? {
             authorized: true as const,
             authorizedBy: cachedAuthority.authorizedBy,
+            ...(cachedAuthority.currentAuthorizedBy
+              ? { currentAuthorizedBy: cachedAuthority.currentAuthorizedBy }
+              : {}),
             fullName: cachedAuthority.fullName,
             ...(cachedAuthority.githubInstallationId !== undefined
               ? { githubInstallationId: cachedAuthority.githubInstallationId }
@@ -2159,6 +2215,9 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     }
     roomAuthorityCache.set(cacheKey, {
       authorizedBy: authority.authorizedBy,
+      ...(authority.currentAuthorizedBy
+        ? { currentAuthorizedBy: authority.currentAuthorizedBy }
+        : {}),
       fullName: authority.fullName,
       ...(authority.githubInstallationId !== undefined
         ? { githubInstallationId: authority.githubInstallationId }
@@ -2175,7 +2234,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       const resolved = await resolveGitHubRepositoryAccess(
         { app: options.github!.app, store: options.store },
         tenant.community,
-        authority.authorizedBy,
+        authority.currentAuthorizedBy ?? authority.authorizedBy,
         authority.fullName,
         authNow,
       );

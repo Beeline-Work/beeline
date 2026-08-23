@@ -15,6 +15,15 @@ type WorkspaceClient = Pick<
   'createCommunity' | 'getCommunity' | 'listCommunities' | 'waitUntilMember'
 >;
 
+export type WorkspaceBootstrapOptions = {
+  /**
+   * Key-succession chain loader: predecessor pubkeys of this identity
+   * (oldest first). When provided, Workspace discovery also finds — and the
+   * client migrates into — everything a replaced device key held.
+   */
+  loadPredecessors?: () => Promise<string[]>;
+};
+
 type WorkspaceStorage = {
   loadActiveId: (pubkey: string) => Promise<string | null>;
   loadPersonalId: (pubkey: string) => Promise<string | null>;
@@ -47,8 +56,10 @@ export async function prepareWorkspaceContext(
   pubkey: string,
   requestedWorkspaceId?: string,
   storage: WorkspaceStorage = defaultStorage,
+  options: WorkspaceBootstrapOptions = {},
 ): Promise<WorkspaceContext> {
-  let workspaces = await client.listCommunities();
+  const predecessors = options.loadPredecessors ? await options.loadPredecessors() : [];
+  let workspaces = await client.listCommunities(pubkey, predecessors);
   let personalWorkspaceId = await storage.loadPersonalId(pubkey);
 
   if (workspaces.length === 0) {
@@ -65,7 +76,7 @@ export async function prepareWorkspaceContext(
     if (!personalId) throw new Error(`Personal ${WORKSPACE_LABEL} could not be created.`);
 
     await client.waitUntilMember(personalId, pubkey);
-    workspaces = await client.listCommunities();
+    workspaces = await client.listCommunities(pubkey, predecessors);
 
     if (!workspaces.some((workspace) => workspace.communityId === personalId)) {
       personalWorkspace = await client.getCommunity(personalId);

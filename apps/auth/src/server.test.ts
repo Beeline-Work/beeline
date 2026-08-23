@@ -556,6 +556,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     });
     expect(roomTokenMint).toEqual({ installationId: 77, repositoryIds: [42] });
 
+
     const refusalCases = [
       {
         reason: 'tenant_room_community_mismatch',
@@ -687,6 +688,109 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       repository: 'octocat/widget',
     });
   });
+
+    // Key succession: the binding was authored by a key that was later
+    // replaced (device lost, identity recovered onto the successor). GitHub
+    // installations exist for the SUCCESSOR key only; authority lookups run
+    // against the resolved current key and the daemon learns it.
+  it('honors successor-key requests against old-key-authored bindings', async () => {
+    const agent = generateKeypair();
+    const predecessorKey = 'a'.repeat(64);
+    const successorKey = 'b'.repeat(64);
+    await store.saveGitHubInstallation(
+      {
+        community: alphaTenant.community,
+        pubkey: successorKey,
+        authorizedSubject: 'owner-subject',
+        accountId: '123',
+        accountLogin: 'octocat',
+        accountType: 'User',
+        installationId: 77,
+        repositorySelection: 'selected',
+        status: 'active',
+        repositoryCount: 1,
+      },
+      new Date(),
+    );
+    await store.replaceGitHubRepositories(
+      alphaTenant.community,
+      77,
+      [
+        {
+          id: 42,
+          installationId: 77,
+          name: 'widget',
+          fullName: 'octocat/widget',
+          remote: 'https://github.com/octocat/widget.git',
+          defaultBranch: 'main',
+        },
+      ],
+      new Date(),
+    );
+    roomTokenAuthority = async (_tenant, input) =>
+      input.agentPubkey === agent.publicKey && input.roomId === 'room-1'
+        ? {
+            authorized: true,
+            authorizedBy: predecessorKey,
+            currentAuthorizedBy: successorKey,
+            fullName: 'octocat/widget',
+            githubInstallationId: 77,
+          }
+        : { authorized: false, reason: 'agent_not_room_member' };
+    const url = `${alphaTenant.origin}/auth/github/room-token`;
+    const response = await app.inject({
+      method: 'POST',
+      url: '/auth/github/room-token',
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(agent.secretKey, agent.publicKey, url, 'POST'),
+      },
+      payload: {
+        pubkey: agent.publicKey,
+        room_id: 'room-1',
+        relay_authorizations: Array.from({ length: 16 }, () =>
+          nip98AuthHeader(agent.secretKey, agent.publicKey, `${alphaTenant.origin}/query`, 'POST'),
+        ),
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      installation_id: 77,
+      full_name: 'octocat/widget',
+      authorized_by: successorKey,
+    });
+
+    // An unrelated key resolving the same binding author is still refused:
+    // no installation row exists under an unrelated identity.
+    const unrelated = generateKeypair();
+    roomTokenAuthority = async (_tenant, input) =>
+      input.agentPubkey === unrelated.publicKey && input.roomId === 'room-1'
+        ? {
+            authorized: true,
+            authorizedBy: predecessorKey,
+            currentAuthorizedBy: unrelated.publicKey,
+            fullName: 'octocat/widget',
+            githubInstallationId: 77,
+          }
+        : { authorized: false, reason: 'agent_not_room_member' };
+    const refused = await app.inject({
+      method: 'POST',
+      url: '/auth/github/room-token',
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(unrelated.secretKey, unrelated.publicKey, url, 'POST'),
+      },
+      payload: {
+        pubkey: unrelated.publicKey,
+        room_id: 'room-1',
+        relay_authorizations: Array.from({ length: 16 }, () =>
+          nip98AuthHeader(unrelated.secretKey, unrelated.publicKey, `${alphaTenant.origin}/query`, 'POST'),
+        ),
+      },
+    });
+    expect(refused.statusCode).toBe(403);
+  });
+
 
   it('mints a read-only token when the Room token request asks for read_only', async () => {
     const owner = generateKeypair();
@@ -2409,6 +2513,74 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     });
     expect(replay.statusCode).toBe(401);
     expect(replay.json().error).toBe('replayed_auth');
+  });
+
+
+  it('serves the succession chain only to the successor key itself', async () => {
+    const challenge = await ceremony();
+    const oldKey = generateKeypair();
+    const newKey = generateKeypair();
+    expect((await bind(challenge, oldKey)).statusCode).toBe(201);
+
+    await store.createTicket('f'.repeat(64), {
+      challenge: 'c'.repeat(43),
+      community: alphaTenant.community,
+      issuer: provider.issuer,
+      audience: provider.clientId,
+      subject: 'google-subject-123',
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 10 * 60_000),
+      attemptCount: 0,
+      consumedAt: null,
+      boundPubkey: null,
+    });
+    await store.consumeTicketAndLink('f'.repeat(64), newKey.publicKey, new Date());
+    const replaced = await store.recoverConsumedTicketLink(
+      'f'.repeat(64),
+      newKey.publicKey,
+      new Date(),
+    );
+    expect(['replaced', 'idempotent']).toContain(replaced.status);
+
+    const url = `${alphaTenant.origin}/auth/oidc/predecessors/${newKey.publicKey}`;
+    const unauthorized = await app.inject({
+      method: 'GET',
+      url,
+      headers: { host: alphaTenant.host },
+    });
+    expect(unauthorized.statusCode).toBe(401);
+
+    const wrongSigner = generateKeypair();
+    const mismatch = await app.inject({
+      method: 'GET',
+      url,
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(wrongSigner.secretKey, wrongSigner.publicKey, url, 'GET'),
+      },
+    });
+    expect(mismatch.statusCode).toBe(401);
+
+    const authorization = nip98AuthHeader(newKey.secretKey, newKey.publicKey, url, 'GET');
+    const chain = await app.inject({
+      method: 'GET',
+      url,
+      headers: { host: alphaTenant.host, authorization },
+    });
+    expect(chain.statusCode).toBe(200);
+    expect(chain.json()).toEqual({ predecessors: [oldKey.publicKey] });
+
+    const oldUrl = `${alphaTenant.origin}/auth/oidc/predecessors/${oldKey.publicKey}`;
+    const oldChain = await app.inject({
+      method: 'GET',
+      url: oldUrl,
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(oldKey.secretKey, oldKey.publicKey, oldUrl, 'GET'),
+      },
+    });
+    expect(oldChain.statusCode).toBe(200);
+    expect(oldChain.json()).toEqual({ predecessors: [] });
   });
 
   it('returns a native bind challenge only through an allowlisted state-bound app callback', async () => {

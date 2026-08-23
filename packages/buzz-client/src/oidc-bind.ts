@@ -75,6 +75,12 @@ export interface GitHubRoomInstallationToken {
   expiresAt: string;
   installationId: number;
   fullName: string;
+  /**
+   * The Room binding author's CURRENT device key after key succession
+   * (absent when the auth service has no succession ledger entry). A daemon
+   * may treat an exact-tip merge approval signed by this key as owner-signed.
+   */
+  authorizedBy?: string;
 }
 
 /** One stored GitHub repository-activity event, released to an authorized daemon. */
@@ -874,7 +880,9 @@ export async function getGitHubRoomInstallationToken(
     typeof body.installation_id !== 'number' ||
     !Number.isSafeInteger(body.installation_id) ||
     typeof body.full_name !== 'string' ||
-    !/^[^/\s]+\/[^/\s]+$/.test(body.full_name)
+    !/^[^/\s]+\/[^/\s]+$/.test(body.full_name) ||
+    (body.authorized_by !== undefined &&
+      (typeof body.authorized_by !== 'string' || !HEX_KEY_RE.test(body.authorized_by)))
   ) {
     throw new OidcBindError(
       'invalid_response',
@@ -887,7 +895,55 @@ export async function getGitHubRoomInstallationToken(
     expiresAt: body.expires_at,
     installationId: body.installation_id,
     fullName: body.full_name,
+    ...(typeof body.authorized_by === 'string' ? { authorizedBy: body.authorized_by } : {}),
   };
+}
+
+/** Validated result of {@link fetchIdentityPredecessors}. */
+export interface IdentitySuccessionChain {
+  /** The keys that previously held this identity, oldest first. */
+  predecessors: string[];
+}
+
+/**
+ * Fetch this key's succession chain from the auth service: the device keys
+ * that previously held the same Beeline identity (oldest first). Served only
+ * to the key itself; a successor uses it to rediscover its predecessor's
+ * Workspaces and migrate its own memberships after a replace.
+ */
+export async function fetchIdentityPredecessors(
+  baseUrl: string,
+  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
+): Promise<string[]> {
+  if (!HEX_KEY_RE.test(identity.publicKey))
+    throw new OidcBindError('invalid_identity', 'invalid public key');
+  const url = endpoint(baseUrl, `/auth/oidc/predecessors/${identity.publicKey}`).toString();
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'GET'),
+      },
+    });
+  } catch (error) {
+    throw new OidcBindError(
+      'offline',
+      error instanceof Error ? error.message : 'auth service unavailable',
+    );
+  }
+  const body = await responseBody(response);
+  if (!response.ok) throw serviceError(body, response.status);
+  if (
+    !Array.isArray(body.predecessors) ||
+    body.predecessors.some((value) => typeof value !== 'string' || !HEX_KEY_RE.test(value))
+  ) {
+    throw new OidcBindError(
+      'invalid_response',
+      'auth service returned an invalid succession chain',
+      response.status,
+    );
+  }
+  return body.predecessors as string[];
 }
 
 /**

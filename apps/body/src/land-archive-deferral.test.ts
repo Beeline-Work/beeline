@@ -290,7 +290,9 @@ describe('a session-state publish refused by an archived channel', () => {
 
     // Archive first (publishes are refused here too, so drive the state the
     // real close leaves behind), then fire the suspended-state publish that
-    // used to land in the log as an unhandled error.
+    // used to land in the log as an unhandled error. A LIVE session retiring
+    // mid-run — not the silent creation-time bookkeeping.
+    fixture.info.session.processState = 'live';
     fixture.info.archived = true;
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -317,6 +319,7 @@ describe('a session-state publish refused by an archived channel', () => {
       { status: 500, body: 'relay unavailable' },
     );
 
+    fixture.info.session.processState = 'live';
     fixture.info.archived = true;
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {

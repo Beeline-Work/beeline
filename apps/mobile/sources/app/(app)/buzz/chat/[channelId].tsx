@@ -78,7 +78,7 @@ import { latestCornerPlan } from '@/buzz/activity-timeline';
 import { cornerObjectiveLine, type RoomContextEntry } from '@/buzz/corner-context';
 import { hydrateRoomEntry } from '@/buzz/room-entry';
 import { groknight } from '@/buzz/groknight';
-import { continuedSpeakerIds } from '@/buzz/ledger-attribution';
+import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution';
 import { splitLedgerText } from '@/buzz/ledger-text';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
@@ -108,7 +108,7 @@ import {
   type CornerStatus,
   type CornerSummary,
 } from '@/buzz/corners';
-import { cornerActionSurface, type CornerAttentionCard } from '@/buzz/corner-attention';
+import { cornerActionSurface } from '@/buzz/corner-attention';
 import { personIdentityLabel, shortMemberNpub } from '@/buzz/member-display';
 import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
 import {
@@ -232,40 +232,15 @@ const MERGE_APPROVAL_ACCENT = groknight.accent;
 
 /**
  * The voice a transcript entry belongs to, or `null` for anything that is not
- * one. People and agents both count: consecutive entries from the same voice
- * fold into one block. A system row (corner card, merge summary, archive
- * notice, permission card) belongs to nobody, so each of those ends the run and
- * makes the next entry re-announce itself.
- *
- * The agent test runs before the person test on purpose, so this agrees with
- * `renderItem`'s own `isAgent ? LedgerEntry : LedgerSteer` choice for the one case
- * where a message is both: an agent viewing its own Room messages, where
- * `isUser` and `isAgentAuthor` are true together. Deriving the two differently
- * would fold a run the renderer draws as two voices.
+ * one, is decided by THE shared projection helper (`buzz/ledger-attribution.ts`
+ * — Rooms and corners alike). This screen only supplies its roster union:
+ * registered agents plus the daemon's own body keys.
  */
-function ledgerSpeakerKey(
-  message: ChatDisplayMessage,
-  agentByPubkey: Map<string, unknown>,
-): string | null {
-  if (
-    message.corner ||
-    message.isMergeSummary ||
-    message.isArchivedNotice ||
-    message.isSystemNotice
-  )
-    return null;
-  if (message.writePermission || message.targetBranchProposal) return null;
-  const isAgent =
-    message.isAgentAuthor ||
-    message.isAgentActivity ||
-    Boolean(
-      message.pubkey && (BODY_PUBKEYS.has(message.pubkey) || agentByPubkey.has(message.pubkey)),
-    );
-  if (isAgent) return `agent:${message.pubkey ?? 'unknown-agent'}`;
-  // An optimistic own message has no pubkey until it reconciles, so it keys on
-  // the viewer rather than on a shared "unknown" bucket.
-  return `person:${message.pubkey ?? (message.isUser ? 'self' : 'unknown-person')}`;
-}
+const knownAgentPubkeysFor = (agentByPubkey: Map<string, unknown>): Set<string> => {
+  const keys = new Set<string>(BODY_PUBKEYS);
+  for (const pubkey of agentByPubkey.keys()) keys.add(pubkey);
+  return keys;
+};
 
 /**
  * One turn of the agent's work: its narration on the slab, its tools as
@@ -381,41 +356,7 @@ function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
   );
 }
 
-// The one card the corner's action area renders where the merge-review panel
-// lives, derived ONCE off the same lifecycle verdict the Room index golds.
-// A live merge target keeps today's review panel; a needs-you verdict with no
-// merge card gets an attention card naming WHAT needs the person (the deck
-// said 'ready for review' / 'decision needed' — the corner must say why);
-// anything else keeps the current empty state. See `corner-attention.ts`.
-function CornerAttentionCardView({
-  card,
-  onReply,
-}: {
-  card: CornerAttentionCard;
-  onReply: () => void;
-}) {
-  return (
-    <HullSurface strength="raised" style={styles.attentionCard} testID="corner-attention-card">
-      <Text style={[styles.attentionCardState]}>
-        {card.glyph} {card.label}
-      </Text>
-      {card.detail ? (
-        <Text style={styles.attentionCardDetail} numberOfLines={3} testID="corner-attention-detail">
-          {card.detail}
-        </Text>
-      ) : null}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Open the composer to reply in this corner"
-        onPress={onReply}
-        style={styles.attentionCardReply}
-        testID="corner-attention-reply"
-      >
-        <Text style={styles.attentionCardReplyLabel}>REPLY IN THIS CORNER →</Text>
-      </Pressable>
-    </HullSurface>
-  );
-}
+
 
 function SwipeToReply({
   children,
@@ -1052,19 +993,18 @@ export default function BuzzChat() {
     [isCorner, messages],
   );
   // Attribution is per run, not per entry: only the first entry of a voice's
-  // run carries its mark and name (see `buzz/ledger-attribution.ts`). A corner
-  // never attributes at all, so it never needs the set.
+  // run carries its mark and name (see `buzz/ledger-attribution.ts`). Corners
+  // attribute exactly like Rooms — several people can sit in one corner, so
+  // bare turns are indistinguishable there too.
   const continuedAttributionIds = useMemo(
     () =>
-      isCorner
-        ? new Set<string>()
-        : continuedSpeakerIds(
-            visibleMessages.map((message) => ({
-              id: message.id,
-              speaker: ledgerSpeakerKey(message, agentByPubkey),
-            })),
-          ),
-    [agentByPubkey, isCorner, visibleMessages],
+      continuedSpeakerIds(
+        visibleMessages.map((message) => ({
+          id: message.id,
+          speaker: ledgerSpeakerKey(message, knownAgentPubkeysFor(agentByPubkey)),
+        })),
+      ),
+    [agentByPubkey, visibleMessages],
   );
   // Newest-first for the inverted FlatList; chronological visibleMessages
   // above stays the source of truth for everything else that reads order.
@@ -1151,7 +1091,12 @@ export default function BuzzChat() {
   );
   // The corner action area's card, from the SAME verdict the deck golds. One
   // derivation (`corner-attention.ts`); the screen renders the answer and
-  // never re-reads raw status tags.
+  // never re-reads raw status tags. This screen IS the corner when isCorner,
+  // so only the review branch may render here — the attention card is scoped
+  // to non-corner summary surfaces (the deck row and pinned bar already route
+  // needs-you INTO this screen via their own oracle-fed affordances); inside
+  // the corner the state word lives in the header badge and the ask itself
+  // lives in the transcript.
   const cornerAction = useMemo(
     () =>
       cornerActionSurface({
@@ -2955,33 +2900,25 @@ export default function BuzzChat() {
       ));
 
       // ── The ledger (§ DESIGN.md "The ledger") ────────────────────
-      // One primitive, both surfaces. Two things differ, and each tracks a real
-      // difference between them:
+      // One primitive, both surfaces. Corners attribute exactly like Rooms —
+      // several people can sit in one corner, so every voice announces itself
+      // with its identity mark and name (or 'You'), once per run.
       //
-      //   · A Corner has one administering agent, named in its top bar, so its
-      //     turns carry no byline name — the dot-and-stamp rhythm only. A Room
-      //     holds several voices, so each run opens with a byline: dot, NAME,
-      //     quiet role tag, HH:MM.
       //   · Your own turn's byline dot and name are brass, and nothing else
       //     marks it: the message text is plain body — regular weight,
       //     primary tone, one size — never bolded, never enlarged.
       const attributionContinued = continuedAttributionIds.has(item.id);
-      // An agent viewing its own Room messages is both `isUser` and an agent;
-      // the agent test wins, matching `ledgerSpeakerKey`'s own ordering.
+      // An agent viewing its own messages is both `isUser` and an agent; the
+      // agent test wins, matching `ledgerSpeakerKey`'s own ordering.
       const isSelfSteer = isOwn && !isAgent;
-      // A Corner is exactly one administering agent plus you, so anything that
-      // is not your own steer is that agent — by the surface's definition, not
-      // by a roster lookup. Deriving it structurally is what keeps a Corner
-      // correct when the roster is empty or still loading.
-      const isCornerAgent = isCorner && !isSelfSteer;
-      const speaksAsAgent = isAgent || isCornerAgent;
+      const speaksAsAgent = isAgent;
       const voiceName = speaksAsAgent
         ? display
           ? display.name
           : (personName ?? shortMemberNpub(item.pubkey ?? ''))
         : (personName ?? (item.pubkey ? shortMemberNpub(item.pubkey) : 'SOMEONE'));
-      // Zero byline names in a Corner — its one agent is named in the top bar
-      // — and none on a continuation of the voice directly above.
+      // Attribution on a continuation of the voice directly above is omitted;
+      // otherwise every voice announces itself with its mark and name.
       //
       // The byline's leading indicator is the speaker's EXISTING identity mark
       // (buzz/identity-mark.ts), at transcript scale, so several people and
@@ -3002,8 +2939,8 @@ export default function BuzzChat() {
       const byline: LedgerByline | undefined = attributionContinued
         ? undefined
         : {
-            name: isCorner ? undefined : isSelfSteer ? 'You' : voiceName,
-            role: speaksAsAgent && !isCorner ? 'agent' : undefined,
+            name: isSelfSteer ? 'You' : voiceName,
+            role: speaksAsAgent ? 'agent' : undefined,
             stamp: ledgerStamp(item.timestamp),
             isViewer: isSelfSteer,
             mark: {
@@ -3025,11 +2962,9 @@ export default function BuzzChat() {
       // Machine noise collapses the same way on both surfaces: one ghost line,
       // expandable, never a wall of output down the slab.
       if (item.isAgentActivity) {
-        // The tool run keeps its attribution: a Room interleaves voices, so a
-        // readout that opens a new agent's run still names them. Corners name
-        // nobody (the top bar owns identity).
-        const activityHandle =
-          !attributionContinued && speaksAsAgent && !isCorner ? voiceName : undefined;
+        // The tool run keeps its attribution on BOTH surfaces: a readout that
+        // opens a new voice's run still names them.
+        const activityHandle = !attributionContinued && speaksAsAgent ? voiceName : undefined;
         return (
           <LedgerActivity
             active={item.id === activeActivityId}
@@ -3540,11 +3475,6 @@ export default function BuzzChat() {
                       </Text>
                     ) : null}
                   </HullSurface>
-                ) : cornerAction.kind === 'attention' ? (
-                  <CornerAttentionCardView
-                    card={cornerAction.card}
-                    onReply={() => composerRef.current?.focus()}
-                  />
                 ) : (
                   <HullSurface
                     strength="quiet"
@@ -5301,41 +5231,6 @@ const styles = StyleSheet.create((theme) => {
     fontSize: 11,
     lineHeight: 16,
   },
-  // ── Corner attention card ───────────────────────────────────────
-  // Same action-area slot as the approval bar; needs-you is the one state
-  // that spends the accent on either surface.
-  attentionCard: {
-    marginHorizontal: 16,
-    padding: 14,
-    gap: 8,
-    backgroundColor: groknight.bgTerminal,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-  },
-  attentionCardState: {
-    ...Typography.mono('semiBold'),
-    fontSize: 12,
-    letterSpacing: 0.3,
-    color: groknight.accent,
-  },
-  attentionCardDetail: {
-    ...Typography.default(),
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  attentionCardReply: {
-    alignSelf: 'flex-start',
-    paddingVertical: 6,
-    paddingRight: 12,
-  },
-  attentionCardReplyLabel: {
-    ...Typography.mono(),
-    fontSize: 11,
-    letterSpacing: 0.3,
-    color: groknight.textPrimary,
-  },
-
   // ── Composer ────────────────────────────────────────────────────
   emptyState: {
     flex: 1,

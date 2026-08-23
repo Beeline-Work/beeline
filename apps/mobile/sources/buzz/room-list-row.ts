@@ -1,10 +1,11 @@
 import {
-  CORNER_NEEDS_YOU_STATUSES,
   cornerStatusPresentation,
+  cornerSuperState,
   roomCornerSignal,
   roomListCorners,
-  type CornerSummary,
   type CornerStatus,
+  type CornerSummary,
+  type CornerSuperState,
 } from '@/buzz/corners';
 import { isMachinePreview } from '@/buzz/room-list-summary';
 import { isRetiredAgentStateNotice } from '@/buzz/retired-agent-notices';
@@ -18,26 +19,31 @@ export const ROOM_LIST_ZONE_LABELS: Record<RoomListZone, string> = {
 };
 
 const ROOM_LIST_ZONE_ORDER: readonly RoomListZone[] = ['needs-you', 'working', 'idle'];
-// The needs-you set is THE one definition (`corners.ts`): the deck's gold zone
-// and the corner view's attention card must never disagree about what counts.
-const NEEDS_YOU_STATUSES = CORNER_NEEDS_YOU_STATUSES;
-const MEANINGFUL_CORNER_STATUSES: ReadonlySet<CornerStatus> = new Set([
-  ...NEEDS_YOU_STATUSES,
-  'live',
-  'merged',
+// Gold is THE three-word verdict's needs-human state — including
+// idle-without-finishing, plainly. Affordance words per legacy word stay
+// contextual (approve card / reply / retry / nudge-close).
+function needsHumanCorner(corner: CornerSummary): boolean {
+  return cornerSuperState(corner.status) === 'needs-human';
+}
+const MEANINGFUL_CORNER_SUPERSTATES: ReadonlySet<CornerSuperState> = new Set([
+  'needs-human',
+  'working',
+  'finished',
 ]);
 const LIVE_STATUSES: ReadonlySet<CornerStatus> = new Set(['live']);
 const FINISHED_STATUSES: ReadonlySet<CornerStatus> = new Set(['merged']);
 
 /**
- * The one loud word a needs-you Room is allowed to say. Each maps from the
- * corner lifecycle state that put the Room in the zone, so the pill can never
- * advertise an action the underlying state does not offer.
+ * The one loud word a needs-you Room is allowed to say — the AFFORDANCE the
+ * person gets on opening the corner (approve card when a live merge target
+ * exists, reply focus otherwise, retry, nudge/close). The STATE word on every
+ * surface is just needs-human; this names what to do about it.
  */
-const NEEDS_YOU_ACTION: Record<Exclude<CornerStatus, 'live' | 'merged' | 'archived'>, string> = {
+const NEEDS_YOU_ACTION: Record<string, string> = {
   open: 'APPROVE',
-  'needs-attention': 'DECIDE',
-  failed: 'BLOCKED',
+  'needs-attention': 'REPLY',
+  failed: 'RETRY',
+  stalled: 'NUDGE',
 };
 
 /**
@@ -175,12 +181,29 @@ function cornerTimestamp(corner: CornerSummary): number {
   return corner.lastActivityAt ?? corner.createdAt ?? 0;
 }
 
-function newestCorner(
+function newestNeedsHuman(
+  corners: readonly CornerSummary[],
+): CornerSummary | undefined {
+  return corners
+    .filter(needsHumanCorner)
+    .sort(
+      (a, b) =>
+        cornerTimestamp(b) - cornerTimestamp(a) ||
+        a.name.localeCompare(b.name) ||
+        a.id.localeCompare(b.id),
+    )[0];
+}
+
+/** Newest corner carrying one of the given legacy words. */
+function newestByStatus(
   corners: readonly CornerSummary[],
   statuses: ReadonlySet<CornerStatus>,
 ): CornerSummary | undefined {
   return corners
-    .filter((corner) => statuses.has(corner.status))
+    .filter(
+      (corner): corner is CornerSummary & { status: CornerStatus } =>
+        corner.status !== null && statuses.has(corner.status),
+    )
     .sort(
       (a, b) =>
         cornerTimestamp(b) - cornerTimestamp(a) ||
@@ -198,24 +221,23 @@ function actorName(
 }
 
 function cornerFact(corner: CornerSummary, authorNames: ReadonlyMap<string, string>): string {
-  switch (corner.status) {
-    case 'live':
+  // The state line speaks THE three words; finished keeps its landed flavor,
+  // archived says nothing.
+  switch (cornerSuperState(corner.status)) {
+    case 'working':
       return `${actorName(corner, authorNames, 'Agent')} working · ${corner.name}`;
-    case 'needs-attention':
-      return `${actorName(corner, authorNames, 'Change')} · decision needed · ${corner.name}`;
-    case 'open':
-      return `${actorName(corner, authorNames, 'Change')} · ready for review · ${corner.name}`;
-    case 'failed':
-      return `${actorName(corner, authorNames, 'Change')} · failed · ${corner.name}`;
-    case 'merged':
-      return `${actorName(corner, authorNames, 'Change')} · landed · ${corner.name}`;
-    case 'archived':
-      return NO_ACTIVITY_PREVIEW;
+    case 'needs-human':
+      return `Waiting on you · ${corner.name}`;
+    case 'finished':
+      return corner.status === 'merged'
+        ? `${actorName(corner, authorNames, 'Change')} · landed · ${corner.name}`
+        : NO_ACTIVITY_PREVIEW;
   }
 }
 
-function needsYouAction(status: CornerStatus): string {
-  return NEEDS_YOU_ACTION[status as keyof typeof NEEDS_YOU_ACTION];
+function needsYouAction(status: CornerStatus | null): string {
+  const key = status === null ? 'stalled' : status;
+  return NEEDS_YOU_ACTION[key] ?? 'REPLY';
 }
 
 export function roomRowPresentation(
@@ -224,9 +246,9 @@ export function roomRowPresentation(
 ): RoomRowPresentation {
   const all = room.corners ?? [];
   const corners = roomListCorners(all);
-  const needsYou = newestCorner(all, NEEDS_YOU_STATUSES);
-  const working = newestCorner(all, LIVE_STATUSES);
-  const finished = newestCorner(all, FINISHED_STATUSES);
+  const needsYou = newestNeedsHuman(all);
+  const working = newestByStatus(all, LIVE_STATUSES);
+  const finished = newestByStatus(all, FINISHED_STATUSES);
   const currentCorner = needsYou ?? working ?? finished;
   const turnWorking = Boolean(room.agentTurnWorking) && !needsYou;
   const zone: RoomListZone = needsYou
@@ -244,7 +266,9 @@ export function roomRowPresentation(
   const messageAt = room.latestMessageAt ?? (clean ? room.updatedAt : undefined) ?? 0;
   const meaningfulAt = Math.max(
     messageAt,
-    ...all.filter((corner) => MEANINGFUL_CORNER_STATUSES.has(corner.status)).map(cornerTimestamp),
+    ...all
+      .filter((corner) => MEANINGFUL_CORNER_SUPERSTATES.has(cornerSuperState(corner.status)))
+      .map(cornerTimestamp),
     room.createdAt ?? 0,
   );
   // The deck attributes idle previews with the same roster the lifecycle facts

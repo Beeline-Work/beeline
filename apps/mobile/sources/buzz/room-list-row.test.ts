@@ -94,12 +94,16 @@ describe('Room row presentation', () => {
       label: 'APPROVE',
     });
     expect(roomRowPresentation({ corners: [corner('needs-attention')] }, NO_NAMES).pills[0]).toEqual(
-      { kind: 'status', label: 'DECIDE' },
+      { kind: 'status', label: 'REPLY' },
     );
     expect(roomRowPresentation({ corners: [corner('failed')] }, NO_NAMES).pills[0]).toEqual({
       kind: 'status',
-      label: 'BLOCKED',
+      label: 'RETRY',
     });
+    // Idle-without-finishing is needs-human too — the nudge/close affordance.
+    expect(
+      roomRowPresentation({ corners: [{ ...corner('open'), status: null }] }, NO_NAMES).pills[0],
+    ).toEqual({ kind: 'status', label: 'NUDGE' });
     // Working and idle rows never carry one.
     expect(
       roomRowPresentation({ corners: [corner('live')] }, NO_NAMES).pills.some(
@@ -207,8 +211,15 @@ describe('Room row presentation', () => {
   it('states the current fact with the responsible actor', () => {
     const names = new Map([['opener', 'Lena']]);
     expect(roomRowPresentation({ corners: [corner('open', 'login-fix')] }, names).fact).toBe(
-      'Lena · ready for review · login-fix',
+      'Waiting on you · login-fix',
     );
+    // Idle-without-finishing is needs-human plainly, same as any other.
+    expect(
+      roomRowPresentation(
+        { corners: [{ ...corner('open', 'login-fix'), status: null }] },
+        names,
+      ).fact,
+    ).toBe('Waiting on you · login-fix');
     expect(roomRowPresentation({ corners: [corner('live', 'rebase-main')] }, names).fact).toBe(
       'Lena working · rebase-main',
     );

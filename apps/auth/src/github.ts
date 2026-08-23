@@ -192,6 +192,25 @@ export class GitHubAppClient {
     return `https://github.com/apps/${this.#config.slug}/installations/new`;
   }
 
+  /**
+   * THIS App's own live configuration (GET /app, App-JWT authenticated):
+   * the subscribed events and permission levels the drift check compares
+   * against the required set.
+   */
+  async fetchApp(): Promise<{ slug: string; events?: unknown; permissions?: unknown }> {
+    const body = await jsonObject(
+      await fetch(`${this.#config.apiBaseUrl}/app`, {
+        headers: githubHeaders(await this.appJwt()),
+      }),
+      'GitHub app lookup',
+    );
+    const slug = body.slug;
+    if (typeof slug !== 'string' || !slug) {
+      throw new Error('GitHub app lookup response is invalid');
+    }
+    return { slug, events: body.events, permissions: body.permissions };
+  }
+
   private async appJwt(): Promise<string> {
     const key = await importPKCS8(this.#config.privateKey.replace(/\\n/g, '\n'), 'RS256');
     const now = Math.floor(Date.now() / 1_000);

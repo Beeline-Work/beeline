@@ -88,10 +88,10 @@ export default {
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",
                 monochromeImage: "./sources/assets/images/icon-monochrome.png",
-                // Brass gradient layer behind the ink Alloy foreground; solid brass is
-                // the fallback if the background image is dropped by a toolchain.
+                // Owner-final treatment: brass loop on a flat aubergine field. Keep the
+                // fallback in sync if a toolchain drops the generated background image.
                 backgroundImage: "./sources/assets/images/icon-adaptive-background.png",
-                backgroundColor: "#E5A645"
+                backgroundColor: "#14091A"
             },
             permissions: [
                 "android.permission.RECORD_AUDIO",

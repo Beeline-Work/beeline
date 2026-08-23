@@ -49,6 +49,7 @@ import {
   type AttachmentReference,
   type RoomRepository,
   type GitHubInstallationAccess,
+  type AgentCommandList,
   AGENT_PRESENCE_STALE_MS,
   personHandle,
 } from '@beeline/buzz-client';
@@ -148,7 +149,13 @@ import {
   type PickedChatAttachment,
 } from '@/buzz/chat-attachment';
 import { describeWriteRequest } from '@/buzz/write-request-copy';
-import { availableSlashVerbs, slashVerbQuery, type BuiltInSlashVerbId } from '@/buzz/slash-verbs';
+import {
+  availableSlashVerbs,
+  slashVerbQuery,
+  agentMentionSlashQuery,
+  matchesAgentCommand,
+  type BuiltInSlashVerbId,
+} from '@/buzz/slash-verbs';
 import {
   cachedChannelKind,
   channelHeaderTitle,
@@ -466,6 +473,8 @@ export default function BuzzChat() {
   const [dismissedMentionKey, setDismissedMentionKey] = useState<string | null>(null);
   const [highlightedSlashVerbIndex, setHighlightedSlashVerbIndex] = useState(0);
   const [dismissedSlashText, setDismissedSlashText] = useState<string | null>(null);
+  /** Per-agent published command lists (null = read resolved absent/unreadable). */
+  const [agentCommandsByPubkey, setAgentCommandsByPubkey] = useState<Record<string, AgentCommandList | null>>({});
   const [sending, setSending] = useState(false);
   const [pendingAttachment, setPendingAttachment] = useState<PickedChatAttachment | null>(null);
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
@@ -884,6 +893,34 @@ export default function BuzzChat() {
   const isCorner = Boolean(parentChannelId);
   const isDirectMessage = Boolean(directMessage);
   const currentSlashQuery = useMemo(() => slashVerbQuery(inputText), [inputText]);
+  // Mention-scoped palette: `@agent /query` addresses THAT agent's advertised
+  // commands. Mutually exclusive with `currentSlashQuery` by shape — the plain
+  // path requires the WHOLE composer to be one slash token.
+  const mentionSlash = useMemo(() => agentMentionSlashQuery(inputText), [inputText]);
+  const mentionSlashAgentPubkey = useMemo(() => {
+    if (!mentionSlash) return null;
+    const needle = mentionSlash.mention.toLowerCase();
+    const match = mentionableAgents.find(
+      (agent) =>
+        agent.handle?.toLowerCase() === needle || agent.name.toLowerCase() === needle,
+    );
+    return match?.pubkey ?? null;
+  }, [mentionSlash, mentionableAgents]);
+  const mentionAgentCommands = useMemo(() => {
+    if (!mentionSlash || !mentionSlashAgentPubkey) return [];
+    const published = agentCommandsByPubkey[mentionSlashAgentPubkey];
+    return (published?.commands ?? []).filter((command) =>
+      matchesAgentCommand(command, mentionSlash.query),
+    );
+  }, [agentCommandsByPubkey, mentionSlash, mentionSlashAgentPubkey]);
+  // True only once the read RESOLVED (absent or empty list): an in-flight or
+  // failed read is unknown, never "does not advertise".
+  const mentionAgentLacksCommands = Boolean(
+    mentionSlash &&
+      mentionSlashAgentPubkey &&
+      agentCommandsByPubkey[mentionSlashAgentPubkey] !== undefined &&
+      (agentCommandsByPubkey[mentionSlashAgentPubkey]?.commands.length ?? 0) === 0,
+  );
   const pendingCornerRequest = useMemo(() => {
     for (let index = combinedMessages.length - 1; index >= 0; index -= 1) {
       const message = combinedMessages[index];
@@ -940,11 +977,40 @@ export default function BuzzChat() {
     ],
   );
   const slashMenuVisible = Boolean(
-    composerFocused && currentSlashQuery !== null && dismissedSlashText !== inputText,
+    composerFocused &&
+      (currentSlashQuery !== null ||
+        (mentionSlash !== null && mentionSlashAgentPubkey !== null)) &&
+      dismissedSlashText !== inputText,
   );
+  const paletteItemCount = mentionAgentCommands.length + slashVerbs.length;
   useEffect(() => {
     setHighlightedSlashVerbIndex(0);
-  }, [currentSlashQuery, slashVerbs.length]);
+  }, [currentSlashQuery, mentionSlash?.query, paletteItemCount]);
+  // Load the addressed agent's published command list on demand — the palette
+  // renders ONLY from this published record, never a hardcoded inventory. A
+  // failed read resolves null ("unknown", rendered as lacks-commands), never
+  // blocks typing.
+  useEffect(() => {
+    const pubkey = mentionSlashAgentPubkey;
+    if (!pubkey || !transport || !activeCommunityId) return;
+    if (agentCommandsByPubkey[pubkey] !== undefined) return;
+    let cancelled = false;
+    transport
+      .agentCommandsRead(activeCommunityId, pubkey)
+      .then((list) => {
+        if (!cancelled) {
+          setAgentCommandsByPubkey((current) => ({ ...current, [pubkey]: list }));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAgentCommandsByPubkey((current) => ({ ...current, [pubkey]: null }));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeCommunityId, agentCommandsByPubkey, mentionSlashAgentPubkey, transport]);
   // `null` means "show a skeleton": the channel kind or its name is still
   // resolving and no honest word exists yet. A corner never renders the Room
   // label as a stand-in for its own slug.
@@ -2686,6 +2752,23 @@ export default function BuzzChat() {
     void Haptics.selectionAsync();
   }, [clearSlashComposer]);
 
+  /**
+   * Insert a selected agent command in place of the typed `/query` token,
+   * KEEPING the @mention that scoped the palette. The trailing space closes
+   * the palette and leaves the composer ready for the command's arguments.
+   */
+  const insertAgentCommand = useCallback(
+    (name: string) => {
+      const next = inputText.replace(/\/[a-z0-9-]*$/i, `/${name} `);
+      inputTextRef.current = next;
+      setInputText(next);
+      setInputSelection({ start: next.length, end: next.length });
+      setComposerHeight(COMPOSER_MIN_HEIGHT);
+      void Haptics.selectionAsync();
+    },
+    [inputText],
+  );
+
   const runSlashVerb = useCallback(
     (verb: BuiltInSlashVerbId) => {
       clearSlashComposer();
@@ -2726,6 +2809,28 @@ export default function BuzzChat() {
       pendingTargetBranchProposal,
     ],
   );
+
+  /** Select whatever the highlight points at across commands-then-verbs. */
+  const selectHighlightedPaletteItem = useCallback(() => {
+    const commandIndex = highlightedSlashVerbIndex - mentionAgentCommands.length;
+    if (commandIndex < 0) {
+      const command = mentionAgentCommands[highlightedSlashVerbIndex];
+      if (command) {
+        insertAgentCommand(command.name);
+        return;
+      }
+    } else {
+      const verb = slashVerbs[commandIndex];
+      if (verb) {
+        runSlashVerb(verb.id);
+        return;
+      }
+    }
+    // No match at all: Enter/the send button passes the text through as an
+    // ordinary message instead of dying as a dead end. The daemon visibly
+    // marks such text on the other side.
+    handleSend();
+  }, [handleSend, highlightedSlashVerbIndex, insertAgentCommand, inputText, mentionAgentCommands, runSlashVerb, slashVerbs]);
 
   const renderItem = useCallback(
     ({ item }: { item: ChatDisplayMessage }) => {
@@ -3556,15 +3661,27 @@ export default function BuzzChat() {
           </View>
         ) : (
           <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-            {slashMenuVisible && (
-              <SlashVerbPicker
-                verbs={slashVerbs}
-                query={currentSlashQuery ?? ''}
-                highlightedIndex={highlightedSlashVerbIndex}
-                onDismiss={dismissSlashMenu}
-                onSelect={runSlashVerb}
-              />
-            )}
+            {slashMenuVisible && (() => {
+              const mentionAgent = mentionSlashAgentPubkey
+                ? agentByPubkey.get(mentionSlashAgentPubkey)
+                : undefined;
+              const mentionAgentName = mentionSlashAgentPubkey
+                ? resolveAgentDisplayIdentity(mentionSlashAgentPubkey, mentionAgent).name
+                : undefined;
+              return (
+                <SlashVerbPicker
+                  verbs={slashVerbs}
+                  query={currentSlashQuery ?? mentionSlash?.query ?? ''}
+                  highlightedIndex={highlightedSlashVerbIndex}
+                  onDismiss={dismissSlashMenu}
+                  onSelect={runSlashVerb}
+                  commands={mentionAgentCommands}
+                  agentName={mentionAgentName}
+                  agentLacksCommands={mentionAgentLacksCommands}
+                  onSelectCommand={insertAgentCommand}
+                />
+              );
+            })()}
             {mentionMenuVisible && (
               <View
                 accessibilityLabel="Mention a Room participant"
@@ -3768,17 +3885,12 @@ export default function BuzzChat() {
                     if (!action) return;
                     if (action === 'select') {
                       event.preventDefault();
-                      const selected = slashVerbs[highlightedSlashVerbIndex];
-                      if (selected) runSlashVerb(selected.id);
-                      // No Beeline verb matches the token: Enter sends it as
-                      // an ordinary message instead of dying as a dead end.
-                      // The daemon visibly marks such text on the other side.
-                      else handleSend();
-                    } else if ((action === 'next' || action === 'previous') && slashVerbs.length) {
+                      selectHighlightedPaletteItem();
+                    } else if ((action === 'next' || action === 'previous') && paletteItemCount) {
                       event.preventDefault();
                       const direction = action === 'next' ? 1 : -1;
                       setHighlightedSlashVerbIndex(
-                        (current) => (current + direction + slashVerbs.length) % slashVerbs.length,
+                        (current) => (current + direction + paletteItemCount) % paletteItemCount,
                       );
                     } else {
                       event.preventDefault();
@@ -3831,12 +3943,7 @@ export default function BuzzChat() {
                 onPress={
                   slashMenuVisible
                     ? () => {
-                        const selected = slashVerbs[highlightedSlashVerbIndex];
-                        if (selected) runSlashVerb(selected.id);
-                        // An unrecognized slash token sends as an ordinary
-                        // message — visibly marked by the daemon — instead of
-                        // a silent dead send button.
-                        else handleSend();
+                        selectHighlightedPaletteItem();
                       }
                     : handleSend
                 }

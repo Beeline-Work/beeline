@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { availableSlashVerbs, slashVerbQuery, type SlashVerbAvailability } from './slash-verbs';
+import {
+  availableSlashVerbs,
+  slashVerbQuery,
+  agentMentionSlashQuery,
+  matchesAgentCommand,
+  type SlashVerbAvailability,
+} from './slash-verbs';
 
 const allAvailable: SlashVerbAvailability = {
   canOpenCorner: true,
@@ -61,5 +67,36 @@ describe('the composer verb list stays in sync with the daemon vocabulary', () =
       'invite',
       'close-corner',
     ]);
+  });
+});
+
+describe('agent-mention slash palette query', () => {
+  it('detects a slash token typed right after a completed @mention', () => {
+    expect(agentMentionSlashQuery('@lena /lo')).toEqual({ mention: 'lena', query: 'lo' });
+    expect(agentMentionSlashQuery('@lena /')).toEqual({ mention: 'lena', query: '' });
+    expect(agentMentionSlashQuery('hey @beebee_2 /rev')).toEqual({
+      mention: 'beebee_2',
+      query: 'rev',
+    });
+    // Trailing whitespace after the token closes the palette.
+    expect(agentMentionSlashQuery('@lena /lo ')).toBeNull();
+  });
+
+  it('stays closed for ordinary prose and non-mention shapes', () => {
+    expect(agentMentionSlashQuery('/loop')).toBeNull();
+    expect(agentMentionSlashQuery('@lena hello /loop')).toBeNull();
+    expect(agentMentionSlashQuery('@lena/loop')).toBeNull();
+    expect(agentMentionSlashQuery('@lena /etc/hosts')).toBeNull();
+    expect(agentMentionSlashQuery('@lena /loop extra')).toBeNull();
+    expect(agentMentionSlashQuery('email me at bob@example.com')).toBeNull();
+  });
+
+  it('matches commands on name prefix or description substring', () => {
+    const loop = { name: 'loop', description: 'Run repeatedly' };
+    expect(matchesAgentCommand(loop, '')).toBe(true);
+    expect(matchesAgentCommand(loop, 'lo')).toBe(true);
+    expect(matchesAgentCommand(loop, 'LOOP')).toBe(true);
+    expect(matchesAgentCommand(loop, 'repeat')).toBe(true);
+    expect(matchesAgentCommand(loop, 'xyz')).toBe(false);
   });
 });

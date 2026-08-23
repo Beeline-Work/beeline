@@ -62,6 +62,41 @@ export interface AcpPermissionOption {
   name?: string;
 }
 
+/** One command/skill an ACP harness advertises via `available_commands_update`. */
+export interface AcpAvailableCommand {
+  name: string;
+  description?: string;
+  inputHint?: string;
+}
+
+/**
+ * Defensively parse an `available_commands_update` payload. Malformed entries
+ * are dropped, never thrown — a harness advertising junk must not break the
+ * session-update pipeline that activity projection rides on.
+ */
+export function parseAvailableCommands(value: unknown): AcpAvailableCommand[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const result: AcpAvailableCommand[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue;
+    const record = entry as Record<string, unknown>;
+    const rawName = typeof record.name === 'string' ? record.name.trim().replace(/^\/+/, '') : '';
+    if (!rawName || rawName.length > 80 || seen.has(rawName)) continue;
+    seen.add(rawName);
+    const description =
+      typeof record.description === 'string' && record.description.trim()
+        ? record.description.trim().slice(0, 300)
+        : undefined;
+    const input = record.input as { hint?: unknown } | undefined;
+    const hintRaw = input && typeof input.hint === 'string' ? input.hint : undefined;
+    const inputHint = hintRaw && hintRaw.trim() ? hintRaw.trim().slice(0, 120) : undefined;
+    result.push({ name: rawName, ...(description ? { description } : {}), ...(inputHint ? { inputHint } : {}) });
+    if (result.length >= 200) break;
+  }
+  return result;
+}
+
 export interface AcpPermissionRequest {
   sessionId?: string;
   toolCall?: {
@@ -184,6 +219,8 @@ export class AcpClient extends EventEmitter {
   private activePromptSessions = new Set<string>();
   /** Tool metadata arrives in session/update just before a sparse permission request. */
   private toolCallMetadata = new Map<string, AcpPermissionRequest['toolCall']>();
+  /** Latest `available_commands_update` per session, keyed by sessionId. */
+  private sessionCommands = new Map<string, AcpAvailableCommand[]>();
   private supportsStandardSteering = false;
   private alive = false;
   /** Bounded tail of recent stderr, so a spawn/exit failure's rejection text
@@ -278,6 +315,7 @@ export class AcpClient extends EventEmitter {
       this.activeRunIds.clear();
       this.activePromptSessions.clear();
       this.toolCallMetadata.clear();
+      this.sessionCommands.clear();
       this.emit('exit', { code, signal });
     });
 
@@ -339,6 +377,11 @@ export class AcpClient extends EventEmitter {
 
   get isAlive(): boolean {
     return this.alive;
+  }
+
+  /** The latest command list this harness advertised for a session, if any. */
+  sessionCommandsFor(sessionId: string): AcpAvailableCommand[] {
+    return this.sessionCommands.get(sessionId) ?? [];
   }
 
   async sessionNew(opts: {
@@ -627,6 +670,15 @@ export class AcpClient extends EventEmitter {
     if (method === 'session/update') {
       const params = msg.params as { sessionId?: string; update?: Record<string, unknown> };
       if (params?.sessionId && params.update) {
+        // Harness-advertised slash commands/skills: captured here so the daemon
+        // can republish them as the agent's durable command list (see
+        // `agent-commands.ts` in buzz-client). Arrival is adapter-driven — all
+        // shipped adapters push it at session start and on mid-session change.
+        if (params.update.sessionUpdate === 'available_commands_update') {
+          const commands = parseAvailableCommands(params.update.availableCommands);
+          this.sessionCommands.set(params.sessionId, commands);
+          this.emit('commands', { sessionId: params.sessionId, commands });
+        }
         const toolCallId = params.update.toolCallId;
         const sessionUpdate = params.update.sessionUpdate;
         if (

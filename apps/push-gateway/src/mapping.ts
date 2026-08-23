@@ -1,4 +1,4 @@
-import { fallbackPersonName } from '@beeline/buzz-client';
+import { fallbackPersonName, KIND_PUT_USER } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
 
 const tagValue = (event: NostrEvent, name: string): string | undefined =>
@@ -19,6 +19,8 @@ export interface NotificationContext {
   senderName?: string;
   /** Derived from the immutable Room create's existing buzz-dm marker. */
   isDirectMessage?: boolean;
+  /** True when the immutable create names a parent channel — a corner worktree channel. */
+  isChildChannel?: boolean;
   /** True only after resolving an immutable Room create linked to a real Workspace create. */
   persistentWorkspaceRoom?: boolean;
   workspaceName?: string;
@@ -31,6 +33,8 @@ export interface NotificationContext {
 export interface NotificationFormattingOptions {
   /** Localized policy switch for a future per-recipient preview preference. */
   showMessagePreview?: boolean;
+  /** The recipient's own pubkey rides the message's `p` tag — higher-signal copy. */
+  recipientMentioned?: boolean;
 }
 
 const MESSAGE_PREVIEW_LENGTH = 120;
@@ -46,6 +50,32 @@ export function formatMessagePreview(content: string): string {
   const characters = [...normalized];
   if (characters.length <= MESSAGE_PREVIEW_LENGTH) return normalized;
   return `${characters.slice(0, MESSAGE_PREVIEW_LENGTH - 1).join('')}…`;
+}
+
+/**
+ * The app's @mention encoding: the mentioned member's pubkey rides a `p` tag on
+ * the kind:9 message (see buzz-client's buildMessage `mentionAgent`). A mention
+ * forces delivery past the plain-chat marker gate but never past fixture or
+ * persistent-Workspace suppression, and never for the message's own author.
+ */
+export function mentionsMember(event: NostrEvent, recipientPubkey: string): boolean {
+  return event.kind === 9 && tagValues(event, 'p').includes(recipientPubkey);
+}
+
+export interface MembershipJoin {
+  channelId: string;
+  joinerPubkey: string;
+  role?: string;
+}
+
+/** A NIP-29 put-user (kind:9000) membership add for one channel. */
+export function membershipJoin(event: NostrEvent): MembershipJoin | null {
+  if (event.kind !== KIND_PUT_USER) return null;
+  const channelId = tagValue(event, 'h');
+  const joinerPubkey = tagValue(event, 'p');
+  if (!channelId || !joinerPubkey) return null;
+  const role = tagValue(event, 'role');
+  return { channelId, joinerPubkey, ...(role ? { role } : {}) };
 }
 
 export function isNotifiableEvent(event: NostrEvent): boolean {
@@ -112,12 +142,21 @@ export function isSuppressedFixtureNotification(
 }
 
 /** The single notification-content policy seam, including message-preview privacy. */
+const roomTitle = (resolvedRoomName: string | undefined): string | undefined =>
+  resolvedRoomName
+    ? resolvedRoomName.startsWith('#')
+      ? resolvedRoomName
+      : `#${resolvedRoomName}`
+    : undefined;
+
 export function mapEventToNotification(
   event: NostrEvent,
   context: NotificationContext,
   options: NotificationFormattingOptions = {},
 ): PushNotificationPlan | null {
-  if (!isNotifiableEvent(event)) return null;
+  // An @mention qualifies even when the plain-chat marker gate would reject the
+  // message's own markers; the gateway has already verified the p-tag recipient.
+  if (!isNotifiableEvent(event) && options.recipientMentioned !== true) return null;
   const channelId = tagValue(event, 'h');
   if (!channelId) return null;
 
@@ -125,6 +164,7 @@ export function mapEventToNotification(
   const isMergeRequest =
     markers.includes('body-control') &&
     Boolean(tagValue(event, 'repo') && tagValue(event, 'branch') && tagValue(event, 'tip'));
+  const mentioned = options.recipientMentioned === true;
   const resolvedRoomName = normalizedDisplayText(context.roomName, 80);
   const roomName = resolvedRoomName ?? 'Room';
   const senderName =
@@ -138,23 +178,42 @@ export function mapEventToNotification(
       ? 'Merge approval requested'
       : context.isDirectMessage
         ? senderName
-        : resolvedRoomName
-          ? resolvedRoomName.startsWith('#')
-            ? resolvedRoomName
-            : `#${resolvedRoomName}`
-          : senderName,
+        : (roomTitle(resolvedRoomName) ?? senderName),
     body: isMergeRequest
       ? `Review requested in ${roomName}`
-      : showMessagePreview && preview
-        ? context.isDirectMessage
-          ? preview
-          : `${senderName}: ${preview}`
-        : `New message in ${roomName}`,
+      : mentioned
+        ? showMessagePreview && preview
+          ? `${senderName} mentioned you: ${preview}`
+          : `${senderName} mentioned you`
+        : showMessagePreview && preview
+          ? context.isDirectMessage
+            ? preview
+            : `${senderName}: ${preview}`
+          : `New message in ${roomName}`,
     data: {
       channelId,
       roomName,
-      type: isMergeRequest ? 'merge-approval-request' : 'channel-activity',
+      type: isMergeRequest ? 'merge-approval-request' : mentioned ? 'mention' : 'channel-activity',
       ...(isMergeRequest ? { cornerId: channelId } : {}),
     },
+  };
+}
+
+/** "N joined <room>" — one bounded card per kind:9000 join event. */
+export function mapMembershipJoinToNotification(
+  event: NostrEvent,
+  context: NotificationContext,
+  joinerName?: string,
+): PushNotificationPlan | null {
+  const join = membershipJoin(event);
+  if (!join) return null;
+  const resolvedRoomName = normalizedDisplayText(context.roomName, 80);
+  const roomName = resolvedRoomName ?? 'Room';
+  const name = normalizedDisplayText(joinerName, 80) ?? fallbackPersonName(join.joinerPubkey);
+  return {
+    channelId: join.channelId,
+    title: roomTitle(resolvedRoomName) ?? name,
+    body: `${name} joined ${roomName}`,
+    data: { channelId: join.channelId, roomName, type: 'member-join' },
   };
 }

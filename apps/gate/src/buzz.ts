@@ -16,12 +16,14 @@
  *     The 30617 signer is the repo OWNER and always resolves to MemberRole::Owner.
  */
 import { randomUUID } from 'node:crypto';
-import { signEvent, type NostrEvent } from '@beeline/nostr';
+import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import {
   KIND_CREATE_GROUP,
   KIND_EDIT_METADATA,
   KIND_PUT_USER,
   KIND_STREAM_MESSAGE,
+  TAG_AGENT,
+  hasAgentIdentityMarker,
 } from '@beeline/buzz-client';
 import { publishEvent, queryEvents } from './relay.js';
 import type { Identity } from './identity.js';
@@ -43,6 +45,34 @@ function sign(identity: Identity, kind: number, tags: string[][], content = ''):
   );
 }
 
+/**
+ * Room creation is a HUMAN action. A registered agent identity (durable
+ * self-signed `#t=buzz-agent` record) must never author a top-level Room —
+ * the kind:9007 creator becomes the relay-recorded owner/`created_by`. Same
+ * rule as the buzz-client creation funnel; corners (`parentChannelId`) stay
+ * agent-creatable by design.
+ */
+async function assertTopLevelCreatorIsHuman(
+  owner: Identity,
+  opts?: { parentChannelId?: string },
+): Promise<void> {
+  if (opts?.parentChannelId) return;
+  const events = await queryEvents(
+    [{ kinds: [KIND_STREAM_MESSAGE], authors: [owner.publicKey], '#t': [TAG_AGENT], limit: 50 }],
+    owner,
+  );
+  const isAgent = events.some(
+    (event) => event.pubkey === owner.publicKey && hasAgentIdentityMarker(event) && verifyEvent(event),
+  );
+  if (isAgent) {
+    throw new Error(
+      'room creation is a human action: a registered agent identity cannot create a Room. ' +
+        'Have a human create or choose the Room (and bind any repository), then pair or ' +
+        'attach the agent to it.',
+    );
+  }
+}
+
 async function createGroup(
   owner: Identity,
   name: string,
@@ -54,6 +84,7 @@ async function createGroup(
     extraTags?: string[][];
   },
 ): Promise<string> {
+  await assertTopLevelCreatorIsHuman(owner, opts);
   const channelId = randomUUID();
   const tags: string[][] = [
     ['h', channelId],

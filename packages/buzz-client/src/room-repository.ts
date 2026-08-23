@@ -25,7 +25,12 @@
  * there is gated with an actionable refusal by the daemon, never a crash.
  */
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
-import { getChannelCommunityId, getChannelRepositoryBinding, getChannelRole } from './channel.js';
+import {
+  getChannelCommunityId,
+  getChannelRepositoryBinding,
+  getChannelRole,
+  isRegisteredAgentKey,
+} from './channel.js';
 import type { ChannelOpsContext } from './channel.js';
 import { publishEvent } from './http.js';
 import { KIND_ROOM_REPOSITORY, TAG_COMMUNITY, TAG_ROOM_REPOSITORY } from './kinds.js';
@@ -114,6 +119,15 @@ export async function setRoomRepository(
   channelId: string,
   input: RoomRepositoryInput & { communityId?: string },
 ): Promise<RoomRepository> {
+  // Repo binding follows the room-creation rule: it is a HUMAN decision. The
+  // admin-role check below is not enough on its own — an agent can be granted
+  // admin — so a registered agent identity is refused here regardless of role.
+  if (await isRegisteredAgentKey(ctx, ctx.identity.publicKey)) {
+    throw new Error(
+      'setting or changing a Room repository is a human action: a registered agent identity ' +
+        'cannot bind a repository to a Room, even as its admin.',
+    );
+  }
   const role = await getChannelRole(ctx, channelId, ctx.identity.publicKey);
   if (role !== 'owner' && role !== 'admin') {
     throw new Error('only a Room admin can set the Room repository');

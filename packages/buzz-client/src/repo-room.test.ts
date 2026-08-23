@@ -73,12 +73,47 @@ describe('repository Room identity', () => {
     );
   });
 
-  it('uses current role projections when member and admin mutations share a timestamp', async () => {
+  it('fails cleanly with an actionable message when no Room is bound to the repository, creating nothing', async () => {
+    // Room creation is a HUMAN action: pairing against a repository whose
+    // Room does not exist must refuse with an actionable message — never
+    // conjure a Room into existence under the agent's key (the side effect
+    // that once bound a foreign repository into a Workspace as a `beeline
+    // pair` side effect).
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          return jsonResponse({ accepted: true });
+        }
+        return jsonResponse([]);
+      }),
+    );
+
+    await expect(
+      resolveRepositoryRoom(ctx(), communityId, binding, human.publicKey, mergeWorker.publicKey),
+    ).rejects.toThrow(/Room creation is a human action/);
+    expect(published).toEqual([]);
+  });
+
+  it('uses current role projections when member and admin mutations share a timestamp on the join path', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
     const channelId = repositoryRoomId(communityId, binding);
+    const roomCreate = signed(human, KIND_CREATE_GROUP, [
+      ['h', channelId],
+      ['repo-key', binding.key],
+      [TAG_COMMUNITY, communityId],
+    ]);
     const published: NostrEvent[] = [];
-    const roles = new Map<string, 'owner' | 'admin' | 'member'>();
-    let roomCreated = false;
+    // A human-created Room where an earlier provisioning left the agent as
+    // owner and the human as a plain member. The agent joins, elevates the
+    // human, provisions the merge worker, and is demoted to plain member —
+    // every mutation sharing one mocked timestamp.
+    const roles = new Map<string, 'owner' | 'admin' | 'member'>([
+      [human.publicKey, 'member'],
+      [agent.publicKey, 'owner'],
+    ]);
 
     vi.stubGlobal(
       'fetch',
@@ -86,10 +121,6 @@ describe('repository Room identity', () => {
         if (String(input).endsWith('/events')) {
           const event = JSON.parse(String(init?.body)) as NostrEvent;
           published.push(event);
-          if (event.kind === KIND_CREATE_GROUP && tagValue(event, 'h') === channelId) {
-            roomCreated = true;
-            roles.set(agent.publicKey, 'owner');
-          }
           if (event.kind === KIND_PUT_USER && tagValue(event, 'h') === channelId) {
             roles.set(
               tagValue(event, 'p')!,
@@ -104,17 +135,8 @@ describe('repository Room identity', () => {
         const requestedId =
           (filter['#d'] as string[] | undefined)?.[0] ??
           (filter['#h'] as string[] | undefined)?.[0];
-        if (kind === KIND_CREATE_GROUP) return jsonResponse([]);
-        if (kind === KIND_CHANNEL_MEMBERS && requestedId === communityId) {
-          return jsonResponse([
-            signed(human, KIND_CHANNEL_MEMBERS, [
-              ['d', communityId],
-              ['p', human.publicKey],
-              ['p', agent.publicKey],
-            ]),
-          ]);
-        }
-        if (kind === KIND_CHANNEL_MEMBERS && requestedId === channelId && roomCreated) {
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([roomCreate]);
+        if (kind === KIND_CHANNEL_MEMBERS && requestedId === channelId) {
           return jsonResponse([
             signed(human, KIND_CHANNEL_MEMBERS, [
               ['d', channelId],
@@ -122,7 +144,7 @@ describe('repository Room identity', () => {
             ]),
           ]);
         }
-        if (kind === KIND_CHANNEL_ADMINS && requestedId === channelId && roomCreated) {
+        if (kind === KIND_CHANNEL_ADMINS && requestedId === channelId) {
           return jsonResponse([
             signed(human, KIND_CHANNEL_ADMINS, [
               ['d', channelId],
@@ -143,21 +165,29 @@ describe('repository Room identity', () => {
       resolveRepositoryRoom(ctx(), communityId, binding, human.publicKey, mergeWorker.publicKey),
     ).resolves.toEqual({
       channelId,
-      created: true,
+      created: false,
       joined: true,
-      mergeWorkerProvisioned: true,
+      mergeWorkerProvisioned: false,
     });
 
-    const create = published.find(
-      (event) => event.kind === KIND_CREATE_GROUP && tagValue(event, 'h') === channelId,
-    );
-    expect(create?.tags).toContainEqual([TAG_COMMUNITY, communityId]);
+    // No Room was created — the agent only joined the human's Room.
+    expect(
+      published.filter((event) => event.kind === KIND_CREATE_GROUP),
+    ).toEqual([]);
 
-    const humanMutations = published.filter(
-      (event) => event.kind === KIND_PUT_USER && tagValue(event, 'p') === human.publicKey,
+    const mutations = published.filter(
+      (event) => event.kind === KIND_PUT_USER && tagValue(event, 'h') === channelId,
     );
-    expect(humanMutations.map((event) => tagValue(event, 'role'))).toEqual(['member', 'admin']);
-    expect(new Set(humanMutations.map((event) => event.created_at))).toEqual(
+    expect(
+      mutations.find((event) => tagValue(event, 'p') === human.publicKey)?.tags,
+    ).toContainEqual(['role', 'admin']);
+    expect(
+      mutations.find((event) => tagValue(event, 'p') === mergeWorker.publicKey)?.tags,
+    ).toContainEqual(['role', 'admin']);
+    expect(
+      mutations.find((event) => tagValue(event, 'p') === agent.publicKey)?.tags,
+    ).toContainEqual(['role', 'member']);
+    expect(new Set(mutations.map((event) => event.created_at))).toEqual(
       new Set([1_700_000_000]),
     );
   });

@@ -150,6 +150,68 @@ describe('room repository binding', () => {
     ).rejects.toThrow('only a Room admin');
   });
 
+  it('refuses a registered agent identity even when it holds the admin role', async () => {
+    // Repo binding is a HUMAN decision. The admin-role check alone cannot
+    // enforce that — an operator can grant an agent admin — so the durable
+    // self-signed agent registry refuses the key regardless of role.
+    const agent = createIdentity('agent-admin');
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        if ((filter.kinds as number[])[0] === 9) {
+          const authors = (filter.authors as string[]) ?? [];
+          return jsonResponse(
+            authors.includes(agent.publicKey)
+              ? [
+                  signed(agent, 9, [
+                    ['t', 'buzz-agent'],
+                    ['h', communityId],
+                    ['community', communityId],
+                    ['d', 'agent-record'],
+                    ['p', agent.publicKey],
+                  ]),
+                ]
+              : [],
+          );
+        }
+        if ((filter.kinds as number[])[0] === KIND_CHANNEL_ADMINS) {
+          return jsonResponse([
+            signed(admin, KIND_CHANNEL_ADMINS, [
+              ['d', channelId],
+              ['p', admin.publicKey, '', 'admin'],
+              ['p', agent.publicKey, '', 'admin'],
+            ]),
+          ]);
+        }
+        if ((filter.kinds as number[])[0] === KIND_CHANNEL_MEMBERS) {
+          return jsonResponse([
+            signed(admin, KIND_CHANNEL_MEMBERS, [
+              ['d', channelId],
+              ['p', admin.publicKey],
+              ['p', agent.publicKey],
+            ]),
+          ]);
+        }
+        return jsonResponse([]);
+      }),
+    );
+
+    await expect(
+      setRoomRepository(ctx(agent), channelId, {
+        key: 'repo-key',
+        name: 'buzzy',
+        remote: 'git://github.com/lunchboxfortwo/buzzy',
+      }),
+    ).rejects.toThrow('human action');
+    expect(published).toEqual([]);
+  });
+
   it('rejects a local-only binding with no remote', async () => {
     const published: NostrEvent[] = [];
     stubRelay({ published });

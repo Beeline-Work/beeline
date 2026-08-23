@@ -1,12 +1,23 @@
 # Beeline CLI bundle channel ("latest from main")
 
-Every push to `main` runs `.github/workflows/beeline-bundle.yml`, which builds
-the CLI bundle natively for each supported platform and publishes the bundle
-set to its existing home — `relay-stack/web/dl/`, served statically at
+Every push to `main` that touches daemon/CLI bundle inputs runs
+`.github/workflows/beeline-bundle.yml`, which builds the CLI bundle natively
+for **linux-x64 on the self-hosted production-Linux runner** (same labels as
+`deploy-host.yml` — zero paid GitHub minutes) and publishes the bundle set to
+its existing home — `relay-stack/web/dl/`, served statically at
 `https://usebeeline.app/dl/` — by committing the regenerated set back to
 `main`. This is a rolling "latest" channel only; tagged releases (`v0.2.x`)
 and `scripts/install-beeline.sh` are untouched and remain the versioned
 install paths.
+
+The darwin-arm64 CI leg is **disabled** (captain decision, 2026-08): no Mac
+consumer ever downloaded the bundle and macOS runners bill 10x. The matrix
+entry stays in the workflow, gated off; re-enable it (set `enabled: true`) as
+a release-only job if a real Mac consumer appears. The build script and
+installer keep their darwin handling for local/cross builds, but a
+cross-built darwin bundle carries `verified: false` and the publisher refuses
+to publish an unverified platform — so only a native-macOS job can put a
+darwin bundle on this channel.
 
 ## Consumer contract
 
@@ -49,14 +60,14 @@ GET https://usebeeline.app/dl/<file named by the manifest>
   download.
 - **`bundles[<platform>].verified`** is `true` only when that platform's bundle
   was built AND install-verified on a native runner of that same platform
-  (`scripts/verify-beeline-install.mjs`). The workflow builds every platform
-  natively, so published entries are always verified; a locally cross-built
-  bundle carries `verified: false`, and the publisher refuses to publish an
-  unverified set.
+  (`scripts/verify-beeline-install.mjs`). The workflow currently builds
+  linux-x64 natively (self-hosted), so published entries are always verified;
+  a locally cross-built bundle carries `verified: false`, and the publisher
+  refuses to publish an unverified set.
 
 ## Publish safety properties
 
-1. **One commit per publish.** The whole set (both tarballs, both sidecars,
+1. **One commit per publish.** The whole set (every tarball, its sidecar,
    `manifest.json`) lands as a single git commit to `main`, so a consumer can
    never see a manifest pointing at a missing or half-updated tarball.
 2. **Stable filenames.** `beeline-<platform>.tar.gz` never changes, matching

@@ -46,4 +46,13 @@ describe('GitHub repository picker launch flow', () => {
     expect(linkageSource).toContain('export function filterRepoCandidates');
     expect(linkageSource).toContain('export function matchesRepoQuery');
   });
+
+  it('renders exactly one owner-grant state card — a share CTA, never an error wall', () => {
+    // The typed pending state is owner-requested UI: one card, one share
+    // action. No other new surface may grow out of it.
+    expect(source).toContain("import { OwnerGrantNeededCard, type OwnerGrantNeeded } from './OwnerGrantNeededCard'");
+    expect(source).toContain('{ownerGrant && <OwnerGrantNeededCard {...ownerGrant} />}');
+    expect(source).toContain("onAskOwnerGrant?: (fullName: string) => void;");
+    expect(linkageSource).toContain("{ kind: 'owner-grant', owner, fullName }");
+  });
 });

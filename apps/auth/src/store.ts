@@ -222,6 +222,19 @@ const MIGRATIONS = [
     ON beeline_github_repo_events (full_name, id)`,
   `CREATE INDEX IF NOT EXISTS beeline_github_repo_events_received_idx
     ON beeline_github_repo_events (received_at)`,
+  `CREATE TABLE IF NOT EXISTS beeline_github_room_link_requests (
+    community TEXT NOT NULL,
+    room_id TEXT NOT NULL,
+    full_name TEXT NOT NULL,
+    requested_by CHAR(64) NOT NULL,
+    requested_at TIMESTAMPTZ NOT NULL,
+    activated_at TIMESTAMPTZ,
+    PRIMARY KEY (community, room_id),
+    CHECK (requested_by ~ '^[0-9a-f]{64}$')
+  )`,
+  `CREATE INDEX IF NOT EXISTS beeline_github_room_link_requests_name_idx
+    ON beeline_github_room_link_requests (community, lower(full_name))
+    WHERE activated_at IS NULL`,
 ] as const;
 
 function asDate(value: unknown): Date {
@@ -337,6 +350,16 @@ export interface GitHubRepositoryAccess {
 interface GitHubRepositoryAccessRow extends GitHubRepositoryAccess {
   /** The matched repository's current full_name, when a repository row matched. */
   fullName?: string;
+}
+
+/** One Room's repository binding waiting for the repository owner's App grant. */
+export interface GitHubRoomLinkRequest {
+  community: string;
+  roomId: string;
+  fullName: string;
+  requestedBy: string;
+  requestedAt: Date;
+  activatedAt?: Date;
 }
 
 export type BindResult =
@@ -1124,6 +1147,75 @@ export class AuthStore {
       if (healed?.accessible) return { ...healed, resolvedFullName: healed.fullName };
     }
     return exact ?? { accessible: false, reason: 'not_granted' };
+  }
+
+  /**
+   * Record that a Room's admin-authored repository binding names a repository
+   * the GitHub App does not cover yet, so the link can complete automatically
+   * once the repository owner grants access.
+   *
+   * A Room binds exactly one repository, so (community, room_id) is the whole
+   * key: re-recording updates the pending row in place, and an already-ACTIVE
+   * row is never resurrected — a later refusal for a different repository
+   * after activation must not flip a completed link back to pending.
+   */
+  async recordGitHubRoomLinkRequest(
+    community: string,
+    roomId: string,
+    fullName: string,
+    requestedBy: string,
+    now: Date,
+  ): Promise<void> {
+    if (!roomId || roomId.length > 200) return;
+    await this.database.query(
+      `INSERT INTO beeline_github_room_link_requests
+        (community, room_id, full_name, requested_by, requested_at)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (community, room_id) DO UPDATE SET
+         full_name = EXCLUDED.full_name,
+         requested_by = EXCLUDED.requested_by,
+         requested_at = EXCLUDED.requested_at
+       WHERE beeline_github_room_link_requests.activated_at IS NULL`,
+      [community, roomId, fullName, requestedBy, now],
+    );
+  }
+
+  /**
+   * Activate every still-pending Room link whose repository is now covered by
+   * one of the given (lowercased) full names, returning ONLY the requests this
+   * call flipped — so duplicate grants (a webhook delivery and a reconcile
+   * racing, or two webhooks for the same installation) are idempotent and each
+   * completion is announced at most once.
+   */
+  async activateGitHubRoomLinks(
+    community: string,
+    fullNames: readonly string[],
+    now: Date,
+  ): Promise<GitHubRoomLinkRequest[]> {
+    const normalized = [...new Set(fullNames.map((name) => name.toLowerCase()))].filter(Boolean);
+    if (normalized.length === 0) return [];
+    const result = await this.database.query<
+      QueryResultRow & {
+        room_id: string;
+        full_name: string;
+        requested_by: string;
+        requested_at: Date | string;
+      }
+    >(
+      `UPDATE beeline_github_room_link_requests
+       SET activated_at = $3
+       WHERE community = $1 AND activated_at IS NULL AND lower(full_name) = ANY($2::text[])
+       RETURNING room_id, full_name, requested_by, requested_at`,
+      [community, normalized, now],
+    );
+    return result.rows.map((row) => ({
+      community,
+      roomId: String(row.room_id),
+      fullName: String(row.full_name),
+      requestedBy: String(row.requested_by),
+      requestedAt: asDate(row.requested_at),
+      activatedAt: now,
+    }));
   }
 
   async claimGitHubWebhookDelivery(deliveryId: string, now: Date): Promise<boolean> {

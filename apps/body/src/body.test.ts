@@ -80,6 +80,8 @@ import {
   WRITE_PERMISSION_RESPONSE_TAG,
   setAgentModelConfig,
   AGENT_PRESENCE_HEARTBEAT_MS,
+  AGENT_PRESENCE_STALE_MS,
+  isAgentPresenceOnline,
   KIND_AGENT_MODEL_CATALOG,
   KIND_AGENT_MODEL_CONFIG,
   KIND_CHANNEL_ADMINS,
@@ -414,7 +416,13 @@ describe('agent identity boundary', () => {
 
     type SpawnProbe = {
       sessionSpawnCommand(
-        input: { mode: 'readonly' | 'edit'; cwd: string; worktreePath?: string },
+        input: {
+          mode: 'readonly' | 'edit';
+          cwd: string;
+          worktreePath?: string;
+          protectedPaths?: string[];
+          additionalWritablePaths?: string[];
+        },
         env: Record<string, string>,
       ): { command: string; args: string[] };
     };
@@ -442,10 +450,22 @@ describe('agent identity boundary', () => {
     it('spawns a corner child with its worktree and git dir writable', () => {
       const body = new Body({ ...config, bwrapPath: '/usr/bin/bwrap' }, newIdentity('operator'));
       const spawn = (body as unknown as SpawnProbe).sessionSpawnCommand(
-        { mode: 'edit', cwd: repoRoot, worktreePath: repoRoot },
+        {
+          mode: 'edit',
+          cwd: repoRoot,
+          worktreePath: repoRoot,
+          protectedPaths: [sandboxRoot],
+        },
         { TMPDIR: '/srv/rooms/r1/agent-home/tmp' },
       );
       expect(spawn.command).toBe('/usr/bin/bwrap');
+      expect(spawn.args.slice(0, 3)).toEqual(['--bind', '/', '/']);
+      const protectedAt = spawn.args.indexOf(sandboxRoot);
+      expect(spawn.args.slice(protectedAt - 1, protectedAt + 2)).toEqual([
+        '--ro-bind',
+        sandboxRoot,
+        sandboxRoot,
+      ]);
       const binds = spawn.args
         .map((argument, index) => (argument === '--bind-try' ? spawn.args[index + 1] : undefined))
         .filter(Boolean);
@@ -541,27 +561,73 @@ describe('agent identity boundary', () => {
       expect(path).toBe('/home/op/.beeline-corners/proj-buzzy/corner-xyz');
     });
 
-    it('the edit-session cd-guard rejects a command that escapes into the shared checkout', async () => {
+    it('builds the corner denylist from every shared and daemon-owned root', () => {
+      const body = new Body(
+        {
+          ...config,
+          workspaceRoot: '/srv/beeline/workspace',
+          agentHomeRoot: '/srv/beeline/rooms/r1/agent-home',
+          agentPrivateRoot: '/srv/beeline/agent-private',
+        },
+        newIdentity('operator'),
+      );
+      const policy = (
+        body as unknown as {
+          cornerFilesystemPolicy(
+            repo: { repo: string; localPath: string },
+            worktree: string,
+            agentPrivate?: string,
+          ): {
+            protectedPaths: string[];
+            writablePaths: string[];
+            additionalWritablePaths: string[];
+          };
+        }
+      ).cornerFilesystemPolicy(
+        { repo: 'proj-buzzy', localPath: '/home/op/proj-buzzy' },
+        '/home/op/.beeline-corners/proj-buzzy/c1',
+        '/srv/beeline/agent-private/r1/c1',
+      );
+
+      expect(policy.protectedPaths).toEqual(
+        expect.arrayContaining([
+          '/srv/beeline/workspace',
+          '/home/op/.beeline-corners/proj-buzzy',
+          '/home/op/proj-buzzy',
+          '/srv/beeline/rooms/r1/agent-home',
+          '/srv/beeline/agent-private',
+        ]),
+      );
+      expect(policy.writablePaths).toContain('/home/op/.beeline-corners/proj-buzzy/c1');
+      expect(policy.additionalWritablePaths).toEqual(['/srv/beeline/agent-private/r1/c1']);
+    });
+
+    it('the edit-session fallback rejects protected writes without blocking general movement', async () => {
       const body = new Body(config, newIdentity('operator'));
       const handler = (
         body as unknown as {
           cornerPermissionHandler(
             worktree: string,
-            primary?: string,
+            protectedPaths: string[],
+            writablePaths: string[],
           ): (req: unknown) => Promise<'allow' | 'reject'>;
         }
-      ).cornerPermissionHandler('/pool/.beeline-corners/proj/c1', '/home/op/proj-buzzy');
+      ).cornerPermissionHandler(
+        '/pool/.beeline-corners/proj/c1',
+        ['/pool/.beeline-corners/proj', '/home/op/proj-buzzy'],
+        ['/pool/.beeline-corners/proj/c1'],
+      );
 
       const escape = await handler({
         toolCall: {
           kind: 'execute',
-          rawInput: { command: 'cd /home/op/proj-buzzy && git commit -am wip' },
+          rawInput: { command: 'cp README.md /home/op/proj-buzzy/README.md' },
         },
       });
       expect(escape).toBe('reject');
 
       const ok = await handler({
-        toolCall: { kind: 'execute', rawInput: { command: 'git commit -am wip' } },
+        toolCall: { kind: 'execute', rawInput: { command: 'cd /tmp && npm run build' } },
       });
       expect(ok).toBe('allow');
 
@@ -570,16 +636,21 @@ describe('agent identity boundary', () => {
       expect(edit).toBe('allow');
     });
 
-    it('the edit-session guard rejects a write that reaches outside the worktree', async () => {
+    it('the edit-session guard rejects denylist writes but allows other outside writes', async () => {
       const body = new Body(config, newIdentity('operator'));
       const handler = (
         body as unknown as {
           cornerPermissionHandler(
             worktree: string,
-            primary?: string,
+            protectedPaths: string[],
+            writablePaths: string[],
           ): (req: unknown) => Promise<'allow' | 'reject'>;
         }
-      ).cornerPermissionHandler('/pool/.beeline-corners/proj/c1', '/home/op/proj-buzzy');
+      ).cornerPermissionHandler(
+        '/pool/.beeline-corners/proj/c1',
+        ['/pool/.beeline-corners/proj', '/home/op/proj-buzzy'],
+        ['/pool/.beeline-corners/proj/c1'],
+      );
 
       // The live breach shape: an absolute path into the operator's own tree.
       await expect(
@@ -593,7 +664,7 @@ describe('agent identity boundary', () => {
       ).resolves.toBe('reject');
       await expect(
         handler({ toolCall: { kind: 'edit', rawInput: { path: '../../../etc/hosts' } } }),
-      ).resolves.toBe('reject');
+      ).resolves.toBe('allow');
       // Reads outside the worktree stay allowed, per the pre-existing policy.
       await expect(
         handler({
@@ -1136,7 +1207,10 @@ describe('agent presence', () => {
     await vi.advanceTimersByTimeAsync(1_000);
     await stop();
 
-    expect(statuses).toEqual(['online', 'online', 'offline']);
+    // A graceful stop goes QUIET — no offline marker. A planned restart inside
+    // the 120s lease must be a non-event in every client, and a genuinely dead
+    // daemon is still detected when the lease expires. See startAgentPresence.
+    expect(statuses).toEqual(['online', 'online']);
     expect(new Set(generations)).toEqual(new Set([stop.generationId]));
     vi.useRealTimers();
   });
@@ -1157,14 +1231,105 @@ describe('agent presence', () => {
     await presence.setStatus('online');
     await presence();
 
-    expect(statuses).toEqual(['online', 'offline', 'online', 'offline']);
+    // Explicit setStatus('offline') (a relay outage outliving the lease) is
+    // the only offline source; stop() itself publishes nothing.
+    expect(statuses).toEqual(['online', 'offline', 'online']);
+  });
+
+  it('a planned restart is a non-event: the stop publishes nothing and a fresh daemon keeps the lease alive', async () => {
+    // The owner-reported flicker (2026-08-23): every self-update restart
+    // published an explicit offline marker, so every client flipped the agent
+    // OFFLINE for the whole handover window. Now the old controller goes quiet,
+    // the lease keeps the last `online` record valid, and the replacement
+    // daemon's first heartbeat replaces it — no offline status ever on the wire.
+    vi.useFakeTimers();
+    const agent = newIdentity('restart-presence-agent');
+    const statuses: string[] = [];
+    const records: Array<{ status?: string; created_at: number }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const event = JSON.parse(String(init?.body)) as NostrEvent;
+        const status = event.tags.find((tag) => tag[0] === 'status')?.[1] ?? '';
+        statuses.push(status);
+        records.push({ status, created_at: event.created_at });
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    // Old daemon generation: one heartbeat, then a graceful stop.
+    const oldPresence = startAgentPresence('presence-room', agent, 60_000);
+    await vi.advanceTimersByTimeAsync(0);
+    await oldPresence();
+    expect(statuses).toEqual(['online']);
+
+    // Restart handover takes some seconds; a NEW generation starts and its
+    // first publish lands promptly.
+    await vi.advanceTimersByTimeAsync(10_000);
+    const newPresence = startAgentPresence('presence-room', agent, 60_000);
+    expect(newPresence.generationId).not.toBe(oldPresence.generationId);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(statuses).toEqual(['online', 'online']);
+    // The reader's verdict at every instant across the boundary stays ONLINE:
+    // the newest record is always within the 120s lease.
+    const newest = records.at(-1)!;
+    expect(newest.status).toBe('online');
+    expect(isAgentPresenceOnline({ agentPubkey: agent.publicKey, status: 'online', observedAt: newest.created_at * 1_000 }, Date.now())).toBe(true);
+    await newPresence();
+    vi.useRealTimers();
+  });
+
+  it('a genuinely dead daemon still reads offline once the lease expires after its last heartbeat', async () => {
+    // Going quiet on stop must never become presence lying: with no further
+    // publications, the reader's staleness window is what detects death, and
+    // that bound is AGENT_PRESENCE_STALE_MS past the last record.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const agent = newIdentity('death-presence-agent');
+    let lastRecord: { status?: string; created_at: number } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const event = JSON.parse(String(init?.body)) as NostrEvent;
+        lastRecord = {
+          status: event.tags.find((tag) => tag[0] === 'status')?.[1],
+          created_at: event.created_at,
+        };
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    const presence = startAgentPresence('presence-room', agent, 60_000);
+    await vi.advanceTimersByTimeAsync(0);
+    await presence(); // daemon dies here; nothing further is published
+
+    const publishedCount = vi.mocked(fetch).mock.calls.length;
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(vi.mocked(fetch).mock.calls.length).toBe(publishedCount);
+
+    expect(lastRecord?.status).toBe('online');
+    const observedAt = lastRecord!.created_at * 1_000;
+    expect(
+      isAgentPresenceOnline(
+        { agentPubkey: agent.publicKey, status: 'online', observedAt },
+        observedAt + AGENT_PRESENCE_STALE_MS,
+      ),
+    ).toBe(true);
+    expect(
+      isAgentPresenceOnline(
+        { agentPubkey: agent.publicKey, status: 'online', observedAt },
+        observedAt + AGENT_PRESENCE_STALE_MS + 1,
+      ),
+    ).toBe(false);
+    vi.useRealTimers();
   });
 
   /**
-   * `stop()` drains any in-flight backoff before publishing its offline
-   * marker, so under fake timers it must be advanced, not merely awaited —
-   * awaiting it directly deadlocks the test and leaks fake timers into the
-   * next one.
+   * `stop()` drains any in-flight backoff before it resolves (it no longer
+   * publishes an offline marker), so under fake timers it must be advanced,
+   * not merely awaited — awaiting it directly deadlocks the test and leaks
+   * fake timers into the next one.
    */
   const stopUnderFakeTimers = async (presence: { (): Promise<void> }): Promise<void> => {
     const stopping = presence();
@@ -2408,6 +2573,171 @@ describe('an idle or suspended corner session is never archived', () => {
         'corner-unlanded',
       );
       expect(info?.archived).toBe(false);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('a restart-caused session pause is never published as agent trouble', () => {
+  /**
+   * Owner-reported 2026-08-23: across every daemon restart (two self-update
+   * handovers in one day) corners surfaced a "suspended" state that read as
+   * agent trouble. Two publication shapes caused it, both planned-pause noise
+   * rather than news: the session's creation-time `suspended` bookkeeping
+   * (replayed for every corner `restoreSubchannels` recreates at startup) and
+   * the suspension `Body.dispose()` drives at shutdown. A genuine mid-run
+   * suspension — idle eviction, capacity wait, watchdog force-suspend — still
+   * publishes. The lifecycle ORACLE is unaffected by any of these either way
+   * (`mapRawCornerStatusTag('suspended')` is undefined); this is about what
+   * the corner header renders.
+   */
+  function newBodyWithScheduler(
+    agent: ReturnType<typeof newIdentity>,
+    workspaceRoot: string,
+    scheduler: unknown,
+  ) {
+    return new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot,
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+      undefined,
+      { scheduler } as never,
+    );
+  }
+
+  function stubRelayRecordingPublishes(): NostrEvent[] {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/query')) {
+          return new Response(JSON.stringify([]), { status: 200 });
+        }
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    return published;
+  }
+
+  const cornerSessionEvents = (published: NostrEvent[]) =>
+    published.filter((event) => event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'corner-session'));
+
+  it("a session's FIRST suspended state is silent bookkeeping; the first real transition publishes", async () => {
+    const agent = newIdentity('initial-state-agent');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-initial-suspend-'));
+    try {
+      const body = newBodyWithScheduler(agent, workspaceRoot, {});
+      const published = stubRelayRecordingPublishes();
+      const session = {
+        channelId: 'corner-fresh',
+        sessionId: 'fresh-session',
+        logicalSessionId: 'logical-fresh',
+        client: new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} }),
+        mode: 'edit' as const,
+        lifecycle: { suspend: async () => undefined },
+      } as never;
+      body.registerSubchannel({
+        subchannelId: 'corner-fresh',
+        worktreePath: '/tmp/does-not-matter',
+        featureBranch: 'feature/fresh',
+        role: newIdentity('fresh-role'),
+        session,
+        lastPolledAt: 0,
+        archived: false,
+      } as never);
+      const onStateChange = Reflect.get(body, 'onCornerSessionStateChange') as (
+        session: unknown,
+        channelId: string,
+        state: 'live' | 'suspended' | 'waiting-for-slot',
+      ) => Promise<void>;
+
+      // Exactly what createManagedSession does at session creation.
+      await onStateChange.call(body, session, 'corner-fresh', 'suspended');
+      expect(cornerSessionEvents(published)).toEqual([]);
+      expect((session as { processState?: string }).processState).toBe('suspended');
+
+      // The first REAL transition reaches the wire.
+      await onStateChange.call(body, session, 'corner-fresh', 'live');
+      expect(cornerSessionEvents(published)).toHaveLength(1);
+      expect(
+        cornerSessionEvents(published)[0].tags.some(
+          (tag) => tag[0] === 'status' && tag[1] === 'live',
+        ),
+      ).toBe(true);
+
+      // And a mid-run suspension still publishes — idle eviction is honest.
+      await onStateChange.call(body, session, 'corner-fresh', 'suspended');
+      expect(cornerSessionEvents(published)).toHaveLength(2);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('Body.dispose suspends sessions without publishing corner-session cards', async () => {
+    const agent = newIdentity('dispose-agent');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-dispose-suspend-'));
+    try {
+      const session = {
+        channelId: 'corner-shutdown',
+        sessionId: 'shutdown-session',
+        logicalSessionId: 'logical-shutdown',
+        processState: 'live' as const,
+        client: new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} }),
+        mode: 'edit' as const,
+        lifecycle: {
+          suspend: async () => undefined,
+          onStateChange: async (state: 'live' | 'suspended' | 'waiting-for-slot') => {
+            onStateChangeCalls.push(state);
+            // Mirror the production wiring: the lifecycle reports through the
+            // Body-owned hook, which owns both tracking and publication.
+            await (Reflect.get(body, 'onCornerSessionStateChange') as (
+              s: unknown,
+              c: string,
+              st: 'live' | 'suspended' | 'waiting-for-slot',
+            ) => Promise<void>).call(body, session, 'corner-shutdown', state);
+          },
+        },
+      } as never;
+      // The one thing SessionScheduler.suspend does that dispose depends on.
+      const scheduler = {
+        suspend: async (key: string) => {
+          const info = body.getSubchannels().get(key);
+          await info?.session.lifecycle.suspend();
+          await info?.session.lifecycle.onStateChange?.('suspended');
+        },
+      };
+      const body = newBodyWithScheduler(agent, workspaceRoot, scheduler);
+      const published = stubRelayRecordingPublishes();
+      const onStateChangeCalls: string[] = [];
+      body.registerSubchannel({
+        subchannelId: 'corner-shutdown',
+        worktreePath: '/tmp/does-not-matter',
+        featureBranch: 'feature/shutdown',
+        role: newIdentity('shutdown-role'),
+        session,
+        lastPolledAt: 0,
+        archived: false,
+      } as never);
+
+      await body.dispose();
+
+      // The teardown ran (the lifecycle saw its suspension) but nothing was
+      // published: a shutdown pause is a quiet handover, not agent trouble.
+      expect(onStateChangeCalls).toEqual(['suspended']);
+      expect(cornerSessionEvents(published)).toEqual([]);
+      expect((session as { processState?: string }).processState).toBe('suspended');
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }

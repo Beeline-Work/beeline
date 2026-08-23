@@ -15,6 +15,7 @@ import {
   Modal as RNModal,
   Pressable,
   ScrollView,
+  Share,
   TextInput,
   TouchableOpacity,
   Platform,
@@ -127,6 +128,11 @@ import {
   roomRepoChipLabel,
   type RepoCandidate,
 } from '@/buzz/room-repo-picker';
+import {
+  OwnerGrantNeededCard,
+  ownerGrantShareMessage,
+  type OwnerGrantNeeded,
+} from '@/components/buzz/OwnerGrantNeededCard';
 import {
   isPinnedCornerLive,
   isPinnedCornerReadyForReview,
@@ -564,6 +570,12 @@ export default function BuzzChat() {
   const [roomRepoBusy, setRoomRepoBusy] = useState(false);
   const [roomRepoError, setRoomRepoError] = useState<string | null>(null);
   const [roomRepoNotice, setRoomRepoNotice] = useState<string | null>(null);
+  // Typed "the App does not cover this repository yet" state: rendered as a
+  // share-with-owner CTA, never an error wall. `uncoveredOwners` feeds the
+  // paste-flow plan so a foreign repo plans the share path instead of a
+  // doomed self-connect.
+  const [ownerGrant, setOwnerGrant] = useState<OwnerGrantNeeded | null>(null);
+  const uncoveredOwnersRef = useRef<Set<string>>(new Set());
   const [cornerOpenRepoPrompt, setCornerOpenRepoPrompt] = useState(false);
   const [roomRepoAccessIssue, setRoomRepoAccessIssue] = useState<{
     fullName: string;
@@ -2438,6 +2450,22 @@ export default function BuzzChat() {
       setRoomRepoBusy(true);
       setRoomRepoError(null);
       try {
+        // A candidate without a connected installation may be a repository the
+        // App never covered (an admin binding a repo whose OWNER has not
+        // granted access). Probe the typed coverage state first: binding now
+        // would only dead-end the daemon's token path later.
+        if (!input.githubInstallationId) {
+          const access = await transport
+            .githubRepositoryAccess(input.name)
+            .catch(() => undefined);
+          if (access && access.accessible === false && access.reason !== 'revoked') {
+            uncoveredOwnersRef.current.add(input.name.split('/')[0]?.toLowerCase() ?? '');
+            if (access.installUrl) {
+              setOwnerGrant({ repository: input.name, installUrl: access.installUrl });
+              return;
+            }
+          }
+        }
         const repo = await transport.roomRepositorySet(decodedId, {
           key: input.key,
           name: input.name,
@@ -2451,6 +2479,7 @@ export default function BuzzChat() {
         setRoomRepository(repo);
         setShowRoomRepoPicker(false);
         setCornerOpenRepoPrompt(false);
+        setOwnerGrant(null);
       } catch (err) {
         setRoomRepoError(`Could not link repo: ${String(err)}`);
       } finally {
@@ -2458,6 +2487,29 @@ export default function BuzzChat() {
       }
     },
     [activeCommunityId, decodedId, roomRepoBusy, transport],
+  );
+
+  // The pasted repository's owner is not among this viewer's installations:
+  // resolve the typed coverage state and share the owner's install link
+  // instead of opening a connect flow that can never grant a foreign repo.
+  const handleAskOwnerGrant = useCallback(
+    async (fullName: string) => {
+      if (!transport) return;
+      setOwnerGrant(null);
+      const access = await transport.githubRepositoryAccess(fullName).catch(() => undefined);
+      uncoveredOwnersRef.current.add(fullName.split('/')[0]?.toLowerCase() ?? '');
+      if (access?.installUrl) {
+        setOwnerGrant({ repository: fullName, installUrl: access.installUrl });
+        void Share.share({ message: ownerGrantShareMessage({ repository: fullName, installUrl: access.installUrl }) });
+        return;
+      }
+      setRoomRepoNotice(
+        access?.accessible
+          ? `${fullName} is already available below.`
+          : `Could not confirm GitHub coverage for ${fullName}. Try again once the owner has installed the app.`,
+      );
+    },
+    [transport],
   );
 
   const handleCreateGitHubRepository = useCallback(
@@ -3726,7 +3778,9 @@ export default function BuzzChat() {
                     currentKey={null}
                     error={roomRepoError}
                     notice={roomRepoNotice}
+                    ownerGrant={ownerGrant}
                     onAddAccount={() => void handleAddGitHubAccount()}
+                    onAskOwnerGrant={(fullName) => void handleAskOwnerGrant(fullName)}
                     onCreateRepository={handleCreateGitHubRepository}
                     onManageInstallation={(installation) =>
                       void handleManageGitHubInstallation(installation)
@@ -4231,7 +4285,10 @@ export default function BuzzChat() {
                     currentKey={roomRepository?.binding.key ?? null}
                     error={roomRepoError}
                     notice={roomRepoNotice}
+                    ownerGrant={ownerGrant}
+                    uncoveredOwners={uncoveredOwnersRef.current}
                     onAddAccount={() => void handleAddGitHubAccount()}
+                    onAskOwnerGrant={(fullName) => void handleAskOwnerGrant(fullName)}
                     onCreateRepository={handleCreateGitHubRepository}
                     onManageInstallation={(installation) =>
                       void handleManageGitHubInstallation(installation)

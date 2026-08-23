@@ -13,10 +13,11 @@
  *     escalation opens a separate corner session and replays the work there.
  *     Only Beeline's own fixed inspection MCP (`read-only-policy.ts`) is
  *     auto-allowed, and this module never widens that.
- *   - A CORNER session may mutate inside its own worktree and the one explicit
- *     Body-owned agent-private state root. Any other absolute path, `..` climb,
- *     or symlink escape is denied. Reads outside stay allowed, per the
- *     pre-existing corner policy.
+ *   - A CORNER session is writable by default. Its bubblewrap mount table masks
+ *     credentials and overlays only shared worktrees/checkouts and daemon-owned
+ *     state read-only. This callback mirrors that denylist for adapters that
+ *     still ask despite their full-autonomy mode; ordinary writes elsewhere
+ *     are approved immediately.
  *
  * Path comparison is done on *physically resolved* paths (the deepest existing
  * ancestor is `realpath`'d and the not-yet-existing remainder appended), so a
@@ -30,7 +31,7 @@ import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { isMutatingPermissionRequest, type AcpPermissionRequest } from './acp.js';
-import { classifyCornerCommand, shellCommandFromRawInput } from './corner-isolation.js';
+import { shellCommandFromRawInput } from './corner-isolation.js';
 
 /**
  * Steering text for a Room denial. ACP's permission response carries only an
@@ -229,32 +230,32 @@ const COMMAND_WRAPPERS = new Set([
 /** Redirection sinks that are never a filesystem escape. */
 const DISCARD_SINKS = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/tty']);
 
-/** Absolute paths a shell command would write to, outside the worktree. */
-function pathInsideAllowedRoot(
-  path: string,
-  worktree: string,
-  allowedRoots: readonly string[],
-): boolean {
+/** Shell-command targets that resolve into a protected write root. */
+function pathInsideAnyRoot(path: string, worktree: string, roots: readonly string[]): boolean {
   const expanded = expandHome(path);
   const worktreeReal = physicalPath(worktree);
   const target = physicalPath(isAbsolute(expanded) ? expanded : resolve(worktreeReal, expanded));
-  return allowedRoots.some((root) => isInside(physicalPath(root), target));
+  return roots.some((root) => isInside(physicalPath(root), target));
 }
 
 function commandWriteEscape(
   command: string,
   worktree: string,
+  protectedWriteRoots: readonly string[],
   allowedWriteRoots: readonly string[],
 ): string | undefined {
-  const escapes = (token: string): boolean =>
-    (token.startsWith('/') || token.startsWith('~')) &&
-    !DISCARD_SINKS.has(token) &&
-    pathEscapesRoot(token, worktree) &&
-    !pathInsideAllowedRoot(token, worktree, allowedWriteRoots);
+  const escapes = (token: string): boolean => {
+    if (DISCARD_SINKS.has(token)) return false;
+    const allowed = [worktree, ...allowedWriteRoots];
+    return (
+      pathInsideAnyRoot(token, worktree, protectedWriteRoots) &&
+      !pathInsideAnyRoot(token, worktree, allowed)
+    );
+  };
 
   // Output redirection to an absolute path: `… > /home/op/proj/file.ts`.
   // `2>/dev/null` never matches: the char before `>` must not be a word char.
-  for (const match of command.matchAll(/(?:^|[^\w>])>>?\s*("?)([~/][^\s"'|;&)]*)\1/g)) {
+  for (const match of command.matchAll(/(?:^|[^\w>])>>?\s*("?)((?:[~/]|\.\.?\/)[^\s"'|;&)]*)\1/g)) {
     const target = match[2];
     if (target && escapes(target)) return target;
   }
@@ -302,48 +303,50 @@ export function classifyRoomPermission(request: AcpPermissionRequest): SandboxVe
 }
 
 /**
- * Corner policy: the cd-guard, plus a path guard that denies a mutating request
- * outside the corner worktree and explicitly supplied private-state roots.
- * Reads are untouched.
+ * Corner fallback policy: allow mutations everywhere except the hygiene
+ * denylist. Explicit writable roots win over protected parents (the current
+ * worktree inside the corners pool, its git common dir inside the canonical
+ * checkout, and selected Body-owned capabilities). Reads are untouched.
  */
 export function classifyCornerPermission(
   request: AcpPermissionRequest,
   worktreePath: string,
-  primaryCheckout?: string,
+  protectedWriteRoots: readonly string[] = [],
   allowedWriteRoots: readonly string[] = [],
 ): SandboxVerdict {
   const command = shellCommandFromRawInput(request.toolCall?.kind, request.toolCall?.rawInput);
-  if (command) {
-    const verdict = classifyCornerCommand(command, worktreePath, primaryCheckout);
-    if (verdict.decision === 'deny') return verdict;
-  }
-
   if (!isMutatingPermissionRequest(request)) return ALLOW;
 
   if (command) {
-    const escape = commandWriteEscape(command, worktreePath, allowedWriteRoots);
+    const escape = commandWriteEscape(
+      command,
+      worktreePath,
+      protectedWriteRoots,
+      allowedWriteRoots,
+    );
     if (escape) {
       return {
         decision: 'deny',
         code: 'command-write-escape',
         reason:
-          `this command would write to '${escape}', outside the corner's isolated worktree ` +
-          `(${worktreePath}) and its agent-private state. Keep project changes inside the worktree.`,
+          `this command would write to protected path '${escape}'. ` +
+          `The corner is autonomous elsewhere, but shared checkouts, sibling corners, ` +
+          `daemon state and credential stores stay read-only.`,
       };
     }
   }
 
   for (const path of permissionTargetPaths(request)) {
     if (
-      pathEscapesRoot(path, worktreePath) &&
-      !pathInsideAllowedRoot(path, worktreePath, allowedWriteRoots)
+      pathInsideAnyRoot(path, worktreePath, protectedWriteRoots) &&
+      !pathInsideAnyRoot(path, worktreePath, [worktreePath, ...allowedWriteRoots])
     ) {
       return {
         decision: 'deny',
         code: 'path-escape',
         reason:
-          `'${path}' resolves outside the corner's isolated worktree (${worktreePath}). ` +
-          `A corner may modify only its worktree and Body-owned agent-private state.`,
+          `'${path}' resolves into a protected shared or daemon-owned path. ` +
+          `The corner is writable by default everywhere else.`,
       };
     }
   }

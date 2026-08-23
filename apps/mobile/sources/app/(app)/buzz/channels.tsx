@@ -51,7 +51,12 @@ import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { useAgentNameCache } from '@/buzz/agent-name-cache';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { isRoomUnread, roomReadAt, useRoomReadState } from '@/buzz/room-read-state';
-import { NO_ACTIVITY_PREVIEW, roomListSections } from '@/buzz/room-list-row';
+import {
+  NO_ACTIVITY_PREVIEW,
+  finishedRoomEntries,
+  roomListSections,
+  type RoomRowPresentation,
+} from '@/buzz/room-list-row';
 import { cornerStatusPresentation, sortCorners, type CornerSummary } from '@/buzz/corners';
 import { cornerHref } from '@/buzz/corner-navigation';
 import {
@@ -92,7 +97,6 @@ import {
   BrittlePress,
   CornerGlyph,
   HullDeckMark,
-  HullWaveSignal,
   MonoButton,
   PixelGateReveal,
   PixelLoader,
@@ -173,9 +177,10 @@ async function loadDisplayChannelBasics(
         } satisfies ChannelDisplayItem;
       }),
     );
-    return rooms
-      .filter((room) => !room.archived)
-      .sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0));
+    // Top-level Rooms only, archived ones included: a relay-archived Room is
+    // FINISHED deck state, not an invisible one — it reaches the reader only
+    // through the collapsed FINISHED entry at the bottom of the index.
+    return rooms.sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0));
   }
 
   const all = await transport.sessionsRead();
@@ -200,7 +205,7 @@ async function loadDisplayChannelBasics(
       }
     }),
   );
-  return resolved.filter((item) => !item.parentChannelId && !item.archived);
+  return resolved.filter((item) => !item.parentChannelId);
 }
 
 async function loadWorkspaceRoster(
@@ -431,6 +436,9 @@ export default function BuzzChannels() {
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [readyInviteUrl, setReadyInviteUrl] = useState<string | undefined>(inviteUrl);
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
+  /** The collapsed FINISHED entry at the bottom of the deck: one row while
+   * collapsed, the finished Rooms themselves once expanded. */
+  const [showFinishedRooms, setShowFinishedRooms] = useState(false);
   const [ageNow, setAgeNow] = useState(() => Date.now());
   /** Rooms where an agent turn is streaming RIGHT NOW, seen live by this
    * screen's own event subscription. Corner turns are durable relay state
@@ -489,8 +497,14 @@ export default function BuzzChannels() {
       ...room,
       unreadNew: unreadCountFor(room, identity?.publicKey, readAt),
     }));
-    return roomListSections(visible, authorNames, { now: ageNow });
+    return {
+      sections: roomListSections(visible, authorNames, { now: ageNow }),
+      finished: finishedRoomEntries(visible, authorNames),
+    };
   }, [ageNow, authorNames, displayChannels, identity?.publicKey, readAt]);
+  // One projection, one consumer each: inline tiers vs the collapsed entry.
+  // Kept as separate names so the JSX below stays flat.
+  const finishedRooms = roomSections.finished;
 
   useEffect(() => {
     let cancelled = false;
@@ -1054,6 +1068,161 @@ export default function BuzzChannels() {
     }
   }, [activeCommunityId, creatingInvite, readyInviteUrl, relayUrl, transport]);
 
+  /** One renderer for every inline tier AND the expanded FINISHED list: the
+   * collapsed entry's rows must be indistinguishable from inline ones. */
+  const renderRoomEntry = useCallback(
+    (entry: { item: ChannelDisplayItem; row: RoomRowPresentation }) => {
+      const { item, row } = entry;
+      // The dropdown lists open corner work, and the CONTROL exists only
+      // for open work too: finished corners (merged/archived) carry no
+      // count and no expansion — the Room itself moves behind the
+      // collapsed FINISHED entry once ALL its work is terminal.
+      const corners = row.corners;
+      const canExpand = corners.length > 0;
+      const title = item.title ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`;
+      const expanded = canExpand && expandedRoomId === item.id;
+      const age = compactRelativeTime(row.meaningfulAt, ageNow);
+      // One state per row, one visual language each: needs-you (brass),
+      // working (motion), idle (steel). The derivation lives in
+      // `roomRowPresentation`; this only picks which mark renders.
+      const deckState = row.attention
+        ? 'needs-you'
+        : row.zone === 'working'
+          ? 'working'
+          : 'idle';
+      return (
+        <View style={styles.roomCell}>
+          {/* The one brass edge on the deck, and only where a person
+              must act — never for mere unread or busy-ness. */}
+          {row.attention && <View pointerEvents="none" style={styles.attnRail} />}
+          <View style={styles.roomRow}>
+            <BrittlePress
+              accessibilityHint={
+                canExpand ? `Long press to reveal ${CORNER_LABEL.toLowerCase()}s` : undefined
+              }
+              accessibilityLabel={`Open ${title}${
+                row.attention ? ', needs your attention' : ''
+              }${row.live && !row.attention ? ', agent working' : ''}, ${
+                formatRoomParticipantTotal(item.participantCount ?? 0)
+              }${
+                canExpand ? `, ${corners.length} open ${CHANGES_LABEL}` : ''
+              }`}
+              contentStyle={styles.indexRow}
+              delayLongPress={350}
+              onLongPress={
+                canExpand
+                  ? () =>
+                      setExpandedRoomId((current) => (current === item.id ? null : item.id))
+                  : undefined
+              }
+              onPress={() => openChannel(item.id)}
+              style={styles.roomPrimary}
+              testID={`room-${item.id}`}
+            >
+              {/* Fixed-width flex mark column — the row's height is
+                  established by its in-flow children, never an overlay. */}
+              <View style={styles.rowMark}>
+                <HullDeckMark state={deckState} />
+              </View>
+              <View style={styles.rowCopy}>
+                <View style={styles.rowTitleLine}>
+                  <Text
+                    numberOfLines={1}
+                    style={[styles.rowTitle, item.archived && styles.rowTitleArchived]}
+                  >
+                    {title}
+                  </Text>
+                  {!!item.repoName && !item.archived && (
+                    <Text numberOfLines={1} style={styles.rowRepo}>
+                      {item.repoName}
+                    </Text>
+                  )}
+                  {item.archived && <Text style={styles.rowFlag}>ARCHIVED</Text>}
+                </View>
+                <Text
+                  numberOfLines={1}
+                  style={[styles.rowPreview, row.attention && styles.rowPreviewAttention]}
+                >
+                  {row.fact}
+                </Text>
+                {/* The cell carries four things and nothing else: the
+                    status mark, the name, the last-message fact, and the
+                    corner count in the gutter. The old pill strip (model,
+                    participants, corners-open, needs-you) was redundant —
+                    the brass mark plus the accent fact already say
+                    "needs you," and the gutter already carries the corner
+                    count — so it is gone. */}
+              </View>
+            </BrittlePress>
+            {/* The right gutter: a fixed marginalia column IN FLOW (a
+                sibling of the pressable, never laid over the row), so
+                an age stamp or a corner count can never reflow the copy
+                beside it and can never escape into the next row. */}
+            <View style={styles.rowGutter}>
+              <Text style={styles.rowAge}>{age}</Text>
+              {canExpand && (
+                <TouchableOpacity
+                  accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${corners.length} open ${
+                    corners.length === 1 ? CORNER_LABEL : CHANGES_LABEL
+                  } in ${title}`}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded }}
+                  onPress={() =>
+                    setExpandedRoomId((current) => (current === item.id ? null : item.id))
+                  }
+                  style={styles.cornerPeek}
+                  testID={`room-corners-toggle-${item.id}`}
+                >
+                  {/* Bare count + fold chevron, no container — the
+                      owner's call: the number IS the affordance. */}
+                  <Text
+                    style={[
+                      styles.cornerPeekCount,
+                      corners.length > 0 && row.attention && styles.cornerPeekCountLive,
+                    ]}
+                  >
+                    {corners.length}
+                    {'\u2009'}
+                    <Text style={styles.cornerPeekChevron}>{expanded ? '⌃' : '⌄'}</Text>
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+          {expanded && (
+            <PixelGateReveal style={styles.cornerDropdown}>
+              <View style={styles.cornerRail} />
+              {corners.map((corner) => {
+                const status = cornerStatusPresentation(corner.status);
+                return (
+                  <TouchableOpacity
+                    accessibilityLabel={`Open ${corner.name} ${CORNER_LABEL}, ${status.label}`}
+                    key={corner.id}
+                    onPress={() =>
+                      router.push(cornerHref(corner.id, item.id, corner.name, 'room-list'))
+                    }
+                    style={styles.cornerRow}
+                  >
+                    <CornerGlyph status={corner.status} style={styles.cornerGlyph} />
+                    <Text numberOfLines={1} style={styles.cornerName}>
+                      {corner.name}
+                    </Text>
+                    <Text style={styles.cornerStatus}>{status.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+              {/* No "all corners" row: the expansion IS the full list, so
+                  a separate link into it was redundant. When a Room grows
+                  past a sensible inline cap we surface "+N more" there —
+                  the only case that route earns its place. */}
+            </PixelGateReveal>
+          )}
+        </View>
+      );
+    },
+    [ageNow, expandedRoomId, openChannel],
+  );
+
   if (!cachedListEntry) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
@@ -1192,7 +1361,7 @@ export default function BuzzChannels() {
 
         <SectionList
           testID="room-list"
-          sections={roomSections}
+          sections={roomSections.sections}
           keyExtractor={(entry) => entry.item.id}
           contentContainerStyle={hasConversations ? styles.listContent : styles.emptyContainer}
           stickySectionHeadersEnabled={false}
@@ -1201,17 +1370,44 @@ export default function BuzzChannels() {
               <Text style={styles.indexLabel}>
                 {section.title} · {section.data.length}
               </Text>
-              {section.zone === 'working' && (
-                <View style={styles.indexSignal}>
-                  <HullWaveSignal compact label="LIVE" />
-                  <Text style={styles.indexSignalCount}>{section.data.length}</Text>
-                </View>
-              )}
             </View>
           )}
           ListFooterComponent={
-            orderedDirectMessages.length > 0 ? (
+            orderedDirectMessages.length > 0 || finishedRooms.length > 0 ? (
               <View style={styles.dmSection}>
+                {/* The collapsed FINISHED entry: one-depth-hidden Rooms —
+                    archived on the relay, or every corner terminal — never
+                    listed inline by any tier. Collapsed it is one header row;
+                    expanded it lists those Rooms through the same row
+                    renderer as every inline tier (the Claude Code mobile
+                    pattern). Hidden entirely when there is nothing finished. */}
+                {finishedRooms.length > 0 && (
+                  <View>
+                    <TouchableOpacity
+                      accessibilityLabel={
+                        showFinishedRooms
+                          ? 'Hide finished rooms'
+                          : `Show ${formatRoomParticipantTotal(finishedRooms.length)} finished ${ROOMS_LABEL.toLowerCase()}`
+                      }
+                      accessibilityRole="button"
+                      accessibilityState={{ expanded: showFinishedRooms }}
+                      onPress={() => setShowFinishedRooms((value) => !value)}
+                      style={styles.indexHeader}
+                      testID="finished-rooms-toggle"
+                    >
+                      <Text style={styles.indexLabel}>
+                        FINISHED · {finishedRooms.length}
+                      </Text>
+                      <Text style={styles.finishedChevron}>
+                        {showFinishedRooms ? '⌃' : '›'}
+                      </Text>
+                    </TouchableOpacity>
+                    {showFinishedRooms &&
+                      finishedRooms.map((entry) => (
+                        <View key={entry.item.id}>{renderRoomEntry(entry)}</View>
+                      ))}
+                  </View>
+                )}
                 <View style={styles.indexHeader}>
                   <Text style={styles.indexLabel}>DIRECT · {orderedDirectMessages.length}</Text>
                 </View>
@@ -1318,157 +1514,7 @@ export default function BuzzChannels() {
               </View>
             ) : null
           }
-          renderItem={({ item: entry }) => {
-            const { item, row } = entry;
-            // The dropdown lists open corner work, and the CONTROL exists only
-            // for open work too: finished corners (merged/archived) are
-            // represented nowhere in navigation per the owner's model — a Room
-            // whose corners have all finished carries no count and no
-            // expansion, and its history stays reachable through the
-            // transcript's landed/closed references.
-            const corners = row.corners;
-            const canExpand = corners.length > 0;
-            const title = item.title ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`;
-            const expanded = canExpand && expandedRoomId === item.id;
-            const age = compactRelativeTime(row.meaningfulAt, ageNow);
-            // One state per row, one visual language each: needs-you (brass),
-            // working (motion), idle (steel). The derivation lives in
-            // `roomRowPresentation`; this only picks which mark renders.
-            const deckState = row.attention
-              ? 'needs-you'
-              : row.zone === 'working'
-                ? 'working'
-                : 'idle';
-            return (
-              <View style={styles.roomCell}>
-                {/* The one brass edge on the deck, and only where a person
-                    must act — never for mere unread or busy-ness. */}
-                {row.attention && <View pointerEvents="none" style={styles.attnRail} />}
-                <View style={styles.roomRow}>
-                  <BrittlePress
-                    accessibilityHint={
-                      canExpand ? `Long press to reveal ${CORNER_LABEL.toLowerCase()}s` : undefined
-                    }
-                    accessibilityLabel={`Open ${title}${
-                      row.attention ? ', needs your attention' : ''
-                    }${row.live && !row.attention ? ', agent working' : ''}, ${
-                      formatRoomParticipantTotal(item.participantCount ?? 0)
-                    }${
-                      canExpand ? `, ${corners.length} open ${CHANGES_LABEL}` : ''
-                    }`}
-                    contentStyle={styles.indexRow}
-                    delayLongPress={350}
-                    onLongPress={
-                      canExpand
-                        ? () =>
-                            setExpandedRoomId((current) => (current === item.id ? null : item.id))
-                        : undefined
-                    }
-                    onPress={() => openChannel(item.id)}
-                    style={styles.roomPrimary}
-                    testID={`room-${item.id}`}
-                  >
-                    {/* Fixed-width flex mark column — the row's height is
-                        established by its in-flow children, never an overlay. */}
-                    <View style={styles.rowMark}>
-                      <HullDeckMark state={deckState} />
-                    </View>
-                    <View style={styles.rowCopy}>
-                      <View style={styles.rowTitleLine}>
-                        <Text
-                          numberOfLines={1}
-                          style={[styles.rowTitle, item.archived && styles.rowTitleArchived]}
-                        >
-                          {title}
-                        </Text>
-                        {!!item.repoName && !item.archived && (
-                          <Text numberOfLines={1} style={styles.rowRepo}>
-                            {item.repoName}
-                          </Text>
-                        )}
-                        {item.archived && <Text style={styles.rowFlag}>ARCHIVED</Text>}
-                      </View>
-                      <Text
-                        numberOfLines={1}
-                        style={[styles.rowPreview, row.attention && styles.rowPreviewAttention]}
-                      >
-                        {row.fact}
-                      </Text>
-                      {/* The cell carries four things and nothing else: the
-                          status mark, the name, the last-message fact, and the
-                          corner count in the gutter. The old pill strip (model,
-                          participants, corners-open, needs-you) was redundant —
-                          the brass mark plus the accent fact already say
-                          "needs you," and the gutter already carries the corner
-                          count — so it is gone. */}
-                    </View>
-                  </BrittlePress>
-                  {/* The right gutter: a fixed marginalia column IN FLOW (a
-                      sibling of the pressable, never laid over the row), so
-                      an age stamp or a corner count can never reflow the copy
-                      beside it and can never escape into the next row. */}
-                  <View style={styles.rowGutter}>
-                    <Text style={styles.rowAge}>{age}</Text>
-                    {canExpand && (
-                      <TouchableOpacity
-                        accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${corners.length} open ${
-                          corners.length === 1 ? CORNER_LABEL : CHANGES_LABEL
-                        } in ${title}`}
-                        accessibilityRole="button"
-                        accessibilityState={{ expanded }}
-                        onPress={() =>
-                          setExpandedRoomId((current) => (current === item.id ? null : item.id))
-                        }
-                        style={styles.cornerPeek}
-                        testID={`room-corners-toggle-${item.id}`}
-                      >
-                        {/* Bare count + fold chevron, no container — the
-                            owner's call: the number IS the affordance. */}
-                        <Text
-                          style={[
-                            styles.cornerPeekCount,
-                            corners.length > 0 && row.attention && styles.cornerPeekCountLive,
-                          ]}
-                        >
-                          {corners.length}
-                          {'\u2009'}
-                          <Text style={styles.cornerPeekChevron}>{expanded ? '⌃' : '⌄'}</Text>
-                        </Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </View>
-                {expanded && (
-                  <PixelGateReveal style={styles.cornerDropdown}>
-                    <View style={styles.cornerRail} />
-                    {corners.map((corner) => {
-                      const status = cornerStatusPresentation(corner.status);
-                      return (
-                        <TouchableOpacity
-                          accessibilityLabel={`Open ${corner.name} ${CORNER_LABEL}, ${status.label}`}
-                          key={corner.id}
-                          onPress={() =>
-                            router.push(cornerHref(corner.id, item.id, corner.name, 'room-list'))
-                          }
-                          style={styles.cornerRow}
-                        >
-                          <CornerGlyph status={corner.status} style={styles.cornerGlyph} />
-                          <Text numberOfLines={1} style={styles.cornerName}>
-                            {corner.name}
-                          </Text>
-                          <Text style={styles.cornerStatus}>{status.label}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                    {/* No "all corners" row: the expansion IS the full list, so
-                        a separate link into it was redundant. When a Room grows
-                        past a sensible inline cap we surface "+N more" there —
-                        the only case that route earns its place. */}
-                  </PixelGateReveal>
-                )}
-              </View>
-            );
-          }}
+          renderItem={({ item: entry }) => renderRoomEntry(entry)}
           onRefresh={() => void handleRefresh(true)}
           refreshing={refreshing}
         />
@@ -1659,14 +1705,14 @@ const styles = StyleSheet.create((theme) => {
     lineHeight: 14,
     letterSpacing: 1.1,
   },
-  indexSignal: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  indexSignalCount: {
-    ...Typography.mono('semiBold'),
-    color: groknight.accent,
-    fontSize: 11,
-    lineHeight: 15,
-  },
   dmSection: { marginTop: 4 },
+  /* The collapsed FINISHED entry's fold chevron — gutter marginalia tier. */
+  finishedChevron: {
+    ...Typography.mono(),
+    color: groknight.ledgerGhost,
+    fontSize: 10,
+    lineHeight: 14,
+  },
   /* The row is a self-sizing flex container: minHeight floor, never a fixed
    * height, and children top-aligned like the mockup's mark/title baseline.
    * The gutter is a sibling column IN FLOW (see ROW_GUTTER_WIDTH), so the

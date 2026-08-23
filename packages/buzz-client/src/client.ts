@@ -63,6 +63,7 @@ import {
   createCommunity,
   createInvite,
   getCommunity,
+  leaveCommunity,
   listCommunityInvites,
   listCommunities,
   renameCommunity,
@@ -460,6 +461,14 @@ export class BuzzClient {
   /** Restore any missing direct Room projections for this human Workspace member. */
   repairCommunityRoomMemberships(communityId: string): Promise<string[]> {
     return repairCommunityRoomMemberships(this.ctx, communityId);
+  }
+
+  /**
+   * Leave a Workspace as this member (self-authored kind:9001), best-effort
+   * leaving its top-level Rooms first. Refuses the sole-owner case up front.
+   */
+  leaveWorkspace(communityId: string): Promise<void> {
+    return leaveCommunity(this.ctx, communityId);
   }
 
   /** Place one existing Workspace member into one Room without elevating their role. */

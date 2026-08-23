@@ -164,23 +164,58 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(styleBlock(source, 'rowRepo')).toMatch(/Typography\.mono\(/);
   });
 
-  it('hangs every row\u2019s metadata in one fixed right gutter', () => {
-    // Marginalia, exactly as the transcript does it: absolutely positioned at a
-    // fixed width, so an age stamp or a corner count can never reflow the copy
-    // beside it, and every row reserves the column whether or not it has one.
+  it('hangs every row\u2019s metadata in one fixed right gutter \u2014 in flow, never absolute', () => {
+    // Marginalia, exactly as the transcript does it: a fixed-width column, so
+    // an age stamp or a corner count can never reflow the copy beside it, and
+    // every row reserves the column whether or not it has one. It MUST be an
+    // in-flow flex sibling (never absolutely positioned over the row): an
+    // overlay cannot contribute height, and a fixed row height under tall copy
+    // is how the first ship of this deck painted rows over their neighbours.
     const gutter = styleBlock(source, 'rowGutter');
-    expect(gutter).toMatch(/position: 'absolute'/);
+    expect(gutter).not.toMatch(/position: 'absolute'/);
     expect(gutter).toContain('width: ROW_GUTTER_WIDTH');
+    expect(gutter).toContain('flexShrink: 0');
     expect(gutter).toMatch(/alignItems: 'flex-end'/);
-    expect(styleBlock(source, 'indexRow')).toContain(
+    expect(styleBlock(source, 'indexRow')).toContain('paddingRight: SCREEN_INSET');
+    expect(styleBlock(source, 'indexRow')).not.toContain(
       'paddingRight: SCREEN_INSET + ROW_GUTTER_WIDTH',
     );
     // The stamp lives in the gutter, never back on the name's own line.
     expect(styleBlock(source, 'rowAge')).not.toContain("marginLeft: 'auto'");
-    expect(source).toContain('<View pointerEvents="box-none" style={styles.rowGutter}>');
+    expect(source).toContain('<View style={styles.rowGutter}>');
+    expect(source).not.toContain('pointerEvents="box-none" style={styles.rowGutter}');
     // Rooms and DMs use the same cell, the same gutter, and the same divider.
     expect(source.match(/style=\{styles\.rowGutter\}/g)).toHaveLength(2);
     expect(source.match(/style=\{styles\.roomCell\}/g)).toHaveLength(2);
+  });
+
+  it('rows are self-sizing flex containers — the overlap regression stays dead', () => {
+    // The first ship of this deck gave every row a FIXED height (72) while
+    // rows carry title + preview + pills, so tall content overflowed its cell
+    // and painted over the neighbouring row. The row must establish its own
+    // height from in-flow children: a minHeight floor, never a fixed height.
+    const indexRow = styleBlock(source, 'indexRow');
+    expect(indexRow).toContain('minHeight: INDEX_ROW_HEIGHT');
+    expect(indexRow).not.toMatch(/\bheight:\s*(?:INDEX_ROW_HEIGHT|\d)/);
+    expect(indexRow).toContain("flexDirection: 'row'");
+    // The status mark is a fixed-width FLEX column inside the row, never an
+    // absolutely positioned layer over it.
+    expect(styleBlock(source, 'rowMark')).not.toMatch(/position: 'absolute'/);
+    expect(styleBlock(source, 'rowMark')).toContain('width: ROW_MARK_WIDTH');
+    expect(source).toContain(
+      '<View style={styles.rowMark}>\n                      <HullDeckMark state={deckState} />',
+    );
+    // The repo tag rides the title line via flex (marginLeft auto), not via
+    // absolute placement.
+    const repo = styleBlock(source, 'rowRepo');
+    expect(repo).toContain("marginLeft: 'auto'");
+    expect(repo).not.toMatch(/position: 'absolute'/);
+    // The brass rail is the ONE absolute layer left on a row cell, and it is
+    // an edge decoration bounded by the cell's own box (top/bottom/left/width,
+    // no negative offsets), so it can never escape into a neighbouring row.
+    const rail = styleBlock(source, 'attnRail');
+    expect(rail).toMatch(/width: 2/);
+    expect(rail).not.toMatch(/-(?:top|left|right|bottom)/);
   });
 
   it('shows the projected current fact, never raw plumbing or a placeholder id', () => {

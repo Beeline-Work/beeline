@@ -1338,7 +1338,11 @@ export default function BuzzChannels() {
                     style={styles.roomPrimary}
                     testID={`room-${item.id}`}
                   >
-                    <HullDeckMark state={deckState} />
+                    {/* Fixed-width flex mark column — the row's height is
+                        established by its in-flow children, never an overlay. */}
+                    <View style={styles.rowMark}>
+                      <HullDeckMark state={deckState} />
+                    </View>
                     <View style={styles.rowCopy}>
                       <View style={styles.rowTitleLine}>
                         <Text
@@ -1379,10 +1383,11 @@ export default function BuzzChannels() {
                       )}
                     </View>
                   </BrittlePress>
-                  {/* The right gutter: a fixed marginalia column, laid over the
-                      row rather than inside it, so an age stamp or a corner
-                      count can never reflow the copy beside it. */}
-                  <View pointerEvents="box-none" style={styles.rowGutter}>
+                  {/* The right gutter: a fixed marginalia column IN FLOW (a
+                      sibling of the pressable, never laid over the row), so
+                      an age stamp or a corner count can never reflow the copy
+                      beside it and can never escape into the next row. */}
+                  <View style={styles.rowGutter}>
                     <Text style={styles.rowAge}>{age}</Text>
                     {canExpand && (
                       <TouchableOpacity
@@ -1514,16 +1519,21 @@ const ROW_GAP = 10;
 const SCREEN_INSET = 16;
 /**
  * The right gutter — the index's marginalia column, and the exact counterpart
- * of the transcript's timestamp margin. It is reserved on *every* row whether
- * or not that row has corners (a collapsing column ragged the one right edge
- * the index reads down), and it is laid *over* the row rather than inside it,
- * so nothing hanging in it can ever reflow the copy to its left.
+ * of the transcript's timestamp margin. It is a normal in-flow flex column on
+ * every row (never absolutely positioned over the row): an overlay cannot add
+ * height, so a tall copy block plus an overlaid gutter is exactly how the
+ * first ship of this deck painted rows over their neighbours. Reserving the
+ * column in flow keeps one clean right edge AND lets every row grow to fit
+ * whatever it carries.
  */
 const ROW_GUTTER_WIDTH = 46;
 /**
- * One row height for the whole index, sized so the gutter holds both of its
- * marks — the age stamp on the name's line, the corner count below it at a
- * full 44pt touch target — without any row growing taller than its neighbours.
+ * The row's MINIMUM height, not its height: every row must reserve this much
+ * so the gutter can hold both of its marks — the age stamp on the name's line,
+ * the corner count below it at a full 44pt touch target — but a row carrying
+ * pills or wrapped preview lines grows past it instead of overflowing into
+ * its neighbour. A fixed `height` here was the overlap defect that sank the
+ * first ship of this deck.
  */
 const INDEX_ROW_HEIGHT = 72;
 /** Drops the gutter's first mark onto the same optical line as the row name. */
@@ -1670,18 +1680,23 @@ const styles = StyleSheet.create((theme) => {
     lineHeight: 15,
   },
   dmSection: { marginTop: 4 },
+  /* The row is a self-sizing flex container: minHeight floor, never a fixed
+   * height, and children top-aligned like the mockup's mark/title baseline.
+   * The gutter is a sibling column IN FLOW (see ROW_GUTTER_WIDTH), so the
+   * pressable needs no compensating right padding. */
   indexRow: {
     minWidth: 0,
-    minHeight: 44,
-    height: groknight.name === 'ledger' ? 52 : INDEX_ROW_HEIGHT,
+    minHeight: INDEX_ROW_HEIGHT,
     paddingLeft: SCREEN_INSET,
-    paddingRight: SCREEN_INSET + ROW_GUTTER_WIDTH,
+    paddingRight: SCREEN_INSET,
     paddingVertical: groknight.name === 'ledger' ? 6 : 11,
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: ROW_GAP,
   },
-  rowMark: { width: ROW_MARK_WIDTH, alignItems: 'center', justifyContent: 'center' },
+  /* Fixed-width leading mark column — a flex child, not an overlay. Top
+   * padding drops the dot/ring/mark onto the name's optical line. */
+  rowMark: { width: ROW_MARK_WIDTH, alignItems: 'center', paddingTop: 4 },
   rowCopy: { flex: 1, minWidth: 0 },
   rowTitleLine: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
   /* The index reads on three tones and nothing else: the name is the brightest
@@ -1792,16 +1807,18 @@ const styles = StyleSheet.create((theme) => {
   },
   roomRow: { position: 'relative', minWidth: 0, flexDirection: 'row', alignItems: 'stretch' },
   roomPrimary: { flex: 1, minWidth: 0 },
-  /* Marginalia, not a third column of content: absolutely placed, fixed width,
-   * right-aligned, and every mark in it ghosted — the same treatment the
-   * transcript gives its timestamps and npub fingerprints. */
+  /* Marginalia, not a third column of content: a fixed-width, right-aligned
+   * IN-FLOW column, and every mark in it ghosted — the same treatment the
+   * transcript gives its timestamps and npub fingerprints. In flow (never
+   * absolute) so it can never paint over the neighbouring row, and so a tall
+   * gutter grows its own row instead of escaping it. */
   rowGutter: {
-    position: 'absolute',
-    top: ROW_GUTTER_TOP,
-    right: SCREEN_INSET,
-    bottom: 0,
     width: ROW_GUTTER_WIDTH,
+    flexShrink: 0,
+    marginRight: SCREEN_INSET,
+    flexDirection: 'column',
     alignItems: 'flex-end',
+    paddingTop: ROW_GUTTER_TOP,
   },
   cornerPeek: {
     width: ROW_GUTTER_WIDTH,

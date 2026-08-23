@@ -5,6 +5,51 @@ import { parseMarkdown, type MarkdownSpan } from '@/components/markdown/parseMar
 import { Typography } from '@/constants/Typography';
 import { CodeHighlighter } from '@/components/buzz/CodeHighlighter';
 
+/**
+ * A span split out of plain prose by `glossMentions` — the same MarkdownSpan
+ * plus a mention flag. Kept local to this file: the parser above knows
+ * nothing about mentions, and it must stay that way.
+ */
+type MentionSpan = MarkdownSpan & { mention?: boolean };
+
+/**
+ * A tagged identity in prose: `@` followed by a handle token (letters,
+ * digits, `_`, `-` — the same character class the composer's mention picker
+ * writes). Speakeasy's chat renders a tagged handle in accent brass; this is
+ * Beeline's mapping of that effect onto the theme's own brass token.
+ *
+ * Deliberately narrow:
+ *  - Plain prose only. Never inside code spans or links — a fenced block or a
+ *    URL is machine text, not an address.
+ *  - The character before `@` must be absent or non-handle text (whitespace,
+ *    opening punctuation), so an email address (`user@example.com`) never
+ *    glosses its domain.
+ */
+const MENTION_PATTERN = /@([A-Za-z0-9][A-Za-z0-9_-]*)/g;
+
+export function glossMentions(spans: MarkdownSpan[]): MentionSpan[] {
+  const out: MentionSpan[] = [];
+  for (const span of spans) {
+    if (span.url || span.styles.includes('code')) {
+      out.push(span);
+      continue;
+    }
+    const text = span.text;
+    let last = 0;
+    for (const match of text.matchAll(MENTION_PATTERN)) {
+      const at = match.index ?? 0;
+      const before = at > 0 ? text[at - 1]! : '';
+      if (/[A-Za-z0-9_.-]/.test(before)) continue;
+      if (at > last) out.push({ ...span, text: text.slice(last, at) });
+      out.push({ ...span, text: match[0], mention: true });
+      last = at + match[0].length;
+    }
+    if (last === 0) out.push(span);
+    else if (last < text.length) out.push({ ...span, text: text.slice(last) });
+  }
+  return out;
+}
+
 type MonoMarkdownProps = {
   markdown: string;
   /**
@@ -33,7 +78,7 @@ type MonoMarkdownProps = {
 /** Block kinds whose renderer starts with a `Text` that can host the handle. */
 const INLINE_HOSTS = new Set(['text', 'header', 'list', 'numbered-list']);
 
-function spanStyle(span: MarkdownSpan, base: TextStyle) {
+function spanStyle(span: MentionSpan, base: TextStyle) {
   return [
     base,
     span.styles.includes('bold') && styles.bold,
@@ -41,6 +86,7 @@ function spanStyle(span: MarkdownSpan, base: TextStyle) {
     span.styles.includes('italic') && styles.italic,
     span.styles.includes('code') && styles.inlineCode,
     span.url && styles.link,
+    span.mention && styles.mention,
   ];
 }
 
@@ -53,9 +99,12 @@ function InlineMarkdown({
   base: TextStyle;
   onLink: (url: string) => void;
 }) {
+  // One funnel: every prose block (text, header, list items) renders its spans
+  // here, so a mention glosses identically wherever it is spoken.
+  const glossed = glossMentions(spans);
   return (
     <>
-      {spans.map((span, index) => (
+      {glossed.map((span, index) => (
         <Text
           key={`${span.text}-${index}`}
           onPress={span.url ? () => onLink(span.url!) : undefined}
@@ -218,6 +267,9 @@ const styles = StyleSheet.create((theme) => ({
   italic: { fontFamily: theme.buzz.proseItalic },
   inlineCode: { fontFamily: theme.buzz.monoRegular, color: theme.buzz.ledgerQuiet },
   link: { textDecorationLine: 'underline' },
+  // A tagged identity pops in the theme's brass — the one chromatic spend in
+  // prose, shared with every other "this is addressed/live" signal.
+  mention: { color: theme.buzz.accent },
   heading: {
     fontFamily: theme.buzz.proseSemibold,
     color: theme.buzz.ledgerBright,

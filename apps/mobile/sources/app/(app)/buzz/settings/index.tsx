@@ -228,7 +228,7 @@ const styles = StyleSheet.create((theme) => {
   backText: { ...Typography.default(), color: groknight.chrome, fontSize: 28, lineHeight: 32 },
   headerCopy: { flex: 1, minWidth: 0 },
   title: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     color: groknight.textPrimary,
     fontSize: 17,
     lineHeight: 22,
@@ -268,20 +268,20 @@ const styles = StyleSheet.create((theme) => {
   /* The hub reads on the index's three tones: name brightest, its explanation
    * a step down, the gutter's mark ghosted. */
   rowTitle: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     color: groknight.textPrimary,
     fontSize: 15,
     lineHeight: 20,
   },
   rowSubtitle: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     marginTop: 3,
     color: groknight.ledgerQuiet,
     fontSize: 12,
     lineHeight: 16,
   },
   rowChevron: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     color: groknight.ledgerGhost,
     fontSize: 18,
     lineHeight: 20,
@@ -306,14 +306,14 @@ const styles = StyleSheet.create((theme) => {
     borderColor: groknight.border,
   },
   confirmText: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     color: groknight.textSecondary,
     fontSize: 12,
     lineHeight: 18,
   },
   cancelButton: { minHeight: 44, marginTop: 5, alignSelf: 'flex-start', justifyContent: 'center' },
   cancelText: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     color: groknight.textSecondary,
     fontSize: 12,
   },

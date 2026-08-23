@@ -448,7 +448,7 @@ const styles = StyleSheet.create((theme) => {
   back: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   backText: { ...Typography.default(), color: groknight.chrome, fontSize: 30, lineHeight: 34 },
   headerCopy: { flex: 1, minWidth: 0, paddingRight: 44 },
-  title: { ...Typography.default('semiBold'), color: groknight.textPrimary, fontSize: 18 },
+  title: { ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold, color: groknight.textPrimary, fontSize: 18 },
   headerMeta: {
     ...Typography.mono('semiBold'),
     marginTop: 3,
@@ -470,13 +470,13 @@ const styles = StyleSheet.create((theme) => {
     letterSpacing: 0.8,
   },
   sectionTitle: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     marginTop: 8,
     color: groknight.textPrimary,
     fontSize: 17,
   },
   sectionBody: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     marginTop: 7,
     color: groknight.textSecondary,
     fontSize: 12,
@@ -486,7 +486,7 @@ const styles = StyleSheet.create((theme) => {
   workspaceIdentityCopy: { flex: 1, minWidth: 0 },
   inlineActions: { marginTop: 4, flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
   input: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     minHeight: 48,
     marginTop: 14,
     paddingHorizontal: 12,
@@ -554,7 +554,7 @@ const styles = StyleSheet.create((theme) => {
     backgroundColor: groknight.bgBase,
   },
   memberCopy: { flex: 1, minWidth: 0 },
-  memberName: { ...Typography.default('semiBold'), color: groknight.textPrimary, fontSize: 13 },
+  memberName: { ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold, color: groknight.textPrimary, fontSize: 13 },
   memberHandle: { ...Typography.mono(), marginTop: 2, color: groknight.textMuted, fontSize: 9 },
   roleRow: { marginTop: 7, flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
   roleButton: {
@@ -570,7 +570,7 @@ const styles = StyleSheet.create((theme) => {
   roleText: { ...Typography.mono('semiBold'), color: groknight.textMuted, fontSize: 8 },
   roleTextSelected: { color: groknight.textPrimary },
   removeButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  removeText: { ...Typography.default(), color: groknight.steel, fontSize: 22 },
+  removeText: { ...Typography.default(), fontFamily: groknight.proseRegular, color: groknight.steel, fontSize: 22 },
   inviteRow: {
     minHeight: 62,
     paddingHorizontal: 10,
@@ -587,7 +587,7 @@ const styles = StyleSheet.create((theme) => {
     fontSize: 10,
     letterSpacing: 0.5,
   },
-  inviteMeta: { ...Typography.default(), marginTop: 4, color: groknight.textMuted, fontSize: 10 },
+  inviteMeta: { ...Typography.default(), fontFamily: groknight.proseRegular, marginTop: 4, color: groknight.textMuted, fontSize: 10 },
   linkRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
   roomRow: {
     minHeight: 66,
@@ -600,8 +600,8 @@ const styles = StyleSheet.create((theme) => {
     backgroundColor: groknight.bgBase,
   },
   roomCopy: { flex: 1, minWidth: 0, minHeight: 56, justifyContent: 'center' },
-  roomName: { ...Typography.default('semiBold'), color: groknight.textPrimary, fontSize: 13 },
-  roomMeta: { ...Typography.default(), marginTop: 3, color: groknight.textMuted, fontSize: 9 },
+  roomName: { ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold, color: groknight.textPrimary, fontSize: 13 },
+  roomMeta: { ...Typography.default(), fontFamily: groknight.proseRegular, marginTop: 3, color: groknight.textMuted, fontSize: 9 },
   visibilityButton: {
     minHeight: 36,
     paddingHorizontal: 9,
@@ -620,13 +620,13 @@ const styles = StyleSheet.create((theme) => {
   denied: { flex: 1, paddingHorizontal: 28, alignItems: 'center', justifyContent: 'center' },
   deniedGlyph: { ...Typography.default(), color: groknight.steel, fontSize: 34 },
   deniedTitle: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     marginTop: 14,
     color: groknight.textPrimary,
     fontSize: 18,
   },
   deniedBody: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     maxWidth: 360,
     marginTop: 8,
     color: groknight.textSecondary,
@@ -647,7 +647,7 @@ const styles = StyleSheet.create((theme) => {
     letterSpacing: 0.7,
   },
   errorText: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     marginTop: 4,
     color: groknight.textSecondary,
     fontSize: 12,

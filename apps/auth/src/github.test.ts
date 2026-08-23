@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { generateKeyPair, exportPKCS8 } from 'jose';
-import { GitHubAppClient, GitHubOAuthClient } from './github.js';
+import { GitHubAppClient, GitHubOAuthClient, READ_ONLY_ROOM_TOKEN_PERMISSIONS } from './github.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -88,6 +88,40 @@ describe('GitHub-only account and repository access', () => {
       method: 'POST',
       body: JSON.stringify({ repository_ids: [9] }),
     });
+  });
+
+  it('downgrades a mint to exactly contents:read + metadata:read when asked for read-only', async () => {
+    const { privateKey } = await generateKeyPair('RS256');
+    const privateKeyPem = await exportPKCS8(privateKey);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ token: 'ro-token', expires_at: '2030-01-01T00:00:00Z' }), {
+          status: 201,
+        }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new GitHubAppClient({ appId: '42', privateKey: privateKeyPem, slug: 'beeline' });
+
+    await expect(
+      app.installationToken(77, {
+        repositoryIds: [9],
+        permissions: READ_ONLY_ROOM_TOKEN_PERMISSIONS,
+      }),
+    ).resolves.toMatchObject({ token: 'ro-token' });
+    // Regression pin: the request NEVER asks for any write permission. The
+    // exact object is the whole contract — a new key here would widen what a
+    // session-held token can do.
+    expect(fetchMock.mock.calls[0]![1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify({
+        repository_ids: [9],
+        permissions: { contents: 'read', metadata: 'read' },
+      }),
+    });
+    const sentBody = JSON.parse(String(fetchMock.mock.calls[0]![1].body));
+    expect(Object.keys(sentBody.permissions)).toEqual(['contents', 'metadata']);
+    expect(Object.values(sentBody.permissions)).toEqual(['read', 'read']);
   });
 
   it('lists the installations visible to a GitHub user token', async () => {

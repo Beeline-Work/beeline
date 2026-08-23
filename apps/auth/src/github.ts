@@ -1,5 +1,16 @@
 import { importPKCS8, SignJWT } from 'jose';
 
+/**
+ * The exact GitHub permission set a READ-ONLY Room repository token may
+ * carry. Pinned here so the mint can never drift into asking for write:
+ * `contents: read` allows clone/fetch only — pushing with this token is
+ * refused by GitHub regardless of what the holder tries.
+ */
+export const READ_ONLY_ROOM_TOKEN_PERMISSIONS = Object.freeze({
+  contents: 'read',
+  metadata: 'read',
+});
+
 const GITHUB_ISSUER = 'https://github.com';
 const DEFAULT_API = 'https://api.github.com';
 
@@ -224,20 +235,30 @@ export class GitHubAppClient {
 
   async installationToken(
     installationId: number,
-    options: { repositoryIds?: readonly number[] } = {},
+    options: {
+      repositoryIds?: readonly number[];
+      /** Explicit permission downgrade sent verbatim to GitHub's token mint. */
+      permissions?: Readonly<Record<string, string>>;
+    } = {},
   ): Promise<GitHubInstallationToken> {
     if (!Number.isSafeInteger(installationId) || installationId <= 0) {
       throw new Error('invalid GitHub installation id');
     }
+    const hasBody = Boolean(options.repositoryIds?.length) || Boolean(options.permissions);
     const body = await jsonObject(
       await fetch(`${this.#config.apiBaseUrl}/app/installations/${installationId}/access_tokens`, {
         method: 'POST',
         headers: {
           ...githubHeaders(await this.appJwt()),
-          ...(options.repositoryIds?.length ? { 'content-type': 'application/json' } : {}),
+          ...(hasBody ? { 'content-type': 'application/json' } : {}),
         },
-        ...(options.repositoryIds?.length
-          ? { body: JSON.stringify({ repository_ids: options.repositoryIds }) }
+        ...(hasBody
+          ? {
+              body: JSON.stringify({
+                ...(options.repositoryIds?.length ? { repository_ids: options.repositoryIds } : {}),
+                ...(options.permissions ? { permissions: options.permissions } : {}),
+              }),
+            }
           : {}),
       }),
       'GitHub installation token',

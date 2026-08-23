@@ -14,7 +14,12 @@ import {
 } from 'node:crypto';
 import { AuthStore } from './store.js';
 import { OidcClient } from './oidc.js';
-import { GitHubAppClient, GitHubOAuthClient, type GitHubIdentity } from './github.js';
+import {
+  GitHubAppClient,
+  GitHubOAuthClient,
+  READ_ONLY_ROOM_TOKEN_PERMISSIONS,
+  type GitHubIdentity,
+} from './github.js';
 import {
   appSetupEnvBlock,
   buildAppManifest,
@@ -1727,6 +1732,14 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     const body = request.body as Record<string, unknown>;
     const pubkey = typeof body.pubkey === 'string' ? body.pubkey : '';
     const roomId = typeof body.room_id === 'string' ? body.room_id : '';
+    // Read-only variant for agent SESSIONS (a corner fetching a private repo
+    // to check currency against origin). The mint below pins GitHub's
+    // permissions to read only, so the token cannot push or write on any ref.
+    // Absent means the daemon's default mint — unchanged.
+    const readOnly = body.read_only;
+    if (readOnly !== undefined && typeof readOnly !== 'boolean') {
+      throw new ProtocolError(400, 'invalid_request', 'read_only must be a boolean');
+    }
     const relayAuthorizations = Array.isArray(body.relay_authorizations)
       ? body.relay_authorizations.filter((value): value is string => typeof value === 'string')
       : [];
@@ -1938,6 +1951,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     }
     const installation = await options.github.app.installationToken(access.installationId, {
       repositoryIds: [access.repositoryId],
+      ...(readOnly ? { permissions: READ_ONLY_ROOM_TOKEN_PERMISSIONS } : {}),
     });
     noStore(reply);
     return reply.send({

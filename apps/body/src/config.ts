@@ -79,6 +79,14 @@ export interface BodyConfig {
   agentHomeRoot?: string;
   /** Durable persona memory/lessons root outside corner worktrees. */
   agentPrivateRoot?: string;
+  /**
+   * Absolute path to this daemon's runtime.json, injected by the daemon
+   * launcher (`runStoredDaemon`). Corner-session git credential helpers
+   * (`corner-read-token.ts`) exec the CLI against it to mint read-only
+   * repository tokens through this daemon's own identity and relay base.
+   * Absent for standalone/test Bodies: those simply never wire the helper.
+   */
+  runtimeConfigPath?: string;
   /** Relay HTTP base (defaults to @beeline/gate config). */
   relayBaseUrl: string;
   relayHost: string;

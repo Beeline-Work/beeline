@@ -269,7 +269,13 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
   let roomTokenAuthority: NonNullable<
     Parameters<typeof buildAuthServer>[0]['authorizeGitHubRoomToken']
   >;
-  let roomTokenMint: { installationId: number; repositoryIds?: readonly number[] } | undefined;
+  let roomTokenMint:
+    | {
+        installationId: number;
+        repositoryIds?: readonly number[];
+        permissions?: Readonly<Record<string, string>>;
+      }
+    | undefined;
   let logLines: string[];
 
   beforeEach(async () => {
@@ -391,7 +397,10 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
           },
           installationToken: async (
             installationId: number,
-            options: { repositoryIds?: readonly number[] } = {},
+            options: {
+              repositoryIds?: readonly number[];
+              permissions?: Readonly<Record<string, string>>;
+            } = {},
           ) => {
             roomTokenMint = { installationId, ...options };
             return { token: 'room-installation-token', expiresAt: '2030-01-01T00:00:00Z' };
@@ -677,6 +686,84 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       authorizedBy: ungrantedOwner.publicKey,
       repository: 'octocat/widget',
     });
+  });
+
+  it('mints a read-only token when the Room token request asks for read_only', async () => {
+    const owner = generateKeypair();
+    const agent = generateKeypair();
+    await store.saveGitHubInstallation(
+      {
+        community: alphaTenant.community,
+        pubkey: owner.publicKey,
+        authorizedSubject: 'owner-subject',
+        accountId: '123',
+        accountLogin: 'octocat',
+        accountType: 'User',
+        installationId: 77,
+        repositorySelection: 'selected',
+        status: 'active',
+        repositoryCount: 1,
+      },
+      new Date(),
+    );
+    await store.replaceGitHubRepositories(
+      alphaTenant.community,
+      77,
+      [
+        {
+          id: 42,
+          installationId: 77,
+          name: 'widget',
+          fullName: 'octocat/widget',
+          remote: 'https://github.com/octocat/widget.git',
+          defaultBranch: 'main',
+        },
+      ],
+      new Date(),
+    );
+    roomTokenAuthority = async (_tenant, input) =>
+      input.agentPubkey === agent.publicKey && input.roomId === 'room-1'
+        ? {
+            authorized: true,
+            authorizedBy: owner.publicKey,
+            fullName: 'octocat/widget',
+            githubInstallationId: 77,
+          }
+        : { authorized: false, reason: 'agent_not_room_member' };
+    const url = `${alphaTenant.origin}/auth/github/room-token`;
+    const mint = async (payload: Record<string, unknown>) =>
+      app.inject({
+        method: 'POST',
+        url: '/auth/github/room-token',
+        headers: {
+          host: alphaTenant.host,
+          authorization: nip98AuthHeader(agent.secretKey, agent.publicKey, url, 'POST'),
+        },
+        payload: {
+          pubkey: agent.publicKey,
+          room_id: 'room-1',
+          relay_authorizations: Array.from({ length: 16 }, () =>
+            nip98AuthHeader(agent.secretKey, agent.publicKey, `${alphaTenant.origin}/query`, 'POST'),
+          ),
+          ...payload,
+        },
+      });
+
+    // The read-only session variant: the mint must pin GitHub permissions to
+    // exactly contents:read + metadata:read alongside the pinned repository —
+    // structurally incapable of pushing or writing anything on any ref.
+    const readOnly = await mint({ read_only: true });
+    expect(readOnly.statusCode).toBe(200);
+    expect(roomTokenMint).toEqual({
+      installationId: 77,
+      repositoryIds: [42],
+      permissions: { contents: 'read', metadata: 'read' },
+    });
+
+    // A non-boolean read_only is a bad request, never silently truthy.
+    const invalid = await mint({ read_only: 'yes' });
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.json()).toMatchObject({ error: 'invalid_request' });
   });
 
   it('completes an organization installation even when the user-token listing cannot verify it', async () => {

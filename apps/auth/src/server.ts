@@ -169,6 +169,55 @@ function nativeReturnPage(target: URL): string {
 </html>`;
 }
 
+// A GitHub App install that did NOT originate inside Beeline (share link,
+// marketplace) lands back on this service carrying installation_id/setup_action
+// but no state marker — there is no flow to consume and no session to bind.
+// That return is purely informational: render a friendly landing (never raw
+// JSON, never a 4xx), perform NO session binding and mint NO token. Server-side
+// discovery already ingests the grant — the installation webhook records it and
+// reconcileGitHubInstallations enumerates with the App JWT — so no reconcile
+// kick is fired here: without a bound pubkey there is nothing cheap to kick
+// that the webhook has not already covered.
+function githubInstallReturnPage(heading: string, body: string): string {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Beeline — GitHub</title>
+    <style>
+      body { background: #090909; color: #f2f2f2; font: 16px system-ui, sans-serif; margin: 0; }
+      main { box-sizing: border-box; margin: 0 auto; max-width: 36rem; padding: 20vh 1.5rem 3rem; }
+      h1 { font-size: 1.5rem; }
+      .mark { color: #d7af5f; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="mark">Beeline</p>
+      <h1>${escapeHtml(heading)}</h1>
+      ${body}
+    </main>
+  </body>
+</html>`;
+}
+
+function githubInstallConnectedPage(): string {
+  return githubInstallReturnPage(
+    'GitHub connected',
+    `<p>The Beeline GitHub App was installed successfully. You can close this tab and return to the app now.</p>
+      <p>If someone sent you this link, let them know you are connected.</p>`,
+  );
+}
+
+function githubInstallErrorPage(): string {
+  return githubInstallReturnPage(
+    'This connection link has expired',
+    `<p>This GitHub connection link is invalid or has already been used.</p>
+      <p>If the installation itself succeeded on GitHub, Beeline will discover it automatically. Otherwise, start again from the app (or ask for a fresh link) and the connection will complete normally.</p>`,
+  );
+}
+
 const GITHUB_SETUP_PAGE_STYLE = `
       body { background: #090909; color: #f2f2f2; font: 16px system-ui, sans-serif; margin: 0; }
       main { box-sizing: border-box; margin: 0 auto; max-width: 44rem; padding: 14vh 1.5rem 3rem; }
@@ -1357,19 +1406,41 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       throw new ProtocolError(503, 'github_unavailable', 'GitHub App is not configured');
     const tenant = tenantFor(request);
     const query = request.query as Record<string, unknown>;
+    // Three shapes reach this route. (a) In-app-initiated: state present and a
+    // matching flow exists — complete the binding exactly as before. (b)
+    // Stateless/foreign: no state at all — a share-link or marketplace install;
+    // answer a friendly landing page and touch nothing. (c) State present but
+    // wrong — keep an error, but as a readable page rather than raw JSON.
+    if (query.state === undefined) {
+      noStore(reply);
+      reply.header(
+        'content-security-policy',
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+      );
+      return reply.status(200).type('text/html; charset=utf-8').send(githubInstallConnectedPage());
+    }
     const state = requiredQueryString(query.state, 'state');
-    const rawInstallationId = requiredQueryString(query.installation_id, 'installation_id');
-    const installationId = Number(rawInstallationId);
-    if (!Number.isSafeInteger(installationId) || installationId <= 0) {
-      throw new ProtocolError(400, 'invalid_installation', 'invalid GitHub installation id');
+    const rawInstallationId = query.installation_id;
+    const installationId =
+      typeof rawInstallationId === 'string' ? Number(rawInstallationId) : Number.NaN;
+    const flowInvalid = () => {
+      noStore(reply);
+      reply.header(
+        'content-security-policy',
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+      );
+      return reply.status(400).type('text/html; charset=utf-8').send(githubInstallErrorPage());
+    };
+    if (
+      typeof state !== 'string' ||
+      !Number.isSafeInteger(installationId) ||
+      installationId <= 0
+    ) {
+      return flowInvalid();
     }
     const flow = await options.store.consumeGitHubInstallFlow(sha256(state), now());
     if (!flow || flow.community !== tenant.community) {
-      throw new ProtocolError(
-        400,
-        'invalid_installation_flow',
-        'GitHub installation flow is missing, expired, or already used',
-      );
+      return flowInvalid();
     }
     const [linkedAccountId, installedAccount, repositories] = await Promise.all([
       options.store.githubSubjectForPubkey(tenant.community, flow.pubkey),

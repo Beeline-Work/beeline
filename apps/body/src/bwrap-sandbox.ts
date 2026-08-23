@@ -101,6 +101,40 @@
  * check passed. A Room does NOT get this bind: the gate is not part of a
  * Room's surface.
  *
+ * ## Credential masks
+
+ * The whole-home ro-bind makes the filesystem READ-ONLY, not PRIVATE: the
+ * operator's `~/.config/gh`, `~/.ssh`, `~/.netrc` and `~/.git-credentials`
+ * are all readable from inside an intact sandbox, and a session that can
+ * READ a credential can use it out-of-band — including pushing to main
+ * directly, which is exactly what the product's approval invariant forbids.
+ * Read-only therefore is not enough for credential stores.
+ *
+ * Every session (Room and corner) gets MASKS on top of the ro-bind: an empty
+ * tmpfs replaces each masked directory and `/dev/null` each masked file, so
+ * their contents are absent, not merely unwritable. The built-in list covers
+ * the known credential homes ({@link KNOWN_CREDENTIAL_MASK_PATHS}); an owner
+ * whose machine keeps secrets elsewhere extends it via the runtime record's
+ * `sandboxMaskPaths` or the `BUZZY_BODY_SANDBOX_MASK` environment variable
+ * (comma-separated absolute paths).
+ *
+ * **Residual, stated honestly**: no mask list can enumerate every secret on a
+ * shared operator machine — env files, dotfiles, and tool state live
+ * everywhere, and this machine's owner has gh credentials "in env files
+ * everywhere". What Beeline guarantees structurally is that it HANDS a
+ * session nothing (`buildAgentEnv` strips push-capable token variables;
+ * `push-broker.ts` funnels every daemon-performed push through ref policy)
+ * and hides the stores it knows about. Ambient secrets beyond that list are
+ * the operator's own exposure on their own account, and every brokered push
+ * at least leaves one audit line naming who pushed what where. The strong
+ * posture for hosts where this matters is running daemons under a dedicated
+ * user account with no gh/git credentials of its own — recommended, not
+ * enforced here.
+ *
+ * Capabilities that pierce the namespace entirely (a reachable
+ * `/var/run/docker.sock`, the systemd user bus) override ALL of the above by
+ * owner choice; see "What this boundary is NOT".
+ *
  * Network is deliberately untouched (no `--unshare-net`): every harness needs to
  * reach its model API.
  *
@@ -115,6 +149,7 @@
  * `session-sandbox.ts` still the boundary it always was.
  */
 import { spawnSync } from 'node:child_process';
+import { lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { executableOnPath } from './agent-command.js';
@@ -209,6 +244,62 @@ export function mergeGateStateDirs(home: string = homedir()): string[] {
   return MERGE_GATE_HOME_STATE_DIRS.map((dir) => resolve(home, dir));
 }
 
+/**
+ * Home-relative paths whose contents must be ABSENT from every sandboxed
+ * session — readable credentials are usable credentials, and the whole-home
+ * read-only bind does not hide anything. Directories are replaced by an empty
+ * writable tmpfs (so tools that insist on writing e.g. `known_hosts` still
+ * work against nothing), files by `/dev/null`.
+ */
+export const KNOWN_CREDENTIAL_MASK_PATHS = [
+  '.config/gh',
+  '.ssh',
+  '.netrc',
+  '.git-credentials',
+  '.secrets.env',
+] as const;
+
+/** One masked path plus whether it was seen as a directory or a file. */
+export interface MaskedPath {
+  path: string;
+  kind: 'dir' | 'file';
+}
+
+/**
+ * The credential-mask entries for one host: the built-in known list plus the
+ * owner's configured extras, resolved against `$HOME`. Entries that do not
+ * exist on this host are skipped — bwrap cannot mount over a missing target —
+ * and `kind` comes from a real stat so the argv builder can pick tmpfs vs
+ * `/dev/null` without touching the filesystem itself.
+ */
+export function credentialMaskPaths(
+  extraPaths: string[] | undefined,
+  home: string = homedir(),
+  stat: (path: string) => { isDirectory: boolean } | undefined = (path) => {
+    try {
+      const info = lstatSync(path);
+      return { isDirectory: info.isDirectory() };
+    } catch {
+      return undefined;
+    }
+  },
+): MaskedPath[] {
+  const candidates = [
+    ...KNOWN_CREDENTIAL_MASK_PATHS.map((entry) => resolve(home, entry)),
+    ...(extraPaths ?? []).map((entry) => resolve(entry)),
+  ];
+  const seen = new Set<string>();
+  const masks: MaskedPath[] = [];
+  for (const path of candidates) {
+    if (seen.has(path)) continue;
+    seen.add(path);
+    const info = stat(path);
+    if (!info) continue;
+    masks.push({ path, kind: info.isDirectory ? 'dir' : 'file' });
+  }
+  return masks.sort((a, b) => a.path.localeCompare(b.path));
+}
+
 /** Result of the one-shot start-up feature detection. */
 export interface BwrapAvailability {
   /** Absolute path to a `bwrap` that passed the self-test, when usable. */
@@ -231,6 +322,13 @@ export interface SandboxMountPlan {
   readOnly: string[];
   /** Paths bind-mounted read-write, deduplicated and sorted. */
   writable: string[];
+  /**
+   * Credential stores replaced by emptiness (empty tmpfs for directories,
+   * `/dev/null` for files). Emitted AFTER the whole-home ro-bind — which
+   * would otherwise expose them read-only — and BEFORE the writable binds,
+   * so a deliberate harness-state bind always wins over a mask.
+   */
+  masks: MaskedPath[];
 }
 
 export interface SandboxSessionSpec {
@@ -260,6 +358,10 @@ export interface SandboxSessionSpec {
    * supply a test home instead of the daemon's real one, like them.
    */
   mergeGateStateDirs?: string[];
+  /** Credential stores hidden from this session ({@link credentialMaskPaths}).
+   * Both modes get them: a Room reading the operator's gh token is the same
+   * out-of-band-push hole a corner would be. */
+  maskPaths?: MaskedPath[];
 }
 
 /** `/tmp` is always a private tmpfs, so a path under it is the shadowed case. */
@@ -307,7 +409,7 @@ export function sandboxMountPlan(spec: SandboxSessionSpec): SandboxMountPlan {
     ...(spec.harnessStateDirs ?? []),
     ...(spec.harnessHomeStateDirs ?? []),
   ]).filter((path) => isUnderTmp(path) && path !== '/tmp' && !writable.includes(path));
-  return { readOnly, writable };
+  return { readOnly, writable, masks: [...(spec.maskPaths ?? [])] };
 }
 
 export interface WrappedCommand {
@@ -331,6 +433,14 @@ export function buildBwrapArgv(input: {
 }): WrappedCommand {
   const args = ['--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp'];
   for (const path of input.plan.readOnly) args.push('--ro-bind', path, path);
+  // Credential masks: applied after the ro-bind they override and before the
+  // writable binds a deliberate harness-state bind would win with. A masked
+  // DIRECTORY becomes an empty writable tmpfs (tools may write into nothing);
+  // a masked FILE becomes /dev/null (readable, empty).
+  for (const mask of input.plan.masks) {
+    if (mask.kind === 'dir') args.push('--tmpfs', mask.path);
+    else args.push('--ro-bind', '/dev/null', mask.path);
+  }
   // `--bind-try`, not `--bind`: a harness state root that has never been created
   // must not make the whole session fail to spawn.
   for (const path of input.plan.writable) args.push('--bind-try', path, path);
@@ -414,7 +524,7 @@ export function detectBwrapSandbox(
     });
   const probe = buildBwrapArgv({
     bwrapPath,
-    plan: { readOnly: [], writable: [] },
+    plan: { readOnly: [], writable: [], masks: [] },
     cwd: '/',
     command: '/bin/true',
   });
@@ -427,6 +537,6 @@ export function detectBwrapSandbox(
   }
   return {
     path: bwrapPath,
-    advisory: `harness OS sandbox ENABLED via ${bwrapPath}: every ACP child gets a read-only filesystem plus a private /tmp, writable only in its own harness state; a corner adds its worktree, git dir, and the merge gate's state root. Hygiene boundary, not confinement — it shapes where sessions write files and does not restrict other access this account has (e.g. sockets, container runtimes)`,
+    advisory: `harness OS sandbox ENABLED via ${bwrapPath}: every ACP child gets a read-only filesystem plus a private /tmp, writable only in its own harness state; known credential stores (~/.config/gh, ~/.ssh, ~/.netrc, ~/.git-credentials) are masked absent; a corner adds its worktree, git dir, and the merge gate's state root. Hygiene boundary, not confinement — it shapes where sessions write files and does not restrict other access this account has (e.g. sockets, container runtimes, secrets not on the mask list)`,
   };
 }

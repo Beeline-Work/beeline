@@ -49,6 +49,23 @@ describe('githubRepositoryLinkagePlan', () => {
       fullName: 'octocat/widget',
     });
   });
+
+  it('plans the owner-grant share path for an owner the probe reported as never covered', () => {
+    // An admin binding a repo whose OWNER has not installed the App can never
+    // self-serve the grant, so the plan must be the share CTA — not a connect
+    // flow that would install on the viewer's own account and change nothing.
+    expect(
+      githubRepositoryLinkagePlan('bananaman/widget', [], [installation], {
+        uncoveredOwners: new Set(['bananaman']),
+      }),
+    ).toEqual({ kind: 'owner-grant', owner: 'bananaman', fullName: 'bananaman/widget' });
+    // Without the probe answer the plan stays the ordinary install flow.
+    expect(githubRepositoryLinkagePlan('bananaman/widget', [], [installation])).toEqual({
+      kind: 'install',
+      owner: 'bananaman',
+      fullName: 'bananaman/widget',
+    });
+  });
 });
 
 describe('dedupeRepoCandidates', () => {

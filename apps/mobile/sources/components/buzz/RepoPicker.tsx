@@ -16,6 +16,7 @@ import {
   githubFullNameFromInput,
   githubRepositoryLinkagePlan,
 } from '@/buzz/room-repo-picker';
+import { OwnerGrantNeededCard, type OwnerGrantNeeded } from './OwnerGrantNeededCard';
 import { Typography } from '@/constants/Typography';
 
 export type RepoPickerProps = {
@@ -25,10 +26,24 @@ export type RepoPickerProps = {
   busy?: boolean;
   error?: string | null;
   notice?: string | null;
+  /**
+   * A typed pending state: the chosen repository is not covered by the App
+   * yet, and only its owner can grant access. Rendered as a share CTA, never
+   * as an error.
+   */
+  ownerGrant?: OwnerGrantNeeded | null;
   onSelect: (candidate: RepoCandidate) => void;
   onAddAccount?: (owner?: string) => void;
   onManageInstallation?: (installation: GitHubInstallationAccess) => void;
   onCreateRepository?: (installationId: number, name: string) => Promise<void> | void;
+  /**
+   * The pasted repository's OWNER is not among this viewer's installations:
+   * offer the share-with-owner path (the host probes the typed grant state
+   * and shares the install link). Absent keeps the connect-only flow.
+   */
+  onAskOwnerGrant?: (fullName: string) => void;
+  /** Owners the server has already reported as never covered (`owner_grant_needed`). */
+  uncoveredOwners?: ReadonlySet<string>;
   testIDPrefix?: string;
 };
 
@@ -48,10 +63,13 @@ export const RepoPicker = memo(function RepoPicker({
   busy = false,
   error,
   notice,
+  ownerGrant,
   onSelect,
   onAddAccount,
   onManageInstallation,
   onCreateRepository,
+  onAskOwnerGrant,
+  uncoveredOwners,
   testIDPrefix = 'repo-picker',
 }: RepoPickerProps) {
   const { theme } = useUnistyles();
@@ -139,6 +157,7 @@ export const RepoPicker = memo(function RepoPicker({
         style={styles.search}
         value={query}
       />
+      {ownerGrant && <OwnerGrantNeededCard {...ownerGrant} />}
       <SectionList
         keyboardShouldPersistTaps="handled"
         nestedScrollEnabled
@@ -167,6 +186,7 @@ export const RepoPicker = memo(function RepoPicker({
               pastedFullName,
               candidates,
               installations,
+              { uncoveredOwners },
             );
             if (plan.kind === 'available') onSelect(plan.candidate);
             else setPendingLinkage(plan);
@@ -200,12 +220,17 @@ export const RepoPicker = memo(function RepoPicker({
                 const plan = pendingLinkage;
                 setPendingLinkage(null);
                 if (plan.kind === 'manage') onManageInstallation?.(plan.installation);
+                else if (plan.kind === 'owner-grant') onAskOwnerGrant?.(plan.fullName);
                 else onAddAccount?.(plan.owner || undefined);
               }}
               style={styles.instructionButton}
               testID={`${testIDPrefix}-link-continue`}
             >
-              <Text style={styles.instructionContinue}>CONTINUE TO GITHUB →</Text>
+              <Text style={styles.instructionContinue}>
+                {pendingLinkage.kind === 'owner-grant'
+                  ? 'SHARE INSTALL LINK →'
+                  : 'CONTINUE TO GITHUB →'}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>

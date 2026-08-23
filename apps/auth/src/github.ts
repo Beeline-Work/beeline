@@ -181,6 +181,17 @@ export class GitHubAppClient {
     return url.toString();
   }
 
+  /**
+   * The STATE-LESS public install URL for this App — the shareable link handed
+   * to a repository OWNER who does not use Beeline themselves. Unlike
+   * {@link installationUrl} it carries no flow state, so anyone can open it:
+   * completing the installation records through the normal webhook/reconcile
+   * path, never through the sharer's session.
+   */
+  get publicInstallUrl(): string {
+    return `https://github.com/apps/${this.#config.slug}/installations/new`;
+  }
+
   private async appJwt(): Promise<string> {
     const key = await importPKCS8(this.#config.privateKey.replace(/\\n/g, '\n'), 'RS256');
     const now = Math.floor(Date.now() / 1_000);

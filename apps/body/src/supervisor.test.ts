@@ -26,6 +26,7 @@ import {
   DEFAULT_ROOM_DISCOVERY_RETRY_MS,
   DEFAULT_ROOM_DISCOVERY_TRANSIENT_RETRY_MS,
   isDurableRoomJoinFailure,
+  isOwnerGrantNeededFailure,
   WorkspaceSupervisor,
 } from './supervisor.js';
 
@@ -1043,6 +1044,20 @@ describe('Room join-failure classification', () => {
       ),
     ).toBe(false);
     expect(isDurableRoomJoinFailure(new Error('fetch failed'))).toBe(false);
+  });
+
+  it('recognizes the typed owner-grant-needed refusal as a pending grant, never a durable park', () => {
+    const error = new OidcBindError(
+      'owner_grant_needed',
+      'bananaman614305/widget is waiting for its owner to grant Beeline access. Ask the repository owner to install the Beeline GitHub App: https://github.com/apps/beeline/installations/new',
+      403,
+      { installUrl: 'https://github.com/apps/beeline/installations/new' },
+    );
+    expect(isOwnerGrantNeededFailure(error)).toBe(true);
+    // The daemon must keep retrying (transient) so the link completes with no
+    // user re-entry once the owner installs.
+    expect(isDurableRoomJoinFailure(error)).toBe(false);
+    expect(isOwnerGrantNeededFailure(new Error('some other failure'))).toBe(false);
   });
 });
 

@@ -48,4 +48,31 @@ describe('Buzz composer slash picker integration', () => {
     expect(chatSource.slice(dismissStart, dismissEnd)).not.toContain('handleSend');
     expect(chatSource.slice(dismissStart, dismissEnd)).not.toContain('messageSubmit');
   });
+
+  it('opens the palette after an @agent mention and renders THAT agent\'s published commands', () => {
+    // The mention-scoped query detects `@agent /query` at the composer tail.
+    expect(chatSource).toContain('agentMentionSlashQuery(inputText)');
+    // The addressed agent's commands are read from the relay record — the only
+    // source — never a hardcoded inventory.
+    expect(chatSource).toContain('agentCommandsRead(activeCommunityId, pubkey)');
+    expect(chatSource).not.toMatch(/commands:\s*\[\s*\{\s*name:\s*'/);
+    // The picker receives both the agent's list and Beeline's built-ins.
+    expect(chatSource).toContain('commands={mentionAgentCommands}');
+  });
+
+  it('selecting an advertised command inserts it after the mention, keeping the mention', () => {
+    const insertStart = chatSource.indexOf('const insertAgentCommand');
+    const insertEnd = chatSource.indexOf('\n  );', insertStart);
+    const insertBlock = chatSource.slice(insertStart, insertEnd);
+    // The typed /token is replaced in place; the @mention prefix survives.
+    expect(insertBlock).toContain("inputText.replace(/\\/[a-z0-9-]*$/i");
+    expect(insertBlock).not.toContain('clearSlashComposer()');
+  });
+
+  it('states honestly when a harness does not advertise commands', () => {
+    expect(pickerSource).toContain('slash-agent-no-commands');
+    expect(pickerSource).toContain('DOES NOT ADVERTISE COMMANDS');
+    // Unknown is not absent: the quiet state renders only once the read resolved.
+    expect(chatSource).toContain('agentCommandsByPubkey[mentionSlashAgentPubkey] !== undefined');
+  });
 });

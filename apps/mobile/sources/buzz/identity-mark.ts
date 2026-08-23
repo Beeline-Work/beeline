@@ -7,6 +7,10 @@
  *        △ agent (angular, engineered)  ○ human (organic)  ▢ workspace (structural)
  *   2. COLOUR is the *memory* hook — "beebee is the amber one". One curated,
  *      well-separated, low-saturation palette, assigned deterministically.
+ *      EXCEPTION — a Workspace is not a person to remember but the house
+ *      itself: every ▢ mark renders in the one house brass (Speakeasy
+ *      treatment), distinguished per Workspace by fill and cypher, never by
+ *      hue.
  *   3. FILL is the coarse, nameable collision axis — solid / hollow / half.
  *      It is stable from the identity seed and still reads at dense-list size.
  *   4. The CYPHER interior is the *uniqueness* tiebreak: a coarse hashed
@@ -130,10 +134,21 @@ function isWarmAnchor(hue: number): boolean {
 }
 
 /**
+ * The house brass — the hue family every WORKSPACE mark renders in. It is one
+ * of `HUE_WHEEL`'s own anchors so the palette machinery is unchanged; only
+ * the pick is pinned. Humans and agents keep the full wheel.
+ */
+export const WORKSPACE_BRASS_HUE = 40;
+
+/**
  * The kind's temperament. Agents run warmer and a step more saturated; humans
  * run cooler and greyer — a quiet second reading of the same type the shape
- * already states outright. Workspaces run most neutral of all: they are
- * structure, and structure should not compete with the people inside it.
+ * already states outright. Workspaces do not pick a temperament hue at all:
+ * they are the house itself, and every ▢ renders in the house brass
+ * (`WORKSPACE_BRASS_HUE`) at brass saturation/lightness — the same Speakeasy
+ * treatment the room-list status marks carry. Per-Workspace distinction comes
+ * from the luminance register below plus the fill and cypher axes, never from
+ * hue.
  *
  * `warmBias` is a relative pick-odds multiplier applied to the warm anchors
  * only (1 is neutral, >1 favours warm, <1 favours cool) — see
@@ -146,7 +161,9 @@ const TEMPERAMENT: Record<
 > = {
   agent: { warmBias: 2, saturation: 0.42, lightness: 0.62 },
   human: { warmBias: 0.5, saturation: 0.24, lightness: 0.6 },
-  workspace: { warmBias: 1, saturation: 0.15, lightness: 0.58 },
+  // Brass register, matched to the theme accents (#b08a4a / #d9b166 / #c9a24b
+  // are all ≈hsl 38–42°): saturated enough to read as metal, not as tan.
+  workspace: { warmBias: 1, saturation: 0.42, lightness: 0.52 },
 };
 
 /**
@@ -204,7 +221,15 @@ function hslToHex(hue: number, saturation: number, lightness: number): string {
 export function identityPalette(seed: string, kind: IdentityKind): IdentityPalette {
   const random = mulberry32(fnv1a32(`${kind}:${seed}`));
   const temperament = TEMPERAMENT[kind];
-  const hueIndex = weightedHueIndex(random, temperament.warmBias);
+  const rolledHueIndex = weightedHueIndex(random, temperament.warmBias);
+  // One gate, at the mark-kind level: every renderer of a workspace mark
+  // flows through here, so pinning the hue pins the glyph everywhere it can
+  // possibly draw. The roll above is kept so the downstream luminance
+  // register stays on the same deterministic stream it always was.
+  const hueIndex =
+    kind === 'workspace'
+      ? (HUE_WHEEL as readonly number[]).indexOf(WORKSPACE_BRASS_HUE)
+      : rolledHueIndex;
   const hue = HUE_WHEEL[hueIndex]!;
   // One of three luminance registers, so two identities that do land on the
   // same hue still separate at a glance without a second hue being invented.

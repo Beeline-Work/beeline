@@ -544,6 +544,33 @@ describe('Buzz Room screen event projection', () => {
     expect(displaySequence([event])).toHaveLength(1);
   });
 
+  it('renders the corner-metadata fallback notice as a quiet system line', () => {
+    // `openSubchannel` (apps/body/src/body.ts): when the hidden model call
+    // that generates a polished title/objective/summary produces nothing, the
+    // daemon now says so on the corner's own channel instead of silently
+    // falling back to the raw request text. Same receipt shape as the
+    // queued-steer ack: body-control, system line, never agent speech.
+    const event = raw(
+      'metadata-fallback-1',
+      'Polished corner metadata could not be generated; this corner opened from the request text as written.',
+      [
+        ['t', 'body-control'],
+        ['t', 'corner-metadata-notice'],
+        ['metadata', 'fallback'],
+      ],
+      14,
+    );
+
+    const projection = projectChatEvent(event, viewer);
+    expect(projection.message).toMatchObject({
+      id: 'metadata-fallback-1',
+      isSystemNotice: true,
+      isUser: false,
+    });
+    expect(projection.message?.isAgentAuthor).toBeUndefined();
+    expect(displaySequence([event])).toHaveLength(1);
+  });
+
   it('does not confuse an archive notice or a parent-Room status card with a corner-scoped delivery failure', () => {
     // Archive notices also carry status=archived with no `subchannel` tag —
     // must not be misread as a delivery failure.

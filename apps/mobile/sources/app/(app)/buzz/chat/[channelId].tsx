@@ -535,6 +535,9 @@ export default function BuzzChat() {
   // conversation that preceded it. Corner-only; a Room never reads it.
   const [cornerTask, setCornerTask] = useState<string | undefined>(undefined);
   const [roomContext, setRoomContext] = useState<RoomContextEntry[]>([]);
+  // The daemon's model-generated summary of the discussion that led here —
+  // the organized replacement for the raw quoted Room window.
+  const [cornerSummary, setCornerSummary] = useState<string | undefined>(undefined);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(
     initialChannelCache?.communityId ?? null,
@@ -1666,6 +1669,7 @@ export default function BuzzChat() {
             },
             onCornerBriefing: (briefing) => {
               if (briefing.task) setCornerTask(briefing.task);
+              if (briefing.summary) setCornerSummary(briefing.summary);
               if (briefing.context.length) setRoomContext(briefing.context);
             },
             onStepFailed: (step, error) =>
@@ -3283,11 +3287,12 @@ export default function BuzzChat() {
             // Inverted list: the footer is the visual TOP. The Room discussion
             // a corner was opened out of belongs above the corner's own first
             // line, and this is the slot that puts it there.
-            loadingOlderMessages || (isCorner && roomContext.length) ? (
+            loadingOlderMessages || (isCorner && (roomContext.length || cornerSummary)) ? (
               <>
-                {isCorner && roomContext.length ? (
+                {isCorner && (roomContext.length || cornerSummary) ? (
                   <RoomContextPreamble
                     entries={roomContext}
+                    summary={cornerSummary}
                     speakerLabel={roomContextSpeakerLabel}
                   />
                 ) : null}

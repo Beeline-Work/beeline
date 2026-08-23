@@ -1561,3 +1561,65 @@ describe('Workspace-wide agent presence', () => {
     expect(client.query).not.toHaveBeenCalled();
   });
 });
+
+describe('Corner briefing', () => {
+  const identity = {
+    publicKey: 'd'.repeat(64),
+    secretKey: new Uint8Array(32).fill(4),
+    name: 'operator',
+  } as Identity;
+
+  function createEvent(tags: string[][]) {
+    return {
+      id: 'create-1',
+      pubkey: 'a'.repeat(64),
+      created_at: 100,
+      kind: KIND_CREATE_GROUP,
+      tags: [['h', 'corner'], [TAG_PARENT, 'room'], ...tags],
+      content: '',
+      sig: 'b'.repeat(128),
+    };
+  }
+
+  function transportWith(client: Record<string, unknown>) {
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+    return transport;
+  }
+
+  it('returns the model-generated summary and skips the raw Room scan entirely', async () => {
+    // The organized summary replaces the transcript dump on BOTH consumers —
+    // so when one exists there is nothing to backfill and no read to pay for.
+    const sessionEventsBackfill = vi.fn();
+    const client = {
+      query: vi.fn(async () => [
+        createEvent([
+          ['task', 'Add color to code blocks'],
+          ['summary', 'The Room agreed code blocks were unreadable and asked for color.'],
+        ]),
+      ]),
+      sessionEventsBackfill,
+    };
+
+    const briefing = await transportWith(client).cornerBriefing('corner', 'room');
+
+    expect(briefing).toEqual({
+      task: 'Add color to code blocks',
+      summary: 'The Room agreed code blocks were unreadable and asked for color.',
+      context: [],
+    });
+    expect(sessionEventsBackfill).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the quoted Room window for corners opened before summaries shipped', async () => {
+    const client = {
+      query: vi.fn(async () => [createEvent([['task', 'Add color to code blocks']])]),
+      sessionEventsBackfill: vi.fn(async () => []),
+    };
+
+    const briefing = await transportWith(client).cornerBriefing('corner', 'room');
+
+    expect(briefing).toEqual({ task: 'Add color to code blocks', context: [] });
+    expect(client.sessionEventsBackfill).toHaveBeenCalled();
+  });
+});

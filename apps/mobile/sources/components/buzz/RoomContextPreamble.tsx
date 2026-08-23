@@ -11,41 +11,55 @@ import type { RoomContextEntry } from '@/buzz/corner-context';
  * A corner opened mid-conversation used to start blank: the reader arrived
  * from a Room where the work had just been described and found a transcript
  * whose first line was the agent already working, with no trace of what led
- * there. This is that trace — the bounded window the daemon also seeds the
- * agent's first turn with, so the person and the agent are looking at the same
- * thing.
+ * there. This is that trace.
  *
- * It is quoted, not repeated: everything sits at `ledgerGhost`, the dimmest
- * tier the ledger has, one tone below even the corner's quietest own line, so
- * scrolling up reads as leaving the corner rather than as more of it. Each
- * line is capped at three lines of prose — this is a reminder of a discussion,
- * not a second transcript — and the block carries no box, per DESIGN.md: a box
- * is for something the reader must act on.
+ * **Two shapes, by data availability.**
  *
- * **Collapsed by default, and that is the point.** A freshly opened corner has
- * almost no transcript of its own, so ten quoted Room lines were the entire
- * first screen — the reader arrived at their new corner and met an undigested
- * dump of what they had just finished saying, with the corner's actual
- * objective nowhere in sight. Reported as "at corner open there is no goal
- * summary, just a literal dump of the last room turns, indecipherable". The
- * block now opens as one ghost line in the same `⋯ … · tap to expand`
- * vocabulary the transcript already uses for tool output, so the objective pin
- * leads and the context is there for whoever wants it.
+ * - When the daemon's hidden model call produced an organized `summary` of
+ *   the discussion (carried on the corner's create event), that renders
+ *   directly — no disclosure, no per-message replay. This is the form the
+ *   "literal dump of the last room turns" complaint asked for: a persistent,
+ *   well-organized account of what was agreed, not a second transcript.
+ * - Older corners (and corners whose metadata generation fell back) have no
+ *   summary, so they keep the quoted-window shape: collapsed by default as
+ *   one `⋯ … · tap to expand` ghost line in the vocabulary the transcript
+ *   already uses for tool output.
+ *
+ * Both sit at the dimmest tiers — this is context, not corner work — and the
+ * block carries no box, per DESIGN.md: a box is for something the reader must
+ * act on.
  *
  * Rendered through the FlatList's `ListFooterComponent`, which on an inverted
  * list is the visual *top* (see the transcript-list note in AGENTS.md).
  */
 export const RoomContextPreamble = React.memo(function RoomContextPreamble({
   entries,
+  summary,
   speakerLabel,
   testID = 'room-context-preamble',
 }: {
   entries: readonly RoomContextEntry[];
+  /** Model-generated summary of the discussion, from the daemon. When present
+   *  it replaces the raw quoted window entirely. */
+  summary?: string;
   /** Display handle for a pubkey, resolved by the screen's own roster. */
   speakerLabel?: (pubkey: string | undefined, isAgent: boolean) => string | undefined;
   testID?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const trimmedSummary = summary?.trim();
+  if (trimmedSummary) {
+    return (
+      <View style={styles.preamble} testID={testID}>
+        <Text style={styles.label} testID={`${testID}-label`}>
+          FROM THE ROOM
+        </Text>
+        <Text style={styles.summary} testID={`${testID}-summary-text`}>
+          {trimmedSummary}
+        </Text>
+      </View>
+    );
+  }
   if (!entries.length) return null;
   const count = entries.length;
   return (
@@ -95,6 +109,18 @@ const styles = StyleSheet.create((theme) => {
     paddingTop: 18,
     paddingBottom: 22,
     gap: 10,
+  },
+  label: {
+    ...Typography.mono(),
+    color: groknight.ledgerGhost,
+    fontSize: 10,
+    letterSpacing: 1,
+  },
+  summary: {
+    ...Typography.ledger(),
+    color: groknight.textSecondary,
+    fontSize: 14,
+    lineHeight: 22,
   },
   disclosureRow: {
     flexDirection: 'row',

@@ -137,10 +137,15 @@ export type RoomEntryHandlers = {
   onMergeNotReadyReason?(reason: string): void;
   onCornerStatus(status: CornerStatus | null): void;
   /**
-   * The corner's inherited objective and the Room discussion that led to it.
-   * Corner-only, and optional — a Room never calls it.
+   * The corner's inherited objective and the Room discussion that led to it —
+   * the daemon's model-generated `summary` when one exists, else the raw
+   * quoted window. Corner-only, and optional — a Room never calls it.
    */
-  onCornerBriefing?(briefing: { task?: string; context: RoomContextEntry[] }): void;
+  onCornerBriefing?(briefing: {
+    task?: string;
+    summary?: string;
+    context: RoomContextEntry[];
+  }): void;
   /**
    * Every corner this transcript can name: a Corner reads its siblings, a Room
    * reads its own. Optional — a caller that only needs its own status can skip

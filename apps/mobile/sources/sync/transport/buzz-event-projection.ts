@@ -518,6 +518,12 @@ export function projectChatEvent(
   // a system line, never as agent speech.
   const isSlashCommandNotice =
     bodyControl && !subchannelId && sessionEventHasTag(event, 't', 'slash-command-notice');
+  // The daemon's honest note that the polished corner title/objective could
+  // not be generated and the corner opened from the raw request text instead.
+  // Same receipt shape as the queued-steer ack: mechanism, rendered as a
+  // system line, never as agent speech.
+  const isCornerMetadataNotice =
+    bodyControl && !subchannelId && sessionEventHasTag(event, 't', 'corner-metadata-notice');
   const repo = sessionEventTagValue(event, 'repo');
   const branch = sessionEventTagValue(event, 'branch');
   const tip = sessionEventTagValue(event, 'tip');
@@ -706,7 +712,7 @@ export function projectChatEvent(
         },
       };
     }
-    if (isSteerQueued || isSlashCommandNotice) {
+    if (isSteerQueued || isSlashCommandNotice || isCornerMetadataNotice) {
       return {
         message: {
           id: eventId(event),

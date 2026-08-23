@@ -815,6 +815,40 @@ describe('Buzz Room screen event projection', () => {
     expect(afterStaleDraft).toEqual(settled);
   });
 
+  it('keeps isNew only for ids entering the list for the first time (replay never re-animates)', () => {
+    // The upsert merge is the authority on newness: warm revalidation
+    // projects every refetched event as `isNew` (its cursor is inclusive, so
+    // known ids come back) and WS resubscribes replay ids. A known id must
+    // never carry the trigger out of the merge — only a first insertion.
+    const known = projectChatEvent(
+      raw('known-id', 'earlier answer', [['t', 'agent-message']], 10),
+      viewer,
+      true,
+    ).message!;
+    const seeded = upsertChatMessages([], [known]);
+    expect(seeded[0]!.isNew).toBe(true); // genuinely new: animates once
+
+    // Same id redelivered (warm replay / resubscribe), still stamped new.
+    const redelivered = projectChatEvent(
+      raw('known-id', 'earlier answer', [['t', 'agent-message']], 10),
+      viewer,
+      true,
+    ).message!;
+    const afterReplay = upsertChatMessages(seeded, [redelivered]);
+    expect(afterReplay).toHaveLength(1);
+    expect(afterReplay[0]!.isNew).toBeUndefined();
+
+    // Two copies of an unseen id in ONE batch are likewise new exactly once.
+    const second = projectChatEvent(
+      raw('second-id', 'another answer', [['t', 'agent-message']], 11),
+      viewer,
+      true,
+    ).message!;
+    expect(upsertChatMessages(seeded, [{ ...second }, { ...second }])[1]!.isNew).toBeUndefined();
+    // ...but the same payload under an unseen id IS a first insertion.
+    expect(upsertChatMessages(seeded, [second])[1]!.isNew).toBe(true);
+  });
+
   it('never lets a second agent message on the same request replace the first', () => {
     // Reconciliation exists for one draft becoming one final message. But a
     // turn can publish more than one `#t=agent-message` answering the same

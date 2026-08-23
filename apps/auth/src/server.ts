@@ -294,19 +294,56 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       ) {
         return;
       }
-      const installationIds = await options.github!.app.listUserInstallationIds(
-        decryptGitHubToken(sealedUserToken),
-      );
-      const verifiedInstallations = await Promise.all(
-        installationIds.map(async (installationId) => {
-          const [account, repositories] = await Promise.all([
-            options.github!.app.installationAccount(installationId),
-            options.github!.app.listRepositories(installationId),
-          ]);
-          return { installationId, account, repositories };
-        }),
-      );
-      for (const { installationId, account, repositories } of verifiedInstallations) {
+      // Enumerate with the APP's own credential: GET /user/installations is
+      // keyed to the OAuth lookup token's visibility, and an unscoped token
+      // cannot see organization installations — production stranded a real
+      // org install behind exactly that blindness. The App JWT sees every
+      // installation, so an install whose callback never persisted is
+      // discovered here without the owner re-running the install flow.
+      const installations = await options.github!.app.listInstallations();
+      // One user-token listing answers "which installations does this user
+      // administer" for every candidate at once; computed only when a
+      // not-yet-recorded installation actually needs the ownership gate.
+      let userInstallationIds: Promise<Set<number> | 'unavailable'> | undefined;
+      const administeredByUser = async (): Promise<Set<number> | 'unavailable'> => {
+        if (!userInstallationIds) {
+          userInstallationIds = options.github!.app
+            .listUserInstallationIds(decryptGitHubToken(sealedUserToken))
+            .then(
+              (ids) => new Set(ids),
+              (error: unknown) => {
+                log.warn(
+                  { err: error, community, pubkey },
+                  'GitHub installation listing unavailable for organization verification',
+                );
+                return 'unavailable' as const;
+              },
+            );
+        }
+        return userInstallationIds;
+      };
+      for (const { installationId, account } of installations) {
+        const known = await options.store.githubInstallation(community, installationId);
+        if (!known) {
+          // A NEWLY discovered installation is only claimed for a user who
+          // can administer it. A User-type account is always verifiable, so
+          // it demands positive confirmation; an Organization-type account
+          // follows the install-callback precedent — GitHub's state-bound
+          // redirect is absent here, but an unavailable listing is logged
+          // and proceeded with, while a definitive denial refuses.
+          const administered = await administeredByUser();
+          if (administered !== 'unavailable') {
+            if (!administered.has(installationId)) continue;
+          } else if (account.type !== 'Organization') {
+            continue;
+          }
+        }
+        // An already recorded installation refreshes through the same
+        // guarded upsert the callback uses: the store's conflict guard keeps
+        // another GitHub account's link untouched and lets a matching
+        // subject move the row onto the current pubkey (identity recovery);
+        // a refusal there is the honest answer, not an error.
+        const repositories = await options.github!.app.listRepositories(installationId);
         await options.store.replaceGitHubInstallationSnapshot(
           {
             community,
@@ -1322,15 +1359,18 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       throw new ProtocolError(401, 'replayed_auth', 'NIP-98 authentication was already used');
     }
     let installations = await options.store.githubInstallationsForPubkey(tenant.community, pubkey);
-    if (!installations.length) {
+    const query = request.query as Record<string, unknown>;
+    // Discovery is not owned by the install callback alone: an installation
+    // whose callback failed to persist (or one added while this user had
+    // another recorded) is found here by the server itself.
+    if (!installations.length || query.refresh === '1') {
       await reconcileGitHubInstallations(tenant.community, pubkey, request.log);
       installations = await options.store.githubInstallationsForPubkey(tenant.community, pubkey);
-      if (!installations.length) {
-        noStore(reply);
-        return reply.send({ installed: false, installations: [], repositories: [] });
-      }
     }
-    const query = request.query as Record<string, unknown>;
+    if (!installations.length) {
+      noStore(reply);
+      return reply.send({ installed: false, installations: [], repositories: [] });
+    }
     if (query.refresh === '1') {
       await Promise.all(
         installations
@@ -1594,20 +1634,41 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
         'agent is not authorized for this Room repository',
       );
     }
-    const access = await resolveGitHubRepositoryAccess(
+    const usable = (candidate: typeof access): boolean =>
+      candidate.accessible &&
+      !!candidate.installationId &&
+      !!candidate.repositoryId &&
+      (authority.githubInstallationId === undefined ||
+        authority.githubInstallationId === candidate.installationId);
+    let access = await resolveGitHubRepositoryAccess(
       { app: options.github.app, store: options.store },
       tenant.community,
       authority.authorizedBy,
       authority.fullName,
       now(),
     );
-    if (
-      !access.accessible ||
-      !access.installationId ||
-      !access.repositoryId ||
-      (authority.githubInstallationId !== undefined &&
-        authority.githubInstallationId !== access.installationId)
-    ) {
+    if (!usable(access)) {
+      // A refusal for a repository whose account has NO recorded active
+      // installation may be a missed callback, not a missing install — the
+      // App can enumerate its own installations server-side. Reconcile once
+      // (rate-limited), re-resolve, and only then refuse with the actionable
+      // message.
+      const owner = (access.movedTo ?? authority.fullName).split('/')[0] ?? '';
+      if (
+        owner &&
+        !(await options.store.githubActiveInstallationCoversAccount(tenant.community, owner))
+      ) {
+        await reconcileGitHubInstallations(tenant.community, authority.authorizedBy, request.log);
+        access = await resolveGitHubRepositoryAccess(
+          { app: options.github.app, store: options.store },
+          tenant.community,
+          authority.authorizedBy,
+          authority.fullName,
+          now(),
+        );
+      }
+    }
+    if (!usable(access)) {
       request.log.warn(
         {
           authorityReason: 'repository_not_granted',
@@ -1629,6 +1690,14 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       );
     }
     const resolvedFullName = access.resolvedFullName ?? authority.fullName;
+    if (!access.installationId || !access.repositoryId) {
+      // Unreachable behind usable(); keeps the mint below type-narrow.
+      throw new ProtocolError(
+        403,
+        'repository_not_granted',
+        'Room repository is not granted to the Beeline GitHub App',
+      );
+    }
     const installation = await options.github.app.installationToken(access.installationId, {
       repositoryIds: [access.repositoryId],
     });

@@ -130,6 +130,11 @@ export interface GitHubInstallationRepository {
   defaultBranch: string;
 }
 
+export interface GitHubAppInstallation {
+  installationId: number;
+  account: GitHubInstallationAccount;
+}
+
 export interface GitHubInstallationAccount {
   id: string;
   login: string;
@@ -193,13 +198,7 @@ export class GitHubAppClient {
     return { token, expiresAt };
   }
 
-  async installationAccount(installationId: number): Promise<GitHubInstallationAccount> {
-    const body = await jsonObject(
-      await fetch(`${this.#config.apiBaseUrl}/app/installations/${installationId}`, {
-        headers: githubHeaders(await this.appJwt()),
-      }),
-      'GitHub installation lookup',
-    );
+  #installationAccountFrom(body: Record<string, unknown>): GitHubInstallationAccount {
     const account = body.account;
     const accountRecord =
       account && typeof account === 'object' && !Array.isArray(account)
@@ -228,6 +227,53 @@ export class GitHubAppClient {
       ...(typeof avatarUrl === 'string' && avatarUrl ? { avatarUrl } : {}),
       repositorySelection,
     };
+  }
+
+  async installationAccount(installationId: number): Promise<GitHubInstallationAccount> {
+    const body = await jsonObject(
+      await fetch(`${this.#config.apiBaseUrl}/app/installations/${installationId}`, {
+        headers: githubHeaders(await this.appJwt()),
+      }),
+      'GitHub installation lookup',
+    );
+    return this.#installationAccountFrom(body);
+  }
+
+  /**
+   * Every installation of THIS App, authenticated by the App JWT alone.
+   *
+   * GET /user/installations is keyed to one OAuth token's visibility and is
+   * blind to organization installations; the App's own credential sees them
+   * all, so server-side reconciliation can discover an install whose callback
+   * never persisted without asking the owner to re-run the flow.
+   */
+  async listInstallations(): Promise<GitHubAppInstallation[]> {
+    const installations: GitHubAppInstallation[] = [];
+    for (let page = 1; ; page++) {
+      const body = await jsonObject(
+        await fetch(`${this.#config.apiBaseUrl}/app/installations?per_page=100&page=${page}`, {
+          headers: githubHeaders(await this.appJwt()),
+        }),
+        'GitHub app installation list',
+      );
+      if (!Array.isArray(body.installations)) {
+        throw new Error('GitHub app installation list is invalid');
+      }
+      for (const entry of body.installations) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+          throw new Error('GitHub app installation entry is invalid');
+        }
+        const record = entry as Record<string, unknown>;
+        // A suspended installation must never be re-recorded as active.
+        if (record.suspended_at) continue;
+        const id = record.id;
+        if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) {
+          throw new Error('GitHub app installation entry is invalid');
+        }
+        installations.push({ installationId: id, account: this.#installationAccountFrom(record) });
+      }
+      if (body.installations.length < 100) return installations;
+    }
   }
 
   /** Compatibility helper for older callers. */

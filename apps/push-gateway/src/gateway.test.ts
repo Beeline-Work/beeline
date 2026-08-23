@@ -1,7 +1,7 @@
 import { createIdentity } from '@beeline/buzz-client';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import type { Messaging } from 'firebase-admin/messaging';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DeliveryState } from './delivery-state.js';
 import { PushGateway, RegisteredEventPoller } from './gateway.js';
 import { NotificationMetadataResolver, type RelayEventReader } from './metadata.js';
@@ -461,3 +461,245 @@ describe('PushGateway', () => {
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+describe('PushGateway decision tracing', () => {
+  const metadata = {
+    resolve: async () => ({
+      roomName: 'Roadmap',
+      senderName: 'Ada',
+      workspaceName: 'Product Engineering',
+      persistentWorkspaceRoom: true,
+    }),
+    invalidate: () => undefined,
+  } as never;
+
+  async function gatewayWith(
+    sendEachForMulticast: ReturnType<typeof vi.fn>,
+    meta: object = metadata,
+    state?: DeliveryState,
+  ): Promise<PushGateway> {
+    return new PushGateway(
+      registry,
+      { sendEachForMulticast } as unknown as Messaging,
+      state ?? (await DeliveryState.load()),
+      meta,
+    );
+  }
+
+  let registry: TokenRegistry;
+  let logs: string[];
+  let spy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    registry = await TokenRegistry.load();
+    await registry.register(PUBKEY_A, TOKEN_A);
+    logs = [];
+    spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      logs.push(String(line));
+    });
+  });
+
+  afterEach(() => {
+    spy.mockRestore();
+  });
+
+  const NO_CHANNEL_EVENT: NostrEvent = {
+    ...event('a'),
+    tags: [['t', 'agent-message']],
+  };
+
+  it.each([
+    ['no-channel', NO_CHANNEL_EVENT],
+    [
+      'not-notifiable-markers',
+      {
+        ...event('b', AUTHOR),
+        tags: [
+          ['h', 'room-1234'],
+          ['t', 'merge-summary'],
+        ],
+      },
+    ],
+    ['not-notifiable-kind', { ...event('b', AUTHOR), kind: 30078 }],
+    ['sender-self', event('c', PUBKEY_A)],
+    // An unregistered identity models a reader whose devices have all vanished.
+    ['no-devices', event('d', AUTHOR, 'room-9999')],
+  ] as Array<[string, NostrEvent]>)(
+    'traces skip reason %s in one line',
+    async (reason, relayEvent) => {
+      const gateway = await gatewayWith(vi.fn());
+      const recipient =
+        reason === 'sender-self' || reason === 'no-channel' || reason.startsWith('not-notifiable-')
+          ? PUBKEY_A
+          : PUBKEY_B;
+      await gateway.handleRelayEvent(relayEvent, recipient, reader);
+      expect(logs.filter((line) => line.includes('[push] decision event='))).toHaveLength(1);
+      expect(logs[0]).toContain(`verdict=skip reason=${reason}`);
+      expect(logs[0]).toContain(`event=${relayEvent.id}`);
+      expect(logs[0]).toContain(`room=${relayEvent.tags.find((t) => t[0] === 'h')?.[1] ?? '-'}`);
+      expect(logs[0]).toContain(`recipient=${recipient}`);
+    },
+  );
+
+  it('traces room-not-persistent-workspace separately from fixture suppression', async () => {
+    const notPersistent = {
+      resolve: async () => ({ roomName: 'Roadmap', persistentWorkspaceRoom: false }),
+      invalidate: () => undefined,
+    } as never;
+    await (
+      await gatewayWith(vi.fn(), notPersistent)
+    ).handleRelayEvent(event('e'), PUBKEY_A, reader);
+    expect(logs[0]).toContain('reason=room-not-persistent-workspace');
+
+    const fixture = {
+      resolve: async () => ({
+        roomName: 'research-no-findings-xyz',
+        workspaceName: 'Product Engineering',
+        persistentWorkspaceRoom: true,
+      }),
+      invalidate: () => undefined,
+    } as never;
+    await (await gatewayWith(vi.fn(), fixture)).handleRelayEvent(event('f'), PUBKEY_A, reader);
+    expect(logs[1]).toContain('reason=fixture-suppressed');
+  });
+
+  it('traces an already-attempted replay without re-sending', async () => {
+    const send = vi.fn(async () => ({
+      successCount: 1,
+      failureCount: 0,
+      responses: [{ success: true, messageId: 'x' }],
+    }));
+    const gateway = await gatewayWith(send);
+    await gateway.handleRelayEvent(event('g'), PUBKEY_A, reader);
+    await gateway.handleRelayEvent(event('g'), PUBKEY_A, reader);
+    expect(send).toHaveBeenCalledOnce();
+    expect(logs.map((line) => (line.match(/reason=([^ ]+)/) ?? [])[1])).toEqual([
+      'fcm-result',
+      'already-attempted',
+    ]);
+  });
+
+  it('the notify verdict carries recipients and device counts', async () => {
+    const send = vi.fn(async () => ({
+      successCount: 1,
+      failureCount: 0,
+      responses: [{ success: true, messageId: 'y' }],
+    }));
+    await (await gatewayWith(send)).handleRelayEvent(event('h'), PUBKEY_A, reader);
+    expect(logs[0]).toContain('verdict=notify');
+    expect(logs[0]).toContain('reason=fcm-result');
+    expect(logs[0]).toMatch(/recipients=1 devices=1 success=1 failure=0/);
+  });
+
+  it('traces metadata errors once and preserves retry behavior', async () => {
+    const failedMetadata = {
+      resolve: async () => {
+        throw new Error('relay unavailable\nupstream reset');
+      },
+      invalidate: () => undefined,
+    } as never;
+    const gateway = await gatewayWith(vi.fn(), failedMetadata);
+
+    await expect(gateway.handleRelayEvent(event('i'), PUBKEY_A, reader)).rejects.toThrow(
+      'relay unavailable',
+    );
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toContain('verdict=skip reason=metadata-error');
+    expect(logs[0]).toContain('error=relay%20unavailable%0Aupstream%20reset');
+    expect(logs[0]).not.toContain('\n');
+  });
+
+  it('traces delivery-state failures once and lets the poller retry', async () => {
+    const failedState = {
+      reserveAttempt: async () => {
+        throw new Error('ledger read-only');
+      },
+    } as never;
+    const gateway = await gatewayWith(vi.fn(), metadata, failedState);
+
+    await expect(gateway.handleRelayEvent(event('j'), PUBKEY_A, reader)).rejects.toThrow(
+      'ledger read-only',
+    );
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toContain('verdict=skip reason=delivery-state-error');
+  });
+
+  it('traces whole-request FCM failures with recipient and device counts', async () => {
+    const send = vi.fn(async () => {
+      throw new Error('FCM unavailable');
+    });
+    const gateway = await gatewayWith(send);
+
+    await expect(gateway.handleRelayEvent(event('k'), PUBKEY_A, reader)).rejects.toThrow(
+      'FCM unavailable',
+    );
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toContain('verdict=skip reason=fcm-error');
+    expect(logs[0]).toContain('recipients=1 devices=1');
+  });
+});
+
+describe('PushGateway.sendTestNotification', () => {
+  it('reports per-device FCM results and sends a real-shaped notification', async () => {
+    const registry = await TokenRegistry.load();
+    await registry.register(PUBKEY_A, TOKEN_A);
+    await registry.register(PUBKEY_A, TOKEN_B);
+    const sendEachForMulticast = vi.fn(async () => ({
+      successCount: 1,
+      failureCount: 1,
+      responses: [
+        { success: true, messageId: 'projects/x/messages/y' },
+        { success: false, error: { code: 'messaging/registration-token-not-registered' } },
+      ],
+    }));
+    const gateway = new PushGateway(
+      registry,
+      { sendEachForMulticast } as unknown as Messaging,
+      await DeliveryState.load(),
+    );
+
+    const report = await gateway.sendTestNotification(PUBKEY_A);
+
+    expect(report.pubkey).toBe(PUBKEY_A);
+    expect(report).toMatchObject({ successCount: 1, failureCount: 1 });
+    expect(report.devices).toHaveLength(2);
+    expect(report.devices[0]).toMatchObject({
+      deviceId: expect.stringMatching(/^[0-9a-f]{16}$/),
+      ok: true,
+      messageId: 'projects/x/messages/y',
+    });
+    expect(report.devices[1]).toMatchObject({
+      deviceId: expect.stringMatching(/^[0-9a-f]{16}$/),
+      ok: false,
+      error: 'messaging/registration-token-not-registered',
+    });
+    expect(JSON.stringify(report)).not.toContain(TOKEN_A);
+    expect(JSON.stringify(report)).not.toContain(TOKEN_B);
+    // Real-shape FCM payload, like a production send.
+    expect(sendEachForMulticast.mock.calls[0]?.[0]).toMatchObject({
+      tokens: [TOKEN_A, TOKEN_B],
+      notification: { title: 'Beeline push test' },
+      data: { type: 'delivery-test' },
+      android: { priority: 'high', notification: { channelId: 'messages' } },
+    });
+    // A test send must not consume durable delivery state or mutate the registry.
+    expect(registry.tokenCount).toBe(2);
+  });
+
+  it('returns an empty device list without calling FCM for an unregistered pubkey', async () => {
+    const sendEachForMulticast = vi.fn();
+    const gateway = new PushGateway(
+      await TokenRegistry.load(),
+      { sendEachForMulticast } as unknown as Messaging,
+      await DeliveryState.load(),
+    );
+    const report = await gateway.sendTestNotification(PUBKEY_B);
+    expect(report).toEqual({
+      pubkey: PUBKEY_B,
+      successCount: 0,
+      failureCount: 0,
+      devices: [],
+    });
+    expect(sendEachForMulticast).not.toHaveBeenCalled();
+  });
+});

@@ -18,6 +18,20 @@ const PERMANENT_TOKEN_ERRORS = new Set([
 
 export type { RelayEventReader } from './metadata.js';
 
+export interface TestDeviceResult {
+  deviceId: string;
+  ok: boolean;
+  messageId?: string;
+  error?: string;
+}
+
+export interface TestSendReport {
+  pubkey: string;
+  successCount: number;
+  failureCount: number;
+  devices: TestDeviceResult[];
+}
+
 type PollResult = 'backoff' | 'busy' | 'empty' | 'polled';
 
 function registeredEventFilters(since: number): Record<string, unknown>[] {
@@ -30,6 +44,14 @@ function registeredEventFilters(since: number): Record<string, unknown>[] {
 function retryAfterMs(error: unknown): number | null {
   const match = String(error).match(/retry in\s+(\d+)s/i);
   return match ? (Number(match[1]) + 1) * 1_000 : null;
+}
+
+function logValue(value: string | number): string {
+  return encodeURIComponent(String(value));
+}
+
+function deviceId(token: string): string {
+  return createHash('sha256').update(token).digest('hex').slice(0, 16);
 }
 
 /** One pending approval is identified by the immutable corner and exact merge target, not a retry event. */
@@ -119,6 +141,31 @@ export class PushGateway {
     private readonly metadata = new NotificationMetadataResolver(),
   ) {}
 
+  /** One concise, greppable line per candidate event — the gateway's whole audit trail. */
+  private trace(
+    event: NostrEvent,
+    recipientPubkey: string | undefined,
+    verdict: 'notify' | 'skip',
+    reason: string,
+    details: Record<string, string | number> = {},
+  ): void {
+    const channelId = event.tags.find((tag) => tag[0] === 'h')?.[1];
+    const fields: Record<string, string | number> = {
+      event: event.id,
+      kind: event.kind,
+      room: channelId ?? '-',
+      recipient: recipientPubkey ?? '-',
+      verdict,
+      reason,
+      ...details,
+    };
+    console.log(
+      `[push] decision ${Object.entries(fields)
+        .map(([key, value]) => `${key}=${logValue(value)}`)
+        .join(' ')}`,
+    );
+  }
+
   async handleRelayEvent(
     event: NostrEvent,
     recipientPubkey: string,
@@ -126,43 +173,155 @@ export class PushGateway {
   ): Promise<void> {
     this.metadata.invalidate(event);
     const channelId = event.tags.find((tag) => tag[0] === 'h')?.[1];
-    if (!channelId) return;
-    if (!isNotifiableEvent(event)) return;
-    if (recipientPubkey === event.pubkey) return;
+    if (!channelId) {
+      this.trace(event, recipientPubkey, 'skip', 'no-channel');
+      return;
+    }
+    if (event.kind !== 9) {
+      this.trace(event, recipientPubkey, 'skip', 'not-notifiable-kind');
+      return;
+    }
+    if (!isNotifiableEvent(event)) {
+      this.trace(event, recipientPubkey, 'skip', 'not-notifiable-markers');
+      return;
+    }
+    if (recipientPubkey === event.pubkey) {
+      this.trace(event, recipientPubkey, 'skip', 'sender-self');
+      return;
+    }
 
     // The relay query was performed as this registered identity, so visibility
     // is the membership/ACL decision. Deliver only to that reader's devices.
     const tokens = this.registry.tokensForPubkeys([recipientPubkey]);
-    if (tokens.length === 0) return;
+    if (tokens.length === 0) {
+      this.trace(event, recipientPubkey, 'skip', 'no-devices');
+      return;
+    }
 
-    const context = await this.metadata.resolve(event, reader);
-    if (isSuppressedFixtureNotification(event, context)) return;
+    let context;
+    try {
+      context = await this.metadata.resolve(event, reader);
+    } catch (error) {
+      this.trace(event, recipientPubkey, 'skip', 'metadata-error', {
+        error: error instanceof Error ? error.message.slice(0, 160) : String(error).slice(0, 160),
+      });
+      // Preserve the existing retry contract. A transient metadata failure must
+      // not advance the recipient cursor and lose the notification forever.
+      throw error;
+    }
+    // Split the suppression gate's two halves so the audit line names the real
+    // cause; isSuppressedFixtureNotification checks persistence first anyway.
+    if (context.persistentWorkspaceRoom !== true) {
+      this.trace(event, recipientPubkey, 'skip', 'room-not-persistent-workspace');
+      return;
+    }
+    if (isSuppressedFixtureNotification(event, context)) {
+      this.trace(event, recipientPubkey, 'skip', 'fixture-suppressed');
+      return;
+    }
     const plan = mapEventToNotification(event, context);
-    if (!plan) return;
+    if (!plan) {
+      this.trace(event, recipientPubkey, 'skip', 'unmapped-notification');
+      return;
+    }
 
     // Claim durably before FCM. An ambiguous network result is never retried:
     // at-most-once delivery is more important than risking a duplicate alert.
     const dedupeKey = deliveryKey(event, plan.data.type ?? 'channel-activity');
-    if (!(await this.deliveryState.reserveAttempt(dedupeKey, event.created_at, recipientPubkey))) {
+    let reserved: boolean;
+    try {
+      reserved = await this.deliveryState.reserveAttempt(
+        dedupeKey,
+        event.created_at,
+        recipientPubkey,
+      );
+    } catch (error) {
+      this.trace(event, recipientPubkey, 'skip', 'delivery-state-error', {
+        error: error instanceof Error ? error.message.slice(0, 160) : String(error).slice(0, 160),
+      });
+      throw error;
+    }
+    if (!reserved) {
+      this.trace(event, recipientPubkey, 'skip', 'already-attempted');
       return;
     }
 
-    const result = await this.messaging.sendEachForMulticast({
-      tokens,
-      notification: { title: plan.title, body: plan.body },
-      data: plan.data,
-      android: {
-        collapseKey: channelId,
-        priority: 'high',
-        notification: { channelId: 'messages', tag: `room:${channelId}` },
-      },
-    });
+    let result: BatchResponse;
+    try {
+      result = await this.messaging.sendEachForMulticast({
+        tokens,
+        notification: { title: plan.title, body: plan.body },
+        data: plan.data,
+        android: {
+          collapseKey: channelId,
+          priority: 'high',
+          notification: { channelId: 'messages', tag: `room:${channelId}` },
+        },
+      });
+    } catch (error) {
+      this.trace(event, recipientPubkey, 'skip', 'fcm-error', {
+        recipients: 1,
+        devices: tokens.length,
+        error: error instanceof Error ? error.message.slice(0, 160) : String(error).slice(0, 160),
+      });
+      throw error;
+    }
 
+    // Emit the candidate's sole decision line as soon as FCM returns. Durable
+    // bookkeeping failures are separately reported by the poll loop without
+    // creating a second, contradictory event decision.
+    this.trace(event, recipientPubkey, 'notify', 'fcm-result', {
+      type: plan.data.type ?? 'channel-activity',
+      recipients: 1,
+      devices: tokens.length,
+      success: result.successCount,
+      failure: result.failureCount,
+    });
     await this.deliveryState.markDelivered(dedupeKey, recipientPubkey);
     await this.removePermanentFailures(tokens, result);
+  }
+
+  /**
+   * Operator proof-of-delivery: send one real notification to every registered
+   * device of one pubkey and report per-device results. Never touches the
+   * durable delivery state — a test send must not consume or suppress anything.
+   */
+  async sendTestNotification(recipientPubkey: string): Promise<TestSendReport> {
+    const tokens = this.registry.tokensForPubkeys([recipientPubkey]);
+    if (tokens.length === 0) {
+      console.log(
+        `[push] test-send recipient=${recipientPubkey.slice(0, 12)} verdict=skip reason=no-devices`,
+      );
+      return { pubkey: recipientPubkey, successCount: 0, failureCount: 0, devices: [] };
+    }
+    const result = await this.messaging.sendEachForMulticast({
+      tokens,
+      notification: {
+        title: 'Beeline push test',
+        body: 'Delivery test from the Beeline push gateway.',
+      },
+      data: { type: 'delivery-test' },
+      android: { priority: 'high', notification: { channelId: 'messages' } },
+    });
+    const devices: TestDeviceResult[] = tokens.map((token, index) => {
+      const response = result.responses[index];
+      return response?.success
+        ? { deviceId: deviceId(token), ok: true, messageId: response.messageId }
+        : {
+            deviceId: deviceId(token),
+            ok: false,
+            error: response?.error?.code ?? response?.error?.message ?? 'unknown FCM failure',
+          };
+    });
     console.log(
-      `[push] FCM sent event=${event.id.slice(0, 12)} channel=${channelId} recipient=${recipientPubkey.slice(0, 12)} devices=${tokens.length} success=${result.successCount} failure=${result.failureCount}`,
+      `[push] test-send recipient=${recipientPubkey.slice(0, 12)} verdict=notify devices=${tokens.length} success=${result.successCount} failure=${result.failureCount}`,
     );
+    return {
+      pubkey: recipientPubkey,
+      successCount: result.successCount,
+      failureCount: result.failureCount,
+      devices,
+    };
   }
 
   private async removePermanentFailures(tokens: string[], result: BatchResponse): Promise<void> {

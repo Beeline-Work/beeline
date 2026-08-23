@@ -38,7 +38,10 @@ The service account file stays outside the repository. Do not log or commit it.
 client sends `physical` or `emulator` from `expo-device`.
 `DELETE /registrations` accepts `{ "pubkey", "token" }` with an exact-method/URL
 NIP-98 authorization from that pubkey, and removes only that device binding.
-The response and logs never contain the FCM token. The v1 registry is a local
+`POST /test-send` accepts `{ "pubkey" }` with the same exact-method/URL NIP-98
+authorization from that pubkey. It sends a real FCM test notification to every
+registered device and returns aggregate counts plus one success/failure record
+per opaque device id. Responses and logs never expose FCM tokens. The v1 registry is a local
 JSON file written mode 0600; it survives normal restarts, but is local to one
 gateway host and is lost if that file is removed. Re-importing or generating a
 Buzz identity registers the device, and each mobile cold start refreshes the
@@ -56,6 +59,18 @@ then suppresses explicit `fixture` tags; `change-review*`, `ui-test`, `ui-demo`,
 room-invite repair/visibility fixtures; and all Rooms linked to an obviously
 test/demo/fixture/throwaway Workspace. ACL-scoped reads remain the per-recipient
 delivery authority for every genuine eligible Room.
+
+Every candidate relay event produces one `[push] decision` line with its full
+event id and Room id, recipient, `notify`/`skip` verdict, exact reason, and send
+counts when FCM was attempted. To audit the metadata and fixture gates against
+the private production query path without sending FCM, run:
+
+```sh
+BUZZY_PUSH_REGISTRY_FILE=/path/to/registrations.json \
+BUZZY_RELAY_URL=http://127.0.0.1:3410 \
+BUZZY_RELAY_HOST=relay.buzzrouter.com \
+  npm run audit:suppression -w @beeline/push-gateway -- <pubkey-prefix> [room-id ...]
+```
 
 ## Notification content and deployment
 

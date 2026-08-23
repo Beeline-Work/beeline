@@ -273,4 +273,20 @@ describe('mapEventToNotification', () => {
   it('ignores events without a channel', () => {
     expect(mapEventToNotification(event([]), { roomName: 'Room' })).toBeNull();
   });
+
+  it('still suppresses a throwaway-named self-referencing Workspace group', () => {
+    // The self-referencing fix makes the group's own name the workspace name;
+    // the throwaway pattern must keep guarding that surface.
+    const relayEvent = event([
+      ['h', 'ws-channel'],
+      ['t', 'agent-message'],
+    ]);
+    expect(
+      isSuppressedFixtureNotification(relayEvent, {
+        roomName: 'test',
+        workspaceName: 'test',
+        persistentWorkspaceRoom: true,
+      }),
+    ).toBe(true);
+  });
 });

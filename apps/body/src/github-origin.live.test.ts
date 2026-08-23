@@ -85,6 +85,11 @@ describe.runIf(live)('GitHub-origin pair → conversation → human-approved lan
       const pairing = await humanClient.createAgentPairingCode(communityId);
       const binding = inspectLocalRepository(checkout).repository;
       const roomId = repositoryRoomId(communityId, binding);
+      // Room creation is a HUMAN action: the human creates the repository Room
+      // from their own key first; pairing joins a Room, never creates one.
+      const humanRoom = await humanClient.resolveRepositoryRoomForHuman(communityId, binding);
+      expect(humanRoom.channelId).toBe(roomId);
+      expect(humanRoom.created).toBe(true);
 
       const pair = spawnSync(
         process.execPath,
@@ -99,13 +104,14 @@ describe.runIf(live)('GitHub-origin pair → conversation → human-approved lan
         },
       );
       expect(pair.status, `${pair.stdout}\n${pair.stderr}`).toBe(0);
-      expect(pair.stdout).toContain(`[buzz] room: ${roomId}`);
+      expect(pair.stdout).toContain('[buzz] repo: none');
 
       const configs = await findRuntimeConfigPaths(checkout);
       expect(configs).toHaveLength(1);
       const runtime = await readRuntimeRecord(configs[0]!);
-      const runtimeRoom = runtime.rooms.find((room) => room.channelId === roomId);
-      expect(runtimeRoom?.mergeWorker).toBeUndefined();
+      // Repo-less pairing stores no Room; the human attaches the agent to the
+      // human-created Room from their own admin key (the in-app action).
+      await humanClient.attachAgentToChannel(roomId, runtime.agent.publicKey, communityId);
       daemonPid = Number(
         (await readFile(resolve(dirname(configs[0]!), 'daemon.pid'), 'utf8')).trim(),
       );

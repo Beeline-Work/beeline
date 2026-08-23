@@ -125,7 +125,9 @@ export async function ensureRepositoryRoomAdmin(
   if (actorRole !== 'owner' && actorRole !== 'admin') {
     throw new Error(
       `required admin role missing for ${pubkey.slice(0, 12)}… in ${channelId}; ` +
-        `current client is ${actorRole ?? 'not a member'} and cannot grant it`,
+        `current client is ${actorRole ?? 'not a member'} and cannot grant it — ` +
+        'ask a human to attach this agent to the Room with admin rights from the Beeline app, ' +
+        'then re-run pairing',
     );
   }
   await setMemberRole(ctx, channelId, pubkey, 'admin');
@@ -174,6 +176,25 @@ async function ensureMergeGateProvisioned(
   if (mergeWorkerPubkey && mergeWorkerPubkey !== agentCtx.identity.publicKey) {
     const workerRole = await projectedRoomRole(agentCtx, channelId, mergeWorkerPubkey);
     if (workerRole !== 'owner' && workerRole !== 'admin') {
+      // Elevating the dedicated merge worker requires the ACTOR to hold
+      // admin. A joining agent is a plain member by design now that Room
+      // creation is human-only, so provisioning degrades to a loud skip:
+      // the runtime record omits the unprovisioned worker and a human must
+      // elevate both from the app. Failing the whole pairing here would
+      // make joining any pre-existing Room impossible.
+      const actorRole = await projectedRoomRole(
+        agentCtx,
+        channelId,
+        agentCtx.identity.publicKey,
+      );
+      if (actorRole !== 'owner' && actorRole !== 'admin') {
+        console.error(
+          `[repo-room] cannot provision the merge worker in ${channelId}: the agent is not a ` +
+            'Room admin. Ask a human to attach this agent with admin rights from the Beeline ' +
+            'app; landing stays unprovisioned until then.',
+        );
+        return;
+      }
       await setMemberRole(agentCtx, channelId, mergeWorkerPubkey, 'admin');
       await waitUntilRole(agentCtx, channelId, mergeWorkerPubkey, 'admin');
     }
@@ -186,9 +207,13 @@ async function ensureMergeGateProvisioned(
 }
 
 /**
- * Resolve the origin-backed Room or create it under the agent's key. The
- * pairing-code minter becomes the initial human admin; the creator is projected
- * down to plain member after provisioning the dedicated merge worker.
+ * Resolve the origin-backed Room and join it. Room creation is a HUMAN
+ * action: this function NEVER creates a Room under the agent's key — pairing
+ * binds an agent to a Room a human made, and a missing Room fails with an
+ * actionable message instead of being conjured into existence (the exact
+ * side effect that once bound a foreign repository into a Workspace as a
+ * `beeline pair` side effect). When the join path can elevate the pairing-code
+ * minter, it does; the agent itself ends as plain member.
  */
 export async function resolveRepositoryRoom(
   agentCtx: ChannelOpsContext,
@@ -198,51 +223,23 @@ export async function resolveRepositoryRoom(
   mergeWorkerPubkey?: string,
 ): Promise<RepositoryRoomResult> {
   const existing = await findRepositoryRoom(agentCtx, communityId, binding.key);
-  if (existing) {
-    await ensureRepositoryRoomAdmin(agentCtx, existing, pairedBy);
-    const result = await joinRepositoryRoom(agentCtx, existing);
-    // A Room existing does not mean a prior pairing's provisioning actually
-    // finished — repair any interrupted worker-elevation/agent-demotion step
-    // before reusing this Room's gate identity. `mergeWorkerProvisioned`
-    // stays false here regardless: existing Rooms already have their own
-    // dedicated gate identity, so this pairing must not run a second one.
-    await ensureMergeGateProvisioned(agentCtx, existing, mergeWorkerPubkey);
-    return result;
+  if (!existing) {
+    throw new Error(
+      `no Room is bound to repository "${binding.name}" in Workspace ${communityId}. ` +
+        'Room creation is a human action: create the Room from the Beeline app (binding this ' +
+        'repository to it), then re-run pairing or attach this agent to that Room from the app.',
+    );
   }
-
-  const channelId = repositoryRoomId(communityId, binding);
-  try {
-    await createChannel(agentCtx, binding.name, {
-      channelId,
-      communityId,
-      repository: binding,
-    });
-  } catch (error) {
-    // Two clones may pair concurrently after both observe no Room. The
-    // deterministic ID lets the loser converge on the winner without a fork.
-    const raced = await findRepositoryRoom(agentCtx, communityId, binding.key);
-    if (raced) {
-      await ensureRepositoryRoomAdmin(agentCtx, raced, pairedBy);
-      const result = await joinRepositoryRoom(agentCtx, raced);
-      await ensureMergeGateProvisioned(agentCtx, raced, mergeWorkerPubkey);
-      return result;
-    }
-    throw error;
-  }
-  await waitUntilMember(agentCtx, channelId, agentCtx.identity.publicKey);
-  if (pairedBy !== agentCtx.identity.publicKey) {
-    await ensureRepositoryRoomAdmin(agentCtx, channelId, pairedBy, true);
-  }
-  // Relay-backed callers provide a distinct gate key before the autonomous
-  // agent is projected down to member. User-hosted git origins intentionally
-  // omit it because delivery is governed by the user's ambient git authority.
+  const channelId = existing;
+  await ensureRepositoryRoomAdmin(agentCtx, channelId, pairedBy);
+  const result = await joinRepositoryRoom(agentCtx, channelId);
+  // A Room existing does not mean a prior pairing's provisioning actually
+  // finished — repair any interrupted worker-elevation/agent-demotion step
+  // before reusing this Room's gate identity. `mergeWorkerProvisioned`
+  // stays false here regardless: existing Rooms already have their own
+  // dedicated gate identity, so this pairing must not run a second one.
   await ensureMergeGateProvisioned(agentCtx, channelId, mergeWorkerPubkey);
-  return {
-    channelId,
-    created: true,
-    joined: true,
-    mergeWorkerProvisioned: Boolean(mergeWorkerPubkey),
-  };
+  return result;
 }
 
 /**

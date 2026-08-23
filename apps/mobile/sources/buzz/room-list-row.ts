@@ -93,19 +93,13 @@ export type RoomRowPresentation = {
    * The corners the count reports and the dropdown lists — the same set, from
    * the same filter, so the number can never advertise work that expanding
    * hides. Terminal corners (`merged`, `archived`) and `failed` ones are
-   * excluded outright and stay reachable through the full corner list.
+   * excluded outright: finished work is represented NOWHERE in navigation
+   * (no count, no expansion, no pinned bar) per the owner's model — its
+   * history stays reachable only through the transcript's landed/closed
+   * references. A Room whose corners have all finished therefore carries no
+   * corner affordance at all.
    */
   corners: CornerSummary[];
-  /**
-   * Every corner the Room is known to hold, terminal ones included. The
-   * dropdown's control must exist whenever a Room has ANY recorded corner:
-   * gating it on open work alone left Rooms whose corners had all landed,
-   * failed, or been closed with no affordance at all — the ALL CORNERS link
-   * lived inside the expanded dropdown, so the row lost its only path to
-   * corner navigation. The count still reports open work only (the captain's
-   * hard requirement); this field decides visibility, not the number.
-   */
-  totalCorners: number;
   /** Which of the three scan zones this Room belongs to. */
   zone: RoomListZone;
   /** Newest message or lifecycle event that should affect list ordering. */
@@ -303,7 +297,6 @@ export function roomRowPresentation(
     live: Boolean(working) || turnWorking,
     attention: Boolean(needsYou),
     corners,
-    totalCorners: all.length,
     zone,
     meaningfulAt,
     fact: currentCorner

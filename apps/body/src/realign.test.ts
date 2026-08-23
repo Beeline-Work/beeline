@@ -282,7 +282,14 @@ describe('Body realigns corners after a land', () => {
       const published: NostrEvent[] = [];
       vi.stubGlobal(
         'fetch',
-        vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+          // Reads (e.g. publishAttentionTransition's fail-open standing-status
+          // check) must get an event ARRAY — a JSON error body here would
+          // retry three times and land every retry's request body in
+          // `published` as a tagless junk entry.
+          if (String(input).endsWith('/query')) {
+            return new Response(JSON.stringify([]), { status: 200 });
+          }
           published.push(JSON.parse(String(init?.body)) as NostrEvent);
           return new Response(JSON.stringify({ accepted: true }), { status: 200 });
         }),

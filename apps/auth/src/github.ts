@@ -25,6 +25,28 @@ async function jsonObject(response: Response, label: string): Promise<Record<str
   return body as Record<string, unknown>;
 }
 
+/** Some App endpoints (e.g. GET /app/installations) answer a bare JSON array, not an envelope. */
+async function jsonArray(
+  response: Response,
+  label: string,
+): Promise<Record<string, unknown>[]> {
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error(`${label} returned invalid JSON`);
+  }
+  if (!response.ok || !Array.isArray(body)) {
+    throw new Error(`${label} failed: HTTP ${response.status}`);
+  }
+  for (const entry of body) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new Error(`${label} entry is invalid`);
+    }
+  }
+  return body as Record<string, unknown>[];
+}
+
 export interface GitHubOAuthConfig {
   clientId: string;
   clientSecret: string;
@@ -250,20 +272,15 @@ export class GitHubAppClient {
   async listInstallations(): Promise<GitHubAppInstallation[]> {
     const installations: GitHubAppInstallation[] = [];
     for (let page = 1; ; page++) {
-      const body = await jsonObject(
+      // GitHub answers this endpoint with a BARE array of installations —
+      // unlike GET /user/installations' {total_count, installations} envelope.
+      const entries = await jsonArray(
         await fetch(`${this.#config.apiBaseUrl}/app/installations?per_page=100&page=${page}`, {
           headers: githubHeaders(await this.appJwt()),
         }),
         'GitHub app installation list',
       );
-      if (!Array.isArray(body.installations)) {
-        throw new Error('GitHub app installation list is invalid');
-      }
-      for (const entry of body.installations) {
-        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-          throw new Error('GitHub app installation entry is invalid');
-        }
-        const record = entry as Record<string, unknown>;
+      for (const record of entries) {
         // A suspended installation must never be re-recorded as active.
         if (record.suspended_at) continue;
         const id = record.id;
@@ -272,7 +289,7 @@ export class GitHubAppClient {
         }
         installations.push({ installationId: id, account: this.#installationAccountFrom(record) });
       }
-      if (body.installations.length < 100) return installations;
+      if (entries.length < 100) return installations;
     }
   }
 

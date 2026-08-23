@@ -2,22 +2,22 @@
  * What each ACP harness actually enforces — confirmed by reading the installed
  * adapters, not assumed from the protocol.
  *
- * Beeline's Room read-only boundary and its corner worktree boundary are both
- * implemented in the ACP permission callback (`session-sandbox.ts`). That
- * callback only binds a harness that *asks*. Two adapters do; one does not:
+ * Beeline's Room read-only callback and its corner hygiene-denylist callback
+ * live in `session-sandbox.ts`. A corner also selects each adapter's no-prompt
+ * autonomy mode; bubblewrap supplies the filesystem mount policy underneath.
+ * The callback only binds a harness that *asks*. Two adapters do; one does not:
  *
  *   - `codex-acp` (@agentclientprotocol/codex-acp): routes every command
  *     execution and file change through `session/request_permission`
  *     (`approvalPolicy: 'on-request'`) AND advertises a real `read-only`
  *     session mode backed by Codex's own OS sandbox
- *     (`sandboxPolicy: { type: 'readOnly' }`). Strongest: even a bypass of our
- *     callback still hits the sandbox. Beeline selects that mode for Rooms via
- *     `AcpClient.applySessionMode`.
+ *     (`sandboxPolicy: { type: 'readOnly' }`). Beeline selects that mode for
+ *     Rooms and `agent-full-access` for corners via `AcpClient.applySessionMode`.
  *   - `claude-agent-acp` (@agentclientprotocol/claude-agent-acp): routes every
  *     tool through the SDK's `canUseTool` -> `session/request_permission`. It
- *     advertises no read-only mode (its modes are `default`/`acceptEdits`/
- *     `plan`/`dontAsk`/`auto`), so a Room stays in `default`, which asks — our
- *     handler then denies. No OS sandbox; enforcement is the callback alone.
+ *     advertises no read-only mode, so a Room stays in `default`, which asks —
+ *     our handler then denies. Corners select its ACP `bypassPermissions` mode.
+ *     No built-in OS sandbox; Room enforcement is the callback alone.
  *   - `pi-acp` (pi-acp, driving @earendil-works/pi-coding-agent): **never** calls
  *     `requestPermission` for a tool. Its only permission requests are pi's own
  *     extension-UI `select`/`confirm` events; read/write/edit/bash are emitted
@@ -112,6 +112,28 @@ export function enforcesPermissionBoundary(agentCommand: string | undefined): bo
  */
 export function usesTextCornerRequestFallback(agentCommand: string | undefined): boolean {
   return Boolean(agentCommand && /(^|[/\\])pi-acp(\.[a-z]+)?$/i.test(agentCommand));
+}
+
+/**
+ * ACP mode ids that make an EDIT corner non-interactive for each shipped
+ * harness. The outer bubblewrap namespace remains the filesystem policy; these
+ * switches only stop the adapter from asking before actions it can already take
+ * inside that namespace.
+ *
+ * Codex calls this `agent-full-access`; claude-agent-acp exposes the Claude SDK
+ * `bypassPermissions` mode through ACP. pi-acp has no permission mode because it
+ * already executes tools without asking. Unknown adapters retain the portable
+ * edit-mode candidates and Body's immediate allow/reject callback.
+ */
+export function cornerAutonomyModeCandidates(agentCommand: string | undefined): string[] {
+  if (agentCommand && /(^|[/\\])codex-acp(\.[a-z]+)?$/i.test(agentCommand)) {
+    return ['agent-full-access'];
+  }
+  if (agentCommand && /(^|[/\\])claude-(agent|code)-acp(\.[a-z]+)?$/i.test(agentCommand)) {
+    return ['bypassPermissions'];
+  }
+  if (agentCommand && /(^|[/\\])pi-acp(\.[a-z]+)?$/i.test(agentCommand)) return [];
+  return ['agent', 'edit', 'code'];
 }
 
 /**

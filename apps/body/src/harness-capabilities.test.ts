@@ -4,11 +4,24 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  cornerAutonomyModeCandidates,
   enforcesPermissionBoundary,
   harnessEnforcement,
   roomSandboxWarning,
   usesTextCornerRequestFallback,
 } from './harness-capabilities.js';
+
+describe('corner autonomy modes', () => {
+  it("uses each shipped adapter's no-prompt contract", () => {
+    expect(cornerAutonomyModeCandidates('/usr/local/bin/codex-acp')).toEqual(['agent-full-access']);
+    expect(cornerAutonomyModeCandidates('claude-agent-acp')).toEqual(['bypassPermissions']);
+    expect(cornerAutonomyModeCandidates('/usr/local/bin/pi-acp')).toEqual([]);
+  });
+
+  it('keeps portable edit candidates for unknown adapters', () => {
+    expect(cornerAutonomyModeCandidates('custom-acp')).toEqual(['agent', 'edit', 'code']);
+  });
+});
 
 describe('harness permission enforcement', () => {
   it('classifies the adapters Beeline ships presets for', () => {

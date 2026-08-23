@@ -3,17 +3,16 @@
  *
  * ## What this boundary IS
  *
- * `session-sandbox.ts` is the *policy* boundary — a Room denies every mutating
- * ACP request, a corner denies one whose target escapes its worktree. That
- * boundary binds only a harness that actually calls `session/request_permission`,
- * and `harness-capabilities.ts` records that one shipped adapter (`pi-acp`)
- * never does: pi executes reads, writes, edits and shell commands *before* the
- * daemon sees them. For that harness the Room/corner split is prompt text and
- * nothing more.
+ * `session-sandbox.ts` is the ACP callback boundary: a Room denies every
+ * mutating request, while a corner immediately approves ordinary actions and
+ * rejects only writes aimed at the hygiene denylist. That callback binds only
+ * a harness that actually calls `session/request_permission`; one shipped
+ * adapter (`pi-acp`) never does, and corner autonomy modes intentionally stop
+ * the other shipped adapters from asking in edit sessions.
  *
- * This module adds the layer underneath: when `bwrap` is available, the harness
- * runs inside a mount namespace whose filesystem is read-only everywhere except
- * the small set of paths that session legitimately owns.
+ * This module adds the layer underneath: when `bwrap` is available, Rooms run
+ * on a read-only filesystem while corners run on a writable filesystem with a
+ * small hygiene denylist overlaid read-only.
  *
  * **What it separates is product hygiene, not privilege.** A Room is the
  * conversational, project-management, ideation channel and is meant to stay
@@ -55,7 +54,7 @@
  *
  * ## Mount table
  *
- * Every session starts from the same base:
+ * A Room starts from this base:
  *
  * ```
  *   --ro-bind / /        the whole host filesystem, read-only. This is what
@@ -68,7 +67,17 @@
  *   --tmpfs /tmp         a private, writable, discarded-at-exit /tmp.
  * ```
  *
- * **Both modes** then get read-write binds for the harness's own state
+ * A corner instead starts with `--bind / /`: ordinary host locations such as
+ * package caches, toolchain directories and build scratch space are writable
+ * without being enumerated. It then overlays the canonical checkout, the pool
+ * containing every corner worktree, and Body's daemon-owned Room state
+ * read-only. The current worktree and its git common directory are rebound
+ * writable after those overlays. This is deliberately a denylist, not an
+ * allowlist: corner autonomy means normal development tools can install and
+ * build wherever they normally do, while sibling work and daemon state stay
+ * pristine.
+ *
+ * **Both modes** get read-write binds for the harness's own state
  * directories: the `CLAUDE_CONFIG_DIR`/`CODEX_HOME`/`XDG_*`/`TMPDIR` overlay
  * from `agent-home.ts`, plus {@link harnessHomeStateDirs} for the state roots no
  * env var relocates. **A Room having writable harness state is a deliberate,
@@ -84,8 +93,9 @@
  * edits land by default — not about what a determined session can reach through
  * non-filesystem channels (see "What this boundary is NOT" above).
  *
- * **Corner (`edit`)** adds, on top of that, the two things an edit session owns:
- * its own worktree, and the repository's **git common directory**. That second
+ * **Corner (`edit`)** rebinds the two protected paths an edit session owns:
+ * its own worktree inside the protected corners pool, and the repository's
+ * **git common directory** inside the protected canonical checkout. That second
  * one is required, not incidental — a corner worktree is a *linked* `git
  * worktree`, so its refs, index and newly written objects all live under the
  * canonical checkout's `.git`. Without it a corner could edit files but never
@@ -110,7 +120,7 @@
  * directly, which is exactly what the product's approval invariant forbids.
  * Read-only therefore is not enough for credential stores.
  *
- * Every session (Room and corner) gets MASKS on top of the ro-bind: an empty
+ * Every session (Room and corner) gets MASKS on top of its root bind: an empty
  * tmpfs replaces each masked directory and `/dev/null` each masked file, so
  * their contents are absent, not merely unwritable. The built-in list covers
  * the known credential homes ({@link KNOWN_CREDENTIAL_MASK_PATHS}); an owner
@@ -145,8 +155,8 @@
  * disabled, a hardened kernel), must not stop the daemon from serving Rooms —
  * that would turn a hardening feature into an outage. `detectBwrapSandbox`
  * self-tests once at daemon start and the caller logs exactly one advisory line;
- * every spawn afterwards is unwrapped, i.e. today's behaviour, with
- * `session-sandbox.ts` still the boundary it always was.
+ * every spawn afterwards is unwrapped. Room callbacks remain fail-closed;
+ * corner callbacks can enforce the denylist only for harnesses that still ask.
  */
 import { spawnSync } from 'node:child_process';
 import { lstatSync } from 'node:fs';
@@ -310,6 +320,8 @@ export interface BwrapAvailability {
 
 /** What one session may reach, before it is turned into bwrap argv. */
 export interface SandboxMountPlan {
+  /** Edit sessions start writable-by-default; Rooms keep the read-only root. */
+  rootWritable?: boolean;
   /**
    * Paths re-bound read-only after the tmpfs that would otherwise hide them.
    *
@@ -358,6 +370,10 @@ export interface SandboxSessionSpec {
    * supply a test home instead of the daemon's real one, like them.
    */
   mergeGateStateDirs?: string[];
+  /** Hygiene denylist overlaid read-only in an edit session. */
+  protectedPaths?: string[];
+  /** Explicit capabilities restored writable after protected parent mounts. */
+  additionalWritablePaths?: string[];
   /** Credential stores hidden from this session ({@link credentialMaskPaths}).
    * Both modes get them: a Room reading the operator's gh token is the same
    * out-of-band-push hole a corner would be. */
@@ -393,7 +409,13 @@ export function sandboxMountPlan(spec: SandboxSessionSpec): SandboxMountPlan {
   ];
   const writable = normalize(
     spec.mode === 'edit'
-      ? [spec.worktreePath, spec.gitCommonDir, ...(spec.mergeGateStateDirs ?? []), ...harnessState]
+      ? [
+          spec.worktreePath,
+          spec.gitCommonDir,
+          ...(spec.mergeGateStateDirs ?? []),
+          ...(spec.additionalWritablePaths ?? []),
+          ...harnessState,
+        ]
       : // A Room writes no checkout and no host path — only its own harness
         // state and the private /tmp. The merge gate is not a Room surface.
         harnessState,
@@ -401,7 +423,7 @@ export function sandboxMountPlan(spec: SandboxSessionSpec): SandboxMountPlan {
   // Everything this session must still see through the /tmp tmpfs, minus what a
   // writable bind already restores. `tmpDir` is never restored read-only: under
   // /tmp it is already served, writably, by the private tmpfs.
-  const readOnly = normalize([
+  const tmpRestores = normalize([
     spec.cwd,
     spec.worktreePath,
     spec.gitCommonDir,
@@ -409,7 +431,16 @@ export function sandboxMountPlan(spec: SandboxSessionSpec): SandboxMountPlan {
     ...(spec.harnessStateDirs ?? []),
     ...(spec.harnessHomeStateDirs ?? []),
   ]).filter((path) => isUnderTmp(path) && path !== '/tmp' && !writable.includes(path));
-  return { readOnly, writable, masks: [...(spec.maskPaths ?? [])] };
+  const readOnly = normalize([
+    ...(spec.mode === 'edit' ? (spec.protectedPaths ?? []) : []),
+    ...tmpRestores,
+  ]).filter((path) => !writable.includes(path));
+  return {
+    ...(spec.mode === 'edit' ? { rootWritable: true } : {}),
+    readOnly,
+    writable,
+    masks: [...(spec.maskPaths ?? [])],
+  };
 }
 
 export interface WrappedCommand {
@@ -421,7 +452,7 @@ export interface WrappedCommand {
  * Wrap `command`/`args` so they run under bwrap with `plan`'s mount table.
  *
  * Argument order is load-bearing and asserted by tests: bwrap applies mount
- * operations in the order given, so `--ro-bind / /` must come first and every
+ * operations in the order given, so the root bind must come first and every
  * per-session mount must come after the `/tmp` tmpfs that would shadow it.
  */
 export function buildBwrapArgv(input: {
@@ -431,7 +462,17 @@ export function buildBwrapArgv(input: {
   command: string;
   args?: string[];
 }): WrappedCommand {
-  const args = ['--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp'];
+  const args = [
+    input.plan.rootWritable ? '--bind' : '--ro-bind',
+    '/',
+    '/',
+    '--dev',
+    '/dev',
+    '--proc',
+    '/proc',
+    '--tmpfs',
+    '/tmp',
+  ];
   for (const path of input.plan.readOnly) args.push('--ro-bind', path, path);
   // Credential masks: applied after the ro-bind they override and before the
   // writable binds a deliberate harness-state bind would win with. A masked

@@ -11,7 +11,7 @@ import type {
   PersonProfile,
   RoomRepositoryResolution,
 } from '@beeline/buzz-client';
-import { cornerStatusPrecedence, type CornerStatus, type CornerSummary } from '@/buzz/corners';
+import { cornerStatusPrecedence, cornerStatusPrecedenceOrNull, type CornerStatus, type CornerSummary } from '@/buzz/corners';
 import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection';
 import { isRetiredAgentStateNotice } from './retired-agent-notices';
 import { upsertChatMessages } from '@/sync/transport/buzz-event-projection';
@@ -492,7 +492,8 @@ function updateListCornerStatus(
         const corners = channel.corners.map((existing) => {
           if (
             existing.id !== corner.subchannelId ||
-            cornerStatusPrecedence(corner.status) < cornerStatusPrecedence(existing.status)
+            cornerStatusPrecedence(corner.status) <
+              cornerStatusPrecedenceOrNull(existing.status)
           ) {
             return existing;
           }

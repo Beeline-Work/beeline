@@ -44,6 +44,10 @@ export type CornerLifecycleFact = {
   isMergeReady?: boolean;
   /** This event is the agent doing work (`t` ∈ `CORNER_WORK_SIGNAL_TAGS`). */
   isWorkSignal?: boolean;
+  /** This event is an agent-authored question/ask awaiting a person —
+   * narration (`t=agent-message`) whose text bears a question. The one
+   * non-review artifact that can hold a needs-you verdict up. */
+  isAsk?: boolean;
 };
 
 export type CornerLifecycleStatus =
@@ -79,6 +83,11 @@ export function mapRawCornerStatusTag(raw: string | undefined): CornerLifecycleS
   }
 }
 
+/** How long an agent's question/ask stays fresh enough to gold a corner.
+ * An ask is only an actionable artifact while a person can reasonably still
+ * act on it; past this window even the newest-substantive ask reads stale. */
+export const CORNER_ASK_FRESH_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 /**
  * Current state from durable history — the rules, in order:
  *
@@ -94,19 +103,47 @@ export function mapRawCornerStatusTag(raw: string | undefined): CornerLifecycleS
  *    what makes the answer stable under the relay's newest-N backfill window:
  *    a window that still holds the old card resolves it against the newer
  *    work, and a window that evicted the card finds no unresolved word either.
+ * 4. THE VERDICT is exactly one of three super-states (`resolveCornerState`),
+ *    with NO sub-reason taxonomy — surfaces choose affordances contextually:
+ *    - WORKING — recent agent work within the liveness window
+ *      (`CORNER_WORK_LIVENESS_WINDOW_MS`); liveness must be VERIFIABLE, so an
+ *      idle corner goes stale out of it.
+ *    - NEEDS-HUMAN — everything unfinished that is not verifiably working,
+ *      INCLUDING idle-without-finishing (deliberately a failure mode, golded
+ *      plainly like every other needs-human state). A fresh unanswered agent
+ *      ask also reads needs-human: the person IS what the corner waits on.
+ *    - FINISHED — merged/archived.
  *
- * No facts at all resolves to `live`: a corner whose history nobody holds is
+ * No facts at all resolves to WORKING: a corner whose history nobody holds is
  * one that was just opened and whose first card is still in flight.
  */
-export function resolveCornerLifecycle(
+export type CornerSuperState = 'working' | 'needs-human' | 'finished';
+
+/** How long a corner's last agent work signal counts as "working right now".
+ * Deliberately generous (a long turn can pause between activity batches) but
+ * finite: idle-without-finishing is needs-human, not work. */
+export const CORNER_WORK_LIVENESS_WINDOW_MS = 60 * 60 * 1000;
+
+export type CornerVerdict = CornerSuperState;
+
+const NEEDS_HUMAN: CornerVerdict = 'needs-human';
+
+export function resolveCornerState(
   facts: ReadonlyArray<CornerLifecycleFact>,
-  options: { merged?: boolean; archived?: boolean } = {},
-): CornerLifecycleStatus {
-  if (options.merged) return 'merged';
-  if (options.archived) return 'archived';
+  options: {
+    merged?: boolean;
+    archived?: boolean;
+    now?: number;
+    askFreshWindowMs?: number;
+    workLivenessWindowMs?: number;
+  } = {},
+): CornerVerdict {
+  if (options.merged || options.archived) return 'finished';
   let latestStatus: CornerLifecycleFact | undefined;
   let mergeReadyAt: number | undefined;
   let workAt: number | undefined;
+  let askAt: number | undefined;
+  let resolvingWorkAt: number | undefined;
   for (const fact of facts) {
     // Only a Mappable status word is a lifecycle card. Session-machinery
     // words (`suspended`, `queued`, `complete`, …) are not lifecycle facts:
@@ -124,9 +161,21 @@ export function resolveCornerLifecycle(
     }
     if (fact.isWorkSignal) {
       workAt = Math.max(workAt ?? 0, fact.createdAt);
+      // An ask IS signed as narration (`agent-message`), but it must never
+      // count as working-on-it: a corner whose last event is "which base do
+      // you want?" is waiting on a person, not working.
+      if (!fact.isAsk) {
+        resolvingWorkAt = Math.max(resolvingWorkAt ?? 0, fact.createdAt);
+      }
+    }
+    if (fact.isAsk) {
+      askAt = Math.max(askAt ?? 0, fact.createdAt);
     }
   }
   const mapped = mapRawCornerStatusTag(latestStatus?.rawStatus);
+  // Terminal words win outright — work signals never resurrect a closed
+  // corner (rule 1).
+  if (mapped === 'merged' || mapped === 'archived') return 'finished';
   // A merge-ready may only speak while nothing newer has — same rule the
   // pre-resolver derivation pinned after three real corners stayed `open`
   // forever past a later failure.
@@ -134,17 +183,114 @@ export function resolveCornerLifecycle(
     mapped === 'open' ||
     (mergeReadyAt !== undefined &&
       (latestStatus === undefined || mergeReadyAt >= latestStatus.createdAt));
-  let status: CornerLifecycleStatus = reviewReady ? 'open' : (mapped ?? 'live');
+  const status: CornerLifecycleStatus = reviewReady ? 'open' : (mapped ?? 'live');
   // The moment whose word is standing: a status card when one exists, else the
   // merge-ready announcement itself.
   const standingAt = latestStatus?.createdAt ?? (reviewReady ? mergeReadyAt : undefined);
+  // A fresh unanswered agent ask that nothing has superseded IS the wait: the
+  // corner needs a person's reply, not a spinner. Evaluated before work
+  // recency because the ask must never read as merely "working", and before
+  // supersession because it must never clear its own question.
+  const newestSubstantive = Math.max(
+    latestStatus?.createdAt ?? 0,
+    mergeReadyAt ?? 0,
+    workAt ?? 0,
+  );
+  const nowMs = options.now ?? Date.now();
+  const freshAsk =
+    askAt !== undefined &&
+    askAt >= newestSubstantive &&
+    nowMs - askAt * 1000 <= (options.askFreshWindowMs ?? CORNER_ASK_FRESH_WINDOW_MS);
+  if (freshAsk) return NEEDS_HUMAN;
+  // Work recency anchor: non-ask agent activity, plus a live-word card (the
+  // daemon announcing work moments ago counts as verifiable liveness too).
+  const recentWorkAt = Math.max(
+    resolvingWorkAt ?? 0,
+    mapped === 'live' ? (latestStatus?.createdAt ?? 0) : 0,
+  );
+  // "No facts" means no SUBSTANTIVE fact — a channel event carrying no
+  // lifecycle information at all (a bare create/control echo) is not evidence
+  // of anything, and the just-opened corner stays working.
+  const hasSubstantiveFact =
+    latestStatus !== undefined ||
+    mergeReadyAt !== undefined ||
+    resolvingWorkAt !== undefined;
+  const verifiablyWorking =
+    !hasSubstantiveFact ||
+    (recentWorkAt > 0 &&
+      nowMs - recentWorkAt * 1000 <=
+        (options.workLivenessWindowMs ?? CORNER_WORK_LIVENESS_WINDOW_MS));
   const supersededByWork =
     standingAt !== undefined &&
-    workAt !== undefined &&
-    workAt > standingAt &&
+    resolvingWorkAt !== undefined &&
+    resolvingWorkAt > standingAt &&
     (status === 'needs-attention' || status === 'open' || status === 'failed');
-  if (supersededByWork) return 'live';
-  return status;
+  if ((supersededByWork || status === 'live') && verifiablyWorking) return 'working';
+  // Everything unfinished that is not verifiably working is needs-human —
+  // including plain idle-without-finishing. Surfaces pick the affordance
+  // (approve card / reply focus / retry / nudge-close) from their own richer
+  // context; the STATE is just the word.
+  return NEEDS_HUMAN;
+}
+
+/**
+ * Legacy seven-word projection of THE three-word verdict, for consumers not
+ * yet migrated to `resolveCornerState`. Idle-without-finishing has no old
+ * word — it maps to `null`, which mobile's facade re-golds as needs-human via
+ * `cornerSuperState`.
+ */
+export function resolveCornerLifecycle(
+  facts: ReadonlyArray<CornerLifecycleFact>,
+  options: {
+    merged?: boolean;
+    archived?: boolean;
+    now?: number;
+    askFreshWindowMs?: number;
+    workLivenessWindowMs?: number;
+  } = {},
+): CornerLifecycleStatus | null {
+  const verdict = resolveCornerState(facts, options);
+  if (verdict === 'working') return 'live';
+  if (verdict === 'finished') {
+    if (options.merged) return 'merged';
+    if (options.archived) return 'archived';
+    let terminal: CornerLifecycleStatus | undefined;
+    let terminalAt = 0;
+    for (const fact of facts) {
+      const word = mapRawCornerStatusTag(fact.rawStatus);
+      if (
+        (word === 'merged' || word === 'archived') &&
+        fact.createdAt >= terminalAt
+      ) {
+        terminal = word;
+        terminalAt = fact.createdAt;
+      }
+    }
+    return terminal ?? 'merged';
+  }
+  // needs-human: preserve the old word where one exists so legacy surfaces
+  // keep their affordance routing; idle-without-finishing (stalled) maps to
+  // `null` and is re-golded as needs-human by mobile's `cornerSuperState`.
+  let latestWord: CornerLifecycleStatus | undefined;
+  let latestWordAt = -1;
+  let mergeReadyAt = -1;
+  for (const fact of facts) {
+    const word = mapRawCornerStatusTag(fact.rawStatus);
+    if (word !== undefined && fact.createdAt >= latestWordAt) {
+      latestWord = word;
+      latestWordAt = fact.createdAt;
+    }
+    if (fact.isMergeReady) mergeReadyAt = Math.max(mergeReadyAt, fact.createdAt);
+  }
+  if (mergeReadyAt >= latestWordAt && mergeReadyAt >= 0) return 'open';
+  if (
+    latestWord === 'open' ||
+    latestWord === 'needs-attention' ||
+    latestWord === 'failed'
+  ) {
+    return latestWord;
+  }
+  return null;
 }
 
 /**
@@ -154,7 +300,7 @@ export function resolveCornerLifecycle(
  */
 export function cornerLifecycleFact(
   createdAt: number,
-  tags: { displayStatus?: string; status?: string; t?: string },
+  tags: { displayStatus?: string; status?: string; t?: string; text?: string },
 ): CornerLifecycleFact {
   const t = tags.t ?? '';
   return {
@@ -164,7 +310,15 @@ export function cornerLifecycleFact(
       : {}),
     ...(t === 'merge-ready' ? { isMergeReady: true } : {}),
     ...(CORNER_WORK_SIGNAL_TAGS.has(t) ? { isWorkSignal: true } : {}),
+    ...(isAgentAsk(t, tags.text) ? { isAsk: true } : {}),
   };
+}
+
+/** An agent-authored question/ask: narration (`agent-message`) whose text
+ * bears a question mark. Progress/retry noise never asks anything — its
+ * shapes carry no '?' — so the bare test is sufficient here. */
+function isAgentAsk(t: string, text: string | undefined): boolean {
+  return t === 'agent-message' && typeof text === 'string' && /\?/.test(text);
 }
 
 /** The statuses a person must act on — the set the Room index golds a row for

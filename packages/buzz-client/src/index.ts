@@ -321,6 +321,7 @@ export {
   setRoomTargetBranch,
   setRoomGitHubEvents,
   normalizeTargetBranchName,
+  type RoomRepositoryAuthorResolution,
   type RoomRepositoryResolution,
 } from './room-repository.js';
 

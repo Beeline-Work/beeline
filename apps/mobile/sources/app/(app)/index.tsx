@@ -94,10 +94,12 @@ const styles = StyleSheet.create((theme) => ({
         textAlign: 'center',
         fontSize: 24,
         ...Typography.default('semiBold'),
+        fontFamily: theme.buzz.proseSemibold,
         color: theme.colors.text,
     },
     subtitle: {
         ...Typography.default(),
+        fontFamily: theme.buzz.proseRegular,
         fontSize: 18,
         color: theme.colors.textSecondary,
         marginTop: 16,

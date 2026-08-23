@@ -262,7 +262,7 @@ const styles = StyleSheet.create((theme) => {
   backText: { ...Typography.default(), color: groknight.chrome, fontSize: 30, fontWeight: '300' },
   headerCopy: { flex: 1, minWidth: 0, paddingLeft: 4 },
   title: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     color: groknight.textPrimary,
     fontSize: 20,
     lineHeight: 24,
@@ -285,7 +285,7 @@ const styles = StyleSheet.create((theme) => {
     borderBottomColor: groknight.textSecondary,
   },
   modeText: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     color: groknight.muted,
     fontSize: 13,
     fontWeight: '600',
@@ -293,12 +293,12 @@ const styles = StyleSheet.create((theme) => {
   modeTextActive: { color: groknight.textPrimary },
   form: { paddingHorizontal: 18, paddingTop: 32 },
   formTitle: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     color: groknight.textPrimary,
     fontSize: 20,
   },
   formHint: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     marginTop: 8,
     maxWidth: 460,
     color: groknight.textSecondary,
@@ -306,7 +306,7 @@ const styles = StyleSheet.create((theme) => {
     lineHeight: 20,
   },
   input: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     minHeight: 48,
     marginTop: 22,
     paddingHorizontal: 12,
@@ -337,7 +337,7 @@ const styles = StyleSheet.create((theme) => {
     letterSpacing: 0.8,
   },
   errorText: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     marginTop: 4,
     color: groknight.textSecondary,
     fontSize: 14,

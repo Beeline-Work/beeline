@@ -165,3 +165,54 @@ describe('MonoMarkdown memoization', () => {
     }
   });
 });
+
+// ── Brass mention glossing (Speakeasy alignment) ─────────────────────────────
+import { glossMentions } from './MonoMarkdown';
+import type { MarkdownSpan } from '@/components/markdown/parseMarkdown';
+
+const plain = (text: string): MarkdownSpan => ({ styles: [], text, url: null });
+
+describe('glossMentions — a tagged handle splits into its own span', () => {
+  it('marks a bare @handle as a mention', () => {
+    const spans = glossMentions([plain('ask @beebee about the relay')]);
+    expect(spans).toEqual([
+      { styles: [], text: 'ask ', url: null },
+      { styles: [], text: '@beebee', url: null, mention: true },
+      { styles: [], text: ' about the relay', url: null },
+    ]);
+  });
+
+  it('keeps the whole handle token, including dashes and underscores', () => {
+    const spans = glossMentions([plain('@lilac-odd_heron speaks')]);
+    expect(spans).toHaveLength(2);
+    expect(spans[0]).toMatchObject({ text: '@lilac-odd_heron', mention: true });
+  });
+
+  it('glosses a mention at the very start and very end of the text', () => {
+    expect(glossMentions([plain('@beebee')])).toEqual([
+      { styles: [], text: '@beebee', url: null, mention: true },
+    ]);
+    expect(glossMentions([plain('ping @beebee')])).toEqual([
+      { styles: [], text: 'ping ', url: null },
+      { styles: [], text: '@beebee', url: null, mention: true },
+    ]);
+  });
+
+  it('never glosses inside an email address', () => {
+    expect(glossMentions([plain('mail user@example.com today')])).toEqual([
+      plain('mail user@example.com today'),
+    ]);
+  });
+
+  it('never glosses inside code spans or links — machine text is not an address', () => {
+    const code = glossMentions([{ styles: ['code'], text: 'run @deploy now', url: null }]);
+    expect(code).toEqual([{ styles: ['code'], text: 'run @deploy now', url: null }]);
+    const link = glossMentions([{ styles: [], text: 'see @beebee', url: 'https://x.dev' }]);
+    expect(link).toEqual([{ styles: [], text: 'see @beebee', url: 'https://x.dev' }]);
+  });
+
+  it('passes untouched prose through unchanged (same object)', () => {
+    const span = plain('no mentions here');
+    expect(glossMentions([span])).toEqual([span]);
+  });
+});

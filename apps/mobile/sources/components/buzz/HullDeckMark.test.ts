@@ -114,7 +114,7 @@ describe('HullDeckMark — three states, three languages', () => {
 
     // Idle is a quiet steel dot — no animation clock at all.
     const idle = render('idle');
-    expect(markStyle(idle)).toMatchObject({ backgroundColor: '#2e2e36' });
+    expect(markStyle(idle)).toMatchObject({ backgroundColor: '#3b3048' });
     expect(pulses(idle)).toBe(0);
   });
 
@@ -135,7 +135,7 @@ describe('HullDeckMark — three states, three languages', () => {
 
     // Idle stays the small steel dot.
     const idle = render('idle');
-    expect(markStyle(idle)).toMatchObject({ backgroundColor: '#2e2e36' });
+    expect(markStyle(idle)).toMatchObject({ backgroundColor: '#3b3048' });
     expect(pulses(idle)).toBe(0);
 
     // And the three reduced-motion marks really are three different shapes:

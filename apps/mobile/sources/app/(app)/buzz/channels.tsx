@@ -1423,7 +1423,9 @@ export default function BuzzChannels() {
                         <TouchableOpacity
                           accessibilityLabel={`Open ${corner.name} ${CORNER_LABEL}, ${status.label}`}
                           key={corner.id}
-                          onPress={() => router.push(cornerHref(corner.id, item.id, corner.name))}
+                          onPress={() =>
+                            router.push(cornerHref(corner.id, item.id, corner.name, 'room-list'))
+                          }
                           style={styles.cornerRow}
                         >
                           <Text

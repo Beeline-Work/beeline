@@ -64,6 +64,19 @@ describe('leaving a corner', () => {
     });
   });
 
+  it('returns to the Room list when the Corner was opened there', () => {
+    expect(
+      chatBackAction(
+        [{ name: 'buzz/channels' }, chatRoute('corner-1')],
+        'room-1',
+        'room-list',
+      ),
+    ).toEqual({ type: 'pop', count: 1 });
+    expect(chatBackAction([chatRoute('corner-1')], 'room-1', 'room-list')).toEqual({
+      type: 'room-list',
+    });
+  });
+
   it('matches the nearest parent copy, ignoring the corner it is leaving', () => {
     const routes = [chatRoute('room-1'), chatRoute('room-1'), chatRoute('corner-1')];
     expect(popCountToParentRoom(routes, 'room-1')).toBe(1);
@@ -104,6 +117,18 @@ describe('corner hrefs', () => {
     expect(cornerHref('corner-1', 'room-1')).toEqual({
       pathname: '/buzz/chat/[channelId]',
       params: { channelId: 'corner-1', parent: 'room-1' },
+    });
+  });
+
+  it('carries an explicit Room-list return target when opened from that list', () => {
+    expect(cornerHref('corner-1', 'room-1', 'fix-oauth-callback', 'room-list')).toEqual({
+      pathname: '/buzz/chat/[channelId]',
+      params: {
+        channelId: 'corner-1',
+        parent: 'room-1',
+        title: 'fix-oauth-callback',
+        returnTo: 'room-list',
+      },
     });
   });
 

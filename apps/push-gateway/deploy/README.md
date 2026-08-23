@@ -1,9 +1,20 @@
 # Production deployment
 
-The push gateway runs inside the relay Compose project. `relay-front` reaches
-it as `push-gateway:8788` on the shared network; port 8788 is never published
-to the host. The one process runs both the HTTP registration server and the
-`RegisteredEventPoller`.
+> Current host state (verified 2026-08-23): the live gateway is the user systemd
+> unit `buzzy-push-gateway.service`, running from
+> `~/buzzy-push-gateway/current`; relay-front reaches its host-bound port 8788.
+> Apply source updates by preparing and building a new immutable release,
+> atomically repointing `current`, and running
+> `systemctl --user restart buzzy-push-gateway.service`. Verify the public
+> `/push/health` route and `journalctl --user -u buzzy-push-gateway.service`.
+> Preserve `secrets/` and `state/`, and never start the Compose poller alongside
+> the unit. The rollout below documents the separate container migration target,
+> not the currently active host topology.
+
+In the container migration target, the push gateway runs inside the relay
+Compose project. `relay-front` reaches it as `push-gateway:8788` on the shared
+network; port 8788 is never published to the host. The one process runs both
+the HTTP registration server and the `RegisteredEventPoller`.
 
 The container uses these internal paths:
 
@@ -59,7 +70,7 @@ forwards the alias's unprefixed `/registrations` and `/health` paths to the same
 container. Do not run the host unit and container concurrently: two pollers
 sharing one state directory can duplicate sends and race durable writes.
 
-## Exact production rollout
+## Container migration rollout
 
 Run from a clean, committed checkout. The source registry must be an existing,
 non-empty version-1 registry; the installer never overwrites an already
@@ -87,6 +98,7 @@ migrated registry.
    directory, builds `beeline-push-gateway:local`, stops/disables the legacy
    systemd unit immediately before starting the container, and recreates only
    relay-front.
+
 4. Change the `push.buzzrouter.com` tunnel origin from host port 8788 to the
    same relay-front loopback origin used by `usebeeline.app` (port 3010 in the
    checked-in stack). This preserves the old unprefixed API through the

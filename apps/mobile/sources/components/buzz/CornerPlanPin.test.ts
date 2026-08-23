@@ -10,6 +10,7 @@ vi.mock('react-native', async () => {
   return {
     AppState: { currentState: 'active', addEventListener: () => ({ remove: () => undefined }) },
     Platform: { OS: 'android', select: (choices: Record<string, unknown>) => choices.default },
+    Pressable: host('Pressable'),
     ScrollView: host('ScrollView'),
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
     Text: host('Text'),
@@ -91,6 +92,25 @@ describe('CornerPlanPin', () => {
     expect(texts[1].props.children).toBe('Add color to code blocks');
     expect(texts[1].props.numberOfLines).toBe(2);
     expect(renderer.root.findAllByType('ScrollView')).toHaveLength(0);
+  });
+
+  it('expands the complete objective when pressed and collapses it on a second press', () => {
+    const objective = `Preserve this complete objective ${'with all of its detail '.repeat(20)}`;
+    const renderer = render(React.createElement(CornerPlanPin, { objective, testID: 'plan' }));
+    const toggle = renderer.root.findByProps({ testID: 'plan-objective-toggle' });
+    const text = () => renderer.root.findByProps({ testID: 'plan-objective' });
+
+    expect(text().props.children).toBe(objective);
+    expect(text().props.numberOfLines).toBe(2);
+    expect(toggle.props.accessibilityState).toEqual({ expanded: false });
+
+    act(() => toggle.props.onPress());
+    expect(text().props.numberOfLines).toBeUndefined();
+    expect(toggle.props.accessibilityState).toEqual({ expanded: true });
+
+    act(() => toggle.props.onPress());
+    expect(text().props.numberOfLines).toBe(2);
+    expect(toggle.props.accessibilityState).toEqual({ expanded: false });
   });
 
   it("prefers the agent's own plan objective over the corner's opening task", () => {

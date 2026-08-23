@@ -72,7 +72,15 @@ function sign(identity: Identity, kind: number, tags: string[][], content = ''):
   );
 }
 
-async function isRegisteredAgentKey(ctx: ChannelOpsContext, pubkey: string): Promise<boolean> {
+/**
+ * True when `pubkey` has self-signed the durable first-class agent record
+ * (`#t=buzz-agent`, kind:9). This classification is independent of channel
+ * roles — promoting an agent to admin never turns its key into a human key.
+ */
+export async function isRegisteredAgentKey(
+  ctx: ChannelOpsContext,
+  pubkey: string,
+): Promise<boolean> {
   const events = await query(ctx, [
     { kinds: [KIND_STREAM_MESSAGE], authors: [pubkey], '#t': [TAG_AGENT], limit: 20 },
   ]);
@@ -98,6 +106,31 @@ export interface ChannelOpsContext {
 
 export type ChannelRole = 'owner' | 'admin' | 'member';
 
+/**
+ * Room creation is a HUMAN action. A registered agent identity must never
+ * author a top-level Room (kind:9007 without a `parent` tag) — that is the
+ * write that makes an agent the relay-recorded `created_by` of a Room and is
+ * how pairing once silently bound a foreign repository into a Workspace.
+ * Enforcement lives here, at the single funnel every creation event in this
+ * codebase is assembled and signed through, keyed on the durable self-signed
+ * agent registry — not on roles, which an operator can change. Child channels
+ * (corners, `parentChannelId` set) stay agent-creatable by design: they are
+ * work items inside a human-governed Room, not Rooms.
+ */
+async function assertTopLevelCreatorIsHuman(
+  ctx: ChannelOpsContext,
+  opts?: { parentChannelId?: string },
+): Promise<void> {
+  if (opts?.parentChannelId) return;
+  if (await isRegisteredAgentKey(ctx, ctx.identity.publicKey)) {
+    throw new Error(
+      'room creation is a human action: a registered agent identity cannot create a Room. ' +
+        'Have a human create or choose the Room (and bind any repository), then pair or ' +
+        'attach the agent to it.',
+    );
+  }
+}
+
 /** Create an open stream channel owned by `identity`. Returns channel UUID. */
 export async function createChannel(
   ctx: ChannelOpsContext,
@@ -114,6 +147,7 @@ export async function createChannel(
     mirrorCommunityMembers?: boolean;
   },
 ): Promise<string> {
+  await assertTopLevelCreatorIsHuman(ctx, opts);
   const channelId = opts?.channelId ?? newChannelUuid();
   const tags: string[][] = [
     ['h', channelId],

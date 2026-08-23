@@ -1498,12 +1498,24 @@ export function agentPresenceRetryDelayMs(
 }
 
 /**
- * Start a low-rate heartbeat. Publishes immediately and serializes refreshes so
- * a slow relay cannot create overlapping requests. The returned stop function
- * emits an offline marker after any in-flight heartbeat settles.
+ * Start a low-rate heartbeat. Publishes `online` immediately (prompt re-presence
+ * on daemon startup) and serializes refreshes so a slow relay cannot create
+ * overlapping requests. The returned stop function goes QUIET: it drains any
+ * in-flight heartbeat and stops refreshing, but publishes nothing.
  *
- * Two properties here are load-bearing for the client's online/offline verdict,
- * which is nothing but "how old is the newest presence record":
+ * The reader's online/offline verdict is nothing but "how old is the newest
+ * presence record" — an explicit offline marker on graceful shutdown would
+ * make every planned restart (self-update handover, `beeline start` restart)
+ * flash the agent OFFLINE in every client until the replacement daemon's first
+ * heartbeat lands. Going quiet instead means a restart inside the lease window
+ * (`AGENT_PRESENCE_STALE_MS`) is a non-event: the last `online` record stays
+ * valid until the new daemon replaces it. A genuinely dead daemon — crash,
+ * kill -9, deliberate stop — is still detected within that same bounded lease:
+ * silence expires honestly. `setStatus('offline')` remains for the one shape
+ * where going quiet would LIE: this daemon is up but its relay connection is
+ * not, and the outage has outlived the lease.
+ *
+ * Two further properties are load-bearing for the client verdict:
  *
  *  - **`created_at` is stamped at PUBLISH time, never at enqueue time.** A
  *    heartbeat that waited behind a retrying predecessor would otherwise land
@@ -1551,9 +1563,9 @@ export function startAgentPresence(
         return;
       } catch (error) {
         const lastAttempt = attempt >= AGENT_PRESENCE_RETRY_MAX_ATTEMPTS;
-        // A shutdown's own offline marker still retries: it is what tells every
-        // reader the daemon is gone rather than merely unreachable.
-        if (lastAttempt || (stopped && nextStatus !== 'offline')) {
+        // An outage's own offline marker still retries: it is what tells every
+        // reader the daemon's relay path is down rather than merely unreachable.
+        if (lastAttempt || stopped) {
           console.error(
             `[body] agent presence ${nextStatus} failed after ${attempt} attempts:`,
             error,
@@ -1605,12 +1617,13 @@ export function startAgentPresence(
     return enqueue(status);
   };
 
+  // Deliberately NO offline publish here — see the docblock above. A planned
+  // shutdown is a quiet handover; the lease is the death signal.
   const stop = async () => {
     if (stopped) return;
     stopped = true;
     clearInterval(timer);
     await chain;
-    await publishWithRetry('offline');
   };
   return Object.assign(stop, { generationId, setStatus });
 }

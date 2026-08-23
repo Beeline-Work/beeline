@@ -38,6 +38,12 @@ export type TurnActivityAction = {
   weight: ActionWeight;
   title: string;
   status?: string;
+  /**
+   * One plain-language line projected from the tool result saying WHY this
+   * failed — `command exited 1: vitest: not found`, never a bare FAILED.
+   * Set only for failures; rendered in the row, one line, dim.
+   */
+  reason?: string;
   path?: string;
   command?: string;
   input?: string;
@@ -146,6 +152,55 @@ function isFailure(item: AgentActivityItem): boolean {
     /(?:failed|error|unavailable|denied)/i.test(item.status ?? '') ||
     /(?:failed|error|unavailable|not available|cannot|can't)/i.test(item.text ?? '')
   );
+}
+
+/**
+ * One plain-language line saying WHY an action failed, projected from the
+ * tool's own result — never a bare "Action failed".
+ *
+ * Body ships the raw output on the same wire record as the status; this folds
+ * the recurring shapes in the live failure corpus (2026-08-23) into one
+ * readable clause each and falls back to the first error-looking line.
+ */
+export function failureReason(item: AgentActivityItem): string | undefined {
+  const raw = item.output ?? item.text;
+  if (!raw) return undefined;
+  // Body usually JSON-stringifies the tool result envelope.
+  let text = raw;
+  let exitCode: number | undefined;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (parsed && typeof parsed === 'object') {
+      if (typeof parsed.formatted_output === 'string') text = parsed.formatted_output;
+      if (typeof parsed.exit_code === 'number') exitCode = parsed.exit_code;
+      if (typeof parsed.stderr === 'string' && parsed.stderr.trim()) text = parsed.stderr;
+    }
+  } catch {
+    // Plain-text output stays as-is.
+  }
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+  const all = lines.join(' \u2014 ');
+
+  const notFound = text.match(/(?:sh:\s*)?\d*:?\s*([\w@./-]+):\s*not found/i);
+  if (notFound) return `command not found: ${notFound[1]}`;
+  if (/Read-only file system|EROFS/i.test(all)) {
+    return 'blocked: that path is read-only outside this corner\u2019s work area';
+  }
+  const missingModule = text.match(/Cannot find (?:package|module) ['"]([^'"]+)['"]/);
+  if (missingModule) return `missing dependency: ${missingModule[1]}`;
+  const noSuchFile = text.match(/(?:ENOENT|No such file or directory).*?[\s'"](\/?[\w.@/-]+)['"]?/);
+  if (noSuchFile && noSuchFile[1] !== 'sh') {
+    return `file does not exist: ${clamp(redactPaths(noSuchFile[1]), 60)}`;
+  }
+  const lock = text.match(/Unable to create '([^']+index\.lock)'/);
+  if (lock) return `git could not write its index (${redactPaths(lock[1])})`;
+  const refused = text.match(/fatal:\s*(.+)/i);
+  if (refused) return clamp(oneLine(refused[1]), 90);
+  const errorLine = lines.find((line) => /(?:^|\b)(?:error|ERR!|ERROR|Traceback|FATAL|exception)\b/i.test(line));
+  const detail = errorLine ?? (exitCode !== undefined || /exit_code/.test(raw) ? lines.at(-1) : undefined);
+  if (!detail) return undefined;
+  const prefix = exitCode !== undefined ? `command exited ${exitCode}: ` : '';
+  return clamp(prefix + oneLine(detail), 110);
 }
 
 function failureTitle(item: AgentActivityItem): string {
@@ -460,6 +515,7 @@ export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActi
   for (const [id, tool] of tools) {
     const weight = actionWeight(tool);
     const title = actionTitle(tool) ?? cleanTitle(tool.title) ?? 'Tool';
+    const reason = weight === 'failure' ? failureReason(tool) : undefined;
     // Keep the tool call as the transcript row and its files as the next level
     // of the drill-down: tool -> file list -> patch. Flattening files onto the
     // slab made a multi-file edit indistinguishable from several unrelated
@@ -470,6 +526,7 @@ export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActi
         kind: 'tool',
         weight,
         title,
+        ...(reason ? { reason } : {}),
         ...(tool.status ? { status: tool.status } : {}),
         ...(tool.command ? { command: tool.command } : {}),
         ...(tool.input ? { input: tool.input } : {}),
@@ -484,6 +541,7 @@ export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActi
       kind: 'tool',
       weight,
       title,
+      ...(reason ? { reason } : {}),
       ...(tool.status ? { status: tool.status } : {}),
       ...(tool.command ? { command: tool.command } : {}),
       ...(tool.input ? { input: tool.input } : {}),

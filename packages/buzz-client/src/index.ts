@@ -117,6 +117,20 @@ export {
 export type { AgentPresence, AgentPresenceStatus } from './agent-presence.js';
 
 export {
+  CORNER_NEEDS_YOU_STATUSES,
+  CORNER_WORK_SIGNAL_TAGS,
+  cornerLifecycleFact,
+  cornerStatusPrecedence,
+  isCornerNeedsYou,
+  mapRawCornerStatusTag,
+  mergeCornerStatuses,
+  resolveCornerLifecycle,
+  resolveCornerStatusAgainstArchive,
+  type CornerLifecycleFact,
+  type CornerLifecycleStatus,
+} from './corner-lifecycle.js';
+
+export {
   tagValue,
   tagValues,
   channelIdOf,

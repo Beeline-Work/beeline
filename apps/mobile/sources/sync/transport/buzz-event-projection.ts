@@ -382,6 +382,21 @@ export type ChatEventProjection = {
    *  (nothing happens until a person says something). Absent means the daemon
    *  did not say, and a client must then make NO retry claim at all. */
   deliveryRetry?: DeliveryRetryPosture;
+  /** The daemon's acknowledgement of THIS corner's signed approval —
+   *  `accepted` (it is landing the approved tip) or `rejected` with the plain
+   *  reason (the approval named an old target tip). This is what lets the
+   *  approve panel resolve its DELIVERING state on evidence instead of
+   *  spinning forever when nothing ever consumes the event. */
+  approvalAck?: {
+    approvalId: string;
+    decision: 'accepted' | 'rejected';
+    tip?: string;
+    rejectedTip?: string;
+  };
+  /** The approved work is CONFIRMED landed on the target branch (`delivery`
+   *  = `landed` tag). Resolves DELIVERING to success even if the corner's
+   *  archive notice was missed live. */
+  deliveryLanded?: boolean;
   agentPresence?: AgentPresence;
 };
 
@@ -512,6 +527,15 @@ export function projectChatEvent(
   // own input, not the agent speaking, so it renders as a system line and
   // never joins the agent's attributed voice run.
   const isSteerQueued = bodyControl && !subchannelId && sessionEventHasTag(event, 't', 'steer-queued');
+  // The daemon's receipt for a signed merge approval: `decision=accepted`
+  // (landing now) or `rejected` with the plain reason. Rendered as a system
+  // line — it is a receipt about the human's own input, never agent speech.
+  const isApprovalAck =
+    bodyControl && !subchannelId && sessionEventHasTag(event, 't', 'buzz-merge-approval-ack');
+  // The approved work is CONFIRMED on the target branch. Resolves the approve
+  // panel's DELIVERING state even if the archive notice was missed live.
+  const deliveryLanded =
+    bodyControl && !subchannelId && sessionEventHasTag(event, 'delivery', 'landed');
   // The daemon's "that slash verb is not one of Beeline's commands" marker
   // (`apps/body/src/body.ts`'s `markSlashCommandVocabulary`). Same shape as
   // the queued-steer ack: a receipt about the human's own input, rendered as
@@ -725,6 +749,30 @@ export function projectChatEvent(
         },
       };
     }
+    if (isApprovalAck) {
+      const decision = sessionEventTagValue(event, 'decision');
+      if (decision !== 'accepted' && decision !== 'rejected') return {};
+      const approvalId = sessionEventTagValue(event, 'approval') ?? eventId(event);
+      return {
+        approvalAck: {
+          approvalId,
+          decision,
+          ...(tip ? { tip } : {}),
+          ...(sessionEventTagValue(event, 'rejected-tip')
+            ? { rejectedTip: sessionEventTagValue(event, 'rejected-tip')! }
+            : {}),
+        },
+        message: {
+          id: eventId(event),
+          text,
+          isUser: false,
+          timestamp: eventTimestamp(event),
+          ...(pubkey ? { pubkey } : {}),
+          isSystemNotice: true,
+          ...(isNew ? { isNew: true } : {}),
+        },
+      };
+    }
     if (isDeliveryFailure) {
       // Previously dropped entirely (no `message`) — the relay durably had
       // the failure but the transcript never showed it and the approve
@@ -750,6 +798,7 @@ export function projectChatEvent(
       ...(previewUrl ? { previewUrl } : {}),
       ...(clearMergeTarget ? { clearMergeTarget: true } : {}),
       ...(isArchived && !subchannelId ? { archiveChannel: true } : {}),
+      ...(deliveryLanded ? { deliveryLanded: true } : {}),
     };
   }
 

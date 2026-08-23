@@ -108,6 +108,7 @@ import {
   type CornerStatus,
   type CornerSummary,
 } from '@/buzz/corners';
+import { cornerActionSurface, type CornerAttentionCard } from '@/buzz/corner-attention';
 import { personIdentityLabel, shortMemberNpub } from '@/buzz/member-display';
 import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
 import {
@@ -182,6 +183,11 @@ import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
 import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
 import {
+  HeaderIdentitySlot,
+  HeaderMetaCaps,
+  HeaderMetaRow,
+} from '@/components/buzz/HeaderLadder';
+import {
   LEDGER_MARGINALIA_WIDTH,
   LedgerEntry,
   LedgerGhostLine,
@@ -198,6 +204,11 @@ import {
   NewMessageMaterialize,
   PixelLoader,
 } from '@/components/buzz/MonoHull';
+import {
+  APPROVAL_ACK_TIMEOUT_MS,
+  approvalTimeoutMessage,
+  nextApprovalState,
+} from '@/buzz/approval-state';
 
 type RoomMemberOption = {
   pubkey: string;
@@ -370,6 +381,42 @@ function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
   );
 }
 
+// The one card the corner's action area renders where the merge-review panel
+// lives, derived ONCE off the same lifecycle verdict the Room index golds.
+// A live merge target keeps today's review panel; a needs-you verdict with no
+// merge card gets an attention card naming WHAT needs the person (the deck
+// said 'ready for review' / 'decision needed' — the corner must say why);
+// anything else keeps the current empty state. See `corner-attention.ts`.
+function CornerAttentionCardView({
+  card,
+  onReply,
+}: {
+  card: CornerAttentionCard;
+  onReply: () => void;
+}) {
+  return (
+    <HullSurface strength="raised" style={styles.attentionCard} testID="corner-attention-card">
+      <Text style={[styles.attentionCardState]}>
+        {card.glyph} {card.label}
+      </Text>
+      {card.detail ? (
+        <Text style={styles.attentionCardDetail} numberOfLines={3} testID="corner-attention-detail">
+          {card.detail}
+        </Text>
+      ) : null}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Open the composer to reply in this corner"
+        onPress={onReply}
+        style={styles.attentionCardReply}
+        testID="corner-attention-reply"
+      >
+        <Text style={styles.attentionCardReplyLabel}>REPLY IN THIS CORNER →</Text>
+      </Pressable>
+    </HullSurface>
+  );
+}
+
 function SwipeToReply({
   children,
   messageId,
@@ -497,6 +544,11 @@ export default function BuzzChat() {
   const [approvalState, setApprovalState] = useState<
     'none' | 'sending' | 'delivering' | 'failed' | 'merged'
   >('none');
+  // The daemon confirmed it CONSUMED the signed approval (`decision=accepted`
+  // ack) and is landing it. This is what lets DELIVERING resolve on evidence:
+  // before this existed, a missed archive event or silent daemon left the
+  // spinner up forever. Cleared whenever the panel reopens for a new review.
+  const [approvalAcked, setApprovalAcked] = useState(false);
   // The daemon's own posture after a failed land. This screen used to hard-code
   // "RETRYING AUTOMATICALLY", which is false for a land the daemon has stopped
   // re-attempting (a moved target being rebased, or one it has given up on) —
@@ -1097,6 +1149,20 @@ export default function BuzzChat() {
     () => resolveCornerLifecycleStatus(cornerLifecycleStatus, isArchived),
     [cornerLifecycleStatus, isArchived],
   );
+  // The corner action area's card, from the SAME verdict the deck golds. One
+  // derivation (`corner-attention.ts`); the screen renders the answer and
+  // never re-reads raw status tags.
+  const cornerAction = useMemo(
+    () =>
+      cornerActionSurface({
+        status: displayedCornerStatus,
+        hasMergeTarget: Boolean(mergeTarget),
+        archived: isArchived,
+        messages,
+        mergeNotReadyReason,
+      }),
+    [displayedCornerStatus, isArchived, mergeTarget, mergeNotReadyReason, messages],
+  );
   const activeAgentTurn = useMemo(
     () =>
       [...messages]
@@ -1399,6 +1465,10 @@ export default function BuzzChat() {
           pendingLiveEvents = [];
           const projections = cacheLiveSessionEvents(identity.publicKey, decodedId, batch);
           for (const projected of projections) {
+            // One reducer owns every transition out of sending/delivering —
+            // rejection ack, landed card, archive notice, delivery failure —
+            // so the approve panel can never hang on an unbounded claim.
+            setApprovalState((current) => nextApprovalState(current, projected));
             if (projected.mergeTarget) {
               // A merge-ready on a DIFFERENT tip is a new change to review —
               // it supersedes whatever happened to the previous approval, so
@@ -1410,6 +1480,7 @@ export default function BuzzChat() {
                 mergeTargetTipRef.current !== projected.mergeTarget.tip
               ) {
                 setApprovalState((current) => (current === 'merged' ? current : 'none'));
+                setApprovalAcked(false);
                 setDeliveryRetry(undefined);
               }
               mergeTargetTipRef.current = projected.mergeTarget.tip;
@@ -1423,6 +1494,7 @@ export default function BuzzChat() {
               mergeTargetTipRef.current = null;
               setMergeTarget(null);
               setPreviewUrl(null);
+              setApprovalAcked(false);
             }
             if (projected.archiveChannel) {
               setIsArchived(true);
@@ -1434,6 +1506,16 @@ export default function BuzzChat() {
             if (projected.deliveryFailed) {
               setApprovalState((current) => (current === 'merged' ? current : 'failed'));
               setDeliveryRetry(projected.deliveryRetry);
+            }
+            // The daemon's receipt for THIS signed approval: accepted (it is
+            // landing the approved tip — stop claiming "delivering", which no
+            // one was answering for) or rejected with its plain reason.
+            if (projected.approvalAck?.decision === 'accepted') {
+              setApprovalAcked(true);
+              setApprovalError(null);
+            } else if (projected.approvalAck?.decision === 'rejected') {
+              setApprovalAcked(false);
+              setDeliveryRetry(undefined);
             }
             applyAgentPresence(projected.agentPresence);
           }
@@ -2545,6 +2627,19 @@ export default function BuzzChat() {
     }
   }, [decodedId, handleBack, transport]);
 
+  // An approval that was accepted by the relay but never acknowledged by the
+  // daemon resolves ITSELF here. The signed approval stays on the relay and a
+  // reconnecting daemon will honor it — the message says exactly that, so an
+  // approval can never hang silently again (the 2026-08-23 live defect).
+  useEffect(() => {
+    if (approvalState !== 'delivering' || approvalAcked) return;
+    const timer = setTimeout(() => {
+      setApprovalState((current) => (current === 'delivering' ? 'failed' : current));
+      setApprovalError(approvalTimeoutMessage());
+    }, APPROVAL_ACK_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [approvalState, approvalAcked]);
+
   const handleApprove = useCallback(async () => {
     if (!transport || !mergeTarget) return;
     setApprovalState('sending');
@@ -2553,6 +2648,7 @@ export default function BuzzChat() {
       const result = await transport.submitMergeApproval(decodedId, mergeTarget);
       if (!result.success)
         throw new Error(result.message ?? 'Approval was not accepted by the relay');
+      setApprovalAcked(false);
       setApprovalState('delivering');
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
@@ -3048,6 +3144,12 @@ export default function BuzzChat() {
     ],
   );
 
+  // The Workspace this Room belongs to, for the header's leading identity
+  // mark — the same mark the rail and the workspace drawer trigger draw.
+  const headerCommunity = activeCommunityId
+    ? (communities.find((community) => community.communityId === activeCommunityId) ?? null)
+    : null;
+
   if (channelCache?.messages === undefined && initialChannelCache?.messages === undefined) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
@@ -3101,7 +3203,7 @@ export default function BuzzChat() {
             because this mark and name are always on screen above them.
           */}
           {isCorner && cornerAgentPubkey && (
-            <View style={styles.cornerHeaderMark} testID="corner-header-agent">
+            <HeaderIdentitySlot testID="corner-header-agent">
               <IdentityMark
                 kind="agent"
                 seed={cornerAgentDisplay?.avatarSeed ?? cornerAgentPubkey}
@@ -3110,7 +3212,18 @@ export default function BuzzChat() {
                 size={26}
                 alive={sessionState === 'working' || processState === 'live'}
               />
-            </View>
+            </HeaderIdentitySlot>
+          )}
+          {!isCorner && !isDirectMessage && (
+            <HeaderIdentitySlot testID="room-header-workspace-mark">
+              <IdentityMark
+                kind="workspace"
+                seed={activeCommunityId ?? 'workspace-loading'}
+                avatarUrl={headerCommunity?.avatar}
+                name={headerCommunity?.name}
+                size={26}
+              />
+            </HeaderIdentitySlot>
           )}
           <TouchableOpacity
             accessibilityLabel={
@@ -3150,20 +3263,20 @@ export default function BuzzChat() {
                 style={styles.repoChip}
                 testID="room-repo-chip"
               >
-                <Text numberOfLines={1} style={styles.repoChipText}>
-                  ▢ {roomRepoChipLabel(roomRepository)}
-                </Text>
+                <HeaderMetaCaps testID="room-repo-chip-text">
+                  REPO · {roomRepoChipLabel(roomRepository)}
+                </HeaderMetaCaps>
               </TouchableOpacity>
             )}
             {isCorner ? (
-              <View style={styles.cornerHeaderStatusRow}>
+              <HeaderMetaRow>
                 <Text numberOfLines={1} style={styles.cornerHeaderAgent}>
                   {(cornerAgentDisplay?.name ?? 'AGENT').toUpperCase()}
                 </Text>
                 {cornerAgentPubkey && (
                   <AgentPresenceLight online={cornerAgentOnline} testID="corner-header-presence" />
                 )}
-                <Text numberOfLines={1} style={styles.cornerHeaderMeta} testID="corner-view-status">
+                <HeaderMetaCaps testID="corner-view-status">
                   {/*
                     Same canonical status word as the Room-list dropdown, the
                     Room chat card, and the standalone Corners list.
@@ -3174,14 +3287,14 @@ export default function BuzzChat() {
                   {participantsHydrated
                     ? `  ·  ${formatRoomParticipantTotal(roomParticipantTotal)}`
                     : ''}
-                </Text>
-              </View>
+                </HeaderMetaCaps>
+              </HeaderMetaRow>
             ) : (
-              <Text style={styles.headerMeta} numberOfLines={1}>
+              <HeaderMetaCaps testID="room-header-meta">
                 {participantsHydrated
                   ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ·  IN THIS ROOM  ›`
                   : 'LOADING MEMBERS'}
-              </Text>
+              </HeaderMetaCaps>
             )}
           </TouchableOpacity>
           {!parentChannelId && !isDirectMessage && !viewerIsAgent && !isArchived && (
@@ -3311,7 +3424,7 @@ export default function BuzzChat() {
           ListHeaderComponent={
             isCorner && !isArchived && sessionState === 'done' ? (
               <View style={styles.cornerReviewFooter}>
-                {mergeTarget ? (
+                {cornerAction.kind === 'review' ? (
                   <HullSurface strength="raised" style={styles.approvalBar}>
                     <View style={styles.approvalInfo}>
                       <Text style={styles.prChip}>CHANGE READY FOR REVIEW</Text>
@@ -3358,7 +3471,7 @@ export default function BuzzChat() {
                       <ChangeReviewPanel
                         transport={transport}
                         sessionId={decodedId}
-                        tip={mergeTarget.tip}
+                        tip={mergeTarget!.tip}
                         onFilesLoaded={handleReviewFilesLoaded}
                       />
                     )}
@@ -3389,10 +3502,17 @@ export default function BuzzChat() {
                       // Approval accepted by the relay — landing/confirming
                       // is still in progress. Must never read the same as
                       // MERGED: that word describes only a durably confirmed
-                      // outcome (the archiveChannel projection below).
+                      // outcome (the archiveChannel projection below). Once
+                      // the daemon's ack arrives the claim narrows to what
+                      // someone actually took custody of; before that, the
+                      // ack timeout below resolves the state honestly.
                       <View style={styles.approvalPending} testID="approve-corner-delivering">
                         <PixelLoader compact />
-                        <Text style={styles.approvalStateText}>✓ APPROVAL SENT · DELIVERING…</Text>
+                        <Text style={styles.approvalStateText}>
+                          {approvalAcked
+                            ? '✓ APPROVAL RECEIVED · LANDING…'
+                            : '✓ APPROVAL SENT · DELIVERING…'}
+                        </Text>
                       </View>
                     ) : approvalState === 'failed' ? (
                       // Only ever claim what the daemon actually told us it is
@@ -3420,6 +3540,11 @@ export default function BuzzChat() {
                       </Text>
                     ) : null}
                   </HullSurface>
+                ) : cornerAction.kind === 'attention' ? (
+                  <CornerAttentionCardView
+                    card={cornerAction.card}
+                    onReply={() => composerRef.current?.focus()}
+                  />
                 ) : (
                   <HullSurface
                     strength="quiet"
@@ -4421,12 +4546,8 @@ const styles = StyleSheet.create((theme) => {
     color: groknight.muted,
   },
   cornerBackText: { ...Typography.mono(), color: groknight.textMuted },
-  // The single agent's faceted mark, stated once for the whole corner.
-  cornerHeaderMark: {
-    marginRight: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  // The single agent's faceted mark, stated once for the whole corner — the
+  // slot itself is the shared HeaderIdentitySlot primitive.
   headerCenter: {
     flex: 1,
     minHeight: 44,
@@ -4459,18 +4580,6 @@ const styles = StyleSheet.create((theme) => {
   },
   cornerChannelNameSkeleton: { width: 108 },
   repoChip: { alignSelf: 'flex-start', marginTop: 2, maxWidth: '100%' },
-  repoChipText: {
-    ...Typography.mono(),
-    fontSize: 11,
-    color: groknight.textMuted,
-  },
-  headerMeta: {
-    ...Typography.default(),
-    fontSize: 11,
-    lineHeight: 15,
-    color: groknight.textMuted,
-    marginTop: 2,
-  },
   cornerHeaderAgent: {
     ...Typography.mono('semiBold'),
     flexShrink: 0,
@@ -4478,20 +4587,6 @@ const styles = StyleSheet.create((theme) => {
     fontSize: 10,
     lineHeight: 14,
     letterSpacing: 0.7,
-  },
-  cornerHeaderMeta: {
-    ...Typography.mono(),
-    flexShrink: 1,
-    color: groknight.textMuted,
-    fontSize: 10,
-    lineHeight: 14,
-  },
-  cornerHeaderStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 3,
-    minWidth: 0,
   },
   addMembersButton: {
     width: 44,
@@ -5205,6 +5300,40 @@ const styles = StyleSheet.create((theme) => {
     color: groknight.textMuted,
     fontSize: 11,
     lineHeight: 16,
+  },
+  // ── Corner attention card ───────────────────────────────────────
+  // Same action-area slot as the approval bar; needs-you is the one state
+  // that spends the accent on either surface.
+  attentionCard: {
+    marginHorizontal: 16,
+    padding: 14,
+    gap: 8,
+    backgroundColor: groknight.bgTerminal,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.border,
+  },
+  attentionCardState: {
+    ...Typography.mono('semiBold'),
+    fontSize: 12,
+    letterSpacing: 0.3,
+    color: groknight.accent,
+  },
+  attentionCardDetail: {
+    ...Typography.default(),
+    color: groknight.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  attentionCardReply: {
+    alignSelf: 'flex-start',
+    paddingVertical: 6,
+    paddingRight: 12,
+  },
+  attentionCardReplyLabel: {
+    ...Typography.mono(),
+    fontSize: 11,
+    letterSpacing: 0.3,
+    color: groknight.textPrimary,
   },
 
   // ── Composer ────────────────────────────────────────────────────

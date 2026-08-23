@@ -286,17 +286,22 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
       await body.pollMergeCompletions();
 
       expect(
-        published.filter((event) =>
-          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'land-summary'),
+        published.filter(
+          (event) =>
+            Array.isArray(event.tags) &&
+            event.tags.some((tag) => tag[0] === 't' && tag[1] === 'land-summary'),
         ),
       ).toHaveLength(0);
-      // ...and maintenance reports the block without starting a model turn.
-      expect(
-        published.some((event) =>
-          event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'blocked'),
-        ),
-      ).toBe(true);
-      expect(Reflect.get(body, 'promptAgent')).not.toHaveBeenCalled();
+      // A moved target self-heals: maintenance reports it as an AUTOMATIC
+      // recovery and hands the corner its own target-sync model turn.
+      const recovering = published.find(
+        (event) =>
+          Array.isArray(event.tags) &&
+          event.content.startsWith("Couldn't land this change") &&
+          event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'auto'),
+      );
+      expect(recovering).toBeDefined();
+      expect(Reflect.get(body, 'promptAgent')).toHaveBeenCalled();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -407,9 +412,11 @@ describe('every land path recaps the corner exactly once', () => {
   }
 
   function landSummaries(published: NostrEvent[]): NostrEvent[] {
-    return published.filter((event) =>
-      event.tags.some((tag) => tag[0] === 't' && tag[1] === 'land-summary'),
-    );
+    // The attention-transition gate also POSTs /query reads through this
+    // capture; only signed kind:9 events are publishes.
+    return published
+      .filter((event) => Array.isArray(event.tags))
+      .filter((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'land-summary'));
   }
 
   /** Approve the corner's exact tip, as a device-held human admin would. */

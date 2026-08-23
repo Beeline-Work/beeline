@@ -35,6 +35,7 @@ import {
   getChannelMetadata,
   getChannelRole,
   isMember,
+  isMembershipProjectionTimeout,
   leaveRoom,
   listMembers,
   removeMember,
@@ -44,6 +45,7 @@ import {
   waitUntilNotMember,
   type ChannelOpsContext,
 } from './channel.js';
+import { isRoomUnmigratable, markRoomUnmigratable } from './unmigratable-rooms.js';
 import type {
   Community,
   CommunityInvite,
@@ -571,6 +573,9 @@ async function assertCommunityMemberInChannels(
     // relay's low-level kind:9000 rejection in the app.
     if ((await getChannelMetadata(ctx, channelId))?.archived) continue;
     if (await isMember(ctx, channelId, pubkey)) continue;
+    // A previously-proven unprojectable self-join stays unprojectable; skip
+    // without re-paying the full projection wait on every bootstrap.
+    if (isRoomUnmigratable(channelId, pubkey)) continue;
     try {
       await setMemberRole(ctx, channelId, pubkey, 'member', {
         extraTags: [[TAG_COMMUNITY, communityId]],
@@ -581,10 +586,32 @@ async function assertCommunityMemberInChannels(
       if (isArchivedChannelError(error)) continue;
       throw error;
     }
-    await waitUntilMember(ctx, channelId, pubkey);
+    try {
+      await waitUntilMember(ctx, channelId, pubkey);
+    } catch (error) {
+      if (!handleUnprojectableSelfJoin(channelId, pubkey, error)) throw error;
+      continue;
+    }
     repaired.push(channelId);
   }
   return repaired;
+}
+
+/**
+ * Classify a failed post-publish membership assert. The relay accepting a
+ * kind:9000 member-add but never updating kind:39002 means it does not honor
+ * this key's self-join in this room (no living admin to author it) — a
+ * permanent verdict, recorded once so later bootstraps skip silently.
+ * Returns true when handled; anything else (transport failure, relay
+ * rejection) is NOT handled and propagates to the caller unchanged.
+ */
+function handleUnprojectableSelfJoin(channelId: string, pubkey: string, error: unknown): boolean {
+  if (!isMembershipProjectionTimeout(error)) return false;
+  markRoomUnmigratable(channelId, pubkey);
+  console.warn(
+    `[buzz-client] room ${channelId} is not migratable for ${pubkey.slice(0, 12)}…: relay stored the self-join but its kind:39002 projection never updated (room has no living admin); skipping`,
+  );
+  return true;
 }
 
 async function isRegisteredAgentIdentity(ctx: ChannelOpsContext, pubkey: string): Promise<boolean> {
@@ -678,10 +705,17 @@ const ROLE_RANK: Record<'member' | 'admin' | 'owner', number> = { member: 0, adm
  *
  * Corners keep the exact membership they inherited when opened, and DMs are
  * immutable two-person Rooms — both are skipped, like Workspace joins do.
+ *
+ * Degradation: a room whose 39002 projection never reflects the acked self-join
+ * (relay honors member-adds only from a room admin — an orphaned room with no
+ * living admin can never admit this key) is classified NOT MIGRATABLE: one
+ * console line, verdict cached via unmigratable-rooms so later bootstraps skip
+ * silently, and migration continues over the remaining rooms without throwing.
  */
 export async function migrateSuccessorMemberships(
   ctx: ChannelOpsContext,
   predecessors: readonly string[],
+  opts?: { membershipWaitTimeoutMs?: number },
 ): Promise<string[]> {
   const pubkey = ctx.identity.publicKey;
   if (await isRegisteredAgentIdentity(ctx, pubkey)) return [];
@@ -725,19 +759,37 @@ export async function migrateSuccessorMemberships(
   for (const [channelId] of createByChannel) {
     if ((await getChannelMetadata(ctx, channelId))?.archived) continue;
     if (await isMember(ctx, channelId, pubkey)) continue;
+    // A room proven unmigratable on an earlier bootstrap (relay stores the
+    // self-join but never projects kind:39002 for it) is skipped without
+    // re-asserting the full projection wait every launch.
+    if (isRoomUnmigratable(channelId, pubkey)) continue;
     let role: 'member' | 'admin' | 'owner' = 'member';
     for (const predecessor of chain) {
       const predecessorRole = await getChannelRole(ctx, channelId, predecessor).catch(() => null);
       if (predecessorRole && ROLE_RANK[predecessorRole] > ROLE_RANK[role]) role = predecessorRole;
     }
+    // A genuine publish failure (relay rejection / network) keeps its existing
+    // error handling; only the post-publish projection assert can classify a
+    // room as not migratable.
     try {
       await setMemberRole(ctx, channelId, pubkey, role);
-      await waitUntilMember(ctx, channelId, pubkey);
-      migrated.push(channelId);
     } catch (error) {
       if (isArchivedChannelError(error)) continue;
       throw error;
     }
+    const waitTimeoutMs = opts?.membershipWaitTimeoutMs ?? undefined;
+    try {
+      await waitUntilMember(
+        ctx,
+        channelId,
+        pubkey,
+        waitTimeoutMs === undefined ? undefined : { timeoutMs: waitTimeoutMs },
+      );
+    } catch (error) {
+      if (!handleUnprojectableSelfJoin(channelId, pubkey, error)) throw error;
+      continue; // Not migratable: skip it, keep migrating the remaining rooms.
+    }
+    migrated.push(channelId);
   }
   return migrated;
 }

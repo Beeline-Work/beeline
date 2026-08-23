@@ -69,7 +69,12 @@ import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { dedupeRepoCandidates } from '@/buzz/room-repo-picker';
 import type { NostrEvent } from '@beeline/nostr';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
-import { cornerName, mapRawCornerStatusTag, type CornerSummary } from '@/buzz/corners';
+import {
+  CORNER_WORK_SIGNAL_TAGS,
+  cornerName,
+  resolveCornerLifecycle,
+  type CornerSummary,
+} from '@/buzz/corners';
 import { projectChatEvent, toRigEvent, type ChatDisplayMessage } from './buzz-event-projection';
 import {
   ROOM_CONTEXT_LIMIT,
@@ -91,7 +96,11 @@ const ROOM_CONTEXT_SCAN_LIMIT = 80;
 
 let sharedClientEntry: { key: string; client: BuzzClient } | undefined;
 
-/** Pure projection shared by the single-Room and cross-Room lifecycle fetchers. */
+/** Pure projection shared by the single-Room and cross-Room lifecycle fetchers.
+ * Both paths — and therefore the cached snapshot and the warm refetch — MUST
+ * derive status through this one function (`resolveCornerLifecycle` is the
+ * oracle); a second derivation is how the deck learned to flip working→gold
+ * seconds after open. */
 function cornerSummaryFromEvents(
   id: string,
   creates: NostrEvent[],
@@ -100,43 +109,24 @@ function cornerSummaryFromEvents(
   merged: boolean,
 ): CornerSummary {
   const create = [...creates].sort((a, b) => a.created_at - b.created_at)[0];
-  // Read the same tag precedence (display-status, then the coarser wire
-  // status) and the same canonical mapping the live Room card uses, so this
-  // snapshot can never disagree with real-time projection about what a
-  // corner's status word is.
-  const statusEntries = events
-    .map((event) => ({
-      raw: tagValue(event.event, 'display-status') ?? tagValue(event.event, 'status'),
-      createdAt: event.createdAt,
-    }))
-    .filter((entry): entry is { raw: string; createdAt: number } => Boolean(entry.raw));
-  const latest = [...statusEntries].sort((a, b) => b.createdAt - a.createdAt)[0];
-  const latestStatus = mapRawCornerStatusTag(latest?.raw);
+  // Reduce every event to its lifecycle facts once, then let the one resolver
+  // in `buzz/corners.ts` decide. Reading the same tags the live Room card uses
+  // (`display-status`, then the coarser wire `status`) keeps this snapshot
+  // agreeing with real-time projection about a corner's status word.
+  const tagOf = (event: BuzzSessionEvent, name: string): string | undefined =>
+    event.event.tags.find((tag) => tag[0] === name)?.[1];
+  const facts = events.map((event) => ({
+    createdAt: event.createdAt,
+    rawStatus: tagOf(event, 'display-status') ?? tagOf(event, 'status'),
+    isMergeReady: tagOf(event, 't') === 'merge-ready',
+    isWorkSignal: CORNER_WORK_SIGNAL_TAGS.has(tagOf(event, 't') ?? ''),
+  }));
   // `closed` on a kind:39000 projection is NIP-29 invite-only access, not a
   // lifecycle state. Only an explicit archived boolean or a corner-scoped
   // archived status removes a corner from the live list.
   const archived =
-    metadata?.archived === true || statusEntries.some((entry) => entry.raw === 'archived');
-  // A merge-ready is a REVIEW ANNOUNCEMENT, not a standing state, so it may
-  // only speak for the corner while nothing newer has spoken.
-  //
-  // It used to win outright — "a merge-ready appears anywhere in the last 50
-  // events" — which made a corner that published a review and then failed read
-  // as `open` for ever. `open` is not terminal, so it kept its place in the
-  // Room's pinned corner strip permanently. Three of the captain's corners are
-  // in exactly that state right now: their newest word is `failed`, and all
-  // three still report `open`.
-  const latestMergeReadyAt = events
-    .filter((event) => event.event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'))
-    .reduce<number | undefined>(
-      (newest, event) =>
-        newest === undefined ? event.createdAt : Math.max(newest, event.createdAt),
-      undefined,
-    );
-  const reviewReady =
-    latestStatus === 'open' ||
-    (latestMergeReadyAt !== undefined &&
-      (latest === undefined || latestMergeReadyAt >= latest.createdAt));
+    metadata?.archived === true ||
+    facts.some((fact) => fact.rawStatus === 'archived');
   const lastActivityAt = Math.max(
     create?.created_at ?? 0,
     ...events.map((event) => event.createdAt),
@@ -145,13 +135,7 @@ function cornerSummaryFromEvents(
     id,
     name: cornerName(create ? tagValue(create, 'name') : undefined, id),
     openerPubkey: create?.pubkey ?? '',
-    status: merged
-      ? 'merged'
-      : archived
-        ? 'archived'
-        : reviewReady
-          ? 'open'
-          : (latestStatus ?? 'live'),
+    status: resolveCornerLifecycle(facts, { merged, archived }),
     createdAt: create?.created_at,
     ...(lastActivityAt > 0 ? { lastActivityAt } : {}),
   };

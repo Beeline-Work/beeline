@@ -292,13 +292,16 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
             event.tags.some((tag) => tag[0] === 't' && tag[1] === 'land-summary'),
         ),
       ).toHaveLength(0);
-      // ...and maintenance reports the block without starting a model turn.
-      expect(
-        published.some((event) =>
-          event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'blocked'),
-        ),
-      ).toBe(true);
-      expect(Reflect.get(body, 'promptAgent')).not.toHaveBeenCalled();
+      // A moved target self-heals: maintenance reports it as an AUTOMATIC
+      // recovery and hands the corner its own target-sync model turn.
+      const recovering = published.find(
+        (event) =>
+          Array.isArray(event.tags) &&
+          event.content.startsWith("Couldn't land this change") &&
+          event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'auto'),
+      );
+      expect(recovering).toBeDefined();
+      expect(Reflect.get(body, 'promptAgent')).toHaveBeenCalled();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

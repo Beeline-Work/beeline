@@ -9,6 +9,7 @@ import type {
   DirectMessage,
   MergeTarget,
   PersonProfile,
+  RoomRepositoryResolution,
 } from '@beeline/buzz-client';
 import { cornerStatusPrecedence, type CornerStatus, type CornerSummary } from '@/buzz/corners';
 import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection';
@@ -321,6 +322,28 @@ function boundedMessages(messages: ChatDisplayMessage[]): ChatDisplayMessage[] {
   return messages.slice(-MAX_CACHED_MESSAGES_PER_CHANNEL);
 }
 
+/**
+ * Field-wise repo-name merge for the Room list's warm refresh.
+ *
+ * A warm update that could not establish the binding must NOT clobber a name
+ * a previous pass already resolved (same principle as the isNew fix in
+ * `upsertChatMessages`): the repo tag rendered on first paint and then
+ * vanished seconds later because the refresh path collapsed "read failed"
+ * and "config exists but no admin authorizes it" into "no repository".
+ * Only a definitive relay answer may change the row: `repository` carries
+ * the (possibly new) name, `none` genuinely clears it, and `unverified` or
+ * a failed read (`resolution === undefined`) keeps the previous value.
+ */
+export function mergedRepoName(
+  previous: string | undefined,
+  resolution: RoomRepositoryResolution | undefined,
+): string | undefined {
+  if (!resolution) return previous;
+  if (resolution.kind === 'repository') return resolution.repository.binding.name ?? undefined;
+  if (resolution.kind === 'none') return undefined;
+  return previous;
+}
+
 /** Keep warm previews and Room enrichment while fresh structural basics load. */
 export function mergeChannelBasicsWithCache(
   basics: ChannelDisplayItem[],
@@ -346,6 +369,15 @@ export function mergeChannelBasicsWithCache(
         : {}),
       ...(existing.participantCount !== undefined
         ? { participantCount: existing.participantCount }
+        : {}),
+      // Enrichment the basics loader never fetches: a warm basics upsert
+      // that lacks these must not strip what the last full enrich resolved.
+      // Fill the gap only — a fresh value (if one ever appears) still wins.
+      ...(channel.repoName === undefined && existing.repoName !== undefined
+        ? { repoName: existing.repoName }
+        : {}),
+      ...(channel.modelLabel === undefined && existing.modelLabel !== undefined
+        ? { modelLabel: existing.modelLabel }
         : {}),
       ...(updatedAt > 0 ? { updatedAt } : {}),
     };

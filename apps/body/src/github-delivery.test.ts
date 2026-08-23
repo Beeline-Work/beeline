@@ -125,6 +125,23 @@ describe('GitHub-origin delivery', () => {
     ).toContain('Nothing ready to merge yet');
   });
 
+  it('refuses review until the feature branch contains the latest target tip', async () => {
+    const { root, info, body } = await repository();
+    const events = captureEvents();
+    await writeFile(resolve(root, 'TARGET.md'), 'new target work\n');
+    run(root, ['add', 'TARGET.md']);
+    run(root, ['commit', '-m', 'advance target before review']);
+    run(root, ['push', 'origin', 'main']);
+
+    await expect(publish(body, info)).resolves.toBe(false);
+    expect(info.mergeTarget).toBeUndefined();
+    const notReady = events.find((event) =>
+      event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
+    );
+    expect(notReady?.content).toMatch(/not up to date with the latest main tip/i);
+    expect(notReady?.content).toMatch(/already authorized; do not ask the human/i);
+  });
+
   it('publishes review-ready work without autonomously landing or archiving it', async () => {
     const { remote, worktree, info, body } = await repository();
     const events = captureEvents();
@@ -186,12 +203,7 @@ describe('GitHub-origin delivery', () => {
   });
 });
 
-/**
- * A maintenance tick has no fresh user input. When an approved corner's target
- * moves, the exact-tip approval is invalidated and Body reports the committed
- * work, but it must not spend a model turn deciding or performing a rebase.
- */
-describe('a land refused because the target moved waits for fresh user input', () => {
+describe('a moved target is standing authorization to update the feature branch', () => {
   async function approvedCornerWithMovedTarget(): Promise<{
     root: string;
     remote: string;
@@ -219,8 +231,6 @@ describe('a land refused because the target moved waits for fresh user input', (
     vi.spyOn(body as never, 'findHumanMergeApproval' as never).mockResolvedValue(
       info.humanMergeApproval as never,
     );
-    // Tripwire: any maintenance-initiated prompt would both spend tokens and
-    // mutate this real worktree, making the policy failure observable.
     const prompts: string[] = [];
     vi.spyOn(body as never, 'promptAgent' as never).mockImplementation((async (
       _session: unknown,
@@ -235,53 +245,59 @@ describe('a land refused because the target moved waits for fresh user input', (
     return { root, remote, worktree, info, body, events, tip, moved, prompts };
   }
 
-  it('does not prompt or rebase, and invalidates the stale approval', async () => {
+  it('automatically rebases, republishes review, and invalidates the stale approval', async () => {
     const { root, remote, worktree, info, body, events, tip, moved, prompts } =
       await approvedCornerWithMovedTarget();
 
     await expect(Reflect.get(body, 'pollDirectRemoteApprovals').call(body)).resolves.toBe(0);
     await body.waitForAgentTasks();
 
-    // Neither the protected branch nor the corner worktree is changed.
+    // The protected branch stays put; only the feature branch is rewritten.
     expect(run(root, ['ls-remote', remote, 'refs/heads/main'])).toContain(moved);
-    expect(prompts).toEqual([]);
-    expect(run(worktree, ['rev-parse', 'HEAD'])).toBe(tip);
-    expect(info.mergeTarget).toBeUndefined();
+    expect(prompts).toHaveLength(1);
+    const refreshedTip = run(worktree, ['rev-parse', 'HEAD']);
+    expect(refreshedTip).not.toBe(tip);
+    expect(run(worktree, ['merge-base', '--is-ancestor', moved, refreshedTip])).toBe('');
+    expect(info.mergeTarget?.tip).toBe(refreshedTip);
     expect(info.humanMergeApproval).toBeUndefined();
 
-    // No model-driven rebase means no invented second review card.
+    // Rewritten work gets a new exact-tip review card; it is not auto-landed.
     const ready = events.filter((event) =>
       event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
     );
-    expect(ready).toHaveLength(1);
-    expect(run(worktree, ['ls-remote', remote, 'refs/heads/feature/corner'])).toContain(tip);
+    expect(ready).toHaveLength(2);
+    expect(run(worktree, ['ls-remote', remote, 'refs/heads/feature/corner'])).toContain(refreshedTip);
   });
 
-  it('says it is blocked on the human and never claims a background retry', async () => {
+  it('truthfully reports the automatic recovery without exposing git plumbing', async () => {
     const { body, events } = await approvedCornerWithMovedTarget();
 
     await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
     await body.waitForAgentTasks();
 
-    const blocked = events.find((event) =>
-      event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'blocked'),
+    const recovering = events.find((event) =>
+      event.content.startsWith("Couldn't land this change") &&
+      event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'auto'),
     );
-    expect(blocked).toBeDefined();
-    expect(blocked!.content).toMatch(/tell me here|nothing is continuing on its own/i);
+    expect(recovering).toBeDefined();
+    expect(recovering!.content).toMatch(/bringing the feature branch up to date automatically/i);
     // ...and no raw git plumbing reaches the transcript either.
-    expect(blocked!.content).not.toMatch(/\bgit\b|hint:|non-fast-forward|\[rejected\]/i);
+    expect(recovering!.content).not.toMatch(/\bgit\b|hint:|non-fast-forward|\[rejected\]/i);
   });
 
-  it('does not re-prompt on later maintenance ticks', async () => {
+  it('starts only one synchronization task across overlapping maintenance ticks', async () => {
     const { body, events, prompts } = await approvedCornerWithMovedTarget();
     await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
     await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
     await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
-    expect(prompts).toEqual([]);
-    const blocked = events.filter((event) =>
-      event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'blocked'),
+    await body.waitForAgentTasks();
+    expect(prompts).toHaveLength(1);
+    const recovering = events.filter(
+      (event) =>
+        event.content.startsWith("Couldn't land this change") &&
+        event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'auto'),
     );
-    expect(blocked).toHaveLength(1);
+    expect(recovering).toHaveLength(1);
   });
 
   it('keeps the automatic-retry claim for a failure the land poll really does re-attempt', async () => {

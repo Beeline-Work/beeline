@@ -37,9 +37,6 @@ export type RoomContextEntry = {
   isAgent: boolean;
 };
 
-/** Longest objective line the panel will render before eliding. */
-const OBJECTIVE_MAX_CHARS = 160;
-
 /** Longest quoted Room line. The block caps each entry at three rendered
  *  lines anyway; this bounds the string before it ever reaches layout. */
 const CONTEXT_MAX_CHARS = 240;
@@ -129,7 +126,10 @@ export function cornerObjectiveLine(input: {
   ];
   for (const candidate of candidates) {
     if (!candidate) continue;
-    const line = roomPreviewText(candidate, OBJECTIVE_MAX_CHARS);
+    // Keep the complete readable objective. The pinned panel owns visual
+    // collapsing, so shortening here would make expansion unable to recover
+    // the text the person asked to see.
+    const line = roomPreviewText(candidate, Number.POSITIVE_INFINITY);
     if (line) return line;
   }
   return undefined;

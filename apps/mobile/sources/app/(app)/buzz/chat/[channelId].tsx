@@ -431,11 +431,12 @@ export default function BuzzChat() {
   // corner already knows both, so passing them makes the header correct on the
   // first frame instead of one relay round trip later. The screen's own reads
   // still run and still win.
-  const { channelId, notificationResponseId, parent, title } = useLocalSearchParams<{
+  const { channelId, notificationResponseId, parent, title, returnTo } = useLocalSearchParams<{
     channelId: string;
     notificationResponseId?: string;
     parent?: string;
     title?: string;
+    returnTo?: string;
   }>();
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
   const initialCacheState = useBuzzLocalCache.getState();
@@ -445,6 +446,7 @@ export default function BuzzChat() {
     : undefined;
   const routeParentChannelId = parent?.trim() || undefined;
   const routeChannelTitle = title?.trim() || undefined;
+  const cornerReturnTarget = returnTo === 'room-list' ? returnTo : undefined;
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const flatListRef = useRef<FlatList<ChatDisplayMessage>>(null);
@@ -2498,23 +2500,23 @@ export default function BuzzChat() {
   );
 
   /**
-   * Leave this transcript. A corner returns to its parent Room by id — see
-   * `corner-navigation.ts` for why the route directly underneath cannot be
-   * trusted to be that Room — and a transcript that is the only route on the
-   * stack replaces itself with the Room list instead of calling a
-   * `router.back()` that silently does nothing.
+   * Leave this transcript. A corner returns to its explicit opening surface
+   * when one was supplied; otherwise it resolves its parent Room by id. See
+   * `corner-navigation.ts` for why the route directly underneath cannot always
+   * be trusted. A lone transcript replaces itself with the Room list instead
+   * of calling a `router.back()` that silently does nothing.
    */
   const handleBack = useCallback(() => {
     const routes = (navigation.getState()?.routes ?? []) as ChatStackRoute[];
-    const action = chatBackAction(routes, parentChannelId);
+    const action = chatBackAction(routes, parentChannelId, cornerReturnTarget);
     if (action.type === 'pop') router.dismiss(action.count);
-    // The parent Room was never on this stack (the corner was opened straight
-    // from the Room list, or from a notification cold start). Open it here
-    // rather than popping into whatever happens to be underneath.
+    // The parent Room was never on this stack (for example, a notification
+    // cold start or an older link without an origin hint). Open it here rather
+    // than popping into whatever happens to be underneath.
     else if (action.type === 'open-room') router.replace(roomHref(action.channelId));
     else if (action.type === 'back') router.back();
     else router.replace('/buzz/channels');
-  }, [navigation, parentChannelId]);
+  }, [cornerReturnTarget, navigation, parentChannelId]);
 
   const handleCloseCorner = useCallback(async () => {
     // `if (!transport) return` — the shape this replaces — made every press a
@@ -3082,7 +3084,9 @@ export default function BuzzChat() {
         <View style={[styles.header, { minHeight: insets.top + 60, paddingTop: insets.top + 8 }]}>
           <TouchableOpacity
             accessibilityLabel={
-              isCorner ? `Back to this ${CORNER_LABEL}’s ${ROOM_LABEL}` : 'Back to Rooms'
+              isCorner && cornerReturnTarget !== 'room-list'
+                ? `Back to this ${CORNER_LABEL}’s ${ROOM_LABEL}`
+                : 'Back to Rooms'
             }
             onPress={handleBack}
             style={styles.backButton}

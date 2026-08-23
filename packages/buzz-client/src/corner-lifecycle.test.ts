@@ -56,9 +56,28 @@ describe('corner lifecycle oracle — THE three-word verdict', () => {
     expect(resolveCornerState([card(100, 'archived')], { now: fresh(100) })).toBe('finished');
   });
 
-  it('a corner whose first card is still in flight is working', () => {
-    expect(resolveCornerState([], { now: Date.now() })).toBe('working');
+  it('restart-caused corner-session suspend/resume noise never churns the verdict', () => {
+    // A daemon restart used to stamp every restored corner with a
+    // `corner-session` status=suspended card. The oracle must be immune:
+    // `suspended` is not a status word (mapRawCornerStatusTag → undefined),
+    // and a session-state event is not a work signal, so it can neither
+    // create needs-human nor fake working.
+    const suspendCard = fact(2000, { t: 'corner-session', status: 'suspended' });
+    expect(mapRawCornerStatusTag('suspended')).toBeUndefined();
+    expect(suspendCard.isWorkSignal).toBeUndefined();
+    expect(suspendCard.rawStatus).toBe('suspended');
+    // Working before the noise stays working...
+    expect(
+      resolveCornerState([work(1000), suspendCard], { now: fresh(1000) }),
+    ).toBe('working');
+    // ...and idle-before-the-noise stays needs-human — the pause the restart
+    // itself caused must not gold the row as fresh agent trouble.
+    const idleNow = 1000 * 1000 + CORNER_WORK_LIVENESS_WINDOW_MS + 1;
+    expect(resolveCornerState([work(1000), suspendCard], { now: idleNow })).toBe('needs-human');
   });
+
+  it('a corner whose first card is still in flight is working', () => {
+    expect(resolveCornerState([], { now: Date.now() })).toBe('working');  });
 
   it('a fresh unanswered agent ask reads needs-human even over recent narration', () => {
     // The ask IS the newest event and well inside the ask window: the corner

@@ -255,6 +255,8 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
   let githubUserInstallations: number[] | Error;
   let githubInstallationListCalls: number;
   let githubRepositoryListError: Error | undefined;
+  let githubInstallationAccess: boolean | Error;
+  let githubRepositoryLookup: { id: number; fullName: string } | undefined;
   let roomTokenAuthority: NonNullable<
     Parameters<typeof buildAuthServer>[0]['authorizeGitHubRoomToken']
   >;
@@ -273,6 +275,8 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     githubUserInstallations = [];
     githubInstallationListCalls = 0;
     githubRepositoryListError = undefined;
+    githubInstallationAccess = true;
+    githubRepositoryLookup = undefined;
     roomTokenAuthority = async () => ({
       authorized: false,
       reason: 'agent_not_room_member',
@@ -319,7 +323,11 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
             if (githubUserInstallations instanceof Error) throw githubUserInstallations;
             return githubUserInstallations;
           },
-          userCanAccessInstallation: async () => true,
+          userCanAccessInstallation: async () => {
+            if (githubInstallationAccess instanceof Error) throw githubInstallationAccess;
+            return githubInstallationAccess;
+          },
+          repositoryByFullName: async () => githubRepositoryLookup,
           listRepositories: async (installationId: number) => {
             if (githubRepositoryListError) throw githubRepositoryListError;
             return [
@@ -621,6 +629,282 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       authorizedBy: ungrantedOwner.publicKey,
       repository: 'octocat/widget',
     });
+  });
+
+  it('completes an organization installation even when the user-token listing cannot verify it', async () => {
+    const identity = generateKeypair();
+    await bindGitHubIdentity(identity, 'v'.repeat(43));
+    // An unscoped OAuth lookup token cannot list organization installations;
+    // production saw this surface as GET /user/installations failing outright.
+    githubInstallationAccess = new Error('GitHub user installations failed: HTTP 404');
+
+    const installStartUrl = 'https://alpha.example/auth/github/install/start';
+    const installStart = await app.inject({
+      method: 'POST',
+      url: '/auth/github/install/start',
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(
+          identity.secretKey,
+          identity.publicKey,
+          installStartUrl,
+          'POST',
+        ),
+      },
+      payload: {
+        pubkey: identity.publicKey,
+        redirect_uri: 'beeline://buzz/github-installation',
+      },
+    });
+    expect(installStart.statusCode).toBe(200);
+    const installUrl = new URL(installStart.json().authorization_url);
+    const installed = await app.inject({
+      method: 'GET',
+      url: `/auth/github/callback?installation_id=78&setup_action=install&state=${installUrl.searchParams.get('state')}`,
+      headers: { host: alphaTenant.host },
+    });
+
+    // The state-bound GitHub redirect from the installing org admin is the
+    // authority; the unavailable listing is logged, never fatal.
+    expect(installed.statusCode).toBe(302);
+    expect(installed.headers.location).toBe('beeline://buzz/github-installation?installed=1');
+    await expect(
+      store.githubInstallationsForPubkey(alphaTenant.community, identity.publicKey),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        installationId: 78,
+        accountLogin: 'acme',
+        accountType: 'Organization',
+        status: 'active',
+      }),
+    ]);
+    const warnings = logLines
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((line) => line.msg === 'GitHub installation listing unavailable for organization verification');
+    expect(warnings).toHaveLength(1);
+  });
+
+  it('logs unexpected installation-callback failures with their request id instead of a silent 500', async () => {
+    const identity = generateKeypair();
+    await bindGitHubIdentity(identity, 'v'.repeat(43));
+    githubRepositoryListError = new Error('GitHub installation repositories failed: HTTP 502');
+
+    const installStartUrl = 'https://alpha.example/auth/github/install/start';
+    const installStart = await app.inject({
+      method: 'POST',
+      url: '/auth/github/install/start',
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(
+          identity.secretKey,
+          identity.publicKey,
+          installStartUrl,
+          'POST',
+        ),
+      },
+      payload: {
+        pubkey: identity.publicKey,
+        redirect_uri: 'beeline://buzz/github-installation',
+      },
+    });
+    const installUrl = new URL(installStart.json().authorization_url);
+    const installed = await app.inject({
+      method: 'GET',
+      url: `/auth/github/callback?installation_id=77&setup_action=install&state=${installUrl.searchParams.get('state')}`,
+      headers: { host: alphaTenant.host },
+    });
+
+    expect(installed.statusCode).toBe(500);
+    const body = installed.json() as Record<string, unknown>;
+    expect(body.error).toBe('internal_error');
+    expect(String(body.message)).toContain('GitHub installation repositories failed: HTTP 502');
+    expect(typeof body.reqId).toBe('string');
+    expect(String(body.message)).toContain(String(body.reqId));
+    const logged = logLines
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((line) => line.reqId === body.reqId && line.level === 50);
+    expect(logged).toHaveLength(1);
+    expect(JSON.stringify(logged[0])).toContain('HTTP 502');
+  });
+
+  it('re-mints Room tokens for a repository that transferred after its Room binding was written', async () => {
+    const owner = generateKeypair();
+    const agent = generateKeypair();
+    // History of one transferred repository: the personal installation listed
+    // it under the old owner/name, then the transfer moved the same immutable
+    // id to the org installation and it disappeared from the old one.
+    await store.saveGitHubInstallation(
+      {
+        community: alphaTenant.community,
+        pubkey: owner.publicKey,
+        authorizedSubject: 'owner-subject',
+        accountId: '123',
+        accountLogin: 'lunchboxfortwo',
+        accountType: 'User',
+        installationId: 77,
+        repositorySelection: 'selected',
+        status: 'active',
+        repositoryCount: 0,
+      },
+      new Date(),
+    );
+    await store.replaceGitHubRepositories(
+      alphaTenant.community,
+      77,
+      [
+        {
+          id: 42,
+          installationId: 77,
+          name: 'beeline',
+          fullName: 'lunchboxfortwo/beeline',
+          remote: 'https://github.com/lunchboxfortwo/beeline.git',
+          defaultBranch: 'main',
+        },
+      ],
+      new Date(),
+    );
+    await store.saveGitHubInstallation(
+      {
+        community: alphaTenant.community,
+        pubkey: owner.publicKey,
+        authorizedSubject: 'owner-subject',
+        accountId: '456',
+        accountLogin: 'Beeline-Work',
+        accountType: 'Organization',
+        installationId: 90,
+        repositorySelection: 'all',
+        status: 'active',
+        repositoryCount: 1,
+      },
+      new Date(),
+    );
+    await store.replaceGitHubRepositories(
+      alphaTenant.community,
+      90,
+      [
+        {
+          id: 42,
+          installationId: 90,
+          name: 'beeline',
+          fullName: 'Beeline-Work/beeline',
+          remote: 'https://github.com/Beeline-Work/beeline.git',
+          defaultBranch: 'main',
+        },
+      ],
+      new Date(),
+    );
+    // The transfer removed the repository from the personal installation.
+    await store.replaceGitHubRepositories(alphaTenant.community, 77, [], new Date());
+    roomTokenAuthority = async (_tenant, input) =>
+      input.agentPubkey === agent.publicKey && input.roomId === 'room-1'
+        ? { authorized: true, authorizedBy: owner.publicKey, fullName: 'lunchboxfortwo/beeline' }
+        : { authorized: false, reason: 'agent_not_room_member' };
+    const url = `${alphaTenant.origin}/auth/github/room-token`;
+    const relayAuthorizations = Array.from({ length: 16 }, () =>
+      nip98AuthHeader(agent.secretKey, agent.publicKey, `${alphaTenant.origin}/query`, 'POST'),
+    );
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/auth/github/room-token',
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(agent.secretKey, agent.publicKey, url, 'POST'),
+      },
+      payload: {
+        pubkey: agent.publicKey,
+        room_id: 'room-1',
+        relay_authorizations: relayAuthorizations,
+      },
+    });
+
+    // The stale binding self-heals onto the transferred repo's current name.
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      token: 'room-installation-token',
+      installation_id: 90,
+      full_name: 'Beeline-Work/beeline',
+    });
+    expect(roomTokenMint).toEqual({ installationId: 90, repositoryIds: [42] });
+  });
+
+  it('follows GitHub\'s rename redirect once, persists it, and names the uncovered destination', async () => {
+    const owner = generateKeypair();
+    const agent = generateKeypair();
+    await store.saveGitHubInstallation(
+      {
+        community: alphaTenant.community,
+        pubkey: owner.publicKey,
+        authorizedSubject: 'owner-subject',
+        accountId: '456',
+        accountLogin: 'Beeline-Work',
+        accountType: 'Organization',
+        installationId: 91,
+        repositorySelection: 'all',
+        status: 'active',
+        repositoryCount: 0,
+      },
+      new Date(),
+    );
+    roomTokenAuthority = async () => ({
+      authorized: true,
+      authorizedBy: owner.publicKey,
+      fullName: 'lunchboxfortwo/beeline',
+    });
+    githubRepositoryLookup = { id: 42, fullName: 'Beeline-Work/beeline' };
+    const url = `${alphaTenant.origin}/auth/github/room-token`;
+    const injectRoomToken = async (pubkey: Keypair) =>
+      app.inject({
+        method: 'POST',
+        url: '/auth/github/room-token',
+        headers: {
+          host: alphaTenant.host,
+          authorization: nip98AuthHeader(pubkey.secretKey, pubkey.publicKey, url, 'POST'),
+        },
+        payload: {
+          pubkey: pubkey.publicKey,
+          room_id: 'room-1',
+          relay_authorizations: Array.from({ length: 16 }, () =>
+            nip98AuthHeader(pubkey.secretKey, pubkey.publicKey, `${alphaTenant.origin}/query`, 'POST'),
+          ),
+        },
+      });
+
+    // The new location exists but no installation covers it: say exactly that.
+    const uncovered = await injectRoomToken(agent);
+    expect(uncovered.statusCode).toBe(403);
+    expect(uncovered.json()).toEqual({
+      error: 'repository_not_granted',
+      message: 'repository moved to Beeline-Work/beeline; grant the App access there',
+    });
+
+    // The org install lands and grants the new location: the same request now
+    // resolves through the redirect AND persists the learned alias.
+    await store.replaceGitHubRepositories(
+      alphaTenant.community,
+      91,
+      [
+        {
+          id: 42,
+          installationId: 91,
+          name: 'beeline',
+          fullName: 'Beeline-Work/beeline',
+          remote: 'https://github.com/Beeline-Work/beeline.git',
+          defaultBranch: 'main',
+        },
+      ],
+      new Date(),
+    );
+    const healed = await injectRoomToken(agent);
+    expect(healed.statusCode).toBe(200);
+    expect(healed.json()).toMatchObject({ full_name: 'Beeline-Work/beeline' });
+
+    // The alias is durable: with GitHub's redirect gone entirely, the old
+    // binding still resolves without any lookup.
+    githubRepositoryLookup = undefined;
+    const viaAlias = await injectRoomToken(agent);
+    expect(viaAlias.statusCode).toBe(200);
+    expect(viaAlias.json()).toMatchObject({ full_name: 'Beeline-Work/beeline' });
   });
 
   it('completes GitHub sign-in through a visible immediate app handoff', async () => {

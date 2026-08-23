@@ -16,6 +16,7 @@ import { AuthStore } from './store.js';
 import { OidcClient } from './oidc.js';
 import { GitHubAppClient, GitHubOAuthClient, type GitHubIdentity } from './github.js';
 import { extractGitHubRepoEvent } from './github-repo-events.js';
+import { resolveGitHubRepositoryAccess } from './github-repository-access.js';
 import {
   isValidNip05Name,
   normalizeHost,
@@ -510,7 +511,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     },
   );
 
-  app.setErrorHandler((error, _request, reply) => {
+  app.setErrorHandler((error, request, reply) => {
     if (error instanceof ProtocolError) {
       void reply.status(error.statusCode).send({ error: error.code, message: error.message });
       return;
@@ -519,7 +520,22 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       void reply.status(413).send({ error: 'request_too_large' });
       return;
     }
-    void reply.status(500).send({ error: 'internal_error' });
+    // Never a silent 500: log the exception against the request id and give
+    // the caller an actionable body. Upstream client errors carry their own
+    // plain-language message (e.g. "GitHub user installations failed: HTTP
+    // 404") and never contain credentials, so surfacing them — plus the id to
+    // correlate with this log line — beats a bare internal_error.
+    const reqId = request.id;
+    request.log.error({ err: error, reqId }, 'auth request failed unexpectedly');
+    const detail =
+      error instanceof Error && error.message.trim()
+        ? error.message.trim().slice(0, 300)
+        : 'the request failed while contacting GitHub or the database';
+    void reply.status(500).send({
+      error: 'internal_error',
+      message: `${detail} (request id ${reqId} — retry; if it persists, search the auth logs for this id)`,
+      reqId,
+    });
   });
 
   app.get('/health', async () => ({ ok: true }));
@@ -1196,13 +1212,40 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       );
     }
     const sealedUserToken = await options.store.githubUserToken(tenant.community, linkedAccountId);
-    if (
-      !sealedUserToken ||
-      !(await options.github.app.userCanAccessInstallation(
+    if (!sealedUserToken) {
+      throw new ProtocolError(
+        403,
+        'installation_account_mismatch',
+        'the signed-in GitHub user cannot administer this installation',
+      );
+    }
+    // GET /user/installations is keyed to the OAuth lookup token's visibility:
+    // user-owned installations always appear, but an unscoped OAuth token
+    // generally cannot list ORGANIZATION installations, so demanding a
+    // positive match here strands every org install behind an exception or a
+    // false negative. For an Organization target, GitHub's state-bound
+    // redirect — only the installing admin's browser receives it, bound to
+    // this flow's one-time state — is the authority; the listing still refuses
+    // when it definitively denies access, and its failures are logged rather
+    // than fatal.
+    let userCanAdminister: boolean | undefined;
+    try {
+      userCanAdminister = await options.github.app.userCanAccessInstallation(
         decryptGitHubToken(sealedUserToken),
         installationId,
-      ))
-    ) {
+      );
+    } catch (error) {
+      if (installedAccount.type !== 'Organization') throw error;
+      request.log.warn(
+        { err: error, installationId },
+        'GitHub installation listing unavailable for organization verification',
+      );
+    }
+    const accessConfirmed =
+      installedAccount.type === 'User'
+        ? userCanAdminister === true
+        : userCanAdminister !== false;
+    if (!accessConfirmed) {
       throw new ProtocolError(
         403,
         'installation_account_mismatch',
@@ -1551,10 +1594,12 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
         'agent is not authorized for this Room repository',
       );
     }
-    const access = await options.store.githubRepositoryAccess(
+    const access = await resolveGitHubRepositoryAccess(
+      { app: options.github.app, store: options.store },
       tenant.community,
       authority.authorizedBy,
       authority.fullName,
+      now(),
     );
     if (
       !access.accessible ||
@@ -1566,7 +1611,8 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       request.log.warn(
         {
           authorityReason: 'repository_not_granted',
-          repositoryAccessReason: access.reason,
+          repositoryAccessReason: access.movedTo ? 'moved_not_granted' : access.reason,
+          movedTo: access.movedTo,
           roomId,
           agentPubkey: pubkey,
           authorizedBy: authority.authorizedBy,
@@ -1577,9 +1623,12 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       throw new ProtocolError(
         403,
         'repository_not_granted',
-        'Room repository is not granted to the Beeline GitHub App',
+        access.movedTo
+          ? `repository moved to ${access.movedTo}; grant the App access there`
+          : 'Room repository is not granted to the Beeline GitHub App',
       );
     }
+    const resolvedFullName = access.resolvedFullName ?? authority.fullName;
     const installation = await options.github.app.installationToken(access.installationId, {
       repositoryIds: [access.repositoryId],
     });
@@ -1588,7 +1637,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       token: installation.token,
       expires_at: installation.expiresAt,
       installation_id: access.installationId,
-      full_name: authority.fullName,
+      full_name: resolvedFullName,
     });
   });
 
@@ -1725,16 +1774,34 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       expiresAt: authNow.getTime() + GITHUB_ROOM_AUTHORITY_CACHE_TTL_MS,
     });
 
-    let events =
-      since === undefined ? [] : await options.store.githubRepoEvents(authority.fullName, since, GITHUB_REPO_EVENT_FETCH_LIMIT);
-    if (since !== undefined && events.length === 0 && waitMs > 0) {
-      await waitForGitHubRepoEvent(authority.fullName, waitMs);
-      events = await options.store.githubRepoEvents(authority.fullName, since, GITHUB_REPO_EVENT_FETCH_LIMIT);
+    // Webhooks store events under the repository's CURRENT full_name; a Room
+    // bound before a transfer/rename asks with the old one. Resolve
+    // best-effort so the read uses the current address; an unresolvable name
+    // just reads (and finds nothing) under the bound name as before.
+    let eventsFullName = authority.fullName;
+    try {
+      const resolved = await resolveGitHubRepositoryAccess(
+        { app: options.github!.app, store: options.store },
+        tenant.community,
+        authority.authorizedBy,
+        authority.fullName,
+        authNow,
+      );
+      if (resolved.resolvedFullName) eventsFullName = resolved.resolvedFullName;
+    } catch (error) {
+      request.log.warn({ err: error, roomId }, 'Room repository rename resolution failed');
     }
-    const head = await options.store.latestGitHubRepoEventId(authority.fullName);
+
+    let events =
+      since === undefined ? [] : await options.store.githubRepoEvents(eventsFullName, since, GITHUB_REPO_EVENT_FETCH_LIMIT);
+    if (since !== undefined && events.length === 0 && waitMs > 0) {
+      await waitForGitHubRepoEvent(eventsFullName, waitMs);
+      events = await options.store.githubRepoEvents(eventsFullName, since, GITHUB_REPO_EVENT_FETCH_LIMIT);
+    }
+    const head = await options.store.latestGitHubRepoEventId(eventsFullName);
     noStore(reply);
     return reply.send({
-      full_name: authority.fullName,
+      full_name: eventsFullName,
       head,
       cursor: events.length > 0 ? events[events.length - 1]!.id : head,
       events: events.map((eventRecord) => ({

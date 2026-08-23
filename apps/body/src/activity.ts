@@ -492,12 +492,12 @@ export interface CompactActivityPlan {
 
 /**
  * A corner plan cannot depend on a harness choosing to emit ACP `plan`
- * updates. The projection owns a small agent-authored fallback checklist and
- * exposes explicit turn boundaries so Body can publish it before the first
- * tool call and close it when the turn settles.
+ * updates. Body can seed the projection with the task-authored plan from the
+ * hidden corner-metadata turn. When neither source provides steps, the
+ * projection reports only that work is underway instead of inventing a plan.
  */
 export type ActivityProjectionController = (() => void) & {
-  startPlan(objective: string): Promise<void>;
+  startPlan(objective: string, authoredPlan?: CompactActivityPlan): Promise<void>;
   completePlan(): Promise<void>;
   currentPlan(): CompactActivityPlan | undefined;
 };
@@ -797,15 +797,14 @@ export function projectActivity(
   let reasoningOpenedAt: number | undefined;
   let reasoningLastAt: number | undefined;
   // The agent's current plan/checklist, and the last one actually put on the
-  // wire. An ACP `plan` update is suppressed from the transcript (it is
-  // reasoning there, not work) but it is the ONLY source for the corner's
-  // pinned objective panel, so it is carried out on the `activity_summary`
-  // event this projection already publishes — the same zero-extra-write
-  // technique `thoughtMs` uses. Only a *changed* plan rides along, so a
-  // 10-step checklist is not re-sent on every 5s batch.
+  // wire. A task-authored opening plan seeds the panel; later ACP `plan`
+  // updates are suppressed from the transcript (they are reasoning there,
+  // not work) but replace that seed through the `activity_summary` event this
+  // projection already publishes — the same zero-extra-write technique
+  // `thoughtMs` uses. Only a *changed* plan rides along, so a 10-step
+  // checklist is not re-sent on every 5s batch.
   let currentPlan: CompactActivityPlan | undefined;
   let publishedPlanKey = '';
-  let usesFallbackPlan = false;
   let publishTail: Promise<void> = Promise.resolve();
   const publishBatch = (events: Record<string, unknown>[]): Promise<void> => {
     const publish = () =>
@@ -842,33 +841,7 @@ export function projectActivity(
     const distilled = safePlanObjective(objective);
     return {
       ...(distilled ? { objective: distilled } : {}),
-      items: [
-        { step: 'Inspect the relevant code', status: 'in_progress' },
-        { step: 'Implement the change', status: 'pending' },
-        { step: 'Verify and summarize the result', status: 'pending' },
-      ],
-    };
-  };
-  const advanceFallbackPlan = (labels: readonly string[], rollupTotal: number): void => {
-    if (!usesFallbackPlan || !currentPlan) return;
-    const enteredWork = rollupTotal > 0 || labels.length > 0;
-    if (!enteredWork) return;
-    const enteredVerification = labels.some((label) => /^Ran (?:the test suite|a build|lint checks|type checks)/.test(label));
-    currentPlan = {
-      ...currentPlan,
-      items: currentPlan.items.map((item, index) => ({
-        ...item,
-        status:
-          index === 0
-            ? 'completed'
-            : index === 1
-              ? enteredVerification
-                ? 'completed'
-                : 'in_progress'
-              : enteredVerification
-                ? 'in_progress'
-                : 'pending',
-      })),
+      items: [{ step: 'Working…', status: 'in_progress' }],
     };
   };
   const flush = () => {
@@ -933,7 +906,6 @@ export function projectActivity(
       }
     }
     const rollupTotal = Object.values(rollup).reduce((sum, count) => sum + count, 0);
-    advanceFallbackPlan(labels, rollupTotal);
     // A plan change alone earns a flush. Without this a turn that opens by
     // planning and then only reads files would leave the objective panel
     // empty for the whole first batch — and a turn that does nothing but
@@ -994,7 +966,6 @@ export function projectActivity(
     );
     if (updatePlan?.items.length) {
       currentPlan = updatePlan;
-      usesFallbackPlan = false;
     }
     trackToolCall(sanitized, toolCallKinds);
     const toolCallId = typeof sanitized.toolCallId === 'string' ? sanitized.toolCallId : undefined;
@@ -1011,9 +982,19 @@ export function projectActivity(
     client.off('session/update', onUpdate);
     flush();
   }) as ActivityProjectionController;
-  controller.startPlan = async (objective: string) => {
-    currentPlan = fallbackPlan(objective);
-    usesFallbackPlan = true;
+  controller.startPlan = async (objective: string, authoredPlan?: CompactActivityPlan) => {
+    const compactAuthoredPlan = authoredPlan ? activityPlan(authoredPlan) : undefined;
+    const distilled = safePlanObjective(objective);
+    currentPlan = compactAuthoredPlan?.items.length
+      ? {
+          ...(distilled
+            ? { objective: distilled }
+            : compactAuthoredPlan.objective
+              ? { objective: compactAuthoredPlan.objective }
+              : {}),
+          items: compactAuthoredPlan.items,
+        }
+      : fallbackPlan(objective);
     await publishPlan(currentPlan);
   };
   controller.completePlan = async () => {

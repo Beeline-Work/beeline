@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import Svg, { Path } from 'react-native-svg';
+import Svg, { G, Path } from 'react-native-svg';
 import Animated, {
   Easing,
   ReduceMotion,
@@ -14,7 +14,12 @@ import { useUnistyles } from 'react-native-unistyles';
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 
+// THE ALLOY — canonical coin geometry (semicircle + half-square fused, triangle cut as
+// negative space via evenodd). The group shift optically centers the enlarged triangle.
 const MARK_PATH = beelineMark.path;
+const MARK_VIEWBOX = beelineMark.viewBox;
+const MARK_TRANSFORM = beelineMark.transform;
+const MARK_FILL_RULE = beelineMark.fillRule as 'evenodd' | 'nonzero';
 
 export function BeelineMark({ size = 112, shimmer = false }: { size?: number; shimmer?: boolean }) {
   const { theme } = useUnistyles();
@@ -45,17 +50,21 @@ export function BeelineMark({ size = 112, shimmer = false }: { size?: number; sh
       accessibilityLabel="Beeline logo"
       width={size}
       height={size}
-      viewBox="0 0 240 240"
+      viewBox={MARK_VIEWBOX}
     >
-      <Path
-        d={MARK_PATH}
-        fill={theme.buzz.brandMark}
-      />
-      <AnimatedPath
-        d={MARK_PATH}
-        fill={theme.buzz.textPrimary}
-        animatedProps={highlightProps}
-      />
+      <G transform={MARK_TRANSFORM}>
+        <Path
+          d={MARK_PATH}
+          fillRule={MARK_FILL_RULE}
+          fill={theme.buzz.brandMark}
+        />
+        <AnimatedPath
+          d={MARK_PATH}
+          fillRule={MARK_FILL_RULE}
+          fill={theme.buzz.textPrimary}
+          animatedProps={highlightProps}
+        />
+      </G>
     </Svg>
   );
 }

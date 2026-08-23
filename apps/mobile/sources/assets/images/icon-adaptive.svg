@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Beeline adaptive launcher foreground — the Alloy, ink</title>
+  <!-- THE ALLOY — canonical geometry, do not redesign (see mark.svg).
+       Launcher framing (owner decision, carried over from the previous mark): the mark is
+       drawn ~26% smaller than a canvas-filling render. At 48% of the canvas the coin's
+       outermost corner (the square's top-right / bottom-right vertex, r ~= 332px) stays
+       inside Android's 66%-diameter adaptive-icon safe zone (r = 338px on this canvas),
+       which the previous mark's framing also targeted. Monochrome themed icon is derived
+       from this file by recoloring #14091A -> #FFFFFF in generate-monochrome-assets.sh. -->
+  <g transform="translate(512 512) scale(2.4576)">
+    <g transform="translate(-9,0)">
+      <path fill="#14091A" fill-rule="evenodd" d="M 0 -100 A 100 100 0 0 0 0 100 L 100 100 L 100 -100 Z M 9 -58 L 67 42 L -49 42 Z"/>
+    </g>
+  </g>
+</svg>

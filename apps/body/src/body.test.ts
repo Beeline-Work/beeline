@@ -74,6 +74,7 @@ import {
   roomTurnPrompt,
   WRITE_PERMISSION_BACKSTOP_POLL_MS,
 } from './body.js';
+import { buildMergeApproval } from '@beeline/buzz-client';
 import { AcpClient, isMutatingPermissionRequest } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import {
@@ -6265,6 +6266,134 @@ describe('a local-only repository lands through the daemon, never through the ag
 
       expect(outcome.kind).toBe('failed');
       expect(gitCommand(repoPath, ['rev-parse', 'refs/heads/master'])).toBe(moved);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts an approval signed by the successor of the binding-author key (key succession)', async () => {
+    const agent = newIdentity('succession-agent');
+    const predecessorKey = newIdentity('old-owner');
+    const successorKey = newIdentity('new-owner');
+    const { root, repoPath, cornerPath, tip } = localOnlyRepoWithCorner();
+    const target = { repo: 'local/local-key', branch: 'refs/heads/master', tip };
+    const approval = buildMergeApproval(successorKey, 'corner-succession', target);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/query')) {
+          const filters = JSON.parse(String(init?.body)) as Record<string, unknown>[];
+          // The approvals read returns ONLY the successor-signed approval.
+          // Every other read (agent registry, role projections) sees nothing,
+          // so authorizeReviewer refuses on role — the succession path must
+          // be what accepts this approval.
+          const isApprovalRead = filters.some(
+            (filter) =>
+              Array.isArray(filter['#t']) && filter['#t'].includes('buzz-merge-approval'),
+          );
+          return new Response(
+            JSON.stringify(isApprovalRead ? [approval] : []),
+            { status: 200 },
+          );
+        }
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    try {
+      const body = new Body(
+        {
+          agentBinary: '/nonexistent',
+          mcpBinary: '/nonexistent',
+          agentEnv: {},
+          workspaceRoot: '/workspace',
+          relayBaseUrl: 'https://relay.example',
+          relayHost: 'relay.example',
+          relayScheme: 'https',
+          relayWsUrl: 'wss://relay.example',
+          autoApprovePermissions: true,
+        },
+        undefined,
+        agent,
+        undefined,
+        {
+          statePath: join(root, 'state.json'),
+          resolveBindingOwnerKey: async () => successorKey.publicKey,
+        },
+      );
+      const info = localCornerInfo(agent, repoPath, cornerPath, tip);
+      info.subchannelId = 'corner-succession';
+      body.registerSubchannel(info as never);
+
+      const accepted = await Reflect.get(body, 'findHumanMergeApproval').call(body, info);
+
+      expect(accepted).toMatchObject({
+        id: approval.id,
+        reviewer: successorKey.publicKey,
+        tip,
+      });
+      expect(published.some((event) => event.tags.includes('decision'))).toBe(false);
+      expect(
+        published.some((event) =>
+          event.tags.some((tag) => tag[0] === 'decision' && tag[1] === 'accepted'),
+        ),
+      ).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a succession-shaped approval from an unrelated key with no ledger answer', async () => {
+    const agent = newIdentity('succession-agent-unrelated');
+    const predecessorKey = newIdentity('old-owner-unrelated');
+    const unrelatedKey = newIdentity('unrelated-key');
+    const { root, repoPath, cornerPath, tip } = localOnlyRepoWithCorner();
+    const target = { repo: 'local/local-key', branch: 'refs/heads/master', tip };
+    const approval = buildMergeApproval(unrelatedKey, 'corner-succession-unrelated', target);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/query')) {
+          const filters = JSON.parse(String(init?.body)) as Record<string, unknown>[];
+          const isApprovalRead = filters.some(
+            (filter) =>
+              Array.isArray(filter['#t']) && filter['#t'].includes('buzz-merge-approval'),
+          );
+          return new Response(JSON.stringify(isApprovalRead ? [approval] : []), { status: 200 });
+        }
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    try {
+      const body = new Body(
+        {
+          agentBinary: '/nonexistent',
+          mcpBinary: '/nonexistent',
+          agentEnv: {},
+          workspaceRoot: '/workspace',
+          relayBaseUrl: 'https://relay.example',
+          relayHost: 'relay.example',
+          relayScheme: 'https',
+          relayWsUrl: 'wss://relay.example',
+          autoApprovePermissions: true,
+        },
+        undefined,
+        agent,
+        undefined,
+        {
+          statePath: join(root, 'state.json'),
+          resolveBindingOwnerKey: async () => predecessorKey.publicKey,
+        },
+      );
+      const info = localCornerInfo(agent, repoPath, cornerPath, tip);
+      info.subchannelId = 'corner-succession-unrelated';
+      body.registerSubchannel(info as never);
+
+      const accepted = await Reflect.get(body, 'findHumanMergeApproval').call(body, info);
+
+      expect(accepted).toBeUndefined();
+      expect(info.humanMergeApproval).toBeUndefined();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

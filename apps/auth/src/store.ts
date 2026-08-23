@@ -96,6 +96,20 @@ const MIGRATIONS = [
   )`,
   `CREATE INDEX IF NOT EXISTS beeline_identity_links_pubkey_idx
     ON beeline_identity_links (community, pubkey)`,
+  `CREATE TABLE IF NOT EXISTS beeline_key_successions (
+    community TEXT NOT NULL,
+    issuer TEXT NOT NULL,
+    audience TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    old_pubkey CHAR(64) NOT NULL,
+    new_pubkey CHAR(64) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (community, issuer, audience, subject, old_pubkey),
+    CHECK (old_pubkey ~ '^[0-9a-f]{64}$'),
+    CHECK (new_pubkey ~ '^[0-9a-f]{64}$')
+  )`,
+  `CREATE INDEX IF NOT EXISTS beeline_key_successions_new_idx
+    ON beeline_key_successions (community, new_pubkey)`,
   `CREATE TABLE IF NOT EXISTS beeline_nip98_replays (
     event_id CHAR(64) PRIMARY KEY,
     expires_at TIMESTAMPTZ NOT NULL
@@ -304,6 +318,21 @@ export interface IdentityLink {
   audience: string;
   subject: string;
   pubkey: string;
+  createdAt: Date;
+}
+
+/**
+ * One recorded device-key replacement: the identity's authority moved from
+ * `oldPubkey` to `newPubkey`. Multiple rows chain (A→B, B→C); a key's current
+ * successor is found by walking rows forward.
+ */
+export interface KeySuccession {
+  community: string;
+  issuer: string;
+  audience: string;
+  subject: string;
+  oldPubkey: string;
+  newPubkey: string;
   createdAt: Date;
 }
 
@@ -626,6 +655,28 @@ export class AuthStore {
            WHERE community = $1 AND issuer = $2 AND audience = $3 AND subject = $4`,
           [ticket.community, ticket.issuer, ticket.audience, ticket.subject, pubkey, now],
         );
+        // Succession ledger: the old key authored rooms/bindings/approvals as
+        // this identity, and chain-aware authority must keep honoring it
+        // THROUGH the new key. Recorded in the same transaction as the link
+        // update so the ledger can never disagree with the link. Replacing
+        // from the same old key twice is idempotent (upsert keeps the latest
+        // successor).
+        await transaction.query(
+          `INSERT INTO beeline_key_successions
+            (community, issuer, audience, subject, old_pubkey, new_pubkey, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (community, issuer, audience, subject, old_pubkey)
+           DO UPDATE SET new_pubkey = EXCLUDED.new_pubkey, created_at = EXCLUDED.created_at`,
+          [
+            ticket.community,
+            ticket.issuer,
+            ticket.audience,
+            ticket.subject,
+            previousPubkey,
+            pubkey,
+            now,
+          ],
+        );
       }
       return {
         status: previousPubkey === pubkey ? 'idempotent' : 'replaced',
@@ -678,6 +729,71 @@ export class AuthStore {
       pubkey: row.pubkey,
       createdAt: asDate(row.created_at),
     }));
+  }
+
+  /**
+   * Walk the succession chain forward from `pubkey` to the CURRENT key of its
+   * identity. A key with no recorded succession resolves to itself. Cycle-
+   * safe (a chain can only grow by replacing the current link key, so cycles
+   * are not reachable through the recovery flow, but the walk refuses to
+   * loop forever on corrupt data).
+   */
+  async resolveCurrentPubkey(community: string, pubkey: string): Promise<string> {
+    let current = pubkey;
+    const visited = new Set<string>([current]);
+    for (;;) {
+      const result = await this.database.query<QueryResultRow & { new_pubkey: string }>(
+        `SELECT new_pubkey FROM beeline_key_successions
+         WHERE community = $1 AND old_pubkey = $2
+         ORDER BY created_at DESC LIMIT 1`,
+        [community, current],
+      );
+      const next = result.rows[0]?.new_pubkey;
+      if (!next || visited.has(next)) return current;
+      visited.add(next);
+      current = next;
+    }
+  }
+
+  /**
+   * The one succession-aware equality check: two pubkeys name the same
+   * Beeline identity when they resolve to the same current key. Every
+   * "is this pubkey the authorized owner" comparison goes through here (or
+   * through {@link resolveCurrentPubkey}) so succession semantics live in
+   * exactly one place.
+   */
+  async sameIdentity(community: string, a: string, b: string): Promise<boolean> {
+    if (a === b) return true;
+    const [resolvedA, resolvedB] = await Promise.all([
+      this.resolveCurrentPubkey(community, a),
+      this.resolveCurrentPubkey(community, b),
+    ]);
+    return resolvedA === resolvedB;
+  }
+
+  /**
+   * The keys that previously held THIS key's identity, oldest first — the
+   * chain a successor client walks to rediscover its predecessor's Workspaces.
+   * Only ever served to the key itself (the route checks the NIP-98 signer).
+   */
+  async successionPredecessors(community: string, pubkey: string): Promise<string[]> {
+    const predecessors: string[] = [];
+    const visited = new Set<string>([pubkey]);
+    let current = pubkey;
+    for (;;) {
+      const result = await this.database.query<QueryResultRow & { old_pubkey: string }>(
+        `SELECT old_pubkey FROM beeline_key_successions
+         WHERE community = $1 AND new_pubkey = $2
+         ORDER BY created_at DESC LIMIT 1`,
+        [community, current],
+      );
+      const previous = result.rows[0]?.old_pubkey;
+      if (!previous || visited.has(previous)) break;
+      visited.add(previous);
+      predecessors.unshift(previous);
+      current = previous;
+    }
+    return predecessors;
   }
 
   async githubSubjectForPubkey(community: string, pubkey: string): Promise<string | null> {

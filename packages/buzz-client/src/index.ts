@@ -172,6 +172,7 @@ export {
   finishOidcBind,
   recoverOidcBind,
   lookupRecovery,
+  fetchIdentityPredecessors,
 } from './oidc-bind.js';
 export type {
   OidcBindChallenge,
@@ -247,6 +248,7 @@ export {
   renameCommunity,
   setCommunityVisibility,
   listCommunities,
+  migrateSuccessorMemberships,
   communityChannels,
   communityMembers,
   attachCommunityMemberToChannel,

@@ -18,7 +18,10 @@ const legacyRelayCommunityId = '3a47eeff-fdff-4a1e-9eb9-b48cb4ed90ed';
 const roomCommunityId = 'e8299f28-f095-472f-941a-80d1195b9a24';
 const roomId = '484556f2-7e81-4ad6-a851-0e57bdba6a67';
 const agentPubkey = 'a3447f1163edeb8dff75a67c3492c808821fe21b8a0c35d363769e45efeca601';
-const roomStore = { relayCommunityIdForRoom: vi.fn() };
+const roomStore = {
+  relayCommunityIdForRoom: vi.fn(),
+  resolveCurrentPubkey: vi.fn(),
+};
 const tenant: AuthTenant = {
   host: 'relay.example',
   // This is deliberately not the Room UUID: production keeps its legacy
@@ -35,6 +38,10 @@ const input = {
 
 beforeEach(() => {
   roomStore.relayCommunityIdForRoom.mockReset().mockResolvedValue(roomCommunityId);
+  // No succession recorded by default: the binding author IS the current key.
+  roomStore.resolveCurrentPubkey.mockReset().mockImplementation(
+    async (_community: string, pubkey: string) => pubkey,
+  );
   relay.isMember.mockReset().mockResolvedValue(true);
   relay.resolveRoomRepository.mockReset().mockResolvedValue({
     binding: {
@@ -54,6 +61,7 @@ describe('GitHub Room token authority', () => {
     await expect(createGitHubRoomTokenAuthority(roomStore)(tenant, input)).resolves.toEqual({
       authorized: true,
       authorizedBy: 'b'.repeat(64),
+      currentAuthorizedBy: 'b'.repeat(64),
       fullName: 'acme/widget',
       githubInstallationId: 77,
     });
@@ -82,7 +90,36 @@ describe('GitHub Room token authority', () => {
     await expect(createGitHubRoomTokenAuthority(roomStore)(tenant, input)).resolves.toEqual({
       authorized: true,
       authorizedBy: 'c'.repeat(64),
+      currentAuthorizedBy: 'c'.repeat(64),
       fullName: 'acme/widget',
+    });
+  });
+
+  it('resolves a replaced binding author to its successor key for authority lookups', async () => {
+    roomStore.resolveCurrentPubkey.mockResolvedValue('d'.repeat(64));
+
+    await expect(createGitHubRoomTokenAuthority(roomStore)(tenant, input)).resolves.toEqual({
+      authorized: true,
+      authorizedBy: 'b'.repeat(64),
+      currentAuthorizedBy: 'd'.repeat(64),
+      fullName: 'acme/widget',
+      githubInstallationId: 77,
+    });
+    expect(roomStore.resolveCurrentPubkey).toHaveBeenCalledWith(
+      tenant.community,
+      'b'.repeat(64),
+    );
+  });
+
+  it('keeps the raw author when succession resolution fails (pre-succession behavior)', async () => {
+    roomStore.resolveCurrentPubkey.mockRejectedValue(new Error('ledger unavailable'));
+
+    await expect(createGitHubRoomTokenAuthority(roomStore)(tenant, input)).resolves.toEqual({
+      authorized: true,
+      authorizedBy: 'b'.repeat(64),
+      currentAuthorizedBy: 'b'.repeat(64),
+      fullName: 'acme/widget',
+      githubInstallationId: 77,
     });
   });
 

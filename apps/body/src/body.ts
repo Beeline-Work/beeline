@@ -123,6 +123,7 @@ import {
 } from '@beeline/buzz-client';
 import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { performBrokeredPush } from './push-broker.js';
+import { isArchivedChannelError } from './archived-channel.js';
 import type { BodyConfig, SessionMode } from './config.js';
 import { publishCritical } from './publish-delivery.js';
 import {
@@ -775,6 +776,24 @@ export interface SubchannelInfo {
   ciWatchStarted?: boolean;
   /** Successfully forwarded member events, preventing same-second relay replays. */
   processedMemberEventIds?: Set<string>;
+  /** The merge-summary card was confirmed published. Idempotency for a corner
+   *  whose archive is deferred past the tick that landed it (a live session),
+   *  so the summary is not restated on every maintenance tick while the corner
+   *  waits to retire. */
+  mergeSummaryPosted?: boolean;
+  /**
+   * The land is complete but this corner's archive is deliberately HELD while
+   * its agent session is still live or has queued work — archiving immediately
+   * made the relay reject every further kind:9 event on the channel, silently
+   * discarding the agent's post-landing output and, since archived corners are
+   * hidden (#375), vanishing a working corner mid-conversation.
+   *
+   * Set by `pollMergeCompletions` when it finds a live session; consumed by
+   * the session lifecycle's `suspended` transition (the scheduler's
+   * suspend/retire path) and backstopped by the per-corner maintenance visit,
+   * which archives as soon as neither reports activity.
+   */
+  archiveWhenSessionRetires?: boolean;
   /**
    * Newest feature-branch tip the harness-independent commit watch has already
    * evaluated through `publishMergeReady`.
@@ -2542,12 +2561,7 @@ export class Body {
         session.activityProjection = undefined;
         if (client.isAlive) await client.stop();
       },
-      ...(input.parentChannelId ? { onStateChange: async (state: 'live' | 'suspended' | 'waiting-for-slot') => {
-        if (session.processState === state) return;
-        session.processState = state;
-        session.processStateSequence = Math.max(Date.now(), (session.processStateSequence ?? 0) + 1);
-        await postCornerSessionStatus(input.channelId, this.agentIdentity, session.logicalSessionId!, state, session.processStateSequence).catch((error) => console.error(`[body] failed to publish corner session state ${state}:`, error));
-      } } : {}),
+      ...(input.parentChannelId ? { onStateChange: (state: 'live' | 'suspended' | 'waiting-for-slot') => this.onCornerSessionStateChange(session, input.channelId, state) } : {}),
     };
     session.lifecycle = lifecycle;
     await lifecycle.onStateChange?.('suspended');
@@ -7337,14 +7351,120 @@ export class Body {
       // last chance. A refusal that is still worth re-attempting holds the
       // teardown for this tick rather than taking the record with it.
       if (!this.landRecapSettled(info)) continue;
-      await this.postMergeSummary(
-        info.subchannelId,
-        info.mergeSummary ?? `Merged ${info.featureBranch} at ${landedTip.slice(0, 12)}…`,
-      );
+      if (!info.mergeSummaryPosted) {
+        await this.postMergeSummary(
+          info.subchannelId,
+          info.mergeSummary ?? `Merged ${info.featureBranch} at ${landedTip.slice(0, 12)}…`,
+        );
+        // Set only after the publish resolved: a refusal must cost this flag
+        // nothing, so a later tick re-attempts rather than skipping forever.
+        info.mergeSummaryPosted = true;
+      }
+      // A live agent session is exactly why the corner must NOT archive yet:
+      // the relay rejects every further kind:9 event on an archived channel,
+      // so an immediate teardown silently discarded the agent's post-landing
+      // output and hid a working corner mid-conversation. Hold the archive;
+      // the session lifecycle's `suspended` transition (and the per-corner
+      // maintenance backstop below) archives once it actually retires.
+      if (this.cornerSessionActive(info)) {
+        if (!info.archiveWhenSessionRetires) {
+          info.archiveWhenSessionRetires = true;
+          console.log(
+            `[body] landed corner ${info.subchannelId} stays open until its agent session retires`,
+          );
+        }
+        merged++;
+        continue;
+      }
       await this.archiveSubchannel(info.subchannelId);
       merged++;
     }
     return merged;
+  }
+
+  /**
+   * Whether this corner's agent session is still live or has queued work — the
+   * condition that must hold an archive off (see `archiveWhenSessionRetires`).
+   *
+   * An active turn is checked directly because the scheduler's own busy set is
+   * private; a session whose physical process is live or waiting for a slot is
+   * read off the lifecycle state the scheduler already reports. `undefined`
+   * (a session never activated, or one already retired) counts as NOT active,
+   * which keeps the common no-live-session land archiving immediately.
+   */
+  private cornerSessionActive(info: SubchannelInfo): boolean {
+    if (this.runningAgentTasks.has(info.subchannelId)) return true;
+    return info.session.processState === 'live' || info.session.processState === 'waiting-for-slot';
+  }
+
+  /**
+   * One corner-session process-state transition, as reported by the Workspace
+   * scheduler's lifecycle (`live` / `suspended` / `waiting-for-slot`).
+   *
+   * Two jobs, in order: a landed corner holding its archive for its live
+   * session takes its teardown the moment the scheduler reports `suspended`
+   * (the authoritative "retired" signal — runs regardless of whether the word
+   * changed, so a redundant notification cannot strand the archive), then the
+   * state is published to the corner as a `corner-session` control event.
+   *
+   * An archived channel refusing that publish is the EXPECTED terminal shape
+   * (a landed corner archived while its session was mid-retire), not a
+   * failure: one plain log line, never an error entry.
+   */
+  private async onCornerSessionStateChange(
+    session: AgentSession,
+    channelId: string,
+    state: 'live' | 'suspended' | 'waiting-for-slot',
+  ): Promise<void> {
+    const changed = session.processState !== state;
+    if (changed) {
+      session.processState = state;
+      session.processStateSequence = Math.max(Date.now(), (session.processStateSequence ?? 0) + 1);
+    }
+    if (state === 'suspended') await this.runDeferredLandArchive(channelId);
+    if (!changed) return;
+    await postCornerSessionStatus(
+      channelId,
+      this.agentIdentity,
+      session.logicalSessionId!,
+      state,
+      session.processStateSequence!,
+    ).catch((error) => {
+      if (isArchivedChannelError(error)) {
+        console.log(
+          `[body] corner ${channelId}: channel archived; skipped ${state} session-state publish`,
+        );
+        return;
+      }
+      console.error(`[body] failed to publish corner session state ${state}:`, error);
+    });
+  }
+
+  /**
+   * Archive a landed corner whose teardown was held for its live session, once
+   * that session has actually retired.
+   *
+   * Called from two places: the session lifecycle's `suspended` transition (the
+   * scheduler's suspend/retire path knows the exact moment) and the per-corner
+   * maintenance visit as a backstop. A no-op unless the corner actually holds a
+   * deferred archive, so every other suspended transition costs nothing.
+   */
+  private async runDeferredLandArchive(subchannelId: string): Promise<void> {
+    const info = this.subchannels.get(subchannelId);
+    if (!info?.archiveWhenSessionRetires || info.archived) return;
+    if (this.cornerSessionActive(info)) return;
+    console.log(`[body] archiving landed corner ${subchannelId}: agent session retired`);
+    try {
+      await this.archiveSubchannel(subchannelId);
+    } catch (error) {
+      // The maintenance backstop retries; nothing here may break the scheduler
+      // callback this runs under (`notifyState` swallows, but loudly hiding a
+      // real failure would strand the corner unarchived with no trace).
+      console.error(
+        `[body] deferred archive of landed corner ${subchannelId} failed; will retry:`,
+        error,
+      );
+    }
   }
 
   /**
@@ -8015,6 +8135,18 @@ export class Body {
           ),
         );
       }
+      return 0;
+    }
+
+    // Backstop for a landed corner whose archive is held for its live session:
+    // the lifecycle's own `suspended` transition normally fires first, but a
+    // session retired through a path that skipped the notification (or raced
+    // this visit while still marked live) converges here instead of staying
+    // open forever. Return either way: a successful archive deleted the
+    // corner from the map, and a failed one should not process messages
+    // against teardown state mid-close.
+    if (info.archiveWhenSessionRetires && !this.cornerSessionActive(info)) {
+      await this.runDeferredLandArchive(subchannelId);
       return 0;
     }
 

@@ -348,3 +348,111 @@ describe('latestCornerPlan', () => {
     ).toEqual(second);
   });
 });
+
+describe('failure reasons', () => {
+  // Output shapes lifted verbatim from the live failure corpus (2026-08-23):
+  // body ships the tool result as a JSON envelope on the same wire record.
+  const wireOutput = (formatted: string, exitCode?: number) =>
+    JSON.stringify({ formatted_output: formatted, ...(exitCode !== undefined ? { exit_code: exitCode } : {}) });
+
+  it('names the missing command instead of a bare FAILED', () => {
+    const turn = buildTurnActivity([
+      {
+        kind: 'tool',
+        id: 'f1',
+        title: 'Ran the test suite',
+        toolKind: 'execute',
+        status: 'failed',
+        command: 'npm test -- --run sources/buzz/local-cache.test.ts',
+        output: wireOutput('sh: 1: vitest: not found', 127),
+      },
+    ]);
+    expect(turn.actions[0]).toMatchObject({
+      weight: 'failure',
+      reason: 'command not found: vitest',
+    });
+  });
+
+  it('says a read-only path was blocked, not just that something failed', () => {
+    const turn = buildTurnActivity([
+      {
+        kind: 'tool',
+        id: 'f2',
+        title: 'Committed changes',
+        toolKind: 'execute',
+        status: 'failed',
+        output: wireOutput(
+          "fatal: Unable to create '/repo/.git/worktrees/c1/index.lock': Read-only file system",
+          128,
+        ),
+      },
+    ]);
+    expect(turn.actions[0]?.reason).toMatch(/blocked: .*read-only/);
+  });
+
+  it('names a missing dependency', () => {
+    const turn = buildTurnActivity([
+      {
+        kind: 'tool',
+        id: 'f3',
+        title: 'Ran type checks',
+        toolKind: 'execute',
+        status: 'failed',
+        output: wireOutput(
+          "MembersScreen.tsx(22,8): error TS2307: Cannot find module '@beeline/buzz-client' or its corresponding type declarations.",
+          2,
+        ),
+      },
+    ]);
+    expect(turn.actions[0]?.reason).toBe("missing dependency: @beeline/buzz-client");
+  });
+
+  it('falls back to the first error line with the exit code', () => {
+    const turn = buildTurnActivity([
+      {
+        kind: 'tool',
+        id: 'f4',
+        title: 'Ran type checks',
+        toolKind: 'execute',
+        status: 'failed',
+        output: wireOutput(
+          '> @beeline/body@0.0.0 test\n> vitest run\nnpm error code 127\nnpm error command failed',
+          127,
+        ),
+      },
+    ]);
+    expect(turn.actions[0]?.reason).toContain('exited 127');
+  });
+
+  it('derives the reason at the projection level, from the real activity_batch envelope', () => {
+    const envelope = JSON.stringify({
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'activity_batch',
+        updates: [
+          {
+            sessionUpdate: 'tool_activity',
+            toolCallId: 'exec-1',
+            title: 'Committed changes',
+            kind: 'execute',
+            status: 'failed',
+            command: 'git commit -m "fix"',
+            output: wireOutput("fatal: Unable to create '/r/.git/index.lock': Read-only file system", 128),
+          },
+        ],
+      },
+    });
+    const items = agentActivityDetails(envelope);
+    expect(items[0]).toMatchObject({ kind: 'tool', status: 'failed' });
+    const turn = buildTurnActivity(items);
+    expect(turn.actions[0]?.weight).toBe('failure');
+    expect(turn.actions[0]?.reason).toMatch(/read-only/);
+  });
+
+  it('leaves successful actions without a reason', () => {
+    const turn = buildTurnActivity([
+      { kind: 'tool', id: 'ok', title: 'Run tests', toolKind: 'execute', status: 'completed', output: '12 passed' },
+    ]);
+    expect(turn.actions[0]?.reason).toBeUndefined();
+  });
+});

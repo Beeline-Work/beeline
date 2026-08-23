@@ -172,6 +172,10 @@ import {
 } from './attachments.js';
 import { isReadOnlyMcpPermissionRequest, READ_ONLY_MCP_SERVER_NAME } from './read-only-policy.js';
 import {
+  ensureCheckoutToolchainProvisioned,
+  seedCornerNodeModules,
+} from './corner-toolchain.js';
+import {
   authorizedExternalMcpServers,
   isExternalMcpPermissionRequest,
 } from './external-mcp-capabilities.js';
@@ -2124,6 +2128,16 @@ export class Body {
         return { command, args: [...(args ?? [])] };
       }
       spec.gitCommonDir = gitCommonDir;
+      // Re-seed the worktree's dependency links at spawn time: provisioning of
+      // the canonical checkout may have finished since the worktree was
+      // created, and this is the last cheap point before the agent runs its
+      // first command. A bare common dir (relay-origin repo) has no checkout to
+      // seed from and is skipped by the helper's existence checks.
+      const commonDir = resolve(input.worktreePath ?? input.cwd, gitCommonDir);
+      const sourceCheckout = basename(commonDir) === '.git' ? resolve(commonDir, '..') : undefined;
+      if (input.worktreePath && sourceCheckout) {
+        this.seedWorktreeToolchain(input.worktreePath, sourceCheckout);
+      }
       // Same bind-try-vs-mkdir reasoning as the harness roots above: the merge
       // gate cannot create its own state root on a read-only $HOME, so create
       // it here, in the daemon, before the child is confined. Corner-only: a
@@ -8201,6 +8215,28 @@ export class Body {
    * committed. Never throws; a failure just leaves `.codegraph/` visible to
    * `git status`, which is a hygiene issue, not a functional one.
    */
+  /**
+   * Give a fresh corner worktree the repository's dependency tree (see
+   * {@link seedCornerNodeModules}) and kick off a one-time install in the
+   * canonical checkout if it has none yet. Both best-effort and cheap; called
+   * at worktree creation AND at edit-session spawn, because provisioning may
+   * finish between a corner opening and its first turn.
+   */
+  private seedWorktreeToolchain(worktreePath: string, sourceCheckout?: string): void {
+    if (!sourceCheckout || !isAbsolute(sourceCheckout)) return;
+    try {
+      const seeded = seedCornerNodeModules({ worktreePath, sourceCheckout });
+      if (seeded.linked.length) {
+        console.log(
+          `[body] seeded corner toolchain for ${worktreePath}: ${seeded.linked.join(', ')}`,
+        );
+      }
+      ensureCheckoutToolchainProvisioned(sourceCheckout);
+    } catch (error) {
+      console.warn(`[body] corner toolchain seeding failed for ${worktreePath}:`, error);
+    }
+  }
+
   private excludeCodegraphFromWorktreeStatus(worktreePath: string): void {
     try {
       const gitPath = spawnSync('git', ['rev-parse', '--git-path', 'info/exclude'], {
@@ -8361,6 +8397,7 @@ export class Body {
     git(worktreePath, ['config', 'user.name', this.agentIdentity.name || 'buzzy-agent']);
     git(worktreePath, ['config', 'user.email', 'agent@buzzy.local']);
     this.excludeCodegraphFromWorktreeStatus(worktreePath);
+    this.seedWorktreeToolchain(worktreePath, repoRoot);
     return true;
   }
 
@@ -8403,6 +8440,7 @@ export class Body {
       git(worktreePath, ['config', 'user.name', this.agentIdentity.name || 'buzzy-agent']);
       git(worktreePath, ['config', 'user.email', 'agent@buzzy.local']);
       this.excludeCodegraphFromWorktreeStatus(worktreePath);
+      this.seedWorktreeToolchain(worktreePath, boundRepo.localPath);
       return;
     }
 

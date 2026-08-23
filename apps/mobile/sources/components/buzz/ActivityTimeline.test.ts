@@ -271,6 +271,34 @@ describe('corner tool activity', () => {
     expect(collapsed).not.toContain('sources/auth/oidc.ts');
   });
 
+  it('renders a one-line plain-language reason under a failed action', () => {
+    const items = [
+      {
+        kind: 'tool' as const,
+        id: 'fail-1',
+        title: 'Committed changes',
+        toolKind: 'execute',
+        status: 'failed',
+        command: 'git commit -m fix',
+        output: JSON.stringify({
+          formatted_output:
+            "fatal: Unable to create '/repo/.git/index.lock': Read-only file system",
+          exit_code: 128,
+        }),
+      },
+    ];
+    const renderer = render(React.createElement(ActivityTimeline, { items }));
+
+    const text = renderedText(renderer);
+    expect(text).toContain('FAILED');
+    // The reason is projected from the tool result, one line, on the slab.
+    expect(text).toMatch(/blocked: .*read-only/);
+    const reasonNode = renderer.root.findAll(
+      (node: any) => typeof node.props?.children === 'string' && node.props.children.startsWith('blocked:'),
+    );
+    expect(reasonNode.length).toBeGreaterThan(0);
+  });
+
   it('drills from a tool line to its file list and then the selected diff', () => {
     const renderer = render(React.createElement(ActivityTimeline, { items: NOISY_TURN }));
 

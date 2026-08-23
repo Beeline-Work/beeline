@@ -6,7 +6,7 @@
  * `migrateSuccessorMemberships` self-joins the successor at the predecessor's
  * role, touches nobody else's membership, and skips DMs and corners.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import {
   KIND_CHANNEL_ADMINS,
@@ -22,6 +22,10 @@ import {
 import { tagValue } from './parse.js';
 import { createIdentity } from './identity.js';
 import { listCommunities, migrateSuccessorMemberships } from './community.js';
+import {
+  resetUnmigratableRooms,
+  seedUnmigratableRooms,
+} from './unmigratable-rooms.js';
 import type { ChannelOpsContext } from './channel.js';
 
 const workspaceId = '11111111-1111-4111-8111-111111111111';
@@ -57,8 +61,12 @@ function jsonResponse(body: unknown): Response {
 /**
  * Minimal stateful relay: membership projections per channel id, create
  * events, and kind:9000 writes that mutate projection state synchronously.
+ *
+ * `stuckChannels` models the measured production reality: upstream block/buzz
+ * stores a kind:9000 member-add but never updates kind:39002 for rooms where
+ * no living admin exists to author it — publish acks, projection frozen.
  */
-function buildRelayState() {
+function buildRelayState(stuckChannels: ReadonlySet<string> = new Set()) {
   const members = new Map<string, string[][]>();
   const admins = new Map<string, string[][]>();
 
@@ -117,6 +125,9 @@ function buildRelayState() {
       if (event.kind !== KIND_PUT_USER) return;
       const channelId = tagValue(event, 'h');
       const target = tagValue(event, 'p');
+      if (!channelId || !target) return;
+      // The relay stored the write but its projection is permanently frozen.
+      if (stuckChannels.has(channelId)) return;
       const roleTag = tagValue(event, 'role') ?? 'member';
       if (!channelId || !target) return;
       const entry: string[] = target === successor.publicKey
@@ -175,6 +186,31 @@ function buildRelayState() {
 }
 
 let relay: ReturnType<typeof buildRelayState>;
+
+beforeEach(() => {
+  // Verdicts are session-scoped by design; each test starts clean.
+  resetUnmigratableRooms();
+});
+
+function stubRelayFetch(options?: { publishStatusFor?: (event: NostrEvent) => number }): void {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/events')) {
+        const event = JSON.parse(String(init?.body)) as NostrEvent;
+        const status = options?.publishStatusFor?.(event);
+        if (status && status !== 200) return new Response('rejected', { status });
+        relay.handlePublish(event);
+        return jsonResponse({ accepted: true });
+      }
+      if (url.endsWith('/query')) {
+        return jsonResponse(await relay.query(JSON.parse(String(init?.body))[0] ?? {}));
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }),
+  );
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -250,5 +286,77 @@ describe('key-succession membership migration', () => {
     const writesAfterFirstPass = relay.published.length;
     await migrateSuccessorMemberships(ctxFor(successor), [oldKey.publicKey]);
     expect(relay.published.length).toBe(writesAfterFirstPass);
+  });
+
+  it('skips a room the relay never projects as NOT MIGRATABLE and still migrates the rest', async () => {
+    // Production reality 2026-08-23: the room's only admin was the
+    // predecessor, so the relay stores the successor's self-join but its
+    // kind:39002 projection never updates. Migration must not throw.
+    relay = buildRelayState(new Set([roomId]));
+    stubRelayFetch();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const migrated = await migrateSuccessorMemberships(ctxFor(successor), [
+        oldKey.publicKey,
+      ], { membershipWaitTimeoutMs: 50 });
+      // The workspace joined; the orphaned room is skipped, not fatal.
+      expect(migrated).toEqual([workspaceId]);
+      expect(relay.successorJoinedWorkspace).toBe(true);
+      expect(relay.successorJoinedRoom).toBe(false);
+
+      // Exactly one log line names the skipped room.
+      const lines = warn.mock.calls
+        .map((call) => call.join(' '))
+        .filter((line) => line.includes(roomId));
+      expect(lines).toHaveLength(1);
+
+      // The verdict is cached for the session: a repeat bootstrap re-skips
+      // the orphaned room WITHOUT re-asserting the projection wait — no new
+      // join attempt for that room at all.
+      const publishedAfterFirstPass = relay.published.length;
+      const second = await migrateSuccessorMemberships(ctxFor(successor), [
+        oldKey.publicKey,
+      ],
+      { membershipWaitTimeoutMs: 50 });
+      expect(second).toEqual([]);
+      expect(relay.published.length).toBe(publishedAfterFirstPass);
+      expect(
+        warn.mock.calls.map((call) => call.join(' ')).filter((line) => line.includes(roomId)),
+      ).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('reuses a seeded unmigratable verdict without waiting on first bootstrap', async () => {
+    seedUnmigratableRooms([{ channelId: roomId, pubkey: successor.publicKey }]);
+    relay = buildRelayState(new Set([roomId]));
+    stubRelayFetch();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const start = Date.now();
+      const migrated = await migrateSuccessorMemberships(ctxFor(successor), [
+        oldKey.publicKey,
+      ]);
+      expect(migrated).toEqual([workspaceId]);
+      // Seeded skip: no 15s projection wait, not even a short one.
+      expect(Date.now() - start).toBeLessThan(2_000);
+      // No re-log for a verdict learned on an earlier launch.
+      expect(warn.mock.calls.map((call) => call.join(' '))).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('still errors on a genuine relay rejection of the join write', async () => {
+    relay = buildRelayState();
+    stubRelayFetch({
+      // HTTP 400 is non-retryable in publishEvent: fails fast.
+      publishStatusFor: (event) =>
+        event.kind === KIND_PUT_USER && tagValue(event, 'h') === workspaceId ? 400 : 200,
+    });
+    await expect(
+      migrateSuccessorMemberships(ctxFor(successor), [oldKey.publicKey]),
+    ).rejects.toThrow(/publishEvent/);
   });
 });

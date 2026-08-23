@@ -221,6 +221,8 @@ export {
   getChannelRepositoryBinding,
   sendMessage,
   backfillMessages,
+  isMembershipProjectionTimeout,
+  MembershipProjectionTimeoutError,
 } from './channel.js';
 export type { ChannelOpsContext, ChannelRole } from './channel.js';
 
@@ -261,6 +263,16 @@ export {
   findCommunityInvite,
   DEFAULT_INVITE_TTL_SECONDS,
 } from './community.js';
+
+export {
+  isRoomUnmigratable,
+  markRoomUnmigratable,
+  seedUnmigratableRooms,
+  unmigratableRooms,
+  resetUnmigratableRooms,
+  unmigratableRoomKey,
+  type UnmigratableRoom,
+} from './unmigratable-rooms.js';
 
 export {
   abandonAgentPairing,

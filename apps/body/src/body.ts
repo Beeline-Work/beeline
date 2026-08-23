@@ -5734,12 +5734,12 @@ export class Body {
       '--untracked-files=all',
       '-z',
     ]).stdout;
-    const dirty = projectDirtyStatus(
+    const dirtyEntries = projectDirtyStatus(
       info.worktreePath,
       status,
       info.session.agentPrivateState,
-    ).length > 0;
-    if (dirty || files.length === 0) {
+    );
+    if (dirtyEntries.length > 0 || files.length === 0) {
       // Never advertise HEAD as reviewable when the agent's actual work is
       // uncommitted, or when it made no committed change. An older ready tip
       // must be withdrawn too, otherwise a human could approve stale work.
@@ -5751,10 +5751,10 @@ export class Body {
       const withdrawnDetail = withdrawnTarget
         ? ` The previously published merge target ${withdrawnTarget.tip} is stale and has been withdrawn.`
         : '';
-      const detail = dirty
+      const detail = dirtyEntries.length > 0
         ? [
             'The worktree has uncommitted or untracked paths:',
-            ...dirty.split('\n').map((entry) => `- ${entry}`),
+            ...dirtyEntries.map((entry) => `- ${entry}`),
             'Commit the intended project changes and remove or relocate anything that should not be reviewed.',
             withdrawnDetail.trim(),
           ]

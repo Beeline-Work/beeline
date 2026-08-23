@@ -460,6 +460,49 @@ describe('agent identity boundary', () => {
       expect(binds).toContain(join(homedir(), '.no-mistakes'));
     });
 
+    it('masks operator credential stores out of a session instead of leaving them read-only', () => {
+      // Acceptance: a session's filesystem must contain NO readable operator
+      // credential store. The whole-home ro-bind makes them read-only, which
+      // is not enough — a readable gh token can push main out-of-band — so
+      // every existing known store plus the owner-configured extras are
+      // masked ABSENT (dir → empty tmpfs, file → /dev/null).
+      const secretDir = join(sandboxRoot, 'operator-secrets');
+      mkdirSync(secretDir, { recursive: true });
+      writeFileSync(join(secretDir, 'token'), 'do-not-read');
+      const body = new Body(
+        {
+          ...config,
+          bwrapPath: '/usr/bin/bwrap',
+          sandboxMaskPaths: [secretDir],
+        },
+        newIdentity('operator'),
+      );
+      const spawn = (body as unknown as SpawnProbe).sessionSpawnCommand(
+        { mode: 'readonly', cwd: '/srv/checkout' },
+        {},
+      );
+      // The owner-configured extra is masked as an empty tmpfs.
+      const secretAt = spawn.args.indexOf(secretDir);
+      expect(spawn.args[secretAt - 1]).toBe('--tmpfs');
+      // Masks ride AFTER the whole-home ro-bind they override.
+      expect(secretAt).toBeGreaterThan(2);
+      // Every built-in known credential store that exists on this host is
+      // masked too — in BOTH modes; this is the Room shape.
+      for (const entry of ['.config/gh', '.ssh', '.netrc', '.git-credentials', '.secrets.env']) {
+        const path = join(homedir(), entry);
+        if (!existsSync(path)) continue;
+        const at = spawn.args.indexOf(path);
+        expect(at).toBeGreaterThan(0);
+        const kind =
+          spawn.args[at - 1] === '--tmpfs'
+            ? 'dir'
+            : spawn.args[at - 1] === '/dev/null' && spawn.args[at - 2] === '--ro-bind'
+              ? 'file'
+              : undefined;
+        expect(kind).toBeDefined();
+      }
+    });
+
     it('spawns the bare command when no bwrap was detected at daemon start', () => {
       const body = new Body(config, newIdentity('operator'));
       const spawn = (body as unknown as SpawnProbe).sessionSpawnCommand(

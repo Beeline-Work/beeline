@@ -441,6 +441,15 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // the boundary before any Room comes online.
   const sandbox = detectBwrapSandbox({ ...(runtime.sandbox ? { policy: runtime.sandbox } : {}) });
   if (sandbox.path) config.bwrapPath = sandbox.path;
+  // Owner-configured credential masks ride the runtime record; the
+  // BUZZY_BODY_SANDBOX_MASK env var is already folded into `config` by
+  // loadBodyConfig. Both are unioned at spawn time in Body.sessionSpawnCommand.
+  if (runtime.sandboxMaskPaths?.length) {
+    config.sandboxMaskPaths = [
+      ...(config.sandboxMaskPaths ?? []),
+      ...runtime.sandboxMaskPaths,
+    ];
+  }
   const controller = new AbortController();
   const stop = () => controller.abort();
   process.once('SIGINT', stop);

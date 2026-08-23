@@ -14,7 +14,9 @@
  * or absence means idle / nothing reportable.
  */
 export {
+  CORNER_ASK_FRESH_WINDOW_MS,
   CORNER_NEEDS_YOU_STATUSES,
+  CORNER_WORK_LIVENESS_WINDOW_MS,
   CORNER_WORK_SIGNAL_TAGS,
   cornerLifecycleFact,
   cornerStatusPrecedence,
@@ -22,15 +24,18 @@ export {
   mapRawCornerStatusTag,
   mergeCornerStatuses,
   resolveCornerLifecycle,
+  resolveCornerState,
   resolveCornerStatusAgainstArchive,
   type CornerLifecycleFact,
   type CornerLifecycleStatus,
+  type CornerSuperState,
 } from '@beeline/buzz-client';
 
 import {
   cornerStatusPrecedence,
   resolveCornerStatusAgainstArchive,
   type CornerLifecycleStatus,
+  type CornerSuperState,
 } from '@beeline/buzz-client';
 
 export type CornerStatus = CornerLifecycleStatus;
@@ -39,16 +44,39 @@ export type CornerSummary = {
   id: string;
   name: string;
   openerPubkey: string;
-  status: CornerStatus;
+  /** The legacy word the transport derived the summary from. `null` means
+   * idle-without-finishing — which IS needs-human under THE three-word
+   * verdict (`cornerSuperState`); surfaces read the super-state, not this. */
+  status: CornerStatus | null;
   createdAt?: number;
   /** Most recent activity timestamp seen for this corner (seconds); used to
    * pick the corner that's actually being worked on over a stale/empty one. */
   lastActivityAt?: number;
 };
 
+/**
+ * THE three-word state every Buzz surface renders and golds: working |
+ * needs-human | finished. Idle-without-finishing (`null`) is needs-human,
+ * plainly — deliberately treated as a failure mode, not a quiet tier.
+ * Affordances stay contextual per surface; the STATE is just these words.
+ */
+export function cornerSuperState(status: CornerStatus | null): CornerSuperState {
+  if (status === null) return 'needs-human';
+  if (status === 'live') return 'working';
+  if (status === 'merged' || status === 'archived') return 'finished';
+  return 'needs-human';
+}
+
+/** Relative precedence that tolerates the oracle's `null` (idle-without-
+ * finishing) verdict — it ranks as the least reportable worded state. */
+export function cornerStatusPrecedenceOrNull(status: CornerStatus | null): number {
+  return status === null ? Number.MAX_SAFE_INTEGER : cornerStatusPrecedence(status);
+}
+
 /** Corners still being actively worked on — the set that deserves a live
- * badge / sort-to-top treatment, as opposed to terminal or paused states. */
-export function isCornerActive(status: CornerStatus): boolean {
+ * badge / sort-to-top treatment, as opposed to terminal or paused states.
+ * The oracle's `null` (stalled) is not active work. */
+export function isCornerActive(status: CornerStatus | null): boolean {
   return status === 'live' || status === 'needs-attention';
 }
 
@@ -61,7 +89,7 @@ export function isCornerActive(status: CornerStatus): boolean {
  * ones so a new non-terminal `CornerStatus` is reportable by default, and a
  * new terminal one has to be named here to become terminal.
  */
-export function isCornerTerminal(status: CornerStatus): boolean {
+export function isCornerTerminal(status: CornerStatus | null): boolean {
   return status === 'merged' || status === 'failed' || status === 'archived';
 }
 
@@ -89,40 +117,38 @@ export function cornerName(name: string | undefined, id: string): string {
 const CORNER_GLYPH_LIVE = '◆';
 const CORNER_GLYPH_QUIET = '◇';
 
-export function cornerGlyphForStatus(status: CornerStatus): string {
+export function cornerGlyphForStatus(status: CornerStatus | null): string {
   return status === 'live' ? CORNER_GLYPH_LIVE : CORNER_GLYPH_QUIET;
 }
 
 export { CORNER_GLYPH_LIVE, CORNER_GLYPH_QUIET };
 
-export function cornerStatusPresentation(status: CornerStatus): {
+/**
+ * The one glyph/label source — and the STATE WORD is exactly the three-word
+ * verdict (`cornerSuperState`), with no sub-reason taxonomy: WORKING,
+ * NEEDS HUMAN (idle-without-finishing included, plainly), FINISHED. Which
+ * affordance a surface offers inside a needs-human corner (approve card when
+ * a live merge target exists, reply focus otherwise, retry, nudge/close) is
+ * that surface's contextual choice, not a state word.
+ */
+export function cornerStatusPresentation(status: CornerStatus | null): {
   glyph: string;
   label: string;
 } {
-  switch (status) {
-    case 'live':
-      return { glyph: CORNER_GLYPH_LIVE, label: 'LIVE' };
-    case 'needs-attention':
-      return { glyph: CORNER_GLYPH_QUIET, label: 'NEEDS ATTENTION' };
-    case 'open': {
-      // The only path to this status (`cornerSummaryFromEvents` in
-      // `buzz-rig-transport.ts`) is a `ready` display-status or a
-      // `merge-ready` tagged event — 'open' never means merely "not yet
-      // closed", it always means the corner has an approvable change.
-      return { glyph: CORNER_GLYPH_QUIET, label: 'READY' };
-    }
-    case 'failed':
-      return { glyph: CORNER_GLYPH_QUIET, label: 'FAILED' };
-    case 'merged':
-      return { glyph: CORNER_GLYPH_QUIET, label: 'MERGED' };
-    case 'archived':
-      return { glyph: CORNER_GLYPH_QUIET, label: 'ARCHIVED' };
+  switch (cornerSuperState(status)) {
+    case 'working':
+      return { glyph: CORNER_GLYPH_LIVE, label: 'WORKING' };
+    case 'needs-human':
+      return { glyph: CORNER_GLYPH_QUIET, label: 'NEEDS HUMAN' };
+    case 'finished':
+      return { glyph: CORNER_GLYPH_QUIET, label: 'FINISHED' };
   }
 }
 
 export function sortCorners(corners: CornerSummary[]): CornerSummary[] {
   return [...corners].sort((a, b) => {
-    const statusDelta = cornerStatusPrecedence(a.status) - cornerStatusPrecedence(b.status);
+    const statusDelta =
+      cornerStatusPrecedenceOrNull(a.status) - cornerStatusPrecedenceOrNull(b.status);
     if (statusDelta !== 0) return statusDelta;
     return (
       (b.lastActivityAt ?? b.createdAt ?? 0) - (a.lastActivityAt ?? a.createdAt ?? 0) ||
@@ -132,12 +158,13 @@ export function sortCorners(corners: CornerSummary[]): CornerSummary[] {
 }
 
 /**
- * The Room-list dropdown is a live-work shortcut, so it lists *only* corners
- * still open or actively being worked. Terminal corners — `merged`,
- * `archived` — and `failed` ones are excluded outright rather than shown
- * dimmed: a Room row's corner count must equal what the dropdown reveals, and
- * a count that includes rows a person cannot act on turns the index into a
- * to-do list of dead work.
+ * The Room-list dropdown is a live-work shortcut, so it lists every corner
+ * still unfinished — working or needs-human, idle-without-finishing included
+ * (its nudge/close affordance lives inside the corner). Terminal corners —
+ * `merged`, `archived` — are excluded outright rather than shown dimmed: a
+ * Room row's corner count must equal what the dropdown reveals, and a count
+ * that includes rows a person cannot act on turns the index into a to-do
+ * list of dead work.
  *
  * Excluded corners stay reachable through their durable cards in the parent
  * Room transcript and through the full `buzz/corners/[roomId]` list, which the
@@ -145,14 +172,20 @@ export function sortCorners(corners: CornerSummary[]): CornerSummary[] {
  * purpose: adding a new `CornerStatus` should force a decision here rather
  * than silently leaking into the index.
  */
-const ROOM_LIST_STATUSES: ReadonlySet<CornerStatus> = new Set<CornerStatus>([
+const ROOM_LIST_WORDED_STATUSES: ReadonlySet<CornerStatus> = new Set<CornerStatus>([
   'live',
   'needs-attention',
   'open',
 ]);
 
 export function roomListCorners(corners: readonly CornerSummary[]): CornerSummary[] {
-  return corners.filter((corner) => ROOM_LIST_STATUSES.has(corner.status));
+  // The dropdown lists every UNFINISHED corner — working and needs-human
+  // alike, idle-without-finishing included (its nudge/close affordance lives
+  // inside). Only finished corners are excluded.
+  return corners.filter(
+    (corner) =>
+      corner.status === null || ROOM_LIST_WORDED_STATUSES.has(corner.status),
+  );
 }
 
 /**
@@ -164,7 +197,9 @@ export function roomCornerSignal(corners: readonly CornerSummary[]): CornerStatu
   const listed = roomListCorners(corners);
   if (listed.length === 0) return null;
   const leading = listed.reduce((best, corner) =>
-    cornerStatusPrecedence(corner.status) < cornerStatusPrecedence(best.status) ? corner : best,
+    cornerStatusPrecedenceOrNull(corner.status) < cornerStatusPrecedenceOrNull(best.status)
+      ? corner
+      : best,
   );
   return isCornerActive(leading.status) ? leading.status : null;
 }

@@ -59,10 +59,11 @@ export type PinnedCornerInput = {
  * actionable thing a captain can do about it, so it wins the single pin even
  * over one still being actively worked.
  */
-const PIN_RELEVANCE: Record<CornerStatus, number> = {
+const PIN_RELEVANCE: Record<string, number> = {
   open: 0,
   live: 1,
   'needs-attention': 2,
+  stalled: 2,
   failed: 3,
   merged: 3,
   archived: 3,
@@ -82,7 +83,12 @@ export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | nul
   const seenAt = new Map<string, number>();
 
   for (const corner of input.lifecycle) {
-    status.set(corner.id, mergeCornerStatuses(status.get(corner.id), corner.status)!);
+    // Idle-without-finishing (`null`) IS needs-human under THE three-word
+    // verdict — pinnable, on the quiet tier like every non-working state.
+    status.set(
+      corner.id,
+      mergeCornerStatuses(status.get(corner.id), corner.status ?? 'needs-attention')!,
+    );
     seenAt.set(corner.id, Math.max(seenAt.get(corner.id) ?? 0, corner.lastActivityAt ?? corner.createdAt ?? 0));
   }
   for (const signal of input.signals) {

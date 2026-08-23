@@ -29,12 +29,16 @@ describe('resolveCornerLifecycle (attention lifecycle, one oracle)', () => {
     // The poisoned-history shape: a gate-outage-era decision card with hours
     // of agent narration and turn lifecycle after it. The card described one
     // moment; the work consumed whatever it was waiting for.
-    expect(resolveCornerLifecycle([status('needs-attention', 100), work(200), work(300)])).toBe(
-      'live',
-    );
-    expect(resolveCornerLifecycle([status('needs-attention', 100), review(50), work(200)])).toBe(
-      'live',
-    );
+    expect(
+      resolveCornerLifecycle([status('needs-attention', 100), work(200), work(300)], {
+        now: 300_000,
+      }),
+    ).toBe('live');
+    expect(
+      resolveCornerLifecycle([status('needs-attention', 100), review(50), work(200)], {
+        now: 200_000,
+      }),
+    ).toBe('live');
   });
 
   it('keeps a genuinely pending decision gold while it is the newest word', () => {
@@ -54,20 +58,24 @@ describe('resolveCornerLifecycle (attention lifecycle, one oracle)', () => {
   });
 
   it('keeps a review open until consumed, then reads working again', () => {
-    expect(resolveCornerLifecycle([review(100)])).toBe('open');
-    expect(resolveCornerLifecycle([review(100), status('ready', 150)])).toBe('open');
+    expect(resolveCornerLifecycle([review(100)], { now: 100_000 })).toBe('open');
+    expect(resolveCornerLifecycle([review(100), status('ready', 150)], { now: 150_000 })).toBe(
+      'open',
+    );
     // Work after the announcement means the review window moved on.
-    expect(resolveCornerLifecycle([review(100), work(200)])).toBe('live');
+    expect(resolveCornerLifecycle([review(100), work(200)], { now: 200_000 })).toBe('live');
     // A newer status still outranks an older merge-ready (existing rule).
     expect(resolveCornerLifecycle([review(100), status('failed', 200)])).toBe('failed');
   });
 
   it('resolves a recoverable failure card once realign work starts', () => {
-    expect(resolveCornerLifecycle([status('failed', 100), work(200)])).toBe('live');
-    // A second failure newer than the work speaks again.
-    expect(resolveCornerLifecycle([status('failed', 100), work(200), status('failed', 300)])).toBe(
-      'failed',
+    expect(resolveCornerLifecycle([status('failed', 100), work(200)], { now: 200_000 })).toBe(
+      'live',
     );
+    // A second failure newer than the work speaks again.
+    expect(
+      resolveCornerLifecycle([status('failed', 100), work(200), status('failed', 300)]),
+    ).toBe('failed');
   });
 
   it('never resurrects a merged or archived corner, whatever came after', () => {
@@ -78,7 +86,7 @@ describe('resolveCornerLifecycle (attention lifecycle, one oracle)', () => {
   });
 
   it('answers live for a history with no status word at all', () => {
-    expect(resolveCornerLifecycle([work(10), work(20)])).toBe('live');
+    expect(resolveCornerLifecycle([work(10), work(20)], { now: 20_000 })).toBe('live');
     expect(resolveCornerLifecycle([])).toBe('live');
   });
 
@@ -89,8 +97,8 @@ describe('resolveCornerLifecycle (attention lifecycle, one oracle)', () => {
     // refetch. This is the cold/warm parity property.
     const fullWindow: CornerLifecycleFact[] = [status('needs-attention', 100), ...Array.from({ length: 49 }, (_, i) => work(200 + i))];
     const evictedWindow: CornerLifecycleFact[] = Array.from({ length: 50 }, (_, i) => work(200 + i));
-    expect(resolveCornerLifecycle(fullWindow)).toBe('live');
-    expect(resolveCornerLifecycle(evictedWindow)).toBe('live');
+    expect(resolveCornerLifecycle(fullWindow, { now: 248 * 1000 + 500 })).toBe('live');
+    expect(resolveCornerLifecycle(evictedWindow, { now: 248 * 1000 + 500 })).toBe('live');
   });
 });
 
@@ -208,15 +216,14 @@ describe('corner navigation model', () => {
     // Shapes are identity vocabulary (△ agent, ○ human, ▢ workspace); a
     // corner's own glyph is always a diamond: filled ◆ while live, hollow ◇
     // otherwise. The label carries the state word.
-    expect(cornerStatusPresentation('live')).toEqual({ glyph: '◆', label: 'LIVE' });
-    expect(cornerStatusPresentation('needs-attention')).toEqual({
-      glyph: '◇',
-      label: 'NEEDS ATTENTION',
-    });
-    expect(cornerStatusPresentation('open')).toEqual({ glyph: '◇', label: 'READY' });
-    expect(cornerStatusPresentation('failed')).toEqual({ glyph: '◇', label: 'FAILED' });
-    expect(cornerStatusPresentation('merged')).toEqual({ glyph: '◇', label: 'MERGED' });
-    expect(cornerStatusPresentation('archived')).toEqual({ glyph: '◇', label: 'ARCHIVED' });
+    // THE three-word state vocabulary — no sub-reason words anywhere.
+    expect(cornerStatusPresentation('live')).toEqual({ glyph: '◆', label: 'WORKING' });
+    for (const word of ['needs-attention', 'open', 'failed', null] as const) {
+      expect(cornerStatusPresentation(word)).toEqual({ glyph: '◇', label: 'NEEDS HUMAN' });
+    }
+    for (const word of ['merged', 'archived'] as const) {
+      expect(cornerStatusPresentation(word)).toEqual({ glyph: '◇', label: 'FINISHED' });
+    }
   });
 
   it('collapses every raw wire status onto the one canonical model', () => {

@@ -113,6 +113,26 @@ describe('Corner sessions may only mutate inside their own worktree', () => {
     if (verdict.decision === 'deny') expect(verdict.code).toBe('path-escape');
   });
 
+  it('allows writes only to the explicitly mounted agent-private state root', async () => {
+    const agentPrivateState = resolve(root, 'room-state/agent-private');
+    await mkdir(agentPrivateState, { recursive: true });
+    const allowed = classifyCornerPermission(
+      edit({ file_path: resolve(agentPrivateState, 'memory/episode.json') }),
+      worktree,
+      operator,
+      [agentPrivateState],
+    );
+    const unrelated = classifyCornerPermission(
+      edit({ file_path: resolve(root, 'other-state/memory/episode.json') }),
+      worktree,
+      operator,
+      [agentPrivateState],
+    );
+
+    expect(allowed.decision).toBe('allow');
+    expect(unrelated.decision).toBe('deny');
+  });
+
   it('denies a `..` traversal out of the worktree', () => {
     const verdict = classifyCornerPermission(
       edit({ path: '../../../proj-buzzy/apps/target.ts' }),

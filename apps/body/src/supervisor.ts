@@ -761,6 +761,7 @@ export class WorkspaceSupervisor {
     return {
       ...this.baseConfig,
       workspaceRoot,
+      agentPrivateRoot: resolve(workspaceRoot, 'agent-private'),
       ...(agentHomeRoot ? { agentHomeRoot } : {}),
     };
   }

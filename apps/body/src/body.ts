@@ -343,7 +343,19 @@ export async function queryEventBacklog(
 }
 
 /** Long enough to make a persistently failing Room a negligible relay consumer. */
-export const ROOM_POLL_FAILURE_BACKOFF_CAP_MS = 5 * 60_000;
+/**
+ * Bounded retry-forever backoff for one Room's push loop.
+ *
+ * This cap is also the ceiling on how long a Room stays DARK after the relay
+ * itself has come back: a daemon with no relay is useless, so once the schedule
+ * saturates it keeps dialing every ~30s rather than going minutes between
+ * attempts. The production outage of 2026-08-23 was measured sitting at a
+ * `pollAge=310517ms` watchdog recovery — five minutes of self-imposed silence
+ * AFTER the relay was accepting connections again — because the old cap let
+ * the schedule reach 5 minutes per attempt. Bounded, jittered, and reset by
+ * the first success; never capped in ATTEMPTS.
+ */
+export const ROOM_POLL_FAILURE_BACKOFF_CAP_MS = 30_000;
 
 /**
  * Idle window for an agent turn, not a hard cap on turn length: it resets on
@@ -6724,6 +6736,7 @@ export class Body {
       let release: (() => void) | undefined;
       let unsubscribe: (() => void) | undefined;
       let offClose: (() => void) | undefined;
+      let removeAbortListener: (() => void) | undefined;
       let maintenanceTimer: ReturnType<typeof setInterval> | undefined;
       try {
         // One REQ on the daemon's shared socket, not another authenticated
@@ -6732,6 +6745,24 @@ export class Body {
         client = lease.client;
         release = lease.release;
         this.roomSockets.set(channelId, client);
+        // Register this iteration's close wake BEFORE any further awaited
+        // work. RelayWs.notifyClose() fires every close observer exactly once
+        // and then clears them, and the previous iteration removed its own
+        // observer in its finally — so a socket that drops during the
+        // subscribe window below would fire into an empty observer set, and
+        // the wait at the bottom of this iteration would sleep forever on a
+        // dead socket. The supervisor's watchdog eventually breaks such a
+        // wedge; standalone `beeline serve` has no watchdog at all, which is
+        // exactly the "process alive, agent dark forever" shape.
+        let finishWait: () => void = () => undefined;
+        const socketClosed = new Promise<void>((resolve) => {
+          finishWait = resolve;
+        });
+        offClose = client.onSocketClose(finishWait);
+        const onAbort = () => finishWait();
+        if (opts.signal?.aborted) finishWait();
+        else opts.signal?.addEventListener('abort', onAbort);
+        removeAbortListener = () => opts.signal?.removeEventListener('abort', onAbort);
         const roomParticipants = await this.roomParticipants(channelId);
         const durableCursor = await this.durableState.cursor(channelId);
         const since = Math.max(this.requestCursors.get(channelId) ?? 0, durableCursor.createdAt);
@@ -6805,19 +6836,7 @@ export class Body {
         );
         maintenanceTimer.unref?.();
 
-        await new Promise<void>((resolveWait) => {
-          // The signal can already be aborted by the time we get here (a slow
-          // connect/subscribe racing a supervisor-issued abort); an 'abort'
-          // listener added after the event already fired never runs, which
-          // would hang this Room's teardown forever.
-          if (opts.signal?.aborted) {
-            resolveWait();
-            return;
-          }
-          const finish = () => resolveWait();
-          offClose = client!.onSocketClose(finish);
-          opts.signal?.addEventListener('abort', finish, { once: true });
-        });
+        await socketClosed;
         await delivery;
         if (!opts.signal?.aborted) throw new Error('Room WebSocket closed');
       } catch (error) {
@@ -6838,6 +6857,7 @@ export class Body {
           clearTimeout(maintenanceTimer);
           clearInterval(maintenanceTimer);
         }
+        removeAbortListener?.();
         offClose?.();
         // Drop this Room's REQ first; the shared socket keeps serving its
         // siblings, and only an owned socket is actually closed by release().

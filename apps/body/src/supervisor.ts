@@ -142,6 +142,34 @@ export const DEFAULT_RECONCILE_HEARTBEAT_MS = 60_000;
 export const DEFAULT_ROOM_DISCOVERY_RETRY_MS = 10 * 60_000;
 
 /**
+ * Retry cadence for a Room whose join failed for a TRANSIENT reason.
+ *
+ * The production darkness of 2026-08-23 did not end when the relay came back:
+ * the outage had first gotten a Room's push loop watchdog-recycled, and the
+ * recovery join then failed on a transient authority error
+ * (`repository_not_granted` from the auth service, itself mid-rollout), which
+ * parked the Room here for ten minutes — repeatedly, across successive deploy
+ * windows. The daemon process stayed up the whole time; the agent was simply
+ * gone from every Room. A transport-shaped failure must therefore retry on
+ * the short cadence below, not the long one.
+ */
+export const DEFAULT_ROOM_DISCOVERY_TRANSIENT_RETRY_MS = 30_000;
+
+/**
+ * Known-DURABLE join failures keep the long park.
+ *
+ * Everything else is treated as transient and retried short: the cost of a
+ * wrong guess is one failed join attempt per pass against a Room the daemon
+ * cannot serve anyway, whereas the cost of parking a recoverable Room for ten
+ * minutes is the agent visibly disappearing. Matched on the reason text so no
+ * error-type import is needed.
+ */
+export function isDurableRoomJoinFailure(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : String(error);
+  return /local-only on another checkout|channel is archived/i.test(text);
+}
+
+/**
  * A destructive removal needs repeated, successful agreement from the relay.
  * One empty projection is not enough: an edge/cache cutover can return a
  * valid-but-incomplete answer immediately after a failed query.
@@ -637,12 +665,13 @@ export class WorkspaceSupervisor {
           }
           this.roomDiscoveryFailures.delete(channelId);
         } catch (error) {
-          if (this.noteRoomDiscoveryFailure(channelId, error)) {
+          const discovery = this.noteRoomDiscoveryFailure(channelId, error);
+          if (discovery.announced) {
             await client
               .messageSubmit(
                 channelId,
-                "Agent unavailable: I could not access this Room's repository. " +
-                  'I will retry automatically in 10 minutes.',
+                `Agent unavailable: I could not access this Room's repository. ` +
+                  `I will retry automatically in ${discovery.retryLabel}.`,
               )
               .catch((noticeError: unknown) =>
                 console.warn(
@@ -698,25 +727,36 @@ export class WorkspaceSupervisor {
 
   /**
    * Record one Room's join failure without letting it reach the discovery
-   * pass. The Room is parked for `DEFAULT_ROOM_DISCOVERY_RETRY_MS`, and the
-   * console line is emitted only when the reason changed — a Room that is
-   * durably unservable (a local-only repository bound on another checkout)
-   * says so once, not every pass.
+   * pass. A DURABLE failure (`isDurableRoomJoinFailure`) is parked for
+   * `DEFAULT_ROOM_DISCOVERY_RETRY_MS`; anything else is treated as transient
+   * and retried on `DEFAULT_ROOM_DISCOVERY_TRANSIENT_RETRY_MS` — the relay,
+   * the auth service, and git remotes all restart, and a Room parked through
+   * such a window reads as an agent that went dark. The console line is
+   * emitted only when the reason changes, either way.
    */
-  private noteRoomDiscoveryFailure(channelId: string, error: unknown): boolean {
+  private noteRoomDiscoveryFailure(channelId: string, error: unknown): {
+    announced: boolean;
+    retryLabel: string;
+  } {
     const message = error instanceof Error ? error.message : String(error);
     const previous = this.roomDiscoveryFailures.get(channelId);
+    const durable = isDurableRoomJoinFailure(error);
+    const retryMs = durable
+      ? DEFAULT_ROOM_DISCOVERY_RETRY_MS
+      : DEFAULT_ROOM_DISCOVERY_TRANSIENT_RETRY_MS;
     this.roomDiscoveryFailures.set(channelId, {
-      retryAt: this.now() + DEFAULT_ROOM_DISCOVERY_RETRY_MS,
+      retryAt: this.now() + retryMs,
       message,
     });
-    if (previous?.message === message) return false;
+    if (previous?.message === message)
+      return { announced: false, retryLabel: '' };
+    const retryLabel = durable ? '10 minutes' : '30 seconds';
     console.error(
       `[supervisor] Room ${channelId} could not be joined; skipping it and retrying in ` +
-        `${DEFAULT_ROOM_DISCOVERY_RETRY_MS}ms:`,
+        `${retryMs}ms:`,
       error,
     );
-    return true;
+    return { announced: true, retryLabel };
   }
 
   /**

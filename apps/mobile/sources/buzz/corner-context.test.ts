@@ -86,10 +86,10 @@ describe('cornerObjectiveLine', () => {
     expect(cornerObjectiveLine({ planObjective: 'diff --git a/x b/x' })).toBeUndefined();
   });
 
-  it('collapses a multi-line task to one line and caps its length', () => {
+  it('collapses a multi-line task to one line without discarding long objective text', () => {
     const line = cornerObjectiveLine({ task: `add color\n\nto **code** blocks` });
     expect(line).toBe('add color to code blocks');
     const long = cornerObjectiveLine({ task: 'x'.repeat(400) });
-    expect(long!.length).toBeLessThanOrEqual(160);
+    expect(long).toBe('x'.repeat(400));
   });
 });

@@ -175,6 +175,8 @@ type MonoButtonProps = Omit<BrittlePressProps, 'children'> & {
   label: string;
   loading?: boolean;
   variant?: 'primary' | 'secondary' | 'destructive';
+  /** Optional extra style for the label Text (e.g. a theme prose family override). */
+  labelStyle?: StyleProp<TextStyle>;
 };
 
 export function MonoButton({
@@ -183,6 +185,7 @@ export function MonoButton({
   variant = 'primary',
   disabled,
   style,
+  labelStyle,
   ...props
 }: MonoButtonProps) {
   const isDisabled = Boolean(disabled || loading);
@@ -210,6 +213,7 @@ export function MonoButton({
             styles.monoButtonText,
             variant === 'primary' ? styles.primaryButtonText : styles.secondaryButtonText,
             isDisabled && styles.disabledButtonText,
+            labelStyle,
           ]}
         >
           {label}

@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { Body } from './body.js';
 import {
   CORNER_OBJECTIVE_MAX_CHARS,
+  CORNER_PLAN_MAX_ITEMS,
+  CORNER_PLAN_STEP_MAX_CHARS,
   CORNER_TITLE_MAX_CHARS,
   cornerMetadataPrompt,
   parseCornerMetadata,
@@ -23,6 +25,7 @@ describe('corner metadata generation boundary', () => {
     expect(prompt).toContain('"turn-19 ');
     expect(prompt).not.toContain('turn-7 ');
     expect(prompt).toContain('untrusted conversation to summarize');
+    expect(prompt).toContain('"items"');
     expect(prompt.length).toBeLessThan(7_000);
   });
 
@@ -31,6 +34,10 @@ describe('corner metadata generation boundary', () => {
       `\`\`\`json\n${JSON.stringify({
         title: `  Improve\ncorner metadata ${'x'.repeat(100)}  `,
         objective: ` Generate a polished title\n and concise objective. ${'y'.repeat(300)}`,
+        items: [
+          ` Read the corner metadata path ${'z'.repeat(300)} `,
+          'Update the strict JSON parser',
+        ],
       })}\n\`\`\``,
     );
 
@@ -38,6 +45,34 @@ describe('corner metadata generation boundary', () => {
     expect(parsed?.title).not.toContain('\n');
     expect(parsed?.objective).toHaveLength(CORNER_OBJECTIVE_MAX_CHARS);
     expect(parsed?.objective).not.toContain('\n');
+    expect(parsed?.plan?.items).toEqual([
+      { step: expect.stringMatching(/^Read the corner metadata path/), status: 'in_progress' },
+      { step: 'Update the strict JSON parser', status: 'pending' },
+    ]);
+    expect(parsed?.plan?.items[0]?.step).toHaveLength(CORNER_PLAN_STEP_MAX_CHARS);
+  });
+
+  it('bounds and deduplicates the task-authored plan without requiring one', () => {
+    const manyItems = Array.from(
+      { length: CORNER_PLAN_MAX_ITEMS + 3 },
+      (_, index) => `Task-specific step ${index}`,
+    );
+    expect(
+      parseCornerMetadata(JSON.stringify({
+        title: 'Bound the plan',
+        objective: 'Keep the authored corner plan compact and safe.',
+        items: [...manyItems, manyItems[0]],
+      }))?.plan?.items.map((item) => item.step),
+    ).toEqual(manyItems.slice(0, CORNER_PLAN_MAX_ITEMS));
+    expect(
+      parseCornerMetadata(JSON.stringify({
+        title: 'Allow no plan',
+        objective: 'Fall back honestly when the agent cannot author specific steps.',
+      })),
+    ).toEqual({
+      title: 'Allow no plan',
+      objective: 'Fall back honestly when the agent cannot author specific steps.',
+    });
   });
 
   it('rejects prose, missing fields, and implausibly empty metadata', () => {
@@ -68,7 +103,7 @@ describe('corner metadata generation boundary', () => {
       {
         generateCornerMetadata: async (prompt) => {
           receivedPrompt = prompt;
-          return '{"title":"Improve corner metadata","objective":"Generate a polished title and concise objective from Room context."}';
+          return '{"title":"Improve corner metadata","objective":"Generate a polished title and concise objective from Room context.","items":["Trace the metadata turn","Parse its task-authored plan","Cover the safe fallback"]}';
         },
       },
     );
@@ -89,6 +124,14 @@ describe('corner metadata generation boundary', () => {
     expect(metadata).toEqual({
       title: 'Improve corner metadata',
       objective: 'Generate a polished title and concise objective from Room context.',
+      plan: {
+        objective: 'Generate a polished title and concise objective from Room context.',
+        items: [
+          { step: 'Trace the metadata turn', status: 'in_progress' },
+          { step: 'Parse its task-authored plan', status: 'pending' },
+          { step: 'Cover the safe fallback', status: 'pending' },
+        ],
+      },
     });
     expect(receivedPrompt).toContain('make corner titles concise');
   });

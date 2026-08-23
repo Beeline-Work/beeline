@@ -470,33 +470,11 @@ describe('self-update keeps fresh-shell invocations working across swaps', () =>
       // Async spawn (never spawnSync): the installer curls the manifest
       // artifacts from THIS process's HTTP server, which cannot answer while
       // the event loop is blocked.
-      const installed = await new Promise<{ status: number; stdout: string; stderr: string }>((resolveInstall) => {
-        const child = spawn(
-          'sh',
-          [join(repoRoot, 'relay-stack', 'web', 'install.sh')],
-          {
-            env: {
-              ...process.env,
-              HOME: root,
-              BEELINE_INSTALL_BASE_URL: remote.baseUrl,
-              BEELINE_INSTALL_PLATFORM: hostPlatformKey(),
-              BEELINE_INSTALL_DIR: binDir,
-              BEELINE_INSTALL_LIB_DIR: join(prefix, 'lib', 'beeline'),
-            },
-            stdio: ['ignore', 'pipe', 'pipe'],
-          },
-        );
-        let stdout = '';
-        let stderr = '';
-        child.stdout.setEncoding('utf8');
-        child.stderr.setEncoding('utf8');
-        child.stdout.on('data', (chunk: string) => (stdout += chunk));
-        child.stderr.on('data', (chunk: string) => (stderr += chunk));
-        const killer = setTimeout(() => child.kill('SIGKILL'), 120_000);
-        child.once('exit', (status) => {
-          clearTimeout(killer);
-          resolveInstall({ status: status ?? -1, stdout, stderr });
-        });
+      const installed = await runInstaller({
+        home: root,
+        baseUrl: remote.baseUrl,
+        binDir,
+        libAnchor: join(prefix, 'lib', 'beeline'),
       });
       expect(installed.stderr).toBe('');
       expect(installed.status).toBe(0);
@@ -563,6 +541,135 @@ describe('self-update keeps fresh-shell invocations working across swaps', () =>
     }
   }, 60_000);
 });
+
+// ---------------------------------------------------------------------------
+// Installer over-install: the anchor must swing to the freshly downloaded
+// release every time (the mv-follows-symlink regression)
+// ---------------------------------------------------------------------------
+
+describe('install.sh over-install swings the active anchor', () => {
+  /** Stray installer temp links (beeline.new.*) anywhere under the install root. */
+  async function collectInstallerLitter(rootDir: string): Promise<string[]> {
+    const { readdir } = await import('node:fs/promises');
+    const litter: string[] = [];
+    const walk = async (dir: string): Promise<void> => {
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        if (/^beeline\\.new[.-]/.test(entry.name)) litter.push(join(dir, entry.name));
+        if (entry.isDirectory()) await walk(join(dir, entry.name));
+      }
+    };
+    await walk(rootDir);
+    return litter;
+  }
+
+  it('reinstalling over an existing release repoints <prefix>/lib/beeline at the new bundle, idempotently', async () => {
+    const v1 = await buildStubBundle('aaa111ov1', '1.0.0');
+    const v2 = await buildStubBundle('bbb222ov2', '2.0.0');
+    const root = await tempDir('over-install-');
+    const prefix = join(root, 'prefix');
+    const binDir = join(prefix, 'bin');
+    const libAnchor = join(prefix, 'lib', 'beeline');
+    const releasesRoot = join(prefix, 'lib', 'beeline-releases');
+    const remote = await serveBundles(new Map([[v1.commit, v1]]));
+    try {
+      // --- 1. fresh install of release A ------------------------------------
+      let installed = await runInstaller({ home: root, baseUrl: remote.baseUrl, binDir, libAnchor });
+      expect(installed.stderr).toBe('');
+      expect(installed.status).toBe(0);
+      expect(await readlinkTarget(libAnchor)).toBe(`beeline-releases/${v1.commit}`);
+      expectFreshShell(prefix, '1.0.0');
+
+      // --- 2. OVER-INSTALL release B (the reported reproduction) ------------
+      remote.publish(v2);
+      installed = await runInstaller({ home: root, baseUrl: remote.baseUrl, binDir, libAnchor });
+      expect(installed.stderr).toBe('');
+      expect(installed.status).toBe(0);
+      expect((await lstat(libAnchor)).isSymbolicLink()).toBe(true);
+      expect(await readlinkTarget(libAnchor)).toBe(`beeline-releases/${v2.commit}`);
+      expectFreshShell(prefix, '2.0.0');
+      expectInstalledHelperForwarders(prefix, '2.0.0');
+
+      // The old swap moved the new anchor link INSIDE the old release via a
+      // destination-following `mv`; no such litter may exist anywhere.
+      expect(await collectInstallerLitter(prefix)).toEqual([]);
+      const topLevelReleases = await readdir(releasesRoot, { withFileTypes: true });
+      expect(topLevelReleases.filter((entry) => entry.isSymbolicLink()).map((entry) => entry.name)).toEqual([]);
+
+      // --- 3. reinstalling the SAME release is idempotent -------------------
+      installed = await runInstaller({ home: root, baseUrl: remote.baseUrl, binDir, libAnchor });
+      expect(installed.status).toBe(0);
+      const entriesAfterReinstall = (await readdir(releasesRoot)).sort();
+      expect(entriesAfterReinstall).toEqual([v1.commit, v2.commit].sort());
+      expect(await readlinkTarget(libAnchor)).toBe(`beeline-releases/${v2.commit}`);
+      expectFreshShell(prefix, '2.0.0');
+
+      // --- 4. tangle left by the old installer is swept on the next install -
+      // A release-id-named symlink under releases/, a timestamp-suffixed
+      // duplicate of the active release, and a stray beeline.new.* link
+      // inside the previous release — exactly what the captain's host held.
+      const { mkdir, writeFile, symlink } = await import('node:fs/promises');
+      await symlink(
+        join('beeline-releases', v2.commit),
+        join(releasesRoot, 'deadbeef1111222233334444555566667777888899'),
+      );
+      const dupDir = join(releasesRoot, `${v2.commit}-1787443702`);
+      await mkdir(join(dupDir, 'lib', 'beeline'), { recursive: true });
+      await writeFile(
+        join(dupDir, 'lib', 'beeline', 'bundle.json'),
+        JSON.stringify({ commit: v2.commit }),
+      );
+      await symlink(
+        join('..', 'beeline-releases', v2.commit),
+        join(releasesRoot, v1.commit, 'beeline.new.999'),
+      );
+      installed = await runInstaller({ home: root, baseUrl: remote.baseUrl, binDir, libAnchor });
+      expect(installed.status).toBe(0);
+      expect(await readlinkTarget(libAnchor)).toBe(`beeline-releases/${v2.commit}`);
+      expect((await readdir(releasesRoot)).sort()).toEqual([v1.commit, v2.commit].sort());
+      expect(await collectInstallerLitter(prefix)).toEqual([]);
+      expectFreshShell(prefix, '2.0.0');
+    } finally {
+      await remote.close();
+    }
+  }, 90_000);
+});
+
+/**
+ * Run the real relay-stack/web/install.sh against a local bundle server.
+ * Async spawn (never spawnSync): the installer curls the artifacts from THIS
+ * process's HTTP server, which cannot answer while the event loop is blocked.
+ */
+function runInstaller(opts: {
+  home: string;
+  baseUrl: string;
+  binDir: string;
+  libAnchor: string;
+}): Promise<{ status: number; stdout: string; stderr: string }> {
+  return new Promise((resolveInstall) => {
+    const child = spawn('sh', [join(repoRoot, 'relay-stack', 'web', 'install.sh')], {
+      env: {
+        ...process.env,
+        HOME: opts.home,
+        BEELINE_INSTALL_BASE_URL: opts.baseUrl,
+        BEELINE_INSTALL_PLATFORM: hostPlatformKey(),
+        BEELINE_INSTALL_DIR: opts.binDir,
+        BEELINE_INSTALL_LIB_DIR: opts.libAnchor,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => (stdout += chunk));
+    child.stderr.on('data', (chunk: string) => (stderr += chunk));
+    const killer = setTimeout(() => child.kill('SIGKILL'), 120_000);
+    child.once('exit', (status) => {
+      clearTimeout(killer);
+      resolveInstall({ status: status ?? -1, stdout, stderr });
+    });
+  });
+}
 
 async function readlinkTarget(path: string): Promise<string> {
   const { readlink } = await import('node:fs/promises');

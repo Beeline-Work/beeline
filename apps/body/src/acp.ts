@@ -16,6 +16,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import type { SessionMode } from './config.js';
+import { cornerAutonomyModeCandidates } from './harness-capabilities.js';
 import {
   harnessReadsMetaSystemPrompt,
   sessionToolScopeMeta,
@@ -438,7 +439,10 @@ export class AcpClient extends EventEmitter {
           currentModeId?: string;
         }
       | undefined;
-    const candidates = mode === 'readonly' ? ['read-only', 'readonly'] : ['agent', 'edit', 'code'];
+    const candidates =
+      mode === 'readonly'
+        ? ['read-only', 'readonly']
+        : cornerAutonomyModeCandidates(this.agentLabel);
     const target = modes?.availableModes?.find(
       (candidate) => candidate.id && candidates.includes(candidate.id),
     )?.id;

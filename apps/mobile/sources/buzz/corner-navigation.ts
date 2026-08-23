@@ -26,6 +26,8 @@ export type ChatStackRoute = {
   params?: Record<string, unknown> | undefined;
 };
 
+export type CornerReturnTarget = 'room-list';
+
 /** Open a top-level Room transcript. */
 export function roomHref(channelId: string): Href {
   return { pathname: '/buzz/chat/[channelId]', params: { channelId } } as unknown as Href;
@@ -34,16 +36,22 @@ export function roomHref(channelId: string): Href {
 /**
  * Open a corner, carrying what the opener already knows about it. `parent` and
  * `title` are pure hints — they make the corner's header correct on the first
- * frame and give its back button a destination before the screen's own reads
- * land, and the screen overwrites both once they do.
+ * frame before the screen's own reads land. `returnTo` records an explicit
+ * opening surface whose navigation origin cannot be derived from the parent.
  */
-export function cornerHref(channelId: string, parentChannelId: string, title?: string): Href {
+export function cornerHref(
+  channelId: string,
+  parentChannelId: string,
+  title?: string,
+  returnTo?: CornerReturnTarget,
+): Href {
   return {
     pathname: '/buzz/chat/[channelId]',
     params: {
       channelId,
       parent: parentChannelId,
       ...(title ? { title } : {}),
+      ...(returnTo ? { returnTo } : {}),
     },
   } as unknown as Href;
 }
@@ -85,16 +93,27 @@ export type ChatBackAction =
 /**
  * What the chat header's back control should do.
  *
- * A corner always resolves to its own parent Room — popped to if it is already
- * on the stack, opened in place if it is not. Neither outcome can leave the
- * reader inside the corner they just tried to leave. A Room falls back to plain
- * stack behaviour, except when it is the only route, where `router.back()` is a
- * no-op and the Room list is the honest destination.
+ * A corner with an explicit opening surface returns there. Otherwise it
+ * resolves to its parent Room — popped to if already on the stack, opened in
+ * place if not. A Room falls back to plain stack behaviour, except when it is
+ * the only route, where `router.back()` is a no-op and the Room list is the
+ * honest destination.
  */
 export function chatBackAction(
   routes: readonly ChatStackRoute[],
   parentChannelId: string | undefined,
+  returnTo?: CornerReturnTarget,
 ): ChatBackAction {
+  // A Corner opened from the Room list must return to that list. Its parent
+  // Room was never visited, so manufacturing one here both violates Back and
+  // flashes a newly mounted transcript during the replacement transition.
+  if (returnTo === 'room-list') {
+    const top = routes.length - 1;
+    for (let index = top - 1; index >= 0; index -= 1) {
+      if (routes[index]?.name === 'buzz/channels') return { type: 'pop', count: top - index };
+    }
+    return { type: 'room-list' };
+  }
   if (parentChannelId) {
     const count = popCountToParentRoom(routes, parentChannelId);
     return count === null ? { type: 'open-room', channelId: parentChannelId } : { type: 'pop', count };

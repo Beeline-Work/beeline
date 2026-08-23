@@ -223,6 +223,7 @@ import {
 } from './harness-capabilities.js';
 import {
   harnessHomeStateDirs,
+  mergeGateStateDirs,
   resolveGitCommonDir,
   wrapAgentCommand,
   type SandboxSessionSpec,
@@ -466,7 +467,8 @@ export const CORNER_ARCHIVE_FALLBACK_SUMMARY = 'Corner closed without a complete
 export const CORNER_TURN_SUMMARY_INSTRUCTION =
   'Finish with only a concise user-facing summary: one sentence or up to three short bullets saying what changed and which checks passed. Do not narrate your process, restate the request, or include multi-paragraph detail.';
 export const CORNER_MERGE_GATE_INSTRUCTION =
-  'Do not tell the human to approve this work or claim that a review target exists. After your turn, Beeline checks the worktree and publishes the review target itself. If that check rejects the work, you will receive its exact reason as a follow-up instruction.';
+  'Do not tell the human to approve this work or claim that a review target exists. After your turn, Beeline checks the worktree and publishes the review target itself. If that check rejects the work, you will receive its exact reason as a follow-up instruction.' +
+  ' An external merge/validation gate you run (e.g. no-mistakes) shares this rule: if it fails to initialize or run, quote its exact error in your reply, report the work as NOT ready, and never ask for approval — an approval the human sends while no review target is published goes nowhere.';
 
 /** Initial rejection plus two bounded agent correction turns. */
 export const MERGE_READY_GATE_MAX_REJECTIONS = 3;
@@ -2065,8 +2067,9 @@ export class Body {
    * daemon detected a working one at start-up.
    *
    * A Room gets a read-only filesystem plus a private temp; a corner adds its
-   * own worktree, this Room's harness state directories, and the git common
-   * directory its linked worktree commits through. See `bwrap-sandbox.ts`.
+   * own worktree, this Room's harness state directories, the git common
+   * directory its linked worktree commits through, and the merge gate's state
+   * root. See `bwrap-sandbox.ts`.
    *
    * Fails open on purpose: an edit session whose git common directory cannot be
    * resolved would be sandboxed into a worktree it could edit but never commit
@@ -2109,6 +2112,19 @@ export class Body {
         return { command, args: [...(args ?? [])] };
       }
       spec.gitCommonDir = gitCommonDir;
+      // Same bind-try-vs-mkdir reasoning as the harness roots above: the merge
+      // gate cannot create its own state root on a read-only $HOME, so create
+      // it here, in the daemon, before the child is confined. Corner-only: a
+      // Room never writes the gate and gains no bind for it.
+      const gateStateDirs = mergeGateStateDirs();
+      for (const dir of gateStateDirs) {
+        try {
+          mkdirSync(dir, { recursive: true });
+        } catch {
+          // Best effort: an unwritable home just means bind-try skips it.
+        }
+      }
+      spec.mergeGateStateDirs = gateStateDirs;
     }
     return wrapAgentCommand({ bwrapPath: this.config.bwrapPath, spec, command, args });
   }

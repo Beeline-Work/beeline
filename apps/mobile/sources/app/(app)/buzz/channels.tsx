@@ -1387,20 +1387,20 @@ export default function BuzzChannels() {
                         style={styles.cornerPeek}
                         testID={`room-corners-toggle-${item.id}`}
                       >
-                        {corners.length > 0 ? (
+                        {/* The mockup's bordered chip — count + fold chevron —
+                            not a bare number: the border is what makes it read
+                            as a pressable disclosure at a glance. */}
+                        <View style={styles.cornerPeekChip}>
                           <Text
                             style={[
                               styles.cornerPeekCount,
-                              row.attention && styles.cornerPeekCountLive,
+                              corners.length > 0 && row.attention && styles.cornerPeekCountLive,
                             ]}
                           >
-                            {corners.length}
+                            {corners.length > 0 ? corners.length : row.totalCorners}
                           </Text>
-                        ) : (
-                          /* No open work, but recorded corners exist: their
-                             total at the same ghosted tier. */
-                          <Text style={styles.cornerPeekCount}>{row.totalCorners}</Text>
-                        )}
+                          <Text style={styles.cornerPeekChevron}>{expanded ? '⌃' : '⌄'}</Text>
+                        </View>
                       </TouchableOpacity>
                     )}
                   </View>
@@ -1757,11 +1757,29 @@ const styles = StyleSheet.create((theme) => {
     alignItems: 'center',
     justifyContent: 'flex-end',
   },
+  /* The mockup's disclosure chip: hairline border, tight radius, count and
+   * fold chevron inside — the border is the affordance. */
+  cornerPeekChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderWidth: 1,
+    borderColor: groknight.border,
+    borderRadius: groknight.radius,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
   cornerPeekCount: {
     ...Typography.mono(),
     color: groknight.ledgerGhost,
-    fontSize: 11,
-    lineHeight: 14,
+    fontSize: 12,
+    lineHeight: 15,
+  },
+  cornerPeekChevron: {
+    ...Typography.mono(),
+    color: groknight.ledgerGhost,
+    fontSize: 10,
+    lineHeight: 13,
   },
   /* The gutter count takes the accent only when the Room itself is needs-you —
    * the same brass rule as the rail and the status pill, one gate. */

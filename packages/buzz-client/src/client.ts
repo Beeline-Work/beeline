@@ -18,6 +18,7 @@ import {
   setAgentSoul,
 } from './agent.js';
 import { getAgentModelCatalog, getAgentModelConfig, setAgentModelConfig } from './agent-model-config.js';
+import { getAgentCommands } from './agent-commands.js';
 import {
   getRoomRepository,
   resolveRoomRepository,
@@ -105,6 +106,7 @@ import type {
   AgentModelCatalog,
   AgentModelConfig,
   AgentModelConfigInput,
+  AgentCommandList,
   CreateAgentOptions,
   ChannelFilterOpts,
   ChannelMember,
@@ -574,6 +576,11 @@ export class BuzzClient {
   /** The current human-chosen model/effort selection for an agent, if any. */
   getAgentModelConfig(communityId: string, agentPubkey: string): Promise<AgentModelConfig | null> {
     return getAgentModelConfig(this.ctx, communityId, agentPubkey);
+  }
+
+  /** The slash commands/skills this agent's runtime advertises, if published. */
+  getAgentCommands(communityId: string, agentPubkey: string): Promise<AgentCommandList | null> {
+    return getAgentCommands(this.ctx, communityId, agentPubkey);
   }
 
   /** Choose a model/effort for an agent. Applied on that agent's next session (re)activation. */

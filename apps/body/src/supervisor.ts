@@ -29,6 +29,7 @@ import {
   type RoomRuntimeRecord,
 } from './runtime.js';
 import { SharedRelaySocket } from './relay-socket.js';
+import { isArchivedChannelError } from './archived-channel.js';
 import {
   RepositoryTruthResolver,
   type RepositoryTruth,
@@ -111,10 +112,12 @@ function reconcileRetryMs(error: unknown, pollMs: number): number {
  * so re-serving the Room can only produce the identical refusal — this is a
  * fact about the Room, not a transient transport condition, and it must never
  * be retried on a loop.
+ *
+ * The classifier's canonical home is `archived-channel.ts` (body imports it
+ * too, and supervisor already imports body, so body cannot import it from
+ * here); re-exported for this module's Room-quarantine callers.
  */
-export function isArchivedChannelError(error: unknown): boolean {
-  return /channel is archived/i.test(error instanceof Error ? error.message : String(error));
-}
+export { isArchivedChannelError };
 
 export const DEFAULT_ROOM_WATCHDOG_STALE_MS = 90_000;
 

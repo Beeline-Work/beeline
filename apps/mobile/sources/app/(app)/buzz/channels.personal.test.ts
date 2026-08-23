@@ -280,7 +280,7 @@ describe('one home surface for every Workspace kind', () => {
     }
     const text = visibleText(tree).join('');
     // Rooms index vocabulary and per-Room previews — not a bare "# name" list.
-    expect(text).toContain('EARLIER · 2');
+    expect(text).toContain('IDLE · 2');
     expect(text).toContain('Ledger rewrite');
     expect(text).toContain('beebee: pushed the branch');
     expect(text).toContain('＋ ROOM');
@@ -295,7 +295,7 @@ describe('one home surface for every Workspace kind', () => {
       expect(has(tree, id), `shared home is missing ${id}`).toBe(true);
     }
     const text = visibleText(tree).join('');
-    expect(text).toContain('EARLIER · 2');
+    expect(text).toContain('IDLE · 2');
     expect(text).toContain('＋ ROOM');
     expect(text).toContain('MEMBERS');
   });

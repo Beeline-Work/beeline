@@ -71,6 +71,108 @@ export function resolveCornerLifecycleStatus(
   return known;
 }
 
+/**
+ * The corner-channel events that mean the agent is — or most recently was —
+ * DOING work here: its own narration (`agent-message` segments), its turn
+ * lifecycle (`agent-turn` working/complete), and its activity receipts
+ * (`agent-activity`). All are signed by the corner's own daemon, so a human
+ * message or a system notice never counts.
+ *
+ * These are what RESOLVE a needs-you status card: the card is an announcement
+ * about one moment, and the moment the corner works again, whatever it was
+ * waiting for was consumed by definition.
+ */
+export const CORNER_WORK_SIGNAL_TAGS: ReadonlySet<string> = new Set([
+  'agent-message',
+  'agent-turn',
+  'agent-activity',
+]);
+
+/** One durable corner-channel event, reduced to the lifecycle facts the
+ * resolver reads. Built once per event by whichever path holds the history
+ * (the batched relay read today); see `resolveCornerLifecycle`. */
+export type CornerLifecycleFact = {
+  createdAt: number;
+  /** Raw `display-status`/`status` value, when this event is a status card. */
+  rawStatus?: string;
+  /** This event announces a change ready for review (`t=merge-ready`). */
+  isMergeReady?: boolean;
+  /** This event is the agent doing work (`t` ∈ `CORNER_WORK_SIGNAL_TAGS`). */
+  isWorkSignal?: boolean;
+};
+
+/**
+ * THE one corner-lifecycle oracle: current state from durable history.
+ *
+ * Every surface that turns corner-channel history into a status must come
+ * through here — the batched relay fetch, the single-Room fetch, and any
+ * future re-derivation — so cold cache and warm refetch can never disagree
+ * about the same underlying events. The visible regression this closes: the
+ * Room index painted `working` from a cached snapshot, then flipped to gold
+ * `needs-you` seconds later when warm revalidation re-derived the corner from
+ * relay history whose NEWEST STATUS CARD was a hours-old gate-outage relic —
+ * the agent had plainly resumed work since (its narration and turn events
+ * filled the channel after the card), but the old derivation read only status
+ * cards, so a needs-you fact could never expire.
+ *
+ * Rules, in order:
+ * 1. `merged`/`archived` are terminal and win outright — work signals never
+ *    resurrect a closed corner.
+ * 2. Otherwise the newest status card speaks, with a merge-ready counting as
+ *    `open` only while nothing newer has spoken (an announcement, not a
+ *    standing state).
+ * 3. EXCEPT that a resolvable status — `needs-attention`, `open`, or a
+ *    recoverable `failed` — stops speaking the moment the newest work signal
+ *    is newer than it: the corner is working again, so the honest word is
+ *    `live`. Terminal words and plain `live` need no resolution. This rule is
+ *    what makes the answer stable under the relay's newest-N backfill window:
+ *    a window that still holds the old card resolves it against the newer
+ *    work, and a window that evicted the card finds no unresolved word either.
+ */
+export function resolveCornerLifecycle(
+  facts: ReadonlyArray<CornerLifecycleFact>,
+  options: { merged?: boolean; archived?: boolean } = {},
+): CornerStatus {
+  if (options.merged) return 'merged';
+  if (options.archived) return 'archived';
+  let latestStatus: CornerLifecycleFact | undefined;
+  let mergeReadyAt: number | undefined;
+  let workAt: number | undefined;
+  for (const fact of facts) {
+    if (
+      fact.rawStatus !== undefined &&
+      (latestStatus === undefined || fact.createdAt >= latestStatus.createdAt)
+    ) {
+      latestStatus = fact;
+    }
+    if (fact.isMergeReady) {
+      mergeReadyAt = Math.max(mergeReadyAt ?? 0, fact.createdAt);
+    }
+    if (fact.isWorkSignal) {
+      workAt = Math.max(workAt ?? 0, fact.createdAt);
+    }
+  }
+  const mapped = mapRawCornerStatusTag(latestStatus?.rawStatus);
+  // A merge-ready may only speak while nothing newer has — same rule the
+  // pre-resolver derivation pinned after three real corners stayed `open`
+  // forever past a later failure.
+  const reviewReady =
+    mapped === 'open' ||
+    (mergeReadyAt !== undefined &&
+      (latestStatus === undefined || mergeReadyAt >= latestStatus.createdAt));
+  let status: CornerStatus = reviewReady ? 'open' : (mapped ?? 'live');
+  // The moment whose word is standing: a status card when one exists, else the
+  // merge-ready announcement itself.
+  const standingAt = latestStatus?.createdAt ?? (reviewReady ? mergeReadyAt : undefined);
+  const supersededByWork =
+    standingAt !== undefined &&
+    workAt !== undefined &&
+    workAt > standingAt &&
+    (status === 'needs-attention' || status === 'open' || status === 'failed');
+  if (supersededByWork) return 'live';
+  return status;
+}
+
 /** Translate a raw `display-status`/`status` wire tag value into the one
  * canonical status. This is the single place that vocabulary conversion
  * happens — nothing downstream should re-derive status from raw tags. */

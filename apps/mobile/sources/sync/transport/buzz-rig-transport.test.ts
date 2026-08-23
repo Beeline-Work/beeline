@@ -10,6 +10,7 @@ vi.mock('@/buzz/runtime-config', () => ({
 import type { SessionEvent as BuzzSessionEvent } from '@beeline/buzz-client';
 import { toRigEvent } from './buzz-event-projection';
 import { BuzzRigTransport } from './buzz-rig-transport';
+import { roomRowPresentation } from '@/buzz/room-list-row';
 import {
   CHANGE_REVIEW_FILE_TAG,
   CHANGE_REVIEW_EVENT_KIND,
@@ -1271,6 +1272,76 @@ describe('Buzz corner lifecycle projection', () => {
       { id: 'stale-review', status: 'failed' },
       { id: 'still-ready', status: 'open' },
     ]);
+  });
+
+  it('resolves an old needs-decision once the corner has worked since, and keeps a live one gold', async () => {
+    // The owner's 2026-08-23 screenshots: two rooms painted `working` from the
+    // cached snapshot, then flipped to hours-old gate-outage attention facts
+    // (~3s after open) when warm revalidation re-derived the corners. A
+    // needs-you card is an announcement about one moment — agent work after it
+    // means the moment passed.
+    const ids = ['resolved-decision', 'pending-decision'];
+    const client = {
+      listSubchannels: vi.fn(async () => ids),
+      query: vi.fn(async () => []),
+      getChannelMetadata: vi.fn(async () => ({ archived: false })),
+      sessionEventsBackfill: vi.fn(async (id: string) => {
+        const card = {
+          ...event(id, [['display-status', 'needs-attention']]),
+          createdAt: 100,
+        };
+        if (id === 'pending-decision') return [card];
+        // Work resumed hours after the decision card: narration segments and
+        // a turn lifecycle, exactly what a working corner publishes.
+        return [
+          card,
+          { ...event(id, [['t', 'agent-turn'], ['status', 'working']]), createdAt: 5000 },
+          { ...event(id, [['t', 'agent-message']]), createdAt: 5100 },
+          { ...event(id, [['t', 'agent-activity']]), createdAt: 5200 },
+        ];
+      }),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(transport.listSubchannelLifecycle('outage-room')).resolves.toMatchObject([
+      { id: 'resolved-decision', status: 'live' },
+      { id: 'pending-decision', status: 'needs-attention' },
+    ]);
+  });
+
+  it('classifies identically on cold cache and warm refetch over unchanged history', async () => {
+    // ONE oracle: the cached snapshot and the warm revalidation are both
+    // derivations of the same relay history, so the row presentation they feed
+    // must agree — no visible working→needs-you flip seconds after open.
+    const backfill = [
+      { ...event('c1', [['display-status', 'needs-attention']]), createdAt: 100 },
+      { ...event('c1', [['t', 'agent-message']]), createdAt: 9000 },
+      // A review announced and then consumed by resumed work — not pending.
+      { ...event('c2', [['t', 'merge-ready'], ['status', 'ready']]), createdAt: 200 },
+      { ...event('c2', [['t', 'agent-turn']]), createdAt: 8000 },
+    ];
+    const client = {
+      listSubchannels: vi.fn(async () => ['c1', 'c2']),
+      query: vi.fn(async () => []),
+      getChannelMetadata: vi.fn(async () => ({ archived: false })),
+      sessionEventsBackfill: vi.fn(async () => backfill),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    const cold = await transport.listSubchannelLifecycle('parity-room');
+    const warm = await transport.listSubchannelLifecycle('parity-room');
+    expect(warm).toEqual(cold);
+
+    const coldRow = roomRowPresentation({ id: 'room', corners: cold }, new Map());
+    const warmRow = roomRowPresentation({ id: 'room', corners: warm }, new Map());
+    expect(warmRow.zone).toBe(coldRow.zone);
+    expect(warmRow.attention).toBe(coldRow.attention);
+    expect(warmRow.fact).toBe(coldRow.fact);
+    // And the resolved history reads as working, not as the stale relic.
+    expect(coldRow.zone).toBe('working');
+    expect(coldRow.attention).toBe(false);
   });
 });
 

@@ -74,6 +74,7 @@ import {
   cornerLifecycleFact,
   cornerName,
   resolveCornerLifecycle,
+  resolveCornerState,
   type CornerSummary,
 } from '@/buzz/corners';
 import { projectChatEvent, toRigEvent, type ChatDisplayMessage } from './buzz-event-projection';
@@ -137,11 +138,24 @@ function cornerSummaryFromEvents(
     create?.created_at ?? 0,
     ...events.map((event) => event.createdAt),
   );
+  const status = resolveCornerLifecycle(facts, { merged, archived });
+  // A `null` word hides WHICH needs-human case holds: a fresh unanswered agent
+  // ask (a person must reply) or a merely idle stalled corner (nobody must).
+  // The owner's deck tiers split them — asked corners stay in NEEDS YOU,
+  // merely-idle ones fall to IDLE — so re-run the oracle with the ask window
+  // closed: only a corner the ask itself is holding in needs-human flips to
+  // working without it. No second derivation of the ask rule; just the same
+  // oracle, twice.
+  const awaitingReply =
+    status === null &&
+    resolveCornerState(facts, { merged, archived }) === 'needs-human' &&
+    resolveCornerState(facts, { merged, archived, askFreshWindowMs: 0 }) === 'working';
   return {
     id,
     name: cornerName(create ? tagValue(create, 'name') : undefined, id),
     openerPubkey: create?.pubkey ?? '',
-    status: resolveCornerLifecycle(facts, { merged, archived }),
+    status,
+    ...(awaitingReply ? { awaitingReply } : {}),
     createdAt: create?.created_at,
     ...(lastActivityAt > 0 ? { lastActivityAt } : {}),
   };

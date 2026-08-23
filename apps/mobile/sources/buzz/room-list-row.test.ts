@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import type { CornerSummary, CornerStatus } from './corners';
 import {
+  finishedRoomEntries,
   isRoomAlive,
   NO_ACTIVITY_PREVIEW,
+  roomIsFinished,
   roomListSections,
   roomRowPresentation,
 } from './room-list-row';
@@ -33,6 +35,34 @@ describe('Room row presentation', () => {
     // idle: nothing happening.
     expect(roomRowPresentation({ corners: [corner('merged')] }, NO_NAMES).zone).toBe('idle');
     expect(roomRowPresentation({}, NO_NAMES).zone).toBe('idle');
+  });
+
+  it('puts only ACTIONABLE corners in NEEDS YOU — a merely idle one is IDLE', () => {
+    // Owner refinement 2026-08-23: idle-without-finishing (`status: null`, no
+    // fresh ask) has nothing for a person to act on, so its Room belongs in
+    // IDLE deck state — not gold.
+    const stalled = { ...corner('open'), status: null };
+    expect(roomRowPresentation({ corners: [stalled] }, NO_NAMES)).toMatchObject({
+      zone: 'idle',
+      attention: false,
+    });
+    expect(
+      roomRowPresentation({ corners: [stalled] }, NO_NAMES).pills.some(
+        (pill) => pill.kind === 'status',
+      ),
+    ).toBe(false);
+    // But a fresh unanswered agent ask (`awaitingReply` — the same null word,
+    // carried by the transport when the oracle says the ask IS the wait) is
+    // exactly what NEEDS YOU exists for, with REPLY as its affordance.
+    const asked = { ...stalled, awaitingReply: true };
+    expect(roomRowPresentation({ corners: [asked] }, NO_NAMES)).toMatchObject({
+      zone: 'needs-you',
+      attention: true,
+    });
+    expect(roomRowPresentation({ corners: [asked] }, NO_NAMES).pills[0]).toEqual({
+      kind: 'status',
+      label: 'REPLY',
+    });
   });
 
   it('ranks needs-you > working > idle when several corners disagree', () => {
@@ -100,15 +130,24 @@ describe('Room row presentation', () => {
       kind: 'status',
       label: 'RETRY',
     });
-    // Idle-without-finishing is needs-human too — the nudge/close affordance.
+    // A fresh ask waits on a reply too.
     expect(
-      roomRowPresentation({ corners: [{ ...corner('open'), status: null }] }, NO_NAMES).pills[0],
-    ).toEqual({ kind: 'status', label: 'NUDGE' });
-    // Working and idle rows never carry one.
+      roomRowPresentation(
+        { corners: [{ ...corner('open'), status: null, awaitingReply: true }] },
+        NO_NAMES,
+      ).pills[0],
+    ).toEqual({ kind: 'status', label: 'REPLY' });
+    // Working and idle rows never carry one — including merely-idle stalls.
     expect(
       roomRowPresentation({ corners: [corner('live')] }, NO_NAMES).pills.some(
         (pill) => pill.kind === 'status',
       ),
+    ).toBe(false);
+    expect(
+      roomRowPresentation(
+        { corners: [{ ...corner('open'), status: null }] },
+        NO_NAMES,
+      ).pills.some((pill) => pill.kind === 'status'),
     ).toBe(false);
     expect(roomRowPresentation({}, NO_NAMES).pills.some((pill) => pill.kind === 'status')).toBe(
       false,
@@ -212,10 +251,18 @@ describe('Room row presentation', () => {
     expect(roomRowPresentation({ corners: [corner('open', 'login-fix')] }, names).fact).toBe(
       'Waiting on you · login-fix',
     );
-    // Idle-without-finishing is needs-human plainly, same as any other.
+    // Idle-without-finishing is no longer a needs-you fact — a merely idle
+    // corner's Room falls back to its spoken history. Only an ask-wait keeps
+    // the "waiting on you" line.
     expect(
       roomRowPresentation(
         { corners: [{ ...corner('open', 'login-fix'), status: null }] },
+        names,
+      ).fact,
+    ).toBe(NO_ACTIVITY_PREVIEW);
+    expect(
+      roomRowPresentation(
+        { corners: [{ ...corner('open', 'login-fix'), status: null, awaitingReply: true }] },
         names,
       ).fact,
     ).toBe('Waiting on you · login-fix');
@@ -235,7 +282,7 @@ describe('Room row presentation', () => {
     ).toBe('Can you check the API?');
   });
 
-  it('sorts needs-you first, then working, then idle rooms by recency buckets', () => {
+  it('zones the deck into NEEDS YOU then IDLE — working rooms included, finished hidden', () => {
     const sections = roomListSections(
       [
         { id: 'quiet-old', title: 'Quiet old', latestMessage: 'old', latestMessageAt: EARLIER_S },
@@ -252,47 +299,83 @@ describe('Room row presentation', () => {
         },
         { id: 'landed', title: 'Landed', corners: [{ ...corner('merged'), lastActivityAt: 12 }] },
         { id: 'quiet-today', title: 'Quiet today', latestMessage: 'hi', latestMessageAt: TODAY_S },
-        {
-          id: 'quiet-yesterday',
-          title: 'Quiet yesterday',
-          latestMessage: 'hi',
-          latestMessageAt: YESTERDAY_S,
-        },
+        { id: 'archived', title: 'Archived room', archived: true, latestMessageAt: TODAY_S + 5 },
       ],
       NO_NAMES,
       { now: NOW },
     );
 
-    // State first (needs-you > working), then recency inside idle only.
-    expect(sections.map((section) => section.title)).toEqual([
-      'NEEDS YOU',
-      'WORKING',
-      'TODAY',
-      'YESTERDAY',
-      'EARLIER',
-    ]);
+    // Exactly two tiers: attention state first, then everything else active
+    // (working rooms live in IDLE per the owner's two-tier framing — their
+    // row marks already convey working vs quiet). No recency headings.
+    expect(sections.map((section) => section.title)).toEqual(['NEEDS YOU', 'IDLE']);
+    expect(sections[0]?.zone).toBe('needs-you');
     expect(sections[0]?.data.map(({ item }) => item.id)).toEqual(['review-new', 'review-old']);
-    expect(sections[2]?.data.map(({ item }) => item.id)).toEqual(['quiet-today']);
-    expect(sections[3]?.data.map(({ item }) => item.id)).toEqual(['quiet-yesterday']);
-    expect(sections[4]?.data.map(({ item }) => item.id)).toEqual(['quiet-old', 'landed']);
-    // Empty zones and buckets are omitted entirely.
+    expect(sections[1]?.zone).toBe('idle');
+    // Newest activity first inside IDLE; working rooms are ordinary members.
+    // (`live`'s corner activity stamp is older than both quiet rooms' messages.)
+    expect(sections[1]?.data.map(({ item }) => item.id)).toEqual([
+      'quiet-today',
+      'quiet-old',
+      'live',
+    ]);
+
+    // Finished rooms — archived, or all corner work terminal — belong to NO
+    // inline tier; they surface only through the collapsed entry's data.
+    const finished = finishedRoomEntries(
+      [
+        { id: 'landed', title: 'Landed', corners: [corner('merged')] },
+        { id: 'closed', title: 'Closed', corners: [corner('archived')] },
+        { id: 'archived-room', title: 'Archived room', archived: true },
+        { id: 'mixed', title: 'Mixed', corners: [corner('merged'), corner('live')] },
+        { id: 'chat-only', title: 'Chat only' },
+      ],
+      NO_NAMES,
+    );
+    // Oldest-activity first here: both corner-finished rooms carry the same
+    // fixture stamp and tie-break by title; the archived room has no stamp.
+    expect(finished.map(({ item }) => item.id)).toEqual([
+      'closed',
+      'landed',
+      'archived-room',
+    ]);
+  });
+
+  it('classifies finished rooms exactly: archived, or every corner terminal', () => {
+    expect(roomIsFinished({})).toBe(false);
+    expect(roomIsFinished({ archived: true })).toBe(true);
+    expect(roomIsFinished({ corners: [corner('merged'), corner('archived')] })).toBe(true);
+    // Any unfinished corner keeps the Room active.
+    expect(roomIsFinished({ corners: [corner('merged'), corner('live')] })).toBe(false);
+    expect(roomIsFinished({ corners: [corner('open')] })).toBe(false);
+    // A stalled corner (`null`) is idle, not terminal.
+    expect(roomIsFinished({ corners: [{ ...corner('open'), status: null }] })).toBe(false);
+  });
+
+  it('omits empty tiers and hides the collapsed entry when nothing is finished', () => {
+    // No needs-you rooms -> the tier is omitted entirely.
     expect(
       roomListSections([{ id: 'only', latestMessage: 'hello', latestMessageAt: TODAY_S }], NO_NAMES, {
         now: NOW,
       }).map((section) => section.title),
-    ).toEqual(['TODAY']);
+    ).toEqual(['IDLE']);
+    // Nothing at all -> no sections.
+    expect(roomListSections([], NO_NAMES, { now: NOW })).toEqual([]);
+    // No finished rooms -> an empty collapsed list (the screen hides the row).
+    expect(finishedRoomEntries([{ id: 'only', latestMessage: 'hello' }], NO_NAMES)).toEqual([]);
   });
 
-  it('keeps archived Rooms out of every Room-list consumer, including the cached sidebar', () => {
-    const sections = roomListSections(
-      [
-        { id: 'archived', title: 'beeline', archived: true },
-        { id: 'live', title: 'beeline', archived: false },
-      ],
-      NO_NAMES,
-    );
+  it('reaches archived Rooms only through the finished set, never inline', () => {
+    const rooms = [
+      { id: 'archived', title: 'beeline', archived: true },
+      { id: 'live', title: 'beeline', archived: false },
+    ];
+    const sections = roomListSections(rooms, NO_NAMES);
 
+    // Inline tiers carry only the active duplicate-titled room...
     expect(sections.flatMap((section) => section.data.map(({ item }) => item.id))).toEqual(['live']);
+    // ...and the archived one exists only in the collapsed entry's data.
+    expect(finishedRoomEntries(rooms, NO_NAMES).map(({ item }) => item.id)).toEqual(['archived']);
   });
 
   it('disambiguates same-name Rooms for both the Room index and cached sidebar', () => {

@@ -1,6 +1,7 @@
 import {
   cornerStatusPresentation,
   cornerSuperState,
+  isCornerTerminal,
   roomCornerSignal,
   roomListCorners,
   type CornerStatus,
@@ -10,20 +11,28 @@ import {
 import { isMachinePreview } from '@/buzz/room-list-summary';
 import { isRetiredAgentStateNotice } from '@/buzz/retired-agent-notices';
 
+/** A row's deck state. Working is a ROW state only (the mark's motion) — the
+ * owner's two-tier deck folds working rooms into the IDLE section, so a
+ * working room carries no top-level tier of its own. */
 export type RoomListZone = 'needs-you' | 'working' | 'idle';
 
-export const ROOM_LIST_ZONE_LABELS: Record<RoomListZone, string> = {
+/** The deck's SECTION tiers: NEEDS YOU, then IDLE (everything not waiting on
+ * the human). Finished Rooms are reachable only through the collapsed entry. */
+export type RoomDeckTier = Exclude<RoomListZone, 'working'>;
+
+export const ROOM_LIST_ZONE_LABELS: Record<RoomDeckTier, string> = {
   'needs-you': 'NEEDS YOU',
-  working: 'WORKING',
   idle: 'IDLE',
 };
 
-const ROOM_LIST_ZONE_ORDER: readonly RoomListZone[] = ['needs-you', 'working', 'idle'];
-// Gold is THE three-word verdict's needs-human state — including
-// idle-without-finishing, plainly. Affordance words per legacy word stay
-// contextual (approve card / reply / retry / nudge-close).
-function needsHumanCorner(corner: CornerSummary): boolean {
-  return cornerSuperState(corner.status) === 'needs-human';
+const ROOM_LIST_TIER_ORDER: readonly RoomDeckTier[] = ['needs-you', 'idle'];
+// Gold is THE three-word verdict's needs-human state — but only its
+// ACTIONABLE half reaches the NEEDS YOU tier (see `needsYouCorner`).
+// Affordance words per legacy word stay contextual (approve card / reply /
+// retry).
+function needsYouAction(status: CornerStatus | null): string {
+  const key = status === null ? 'needs-attention' : status;
+  return NEEDS_YOU_ACTION[key] ?? 'REPLY';
 }
 const MEANINGFUL_CORNER_SUPERSTATES: ReadonlySet<CornerSuperState> = new Set([
   'needs-human',
@@ -32,6 +41,20 @@ const MEANINGFUL_CORNER_SUPERSTATES: ReadonlySet<CornerSuperState> = new Set([
 ]);
 const LIVE_STATUSES: ReadonlySet<CornerStatus> = new Set(['live']);
 const FINISHED_STATUSES: ReadonlySet<CornerStatus> = new Set(['merged']);
+
+/**
+ * Whether this corner puts its Room in the NEEDS YOU tier. Owner refinement:
+ * NEEDS YOU is for corners a person can act on RIGHT NOW — a review-ready
+ * change (`open`), a decision/reply ask (`needs-attention`, or a fresh agent
+ * question carried as `awaitingReply`), or a failure-stalled card (`failed`).
+ * A merely idle corner — nothing fresh to answer, nothing new to approve — is
+ * IDLE deck state, not attention; its nudge/close affordance still lives
+ * inside the corner itself.
+ */
+function needsYouCorner(corner: CornerSummary): boolean {
+  if (corner.awaitingReply) return true;
+  return corner.status !== null && cornerSuperState(corner.status) === 'needs-human';
+}
 
 /**
  * The one loud word a needs-you Room is allowed to say — the AFFORDANCE the
@@ -69,6 +92,28 @@ export type RoomRowPill =
  * readable has been said. The screen renders the answer; it does not
  * re-derive it.
  */
+/**
+ * A finished Room: archived on the relay, or one whose corner work has all
+ * reached a terminal word (`merged`/`archived`). Such a Room holds no live or
+ * needs-you state, so the deck hides it behind the collapsed FINISHED entry
+ * instead of listing it inline. Two deliberate exclusions: a plain chat Room
+ * with no corners is never finished (it has no work to finish), and a `failed`
+ * corner never finishes its Room — a failure-stalled card still waits on a
+ * person's retry, which is NEEDS YOU state.
+ */
+export function roomIsFinished(
+  room: Pick<RoomRowInput, 'archived' | 'corners'>,
+): boolean {
+  if (room.archived) return true;
+  const corners = room.corners ?? [];
+  if (corners.length === 0) return false;
+  // Any unfinished corner — live, worded, or merely stalled (`null`) — keeps
+  // the Room active.
+  if (corners.some((corner) => !isCornerTerminal(corner.status))) return false;
+  // ...and a failure still owes the person an answer.
+  return !corners.some((corner) => corner.status === 'failed');
+}
+
 export type RoomRowPresentation = {
   /**
    * The row's one leading mark glyph. A Room reports corner state when it has
@@ -158,15 +203,9 @@ export type RoomRowInput = {
   agentTurnWorking?: boolean;
 };
 
-/** Recency headings for idle rooms, oldest last. Deliberately coarse. */
-const QUIET_BUCKETS: readonly { title: string; maxAgeMs: number }[] = [
-  { title: 'TODAY', maxAgeMs: Number.POSITIVE_INFINITY },
-  { title: 'YESTERDAY', maxAgeMs: 24 * 60 * 60 * 1000 },
-  { title: 'EARLIER', maxAgeMs: Number.POSITIVE_INFINITY },
-];
-
 export type RoomListSection<T extends RoomRowInput> = {
-  zone: RoomListZone;
+  /** One of the two deck tiers — never `'working'`, which is a row state only. */
+  zone: RoomDeckTier;
   title: string;
   data: Array<{ item: T; row: RoomRowPresentation }>;
 };
@@ -175,11 +214,11 @@ function cornerTimestamp(corner: CornerSummary): number {
   return corner.lastActivityAt ?? corner.createdAt ?? 0;
 }
 
-function newestNeedsHuman(
+function newestNeedsYou(
   corners: readonly CornerSummary[],
 ): CornerSummary | undefined {
   return corners
-    .filter(needsHumanCorner)
+    .filter(needsYouCorner)
     .sort(
       (a, b) =>
         cornerTimestamp(b) - cornerTimestamp(a) ||
@@ -229,18 +268,13 @@ function cornerFact(corner: CornerSummary, authorNames: ReadonlyMap<string, stri
   }
 }
 
-function needsYouAction(status: CornerStatus | null): string {
-  const key = status === null ? 'stalled' : status;
-  return NEEDS_YOU_ACTION[key] ?? 'REPLY';
-}
-
 export function roomRowPresentation(
   room: RoomRowInput,
   authorNames: ReadonlyMap<string, string>,
 ): RoomRowPresentation {
   const all = room.corners ?? [];
   const corners = roomListCorners(all);
-  const needsYou = newestNeedsHuman(all);
+  const needsYou = newestNeedsYou(all);
   const working = newestByStatus(all, LIVE_STATUSES);
   const finished = newestByStatus(all, FINISHED_STATUSES);
   const currentCorner = needsYou ?? working ?? finished;
@@ -306,24 +340,25 @@ export function roomRowPresentation(
   };
 }
 
-/**
- * Build the deck's sections: Needs you first, then Working, then idle rooms
- * grouped by recency (Today / Yesterday / Earlier). This is deliberately the
- * only Room ordering function the screen consumes: lifecycle state, fact text,
- * age, and placement all come from the same projection.
- */
-export function roomListSections<T extends RoomRowInput>(
+type RankedEntry<T extends RoomRowInput> = { item: T; row: RoomRowPresentation };
+
+function byRecency<T extends RoomRowInput>(a: RankedEntry<T>, b: RankedEntry<T>): number {
+  return (
+    b.row.meaningfulAt - a.row.meaningfulAt ||
+    (a.item.title ?? a.item.id ?? '').localeCompare(b.item.title ?? b.item.id ?? '')
+  );
+}
+
+function projectEntries<T extends RoomRowInput>(
   rooms: readonly T[],
   authorNames: ReadonlyMap<string, string>,
-  options: { now?: number } = {},
-): RoomListSection<T>[] {
-  const visibleRooms = rooms.filter((item) => !item.archived);
+): Array<RankedEntry<T>> {
   const titleCounts = new Map<string, number>();
-  for (const item of visibleRooms) {
+  for (const item of rooms) {
     const title = item.title?.trim().toLocaleLowerCase();
     if (title) titleCounts.set(title, (titleCounts.get(title) ?? 0) + 1);
   }
-  const projected = visibleRooms.map((item) => {
+  return rooms.map((item) => {
     const row = roomRowPresentation(item, authorNames);
     const title = item.title?.trim().toLocaleLowerCase();
     const duplicateTitle = title ? (titleCounts.get(title) ?? 0) > 1 : false;
@@ -331,43 +366,56 @@ export function roomListSections<T extends RoomRowInput>(
       duplicateTitle && item.id && item.title
         ? { ...item, title: `${item.title} · ID ${item.id.slice(0, 8)}` }
         : item;
-    return {
-      item: displayItem,
-      row,
-      bucket: row.zone === 'idle' ? quietBucket(row.meaningfulAt, options.now ?? Date.now()) : -1,
-    };
+    return { item: displayItem, row };
   });
-  const byRecency = (
-    a: { item: T; row: RoomRowPresentation },
-    b: { item: T; row: RoomRowPresentation },
-  ) =>
-    b.row.meaningfulAt - a.row.meaningfulAt ||
-    (a.item.title ?? a.item.id ?? '').localeCompare(b.item.title ?? b.item.id ?? '');
+}
+
+/**
+ * Build the deck's ACTIVE sections: NEEDS YOU first (rooms with a corner
+ * genuinely waiting on the human), then IDLE — every other visible Room,
+ * working ones included, newest activity first. Recency headings (TODAY /
+ * YESTERDAY / EARLIER) are retired: attention-state and recency were
+ * semantically different tiers, so the deck now has exactly two labels, and
+ * each row's mark already conveys working vs quiet. Finished Rooms (archived,
+ * or all corner work terminal) belong to NO inline section — they surface
+ * only through {@link finishedRoomEntries}, which backs the collapsed entry.
+ *
+ * This is deliberately the only Room ordering function the screen consumes
+ * for its tiers: lifecycle state, fact text, age, and placement all come from
+ * the same projection. (`options.now` remains accepted for call-site
+ * stability; zoning no longer depends on wall-clock buckets.)
+ */
+export function roomListSections<T extends RoomRowInput>(
+  rooms: readonly T[],
+  authorNames: ReadonlyMap<string, string>,
+  _options: { now?: number } = {},
+): RoomListSection<T>[] {
+  const activeRooms = rooms.filter((item) => !roomIsFinished(item));
+  const projected = projectEntries(activeRooms, authorNames);
   const sections: RoomListSection<T>[] = [];
-  for (const zone of ROOM_LIST_ZONE_ORDER) {
-    if (zone !== 'idle') {
-      const data = projected.filter((entry) => entry.row.zone === zone).sort(byRecency);
-      if (data.length > 0) sections.push({ zone, title: ROOM_LIST_ZONE_LABELS[zone], data });
-      continue;
-    }
-    for (let bucket = 0; bucket < QUIET_BUCKETS.length; bucket += 1) {
-      const data = projected
-        .filter((entry) => entry.row.zone === 'idle' && entry.bucket === bucket)
-        .sort(byRecency);
-      if (data.length > 0) {
-        sections.push({ zone, title: QUIET_BUCKETS[bucket].title, data });
-      }
-    }
+  for (const tier of ROOM_LIST_TIER_ORDER) {
+    const data = projected
+      .filter(
+        (entry) =>
+          entry.row.zone === tier || (tier === 'idle' && entry.row.zone === 'working'),
+      )
+      .sort(byRecency);
+    if (data.length > 0) sections.push({ zone: tier, title: ROOM_LIST_ZONE_LABELS[tier], data });
   }
   return sections;
 }
 
-/** Which recency heading an idle room belongs under. `-1` = not idle. */
-function quietBucket(meaningfulAtSeconds: number, nowMs: number): number {
-  const startOfToday = new Date(nowMs);
-  startOfToday.setHours(0, 0, 0, 0);
-  const at = meaningfulAtSeconds * 1000;
-  if (at >= startOfToday.getTime()) return 0;
-  if (at >= startOfToday.getTime() - QUIET_BUCKETS[1].maxAgeMs) return 1;
-  return 2;
+/**
+ * The finished Rooms the deck collapses into one bottom entry — archived on
+ * the relay, or every corner terminal — newest first. Never listed inline by
+ * any tier; the screen renders them only when that entry is expanded.
+ */
+export function finishedRoomEntries<T extends RoomRowInput>(
+  rooms: readonly T[],
+  authorNames: ReadonlyMap<string, string>,
+): Array<RankedEntry<T>> {
+  return projectEntries(
+    rooms.filter((item) => roomIsFinished(item)),
+    authorNames,
+  ).sort(byRecency);
 }

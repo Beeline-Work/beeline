@@ -163,6 +163,7 @@ const monoStyles = new Set([
   'targetBranchStatus',
   'previewLinkLabel',
   'previewLinkUrl',
+  'finishedChevron',
 ]);
 
 function styleDefinition(source: string, name: string): string {

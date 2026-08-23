@@ -1025,13 +1025,18 @@ export const RECOVERABLE_CORNER_FAILURE_TAGS: readonly string[][] = [
  * fresh timestamp — a fresh timestamp is exactly what let a restart re-gold
  * parked corners while their agents were actively working (2026-08-23).
  */
-export function standingCornerStatusFromEvents(events: readonly NostrEvent[]): CornerLifecycleStatus {
+export function standingCornerStatusFromEvents(
+  events: readonly NostrEvent[],
+): CornerLifecycleStatus | null {
   return resolveCornerLifecycle(
     events.map((event) =>
       cornerLifecycleFact(event.created_at, {
         displayStatus: tagValue(event, 'display-status'),
         status: tagValue(event, 'status'),
         t: tagValue(event, 't'),
+        // Agent narration content — lets the oracle see a fresh unanswered
+        // question as the actionable artifact it is.
+        text: event.content,
       }),
     ),
   );
@@ -5840,7 +5845,7 @@ export class Body {
     info: SubchannelInfo,
     publish: () => Promise<void>,
   ): Promise<void> {
-    let standing: CornerLifecycleStatus;
+    let standing: CornerLifecycleStatus | null;
     try {
       const events = await this.agentRelay.queryEvents([
         {

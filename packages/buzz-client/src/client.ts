@@ -74,6 +74,7 @@ import {
   setCommunityVisibility,
 } from './community.js';
 import { publishEvent, type HttpBridgeOptions } from './http.js';
+import { fetchIdentityPredecessors } from './oidc-bind.js';
 import {
   KIND_AGENT_DRAFT,
   KIND_AGENT_PRESENCE,
@@ -140,6 +141,9 @@ function hostFromBaseUrl(baseUrl: string): string {
   return u.host;
 }
 
+/** Bound on the lazy auth-service predecessor fetch inside communityMembers. */
+const SUCCESSION_LOAD_TIMEOUT_MS = 5_000;
+
 export class BuzzClient {
   readonly identity: Identity;
   readonly baseUrl: string;
@@ -148,6 +152,8 @@ export class BuzzClient {
   private readonly ctx: ChannelOpsContext;
   private readonly config: BuzzClientConfig;
   private ws: RelayWs | null = null;
+  /** Key-succession chain cache: undefined = not loaded yet, [] = none / auth unreachable. */
+  private successionPredecessors?: string[];
 
   constructor(config: BuzzClientConfig) {
     this.config = config;
@@ -453,8 +459,38 @@ export class BuzzClient {
     return communityChannels(this.ctx, communityId);
   }
 
-  communityMembers(communityId: string): Promise<CommunityMember[]> {
-    return communityMembers(this.ctx, communityId);
+  /**
+   * Explicitly seed this client's key-succession chain (see
+   * {@link fetchIdentityPredecessors}), skipping the lazy auth-service load in
+   * {@link communityMembers}. Pass [] to pin "no succession".
+   */
+  setSuccessionPredecessors(predecessors: readonly string[]): void {
+    this.successionPredecessors = [...predecessors];
+  }
+
+  /**
+   * Workspace roster with succession-aware role resolution. When no explicit
+   * chain is seeded or passed, the identity's predecessors are fetched once
+   * per client from the auth service (best-effort, bounded); an unreachable
+   * auth service degrades to ordinary role resolution — never throws.
+   */
+  async communityMembers(
+    communityId: string,
+    opts?: { predecessors?: readonly string[] },
+  ): Promise<CommunityMember[]> {
+    const seeded = opts?.predecessors ?? this.successionPredecessors;
+    const predecessors = seeded ?? (await this.loadSuccessionChain());
+    return communityMembers(this.ctx, communityId, predecessors.length ? { predecessors } : undefined);
+  }
+
+  /** Once-per-client best-effort predecessor fetch, cached even when empty. */
+  private async loadSuccessionChain(): Promise<string[]> {
+    if (this.successionPredecessors) return this.successionPredecessors;
+    this.successionPredecessors = await Promise.race([
+      fetchIdentityPredecessors(this.baseUrl, this.identity).catch(() => [] as string[]),
+      new Promise<string[]>((resolve) => setTimeout(() => resolve([]), SUCCESSION_LOAD_TIMEOUT_MS)),
+    ]);
+    return this.successionPredecessors;
   }
 
   /** Restore any missing direct Room projections for this human Workspace member. */

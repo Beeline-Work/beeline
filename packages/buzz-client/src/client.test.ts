@@ -185,3 +185,171 @@ describe('live Room subscriptions', () => {
     client.disconnect();
   });
 });
+
+describe('succession-aware communityMembers', () => {
+  const communityId = '33333333-3333-4333-8333-333333333333';
+
+  function rosterResponse(body: unknown): Response {
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
+  function stubFetch(handlers: {
+    predecessors?: string[] | Error;
+    onQuery?: (filter: Record<string, unknown>) => unknown[] | undefined;
+  }): { fetchMock: ReturnType<typeof vi.fn>; predecessorCalls: () => number } {
+    let predecessorCount = 0;
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/auth/oidc/predecessors/')) {
+        predecessorCount += 1;
+        if (handlers.predecessors instanceof Error) throw handlers.predecessors;
+        return rosterResponse({ predecessors: handlers.predecessors ?? [] });
+      }
+      const filter = JSON.parse(String(init?.body))[0] as Record<string, unknown>;
+      const served = handlers.onQuery?.(filter);
+      return rosterResponse(served ?? []);
+    });
+    return { fetchMock, predecessorCalls: () => predecessorCount };
+  }
+
+  it('lazily loads the succession chain once and inherits the create author role', async () => {
+    const identity = createIdentity('succession-client');
+    const predecessor = createIdentity('succession-predecessor');
+    const create = signEvent(
+      {
+        pubkey: predecessor.publicKey,
+        created_at: 1_700_000_000,
+        kind: 9007,
+        tags: [['h', communityId], ['name', 'Builders'], ['community', communityId]],
+        content: '',
+      },
+      predecessor.secretKey,
+    );
+    const members = signEvent(
+      {
+        pubkey: predecessor.publicKey,
+        created_at: 1_700_000_001,
+        kind: 39002,
+        tags: [['d', communityId], ['p', predecessor.publicKey]],
+        content: '',
+      },
+      predecessor.secretKey,
+    );
+    const { fetchMock, predecessorCalls } = stubFetch({
+      predecessors: [predecessor.publicKey],
+      onQuery: (filter) => {
+        if ((filter.kinds as number[])?.includes(9007)) return [create];
+        if ((filter.kinds as number[])?.includes(39002)) return [members];
+        return [];
+      },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const client = createBuzzClient({ baseUrl: 'https://relay.test', identity });
+
+    const roles = await client.communityMembers(communityId);
+    expect(roles).toEqual([{ pubkey: identity.publicKey, role: 'owner' }]);
+
+    // A second read reuses the cached chain — one auth probe per client.
+    await client.communityMembers(communityId);
+    expect(predecessorCalls()).toBe(1);
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it('degrades to published roles when the auth service is unreachable', async () => {
+    const identity = createIdentity('succession-offline');
+    const owner = createIdentity('succession-owner');
+    const create = signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: 1_700_000_000,
+        kind: 9007,
+        tags: [['h', communityId], ['name', 'Builders'], ['community', communityId]],
+        content: '',
+      },
+      owner.secretKey,
+    );
+    const members = signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: 1_700_000_001,
+        kind: 39002,
+        tags: [['d', communityId], ['p', owner.publicKey], ['p', identity.publicKey]],
+        content: '',
+      },
+      owner.secretKey,
+    );
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).includes('/auth/oidc/predecessors/')) throw new Error('auth down');
+        const filter = JSON.parse(String(init?.body))[0] as Record<string, unknown>;
+        if ((filter.kinds as number[])?.includes(9007)) return rosterResponse([create]);
+        if ((filter.kinds as number[])?.includes(39002)) return rosterResponse([members]);
+        return rosterResponse([]);
+      }),
+    );
+
+    const client = createBuzzClient({ baseUrl: 'https://relay.test', identity });
+    const roles = await client.communityMembers(communityId);
+    const byPubkey = new Map(roles.map((member) => [member.pubkey, member.role]));
+    expect(byPubkey.get(owner.publicKey)).toBe('owner');
+    expect(byPubkey.get(identity.publicKey)).toBe('member');
+  });
+
+  it('honors an explicitly seeded chain without touching the auth service', async () => {
+    const identity = createIdentity('succession-seeded');
+    const adminPredecessor = createIdentity('succession-admin');
+    const owner = createIdentity('succession-owner2');
+    const create = signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: 1_700_000_000,
+        kind: 9007,
+        tags: [['h', communityId], ['name', 'Builders'], ['community', communityId]],
+        content: '',
+      },
+      owner.secretKey,
+    );
+    const admins = signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: 1_700_000_001,
+        kind: 39001,
+        tags: [['d', communityId], ['p', owner.publicKey, 'owner'], ['p', adminPredecessor.publicKey, 'admin']],
+        content: '',
+      },
+      owner.secretKey,
+    );
+    const members = signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: 1_700_000_002,
+        kind: 39002,
+        tags: [['d', communityId], ['p', owner.publicKey]],
+        content: '',
+      },
+      owner.secretKey,
+    );
+    const { fetchMock, predecessorCalls } = stubFetch({
+      predecessors: [adminPredecessor.publicKey],
+      onQuery: (filter) => {
+        if ((filter.kinds as number[])?.includes(9007)) return [create];
+        if ((filter.kinds as number[])?.includes(39001)) return [admins];
+        if ((filter.kinds as number[])?.includes(39002)) return [members];
+        return [];
+      },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const client = createBuzzClient({ baseUrl: 'https://relay.test', identity });
+    client.setSuccessionPredecessors([adminPredecessor.publicKey]);
+
+    const roles = await client.communityMembers(communityId);
+    const byPubkey = new Map(roles.map((member) => [member.pubkey, member.role]));
+    expect(byPubkey.get(identity.publicKey)).toBe('admin');
+    expect(byPubkey.has(adminPredecessor.publicKey)).toBe(false);
+    expect(predecessorCalls()).toBe(0); // seeded chain never fetched
+  });
+});

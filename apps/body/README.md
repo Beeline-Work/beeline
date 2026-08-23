@@ -138,7 +138,7 @@ on `PATH`; the installer prints the exact export when it is not.
 # Supported user path: pair the agent identity and launch its durable daemon.
 # The current directory is never treated as repository intent; Rooms already
 # carry their own selected repository binding.
-# With no --agent flag, Beeline detects Codex, Claude Code, Goose, and Pi.
+# With no --agent flag, Beeline detects Codex, Claude Code, Goose, Pi, and Grok.
 # Installed agents with a missing ACP adapter remain in the numbered menu and
 # offer to install it when selected. Non-interactive runs print the exact manual
 # install command and never install packages automatically.
@@ -165,6 +165,16 @@ beeline pair BUZZ-XXXX-XXXX --agent goose
 # Pi uses the registry-listed pi-acp adapter:
 #   npm install -g @mariozechner/pi-coding-agent pi-acp
 beeline pair BUZZ-XXXX-XXXX --agent pi
+
+# Grok speaks ACP natively over `grok agent stdio`; no adapter binary needed.
+#   curl -fsSL https://x.ai/cli/install.sh | bash
+beeline pair BUZZ-XXXX-XXXX --agent grok
+
+# Cursor has no native ACP mode. Install the Cursor CLI and the community
+# bridge, then drive it through the custom path:
+#   curl -fsSL https://cursor.com/install | sh && cursor-agent login
+#   npm install -g cursor-acp
+beeline pair BUZZ-XXXX-XXXX --agent custom --agent-command 'cursor-acp'
 
 # The bundled reference agent is an explicit fallback for development and
 # requires an LLM key/configuration from the operator.

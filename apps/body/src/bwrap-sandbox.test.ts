@@ -324,6 +324,7 @@ describe('bwrap argv construction', () => {
       '/home/op/.config/goose',
       '/home/op/.local/share/goose',
     ]);
+    expect(harnessHomeStateDirs('/home/op/.grok/bin/grok', '/home/op')).toEqual(['/home/op/.grok']);
     // An unrecognised harness gets none, rather than four empty directories
     // created in the operator's home for harnesses this host does not run.
     expect(harnessHomeStateDirs('some-unknown-acp', '/home/op')).toEqual([]);

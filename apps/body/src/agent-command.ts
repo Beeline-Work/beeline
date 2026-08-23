@@ -1,10 +1,18 @@
 import { accessSync, constants, existsSync } from 'node:fs';
 import { delimiter, isAbsolute, resolve } from 'node:path';
 
-export const AGENT_KINDS = ['codex', 'claude', 'goose', 'pi', 'reference', 'custom'] as const;
+export const AGENT_KINDS = [
+  'codex',
+  'claude',
+  'goose',
+  'pi',
+  'grok',
+  'reference',
+  'custom',
+] as const;
 export type AgentKind = (typeof AGENT_KINDS)[number];
 
-export const AUTO_DETECT_AGENT_KINDS = ['codex', 'claude', 'goose', 'pi'] as const;
+export const AUTO_DETECT_AGENT_KINDS = ['codex', 'claude', 'goose', 'pi', 'grok'] as const;
 
 export interface AgentCommand {
   kind: AgentKind;
@@ -34,6 +42,7 @@ const AGENT_EXECUTABLES: Record<(typeof AUTO_DETECT_AGENT_KINDS)[number], string
   claude: 'claude',
   goose: 'goose',
   pi: 'pi',
+  grok: 'grok',
 };
 
 const ADAPTER_INSTALL_COMMANDS: Record<'codex' | 'claude' | 'pi', AdapterInstallCommand> = {
@@ -223,6 +232,20 @@ export function resolveAgentCommand(opts: {
     return { kind: typedKind, command, args: [] };
   }
 
+  if (typedKind === 'grok') {
+    // Grok speaks ACP natively: `grok agent stdio` is the ACP server (verified
+    // against a real initialize/session/new/session/prompt handshake — it sends
+    // standard `session/request_permission` requests in ask mode). No adapter
+    // binary, so there is no missing-adapter state for this kind.
+    const command = requireExecutable(
+      'grok',
+      env,
+      cwd,
+      'Grok CLI not found. Install it with `curl -fsSL https://x.ai/cli/install.sh | bash`, then retry with `--agent grok`.',
+    );
+    return { kind: typedKind, command, args: ['agent', 'stdio'] };
+  }
+
   if (typedKind === 'custom') {
     const parsed = parseAgentCommand(opts.customCommand ?? '');
     return {
@@ -275,7 +298,10 @@ export function detectInstalledAgentCommands(
         agent: resolveAgentCommand({ kind, env, cwd: opts.cwd }),
       });
     } catch {
-      if (kind !== 'goose') {
+      // goose speaks ACP natively (`goose acp`) and grok does too (`grok agent
+      // stdio`): neither has a separable adapter to install, so a detected
+      // binary that fails to resolve has no actionable install step.
+      if (kind !== 'goose' && kind !== 'grok') {
         detected.push({
           kind,
           status: 'missing-adapter',

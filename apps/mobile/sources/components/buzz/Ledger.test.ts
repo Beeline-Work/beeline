@@ -482,3 +482,160 @@ describe('the ledger — the typewriter reveals each message at most once', () =
     expect(treeText(later)).not.toContain('closes idle sockets');
   });
 });
+
+// ── Per-speaker identity marks ───────────────────────────────────────────────
+//
+// The byline's leading indicator is the speaker's EXISTING identity mark
+// (`buzz/identity-mark.ts`) at transcript scale — no new vocabulary. The real
+// SVG renderer is covered by `IdentityMark.test.ts`; here it is stubbed so the
+// attribution contract (who gets which mark, and when none renders) is what is
+// under test.
+vi.mock('./IdentityMark', async () => {
+  const ReactModule = await import('react');
+  const IdentityMarkStub = (props: Record<string, unknown>) =>
+    ReactModule.createElement('IdentityMark', props, props.children as never);
+  return { IdentityMark: IdentityMarkStub };
+});
+
+describe('the ledger — per-speaker identity marks', () => {
+  const markOf = (renderer: ReactTestRenderer): Record<string, any> =>
+    renderer.root.findByProps({ testID: 'chat-byline-mark' }).props;
+
+  it('leads an agent turn with that agent’s own identity mark, ring while working', () => {
+    const renderer = render(
+      React.createElement(LedgerEntry, {
+        itemId: 'm1',
+        luminous: true,
+        byline: {
+          name: 'Beebee',
+          role: 'agent',
+          stamp: '09:41',
+          mark: { seed: 'agent-pubkey-a', kind: 'agent', alive: true },
+        },
+        bodyText: 'Read the scheduler and found the stall.',
+        bodyTestID: 'body',
+      }),
+    );
+
+    const mark = markOf(renderer);
+    expect(mark.seed).toBe('agent-pubkey-a');
+    expect(mark.kind).toBe('agent');
+    expect(mark.alive).toBe(true);
+    // Transcript scale, inside the brief's ~16–18px band.
+    expect(mark.size).toBe(17);
+    // The mark REPLACES the generic dot — both never render together.
+    const dots = stylesOfType(renderer, 'View').filter((style) => style.width === 5);
+    expect(dots.length).toBe(0);
+  });
+
+  it('renders the same mark shape without the ring when the agent is idle', () => {
+    const renderer = render(
+      React.createElement(LedgerEntry, {
+        itemId: 'm2',
+        luminous: true,
+        byline: {
+          name: 'Beebee',
+          role: 'agent',
+          stamp: '09:45',
+          mark: { seed: 'agent-pubkey-a', kind: 'agent', alive: false },
+        },
+        bodyText: 'Done for now.',
+        bodyTestID: 'body',
+      }),
+    );
+
+    const mark = markOf(renderer);
+    expect(mark.kind).toBe('agent');
+    expect(mark.alive).toBe(false);
+  });
+
+  it('leads a human turn with that person’s circle mark, never an alive ring', () => {
+    const renderer = render(
+      React.createElement(LedgerSteer, {
+        itemId: 'm3',
+        byline: {
+          name: 'You',
+          stamp: '10:00',
+          isViewer: true,
+          mark: { seed: 'viewer-pubkey', kind: 'human' },
+        },
+        bodyText: 'Ship it.',
+        bodyTestID: 'body',
+      }),
+    );
+
+    const mark = markOf(renderer);
+    expect(mark.seed).toBe('viewer-pubkey');
+    expect(mark.kind).toBe('human');
+    // Gold means a live agent, by type: a human mark never carries `alive`.
+    expect(mark.alive).toBeUndefined();
+  });
+
+  it('gives two speakers visibly different marks from the same system', () => {
+    const first = render(
+      React.createElement(LedgerEntry, {
+        itemId: 'm4',
+        luminous: true,
+        byline: {
+          name: 'Beebee',
+          role: 'agent',
+          stamp: '09:41',
+          mark: { seed: 'agent-pubkey-a', kind: 'agent' },
+        },
+        bodyText: 'First voice.',
+        bodyTestID: 'body',
+      }),
+    );
+    const second = render(
+      React.createElement(LedgerSteer, {
+        itemId: 'm5',
+        byline: {
+          name: 'Mika',
+          stamp: '09:42',
+          mark: { seed: 'person-pubkey-b', kind: 'human' },
+        },
+        bodyText: 'Second voice.',
+        bodyTestID: 'body',
+      }),
+    );
+
+    const agentMark = markOf(first);
+    const personMark = markOf(second);
+    // Distinct seeds → the deterministic per-identity palette/fill diverge;
+    // distinct kinds → triangle vs circle. Both from the ONE mark system.
+    expect(agentMark.seed).not.toBe(personMark.seed);
+    expect(agentMark.kind).toBe('agent');
+    expect(personMark.kind).toBe('human');
+    expect(agentMark.size).toBe(personMark.size);
+  });
+
+  it('renders no mark on a continued run — the byline (and mark) open the run only', () => {
+    const renderer = render(
+      React.createElement(LedgerEntry, {
+        itemId: 'm6',
+        continued: true,
+        byline: undefined,
+        bodyText: 'Still the same voice flowing on.',
+        bodyTestID: 'body',
+      }),
+    );
+
+    expect(renderer.root.findAllByProps({ testID: 'chat-byline-mark' })).toHaveLength(0);
+  });
+
+  it('keeps the plain dot fallback for a byline without a mark', () => {
+    const renderer = render(
+      React.createElement(LedgerEntry, {
+        itemId: 'm7',
+        luminous: true,
+        byline: { name: 'Beebee', role: 'agent', stamp: '09:41' },
+        bodyText: 'No mark provided.',
+        bodyTestID: 'body',
+      }),
+    );
+
+    expect(renderer.root.findAllByProps({ testID: 'chat-byline-mark' })).toHaveLength(0);
+    const dots = stylesOfType(renderer, 'View').filter((style) => style.width === 5);
+    expect(dots.length).toBeGreaterThan(0);
+  });
+});

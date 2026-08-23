@@ -83,10 +83,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         textAlign: 'center',
     },
     roomGlyphLive: {
-        color: theme.colors.status.connected,
+        // Working: brass, matching the deck's live accent — never a semantic
+        // status colour; the glyph is identity, not validation.
+        color: theme.buzz.accent,
     },
     roomGlyphAttention: {
-        color: theme.colors.text,
+        // Needs-you: the one loud brass state on this list.
+        color: theme.buzz.accent,
     },
     roomCopy: {
         flex: 1,

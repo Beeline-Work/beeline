@@ -114,6 +114,9 @@ import {
   matchSlashCommand,
   isBeelineSlashCommand,
   beelineSlashCommandList,
+  cornerLifecycleFact,
+  resolveCornerLifecycle,
+  type CornerLifecycleStatus,
 } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
 import type { BodyConfig, SessionMode } from './config.js';
@@ -1000,6 +1003,27 @@ export const RECOVERABLE_CORNER_FAILURE_TAGS: readonly string[][] = [
   ['status', 'failed'],
   ['display-status', 'needs-attention'],
 ];
+
+/**
+ * The corner's standing lifecycle verdict, computed by THE one oracle
+ * (`resolveCornerLifecycle` in `@beeline/buzz-client` — the same module every
+ * client surface reads) over the daemon's own corner-channel history. Used to
+ * keep restarts from rebroadcasting stale attention: a status card is a state
+ * TRANSITION, so a verdict that already stands is never republished with a
+ * fresh timestamp — a fresh timestamp is exactly what let a restart re-gold
+ * parked corners while their agents were actively working (2026-08-23).
+ */
+export function standingCornerStatusFromEvents(events: readonly NostrEvent[]): CornerLifecycleStatus {
+  return resolveCornerLifecycle(
+    events.map((event) =>
+      cornerLifecycleFact(event.created_at, {
+        displayStatus: tagValue(event, 'display-status'),
+        status: tagValue(event, 'status'),
+        t: tagValue(event, 't'),
+      }),
+    ),
+  );
+}
 
 export const CORNER_WORKTREE_UNRESTORABLE =
   'Agent restart could not restore this corner worktree; no input was discarded.';
@@ -3261,7 +3285,26 @@ export class Body {
           // maintenance tick. A second restore call in the same process is a
           // no-op; another daemon restart gets one new continuation attempt.
           const restartContinuationKey = `${this.agentIdentity.publicKey}:${subchannelId}`;
-          if (request && !tip && !BODY_RESTART_CONTINUATIONS.has(restartContinuationKey)) {
+          // A restart is not a fact about the task. Auto-resume ONLY a corner
+          // that was actively working when the daemon died; a corner parked on
+          // a needs-you verdict (moved target, failed delivery, nothing yet
+          // committed) stays parked — blockMovedTarget literally promises
+          // "nothing is continuing on its own", and re-driving it here is
+          // what republished fresh working/needs-attention cards on every
+          // restart, re-golding the deck while nobody was working.
+          const standingAtRestart = standingCornerStatusFromEvents(events);
+          if (request && !tip && standingAtRestart !== 'live') {
+            console.log(
+              `[body] corner ${subchannelId} not resumed after restart: standing verdict is ` +
+                `${standingAtRestart}; waiting on a person instead of re-driving the original request`,
+            );
+          }
+          if (
+            request &&
+            !tip &&
+            standingAtRestart === 'live' &&
+            !BODY_RESTART_CONTINUATIONS.has(restartContinuationKey)
+          ) {
             BODY_RESTART_CONTINUATIONS.add(restartContinuationKey);
             const originalPrompt = attachmentPrompt(
               request.authorPubkey,
@@ -5730,6 +5773,61 @@ export class Body {
     status: 'starting' | 'working' | 'needs-attention' | 'ready' | 'failed',
     message: string,
     extraTags: string[][] = [],
+  ): Promise<void> {
+    const parentId = info.session.parentChannelId;
+    if (!parentId) return Promise.resolve();
+    if (status === 'needs-attention') {
+      // A needs-you card is only ever a state TRANSITION; restatements are
+      // suppressed (see `publishAttentionTransition`).
+      return this.publishAttentionTransition(info, () =>
+        this.writeParentCornerStatus(info, status, message, extraTags),
+      );
+    }
+    return this.writeParentCornerStatus(info, status, message, extraTags);
+  }
+
+  /**
+   * Publish a needs-attention card ONLY as a state transition. The corner's
+   * standing verdict comes from THE one oracle over its own channel history;
+   * when that verdict is already needs-attention, a second identical card
+   * would carry no new fact — just a fresh timestamp, which is exactly what
+   * let restarts re-gold parked corners while their agents worked. An
+   * unreadable history fails OPEN (publish), because suppressing a real
+   * transition is worse than one duplicate card.
+   */
+  private async publishAttentionTransition(
+    info: SubchannelInfo,
+    publish: () => Promise<void>,
+  ): Promise<void> {
+    let standing: CornerLifecycleStatus;
+    try {
+      const events = await this.agentRelay.queryEvents([
+        {
+          kinds: [9],
+          '#h': [info.subchannelId],
+          authors: [this.agentIdentity.publicKey],
+          limit: 500,
+        },
+      ]);
+      standing = standingCornerStatusFromEvents(events);
+    } catch (error) {
+      console.warn(`[body] could not read ${info.subchannelId} standing status; publishing anyway:`, error);
+      return publish();
+    }
+    if (standing === 'needs-attention') {
+      console.log(
+        `[body] corner ${info.subchannelId}: needs-attention already standing; suppressed restatement`,
+      );
+      return;
+    }
+    return publish();
+  }
+
+  private writeParentCornerStatus(
+    info: SubchannelInfo,
+    status: 'starting' | 'working' | 'needs-attention' | 'ready' | 'failed',
+    message: string,
+    extraTags: string[][],
   ): Promise<void> {
     const parentId = info.session.parentChannelId;
     if (!parentId) return Promise.resolve();

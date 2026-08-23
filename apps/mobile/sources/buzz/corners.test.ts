@@ -204,16 +204,19 @@ describe('corner navigation model', () => {
     expect(cornerName('  #Auth callback  ', 'unused')).toBe('Auth-callback');
   });
 
-  it('uses redundant monochrome glyph and text for every status', () => {
+  it('uses the one diamond family for every corner glyph — corners are WORK, never identities', () => {
+    // Shapes are identity vocabulary (△ agent, ○ human, ▢ workspace); a
+    // corner's own glyph is always a diamond: filled ◆ while live, hollow ◇
+    // otherwise. The label carries the state word.
     expect(cornerStatusPresentation('live')).toEqual({ glyph: '◆', label: 'LIVE' });
     expect(cornerStatusPresentation('needs-attention')).toEqual({
-      glyph: '▲',
+      glyph: '◇',
       label: 'NEEDS ATTENTION',
     });
     expect(cornerStatusPresentation('open')).toEqual({ glyph: '◇', label: 'READY' });
-    expect(cornerStatusPresentation('failed')).toEqual({ glyph: '✕', label: 'FAILED' });
-    expect(cornerStatusPresentation('merged')).toEqual({ glyph: '✓', label: 'MERGED' });
-    expect(cornerStatusPresentation('archived')).toEqual({ glyph: '□', label: 'ARCHIVED' });
+    expect(cornerStatusPresentation('failed')).toEqual({ glyph: '◇', label: 'FAILED' });
+    expect(cornerStatusPresentation('merged')).toEqual({ glyph: '◇', label: 'MERGED' });
+    expect(cornerStatusPresentation('archived')).toEqual({ glyph: '◇', label: 'ARCHIVED' });
   });
 
   it('collapses every raw wire status onto the one canonical model', () => {

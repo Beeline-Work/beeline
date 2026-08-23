@@ -125,6 +125,8 @@ const monoStyles = new Set([
   'approveButtonText',
   'approvalStateText',
   'approvalSentText',
+  'attentionCardState',
+  'attentionCardReplyLabel',
   'cancelTurnText',
   'cornerInput',
   'cornerSendButtonText',

@@ -70,7 +70,7 @@ import { dedupeRepoCandidates } from '@/buzz/room-repo-picker';
 import type { NostrEvent } from '@beeline/nostr';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import {
-  CORNER_WORK_SIGNAL_TAGS,
+  cornerLifecycleFact,
   cornerName,
   resolveCornerLifecycle,
   type CornerSummary,
@@ -109,18 +109,20 @@ function cornerSummaryFromEvents(
   merged: boolean,
 ): CornerSummary {
   const create = [...creates].sort((a, b) => a.created_at - b.created_at)[0];
-  // Reduce every event to its lifecycle facts once, then let the one resolver
-  // in `buzz/corners.ts` decide. Reading the same tags the live Room card uses
-  // (`display-status`, then the coarser wire `status`) keeps this snapshot
-  // agreeing with real-time projection about a corner's status word.
+  // Reduce every event to its lifecycle facts once, then let THE one oracle
+  // (`@beeline/buzz-client`'s corner-lifecycle, re-exported by `buzz/corners`)
+  // decide. Reading the same tags the live Room card uses (`display-status`,
+  // then the coarser wire `status`) keeps this snapshot agreeing with
+  // real-time projection about a corner's status word.
   const tagOf = (event: BuzzSessionEvent, name: string): string | undefined =>
     event.event.tags.find((tag) => tag[0] === name)?.[1];
-  const facts = events.map((event) => ({
-    createdAt: event.createdAt,
-    rawStatus: tagOf(event, 'display-status') ?? tagOf(event, 'status'),
-    isMergeReady: tagOf(event, 't') === 'merge-ready',
-    isWorkSignal: CORNER_WORK_SIGNAL_TAGS.has(tagOf(event, 't') ?? ''),
-  }));
+  const facts = events.map((event) =>
+    cornerLifecycleFact(event.createdAt, {
+      displayStatus: tagOf(event, 'display-status'),
+      status: tagOf(event, 'status'),
+      t: tagOf(event, 't'),
+    }),
+  );
   // `closed` on a kind:39000 projection is NIP-29 invite-only access, not a
   // lifecycle state. Only an explicit archived boolean or a corner-scoped
   // archived status removes a corner from the live list.

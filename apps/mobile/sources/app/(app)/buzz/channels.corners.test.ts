@@ -298,7 +298,7 @@ describe('room-list corner dropdown', () => {
     useBuzzLocalCache.setState({ channelLists: {}, channels: {} } as never);
   });
 
-  it('a Room with N open corners expands N navigable entries plus All Corners', async () => {
+  it('a Room with N open corners expands to exactly N navigable entries', async () => {
     cornerFixtures['room-1'] = [
       corner('corner-a', 'fix ledger drift', 'live'),
       corner('corner-b', 'polish bylines', 'open'),
@@ -328,15 +328,12 @@ describe('room-list corner dropdown', () => {
       navigation.push.mockClear();
     }
 
-    // The durable path into the full corner list is right there too.
-    const allCorners = findAllByTestId(tree, 'room-all-corners-room-1');
-    expect(allCorners).toHaveLength(1);
-    await press(allCorners[0]);
-    expect(navigation.push).toHaveBeenCalledTimes(1);
-    expect(navigation.push.mock.calls[0][0]).toContain('/buzz/corners/room-1');
+    // The expansion IS the full list: no trailing All Corners row exists.
+    expect(findAllByTestId(tree, 'room-all-corners-room-1')).toHaveLength(0);
+    expect(navigation.push).not.toHaveBeenCalled();
   });
 
-  it('a Room whose corners are all terminal still exposes the control and its All Corners path', async () => {
+  it('a Room whose corners are all terminal still exposes the control, and expanding it lists no rows', async () => {
     cornerFixtures['room-1'] = [
       corner('corner-c', 'landed work', 'merged'),
       corner('corner-d', 'dead end', 'failed'),
@@ -357,11 +354,9 @@ describe('room-list corner dropdown', () => {
     expect(findByAclPrefix(tree, 'Open landed work CORNER')).toHaveLength(0);
     expect(findByAclPrefix(tree, 'Open dead end CORNER')).toHaveLength(0);
 
-    const allCorners = findAllByTestId(tree, 'room-all-corners-room-1');
-    expect(allCorners).toHaveLength(1);
-    await press(allCorners[0]);
-    expect(navigation.push).toHaveBeenCalledTimes(1);
-    expect(navigation.push.mock.calls[0][0]).toContain('/buzz/corners/room-1');
+    // No All Corners row either — the expansion lists open work only, and
+    // this Room has none.
+    expect(findAllByTestId(tree, 'room-all-corners-room-1')).toHaveLength(0);
   });
 
   it('a Room with no corners shows no dropdown control at all', async () => {

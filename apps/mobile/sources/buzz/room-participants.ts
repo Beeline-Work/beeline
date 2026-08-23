@@ -142,9 +142,9 @@ export function formatRoomParticipantList(names: string[]): string {
   return `${names.slice(0, 4).join(', ')} and ${names.length - 4} others`;
 }
 
-/** Compact header count; the unified participant bar carries the actual names. */
+/** Compact header member count; the unified roster sheet carries the actual names. */
 export function formatRoomParticipantTotal(total: number): string {
-  return `${total} ${total === 1 ? 'participant' : 'participants'}`;
+  return `${total} ${total === 1 ? 'member' : 'members'}`;
 }
 
 /**

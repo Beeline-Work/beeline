@@ -13,10 +13,10 @@
  *     escalation opens a separate corner session and replays the work there.
  *     Only Beeline's own fixed inspection MCP (`read-only-policy.ts`) is
  *     auto-allowed, and this module never widens that.
- *   - A CORNER session may mutate, but only inside its own worktree. A write
- *     whose target resolves outside it — an absolute path, a `..` climb, or a
- *     symlink that lands outside — is denied. Reads outside stay allowed, per
- *     the pre-existing corner policy.
+ *   - A CORNER session may mutate inside its own worktree and the one explicit
+ *     Body-owned agent-private state root. Any other absolute path, `..` climb,
+ *     or symlink escape is denied. Reads outside stay allowed, per the
+ *     pre-existing corner policy.
  *
  * Path comparison is done on *physically resolved* paths (the deepest existing
  * ancestor is `realpath`'d and the not-yet-existing remainder appended), so a
@@ -230,11 +230,27 @@ const COMMAND_WRAPPERS = new Set([
 const DISCARD_SINKS = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/tty']);
 
 /** Absolute paths a shell command would write to, outside the worktree. */
-function commandWriteEscape(command: string, worktree: string): string | undefined {
+function pathInsideAllowedRoot(
+  path: string,
+  worktree: string,
+  allowedRoots: readonly string[],
+): boolean {
+  const expanded = expandHome(path);
+  const worktreeReal = physicalPath(worktree);
+  const target = physicalPath(isAbsolute(expanded) ? expanded : resolve(worktreeReal, expanded));
+  return allowedRoots.some((root) => isInside(physicalPath(root), target));
+}
+
+function commandWriteEscape(
+  command: string,
+  worktree: string,
+  allowedWriteRoots: readonly string[],
+): string | undefined {
   const escapes = (token: string): boolean =>
     (token.startsWith('/') || token.startsWith('~')) &&
     !DISCARD_SINKS.has(token) &&
-    pathEscapesRoot(token, worktree);
+    pathEscapesRoot(token, worktree) &&
+    !pathInsideAllowedRoot(token, worktree, allowedWriteRoots);
 
   // Output redirection to an absolute path: `… > /home/op/proj/file.ts`.
   // `2>/dev/null` never matches: the char before `>` must not be a word char.
@@ -287,12 +303,14 @@ export function classifyRoomPermission(request: AcpPermissionRequest): SandboxVe
 
 /**
  * Corner policy: the cd-guard, plus a path guard that denies a mutating request
- * whose target resolves outside the corner's own worktree. Reads are untouched.
+ * outside the corner worktree and explicitly supplied private-state roots.
+ * Reads are untouched.
  */
 export function classifyCornerPermission(
   request: AcpPermissionRequest,
   worktreePath: string,
   primaryCheckout?: string,
+  allowedWriteRoots: readonly string[] = [],
 ): SandboxVerdict {
   const command = shellCommandFromRawInput(request.toolCall?.kind, request.toolCall?.rawInput);
   if (command) {
@@ -303,26 +321,29 @@ export function classifyCornerPermission(
   if (!isMutatingPermissionRequest(request)) return ALLOW;
 
   if (command) {
-    const escape = commandWriteEscape(command, worktreePath);
+    const escape = commandWriteEscape(command, worktreePath, allowedWriteRoots);
     if (escape) {
       return {
         decision: 'deny',
         code: 'command-write-escape',
         reason:
           `this command would write to '${escape}', outside the corner's isolated worktree ` +
-          `(${worktreePath}). Keep every change inside the worktree.`,
+          `(${worktreePath}) and its agent-private state. Keep project changes inside the worktree.`,
       };
     }
   }
 
   for (const path of permissionTargetPaths(request)) {
-    if (pathEscapesRoot(path, worktreePath)) {
+    if (
+      pathEscapesRoot(path, worktreePath) &&
+      !pathInsideAllowedRoot(path, worktreePath, allowedWriteRoots)
+    ) {
       return {
         decision: 'deny',
         code: 'path-escape',
         reason:
           `'${path}' resolves outside the corner's isolated worktree (${worktreePath}). ` +
-          `A corner may only modify files inside its own worktree.`,
+          `A corner may modify only its worktree and Body-owned agent-private state.`,
       };
     }
   }

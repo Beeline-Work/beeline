@@ -25,7 +25,7 @@ import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { useAgentNameCache } from '@/buzz/agent-name-cache';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
-import { HullSurface, PixelLoader } from '@/components/buzz/MonoHull';
+import { HullSurface, PixelLoader, CornerGlyph } from '@/components/buzz/MonoHull';
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
 import { afterInteractions } from '@/buzz/defer-interaction';
@@ -361,7 +361,7 @@ export default function BuzzCorners() {
                 </View>
                 <View style={styles.statusBlock}>
                   <View style={styles.statusGlyphRow}>
-                    <Text style={styles.statusGlyph}>{status.glyph}</Text>
+                    <CornerGlyph status={item.status} style={styles.statusGlyph} />
                     {showsPresence && (
                       <Text
                         style={[

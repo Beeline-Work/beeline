@@ -6,7 +6,7 @@ import { afterAll, afterEach, describe, it, expect, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hasWriteTools, inventoryForMcpServers } from './mcp-inventory.js';
 import { parseEnvFile, hasLlmCredentials, type BodyConfig } from './config.js';
@@ -433,6 +433,8 @@ describe('agent identity boundary', () => {
         .filter(Boolean);
       expect(binds).toEqual(['/srv/rooms/r1/agent-home/claude']);
       expect(binds).not.toContain('/srv/checkout');
+      // The merge gate is not part of a Room's surface.
+      expect(binds).not.toContain(join(homedir(), '.no-mistakes'));
       expect(spawn.args.slice(-1)).toEqual(['/nonexistent']);
     });
 
@@ -449,6 +451,12 @@ describe('agent identity boundary', () => {
       expect(binds).toContain(repoRoot);
       expect(binds).toContain(join(repoRoot, '.git'));
       expect(binds).toContain('/srv/rooms/r1/agent-home/tmp');
+      // Live reproduction (corner "Enrich-the-pond-in-the-staging…", Codex,
+      // 2026-08-23): the no-mistakes merge gate initializes its state under
+      // ~/.no-mistakes from inside the sandboxed corner session. Without this
+      // bind every attempt died "state repository directory is mounted
+      // read-only" while the gate's health checks — socket reads — passed.
+      expect(binds).toContain(join(homedir(), '.no-mistakes'));
     });
 
     it('spawns the bare command when no bwrap was detected at daemon start', () => {
@@ -4335,6 +4343,21 @@ describe('first-class assistant messages', () => {
     const gateCallSites = source.match(/this\.finishCornerTurnAgainstMergeGate\(/g) ?? [];
     expect(summaryPolicy).toHaveLength(1);
     expect(gateCallSites).toHaveLength(2);
+  });
+
+  it('the corner merge-gate instruction carries the external-gate failure-honesty rule at both turn call sites', () => {
+    // Live reproduction (corner "Fix-corner-open-to-use-model-summary", Ox,
+    // 2026-08-23): an external gate that could not initialize left the review
+    // panel empty while the agent told the human to approve. The one shared
+    // instruction must say what to do instead, and both corner call sites
+    // (opening turn + follow-ups) must carry it — a claim of readiness with no
+    // published review target sends the human's approval nowhere.
+    const source = readFileSync(new URL('./body.ts', import.meta.url), 'utf8');
+    expect(source).toMatch(
+      /fails to initialize or run[^']*quote its exact error[^']*never ask for approval/,
+    );
+    // Declaration plus exactly the two corner turn prompts.
+    expect(source.match(/CORNER_MERGE_GATE_INSTRUCTION/g)).toHaveLength(3);
   });
 
   it('strips only a leading Codex skill-budget warning', () => {

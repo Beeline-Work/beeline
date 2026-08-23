@@ -14,12 +14,14 @@ then a regular body with tight line-height and visible space between turns.
 
 ## The slab
 
-The default Buzz surface is near-black (`#070708`), edge to edge, with no
-second surface laid over it. Chrome — the Room-list header, the transcript
-header, the Workspace rail — carries no background, texture, or plate of its
-own: it is the same obsidian as the content it introduces, held apart by one
-hairline and by type weight. Press and hover are the only luminance steps above
-the slab (`#181818`, `#1e1e1e`).
+The default Buzz surface is the Speakeasy brand canvas, a very dark aubergine
+(`#14091A`, mapped at the token level in `groknight.ts` so every screen
+inherits it), edge to edge, with no second surface laid over it. Chrome — the
+Room-list header, the transcript header, the Workspace rail — carries no
+background, texture, or plate of its own: it is the same canvas as the content
+it introduces, held apart by one hairline and by type weight. Press and hover
+are the only luminance steps above the slab; every elevation stop keeps its
+pre-canvas offset from the base, so contrast relationships are unchanged.
 
 A lifted surface (`HullSurface`, with its faint scratch texture) is reserved for
 something that genuinely floats *over* the slab and does not repeat: a modal
@@ -403,7 +405,9 @@ says "still going" and claims nothing else.
 
 ## Color exceptions, stated so no one re-litigates them
 
-1. **Brass (`#b08a4a` in Obsidian)** marks the viewer's byline dot and name and
+1. **Brass (`#b08a4a` in Obsidian)** marks the viewer's byline dot and name,
+   a tagged `@handle` in prose (`MonoMarkdown`'s mention gloss — the Speakeasy
+   chat effect), and
    the moment you act on agent work: the ring around a working agent's identity
    mark, live/online presence (the Corner's LIVE wave, a presence dot, the
    pinned corner line, and a Room on the index with a live corner), owner role,

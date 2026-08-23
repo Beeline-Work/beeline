@@ -23,6 +23,7 @@ import {
   TAG_ROOM_LIFECYCLE,
 } from './kinds.js';
 import { publishEvent, type AuthenticatedHttpBridgeOptions } from './http.js';
+import { isArchivedChannelError } from './archived-channel.js';
 import {
   parseMembersEvent,
   parseMetadataEvent,
@@ -367,12 +368,21 @@ export async function leaveRoom(ctx: ChannelOpsContext, channelId: string): Prom
         : 'you are not a current member of this Room',
     );
   }
-  await removeMember(ctx, channelId, ctx.identity.publicKey, {
-    extraTags: [
-      ['t', TAG_ROOM_LIFECYCLE],
-      ['action', 'member-leave'],
-    ],
-  });
+  try {
+    await removeMember(ctx, channelId, ctx.identity.publicKey, {
+      extraTags: [
+        ['t', TAG_ROOM_LIFECYCLE],
+        ['action', 'member-leave'],
+      ],
+    });
+  } catch (error) {
+    // Leaving an archived Room must not depend on the publish landing: the
+    // relay refuses writes to archived channels outright, and the member's
+    // own dismissal of the Room from their deck is local intent. The
+    // archived-channel refusal is terminal, so treat it as done.
+    if (isArchivedChannelError(error)) return;
+    throw error;
+  }
   await waitUntilNotMember(ctx, channelId, ctx.identity.publicKey);
 }
 
@@ -490,6 +500,14 @@ export async function waitUntilRoomArchived(
  * Explicit owner/admin Room archive path.
  * This is intentionally separate from Gate's corner-only archive writer.
  * Relay data is retained; recovery projection/UI is a separate follow-up.
+ *
+ * Deleting an ALREADY-archived Room is success, not error: the relay refuses
+ * every further kind:9002 on an archived channel with HTTP 400
+ * "channel is archived", which would otherwise make the delete button
+ * permanently broken for exactly the Rooms a user most wants gone. The
+ * archived-channel refusal is the proof the Room already sits in the desired
+ * terminal state, so it resolves instead of surfacing; any other failure
+ * (network, a different 4xx) still throws honestly.
  */
 export async function archiveRoom(ctx: ChannelOpsContext, channelId: string): Promise<void> {
   await assertTopLevelRoom(ctx, channelId);
@@ -501,7 +519,12 @@ export async function archiveRoom(ctx: ChannelOpsContext, channelId: string): Pr
     ['t', TAG_ROOM_LIFECYCLE],
     ['action', 'admin-delete'],
   ]);
-  await publishEvent(ctx.http, event);
+  try {
+    await publishEvent(ctx.http, event);
+  } catch (error) {
+    if (isArchivedChannelError(error)) return;
+    throw error;
+  }
   await waitUntilRoomArchived(ctx, channelId);
 }
 

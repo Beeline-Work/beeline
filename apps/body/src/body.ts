@@ -281,8 +281,8 @@ export interface AgentSession {
   unsubscribeActivity?: () => void;
   /** Corner-only plan boundary layered onto the activity projection. */
   activityProjection?: ActivityProjectionController;
-  /** Distilled objective to publish when a lazily suspended session activates. */
-  pendingPlanObjective?: string;
+  /** Task-authored opening plan to publish when a lazily suspended session activates. */
+  pendingPlan?: { objective: string; authoredPlan?: CompactActivityPlan };
   /** Last created_at timestamp when polling for member messages (subchannels only). */
   lastPolledAt?: number;
   /** Whether this subchannel has been archived. */
@@ -634,6 +634,8 @@ export interface SubchannelInfo {
   cornerName?: string;
   /** Distilled objective this corner was opened with; '' when it had none. */
   taskDescription?: string;
+  /** Task-authored opening plan from the hidden, tool-free editorial turn. */
+  taskPlan?: CompactActivityPlan;
   /** When this corner was opened, in ms — used to spot a repeated open-a-corner. */
   openedAt?: number;
   /** Exact target advertised to the human merge gate once work is pushed. */
@@ -2093,8 +2095,9 @@ export class Body {
 
   /**
    * Run a short-lived ACP session with an empty MCP inventory. Its answer is
-   * never projected into the Room transcript; only validated title/objective
-   * strings survive. Any failure preserves the deterministic metadata path.
+   * never projected into the Room transcript; only validated title,
+   * objective, and task-specific plan strings survive. Any failure preserves
+   * the deterministic metadata path.
    */
   private async modelCornerMetadata(
     channelId: string,
@@ -2312,10 +2315,10 @@ export class Body {
         );
         session.activityProjection = activityProjection;
         session.unsubscribeActivity = activityProjection;
-        if (session.pendingPlanObjective) {
-          const objective = session.pendingPlanObjective;
-          session.pendingPlanObjective = undefined;
-          await activityProjection.startPlan(objective);
+        if (session.pendingPlan) {
+          const pendingPlan = session.pendingPlan;
+          session.pendingPlan = undefined;
+          await activityProjection.startPlan(pendingPlan.objective, pendingPlan.authoredPlan);
         }
         if (input.communityId) {
           await this.applyModelConfigForSession(
@@ -2755,17 +2758,22 @@ export class Body {
   }
 
   /**
-   * Publish the corner's deterministic multi-step plan before its user-caused
-   * prompt can run.
+   * Publish the corner's task-authored plan before its user-caused prompt can
+   * run. If no agent-authored steps exist, the projection publishes only the
+   * distilled objective plus one honest working state.
    * A suspended ACP process has no projection yet, so activation consumes the
    * pending objective; a warm process publishes immediately. Either way the
    * checklist is the first agent-activity event of the turn.
    */
-  private async startCornerPlan(session: AgentSession, objective: string): Promise<void> {
-    session.pendingPlanObjective = objective;
+  private async startCornerPlan(
+    session: AgentSession,
+    objective: string,
+    authoredPlan?: CompactActivityPlan,
+  ): Promise<void> {
+    session.pendingPlan = { objective, ...(authoredPlan ? { authoredPlan } : {}) };
     if (!session.activityProjection) return;
-    session.pendingPlanObjective = undefined;
-    await session.activityProjection.startPlan(objective);
+    session.pendingPlan = undefined;
+    await session.activityProjection.startPlan(objective, authoredPlan);
   }
 
   private async completeCornerPlan(session: AgentSession): Promise<void> {
@@ -3146,6 +3154,7 @@ export class Body {
             archived: false,
             boundRepo: cornerRepo,
             taskDescription: restoredTaskDescription,
+            ...(restoredPlan ? { taskPlan: restoredPlan } : {}),
             ...(request ? { request } : {}),
             ...(tip
               ? {
@@ -3437,6 +3446,12 @@ export class Body {
     }
     const requestedObjective = options?.objective?.trim().slice(0, 320);
     const taskDescription = requestedObjective || generated?.objective || fallbackObjective;
+    const taskPlan: CompactActivityPlan | undefined = generated?.plan
+      ? {
+          ...(taskDescription ? { objective: taskDescription } : {}),
+          items: generated.plan.items,
+        }
+      : undefined;
     const fallbackSlug = statedTask
       ? taskSlugForCornerIntent(intent)
       : slugifyCornerTask(taskDescription);
@@ -3510,8 +3525,8 @@ export class Body {
         `Your feature branch is: ${featureBranch}`,
         'You have full shell and file editing tools available.',
         'You CAN create, edit, and delete files in this worktree.',
-        'Maintain a short multi-step plan for every turn. Update its statuses as you inspect, implement, and verify; keep exactly one item in progress until the turn is complete.',
-        'The host publishes a bounded fallback checklist before your first tool call, so replace it with your more specific plan whenever your harness supports plan updates.',
+        "Before your first non-plan tool call in every turn, use your harness's plan mechanism to publish two to six concrete steps specific to the request.",
+        'Update that plan as the work changes and keep exactly one item in progress until the turn is complete.',
         'Commit your changes to the feature branch when appropriate.',
         'Never merge, push or change the target branch, or archive this corner. Stop after committing the feature branch; only a signed human approval may authorize landing and archive cleanup.',
         'A tool or skill can be unavailable or fail to initialize (for example codegraph before its index is ready). Treat that as a normal recoverable error for that one call and continue the task with what you have; never abort the task because a single tool or skill is missing.',
@@ -3560,6 +3575,7 @@ export class Body {
       boundRepo,
       cornerName,
       taskDescription,
+      ...(taskPlan ? { taskPlan } : {}),
       openedAt: Date.now(),
       ...(request ? { request } : {}),
     };
@@ -5401,7 +5417,9 @@ export class Body {
           'working',
           this.presenceGenerations.get(info.subchannelId),
         );
-        await this.startCornerPlan(info.session, info.taskDescription || prompt);
+        const taskPlan = info.taskPlan;
+        info.taskPlan = undefined;
+        await this.startCornerPlan(info.session, info.taskDescription || prompt, taskPlan);
         await this.durableState.appendConversation(info.subchannelId, {
           role: 'user',
           text: prompt,

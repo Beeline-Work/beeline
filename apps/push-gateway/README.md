@@ -38,7 +38,10 @@ The service account file stays outside the repository. Do not log or commit it.
 client sends `physical` or `emulator` from `expo-device`.
 `DELETE /registrations` accepts `{ "pubkey", "token" }` with an exact-method/URL
 NIP-98 authorization from that pubkey, and removes only that device binding.
-The response and logs never contain the FCM token. The v1 registry is a local
+`POST /test-send` accepts `{ "pubkey" }` with the same exact-method/URL NIP-98
+authorization from that pubkey. It sends a real FCM test notification to every
+registered device and returns aggregate counts plus one success/failure record
+per opaque device id. Responses and logs never expose FCM tokens. The v1 registry is a local
 JSON file written mode 0600; it survives normal restarts, but is local to one
 gateway host and is lost if that file is removed. Re-importing or generating a
 Buzz identity registers the device, and each mobile cold start refreshes the
@@ -57,6 +60,18 @@ room-invite repair/visibility fixtures; and all Rooms linked to an obviously
 test/demo/fixture/throwaway Workspace. ACL-scoped reads remain the per-recipient
 delivery authority for every genuine eligible Room.
 
+Every candidate relay event produces one `[push] decision` line with its full
+event id and Room id, recipient, `notify`/`skip` verdict, exact reason, and send
+counts when FCM was attempted. To audit the metadata and fixture gates against
+the private production query path without sending FCM, run:
+
+```sh
+BUZZY_PUSH_REGISTRY_FILE=/path/to/registrations.json \
+BUZZY_RELAY_URL=http://127.0.0.1:3410 \
+BUZZY_RELAY_HOST=relay.buzzrouter.com \
+  npm run audit:suppression -w @beeline/push-gateway -- <pubkey-prefix> [room-id ...]
+```
+
 ## Notification content and deployment
 
 Message notifications show the relay event's trimmed text and the cached display
@@ -69,7 +84,12 @@ Changes under this service require a push-gateway redeploy. Changes to the
 Android notification channel label require a new APK; the application label is
 already Beeline.
 
-The production deployment runs this service beside relay-front and the relay in
-the Compose stack. Port 8788 stays internal, the FCM credential is mounted
-read-only, and the registry plus delivery ledger share a durable host-mounted
-state directory. See [`deploy/README.md`](deploy/README.md).
+The live production host currently runs `buzzy-push-gateway.service` as a user
+systemd unit, with `~/buzzy-push-gateway/current` pointing at an immutable
+release. To apply a committed gateway update, the operator prepares and builds
+a new release, atomically repoints `current`, then runs
+`systemctl --user restart buzzy-push-gateway.service`. Verify `/push/health` and
+the new decision lines with `journalctl --user -u buzzy-push-gateway.service`.
+Preserve the existing `secrets/` and `state/` directories throughout. The
+checked-in Compose deployment remains a separate target topology; do not run
+both pollers against one delivery ledger. See [`deploy/README.md`](deploy/README.md).

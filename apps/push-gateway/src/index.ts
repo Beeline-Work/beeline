@@ -64,7 +64,9 @@ async function main(): Promise<void> {
   const pollTimer = setInterval(pollRegisteredEvent, config.pollIntervalMs);
   pollRegisteredEvent();
 
-  const server = createRegistrationServer(registry);
+  const server = createRegistrationServer(registry, {
+    sendTest: (pubkey) => gateway.sendTestNotification(pubkey),
+  });
   server.listen(config.port, config.host, () => {
     console.log(
       `[push] gateway listening on http://${config.host}:${config.port}; ` +

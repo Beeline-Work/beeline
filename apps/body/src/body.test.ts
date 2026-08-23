@@ -44,6 +44,7 @@ import {
   isMovedTargetLandFailure,
   cornerArchiveSummary,
   CORNER_CLOSE_TAG,
+  CORNER_TARGET_SYNC_INSTRUCTION,
   CORNER_TURN_SUMMARY_INSTRUCTION,
   CORNER_TURN_SUMMARY_MAX_CHARS,
   cornerNameForIntent,
@@ -4555,6 +4556,17 @@ describe('first-class assistant messages', () => {
     );
     // Declaration plus exactly the two corner turn prompts.
     expect(source.match(/CORNER_MERGE_GATE_INSTRUCTION/g)).toHaveLength(3);
+  });
+
+  it('makes target synchronization standing permission for every corner turn and restored session', () => {
+    const source = readFileSync(new URL('./body.ts', import.meta.url), 'utf8');
+    expect(CORNER_TARGET_SYNC_INSTRUCTION).toMatch(
+      /always implied for every corner and every agent/i,
+    );
+    expect(CORNER_TARGET_SYNC_INSTRUCTION).toMatch(/without asking the human again/i);
+    // Declaration, new/restored system prompts, opening/follow-up turns, and
+    // the automatic moved-target recovery task.
+    expect(source.match(/CORNER_TARGET_SYNC_INSTRUCTION/g)).toHaveLength(6);
   });
 
   it('strips only a leading Codex skill-budget warning', () => {

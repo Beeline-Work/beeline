@@ -5105,7 +5105,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
         published.find((event) =>
           event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
         )?.content,
-      ).toContain('uncommitted work');
+      ).toContain('memory/project-index.json');
     } finally {
       await rm(worktreePath, { recursive: true, force: true });
     }
@@ -5151,7 +5151,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
       );
       expect(notReadyEvent?.content).toBeTruthy();
       expect(notReadyEvent!.content).toContain('Nothing ready to merge yet');
-      expect(notReadyEvent!.content).toContain('README.md');
+      expect(notReadyEvent!.content).toContain('lessons/bank.json');
     } finally {
       await rm(worktreePath, { recursive: true, force: true });
     }

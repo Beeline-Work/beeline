@@ -218,12 +218,19 @@ function MechanismRow({
       testID={`${idPrefix}-${action.id}`}
     >
       <Text style={styles.mechanismGlyph}>{ROW_GLYPH[action.weight]}</Text>
-      <Text
-        numberOfLines={1}
-        style={[styles.mechanismLabel, tone]}
-      >
-        {action.title}
-      </Text>
+      <View style={styles.mechanismTextColumn}>
+        <Text
+          numberOfLines={1}
+          style={[styles.mechanismLabel, tone]}
+        >
+          {action.title}
+        </Text>
+        {action.weight === 'failure' && action.reason ? (
+          <Text numberOfLines={1} style={styles.mechanismReason}>
+            {action.reason}
+          </Text>
+        ) : null}
+      </View>
       {action.weight === 'failure' ? (
         <Text style={styles.mechanismMeta}>FAILED</Text>
       ) : action.files?.length ? (
@@ -582,6 +589,17 @@ const styles = StyleSheet.create((theme) => {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  mechanismTextColumn: {
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  mechanismReason: {
+    ...Typography.mono(),
+    fontSize: 11,
+    lineHeight: 15,
+    color: groknight.ledgerGhost,
+    marginTop: 1,
   },
   mechanismGlyph: {
     ...Typography.mono(),

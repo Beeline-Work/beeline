@@ -209,6 +209,10 @@ export const HARNESS_HOME_STATE_DIRS: Array<{ match: RegExp; dirs: string[] }> =
     match: /(^|[/\\])goose(\.[a-z]+)?$/i,
     dirs: ['.config/goose', '.local/share/goose'],
   },
+  {
+    match: /(^|[/\\])grok(\.[a-z]+)?$/i,
+    dirs: ['.grok'],
+  },
 ];
 
 /**

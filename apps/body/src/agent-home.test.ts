@@ -32,7 +32,7 @@ describe('per-room harness state isolation', () => {
     const envA = await prepareRoomAgentHome({ root: roomA, operatorHome });
     const envB = await prepareRoomAgentHome({ root: roomB, operatorHome });
 
-    for (const key of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME', 'TMPDIR']) {
+    for (const key of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'GROK_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME', 'TMPDIR']) {
       expect(envA[key]).toBeTruthy();
       expect(envA[key]!.startsWith(roomA)).toBe(true);
       // Two Rooms of the same agent must not share a harness state directory.
@@ -50,8 +50,10 @@ describe('per-room harness state isolation', () => {
     const operatorHome = await scratch('beeline-operator-home-');
     await mkdir(resolve(operatorHome, '.claude'), { recursive: true });
     await mkdir(resolve(operatorHome, '.codex'), { recursive: true });
+    await mkdir(resolve(operatorHome, '.grok'), { recursive: true });
     await writeFile(resolve(operatorHome, '.claude/.credentials.json'), '{"token":"claude"}');
     await writeFile(resolve(operatorHome, '.codex/auth.json'), '{"token":"codex"}');
+    await writeFile(resolve(operatorHome, '.grok/auth.json'), '{"token":"grok"}');
 
     const roomA = resolve(await scratch('beeline-room-a-'), 'agent-home');
     const roomB = resolve(await scratch('beeline-room-b-'), 'agent-home');
@@ -61,12 +63,15 @@ describe('per-room harness state isolation', () => {
     for (const root of [roomA, roomB]) {
       const claude = resolve(root, 'claude/.credentials.json');
       const codex = resolve(root, 'codex/auth.json');
+      const grok = resolve(root, 'grok/auth.json');
       expect(readFileSync(claude, 'utf8')).toBe('{"token":"claude"}');
       expect(readFileSync(codex, 'utf8')).toBe('{"token":"codex"}');
+      expect(readFileSync(grok, 'utf8')).toBe('{"token":"grok"}');
       // Symlinked, not copied: a refreshed token stays shared with every other
       // room-instance and with the operator's own CLI.
       expect(lstatSync(claude).isSymbolicLink()).toBe(true);
       expect(lstatSync(codex).isSymbolicLink()).toBe(true);
+      expect(lstatSync(grok).isSymbolicLink()).toBe(true);
     }
   });
 
@@ -84,6 +89,7 @@ describe('per-room harness state isolation', () => {
     expect(overlay).toEqual({
       CLAUDE_CONFIG_DIR: '/rooms/room-a/agent-home/claude',
       CODEX_HOME: '/rooms/room-a/agent-home/codex',
+      GROK_HOME: '/rooms/room-a/agent-home/grok',
       XDG_STATE_HOME: '/rooms/room-a/agent-home/state',
       XDG_CACHE_HOME: '/rooms/room-a/agent-home/cache',
       TMPDIR: '/rooms/room-a/agent-home/tmp',

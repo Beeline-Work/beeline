@@ -16,6 +16,9 @@ describe('corner autonomy modes', () => {
     expect(cornerAutonomyModeCandidates('/usr/local/bin/codex-acp')).toEqual(['agent-full-access']);
     expect(cornerAutonomyModeCandidates('claude-agent-acp')).toEqual(['bypassPermissions']);
     expect(cornerAutonomyModeCandidates('/usr/local/bin/pi-acp')).toEqual([]);
+    // grok advertises no ACP modes; corners drive through the auto-allow
+    // worktree callback instead.
+    expect(cornerAutonomyModeCandidates('/home/op/.grok/bin/grok')).toEqual([]);
   });
 
   it('keeps portable edit candidates for unknown adapters', () => {
@@ -32,6 +35,10 @@ describe('harness permission enforcement', () => {
     expect(harnessEnforcement('claude-code-acp').enforcement).toBe('permission-callback');
     // pi-acp never sends session/request_permission for a tool call.
     expect(harnessEnforcement('/usr/local/bin/pi-acp').enforcement).toBe('none');
+    // grok (native `grok agent stdio`) sends standard permission requests in
+    // ask mode — same class as claude, held by the daemon callback alone.
+    expect(harnessEnforcement('/home/op/.grok/bin/grok').enforcement).toBe('permission-callback');
+    expect(harnessEnforcement('/usr/local/bin/grok-acp').enforcement).toBe('unknown');
   });
 
   it('fails closed on an unverified harness rather than assuming it asks', () => {
@@ -45,6 +52,7 @@ describe('harness permission enforcement', () => {
     expect(usesTextCornerRequestFallback('/usr/local/bin/pi-acp')).toBe(true);
     expect(usesTextCornerRequestFallback('codex-acp')).toBe(false);
     expect(usesTextCornerRequestFallback('claude-agent-acp')).toBe(false);
+    expect(usesTextCornerRequestFallback('/home/op/.grok/bin/grok')).toBe(false);
     expect(usesTextCornerRequestFallback('some-unknown-acp')).toBe(false);
     expect(usesTextCornerRequestFallback(undefined)).toBe(false);
   });
@@ -52,6 +60,7 @@ describe('harness permission enforcement', () => {
   it('warns only for a harness the daemon cannot actually hold to the boundary', () => {
     expect(roomSandboxWarning('codex-acp')).toBeUndefined();
     expect(roomSandboxWarning('claude-agent-acp')).toBeUndefined();
+    expect(roomSandboxWarning('/home/op/.grok/bin/grok')).toBeUndefined();
     const warning = roomSandboxWarning('pi-acp');
     expect(warning).toMatch(/ADVISORY/);
     expect(warning).toMatch(/sandbox=OFF/);

@@ -15,6 +15,13 @@ import {
 import { AuthStore } from './store.js';
 import { OidcClient } from './oidc.js';
 import { GitHubAppClient, GitHubOAuthClient, type GitHubIdentity } from './github.js';
+import {
+  appSetupEnvBlock,
+  buildAppManifest,
+  checkGitHubAppDriftBestEffort,
+  convertAppManifestCode,
+  setupTokenMatches,
+} from './github-manifest.js';
 import { extractGitHubRepoEvent } from './github-repo-events.js';
 import { resolveGitHubRepositoryAccess } from './github-repository-access.js';
 import {
@@ -97,6 +104,12 @@ export interface AuthServerOptions {
   nativeRedirectUris?: string[];
   /** Local device emulators only. Production browser-session cookies stay Secure. */
   secureCookies?: boolean;
+  /**
+   * Shared secret gating the GitHub App manifest setup pages
+   * (/auth/github/app-setup, /auth/github/app-drift). When unset those
+   * endpoints refuse — the setup surface is operator-only, never public.
+   */
+  githubSetupToken?: string;
   /** Relay-backed proof that an agent currently belongs to a Room and that Room names this repo. */
   authorizeGitHubRoomToken?: (
     tenant: AuthTenant,
@@ -152,6 +165,62 @@ function nativeReturnPage(target: URL): string {
     </main>
   </body>
 </html>`;
+}
+
+const GITHUB_SETUP_PAGE_STYLE = `
+      body { background: #090909; color: #f2f2f2; font: 16px system-ui, sans-serif; margin: 0; }
+      main { box-sizing: border-box; margin: 0 auto; max-width: 44rem; padding: 14vh 1.5rem 3rem; }
+      pre { background: #161616; border: 1px solid #333; overflow-x: auto; padding: 1rem; }
+      code { font-family: ui-monospace, monospace; font-size: 0.85em; }
+      button { background: #d7af5f; border: none; color: #111; cursor: pointer; font: inherit; font-weight: 700; padding: 0.6rem 1.2rem; }
+    `;
+
+function setupPage(body: string): string {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Beeline GitHub App setup</title>
+    <style>${GITHUB_SETUP_PAGE_STYLE}</style>
+  </head>
+  <body>
+    <main>
+      ${body}
+    </main>
+  </body>
+</html>`;
+}
+
+/** The manifest creation form: one click submits everything to GitHub. */
+function githubAppSetupFormPage(manifest: Record<string, unknown>): string {
+  const manifestJson = escapeHtml(JSON.stringify(manifest));
+  return setupPage(`
+      <h1>Beeline GitHub App setup</h1>
+      <p>This creates your Beeline GitHub App with every event and permission preconfigured &mdash; no checkbox assembly required.</p>
+      <p>After GitHub creates the App you will land back here with a copy-paste environment block for the auth service.</p>
+      <form method="post" action="https://github.com/settings/apps/new">
+        <input type="hidden" name="manifest" value="${manifestJson}">
+        <button type="submit">Create the Beeline GitHub App on GitHub</button>
+      </form>`);
+}
+
+/** The one-time conversion result: copy-paste env block, never logged. */
+function githubAppSetupEnvPage(envBlock: string, appUrl: string | undefined): string {
+  const install = appUrl ? `${escapeHtml(appUrl)}/installations/new` : '';
+  return setupPage(`
+      <h1>GitHub App created</h1>
+      <p>Copy this block into the auth service environment and restart it:</p>
+      <pre><code>${escapeHtml(envBlock)}</code></pre>
+      ${appUrl ? `<p>Next: <a href="${install}">install the App on your account or organization</a>.</p>` : ''}
+      <p>Keep the private key out of chat logs and version control.</p>`);
+}
+
+function githubAppSetupErrorPage(message: string): string {
+  return setupPage(`
+      <h1>GitHub App setup failed</h1>
+      <p>${escapeHtml(message)}</p>
+      <p>The conversion code is single-use; start over from the setup page.</p>`);
 }
 
 function requiredQueryString(value: unknown, name: string): string {
@@ -2065,6 +2134,73 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       name,
       pubkey: auth.pubkey,
     });
+  });
+
+  app.get('/auth/github/app-setup', async (request, reply) => {
+    if (!options.githubSetupToken) {
+      throw new ProtocolError(
+        503,
+        'github_setup_disabled',
+        'GitHub App setup is not enabled on this service',
+      );
+    }
+    const tenant = tenantFor(request);
+    const query = request.query as Record<string, unknown>;
+    if (!setupTokenMatches(query?.token, options.githubSetupToken)) {
+      throw new ProtocolError(403, 'invalid_setup_token', 'invalid or missing setup token');
+    }
+    noStore(reply);
+    const code = typeof query.code === 'string' && query.code ? query.code : undefined;
+    if (!code) {
+      // The gate token rides INSIDE the manifest redirect_url so GitHub's
+      // post-creation redirect (?code=...) lands back here still authorized.
+      const redirectUrl = `${tenant.origin}/auth/github/app-setup?token=${encodeURIComponent(options.githubSetupToken)}`;
+      return reply
+        .type('text/html; charset=utf-8')
+        .send(
+          githubAppSetupFormPage(
+            buildAppManifest({ name: 'Beeline', origin: tenant.origin, redirectUrl }),
+          ),
+        );
+    }
+    try {
+      const conversion = await convertAppManifestCode('https://api.github.com', code);
+      request.log.info(
+        { appId: conversion.appId, slug: conversion.slug },
+        'GitHub App created via manifest flow',
+      );
+      return reply
+        .type('text/html; charset=utf-8')
+        .send(githubAppSetupEnvPage(appSetupEnvBlock(conversion), conversion.htmlUrl));
+    } catch (error) {
+      request.log.warn({ err: error }, 'GitHub App manifest conversion failed');
+      return reply
+        .code(502)
+        .type('text/html; charset=utf-8')
+        .send(githubAppSetupErrorPage(error instanceof Error ? error.message : String(error)));
+    }
+  });
+
+  app.get('/auth/github/app-drift', async (request, reply) => {
+    if (!options.github) {
+      throw new ProtocolError(503, 'github_unavailable', 'GitHub is not configured');
+    }
+    if (!options.githubSetupToken) {
+      throw new ProtocolError(
+        503,
+        'github_setup_disabled',
+        'GitHub App setup is not enabled on this service',
+      );
+    }
+    const query = request.query as Record<string, unknown>;
+    if (!setupTokenMatches(query?.token, options.githubSetupToken)) {
+      throw new ProtocolError(403, 'invalid_setup_token', 'invalid or missing setup token');
+    }
+    const drift = await checkGitHubAppDriftBestEffort(options.github.app, (line) =>
+      request.log.info(line),
+    );
+    noStore(reply);
+    return reply.send(drift ? { drift } : { drift: null });
   });
 
   return app;

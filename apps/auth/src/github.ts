@@ -365,6 +365,13 @@ export class GitHubAppClient {
    * location in the body, so this resolves a stale owner/name to the current
    * one without any stored state. Undefined when GitHub has no such repository
    * (or the lookup fails); never throws.
+   *
+   * LIMITATION: GitHub only issues that redirect to viewers already able to
+   * see the repository at its new location, and the App JWT alone reads
+   * public repositories. A PRIVATE repo transferred to an account whose
+   * installation is not (yet) recorded therefore comes back undefined here —
+   * `movedTo` stays unknown and callers must rely on installation
+   * reconciliation plus immutable-id healing instead of redirect following.
    */
   async repositoryByFullName(
     fullName: string,

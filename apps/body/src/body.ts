@@ -140,6 +140,16 @@ import {
 } from './access-policy.js';
 import { DurableBodyState } from './durable-state.js';
 import {
+  CONCLUDE_PROMPT,
+  CONCLUDE_TURN_FALLBACK,
+  MAX_CONCLUDE_NUDGES_PER_EPISODE,
+  concludeEpisodeExhausted,
+  concludeNudgeDue,
+  freshConcludeEpisode,
+  standingAskFromEvents,
+  type ConcludeEpisode,
+} from './conclude-watch.js';
+import {
   NAMED_REPOSITORY_PERMISSION_COMMAND,
   namedRepositoryTargetFromPermission,
   namedRepositoryTargetFromRoomRequest,
@@ -810,6 +820,14 @@ export interface SubchannelInfo {
    * re-attempted on the next maintenance tick for the same tip.
    */
   observedReviewTip?: string;
+  /**
+   * Quiet-episode state for the conclude watch: the record that a turn ended
+   * without any of the four terminal states, how many bounded conclude
+   * nudges this episode already spent, and whether its stalled card went
+   * out. Hydrated from `DurableBodyState` on restore so a restart mid-episode
+   * neither resets the spent budget nor re-marks a resolved episode.
+   */
+  conclude?: ConcludeEpisode;
 }
 
 /** Fail closed unless an archive target is the exact relay-linked child session. */
@@ -3436,6 +3454,10 @@ export class Body {
               : {}),
           });
           const cursor = await this.durableState.cursor(subchannelId);
+          // Quiet-episode state survives restarts so a mid-episode corner
+          // neither gets its spent nudge budget back nor a duplicate stalled
+          // card on resume.
+          const concludeRecord = await this.durableState.concludeEpisode(subchannelId);
           const requestId = control ? tagValue(control, 'request') : undefined;
           const requestEvent = requestId
             ? parentEvents.find((event) => event.id === requestId)
@@ -3479,6 +3501,7 @@ export class Body {
                   },
                 }
               : {}),
+            ...(concludeRecord ? { conclude: concludeRecord } : {}),
           };
           session.lastPolledAt = cursor.createdAt;
           this.registerSubchannel(info);
@@ -5870,6 +5893,9 @@ export class Body {
       const requestId = attribution.requestId;
       const sessionId = info.session.logicalSessionId ?? info.session.sessionId;
       try {
+        // A human-opened (or daemon-restarted) task starts fresh: any standing
+        // quiet episode and its spent nudge budget end here.
+        this.noteCornerTurnStart(info);
         await this.postParentCornerStatus(info, 'working', `Agent is working on: ${prompt}`);
         await postAgentTurnStatus(
           info.subchannelId,
@@ -5932,6 +5958,10 @@ export class Body {
           ready ? 'complete' : 'failed',
           this.presenceGenerations.get(info.subchannelId),
         );
+        // A turn that resolved without a review target opens a quiet episode
+        // for the conclude watch — unless a failure card already declared
+        // state 4 below, which never reaches this line.
+        this.noteCornerTurnEnd(info, ready);
       } catch (error) {
         // A closed corner's session gets killed to abort the turn, which
         // routinely surfaces here as a rejected prompt — that is the close
@@ -7947,6 +7977,257 @@ export class Body {
     );
   }
 
+  // ---------------------------------------------------------------------
+  // Conclude watch — "never idle".
+  //
+  // A corner turn may end in exactly four states: still working, a fresh
+  // question to the human, a reviewable change presented, or a declared
+  // failure. When a turn resolves with NONE of those holding (the agent only
+  // narrated and stopped), `noteCornerTurnEnd` opens a quiet episode and the
+  // maintenance tick below drives the corner to a terminal outcome with a
+  // bounded conclude steer through the same path human messages take.
+  // ---------------------------------------------------------------------
+
+  private persistConcludeEpisode(info: SubchannelInfo): void {
+    void this.durableState.saveConcludeEpisode(info.subchannelId, info.conclude).catch((error) =>
+      console.error(`[body] failed to persist conclude state for ${info.subchannelId}:`, error),
+    );
+  }
+
+  /** A human message (or human-opened task) starts a turn: any standing quiet
+   *  episode is over and its spent budget does not carry into the new one. */
+  private noteCornerTurnStart(info: SubchannelInfo): void {
+    if (!info.conclude || info.conclude.quietSince !== undefined || info.conclude.nudges > 0) {
+      info.conclude = freshConcludeEpisode();
+      this.persistConcludeEpisode(info);
+    }
+  }
+
+  /** A corner turn resolved. `ready` = a review target was published (state 3);
+   *  anything else that is not a declared failure lands here as a quiet
+   *  episode for the conclude watch to evaluate on the next maintenance tick. */
+  private noteCornerTurnEnd(info: SubchannelInfo, ready: boolean): void {
+    if (info.archived) return;
+    if (ready) {
+      info.conclude = freshConcludeEpisode();
+      this.persistConcludeEpisode(info);
+      return;
+    }
+    const episode = info.conclude ?? freshConcludeEpisode();
+    episode.quietSince = Date.now();
+    info.conclude = episode;
+    this.persistConcludeEpisode(info);
+  }
+
+  /** Evaluate every served corner's quiet episode; one corner's failure must
+   *  not starve the corners behind it (same shape as the commit watch). */
+  private async pollConcludeWatch(): Promise<void> {
+    for (const info of [...this.subchannels.values()]) {
+      try {
+        await this.observeQuietCorner(info);
+      } catch (error) {
+        console.error(
+          `[body] corner ${info.subchannelId} conclude watch failed; will retry:`,
+          error,
+        );
+      }
+    }
+  }
+
+  private async observeQuietCorner(info: SubchannelInfo): Promise<void> {
+    const episode = info.conclude;
+    if (!episode?.quietSince) return;
+    // Terminal or effectively-terminal corners are never nudged: archived,
+    // landed, or holding their archive for a retiring session (#375/#384).
+    if (info.archived || info.landedTip || info.archiveWhenSessionRetires) return;
+    // State 1 — still working: an in-flight or queued turn owns the outcome,
+    // and its own tail will re-mark or resolve the episode when it ends.
+    if (this.runningAgentTasks.has(info.subchannelId)) return;
+    if (info.session.client?.activeRunId?.(info.session.sessionId)) return;
+    // Only a live session can be steered. A suspended one is idle-evicted or
+    // parked by a planned restart (#384); waking it just to be nagged would
+    // manufacture exactly the noise this watch exists to remove.
+    if (info.session.processState && info.session.processState !== 'live') return;
+    if (!concludeNudgeDue(episode, Date.now())) return;
+
+    // State 3 — a reviewable change is presented. The commit watch runs ahead
+    // of this step in the same maintenance chain, so a freshly committed tip
+    // is already in `mergeTarget` by now. Commits it has not yet evaluated
+    // stay its business: skip rather than nudge over work about to be shown.
+    if (info.mergeTarget) {
+      info.conclude = freshConcludeEpisode();
+      this.persistConcludeEpisode(info);
+      return;
+    }
+    if (this.cornerHasUnreviewedCommits(info)) return;
+
+    // State 2 — a fresh unanswered ask. Read the corner's own channel so
+    // narrative segments (relay-only) count, not just durable conversation.
+    try {
+      const events = await this.agentRelay.queryEvents([
+        { kinds: [9], '#h': [info.subchannelId], limit: 100 },
+      ]);
+      if (standingAskFromEvents(events, this.agentIdentity.publicKey)) {
+        info.conclude = freshConcludeEpisode();
+        this.persistConcludeEpisode(info);
+        return;
+      }
+    } catch (error) {
+      // An unreadable channel is not evidence of silence: skip this tick and
+      // let the next evaluation decide, rather than nudging over a question
+      // that may already be standing.
+      console.error(
+        `[body] corner ${info.subchannelId} conclude watch could not read asks; skipping tick:`,
+        error,
+      );
+      return;
+    }
+
+    if (concludeEpisodeExhausted(episode)) {
+      if (!episode.stalledNotified) {
+        episode.stalledNotified = true;
+        episode.quietSince = undefined;
+        this.persistConcludeEpisode(info);
+        await this.postParentCornerStatus(
+          info,
+          'needs-attention',
+          'Agent stalled without concluding: no review, no open question, and no reported failure across its last turns.',
+        );
+        console.log(`[body] corner ${info.subchannelId}: stalled without concluding; parked needs-attention`);
+      }
+      return;
+    }
+
+    // Spend one bounded conclude nudge. The turn's own end re-marks or
+    // resolves the episode, and its activity is ordinary work-signal.
+    episode.nudges += 1;
+    episode.lastNudgeAt = Date.now();
+    episode.quietSince = undefined;
+    this.persistConcludeEpisode(info);
+    console.log(
+      `[body] corner ${info.subchannelId}: quiet turn end; sending conclude nudge ` +
+        `${episode.nudges}/${MAX_CONCLUDE_NUDGES_PER_EPISODE}`,
+    );
+    await this.driveConcludeTurn(info);
+  }
+
+  /** Cheap mirror of `observeCornerCommits`' pre-checks: commits beyond the
+   *  target branch in a clean tree that no review has covered yet. True means
+   *  the commit watch — which ran earlier this same tick — owns the outcome. */
+  private cornerHasUnreviewedCommits(info: SubchannelInfo): boolean {
+    if (!info.boundRepo) return false;
+    try {
+      const tip = git(info.worktreePath, ['rev-parse', 'HEAD']).stdout.trim();
+      if (!/^[0-9a-f]{40}$/.test(tip)) return false;
+      if (
+        info.observedReviewTip === tip ||
+        info.mergeTarget?.tip === tip ||
+        info.landedTip === tip
+      ) {
+        return false;
+      }
+      const status = git(info.worktreePath, [
+        'status',
+        '--porcelain=v1',
+        '--untracked-files=all',
+        '-z',
+      ]).stdout;
+      if (projectDirtyStatus(info.worktreePath, status, info.session.agentPrivateState).length > 0)
+        return false;
+      const targetBranch = info.boundRepo.targetBranch ?? 'refs/heads/main';
+      const baseTip = git(info.worktreePath, ['rev-parse', '--verify', targetBranch]).stdout.trim();
+      if (!/^[0-9a-f]{40}$/.test(baseTip)) return false;
+      if (!git(info.worktreePath, ['merge-base', '--is-ancestor', baseTip, tip]).ok) return false;
+      const ahead =
+        Number(git(info.worktreePath, ['rev-list', '--count', `${baseTip}..${tip}`]).stdout.trim()) ||
+        0;
+      return ahead > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Drive one conclude turn through the same machinery a human follow-up
+   *  uses: working status, pinned-session prompt, merge-gate tail, completion
+   *  status, and the ordinary turn-end bookkeeping. Guarded by
+   *  `runningAgentTasks` like every other driver so overlapping ticks see it. */
+  private async driveConcludeTurn(info: SubchannelInfo): Promise<void> {
+    if (this.runningAgentTasks.has(info.subchannelId)) return;
+    const requestId = `conclude-${randomUUID()}`;
+    const attribution = {
+      requestId,
+      originalRequestId: requestId,
+      cause: 'corner-conclude' as const,
+    };
+    const sessionId = info.session.logicalSessionId ?? info.session.sessionId;
+    const task = (async () => {
+      try {
+        await postAgentTurnStatus(
+          info.subchannelId,
+          this.agentIdentity,
+          requestId,
+          sessionId,
+          'working',
+          this.presenceGenerations.get(info.subchannelId),
+        );
+        const result = await this.promptAgent(
+          info.session,
+          `${CONCLUDE_PROMPT}\n\n${CORNER_TARGET_SYNC_INSTRUCTION}\n${CORNER_MERGE_GATE_INSTRUCTION}\n${CORNER_TURN_SUMMARY_INSTRUCTION}`,
+          {
+            ...attribution,
+            channelId: info.subchannelId,
+            narrate: true,
+            withholdMergeClaims: true,
+          },
+        );
+        if (info.archived) return;
+        const ready = await this.finishCornerTurnAgainstMergeGate(
+          info,
+          result,
+          attribution,
+          CONCLUDE_TURN_FALLBACK,
+        );
+        await this.completeCornerPlan(info.session);
+        await postAgentTurnStatus(
+          info.subchannelId,
+          this.agentIdentity,
+          requestId,
+          sessionId,
+          ready ? 'complete' : 'failed',
+          this.presenceGenerations.get(info.subchannelId),
+        );
+        this.noteCornerTurnEnd(info, ready);
+      } catch (error) {
+        // A closed corner kills the session to abort the turn; closing stays
+        // terminal, exactly like every other driver's catch path.
+        if (info.archived) return;
+        await postAgentTurnStatus(
+          info.subchannelId,
+          this.agentIdentity,
+          requestId,
+          sessionId,
+          'failed',
+          this.presenceGenerations.get(info.subchannelId),
+        ).catch(() => undefined);
+        await postControlMessage(
+          info.subchannelId,
+          this.agentIdentity,
+          `Agent could not be driven to a conclusion: ${summarizeGitFailure(String(error))}`,
+          [...RECOVERABLE_CORNER_FAILURE_TAGS, ...this.deliveryFailureTags(info)],
+        ).catch(() => undefined);
+        await this.postParentCornerStatus(
+          info,
+          'needs-attention',
+          'Work stopped. Open corner for details.',
+        ).catch(() => undefined);
+      } finally {
+        this.runningAgentTasks.delete(info.subchannelId);
+      }
+    })();
+    this.runningAgentTasks.set(info.subchannelId, task);
+    await task;
+  }
+
   /**
    * Keep optional Room maintenance from terminating the request loop. A failed
    * child poll or merge check is retried on this Room's next tick; it cannot
@@ -8000,6 +8281,13 @@ export class Body {
       const failed = results.find((result) => result.status === 'rejected');
       if (failed?.status === 'rejected') throw failed.reason;
     });
+    // Never-idle: a corner whose latest turn ended without any of the four
+    // terminal states (working / ask / review / failure) gets one bounded
+    // conclude steer. Runs AFTER the member poll so a queued human message
+    // starts its own real turn first, and after the commit watch so freshly
+    // committed work is already published (or visibly pending) before this
+    // decides anything.
+    await guarded('corner conclude watch', () => this.pollConcludeWatch());
     // ...and a corner that fell out of local tracking altogether is in no map
     // for that watch to read, so its close request is re-derived from the relay
     // first. Runs before the watch below so an adopted corner closes on this
@@ -8307,6 +8595,9 @@ export class Body {
         // working" notice about the turn currently in flight would be
         // answering this message rather than describing the backend.
         this.noteInboundMessage(subchannelId);
+        // A human message starts a fresh episode: any standing quiet period
+        // and its spent conclude-nudge budget end here.
+        this.noteCornerTurnStart(info);
         let promptAttempted = false;
         try {
           let agentResult: (PromptResult & { narrativeFloor?: number }) | undefined;
@@ -8406,6 +8697,9 @@ export class Body {
               ready ? 'complete' : 'failed',
               this.presenceGenerations.get(subchannelId),
             );
+            // Same contract as the opening turn: no review target and no
+            // failure card means the conclude watch evaluates this turn end.
+            this.noteCornerTurnEnd(info, ready);
           }
           processed.add(evt.id);
           await this.durableState.delivered(subchannelId, evt.id);

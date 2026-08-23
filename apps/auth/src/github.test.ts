@@ -110,6 +110,66 @@ describe('GitHub-only account and repository access', () => {
     );
   });
 
+  it('lists every installation of the App with its own JWT, skipping suspended ones', async () => {
+    const { privateKey } = await generateKeyPair('RS256');
+    const privateKeyPem = await exportPKCS8(privateKey);
+    // Page 1 is full so a second page is fetched; page 2 closes the loop.
+    const pageOne = Array.from({ length: 100 }, (_, index) => ({
+      id: index + 1,
+      account: { id: 500, login: 'acme', type: 'Organization', avatar_url: 'https://a/p' },
+      repository_selection: 'all',
+    }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ installations: pageOne }), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            installations: [
+              {
+                id: 900,
+                account: { id: 123, login: 'octocat', type: 'User' },
+                repository_selection: 'selected',
+              },
+              {
+                id: 901,
+                suspended_at: '2026-08-01T00:00:00Z',
+                account: { id: 789, login: 'gone', type: 'User' },
+                repository_selection: 'all',
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new GitHubAppClient({ appId: '42', privateKey: privateKeyPem, slug: 'beeline' });
+
+    const installations = await app.listInstallations();
+    expect(installations).toHaveLength(101);
+    expect(installations.at(-1)).toEqual({
+      installationId: 900,
+      account: {
+        id: '123',
+        login: 'octocat',
+        type: 'User',
+        repositorySelection: 'selected',
+      },
+    });
+    expect(installations.map(({ installationId }) => installationId)).not.toContain(901);
+    expect(fetchMock.mock.calls[0]![0]).toBe(
+      'https://api.github.com/app/installations?per_page=100&page=1',
+    );
+    expect(fetchMock.mock.calls[1]![0]).toBe(
+      'https://api.github.com/app/installations?per_page=100&page=2',
+    );
+    // The App JWT authenticates the enumeration, never a user token.
+    const authorization = (fetchMock.mock.calls[0]![1] as { headers: Record<string, string> })
+      .headers.authorization;
+    expect(authorization).toMatch(/^Bearer ey/);
+    expect(authorization).not.toContain('user-token');
+  });
+
   it('keeps callback membership checks short-circuiting once the installation is found', async () => {
     const { privateKey } = await generateKeyPair('RS256');
     const privateKeyPem = await exportPKCS8(privateKey);

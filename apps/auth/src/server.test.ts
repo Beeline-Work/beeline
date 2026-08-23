@@ -253,6 +253,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
   let githubState = '';
   let githubSubject: string;
   let githubUserInstallations: number[] | Error;
+  let githubAppInstallations: number[] | Error;
   let githubInstallationListCalls: number;
   let githubRepositoryListError: Error | undefined;
   let githubInstallationAccess: boolean | Error;
@@ -273,6 +274,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     await store.migrate();
     githubSubject = '123';
     githubUserInstallations = [];
+    githubAppInstallations = [];
     githubInstallationListCalls = 0;
     githubRepositoryListError = undefined;
     githubInstallationAccess = true;
@@ -319,9 +321,22 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
             repositorySelection: 'all' as const,
           }),
           listUserInstallationIds: async () => {
-            githubInstallationListCalls += 1;
             if (githubUserInstallations instanceof Error) throw githubUserInstallations;
             return githubUserInstallations;
+          },
+          // The App JWT enumeration the server-side reconcile relies on.
+          listInstallations: async () => {
+            githubInstallationListCalls += 1;
+            if (githubAppInstallations instanceof Error) throw githubAppInstallations;
+            return githubAppInstallations.map((installationId) => ({
+              installationId,
+              account: {
+                id: installationId === 77 ? '123' : '456',
+                login: installationId === 77 ? 'octocat' : 'acme',
+                type: installationId === 77 ? ('User' as const) : ('Organization' as const),
+                repositorySelection: 'all' as const,
+              },
+            }));
           },
           userCanAccessInstallation: async () => {
             if (githubInstallationAccess instanceof Error) throw githubInstallationAccess;
@@ -972,6 +987,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
   });
 
   it('reconciles a missed GitHub installation callback onto the current identity after pubkey churn', async () => {
+    githubAppInstallations = [77];
     githubUserInstallations = [77];
     const oldIdentity = generateKeypair();
     await bindGitHubIdentity(oldIdentity, 'o'.repeat(43));
@@ -1020,7 +1036,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
   });
 
   it('moves an orphaned installation row only when the stable GitHub subject matches', async () => {
-    githubUserInstallations = [77];
+    githubAppInstallations = [77];
     const oldIdentity = generateKeypair();
     await bindGitHubIdentity(oldIdentity, '3'.repeat(43));
     await expect(
@@ -1077,7 +1093,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
   });
 
   it('returns the honest cached miss when GitHub installation reconciliation fails', async () => {
-    githubUserInstallations = new Error('GitHub rate limited');
+    githubAppInstallations = new Error('GitHub rate limited');
     const identity = generateKeypair();
     await bindGitHubIdentity(identity, 'f'.repeat(43));
 
@@ -1107,6 +1123,9 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     expect(throttled.statusCode).toBe(200);
     expect(throttled.json()).toEqual({ installed: false, installations: [], repositories: [] });
     expect(githubInstallationListCalls).toBe(1);
+    // No GitHub credential material ever reaches the log — the reconcile
+    // path signs App JWTs and decrypts user tokens internally.
+    expect(logLines.join('\n')).not.toMatch(/Bearer ey|PRIVATE KEY|github-user-token/);
   });
 
   it('keeps users with no GitHub App installation in the install flow', async () => {
@@ -1129,6 +1148,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
   });
 
   it('does not claim repository access when GitHub repository verification fails', async () => {
+    githubAppInstallations = [77];
     githubUserInstallations = [77];
     githubRepositoryListError = new Error('repository listing failed');
     const identity = generateKeypair();
@@ -1152,6 +1172,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
   });
 
   it('does not transfer an organization installation between distinct GitHub subjects', async () => {
+    githubAppInstallations = [78];
     githubUserInstallations = [78];
     const firstIdentity = generateKeypair();
     await bindGitHubIdentity(firstIdentity, '1'.repeat(43));
@@ -1203,6 +1224,166 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     ).resolves.toEqual([expect.objectContaining({ installationId: 78, authorizedSubject: '123' })]);
     await expect(
       store.githubInstallationsForPubkey(alphaTenant.community, secondIdentity.publicKey),
+    ).resolves.toEqual([]);
+  });
+
+  it('discovers an unrecorded organization installation on refresh and grants its repositories', async () => {
+    const identity = generateKeypair();
+    await bindGitHubIdentity(identity, 'r'.repeat(43));
+    // The App is installed on org acme but the callback never persisted, and
+    // an unscoped OAuth token cannot even list organization installations.
+    // Only the App JWT enumeration can discover it.
+    githubAppInstallations = [78];
+    githubUserInstallations = new Error('GitHub user installations failed: HTTP 404');
+
+    const reposUrl = `https://alpha.example/auth/github/repos/${identity.publicKey}?refresh=1`;
+    const response = await app.inject({
+      method: 'GET',
+      url: `/auth/github/repos/${identity.publicKey}?refresh=1`,
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, reposUrl, 'GET'),
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      installed: true,
+      installations: [
+        { installationId: 78, accountLogin: 'acme', accountType: 'Organization', status: 'active' },
+      ],
+      repositories: [{ installationId: 78, fullName: 'acme/widget' }],
+    });
+    await expect(
+      store.githubInstallationsForPubkey(alphaTenant.community, identity.publicKey),
+    ).resolves.toEqual([
+      expect.objectContaining({ installationId: 78, authorizedSubject: '123', status: 'active' }),
+    ]);
+
+    // The discovered installation now grants Room tokens with no callback.
+    roomTokenAuthority = async () => ({
+      authorized: true,
+      authorizedBy: identity.publicKey,
+      fullName: 'acme/widget',
+    });
+    roomTokenMint = undefined;
+    const tokenUrl = 'https://alpha.example/auth/github/room-token';
+    const minted = await app.inject({
+      method: 'POST',
+      url: '/auth/github/room-token',
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, tokenUrl, 'POST'),
+      },
+      payload: {
+        pubkey: identity.publicKey,
+        room_id: 'org-room',
+        relay_authorizations: Array.from({ length: 16 }, () =>
+          nip98AuthHeader(
+            identity.secretKey,
+            identity.publicKey,
+            `${alphaTenant.origin}/query`,
+            'POST',
+          ),
+        ),
+      },
+    });
+    expect(minted.statusCode).toBe(200);
+    expect(minted.json()).toMatchObject({ installation_id: 78, full_name: 'acme/widget' });
+    expect(roomTokenMint).toMatchObject({ installationId: 78, repositoryIds: [42] });
+  });
+
+  it('heals a missed installation during a room-token refusal instead of refusing a covered repository', async () => {
+    const owner = generateKeypair();
+    await bindGitHubIdentity(owner, 'h'.repeat(43));
+    githubAppInstallations = [78];
+    githubUserInstallations = [78];
+    roomTokenAuthority = async () => ({
+      authorized: true,
+      authorizedBy: owner.publicKey,
+      fullName: 'acme/widget',
+    });
+    roomTokenMint = undefined;
+    const tokenUrl = 'https://alpha.example/auth/github/room-token';
+    const response = await app.inject({
+      method: 'POST',
+      url: '/auth/github/room-token',
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(owner.secretKey, owner.publicKey, tokenUrl, 'POST'),
+      },
+      payload: {
+        pubkey: owner.publicKey,
+        room_id: 'org-room',
+        relay_authorizations: Array.from({ length: 16 }, () =>
+          nip98AuthHeader(owner.secretKey, owner.publicKey, `${alphaTenant.origin}/query`, 'POST'),
+        ),
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ installation_id: 78, full_name: 'acme/widget' });
+    expect(roomTokenMint).toMatchObject({ installationId: 78 });
+    await expect(
+      store.githubInstallationsForPubkey(alphaTenant.community, owner.publicKey),
+    ).resolves.toEqual([expect.objectContaining({ installationId: 78, status: 'active' })]);
+  });
+
+  it('still refuses a room token when reconciliation finds no covering installation', async () => {
+    const owner = generateKeypair();
+    await bindGitHubIdentity(owner, 'm'.repeat(43));
+    roomTokenAuthority = async () => ({
+      authorized: true,
+      authorizedBy: owner.publicKey,
+      fullName: 'octocat/widget',
+    });
+    const tokenUrl = 'https://alpha.example/auth/github/room-token';
+    const response = await app.inject({
+      method: 'POST',
+      url: '/auth/github/room-token',
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(owner.secretKey, owner.publicKey, tokenUrl, 'POST'),
+      },
+      payload: {
+        pubkey: owner.publicKey,
+        room_id: 'uncovered-room',
+        relay_authorizations: Array.from({ length: 16 }, () =>
+          nip98AuthHeader(owner.secretKey, owner.publicKey, `${alphaTenant.origin}/query`, 'POST'),
+        ),
+      },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({
+      error: 'repository_not_granted',
+      message: 'Room repository is not granted to the Beeline GitHub App',
+    });
+    expect(githubInstallationListCalls).toBe(1);
+  });
+
+  it('does not claim a newly discovered user-owned installation the user cannot administer', async () => {
+    const identity = generateKeypair();
+    await bindGitHubIdentity(identity, 'u'.repeat(43));
+    // The App serves installation 77 elsewhere; this user's listing succeeds
+    // but does not include it, so reconciliation must not claim it for them.
+    githubAppInstallations = [77];
+    githubUserInstallations = [];
+
+    const reposUrl = `https://alpha.example/auth/github/repos/${identity.publicKey}?refresh=1`;
+    const response = await app.inject({
+      method: 'GET',
+      url: `/auth/github/repos/${identity.publicKey}?refresh=1`,
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, reposUrl, 'GET'),
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ installed: false, installations: [], repositories: [] });
+    await expect(
+      store.githubInstallationsForPubkey(alphaTenant.community, identity.publicKey),
     ).resolves.toEqual([]);
   });
 

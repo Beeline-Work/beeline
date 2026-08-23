@@ -121,12 +121,36 @@ export function projectDirtyStatus(
   state: CornerAgentPrivateState | undefined,
 ): string[] {
   const entries = porcelainV1Z.split('\0').filter(Boolean);
-  if (!state || !isBodyOwnedPrivateStateLink(worktreePath, state)) return entries;
-  const relativeLink = relative(resolve(worktreePath), resolve(state.worktreePath)).replaceAll(
-    '\\',
-    '/',
-  );
-  return entries.filter((entry) => entry !== `?? ${relativeLink}`);
+  let filtered = entries;
+  if (state && isBodyOwnedPrivateStateLink(worktreePath, state)) {
+    const relativeLink = relative(resolve(worktreePath), resolve(state.worktreePath)).replaceAll(
+      '\\',
+      '/',
+    );
+    filtered = filtered.filter((entry) => entry !== `?? ${relativeLink}`);
+  }
+  return filtered.filter((entry) => !isSeededToolchainLink(worktreePath, entry));
+}
+
+/**
+ * Body seeds a corner's dependency tree by linking the source checkout's
+ * `node_modules` directories into the worktree (`corner-toolchain.ts`). In a
+ * repository that does not ignore `node_modules` those links show up as
+ * untracked paths and would otherwise block merge readiness forever. Only ever
+ * ignore an entry that is verifiably a SYMLINK named node_modules — a real
+ * project-owned node_modules directory still reads as dirt, same contract as
+ * the private-state link above.
+ */
+function isSeededToolchainLink(worktreePath: string, entry: string): boolean {
+  if (!entry.startsWith('?? ')) return false;
+  const path = entry.slice('?? '.length);
+  if (path !== 'node_modules' && !path.endsWith('/node_modules')) return false;
+  if (path.includes('*') || path.includes('"')) return false;
+  try {
+    return lstatSync(resolve(worktreePath, path)).isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 export function agentPrivateStateInstructions(state: CornerAgentPrivateState | undefined): string {

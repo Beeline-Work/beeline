@@ -13,6 +13,7 @@ const sources = [
   '../../app/(app)/buzz/settings/workspace.tsx',
   './CommunityInviteEntry.tsx',
   './CommunityRail.tsx',
+  './HeaderLadder.tsx',
   './Ledger.tsx',
 ];
 
@@ -118,7 +119,6 @@ const monoStyles = new Set([
   'cornerBackText',
   'cornerChannelName',
   'cornerHeaderAgent',
-  'cornerHeaderMeta',
   'cornerEmptyText',
   'prChip',
   'approvalBarText',
@@ -154,7 +154,7 @@ const monoStyles = new Set([
   'modelCustomInput',
   'repoRowLabel',
   'repoRowValue',
-  'repoChipText',
+  'metaCaps',
   'repoPromptTitle',
   'repoPromptDismissText',
   'targetBranchChange',

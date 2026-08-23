@@ -167,6 +167,13 @@ type BuzzCacheState = PersistedBuzzCache & {
     roomId: string,
     corner: { subchannelId: string; status: CornerStatus; lastActivityAt?: number },
   ) => void;
+  /** Replace the complete lifecycle snapshot for a Room after a live signal
+   * reveals a corner that was absent from the list's earlier snapshot. */
+  replaceRoomCorners: (
+    viewerPubkey: string,
+    roomId: string,
+    corners: CornerSummary[],
+  ) => void;
   replaceProfiles: (viewerPubkey: string, communityId: string, profiles: PersonProfile[]) => void;
   clear: () => void;
 };
@@ -554,6 +561,25 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
       // No status moved: skip the write entirely rather than notifying every
       // subscriber with an identical snapshot.
       return channelLists === state.channelLists ? state : { channelLists };
+    }),
+  replaceRoomCorners: (viewerPubkey, roomId, corners) =>
+    set((state) => {
+      let listsChanged = false;
+      const channelLists = Object.fromEntries(
+        Object.entries(state.channelLists).map(([key, entry]) => {
+          if (entry.viewerPubkey !== viewerPubkey) return [key, entry];
+          let entryChanged = false;
+          const channels = entry.channels.map((channel) => {
+            if (channel.id !== roomId) return channel;
+            entryChanged = true;
+            return { ...channel, corners };
+          });
+          if (!entryChanged) return [key, entry];
+          listsChanged = true;
+          return [key, { ...entry, channels }];
+        }),
+      );
+      return listsChanged ? { channelLists } : state;
     }),
   patchChannel: (viewerPubkey, channelId, patch) =>
     set((state) => {

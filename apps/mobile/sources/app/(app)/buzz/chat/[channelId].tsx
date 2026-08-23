@@ -108,6 +108,7 @@ import {
   type CornerStatus,
   type CornerSummary,
 } from '@/buzz/corners';
+import { cornerActionSurface, type CornerAttentionCard } from '@/buzz/corner-attention';
 import { personIdentityLabel, shortMemberNpub } from '@/buzz/member-display';
 import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
 import {
@@ -367,6 +368,42 @@ function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
       </View>
       <Text style={styles.attachmentOpenGlyph}>↗</Text>
     </Pressable>
+  );
+}
+
+// The one card the corner's action area renders where the merge-review panel
+// lives, derived ONCE off the same lifecycle verdict the Room index golds.
+// A live merge target keeps today's review panel; a needs-you verdict with no
+// merge card gets an attention card naming WHAT needs the person (the deck
+// said 'ready for review' / 'decision needed' — the corner must say why);
+// anything else keeps the current empty state. See `corner-attention.ts`.
+function CornerAttentionCardView({
+  card,
+  onReply,
+}: {
+  card: CornerAttentionCard;
+  onReply: () => void;
+}) {
+  return (
+    <HullSurface strength="raised" style={styles.attentionCard} testID="corner-attention-card">
+      <Text style={[styles.attentionCardState]}>
+        {card.glyph} {card.label}
+      </Text>
+      {card.detail ? (
+        <Text style={styles.attentionCardDetail} numberOfLines={3} testID="corner-attention-detail">
+          {card.detail}
+        </Text>
+      ) : null}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Open the composer to reply in this corner"
+        onPress={onReply}
+        style={styles.attentionCardReply}
+        testID="corner-attention-reply"
+      >
+        <Text style={styles.attentionCardReplyLabel}>REPLY IN THIS CORNER →</Text>
+      </Pressable>
+    </HullSurface>
   );
 }
 
@@ -1093,6 +1130,20 @@ export default function BuzzChat() {
   const displayedCornerStatus = useMemo(
     () => resolveCornerLifecycleStatus(cornerLifecycleStatus, isArchived),
     [cornerLifecycleStatus, isArchived],
+  );
+  // The corner action area's card, from the SAME verdict the deck golds. One
+  // derivation (`corner-attention.ts`); the screen renders the answer and
+  // never re-reads raw status tags.
+  const cornerAction = useMemo(
+    () =>
+      cornerActionSurface({
+        status: displayedCornerStatus,
+        hasMergeTarget: Boolean(mergeTarget),
+        archived: isArchived,
+        messages,
+        mergeNotReadyReason,
+      }),
+    [displayedCornerStatus, isArchived, mergeTarget, mergeNotReadyReason, messages],
   );
   const activeAgentTurn = useMemo(
     () =>
@@ -3306,7 +3357,7 @@ export default function BuzzChat() {
           ListHeaderComponent={
             isCorner && !isArchived && sessionState === 'done' ? (
               <View style={styles.cornerReviewFooter}>
-                {mergeTarget ? (
+                {cornerAction.kind === 'review' ? (
                   <HullSurface strength="raised" style={styles.approvalBar}>
                     <View style={styles.approvalInfo}>
                       <Text style={styles.prChip}>CHANGE READY FOR REVIEW</Text>
@@ -3353,7 +3404,7 @@ export default function BuzzChat() {
                       <ChangeReviewPanel
                         transport={transport}
                         sessionId={decodedId}
-                        tip={mergeTarget.tip}
+                        tip={mergeTarget!.tip}
                         onFilesLoaded={handleReviewFilesLoaded}
                       />
                     )}
@@ -3415,6 +3466,11 @@ export default function BuzzChat() {
                       </Text>
                     ) : null}
                   </HullSurface>
+                ) : cornerAction.kind === 'attention' ? (
+                  <CornerAttentionCardView
+                    card={cornerAction.card}
+                    onReply={() => composerRef.current?.focus()}
+                  />
                 ) : (
                   <HullSurface
                     strength="quiet"
@@ -5200,6 +5256,40 @@ const styles = StyleSheet.create((theme) => {
     color: groknight.textMuted,
     fontSize: 11,
     lineHeight: 16,
+  },
+  // ── Corner attention card ───────────────────────────────────────
+  // Same action-area slot as the approval bar; needs-you is the one state
+  // that spends the accent on either surface.
+  attentionCard: {
+    marginHorizontal: 16,
+    padding: 14,
+    gap: 8,
+    backgroundColor: groknight.bgTerminal,
+    borderBottomWidth: 1,
+    borderBottomColor: groknight.border,
+  },
+  attentionCardState: {
+    ...Typography.mono('semiBold'),
+    fontSize: 12,
+    letterSpacing: 0.3,
+    color: groknight.accent,
+  },
+  attentionCardDetail: {
+    ...Typography.default(),
+    color: groknight.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  attentionCardReply: {
+    alignSelf: 'flex-start',
+    paddingVertical: 6,
+    paddingRight: 12,
+  },
+  attentionCardReplyLabel: {
+    ...Typography.mono(),
+    fontSize: 11,
+    letterSpacing: 0.3,
+    color: groknight.textPrimary,
   },
 
   // ── Composer ────────────────────────────────────────────────────

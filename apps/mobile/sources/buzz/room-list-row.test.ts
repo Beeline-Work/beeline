@@ -85,7 +85,7 @@ describe('Room row presentation', () => {
 
   it('escalates a corner waiting on a person without spending motion', () => {
     const row = roomRowPresentation({ corners: [corner('needs-attention')] }, NO_NAMES);
-    expect(row).toMatchObject({ attention: true, live: false, glyph: '▲' });
+    expect(row).toMatchObject({ attention: true, live: false, glyph: '◇' });
   });
 
   it('carries exactly one loud action word per needs-you row', () => {

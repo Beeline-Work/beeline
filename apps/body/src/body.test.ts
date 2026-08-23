@@ -7026,6 +7026,189 @@ describe('closing a corner with no live session', () => {
     }
   });
 
+  /**
+   * A restart is not a fact about the task. The live failure (2026-08-23):
+   * every daemon restart re-drove corners parked on needs-attention cards
+   * (moved target, failed delivery), and each re-drive republished fresh
+   * working/needs-attention cards — re-golding the Room deck while nobody
+   * was working. A parked corner must stay parked; only a corner that was
+   * actively working when the daemon died earns an auto-resume.
+   */
+  it('does not re-drive a corner parked on needs-attention after a restart', async () => {
+    const agent = newIdentity('restart-parked-agent');
+    const captain = newIdentity('restart-parked-captain');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-restart-parked-'));
+    const source = join(workspaceRoot, 'source');
+    const cornerPath = join(workspaceRoot, '.worktrees', 'corner-parked');
+    const gitRun = (cwd: string, args: string[]) => {
+      const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+      if (result.status !== 0) throw new Error(String(result.stderr));
+    };
+    try {
+      mkdirSync(source, { recursive: true });
+      gitRun(source, ['init', '-q', '-b', 'main']);
+      gitRun(source, ['config', 'user.name', 'Restart Test']);
+      gitRun(source, ['config', 'user.email', 'restart@test.invalid']);
+      writeFileSync(join(source, 'README.md'), 'parked\n');
+      gitRun(source, ['add', 'README.md']);
+      gitRun(source, ['commit', '-q', '-m', 'seed']);
+      gitRun(source, ['worktree', 'add', '-q', '-b', 'feature/parked', cornerPath, 'main']);
+
+      const request = signEvent(
+        {
+          pubkey: captain.publicKey,
+          created_at: 1,
+          kind: 9,
+          tags: [['h', 'room-parked']],
+          content: 'Finish the commissioned change.',
+        },
+        captain.secretKey,
+      );
+      const control = signEvent(
+        {
+          pubkey: agent.publicKey,
+          created_at: 2,
+          kind: 9,
+          tags: [
+            ['h', 'corner-parked'],
+            ['feature', 'feature/parked'],
+            ['parent', 'room-parked'],
+            ['request', request.id],
+          ],
+          content: 'corner opened',
+        },
+        agent.secretKey,
+      );
+      // The corner's standing verdict is needs-attention: a status card newer
+      // than any work signal. THE oracle resolves this to needs-attention.
+      const parkedCard = signEvent(
+        {
+          pubkey: agent.publicKey,
+          created_at: Math.floor(Date.now() / 1000),
+          kind: 9,
+          tags: [
+            ['h', 'corner-parked'],
+            ['t', 'body-control'],
+            ['display-status', 'needs-attention'],
+          ],
+          content: "Couldn't land on main — waiting on you.",
+        },
+        agent.secretKey,
+      );
+      stubRelayHttp([]);
+      mocks.createBuzzClient.mockReturnValue({
+        listSubchannels: async () => ['corner-parked'],
+        getChannelMetadata: async () => ({ archived: false }),
+        disconnect: () => undefined,
+      } as never);
+
+      const body = newBody(agent, workspaceRoot);
+      vi.spyOn(body as never, 'channelCommunityId' as never).mockResolvedValue(undefined as never);
+      Reflect.set(body, 'agentRelay', {
+        queryEvents: vi.fn(async (filters: Array<Record<string, unknown>>) => {
+          const filter = filters[0] ?? {};
+          if ((filter.kinds as number[] | undefined)?.includes(9007)) {
+            return [cornerCreateEvent(agent, 'corner-parked', 'room-parked')];
+          }
+          if ((filter['#h'] as string[] | undefined)?.includes('room-parked')) return [request];
+          return [control, parkedCard];
+        }),
+      });
+      vi.spyOn(body as never, 'createManagedSession' as never).mockResolvedValue({
+        channelId: 'corner-parked',
+        sessionId: 'restored-session',
+        client: {},
+        mode: 'edit',
+        parentChannelId: 'room-parked',
+        worktreePath: cornerPath,
+        featureBranch: 'feature/parked',
+      } as never);
+      const start = vi
+        .spyOn(body as never, 'startAgentTask' as never)
+        .mockImplementation(() => undefined as never);
+
+      await Reflect.get(body, 'restoreSubchannels').call(body, 'room-parked', {
+        repo: 'proj',
+        targetBranch: 'refs/heads/main',
+      });
+
+      // Still served — readable and closable — but NOT re-driven...
+      expect(body.getSubchannels().has('corner-parked')).toBe(true);
+      expect(start).not.toHaveBeenCalled();
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  /** A needs-attention parent card is only ever a state TRANSITION: when THE
+   * oracle says the verdict already stands, restating it would carry no new
+   * fact — just a fresh timestamp, which is what let every restart re-gold
+   * parked corners while their agents were actively working. */
+  it('suppresses a restated needs-attention card but publishes a real transition', async () => {
+    const agent = newIdentity('attention-transition-agent');
+    const workspaceRoot = '/workspace';
+    const body = newBody(agent, workspaceRoot);
+    const now = Math.floor(Date.now() / 1000);
+    const standingCard = signEvent(
+      {
+        pubkey: agent.publicKey,
+        created_at: now - 60,
+        kind: 9,
+        tags: [
+          ['h', 'corner-restated'],
+          ['t', 'body-control'],
+          ['display-status', 'needs-attention'],
+        ],
+        content: 'Nothing committed is ready for review.',
+      },
+      agent.secretKey,
+    );
+    let standing: NostrEvent[] = [standingCard];
+    Reflect.set(body, 'agentRelay', {
+      queryEvents: vi.fn(async () => standing),
+    });
+    const published = stubRelayHttp([]);
+
+    const info = {
+      subchannelId: 'corner-restated',
+      featureBranch: 'feature/restated',
+      session: { sessionId: 's1', parentChannelId: 'room-restated' },
+    } as never;
+    await Reflect.get(body, 'postParentCornerStatus').call(
+      body,
+      info,
+      'needs-attention',
+      'Nothing committed is ready for review.',
+    );
+    expect(published).toHaveLength(0);
+
+    // A real transition — the corner was live before — publishes.
+    standing = [];
+    await Reflect.get(body, 'postParentCornerStatus').call(
+      body,
+      info,
+      'needs-attention',
+      'Work stopped. Open corner for details.',
+    );
+    expect(published).toHaveLength(1);
+    expect(published[0]!.tags).toContainEqual(['display-status', 'needs-attention']);
+    expect(published[0]!.tags).toContainEqual(['subchannel', 'corner-restated']);
+
+    // An unreadable history fails OPEN: publishing beats one suppressed truth.
+    Reflect.set(body, 'agentRelay', {
+      queryEvents: vi.fn(async () => {
+        throw new Error('relay down');
+      }),
+    });
+    await Reflect.get(body, 'postParentCornerStatus').call(
+      body,
+      info,
+      'needs-attention',
+      'Delivery failed.',
+    );
+    expect(published).toHaveLength(2);
+  });
+
   it('records a corner whose worktree is gone as abandoned, instead of leaving it in no map at all', async () => {
     const agent = newIdentity('restore-gap-agent');
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-restore-gap-'));

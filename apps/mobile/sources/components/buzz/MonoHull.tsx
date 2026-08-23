@@ -6,6 +6,7 @@ import {
   type PressableProps,
   type StyleProp,
   Text,
+  type TextStyle,
   View,
   type ViewProps,
   type ViewStyle,
@@ -26,6 +27,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { groknight } from '@/buzz/groknight';
 import { hasMessageRevealed, markMessageRevealed } from '@/buzz/message-reveal';
+import { cornerGlyphForStatus, type CornerStatus } from '@/buzz/corners';
 import { Typography } from '@/constants/Typography';
 
 export const motionTokens = {
@@ -467,6 +469,30 @@ function WaveSegment({
 const LIVE_PULSE_FLOOR = 0.55;
 
 /**
+ * THE corner-state glyph, for every surface that names a corner: deck
+ * expansion rows, corner lists, pinned references. Diamonds are the corner
+ * family — corners are WORK, never identities (△○▢ are identity shapes,
+ * `identity-mark.ts`), so this component is the only thing that may draw a
+ * corner's own glyph: filled ◆ while the work is live, hollow ◇ otherwise.
+ * The state word always rides beside it (`cornerStatusPresentation`).
+ */
+export function CornerGlyph({
+  status,
+  style,
+  testID,
+}: {
+  status: CornerStatus;
+  style?: StyleProp<TextStyle>;
+  testID?: string;
+}) {
+  return (
+    <Text style={[style, status === 'live' && styles.cornerGlyphLive]} testID={testID}>
+      {cornerGlyphForStatus(status)}
+    </Text>
+  );
+}
+
+/**
  * The same live wave, reduced to a single mark: one slow sin² breath on
  * whatever it wraps, on `HullWaveSignal`'s clock. It exists so a dense index
  * row can carry the "an agent is alive here" signal at the size of one glyph
@@ -666,6 +692,7 @@ const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
   return ({
   hullSurface: { position: 'relative', overflow: 'hidden' },
+  cornerGlyphLive: { color: groknight.accent },
   textureLayer: { ...StyleSheet.absoluteFillObject, opacity: 1 },
   scratch: {
     position: 'absolute',

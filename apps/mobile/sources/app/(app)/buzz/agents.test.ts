@@ -888,4 +888,42 @@ describe('Members screen', () => {
     });
   });
 
+  describe('viewer with key succession', () => {
+    it('renders owner affordances from the succession-aware roster, with the dead predecessor gone', async () => {
+      const predecessorKey = '9'.repeat(64);
+      const viewerKey = 'a'.repeat(64);
+      // What the succession-aware communityMembers resolver now returns: the
+      // CURRENT key carries owner and the dead create-author predecessor is
+      // not in the roster at all (never both keys).
+      client.communityMembers.mockResolvedValue([{ pubkey: viewerKey, role: 'owner' }]);
+      // Workspace discovery had no chain available, so no viewerRole came
+      // back on the community record — management gating must come from the
+      // roster read alone.
+      (prepareWorkspaceContext as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+        workspaces: [{
+          communityId: 'workspace-1',
+          name: 'Night Shift',
+          ownerPubkey: predecessorKey,
+        }],
+        activeWorkspaceId: 'workspace-1',
+      });
+
+      const renderer = await render();
+
+      // Management affordances: isWorkspaceManagerRole(viewerRole) true.
+      expect(renderer.root.findByProps({ testID: 'invite-person' })).toBeDefined();
+      expect(renderer.root.findByProps({ testID: 'add-agent' })).toBeDefined();
+      // The viewer's own owner badge, not a least-privileged member stub.
+      const roleLabel = renderer.root.findByProps({ testID: `member-${viewerKey}-role-label` });
+      // testID sits on the wrapping button; its accessibility label carries
+      // the rendered role word (the nested Text mocks defeat children reads).
+      expect(roleLabel.props.accessibilityLabel).toContain('role: OWNER');
+      // The dead predecessor renders nowhere.
+      expect(
+        renderer.root.findAllByProps({ testID: `member-${predecessorKey}-identity` }),
+      ).toHaveLength(0);
+      expect(renderer.root.findByProps({ testID: 'members-people-count' }).props.children).toBe(1);
+    });
+  });
+
 });

@@ -253,6 +253,7 @@ export {
   migrateSuccessorMemberships,
   communityChannels,
   communityMembers,
+  inheritRolesThroughSuccession,
   attachCommunityMemberToChannel,
   createInvite,
   listCommunityInvites,

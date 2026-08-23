@@ -335,7 +335,7 @@ describe('room-list corner dropdown', () => {
     expect(navigation.push).not.toHaveBeenCalled();
   });
 
-  it('a Room whose corners are all terminal still exposes the control, and expanding it lists no rows', async () => {
+  it('a Room whose corners are all terminal shows no corner affordance at all', async () => {
     cornerFixtures['room-1'] = [
       corner('corner-c', 'landed work', 'merged'),
       corner('corner-d', 'dead end', 'failed'),
@@ -343,21 +343,10 @@ describe('room-list corner dropdown', () => {
     seedWorkspace();
     const tree = await render();
 
-    // No open corners -> no navigable rows listed, but the CONTROL exists
-    // (this is the regression: gating it on open work alone left such Rooms
-    // with no route into their corners at all).
-    const toggle = findAllByTestId(tree, 'room-corners-toggle-room-1');
-    expect(toggle).toHaveLength(1);
-
-    await act(async () => {
-      toggle[0].props.onPress?.();
-    });
-
-    expect(findByAclPrefix(tree, 'Open landed work CORNER')).toHaveLength(0);
-    expect(findByAclPrefix(tree, 'Open dead end CORNER')).toHaveLength(0);
-
-    // No All Corners row either — the expansion lists open work only, and
-    // this Room has none.
+    // Finished corners are represented NOWHERE in navigation (owner's model):
+    // no count, no expansion control, no rows. Their history stays reachable
+    // through the transcript's landed/closed references only.
+    expect(findAllByTestId(tree, 'room-corners-toggle-room-1')).toHaveLength(0);
     expect(findAllByTestId(tree, 'room-all-corners-room-1')).toHaveLength(0);
   });
 

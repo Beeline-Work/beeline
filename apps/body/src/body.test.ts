@@ -460,6 +460,49 @@ describe('agent identity boundary', () => {
       expect(binds).toContain(join(homedir(), '.no-mistakes'));
     });
 
+    it('masks operator credential stores out of a session instead of leaving them read-only', () => {
+      // Acceptance: a session's filesystem must contain NO readable operator
+      // credential store. The whole-home ro-bind makes them read-only, which
+      // is not enough — a readable gh token can push main out-of-band — so
+      // every existing known store plus the owner-configured extras are
+      // masked ABSENT (dir → empty tmpfs, file → /dev/null).
+      const secretDir = join(sandboxRoot, 'operator-secrets');
+      mkdirSync(secretDir, { recursive: true });
+      writeFileSync(join(secretDir, 'token'), 'do-not-read');
+      const body = new Body(
+        {
+          ...config,
+          bwrapPath: '/usr/bin/bwrap',
+          sandboxMaskPaths: [secretDir],
+        },
+        newIdentity('operator'),
+      );
+      const spawn = (body as unknown as SpawnProbe).sessionSpawnCommand(
+        { mode: 'readonly', cwd: '/srv/checkout' },
+        {},
+      );
+      // The owner-configured extra is masked as an empty tmpfs.
+      const secretAt = spawn.args.indexOf(secretDir);
+      expect(spawn.args[secretAt - 1]).toBe('--tmpfs');
+      // Masks ride AFTER the whole-home ro-bind they override.
+      expect(secretAt).toBeGreaterThan(2);
+      // Every built-in known credential store that exists on this host is
+      // masked too — in BOTH modes; this is the Room shape.
+      for (const entry of ['.config/gh', '.ssh', '.netrc', '.git-credentials', '.secrets.env']) {
+        const path = join(homedir(), entry);
+        if (!existsSync(path)) continue;
+        const at = spawn.args.indexOf(path);
+        expect(at).toBeGreaterThan(0);
+        const kind =
+          spawn.args[at - 1] === '--tmpfs'
+            ? 'dir'
+            : spawn.args[at - 1] === '/dev/null' && spawn.args[at - 2] === '--ro-bind'
+              ? 'file'
+              : undefined;
+        expect(kind).toBeDefined();
+      }
+    });
+
     it('spawns the bare command when no bwrap was detected at daemon start', () => {
       const body = new Body(config, newIdentity('operator'));
       const spawn = (body as unknown as SpawnProbe).sessionSpawnCommand(
@@ -2238,6 +2281,136 @@ describe('corner archive boundary', () => {
     expect(() =>
       assertSubchannelArchiveTarget(info({ parentChannelId: 'room' }), 'other-room'),
     ).toThrow('non-corner');
+  });
+});
+
+describe('an idle or suspended corner session is never archived', () => {
+  /**
+   * Owner-reported suspicion (2026-08-23): corners were believed to be
+   * auto-archived on session suspension/idleness. Relay forensics showed every
+   * real archive was the designed post-land path, but the invariant deserves a
+   * pin: suspension retires the ACP process and publishes a `corner-session`
+   * control event — nothing else. No maintenance pass may turn a suspended,
+   * idle, or merely quiet corner into an archived one.
+   */
+  function newBody(agent: ReturnType<typeof newIdentity>, workspaceRoot: string) {
+    return new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot,
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+    );
+  }
+
+  function stubRelayRecordingPublishes(): NostrEvent[] {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/query')) {
+          return new Response(JSON.stringify([]), { status: 200 });
+        }
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    return published;
+  }
+
+  it('a suspension cycle leaves the corner open and archives nothing', async () => {
+    const agent = newIdentity('suspension-agent');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-suspend-noarchive-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      const published = stubRelayRecordingPublishes();
+      const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+      const lifecycle = {
+        suspend: async () => undefined,
+        onStateChange: async (_state: 'live' | 'suspended' | 'waiting-for-slot') => undefined,
+      };
+      body.registerSubchannel({
+        subchannelId: 'corner-idle',
+        worktreePath: '/tmp/does-not-matter',
+        featureBranch: 'feature/idle',
+        role: newIdentity('suspension-role'),
+        session: {
+          channelId: 'corner-idle',
+          sessionId: 'idle-session',
+          client,
+          mode: 'edit' as const,
+          lifecycle,
+        },
+        lastPolledAt: 0,
+        archived: false,
+      } as never);
+
+      // Exactly what SessionScheduler.retire does when the idle sweep reclaims
+      // a quiet session: suspend the process, then publish the state change.
+      await lifecycle.suspend();
+      await lifecycle.onStateChange?.('suspended');
+
+      // The maintenance passes a suspended corner goes through must not close
+      // it: no land exists, no approval exists, no close request exists.
+      await body.pollMergeCompletions();
+      await Reflect.get(body, 'pollMembersOnce').call(body, 'corner-idle');
+
+      expect(published.filter((event) => event.kind === 9002)).toEqual([]);
+      expect(
+        published.some((event) =>
+          event.tags?.some((tag) => tag[0] === 'status' && tag[1] === 'archived'),
+        ),
+      ).toBe(false);
+      const info = (Reflect.get(body, 'subchannels') as Map<string, { archived?: boolean }>).get(
+        'corner-idle',
+      );
+      expect(info?.archived).toBe(false);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('a corner whose work never landed is not archived by the merge-completion poll', async () => {
+    const agent = newIdentity('unlanded-agent');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-unlanded-noarchive-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      const published = stubRelayRecordingPublishes();
+      body.registerSubchannel({
+        subchannelId: 'corner-unlanded',
+        worktreePath: '/tmp/does-not-matter',
+        featureBranch: 'feature/unlanded',
+        role: newIdentity('unlanded-role'),
+        session: {
+          channelId: 'corner-unlanded',
+          sessionId: 'unlanded-session',
+          client: new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} }),
+          mode: 'edit' as const,
+        },
+        lastPolledAt: 0,
+        archived: false,
+      } as never);
+
+      await body.pollMergeCompletions();
+
+      // Without a confirmed landed tip behind a human approval there is no
+      // archive — even though the poll ran to completion.
+      expect(published.filter((event) => event.kind === 9002)).toEqual([]);
+      const info = (Reflect.get(body, 'subchannels') as Map<string, { archived?: boolean }>).get(
+        'corner-unlanded',
+      );
+      expect(info?.archived).toBe(false);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
   });
 });
 

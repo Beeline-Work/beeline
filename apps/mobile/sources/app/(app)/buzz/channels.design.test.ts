@@ -253,14 +253,14 @@ describe('Room list — Grok Mono Hull invariants', () => {
     // Captain's hard requirement: only open/active corners are counted and
     // listed. `roomRowPresentation` resolves that one set through
     // `roomListCorners`, and both the count and the dropdown read its result —
-    // nothing on this screen may compute a corner total of its own. When no
-    // open work exists but recorded corners do, the control falls back to the
-    // room's recorded total.
+    // nothing on this screen may compute a corner total of its own. Finished
+    // corners are represented NOWHERE: no recorded-total fallback count, and
+    // no expansion affordance when nothing is open.
     expect(source).toContain('const corners = row.corners;');
-    expect(source).toContain('const canExpand = row.totalCorners > 0;');
+    expect(source).toContain('const canExpand = corners.length > 0;');
     expect(source).toContain('{corners.length}');
-    expect(source).toContain('{row.totalCorners}');
     expect(source).toContain('{corners.map((corner) => {');
+    expect(source).not.toContain('totalCorners');
     expect(source).not.toContain('roomListCorners(');
     expect(source).not.toMatch(/item\.corners(?:\s*\?\?\s*\[\])?\.length/);
   });

@@ -151,6 +151,7 @@ export {
 
 export { publishEvent, queryEvents, requestQueryEvents, relayReachable } from './http.js';
 export type { AuthenticatedHttpBridgeOptions, HttpBridgeOptions } from './http.js';
+export { isArchivedChannelError } from './archived-channel.js';
 
 export {
   OIDC_BIND_PROTOCOL,

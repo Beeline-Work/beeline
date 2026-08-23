@@ -481,7 +481,8 @@ export function CornerGlyph({
   style,
   testID,
 }: {
-  status: CornerStatus;
+  /** The oracle's verdict; `null` (stalled/idle) renders on the quiet tier. */
+  status: CornerStatus | null;
   style?: StyleProp<TextStyle>;
   testID?: string;
 }) {

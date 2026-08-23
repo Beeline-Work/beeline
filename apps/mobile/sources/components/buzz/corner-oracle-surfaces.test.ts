@@ -46,7 +46,7 @@ describe('one corner lifecycle oracle', () => {
     expect(transportSource).toMatch(
       /import \{[\s\S]*?resolveCornerLifecycle[\s\S]*?\} from '@\/buzz\/corners'/,
     );
-    expect(rowSource).toMatch(/CORNER_NEEDS_YOU_STATUSES[\s\S]*?from '@\/buzz\/corners'/);
+    expect(rowSource).toMatch(/cornerSuperState[\s\S]*?from '@\/buzz\/corners'/);
     expect(indicatorsSource).toMatch(/mergeCornerStatuses[\s\S]*?from '\.\/corners'/);
     expect(chatSource).toMatch(/resolveCornerLifecycleStatus[\s\S]*?from '@\/buzz\/corners'/);
     expect(chatSource).toMatch(/cornerActionSurface[\s\S]*?from '@\/buzz\/corner-attention'/);
@@ -71,16 +71,19 @@ describe('one corner lifecycle oracle', () => {
     expect(facade).not.toMatch(/export function mapRawCornerStatusTag/);
   });
 
-  it('the empty-state panel is unreachable whenever the verdict is needs-you', () => {
-    // The corner screen branches on the ONE action-surface derivation:
-    // review panel -> attention card -> nothing-ready. The NOTHING READY
-    // copy exists only inside that last, non-needs-you branch.
+  it('the corner screen never renders the attention card on itself', () => {
+    // The attention card routes attention FROM summary surfaces INTO the
+    // corner; inside the corner it is self-referential (its 'REPLY IN THIS
+    // CORNER' affordance is meaningless where you already stand). The screen
+    // consumes only the review branch of the derivation; the state word lives
+    // in the header badge, the ask lives in the transcript.
     const reviewBranch = chatSource.indexOf("cornerAction.kind === 'review'");
-    const attentionBranch = chatSource.indexOf("cornerAction.kind === 'attention'");
     const nothingReadyIndex = chatSource.indexOf('NOTHING READY TO MERGE YET');
     expect(reviewBranch).toBeGreaterThan(0);
-    expect(attentionBranch).toBeGreaterThan(reviewBranch);
-    expect(nothingReadyIndex).toBeGreaterThan(attentionBranch);
+    expect(nothingReadyIndex).toBeGreaterThan(reviewBranch);
+    expect(chatSource).not.toContain("cornerAction.kind === 'attention'");
+    expect(chatSource).not.toContain('corner-attention-card');
+    expect(chatSource).not.toContain('REPLY IN THIS CORNER');
     // And no other rendering path may branch on raw status words directly.
     expect(chatSource).not.toMatch(/displayedCornerStatus === '(needs-attention|open|failed)'/);
   });
@@ -123,8 +126,10 @@ describe('four surfaces agree on one verdict', () => {
   for (const { facts, history, status } of cases) {
     it(`agrees on ${facts}`, () => {
       // The verdict itself comes from THE oracle, exactly as the transport does.
+      // `now` sits just after the newest fact so liveness windows hold.
+      const now = history.length > 0 ? history[history.length - 1].createdAt * 1000 + 1000 : 0;
       const resolved =
-        history.length === 0 ? null : resolveCornerLifecycle(history as never);
+        history.length === 0 ? null : resolveCornerLifecycle(history as never, { now });
       const expected = status;
       if (status !== null) expect(resolved).toBe(expected);
 
@@ -168,10 +173,13 @@ describe('four surfaces agree on one verdict', () => {
     const before = resolveCornerLifecycle([{ createdAt: 100, rawStatus: 'needs-attention' }]);
     expect(before).toBe('needs-attention');
     // After: one new fact — the agent's own narration, NEWER than the card.
-    const after = resolveCornerLifecycle([
-      { createdAt: 100, rawStatus: 'needs-attention' },
-      { createdAt: 200, isWorkSignal: true },
-    ]);
+    const after = resolveCornerLifecycle(
+      [
+        { createdAt: 100, rawStatus: 'needs-attention' },
+        { createdAt: 200, isWorkSignal: true },
+      ],
+      { now: 200 * 1000 + 1000 },
+    );
     expect(after).toBe('live');
 
     const corners = [corner(after)];
@@ -189,7 +197,7 @@ describe('four surfaces agree on one verdict', () => {
     for (const glyph of ['▲', '△', '○', '▢', '□', '✕', '✓']) {
       expect(facade, `${glyph} is not a corner glyph`).not.toContain(`glyph: '${glyph}'`);
     }
-    expect(facade).toContain("return { glyph: CORNER_GLYPH_LIVE, label: 'LIVE' }");
+    expect(facade).toContain("return { glyph: CORNER_GLYPH_LIVE, label: 'WORKING' }");
     // Expansion rows and the standalone list render THE shared component.
     expect(channelsSource).toContain('<CornerGlyph status={corner.status}');
     const listSource = sourceFile('../../app/(app)/buzz/corners/[roomId].tsx');

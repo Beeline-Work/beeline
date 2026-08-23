@@ -118,18 +118,21 @@ describe('Room list — Grok Mono Hull invariants', () => {
     );
     expect(accentStyles.sort()).toEqual([
       'attnRail',
-      'cornerGlyphLive',
       'cornerPeekCountLive',
       'fab',
       'indexSignalCount',
       'rowPreviewAttention',
     ]);
     // Every accent style on a ROW is gated by the derived needs-you flag (the
-    // FAB is an action surface, `indexSignalCount`/`cornerGlyphLive` are the
-    // heading's LIVE count and the corner dropdown's live glyph).
+    // FAB is an action surface, `indexSignalCount`/`cornerPeekCountLive` are
+    // the heading's LIVE count and the dropdown's live count). The expansion
+    // rows' live glyph color lives in MonoHull's shared CornerGlyph.
     expect(source).toContain("row.attention && <View pointerEvents=\"none\" style={styles.attnRail} />");
     expect(source).toContain('row.attention && styles.rowPreviewAttention');
     expect(source).toContain('row.attention && styles.cornerPeekCountLive');
+    // Corner state glyphs render through THE one shared diamond component —
+    // never a screen-local Text with an identity shape.
+    expect(source).toContain('<CornerGlyph status={corner.status} style={styles.cornerGlyph} />');
     // No pill strip came back: the cell renders mark + name + fact + count,
     // and nothing else.
     expect(source).not.toMatch(/styles\.pillStrip|styles\.rowPill/);

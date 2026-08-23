@@ -1,4 +1,5 @@
 import {
+  CORNER_NEEDS_YOU_STATUSES,
   cornerStatusPresentation,
   roomCornerSignal,
   roomListCorners,
@@ -17,11 +18,9 @@ export const ROOM_LIST_ZONE_LABELS: Record<RoomListZone, string> = {
 };
 
 const ROOM_LIST_ZONE_ORDER: readonly RoomListZone[] = ['needs-you', 'working', 'idle'];
-const NEEDS_YOU_STATUSES: ReadonlySet<CornerStatus> = new Set([
-  'needs-attention',
-  'open',
-  'failed',
-]);
+// The needs-you set is THE one definition (`corners.ts`): the deck's gold zone
+// and the corner view's attention card must never disagree about what counts.
+const NEEDS_YOU_STATUSES = CORNER_NEEDS_YOU_STATUSES;
 const MEANINGFUL_CORNER_STATUSES: ReadonlySet<CornerStatus> = new Set([
   ...NEEDS_YOU_STATUSES,
   'live',

@@ -778,6 +778,51 @@ export async function confirmPendingUpdate(layout: BeelineInstallLayout): Promis
   return true;
 }
 
+/**
+ * Crash-safe response to a new release that cannot boot: restore the
+ * previous release on disk and relaunch the daemon FROM THAT RELEASE's own
+ * entrypoint (never the anchor — the anchor names the broken bundle until
+ * the rollback below flips it back). Reads the pending-update journal for
+ * both halves; a journal with no previous release can only be recorded,
+ * loudly. Returns the replacement pid, or undefined when nothing could be
+ * relaunched.
+ */
+export async function relaunchPreviousReleaseAfterFailedUpdate(
+  layout: BeelineInstallLayout,
+  configPath: string,
+  opts: { logger?: (line: string) => void } = {},
+): Promise<number | undefined> {
+  const log = opts.logger ?? ((line: string) => console.error(line));
+  const journal = await readPendingUpdate(layout);
+  await clearPendingUpdate(layout);
+  if (!journal?.previousReleaseId) {
+    log(
+      `[body] self-update: release ${journal ? describeIdentity(journal.to) : 'unknown'} failed to boot, but no previous release is recorded to fall back to; leaving the current bundle in place`,
+    );
+    return undefined;
+  }
+  await rollbackToPreviousRelease(layout, journal.previousReleaseId);
+  const state = await readUpdateState(layout);
+  await writeUpdateState(layout, {
+    ...state,
+    lastRollback: {
+      releaseId: journal.releaseId,
+      toReleaseId: journal.previousReleaseId,
+      reason: 'new release failed to boot inside its confirm window',
+      at: Date.now(),
+    },
+  }).catch(() => undefined);
+  const previousDir = join(layout.releasesRoot, journal.previousReleaseId);
+  const entrypoint = (await resolveBundleEntrypoint(previousDir)) ?? join(previousDir, BUNDLE_ENTRYPOINT);
+  const foreground = process.env.BEELINE_DAEMON_BACKGROUND !== '1';
+  const pid = await launchRuntimeDaemon(configPath, { entrypoint, foreground });
+  log(
+    `[body] self-update FALLBACK: release ${describeIdentity(journal.to)} (${journal.releaseId}) failed to boot; ` +
+      `relaunched the previous release ${journal.previousReleaseId} (${describeIdentity(journal.from)}) as pid ${pid}`,
+  );
+  return pid;
+}
+
 // ---------------------------------------------------------------------------
 // CLI → daemon restart requests
 // ---------------------------------------------------------------------------
@@ -837,6 +882,15 @@ export interface SelfUpdateManagerOptions {
    * next start would roll back a bundle that was never given a chance.
    */
   restartHandover?: boolean;
+  /**
+   * Release id of an update that is pending health confirmation at process
+   * start (from the settle-on-start read). Arming this makes a fatal
+   * supervisor failure INSIDE the confirm window roll back to
+   * `previousReleaseId` and relaunch it, instead of crash-looping forever on
+   * a release that cannot boot. The confirm timer clears it alongside the
+   * journal once the window passes healthy.
+   */
+  pendingUnconfirmedReleaseId?: string;
   fetchImpl?: typeof fetch;
   logger?: (line: string) => void;
 }
@@ -865,7 +919,12 @@ export class SelfUpdateManager {
   private disposed = false;
   private applying = false;
   private deferredBusyNotice = false;
+  private driftDeferredNotice = false;
   private lastVerdictLog = '';
+  /** Captured once: the release id this PROCESS loaded its code from. */
+  private loadedReleaseIdPromise: Promise<string | undefined> | undefined;
+  /** Identity of that same release, read while the anchor still named it. */
+  private loadedIdentity: InstalledBundleIdentity | undefined;
   /** Set once a newer bundle is LIVE and the process should hand over. */
   restartPending = false;
   private unconfirmedReleaseId: string | undefined;
@@ -890,6 +949,7 @@ export class SelfUpdateManager {
       env,
       now: options.now ?? Date.now,
     };
+    this.unconfirmedReleaseId = options.pendingUnconfirmedReleaseId;
     this.isIdle = options.isIdle ?? (() => true);
     this.notifyFn = options.notify ?? (async () => undefined);
     this.requestRestartCb = options.requestRestart;
@@ -907,6 +967,9 @@ export class SelfUpdateManager {
 
   start(): void {
     if (this.timer || this.disposed) return;
+    // Capture the anchor BEFORE anything can flip it: this is the reference
+    // point every later drift check compares against.
+    void this.captureLoadedRelease();
     this.nextCheckAllowedAt = this.options.now() + this.options.initialDelayMs;
     this.timer = setInterval(() => {
       void this.tick();
@@ -923,6 +986,26 @@ export class SelfUpdateManager {
   /** True while an applied-but-unconfirmed update could still need rollback. */
   hasUnconfirmedUpdate(): boolean {
     return this.unconfirmedReleaseId !== undefined;
+  }
+
+  /**
+   * What this process loaded its code from, captured on first use. Reading
+   * through `layout.libDir` ONCE is the whole trick: every later
+   * `activeReleaseId` read sees the anchor's CURRENT target, so any
+   * difference means somebody else swapped the install under us (a `beeline
+   * update` whose forced re-check finds itself already current, install.sh,
+   * another daemon sharing this install, a manual rollback) and this process
+   * is executing stale code.
+   */
+  private captureLoadedRelease(): Promise<string | undefined> {
+    this.loadedReleaseIdPromise ??= (async () => {
+      const id = await activeReleaseId(this.options.layout).catch(() => undefined);
+      if (id) {
+        this.loadedIdentity = await readInstalledBundleIdentity(this.options.layout).catch(() => undefined);
+      }
+      return id;
+    })();
+    return this.loadedReleaseIdPromise;
   }
 
   markUpdateConfirmed(): void {
@@ -964,6 +1047,72 @@ export class SelfUpdateManager {
     return !this.isIdle();
   }
 
+  /**
+   * Anchor-drift detection: the cheap periodic half of "make running daemons
+   * pick up new releases". One lstat+readlink per tick, independent of the
+   * manifest cadence AND of BEELINE_UPDATE_DISABLE (that switch governs
+   * fetching; executing stale code is never a desired state, and a manual
+   * `beeline update --rollback` must bring daemons back just like an update
+   * brings them forward). On drift past the busy gate it writes the rollback
+   * journal, arms the unconfirmed state, and hands the process over to the
+   * ACTIVE anchor via the same restart path the daemon's own apply uses —
+   * so `launchReplacement` resolves the entrypoint through the CURRENT
+   * symlink and a new release that cannot boot rolls back inside the
+   * existing confirm-window machinery.
+   *
+   * Returns true when a restart was requested (the tick must not continue).
+   */
+  private async checkAnchorDrift(opts: { forced?: boolean } = {}): Promise<boolean> {
+    if (!this.restartHandover) return false;
+    const layout = this.options.layout;
+    const loaded = await this.captureLoadedRelease();
+    if (!loaded) return false; // dev checkout / unreadable install: nothing to compare
+    const current = await activeReleaseId(layout).catch(() => undefined);
+    if (!current || current === loaded) {
+      this.driftDeferredNotice = false;
+      return false;
+    }
+
+    // Same busy gate as apply(): never interrupt a turn, corner, or intake.
+    if (this.busy()) {
+      if (!this.driftDeferredNotice) {
+        this.log('[body] self-update: the install anchor changed while agent work is running; the restart waits until the daemon is idle');
+        this.driftDeferredNotice = true;
+      }
+      const idle = await this.waitForIdle();
+      if (!idle) {
+        this.log('[body] self-update: still busy after the idle wait; deferring the drift restart to the next tick');
+        return false;
+      }
+    }
+    this.driftDeferredNotice = false;
+
+    const now = this.options.now();
+    const toIdentity = await readInstalledBundleIdentity(layout).catch(() => undefined);
+    await writePendingUpdate(layout, {
+      from: this.loadedIdentity ?? {},
+      to: toIdentity ?? {},
+      releaseId: current,
+      // A legacy real-dir origin has no releases/<id> copy to roll back to.
+      previousReleaseId: loaded === 'legacy' ? undefined : loaded,
+      appliedAt: now,
+    });
+    this.unconfirmedReleaseId = current;
+    this.restartPending = true;
+    const why = opts.forced
+      ? 'an operator update request asked this daemon to pick up the installed bundle'
+      : 'the install anchor moved under this daemon';
+    this.log(
+      `[body] self-update RESTART: release ${loaded} (${describeIdentity(this.loadedIdentity)}) -> ` +
+        `${current} (${describeIdentity(toIdentity)}); ${why}; handing over once drained`,
+    );
+    await this.notifyRooms(
+      `Beeline updated ${describeIdentity(this.loadedIdentity)} -> ${describeIdentity(toIdentity)}; the daemon is restarting now.`,
+    );
+    this.requestRestartCb?.();
+    return true;
+  }
+
   /** Public single tick — test/CLI synchronization point. */
   async tickOnce(): Promise<void> {
     await this.tick();
@@ -988,6 +1137,22 @@ export class SelfUpdateManager {
       }
     } catch {
       return;
+    }
+
+    // Anchor-drift check first and EVERY tick: one lstat+readlink, immune to
+    // the disable switch and the manifest cadence (see checkAnchorDrift).
+    // Held under the same `applying` guard as checkAndApply so two interval
+    // ticks can never run concurrent drift flows (each contains a possibly
+    // long waitForIdle wait).
+    this.applying = true;
+    try {
+      if (await this.checkAnchorDrift({ forced })) return;
+    } catch (error) {
+      this.log(
+        `[body] self-update anchor-drift check failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      this.applying = false;
     }
 
     const disabled = this.options.env.BEELINE_UPDATE_DISABLE === '1';

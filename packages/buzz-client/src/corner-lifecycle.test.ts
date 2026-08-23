@@ -98,6 +98,34 @@ describe('corner lifecycle oracle — THE three-word verdict', () => {
     expect(resolveCornerState(windowed, { now: fresh(3000) })).toBe('working');
   });
 
+  it('a landed-but-not-yet-archived corner still renders while its session works', () => {
+    // The daemon's land card carries `status=ready` + `t=landed` and is NOT a
+    // terminal word: since the land→archive race fix, the channel stays open
+    // while the agent session winds down, so the corner must stay visible and
+    // resolve from its newer facts like any other unfinished corner.
+    const land = fact(1000, { t: 'landed', status: 'ready' });
+    // A bare ready word with no live merge-ready target behind it reads
+    // needs-human (pinned deliberately by the existing oracle suite); it is
+    // certainly not terminal — the corner stays rendered.
+    expect(resolveCornerState([land], { now: fresh(1000) })).toBe('needs-human');
+    // Newer non-ask work signal: working — this is exactly what keeps a live,
+    // merged-but-unarchived corner on screen instead of vanishing.
+    expect(resolveCornerState([land, work(2000)], { now: fresh(2000) })).toBe('working');
+    // Idle past the liveness window with nothing terminal yet: needs-human.
+    // Still rendered; never silently gone before an archive is confirmed.
+    expect(
+      resolveCornerState([land, work(2000)], {
+        now: 2000 * 1000 + CORNER_WORK_LIVENESS_WINDOW_MS + 1,
+      }),
+    ).toBe('needs-human');
+    // Once the archive is actually confirmed (archived card or merged flag),
+    // terminal wins outright — work signals never resurrect it.
+    expect(
+      resolveCornerState([land, work(2000), card(3000, 'archived')], { now: fresh(3000) }),
+    ).toBe('finished');
+    expect(resolveCornerState([land, work(2000)], { merged: true })).toBe('finished');
+  });
+
   it('the legacy seven-word projection maps the three words for old consumers', () => {
     const now = fresh(3000);
     expect(resolveCornerLifecycle([work(3000)], { now })).toBe('live');

@@ -13,6 +13,7 @@ import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { publishEvent, queryEvents, type HttpBridgeOptions } from './http.js';
+import { isArchivedChannelError } from './archived-channel.js';
 import { getDirectMessage } from './direct-message.js';
 import { query } from './query.js';
 import {
@@ -571,11 +572,6 @@ async function communityRoomIds(ctx: ChannelOpsContext, communityId: string): Pr
     if (channelId) ids.add(channelId);
   }
   return [...ids];
-}
-
-function isArchivedChannelError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /channel is archived/i.test(message);
 }
 
 function archivedWorkspaceError(): Error {

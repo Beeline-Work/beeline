@@ -299,6 +299,24 @@ describe('Speaker identity', () => {
     expect(ledgerBranch()).toMatch(/attributionContinued\s*\n\s*\? undefined/);
   });
 
+  it('leads every byline with the speaker’s EXISTING identity mark, not a new one', () => {
+    const branch = ledgerBranch();
+    // The mark is keyed on the message signer's pubkey — the same seed every
+    // other surface renders — and its kind follows the same speaksAsAgent
+    // decision the entry/steer split already uses. No second mark vocabulary.
+    expect(branch).toContain(
+      "item.pubkey ?? (isSelfSteer ? cacheViewerPubkey || 'self' : 'unknown-person')",
+    );
+    expect(branch).toContain("kind: speaksAsAgent ? 'agent' : 'human'");
+    // An agent carries the gold ring only while its presence lease says alive;
+    // the presence read is the SAME helper every other online/offline verdict
+    // on this screen uses.
+    expect(branch).toMatch(/speakerAlive[\s\S]{0,400}isAgentPresenceOnlineWithReconnectGrace/);
+    // And the ledger renders it through the one identity-mark component.
+    expect(ledgerSource).toContain("import { IdentityMark } from './IdentityMark'");
+    expect(ledgerSource).toContain('testID="chat-byline-mark"');
+  });
+
   it('reads the agent roster the Members screen reads, so both name an agent the same', () => {
     // Every agent name in the transcript comes from `listAgents`, which is what
     // hydrates the human-authored soul overlay. Scoping that read strictly to

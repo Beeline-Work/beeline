@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { useReducedMotion } from 'react-native-reanimated';
 import { Typography } from '@/constants/Typography';
 import { hasMessageRevealed, markMessageRevealed } from '@/buzz/message-reveal';
+import { IdentityMark } from './IdentityMark';
 import { MonoMarkdown } from './MonoMarkdown';
 
 /**
@@ -32,6 +33,23 @@ import { MonoMarkdown } from './MonoMarkdown';
 /** The right margin the ghosted stamp hangs in, clear of the flowing column. */
 export const LEDGER_MARGINALIA_WIDTH = 36;
 
+/** Transcript scale for the speaker's identity mark (~16–18px). Below the
+ *  cypher floor the mark renders as its solid signature shape + colour, which
+ *  is exactly what a byline wants. */
+export const LEDGER_MARK_SIZE = 17;
+
+/** The speaker's existing identity mark (`buzz/identity-mark.ts`), rendered at
+ *  transcript scale in place of the generic byline dot. No new vocabulary:
+ *  circle = person, triangle = agent, per-identity hue, gold ring while the
+ *  agent works — the same axes every other surface renders. */
+export type LedgerBylineMark = {
+  /** The speaker's stable seed (pubkey); same seed, same mark as everywhere. */
+  seed: string;
+  kind: 'agent' | 'human';
+  /** Agents only: working right now → the gold ring. */
+  alive?: boolean;
+};
+
 /** The byline above a run's opening turn. */
 export type LedgerByline = {
   /** The voice's display name. Omitted in a Corner (named in the top bar). */
@@ -40,8 +58,10 @@ export type LedgerByline = {
   role?: string;
   /** The 24h clock stamp, mono. */
   stamp: string;
-  /** True only for the viewer's own turn — switches the dot and name to brass. */
+  /** True only for the viewer's own turn — switches the name to brass. */
   isViewer?: boolean;
+  /** The speaker's identity mark. Omitted → the plain dot fallback renders. */
+  mark?: LedgerBylineMark;
 };
 
 type LedgerBodyProps = {
@@ -199,12 +219,32 @@ export function LedgerMarginalia({
 }
 
 function Byline({ byline }: { byline: LedgerByline }) {
+  const mark = byline.mark;
   return (
     <View style={styles.byline}>
-      <View
-        style={[styles.bylineDot, byline.isViewer && styles.bylineDotViewer]}
-        testID="chat-byline-dot"
-      />
+      {mark ? (
+        mark.kind === 'agent' ? (
+          <IdentityMark
+            seed={mark.seed}
+            kind="agent"
+            alive={Boolean(mark.alive)}
+            size={LEDGER_MARK_SIZE}
+            testID="chat-byline-mark"
+          />
+        ) : (
+          <IdentityMark
+            seed={mark.seed}
+            kind="human"
+            size={LEDGER_MARK_SIZE}
+            testID="chat-byline-mark"
+          />
+        )
+      ) : (
+        <View
+          style={[styles.bylineDot, byline.isViewer && styles.bylineDotViewer]}
+          testID="chat-byline-dot"
+        />
+      )}
       <Text style={styles.bylineText}>
         {byline.name ? (
           <Text style={[styles.bylineText, byline.isViewer && styles.bylineNameViewer]}>

@@ -194,6 +194,16 @@ function githubRepositoryFromPayload(
   return { id, installationId, name, fullName, remote, defaultBranch };
 }
 
+/**
+ * Whether a user-token listing failure means the STORED OAuth credential was
+ * rejected (401/403) rather than GitHub being unreachable — the signal that
+ * the app should silently re-auth next session.
+ */
+function isGitHubUserTokenAuthError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /HTTP 40[13]\b/.test(message);
+}
+
 function githubInstallationId(value: unknown): number {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new ProtocolError(400, 'invalid_webhook', 'invalid GitHub installation payload');
@@ -310,12 +320,26 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
           userInstallationIds = options.github!.app
             .listUserInstallationIds(decryptGitHubToken(sealedUserToken))
             .then(
-              (ids) => new Set(ids),
+              (ids) => {
+                // The stored credential demonstrably still works.
+                void options.store
+                  .clearGitHubUserTokenStale(community, subject)
+                  .catch(() => {});
+                return new Set(ids);
+              },
               (error: unknown) => {
                 log.warn(
                   { err: error, community, pubkey },
                   'GitHub installation listing unavailable for organization verification',
                 );
+                if (isGitHubUserTokenAuthError(error)) {
+                  // GitHub answered 401/403 for the STORED user token: mark
+                  // it stale so the app can offer a silent re-auth next
+                  // session. Best-effort — never blocks the reconcile.
+                  void options.store
+                    .markGitHubUserTokenStale(community, subject, now())
+                    .catch(() => {});
+                }
                 return 'unavailable' as const;
               },
             );
@@ -1390,9 +1414,16 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       installations = await options.store.githubInstallationsForPubkey(tenant.community, pubkey);
     }
     const repositories = await options.store.githubRepositoriesForPubkey(tenant.community, pubkey);
+    // Set when reconcile's last user-token listing was rejected with 401/403:
+    // the stored OAuth credential is dead and the app should re-auth silently.
+    const staleSubject = await options.store.githubSubjectForPubkey(tenant.community, pubkey);
+    const userTokenStaleAt = staleSubject
+      ? await options.store.githubUserTokenStaleAt(tenant.community, staleSubject)
+      : null;
     noStore(reply);
     return reply.send({
       installed: true,
+      ...(userTokenStaleAt ? { user_token_stale: true } : {}),
       installations: installations.map((installation) => ({
         installationId: installation.installationId,
         accountId: installation.accountId,
@@ -1634,12 +1665,18 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
         'agent is not authorized for this Room repository',
       );
     }
+    // `authority.githubInstallationId` (the Room binding's bind-time pin) is
+    // deliberately NOT checked here. It is a hint from when the binding was
+    // written, and after a transfer the immutable repository id heals onto
+    // whichever ACTIVE installation of the authorizing human currently covers
+    // it — usually a different installation id than the pinned one. Demanding
+    // equality stranded every Room token behind a permanent refusal when the
+    // repository moved to an org whose installation reconcile had just
+    // claimed (production, 2026-08). Authority is unchanged: the store only
+    // resolves installations recorded for the authorizing pubkey, and the
+    // mint below is scoped to the exact healed repository id.
     const usable = (candidate: typeof access): boolean =>
-      candidate.accessible &&
-      !!candidate.installationId &&
-      !!candidate.repositoryId &&
-      (authority.githubInstallationId === undefined ||
-        authority.githubInstallationId === candidate.installationId);
+      candidate.accessible && !!candidate.installationId && !!candidate.repositoryId;
     let access = await resolveGitHubRepositoryAccess(
       { app: options.github.app, store: options.store },
       tenant.community,

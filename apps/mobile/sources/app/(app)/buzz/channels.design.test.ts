@@ -110,8 +110,9 @@ describe('Room list — Grok Mono Hull invariants', () => {
 
   it('spends brass ONLY on needs-you rows — the deck\u2019s whole point', () => {
     // The supervision deck's one rule: the accent appears on a needs-you row's
-    // rail, its action pill, its activity line, and nowhere else. Working is
-    // motion; idle and unread are steel/luminance.
+    // rail and its activity line — there are no pills anymore, so the brass
+    // mark plus the accent fact line carry the whole "needs you" signal.
+    // Working is motion; idle and unread are steel/luminance.
     const accentStyles = [...source.matchAll(/ {2}([A-Za-z0-9_]+): \{[^}]*groknight\.accent/g)].map(
       (match) => match[1],
     );
@@ -121,7 +122,6 @@ describe('Room list — Grok Mono Hull invariants', () => {
       'cornerPeekCountLive',
       'fab',
       'indexSignalCount',
-      'rowPillStatus',
       'rowPreviewAttention',
     ]);
     // Every accent style on a ROW is gated by the derived needs-you flag (the
@@ -130,8 +130,9 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(source).toContain("row.attention && <View pointerEvents=\"none\" style={styles.attnRail} />");
     expect(source).toContain('row.attention && styles.rowPreviewAttention');
     expect(source).toContain('row.attention && styles.cornerPeekCountLive');
-    // Unread never picks up brass: the unread pill steps up a gray tier.
-    expect(styleBlock(source, 'rowPillUnread')).not.toMatch(/accent/);
+    // No pill strip came back: the cell renders mark + name + fact + count,
+    // and nothing else.
+    expect(source).not.toMatch(/styles\.pillStrip|styles\.rowPill/);
     expect(source).not.toContain('styles.unreadRail');
   });
 
@@ -159,8 +160,7 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(styleBlock(source, 'rowTitle')).toContain("Typography.default('semiBold')");
     expect(styleBlock(source, 'rowTitle')).toContain('fontSize: 16');
     expect(styleBlock(source, 'rowTitleRead')).toContain('groknight.textSecondary');
-    // The pill strip is mono micro-labels; the repo tag rides the title line.
-    expect(styleBlock(source, 'rowPill')).toMatch(/Typography\.mono\(/);
+    // The repo tag rides the title line in mono.
     expect(styleBlock(source, 'rowRepo')).toMatch(/Typography\.mono\(/);
   });
 
@@ -199,9 +199,15 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(indexRow).not.toMatch(/\bheight:\s*(?:INDEX_ROW_HEIGHT|\d)/);
     expect(indexRow).toContain("flexDirection: 'row'");
     // The status mark is a fixed-width FLEX column inside the row, never an
-    // absolutely positioned layer over it.
-    expect(styleBlock(source, 'rowMark')).not.toMatch(/position: 'absolute'/);
-    expect(styleBlock(source, 'rowMark')).toContain('width: ROW_MARK_WIDTH');
+    // absolutely positioned layer over it. Its box is exactly the name's line
+    // height (lineHeight 21) with the mark centered in it, so the dot/ring
+    // aligns TO the name instead of floating above it.
+    const rowMark = styleBlock(source, 'rowMark');
+    expect(rowMark).not.toMatch(/position: 'absolute'/);
+    expect(rowMark).toContain('width: ROW_MARK_WIDTH');
+    expect(rowMark).toContain('height: 21');
+    expect(rowMark).toContain("justifyContent: 'center'");
+    expect(rowMark).not.toMatch(/paddingTop/);
     expect(source).toContain(
       '<View style={styles.rowMark}>\n                      <HullDeckMark state={deckState} />',
     );
@@ -246,7 +252,7 @@ describe('Room list — Grok Mono Hull invariants', () => {
     // `roomListCorners`, and both the count and the dropdown read its result —
     // nothing on this screen may compute a corner total of its own. When no
     // open work exists but recorded corners do, the control falls back to the
-    // room's total (what expanding then reveals: the All Corners link).
+    // room's recorded total.
     expect(source).toContain('const corners = row.corners;');
     expect(source).toContain('const canExpand = row.totalCorners > 0;');
     expect(source).toContain('{corners.length}');
@@ -264,23 +270,9 @@ describe('Room list — Grok Mono Hull invariants', () => {
     );
     expect(source).toContain('{expanded && (');
     expect(source).toContain('{corners.map((corner) => {');
-    // The All Corners link is present whenever the dropdown is expanded — not
-    // only when open rows exist above it — so a Room whose corners have all
-    // landed, failed, or been closed still reaches the full corner list.
-    const expandedStart = source.indexOf('{expanded && (');
-    const expandedBlock = source.slice(
-      expandedStart,
-      source.indexOf('</PixelGateReveal>', expandedStart),
-    );
-    expect(expandedBlock).toContain("testID={`room-all-corners-${item.id}`}");
-    // ...and it sits outside the open-corners map, so it renders even when
-    // that list is empty: the map closes before the All Corners control.
-    const mapStart = expandedBlock.indexOf('{corners.map((corner) => {');
-    const allCornersAt = expandedBlock.indexOf('room-all-corners');
-    expect(allCornersAt).toBeGreaterThan(mapStart);
-    const mapClose = expandedBlock.indexOf('})}', mapStart);
-    expect(mapClose).toBeGreaterThan(mapStart);
-    expect(allCornersAt).toBeGreaterThan(mapClose);
+    // The expansion IS the full list of open work: no trailing All Corners
+    // row was re-added after it.
+    expect(source).not.toContain('room-all-corners');
     expect(source).not.toContain('cornerPeekCaret');
     expect(styleBlock(source, 'cornerPeek')).toContain("flexDirection: 'row'");
     expect(styleBlock(source, 'cornerPeek')).toContain("alignItems: 'center'");
@@ -314,8 +306,12 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(source).toContain("section.zone === 'working'");
   });
 
-  it('offers the full corner list as the way to reach excluded corners', () => {
-    expect(source).toContain('/buzz/corners/${encodeURIComponent(item.id)}');
+  it('keeps the expansion as the only in-index corner list — no duplicate route link', () => {
+    // The All Corners row was removed: the expanded dropdown already lists
+    // the Room's open corners, so a second link into the same list was
+    // redundant. Nothing in the index navigates to the standalone corners
+    // screen anymore — that surface remains reachable from elsewhere.
+    expect(source).not.toContain('/buzz/corners/');
   });
 
   it('keeps 44pt touch targets on every index control', () => {

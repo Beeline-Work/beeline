@@ -219,7 +219,7 @@ export class NotificationMetadataResolver {
     // Only the immutable create can establish the Workspace binding. Mutable
     // metadata may refine presentation but cannot make a standalone Room FCM-eligible.
     const communityId = creation ? tagValue(creation, TAG_COMMUNITY) : undefined;
-    if (!creation || !communityId || communityId === channelId) {
+    if (!creation || !communityId) {
       const fixture = fixtureFields([creation, metadata]);
       return {
         ...(roomName ? { roomName } : {}),
@@ -227,7 +227,25 @@ export class NotificationMetadataResolver {
         persistentWorkspaceRoom: false,
         fixtureCandidates: fixture.candidates,
         fixtureMarkers: fixture.markers,
-        ...(communityId ? { communityId } : {}),
+      };
+    }
+    if (communityId === channelId) {
+      // A self-referencing community tag (`community` == the channel's own `h`)
+      // is the canonical Buzz Workspace-group shape: one immutable kind:9007
+      // create IS both the Workspace record and its chat-eligible top-level
+      // channel. Classifying it as standalone suppressed messages posted to
+      // real top-level Workspace rooms (live 2026-08-23: "Tubing Crew" and
+      // "Personal"). The Workspace name is the channel's own name, so the
+      // throwaway-workspace suppression still applies unchanged.
+      const fixture = fixtureFields([creation, metadata]);
+      return {
+        ...(roomName ? { roomName } : {}),
+        isDirectMessage,
+        communityId,
+        ...(roomName ? { workspaceName: roomName } : {}),
+        persistentWorkspaceRoom: Boolean(roomName),
+        fixtureCandidates: fixture.candidates,
+        fixtureMarkers: fixture.markers,
       };
     }
 

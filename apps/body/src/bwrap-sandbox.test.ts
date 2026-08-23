@@ -15,7 +15,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import {
@@ -23,6 +23,8 @@ import {
   detectBwrapSandbox,
   isSandboxPolicy,
   harnessHomeStateDirs,
+  MERGE_GATE_HOME_STATE_DIRS,
+  mergeGateStateDirs,
   resolveGitCommonDir,
   sandboxMountPlan,
   wrapAgentCommand,
@@ -100,6 +102,20 @@ describe('sandbox mount plan', () => {
       harnessStateDirs: ['/w', '/b/', '/a'],
     });
     expect(plan.writable).toEqual(['/a', '/b', '/w', '/w/.git']);
+  });
+
+  it('binds the merge gate state root writably for an edit session only', () => {
+    const spec = {
+      cwd: '/corners/c1',
+      worktreePath: '/corners/c1',
+      gitCommonDir: '/repos/abc/.git',
+      mergeGateStateDirs: ['/home/op/.no-mistakes'],
+    };
+    expect(sandboxMountPlan({ ...spec, mode: 'edit' }).writable).toContain('/home/op/.no-mistakes');
+    // The field is ignored in read-only mode: a Room never writes the gate.
+    expect(sandboxMountPlan({ ...spec, mode: 'readonly', worktreePath: undefined }).writable).toEqual(
+      [],
+    );
   });
 });
 
@@ -206,6 +222,58 @@ describe('bwrap argv construction', () => {
     // bwrap applies operations in order, so a bind placed before `--tmpfs /tmp`
     // would be silently shadowed for any path under /tmp.
     expect(args.indexOf('--tmpfs')).toBeLessThan(args.indexOf('--bind-try'));
+  });
+
+  // Live reproduction (owner corner "Enrich-the-pond-in-the-staging…", Codex
+  // agent, 2026-08-23): a sandboxed corner drove the no-mistakes merge gate,
+  // whose state lives under ~/.no-mistakes. Connecting to the shared daemon
+  // socket works through the read-only mount, so health checks passed — but
+  // initializing the gate writes under that root, and the attempt died with
+  // "state repository directory is mounted read-only". This is the exact
+  // missing-writable-bind symptom class the module comment predicts.
+  it('a corner session can initialize the merge gate: ~/.no-mistakes is writable', () => {
+    const gateRoot = resolve(homedir(), '.no-mistakes');
+    const { args } = wrapAgentCommand({
+      bwrapPath: '/usr/bin/bwrap',
+      spec: {
+        mode: 'edit',
+        cwd: '/corners/c1',
+        worktreePath: '/corners/c1',
+        gitCommonDir: '/repos/abc/.git',
+        harnessHomeStateDirs: harnessHomeStateDirs('codex-acp'),
+        mergeGateStateDirs: mergeGateStateDirs(),
+      },
+      command: 'codex-acp',
+    });
+    const binds = args
+      .map((argument, index) => (argument === '--bind-try' ? args[index + 1] : undefined))
+      .filter(Boolean);
+    expect(binds).toContain(gateRoot);
+  });
+
+  it('a Room session gains NO write access to the merge gate state root', () => {
+    const gateRoot = resolve(homedir(), '.no-mistakes');
+    for (const mode of ['readonly', 'edit'] as const) {
+      const { args } = wrapAgentCommand({
+        bwrapPath: '/usr/bin/bwrap',
+        spec:
+          mode === 'edit'
+            ? {
+                mode,
+                cwd: '/corners/c1',
+                worktreePath: '/corners/c1',
+                gitCommonDir: '/repos/abc/.git',
+              }
+            : { mode, cwd: '/srv/checkout', harnessHomeStateDirs: harnessHomeStateDirs('codex-acp') },
+        command: 'codex-acp',
+      });
+      expect(args).not.toContain(gateRoot);
+    }
+  });
+
+  it('maps the gate root to exactly <home>/.no-mistakes', () => {
+    expect(MERGE_GATE_HOME_STATE_DIRS).toEqual(['.no-mistakes']);
+    expect(mergeGateStateDirs('/home/op')).toEqual(['/home/op/.no-mistakes']);
   });
 
   it('names only the configured harness\'s own $HOME state root', () => {
@@ -374,6 +442,37 @@ liveDescribe('the wrapper really stops the writes it says it stops', () => {
     const escapeCheckout = runWrapped(spec, `touch ${JSON.stringify(resolve(checkout, 'evil.txt'))}`);
     expect(escapeCheckout.status).not.toBe(0);
     expect(existsSync(resolve(checkout, 'evil.txt'))).toBe(false);
+  });
+
+  it('a corner can initialize the merge gate inside its namespace; a Room cannot', () => {
+    // A fixture stands in for ~/.no-mistakes so the proof never writes the
+    // operator's real gate state. This is exactly what the bind buys: the
+    // live repro died with "state repository directory is mounted read-only"
+    // on the gate's first write here.
+    const gateRoot = resolve(root, 'gate-home/.no-mistakes');
+    // The daemon creates the root BEFORE confinement (`sessionSpawnCommand`):
+    // a source path that does not exist makes `--bind-try` skip the bind
+    // entirely, and the gate would write into the private tmpfs instead.
+    mkdirSync(gateRoot, { recursive: true });
+    const cornerSpec = {
+      mode: 'edit' as const,
+      cwd: worktree,
+      worktreePath: worktree,
+      mergeGateStateDirs: [gateRoot],
+    };
+    const init = runWrapped(cornerSpec, `mkdir -p '${gateRoot}/repos' && touch '${gateRoot}/state.sqlite' && echo ok`);
+    expect(init.stdout.trim()).toBe('ok');
+    expect(existsSync(resolve(gateRoot, 'state.sqlite'))).toBe(true);
+
+    // The same root stays read-only through a Room's mount table: the gate is
+    // not part of a Room's surface.
+    const denied = runWrapped(
+      { mode: 'readonly', cwd: checkout, mergeGateStateDirs: [gateRoot] },
+      `touch '${gateRoot}/from-room'`,
+    );
+    expect(denied.status).not.toBe(0);
+    expect(denied.stderr).toMatch(/Read-only file system/);
+    expect(existsSync(resolve(gateRoot, 'from-room'))).toBe(false);
   });
 
   it('a corner can commit, because its git common directory is writable', () => {

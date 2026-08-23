@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildAgentEnv,
   loadBodyConfig,
+  parseSandboxMaskEnv,
   resolveCodegraphCommand,
   resolveReadonlyMcpCommand,
 } from './config.js';
@@ -98,12 +99,10 @@ describe('buildAgentEnv passthrough boundary', () => {
       HOME: '/home/operator',
       LANG: 'en_US.UTF-8',
       LC_ALL: 'en_US.UTF-8',
-      SSH_AUTH_SOCK: '/run/ssh-agent.sock',
       HTTPS_PROXY: 'http://proxy.test:3128',
       NODE_EXTRA_CA_CERTS: '/etc/ca.pem',
       ANTHROPIC_API_KEY: 'anthropic-key',
       CLAUDE_CONFIG_DIR: '/home/operator/.claude',
-      GITHUB_TOKEN: 'gh-token',
       BUZZ_DEV_MCP_BIN: '/usr/bin/buzz-dev-mcp',
       // A corner agent builds the user's project inside its worktree, so the
       // toolchain environment has to survive the boundary.
@@ -129,6 +128,37 @@ describe('buildAgentEnv passthrough boundary', () => {
     expect(agentEnv.UNRELATED_DEPLOY_SECRET).toBe('do-not-leak');
     expect(agentEnv.STRIPE_SECRET_KEY).toBeUndefined();
     expect(agentEnv.MISSING_VAR).toBeUndefined();
+  });
+
+  // Structural half of "an agent can never land on main without the owner's
+  // signed approval": sessions never hold a push-capable token. The denylist
+  // runs LAST, so neither a passthrough prefix (GH_, GITHUB_) nor an explicit
+  // operator extension can re-introduce one.
+  it('never hands a push-capable repository credential to an ACP child', () => {
+    const agentEnv = buildAgentEnv({
+      ...daemonEnv,
+      GH_TOKEN: 'gh-cli-token',
+      GH_ENTERPRISE_TOKEN: 'ghes-token',
+      GIT_ASKPASS: '/bin/true',
+    });
+
+    expect(agentEnv.GITHUB_TOKEN).toBeUndefined();
+    expect(agentEnv.GH_TOKEN).toBeUndefined();
+    expect(agentEnv.GH_ENTERPRISE_TOKEN).toBeUndefined();
+    // An ssh-agent socket is a keyring reachable through the mount namespace;
+    // handing one over is handing over push capability.
+    expect(agentEnv.SSH_AUTH_SOCK).toBeUndefined();
+  });
+
+  it('the credential denylist wins even when the operator explicitly extends the passthrough', () => {
+    const agentEnv = buildAgentEnv({
+      ...daemonEnv,
+      BUZZY_BODY_AGENT_ENV_PASSTHROUGH: 'GITHUB_TOKEN,GH_TOKEN,SSH_AUTH_SOCK',
+    });
+
+    expect(agentEnv.GITHUB_TOKEN).toBeUndefined();
+    expect(agentEnv.GH_TOKEN).toBeUndefined();
+    expect(agentEnv.SSH_AUTH_SOCK).toBeUndefined();
   });
 });
 
@@ -165,5 +195,32 @@ describe('resolveCodegraphCommand', () => {
   it('is best-effort: no override and nothing on PATH returns undefined instead of throwing', () => {
     expect(() => resolveCodegraphCommand({ PATH: '' })).not.toThrow();
     expect(resolveCodegraphCommand({ PATH: '' })).toBeUndefined();
+  });
+});
+
+describe('sandbox mask configuration', () => {
+  it('parses BUZZY_BODY_SANDBOX_MASK as a comma/newline-separated path list', () => {
+    expect(parseSandboxMaskEnv({ BUZZY_BODY_SANDBOX_MASK: '/srv/secrets, /etc/creds\n/home/op/.envs' })).toEqual([
+      '/srv/secrets',
+      '/etc/creds',
+      '/home/op/.envs',
+    ]);
+  });
+
+  it('is absent when unset or empty', () => {
+    expect(parseSandboxMaskEnv({})).toBeUndefined();
+    expect(parseSandboxMaskEnv({ BUZZY_BODY_SANDBOX_MASK: '  ' })).toBeUndefined();
+    expect(parseSandboxMaskEnv({ BUZZY_BODY_SANDBOX_MASK: ',,' })).toBeUndefined();
+  });
+
+  it('loadBodyConfig carries the mask list through', () => {
+    const config = loadBodyConfig({
+      workspaceRoot: '/tmp/workspace',
+      env: {
+        PATH: process.env.PATH ?? '',
+        BUZZY_BODY_SANDBOX_MASK: '/srv/operator-secrets',
+      },
+    });
+    expect(config.sandboxMaskPaths).toEqual(['/srv/operator-secrets']);
   });
 });

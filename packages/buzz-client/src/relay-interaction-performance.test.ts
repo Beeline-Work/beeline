@@ -119,8 +119,14 @@ describe('relay interaction latency probe', () => {
       // Child creates and parent Body-control links coalesce into the same
       // authenticated batch, preserving invite-only corner discovery without
       // adding a Room-list round trip.
-      'workspace-home-4-rooms-including-dm-discovery': { requests: 8 },
-      'room-or-dm-chat': { requests: 5 },
+      //
+      // +1 vs the historical counts: the FIRST communityMembers call lazily
+      // probes the auth service for this identity's key-succession chain
+      // (once per client, cached even when empty) so a replaced device key
+      // resolves as its Workspace roles instead of rendering as a stranger.
+      // The agents scenario never reads the roster, so it stays at 3.
+      'workspace-home-4-rooms-including-dm-discovery': { requests: 9 },
+      'room-or-dm-chat': { requests: 6 },
       agents: { requests: 3 },
     });
   }, 20_000);

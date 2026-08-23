@@ -1249,3 +1249,151 @@ describe('community invites', () => {
     await expect(redeemInvite(ctx(invitee), token)).rejects.toThrow('invite has expired');
   });
 });
+
+describe('succession-aware Workspace role resolution', () => {
+  const successor = createIdentity('successor');
+  // The predecessor key that used to hold the identity before replacement.
+  const predecessor = createIdentity('predecessor');
+
+  function stubRoster(options?: { members?: NostrEvent; admins?: NostrEvent }): void {
+    const members = options?.members ?? memberState();
+    const admins = options?.admins ?? adminState();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const kind = (filterFrom(init).kinds as number[])[0];
+        if (kind === KIND_CHANNEL_MEMBERS) return jsonResponse([members]);
+        if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([admins]);
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([communityCreate()]);
+        return jsonResponse([]);
+      }),
+    );
+  }
+
+  it('crowns the successor owner when the create author is a dead predecessor', async () => {
+    // The Workspace create event is immutable and still carries the
+    // predecessor's pubkey; without succession resolution the successor
+    // rendered as plain member forever.
+    const create = signed(predecessor, KIND_CREATE_GROUP, [
+      ['h', communityId],
+      ['name', 'Builders'],
+      ['channel_type', 'stream'],
+      [TAG_COMMUNITY, communityId],
+    ]);
+    const members = signed(predecessor, KIND_CHANNEL_MEMBERS, [
+      ['d', communityId],
+      ['p', predecessor.publicKey],
+    ]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const kind = (filterFrom(init).kinds as number[])[0];
+        if (kind === KIND_CHANNEL_MEMBERS) return jsonResponse([members]);
+        if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([]);
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([create]);
+        return jsonResponse([]);
+      }),
+    );
+
+    const roles = await communityMembers(ctx(successor), communityId, {
+      predecessors: [predecessor.publicKey],
+    });
+    expect(roles).toEqual([
+      { pubkey: successor.publicKey, role: 'owner' },
+    ]);
+  });
+
+  it('inherits an admin-listed predecessor role as admin', async () => {
+    const admins = signed(owner, KIND_CHANNEL_ADMINS, [
+      ['d', communityId],
+      ['p', owner.publicKey, 'owner'],
+      ['p', predecessor.publicKey, 'admin'],
+    ]);
+    const members = memberState(true);
+    stubRoster({ members, admins });
+
+    const roles = await communityMembers(ctx(successor), communityId, {
+      predecessors: [predecessor.publicKey],
+    });
+    const byPubkey = new Map(roles.map((member) => [member.pubkey, member.role]));
+    expect(byPubkey.get(successor.publicKey)).toBe('admin');
+    expect(byPubkey.has(predecessor.publicKey)).toBe(false);
+    expect(byPubkey.get(owner.publicKey)).toBe('owner');
+  });
+
+  it('renders only the current key when both keys appear in the projections', async () => {
+    const members = signed(owner, KIND_CHANNEL_MEMBERS, [
+      ['d', communityId],
+      ['p', owner.publicKey],
+      ['p', predecessor.publicKey],
+      ['p', successor.publicKey],
+    ]);
+    stubRoster({ members });
+
+    const roles = await communityMembers(ctx(successor), communityId, {
+      predecessors: [predecessor.publicKey],
+    });
+    const pubkeys = roles.map((member) => member.pubkey);
+    expect(pubkeys).toContain(successor.publicKey);
+    expect(pubkeys).not.toContain(predecessor.publicKey);
+  });
+
+  it('resolves roles exactly as published when no chain is available', async () => {
+    stubRoster({ members: memberState(true) });
+
+    for (const opts of [undefined, { predecessors: [] as string[] }]) {
+      const roles = await communityMembers(ctx(invitee), communityId, opts);
+      expect(roles).toEqual(
+        expect.arrayContaining([
+          { pubkey: owner.publicKey, role: 'owner' },
+          { pubkey: invitee.publicKey, role: 'member' },
+        ]),
+      );
+    }
+  });
+
+  it('honors explicit role tags on the kind:39002 projection, with kind:39001 overriding', async () => {
+    // This relay writes roles into p[2]; an admin tagged only there must not
+    // flatten to plain member. The 39001 admins projection stays the override
+    // source: outsider's plain-member 39002 tag is overridden by its 39001
+    // admin listing below.
+    const members = signed(owner, KIND_CHANNEL_MEMBERS, [
+      ['d', communityId],
+      ['p', owner.publicKey, 'owner'],
+      ['p', invitee.publicKey, 'admin'],
+      ['p', outsider.publicKey, 'member'],
+    ]);
+    // 39001 elevates outsider to admin, overriding the plain-member tag.
+    const admins = signed(owner, KIND_CHANNEL_ADMINS, [
+      ['d', communityId],
+      ['p', owner.publicKey, 'owner'],
+      ['p', outsider.publicKey, 'admin'],
+    ]);
+    stubRoster({ members, admins });
+
+    const roles = await communityMembers(ctx(invitee), communityId);
+    const byPubkey = new Map(roles.map((member) => [member.pubkey, member.role]));
+    expect(byPubkey.get(invitee.publicKey)).toBe('admin'); // from 39002 p[2]
+    expect(byPubkey.get(outsider.publicKey)).toBe('admin'); // 39001 overrides 39002
+  });
+
+  it('keeps the highest role when the viewer is listed below its inherited one', async () => {
+    const admins = signed(owner, KIND_CHANNEL_ADMINS, [
+      ['d', communityId],
+      ['p', owner.publicKey, 'owner'],
+      ['p', predecessor.publicKey, 'admin'],
+    ]);
+    const members = signed(owner, KIND_CHANNEL_MEMBERS, [
+      ['d', communityId],
+      ['p', owner.publicKey],
+      ['p', successor.publicKey], // listed plain while predecessor was admin
+    ]);
+    stubRoster({ members, admins });
+
+    const roles = await communityMembers(ctx(successor), communityId, {
+      predecessors: [predecessor.publicKey],
+    });
+    const byPubkey = new Map(roles.map((member) => [member.pubkey, member.role]));
+    expect(byPubkey.get(successor.publicKey)).toBe('admin');
+  });
+});

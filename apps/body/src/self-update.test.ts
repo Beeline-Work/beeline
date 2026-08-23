@@ -17,6 +17,7 @@ import {
   readInstalledBundleIdentity,
   readPendingUpdate,
   readUpdateState,
+  relaunchPreviousReleaseAfterFailedUpdate,
   rollbackToPreviousRelease,
   settlePendingUpdateOnStart,
   stageRelease,
@@ -448,6 +449,251 @@ describe('self-update end to end against a local fixture manifest', () => {
     expect(restarted).toBe(true);
     expect(existsSync(join(runtimeDir, 'update-request.json'))).toBe(false);
   });
+});
+
+describe('anchor-drift restart (a running daemon picks up an externally swapped install)', () => {
+  interface FixtureRelease { id: string; commit: string; version: string }
+
+  /** A release-based install (symlinked anchor) with pre-staged releases, like every post-first-update host. */
+  async function makeReleaseInstall(releases: FixtureRelease[], activeId: string): Promise<{ root: string; layout: BeelineInstallLayout }> {
+    const root = await tempDir('install-drift');
+    const libDir = join(root, 'prefix', 'lib', 'beeline');
+    const releasesRoot = join(root, 'prefix', 'lib', 'beeline-releases');
+    await mkdir(join(root, 'prefix', 'bin'), { recursive: true });
+    for (const release of releases) {
+      await mkdir(join(releasesRoot, release.id, 'lib', 'beeline'), { recursive: true });
+      await writeFile(join(releasesRoot, release.id, 'lib', 'beeline', 'beeline-cli.mjs'), STUB_CLI);
+      await writeFile(
+        join(releasesRoot, release.id, 'bundle.json'),
+        `${JSON.stringify({ schemaVersion: 1, name: 'beeline', platform: hostPlatformKey(), ...release }, null, 2)}\n`,
+      );
+    }
+    await symlink(join('beeline-releases', activeId), libDir);
+    return { root, layout: beelineInstallLayout({ BEELINE_LIB_DIR: libDir })! };
+  }
+
+  function makeManager(
+    layout: BeelineInstallLayout,
+    opts: Partial<ConstructorParameters<typeof SelfUpdateManager>[0]> & { idle: () => boolean },
+  ): { manager: SelfUpdateManager; logs: string[]; notices: string[]; restartRequested: () => boolean } {
+    const logs: string[] = [];
+    const notices: string[] = [];
+    let requested = false;
+    const manager = new SelfUpdateManager({
+      layout,
+      env: { BEELINE_UPDATE_MANIFEST_URL: 'https://invalid.invalid/dl/manifest.json' },
+      checkIntervalMs: 3_600_000,
+      initialDelayMs: 3_600_000,
+      idleTimeoutMs: 400,
+      idlePollMs: 20,
+      isIdle: opts.idle,
+      notify: (text) => {
+        notices.push(text);
+      },
+      requestRestart: () => {
+        requested = true;
+      },
+      logger: (line) => logs.push(line),
+      ...opts,
+    });
+    return { manager, logs, notices, restartRequested: () => requested };
+  }
+
+  async function waitDaemonStarted(runtimeDir: string): Promise<{ pid: number; commit?: string; entrypoint: string }> {
+    const startedPath = join(runtimeDir, 'daemon-started.json');
+    for (let waited = 0; waited < 15_000 && !existsSync(startedPath); waited += 100) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    if (!existsSync(startedPath)) throw new Error('replacement daemon never started');
+    return JSON.parse(await readFile(startedPath, 'utf8'));
+  }
+
+  it('detects the anchor flip while idle and hands over to a replacement resolved from the CURRENT symlink', async () => {
+    const oldR: FixtureRelease = { id: 'r-old', commit: 'c1old', version: '1.0.0' };
+    const newR: FixtureRelease = { id: 'r-new', commit: 'c2new', version: '1.1.0' };
+    const { root, layout } = await makeReleaseInstall([oldR, newR], oldR.id);
+    const runtimeDir = join(root, 'runtime');
+    await mkdir(runtimeDir, { recursive: true });
+    const configPath = join(runtimeDir, 'runtime.json');
+    await writeFile(configPath, '{}');
+    const { manager, logs, notices, restartRequested } = makeManager(layout, { idle: () => true });
+
+    // First tick captures what THIS process loaded from; nothing moves.
+    await manager.tickOnce();
+    expect(manager.restartPending).toBe(false);
+    expect(await readPendingUpdate(layout)).toBeUndefined();
+
+    // Someone ELSE swaps the install under us (another daemon's apply,
+    // `beeline update` without restart, install.sh, a manual rollback).
+    await activateRelease(layout, newR.id);
+    expect(await activeReleaseId(layout)).toBe(newR.id);
+
+    await manager.tickOnce();
+    expect(manager.restartPending).toBe(true);
+    expect(restartRequested()).toBe(true);
+
+    // One clear line per restart: old release, new release, why.
+    const driftLine = logs.find((line) => line.includes('self-update RESTART'));
+    expect(driftLine).toBeDefined();
+    expect(driftLine).toContain(oldR.id);
+    expect(driftLine).toContain(newR.id);
+    expect(driftLine).toContain('the install anchor moved under this daemon');
+
+    // Rollback journal written so a replacement that cannot boot falls back.
+    const pending = await readPendingUpdate(layout);
+    expect(pending?.releaseId).toBe(newR.id);
+    expect(pending?.previousReleaseId).toBe(oldR.id);
+    expect(pending?.from).toEqual({ commit: oldR.commit, version: oldR.version });
+    expect(notices.join('\n')).toContain('restarting now');
+
+    // Handover exec target must resolve through the CURRENT anchor.
+    const pid = await manager.launchReplacement(configPath);
+    expect(pid).toBeGreaterThan(0);
+    const started = await waitDaemonStarted(runtimeDir);
+    expect(started.pid).toBe(pid);
+    expect(started.commit).toBe(newR.commit);
+    expect(started.entrypoint).toContain(`/beeline-releases/${newR.id}/`);
+    try {
+      process.kill(started.pid, 'SIGTERM');
+    } catch {
+      // already gone
+    }
+  }, 60_000);
+
+  it('defers the drift restart while agent work is running, then restarts once idle', async () => {
+    const oldR: FixtureRelease = { id: 'd-old', commit: 'd1old', version: '2.0.0' };
+    const newR: FixtureRelease = { id: 'd-new', commit: 'd2new', version: '2.1.0' };
+    const { layout } = await makeReleaseInstall([oldR, newR], oldR.id);
+    let idle = false;
+    const { manager, logs, restartRequested } = makeManager(layout, { idle: () => idle });
+
+    await manager.tickOnce(); // capture loaded release
+    await activateRelease(layout, newR.id);
+
+    // Busy: the tick waits out its (short, test-tuned) idle budget, defers,
+    // and touches nothing live.
+    await manager.tickOnce();
+    expect(manager.restartPending).toBe(false);
+    expect(restartRequested()).toBe(false);
+    expect(await readPendingUpdate(layout)).toBeUndefined();
+    expect(logs.some((line) => line.includes('waits until the daemon is idle'))).toBe(true);
+
+    // Idle again: the very next tick hands over.
+    idle = true;
+    await manager.tickOnce();
+    expect(manager.restartPending).toBe(true);
+    expect(restartRequested()).toBe(true);
+    expect((await readPendingUpdate(layout))?.previousReleaseId).toBe(oldR.id);
+  }, 30_000);
+
+  it('keeps detecting drift even with auto-update disabled and no manifest reachable', async () => {
+    const oldR: FixtureRelease = { id: 'x-old', commit: 'x1old', version: '3.0.0' };
+    const newR: FixtureRelease = { id: 'x-new', commit: 'x2new', version: '3.1.0' };
+    const { layout } = await makeReleaseInstall([oldR, newR], oldR.id);
+    const { manager, restartRequested } = makeManager(layout, {
+      idle: () => true,
+      env: { BEELINE_UPDATE_DISABLE: '1', BEELINE_UPDATE_MANIFEST_URL: 'https://invalid.invalid/dl/manifest.json' },
+    });
+
+    await manager.tickOnce();
+    await activateRelease(layout, newR.id);
+    await manager.tickOnce();
+    // Executing stale code is never a desired state: disable governs fetching,
+    // not adopting an install that already moved.
+    expect(manager.restartPending).toBe(true);
+    expect(restartRequested()).toBe(true);
+    expect((await readPendingUpdate(layout))?.previousReleaseId).toBe(oldR.id);
+  }, 30_000);
+
+  it('arms unconfirmed state from the pending journal so a fatal boot failure can roll back', async () => {
+    const oldR: FixtureRelease = { id: 'u-old', commit: 'u1old', version: '4.0.0' };
+    const newR: FixtureRelease = { id: 'u-new', commit: 'u2new', version: '4.1.0' };
+    const { root, layout } = await makeReleaseInstall([oldR, newR], newR.id);
+    await writePendingUpdateFixture(layout, {
+      from: { commit: oldR.commit, version: oldR.version },
+      to: { commit: newR.commit, version: newR.version },
+      releaseId: newR.id,
+      previousReleaseId: oldR.id,
+      appliedAt: Date.now(),
+    });
+    const { manager } = makeManager(layout, {
+      idle: () => true,
+      pendingUnconfirmedReleaseId: newR.id,
+    });
+    expect(manager.hasUnconfirmedUpdate()).toBe(true);
+    manager.markUpdateConfirmed();
+    expect(manager.hasUnconfirmedUpdate()).toBe(false);
+    void root;
+  });
+
+  it('falls back to the previous release when the new one cannot boot', async () => {
+    const prevR: FixtureRelease = { id: 'f-prev', commit: 'f1prev', version: '5.0.0' };
+    const nextR: FixtureRelease = { id: 'f-next', commit: 'f2next', version: '5.1.0' };
+    const { root, layout } = await makeReleaseInstall([prevR, nextR], nextR.id);
+    const runtimeDir = join(root, 'runtime');
+    await mkdir(runtimeDir, { recursive: true });
+    const configPath = join(runtimeDir, 'runtime.json');
+    await writeFile(configPath, '{}');
+    await writePendingUpdateFixture(layout, {
+      from: { commit: prevR.commit, version: prevR.version },
+      to: { commit: nextR.commit, version: nextR.version },
+      releaseId: nextR.id,
+      previousReleaseId: prevR.id,
+      appliedAt: Date.now(),
+    });
+
+    const logs: string[] = [];
+    const pid = await relaunchPreviousReleaseAfterFailedUpdate(layout, configPath, {
+      logger: (line) => logs.push(line),
+    });
+
+    // Loud log naming both releases.
+    const fallbackLine = logs.find((line) => line.includes('self-update FALLBACK')) ?? '';
+    expect(fallbackLine).toContain(nextR.id);
+    expect(fallbackLine).toContain(prevR.id);
+    expect(fallbackLine).toContain('failed to boot');
+
+    // The anchor is restored AND the relaunched process runs the PREVIOUS
+    // release's own entrypoint.
+    expect(pid).toBeGreaterThan(0);
+    expect(await activeReleaseId(layout)).toBe(prevR.id);
+    const started = await waitDaemonStarted(runtimeDir);
+    expect(started.commit).toBe(prevR.commit);
+    expect(started.entrypoint).toContain(`/beeline-releases/${prevR.id}/`);
+    try {
+      process.kill(started.pid!, 'SIGTERM');
+    } catch {
+      // already gone
+    }
+
+    // Rollback recorded in install state; journal consumed.
+    expect((await readUpdateState(layout)).lastRollback?.toReleaseId).toBe(prevR.id);
+    expect(await readPendingUpdate(layout)).toBeUndefined();
+  }, 60_000);
+
+  it('states plainly when a failed release has no previous release to fall back to', async () => {
+    const onlyR: FixtureRelease = { id: 's-only', commit: 's1only', version: '6.0.0' };
+    const { root, layout } = await makeReleaseInstall([onlyR], onlyR.id);
+    const runtimeDir = join(root, 'runtime');
+    await mkdir(runtimeDir, { recursive: true });
+    const configPath = join(runtimeDir, 'runtime.json');
+    await writeFile(configPath, '{}');
+    await writePendingUpdateFixture(layout, {
+      from: {},
+      to: { commit: onlyR.commit },
+      releaseId: onlyR.id,
+      previousReleaseId: undefined,
+      appliedAt: Date.now(),
+    });
+    const logs: string[] = [];
+    const pid = await relaunchPreviousReleaseAfterFailedUpdate(layout, configPath, {
+      logger: (line) => logs.push(line),
+    });
+    expect(pid).toBeUndefined();
+    expect(logs.join('\n')).toContain('no previous release');
+    expect(await activeReleaseId(layout)).toBe(onlyR.id); // untouched
+    expect(await readPendingUpdate(layout)).toBeUndefined();
+  }, 30_000);
 });
 
 describe('rollback helper', () => {

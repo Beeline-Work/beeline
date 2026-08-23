@@ -130,3 +130,119 @@ describe('durable transactional identity-link store', () => {
     await database.close();
   }, 30_000);
 });
+
+describe('key succession ledger', () => {
+  const directories: string[] = [];
+
+  afterEach(() => {
+    for (const directory of directories.splice(0))
+      rmSync(directory, { recursive: true, force: true });
+  });
+
+  async function buildStore(): Promise<AuthStore> {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-auth-succession-'));
+    directories.push(directory);
+    const database = new DurablePgliteDatabase(directory);
+    await database.client.waitReady;
+    const store = new AuthStore(database);
+    await store.migrate();
+    return store;
+  }
+
+  function ticket(hashSeed: string) {
+    const now = new Date();
+    return {
+      challenge: `challenge-${hashSeed}`,
+      community: 'relay.example',
+      issuer: 'https://github.com',
+      audience: 'beeline-mobile',
+      subject: 'github-user-1',
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 10 * 60_000),
+      attemptCount: 0,
+      consumedAt: null,
+      boundPubkey: null,
+    };
+  }
+
+  it('replace records a succession; chained replacements resolve to the newest key', async () => {
+    const store = await buildStore();
+    const oldKey = 'a'.repeat(64);
+    const midKey = 'b'.repeat(64);
+    const newKey = 'c'.repeat(64);
+
+    // Old key binds first.
+    await store.createTicket('1'.repeat(64), ticket('1'));
+    expect(
+      (await store.consumeTicketAndLink('1'.repeat(64), oldKey, new Date())).status,
+    ).toBe('linked');
+    // Candidate bind conflicts, then replace records the succession A→B.
+    await store.createTicket('2'.repeat(64), ticket('2'));
+    await store.consumeTicketAndLink('2'.repeat(64), midKey, new Date());
+    const replaced = await store.recoverConsumedTicketLink(
+      '2'.repeat(64),
+      midKey,
+      new Date(),
+    );
+    expect(replaced).toMatchObject({ status: 'replaced', previousPubkey: oldKey });
+
+    // Chain A→B resolves.
+    await expect(store.resolveCurrentPubkey('relay.example', oldKey)).resolves.toBe(midKey);
+    await expect(store.sameIdentity('relay.example', oldKey, midKey)).resolves.toBe(true);
+    await expect(store.successionPredecessors('relay.example', midKey)).resolves.toEqual([oldKey]);
+
+    // Second replacement chains B→C and the walk follows to C.
+    await store.createTicket('3'.repeat(64), ticket('3'));
+    await store.consumeTicketAndLink('3'.repeat(64), newKey, new Date());
+    await store.recoverConsumedTicketLink('3'.repeat(64), newKey, new Date());
+
+    await expect(store.resolveCurrentPubkey('relay.example', oldKey)).resolves.toBe(newKey);
+    await expect(store.resolveCurrentPubkey('relay.example', midKey)).resolves.toBe(newKey);
+    await expect(store.resolveCurrentPubkey('relay.example', newKey)).resolves.toBe(newKey);
+    await expect(store.sameIdentity('relay.example', oldKey, newKey)).resolves.toBe(true);
+    await expect(store.sameIdentity('relay.example', oldKey, 'd'.repeat(64))).resolves.toBe(false);
+    await expect(store.successionPredecessors('relay.example', newKey)).resolves.toEqual([
+      oldKey,
+      midKey,
+    ]);
+  }, 30_000);
+
+  it('re-replacing from the same key is idempotent (latest successor wins)', async () => {
+    const store = await buildStore();
+    const oldKey = 'a'.repeat(64);
+    await store.createTicket('1'.repeat(64), ticket('1'));
+    await store.consumeTicketAndLink('1'.repeat(64), oldKey, new Date());
+
+    const second = async (candidate: string, seed: string) => {
+      await store.createTicket(seed.repeat(64), ticket(seed));
+      await store.consumeTicketAndLink(seed.repeat(64), candidate, new Date());
+      await store.recoverConsumedTicketLink(seed.repeat(64), candidate, new Date());
+    };
+
+    await second('b'.repeat(64), '2');
+    // A third device key replaces again FROM the current link key (B→C); then
+    // a stale replay of B's recovery is refused as used, not re-recorded.
+    await second('c'.repeat(64), '3');
+    await expect(store.resolveCurrentPubkey('relay.example', oldKey)).resolves.toBe(
+      'c'.repeat(64),
+    );
+    await expect(store.successionPredecessors('relay.example', 'c'.repeat(64))).resolves.toEqual([
+      oldKey,
+      'b'.repeat(64),
+    ]);
+  }, 30_000);
+
+  it('a plain conflict without an explicit replace records no succession', async () => {
+    const store = await buildStore();
+    const oldKey = 'a'.repeat(64);
+    const otherKey = 'b'.repeat(64);
+    await store.createTicket('1'.repeat(64), ticket('1'));
+    await store.consumeTicketAndLink('1'.repeat(64), oldKey, new Date());
+    await store.createTicket('2'.repeat(64), ticket('2'));
+    expect(
+      (await store.consumeTicketAndLink('2'.repeat(64), otherKey, new Date())).status,
+    ).toBe('conflict');
+    await expect(store.resolveCurrentPubkey('relay.example', otherKey)).resolves.toBe(otherKey);
+    await expect(store.sameIdentity('relay.example', oldKey, otherKey)).resolves.toBe(false);
+  }, 30_000);
+});

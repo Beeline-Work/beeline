@@ -22,6 +22,7 @@ import {
   type PersonProfile,
 } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { loadSuccessionPredecessors } from '@/buzz/succession-chain';
 import { presenceMapFromSessionEvents } from '@/buzz/agent-presence';
 import type { BeelineThemeTokens } from '@/buzz/groknight';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
@@ -380,12 +381,17 @@ export default function BuzzAgents() {
           router.replace('/buzz/onboarding');
           return;
         }
-        const nextTransport = new BuzzRigTransport(currentIdentity, await getEffectiveRelayUrl());
+        const relayUrl = await getEffectiveRelayUrl();
+        const nextTransport = new BuzzRigTransport(currentIdentity, relayUrl);
         const client = await nextTransport.ensureClient();
         const { workspaces: available, activeWorkspaceId } = await prepareWorkspaceContext(
           client,
           currentIdentity.publicKey,
           requestedCommunityId,
+          undefined,
+          {
+            loadPredecessors: () => loadSuccessionPredecessors(relayUrl, currentIdentity),
+          },
         );
         const [listed, viewerProfile, allMembers] = await Promise.all([
           client.listAgents(activeWorkspaceId),

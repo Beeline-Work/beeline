@@ -42,6 +42,7 @@ import { authSessionOptions } from '@/auth/auth-session';
 import { saveLastViewedChannel } from '@/buzz/community-storage';
 import { createCommunityInviteUrl } from '@/buzz/community-invite';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
+import { loadSuccessionPredecessors } from '@/buzz/succession-chain';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { formatRoomParticipantTotal, roomParticipantPubkeys } from '@/buzz/room-participants';
 import { shortMemberNpub } from '@/buzz/member-display';
@@ -531,8 +532,17 @@ export default function BuzzChannels() {
           setTransport(nextTransport);
         }
         const client = await nextTransport.ensureClient();
+        const bootstrapOptions = {
+          loadPredecessors: () => loadSuccessionPredecessors(url, currentIdentity),
+        };
         const [workspaceContext, identityIsAgent] = await Promise.all([
-          prepareWorkspaceContext(client, currentIdentity.publicKey, requestedCommunity),
+          prepareWorkspaceContext(
+            client,
+            currentIdentity.publicKey,
+            requestedCommunity,
+            undefined,
+            bootstrapOptions,
+          ),
           client.isAgentIdentity(currentIdentity.publicKey),
         ]);
         const {
@@ -649,6 +659,14 @@ export default function BuzzChannels() {
           client,
           identity.publicKey,
           activeCommunityId ?? undefined,
+          undefined,
+          {
+            loadPredecessors: async () =>
+              loadSuccessionPredecessors(
+                relayUrl && relayUrl !== DEFAULT_RELAY_URL ? relayUrl : await getEffectiveRelayUrl(),
+                identity,
+              ),
+          },
         );
         await ensurePersonNameForWorkspace(client, active, identity.publicKey);
         if (!isCurrent()) return;

@@ -33,6 +33,7 @@ import { parseMembersEvent, tagValue, tagValues } from './parse.js';
 import {
   getChannelCommunityId,
   getChannelMetadata,
+  getChannelRole,
   isMember,
   setMemberRole,
   waitForRelayProjection,
@@ -425,9 +426,16 @@ export async function listCommunities(
   ctx: ChannelOpsContext,
   pubkey: string,
   limit = 50,
+  /**
+   * Predecessor keys of `pubkey`'s identity (key succession). Membership
+   * projections naming any of these keys also count as discovery hits, so a
+   * replaced device key still finds the Workspaces its predecessor held.
+   */
+  predecessors: readonly string[] = [],
 ): Promise<Community[]> {
+  const discoveryKeys = [pubkey, ...predecessors.filter((key) => key !== pubkey)];
   const memberEvents = await query(ctx, [
-    { kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS], '#p': [pubkey], limit },
+    { kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS], '#p': discoveryKeys, limit },
   ]);
   const ids = [
     ...new Set(
@@ -597,6 +605,82 @@ export async function repairCommunityRoomMemberships(
     throw new Error('Room membership repair requires current Workspace membership');
   }
   return assertCommunityMemberInChannels(ctx, communityId, pubkey);
+}
+
+const ROLE_RANK: Record<'member' | 'admin' | 'owner', number> = { member: 0, admin: 1, owner: 2 };
+
+/**
+ * Key-succession membership migration: make THIS key (the successor) a member
+ * of every Workspace and top-level Room its identity's predecessor keys
+ * belonged to, at the highest role any of them held there. Zero re-inviting:
+ * the successor self-joins under its own signature, so no other key's
+ * authority and no other member's record is touched — agents' memberships
+ * are never written.
+ *
+ * Corners keep the exact membership they inherited when opened, and DMs are
+ * immutable two-person Rooms — both are skipped, like Workspace joins do.
+ */
+export async function migrateSuccessorMemberships(
+  ctx: ChannelOpsContext,
+  predecessors: readonly string[],
+): Promise<string[]> {
+  const pubkey = ctx.identity.publicKey;
+  if (await isRegisteredAgentIdentity(ctx, pubkey)) return [];
+  const chain = [...new Set(predecessors)].filter(
+    (key) => /^[0-9a-f]{64}$/.test(key) && key !== pubkey,
+  );
+  if (chain.length === 0) return [];
+
+  // Candidate channels: anything whose membership/admin projection names a
+  // predecessor. One multi-key read; classification happens below.
+  const projections = await query(ctx, [
+    { kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS], '#p': chain, limit: 500 },
+  ]);
+  const candidateIds = [
+    ...new Set(
+      projections
+        .map((event) => tagValue(event, 'd') ?? tagValue(event, 'h'))
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  if (candidateIds.length === 0) return [];
+
+  // Classify candidates off their kind:9007 create events in one batched read.
+  const creates = await query(ctx, [
+    { kinds: [KIND_CREATE_GROUP], '#h': candidateIds, limit: Math.max(500, candidateIds.length * 5) },
+  ]);
+  const createByChannel = new Map<string, NostrEvent>();
+  for (const event of creates) {
+    const channelId = tagValue(event, 'h') ?? tagValue(event, 'd');
+    if (!channelId || createByChannel.has(channelId)) continue;
+    if (tagValues(event, 't').includes(TAG_DIRECT_MESSAGE)) continue; // DMs immutable
+    if (tagValue(event, TAG_PARENT)) continue; // corners inherit, never migrate
+    if (isCommunityCreate(event)) {
+      createByChannel.set(channelId, event); // Workspace itself
+      continue;
+    }
+    if (tagValue(event, TAG_COMMUNITY)) createByChannel.set(channelId, event); // top-level Room
+  }
+
+  const migrated: string[] = [];
+  for (const [channelId] of createByChannel) {
+    if ((await getChannelMetadata(ctx, channelId))?.archived) continue;
+    if (await isMember(ctx, channelId, pubkey)) continue;
+    let role: 'member' | 'admin' | 'owner' = 'member';
+    for (const predecessor of chain) {
+      const predecessorRole = await getChannelRole(ctx, channelId, predecessor).catch(() => null);
+      if (predecessorRole && ROLE_RANK[predecessorRole] > ROLE_RANK[role]) role = predecessorRole;
+    }
+    try {
+      await setMemberRole(ctx, channelId, pubkey, role);
+      await waitUntilMember(ctx, channelId, pubkey);
+      migrated.push(channelId);
+    } catch (error) {
+      if (isArchivedChannelError(error)) continue;
+      throw error;
+    }
+  }
+  return migrated;
 }
 
 /** Read community membership and overlay owner/admin roles from kind:39001. */

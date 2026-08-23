@@ -121,6 +121,9 @@ function cornerSummaryFromEvents(
       displayStatus: tagOf(event, 'display-status'),
       status: tagOf(event, 'status'),
       t: tagOf(event, 't'),
+      // Agent narration content — lets the oracle see a fresh unanswered
+      // question as the actionable artifact it is.
+      text: event.content,
     }),
   );
   // `closed` on a kind:39000 projection is NIP-29 invite-only access, not a

@@ -277,17 +277,19 @@ describe('Speaker identity', () => {
     expect(ledgerSource).toContain('<Byline byline={byline} />');
   });
 
-  it('gives a Corner zero byline names, whatever the roster says', () => {
+  it('attributes a Corner exactly like a Room — mark + name/You, per run', () => {
     const branch = ledgerBranch();
-    // `isCorner` alone, not `isCorner && isAgent`: `isAgent` needs the roster,
-    // and a Corner whose roster is empty or still loading used to print the
-    // signer's bare npub as a name.
-    expect(branch).toMatch(/name: isCorner \? undefined : isSelfSteer \? 'You' : voiceName/);
-    // A Corner is one agent plus you, so "not your own steer" *is* the agent —
-    // derived from the surface, never from a lookup that can come back empty.
-    expect(branch).toContain('const isCornerAgent = isCorner && !isSelfSteer');
-    expect(branch).toContain('const speaksAsAgent = isAgent || isCornerAgent');
-    expect(branch).toContain('luminous={speaksAsAgent}');
+    // Owner override (2026-08): corners hold several participants, so bare
+    // turns are indistinguishable there. The old zero-byline rule —
+    // `name: isCorner ? undefined : …` and the structural `isCornerAgent`
+    // assumption that mislabeled other people as the agent — is deleted; the
+    // shared projection helper (`buzz/ledger-attribution.ts`) decides voices
+    // for both surfaces.
+    expect(branch).not.toMatch(/name: isCorner \? undefined/);
+    expect(branch).not.toContain('const isCornerAgent');
+    expect(branch).toContain("name: isSelfSteer ? 'You' : voiceName");
+    expect(branch).toContain('role: speaksAsAgent ? \'agent\' : undefined');
+    // The corner header still names its administering agent in the top bar.
     expect(chatSource).toMatch(
       /isCorner && cornerAgentPubkey && \([\s\S]{0,400}testID="corner-header-agent"[\s\S]{0,400}<IdentityMark/,
     );

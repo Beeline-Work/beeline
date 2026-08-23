@@ -61,7 +61,7 @@ describe('production iOS capabilities', () => {
     );
 
     expect(config.extra?.app?.buzzyRelayUrl).toBe('https://usebeeline.app');
-    expect(config.extra?.app?.buzzyPushGatewayUrl).toBe('https://push.buzzrouter.com');
+    expect(config.extra?.app?.buzzyPushGatewayUrl).toBe('https://usebeeline.app/push');
     expect(config.ios?.associatedDomains).toEqual([
       'applinks:usebeeline.app',
       'applinks:relay.buzzrouter.com',

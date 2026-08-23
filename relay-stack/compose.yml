@@ -97,6 +97,8 @@ services:
 
   relay-front:
     image: nginx:1.27-alpine
+    extra_hosts:
+      - "push-host:host-gateway"
     ports:
       - "127.0.0.1:${BUZZ_HTTP_PORT:-3010}:3000"
     volumes:

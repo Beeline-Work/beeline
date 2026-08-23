@@ -584,6 +584,27 @@ export async function setChannelVisibility(
 }
 
 /**
+ * The relay stores a kind:9000 member-add but its kind:39002 projection never
+ * shows the member within the wait window. Upstream block/buzz honors
+ * member-adds only when authored by a room admin, so a self-join against a
+ * room with no living admin times out here BY DESIGN of the relay — a
+ * permanent verdict about that (room, key) pair, not a transient failure.
+ * Callers classify via isMembershipProjectionTimeout to degrade gracefully
+ * (e.g. succession migration skipping an orphaned room) while genuine
+ * publish/transport errors keep propagating.
+ */
+export class MembershipProjectionTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MembershipProjectionTimeoutError';
+  }
+}
+
+export function isMembershipProjectionTimeout(error: unknown): boolean {
+  return error instanceof MembershipProjectionTimeoutError;
+}
+
+/**
  * Poll until membership is visible (gotcha: accepted 9000 ≠ applied).
  * Throws if not listed within timeout.
  */
@@ -603,7 +624,7 @@ export async function waitUntilMember(
     { timeoutMs, intervalMs },
   );
   if (ok) return;
-  throw new Error(
+  throw new MembershipProjectionTimeoutError(
     `membership not visible for ${pubkey.slice(0, 12)}… in ${channelId} after ${timeoutMs}ms (assert on 39002, not publish ack)`,
   );
 }

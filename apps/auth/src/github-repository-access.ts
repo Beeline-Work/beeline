@@ -36,6 +36,18 @@ export interface GitHubRepositoryResolution {
  * Step 4 also produces the actionable answer for the uncovered case: the new
  * location is known but not granted to the App, which callers must surface
  * instead of a generic not_granted.
+ *
+ * DEPENDENCY — step 4 only sees a transfer when some installation already
+ * covers the destination. GitHub answers GET /repos/{old} with its rename
+ * redirect only for viewers that can see the repository at its NEW location,
+ * and an App JWT alone reads public repositories; a PRIVATE repo transferred
+ * to an account whose install was never recorded yields a bare 404, so
+ * `movedTo` stays unknown and step 4 learns nothing. That is why the
+ * room-token refusal path reconciles installations BEFORE giving up on an
+ * unknown destination: reconcile records the unrecorded install via the App
+ * JWT enumeration, and step 2's id-heal then resolves the stale binding onto
+ * the transferred repository's immutable id under its new name — no redirect
+ * knowledge required.
  */
 export async function resolveGitHubRepositoryAccess(
   deps: GitHubRepositoryAccessDeps,

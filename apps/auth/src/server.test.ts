@@ -254,6 +254,14 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
   let githubSubject: string;
   let githubUserInstallations: number[] | Error;
   let githubAppInstallations: number[] | Error;
+  // Optional per-test detail for the App-JWT enumeration; when unset the
+  // default octocat/acme mapping above keeps older tests unchanged.
+  let githubAppInstallationDetail:
+    | Array<{ installationId: number; accountId: string; login: string; type: 'User' | 'Organization' }>
+    | undefined;
+  let githubAppRepositoryDetail:
+    | Record<number, Array<{ id: number; name: string; fullName: string }>>
+    | undefined;
   let githubInstallationListCalls: number;
   let githubRepositoryListError: Error | undefined;
   let githubInstallationAccess: boolean | Error;
@@ -275,6 +283,8 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     githubSubject = '123';
     githubUserInstallations = [];
     githubAppInstallations = [];
+    githubAppInstallationDetail = undefined;
+    githubAppRepositoryDetail = undefined;
     githubInstallationListCalls = 0;
     githubRepositoryListError = undefined;
     githubInstallationAccess = true;
@@ -328,6 +338,17 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
           listInstallations: async () => {
             githubInstallationListCalls += 1;
             if (githubAppInstallations instanceof Error) throw githubAppInstallations;
+            if (githubAppInstallationDetail) {
+              return githubAppInstallationDetail.map(({ installationId, accountId, login, type }) => ({
+                installationId,
+                account: {
+                  id: accountId,
+                  login,
+                  type,
+                  repositorySelection: 'all' as const,
+                },
+              }));
+            }
             return githubAppInstallations.map((installationId) => ({
               installationId,
               account: {
@@ -345,6 +366,14 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
           repositoryByFullName: async () => githubRepositoryLookup,
           listRepositories: async (installationId: number) => {
             if (githubRepositoryListError) throw githubRepositoryListError;
+            if (githubAppRepositoryDetail) {
+              return (githubAppRepositoryDetail[installationId] ?? []).map((repo) => ({
+                ...repo,
+                installationId,
+                remote: `https://github.com/${repo.fullName}.git`,
+                defaultBranch: 'main',
+              }));
+            }
             return [
               {
                 id: 42,
@@ -920,6 +949,168 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     const viaAlias = await injectRoomToken(agent);
     expect(viaAlias.statusCode).toBe(200);
     expect(viaAlias.json()).toMatchObject({ full_name: 'Beeline-Work/beeline' });
+  });
+
+  it('reconciles an unrecorded installation when a transfer refuses under a stale active install', async () => {
+    const owner = generateKeypair();
+    const agent = generateKeypair();
+    await bindGitHubIdentity(owner, 'p'.repeat(43));
+    // Production shape (2026-08): the personal installation is still recorded
+    // ACTIVE against the OLD owner, but the repository has transferred away
+    // from it — its snapshot rows are deactivated, not deleted.
+    await store.saveGitHubInstallation(
+      {
+        community: alphaTenant.community,
+        pubkey: owner.publicKey,
+        authorizedSubject: '123',
+        accountId: '123',
+        accountLogin: 'lunchboxfortwo',
+        accountType: 'User',
+        installationId: 77,
+        repositorySelection: 'selected',
+        status: 'active',
+        repositoryCount: 0,
+      },
+      new Date(),
+    );
+    await store.replaceGitHubRepositories(
+      alphaTenant.community,
+      77,
+      [
+        {
+          id: 42,
+          installationId: 77,
+          name: 'beeline',
+          fullName: 'lunchboxfortwo/beeline',
+          remote: 'https://github.com/lunchboxfortwo/beeline.git',
+          defaultBranch: 'main',
+        },
+      ],
+      new Date(),
+    );
+    await store.replaceGitHubRepositories(alphaTenant.community, 77, [], new Date());
+    // Meanwhile the org installation exists on GitHub but was never recorded,
+    // and the private repository's rename redirect is invisible to the App
+    // JWT alone — so movedTo stays empty and the refusal reads plain
+    // not_granted.
+    githubRepositoryLookup = undefined;
+    githubAppInstallations = [90];
+    githubAppInstallationDetail = [
+      { installationId: 90, accountId: '789', login: 'Beeline-Work', type: 'Organization' },
+    ];
+    githubAppRepositoryDetail = {
+      90: [{ id: 42, name: 'beeline', fullName: 'Beeline-Work/beeline' }],
+    };
+    // The user-token listing cannot verify organization installs (#355).
+    githubUserInstallations = new Error('GitHub user installations failed: HTTP 404');
+    roomTokenAuthority = async (_tenant, input) =>
+      input.agentPubkey === agent.publicKey && input.roomId === 'room-1'
+        ? { authorized: true, authorizedBy: owner.publicKey, fullName: 'lunchboxfortwo/beeline' }
+        : { authorized: false, reason: 'agent_not_room_member' };
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/auth/github/room-token',
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(agent.secretKey, agent.publicKey, `${alphaTenant.origin}/auth/github/room-token`, 'POST'),
+      },
+      payload: {
+        pubkey: agent.publicKey,
+        room_id: 'room-1',
+        relay_authorizations: Array.from({ length: 16 }, () =>
+          nip98AuthHeader(agent.secretKey, agent.publicKey, `${alphaTenant.origin}/query`, 'POST'),
+        ),
+      },
+    });
+
+    // Reconcile records the org install, then immutable-id healing resolves
+    // the stale binding onto the transferred repository under its new name.
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      token: 'room-installation-token',
+      installation_id: 90,
+      full_name: 'Beeline-Work/beeline',
+    });
+    expect(roomTokenMint).toEqual({ installationId: 90, repositoryIds: [42] });
+  });
+
+  it('rate-limits the failing-path reconciliation so repeated refusals cannot storm GitHub', async () => {
+    const owner = generateKeypair();
+    const agent = generateKeypair();
+    await bindGitHubIdentity(owner, 'q'.repeat(43));
+    // Same stale-active-install shape, but GitHub holds NO undiscovered
+    // installation: every request still refuses, and the App-JWT enumeration
+    // must run exactly once per rate-limit window.
+    await store.saveGitHubInstallation(
+      {
+        community: alphaTenant.community,
+        pubkey: owner.publicKey,
+        authorizedSubject: '123',
+        accountId: '123',
+        accountLogin: 'lunchboxfortwo',
+        accountType: 'User',
+        installationId: 77,
+        repositorySelection: 'selected',
+        status: 'active',
+        repositoryCount: 0,
+      },
+      new Date(),
+    );
+    await store.replaceGitHubRepositories(
+      alphaTenant.community,
+      77,
+      [
+        {
+          id: 42,
+          installationId: 77,
+          name: 'beeline',
+          fullName: 'lunchboxfortwo/beeline',
+          remote: 'https://github.com/lunchboxfortwo/beeline.git',
+          defaultBranch: 'main',
+        },
+      ],
+      new Date(),
+    );
+    await store.replaceGitHubRepositories(alphaTenant.community, 77, [], new Date());
+    githubRepositoryLookup = undefined;
+    roomTokenAuthority = async (_tenant, input) =>
+      input.agentPubkey === agent.publicKey && input.roomId === 'room-1'
+        ? { authorized: true, authorizedBy: owner.publicKey, fullName: 'lunchboxfortwo/beeline' }
+        : { authorized: false, reason: 'agent_not_room_member' };
+    const injectRoomToken = () =>
+      app.inject({
+        method: 'POST',
+        url: '/auth/github/room-token',
+        headers: {
+          host: alphaTenant.host,
+          authorization: nip98AuthHeader(agent.secretKey, agent.publicKey, `${alphaTenant.origin}/auth/github/room-token`, 'POST'),
+        },
+        payload: {
+          pubkey: agent.publicKey,
+          room_id: 'room-1',
+          relay_authorizations: Array.from({ length: 16 }, () =>
+            nip98AuthHeader(agent.secretKey, agent.publicKey, `${alphaTenant.origin}/query`, 'POST'),
+          ),
+        },
+      });
+
+    const first = await injectRoomToken();
+    expect(first.statusCode).toBe(403);
+    expect(first.json()).toEqual({
+      error: 'repository_not_granted',
+      message: 'Room repository is not granted to the Beeline GitHub App',
+    });
+    const second = await injectRoomToken();
+    expect(second.statusCode).toBe(403);
+    expect(githubInstallationListCalls).toBe(1);
+    const refusalLogs = logLines
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((line) => line.msg === 'GitHub Room token authority refused request');
+    expect(refusalLogs.length).toBe(2);
+    expect(refusalLogs.every((line) => line.repositoryAccessReason === 'not_granted')).toBe(true);
+    // No GitHub credential material ever reaches the log.
+    expect(logLines.join('\n')).not.toMatch(/Bearer ey|PRIVATE KEY|github-user-token/);
   });
 
   it('completes GitHub sign-in through a visible immediate app handoff', async () => {

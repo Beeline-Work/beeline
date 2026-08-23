@@ -419,13 +419,13 @@ const styles = StyleSheet.create((theme) => {
   backText: { ...Typography.default(), color: groknight.muted, fontSize: 22 },
   headerCopy: { flex: 1, minWidth: 0 },
   eyebrow: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     color: groknight.textMuted,
     fontSize: 11,
     lineHeight: 15,
   },
   title: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     color: groknight.textPrimary,
     fontSize: 20,
     lineHeight: 24,
@@ -451,7 +451,7 @@ const styles = StyleSheet.create((theme) => {
     letterSpacing: 0.6,
   },
   modelText: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     marginTop: 6,
     color: groknight.textSecondary,
     fontSize: 12,
@@ -464,7 +464,7 @@ const styles = StyleSheet.create((theme) => {
     borderWidth: 1,
     borderColor: groknight.borderStrong,
   },
-  errorText: { ...Typography.default(), color: groknight.textSecondary, fontSize: 12 },
+  errorText: { ...Typography.default(), fontFamily: groknight.proseRegular, color: groknight.textSecondary, fontSize: 12 },
   cornerRow: {
     minWidth: 0,
     minHeight: 64,
@@ -477,12 +477,12 @@ const styles = StyleSheet.create((theme) => {
   },
   cornerCopy: { flex: 1, minWidth: 0, marginLeft: 10 },
   cornerName: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     color: groknight.textPrimary,
     fontSize: 14,
   },
   agent: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     marginTop: 4,
     color: groknight.textMuted,
     fontSize: 10,
@@ -506,13 +506,13 @@ const styles = StyleSheet.create((theme) => {
   emptyState: { flex: 1, padding: 24, alignItems: 'center', justifyContent: 'center' },
   emptyGlyph: { ...Typography.default(), color: groknight.steel, fontSize: 28 },
   emptyTitle: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     marginTop: 10,
     color: groknight.textPrimary,
     fontSize: 16,
   },
   emptyText: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     marginTop: 6,
     color: groknight.textMuted,
     fontSize: 12,

@@ -31,7 +31,8 @@ import {
   wrapAgentCommand,
 } from './bwrap-sandbox.js';
 
-const BASE = ['--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp'];
+const ROOM_BASE = ['--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp'];
+const CORNER_BASE = ['--bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp'];
 
 describe('sandbox mount plan', () => {
   it('gives a Room its own harness state and nothing else — no checkout, no host path', () => {
@@ -71,7 +72,7 @@ describe('sandbox mount plan', () => {
     });
   });
 
-  it('gives a corner exactly its worktree, harness state, and git common dir', () => {
+  it('restores a corner worktree, harness state, and git common dir writable', () => {
     const plan = sandboxMountPlan({
       mode: 'edit',
       cwd: '/home/op/.beeline-corners/proj/c1',
@@ -93,6 +94,29 @@ describe('sandbox mount plan', () => {
     // The canonical checkout's WORKING TREE stays read-only; only its git dir
     // is writable, which is what a linked worktree commits through.
     expect(plan.writable).not.toContain('/srv/beeline/repositories/abc');
+    expect(plan.rootWritable).toBe(true);
+  });
+
+  it('makes corners writable by default and overlays only the hygiene denylist', () => {
+    const plan = sandboxMountPlan({
+      mode: 'edit',
+      cwd: '/corners/c1',
+      worktreePath: '/corners/c1',
+      gitCommonDir: '/repos/canonical/.git',
+      protectedPaths: ['/corners', '/repos/canonical', '/state/beeline'],
+      additionalWritablePaths: ['/state/beeline/rooms/r1/agent-private'],
+    });
+    expect(plan.rootWritable).toBe(true);
+    expect(plan.readOnly).toEqual(['/corners', '/repos/canonical', '/state/beeline']);
+    expect(plan.writable).toEqual([
+      '/corners/c1',
+      '/repos/canonical/.git',
+      '/state/beeline/rooms/r1/agent-private',
+    ]);
+    // ~/.cache, /tmp and toolchain locations need no allowlist entry: the root
+    // bind is writable and only the paths above are overlaid read-only.
+    expect(plan.writable).not.toContain('/home/op/.cache');
+    expect(plan.writable).not.toContain('/opt/toolchains');
   });
 
   it('deduplicates and sorts so the argv is stable across call order', () => {
@@ -115,9 +139,9 @@ describe('sandbox mount plan', () => {
     };
     expect(sandboxMountPlan({ ...spec, mode: 'edit' }).writable).toContain('/home/op/.no-mistakes');
     // The field is ignored in read-only mode: a Room never writes the gate.
-    expect(sandboxMountPlan({ ...spec, mode: 'readonly', worktreePath: undefined }).writable).toEqual(
-      [],
-    );
+    expect(
+      sandboxMountPlan({ ...spec, mode: 'readonly', worktreePath: undefined }).writable,
+    ).toEqual([]);
   });
 });
 
@@ -174,7 +198,7 @@ describe('bwrap argv construction', () => {
     });
     expect(command).toBe('/usr/bin/bwrap');
     expect(args).toEqual([
-      ...BASE,
+      ...ROOM_BASE,
       '--bind-try',
       '/srv/rooms/r1/agent-home/claude',
       '/srv/rooms/r1/agent-home/claude',
@@ -204,11 +228,21 @@ describe('bwrap argv construction', () => {
         cwd: '/corners/c1',
         worktreePath: '/corners/c1',
         gitCommonDir: '/repos/abc/.git',
+        protectedPaths: ['/corners', '/repos/abc', '/state/beeline'],
       },
       command: 'codex-acp',
     });
     expect(args).toEqual([
-      ...BASE,
+      ...CORNER_BASE,
+      '--ro-bind',
+      '/corners',
+      '/corners',
+      '--ro-bind',
+      '/repos/abc',
+      '/repos/abc',
+      '--ro-bind',
+      '/state/beeline',
+      '/state/beeline',
       '--bind-try',
       '/corners/c1',
       '/corners/c1',
@@ -266,7 +300,11 @@ describe('bwrap argv construction', () => {
                 worktreePath: '/corners/c1',
                 gitCommonDir: '/repos/abc/.git',
               }
-            : { mode, cwd: '/srv/checkout', harnessHomeStateDirs: harnessHomeStateDirs('codex-acp') },
+            : {
+                mode,
+                cwd: '/srv/checkout',
+                harnessHomeStateDirs: harnessHomeStateDirs('codex-acp'),
+              },
         command: 'codex-acp',
       });
       expect(args).not.toContain(gateRoot);
@@ -278,7 +316,7 @@ describe('bwrap argv construction', () => {
     expect(mergeGateStateDirs('/home/op')).toEqual(['/home/op/.no-mistakes']);
   });
 
-  it('names only the configured harness\'s own $HOME state root', () => {
+  it("names only the configured harness's own $HOME state root", () => {
     expect(harnessHomeStateDirs('/usr/local/bin/pi-acp', '/home/op')).toEqual(['/home/op/.pi']);
     expect(harnessHomeStateDirs('codex-acp', '/home/op')).toEqual(['/home/op/.codex']);
     expect(harnessHomeStateDirs('claude-agent-acp', '/home/op')).toEqual(['/home/op/.claude']);
@@ -463,23 +501,25 @@ describe('feature detection falls back rather than failing the daemon', () => {
 const bwrap = detectBwrapSandbox();
 const liveDescribe = bwrap.path ? describe : describe.skip;
 
-liveDescribe('the wrapper really stops the writes it says it stops', () => {
+liveDescribe('the wrapper enforces Room read-only and the corner hygiene denylist', () => {
   let root: string;
   let checkout: string;
   let worktree: string;
-  // A real path in the operator's home that must never come into existence.
-  const homeProbe = resolve(homedir(), '.beeline-sandbox-proof-should-never-exist');
+  const homeProbe = resolve(homedir(), '.beeline-sandbox-proof-corner-writable');
+  let siblingCorner: string;
 
   beforeAll(() => {
     root = mkdtempSync(resolve(tmpdir(), 'bwrap-proof-'));
     checkout = resolve(root, 'checkout');
-    worktree = resolve(root, 'corner');
-    spawnSync('mkdir', ['-p', checkout, worktree]);
+    worktree = resolve(root, 'corners/current');
+    siblingCorner = resolve(root, 'corners/sibling');
+    spawnSync('mkdir', ['-p', checkout, worktree, siblingCorner]);
     writeFileSync(resolve(checkout, 'README.md'), 'canonical\n');
   });
 
   afterAll(() => {
     if (root) rmSync(root, { recursive: true, force: true });
+    if (existsSync(homeProbe)) rmSync(homeProbe, { force: true });
   });
 
   const runWrapped = (spec: Parameters<typeof wrapAgentCommand>[0]['spec'], script: string) => {
@@ -513,21 +553,33 @@ liveDescribe('the wrapper really stops the writes it says it stops', () => {
     expect(runWrapped(spec, 'touch /tmp/scratch && echo ok').stdout.trim()).toBe('ok');
   });
 
-  it('a corner writes its own worktree but still cannot write outside it', () => {
-    const spec = { mode: 'edit' as const, cwd: worktree, worktreePath: worktree };
+  it('a corner writes generally but cannot write protected checkouts or sibling corners', () => {
+    const spec = {
+      mode: 'edit' as const,
+      cwd: worktree,
+      worktreePath: worktree,
+      protectedPaths: [checkout, resolve(root, 'corners')],
+    };
     expect(runWrapped(spec, 'touch ./work.txt && echo ok').stdout.trim()).toBe('ok');
     expect(existsSync(resolve(worktree, 'work.txt'))).toBe(true);
 
-    const escapeHome = runWrapped(spec, `touch ${JSON.stringify(homeProbe)}`);
-    expect(escapeHome.status).not.toBe(0);
-    expect(escapeHome.stderr).toMatch(/Read-only file system/);
-    expect(existsSync(homeProbe)).toBe(false);
+    const writeHome = runWrapped(spec, `touch ${JSON.stringify(homeProbe)} && echo ok`);
+    expect(writeHome.stdout.trim()).toBe('ok');
+    expect(existsSync(homeProbe)).toBe(true);
 
-    // A sibling checkout is not in this corner's mount table at all, so the
-    // write fails and nothing lands on the host either way.
-    const escapeCheckout = runWrapped(spec, `touch ${JSON.stringify(resolve(checkout, 'evil.txt'))}`);
+    const escapeCheckout = runWrapped(
+      spec,
+      `touch ${JSON.stringify(resolve(checkout, 'evil.txt'))}`,
+    );
     expect(escapeCheckout.status).not.toBe(0);
     expect(existsSync(resolve(checkout, 'evil.txt'))).toBe(false);
+
+    const escapeSibling = runWrapped(
+      spec,
+      `touch ${JSON.stringify(resolve(siblingCorner, 'evil.txt'))}`,
+    );
+    expect(escapeSibling.status).not.toBe(0);
+    expect(existsSync(resolve(siblingCorner, 'evil.txt'))).toBe(false);
   });
 
   it('a corner can initialize the merge gate inside its namespace; a Room cannot', () => {
@@ -544,9 +596,13 @@ liveDescribe('the wrapper really stops the writes it says it stops', () => {
       mode: 'edit' as const,
       cwd: worktree,
       worktreePath: worktree,
+      protectedPaths: [resolve(root, 'gate-home')],
       mergeGateStateDirs: [gateRoot],
     };
-    const init = runWrapped(cornerSpec, `mkdir -p '${gateRoot}/repos' && touch '${gateRoot}/state.sqlite' && echo ok`);
+    const init = runWrapped(
+      cornerSpec,
+      `mkdir -p '${gateRoot}/repos' && touch '${gateRoot}/state.sqlite' && echo ok`,
+    );
     expect(init.stdout.trim()).toBe('ok');
     expect(existsSync(resolve(gateRoot, 'state.sqlite'))).toBe(true);
 
@@ -576,7 +632,13 @@ liveDescribe('the wrapper really stops the writes it says it stops', () => {
     expect(gitCommonDir).toBe(resolve(repo, '.git'));
 
     const committed = runWrapped(
-      { mode: 'edit', cwd: linked, worktreePath: linked, gitCommonDir },
+      {
+        mode: 'edit',
+        cwd: linked,
+        worktreePath: linked,
+        gitCommonDir,
+        protectedPaths: [repo],
+      },
       'echo b > b.txt && git add b.txt && git commit -qm proof && git rev-parse --short HEAD',
     );
     expect(committed.stderr).toBe('');
@@ -585,7 +647,7 @@ liveDescribe('the wrapper really stops the writes it says it stops', () => {
     // …and the same corner without the git bind cannot, which is why that mount
     // is part of the table rather than an optimisation.
     const denied = runWrapped(
-      { mode: 'edit', cwd: linked, worktreePath: linked },
+      { mode: 'edit', cwd: linked, worktreePath: linked, protectedPaths: [repo] },
       'echo c > c.txt && git add c.txt && git commit -qm nope',
     );
     expect(denied.status).not.toBe(0);

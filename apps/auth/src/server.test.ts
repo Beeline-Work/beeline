@@ -322,6 +322,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
           }),
         } as unknown as GitHubOAuthClient,
         app: {
+          publicInstallUrl: 'https://github.test/apps/beeline/installations/new',
           installationUrl: (state: string) =>
             `https://github.test/apps/beeline/installations/new?state=${state}`,
           installationAccount: async (installationId: number) => ({
@@ -656,8 +657,11 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     });
     expect(ungranted.statusCode).toBe(403);
     expect(ungranted.json()).toEqual({
-      error: 'repository_not_granted',
-      message: 'Room repository is not granted to the Beeline GitHub App',
+      error: 'owner_grant_needed',
+      message:
+        'octocat/widget is waiting for its owner to grant Beeline access. Ask the repository owner to install the Beeline GitHub App: https://github.test/apps/beeline/installations/new',
+      install_url: 'https://github.test/apps/beeline/installations/new',
+      repository: 'octocat/widget',
     });
 
     const refusalLogs = logLines
@@ -665,11 +669,11 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       .filter((line) => line.msg === 'GitHub Room token authority refused request');
     expect(refusalLogs.map((line) => line.authorityReason)).toEqual([
       ...refusalCases.map(({ reason }) => reason),
-      'repository_not_granted',
+      'owner_grant_needed',
     ]);
     expect(refusalLogs.every((line) => line.agentPubkey && line.roomId)).toBe(true);
     expect(refusalLogs.at(-1)).toMatchObject({
-      repositoryAccessReason: 'not_granted',
+      authorityReason: 'owner_grant_needed',
       authorizedBy: ungrantedOwner.publicKey,
       repository: 'octocat/widget',
     });
@@ -1182,8 +1186,10 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     // definitive negative: the claim is refused and nothing is recorded.
     expect(response.statusCode).toBe(403);
     expect(response.json()).toEqual({
-      error: 'repository_not_granted',
-      message: 'Room repository is not granted to the Beeline GitHub App',
+      error: 'owner_grant_needed',
+      message: expect.stringContaining('is waiting for its owner to grant Beeline access'),
+      install_url: 'https://github.test/apps/beeline/installations/new',
+      repository: expect.any(String),
     });
     await expect(
       store.githubInstallation(alphaTenant.community, 90),
@@ -1288,10 +1294,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
 
     const first = await injectRoomToken();
     expect(first.statusCode).toBe(403);
-    expect(first.json()).toEqual({
-      error: 'repository_not_granted',
-      message: 'Room repository is not granted to the Beeline GitHub App',
-    });
+    expect(first.json()).toMatchObject({ error: 'owner_grant_needed' });
     const second = await injectRoomToken();
     expect(second.statusCode).toBe(403);
     expect(githubInstallationListCalls).toBe(1);
@@ -1299,7 +1302,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       .map((line) => JSON.parse(line) as Record<string, unknown>)
       .filter((line) => line.msg === 'GitHub Room token authority refused request');
     expect(refusalLogs.length).toBe(2);
-    expect(refusalLogs.every((line) => line.repositoryAccessReason === 'not_granted')).toBe(true);
+    expect(refusalLogs.every((line) => line.authorityReason === 'owner_grant_needed')).toBe(true);
     // No GitHub credential material ever reaches the log.
     expect(logLines.join('\n')).not.toMatch(/Bearer ey|PRIVATE KEY|github-user-token/);
   });
@@ -1737,11 +1740,210 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     });
 
     expect(response.statusCode).toBe(403);
-    expect(response.json()).toEqual({
-      error: 'repository_not_granted',
-      message: 'Room repository is not granted to the Beeline GitHub App',
-    });
+    expect(response.json()).toMatchObject({ error: 'owner_grant_needed' });
     expect(githubInstallationListCalls).toBe(1);
+  });
+
+  it('answers a never-granted repository with the typed owner-grant state and records the pending link', async () => {
+    const requester = generateKeypair();
+    await bindGitHubIdentity(requester, 'g'.repeat(43));
+    // The requester administers the Room and authors the binding, but the
+    // repository's OWNER has never installed the App — only the owner can.
+    roomTokenAuthority = async (_tenant, input) =>
+      input.agentPubkey === requester.publicKey && input.roomId === 'room-foreign'
+        ? { authorized: true, authorizedBy: requester.publicKey, fullName: 'bananaman/widget' }
+        : { authorized: false, reason: 'agent_not_room_member' };
+    const tokenUrl = `${alphaTenant.origin}/auth/github/room-token`;
+    const refused = await app.inject({
+      method: 'POST',
+      url: '/auth/github/room-token',
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(
+          requester.secretKey,
+          requester.publicKey,
+          tokenUrl,
+          'POST',
+        ),
+      },
+      payload: {
+        pubkey: requester.publicKey,
+        room_id: 'room-foreign',
+        relay_authorizations: Array.from({ length: 16 }, () =>
+          nip98AuthHeader(
+            requester.secretKey,
+            requester.publicKey,
+            `${alphaTenant.origin}/query`,
+            'POST',
+          ),
+        ),
+      },
+    });
+    expect(refused.statusCode).toBe(403);
+    expect(refused.json()).toEqual({
+      error: 'owner_grant_needed',
+      message:
+        'bananaman/widget is waiting for its owner to grant Beeline access. Ask the repository owner to install the Beeline GitHub App: https://github.test/apps/beeline/installations/new',
+      install_url: 'https://github.test/apps/beeline/installations/new',
+      repository: 'bananaman/widget',
+    });
+
+    // The bind-time probe surfaces the same typed state (with Room context so
+    // the pending link is recorded here too) — a pending state, not an error.
+    const accessUrl = `${alphaTenant.origin}/auth/github/repo-access/${requester.publicKey}?full_name=bananaman%2Fwidget&room_id=room-foreign`;
+    const probe = await app.inject({
+      method: 'GET',
+      url: `/auth/github/repo-access/${requester.publicKey}?full_name=bananaman%2Fwidget&room_id=room-foreign`,
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(
+          requester.secretKey,
+          requester.publicKey,
+          accessUrl,
+          'GET',
+        ),
+      },
+    });
+    expect(probe.statusCode).toBe(200);
+    expect(probe.json()).toMatchObject({
+      accessible: false,
+      grant_needed: true,
+      install_url: 'https://github.test/apps/beeline/installations/new',
+    });
+  });
+
+  it('flips a pending Room link active when the owner installs, announcing it once', async () => {
+    const requester = generateKeypair();
+    const owner = generateKeypair();
+    await bindGitHubIdentity(requester, 'h'.repeat(43));
+    roomTokenAuthority = async (_tenant, input) =>
+      input.agentPubkey === requester.publicKey && input.roomId === 'room-pending'
+        ? { authorized: true, authorizedBy: requester.publicKey, fullName: 'octocat/widget' }
+        : { authorized: false, reason: 'agent_not_room_member' };
+    const tokenUrl = `${alphaTenant.origin}/auth/github/room-token`;
+    const injectRefusal = () =>
+      app.inject({
+        method: 'POST',
+        url: '/auth/github/room-token',
+        headers: {
+          host: alphaTenant.host,
+          authorization: nip98AuthHeader(
+            requester.secretKey,
+            requester.publicKey,
+            tokenUrl,
+            'POST',
+          ),
+        },
+        payload: {
+          pubkey: requester.publicKey,
+          room_id: 'room-pending',
+          relay_authorizations: Array.from({ length: 16 }, () =>
+            nip98AuthHeader(
+              requester.secretKey,
+              requester.publicKey,
+              `${alphaTenant.origin}/query`,
+              'POST',
+            ),
+          ),
+        },
+      });
+    expect((await injectRefusal()).statusCode).toBe(403);
+
+    // The repository OWNER installs the App on their own account later. The
+    // installation webhook records coverage under the community...
+    await store.saveGitHubInstallation(
+      {
+        community: alphaTenant.community,
+        pubkey: owner.publicKey,
+        authorizedSubject: 'owner-subject',
+        accountId: '123',
+        accountLogin: 'octocat',
+        accountType: 'User',
+        installationId: 77,
+        repositorySelection: 'all',
+        status: 'active',
+        repositoryCount: 0,
+      },
+      new Date(),
+    );
+    const addedPayload = JSON.stringify({
+      action: 'added',
+      installation: { id: 77 },
+      repositories_added: [
+        {
+          id: 42,
+          name: 'widget',
+          full_name: 'octocat/widget',
+          clone_url: 'https://github.com/octocat/widget.git',
+          default_branch: 'main',
+        },
+      ],
+      repositories_removed: [],
+    });
+    const webhook = await app.inject({
+      method: 'POST',
+      url: '/auth/github/webhook',
+      headers: {
+        host: alphaTenant.host,
+        'content-type': 'application/json',
+        'x-github-event': 'installation_repositories',
+        'x-github-delivery': 'delivery-grant-1',
+        'x-hub-signature-256': `sha256=${createHmac('sha256', 'webhook-secret').update(addedPayload).digest('hex')}`,
+      },
+      payload: addedPayload,
+    });
+    expect(webhook.statusCode).toBe(202);
+
+    // ...and the pending link flips active with exactly one feed announcement.
+    // A duplicate grant (redelivery or reconcile) is idempotent.
+    const announcements = await store.githubRepoEvents('octocat/widget', 0, 100);
+    expect(
+      announcements.filter((event) => event.eventType === 'beeline_room_link'),
+    ).toHaveLength(1);
+    expect(announcements.at(-1)).toMatchObject({
+      eventType: 'beeline_room_link',
+      summary: 'Beeline access granted: octocat/widget is now linked.',
+    });
+    await store.activateGitHubRoomLinks(alphaTenant.community, ['octocat/widget'], new Date());
+    const stillOne = await store.githubRepoEvents('octocat/widget', 0, 100);
+    expect(stillOne.filter((event) => event.eventType === 'beeline_room_link')).toHaveLength(1);
+
+    // Once the grant is claimable by the community (the install callback or
+    // reconcile records the installation against a linked human — the
+    // requester here), the SAME room-token request succeeds with no re-entry.
+    await store.saveGitHubInstallation(
+      {
+        community: alphaTenant.community,
+        pubkey: requester.publicKey,
+        authorizedSubject: 'owner-subject',
+        accountId: '123',
+        accountLogin: 'octocat',
+        accountType: 'User',
+        installationId: 77,
+        repositorySelection: 'all',
+        status: 'active',
+        repositoryCount: 1,
+      },
+      new Date(),
+    );
+    await store.replaceGitHubRepositories(
+      alphaTenant.community,
+      77,
+      [
+        {
+          id: 42,
+          installationId: 77,
+          name: 'widget',
+          fullName: 'octocat/widget',
+          remote: 'https://github.com/octocat/widget.git',
+          defaultBranch: 'main',
+        },
+      ],
+      new Date(),
+    );
+    const granted = await injectRefusal();
+    expect(granted.statusCode).toBe(200);
+    expect(granted.json()).toMatchObject({ full_name: 'octocat/widget' });
   });
 
   it('does not claim a newly discovered user-owned installation the user cannot administer', async () => {

@@ -173,6 +173,18 @@ export function isDurableRoomJoinFailure(error: unknown): boolean {
 }
 
 /**
+ * The Room's repository binding names a repository the Beeline GitHub App
+ * does not cover yet: only the repository's OWNER can install the App, so the
+ * daemon parks the Room (transient retry) until that grant lands. The typed
+ * auth refusal carries a shareable install URL; this matcher only decides
+ * whether a later successful join deserves its "link went live" card.
+ */
+export function isOwnerGrantNeededFailure(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : String(error);
+  return /owner_grant_needed|waiting for its owner to grant beeline access/i.test(text);
+}
+
+/**
  * A destructive removal needs repeated, successful agreement from the relay.
  * One empty projection is not enough: an edge/cache cutover can return a
  * valid-but-incomplete answer immediately after a failed query.
@@ -221,6 +233,8 @@ export class WorkspaceSupervisor {
    * log line and its own retry cadence — never the whole discovery pass.
    */
   private readonly roomDiscoveryFailures = new Map<string, { retryAt: number; message: string }>();
+  /** Rooms whose join failed for a pending owner grant — one "went live" card on success. */
+  private readonly pendingOwnerGrantNotice = new Set<string>();
   /**
    * Rooms the relay has authoritatively reported as ARCHIVED, held inert for
    * this daemon process: never served again, never retried, and never even
@@ -751,6 +765,9 @@ export class WorkspaceSupervisor {
       retryAt: this.now() + retryMs,
       message,
     });
+    if (isOwnerGrantNeededFailure(error)) {
+      this.pendingOwnerGrantNotice.add(channelId);
+    }
     if (previous?.message === message)
       return { announced: false, retryLabel: '' };
     const retryLabel = durable ? '10 minutes' : '30 seconds';
@@ -870,6 +887,18 @@ export class WorkspaceSupervisor {
       recovering: false,
     });
     console.log(`[supervisor] serving Room ${channelId} from ${boundRepo.localPath}`);
+    // The Room was parked waiting for the repository OWNER to grant Beeline
+    // access (shareable install link, typed owner_grant_needed refusal) and
+    // the grant has landed — announce it once, through the ordinary
+    // agent-message path. Best-effort: a failed publish must never undo a
+    // successful join.
+    if (this.pendingOwnerGrantNotice.delete(channelId)) {
+      postAgentMessage(
+        channelId,
+        this.agent,
+        `Beeline access to ${boundRepo.repositoryId ?? boundRepo.repo} is live — this Room's repository link is complete.`,
+      ).catch(() => {});
+    }
   }
 
   private startConversationRoom(

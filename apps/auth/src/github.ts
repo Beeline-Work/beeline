@@ -182,6 +182,17 @@ export class GitHubAppClient {
   }
 
   /**
+   * The STATE-LESS public install URL for this App — the shareable link handed
+   * to a repository OWNER who does not use Beeline themselves. Unlike
+   * {@link installationUrl} it carries no flow state, so anyone can open it:
+   * completing the installation records through the normal webhook/reconcile
+   * path, never through the sharer's session.
+   */
+  get publicInstallUrl(): string {
+    return `https://github.com/apps/${this.#config.slug}/installations/new`;
+  }
+
+  /**
    * THIS App's own live configuration (GET /app, App-JWT authenticated):
    * the subscribed events and permission levels the drift check compares
    * against the required set.

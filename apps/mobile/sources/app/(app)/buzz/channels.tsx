@@ -1387,20 +1387,18 @@ export default function BuzzChannels() {
                         style={styles.cornerPeek}
                         testID={`room-corners-toggle-${item.id}`}
                       >
-                        {/* The mockup's bordered chip — count + fold chevron —
-                            not a bare number: the border is what makes it read
-                            as a pressable disclosure at a glance. */}
-                        <View style={styles.cornerPeekChip}>
-                          <Text
-                            style={[
-                              styles.cornerPeekCount,
-                              corners.length > 0 && row.attention && styles.cornerPeekCountLive,
-                            ]}
-                          >
-                            {corners.length > 0 ? corners.length : row.totalCorners}
-                          </Text>
+                        {/* Bare count + fold chevron, no container — the
+                            owner's call: the number IS the affordance. */}
+                        <Text
+                          style={[
+                            styles.cornerPeekCount,
+                            corners.length > 0 && row.attention && styles.cornerPeekCountLive,
+                          ]}
+                        >
+                          {corners.length > 0 ? corners.length : row.totalCorners}
+                          {'\u2009'}
                           <Text style={styles.cornerPeekChevron}>{expanded ? '⌃' : '⌄'}</Text>
-                        </View>
+                        </Text>
                       </TouchableOpacity>
                     )}
                   </View>
@@ -1756,18 +1754,6 @@ const styles = StyleSheet.create((theme) => {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
-  },
-  /* The mockup's disclosure chip: hairline border, tight radius, count and
-   * fold chevron inside — the border is the affordance. */
-  cornerPeekChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    borderWidth: 1,
-    borderColor: groknight.border,
-    borderRadius: groknight.radius,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
   },
   cornerPeekCount: {
     ...Typography.mono(),

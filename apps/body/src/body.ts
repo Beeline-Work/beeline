@@ -115,8 +115,13 @@ import {
   isBeelineSlashCommand,
   beelineSlashCommandList,
 } from '@beeline/buzz-client';
-import type { NostrEvent } from '@beeline/nostr';
+import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 import type { BodyConfig, SessionMode } from './config.js';
+import { publishCritical } from './publish-delivery.js';
+import {
+  realignAnnouncement,
+  realignWorktreeOntoTarget,
+} from './realign.js';
 import type { RepositoryTruth, RepositoryTruthCheckpoint } from './repository-truth.js';
 import {
   AccessRefusalLimiter,
@@ -678,6 +683,13 @@ export interface SubchannelInfo {
   lastMergeNotReadyReason?: string;
   /** Exact signed human approval that authorizes landing and archive cleanup. */
   humanMergeApproval?: { id: string; reviewer: string; tip: string };
+  /** Approval event ids this corner has already answered with an
+   *  `buzz-merge-approval-ack` rejection (stale tip), so the honest reply is
+   *  sent once instead of once per maintenance tick. */
+  rejectedApprovalIds?: Set<string>;
+  /** Approval event id whose acceptance was confirmed published. Kept so a
+   *  re-found approval on a later poll does not republish the ack. */
+  ackedApprovalId?: string;
   /**
    * What the human was actually shown for review, captured when merge-ready
    * was published. The corner's worktree can no longer derive this once the
@@ -998,6 +1010,24 @@ export const RECOVERABLE_CORNER_FAILURE_TAGS: readonly string[][] = [
 export const CORNER_WORKTREE_UNRESTORABLE =
   'Agent restart could not restore this corner worktree; no input was discarded.';
 
+/** Shared tag block for an `APPROVAL_ACK_TAG` card. The caller adds its own
+ *  `decision` tag (`accepted`/`rejected`) plus any rejection specifics. */
+function approvalAckTags(
+  agentPubkey: string,
+  approval: NostrEvent,
+  target: NonNullable<SubchannelInfo['mergeTarget']>,
+): string[][] {
+  return [
+    ['t', APPROVAL_ACK_TAG],
+    ['approval', approval.id],
+    ['reviewer', approval.pubkey],
+    ['repo', target.repo],
+    ['branch', target.branch],
+    ['tip', target.tip],
+    ['agent', agentPubkey],
+  ];
+}
+
 /**
  * A corner whose approved repository can no longer be resolved. Same family as
  * `CORNER_WORKTREE_UNRESTORABLE`: a restart-time card about a durable
@@ -1025,6 +1055,11 @@ function cornerAlreadyReported(events: readonly NostrEvent[], prefix: string): b
 
 export const MERGE_READY_TAG = 'merge-ready';
 export const LANDED_TAG = 'landed';
+/** Wire tag for the approval-acknowledgement card the daemon publishes when it
+ *  consumes an approval — accepted, or rejected with the plain reason (a stale
+ *  tip must never hang the app's DELIVERING state). Projected by
+ *  `buzz-event-projection.ts` as `ChatEventProjection.approvalAck`. */
+export const APPROVAL_ACK_TAG = 'buzz-merge-approval-ack';
 /** Deterministic host recap posted to the PARENT Room when a corner's work lands. */
 export const LAND_SUMMARY_TAG = 'land-summary';
 /**
@@ -1851,6 +1886,12 @@ export class Body {
    * this set rather than leaving a timer holding the daemon open.
    */
   private readonly pendingCiWatches = new Set<Promise<void>>();
+  /** (repoId:tip) lands this process has already realigned corners for. */
+  private readonly realignedLandKeys = new Set<string>();
+  /** Per-Room last-scan timestamp for the foreign merge-land watch. */
+  private readonly foreignLandScanAt = new Map<string, number>();
+  /** Newest foreign land event cursor already examined, per Room. */
+  private readonly foreignLandCursor = new Map<string, number>();
   private readonly ciWatchAbort = new AbortController();
   /** Test seam: poll cadence/transport for the CI watch. Never set in production. */
   private ciWatchOptions: Partial<CiWatchOptions> = {};
@@ -5946,21 +5987,70 @@ export class Body {
     // first would let a failed publish here poison this function's own
     // idempotency guard above (`info.mergeTarget?.tip === tip`) into
     // silently skipping the retry a later call needs to make.
-    await postControlMessage(
-      info.subchannelId,
-      this.agentIdentity,
-      `Work is ready for human merge approval — ${tip.slice(0, 12)}…`,
-      [
-        ['t', MERGE_READY_TAG],
-        ['status', 'ready'],
-        ['repo', target.repo],
-        ['branch', target.branch],
-        ['feature', info.featureBranch],
-        ['tip', target.tip],
-        ['agent', this.agentIdentity.publicKey],
-        ...(previewUrl ? [['preview', previewUrl]] : []),
-      ],
+    //
+    // This is THE lifecycle-critical publication: a single dropped attempt
+    // (the recurring deploy-bounce 502 windows outlasted publishEvent's own
+    // quick inner retries) left a finished corner with no review card at all —
+    // the panel read NOTHING READY TO MERGE YET forever. The outer loop here
+    // rides the transient outage out with bounded backoff, and if the budget
+    // is still exhausted it says so plainly and leaves `mergeTarget` unset so
+    // the next corner turn re-attempts from the top.
+    const reviewCardPublished = await publishCritical(
+      () =>
+        postControlMessage(
+          info.subchannelId,
+          this.agentIdentity,
+          `Work is ready for human merge approval — ${tip.slice(0, 12)}…`,
+          [
+            ['t', MERGE_READY_TAG],
+            ['status', 'ready'],
+            ['repo', target.repo],
+            ['branch', target.branch],
+            ['feature', info.featureBranch],
+            ['tip', target.tip],
+            ['agent', this.agentIdentity.publicKey],
+            ...(previewUrl ? [['preview', previewUrl]] : []),
+          ],
+        ),
+      {
+        label: `merge-ready card for corner ${info.subchannelId}`,
+        onRetry: (attempt, delayMs, error) =>
+          console.error(
+            `[body] merge-ready publish retrying for ${info.subchannelId} (attempt ${attempt} in ${delayMs}ms):`,
+            error,
+          ),
+        onGiveUp: (error) =>
+          console.error(
+            `[body] merge-ready publish could not be confirmed for ${info.subchannelId}; will re-attempt on the next turn/poll:`,
+            error,
+          ),
+      },
     );
+    if (!reviewCardPublished) {
+      info.lastMergeNotReadyReason =
+        'The review card could not be published — the relay was unreachable. It will be retried automatically.';
+      await publishCritical(
+        () =>
+          postControlMessage(
+            info.subchannelId,
+            this.agentIdentity,
+            "Couldn't publish the review card — the relay is unreachable. I'll keep retrying; your work is committed and safe.",
+            [
+              ...RECOVERABLE_CORNER_FAILURE_TAGS,
+              ['retry', 'auto' satisfies DeliveryRetryPosture],
+              ['repo', target.repo],
+              ['branch', target.branch],
+              ['tip', target.tip],
+            ],
+          ),
+        {
+          label: `merge-ready failure notice for corner ${info.subchannelId}`,
+          onGiveUp: (error) =>
+            console.error(`[body] merge-ready failure notice also refused for ${info.subchannelId}:`, error),
+        },
+      ).catch(() => undefined);
+      return false;
+    }
     info.mergeTarget = target;
     // A fresh review is a fresh land attempt: whatever the previous tip could
     // not do is no longer the standing condition being reported.
@@ -5969,7 +6059,17 @@ export class Body {
     return true;
   }
 
-  /** Find an exact-tip approval from a device-held human admin, never an agent. */
+  /**
+   * Find an exact-tip approval from a device-held human admin, never an agent.
+   *
+   * Every verifiable approval addressed to this corner gets a response, not
+   * just the one that matches the current review target: an approval naming
+   * an older tip is answered ONCE with a plain rejection (which tip it named,
+   * which tip is current) so the app's approve panel can resolve instead of
+   * spinning on DELIVERING forever. Silence was the defect: the event sat on
+   * the relay, verified fine against the repo+branch binding, and was skipped
+   * by nothing but a quiet `continue`.
+   */
   private async findHumanMergeApproval(
     info: SubchannelInfo,
   ): Promise<SubchannelInfo['humanMergeApproval']> {
@@ -5991,8 +6091,17 @@ export class Body {
       console.error('[body] human merge approval lookup failed closed:', error);
       return undefined;
     }
+    // Oldest first so a stale-tip reply goes out before (or alongside) the
+    // acceptance for a newer, matching approval from the same reviewer.
+    approvals.sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
+    const rejectedIds = (info.rejectedApprovalIds ??= new Set<string>());
     for (const approval of approvals) {
-      if (!verifyApproval(approval, approval.pubkey, target)) continue;
+      if (!verifyEvent(approval)) continue;
+      if (approval.pubkey === this.agentIdentity.publicKey) continue;
+      if (!verifyApproval(approval, approval.pubkey, target)) {
+        await this.rejectStaleTipApproval(info, target, approval, rejectedIds);
+        continue;
+      }
       const authority = await authorizeReviewer({
         pubkey: approval.pubkey,
         relay: this.agentRelay,
@@ -6005,9 +6114,88 @@ export class Body {
         reviewer: approval.pubkey,
         tip: target.tip,
       };
+      if (info.ackedApprovalId !== approval.id) {
+        const acked = await publishCritical(
+          () =>
+            postControlMessage(
+              info.subchannelId,
+              this.agentIdentity,
+              `Approval received — landing ${target.branch.replace(/^refs\/heads\//, '')} at ${target.tip.slice(0, 12)}…`,
+              [
+                ...approvalAckTags(this.agentIdentity.publicKey, approval, target),
+                ['decision', 'accepted'],
+              ],
+            ),
+          {
+            label: `approval ack for corner ${info.subchannelId}`,
+            onRetry: (attempt, delayMs, error) =>
+              console.error(
+                `[body] approval ack publish retrying (attempt ${attempt} in ${delayMs}ms):`,
+                error,
+              ),
+            onGiveUp: (error) =>
+              console.error(`[body] approval ack could not be published; will re-ack on next poll:`, error),
+          },
+        );
+        if (acked) {
+          // Mark only once confirmed published so a refused ack retries on a
+          // later tick instead of being silently dropped.
+          info.ackedApprovalId = approval.id;
+        }
+      }
       return info.humanMergeApproval;
     }
     return undefined;
+  }
+
+  /** Answer (once per event id) an authority-verified approval that binds to
+   *  this repo+branch but names a tip other than the current review target. */
+  private async rejectStaleTipApproval(
+    info: SubchannelInfo,
+    target: NonNullable<SubchannelInfo['mergeTarget']>,
+    approval: NostrEvent,
+    rejectedIds: Set<string>,
+  ): Promise<void> {
+    if (rejectedIds.has(approval.id)) return;
+    const tags = Object.fromEntries(approval.tags.filter((tag) => tag.length >= 2));
+    if (tags['t'] !== APPROVAL_MARKER) return;
+    if (tags['repo'] && tags['repo'] !== target.repo) return;
+    if (tags['branch'] && tags['branch'] !== target.branch) return;
+    if (!tags['tip'] || tags['tip'] === target.tip) return;
+    const authority = await authorizeReviewer({
+      pubkey: approval.pubkey,
+      relay: this.agentRelay,
+      channelId: info.subchannelId,
+      custody: 'device',
+    });
+    if (!authority.authorized) return;
+    const branch = target.branch.replace(/^refs\/heads\//, '');
+    const published = await publishCritical(
+      () =>
+        postControlMessage(
+          info.subchannelId,
+          this.agentIdentity,
+          `That approval named an older ${branch} tip (${String(tags['tip']).slice(0, 12)}), ` +
+            `and ${branch} has moved on to ${target.tip.slice(0, 12)} — it cannot be used as signed. ` +
+            'Nothing landed from it. Re-approve the current review card and it will land right away.',
+          [
+            ...approvalAckTags(this.agentIdentity.publicKey, approval, target),
+            ['decision', 'rejected'],
+            ['rejected-tip', String(tags['tip'])],
+            ...RECOVERABLE_CORNER_FAILURE_TAGS,
+            ['retry', 'blocked' satisfies DeliveryRetryPosture],
+          ],
+        ),
+      {
+        label: `stale-tip approval rejection for corner ${info.subchannelId}`,
+        onRetry: (attempt, delayMs, error) =>
+          console.error(
+            `[body] stale-tip rejection publish retrying (attempt ${attempt} in ${delayMs}ms):`,
+            error,
+          ),
+      },
+    );
+    if (published) rejectedIds.add(approval.id);
   }
 
   /**
@@ -6254,41 +6442,54 @@ export class Body {
       );
 
       // Both status publishes are announcements ABOUT a land that already
-      // happened, and neither is retryable (see above). A refused announcement
-      // is therefore logged and stepped over rather than allowed to cost this
-      // corner its recap — or to abort the loop and starve every corner behind
-      // it of its own land.
-      await postControlMessage(
-        info.subchannelId,
-        this.agentIdentity,
-        `Human-approved work landed on ${target.branch} at ${target.tip}.`,
-        [
-          ['t', LANDED_TAG],
-          ['status', 'ready'],
-          ['delivery', 'landed'],
-          ['approval', info.humanMergeApproval!.id],
-          ['reviewer', info.humanMergeApproval!.reviewer],
-          ['repo', target.repo],
-          ['branch', target.branch],
-          ['feature', info.featureBranch],
-          ['tip', target.tip],
-          ['agent', this.agentIdentity.publicKey],
-        ],
-      ).catch((error) =>
-        console.error(`[body] land status card refused for ${info.subchannelId}:`, error),
+      // happened, and neither is retryable by re-running the land (see above).
+      // They ARE worth riding out a transient relay outage for, though — each
+      // gets the bounded critical-publish loop, and a final refusal is logged
+      // and stepped over rather than allowed to cost this corner its recap —
+      // or to abort the loop and starve every corner behind it of its own land.
+      await publishCritical(
+        () =>
+          postControlMessage(
+            info.subchannelId,
+            this.agentIdentity,
+            `Human-approved work landed on ${target.branch} at ${target.tip}.`,
+            [
+              ['t', LANDED_TAG],
+              ['status', 'ready'],
+              ['delivery', 'landed'],
+              ['approval', info.humanMergeApproval!.id],
+              ['reviewer', info.humanMergeApproval!.reviewer],
+              ['repo', target.repo],
+              ['branch', target.branch],
+              ['feature', info.featureBranch],
+              ['tip', target.tip],
+              ['agent', this.agentIdentity.publicKey],
+            ],
+          ),
+        {
+          label: `land status card for ${info.subchannelId}`,
+          onGiveUp: (error) =>
+            console.error(`[body] land status card refused for ${info.subchannelId}:`, error),
+        },
       );
-      await this.postParentCornerStatus(
-        info,
-        'ready',
-        `Human-approved work landed at ${target.tip.slice(0, 12)} on ${target.branch.replace(/^refs\/heads\//, '')}.`,
-        [
-          ['delivery', 'landed'],
-          ['approval', info.humanMergeApproval!.id],
-          ['reviewer', info.humanMergeApproval!.reviewer],
-          ['tip', target.tip],
-        ],
-      ).catch((error) =>
-        console.error(`[body] land parent status refused for ${info.subchannelId}:`, error),
+      await publishCritical(
+        () =>
+          this.postParentCornerStatus(
+            info,
+            'ready',
+            `Human-approved work landed at ${target.tip.slice(0, 12)} on ${target.branch.replace(/^refs\/heads\//, '')}.`,
+            [
+              ['delivery', 'landed'],
+              ['approval', info.humanMergeApproval!.id],
+              ['reviewer', info.humanMergeApproval!.reviewer],
+              ['tip', target.tip],
+            ],
+          ),
+        {
+          label: `land parent status for ${info.subchannelId}`,
+          onGiveUp: (error) =>
+            console.error(`[body] land parent status refused for ${info.subchannelId}:`, error),
+        },
       );
       await this.recapLandedCorner(info, target.tip);
       landed++;
@@ -6555,12 +6756,166 @@ export class Body {
    * half may hold up the teardown that follows a land.
    */
   private async recapLandedCorner(info: SubchannelInfo, landedTip: string): Promise<void> {
+    // Post-merge auto-realign: the instant a land is confirmed, every OTHER
+    // open corner bound to this repository is brought up to date without its
+    // human having to ask each agent. Fire-and-forget — realign work must
+    // never hold up (or be able to fail) the recap and teardown that follow.
+    // Exactly-once per (repo, tip) lives inside.
+    if (info.boundRepo) {
+      void this.realignRepositoryAfterLand(info.boundRepo, landedTip);
+    }
     if (info.landSummaryPosted) return;
     const landSummaryId = await this.postCornerLandSummary(info, landedTip).catch((error) => {
       this.noteLandRecap(info, 'refused', errorText(error));
       return undefined;
     });
     this.watchLandedCommitCi(info, landedTip, landSummaryId);
+  }
+
+  /** Cadence for the foreign merge-land watch (one bounded read per Room). */
+  private static readonly FOREIGN_LAND_SCAN_MS = 60_000;
+  /** How far back the first scan after a restart looks. Bootstrap is
+   *  deliberately conservative: a realign is idempotent (an up-to-date corner
+   *  is a no-op), so re-examining one recent land costs nothing. */
+  private static readonly FOREIGN_LAND_BOOTSTRAP_WINDOW_S = 600;
+
+  /**
+   * Post-merge auto-realign: bring every OTHER open corner bound to this
+   * repository onto the newly landed target branch, without its human having
+   * to ask each agent.
+   *
+   * The canonical checkout the Room reads from is already refreshed by
+   * `refreshRepositoryTruth` at every land point, so what moves here is the
+   * corners themselves (`realign.ts`):
+   *
+   *   - clean, behind corners are rebased onto the new target automatically;
+   *   - conflicted / dirty corners ANNOUNCE that plainly instead of silently
+   *     diverging;
+   *   - corners with a live review target are left strictly alone — rebasing
+   *     would rewrite the exact tip a human's signed approval binds to.
+   *
+   * Exactly-once per (repository, landed tip), so the recap path calling
+   * this from both the land poll and the completion poll stays harmless.
+   */
+  private async realignRepositoryAfterLand(boundRepo: BoundRepo, landedTip: string): Promise<void> {
+    const repoKey = this.repoId(boundRepo);
+    const key = `${repoKey}:${landedTip}`;
+    if (this.realignedLandKeys.has(key)) return;
+    this.realignedLandKeys.add(key);
+    try {
+      await this.realignCornersForRepo(repoKey, boundRepo.targetBranch ?? 'refs/heads/main');
+    } catch (error) {
+      console.error(`[body] post-merge realign failed for ${repoKey}:`, error);
+    }
+  }
+
+  /** Realign every open corner of one repository; announcements ride the
+   *  bounded critical-publish loop. Returns how many corners were rebased. */
+  private async realignCornersForRepo(repoKey: string, targetBranch: string): Promise<number> {
+    let rebased = 0;
+    for (const other of this.subchannels.values()) {
+      if (other.archived) continue;
+      if (!other.boundRepo || this.repoId(other.boundRepo) !== repoKey) continue;
+      // A live review target IS an exact-tip approval waiting to land —
+      // rebasing it would invalidate the signed binding and strand the
+      // approval. The corner keeps its base until its human decides.
+      if (other.mergeTarget || other.humanMergeApproval) {
+        console.log(
+          `[body] realign skipped for corner ${other.subchannelId}: a review target is outstanding`,
+        );
+        continue;
+      }
+      const result = realignWorktreeOntoTarget(other.worktreePath, {
+        remoteName: other.boundRepo.remoteName ?? undefined,
+        targetBranch,
+      });
+      if (result.status === 'up-to-date') continue;
+      if (result.status === 'rebased') {
+        rebased++;
+        console.log(
+          `[body] realigned corner ${other.subchannelId} onto ${targetBranch} (${result.previousTip?.slice(0, 12)} -> ${(result.detail ?? '').slice(0, 12)})`,
+        );
+        continue;
+      }
+      const announcement = realignAnnouncement(result, other.featureBranch, targetBranch);
+      if (!announcement) continue;
+      console.log(`[body] realign announcement for ${other.subchannelId}: ${result.status}`);
+      await publishCritical(
+        () =>
+          postControlMessage(other.subchannelId, this.agentIdentity, announcement, [
+            ...RECOVERABLE_CORNER_FAILURE_TAGS,
+            ['t', 'corner-realign'],
+            ['status', 'needs-attention'],
+            ['display-status', 'needs-attention'],
+            ['retry', 'blocked' satisfies DeliveryRetryPosture],
+            ['branch', targetBranch],
+          ]),
+        {
+          label: `realign notice for corner ${other.subchannelId}`,
+          onGiveUp: (error) =>
+            console.error(`[body] realign notice refused for ${other.subchannelId}:`, error),
+        },
+      );
+      await publishCritical(
+        () =>
+          this.postParentCornerStatus(
+            other,
+            'needs-attention',
+            'Could not follow the latest merge on the target branch. Open corner for details.',
+          ),
+        {
+          label: `realign parent status for ${other.subchannelId}`,
+          onGiveUp: (error) =>
+            console.error(`[body] realign parent status refused for ${other.subchannelId}:`, error),
+        },
+      );
+    }
+    return rebased;
+  }
+
+  /**
+   * Watch THIS Room's transcript for merge-landed cards authored by ANOTHER
+   * agent serving the same repository, and realign our own corners in
+   * response. A repository can be served by several agents at once; when one
+   * lands, the others must follow without their humans asking each of them.
+   *
+   * One bounded newest-N read per Room per minute; events older than the
+   * cursor are ignored, and the first scan after a start only sets the cursor
+   * (bootstrap = "start from now", matching the GitHub-event watcher).
+   */
+  private async pollForeignMergeLands(channelId: string): Promise<void> {
+    const now = Date.now();
+    const last = this.foreignLandScanAt.get(channelId) ?? 0;
+    if (now - last < Body.FOREIGN_LAND_SCAN_MS) return;
+    this.foreignLandScanAt.set(channelId, now);
+    const events = await this.agentRelay.queryEvents([
+      { kinds: [9], '#h': [channelId], limit: 50 },
+    ]);
+    const chronological = [...events].sort((a, b) => a.created_at - b.created_at);
+    let cursor = this.foreignLandCursor.get(channelId) ?? Math.floor(now / 1000) - Body.FOREIGN_LAND_BOOTSTRAP_WINDOW_S;
+    const newestSeen =
+      chronological.length > 0 ? chronological[chronological.length - 1]!.created_at : cursor;
+    for (const event of chronological) {
+      if (event.created_at <= cursor) continue;
+      cursor = Math.max(cursor, event.created_at);
+      if (event.pubkey === this.agentIdentity.publicKey) continue;
+      const tags = Object.fromEntries(event.tags.filter((tag) => tag.length >= 2));
+      if (tags['t'] !== LANDED_TAG && tags['delivery'] !== 'landed') continue;
+      if (!tags['tip'] || !/^[0-9a-f]{40}$/.test(String(tags['tip']))) continue;
+      const repoTag = typeof tags['repo'] === 'string' ? tags['repo'] : undefined;
+      if (!repoTag) continue;
+      // Only repos THIS daemon actually serves corners for.
+      const served = [...this.subchannels.values()].some(
+        (info) => info.boundRepo && !info.archived && this.repoId(info.boundRepo) === repoTag,
+      );
+      if (!served) continue;
+      const branch = typeof tags['branch'] === 'string' ? tags['branch'] : undefined;
+      console.log(
+        `[body] foreign merge-land observed in ${channelId}: repo=${repoTag} tip=${String(tags['tip']).slice(0, 12)}; realigning own corners`,
+      );
+      await this.realignCornersForRepo(repoTag, branch ?? 'refs/heads/main');
+    }
+    this.foreignLandCursor.set(channelId, newestSeen);
   }
 
   /**
@@ -7020,6 +7375,12 @@ export class Body {
     // timeouts, so putting them first costs the member poll nothing.
     await guarded('direct merge approval poll', () => this.pollDirectRemoteApprovals());
     await guarded('merge completion poll', () => this.pollMergeCompletions());
+    // Another agent serving this repository may have landed a merge in this
+    // Room; our own corners must follow without being asked (post-merge
+    // auto-realign, cross-agent half).
+    if (boundRepo) {
+      await guarded('foreign merge-land watch', () => this.pollForeignMergeLands(channelId));
+    }
     await guarded('corner member poll', async () => {
       const results = await Promise.allSettled(
         [...this.subchannels.keys()].map((subchannelId) => this.pollMembers(subchannelId)),

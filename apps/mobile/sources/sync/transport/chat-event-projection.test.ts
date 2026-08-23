@@ -1189,3 +1189,59 @@ describe('a proposed target-branch change', () => {
     expect(transcriptMessages([projected.message!])[0]!.targetBranchProposal?.to).toBe('staging');
   });
 });
+
+describe('approval acknowledgement projection', () => {
+  const ackTags = (decision: string) => [
+    ['t', 'body-control'],
+    ['t', 'buzz-merge-approval-ack'],
+    ['decision', decision],
+    ['approval', 'approval-event-id'],
+    ['repo', 'Beeline-Work/beeline'],
+    ['branch', 'refs/heads/main'],
+    ['tip', 'c'.repeat(40)],
+  ];
+
+  it('projects an accepted ack as a system notice carrying the receipt', () => {
+    const event = raw('ack1', 'Approval received — landing main…', ackTags('accepted'), 10);
+    const projection = projectChatEvent(event, viewer);
+    expect(projection.approvalAck).toEqual({ approvalId: 'approval-event-id', decision: 'accepted', tip: 'c'.repeat(40) });
+    expect(projection.message?.isSystemNotice).toBe(true);
+  });
+
+  it('projects a rejected ack with the rejected tip so the panel can fail honestly', () => {
+    const event = raw(
+      'ack2',
+      'That approval named an older main tip…',
+      [...ackTags('rejected'), ['rejected-tip', 'd'.repeat(40)]],
+      11,
+    );
+    const projection = projectChatEvent(event, viewer);
+    expect(projection.approvalAck).toEqual({
+      approvalId: 'approval-event-id',
+      decision: 'rejected',
+      tip: 'c'.repeat(40),
+      rejectedTip: 'd'.repeat(40),
+    });
+  });
+
+  it('ignores an ack with an unknown decision', () => {
+    const event = raw('ack3', '?', ackTags('maybe'), 12);
+    expect(projectChatEvent(event, viewer).approvalAck).toBeUndefined();
+  });
+
+  it('marks the landed delivery card so DELIVERING resolves even without the archive notice', () => {
+    const event = raw(
+      'land',
+      'Human-approved work landed on refs/heads/main.',
+      [['t', 'body-control'], ['t', 'landed'], ['status', 'ready'], ['delivery', 'landed'], ['tip', 'c'.repeat(40)]],
+      13,
+    );
+    const projection = projectChatEvent(event, viewer);
+    expect(projection.deliveryLanded).toBe(true);
+  });
+
+  it('does not mark ordinary body-control chatter as a landed delivery', () => {
+    const event = raw('chat', 'Agent is thinking…', [['t', 'body-control'], ['status', 'working']], 14);
+    expect(projectChatEvent(event, viewer).deliveryLanded).toBeUndefined();
+  });
+});

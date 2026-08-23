@@ -91,6 +91,16 @@
  * canonical checkout's `.git`. Without it a corner could edit files but never
  * commit. The canonical checkout's *working tree* stays read-only in both modes.
  *
+ * A corner also gets {@link mergeGateStateDirs} — today exactly
+ * `~/.no-mistakes` — writably: an edit session drives the no-mistakes merge
+ * gate from inside its namespace, and although reaching the shared daemon
+ * socket works through the read-only mount (which is why gate health checks
+ * kept passing), initializing or driving the gate writes run state, locks and
+ * per-repo records under that root. Missing it reproduced as a corner dying
+ * with "state repository directory is mounted read-only" while every health
+ * check passed. A Room does NOT get this bind: the gate is not part of a
+ * Room's surface.
+ *
  * Network is deliberately untouched (no `--unshare-net`): every harness needs to
  * reach its model API.
  *
@@ -175,6 +185,30 @@ export function harnessHomeStateDirs(
   return [];
 }
 
+/**
+ * Tool state roots under `$HOME` that a CORNER (edit) session needs writably,
+ * beyond any one harness's own state ({@link HARNESS_HOME_STATE_DIRS}).
+ *
+ * Today exactly one entry: the no-mistakes merge gate keeps its pipeline state
+ * — repo registry, run database, daemon socket directory, lock files — under
+ * `~/.no-mistakes`. A sandboxed corner invokes that gate from inside its
+ * namespace regardless of which harness runs, so unlike the harness list this
+ * is keyed on no command: it is always bound for edit sessions.
+ *
+ * Deliberately a shared writable bind, NOT relocated per session via the tool's
+ * own `NM_HOME` override: the gate's daemon and run history are shared host
+ * state (one instance serves every repository and lane), and a per-corner home
+ * would leave every corner unable to reach that daemon and trying to spawn its
+ * own inside its namespace. Two ordinary terminals on this host share the same
+ * root; a corner is entitled to exactly that much.
+ */
+export const MERGE_GATE_HOME_STATE_DIRS = ['.no-mistakes'];
+
+/** The merge gate's `$HOME` state roots, absolute. See {@link MERGE_GATE_HOME_STATE_DIRS}. */
+export function mergeGateStateDirs(home: string = homedir()): string[] {
+  return MERGE_GATE_HOME_STATE_DIRS.map((dir) => resolve(home, dir));
+}
+
 /** Result of the one-shot start-up feature detection. */
 export interface BwrapAvailability {
   /** Absolute path to a `bwrap` that passed the self-test, when usable. */
@@ -220,6 +254,12 @@ export interface SandboxSessionSpec {
   tmpDir?: string;
   /** Git common directory backing a corner's linked worktree. */
   gitCommonDir?: string;
+  /**
+   * Tool state roots only an EDIT session may write — normally
+   * {@link mergeGateStateDirs}. Separate from the harness lists so a caller can
+   * supply a test home instead of the daemon's real one, like them.
+   */
+  mergeGateStateDirs?: string[];
 }
 
 /** `/tmp` is always a private tmpfs, so a path under it is the shadowed case. */
@@ -251,9 +291,9 @@ export function sandboxMountPlan(spec: SandboxSessionSpec): SandboxMountPlan {
   ];
   const writable = normalize(
     spec.mode === 'edit'
-      ? [spec.worktreePath, spec.gitCommonDir, ...harnessState]
+      ? [spec.worktreePath, spec.gitCommonDir, ...(spec.mergeGateStateDirs ?? []), ...harnessState]
       : // A Room writes no checkout and no host path — only its own harness
-        // state and the private /tmp.
+        // state and the private /tmp. The merge gate is not a Room surface.
         harnessState,
   );
   // Everything this session must still see through the /tmp tmpfs, minus what a
@@ -263,6 +303,7 @@ export function sandboxMountPlan(spec: SandboxSessionSpec): SandboxMountPlan {
     spec.cwd,
     spec.worktreePath,
     spec.gitCommonDir,
+    ...(spec.mergeGateStateDirs ?? []),
     ...(spec.harnessStateDirs ?? []),
     ...(spec.harnessHomeStateDirs ?? []),
   ]).filter((path) => isUnderTmp(path) && path !== '/tmp' && !writable.includes(path));
@@ -386,6 +427,6 @@ export function detectBwrapSandbox(
   }
   return {
     path: bwrapPath,
-    advisory: `harness OS sandbox ENABLED via ${bwrapPath}: every ACP child gets a read-only filesystem plus a private /tmp, writable only in its own harness state; a corner adds its worktree and git dir. Hygiene boundary, not confinement — it shapes where sessions write files and does not restrict other access this account has (e.g. sockets, container runtimes)`,
+    advisory: `harness OS sandbox ENABLED via ${bwrapPath}: every ACP child gets a read-only filesystem plus a private /tmp, writable only in its own harness state; a corner adds its worktree, git dir, and the merge gate's state root. Hygiene boundary, not confinement — it shapes where sessions write files and does not restrict other access this account has (e.g. sockets, container runtimes)`,
   };
 }

@@ -770,41 +770,73 @@ export class AuthStore {
         repository_count: number;
       }
     >(
-      `SELECT authorized_subject, account_id, account_login, account_type, account_avatar_url, installation_id,
+      `SELECT pubkey, authorized_subject, account_id, account_login, account_type, account_avatar_url, installation_id,
               repository_selection, status, repository_count
        FROM beeline_github_installations
        WHERE community = $1 AND pubkey = $2
        ORDER BY lower(account_login), installation_id`,
       [community, pubkey],
     );
-    return result.rows.map((row) => {
-      const installationId = Number(row.installation_id);
-      if (!Number.isSafeInteger(installationId) || installationId <= 0) {
-        throw new Error('stored GitHub installation id is invalid');
-      }
-      if (row.account_type !== 'User' && row.account_type !== 'Organization') {
-        throw new Error('stored GitHub account type is invalid');
-      }
-      if (row.repository_selection !== 'all' && row.repository_selection !== 'selected') {
-        throw new Error('stored GitHub repository selection is invalid');
-      }
-      if (row.status !== 'active' && row.status !== 'revoked' && row.status !== 'suspended') {
-        throw new Error('stored GitHub installation status is invalid');
-      }
-      return {
-        community,
-        pubkey,
-        authorizedSubject: row.authorized_subject,
-        accountId: row.account_id,
-        accountLogin: row.account_login,
-        accountType: row.account_type,
-        ...(row.account_avatar_url ? { accountAvatarUrl: row.account_avatar_url } : {}),
-        installationId,
-        repositorySelection: row.repository_selection,
-        status: row.status,
-        repositoryCount: row.repository_count,
-      };
-    });
+    return result.rows.map((row) => this.#gitHubInstallationRow(community, row));
+  }
+
+  #gitHubInstallationRow(community: string, row: QueryResultRow): GitHubInstallation {
+    const installationId = Number(row.installation_id);
+    if (!Number.isSafeInteger(installationId) || installationId <= 0) {
+      throw new Error('stored GitHub installation id is invalid');
+    }
+    if (row.account_type !== 'User' && row.account_type !== 'Organization') {
+      throw new Error('stored GitHub account type is invalid');
+    }
+    if (row.repository_selection !== 'all' && row.repository_selection !== 'selected') {
+      throw new Error('stored GitHub repository selection is invalid');
+    }
+    if (row.status !== 'active' && row.status !== 'revoked' && row.status !== 'suspended') {
+      throw new Error('stored GitHub installation status is invalid');
+    }
+    return {
+      community,
+      pubkey: String(row.pubkey),
+      authorizedSubject: row.authorized_subject as string | null,
+      accountId: String(row.account_id),
+      accountLogin: String(row.account_login),
+      accountType: row.account_type as 'User' | 'Organization',
+      ...(row.account_avatar_url ? { accountAvatarUrl: String(row.account_avatar_url) } : {}),
+      installationId,
+      repositorySelection: row.repository_selection as 'all' | 'selected',
+      status: row.status as 'active' | 'revoked' | 'suspended',
+      repositoryCount: Number(row.repository_count),
+    };
+  }
+
+  /** One recorded installation by id within a Workspace, regardless of owner. */
+  async githubInstallation(
+    community: string,
+    installationId: number,
+  ): Promise<GitHubInstallation | null> {
+    const result = await this.database.query<QueryResultRow & { pubkey: string }>(
+      `SELECT pubkey, authorized_subject, account_id, account_login, account_type, account_avatar_url,
+              installation_id, repository_selection, status, repository_count
+       FROM beeline_github_installations
+       WHERE community = $1 AND installation_id = $2`,
+      [community, installationId],
+    );
+    const row = result.rows[0];
+    return row ? this.#gitHubInstallationRow(community, row) : null;
+  }
+
+  /** Whether any ACTIVE recorded installation in the Workspace covers an account login. */
+  async githubActiveInstallationCoversAccount(
+    community: string,
+    login: string,
+  ): Promise<boolean> {
+    const result = await this.database.query<QueryResultRow>(
+      `SELECT 1 AS covered FROM beeline_github_installations
+       WHERE community = $1 AND lower(account_login) = lower($2) AND status = 'active'
+       LIMIT 1`,
+      [community, login],
+    );
+    return result.rows.length > 0;
   }
 
   async githubInstallationForPubkey(

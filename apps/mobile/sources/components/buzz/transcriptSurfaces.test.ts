@@ -301,6 +301,17 @@ describe('Speaker identity', () => {
     expect(ledgerBranch()).toMatch(/attributionContinued\s*\n\s*\? undefined/);
   });
 
+  it('never spends the prose byline on a collapsed tool/thought block', () => {
+    // Owner report (peddle room, 2026-08-23): in [tool-summary, prose] runs
+    // the byline was consumed by the tool block and the agent's text turn
+    // rendered bare. The screen must tell the shared attribution helper which
+    // rows are machine noise, so prose re-announces across them.
+    expect(chatSource).toContain('continuedSpeakerIds');
+    expect(chatSource).toMatch(
+      /isMachine:\s*message\.isAgentActivity/,
+    );
+  });
+
   it('leads every byline with the speaker’s EXISTING identity mark, not a new one', () => {
     const branch = ledgerBranch();
     // The mark is keyed on the message signer's pubkey — the same seed every

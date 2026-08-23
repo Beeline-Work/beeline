@@ -1077,6 +1077,10 @@ export default function BuzzChat() {
         visibleMessages.map((message) => ({
           id: message.id,
           speaker: ledgerSpeakerKey(message, knownAgentPubkeysFor(agentByPubkey)),
+          // A collapsed tool/thought run is mechanism, not prose: it may fold
+          // into the voice above it, but the prose below it must re-announce
+          // (its byline was never allowed to be spent on the tool block).
+          isMachine: message.isAgentActivity,
         })),
       ),
     [agentByPubkey, visibleMessages],

@@ -81,8 +81,8 @@ import {
   describeIdentity,
   readInstalledBundleIdentity,
   readPendingUpdate,
+  relaunchPreviousReleaseAfterFailedUpdate,
   repairInstallForwarders,
-  rollbackToPreviousRelease,
   settlePendingUpdateOnStart,
 } from './self-update.js';
 import {
@@ -460,16 +460,26 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   let confirmTimer: NodeJS.Timeout | undefined;
   if (layout) {
     const settle = await settlePendingUpdateOnStart(layout);
+    let pendingReleaseId: string | undefined;
     if (settle.kind === 'rolled-back') {
       console.error(
         `[body] self-update ROLLED BACK: bundle ${describeIdentity(settle.record.to)} never confirmed healthy; ` +
           `restored ${settle.record.previousReleaseId ?? 'previous release'}`,
       );
     } else if (settle.kind === 'pending') {
+      // Arm the unconfirmed state: a fatal supervisor failure inside the
+      // confirm window must roll back to the previous release and relaunch
+      // it, not crash-loop forever on a bundle that cannot boot. This covers
+      // BOTH restart origins — this daemon's own apply AND an externally
+      // flipped anchor adopted by the anchor-drift check.
+      pendingReleaseId = settle.record.releaseId;
       const remaining = Math.max(1_000, settle.confirmAt - Date.now());
       confirmTimer = setTimeout(() => {
         void confirmPendingUpdate(layout).then((confirmed) => {
-          if (confirmed) console.log('[body] self-update: new bundle confirmed healthy; rollback journal cleared');
+          if (confirmed) {
+            console.log('[body] self-update: new bundle confirmed healthy; rollback journal cleared');
+            selfUpdate?.markUpdateConfirmed();
+          }
         });
       }, remaining);
       confirmTimer.unref?.();
@@ -480,6 +490,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
       isIdle: () => supervisorRef?.isWorkspaceIdle() ?? true,
       notify: (text) => supervisorRef?.broadcastDaemonNotice(text) ?? Promise.resolve(),
       requestRestart: () => controller.abort(),
+      ...(pendingReleaseId ? { pendingUnconfirmedReleaseId: pendingReleaseId } : {}),
     });
     selfUpdate.start();
   }
@@ -515,19 +526,12 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         // case: restore the previous bundle and hand the process over to it.
         if (selfUpdate?.hasUnconfirmedUpdate()) {
           const journal = await readPendingUpdate(layout!);
-          if (journal?.previousReleaseId) {
-            await rollbackToPreviousRelease(layout!, journal.previousReleaseId);
-          }
-          await clearPendingUpdate(layout!);
-          const message = `Beeline self-update to ${describeIdentity(journal?.to)} failed to start; rolled back to ${journal?.previousReleaseId ?? 'the previous bundle'}.`;
+          const message = `Beeline self-update to ${describeIdentity(journal?.to)} failed to start; rolling back to ${journal?.previousReleaseId ?? 'the previous bundle'}.`;
           console.error(`[body] ${message}`);
           await selfUpdate.notifyRooms(message);
-          if (journal?.previousReleaseId) {
-            const pid = await selfUpdate.relaunchFromRelease(configPath, journal.previousReleaseId);
-            console.log(`[body] self-update: relaunched daemon on previous release (pid ${pid})`);
-          } else {
-            console.error('[body] self-update: no previous release recorded; leaving the current bundle in place');
-          }
+          await relaunchPreviousReleaseAfterFailedUpdate(layout!, configPath, {
+            logger: (line) => console.error(line),
+          });
           selfUpdate.markUpdateConfirmed();
           return;
         }

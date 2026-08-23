@@ -45,9 +45,16 @@ export type CornerSummary = {
   name: string;
   openerPubkey: string;
   /** The legacy word the transport derived the summary from. `null` means
-   * idle-without-finishing — which IS needs-human under THE three-word
-   * verdict (`cornerSuperState`); surfaces read the super-state, not this. */
+   * idle-without-finishing — which may be merely quiet OR a fresh unanswered
+   * agent question; `awaitingReply` distinguishes the two. Surfaces read the
+   * super-state, not this. */
   status: CornerStatus | null;
+  /** The corner waits on a person because its agent asked a question that
+   * nothing has superseded while it was still fresh (`resolveCornerState`'s
+   * fresh-ask rule) — the case whose legacy word is `null`. Deck tiering
+   * reads this to keep an asked corner in NEEDS YOU while a merely-idle
+   * stalled corner falls to IDLE. Absent = not an ask-wait. */
+  awaitingReply?: boolean;
   createdAt?: number;
   /** Most recent activity timestamp seen for this corner (seconds); used to
    * pick the corner that's actually being worked on over a stale/empty one. */

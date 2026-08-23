@@ -61,7 +61,6 @@ describe('Room list — Grok Mono Hull invariants', () => {
     for (const primitive of [
       'BrittlePress',
       'HullDeckMark',
-      'HullWaveSignal',
       'MonoButton',
       'PixelGateReveal',
       'PixelLoader',
@@ -120,7 +119,6 @@ describe('Room list — Grok Mono Hull invariants', () => {
       'attnRail',
       'cornerPeekCountLive',
       'fab',
-      'indexSignalCount',
       'rowPreviewAttention',
     ]);
     // Every accent style on a ROW is gated by the derived needs-you flag (the
@@ -212,7 +210,7 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(rowMark).toContain("justifyContent: 'center'");
     expect(rowMark).not.toMatch(/paddingTop/);
     expect(source).toContain(
-      '<View style={styles.rowMark}>\n                      <HullDeckMark state={deckState} />',
+      '<View style={styles.rowMark}>\n                <HullDeckMark state={deckState} />',
     );
     // The repo tag rides the title line via flex (marginLeft auto), not via
     // absolute placement.
@@ -306,11 +304,32 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(styleBlock(source, 'fab')).toMatch(/(?:width|minHeight): 44/);
   });
 
-  it('renders three non-sticky zones from the meaningful-event projection', () => {
+  it('renders exactly two inline tiers plus the collapsed FINISHED entry', () => {
+    // Owner spec 2026-08-23: attention-state and recency were semantically
+    // different tiers; the deck has exactly TWO section labels — NEEDS YOU
+    // (actionable corner work) then IDLE (every other visible Room, working
+    // ones included; the row marks already convey working vs quiet). No
+    // recency headings, no third top-level tier. The labels themselves are
+    // pinned by room-list-row.test.ts against the projection; this screen
+    // must render them verbatim from that one source, never re-derive a
+    // vocabulary of its own.
+    expect(source).toContain("from '@/buzz/room-list-row'");
+    expect(source).toContain('{section.title} · {section.data.length}');
     expect(source).toContain('<SectionList');
-    expect(source).toContain('sections={roomSections}');
+    expect(source).toContain('sections={roomSections.sections}');
     expect(source).toContain('stickySectionHeadersEnabled={false}');
-    expect(source).toContain("section.zone === 'working'");
+    expect(source).not.toContain("section.zone === 'working'");
+    for (const retired of ["'WORKING'", "'TODAY'", "'YESTERDAY'", "'EARLIER'"]) {
+      expect(source, `${retired} must not come back as a tier label`).not.toContain(retired);
+    }
+    // Finished Rooms are one-depth-hidden: a single collapsed header row at
+    // the bottom that expands to the finished list — never rendered inline by
+    // any tier.
+    expect(source).toContain('FINISHED ·');
+    expect(source).toContain('testID="finished-rooms-toggle"');
+    expect(source).toContain('accessibilityState={{ expanded: showFinishedRooms }}');
+    expect(source).toContain('showFinishedRooms &&');
+    expect(source).toContain('renderRoomEntry(entry)');
   });
 
   it('keeps the expansion as the only in-index corner list — no duplicate route link', () => {

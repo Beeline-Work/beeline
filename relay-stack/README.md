@@ -18,7 +18,9 @@ and packages it with `buzz-agent` and `buzz-dev-mcp` into
 `BUZZ_AGENT_BIN` and `BUZZ_DEV_MCP_BIN`, then `PATH`, and otherwise builds the
 pinned upstream source for the host platform.
 
-`darwin-arm64` is also a declared target. On a non-macOS build host, supply
+`darwin-arm64` is also a declared target for LOCAL builds (CI no longer builds
+it — see `docs/cli-bundle-channel.md`; a cross-built darwin bundle carries
+`verified: false` and cannot be published). On a non-macOS build host, supply
 both matching binaries:
 
 ```sh

@@ -183,6 +183,11 @@ import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
 import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
 import {
+  HeaderIdentitySlot,
+  HeaderMetaCaps,
+  HeaderMetaRow,
+} from '@/components/buzz/HeaderLadder';
+import {
   LEDGER_MARGINALIA_WIDTH,
   LedgerEntry,
   LedgerGhostLine,
@@ -3095,6 +3100,12 @@ export default function BuzzChat() {
     ],
   );
 
+  // The Workspace this Room belongs to, for the header's leading identity
+  // mark — the same mark the rail and the workspace drawer trigger draw.
+  const headerCommunity = activeCommunityId
+    ? (communities.find((community) => community.communityId === activeCommunityId) ?? null)
+    : null;
+
   if (channelCache?.messages === undefined && initialChannelCache?.messages === undefined) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
@@ -3148,7 +3159,7 @@ export default function BuzzChat() {
             because this mark and name are always on screen above them.
           */}
           {isCorner && cornerAgentPubkey && (
-            <View style={styles.cornerHeaderMark} testID="corner-header-agent">
+            <HeaderIdentitySlot testID="corner-header-agent">
               <IdentityMark
                 kind="agent"
                 seed={cornerAgentDisplay?.avatarSeed ?? cornerAgentPubkey}
@@ -3157,7 +3168,18 @@ export default function BuzzChat() {
                 size={26}
                 alive={sessionState === 'working' || processState === 'live'}
               />
-            </View>
+            </HeaderIdentitySlot>
+          )}
+          {!isCorner && !isDirectMessage && (
+            <HeaderIdentitySlot testID="room-header-workspace-mark">
+              <IdentityMark
+                kind="workspace"
+                seed={activeCommunityId ?? 'workspace-loading'}
+                avatarUrl={headerCommunity?.avatar}
+                name={headerCommunity?.name}
+                size={26}
+              />
+            </HeaderIdentitySlot>
           )}
           <TouchableOpacity
             accessibilityLabel={
@@ -3197,20 +3219,20 @@ export default function BuzzChat() {
                 style={styles.repoChip}
                 testID="room-repo-chip"
               >
-                <Text numberOfLines={1} style={styles.repoChipText}>
-                  ▢ {roomRepoChipLabel(roomRepository)}
-                </Text>
+                <HeaderMetaCaps testID="room-repo-chip-text">
+                  REPO · {roomRepoChipLabel(roomRepository)}
+                </HeaderMetaCaps>
               </TouchableOpacity>
             )}
             {isCorner ? (
-              <View style={styles.cornerHeaderStatusRow}>
+              <HeaderMetaRow>
                 <Text numberOfLines={1} style={styles.cornerHeaderAgent}>
                   {(cornerAgentDisplay?.name ?? 'AGENT').toUpperCase()}
                 </Text>
                 {cornerAgentPubkey && (
                   <AgentPresenceLight online={cornerAgentOnline} testID="corner-header-presence" />
                 )}
-                <Text numberOfLines={1} style={styles.cornerHeaderMeta} testID="corner-view-status">
+                <HeaderMetaCaps testID="corner-view-status">
                   {/*
                     Same canonical status word as the Room-list dropdown, the
                     Room chat card, and the standalone Corners list.
@@ -3221,14 +3243,14 @@ export default function BuzzChat() {
                   {participantsHydrated
                     ? `  ·  ${formatRoomParticipantTotal(roomParticipantTotal)}`
                     : ''}
-                </Text>
-              </View>
+                </HeaderMetaCaps>
+              </HeaderMetaRow>
             ) : (
-              <Text style={styles.headerMeta} numberOfLines={1}>
+              <HeaderMetaCaps testID="room-header-meta">
                 {participantsHydrated
                   ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ·  IN THIS ROOM  ›`
                   : 'LOADING MEMBERS'}
-              </Text>
+              </HeaderMetaCaps>
             )}
           </TouchableOpacity>
           {!parentChannelId && !isDirectMessage && !viewerIsAgent && !isArchived && (
@@ -4472,12 +4494,8 @@ const styles = StyleSheet.create((theme) => {
     color: groknight.muted,
   },
   cornerBackText: { ...Typography.mono(), color: groknight.textMuted },
-  // The single agent's faceted mark, stated once for the whole corner.
-  cornerHeaderMark: {
-    marginRight: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  // The single agent's faceted mark, stated once for the whole corner — the
+  // slot itself is the shared HeaderIdentitySlot primitive.
   headerCenter: {
     flex: 1,
     minHeight: 44,
@@ -4510,18 +4528,6 @@ const styles = StyleSheet.create((theme) => {
   },
   cornerChannelNameSkeleton: { width: 108 },
   repoChip: { alignSelf: 'flex-start', marginTop: 2, maxWidth: '100%' },
-  repoChipText: {
-    ...Typography.mono(),
-    fontSize: 11,
-    color: groknight.textMuted,
-  },
-  headerMeta: {
-    ...Typography.default(),
-    fontSize: 11,
-    lineHeight: 15,
-    color: groknight.textMuted,
-    marginTop: 2,
-  },
   cornerHeaderAgent: {
     ...Typography.mono('semiBold'),
     flexShrink: 0,
@@ -4529,20 +4535,6 @@ const styles = StyleSheet.create((theme) => {
     fontSize: 10,
     lineHeight: 14,
     letterSpacing: 0.7,
-  },
-  cornerHeaderMeta: {
-    ...Typography.mono(),
-    flexShrink: 1,
-    color: groknight.textMuted,
-    fontSize: 10,
-    lineHeight: 14,
-  },
-  cornerHeaderStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 3,
-    minWidth: 0,
   },
   addMembersButton: {
     width: 44,

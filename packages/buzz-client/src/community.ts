@@ -405,6 +405,26 @@ export async function setCommunityVisibility(
   throw new Error('Workspace visibility was not projected after 15000ms');
 }
 
+/**
+ * Highest Workspace role any key of the viewer's succession chain holds —
+ * create-author ownership included. Without predecessors this reduces to the
+ * previous single-key check, so no-chain callers resolve exactly as before.
+ */
+function projectedCommunityRoleForChain(
+  events: NostrEvent[],
+  communityId: string,
+  chainKeys: readonly string[],
+  ownerPubkey: string,
+): CommunityRole | undefined {
+  let best: CommunityRole | undefined;
+  for (const key of chainKeys) {
+    const role =
+      key === ownerPubkey ? 'owner' : projectedCommunityRole(events, communityId, key);
+    if (role && (best === undefined || ROLE_RANK[role] > ROLE_RANK[best])) best = role;
+  }
+  return best;
+}
+
 function projectedCommunityRole(
   events: NostrEvent[],
   communityId: string,
@@ -470,10 +490,12 @@ export async function listCommunities(
     if (!wanted.has(communityId)) continue;
     const community = toCommunity(events, metadataById.get(communityId));
     if (community) {
-      const viewerRole =
-        community.ownerPubkey === pubkey
-          ? 'owner'
-          : projectedCommunityRole(memberEvents, communityId, pubkey);
+      const viewerRole = projectedCommunityRoleForChain(
+        memberEvents,
+        communityId,
+        discoveryKeys,
+        community.ownerPubkey,
+      );
       byId.set(communityId, { ...community, ...(viewerRole ? { viewerRole } : {}) });
     }
   }
@@ -485,10 +507,12 @@ export async function listCommunities(
   const recovered = await Promise.all(exactIds.map((id) => getCommunity(ctx, id)));
   for (const community of recovered) {
     if (community) {
-      const viewerRole =
-        community.ownerPubkey === pubkey
-          ? 'owner'
-          : projectedCommunityRole(memberEvents, community.communityId, pubkey);
+      const viewerRole = projectedCommunityRoleForChain(
+        memberEvents,
+        community.communityId,
+        discoveryKeys,
+        community.ownerPubkey,
+      );
       byId.set(community.communityId, {
         ...community,
         ...(viewerRole ? { viewerRole } : {}),
@@ -735,10 +759,56 @@ export async function migrateSuccessorMemberships(
   return migrated;
 }
 
+export interface CommunityMembersOptions {
+  /**
+   * Predecessor keys of the calling identity (key succession, oldest first —
+   * as returned by `fetchIdentityPredecessors`). A predecessor that still
+   * holds a role in the projections — or authored the Workspace's immutable
+   * create event — transfers that role to the CURRENT key and is dropped
+   * from the returned roster entirely: after a device-key replacement the
+   * successor is the same person, and both keys must never render side by
+   * side. Omit (or pass empty) to resolve roles exactly as published.
+   */
+  predecessors?: readonly string[];
+}
+
+/** Collapse an optional projection role string onto the canonical vocabulary. */
+function normalizeProjectionRole(role?: string): CommunityRole {
+  return role === 'owner' ? 'owner' : role === 'admin' ? 'admin' : 'member';
+}
+
+/**
+ * Key-succession role inheritance over an assembled role map.
+ *
+ * For every predecessor of the viewer's identity that still holds a role,
+ * the CURRENT key inherits the highest of the two roles and the predecessor
+ * entry is removed — a replaced device key renders as one person, never two.
+ * Pure so both {@link communityMembers} and tests share one resolution rule;
+ * an absent/empty chain leaves the map untouched (today's behaviour).
+ */
+export function inheritRolesThroughSuccession(
+  roles: Map<string, CommunityRole>,
+  viewerPubkey: string,
+  predecessors: readonly string[],
+): void {
+  for (const predecessor of predecessors) {
+    if (!predecessor || predecessor === viewerPubkey) continue;
+    const inherited = roles.get(predecessor);
+    if (inherited === undefined) continue;
+    const current = roles.get(viewerPubkey);
+    if (current === undefined || ROLE_RANK[inherited] > ROLE_RANK[current]) {
+      roles.set(viewerPubkey, inherited);
+    }
+    // Never show both keys: this predecessor IS the viewer's past identity.
+    roles.delete(predecessor);
+  }
+}
+
 /** Read community membership and overlay owner/admin roles from kind:39001. */
 export async function communityMembers(
   ctx: ChannelOpsContext,
   communityId: string,
+  opts?: CommunityMembersOptions,
 ): Promise<CommunityMember[]> {
   const [memberEvents, adminEvents, community] = await Promise.all([
     queryGroupState(ctx, KIND_CHANNEL_MEMBERS, communityId),
@@ -750,7 +820,14 @@ export async function communityMembers(
   const roles = new Map<string, CommunityRole>();
   const latestMembers = [...memberEvents].sort((a, b) => b.created_at - a.created_at)[0];
   if (latestMembers) {
-    for (const member of parseMembersEvent(latestMembers)) roles.set(member.pubkey, 'member');
+    for (const member of parseMembersEvent(latestMembers)) {
+      // This relay writes explicit roles into the kind:39002 projection's
+      // p[2] slot; honor them when present instead of flattening everyone to
+      // plain member. Source precedence below: kind:39002 role tags are the
+      // base, kind:39001 admins override them, and the immutable create
+      // author is crowned owner last — unchanged relative ordering.
+      roles.set(member.pubkey, normalizeProjectionRole(member.role));
+    }
   }
   const latestAdmins = [...adminEvents].sort((a, b) => b.created_at - a.created_at)[0];
   if (latestAdmins) {
@@ -761,6 +838,7 @@ export async function communityMembers(
     }
   }
   roles.set(community.ownerPubkey, 'owner');
+  inheritRolesThroughSuccession(roles, ctx.identity.publicKey, opts?.predecessors ?? []);
   return [...roles.entries()].map(([pubkey, role]) => ({ pubkey, role }));
 }
 

@@ -1413,6 +1413,203 @@ describe('Room poll resilience', () => {
     }
   });
 
+  it('reconnects a dropped relay socket forever: re-subscribes, re-announces presence, and delivers post-reconnect events', async () => {
+    let socketConnected = true;
+    // Monotonic count of REQ subscriptions issued across every loop iteration
+    // (an iteration's own unsubscribe removes its handler from `latest`, so a
+    // plain array length would go DOWN on reconnect and hide the re-subscribe).
+    let subscribeCount = 0;
+    let latest: ((sessionEvent: { event: NostrEvent }) => void) | undefined;
+    const closeCallbacks = new Set<() => void>();
+    const fakeClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn(),
+      listMembers: vi.fn().mockResolvedValue([]),
+      sessionEventsSubscribe: vi.fn(
+        async (_channelId: string, handler: (sessionEvent: { event: NostrEvent }) => void) => {
+          subscribeCount += 1;
+          latest = handler;
+          return () => {
+            if (latest === handler) latest = undefined;
+          };
+        },
+      ),
+      onSocketClose: vi.fn((handler: () => void) => {
+        closeCallbacks.add(handler);
+        return () => {
+          closeCallbacks.delete(handler);
+        };
+      }),
+      get socket() {
+        return { connected: socketConnected };
+      },
+    };
+    mocks.createBuzzClient.mockReturnValue(fakeClient);
+
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'beeline-body-ws-reconnect-'));
+    const processed: NostrEvent[] = [];
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot,
+        relayBaseUrl: 'http://relay.test',
+        relayHost: 'relay.test',
+        relayScheme: 'http',
+        relayWsUrl: 'ws://relay.test',
+        autoApprovePermissions: true,
+      } as BodyConfig,
+      newIdentity('ws-reconnect-operator'),
+      newIdentity('ws-reconnect-agent'),
+      undefined,
+    );
+    Reflect.set(body, 'roomParticipants', async () => []);
+    Reflect.set(
+      body,
+      'processChannelRequestEvents',
+      async (_channelId: string, _b: unknown, _e: unknown, events: NostrEvent[]) => {
+        processed.push(...events);
+        return 0;
+      },
+    );
+    body.pollChannelRequests = async () => 0;
+
+    const waitFor = async (check: () => boolean, label: string, timeoutMs = 6_000) => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (check()) return;
+        await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+      }
+      throw new Error(`timed out waiting for ${label}`);
+    };
+
+    const abort = new AbortController();
+    const setStatus = vi.fn().mockResolvedValue(undefined);
+    const presence = { setStatus };
+    const loop = (
+      Reflect.get(body, 'runRoomPushLoop') as (...args: unknown[]) => Promise<void>
+    ).call(body, 'ws-reconnect-room', undefined, 'named-repository', presence, { signal: abort.signal }, async () => undefined);
+
+    try {
+      await waitFor(() => subscribeCount === 1, 'initial subscribe');
+      expect(setStatus).toHaveBeenCalledWith('online');
+
+      // The relay restarts: every Room's socket is severed at once.
+      socketConnected = false;
+      for (const handler of [...closeCallbacks]) handler();
+
+      // The push loop must dial again ON ITS OWN (retry-forever, bounded
+      // backoff), re-subscribe the REQ, and re-announce presence so Rooms see
+      // the agent come back.
+      await waitFor(() => subscribeCount >= 2, 're-subscribe after drop');
+      expect(setStatus.mock.calls.filter((call) => call[0] === 'online').length).toBeGreaterThanOrEqual(2);
+
+      // An event that arrives only AFTER the reconnection is delivered.
+      latest!({ event: { id: 'post-reconnect' } as NostrEvent });
+      await waitFor(
+        () => processed.some((event) => event.id === 'post-reconnect'),
+        'post-reconnect delivery',
+      );
+    } finally {
+      abort.abort();
+      await loop;
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('recovers when the socket drops DURING the subscribe window, not only after the wait begins', async () => {
+    let socketConnected = true;
+    let iteration = 0;
+    let subscribeCount = 0;
+    let closeHandler: (() => void) | undefined;
+    const fakeClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn(),
+      listMembers: vi.fn().mockResolvedValue([]),
+      sessionEventsSubscribe: vi.fn(
+        async (_channelId: string, _handler: (sessionEvent: { event: NostrEvent }) => void) => {
+          subscribeCount += 1;
+          return () => undefined;
+        },
+      ),
+      onSocketClose: vi.fn((handler: () => void) => {
+        closeHandler = handler;
+        return () => {
+          if (closeHandler === handler) closeHandler = undefined;
+        };
+      }),
+      get socket() {
+        return { connected: socketConnected };
+      },
+    };
+    mocks.createBuzzClient.mockReturnValue(fakeClient);
+
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'beeline-body-ws-race-'));
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot,
+        relayBaseUrl: 'http://relay.test',
+        relayHost: 'relay.test',
+        relayScheme: 'http',
+        relayWsUrl: 'ws://relay.test',
+        autoApprovePermissions: true,
+      } as BodyConfig,
+      newIdentity('ws-race-operator'),
+      newIdentity('ws-race-agent'),
+      undefined,
+    );
+    Reflect.set(body, 'processChannelRequestEvents', async () => 0);
+    body.pollChannelRequests = async () => 0;
+    // The drop lands inside iteration 2's subscribe window — between the
+    // socket lease and the REQ — where `notifyClose` used to fire into an
+    // empty observer set and leave this loop asleep on a dead socket forever
+    // (standalone serve has no supervisor watchdog to break such a wedge).
+    Reflect.set(body, 'roomParticipants', async () => {
+      iteration += 1;
+      if (iteration === 2) {
+        socketConnected = false;
+        closeHandler?.();
+      }
+      return [];
+    });
+
+    const waitFor = async (check: () => boolean, label: string, timeoutMs = 8_000) => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (check()) return;
+        await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+      }
+      throw new Error(`timed out waiting for ${label}`);
+    };
+
+    const abort = new AbortController();
+    const setStatus = vi.fn().mockResolvedValue(undefined);
+    const loop = (
+      Reflect.get(body, 'runRoomPushLoop') as (...args: unknown[]) => Promise<void>
+    ).call(body, 'ws-race-room', undefined, 'named-repository', { setStatus }, { signal: abort.signal }, async () => undefined);
+
+    try {
+      await waitFor(() => subscribeCount === 1, 'initial subscribe');
+      // A first clean restart ends iteration 1, so the loop enters the
+      // iteration whose subscribe window the drop below will land in.
+      closeHandler?.();
+      // Iteration 2 dies mid-window (its own roomParticipants read fires the
+      // close, before the old code ever registered its close observer); the
+      // loop must wake, back off briefly, and subscribe AGAIN (iteration 3)
+      // instead of sleeping forever on the dead socket.
+      await waitFor(() => subscribeCount >= 3, 'resubscribe after mid-subscribe-window drop');
+      expect(socketConnected).toBe(false);
+    } finally {
+      abort.abort();
+      await loop;
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   it('isRoomAgentOnline seeds once per Room via a query, then updates live off agentPresenceSubscribe with no further queries', async () => {
     let presenceHandler: ((sessionEvent: { event: NostrEvent }) => void) | undefined;
     const unsubscribe = vi.fn();

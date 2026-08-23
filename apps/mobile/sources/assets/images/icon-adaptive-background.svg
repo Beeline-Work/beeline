@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Beeline adaptive launcher background — brass tile</title>
+  <!-- Speakeasy brass tile, 150deg: #f0b95a -> #E5A645 (55%) -> #C48A33 -->
+  <defs>
+    <linearGradient id="brass-tile" gradientUnits="objectBoundingBox" x1="0" y1="0" x2="0.5" y2="0.866">
+      <stop offset="0" stop-color="#f0b95a"/>
+      <stop offset="0.55" stop-color="#E5A645"/>
+      <stop offset="1" stop-color="#C48A33"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#brass-tile)"/>
+</svg>

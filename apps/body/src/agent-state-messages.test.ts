@@ -114,7 +114,10 @@ describe('the daemon-published agent state notices stay deleted', () => {
     );
     expect(reconcile.length).toBeGreaterThan(0);
     expect(reconcile).toContain('.messageSubmit(');
-    expect(reconcile).toContain('I will retry automatically in 10 minutes.');
+    // The retry cadence is dynamic (durable failures say ten minutes,
+    // transient ones say thirty seconds) but it is always stated plainly.
+    expect(reconcile).toContain('I will retry automatically in ${discovery.retryLabel}.');
+    expect(reconcile).toContain("'10 minutes'");
     expect(reconcile).not.toContain("I can't get to this room's repo");
   });
 });

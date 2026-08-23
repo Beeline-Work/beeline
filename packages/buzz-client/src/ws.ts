@@ -47,6 +47,14 @@ function messageData(ev: unknown): string {
 /**
  * One authenticated WS connection to a Buzz relay.
  * Call `connect()` before subscribe/publish.
+ *
+ * Connection loss is ALWAYS retried, forever: clean close, transport error,
+ * connect timeout, server restart. The schedule is bounded exponential backoff
+ * with +/-50% jitter (`reconnectDelayWithJitter`), reset to the base delay by
+ * the first successful connection, with no cap on attempts — a client with no
+ * relay is useless, so it keeps dialing. Live REQ subscriptions are replayed
+ * on the replacement socket (`resubscribeLiveRequests`) using each
+ * subscription's reconnect cursor, so callers re-subscribe implicitly.
  */
 /**
  * Reconnect spacing that does not put every client back at the door together.
@@ -235,7 +243,30 @@ export class RelayWs {
       };
 
       const onError = () => {
-        finish(new Error(`RelayWs error connecting to ${this.opts.wsUrl}`));
+        const err = new Error(`RelayWs error connecting to ${this.opts.wsUrl}`);
+        if (!settled) {
+          finish(err);
+          return;
+        }
+        // A transport error on an ALREADY-connected socket is connection loss,
+        // not a connect failure: half-open TCP (the peer restarted without a
+        // close frame reaching us) surfaces exactly here. Ignoring it left the
+        // socket nominally open but dead — every later send failed silently
+        // and nothing ever re-dialed, which is the "process alive, agent dark"
+        // production shape. Tearing down routes through onClose's normal
+        // recovery path (idempotent: it ignores a socket that is no longer
+        // current), and impls that always follow an error with a close are
+        // unaffected.
+        if (this.ws === socket) {
+          try {
+            socket.close();
+          } catch {
+            this.ws = null;
+            this.stopKeepalive();
+            this.notifyClose();
+            if (!this.closed) this.scheduleReconnect();
+          }
+        }
       };
 
       const onClose = () => {

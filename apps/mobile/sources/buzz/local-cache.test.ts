@@ -32,6 +32,7 @@ import {
 import {
   cacheLiveSessionEvent,
   cacheLiveSessionEvents,
+  refreshRoomListCornersForUnknownSignals,
   revalidateCachedMessages,
 } from './local-cache-sync';
 import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection';
@@ -700,6 +701,55 @@ describe('Buzz local cache', () => {
     expect(
       useBuzzLocalCache.getState().channelLists[`${viewer}:workspace`]?.channels[0]?.corners,
     ).toEqual([{ id: 'corner-1', name: 'implement-this', openerPubkey: 'agent', status: 'archived' }]);
+  });
+
+  it('refreshes the Room-list lifecycle when a live signal announces a newly opened corner', async () => {
+    const now = Date.now();
+    const firstCorner = {
+      id: 'corner-1',
+      name: 'first-task',
+      openerPubkey: 'agent',
+      status: 'live' as const,
+    };
+    const secondCorner = {
+      id: 'corner-2',
+      name: 'second-task',
+      openerPubkey: 'agent',
+      status: 'open' as const,
+    };
+    useBuzzLocalCache.getState().setChannelList({
+      viewerPubkey: viewer,
+      communityId: 'workspace',
+      channels: [{ id: 'room', active: true, title: 'Room', corners: [firstCorner] }],
+      directMessages: [],
+      workspaceMembers: [],
+      communities: [],
+      personalWorkspaceId: null,
+      viewerIsAgent: false,
+      canEditWorkspaceAvatar: false,
+      updatedAt: now,
+      lastAccessedAt: now,
+    });
+    const projections = cacheLiveSessionEvents(viewer, 'room', [
+      controlEvent('new-corner-status', 12, [
+        ['t', 'body-control'],
+        ['subchannel', 'corner-2'],
+        ['status', 'open'],
+      ]),
+    ]);
+    const listSubchannelLifecycle = vi.fn(async () => [firstCorner, secondCorner]);
+
+    await refreshRoomListCornersForUnknownSignals(
+      { listSubchannelLifecycle } as never,
+      viewer,
+      'room',
+      projections,
+    );
+
+    expect(listSubchannelLifecycle).toHaveBeenCalledWith('room');
+    expect(
+      useBuzzLocalCache.getState().channelLists[`${viewer}:workspace`]?.channels[0]?.corners,
+    ).toEqual([firstCorner, secondCorner]);
   });
 
   it('replaces an old preview when a newer message shares the stream cursor second', async () => {

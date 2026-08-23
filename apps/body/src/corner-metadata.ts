@@ -3,6 +3,10 @@ import type { CompactActivityPlan } from './activity.js';
 export interface CornerMetadata {
   title: string;
   objective: string;
+  /** Organized summary of the Room discussion that led here. Replaces the
+   *  raw transcript dump both the corner's first turn and the app's inherited-
+   *  context panel used to show verbatim. */
+  summary: string;
   plan?: CompactActivityPlan;
 }
 
@@ -10,6 +14,8 @@ export const CORNER_TITLE_MAX_CHARS = 72;
 export const CORNER_OBJECTIVE_MAX_CHARS = 240;
 export const CORNER_PLAN_MAX_ITEMS = 6;
 export const CORNER_PLAN_STEP_MAX_CHARS = 160;
+export const CORNER_SUMMARY_MAX_CHARS = 600;
+const CORNER_SUMMARY_MIN_CHARS = 20;
 const CORNER_METADATA_CONTEXT_LIMIT = 12;
 const CORNER_METADATA_CONTEXT_ENTRY_MAX_CHARS = 470;
 
@@ -39,9 +45,13 @@ export function cornerMetadataPrompt(
   }));
   return [
     'Create polished metadata for one software-development work corner.',
-    'Return exactly one JSON object and no markdown: {"title":"...","objective":"...","items":["..."]}',
+    'Return exactly one JSON object and no markdown:',
+    ' {"title":"...","objective":"...","summary":"...","items":["..."]}',
     `title: an imperative, specific label of at most ${CORNER_TITLE_MAX_CHARS} characters.`,
     `objective: one complete, concise sentence of at most ${CORNER_OBJECTIVE_MAX_CHARS} characters.`,
+    `summary: at most ${CORNER_SUMMARY_MAX_CHARS} characters organizing what the discussion`,
+    ' established and what this corner must accomplish — the context a new',
+    ' reader needs, in plain prose, not a message-by-message replay.',
     `items: two to ${CORNER_PLAN_MAX_ITEMS} concrete, ordered implementation steps specific to this objective; each at most ${CORNER_PLAN_STEP_MAX_CHARS} characters.`,
     'If the conversation is too vague to author honest task-specific steps, return an empty items array. Never fill it with generic inspect/implement/verify steps.',
     'Resolve vague requests such as "open the corner" from the recent conversation.',
@@ -69,8 +79,10 @@ export function parseCornerMetadata(output: string): CornerMetadata | undefined 
   const record = parsed as Record<string, unknown>;
   const title = oneLine(record.title, CORNER_TITLE_MAX_CHARS);
   const objective = oneLine(record.objective, CORNER_OBJECTIVE_MAX_CHARS);
-  if (!title || !objective) return undefined;
+  const summary = oneLine(record.summary, CORNER_SUMMARY_MAX_CHARS);
+  if (!title || !objective || !summary) return undefined;
   if (title.length < 3 || objective.length < 8) return undefined;
+  if (summary.length < CORNER_SUMMARY_MIN_CHARS) return undefined;
   const steps: string[] = [];
   if (Array.isArray(record.items)) {
     for (const item of record.items) {
@@ -83,6 +95,7 @@ export function parseCornerMetadata(output: string): CornerMetadata | undefined 
   return {
     title,
     objective,
+    summary,
     ...(steps.length
       ? {
           plan: {

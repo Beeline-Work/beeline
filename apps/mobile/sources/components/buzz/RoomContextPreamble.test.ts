@@ -74,6 +74,34 @@ describe('RoomContextPreamble', () => {
     expect(render(React.createElement(RoomContextPreamble, { entries: [] })).toJSON()).toBeNull();
   });
 
+  it('renders the generated summary directly, instead of the quoted window', () => {
+    // The report: "a literal dump of the last room turns" where a persistent,
+    // well-organized summary should be. When the daemon's model call produced
+    // one, it IS the context — no disclosure, no per-message replay.
+    const renderer = render(
+      React.createElement(RoomContextPreamble, {
+        entries,
+        summary: '  The Room agreed the code blocks need color and asked for a corner.  ',
+      }),
+    );
+    expect(summaryText(renderer, '-label')).toBe('FROM THE ROOM');
+    expect(summaryText(renderer, '-summary-text')).toBe(
+      'The Room agreed the code blocks need color and asked for a corner.',
+    );
+    const quoted = renderer.root
+      .findAllByType('Text')
+      .filter((node: { props: { testID?: string } }) => node.props.testID?.endsWith('-entry'));
+    expect(quoted).toHaveLength(0);
+    expect(renderer.root.findAllByType('Pressable')).toHaveLength(0);
+  });
+
+  it('falls back to the collapsed quoted window when there is no summary', () => {
+    const renderer = render(React.createElement(RoomContextPreamble, { entries }));
+    expect(renderer.root.findAllByProps({ testID: 'room-context-preamble-summary-text' }))
+      .toHaveLength(0);
+    expect(summaryText(renderer, '-summary')).toBe('⋯ 2 earlier messages from the Room');
+  });
+
   it('opens collapsed, so a fresh corner does not lead with a dump of the Room', () => {
     // A corner opened mid-conversation has almost no transcript of its own, so
     // an expanded ten-line quote was the entire first screen — the reader

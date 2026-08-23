@@ -1221,21 +1221,24 @@ export class BuzzRigTransport implements RigTransport {
 
   /**
    * What a corner inherited from the Room it was opened out of: the objective
-   * the daemon recorded on the corner's create event, and the bounded window
-   * of Room conversation that immediately preceded the corner opening.
+   * the daemon recorded on the corner's create event, and — in order of
+   * preference — the daemon's model-generated summary of the discussion that
+   * led here (`summary` tag), or failing that the bounded window of raw Room
+   * conversation that immediately preceded the corner opening.
    *
-   * Both come from the corner's own kind:9007 create event and the parent
-   * Room's history, so this works for every corner — including ones opened
-   * before this shipped, which simply have no `task` tag and fall back to the
-   * corner's name. The create-event read is the same filter
-   * `getParentChannelId` already issues, so on the enter-corner path it is a
-   * cache hit rather than a second round trip.
+   * All of it comes from the corner's own kind:9007 create event (plus the
+   * parent Room's history for pre-summary corners), so this works for every
+   * corner — including ones opened before this shipped, which simply have no
+   * `task`/`summary` tag and fall back to the corner's name. The create-event
+   * read is the same filter `getParentChannelId` already issues, so on the
+   * enter-corner path it is a cache hit rather than a second round trip, and
+   * a corner with a summary skips the parent-history scan entirely.
    */
   async cornerBriefing(
     cornerChannelId: string,
     parentChannelId: string,
     limit: number = ROOM_CONTEXT_LIMIT,
-  ): Promise<{ task?: string; context: RoomContextEntry[] }> {
+  ): Promise<{ task?: string; summary?: string; context: RoomContextEntry[] }> {
     const client = await this.getClient();
     const creates = await client.query([
       { kinds: [KIND_CREATE_GROUP], '#h': [cornerChannelId], limit: 5 },
@@ -1248,6 +1251,11 @@ export class BuzzRigTransport implements RigTransport {
     // and a window taken from the wrong side of it would be worse than none.
     if (!create) return { context: [] };
     const task = tagValue(create, 'task');
+    // The daemon's model-generated, organized summary of the discussion that
+    // led here. When present it REPLACES the raw Room window below — both on
+    // screen and as a relay-read saving: there is nothing to scan for.
+    const summary = tagValue(create, 'summary');
+    if (summary) return { ...(task ? { task } : {}), summary, context: [] };
     const events = await client.sessionEventsBackfill(parentChannelId, {
       until: create.created_at,
       limit: ROOM_CONTEXT_SCAN_LIMIT,

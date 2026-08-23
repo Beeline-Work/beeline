@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { Body } from './body.js';
+import { Body, cornerOpenTaskPrompt } from './body.js';
 import {
   CORNER_OBJECTIVE_MAX_CHARS,
   CORNER_PLAN_MAX_ITEMS,
   CORNER_PLAN_STEP_MAX_CHARS,
+  CORNER_SUMMARY_MAX_CHARS,
   CORNER_TITLE_MAX_CHARS,
   cornerMetadataPrompt,
   parseCornerMetadata,
@@ -26,7 +27,8 @@ describe('corner metadata generation boundary', () => {
     expect(prompt).not.toContain('turn-7 ');
     expect(prompt).toContain('untrusted conversation to summarize');
     expect(prompt).toContain('"items"');
-    expect(prompt.length).toBeLessThan(7_000);
+    expect(prompt).toContain('"summary"');
+    expect(prompt.length).toBeLessThan(7_500);
   });
 
   it('accepts strict JSON and normalizes it to short plain text', () => {
@@ -38,6 +40,7 @@ describe('corner metadata generation boundary', () => {
           ` Read the corner metadata path ${'z'.repeat(300)} `,
           'Update the strict JSON parser',
         ],
+        summary: ` The Room asked for polished corner metadata\n because vague commands produce poor labels. ${'z'.repeat(700)}`,
       })}\n\`\`\``,
     );
 
@@ -50,6 +53,8 @@ describe('corner metadata generation boundary', () => {
       { step: 'Update the strict JSON parser', status: 'pending' },
     ]);
     expect(parsed?.plan?.items[0]?.step).toHaveLength(CORNER_PLAN_STEP_MAX_CHARS);
+    expect(parsed?.summary).toHaveLength(CORNER_SUMMARY_MAX_CHARS);
+    expect(parsed?.summary).not.toContain('\n');
   });
 
   it('bounds and deduplicates the task-authored plan without requiring one', () => {
@@ -61,6 +66,7 @@ describe('corner metadata generation boundary', () => {
       parseCornerMetadata(JSON.stringify({
         title: 'Bound the plan',
         objective: 'Keep the authored corner plan compact and safe.',
+        summary: 'The Room asked for a compact, honest plan alongside polished metadata.',
         items: [...manyItems, manyItems[0]],
       }))?.plan?.items.map((item) => item.step),
     ).toEqual(manyItems.slice(0, CORNER_PLAN_MAX_ITEMS));
@@ -68,19 +74,30 @@ describe('corner metadata generation boundary', () => {
       parseCornerMetadata(JSON.stringify({
         title: 'Allow no plan',
         objective: 'Fall back honestly when the agent cannot author specific steps.',
+        summary: 'The conversation is too vague to author specific implementation steps.',
       })),
     ).toEqual({
       title: 'Allow no plan',
       objective: 'Fall back honestly when the agent cannot author specific steps.',
+      summary: 'The conversation is too vague to author specific implementation steps.',
     });
   });
 
   it('rejects prose, missing fields, and implausibly empty metadata', () => {
     expect(
-      parseCornerMetadata('Here is the metadata: {"title":"Fix it","objective":"Do it."}'),
+      parseCornerMetadata(
+        'Here is the metadata: {"title":"Fix it","objective":"Do it.","summary":"A summary."}',
+      ),
     ).toBeUndefined();
     expect(parseCornerMetadata('{"title":"Fix it"}')).toBeUndefined();
     expect(parseCornerMetadata('{"title":"x","objective":"too short"}')).toBeUndefined();
+    // A missing or too-short summary is a failed generation, not a partial
+    // success: the whole point of the field is replacing the transcript dump.
+    expect(
+      parseCornerMetadata(
+        '{"title":"Fix the thing","objective":"Repair the merge approval path.","summary":"too short"}',
+      ),
+    ).toBeUndefined();
   });
 
   it('runs through the hidden generator seam without publishing its answer', async () => {
@@ -103,7 +120,14 @@ describe('corner metadata generation boundary', () => {
       {
         generateCornerMetadata: async (prompt) => {
           receivedPrompt = prompt;
-          return '{"title":"Improve corner metadata","objective":"Generate a polished title and concise objective from Room context.","items":["Trace the metadata turn","Parse its task-authored plan","Cover the safe fallback"]}';
+          return JSON.stringify({
+            title: 'Improve corner metadata',
+            objective:
+              'Generate a polished title and concise objective from Room context.',
+            summary:
+              'The Room discussed vague corner names and asked for model-generated metadata instead of raw request text.',
+            items: ['Trace the metadata turn', 'Parse its task-authored plan', 'Cover the safe fallback'],
+          });
         },
       },
     );
@@ -124,6 +148,8 @@ describe('corner metadata generation boundary', () => {
     expect(metadata).toEqual({
       title: 'Improve corner metadata',
       objective: 'Generate a polished title and concise objective from Room context.',
+      summary:
+        'The Room discussed vague corner names and asked for model-generated metadata instead of raw request text.',
       plan: {
         objective: 'Generate a polished title and concise objective from Room context.',
         items: [
@@ -134,6 +160,24 @@ describe('corner metadata generation boundary', () => {
       },
     });
     expect(receivedPrompt).toContain('make corner titles concise');
+  });
+
+  it('seeds the corner\'s first turn with the generated summary, not the transcript', () => {
+    const transcript = [
+      { role: 'user', text: 'the merge approval path is broken', eventId: 'e1' },
+      { role: 'agent', text: 'I can look into it', eventId: 'e2' },
+    ];
+    const withSummary = cornerOpenTaskPrompt(transcript, 'open a corner', 'e3', {
+      summary: 'The Room diagnosed a broken merge approval path and asked for a fix.',
+    });
+    expect(withSummary).toContain('host-generated summary');
+    expect(withSummary).toContain('The Room diagnosed a broken merge approval path');
+    // The verbatim dump is exactly what this replaces — it must not ride along.
+    expect(withSummary).not.toContain('merge approval path is broken');
+
+    const withoutSummary = cornerOpenTaskPrompt(transcript, 'open a corner', 'e3');
+    expect(withoutSummary).toContain('Recent Room transcript');
+    expect(withoutSummary).toContain('merge approval path is broken');
   });
 
   it('keeps the production metadata session tool-free and ahead of channel creation', () => {
@@ -148,5 +192,22 @@ describe('corner metadata generation boundary', () => {
     expect(open.indexOf('await this.modelCornerMetadata(')).toBeLessThan(
       open.indexOf('await createAgentSubchannel('),
     );
+  });
+
+  it('publishes a visible fallback notice when generation produced nothing', () => {
+    const source = readFileSync(fileURLToPath(new URL('./body.ts', import.meta.url)), 'utf8');
+    const open = source.slice(source.indexOf('async openSubchannel('));
+    const body = open.slice(0, open.indexOf('\n  }\n'));
+    // The failure is user-visible on the corner's own channel, not just a log
+    // line — and only when a generation attempt actually ran.
+    expect(body).toContain("request && !generated");
+    expect(body).toContain("'corner-metadata-notice'");
+    // The generated summary reaches both consumers of the old transcript dump.
+    expect(body).toContain('generated?.summary,');
+    const promptFn = source.slice(
+      source.indexOf('export function cornerOpenTaskPrompt('),
+      source.indexOf('/** Detect the narrow human command'),
+    );
+    expect(promptFn).toContain('options?: { summary?: string }');
   });
 });

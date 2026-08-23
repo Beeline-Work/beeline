@@ -21,6 +21,7 @@ Install one of these supported agents:
   claude Install Claude Code and npm install -g @agentclientprotocol/claude-agent-acp
   goose  https://block.github.io/goose/docs/getting-started/installation/
   pi     npm install -g @mariozechner/pi-coding-agent pi-acp
+  grok   curl -fsSL https://x.ai/cli/install.sh | bash
 Then retry, or explicitly use \`--agent reference\` with an LLM key.
 For another ACP server, use \`--agent custom --agent-command "<cmd> [args...]"\`.`;
 

@@ -30,6 +30,22 @@
  *     behind the observed breach: a Room session wrote to an absolute path
  *     outside its checkout without a single permission request reaching us.
  *
+ *   - `grok` (xAI Grok CLI, native ACP over `grok agent stdio` — no adapter
+ *     binary): sends standard `session/request_permission` requests for every
+ *     mutating tool call in its default ask mode (verified live: an ACP client
+ *     driving `grok agent stdio` received one for `kind: 'execute'` and the run
+ *     resumed on the selected option). Like claude-agent-acp it advertises no
+ *     ACP session modes at all (`session/new` returns no `modes`), so a Room's
+ *     read-only rule is held by the daemon callback alone; corners drive through
+ *     Body's auto-allow worktree callback, exactly like buzz-agent-backed
+ *     corners. Two operator-side switches bypass the asking — `[ui]
+ *     permission_mode = "always-approve"` in `~/.grok/config.toml` and
+ *     `_meta.yoloMode` on `session/new` (which Beeline never sends) — so an
+ *     operator who pinned always-approve has a Room boundary held only by the
+ *     OS sandbox, same as a claude operator pinning bypassPermissions.
+ *     `GROK_CONFIG` cannot change this either way: xAI deliberately excludes
+ *     permission settings from that env overlay.
+ *
  * `goose` and `custom`/`reference` commands are unclassified and treated as
  * unenforced, because "we did not verify it" must not read as "it is safe".
  */
@@ -70,6 +86,13 @@ const PROFILES: Array<{ match: RegExp; profile: HarnessProfile }> = [
     profile: {
       enforcement: 'none',
       note: 'pi-acp never sends session/request_permission for a tool call: pi executes reads, writes, edits, and shell commands before the daemon sees them, and exposes no sandbox or permission flag to pass at spawn',
+    },
+  },
+  {
+    match: /(^|[/\\])grok(\.[a-z]+)?$/i,
+    profile: {
+      enforcement: 'permission-callback',
+      note: 'grok sends standard session/request_permission requests for mutating tools in its default ask mode; it advertises no read-only ACP mode, so the daemon callback is the only boundary unless the OS sandbox wraps it',
     },
   },
   {
@@ -132,6 +155,11 @@ export function cornerAutonomyModeCandidates(agentCommand: string | undefined): 
   if (agentCommand && /(^|[/\\])claude-(agent|code)-acp(\.[a-z]+)?$/i.test(agentCommand)) {
     return ['bypassPermissions'];
   }
+  // grok advertises no ACP modes (`session/new` returns no `modes` field), so
+  // there is nothing to select: corner mutations arrive as ordinary
+  // `session/request_permission` requests and Body's auto-allow worktree
+  // callback answers them, exactly like buzz-agent-backed corners.
+  if (agentCommand && /(^|[/\\])grok(\.[a-z]+)?$/i.test(agentCommand)) return [];
   if (agentCommand && /(^|[/\\])pi-acp(\.[a-z]+)?$/i.test(agentCommand)) return [];
   return ['agent', 'edit', 'code'];
 }

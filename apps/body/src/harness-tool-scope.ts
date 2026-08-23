@@ -130,6 +130,13 @@ const PROFILES: Array<{ match: RegExp; profile: ToolScopeProfile }> = [
     },
   },
   {
+    match: /(^|[/\\])grok(\.[a-z]+)?$/i,
+    profile: {
+      enforcement: 'config-isolated',
+      note: "grok loads the operator's own ~/.grok MCP servers even when session/new passes an empty mcpServers list (measured live), so only an isolated GROK_HOME scopes the session; no account-bound connector surface was found",
+    },
+  },
+  {
     match: /(^|[/\\])buzz-agent(\.[a-z]+)?$/i,
     profile: {
       enforcement: 'allowlisted',

@@ -12,13 +12,20 @@ describe('beeline pair help', () => {
     );
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain('--agent <codex|claude|goose|pi|reference|custom>');
+    expect(result.stdout).toContain('--agent <codex|claude|goose|pi|grok|reference|custom>');
     expect(result.stdout).toContain('With no --agent flag, beeline detects supported installed');
     expect(result.stdout).toContain('ACP adapters stay visible');
     expect(result.stdout).toContain('never installs packages automatically');
     expect(result.stdout).toContain(
+      'grok       Operator\'s Grok through its native \'grok agent stdio\' ACP server',
+    );
+    expect(result.stdout).toContain(
       'reference  Bundled buzz-agent (explicit fallback; requires an LLM key)',
     );
+    // Cursor has no native ACP; the help must document the real custom path
+    // rather than imply a preset exists.
+    expect(result.stdout).toContain('Cursor has no native ACP mode');
+    expect(result.stdout).toContain("--agent custom --agent-command 'cursor-acp'");
     expect(result.stdout).toContain('--agent-command');
   });
 

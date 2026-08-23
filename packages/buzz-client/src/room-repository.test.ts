@@ -365,6 +365,105 @@ describe('a repository that cannot be confirmed is not a repository that is abse
   });
 });
 
+/**
+ * Key succession: a Room's binding may have been authored by the owner's
+ * PREDECESSOR device key — after a replacement that key no longer reads back
+ * as a Room admin, so resolution used to report `unverified` and the auth
+ * service's room-token path aborted with `room_repository_missing` before its
+ * own succession-aware authority check ever ran (production, 2026-08-23).
+ * Readers that CAN resolve the chain thread a resolver in and the author
+ * authorizes through its CURRENT key; everyone else keeps today's behavior.
+ */
+describe('binding author resolves through the owner succession chain', () => {
+  const predecessor = createIdentity('owner-predecessor');
+  const successor = createIdentity('owner-successor');
+  const stranger = createIdentity('stranger');
+
+  function bindingAuthoredBy(identity: typeof predecessor): NostrEvent {
+    return signEvent(
+      {
+        pubkey: identity.publicKey,
+        created_at: Math.floor(Date.now() / 1000),
+        kind: KIND_ROOM_REPOSITORY,
+        tags: [
+          ['d', `${TAG_ROOM_REPOSITORY}:${channelId}`],
+          ['h', channelId],
+          ['t', TAG_ROOM_REPOSITORY],
+          [TAG_COMMUNITY, communityId],
+        ],
+        content: JSON.stringify({
+          key: 'repo-key',
+          name: 'buzzy',
+          remote: 'git://github.com/lunchboxfortwo/buzzy',
+          localOnly: false,
+        }),
+      },
+      identity.secretKey,
+    );
+  }
+
+  // The successor holds the Room owner role; the predecessor key was removed
+  // from the projections when the device key was replaced.
+  function stubSuccessionRoom(published: NostrEvent[]): void {
+    stubRelay({
+      published,
+      admins: [successor.publicKey],
+      members: [successor.publicKey],
+      genesisRepo: false,
+    });
+  }
+
+  const resolver = {
+    resolveCurrentPubkey: async (pubkey: string): Promise<string> =>
+      pubkey === predecessor.publicKey ? successor.publicKey : pubkey,
+  };
+
+  it('resolves a predecessor-authored binding through the current owner key', async () => {
+    stubSuccessionRoom([bindingAuthoredBy(predecessor)]);
+
+    await expect(
+      resolveRoomRepository(ctx(successor), channelId, resolver),
+    ).resolves.toMatchObject({ source: 'config', authoredBy: predecessor.publicKey });
+    await expect(resolveRoomRepositoryState(ctx(successor), channelId, resolver)).resolves.toEqual({
+      kind: 'repository',
+      repository: expect.objectContaining({ authoredBy: predecessor.publicKey }),
+    });
+  });
+
+  it('keeps today’s `unverified` answer when no resolver is supplied', async () => {
+    // Same wire state, but this reader cannot resolve the chain — behavior is
+    // exactly pre-succession: never a silent widening.
+    stubSuccessionRoom([bindingAuthoredBy(predecessor)]);
+
+    await expect(resolveRoomRepositoryState(ctx(successor), channelId)).resolves.toMatchObject({
+      kind: 'unverified',
+    });
+    await expect(resolveRoomRepository(ctx(successor), channelId)).resolves.toBeNull();
+  });
+
+  it('degrades to the raw-author check when the chain cannot be resolved', async () => {
+    stubSuccessionRoom([bindingAuthoredBy(predecessor)]);
+
+    await expect(
+      resolveRoomRepository(ctx(successor), channelId, {
+        resolveCurrentPubkey: async () => {
+          throw new Error('ledger unavailable');
+        },
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it('refuses a binding authored by an unrelated key even with the resolver', async () => {
+    stubSuccessionRoom([bindingAuthoredBy(stranger)]);
+
+    // The stranger resolves to itself; it holds no Room role.
+    await expect(resolveRoomRepositoryState(ctx(successor), channelId, resolver)).resolves.toMatchObject({
+      kind: 'unverified',
+    });
+    await expect(resolveRoomRepository(ctx(successor), channelId, resolver)).resolves.toBeNull();
+  });
+});
+
 describe('room target branch (chat-native change)', () => {
   it('normalizes a proposed branch name and refuses anything that is not one', () => {
     expect(normalizeTargetBranchName(' staging ')).toBe('staging');

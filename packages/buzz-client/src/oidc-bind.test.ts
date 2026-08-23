@@ -387,6 +387,29 @@ describe('OIDC device-key bind protocol', () => {
     );
   });
 
+  it('sends read_only on the Room token request when a session asks for the read-only variant', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          token: 'room-token',
+          expires_at: '2030-01-01T00:00:00Z',
+          installation_id: 77,
+          full_name: 'acme/widget',
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      getGitHubRoomInstallationToken('https://relay.example', identity, 'room-1', {
+        readOnly: true,
+      }),
+    ).resolves.toMatchObject({ token: 'room-token' });
+    const sent = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(sent.read_only).toBe(true);
+  });
+
   it('fetches Room repository events with since/wait options and validates the response', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(
       new Response(

@@ -758,6 +758,29 @@ describe('multi-identity guard (S0) + access policy', () => {
       'invalid agent runtime config',
     );
   });
+
+  it('round-trips owner-configured sandbox mask paths and rejects a malformed list', async () => {
+    const root = await repository('https://example.com/team/project.git');
+    const supervisorRoot = await stateRoot();
+    const result = await pairAgent(root, supervisorRoot);
+    expect(
+      (await readRuntimeRecord(result.configPath)).sandboxMaskPaths,
+    ).toBeUndefined();
+
+    const raw = JSON.parse(await readFile(result.configPath, 'utf8')) as Record<string, unknown>;
+    raw.sandboxMaskPaths = ['/srv/operator-secrets', '~/.env-backups'];
+    await writeFile(result.configPath, `${JSON.stringify(raw)}\n`);
+    expect((await readRuntimeRecord(result.configPath)).sandboxMaskPaths).toEqual([
+      '/srv/operator-secrets',
+      '~/.env-backups',
+    ]);
+
+    raw.sandboxMaskPaths = ['/ok', 42];
+    await writeFile(result.configPath, `${JSON.stringify(raw)}\n`);
+    await expect(readRuntimeRecord(result.configPath)).rejects.toThrow(
+      'invalid agent runtime config',
+    );
+  });
 });
 
 describe('runtime root migration', () => {

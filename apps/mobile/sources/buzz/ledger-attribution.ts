@@ -20,15 +20,32 @@ export type LedgerSpeakerEntry = {
   id: string;
   /** A stable key for the voice, or `null` for anything that is not one. */
   speaker: string | null;
+  /** A collapsed tool-call/thought run — mechanism, not prose. It may fold
+   *  into the voice above it (no repeated compact header), but it cannot lend
+   *  its own continuation to the PROSE below it: prose always re-announces
+   *  across machine noise, so an agent's text turn is never left without its
+   *  mark and name just because a tool block opened the run.
+   */
+  isMachine?: boolean;
 };
 
 /** Ids of entries whose speaker already announced itself on the entry above. */
 export function continuedSpeakerIds(entries: readonly LedgerSpeakerEntry[]): Set<string> {
   const continued = new Set<string>();
-  let previous: string | null = null;
+  let previous: LedgerSpeakerEntry | null = null;
   for (const entry of entries) {
-    if (entry.speaker !== null && entry.speaker === previous) continued.add(entry.id);
-    previous = entry.speaker;
+    // Same voice continues the run — except across machine noise: a collapsed
+    // tool/thought block between two prose turns visually separates them, so
+    // the later prose re-announces instead of riding the earlier prose's
+    // byline past the block. Machine rows following each other (or following
+    // their own prose) still fold: the compact header stays once per run.
+    const foldsIntoRun =
+      entry.speaker !== null &&
+      previous !== null &&
+      entry.speaker === previous.speaker &&
+      !(previous.isMachine === true && !entry.isMachine);
+    if (foldsIntoRun) continued.add(entry.id);
+    previous = entry;
   }
   return continued;
 }

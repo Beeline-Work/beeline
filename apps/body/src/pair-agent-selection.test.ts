@@ -80,6 +80,20 @@ describe('pair agent auto-selection', () => {
     expect(log.text()).toContain('[buzz] using goose (selected)');
   });
 
+  it('auto-selects a native-ACP grok install without any adapter step', async () => {
+    const grok = await executables('grok');
+    const log = capture();
+
+    const selected = await selectPairAgentCommand({
+      env: { PATH: grok },
+      interactive: false,
+      output: log.output,
+    });
+
+    expect(selected).toEqual({ kind: 'grok', command: resolve(grok, 'grok'), args: ['agent', 'stdio'] });
+    expect(log.text()).toContain('[buzz] using grok (auto-detected)');
+  });
+
   it('refuses to guess among several detected agents without a TTY', async () => {
     const codex = await executables('codex', 'codex-acp');
     const goose = await executables('goose');

@@ -1347,6 +1347,91 @@ describe('Buzz corner lifecycle projection', () => {
     expect(coldRow.zone).toBe('working');
     expect(coldRow.attention).toBe(false);
   });
+
+  it('reads Room presence so a dead-agent stale ask reads STALLED, not needs-you', async () => {
+    // The owner's real shape: a corner holding an ask card, its daemon dead.
+    // The transport feeds the oracle a SOFT presence input (one multi-`#d`
+    // read per fetch); only when every record is provably past its lease does
+    // the summary carry `agentOffline` — and then the ask is STALLED, never
+    // "waiting on you".
+    const presenceEvent = (status: 'online' | 'offline', createdAt = NOW_S) => ({
+      id: `presence-${status}`,
+      pubkey: 'd'.repeat(64),
+      created_at: createdAt,
+      kind: 30078,
+      tags: [
+        ['d', 'agent-presence:dead-room'],
+        ['agent', 'd'.repeat(64)],
+        ['status', status],
+      ],
+      content: '',
+      sig: 'e'.repeat(128),
+    });
+    const makeClient = (presence: object[]) => ({
+      listSubchannels: vi.fn(async () => ['ask-corner']),
+      query: vi.fn(async (filters: Array<Record<string, unknown>>) => {
+        const kinds = filters[0]?.kinds as number[] | undefined;
+        if (kinds?.[0] === 30078) return presence;
+        if (kinds?.[0] === 9) return [];
+        return [
+          {
+            id: 'create-ask-corner',
+            pubkey: 'f'.repeat(64),
+            created_at: 1,
+            kind: 9007,
+            tags: [['h', 'ask-corner'], ['name', 'stale-ask']],
+            content: '',
+            sig: 'e'.repeat(128),
+          },
+        ];
+      }),
+      getChannelMetadata: vi.fn(async () => ({ archived: false })),
+      sessionEventsBackfill: vi.fn(async () => [
+        { ...event('ask-corner', [['display-status', 'needs-attention']]), createdAt: NOW_S - 7200 },
+        {
+          ...event('ask-corner', [
+            ['t', 'agent-message'],
+          ]),
+          createdAt: NOW_S - 3600,
+          content: 'Main moved on — which base should I rebase onto?',
+        },
+      ]),
+    });
+
+    // Dead agent: the last heartbeat is 10 minutes old, far past the 120s
+    // lease. Same facts that golded before now read stalled.
+    const deadTransport = new BuzzRigTransport(identity, 'https://relay.test');
+    (
+      deadTransport as unknown as { client: ReturnType<typeof makeClient> }
+    ).client = makeClient([presenceEvent('online', NOW_S - 600)]);
+    await expect(deadTransport.listSubchannelLifecycle('dead-room')).resolves.toMatchObject([
+      { id: 'ask-corner', status: null, agentOffline: true },
+    ]);
+
+    // Live agent: same history, fresh heartbeat — today's behaviour, the
+    // worded card keeps its gold needs-you reading.
+    const liveTransport = new BuzzRigTransport(identity, 'https://relay.test');
+    (
+      liveTransport as unknown as { client: ReturnType<typeof makeClient> }
+    ).client = makeClient([presenceEvent('online', NOW_S - 10)]);
+    await expect(liveTransport.listSubchannelLifecycle('live-room')).resolves.toMatchObject([
+      { id: 'ask-corner', status: 'needs-attention' },
+    ]);
+    const liveSummary = await liveTransport.listSubchannelLifecycle('live-room');
+    expect(liveSummary[0]?.agentOffline).toBeUndefined();
+
+    // No presence record at all is UNKNOWN, never offline: the verdict must
+    // not flip on a missing signal.
+    const unknownTransport = new BuzzRigTransport(identity, 'https://relay.test');
+    (
+      unknownTransport as unknown as { client: ReturnType<typeof makeClient> }
+    ).client = makeClient([]);
+    await expect(unknownTransport.listSubchannelLifecycle('unknown-room')).resolves.toMatchObject([
+      { id: 'ask-corner', status: 'needs-attention' },
+    ]);
+    const summary = await unknownTransport.listSubchannelLifecycle('unknown-room');
+    expect(summary[0]?.agentOffline).toBeUndefined();
+  });
 });
 
 describe('Buzz cross-Room corner lifecycle batching', () => {

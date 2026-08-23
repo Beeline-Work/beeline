@@ -55,6 +55,16 @@ export type CornerSummary = {
    * reads this to keep an asked corner in NEEDS YOU while a merely-idle
    * stalled corner falls to IDLE. Absent = not an ask-wait. */
   awaitingReply?: boolean;
+  /** The corner's agent is PROVABLY offline past its presence lease (every
+   * agent presence record for the Room is outside `isAgentPresenceOnline`'s
+   * 120s window), AND that fact changes the reading: the oracle's verdict was
+   * STALLED, not needs-human. An ask held by a dead agent is not waiting on
+   * your reply — it is a stalled session. Absent/undefined = unknown (no
+   * presence read answered, or the agent is online) = behave exactly as
+   * today. Only set when a reviewable change is NOT present: `open` corners
+   * stay needs-you regardless of presence, because the artifact stands on
+   * its own. */
+  agentOffline?: boolean;
   createdAt?: number;
   /** Most recent activity timestamp seen for this corner (seconds); used to
    * pick the corner that's actually being worked on over a stale/empty one. */
@@ -67,7 +77,9 @@ export type CornerSummary = {
  * plainly — deliberately treated as a failure mode, not a quiet tier.
  * Affordances stay contextual per surface; the STATE is just these words.
  */
-export function cornerSuperState(status: CornerStatus | null): CornerSuperState {
+export function cornerSuperState(
+  status: CornerStatus | null,
+): Exclude<CornerSuperState, 'stalled'> {
   if (status === null) return 'needs-human';
   if (status === 'live') return 'working';
   if (status === 'merged' || status === 'archived') return 'finished';
@@ -131,17 +143,45 @@ export function cornerGlyphForStatus(status: CornerStatus | null): string {
 export { CORNER_GLYPH_LIVE, CORNER_GLYPH_QUIET };
 
 /**
+ * A corner whose agent is PROVABLY offline past its presence lease and that
+ * holds no actionable artifact: the oracle's STALLED verdict. Such a corner
+ * is never "waiting on you" — gold means something YOU can act on with a live
+ * agent or a real artifact, and neither applies here. A reviewable change
+ * (`open`) is exactly the real-artifact exception and stays needs-you.
+ */
+export function isCornerStalledOffline(
+  corner: Pick<CornerSummary, 'status' | 'agentOffline'>,
+): boolean {
+  return (
+    corner.agentOffline === true &&
+    corner.status !== 'open' &&
+    corner.status !== 'merged' &&
+    corner.status !== 'archived'
+  );
+}
+
+/**
  * The one glyph/label source — and the STATE WORD is exactly the three-word
  * verdict (`cornerSuperState`), with no sub-reason taxonomy: WORKING,
  * NEEDS HUMAN (idle-without-finishing included, plainly), FINISHED. Which
  * affordance a surface offers inside a needs-human corner (approve card when
  * a live merge target exists, reply focus otherwise, retry, nudge/close) is
  * that surface's contextual choice, not a state word.
+ *
+ * The one honest exception is `isCornerStalledOffline`: a provably-offline
+ * agent's unfinished corner reads STALLED — agent unreachable — never
+ * "NEEDS HUMAN", because nobody is asking the person anything.
  */
-export function cornerStatusPresentation(status: CornerStatus | null): {
+export function cornerStatusPresentation(
+  status: CornerStatus | null,
+  opts?: { agentOffline?: boolean },
+): {
   glyph: string;
   label: string;
 } {
+  if (isCornerStalledOffline({ status, agentOffline: opts?.agentOffline })) {
+    return { glyph: CORNER_GLYPH_QUIET, label: 'STALLED' };
+  }
   switch (cornerSuperState(status)) {
     case 'working':
       return { glyph: CORNER_GLYPH_LIVE, label: 'WORKING' };

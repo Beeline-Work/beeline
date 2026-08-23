@@ -65,6 +65,66 @@ describe('Room row presentation', () => {
     });
   });
 
+  it('an OFFLINE agent with a stalled corner is never "waiting on you" — IDLE, honestly labelled', () => {
+    // Owner report 2026-08-23: charles/beeline showed NEEDS YOU "Waiting on
+    // you" while their agents were DEAD — a stale ask card golded forever
+    // because only newer work (which a dead agent cannot produce) clears it.
+    // The transport carries the oracle's STALLED verdict as `agentOffline`,
+    // and the deck answers it: no gold, no action pill, an honest fact line.
+    const stalled = { ...corner('open', 'charles-fix'), status: null, agentOffline: true };
+    const row = roomRowPresentation({ corners: [stalled] }, NO_NAMES);
+    expect(row).toMatchObject({ zone: 'idle', attention: false, live: false, glyph: '◇' });
+    expect(row.fact).toBe('Agent offline · charles-fix');
+    expect(row.pills.some((pill) => pill.kind === 'status')).toBe(false);
+    // A worded needs-you card next to the offline flag stalls too (defensive
+    // shape — the oracle nulls stalled corners' words, but older caches may
+    // still carry one).
+    expect(
+      roomRowPresentation(
+        { corners: [{ ...corner('needs-attention', 'stale-ask'), agentOffline: true }] },
+        NO_NAMES,
+      ).attention,
+    ).toBe(false);
+  });
+
+  it('an offline agent WITH a reviewable change still reads needs-you (APPROVE)', () => {
+    // The artifact stands on its own: approving a presented change does not
+    // need the agent awake. Presence never touches this verdict.
+    const row = roomRowPresentation(
+      { corners: [{ ...corner('open', 'review-me'), agentOffline: true }] },
+      NO_NAMES,
+    );
+    expect(row).toMatchObject({ zone: 'needs-you', attention: true });
+    expect(row.pills[0]).toEqual({ kind: 'status', label: 'APPROVE' });
+    expect(row.fact).toBe('Waiting on you · review-me');
+  });
+
+  it('keeps an offline-stalled Room out of the NEEDS YOU tier', () => {
+    // The deck-tier contract for the same defect: an offline-stalled room
+    // belongs in IDLE (its row fact says "Agent offline"), never in NEEDS YOU
+    // "waiting on you" — while a genuinely reviewable Room keeps its gold.
+    const sections = roomListSections(
+      [
+        {
+          id: 'charles',
+          title: 'Charles',
+          corners: [
+            { ...corner('open', 'charles-fix'), status: null, agentOffline: true, lastActivityAt: 9 },
+          ],
+        },
+        { id: 'review', title: 'Review', corners: [{ ...corner('open'), lastActivityAt: 5 }] },
+      ],
+      NO_NAMES,
+      { now: NOW },
+    );
+    expect(sections.map((section) => section.title)).toEqual(['NEEDS YOU', 'IDLE']);
+    expect(sections[0]?.data.map(({ item }) => item.id)).toEqual(['review']);
+    expect(sections[1]?.data.map(({ item }) => item.id)).toEqual(['charles']);
+    const charlesRow = sections[1]?.data[0]?.row;
+    expect(charlesRow?.fact).toBe('Agent offline · charles-fix');
+    expect(charlesRow?.attention).toBe(false);
+  });
+
   it('ranks needs-you > working > idle when several corners disagree', () => {
     const row = roomRowPresentation(
       { corners: [corner('open'), corner('live'), corner('needs-attention')] },

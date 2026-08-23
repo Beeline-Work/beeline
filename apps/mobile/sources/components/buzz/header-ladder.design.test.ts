@@ -18,7 +18,7 @@ const ladderSource = readFileSync(path.join(__dirname, './HeaderLadder.tsx'), 'u
 
 describe('Chat header — one language for Room and Corner', () => {
   it('routes both surfaces’ header metadata through the shared micro-caps token', () => {
-    // The repo binding, the participant line, and the corner status all read
+    // The repo binding, the member count line, and the corner status all read
     // through HeaderMetaCaps — no hand-rolled meta text per branch.
     const uses = chatSource.match(/<HeaderMetaCaps/g) ?? [];
     expect(uses.length).toBeGreaterThanOrEqual(3);
@@ -35,12 +35,21 @@ describe('Chat header — one language for Room and Corner', () => {
     }
   });
 
-  it('leads the Room with the workspace identity mark, in the shared slot', () => {
-    const branch = chatSource.indexOf('{!isCorner && !isDirectMessage && (');
-    expect(branch, 'missing the Room mark branch').toBeGreaterThanOrEqual(0);
-    const window = chatSource.slice(branch, branch + 400);
-    expect(window).toContain('<HeaderIdentitySlot testID="room-header-workspace-mark">');
-    expect(window).toMatch(/<IdentityMark\s*\n\s*kind="workspace"/);
+  it('renders no workspace mark in the Room top bar', () => {
+    // Owner trim (2026-08-23): the workspace glyph was removed from the room
+    // header entirely — it stays only on the workspace list's own surfaces.
+    expect(chatSource).not.toContain('room-header-workspace-mark');
+    expect(chatSource).not.toMatch(/<IdentityMark\s*\n\s*kind="workspace"/);
+  });
+
+  it('phrases the Room count as "N members", with no location suffix', () => {
+    // Owner trim (2026-08-23): "3 participants · IN THIS ROOM" became
+    // "3 members" (singular "1 member") on every surface.
+    expect(chatSource).not.toContain('IN THIS ROOM  ›');
+    expect(chatSource).not.toContain("}' participants");
+    const meta = chatSource.match(/<HeaderMetaCaps testID="room-header-meta">[\s\S]*?<\/HeaderMetaCaps>/);
+    expect(meta, 'missing room-header-meta').toBeTruthy();
+    expect(meta![0]).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
   });
 
   it('leads the Corner with the agent mark through the same slot', () => {

@@ -36,6 +36,13 @@ describe('Room→repo header chip', () => {
     expect(guardStart).toBeLessThan(chipIndex);
   });
 
+  it('shows the bare repo slug — no "REPO" label prefix', () => {
+    // Owner trim (2026-08-23): the URL/slug already says what it is.
+    const chip = blockFrom(chatSource, 'testID="room-repo-chip"', 'room repo chip');
+    expect(chip).toContain('roomRepoChipLabel(roomRepository)');
+    expect(chip).not.toMatch(/\bREPO\b/);
+  });
+
   it('is fetched off the enter-room fan-out, and cleared for a corner', () => {
     const effect = blockFrom(
       chatSource,

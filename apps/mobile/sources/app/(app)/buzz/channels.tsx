@@ -43,7 +43,7 @@ import { saveLastViewedChannel } from '@/buzz/community-storage';
 import { createCommunityInviteUrl } from '@/buzz/community-invite';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
-import { roomParticipantPubkeys } from '@/buzz/room-participants';
+import { formatRoomParticipantTotal, roomParticipantPubkeys } from '@/buzz/room-participants';
 import { shortMemberNpub } from '@/buzz/member-display';
 import { ensurePersonNameForWorkspace } from '@/buzz/person-name';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
@@ -1302,11 +1302,14 @@ export default function BuzzChannels() {
           }
           renderItem={({ item: entry }) => {
             const { item, row } = entry;
-            // The dropdown lists open corner work, but the CONTROL exists for
-            // any Room with recorded corners: an all-terminal Room (landed,
-            // failed, closed) still needs its path into the full corner list.
+            // The dropdown lists open corner work, and the CONTROL exists only
+            // for open work too: finished corners (merged/archived) are
+            // represented nowhere in navigation per the owner's model — a Room
+            // whose corners have all finished carries no count and no
+            // expansion, and its history stays reachable through the
+            // transcript's landed/closed references.
             const corners = row.corners;
-            const canExpand = row.totalCorners > 0;
+            const canExpand = corners.length > 0;
             const title = item.title ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`;
             const expanded = canExpand && expandedRoomId === item.id;
             const age = compactRelativeTime(row.meaningfulAt, ageNow);
@@ -1331,13 +1334,9 @@ export default function BuzzChannels() {
                     accessibilityLabel={`Open ${title}${
                       row.attention ? ', needs your attention' : ''
                     }${row.live && !row.attention ? ', agent working' : ''}, ${
-                      item.participantCount ?? 0
-                    } participants${
-                      canExpand
-                        ? corners.length > 0
-                          ? `, ${corners.length} open ${CHANGES_LABEL}`
-                          : `, ${row.totalCorners} recorded ${CHANGES_LABEL}`
-                        : ''
+                      formatRoomParticipantTotal(item.participantCount ?? 0)
+                    }${
+                      canExpand ? `, ${corners.length} open ${CHANGES_LABEL}` : ''
                     }`}
                     contentStyle={styles.indexRow}
                     delayLongPress={350}
@@ -1394,12 +1393,8 @@ export default function BuzzChannels() {
                     <Text style={styles.rowAge}>{age}</Text>
                     {canExpand && (
                       <TouchableOpacity
-                        accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${
-                          corners.length > 0
-                            ? `${corners.length} open ${
-                                corners.length === 1 ? CORNER_LABEL : CHANGES_LABEL
-                              }`
-                            : `${row.totalCorners} recorded ${CHANGES_LABEL}`
+                        accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${corners.length} open ${
+                          corners.length === 1 ? CORNER_LABEL : CHANGES_LABEL
                         } in ${title}`}
                         accessibilityRole="button"
                         accessibilityState={{ expanded }}
@@ -1417,7 +1412,7 @@ export default function BuzzChannels() {
                             corners.length > 0 && row.attention && styles.cornerPeekCountLive,
                           ]}
                         >
-                          {corners.length > 0 ? corners.length : row.totalCorners}
+                          {corners.length}
                           {'\u2009'}
                           <Text style={styles.cornerPeekChevron}>{expanded ? '⌃' : '⌄'}</Text>
                         </Text>

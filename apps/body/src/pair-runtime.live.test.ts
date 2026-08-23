@@ -150,12 +150,19 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
       agentBinary: liveAgent.command,
       mcpBinary: resolveMcpBinary(),
     };
+    // Room creation is a HUMAN action: the human creates the repository Room
+    // from their own key first; pairing joins it, never creates it.
+    const humanRoom = await humanClient.resolveRepositoryRoomForHuman(communityId, binding);
+    expect(humanRoom.channelId).toBe(roomId);
+    expect(humanRoom.created).toBe(true);
     const command = spawnSync(
       process.execPath,
       [
         resolve('dist/cli.js'),
         'pair',
         pairing.code,
+        '--repo',
+        checkout,
         ...(selectedAgentKind ? ['--agent', selectedAgentKind] : []),
       ],
       {
@@ -172,6 +179,7 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
     );
     expect(command.status, command.stderr).toBe(0);
     expect(command.stdout).toContain(`[buzz] room: ${roomId}`);
+    expect(command.stdout).toContain('joined');
     if (!selectedAgentKind) {
       expect(command.stdout).toContain(`[buzz] using ${liveAgent.kind} (auto-detected)`);
     }
@@ -186,14 +194,15 @@ describe.runIf(live)('live one-command pair → Room → branch', () => {
     daemonPid = Number((await readFile(resolve(configs[0]!, '..', 'daemon.pid'), 'utf8')).trim());
     expect(runtimeRoom.repo.root).toBe(checkout);
     expect(runtimeRoom.channelId).toBe(roomId);
-    expect(runtimeRoom.mergeWorker?.publicKey).toMatch(/^[0-9a-f]{64}$/);
     await announceRepo(human, repo, roomId);
     const humanRelay = createRelayClient(human);
     await waitUntil(
       async () =>
+        // The human creator is the Room's admin authority; the agent joined as
+        // a plain member. No merge worker is provisioned here — that now needs
+        // a human admin action, and this flow does not exercise landing.
         (await resolveChannelRole(roomId, human.publicKey, humanRelay)) === 'admin' &&
-        (await resolveChannelRole(roomId, runtimeRoom.mergeWorker!.publicKey, humanRelay)) ===
-          'admin',
+        (await resolveChannelRole(roomId, runtime.agent.publicKey, humanRelay)) === 'member',
       30_000,
     );
 

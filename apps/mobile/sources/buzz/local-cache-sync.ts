@@ -24,6 +24,7 @@ export type MessageSyncResult = {
 };
 
 const inFlightRevalidations = new Map<string, Promise<MessageSyncResult>>();
+const inFlightCornerRevalidations = new Map<string, Promise<void>>();
 
 /**
  * A cold channel's initial backfill returns its N most recent matching kind:9
@@ -281,6 +282,63 @@ export function cacheLiveSessionEvents(
     });
   }
   return projections;
+}
+
+/**
+ * A live corner signal contains only id/status, so it cannot safely fabricate
+ * the full sidebar card (name, opener, creation time). When that id was absent
+ * from the Room list's earlier lifecycle snapshot, re-read the authoritative
+ * lifecycle and replace the Room's array as one store update. Concurrent
+ * signals for the same Room share one read.
+ */
+export function refreshRoomListCornersForUnknownSignals(
+  transport: BuzzRigTransport,
+  viewerPubkey: string,
+  roomId: string,
+  projections: ReturnType<typeof projectChatEvent>[],
+): Promise<void> | undefined {
+  const signaledIds = projections.flatMap((projection) =>
+    projection.message?.corner ? [projection.message.corner.subchannelId] : [],
+  );
+  if (signaledIds.length === 0) return undefined;
+
+  const hasUnknownCorner = Object.values(useBuzzLocalCache.getState().channelLists)
+    .filter((entry) => entry.viewerPubkey === viewerPubkey)
+    .flatMap((entry) => entry.channels)
+    .filter((channel) => channel.id === roomId)
+    .some((channel) =>
+      signaledIds.some((id) => !channel.corners?.some((corner) => corner.id === id)),
+    );
+  if (!hasUnknownCorner) return undefined;
+
+  const key = `${viewerPubkey}:${roomId}`;
+  const existing = inFlightCornerRevalidations.get(key);
+  if (existing) {
+    // The in-flight read may have started before this newer signal existed.
+    // Re-check after it settles so a burst opening two corners cannot lose the
+    // second id behind the first Room-level deduplication slot.
+    return existing.then(
+      () =>
+        refreshRoomListCornersForUnknownSignals(transport, viewerPubkey, roomId, projections) ??
+        Promise.resolve(),
+    );
+  }
+  const revalidation = transport
+    .listSubchannelLifecycle(roomId)
+    .then((corners) => {
+      useBuzzLocalCache.getState().replaceRoomCorners(viewerPubkey, roomId, corners);
+    })
+    .catch(() => {
+      // The normal focus/heartbeat refresh remains the backstop. A transient
+      // lifecycle read must not surface as an unhandled UI promise rejection.
+    })
+    .finally(() => {
+      if (inFlightCornerRevalidations.get(key) === revalidation) {
+        inFlightCornerRevalidations.delete(key);
+      }
+    });
+  inFlightCornerRevalidations.set(key, revalidation);
+  return revalidation;
 }
 
 /** Project one live event into the same persisted cache used by backfill and navigation. */

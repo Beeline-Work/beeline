@@ -481,6 +481,8 @@ export const CORNER_TURN_SUMMARY_INSTRUCTION =
 export const CORNER_MERGE_GATE_INSTRUCTION =
   'Do not tell the human to approve this work or claim that a review target exists. After your turn, Beeline checks the worktree and publishes the review target itself. If that check rejects the work, you will receive its exact reason as a follow-up instruction.' +
   ' An external merge/validation gate you run (e.g. no-mistakes) shares this rule: if it fails to initialize or run, quote its exact error in your reply, report the work as NOT ready, and never ask for approval — an approval the human sends while no review target is published goes nowhere.';
+export const CORNER_TARGET_SYNC_INSTRUCTION =
+  'Before Beeline can publish a merge target, bring the feature branch up to date with the latest tip of its fixed target branch. Permission to fetch and merge or rebase the target into the feature branch is always implied for every corner and every agent: do it without asking the human again, resolve conflicts in the feature worktree, rerun relevant checks, and commit the result. Never modify the target branch itself.';
 
 /** Initial rejection plus two bounded agent correction turns. */
 export const MERGE_READY_GATE_MAX_REJECTIONS = 3;
@@ -3202,6 +3204,7 @@ export class Body {
               `Your feature branch is: ${featureBranch}`,
               'Continue from the structured resume brief and repository state. Never start a second task.',
               'Never merge, push or change the target branch, or archive this corner; only a signed human approval may authorize those effects.',
+              CORNER_TARGET_SYNC_INSTRUCTION,
               'A tool or skill can be unavailable or fail to initialize (for example codegraph before its index is ready). Treat that as a normal recoverable error for that one call and continue the task with what you have; never abort the task because a single tool or skill is missing.',
               'You may call any skill available to you, but only when the current task explicitly calls for it or names it directly. Never auto-trigger a skill (e.g. a design/UX review skill) on routine or trivial work.',
             ].join('\n'),
@@ -3643,6 +3646,7 @@ export class Body {
         'Update that plan as the work changes and keep exactly one item in progress until the turn is complete.',
         'Commit your changes to the feature branch when appropriate.',
         'Never merge, push or change the target branch, or archive this corner. Stop after committing the feature branch; only a signed human approval may authorize landing and archive cleanup.',
+        CORNER_TARGET_SYNC_INSTRUCTION,
         'A tool or skill can be unavailable or fail to initialize (for example codegraph before its index is ready). Treat that as a normal recoverable error for that one call and continue the task with what you have; never abort the task because a single tool or skill is missing.',
         'You may call any skill available to you, but only when the current task explicitly calls for it or names it directly. Never auto-trigger a skill (e.g. a design/UX review skill) on routine or trivial work.',
         `Repo: ${this.repoId(boundRepo)}`,
@@ -5663,6 +5667,7 @@ export class Body {
             'Implement the following human request in this worktree.',
             'Keep all edits on the current feature branch. Commit the completed work.',
             'Do not merge, push or change the target branch, or archive this corner.',
+            CORNER_TARGET_SYNC_INSTRUCTION,
             CORNER_MERGE_GATE_INSTRUCTION,
             CORNER_TURN_SUMMARY_INSTRUCTION,
             '',
@@ -5809,6 +5814,48 @@ export class Body {
     }
   }
 
+  /**
+   * Read the target tip that a review published right now would actually land
+   * onto. A remote read is deliberate: a stale local tracking ref is exactly
+   * how a behind corner used to reach review and fail only after approval.
+   */
+  private async currentReviewTargetTip(
+    info: SubchannelInfo,
+    targetBranch: string,
+  ): Promise<{ tip?: string; reason?: string }> {
+    const boundRepo = info.boundRepo!;
+    const remote = boundRepo.remoteName;
+    if (remote) {
+      // Review against the endpoint landing will PUSH to. Git permits a
+      // separate fetch URL (preview tests and real mirrors use one), and
+      // checking that endpoint would certify the wrong target branch.
+      const pushUrl = git(info.worktreePath, ['remote', 'get-url', '--push', remote]);
+      const targetRemote = pushUrl.ok && pushUrl.stdout.trim() ? pushUrl.stdout.trim() : remote;
+      const targetLs = await this.remoteGit(boundRepo, info.worktreePath, [
+        'ls-remote',
+        targetRemote,
+        targetBranch,
+      ]);
+      if (!targetLs.ok) {
+        return {
+          reason:
+            targetLs.stderr.trim() ||
+            `Could not read ${targetBranch} on ${remote} to verify that this corner is up to date.`,
+        };
+      }
+      const tip = targetLs.stdout.trim().split(/\s+/)[0];
+      return /^[0-9a-f]{40}$/.test(tip ?? '')
+        ? { tip }
+        : { reason: `The target branch ${targetBranch} no longer exists on ${remote}.` };
+    }
+
+    const localTarget = git(info.worktreePath, ['rev-parse', '--verify', targetBranch]);
+    const tip = localTarget.stdout.trim();
+    return localTarget.ok && /^[0-9a-f]{40}$/.test(tip)
+      ? { tip }
+      : { reason: `Could not resolve the local target branch ${targetBranch}.` };
+  }
+
   /** Push the agent's feature tip and publish the exact human-approval target. */
   private async publishMergeReady(info: SubchannelInfo): Promise<boolean> {
     const boundRepo = info.boundRepo;
@@ -5821,7 +5868,20 @@ export class Body {
       branch: boundRepo.targetBranch ?? 'refs/heads/main',
       tip,
     };
-    const base = resolveReviewBaseTip(info.worktreePath, target.branch);
+    const currentTarget = await this.currentReviewTargetTip(info, target.branch);
+    const targetIsAncestor = Boolean(
+      currentTarget.tip &&
+        (currentTarget.tip === tip ||
+          git(info.worktreePath, ['merge-base', '--is-ancestor', currentTarget.tip, tip]).ok),
+    );
+    const targetSyncReason = currentTarget.reason
+      ? currentTarget.reason
+      : !targetIsAncestor
+        ? `The feature branch is not up to date with the latest ${target.branch.replace(/^refs\/heads\//, '')} tip (${currentTarget.tip!.slice(0, 12)}). Fetch the current target from its landing remote, merge or rebase it into this feature branch, resolve any conflicts, rerun relevant checks, and commit the result. This synchronization is already authorized; do not ask the human for permission.`
+        : undefined;
+    const base = targetIsAncestor
+      ? currentTarget.tip!
+      : resolveReviewBaseTip(info.worktreePath, target.branch);
     const files = listChangeReviewFiles(info.worktreePath, base, tip);
     const status = git(info.worktreePath, [
       'status',
@@ -5834,7 +5894,7 @@ export class Body {
       status,
       info.session.agentPrivateState,
     );
-    if (dirtyEntries.length > 0 || files.length === 0) {
+    if (targetSyncReason || dirtyEntries.length > 0 || files.length === 0) {
       // Never advertise HEAD as reviewable when the agent's actual work is
       // uncommitted, or when it made no committed change. An older ready tip
       // must be withdrawn too, otherwise a human could approve stale work.
@@ -5846,20 +5906,22 @@ export class Body {
       const withdrawnDetail = withdrawnTarget
         ? ` The previously published merge target ${withdrawnTarget.tip} is stale and has been withdrawn.`
         : '';
-      const detail = dirtyEntries.length > 0
-        ? [
-            'The worktree has uncommitted or untracked paths:',
-            ...dirtyEntries.map((entry) => `- ${entry}`),
-            'Commit the intended project changes and remove or relocate anything that should not be reviewed.',
-            withdrawnDetail.trim(),
-          ]
-            .filter(Boolean)
-            .join('\n')
-        : withdrawnTarget
-          ? `The previously published merge target ${withdrawnTarget.tip} is stale and has been withdrawn because the current tip has no remaining diff against ${target.branch}.`
-          : commitCount === 0
-            ? `No committed change is available for this turn. The current tip matches the review base on ${target.branch}.`
-            : `The branch has ${commitCount} committed ${commitCount === 1 ? 'change' : 'changes'}, but their combined diff against ${target.branch} is empty.`;
+      const detail = targetSyncReason
+        ? targetSyncReason
+        : dirtyEntries.length > 0
+          ? [
+              'The worktree has uncommitted or untracked paths:',
+              ...dirtyEntries.map((entry) => `- ${entry}`),
+              'Commit the intended project changes and remove or relocate anything that should not be reviewed.',
+              withdrawnDetail.trim(),
+            ]
+              .filter(Boolean)
+              .join('\n')
+          : withdrawnTarget
+            ? `The previously published merge target ${withdrawnTarget.tip} is stale and has been withdrawn because the current tip has no remaining diff against ${target.branch}.`
+            : commitCount === 0
+              ? `No committed change is available for this turn. The current tip matches the review base on ${target.branch}.`
+              : `The branch has ${commitCount} committed ${commitCount === 1 ? 'change' : 'changes'}, but their combined diff against ${target.branch} is empty.`;
       info.lastMergeNotReadyReason = detail;
       await postControlMessage(
         info.subchannelId,
@@ -6346,15 +6408,17 @@ export class Body {
   }
 
   /**
-   * Stop after a moved-target refusal and ask the human what to do next.
-   * Their approval authorized landing one exact tip; it did not commission an
-   * autonomous rebase turn from a later maintenance tick.
+   * A moved target invalidates the exact-tip approval, but synchronizing the
+   * feature branch is standing merge preparation rather than a new product
+   * decision. Resume the corner automatically; the rewritten tip still gets a
+   * fresh review target and therefore requires a fresh signed merge approval.
    */
   private async blockMovedTarget(
     info: SubchannelInfo,
     target: NonNullable<SubchannelInfo['mergeTarget']>,
   ): Promise<void> {
     const branch = target.branch.replace(/^refs\/heads\//, '');
+    const approvalId = info.humanMergeApproval?.id ?? target.tip;
     const failureTags: string[][] = [
       ['repo', target.repo],
       ['branch', target.branch],
@@ -6371,19 +6435,36 @@ export class Body {
       this.agentIdentity,
       `Couldn't land this change on ${branch} — ${branch} moved on since you approved it. ` +
         `Nothing was lost: the work is committed on ${info.featureBranch}. ` +
-        `The approval you already gave no longer applies. Tell me here if you want this corner brought up to date; nothing is continuing on its own.`,
+        `The approval you already gave no longer applies. Beeline is bringing the feature branch up to date automatically; a fresh review target will be published when it passes checks.`,
       [
         ...RECOVERABLE_CORNER_FAILURE_TAGS,
-        ['retry', 'blocked' satisfies DeliveryRetryPosture],
+        ['retry', 'auto' satisfies DeliveryRetryPosture],
         ...failureTags,
       ],
     );
     await this.postParentCornerStatus(
       info,
-      'needs-attention',
-      `Couldn't land on ${branch}. Waiting on you.`,
+      'working',
+      `${branch} moved; bringing the corner up to date automatically.`,
       [['tip', target.tip]],
     );
+    if (!this.runningAgentTasks.has(info.subchannelId)) {
+      this.startAgentTask(
+        info,
+        `Bring this corner up to date with ${branch}.`,
+        [
+          `The approved merge target moved to a newer ${branch} tip after review.`,
+          CORNER_TARGET_SYNC_INSTRUCTION,
+          `Synchronize ${info.featureBranch} with ${target.branch}, preserve the intended corner changes, resolve conflicts, run relevant checks, and commit the updated feature branch.`,
+          'Do not land it yourself. Beeline will publish a new review target for the rewritten tip.',
+        ].join('\n'),
+        {
+          requestId: approvalId,
+          originalRequestId: info.request?.eventId ?? approvalId,
+          cause: 'target-sync',
+        },
+      );
+    }
   }
 
   /**
@@ -7387,7 +7468,7 @@ export class Body {
             promptAttempted = true;
             return this.promptAgent(
               session,
-              `${prompt}\n\n${CORNER_MERGE_GATE_INSTRUCTION}\n${CORNER_TURN_SUMMARY_INSTRUCTION}`,
+              `${prompt}\n\n${CORNER_TARGET_SYNC_INSTRUCTION}\n${CORNER_MERGE_GATE_INSTRUCTION}\n${CORNER_TURN_SUMMARY_INSTRUCTION}`,
               {
                 channelId: subchannelId,
                 requestId: evt.id,

@@ -10,7 +10,7 @@ const productionElevenLabsAgentId = 'agent_6701k211syvvegba4kt7m68nxjmw';
 const elevenLabsAgentId = productionElevenLabsAgentId;
 const consoleLoggingDefault = process.env.NODE_ENV !== 'production';
 const buzzyRelayUrl = process.env.EXPO_PUBLIC_BUZZY_RELAY_URL || 'https://usebeeline.app';
-const buzzyPushGatewayUrl = process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL || 'https://push.buzzrouter.com';
+const buzzyPushGatewayUrl = process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL || 'https://usebeeline.app/push';
 
 function git(args) {
     try {

@@ -84,12 +84,33 @@ mkdir -p "$releases_root"
 release_id=$(node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).commit || ""))' "$temporary_dir/lib/beeline/bundle.json" 2>/dev/null || true)
 release_id=$(printf %s "$release_id" | tr -c '0-9a-zA-Z._-' '-' | cut -c1-80)
 [ -n "$release_id" ] || release_id="manual-$(date +%s)"
+# Stage the download beside the releases root (same filesystem) so placing
+# it is a plain rename. A collision on the release id is resolved by
+# REUSING the existing complete directory — never by piling up
+# timestamp-suffixed duplicates (${id}-<epoch>), which older installers
+# accumulated on every reinstall.
 target=$releases_root/$release_id
-if [ -e "$target" ]; then
-  target="$releases_root/${release_id}-$(date +%s)"
+staging=$releases_root/.staging.$$.$release_id
+rm -rf "$staging"
+mkdir -p "$staging"
+cp -R "$temporary_dir/bin" "$temporary_dir/lib" "$staging/"
+if [ -L "$target" ]; then
+  # A release-id-named SYMLINK here is tangle from the old mv-based swap,
+  # never legitimate content — replace it with the real directory.
+  rm -f "$target"
+  mv "$staging" "$target"
+elif [ -d "$target" ] && [ -f "$target/lib/beeline/bundle.json" ]; then
+  # Same release id already installed completely: idempotent reinstall.
+  # Keep the existing directory (a running daemon may be executing from
+  # it) and drop the staged copy.
+  rm -rf "$staging"
+elif [ -e "$target" ]; then
+  # Partial/corrupt leftover from an interrupted earlier install: replace it.
+  rm -rf "$target"
+  mv "$staging" "$target"
+else
+  mv "$staging" "$target"
 fi
-mkdir -p "$target"
-cp -R "$temporary_dir/bin" "$temporary_dir/lib" "$target/"
 
 # Converge an existing non-release install: a REAL directory at the anchor is
 # legacy (installer v1 output, flat or release-shaped). Preserve it as a
@@ -115,10 +136,53 @@ if [ -d "$anchor" ] && [ ! -L "$anchor" ]; then
   done
 fi
 
+# Capture where the anchor pointed BEFORE the swap, so the duplicate-prune
+# sweep below never touches a release anything was recently live on.
+previous_link_target=
+if [ -L "$anchor" ]; then
+  previous_link_target=$(readlink "$anchor" || true)
+fi
+
 # Point the anchor at the new release with a single atomic rename.
+#
+# This MUST be rename(2), not `mv`: when $anchor is a symlink to a directory
+# — which is exactly its contract shape after the first release-shaped
+# install — mv treats the destination as a directory and moves the new link
+# INSIDE the old release (beeline-releases/<old>/beeline.new.<pid>), leaving
+# the active anchor stale so every reinstall keeps running the previous
+# bundle. rename(2) replaces the symlink itself without following it; this is
+# the same primitive self-update's activateRelease() relies on.
 rm -f "$anchor.new.$$"
 ln -s "beeline-releases/$(basename "$target")" "$anchor.new.$$"
-mv "$anchor.new.$$" "$anchor"
+node -e 'require("fs").renameSync(process.argv[1], process.argv[2])' "$anchor.new.$$" "$anchor"
+
+# Sweep the litter the old mv-based swap left behind: stray anchor-candidate
+# symlinks inside release directories and in lib/, plus any symlink directly
+# under beeline-releases/ (a real release there is always a DIRECTORY).
+find "$releases_root" -maxdepth 1 -type l -exec rm -f {} + 2>/dev/null || true
+find "$(dirname "$anchor")" -maxdepth 1 \( -name 'beeline.new.*' -o -name 'beeline.new-*' \) -exec rm -f {} + 2>/dev/null || true
+find "$releases_root" -maxdepth 2 \( -name 'beeline.new.*' -o -name 'beeline.new-*' \) -exec rm -f {} + 2>/dev/null || true
+
+# Prune timestamp-suffixed duplicates of a canonical release that older
+# installers created on repeated installs of the same bundle. Only a
+# <base>-<digits> sibling of an EXISTING <base> directory carrying the SAME
+# bundle identity qualifies, and never one the anchor pointed at before or
+# points at now — those stay as meaningful rollback copies.
+for dup in "$releases_root"/*-[0-9]*; do
+  [ -d "$dup" ] || continue
+  dup_name=$(basename "$dup")
+  [ "$dup_name" != "$(basename "$target")" ] || continue
+  base=${dup_name%-*}
+  [ -n "$base" ] && [ -d "$releases_root/$base" ] || continue
+  case "$previous_link_target" in
+    */"$dup_name"|*/"$dup_name"/*) continue ;;
+  esac
+  dup_commit=$(node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).commit || ""))' "$releases_root/$base/lib/beeline/bundle.json" 2>/dev/null || true)
+  [ -n "$dup_commit" ] || continue
+  dup_id_commit=$(node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).commit || ""))' "$dup/lib/beeline/bundle.json" 2>/dev/null || true)
+  [ "$dup_commit" = "$dup_id_commit" ] || continue
+  rm -rf "$dup"
+done
 
 mkdir -p "$bin_dir"
 
@@ -160,6 +224,12 @@ exec "\$prefix_dir/lib/beeline/bin/beeline" "\$@"
 EOF
 chmod 0755 "$bin_dir/.beeline.new.$$"
 mv -f "$bin_dir/.beeline.new.$$" "$bin_dir/beeline"
+
+active_link=$(readlink "$anchor" || true)
+if [ "$active_link" != "beeline-releases/$(basename "$target")" ]; then
+  fail "failed to activate release $(basename "$target") (anchor reads: ${active_link:-nothing})"
+fi
+echo "beeline installer: active release $(basename "$target")"
 
 echo "beeline installer: installed beeline, buzz-agent, buzz-dev-mcp, and buzz-readonly-mcp in $bin_dir"
 case ":${PATH:-}:" in

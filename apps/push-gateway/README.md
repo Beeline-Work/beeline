@@ -84,7 +84,12 @@ Changes under this service require a push-gateway redeploy. Changes to the
 Android notification channel label require a new APK; the application label is
 already Beeline.
 
-The production deployment runs this service beside relay-front and the relay in
-the Compose stack. Port 8788 stays internal, the FCM credential is mounted
-read-only, and the registry plus delivery ledger share a durable host-mounted
-state directory. See [`deploy/README.md`](deploy/README.md).
+The live production host currently runs `buzzy-push-gateway.service` as a user
+systemd unit, with `~/buzzy-push-gateway/current` pointing at an immutable
+release. To apply a committed gateway update, the operator prepares and builds
+a new release, atomically repoints `current`, then runs
+`systemctl --user restart buzzy-push-gateway.service`. Verify `/push/health` and
+the new decision lines with `journalctl --user -u buzzy-push-gateway.service`.
+Preserve the existing `secrets/` and `state/` directories throughout. The
+checked-in Compose deployment remains a separate target topology; do not run
+both pollers against one delivery ledger. See [`deploy/README.md`](deploy/README.md).

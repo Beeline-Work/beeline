@@ -91,6 +91,45 @@ describe('agent command selection', () => {
     });
   });
 
+  it('uses the Grok CLI native ACP server with no adapter binary', async () => {
+    const grok = await executable('grok');
+
+    expect(resolveAgentCommand({ kind: 'grok', env: { PATH: grok.directory } })).toEqual({
+      kind: 'grok',
+      command: grok.path,
+      args: ['agent', 'stdio'],
+    });
+  });
+
+  it('gives an actionable install error when the Grok CLI is missing', () => {
+    expect(() => resolveAgentCommand({ kind: 'grok', env: { PATH: '' } })).toThrow(
+      'curl -fsSL https://x.ai/cli/install.sh | bash',
+    );
+  });
+
+  it('detects a grok install as ready with no adapter step (native ACP)', async () => {
+    const grok = await executable('grok');
+
+    const detected = detectInstalledAgentCommands({ env: { PATH: grok.directory } });
+    expect(detected).toEqual([
+      { kind: 'grok', status: 'ready', agent: { kind: 'grok', command: grok.path, args: ['agent', 'stdio'] } },
+    ]);
+  });
+
+  it('resolves a Cursor community-bridge custom command through the custom path', async () => {
+    // Cursor's CLI has no native ACP mode; the documented path is the
+    // third-party `cursor-acp` bridge driven through `--agent custom`.
+    const cursorAcp = await executable('cursor-acp');
+
+    expect(
+      resolveAgentCommand({
+        kind: 'custom',
+        customCommand: 'cursor-acp',
+        env: { PATH: cursorAcp.directory },
+      }),
+    ).toEqual({ kind: 'custom', command: cursorAcp.path, args: [] });
+  });
+
   it('gives an actionable error when Pi has no ACP adapter', async () => {
     const pi = await executable('pi');
 

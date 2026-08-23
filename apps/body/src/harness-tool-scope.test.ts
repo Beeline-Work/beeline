@@ -79,6 +79,7 @@ describe('harnessToolScope', () => {
     expect(harnessToolScope('/usr/local/bin/claude-agent-acp').enforcement).toBe('allowlisted');
     expect(harnessToolScope('buzz-agent').enforcement).toBe('allowlisted');
     expect(harnessToolScope('codex-acp').enforcement).toBe('config-isolated');
+    expect(harnessToolScope('/home/op/.grok/bin/grok').enforcement).toBe('config-isolated');
     expect(harnessToolScope('pi-acp').enforcement).toBe('none');
   });
 

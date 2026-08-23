@@ -135,7 +135,7 @@ function pairUsage(): void {
 ${pc.bold('Pair this repository and start its durable Room agent(s).')}
 
 ${pc.dim('Usage:')}
-  beeline pair <BUZZ-XXXX-XXXX> [--agent <codex|claude|goose|pi|reference|custom>]
+  beeline pair <BUZZ-XXXX-XXXX> [--agent <codex|claude|goose|pi|grok|reference|custom>]
                [--agent-command '<command> [args...]'] [--repo <path>]
                [--access <everyone|creator>] [--auto-response '<text>']
                [--mcp <squire>]
@@ -151,8 +151,14 @@ Agent choices:
   claude     Operator's Claude Code through a Claude ACP adapter
   goose      Operator's Goose through its native 'goose acp' server
   pi         Operator's Pi through the pi-acp adapter
+  grok       Operator's Grok through its native 'grok agent stdio' ACP server
   reference  Bundled buzz-agent (explicit fallback; requires an LLM key)
   custom     Explicit ACP command supplied with --agent-command
+
+Cursor has no native ACP mode. To drive it, install the Cursor CLI
+(curl -fsSL https://cursor.com/install | sh), log in with \`cursor-agent login\`,
+install the community bridge (npm install -g cursor-acp), and pair with
+\`--agent custom --agent-command 'cursor-acp'\`.
 
 With no --agent flag, beeline detects supported installed coding agents. Missing
 ACP adapters stay visible and can be installed when selected on a terminal. In a

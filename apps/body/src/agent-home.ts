@@ -28,16 +28,23 @@ import { AGENT_PRIVATE_STATE_ENV } from './agent-private-state.js';
  * keyed by the state directory the harness was pointed at. `source` is
  * relative to the operator's real `$HOME`; `target` to the isolated dir.
  */
-const SHARED_CREDENTIALS: Array<{ dir: 'claude' | 'codex'; source: string; target: string }> = [
+const SHARED_CREDENTIALS: Array<{
+  dir: 'claude' | 'codex' | 'grok';
+  source: string;
+  target: string;
+}> = [
   // Claude Code relocates ~/.claude wholesale via CLAUDE_CONFIG_DIR; the OAuth
   // credentials live inside it, so an isolated dir needs them linked back.
   { dir: 'claude', source: '.claude/.credentials.json', target: '.credentials.json' },
   // Codex CLI relocates ~/.codex via CODEX_HOME; auth.json holds its login.
   { dir: 'codex', source: '.codex/auth.json', target: 'auth.json' },
+  // Grok relocates ~/.grok via GROK_HOME; auth.json holds its login (same
+  // shape as codex).
+  { dir: 'grok', source: '.grok/auth.json', target: 'auth.json' },
 ];
 
 /** Subdirectories created under a room-instance's agent home. */
-const HOME_SUBDIRS = ['claude', 'codex', 'state', 'cache', 'tmp'] as const;
+const HOME_SUBDIRS = ['claude', 'codex', 'grok', 'state', 'cache', 'tmp'] as const;
 
 export interface RoomAgentHomeInput {
   /** Per-room agent home root, e.g. `<roomRoot>/agent-home`. */
@@ -88,6 +95,7 @@ export function roomAgentHomeEnv(root: string): Record<string, string> {
   return {
     CLAUDE_CONFIG_DIR: resolve(resolved, 'claude'),
     CODEX_HOME: resolve(resolved, 'codex'),
+    GROK_HOME: resolve(resolved, 'grok'),
     XDG_STATE_HOME: resolve(resolved, 'state'),
     XDG_CACHE_HOME: resolve(resolved, 'cache'),
     TMPDIR: resolve(resolved, 'tmp'),
@@ -105,6 +113,7 @@ export function roomAgentHomeEnv(root: string): Record<string, string> {
 export const HARNESS_STATE_ENV_VARS = [
   'CLAUDE_CONFIG_DIR',
   'CODEX_HOME',
+  'GROK_HOME',
   'XDG_STATE_HOME',
   'XDG_CACHE_HOME',
   AGENT_PRIVATE_STATE_ENV,

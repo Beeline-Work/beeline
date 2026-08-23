@@ -152,6 +152,24 @@ export interface AgentModelCatalog {
   raw: NostrEvent;
 }
 
+/** One slash command/skill an agent's ACP runtime advertises (display only). */
+export interface AgentCommandInfo {
+  /** The command name, without any leading slash (e.g. `loop`, `mcp:github`). */
+  name: string;
+  description?: string;
+  /** Argument hint the harness advertised (e.g. `[issue-number]`). */
+  inputHint?: string;
+}
+
+/** Self-authored, per-(agent,Workspace) snapshot of the agent's advertised commands. */
+export interface AgentCommandList {
+  communityId: string;
+  agentPubkey: string;
+  commands: AgentCommandInfo[];
+  updatedAt: number;
+  raw: NostrEvent;
+}
+
 export interface AgentModelConfigInput {
   /** The chosen `model` option's id. Absent leaves the current model choice alone. */
   model?: string;

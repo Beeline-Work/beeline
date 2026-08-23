@@ -157,6 +157,10 @@ import {
 } from './target-branch.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
+import {
+  prepareGitReadTokenHelper,
+  resolveBeelineCliEntrypoint,
+} from './corner-read-token.js';
 import type { RelaySocketLease, SharedRelaySocket } from './relay-socket.js';
 import { appendPersonaSessionInstructions } from './persona-instructions.js';
 import {
@@ -2182,6 +2186,38 @@ export class Body {
   }
 
   /**
+   * Git env entries wiring the read-only repository credential helper into a
+   * corner session (`corner-read-token.ts`). Strictly best-effort: any
+   * failure — unwritable state dir, dev/tsx entrypoint, missing runtime pin —
+   * degrades to today's behaviour (no private-repo fetch) with one advisory
+   * line, and never blocks or fails the session. Only GitHub-backed repos
+   * qualify; relay-origin and local-only repos are skipped by the caller.
+   */
+  private async gitReadTokenEnv(input: {
+    roomId: string;
+    stateDir: string;
+  }): Promise<Record<string, string> | undefined> {
+    try {
+      const cliEntrypoint = resolveBeelineCliEntrypoint();
+      if (!cliEntrypoint || !this.config.runtimeConfigPath) return undefined;
+      const wiring = await prepareGitReadTokenHelper({
+        roomId: input.roomId,
+        stateDir: input.stateDir,
+        nodePath: process.execPath,
+        cliEntrypoint,
+        runtimeConfigPath: this.config.runtimeConfigPath,
+      });
+      console.log(
+        `[body] read-only git credential helper wired for Room ${input.roomId}: ${wiring.helperPath}`,
+      );
+      return wiring.env;
+    } catch (error) {
+      console.warn('[body] read-only git credential helper unavailable:', error);
+      return undefined;
+    }
+  }
+
+  /**
    * Prepare the one Body-owned, provenance-verifiable path a corner may use
    * for persona bookkeeping. Failure leaves the old strict worktree boundary
    * intact and is advisory; it must never prevent a commissioned corner.
@@ -2406,6 +2442,13 @@ export class Body {
     resumeOnFirstActivation?: boolean;
     resumePlan?: CompactActivityPlan;
     agentPrivateState?: CornerAgentPrivateState;
+    /**
+     * When set (corner edit sessions on a GitHub-backed repo), the session's
+     * git environment gets a read-only credential helper for private-repo
+     * fetches — see `corner-read-token.ts`. `roomId` is the PARENT Room id;
+     * `stateDir` must be session-private and writable in the sandbox.
+     */
+    gitReadCredential?: { roomId: string; stateDir: string };
   }): Promise<AgentSession> {
     let client = new AcpClient({
       agentCommand: this.config.agentCommand ?? this.config.agentBinary,
@@ -2435,9 +2478,16 @@ export class Body {
         // that keys per-project state off its own cwd matches this session.
         await mkdir(input.cwd, { recursive: true });
         const baseSessionEnv = await this.sessionAgentEnv();
-        const sessionEnv = input.agentPrivateState
-          ? { ...baseSessionEnv, [AGENT_PRIVATE_STATE_ENV]: input.agentPrivateState.root }
-          : baseSessionEnv;
+        const readTokenEnv = input.gitReadCredential
+          ? await this.gitReadTokenEnv(input.gitReadCredential)
+          : undefined;
+        const sessionEnv = {
+          ...baseSessionEnv,
+          ...(input.agentPrivateState
+            ? { [AGENT_PRIVATE_STATE_ENV]: input.agentPrivateState.root }
+            : {}),
+          ...(readTokenEnv ?? {}),
+        };
         const spawnCommand = this.sessionSpawnCommand(
           {
             mode: input.mode,
@@ -3380,6 +3430,10 @@ export class Body {
             resumePlan: restoredPlan,
             ...(agentPrivateState ? { agentPrivateState } : {}),
             ...(communityId ? { communityId } : {}),
+            ...(cornerRepo.truth?.binding.remote?.startsWith('git://github.com/') &&
+            agentPrivateState
+              ? { gitReadCredential: { roomId: parentChannelId, stateDir: agentPrivateState.root } }
+              : {}),
           });
           const cursor = await this.durableState.cursor(subchannelId);
           const requestId = control ? tagValue(control, 'request') : undefined;
@@ -3847,6 +3901,9 @@ export class Body {
       resumeTargetRef: boundRepo.targetBranch ?? 'refs/heads/main',
       ...(agentPrivateState ? { agentPrivateState } : {}),
       ...(communityId ? { communityId } : {}),
+      ...(boundRepo.truth?.binding.remote?.startsWith('git://github.com/') && agentPrivateState
+        ? { gitReadCredential: { roomId: tlcChannelId, stateDir: agentPrivateState.root } }
+        : {}),
     });
 
     const now = Math.floor(Date.now() / 1000);

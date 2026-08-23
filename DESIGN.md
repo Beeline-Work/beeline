@@ -289,8 +289,15 @@ anchors are not a uniqueness claim: the closest measured agent pair is 100° /
 Saturation stays low so every mark sits inside the obsidian world rather than
 on top of it, and each type carries a temperament as a quiet second reading of
 what the shape already states: agents warmer and a step more saturated, people
-cooler and greyer, Workspaces most neutral of all — structure should not
-compete with the people inside it.
+cooler and greyer.
+
+**Workspace exception — the house brass.** A Workspace is not someone to
+remember; it is the house itself. Every `▢` mark therefore renders in ONE hue
+family — the Speakeasy brass (`WORKSPACE_BRASS_HUE`, ≈40°, matched to the
+theme accents) — regardless of its seed. Per-Workspace distinction rides the
+fill, cypher, and luminance-register axes only; no green/lavender/other-hued
+workspace glyph may exist anywhere. Humans (○) and agents (△) keep their full
+deterministic wheel.
 
 **3 · Fill is the nameable collision axis.** Each identity is **solid**,
 **hollow**, or **half-filled**, chosen from its seed on a stream independent of

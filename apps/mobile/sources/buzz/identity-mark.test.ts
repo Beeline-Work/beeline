@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CYPHER_CELLS,
   IDENTITY_FILL_STATES,
+  WORKSPACE_BRASS_HUE,
   identityFillState,
   identityMarkGeometry,
   identityPalette,
@@ -29,7 +30,8 @@ describe('the signature colour is a memory hook', () => {
     // identities on three near-identical purples. Here two identities either
     // share a signature outright or sit a clearly readable distance apart —
     // there is no such thing as "almost the same colour" in this system.
-    for (const kind of ['agent', 'human', 'workspace'] as IdentityKind[]) {
+    // Workspaces are excluded by design: they all share the house brass.
+    for (const kind of ['agent', 'human'] as IdentityKind[]) {
       for (let i = 0; i < PUBKEYS.length; i += 1) {
         for (let j = i + 1; j < PUBKEYS.length; j += 1) {
           const a = identityPalette(PUBKEYS[i]!, kind);
@@ -82,7 +84,7 @@ describe('the signature colour is a memory hook', () => {
     expect(inCorridor / bigSample.length).toBeLessThan(0.3);
   });
 
-  it('runs agents warm and saturated, people cool and grey', () => {
+  it('runs agents warm and saturated, people cooler and greyer', () => {
     // A quiet second reading of the type the shape already states outright.
     const warmth = (kind: IdentityKind) => {
       const hues = PUBKEYS.map((pubkey) => identityPalette(pubkey, kind).hue);
@@ -101,12 +103,44 @@ describe('the signature colour is a memory hook', () => {
     for (const pubkey of PUBKEYS.slice(0, 12)) {
       const agent = saturation(identityPalette(pubkey, 'agent').mid);
       const human = saturation(identityPalette(pubkey, 'human').mid);
-      const workspace = saturation(identityPalette(pubkey, 'workspace').mid);
       expect(agent).toBeGreaterThan(human);
-      expect(human).toBeGreaterThan(workspace);
       // Muted, never neon: these have to sit inside the obsidian world.
       expect(agent).toBeLessThan(0.45);
     }
+  });
+
+  it('renders every workspace mark in the house brass — never a per-identity hue', () => {
+    // The Speakeasy treatment: a Workspace is the house itself, not someone
+    // to remember, so every ▢ sits in one brass family. Per-Workspace
+    // distinction rides fill + cypher + luminance register, never hue.
+    for (const pubkey of PUBKEYS) {
+      const palette = identityPalette(pubkey, 'workspace');
+      expect(palette.hue).toBe(WORKSPACE_BRASS_HUE);
+      expect(palette.hueIndex).toBe(
+        identityPalette('any-other-seed-lands-same', 'workspace').hueIndex,
+      );
+      // Brass-family saturation: reads as metal on the obsidian ground, not
+      // as the washed-out grey-tan the old neutral temperament produced.
+      const [r, g, b] = [1, 3, 5].map((at) => parseInt(palette.mid.slice(at, at + 2), 16) / 255) as [
+        number,
+        number,
+        number,
+      ];
+      expect(Math.max(r, g, b) - Math.min(r, g, b)).toBeGreaterThan(0.3);
+    }
+
+    // Humans and agents keep their per-identity wheel: this change must not
+    // have leaked into their palettes.
+    const agentHues = new Set(PUBKEYS.map((pubkey) => identityPalette(pubkey, 'agent').hue));
+    const humanHues = new Set(PUBKEYS.map((pubkey) => identityPalette(pubkey, 'human').hue));
+    expect(agentHues.size).toBeGreaterThanOrEqual(10);
+    expect(humanHues.size).toBeGreaterThanOrEqual(8);
+    expect(agentHues.has(WORKSPACE_BRASS_HUE)).toBe(true); // 40 is a wheel anchor
+    expect(humanHues.has(WORKSPACE_BRASS_HUE)).toBe(false); // humans lean cool
+
+    // Distinct workspaces stay distinguishable without hue: fill varies.
+    const fills = new Set(PUBKEYS.map((pubkey) => identityFillState(pubkey, 'workspace')));
+    expect(fills.size).toBe(IDENTITY_FILL_STATES.length);
   });
 
   it('keeps the same identity distinguishable across types', () => {

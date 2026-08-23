@@ -235,7 +235,7 @@ describe('projectActivity granularity', () => {
     ]);
   });
 
-  it('publishes and advances a multi-step fallback plan even when the harness never plans', async () => {
+  it('publishes the objective with one honest working state when the harness never plans', async () => {
     const projection = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
 
     // This is the first agent-activity event of the corner turn. No ACP plan
@@ -245,10 +245,6 @@ describe('projectActivity granularity', () => {
 
     emit(toolCall('search-plan', { kind: 'search', title: 'search_text' }));
     emit(toolCallUpdate('search-plan', { status: 'completed' }));
-    await vi.advanceTimersByTimeAsync(5_000);
-
-    emit(toolCall('edit-plan', { kind: 'edit', title: 'str_replace', rawInput: { path: 'a.ts' } }));
-    emit(toolCallUpdate('edit-plan', { status: 'completed' }));
     await vi.advanceTimersByTimeAsync(5_000);
 
     emit(toolCall('test-plan', {
@@ -268,16 +264,75 @@ describe('projectActivity granularity', () => {
       return content.update.updates.flatMap((update) => (update.plan ? [update.plan] : []));
     }) as Array<{ objective?: string; items: Array<{ step: string; status: string }> }>;
 
-    expect(plans.map((plan) => plan.items.map((item) => item.status))).toEqual([
-      ['in_progress', 'pending', 'pending'],
-      ['completed', 'in_progress', 'pending'],
-      ['completed', 'completed', 'in_progress'],
-      ['completed', 'completed', 'completed'],
+    expect(plans.map((plan) => plan.items)).toEqual([
+      [{ step: 'Working…', status: 'in_progress' }],
+      [{ step: 'Working…', status: 'completed' }],
     ]);
-    expect(plans[0]!.items).toHaveLength(3);
     expect(plans[0]!.objective).not.toContain('\n');
     expect(plans[0]!.objective).not.toContain('**');
     expect(plans[0]!.objective!.length).toBeLessThanOrEqual(160);
+    expect(JSON.stringify(plans)).not.toContain('Inspect the relevant code');
+    expect(JSON.stringify(plans)).not.toContain('Implement the change');
+    expect(JSON.stringify(plans)).not.toContain('Verify and summarize the result');
+  });
+
+  it('publishes different task-authored plans for two different corner transcripts', async () => {
+    const authProjection = projectActivity(
+      client as unknown as AcpClient,
+      'auth-corner',
+      owner,
+      sessionId,
+    );
+    await authProjection.startPlan('Move registration onto usebeeline.app.', {
+      items: [
+        { step: 'Trace the registration URL selection', status: 'in_progress' },
+        { step: 'Point registration at usebeeline.app', status: 'pending' },
+        { step: 'Cover the production host in tests', status: 'pending' },
+      ],
+    });
+    authProjection();
+
+    const archiveClient = new EventEmitter();
+    const archiveProjection = projectActivity(
+      archiveClient as unknown as AcpClient,
+      'archive-corner',
+      owner,
+      'session-2',
+    );
+    await archiveProjection.startPlan('Stop retrying archived Rooms.', {
+      items: [
+        { step: 'Classify archived-channel refusals', status: 'in_progress' },
+        { step: 'Park archived Rooms for this process', status: 'pending' },
+        { step: 'Prove quarantine does not retry them', status: 'pending' },
+      ],
+    });
+    archiveProjection();
+
+    const plans = published.map((event) => {
+      const content = JSON.parse(event.content) as {
+        update: { updates: Array<{ plan?: Record<string, unknown> }> };
+      };
+      return content.update.updates[0]!.plan;
+    });
+
+    expect(plans).toEqual([
+      {
+        objective: 'Move registration onto usebeeline.app.',
+        items: [
+          { step: 'Trace the registration URL selection', status: 'in_progress' },
+          { step: 'Point registration at usebeeline.app', status: 'pending' },
+          { step: 'Cover the production host in tests', status: 'pending' },
+        ],
+      },
+      {
+        objective: 'Stop retrying archived Rooms.',
+        items: [
+          { step: 'Classify archived-channel refusals', status: 'in_progress' },
+          { step: 'Park archived Rooms for this process', status: 'pending' },
+          { step: 'Prove quarantine does not retry them', status: 'pending' },
+        ],
+      },
+    ]);
   });
 
   it('re-sends the plan only when it actually changed', async () => {

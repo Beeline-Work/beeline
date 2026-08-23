@@ -9,10 +9,10 @@
  * the channel, not a transient transport condition, and it must never be
  * retried on a loop or reported as an unexpected error.
  *
- * Canonical home for the classifier. `supervisor.ts` re-exports it for its
- * Room-quarantine path; `body.ts` consumes it directly (supervisor imports
- * body, so body cannot import supervisor without a cycle).
+ * The implementation lives in `@beeline/buzz-client` (`archived-channel.ts`)
+ * so client-side Room delete/leave paths share the exact same classifier;
+ * this module re-exports it for Body's internal consumers. `supervisor.ts`
+ * re-exports it for its Room-quarantine path; `body.ts` consumes it directly
+ * (supervisor imports body, so body cannot import supervisor without a cycle).
  */
-export function isArchivedChannelError(error: unknown): boolean {
-  return /channel is archived/i.test(error instanceof Error ? error.message : String(error));
-}
+export { isArchivedChannelError } from '@beeline/buzz-client';

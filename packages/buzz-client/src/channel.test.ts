@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import {
+  archiveRoom,
   createChannel,
   isMember,
   getChannelMetadata,
+  leaveRoom,
   listChannelsForPubkey,
   listMembers,
   listSubchannels,
@@ -20,6 +22,7 @@ import {
   KIND_CREATE_GROUP,
   KIND_EDIT_METADATA,
   KIND_STREAM_MESSAGE,
+  TAG_ROOM_LIFECYCLE,
 } from './kinds.js';
 import { tagValue } from './parse.js';
 import type { RelayWs } from './ws.js';
@@ -706,5 +709,146 @@ describe('top-level Room creation is human-only', () => {
     expect(channelId).toBeTruthy();
     expect(registryQueries).toBe(0);
     expect(published[0]!.tags).toContainEqual(['parent', 'parent-room']);
+  });
+});
+
+describe('archiveRoom and leaveRoom against an already-archived channel', () => {
+  const archivedError = JSON.stringify({ error: 'invalid: channel is archived' });
+
+  function stubRelay(
+    channelId: string,
+    opts: { role?: 'owner' | 'member'; publish: (event: NostrEvent) => Response },
+  ): NostrEvent[] {
+    const published: NostrEvent[] = [];
+    const role = opts.role ?? 'owner';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          const event = JSON.parse(String(init?.body)) as NostrEvent;
+          published.push(event);
+          return opts.publish(event);
+        }
+        const filter = (JSON.parse(String(init?.body)) as Record<string, unknown>[])[0]!;
+        const kind = (filter.kinds as number[])[0]!;
+        if (kind === KIND_CREATE_GROUP) {
+          return new Response(
+            JSON.stringify([
+              signEvent(
+                {
+                  pubkey: identity.publicKey,
+                  created_at: 1_700_000_000,
+                  kind,
+                  tags: [['h', channelId]],
+                  content: '',
+                },
+                identity.secretKey,
+              ),
+            ]),
+          );
+        }
+        if (kind === KIND_CHANNEL_MEMBERS || kind === KIND_CHANNEL_ADMINS) {
+          if (kind === KIND_CHANNEL_ADMINS && opts.role === 'member') {
+            return new Response('[]');
+          }
+          const pTag =
+            kind === KIND_CHANNEL_ADMINS
+              ? ['p', identity.publicKey, role]
+              : ['p', identity.publicKey];
+          return new Response(
+            JSON.stringify([
+              signEvent(
+                {
+                  pubkey: identity.publicKey,
+                  created_at: 1_700_000_000,
+                  kind,
+                  tags: [['d', channelId], pTag],
+                  content: '',
+                },
+                identity.secretKey,
+              ),
+            ]),
+          );
+        }
+        if (kind === KIND_CHANNEL_METADATA) {
+          return new Response(
+            JSON.stringify([
+              signEvent(
+                {
+                  pubkey: identity.publicKey,
+                  created_at: 1_700_000_001,
+                  kind,
+                  tags: [['d', channelId], ['archived', 'true']],
+                  content: '',
+                },
+                identity.secretKey,
+              ),
+            ]),
+          );
+        }
+        return new Response('[]');
+      }),
+    );
+    return published;
+  }
+
+  it('resolves success when the relay refuses the delete because the channel is already archived', async () => {
+    let attempts = 0;
+    const published = stubRelay('already-archived-room', {
+      publish: () => {
+        attempts += 1;
+        return new Response(archivedError, { status: 400 });
+      },
+    });
+
+    await expect(archiveRoom(ctx, 'already-archived-room')).resolves.toBeUndefined();
+
+    // A 400 is fail-fast (never retried) and the classifier matched, so the
+    // desired terminal state was already reached — no error surfaced.
+    expect(attempts).toBe(1);
+    expect(published[0]!.kind).toBe(KIND_EDIT_METADATA);
+    expect(published[0]!.tags).toContainEqual(['archived', 'true']);
+  });
+
+  it('archives a live channel through the unchanged publish + projection path', async () => {
+    const published = stubRelay('live-room', {
+      publish: () => new Response(JSON.stringify({ accepted: true }), { status: 200 }),
+    });
+
+    await expect(archiveRoom(ctx, 'live-room')).resolves.toBeUndefined();
+    expect(published).toHaveLength(1);
+    expect(published[0]!.tags).toContainEqual(['t', TAG_ROOM_LIFECYCLE]);
+    expect(published[0]!.tags).toContainEqual(['action', 'admin-delete']);
+  });
+
+  it('still surfaces a genuine publish failure on delete', async () => {
+    stubRelay('broken-room', {
+      publish: () => new Response(JSON.stringify({ error: 'invalid: bad signature' }), { status: 400 }),
+    });
+
+    await expect(archiveRoom(ctx, 'broken-room')).rejects.toThrow(/bad signature/);
+  });
+
+  it('lets a member leave an already-archived Room without a successful publish', async () => {
+    let attempts = 0;
+    stubRelay('leave-archived-room', {
+      role: 'member',
+      publish: () => {
+        attempts += 1;
+        return new Response(archivedError, { status: 400 });
+      },
+    });
+
+    await expect(leaveRoom(ctx, 'leave-archived-room')).resolves.toBeUndefined();
+    expect(attempts).toBe(1);
+  });
+
+  it('still surfaces a genuine failure when leaving a live Room', async () => {
+    stubRelay('leave-live-room', {
+      role: 'member',
+      publish: () => new Response(JSON.stringify({ error: 'invalid: not permitted' }), { status: 400 }),
+    });
+
+    await expect(leaveRoom(ctx, 'leave-live-room')).rejects.toThrow(/not permitted/);
   });
 });

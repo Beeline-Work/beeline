@@ -299,6 +299,40 @@ describe('Members screen', () => {
     expect(save().props.disabled).toBe(true);
   });
 
+  it('darkflights the Agent picture override: the editor offers no picture buttons', async () => {
+    // Photo-override darkflight (owner decision, 2026-08-23): even an agent
+    // with a stored soul photo gets no 'Set/Change picture' affordance — the
+    // generated mark is the only face an Agent can have.
+    const agentPubkey = '7'.repeat(64);
+    client.listAgents.mockResolvedValue([
+      {
+        agentId: 'a7',
+        communityId: 'workspace-1',
+        displayName: 'joy',
+        pubkey: agentPubkey,
+        createdAt: 0,
+        soulProfile: { name: 'joy', soul: 'Keep the suite green.', avatarSeed: agentPubkey, avatar: 'https://example.test/joy.png' },
+        raw: {},
+      },
+    ]);
+    const renderer = await render();
+
+    await act(async () => {
+      ancestorButton(renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` })).props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(renderer.root.findByProps({ testID: `message-agent-${agentPubkey}` })).toBeDefined();
+    const text = renderer.root
+      .findAllByType('Text')
+      .map((node: any) => (typeof node.props.children === 'string' ? node.props.children : ''))
+      .join(' ');
+    expect(text).not.toContain('Set picture');
+    expect(text).not.toContain('Change picture');
+    expect(text).not.toContain('Use generated mark');
+  });
+
   it('offers manual Model / Effort entry even when the agent has never published a catalog', async () => {
     // A missing catalog used to hide the section outright, so a model the
     // harness accepts but does not list could not be configured at all. The

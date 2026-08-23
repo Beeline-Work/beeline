@@ -316,6 +316,31 @@ describe('one mark, everywhere', () => {
     expect(groknight.photoIdentityMarksEnabled).toBe(false);
   });
 
+  it('renders generated marks for users and workspaces even when a photo is stored', () => {
+    // Photo-override darkflight (owner decision, 2026-08-23): stored photos are
+    // inert data. A mark renders unconditionally for every kind, never the
+    // relay image behind it.
+    const kinds = [
+      { kind: 'human' as const, shape: 'Circle' },
+      { kind: 'workspace' as const, shape: 'Rect' },
+      { kind: 'agent' as const, shape: 'Polygon' },
+    ];
+    for (const { kind, shape } of kinds) {
+      const renderer = render(
+        React.createElement(IdentityMark, {
+          seed: HUMAN,
+          kind,
+          avatarUrl: 'https://example.test/stored-photo.png',
+          name: 'Joy',
+        }),
+      );
+      expect(renderer.root.findAllByType('Image')).toHaveLength(0);
+      expect(
+        renderer.root.findAll((node: any) => node.type === shape).length,
+      ).toBeGreaterThan(0);
+    }
+  });
+
   it('does not re-render when its own props are unchanged', () => {
     // `renderItem` is recreated on every presence tick; without memoization
     // every visible row rebuilds its whole SVG for an update it has no part in.

@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   dedupeRepoCandidates,
+  filterRepoCandidates,
   githubRepositoryLinkagePlan,
   looksLikeCornerOpenIntent,
   githubFullNameFromInput,
+  matchesRepoQuery,
   roomRepoChipLabel,
 } from './room-repo-picker';
 
@@ -64,6 +66,46 @@ describe('dedupeRepoCandidates', () => {
 
   it('drops entries with no key', () => {
     expect(dedupeRepoCandidates([{ key: '', name: 'nope' }])).toEqual([]);
+  });
+});
+
+describe('matchesRepoQuery / filterRepoCandidates', () => {
+  const candidates = [
+    { key: 'k1', name: 'acme/widget', remote: 'git@github.com:acme/widget.git' },
+    { key: 'k2', name: 'acme/sprocket' },
+    { key: 'k3', name: 'gizmo', remote: 'git://example.com/octocat/gizmo.git' },
+    { key: 'k4', name: 'local-only' },
+  ];
+
+  it('matches owner/name case-insensitively as a substring', () => {
+    expect(filterRepoCandidates(candidates, 'ACME/WID')).toEqual([candidates[0]]);
+    expect(filterRepoCandidates(candidates, 'sprocket')).toEqual([candidates[1]]);
+  });
+
+  it('matches on the remote URL when the local name omits the owner', () => {
+    expect(filterRepoCandidates(candidates, 'octocat')).toEqual([candidates[2]]);
+  });
+
+  it('also matches the owning installation account login', () => {
+    const installations = [{ installationId: 7, accountLogin: 'octocat' }];
+    const grouped = [{ key: 'k5', name: 'widget', githubInstallationId: 7 }];
+    expect(filterRepoCandidates(grouped, 'OCTOCAT', installations)).toEqual(grouped);
+    expect(filterRepoCandidates(candidates, 'octocat', installations)).toEqual([candidates[2]]);
+  });
+
+  it('ANDs multiple whitespace-separated tokens', () => {
+    expect(filterRepoCandidates(candidates, 'acme spr')).toEqual([candidates[1]]);
+    expect(filterRepoCandidates(candidates, 'acme gizmo')).toEqual([]);
+  });
+
+  it('treats a blank query as match-everything without mutating order', () => {
+    expect(filterRepoCandidates(candidates, '')).toEqual(candidates);
+    expect(filterRepoCandidates(candidates, '   ')).toEqual(candidates);
+    expect(matchesRepoQuery(candidates[0]!, '\t')).toBe(true);
+  });
+
+  it('returns nothing when no field matches', () => {
+    expect(filterRepoCandidates(candidates, 'nope')).toEqual([]);
   });
 });
 

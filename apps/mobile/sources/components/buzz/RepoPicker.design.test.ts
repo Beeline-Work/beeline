@@ -24,4 +24,26 @@ describe('GitHub repository picker launch flow', () => {
     expect(source).toContain('CONTINUE TO GITHUB →');
     expect(source).toContain('setPendingLinkage(plan)');
   });
+
+  it('scrolls a large account instead of rendering past the fold', () => {
+    // The candidate list is a height-bounded, virtualized SectionList — a
+    // 100+ repo account must be reachable by scroll, never clipped.
+    expect(source).toContain('SectionList');
+    expect(source).toContain('maxHeight: listMaxHeight');
+    expect(source).toContain('MAX_LIST_HEIGHT_FRACTION');
+    expect(source).toContain('nestedScrollEnabled');
+    // Taps on rows still land while the search keyboard is open.
+    expect(source).toContain('keyboardShouldPersistTaps="handled"');
+    // The search field stays pinned above the scrolling list.
+    const searchIndex = source.indexOf('Search repositories or paste a GitHub URL');
+    const listIndex = source.indexOf(`${'`'}${'${'}testIDPrefix}-list${'`'}`);
+    expect(searchIndex).toBeGreaterThan(-1);
+    expect(listIndex).toBeGreaterThan(searchIndex);
+  });
+
+  it('filters live through the shared pure helper, not an inline predicate', () => {
+    expect(source).toContain('filterRepoCandidates(candidates, query, installations)');
+    expect(linkageSource).toContain('export function filterRepoCandidates');
+    expect(linkageSource).toContain('export function matchesRepoQuery');
+  });
 });

@@ -45,6 +45,9 @@ export const KIND_AGENT_MODEL_CATALOG = 30078;
 /** NIP-33 parameterized replaceable application data (human-authored agent model/effort selection). */
 export const KIND_AGENT_MODEL_CONFIG = 30078;
 
+/** Same kind:30078 convention — a self-authored snapshot of an agent's advertised commands. */
+export const KIND_AGENT_COMMANDS = 30078;
+
 /** NIP-33 parameterized replaceable application data (admin-authored Room→repository binding). */
 export const KIND_ROOM_REPOSITORY = 30078;
 
@@ -74,6 +77,9 @@ export const TAG_AGENT_MODEL_CATALOG = 'buzz-agent-model-catalog';
 
 /** Marker for a human-authored agent model/effort selection. */
 export const TAG_AGENT_MODEL_CONFIG = 'buzz-agent-model-config';
+
+/** Marker for a self-authored snapshot of an agent runtime's advertised commands. */
+export const TAG_AGENT_COMMANDS = 'buzz-agent-commands';
 
 /** Marker for an admin-authored, mutable Room→repository binding (room owns the repo). */
 export const TAG_ROOM_REPOSITORY = 'buzz-room-repository';

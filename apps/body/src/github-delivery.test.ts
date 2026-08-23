@@ -115,11 +115,14 @@ describe('GitHub-origin delivery', () => {
 
     await expect(publish(body, info)).resolves.toBe(false);
     expect(info.mergeTarget).toBeUndefined();
+    // The attention-transition gate also POSTs /query reads through this
+    // capture; only signed kind:9 events are publishes.
+    const publishes = events.filter((event) => Array.isArray(event.tags));
     expect(
-      events.some((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready')),
+      publishes.some((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready')),
     ).toBe(false);
     expect(
-      events.find((event) =>
+      publishes.find((event) =>
         event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
       )?.content,
     ).toContain('Nothing ready to merge yet');
@@ -262,9 +265,11 @@ describe('a moved target is standing authorization to update the feature branch'
     expect(info.humanMergeApproval).toBeUndefined();
 
     // Rewritten work gets a new exact-tip review card; it is not auto-landed.
-    const ready = events.filter((event) =>
-      event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
-    );
+    // Only signed kind:9 publishes count — the attention-transition gate also
+    // POSTs /query reads through this capture.
+    const ready = events
+      .filter((event) => Array.isArray(event.tags))
+      .filter((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'));
     expect(ready).toHaveLength(2);
     expect(run(worktree, ['ls-remote', remote, 'refs/heads/feature/corner'])).toContain(refreshedTip);
   });
@@ -292,11 +297,13 @@ describe('a moved target is standing authorization to update the feature branch'
     await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
     await body.waitForAgentTasks();
     expect(prompts).toHaveLength(1);
-    const recovering = events.filter(
-      (event) =>
-        event.content.startsWith("Couldn't land this change") &&
-        event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'auto'),
-    );
+    const recovering = events
+      .filter((event) => Array.isArray(event.tags))
+      .filter(
+        (event) =>
+          event.content.startsWith("Couldn't land this change") &&
+          event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'auto'),
+      );
     expect(recovering).toHaveLength(1);
   });
 

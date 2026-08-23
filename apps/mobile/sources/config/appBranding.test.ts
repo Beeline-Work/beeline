@@ -241,8 +241,10 @@ describe('Beeline display branding', () => {
     const production = resolveEasBuildProfile(easBuildProfiles, 'production');
     const productionApk = resolveEasBuildProfile(easBuildProfiles, 'production-apk');
 
+    // #322 pins the APK profile onto the production OTA channel explicitly.
     expect(easBuildProfiles['production-apk']).toEqual({
       extends: 'production',
+      channel: 'production',
       android: { buildType: 'apk' },
     });
     expect(productionApk).toEqual({

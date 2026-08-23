@@ -152,6 +152,7 @@ vi.mock('@/components/buzz/MonoHull', async () => {
     HullSurface: host('HullSurface'),
     HullWaveSignal: host('HullWaveSignal'),
     HullDeckMark: host('HullDeckMark'),
+    CornerGlyph: (props: any) => host('CornerGlyph')(props),
     MonoButton: host('MonoButton'),
     PixelGateReveal: host('PixelGateReveal'),
     PixelLoader: host('PixelLoader'),

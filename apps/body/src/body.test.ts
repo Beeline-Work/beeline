@@ -4326,14 +4326,15 @@ describe('first-class assistant messages', () => {
     ).toHaveLength(1);
   });
 
-  it('both corner turn call sites suppress the duplicate summary only when the turn narrated', () => {
-    // Pins the wiring the test above exercises by hand: the corner-open turn
-    // and the corner follow-up turn both key `summaryOnly` off the narrator's
-    // own floor, so a harness that streamed nothing still gets its one
-    // end-of-turn message in the transcript.
+  it('both corner turn call sites share the narrated-summary suppression at the merge gate', () => {
+    // Both the corner-open and corner-follow-up paths funnel through one gate
+    // helper, which keys `summaryOnly` off the narrator's own floor. A harness
+    // that streamed nothing still gets its one end-of-turn transcript message.
     const source = readFileSync(new URL('./body.ts', import.meta.url), 'utf8');
-    const callSites = source.match(/summaryOnly: \w+\.narrativeFloor !== undefined/g) ?? [];
-    expect(callSites).toHaveLength(2);
+    const summaryPolicy = source.match(/withheldMergeClaim !== true/g) ?? [];
+    const gateCallSites = source.match(/this\.finishCornerTurnAgainstMergeGate\(/g) ?? [];
+    expect(summaryPolicy).toHaveLength(1);
+    expect(gateCallSites).toHaveLength(2);
   });
 
   it('strips only a leading Codex skill-budget warning', () => {
@@ -5104,7 +5105,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
         published.find((event) =>
           event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
         )?.content,
-      ).toContain('uncommitted work');
+      ).toContain('memory/project-index.json');
     } finally {
       await rm(worktreePath, { recursive: true, force: true });
     }
@@ -5150,6 +5151,241 @@ describe('corner merge-ready surfaces a real committed change', () => {
       );
       expect(notReadyEvent?.content).toBeTruthy();
       expect(notReadyEvent!.content).toContain('Nothing ready to merge yet');
+      expect(notReadyEvent!.content).toContain('lessons/bank.json');
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
+  it('distinguishes no committed change, an empty committed diff, and a withdrawn stale target', async () => {
+    const agent = newIdentity('merge-not-ready-reasons-agent');
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const paths = [
+      committedFeatureWorktree(),
+      committedFeatureWorktree(),
+      committedFeatureWorktree(),
+    ];
+    try {
+      const infoFor = (worktreePath: string, subchannelId: string) => ({
+        subchannelId,
+        worktreePath,
+        featureBranch: 'feature/ready',
+        role: agent,
+        session: { channelId: subchannelId, sessionId: 'session' } as never,
+        lastPolledAt: 0,
+        archived: false,
+        boundRepo: { repo: 'repo', targetBranch: 'refs/heads/main' },
+      });
+
+      gitCommand(paths[0]!, ['reset', '--hard', 'main']);
+      const noChangeBody = newBody(agent);
+      const noChangeInfo = infoFor(paths[0]!, 'corner-no-commit');
+      noChangeBody.registerSubchannel(noChangeInfo);
+      await Reflect.get(noChangeBody, 'publishMergeReady').call(noChangeBody, noChangeInfo);
+      expect(Reflect.get(noChangeInfo, 'lastMergeNotReadyReason')).toContain(
+        'No committed change is available for this turn',
+      );
+
+      gitCommand(paths[1]!, ['reset', '--hard', 'main']);
+      gitCommand(paths[1]!, ['commit', '--allow-empty', '-m', 'empty feature commit']);
+      const emptyBody = newBody(agent);
+      const emptyInfo = infoFor(paths[1]!, 'corner-empty-diff');
+      emptyBody.registerSubchannel(emptyInfo);
+      await Reflect.get(emptyBody, 'publishMergeReady').call(emptyBody, emptyInfo);
+      expect(Reflect.get(emptyInfo, 'lastMergeNotReadyReason')).toContain(
+        'combined diff against refs/heads/main is empty',
+      );
+
+      const staleBody = newBody(agent);
+      const staleInfo = infoFor(paths[2]!, 'corner-stale-target');
+      staleBody.registerSubchannel(staleInfo);
+      await Reflect.get(staleBody, 'publishMergeReady').call(staleBody, staleInfo);
+      const publishedTip = Reflect.get(staleInfo, 'mergeTarget').tip as string;
+      gitCommand(paths[2]!, ['branch', '-f', 'main', 'HEAD']);
+      await Reflect.get(staleBody, 'publishMergeReady').call(staleBody, staleInfo);
+      expect(Reflect.get(staleInfo, 'mergeTarget')).toBeUndefined();
+      expect(Reflect.get(staleInfo, 'lastMergeNotReadyReason')).toContain(publishedTip);
+      expect(Reflect.get(staleInfo, 'lastMergeNotReadyReason')).toContain(
+        'stale and has been withdrawn',
+      );
+
+      const notReadyCards = published.filter((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
+      );
+      expect(notReadyCards).toHaveLength(3);
+    } finally {
+      await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
+    }
+  });
+
+  it('feeds the concrete rejection back to the agent and publishes its approval claim only after a real merge target', async () => {
+    const agent = newIdentity('merge-feedback-agent');
+    const body = newBody(agent);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const worktreePath = committedFeatureWorktree();
+    try {
+      const durableState = Reflect.get(body, 'durableState');
+      vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
+      vi.spyOn(durableState, 'recordModelTurn').mockResolvedValue();
+      writeFileSync(join(worktreePath, 'PENDING.txt'), 'commit me\n');
+      const prompts: string[] = [];
+      const sessionPrompt = vi.fn(
+        async (
+          _sessionId: string,
+          prompt: string,
+          _timeoutMs: number,
+          onChunk?: (delta: string, fullText: string) => void,
+        ) => {
+          prompts.push(prompt);
+          if (prompts.length === 2) {
+            gitCommand(worktreePath, ['add', 'PENDING.txt']);
+            gitCommand(worktreePath, ['commit', '-m', 'commit pending work']);
+          }
+          const agentText = 'The work is ready. Approve the change-review panel.';
+          onChunk?.(agentText, agentText);
+          return { stopReason: 'end_turn', updates: [], agentText, toolCalls: [] };
+        },
+      );
+      const info = {
+        subchannelId: 'corner-merge-feedback',
+        worktreePath,
+        featureBranch: 'feature/ready',
+        role: agent,
+        session: {
+          channelId: 'corner-merge-feedback',
+          sessionId: 'session',
+          client: { sessionPrompt, sessionCancel: vi.fn() },
+        } as never,
+        lastPolledAt: 0,
+        archived: false,
+        boundRepo: { repo: 'repo', targetBranch: 'refs/heads/main' },
+      };
+      body.registerSubchannel(info);
+
+      Reflect.get(body, 'startAgentTask').call(
+        body,
+        info,
+        'Finish the pending work.',
+        'Finish the pending work.',
+        {
+          requestId: 'request-feedback',
+          originalRequestId: 'request-feedback',
+          cause: 'corner-opening',
+        },
+      );
+      await vi.waitFor(() => expect(prompts.length).toBeGreaterThan(0));
+      await body.waitForAgentTasks();
+
+      expect(prompts).toHaveLength(2);
+      expect(prompts[1]).toContain('PENDING.txt');
+      expect(prompts[1]).toContain('did not publish a merge target');
+      expect(
+        published.some((event) =>
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
+        ),
+      ).toBe(true);
+      const readyIndex = published.findIndex((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+      );
+      const approvalClaimIndex = published.findIndex((event) =>
+        event.content.includes('Approve the change-review panel'),
+      );
+      expect(info.mergeTarget).toBeDefined();
+      expect(readyIndex).toBeGreaterThanOrEqual(0);
+      expect(approvalClaimIndex).toBeGreaterThan(readyIndex);
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
+  it('stops after three rejected gate checks and reports the last concrete blocker without publishing a false completion', async () => {
+    const agent = newIdentity('merge-feedback-bounded-agent');
+    const body = newBody(agent);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const worktreePath = committedFeatureWorktree();
+    try {
+      vi.spyOn(Reflect.get(body, 'durableState'), 'appendConversation').mockResolvedValue();
+      writeFileSync(join(worktreePath, 'STUCK.txt'), 'still dirty\n');
+      const info = {
+        subchannelId: 'corner-merge-feedback-stuck',
+        worktreePath,
+        featureBranch: 'feature/ready',
+        role: agent,
+        session: { channelId: 'corner-merge-feedback-stuck', sessionId: 'session' } as never,
+        lastPolledAt: 0,
+        archived: false,
+        boundRepo: { repo: 'repo', targetBranch: 'refs/heads/main' },
+      };
+      body.registerSubchannel(info);
+      const prompts: string[] = [];
+      vi.spyOn(body as never, 'promptAgent' as never).mockImplementation((async (
+        _session: unknown,
+        prompt: string,
+      ) => {
+        prompts.push(prompt);
+        return {
+          agentText: 'Everything is done. Approve the change-review panel.',
+          updates: [],
+        };
+      }) as never);
+
+      Reflect.get(body, 'startAgentTask').call(
+        body,
+        info,
+        'Finish work that cannot be committed.',
+        'Finish work that cannot be committed.',
+        {
+          requestId: 'request-stuck',
+          originalRequestId: 'request-stuck',
+          cause: 'corner-opening',
+        },
+      );
+      await vi.waitFor(() => expect(prompts.length).toBeGreaterThan(0));
+      await body.waitForAgentTasks();
+
+      expect(prompts).toHaveLength(4);
+      expect(prompts.slice(1).every((prompt) => prompt.includes('STUCK.txt'))).toBe(true);
+      expect(prompts.at(-1)).toContain('Stop trying to make this corner merge-ready');
+      expect(
+        published.filter((event) =>
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
+        ),
+      ).toHaveLength(3);
+      expect(
+        published.some((event) =>
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+        ),
+      ).toBe(false);
+      expect(info.mergeTarget).toBeUndefined();
+      expect(
+        published.some((event) => event.content.includes('Approve the change-review panel')),
+      ).toBe(false);
+      const blocker = published.find((event) =>
+        event.content.includes('I stopped after 3 merge-gate rejections'),
+      );
+      expect(blocker?.content).toContain('STUCK.txt');
+      expect(blocker?.content).toContain('nothing to approve');
     } finally {
       await rm(worktreePath, { recursive: true, force: true });
     }

@@ -465,6 +465,23 @@ export const CORNER_TURN_SUMMARY_MAX_ITEMS = 3;
 export const CORNER_ARCHIVE_FALLBACK_SUMMARY = 'Corner closed without a completed summary.';
 export const CORNER_TURN_SUMMARY_INSTRUCTION =
   'Finish with only a concise user-facing summary: one sentence or up to three short bullets saying what changed and which checks passed. Do not narrate your process, restate the request, or include multi-paragraph detail.';
+export const CORNER_MERGE_GATE_INSTRUCTION =
+  'Do not tell the human to approve this work or claim that a review target exists. After your turn, Beeline checks the worktree and publishes the review target itself. If that check rejects the work, you will receive its exact reason as a follow-up instruction.';
+
+/** Initial rejection plus two bounded agent correction turns. */
+export const MERGE_READY_GATE_MAX_REJECTIONS = 3;
+
+/**
+ * A corner's live draft/narrative is visible before the host can inspect git.
+ * Hold readiness/approval claims out of that early stream; the unmodified
+ * final response is published after `publishMergeReady` succeeds.
+ */
+export function withoutPrematureMergeClaims(message: string): string {
+  return message
+    .split('\n')
+    .map((line) => (/\b(?:approv\w*|ready)\b/i.test(line) ? '' : line))
+    .join('\n');
+}
 
 function shortenSummaryItem(value: string, maxChars = 144): string {
   const compact = value.replace(/\s+/g, ' ').trim();
@@ -642,6 +659,9 @@ export interface SubchannelInfo {
   mergeTarget?: { repo: string; branch: string; tip: string };
   /** Latest agent-authored completion summary. */
   mergeSummary?: string;
+  /** Exact reason from the latest rejected merge-readiness check. Cleared only
+   *  after a real review target is published. */
+  lastMergeNotReadyReason?: string;
   /** Exact signed human approval that authorizes landing and archive cleanup. */
   humanMergeApproval?: { id: string; reviewer: string; tip: string };
   /**
@@ -2583,6 +2603,13 @@ export class Body {
     turn: ModelTurnAttribution & {
       channelId: string;
       narrate?: boolean;
+      /** Keep an internal continuation off the human transcript until its
+       *  host-side verdict is known. Used by merge-gate correction turns so
+       *  an agent cannot advertise approval before a target exists. */
+      silent?: boolean;
+      /** Corner turns only: hide readiness/approval claims from the live
+       *  stream until the host has published an actual merge target. */
+      withholdMergeClaims?: boolean;
       /**
        * The event a stall notice should thread as a reply, when one exists
        * in `channelId` itself. Deliberately separate from `requestId` (used
@@ -2602,9 +2629,13 @@ export class Body {
       cornerRequests?: boolean;
     },
   ): Promise<
-    PromptResult & { narrativeFloor?: number; cornerRequest?: AgentCornerRequest }
+    PromptResult & {
+      narrativeFloor?: number;
+      cornerRequest?: AgentCornerRequest;
+      withheldMergeClaim?: boolean;
+    }
   > {
-    const draft = turn
+    const draft = !turn.silent
       ? createDraftStreamer(
           turn.channelId,
           this.agentIdentity,
@@ -2612,10 +2643,11 @@ export class Body {
           turn.requestId,
         )
       : undefined;
-    const narrator = turn.narrate
+    const narrator = !turn.silent && turn.narrate
       ? createNarrativeCommitter(turn.channelId, this.agentIdentity)
       : undefined;
     const cornerRequestFilter = turn.cornerRequests ? createCornerRequestFilter() : undefined;
+    let withheldMergeClaim = false;
     // Surface a stall well before ROOM_AGENT_PROMPT_TIMEOUT_MS elapses. Armed
     // on every ACP activity signal (`onActivity` below fires on every
     // session/update, the same trigger `AcpClient` uses to reset its own idle
@@ -2682,8 +2714,12 @@ export class Body {
               const visible = cornerRequestFilter
                 ? cornerRequestFilter.onChunk(fullText)
                 : fullText;
-              draft?.onChunk(visible);
-              narrator?.onChunk(visible);
+              const gateSafeVisible = turn.withholdMergeClaims
+                ? withoutPrematureMergeClaims(visible)
+                : visible;
+              if (gateSafeVisible !== visible) withheldMergeClaim = true;
+              draft?.onChunk(gateSafeVisible);
+              narrator?.onChunk(gateSafeVisible);
             }),
           armStallTimer,
         );
@@ -2754,7 +2790,11 @@ export class Body {
     // narrator.finish() (above) has already flushed the last segment by the
     // time we read this, so lastCreatedAt() reflects the true final segment.
     const narrativeFloor = narrator?.lastCreatedAt();
-    return { ...result, ...(narrativeFloor ? { narrativeFloor } : {}) };
+    return {
+      ...result,
+      ...(narrativeFloor ? { narrativeFloor } : {}),
+      ...(withheldMergeClaim ? { withheldMergeClaim: true } : {}),
+    };
   }
 
   /**
@@ -5397,6 +5437,120 @@ export class Body {
     });
   }
 
+  private mergeGateFeedbackPrompt(
+    reason: string,
+    rejection: number,
+    terminal: boolean,
+  ): string {
+    return [
+      `The merge gate rejected this corner (${rejection}/${MERGE_READY_GATE_MAX_REJECTIONS}) and did not publish a merge target.`,
+      '',
+      `Gate reason:\n${reason}`,
+      '',
+      terminal
+        ? 'Stop trying to make this corner merge-ready. Report the blocker honestly and do not claim the work is ready or ask the human to approve it.'
+        : 'Treat this as actionable feedback. Inspect the worktree, resolve the stated condition, and commit the intended project change. Remove or relocate unintended files instead of committing them. Then finish with a concise summary; Beeline will run the gate again.',
+      'There is nothing for the human to approve unless Beeline publishes a merge target after that check.',
+    ].join('\n');
+  }
+
+  /**
+   * Keep a corner turn private until the host has published the review target
+   * it refers to. A rejected verdict is fed back through the same pinned ACP
+   * session as ordinary corner work, then checked again. The final rejection
+   * still reaches the agent, but Body publishes a deterministic blocker so an
+   * ignored instruction can never turn into a false approval request.
+   */
+  private async finishCornerTurnAgainstMergeGate(
+    info: SubchannelInfo,
+    initialResult: PromptResult & { narrativeFloor?: number; withheldMergeClaim?: boolean },
+    attribution: ModelTurnAttribution,
+    fallback: string,
+    options: { replyTo?: string; replyRootId?: string } = {},
+  ): Promise<boolean> {
+    let result = initialResult;
+    const publishResult = async (): Promise<void> => {
+      info.mergeSummary = await this.publishAgentResult(
+        info.subchannelId,
+        info.session,
+        result,
+        fallback,
+        {
+          ...options,
+          concise: true,
+          minCreatedAt: result.narrativeFloor,
+          // A narrated opening turn is already durable. Internal gate
+          // corrections are silent and therefore always publish a summary.
+          summaryOnly:
+            result.narrativeFloor !== undefined && result.withheldMergeClaim !== true,
+        },
+      );
+      await this.durableState.appendConversation(info.subchannelId, {
+        role: 'agent',
+        text: info.mergeSummary,
+        at: new Date().toISOString(),
+      });
+    };
+    for (let rejection = 1; rejection <= MERGE_READY_GATE_MAX_REJECTIONS; rejection++) {
+      if (info.archived) return false;
+      if (await this.publishMergeReady(info)) {
+        await publishResult();
+        return true;
+      }
+
+      // `publishMergeReady` also returns false when there is no repository,
+      // the corner closed concurrently, or HEAD cannot be read. Those paths
+      // did not publish a merge-not-ready verdict, so there is no gate truth
+      // to feed back and no basis for spending three extra model turns.
+      if (!info.lastMergeNotReadyReason) {
+        await publishResult();
+        return false;
+      }
+      const reason = info.lastMergeNotReadyReason;
+      const terminal = rejection === MERGE_READY_GATE_MAX_REJECTIONS;
+      const feedback = this.mergeGateFeedbackPrompt(reason, rejection, terminal);
+      await this.durableState.appendConversation(info.subchannelId, {
+        role: 'control',
+        text: feedback,
+        at: new Date().toISOString(),
+      });
+      const feedbackResult = await this.promptAgent(info.session, feedback, {
+        ...attribution,
+        channelId: info.subchannelId,
+        silent: true,
+      });
+      if (info.archived) return false;
+
+      if (terminal) {
+        const blocker =
+          `I stopped after ${MERGE_READY_GATE_MAX_REJECTIONS} merge-gate rejections. ` +
+          `${reason} No merge target was published, so there is nothing to approve. ` +
+          'This corner needs human attention before it can continue.';
+        info.mergeSummary = await this.publishAgentResult(
+          info.subchannelId,
+          info.session,
+          {
+            agentText: blocker,
+            updates: [],
+            toolCalls: [],
+            stopReason: 'merge-gate-blocked',
+          },
+          blocker,
+          options,
+        );
+        await this.durableState.appendConversation(info.subchannelId, {
+          role: 'agent',
+          text: info.mergeSummary,
+          at: new Date().toISOString(),
+        });
+        return false;
+      }
+
+      result = feedbackResult;
+    }
+    return false;
+  }
+
   /** Start the requested work without blocking discovery/UI updates. */
   private startAgentTask(
     info: SubchannelInfo,
@@ -5432,6 +5586,7 @@ export class Body {
             'Implement the following human request in this worktree.',
             'Keep all edits on the current feature branch. Commit the completed work.',
             'Do not merge, push or change the target branch, or archive this corner.',
+            CORNER_MERGE_GATE_INSTRUCTION,
             CORNER_TURN_SUMMARY_INSTRUCTION,
             '',
             taskInstructions,
@@ -5445,39 +5600,27 @@ export class Body {
             ...attribution,
             channelId: info.subchannelId,
             narrate: true,
+            withholdMergeClaims: true,
           },
         );
-        await this.completeCornerPlan(info.session);
         // The corner may have been closed (archived) while this turn was
         // in flight — closing kills the ACP session but cannot interrupt a
         // response that had already resolved. Never publish anything for an
         // archived corner: closing must be terminal, not just fast.
         if (info.archived) return;
-        info.mergeSummary = await this.publishAgentResult(
-          info.subchannelId,
-          info.session,
+        const ready = await this.finishCornerTurnAgainstMergeGate(
+          info,
           result,
+          attribution,
           `Completed: ${prompt}`,
-          {
-            concise: true,
-            minCreatedAt: result.narrativeFloor,
-            // The narrative committer already put this turn's full prose in
-            // the transcript; the concise reduction would repeat it.
-            summaryOnly: result.narrativeFloor !== undefined,
-          },
         );
-        await this.durableState.appendConversation(info.subchannelId, {
-          role: 'agent',
-          text: info.mergeSummary,
-          at: new Date().toISOString(),
-        });
-        await this.publishMergeReady(info);
+        await this.completeCornerPlan(info.session);
         await postAgentTurnStatus(
           info.subchannelId,
           this.agentIdentity,
           requestId,
           sessionId,
-          'complete',
+          ready ? 'complete' : 'failed',
           this.presenceGenerations.get(info.subchannelId),
         );
       } catch (error) {
@@ -5609,19 +5752,38 @@ export class Body {
       '--untracked-files=all',
       '-z',
     ]).stdout;
-    const dirty = projectDirtyStatus(
+    const dirtyEntries = projectDirtyStatus(
       info.worktreePath,
       status,
       info.session.agentPrivateState,
-    ).length > 0;
-    if (dirty || files.length === 0) {
+    );
+    if (dirtyEntries.length > 0 || files.length === 0) {
       // Never advertise HEAD as reviewable when the agent's actual work is
       // uncommitted, or when it made no committed change. An older ready tip
       // must be withdrawn too, otherwise a human could approve stale work.
+      const withdrawnTarget = info.mergeTarget;
       info.mergeTarget = undefined;
-      const detail = dirty
-        ? 'The agent has uncommitted work. It must commit the change before it can be reviewed.'
-        : 'The agent completed this turn without a committed change.';
+      const commitCount =
+        Number(git(info.worktreePath, ['rev-list', '--count', `${base}..${tip}`]).stdout.trim()) ||
+        0;
+      const withdrawnDetail = withdrawnTarget
+        ? ` The previously published merge target ${withdrawnTarget.tip} is stale and has been withdrawn.`
+        : '';
+      const detail = dirtyEntries.length > 0
+        ? [
+            'The worktree has uncommitted or untracked paths:',
+            ...dirtyEntries.map((entry) => `- ${entry}`),
+            'Commit the intended project changes and remove or relocate anything that should not be reviewed.',
+            withdrawnDetail.trim(),
+          ]
+            .filter(Boolean)
+            .join('\n')
+        : withdrawnTarget
+          ? `The previously published merge target ${withdrawnTarget.tip} is stale and has been withdrawn because the current tip has no remaining diff against ${target.branch}.`
+          : commitCount === 0
+            ? `No committed change is available for this turn. The current tip matches the review base on ${target.branch}.`
+            : `The branch has ${commitCount} committed ${commitCount === 1 ? 'change' : 'changes'}, but their combined diff against ${target.branch} is empty.`;
+      info.lastMergeNotReadyReason = detail;
       await postControlMessage(
         info.subchannelId,
         this.agentIdentity,
@@ -5641,6 +5803,7 @@ export class Body {
       );
       return false;
     }
+    info.lastMergeNotReadyReason = undefined;
     // Snapshot what this review actually contains while the base is still
     // derivable — once the target ref advances to this tip, `base` and `tip`
     // collapse and the landed-work recap could no longer name a single file.
@@ -7125,7 +7288,6 @@ export class Body {
         this.noteInboundMessage(subchannelId);
         let promptAttempted = false;
         try {
-          let agentReply = '';
           let agentResult: (PromptResult & { narrativeFloor?: number }) | undefined;
           const promptNewTurn = async (): Promise<PromptResult & { narrativeFloor?: number }> => {
             await this.startCornerPlan(session, evt.content);
@@ -7140,7 +7302,7 @@ export class Body {
             promptAttempted = true;
             return this.promptAgent(
               session,
-              `${prompt}\n\n${CORNER_TURN_SUMMARY_INSTRUCTION}`,
+              `${prompt}\n\n${CORNER_MERGE_GATE_INSTRUCTION}\n${CORNER_TURN_SUMMARY_INSTRUCTION}`,
               {
                 channelId: subchannelId,
                 requestId: evt.id,
@@ -7149,6 +7311,7 @@ export class Body {
                 replyToId: evt.id,
                 replyRootId: replyRootIdForEvent(evt),
                 narrate: true,
+                withholdMergeClaims: true,
               },
             );
           };
@@ -7199,31 +7362,27 @@ export class Body {
           // running) archives the corner out of band. Never publish a turn
           // that resolved after that — closing must be terminal.
           if (agentResult && !info.archived) {
-            await this.completeCornerPlan(session);
-            agentReply = await this.publishAgentResult(
-              subchannelId,
-              session,
+            const ready = await this.finishCornerTurnAgainstMergeGate(
+              info,
               agentResult,
+              {
+                requestId: evt.id,
+                originalRequestId: evt.id,
+                cause: 'corner-follow-up',
+              },
               'Completed the requested follow-up.',
               {
-                concise: true,
-                minCreatedAt: agentResult.narrativeFloor,
-                summaryOnly: agentResult.narrativeFloor !== undefined,
+                replyTo: evt.id,
+                replyRootId: replyRootIdForEvent(evt),
               },
             );
-            info.mergeSummary = agentReply || info.mergeSummary;
-            await this.durableState.appendConversation(subchannelId, {
-              role: 'agent',
-              text: agentReply,
-              at: new Date().toISOString(),
-            });
-            await this.publishMergeReady(info);
+            await this.completeCornerPlan(session);
             await postAgentTurnStatus(
               subchannelId,
               this.agentIdentity,
               evt.id,
               session.logicalSessionId ?? session.sessionId,
-              'complete',
+              ready ? 'complete' : 'failed',
               this.presenceGenerations.get(subchannelId),
             );
           }

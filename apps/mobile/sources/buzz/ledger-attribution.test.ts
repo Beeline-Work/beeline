@@ -33,4 +33,46 @@ describe('ledger attribution runs', () => {
     const continued = continuedSpeakerIds([other('card-1'), other('card-2'), agent('a1')]);
     expect(continued.size).toBe(0);
   });
+
+  it('re-announces the voice when prose follows a collapsed tool run', () => {
+    // Owner-reported (peddle room, 2026-08-23): a run ordered [tool-summary,
+    // prose] spent the byline on the tool block and left the agent's actual
+    // text turn bare — the reader could not tell who was talking. Machine
+    // noise opens a run but cannot lend its continuation to the prose below.
+    const tool = { id: 'tool-1', speaker: 'agent:beebee', isMachine: true };
+    const prose = agent('a1');
+    const continued = continuedSpeakerIds([tool, prose]);
+    expect(continued.has('tool-1')).toBe(false);
+    expect(continued.has('a1')).toBe(false);
+  });
+
+  it('still folds machine rows that follow their own prose', () => {
+    // A reply followed by its collapsed tool line is one run: no repeated
+    // compact header under the byline the prose already carried.
+    const continued = continuedSpeakerIds([
+      agent('a1'),
+      { id: 'tool-1', speaker: 'agent:beebee', isMachine: true },
+      { id: 'tool-2', speaker: 'agent:beebee', isMachine: true },
+    ]);
+    expect([...continued]).toEqual(['tool-1', 'tool-2']);
+  });
+
+  it('prose after a mid-run tool block re-announces instead of riding the earlier byline past the block', () => {
+    const continued = continuedSpeakerIds([
+      agent('a1'),
+      { id: 'tool-1', speaker: 'agent:beebee', isMachine: true },
+      agent('a2'),
+    ]);
+    expect(continued.has('tool-1')).toBe(true);
+    expect(continued.has('a2')).toBe(false);
+  });
+
+  it('machine noise never bridges two different voices', () => {
+    const continued = continuedSpeakerIds([
+      agent('a1', 'beebee'),
+      { id: 'tool-1', speaker: 'agent:beebee', isMachine: true },
+      agent('b1', 'alden'),
+    ]);
+    expect(continued.has('b1')).toBe(false);
+  });
 });

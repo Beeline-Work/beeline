@@ -16,13 +16,18 @@ function cornerMessage(overrides: Partial<LedgerAttributionMessage>): LedgerAttr
 }
 
 /** Project a corner transcript to its per-entry speaker keys + runs, exactly
- * as the corner screen does (`continuedSpeakerIds` over `ledgerSpeakerKey`). */
+ * as the corner screen does (`continuedSpeakerIds` over `ledgerSpeakerKey`,
+ * with collapsed tool/thought rows flagged as machine noise). */
 function projectCornerTranscript(messages: readonly LedgerAttributionMessage[]) {
   const keys = new Map(
     messages.map((message) => [message.id, ledgerSpeakerKey(message, ROSTER)] as const),
   );
   const continued = continuedSpeakerIds(
-    messages.map((message) => ({ id: message.id, speaker: keys.get(message.id) ?? null })),
+    messages.map((message) => ({
+      id: message.id,
+      speaker: keys.get(message.id) ?? null,
+      isMachine: message.isAgentActivity,
+    })),
   );
   return { keys, continued };
 }
@@ -80,6 +85,19 @@ describe('corner transcript speaker attribution (same treatment as rooms)', () =
     // With no roster at all, narration without the agent tag is a person —
     // attributed, never bare.
     expect(ledgerSpeakerKey(message, new Set())).toBe(`person:${AGENT}`);
+  });
+
+  it('a tool-summary-then-prose run attributes the prose (owner report 2026-08-23)', () => {
+    // A collapsed tool block opening the run carries the compact header, but
+    // the agent's actual text turn must still announce itself with mark +
+    // name — machine noise cannot spend the prose's byline.
+    const { keys, continued } = projectCornerTranscript([
+      cornerMessage({ id: 'tool-1', pubkey: AGENT, isAgentActivity: true }),
+      cornerMessage({ id: 'prose-1', pubkey: AGENT, isAgentAuthor: true }),
+    ]);
+    expect(keys.get('tool-1')).toBe(`agent:${AGENT}`);
+    expect(continued.has('tool-1')).toBe(false); // compact header on the block
+    expect(continued.has('prose-1')).toBe(false); // full byline above the prose
   });
 
   it('mechanism rows belong to nobody: cards end runs instead of speaking', () => {

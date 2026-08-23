@@ -1,4 +1,5 @@
 import type { BuzzClient, Community } from '@beeline/buzz-client';
+import { seedUnmigratableRooms, unmigratableRooms } from '@beeline/buzz-client';
 
 import {
   loadActiveCommunityId,
@@ -6,6 +7,10 @@ import {
   saveActiveCommunityId,
   savePersonalCommunityId,
 } from './community-storage';
+import {
+  loadUnmigratableRooms,
+  saveUnmigratableRooms,
+} from './unmigratable-rooms-cache';
 import { WORKSPACE_LABEL } from './vocabulary';
 
 export const PERSONAL_WORKSPACE_NAME = 'Personal';
@@ -22,6 +27,26 @@ export type WorkspaceBootstrapOptions = {
    * client migrates into — everything a replaced device key held.
    */
   loadPredecessors?: () => Promise<string[]>;
+  /**
+   * Durable not-migratable room verdicts (DI seam for tests). Defaults to
+   * the MMKV-backed `unmigratable-rooms-cache`: seeded into the buzz-client's
+   * session cache before migration so a room proven unprojectable on an
+   * earlier launch is skipped WITHOUT re-asserting the full projection wait,
+   * and refreshed after discovery so newly-learned verdicts survive relaunch.
+   */
+  unmigratableVerdicts?: {
+    loadAndSeed: (viewerPubkey: string) => void;
+    persist: (viewerPubkey: string) => void;
+  };
+};
+
+const defaultUnmigratableVerdicts = {
+  loadAndSeed: (viewerPubkey: string): void => {
+    seedUnmigratableRooms(loadUnmigratableRooms(viewerPubkey));
+  },
+  persist: (viewerPubkey: string): void => {
+    saveUnmigratableRooms(viewerPubkey, unmigratableRooms());
+  },
 };
 
 type WorkspaceStorage = {
@@ -59,7 +84,12 @@ export async function prepareWorkspaceContext(
   options: WorkspaceBootstrapOptions = {},
 ): Promise<WorkspaceContext> {
   const predecessors = options.loadPredecessors ? await options.loadPredecessors() : [];
+  const verdicts = options.unmigratableVerdicts ?? defaultUnmigratableVerdicts;
+  verdicts.loadAndSeed(pubkey);
   let workspaces = await client.listCommunities(pubkey, predecessors);
+  // Persist any verdict learned during THIS pass (migration + membership
+  // repair both record them) so the next launch skips those rooms instantly.
+  verdicts.persist(pubkey);
   let personalWorkspaceId = await storage.loadPersonalId(pubkey);
 
   if (workspaces.length === 0) {

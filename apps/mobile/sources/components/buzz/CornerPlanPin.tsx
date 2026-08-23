@@ -1,5 +1,5 @@
 import React from 'react';
-import { ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { HullLivePulse } from '@/components/buzz/MonoHull';
@@ -31,7 +31,8 @@ const PLAN_PIN_MAX_HEIGHT = PLAN_PIN_VISIBLE_ROWS * PLAN_PIN_ROW_HEIGHT;
  *
  * Two rules keep it from becoming the region that ate the corner, which is how
  * the first attempt at this panel (PR #165) failed: every line is capped to
- * one line of text, and the checklist never grows past
+ * one line of text, the objective is two lines until explicitly expanded, and
+ * the checklist never grows past
  * `PLAN_PIN_MAX_HEIGHT` — a long plan scrolls inside its own frame rather than
  * pushing the transcript down. It renders nothing at all when there is neither
  * an objective nor a plan; there is no empty pin and no placeholder copy.
@@ -41,11 +42,12 @@ export const CornerPlanPin = React.memo(function CornerPlanPin({
   plan,
   testID,
 }: {
-  /** One line naming what this corner is for. See `cornerObjectiveLine`. */
+  /** The complete, single-line text naming what this corner is for. */
   objective?: string;
   plan?: AgentActivityItem['plan'];
   testID?: string;
 }) {
+  const [objectiveExpanded, setObjectiveExpanded] = React.useState(false);
   const items = plan?.items ?? [];
   // The agent's own plan objective wins when it has one; otherwise the line
   // the corner was opened with.
@@ -55,9 +57,24 @@ export const CornerPlanPin = React.memo(function CornerPlanPin({
     <View style={styles.pin} testID={testID}>
       <Text style={styles.eyebrow}>OBJECTIVE</Text>
       {headline ? (
-        <Text numberOfLines={2} style={styles.objective} testID={`${testID}-objective`}>
-          {headline}
-        </Text>
+        <Pressable
+          accessibilityHint={
+            objectiveExpanded ? 'Collapses the objective' : 'Shows the full objective'
+          }
+          accessibilityLabel="Corner objective"
+          accessibilityRole="button"
+          accessibilityState={{ expanded: objectiveExpanded }}
+          onPress={() => setObjectiveExpanded((expanded) => !expanded)}
+          testID={`${testID}-objective-toggle`}
+        >
+          <Text
+            numberOfLines={objectiveExpanded ? undefined : 2}
+            style={styles.objective}
+            testID={`${testID}-objective`}
+          >
+            {headline}
+          </Text>
+        </Pressable>
       ) : null}
       {items.length ? (
         <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>

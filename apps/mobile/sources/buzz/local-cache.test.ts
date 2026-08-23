@@ -25,6 +25,7 @@ import {
   clearBuzzLocalCache,
   flushBuzzLocalCacheForBackground,
   mergeChannelBasicsWithCache,
+  mergedRepoName,
   profileCacheKey,
   useBuzzLocalCache,
 } from './local-cache';
@@ -210,6 +211,66 @@ describe('Buzz local cache', () => {
         corners: [],
       }),
     ]);
+  });
+
+  it('keeps a resolved repo tag across a warm basics upsert that lacks one', () => {
+    // Reproduction of the owner report: the repo tag rendered on first paint
+    // (cached row carries `repoName`), then vanished seconds later when the
+    // warm refresh committed fresh basics that never carry enrichment. A
+    // warm update without the value must not clobber a present one.
+    expect(
+      mergeChannelBasicsWithCache(
+        [{ id: 'room', active: true, title: 'Fresh title', updatedAt: 20 }],
+        [
+          {
+            id: 'room',
+            active: true,
+            title: 'Cached title',
+            updatedAt: 12,
+            repoName: 'lunchboxfortwo/beeline',
+            modelLabel: 'ox-alpha',
+          },
+        ],
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        title: 'Fresh title',
+        repoName: 'lunchboxfortwo/beeline',
+        modelLabel: 'ox-alpha',
+      }),
+    ]);
+  });
+
+  it('a warm upsert carrying a changed repoName still updates it', () => {
+    expect(
+      mergeChannelBasicsWithCache(
+        [{ id: 'room', active: true, title: 'Fresh', updatedAt: 5, repoName: 'org/moved-repo' }],
+        [{ id: 'room', active: true, title: 'Cached', updatedAt: 12, repoName: 'org/old-repo' }],
+      ),
+    ).toEqual([expect.objectContaining({ repoName: 'org/moved-repo' })]);
+  });
+
+  it('mergedRepoName changes the row only on a definitive relay answer', () => {
+    const repository = (name: string) => ({
+      kind: 'repository' as const,
+      repository: {
+        channelId: 'room',
+        binding: { key: 'k', name, localOnly: false },
+        source: 'config' as const,
+      },
+    });
+    // A confirmed binding carries the (possibly changed) name.
+    expect(mergedRepoName('old/name', repository('new/name'))).toBe('new/name');
+    // A confirmed absence genuinely clears it.
+    expect(mergedRepoName('old/name', { kind: 'none' })).toBeUndefined();
+    // "Config exists but no admin authorizes it" is NOT an absence — keep.
+    expect(
+      mergedRepoName('old/name', { kind: 'unverified', reason: 'no admin author' }),
+    ).toBe('old/name');
+    // A failed/thrown read is not evidence either — keep.
+    expect(mergedRepoName('old/name', undefined)).toBe('old/name');
+    // And nothing is invented where nothing was known before.
+    expect(mergedRepoName(undefined, { kind: 'unverified', reason: 'x' })).toBeUndefined();
   });
 
   it('caps messages and evicts least-recently-used Rooms', () => {

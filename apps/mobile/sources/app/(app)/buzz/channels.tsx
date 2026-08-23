@@ -67,6 +67,7 @@ import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/Co
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
 import {
+  mergedRepoName,
   selectChannelList,
   channelListCacheKey,
   getCachedChannel,
@@ -321,8 +322,11 @@ async function enrichDisplayChannels(
         revalidateCachedMessages(transport, viewerPubkey, room.id),
         client.listMembers(room.id),
         // The repo name is published Room state (admin-authored binding),
-        // never derived from cwd or pairing history.
-        transport.roomRepositoryRead(room.id),
+        // never derived from cwd or pairing history. The tri-state read keeps
+        // "could not confirm" distinct from "there isn't one", so a transient
+        // refusal or an unreadable role projection cannot strip the title
+        // line's repo tag — `mergedRepoName` keeps the previous name then.
+        transport.roomRepositoryState(room.id),
       ]);
       const roomMemberPubkeys =
         members.status === 'fulfilled'
@@ -345,8 +349,15 @@ async function enrichDisplayChannels(
             ? roomParticipantPubkeys(new Set(roomMemberPubkeys), workspacePeople, workspaceAgents)
                 .size
             : 0,
-        repoName: repo.status === 'fulfilled' ? (repo.value?.binding.name ?? undefined) : undefined,
-        modelLabel: roomMemberPubkeys.map((pubkey) => modelByAgent.get(pubkey)).find(Boolean),
+        repoName: mergedRepoName(
+          room.repoName,
+          repo.status === 'fulfilled' ? repo.value : undefined,
+        ),
+        modelLabel:
+          roomMemberPubkeys.length > 0
+            ? (roomMemberPubkeys.map((pubkey) => modelByAgent.get(pubkey)).find(Boolean) ??
+              room.modelLabel)
+            : room.modelLabel,
       };
     }),
   );

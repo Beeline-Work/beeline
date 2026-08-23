@@ -122,6 +122,8 @@ class ProtocolError extends Error {
     readonly statusCode: number,
     readonly code: string,
     message: string,
+    /** Extra machine-readable fields merged into the JSON error body. */
+    readonly details?: Record<string, unknown>,
   ) {
     super(message);
   }
@@ -454,6 +456,13 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
           repositories,
           attemptedAt,
         );
+        // Reconcile is the backstop that discovers an owner's NEW install
+        // without any callback, so it is also a completion path for pending
+        // Room links (failures are swallowed by this function's outer catch).
+        await completeActivatedRoomLinks(
+          community,
+          repositories.map((repository) => repository.fullName),
+        );
       }
     } catch (error) {
       log.warn({ err: error, community, pubkey }, 'GitHub installation reconciliation failed');
@@ -542,6 +551,34 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       timer.unref?.();
       waiters.add(done);
     });
+  };
+
+  // Complete pending Room→repo links whose repository just became covered by
+  // an installation (install callback, webhook, or reconcile), and announce
+  // each completion into the stored repository-event feed the daemon already
+  // long-polls — so the Room card announcing "access granted" rides exactly
+  // the path stars and issues ride, with no new delivery mechanism. The
+  // deterministic per-link delivery id makes re-announcement impossible: a
+  // second activation attempt finds nothing to flip, and a replayed event row
+  // conflicts on delivery_id and is dropped.
+  const completeActivatedRoomLinks = async (
+    community: string,
+    fullNames: readonly string[],
+  ): Promise<void> => {
+    const activated = await options.store.activateGitHubRoomLinks(community, fullNames, now());
+    if (activated.length === 0) return;
+    await options.store.saveGitHubRepoEvents(
+      activated.map((link) => ({
+        fullName: link.fullName,
+        deliveryId: `room-link-${sha256(`${community}|${link.roomId}|${link.fullName.toLowerCase()}`).slice(0, 32)}`,
+        eventType: 'beeline_room_link',
+        action: 'granted',
+        actor: '',
+        summary: `Beeline access granted: ${link.fullName} is now linked.`,
+      })),
+      now(),
+    );
+    for (const link of activated) wakeGitHubRepoEventWaiters(link.fullName);
   };
 
   // A successful Room authority proof costs several authenticated relay reads.
@@ -643,7 +680,12 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof ProtocolError) {
-      void reply.status(error.statusCode).send({ error: error.code, message: error.message });
+      void
+        reply.status(error.statusCode).send({
+          error: error.code,
+          message: error.message,
+          ...(error.details ?? {}),
+        });
       return;
     }
     if (error && typeof error === 'object' && 'statusCode' in error && error.statusCode === 413) {
@@ -1411,6 +1453,17 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       repositories,
       now(),
     );
+    // A pending Room link for one of these repositories may now be grantable —
+    // best-effort: the callback must not fail AFTER a successful save, and any
+    // later webhook/reconcile completes it instead.
+    try {
+      await completeActivatedRoomLinks(
+        tenant.community,
+        repositories.map((repository) => repository.fullName),
+      );
+    } catch (error) {
+      request.log.warn({ err: error, installationId }, 'Room link completion check failed');
+    }
     const completion = new URL(flow.redirectUri);
     completion.searchParams.set('installed', '1');
     return reply.redirect(completion.toString(), 302);
@@ -1629,10 +1682,37 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       if (!/^[^/\s]+\/[^/\s]+$/.test(fullName)) {
         throw new ProtocolError(400, 'invalid_repository', 'expected owner/repo');
       }
+      // Optional Room context: when the caller is about to bind a Room to this
+      // repository, a not-covered answer records the durable pending link so
+      // completion is automatic once the repository owner grants access.
+      const roomId = typeof query.room_id === 'string' ? query.room_id : '';
+      if (roomId.length > 200) {
+        throw new ProtocolError(400, 'invalid_request', 'invalid room_id');
+      }
       noStore(reply);
-      return reply.send(
-        await options.store.githubRepositoryAccess(tenant.community, pubkey, fullName),
+      const access = await options.store.githubRepositoryAccess(
+        tenant.community,
+        pubkey,
+        fullName,
       );
+      if (!access.accessible && access.reason !== 'revoked') {
+        const installUrl = options.github.app.publicInstallUrl;
+        if (roomId) {
+          try {
+            await options.store.recordGitHubRoomLinkRequest(
+              tenant.community,
+              roomId,
+              fullName,
+              pubkey,
+              now(),
+            );
+          } catch (error) {
+            request.log.warn({ err: error, roomId, repository: fullName }, 'Room link request not recorded');
+          }
+        }
+        return reply.send({ ...access, grant_needed: true, install_url: installUrl });
+      }
+      return reply.send(access);
     },
   );
 
@@ -1791,10 +1871,48 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       }
     }
     if (!usable(access)) {
+      if (!access.movedTo) {
+        // The NEVER-GRANTED case is a pending owner grant, not an error wall:
+        // the repository's owner (who may not use Beeline at all) must install
+        // the App on their account — only GitHub can grant that, and only the
+        // owner can do it. Record the durable pending link so the completion
+        // is automatic and announced once the grant lands, and answer with a
+        // TYPED refusal carrying the shareable, state-less install URL. This
+        // is deliberately distinct from the moved-repository message below.
+        const repository = authority.fullName;
+        const installUrl = options.github.app.publicInstallUrl;
+        try {
+          await options.store.recordGitHubRoomLinkRequest(
+            tenant.community,
+            roomId,
+            repository,
+            authority.authorizedBy,
+            now(),
+          );
+        } catch (error) {
+          request.log.warn({ err: error, roomId, repository }, 'Room link request not recorded');
+        }
+        request.log.warn(
+          {
+            authorityReason: 'owner_grant_needed',
+            roomId,
+            agentPubkey: pubkey,
+            authorizedBy: authority.authorizedBy,
+            repository,
+          },
+          'GitHub Room token authority refused request',
+        );
+        throw new ProtocolError(
+          403,
+          'owner_grant_needed',
+          `${repository} is waiting for its owner to grant Beeline access. Ask the repository owner to install the Beeline GitHub App: ${installUrl}`,
+          { install_url: installUrl, repository },
+        );
+      }
       request.log.warn(
         {
           authorityReason: 'repository_not_granted',
-          repositoryAccessReason: access.movedTo ? 'moved_not_granted' : access.reason,
+          repositoryAccessReason: 'moved_not_granted',
           movedTo: access.movedTo,
           roomId,
           agentPubkey: pubkey,
@@ -1806,9 +1924,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       throw new ProtocolError(
         403,
         'repository_not_granted',
-        access.movedTo
-          ? `repository moved to ${access.movedTo}; grant the App access there`
-          : 'Room repository is not granted to the Beeline GitHub App',
+        `repository moved to ${access.movedTo}; grant the App access there`,
       );
     }
     const resolvedFullName = access.resolvedFullName ?? authority.fullName;
@@ -2013,7 +2129,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     if (!options.github?.webhookSecret) {
       throw new ProtocolError(503, 'github_unavailable', 'GitHub webhook is not configured');
     }
-    tenantFor(request);
+    const webhookTenant = tenantFor(request);
     const rawBody = (request as FastifyRequest & { rawBody?: Buffer }).rawBody;
     if (
       !rawBody ||
@@ -2087,6 +2203,14 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
           return id;
         });
         await options.store.applyGitHubRepositoryChanges(installationId, added, removedIds, now());
+        // Repositories just added to an installation complete any pending
+        // Room link waiting on them. Inside the delivery's try block: a
+        // failure releases the delivery so GitHub redelivers and the
+        // idempotent activation re-runs.
+        await completeActivatedRoomLinks(
+          webhookTenant.community,
+          added.map((repository) => repository.fullName),
+        );
       }
     } catch (error) {
       await options.store.releaseGitHubWebhookDelivery(deliveryId);

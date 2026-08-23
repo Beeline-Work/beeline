@@ -17,16 +17,28 @@ export type RepoCandidate = {
 export type GitHubRepositoryLinkagePlan =
   | { kind: 'available'; candidate: RepoCandidate }
   | { kind: 'manage'; installation: GitHubInstallationAccess; fullName: string }
-  | { kind: 'install'; owner: string; fullName: string };
+  | { kind: 'install'; owner: string; fullName: string }
+  /**
+   * The server-side coverage probe has already answered that this repository
+   * is NEVER granted (distinct from a move): only its owner can install the
+   * App, so the host executes the share-with-owner path instead of opening
+   * the viewer's own connect flow, which can never grant a foreign repo.
+   */
+  | { kind: 'owner-grant'; owner: string; fullName: string };
 
 /**
  * Decide what GitHub work is actually required for one repository. A caller
  * must execute this plan instead of blindly opening the GitHub App page.
+ *
+ * `uncoveredOwners` carries owners the auth service has already reported as
+ * not covered by the App (`owner_grant_needed`), so a pasted foreign repo
+ * plans the share CTA rather than a doomed self-connect.
  */
 export function githubRepositoryLinkagePlan(
   fullName: string,
   candidates: readonly RepoCandidate[],
   installations: readonly GitHubInstallationAccess[],
+  options: { uncoveredOwners?: ReadonlySet<string> } = {},
 ): GitHubRepositoryLinkagePlan {
   const normalized = fullName.trim().toLowerCase();
   const candidate = candidates.find((entry) => entry.name.toLowerCase() === normalized);
@@ -37,9 +49,13 @@ export function githubRepositoryLinkagePlan(
     (entry) =>
       entry.status === 'active' && entry.accountLogin.toLowerCase() === owner.toLowerCase(),
   );
-  return installation
-    ? { kind: 'manage', installation, fullName }
-    : { kind: 'install', owner, fullName };
+  if (!installation) {
+    if (owner && options.uncoveredOwners?.has(owner.toLowerCase())) {
+      return { kind: 'owner-grant', owner, fullName };
+    }
+    return { kind: 'install', owner, fullName };
+  }
+  return { kind: 'manage', installation, fullName };
 }
 
 export const GITHUB_REPOSITORY_SELECTION_INSTRUCTION =

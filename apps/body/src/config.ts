@@ -18,6 +18,7 @@ import {
 } from './agent-command.js';
 import type { AgentAccessPolicy } from './access-policy.js';
 import type { ExternalMcpCapability } from './external-mcp-capabilities.js';
+import type { McpServerWire } from './acp.js';
 
 export type SessionMode = 'readonly' | 'edit';
 
@@ -101,6 +102,13 @@ export interface BodyConfig {
   accessAutoResponse?: string;
   /** Explicit account capabilities mounted for this agent; never inherited from operator config. */
   externalMcpCapabilities?: ExternalMcpCapability[];
+  /**
+   * Operator-authored MCP tool servers (`<runtimeDir>/operator-mcp.json`, see
+   * `operator-mcp.ts`) mounted for CORNER edit sessions in addition to
+   * Beeline's own inventory — still gated on the `creator` access policy like
+   * the account-backed capability profiles. Empty/unset mounts nothing.
+   */
+  operatorMcpServers?: McpServerWire[];
   /**
    * Pair-time default model/effort (`--model`/`--effort` at `beeline pair`),
    * injected from the runtime record by the daemon. Applied by

@@ -1321,12 +1321,12 @@ const styles = StyleSheet.create((theme) => {
   backText: { ...Typography.default(), color: groknight.chrome, fontSize: 30, fontWeight: '300' },
   headerCopy: { flex: 1, minWidth: 0, paddingLeft: 4 },
   title: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     color: groknight.textPrimary,
     fontSize: 20,
     lineHeight: 24,
   },
-  headerMeta: { ...Typography.default(), marginTop: 2, color: groknight.muted, fontSize: 11 },
+  headerMeta: { ...Typography.default(), fontFamily: groknight.proseRegular, marginTop: 2, color: groknight.muted, fontSize: 11 },
   scrollContent: { paddingHorizontal: 18, paddingTop: 20, paddingBottom: 56 },
   pairPanel: {
     paddingBottom: 24,
@@ -1336,7 +1336,7 @@ const styles = StyleSheet.create((theme) => {
   },
   pairNote: { ...Typography.default(), fontFamily: groknight.proseRegular, color: groknight.textSecondary, fontSize: 13, lineHeight: 19 },
   stepLabel: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     marginTop: 14,
     color: groknight.textSecondary,
     fontSize: 12,
@@ -1361,7 +1361,7 @@ const styles = StyleSheet.create((theme) => {
     fontSize: 13,
   },
   copyText: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     marginLeft: 10,
     color: groknight.textSecondary,
     fontSize: 12,
@@ -1383,7 +1383,7 @@ const styles = StyleSheet.create((theme) => {
     letterSpacing: 0.8,
   },
   error: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     marginTop: 4,
     color: groknight.textSecondary,
     fontSize: 14,
@@ -1392,15 +1392,15 @@ const styles = StyleSheet.create((theme) => {
   memberSection: { marginBottom: 32 },
   sectionHeader: { marginBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 10 },
   sectionTitle: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     flex: 1,
     color: groknight.textPrimary,
     fontSize: 14,
   },
-  count: { ...Typography.default(), color: groknight.muted, fontSize: 12 },
+  count: { ...Typography.default(), fontFamily: groknight.proseRegular, color: groknight.muted, fontSize: 12 },
   sectionAction: { alignSelf: 'center' },
   sectionEmpty: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     paddingVertical: 18,
     color: groknight.textMuted,
     fontSize: 13,
@@ -1452,7 +1452,7 @@ const styles = StyleSheet.create((theme) => {
   },
   roleTextSelected: { color: groknight.textPrimary },
   removePersonButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  removePersonText: { ...Typography.default(), color: groknight.steel, fontSize: 22 },
+  removePersonText: { ...Typography.default(), fontFamily: groknight.proseRegular, color: groknight.steel, fontSize: 22 },
   empty: {
     alignItems: 'center',
     paddingTop: 46,
@@ -1472,14 +1472,13 @@ const styles = StyleSheet.create((theme) => {
     textAlign: 'center',
   },
   emptyTitle: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     marginTop: 10,
     color: groknight.textPrimary,
     fontSize: 16,
   },
   emptyCopy: {
-    ...Typography.default(),
-    fontFamily: groknight.proseRegular,
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     marginTop: 7,
     color: groknight.textSecondary,
     fontSize: 12,
@@ -1498,14 +1497,12 @@ const styles = StyleSheet.create((theme) => {
   agentRowActive: { backgroundColor: groknight.bgBase },
   agentCopy: { flex: 1, minWidth: 0 },
   agentName: {
-    ...Typography.default('semiBold'),
-    fontFamily: groknight.proseSemibold,
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     color: groknight.textPrimary,
     fontSize: 15,
   },
   personality: {
-    ...Typography.default(),
-    fontFamily: groknight.proseRegular,
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     marginTop: 3,
     color: groknight.textSecondary,
     fontSize: 11,
@@ -1539,8 +1536,7 @@ const styles = StyleSheet.create((theme) => {
     letterSpacing: 0.55,
   },
   agentOfflineNoticeText: {
-    ...Typography.default(),
-    fontFamily: groknight.proseRegular,
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     marginTop: 3,
     color: groknight.textSecondary,
     fontSize: 11,
@@ -1558,7 +1554,7 @@ const styles = StyleSheet.create((theme) => {
   avatarActions: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 18 },
   avatarReset: { minHeight: 44, justifyContent: 'center' },
   avatarResetText: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     color: groknight.textSecondary,
     fontSize: 12,
   },
@@ -1570,19 +1566,19 @@ const styles = StyleSheet.create((theme) => {
     lineHeight: 15,
   },
   editorTitle: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     color: groknight.textPrimary,
     fontSize: 16,
   },
   editorHint: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     marginTop: 4,
     color: groknight.steel,
     fontSize: 12,
     lineHeight: 17,
   },
   label: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     marginTop: 10,
     marginBottom: 6,
     color: groknight.textSecondary,
@@ -1590,7 +1586,7 @@ const styles = StyleSheet.create((theme) => {
     fontWeight: '600',
   },
   input: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     minHeight: 44,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -1613,7 +1609,7 @@ const styles = StyleSheet.create((theme) => {
     backgroundColor: 'transparent',
   },
   secondaryButtonText: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     color: groknight.textSecondary,
     fontSize: 12,
     fontWeight: '600',
@@ -1622,7 +1618,7 @@ const styles = StyleSheet.create((theme) => {
   flexButton: { flex: 1, minWidth: 0 },
   modelConfigSection: { marginTop: 12 },
   modelConfigHint: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     color: groknight.textMuted,
     fontSize: 12,
     paddingBottom: 8,
@@ -1636,7 +1632,7 @@ const styles = StyleSheet.create((theme) => {
     paddingVertical: 10,
   },
   modelAxisLabel: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     color: groknight.textSecondary,
     fontSize: 12,
     fontWeight: '600',
@@ -1672,7 +1668,7 @@ const styles = StyleSheet.create((theme) => {
     paddingVertical: 6,
   },
   modelCustomApply: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     color: groknight.textMuted,
     fontSize: 12,
     paddingHorizontal: 4,
@@ -1687,7 +1683,7 @@ const styles = StyleSheet.create((theme) => {
   },
   modelOptionText: { ...Typography.mono(), color: groknight.textMuted, fontSize: 12 },
   modelOptionTextActive: { color: groknight.accent },
-  modelOptionCheck: { ...Typography.default(), color: groknight.accent, fontSize: 12 },
+  modelOptionCheck: { ...Typography.default(), fontFamily: groknight.proseRegular, color: groknight.accent, fontSize: 12 },
   removeButton: {
     marginTop: 22,
     minHeight: 52,
@@ -1700,13 +1696,13 @@ const styles = StyleSheet.create((theme) => {
     backgroundColor: groknight.bgBase,
   },
   removeButtonLabel: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     color: groknight.textPrimary,
     fontSize: 12,
     letterSpacing: 0.3,
   },
   removeButtonHint: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     marginTop: 3,
     color: groknight.textMuted,
     fontSize: 9,
@@ -1720,19 +1716,19 @@ const styles = StyleSheet.create((theme) => {
     backgroundColor: groknight.bgHighlight,
   },
   removeConfirmFlag: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     color: groknight.textPrimary,
     fontSize: 9,
     letterSpacing: 1.4,
   },
   removeConfirmTitle: {
-    ...Typography.default('semiBold'),
+    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     marginTop: 7,
     color: groknight.textPrimary,
     fontSize: 16,
   },
   removeConfirmCopy: {
-    ...Typography.default(),
+    ...Typography.default(), fontFamily: groknight.proseRegular,
     marginTop: 6,
     color: groknight.textSecondary,
     fontSize: 12,

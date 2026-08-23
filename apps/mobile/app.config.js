@@ -88,7 +88,10 @@ export default {
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",
                 monochromeImage: "./sources/assets/images/icon-monochrome.png",
-                backgroundColor: "#090909"
+                // Brass gradient layer behind the ink Alloy foreground; solid brass is
+                // the fallback if the background image is dropped by a toolchain.
+                backgroundImage: "./sources/assets/images/icon-adaptive-background.png",
+                backgroundColor: "#E5A645"
             },
             permissions: [
                 "android.permission.RECORD_AUDIO",
@@ -219,17 +222,17 @@ export default {
                 'expo-splash-screen',
                 {
                     ios: {
-                        backgroundColor: "#090909",
+                        backgroundColor: "#14091A",
                         dark: {
-                            backgroundColor: "#090909",
+                            backgroundColor: "#14091A",
                         }
                     },
                     android: {
                         image: "./sources/assets/images/splash-android-light.png",
-                        backgroundColor: "#090909",
+                        backgroundColor: "#14091A",
                         dark: {
                             image: "./sources/assets/images/splash-android-dark.png",
-                            backgroundColor: "#090909",
+                            backgroundColor: "#14091A",
                         }
                     }
                 }

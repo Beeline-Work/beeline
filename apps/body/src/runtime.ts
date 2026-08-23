@@ -81,6 +81,11 @@ export interface AgentRuntimeRecord {
    * and leaves `session-sandbox.ts`'s permission handler as the only boundary.
    */
   sandbox?: SandboxPolicy;
+  /**
+   * Owner-configured extra credential-mask paths (`bwrap-sandbox.ts`), unioned
+   * with the built-in known list at spawn time. Absolute or `$HOME`-relative.
+   */
+  sandboxMaskPaths?: string[];
   agentKind?: AgentKind;
   agentCommand?: string;
   agentArgs?: string[];
@@ -577,6 +582,11 @@ export async function readRuntimeRecord(path: string): Promise<AgentRuntimeRecor
         parsed.externalMcpCapabilities.some((capability) => !isExternalMcpCapability(capability)) ||
         parsed.accessPolicy !== 'creator')) ||
     (parsed.sandbox !== undefined && !isSandboxPolicy(parsed.sandbox)) ||
+    (parsed.sandboxMaskPaths !== undefined &&
+      (!Array.isArray(parsed.sandboxMaskPaths) ||
+        parsed.sandboxMaskPaths.some(
+          (path) => typeof path !== 'string' || !path.trim(),
+        ))) ||
     (parsed.modelSelection !== undefined &&
       (typeof parsed.modelSelection !== 'object' ||
         parsed.modelSelection === null ||

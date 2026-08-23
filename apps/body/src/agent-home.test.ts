@@ -4,7 +4,12 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
-import { prepareRoomAgentHome, roomAgentHomeEnv } from './agent-home.js';
+import {
+  harnessStateDirsFromEnv,
+  prepareRoomAgentHome,
+  roomAgentHomeEnv,
+} from './agent-home.js';
+import { AGENT_PRIVATE_STATE_ENV } from './agent-private-state.js';
 
 const cleanup: string[] = [];
 
@@ -84,5 +89,13 @@ describe('per-room harness state isolation', () => {
       TMPDIR: '/rooms/room-a/agent-home/tmp',
     });
     expect(existsSync('/rooms/room-a/agent-home')).toBe(false);
+  });
+
+  it('includes the explicit agent-private root in the writable sandbox state', () => {
+    const { stateDirs } = harnessStateDirsFromEnv({
+      [AGENT_PRIVATE_STATE_ENV]: '/rooms/room-a/agent-private',
+    });
+
+    expect(stateDirs).toEqual(['/rooms/room-a/agent-private']);
   });
 });

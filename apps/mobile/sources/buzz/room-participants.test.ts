@@ -37,8 +37,9 @@ describe('Room participant presentation', () => {
   });
 
   it('formats the compact header total', () => {
-    expect(formatRoomParticipantTotal(1)).toBe('1 participant');
-    expect(formatRoomParticipantTotal(8)).toBe('8 participants');
+    expect(formatRoomParticipantTotal(1)).toBe('1 member');
+    expect(formatRoomParticipantTotal(3)).toBe('3 members');
+    expect(formatRoomParticipantTotal(8)).toBe('8 members');
   });
 
   it('groups the visible Room roster into people and Agents', () => {

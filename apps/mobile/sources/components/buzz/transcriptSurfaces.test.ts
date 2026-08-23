@@ -604,7 +604,7 @@ describe('Corner header identity', () => {
 describe('Leaving a corner', () => {
   it('routes back by parent id, never by a bare stack pop', () => {
     expect(chatSource).toContain('onPress={handleBack}');
-    expect(chatSource).toContain('chatBackAction(routes, parentChannelId)');
+    expect(chatSource).toContain('chatBackAction(routes, parentChannelId, cornerReturnTarget)');
     // The only surviving `router.back()` is inside handleBack's own 'back' case.
     expect(chatSource.match(/router\.back\(\);/g)?.length).toBe(1);
     expect(chatSource).toMatch(/action\.type === 'back'\) router\.back\(\)/);

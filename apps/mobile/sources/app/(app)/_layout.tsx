@@ -81,6 +81,7 @@ export default function RootLayout() {
                 options={{
                     headerShown: false,
                     statusBarStyle: 'light',
+                    contentStyle: { backgroundColor: theme.buzz.bgBase },
                 }}
             />
             <Stack.Screen
@@ -130,6 +131,7 @@ export default function RootLayout() {
                 options={{
                     headerShown: false,
                     statusBarStyle: 'light',
+                    contentStyle: { backgroundColor: theme.buzz.bgBase },
                 }}
             />
             <Stack.Screen

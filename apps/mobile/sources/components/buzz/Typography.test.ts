@@ -92,9 +92,8 @@ const monoStyles = new Set([
   'rowFlag',
   'rowAge',
   'rowAgeUnread',
-  // The supervision deck's mono micro-metadata: repo tag, search.
+  // The supervision deck's mono micro-metadata: repo tag.
   'rowRepo',
-  'searchField',
   'rowPreviewAuthor',
   'railCommandLabel',
   'cornerPeekCount',

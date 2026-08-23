@@ -20,6 +20,8 @@ export type {
   AgentModelCatalog,
   AgentModelConfigInput,
   AgentModelConfig,
+  AgentCommandInfo,
+  AgentCommandList,
   PersonProfile,
   PersonProfileInput,
   MediaBlob,
@@ -284,6 +286,14 @@ export {
   setAgentModelConfig,
   getAgentModelConfig,
 } from './agent-model-config.js';
+
+export {
+  MAX_AGENT_COMMANDS,
+  parseAgentCommandEntries,
+  parseAgentCommands,
+  publishAgentCommands,
+  getAgentCommands,
+} from './agent-commands.js';
 
 export {
   parseRoomRepository,

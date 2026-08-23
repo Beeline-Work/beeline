@@ -53,6 +53,7 @@ import {
   type AgentModelCatalog,
   type AgentModelConfig,
   type AgentModelConfigInput,
+  type AgentCommandList,
   TAG_AGENT_PRESENCE,
   type RoomRepository,
   type RoomRepositoryResolution,
@@ -649,6 +650,15 @@ export class BuzzRigTransport implements RigTransport {
   ): Promise<AgentModelConfig | null> {
     const client = await this.getClient();
     return client.getAgentModelConfig(communityId, agentPubkey);
+  }
+
+  /** The slash commands/skills an agent's harness advertises, if published. */
+  async agentCommandsRead(
+    communityId: string,
+    agentPubkey: string,
+  ): Promise<AgentCommandList | null> {
+    const client = await this.getClient();
+    return client.getAgentCommands(communityId, agentPubkey);
   }
 
   /** Choose a model/effort for an agent. Applied on that agent's next session (re)activation. */

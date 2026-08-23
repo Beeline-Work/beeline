@@ -9423,3 +9423,287 @@ describe('an unrecognized slash command is marked, never silently executed', () 
     expect(slashNotices(published)).toHaveLength(1);
   });
 });
+
+describe('agent command list publishing (composer palette source of truth)', () => {
+  const communityId = '33333333-3333-4333-8333-333333333333';
+  const config = {
+    agentBinary: '/nonexistent',
+    mcpBinary: '/nonexistent',
+    agentEnv: {},
+    workspaceRoot: '/tmp/buzzy-body-unit',
+    relayBaseUrl: 'http://relay.test',
+    relayHost: 'relay.test',
+    relayScheme: 'http',
+    relayWsUrl: 'ws://relay.test',
+    autoApprovePermissions: true,
+  };
+
+  function jsonResponse(body: unknown): Response {
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
+  it('republishes captured harness commands as a durable self-authored record, once per distinct list', async () => {
+    vi.useFakeTimers();
+    const agentIdentity = newIdentity('commands-agent');
+    const body = new Body(config, newIdentity('operator'), agentIdentity);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return jsonResponse({ accepted: true });
+      }),
+    );
+
+    // A stand-in for the live AcpClient: the daemon attaches a plain event
+    // listener to whatever client owns the session.
+    const { EventEmitter } = await import('node:events');
+    const fakeClient = new EventEmitter() as unknown as AcpClient;
+    const detach = Reflect.get(body, 'attachAgentCommandPublisher').call(
+      body,
+      fakeClient,
+      communityId,
+    ) as () => void;
+
+    fakeClient.emit('commands', {
+      sessionId: 'sess-1',
+      commands: [{ name: 'loop', description: 'Loop' }],
+    });
+    await vi.advanceTimersByTimeAsync(4_000);
+    let commandEvents = published.filter((event) => event.kind === 30078);
+    expect(commandEvents).toHaveLength(1);
+    expect(commandEvents[0]!.pubkey).toBe(agentIdentity.publicKey);
+    const tags = commandEvents[0]!.tags as string[][];
+    expect(tags).toEqual(expect.arrayContaining([['t', 'buzz-agent-commands'], ['h', communityId]]));
+    expect(JSON.parse(commandEvents[0]!.content)).toEqual({
+      commands: [{ name: 'loop', description: 'Loop' }],
+    });
+
+    // An identical list again costs no second write within the process.
+    fakeClient.emit('commands', {
+      sessionId: 'sess-1',
+      commands: [{ name: 'loop', description: 'Loop' }],
+    });
+    await vi.advanceTimersByTimeAsync(4_000);
+    commandEvents = published.filter((event) => event.kind === 30078);
+    expect(commandEvents).toHaveLength(1);
+
+    // Detaching stops capture entirely.
+    detach();
+    fakeClient.emit('commands', {
+      sessionId: 'sess-1',
+      commands: [{ name: 'different' }],
+    });
+    await vi.advanceTimersByTimeAsync(4_000);
+    commandEvents = published.filter((event) => event.kind === 30078);
+    expect(commandEvents).toHaveLength(1);
+  });
+});
+describe('harness-independent corner commit watch', () => {
+  function gitCommand(cwd: string, args: string[]): string {
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    if (result.status !== 0) throw new Error(result.stderr);
+    return result.stdout.trim();
+  }
+
+  /** A worktree with one real committed change on its feature branch and a
+   *  clean tree — what a pi corner looks like after a turn whose completion
+   *  event never reached the daemon. */
+  function committedFeatureWorktree(): string {
+    const directory = mkdtempSync(join(tmpdir(), 'buzzy-commit-watch-'));
+    gitCommand(directory, ['init', '-b', 'main']);
+    gitCommand(directory, ['config', 'user.name', 'Commit Watch Test']);
+    gitCommand(directory, ['config', 'user.email', 'commit-watch@test.invalid']);
+    writeFileSync(join(directory, 'README.md'), '# Before\n');
+    gitCommand(directory, ['add', '.']);
+    gitCommand(directory, ['commit', '-m', 'base']);
+    gitCommand(directory, ['checkout', '-b', 'feature/watched']);
+    writeFileSync(join(directory, 'README.md'), '# After\n');
+    gitCommand(directory, ['add', 'README.md']);
+    gitCommand(directory, ['commit', '-m', 'committed without a completed turn']);
+    return directory;
+  }
+
+  function newBody(agent: ReturnType<typeof newIdentity>) {
+    return new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: '/workspace',
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+    );
+  }
+
+  function stubPublishing(): NostrEvent[] {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    return published;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function watchInfo(
+    body: Body,
+    agent: ReturnType<typeof newIdentity>,
+    worktreePath: string,
+    overrides: Record<string, unknown> = {},
+  ): SubchannelInfoFixture {
+    const info = {
+      subchannelId: 'corner-commit-watch',
+      worktreePath,
+      featureBranch: 'feature/watched',
+      role: agent,
+      session: {
+        channelId: 'corner-commit-watch',
+        sessionId: 'session',
+        client: { activeRunId: () => undefined },
+      } as never,
+      lastPolledAt: 0,
+      archived: false,
+      boundRepo: { repo: 'repo', targetBranch: 'refs/heads/main' },
+      ...overrides,
+    } as SubchannelInfoFixture;
+    body.registerSubchannel(info);
+    return info;
+  }
+
+  // The test fixtures register plain session objects; keep the local type
+  // loose where only Body's own bookkeeping reads them.
+  type SubchannelInfoFixture = Parameters<Body['registerSubchannel']>[0];
+
+  it('publishes a review card for committed work even when no ACP turn ever resolved', async () => {
+    const agent = newIdentity('commit-watch-agent');
+    const body = newBody(agent);
+    const published = stubPublishing();
+    const worktreePath = committedFeatureWorktree();
+    try {
+      // No running task, an idle session, commits on the branch, clean tree:
+      // exactly the state a pi corner is left in when its turn dies before
+      // the daemon sees a final response.
+      const info = watchInfo(body, agent, worktreePath);
+
+      await Reflect.get(body, 'pollCornerCommitWatch').call(body);
+
+      expect(
+        published.some((event) =>
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+        ),
+      ).toBe(true);
+      expect(info.observedReviewTip).toBe(gitCommand(worktreePath, ['rev-parse', 'HEAD']));
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
+  it('does not publish while the worktree still has uncommitted work', async () => {
+    const agent = newIdentity('commit-watch-dirty-agent');
+    const body = newBody(agent);
+    const published = stubPublishing();
+    const worktreePath = committedFeatureWorktree();
+    try {
+      writeFileSync(join(worktreePath, 'wip.txt'), 'mid-task\n');
+      watchInfo(body, agent, worktreePath);
+
+      await Reflect.get(body, 'pollCornerCommitWatch').call(body);
+
+      expect(published).toHaveLength(0);
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
+  it('evaluates each tip once and never duplicates the review card', async () => {
+    const agent = newIdentity('commit-watch-idempotent-agent');
+    const body = newBody(agent);
+    const published = stubPublishing();
+    const worktreePath = committedFeatureWorktree();
+    try {
+      watchInfo(body, agent, worktreePath);
+
+      await Reflect.get(body, 'pollCornerCommitWatch').call(body);
+      await Reflect.get(body, 'pollCornerCommitWatch').call(body);
+
+      expect(
+        published.filter((event) =>
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+        ),
+      ).toHaveLength(1);
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
+  it('stays silent while a turn is still running in the corner', async () => {
+    const agent = newIdentity('commit-watch-busy-agent');
+    const body = newBody(agent);
+    const published = stubPublishing();
+    const worktreePath = committedFeatureWorktree();
+    try {
+      watchInfo(body, agent, worktreePath, {
+        session: {
+          channelId: 'corner-commit-watch',
+          sessionId: 'session',
+          client: { activeRunId: () => 'run-1' },
+        },
+      });
+
+      await Reflect.get(body, 'pollCornerCommitWatch').call(body);
+
+      expect(published).toHaveLength(0);
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
+  it('never re-advertises a tip that already landed or is already the live review target', async () => {
+    const agent = newIdentity('commit-watch-landed-agent');
+    const body = newBody(agent);
+    const published = stubPublishing();
+    const worktreePath = committedFeatureWorktree();
+    try {
+      const tip = gitCommand(worktreePath, ['rev-parse', 'HEAD']);
+      watchInfo(body, agent, worktreePath, { landedTip: tip, mergeTarget: { repo: 'repo', branch: 'refs/heads/main', tip } });
+
+      await Reflect.get(body, 'pollCornerCommitWatch').call(body);
+
+      expect(published).toHaveLength(0);
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
+  it('runs from the Room maintenance chain ahead of the member poll', () => {
+    // Source assertion: the maintenance step ordering is load-bearing (the
+    // watch must run after the land polls so landed corners are skipped via
+    // `landedTip`, and before the member poll so a queued steer cannot start
+    // a new turn ahead of the card).
+    const source = readFileSync(new URL('./body.ts', import.meta.url), 'utf8');
+    const maintenance = source.slice(source.indexOf('private async pollRoomMaintenance'));
+    const watchStep = maintenance.indexOf("guarded('corner commit watch'");
+    const memberPoll = maintenance.indexOf("guarded('corner member poll'");
+    const landPoll = maintenance.indexOf("guarded('direct merge approval poll'");
+    expect(watchStep).toBeGreaterThan(-1);
+    expect(memberPoll).toBeGreaterThan(watchStep);
+    expect(landPoll).toBeGreaterThan(-1);
+    expect(landPoll).toBeLessThan(watchStep);
+  });
+});

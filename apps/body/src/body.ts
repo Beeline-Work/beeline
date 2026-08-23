@@ -20,6 +20,7 @@ import WebSocket from 'ws';
 import {
   AcpClient,
   isMutatingPermissionRequest,
+  type AcpAvailableCommand,
   type AcpPermissionDecision,
   type AcpPermissionHandler,
   type AcpPermissionRequest,
@@ -47,6 +48,7 @@ import {
   type ActivityProjectionController,
   type CompactActivityPlan,
 } from './activity.js';
+import { createAgentCommandPublisher } from './agent-commands-publish.js';
 import {
   PI_CORNER_REQUEST_INSTRUCTIONS,
   createCornerRequestFilter,
@@ -104,6 +106,7 @@ import {
   summarizeGitFailure,
   getAgentModelConfig,
   getAgentModelCatalog,
+  publishAgentCommands,
   getRoomRepository,
   publishAgentModelCatalog,
   type AgentPresence,
@@ -292,6 +295,8 @@ export interface AgentSession {
   parentChannelId?: string;
   /** Unsubscribe from activity projection. */
   unsubscribeActivity?: () => void;
+  /** Unsubscribe from harness command-list capture (relay republish). */
+  unsubscribeCommands?: () => void;
   /** Corner-only plan boundary layered onto the activity projection. */
   activityProjection?: ActivityProjectionController;
   /** Task-authored opening plan to publish when a lazily suspended session activates. */
@@ -406,6 +411,13 @@ const MODEL_CATALOG_PROBES = new Map<string, Promise<AgentModelConfigOption[]>>(
 /** Selections this process has already synced, so N Rooms starting at once
  * publish the same `(communityId, pubkey)` record once, not N times. */
 const MODEL_SELECTION_SYNCED = new Set<string>();
+
+/**
+ * Command-list publishes are deduped per process by exact list signature, so a
+ * burst of identical `available_commands_update` pushes (session re-activations,
+ * several Rooms sharing one harness) costs one relay write, not one each.
+ */
+const PUBLISHED_COMMAND_SIGNATURES = new Set<string>();
 
 /**
  * Best-effort live read of this agent's advertised model/effort catalog, so a
@@ -2462,6 +2474,8 @@ export class Body {
             created.raw,
             session,
           );
+          session.unsubscribeCommands?.();
+          session.unsubscribeCommands = this.attachAgentCommandPublisher(client, input.communityId);
         }
         return created.sessionId;
       },
@@ -2470,6 +2484,8 @@ export class Body {
         if (plan) session.resumePlan = plan;
         session.unsubscribeActivity?.();
         session.unsubscribeActivity = undefined;
+        session.unsubscribeCommands?.();
+        session.unsubscribeCommands = undefined;
         session.activityProjection = undefined;
         if (client.isAlive) await client.stop();
       },
@@ -2546,6 +2562,33 @@ export class Body {
     }
     if (!applied) return;
     await applyAgentModelSelection(client, sessionId, rawConfigOptions, applied);
+  }
+
+  /**
+   * Capture this agent's harness-advertised slash commands/skills and republish
+   * them as the durable `(communityId, agentPubkey)` record the mobile composer
+   * renders its palette from. Adapters push `available_commands_update` at
+   * session start and on mid-session change, so a plain event listener covers
+   * both. Best-effort and display-only: never blocks session startup, never
+   * carries authority. An empty list is not published — record absence IS the
+   * "does not advertise" signal. Mechanics: `agent-commands-publish.ts`.
+   */
+  private attachAgentCommandPublisher(client: AcpClient, communityId: string): () => void {
+    const publisher = createAgentCommandPublisher({
+      publish: async (commands) => {
+        await publishAgentCommands(this.agentClientContext(), communityId, commands);
+      },
+      publishedSignatures: PUBLISHED_COMMAND_SIGNATURES,
+      dedupeKeyPrefix: communityId,
+    });
+    const onCommands = ({ commands }: { commands: AcpAvailableCommand[] }) => {
+      publisher.onCommands(commands);
+    };
+    client.on('commands', onCommands);
+    return () => {
+      client.off('commands', onCommands);
+      publisher.dispose();
+    };
   }
 
   /**
@@ -8095,6 +8138,14 @@ export class Body {
       } catch (error) {
         console.error(
           `[body] archive ${subchannelId}: activity teardown failed; continuing:`,
+          error,
+        );
+      }
+      try {
+        session.unsubscribeCommands?.();
+      } catch (error) {
+        console.error(
+          `[body] archive ${subchannelId}: command-list teardown failed; continuing:`,
           error,
         );
       }

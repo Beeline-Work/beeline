@@ -9250,3 +9250,82 @@ describe('an unrecognized slash command is marked, never silently executed', () 
     expect(slashNotices(published)).toHaveLength(1);
   });
 });
+
+describe('agent command list publishing (composer palette source of truth)', () => {
+  const communityId = '33333333-3333-4333-8333-333333333333';
+  const config = {
+    agentBinary: '/nonexistent',
+    mcpBinary: '/nonexistent',
+    agentEnv: {},
+    workspaceRoot: '/tmp/buzzy-body-unit',
+    relayBaseUrl: 'http://relay.test',
+    relayHost: 'relay.test',
+    relayScheme: 'http',
+    relayWsUrl: 'ws://relay.test',
+    autoApprovePermissions: true,
+  };
+
+  function jsonResponse(body: unknown): Response {
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
+  it('republishes captured harness commands as a durable self-authored record, once per distinct list', async () => {
+    vi.useFakeTimers();
+    const agentIdentity = newIdentity('commands-agent');
+    const body = new Body(config, newIdentity('operator'), agentIdentity);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return jsonResponse({ accepted: true });
+      }),
+    );
+
+    // A stand-in for the live AcpClient: the daemon attaches a plain event
+    // listener to whatever client owns the session.
+    const { EventEmitter } = await import('node:events');
+    const fakeClient = new EventEmitter() as unknown as AcpClient;
+    const detach = Reflect.get(body, 'attachAgentCommandPublisher').call(
+      body,
+      fakeClient,
+      communityId,
+    ) as () => void;
+
+    fakeClient.emit('commands', {
+      sessionId: 'sess-1',
+      commands: [{ name: 'loop', description: 'Loop' }],
+    });
+    await vi.advanceTimersByTimeAsync(4_000);
+    let commandEvents = published.filter((event) => event.kind === 30078);
+    expect(commandEvents).toHaveLength(1);
+    expect(commandEvents[0]!.pubkey).toBe(agentIdentity.publicKey);
+    const tags = commandEvents[0]!.tags as string[][];
+    expect(tags).toEqual(expect.arrayContaining([['t', 'buzz-agent-commands'], ['h', communityId]]));
+    expect(JSON.parse(commandEvents[0]!.content)).toEqual({
+      commands: [{ name: 'loop', description: 'Loop' }],
+    });
+
+    // An identical list again costs no second write within the process.
+    fakeClient.emit('commands', {
+      sessionId: 'sess-1',
+      commands: [{ name: 'loop', description: 'Loop' }],
+    });
+    await vi.advanceTimersByTimeAsync(4_000);
+    commandEvents = published.filter((event) => event.kind === 30078);
+    expect(commandEvents).toHaveLength(1);
+
+    // Detaching stops capture entirely.
+    detach();
+    fakeClient.emit('commands', {
+      sessionId: 'sess-1',
+      commands: [{ name: 'different' }],
+    });
+    await vi.advanceTimersByTimeAsync(4_000);
+    commandEvents = published.filter((event) => event.kind === 30078);
+    expect(commandEvents).toHaveLength(1);
+  });
+});

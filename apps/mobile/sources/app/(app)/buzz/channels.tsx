@@ -1364,23 +1364,13 @@ export default function BuzzChannels() {
                       >
                         {row.fact}
                       </Text>
-                      {row.pills.length > 0 && (
-                        <View style={styles.pillStrip}>
-                          {row.pills.map((pill, index) => (
-                            <Text
-                              key={`${pill.kind}-${index}`}
-                              style={[
-                                styles.rowPill,
-                                pill.kind === 'status'
-                                  ? styles.rowPillStatus
-                                  : pill.kind === 'unread' && styles.rowPillUnread,
-                              ]}
-                            >
-                              {pill.label.toUpperCase()}
-                            </Text>
-                          ))}
-                        </View>
-                      )}
+                      {/* The cell carries four things and nothing else: the
+                          status mark, the name, the last-message fact, and the
+                          corner count in the gutter. The old pill strip (model,
+                          participants, corners-open, needs-you) was redundant —
+                          the brass mark plus the accent fact already say
+                          "needs you," and the gutter already carries the corner
+                          count — so it is gone. */}
                     </View>
                   </BrittlePress>
                   {/* The right gutter: a fixed marginalia column IN FLOW (a
@@ -1452,21 +1442,10 @@ export default function BuzzChannels() {
                         </TouchableOpacity>
                       );
                     })}
-                    {/* Always present while expanded — including when no open
-                        work is listed — so every Room with recorded corners
-                        keeps one durable path into its full corner list. */}
-                    <TouchableOpacity
-                      accessibilityLabel={`All ${CHANGES_LABEL} in ${title}`}
-                      accessibilityRole="button"
-                      onPress={() =>
-                        router.push(`/buzz/corners/${encodeURIComponent(item.id)}` as Href)
-                      }
-                      style={styles.cornerRow}
-                      testID={`room-all-corners-${item.id}`}
-                    >
-                      <Text style={styles.cornerAllText}>ALL {CHANGES_LABEL.toUpperCase()}</Text>
-                      <Text style={styles.cornerAllCaret}>›</Text>
-                    </TouchableOpacity>
+                    {/* No "all corners" row: the expansion IS the full list, so
+                        a separate link into it was redundant. When a Room grows
+                        past a sensible inline cap we surface "+N more" there —
+                        the only case that route earns its place. */}
                   </PixelGateReveal>
                 )}
               </View>
@@ -1694,9 +1673,10 @@ const styles = StyleSheet.create((theme) => {
     alignItems: 'flex-start',
     gap: ROW_GAP,
   },
-  /* Fixed-width leading mark column — a flex child, not an overlay. Top
-   * padding drops the dot/ring/mark onto the name's optical line. */
-  rowMark: { width: ROW_MARK_WIDTH, alignItems: 'center', paddingTop: 4 },
+  /* Fixed-width leading mark column — a flex child, not an overlay. Its box is
+   * the exact height of the name's line and the mark is centered in it, so the
+   * dot/ring/mark lands AT the name's height instead of floating above it. */
+  rowMark: { width: ROW_MARK_WIDTH, height: 21, alignItems: 'center', justifyContent: 'center' },
   rowCopy: { flex: 1, minWidth: 0 },
   rowTitleLine: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
   /* The index reads on three tones and nothing else: the name is the brightest

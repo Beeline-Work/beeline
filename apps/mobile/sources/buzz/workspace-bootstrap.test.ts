@@ -1,4 +1,17 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+// workspace-bootstrap now seeds/persists unmigratable-room verdicts through
+// the default MMKV-backed store; stub the native module like every other
+// node-env test that transitively reaches it.
+vi.mock('react-native-mmkv', () => ({
+  MMKV: class {
+    getString() {
+      return undefined;
+    }
+    set() {}
+    delete() {}
+  },
+}));
 
 import { PERSONAL_WORKSPACE_NAME, prepareWorkspaceContext } from './workspace-bootstrap';
 
@@ -122,5 +135,45 @@ describe('Workspace bootstrap with key-succession predecessors', () => {
     await prepareWorkspaceContext(client, 'person-pubkey', undefined, storage());
 
     expect(client.listCommunities).toHaveBeenCalledWith('person-pubkey', []);
+  });
+
+  it('seeds durable unmigratable verdicts before discovery and persists after it', async () => {
+    const client = workspaceClient();
+    client.listCommunities.mockResolvedValue([workspace('ws-1')]);
+    const verdicts = {
+      loadAndSeed: vi.fn(),
+      persist: vi.fn(),
+    };
+
+    await prepareWorkspaceContext(client, 'successor-key', undefined, storage(), {
+      unmigratableVerdicts: verdicts,
+    });
+
+    // Seed happens BEFORE the migration-bearing read; persist AFTER, so any
+    // verdict learned during this pass (migration or membership repair)
+    // survives relaunch and the next launch skips those rooms instantly.
+    expect(verdicts.loadAndSeed).toHaveBeenCalledWith('successor-key');
+    expect(verdicts.persist).toHaveBeenCalledWith('successor-key');
+    expect(verdicts.loadAndSeed.mock.invocationCallOrder[0]).toBeLessThan(
+      client.listCommunities.mock.invocationCallOrder[0],
+    );
+    expect(client.listCommunities.mock.invocationCallOrder[0]).toBeLessThan(
+      verdicts.persist.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('does not persist verdicts when discovery itself fails', async () => {
+    const client = workspaceClient();
+    client.listCommunities.mockRejectedValue(new Error('relay down'));
+    const verdicts = { loadAndSeed: vi.fn(), persist: vi.fn() };
+
+    await expect(
+      prepareWorkspaceContext(client, 'successor-key', undefined, storage(), {
+        unmigratableVerdicts: verdicts,
+      }),
+    ).rejects.toThrow('relay down');
+
+    expect(verdicts.loadAndSeed).toHaveBeenCalled();
+    expect(verdicts.persist).not.toHaveBeenCalled();
   });
 });

@@ -23,6 +23,15 @@
  *
  * A Room with neither resolves to `null` — a chat-only Room. Opening a corner
  * there is gated with an actionable refusal by the daemon, never a crash.
+ *
+ * Key succession: a binding authored by a Room owner's PREVIOUS device key is
+ * still that owner's binding. Readers that CAN resolve the succession chain
+ * (the auth service's room-token authority, which owns the ledger) thread a
+ * {@link RoomRepositoryAuthorResolution} resolver in; the author-role check
+ * then also accepts the author's CURRENT key. Without a resolver — or when the
+ * chain cannot be resolved — behavior is exactly pre-succession: only an
+ * author who is himself currently an admin/owner authorizes. Signature
+ * verification is never relaxed and an unrelated key never passes.
  */
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import {
@@ -202,10 +211,49 @@ export type RoomRepositoryResolution =
  * authorizes. That is deliberately NOT relaxed into "use it anyway": the
  * admin check is the whole authority model here. It is only reported honestly
  * so a caller can wait rather than act on an absence it never established.
+ *
+ * With `options.resolveCurrentPubkey`, an author also authorizes through its
+ * CURRENT successor key — the auth service's room-token authority threads its
+ * ledger resolver in so a binding written by a replaced owner key still
+ * resolves. See {@link RoomRepositoryAuthorResolution}.
  */
+/**
+ * Optional key-succession resolution for binding-author checks. Only readers
+ * with real ledger access (the auth service) supply one; everyone else gets
+ * today's exact behavior unchanged.
+ */
+export interface RoomRepositoryAuthorResolution {
+  /**
+   * Resolve one pubkey forward through key succession to its identity's
+   * CURRENT device key (the input itself when no succession is recorded).
+   * Throw = chain unavailable: the caller degrades to the raw author rather
+   * than widening authority on a guess.
+   */
+  resolveCurrentPubkey?: (pubkey: string) => Promise<string>;
+}
+
+/**
+ * The keys a binding author may authorize through: itself, plus its current
+ * successor key when a resolver is supplied and resolves one. Any resolver
+ * failure degrades to the raw author alone — never a silent widening.
+ */
+async function authorKeysForRoleCheck(
+  author: string,
+  options?: RoomRepositoryAuthorResolution,
+): Promise<string[]> {
+  if (!options?.resolveCurrentPubkey) return [author];
+  try {
+    const current = await options.resolveCurrentPubkey(author);
+    return current && current !== author ? [author, current] : [author];
+  } catch {
+    return [author];
+  }
+}
+
 export async function readRoomRepositoryConfig(
   ctx: ChannelOpsContext,
   channelId: string,
+  options?: RoomRepositoryAuthorResolution,
 ): Promise<RoomRepositoryResolution> {
   const events = await query(ctx, [
     { kinds: [KIND_ROOM_REPOSITORY], '#d': [roomRepositoryKey(channelId)], limit: 20 },
@@ -219,8 +267,12 @@ export async function readRoomRepositoryConfig(
         (a.raw && b.raw ? b.raw.id.localeCompare(a.raw.id) : 0),
     );
   for (const candidate of candidates) {
-    const role = await getChannelRole(ctx, channelId, candidate.authoredBy!);
-    if (role === 'owner' || role === 'admin') return { kind: 'repository', repository: candidate };
+    for (const authorKey of await authorKeysForRoleCheck(candidate.authoredBy!, options)) {
+      const role = await getChannelRole(ctx, channelId, authorKey);
+      if (role === 'owner' || role === 'admin') {
+        return { kind: 'repository', repository: candidate };
+      }
+    }
   }
   if (candidates.length > 0) {
     return {
@@ -236,8 +288,9 @@ export async function readRoomRepositoryConfig(
 export async function getRoomRepository(
   ctx: ChannelOpsContext,
   channelId: string,
+  options?: RoomRepositoryAuthorResolution,
 ): Promise<RoomRepository | null> {
-  const resolution = await readRoomRepositoryConfig(ctx, channelId);
+  const resolution = await readRoomRepositoryConfig(ctx, channelId, options);
   return resolution.kind === 'repository' ? resolution.repository : null;
 }
 
@@ -250,8 +303,9 @@ export async function getRoomRepository(
 export async function resolveRoomRepository(
   ctx: ChannelOpsContext,
   channelId: string,
+  options?: RoomRepositoryAuthorResolution,
 ): Promise<RoomRepository | null> {
-  const state = await resolveRoomRepositoryState(ctx, channelId);
+  const state = await resolveRoomRepositoryState(ctx, channelId, options);
   return state.kind === 'repository' ? state.repository : null;
 }
 
@@ -268,8 +322,9 @@ export async function resolveRoomRepository(
 export async function resolveRoomRepositoryState(
   ctx: ChannelOpsContext,
   channelId: string,
+  options?: RoomRepositoryAuthorResolution,
 ): Promise<RoomRepositoryResolution> {
-  const config = await readRoomRepositoryConfig(ctx, channelId);
+  const config = await readRoomRepositoryConfig(ctx, channelId, options);
   if (config.kind === 'repository') return config;
   const binding = await getChannelRepositoryBinding(ctx, channelId);
   if (binding) {

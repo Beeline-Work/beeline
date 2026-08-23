@@ -3,6 +3,7 @@ import {
   isMember,
   resolveRoomRepository,
   type ChannelOpsContext,
+  type RoomRepositoryAuthorResolution,
 } from '@beeline/buzz-client';
 import type { AuthServerOptions, AuthTenant } from './server.js';
 import type { AuthStore } from './store.js';
@@ -38,10 +39,20 @@ export function createGitHubRoomTokenAuthority(
         },
       },
     };
+    // Binding RESOLUTION is succession-aware too, not just the check below:
+    // a restored Room's binding was authored by the owner's PREDECESSOR key,
+    // which no longer reads back as a Room admin — without this the token
+    // request aborts with `room_repository_missing` before the authority
+    // check ever runs (production, 2026-08-23). The resolver resolves the
+    // author through the same ledger `resolveCurrentPubkey` uses below; on
+    // chain-unavailable it degrades to today's raw-author behavior.
+    const repositoryResolution: RoomRepositoryAuthorResolution = {
+      resolveCurrentPubkey: (pubkey) => roomStore.resolveCurrentPubkey(tenant.community, pubkey),
+    };
     const [communityId, member, repository] = await Promise.all([
       roomStore.relayCommunityIdForRoom(input.roomId),
       isMember(ctx, input.roomId, input.agentPubkey),
-      resolveRoomRepository(ctx, input.roomId),
+      resolveRoomRepository(ctx, input.roomId, repositoryResolution),
     ]);
     if (!communityId || !tenant.roomCommunityIds.includes(communityId)) {
       return { authorized: false, reason: 'tenant_room_community_mismatch' };

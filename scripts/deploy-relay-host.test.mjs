@@ -77,6 +77,37 @@ case "$cmd" in
     ;;
   compose)
     log "compose $*"
+    # Emulate compose resolving env_file entries from the -f file AS THE
+    # INVOKING USER (the real failure mode of run 32615214417): any listed
+    # path the caller cannot read must fail validation.
+    case "$*" in
+      *config*)
+        f=""; prev=""
+        for a in "$@"; do
+          [ "$prev" = "-f" ] && f="$a"
+          prev="$a"
+        done
+        if [ -n "$f" ]; then
+          unread=$(awk '
+            /^[[:space:]]*env_file:/ { inlist=1; next }
+            inlist && /^[[:space:]]*-[[:space:]]/ {
+              line=$0; sub(/^[[:space:]]*-[[:space:]]*/, "", line); print line; next
+            }
+            { inlist=0 }
+          ' "$f" | while IFS= read -r ef; do
+            case "$ef" in
+              /*) p="$ef" ;;
+              *) p="$(dirname "$f")/$ef" ;;
+            esac
+            [ -r "$p" ] || echo "$p"
+          done)
+          if [ -n "$unread" ]; then
+            echo "open $unread: permission denied" >&2
+            exit 1
+          fi
+        fi
+        ;;
+    esac
     # Only a FULL-stack up can be made to fail; the pre-existing auth-only
     # recreation always succeeds.
     case "$*" in
@@ -310,4 +341,31 @@ test('a refused sudo install (missing sudoers rule) fails loudly and rolls the c
   assert.notEqual(r.status, 0);
   assert.ok(r.stderr.includes('STACK ROLLOUT FAILED'), r.stderr);
   assert.equal(r.readLive('compose.yml'), PRE_CHANGE_COMPOSE);
+});
+
+test('compose validation never resolves real env_file secrets: an unreadable env_file entry does not fail the deploy', async () => {
+  // chmod-000 file even its owner cannot read — stands in for the runner
+  // hitting /home/lunchbox/buzzy-auth/oidc.env (run 32615214417). The stubbed
+  // docker resolves env_file entries as the invoking user, so validating the
+  // UNtransformed compose would fail right here.
+  const secretDir = mkdtemp();
+  const secret = path.join(secretDir, 'oidc.env');
+  fs.writeFileSync(secret, 'OIDC_CLIENT_SECRET=x\n');
+  fs.chmodSync(secret, 0o000);
+  try {
+    const variant = fs.readFileSync(TRACKED_COMPOSE, 'utf8').replace(
+      '- /home/lunchbox/buzzy-auth/oidc.env',
+      `- ${secret}`,
+    );
+    assert.ok(variant.includes(secret), 'fixture must actually reference the unreadable file');
+    const r = await runDeploy({ liveCompose: variant });
+    assert.equal(r.status, 0, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
+    assert.ok(r.stdout.includes('production stack rolled out'));
+    // The transformation was validation-only: the DEPLOYED compose carries
+    // the repo's real env_file reference (deployed bytes converge to the
+    // tracked file, never to the pre-deploy live variant).
+    assert.equal(r.readLive('compose.yml'), fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
+  } finally {
+    fs.chmodSync(secret, 0o644);
+  }
 });

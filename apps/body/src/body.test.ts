@@ -416,7 +416,13 @@ describe('agent identity boundary', () => {
 
     type SpawnProbe = {
       sessionSpawnCommand(
-        input: { mode: 'readonly' | 'edit'; cwd: string; worktreePath?: string },
+        input: {
+          mode: 'readonly' | 'edit';
+          cwd: string;
+          worktreePath?: string;
+          protectedPaths?: string[];
+          additionalWritablePaths?: string[];
+        },
         env: Record<string, string>,
       ): { command: string; args: string[] };
     };
@@ -444,10 +450,22 @@ describe('agent identity boundary', () => {
     it('spawns a corner child with its worktree and git dir writable', () => {
       const body = new Body({ ...config, bwrapPath: '/usr/bin/bwrap' }, newIdentity('operator'));
       const spawn = (body as unknown as SpawnProbe).sessionSpawnCommand(
-        { mode: 'edit', cwd: repoRoot, worktreePath: repoRoot },
+        {
+          mode: 'edit',
+          cwd: repoRoot,
+          worktreePath: repoRoot,
+          protectedPaths: [sandboxRoot],
+        },
         { TMPDIR: '/srv/rooms/r1/agent-home/tmp' },
       );
       expect(spawn.command).toBe('/usr/bin/bwrap');
+      expect(spawn.args.slice(0, 3)).toEqual(['--bind', '/', '/']);
+      const protectedAt = spawn.args.indexOf(sandboxRoot);
+      expect(spawn.args.slice(protectedAt - 1, protectedAt + 2)).toEqual([
+        '--ro-bind',
+        sandboxRoot,
+        sandboxRoot,
+      ]);
       const binds = spawn.args
         .map((argument, index) => (argument === '--bind-try' ? spawn.args[index + 1] : undefined))
         .filter(Boolean);
@@ -543,27 +561,73 @@ describe('agent identity boundary', () => {
       expect(path).toBe('/home/op/.beeline-corners/proj-buzzy/corner-xyz');
     });
 
-    it('the edit-session cd-guard rejects a command that escapes into the shared checkout', async () => {
+    it('builds the corner denylist from every shared and daemon-owned root', () => {
+      const body = new Body(
+        {
+          ...config,
+          workspaceRoot: '/srv/beeline/workspace',
+          agentHomeRoot: '/srv/beeline/rooms/r1/agent-home',
+          agentPrivateRoot: '/srv/beeline/agent-private',
+        },
+        newIdentity('operator'),
+      );
+      const policy = (
+        body as unknown as {
+          cornerFilesystemPolicy(
+            repo: { repo: string; localPath: string },
+            worktree: string,
+            agentPrivate?: string,
+          ): {
+            protectedPaths: string[];
+            writablePaths: string[];
+            additionalWritablePaths: string[];
+          };
+        }
+      ).cornerFilesystemPolicy(
+        { repo: 'proj-buzzy', localPath: '/home/op/proj-buzzy' },
+        '/home/op/.beeline-corners/proj-buzzy/c1',
+        '/srv/beeline/agent-private/r1/c1',
+      );
+
+      expect(policy.protectedPaths).toEqual(
+        expect.arrayContaining([
+          '/srv/beeline/workspace',
+          '/home/op/.beeline-corners/proj-buzzy',
+          '/home/op/proj-buzzy',
+          '/srv/beeline/rooms/r1/agent-home',
+          '/srv/beeline/agent-private',
+        ]),
+      );
+      expect(policy.writablePaths).toContain('/home/op/.beeline-corners/proj-buzzy/c1');
+      expect(policy.additionalWritablePaths).toEqual(['/srv/beeline/agent-private/r1/c1']);
+    });
+
+    it('the edit-session fallback rejects protected writes without blocking general movement', async () => {
       const body = new Body(config, newIdentity('operator'));
       const handler = (
         body as unknown as {
           cornerPermissionHandler(
             worktree: string,
-            primary?: string,
+            protectedPaths: string[],
+            writablePaths: string[],
           ): (req: unknown) => Promise<'allow' | 'reject'>;
         }
-      ).cornerPermissionHandler('/pool/.beeline-corners/proj/c1', '/home/op/proj-buzzy');
+      ).cornerPermissionHandler(
+        '/pool/.beeline-corners/proj/c1',
+        ['/pool/.beeline-corners/proj', '/home/op/proj-buzzy'],
+        ['/pool/.beeline-corners/proj/c1'],
+      );
 
       const escape = await handler({
         toolCall: {
           kind: 'execute',
-          rawInput: { command: 'cd /home/op/proj-buzzy && git commit -am wip' },
+          rawInput: { command: 'cp README.md /home/op/proj-buzzy/README.md' },
         },
       });
       expect(escape).toBe('reject');
 
       const ok = await handler({
-        toolCall: { kind: 'execute', rawInput: { command: 'git commit -am wip' } },
+        toolCall: { kind: 'execute', rawInput: { command: 'cd /tmp && npm run build' } },
       });
       expect(ok).toBe('allow');
 
@@ -572,16 +636,21 @@ describe('agent identity boundary', () => {
       expect(edit).toBe('allow');
     });
 
-    it('the edit-session guard rejects a write that reaches outside the worktree', async () => {
+    it('the edit-session guard rejects denylist writes but allows other outside writes', async () => {
       const body = new Body(config, newIdentity('operator'));
       const handler = (
         body as unknown as {
           cornerPermissionHandler(
             worktree: string,
-            primary?: string,
+            protectedPaths: string[],
+            writablePaths: string[],
           ): (req: unknown) => Promise<'allow' | 'reject'>;
         }
-      ).cornerPermissionHandler('/pool/.beeline-corners/proj/c1', '/home/op/proj-buzzy');
+      ).cornerPermissionHandler(
+        '/pool/.beeline-corners/proj/c1',
+        ['/pool/.beeline-corners/proj', '/home/op/proj-buzzy'],
+        ['/pool/.beeline-corners/proj/c1'],
+      );
 
       // The live breach shape: an absolute path into the operator's own tree.
       await expect(
@@ -595,7 +664,7 @@ describe('agent identity boundary', () => {
       ).resolves.toBe('reject');
       await expect(
         handler({ toolCall: { kind: 'edit', rawInput: { path: '../../../etc/hosts' } } }),
-      ).resolves.toBe('reject');
+      ).resolves.toBe('allow');
       // Reads outside the worktree stay allowed, per the pre-existing policy.
       await expect(
         handler({

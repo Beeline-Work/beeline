@@ -101,13 +101,6 @@ function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-/** Case-insensitive substring match for the deck's search field. */
-function matchesSearch(text: string, query: string): boolean {
-  const needle = query.trim().toLocaleLowerCase();
-  if (!needle) return true;
-  return text.toLocaleLowerCase().includes(needle);
-}
-
 /**
  * How many person-facing messages this Room holds past the reader's mark, or
  * `null` when that answer is only "unread" — either there is no mark yet or
@@ -422,9 +415,6 @@ export default function BuzzChannels() {
   const [readyInviteUrl, setReadyInviteUrl] = useState<string | undefined>(inviteUrl);
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
   const [ageNow, setAgeNow] = useState(() => Date.now());
-  // The deck's search field: filters Rooms (and DMs) by name without touching
-  // what is cached — a view over the same projection, never a second source.
-  const [searchQuery, setSearchQuery] = useState('');
   /** Rooms where an agent turn is streaming RIGHT NOW, seen live by this
    * screen's own event subscription. Corner turns are durable relay state
    * (they arrive through `corners`); conversational Room turns only exist on
@@ -456,10 +446,10 @@ export default function BuzzChannels() {
   );
   const orderedDirectMessages = useMemo(
     () =>
-      [...directMessages]
-        .filter((dm) => matchesSearch(dm.peerName, searchQuery))
-        .sort((a, b) => b.updatedAt - a.updatedAt || a.peerName.localeCompare(b.peerName)),
-    [directMessages, searchQuery],
+      [...directMessages].sort(
+        (a, b) => b.updatedAt - a.updatedAt || a.peerName.localeCompare(b.peerName),
+      ),
+    [directMessages],
   );
   const hasConversations = displayChannels.length > 0 || orderedDirectMessages.length > 0;
   const activeCommunity = useMemo(
@@ -478,11 +468,12 @@ export default function BuzzChannels() {
     return names;
   }, [cachedListEntry?.workspaceMembers, identity?.publicKey]);
   const roomSections = useMemo(() => {
-    const visible = displayChannels
-      .filter((room) => matchesSearch(room.title ?? room.id, searchQuery))
-      .map((room) => ({ ...room, unreadNew: unreadCountFor(room, identity?.publicKey, readAt) }));
+    const visible = displayChannels.map((room) => ({
+      ...room,
+      unreadNew: unreadCountFor(room, identity?.publicKey, readAt),
+    }));
     return roomListSections(visible, authorNames, { now: ageNow });
-  }, [ageNow, authorNames, displayChannels, identity?.publicKey, readAt, searchQuery]);
+  }, [ageNow, authorNames, displayChannels, identity?.publicKey, readAt]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1454,21 +1445,11 @@ export default function BuzzChannels() {
           refreshing={refreshing}
         />
 
-        {/* The deck's footer: one search field and the brass ＋. The FAB is
-            the same affordance as the header's ＋ ROOM — one action, two
-            reaches — and the search filters the cached projection without
-            ever becoming a second source of rooms. */}
+        {/* The deck's footer: just the brass ＋. The captain removed the
+            search field — a supervision deck holds few rooms, and a phone
+            index never needed filtering. The FAB is the same affordance as
+            the header's ＋ ROOM. */}
         <View style={[styles.deckFoot, { paddingBottom: 12 + insets.bottom }]}>
-          <TextInput
-            accessibilityLabel={`Search ${ROOMS_LABEL.toLowerCase()}`}
-            autoCorrect={false}
-            onChangeText={setSearchQuery}
-            placeholder="Search rooms…"
-            placeholderTextColor={theme.buzz.dim}
-            style={styles.searchField}
-            testID="room-search"
-            value={searchQuery}
-          />
           {!viewerIsAgent && (
             <TouchableOpacity
               accessibilityLabel={`Create ${ROOM_LABEL}`}
@@ -1832,29 +1813,16 @@ const styles = StyleSheet.create((theme) => {
     letterSpacing: 0.6,
   },
 
-  /* ── the deck's footer: one search field, one brass ＋ ─────────────── */
+  /* ── the deck's footer: one brass ＋ ───────────────────── */
   deckFoot: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    justifyContent: 'flex-end',
     paddingHorizontal: SCREEN_INSET,
     paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: groknight.border,
     backgroundColor: groknight.bgTerminal,
-  },
-  searchField: {
-    ...Typography.mono(),
-    flex: 1,
-    minWidth: 0,
-    minHeight: 44,
-    paddingHorizontal: 13,
-    borderRadius: 3,
-    borderWidth: 1,
-    borderColor: groknight.border,
-    backgroundColor: groknight.bgRaised,
-    color: groknight.textSecondary,
-    fontSize: 12,
   },
   /* The FAB is a box that wraps something the user must find and act on —
    * the one place DESIGN.md's shape rule admits a filled brass surface. */

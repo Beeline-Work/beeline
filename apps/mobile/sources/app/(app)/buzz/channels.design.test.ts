@@ -288,14 +288,18 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(source).not.toContain('styles.rowUnread');
   });
 
-  it('closes the deck with a search field and the brass FAB, both wired', () => {
-    expect(source).toContain('testID="room-search"');
+  it('closes the deck with just the brass FAB — the search field stays gone', () => {
+    // Captain's call: a supervision deck holds few rooms, so search was dead
+    // weight. The field, its state, its filter helper, and its style must not
+    // come back — and nothing else in the index may grow a second filter.
+    expect(source).not.toContain('room-search');
+    expect(source).not.toContain('searchField');
+    expect(source).not.toContain('matchesSearch');
+    expect(source).not.toMatch(/searchQuery|setSearchQuery/);
+    // The FAB stays wired and opens the same create panel as the header
+    // affordance.
     expect(source).toContain('testID="create-room-fab"');
-    expect(source).toContain('matchesSearch(dm.peerName, searchQuery)');
-    expect(source).toContain('matchesSearch(room.title ?? room.id, searchQuery)');
-    // The FAB opens the same create panel as the header affordance.
     expect(source).toContain('onPress={() => setShowCreateChannel(true)}');
-    expect(styleBlock(source, 'searchField')).toMatch(/minHeight: 44/);
     expect(styleBlock(source, 'fab')).toMatch(/(?:width|minHeight): 44/);
   });
 

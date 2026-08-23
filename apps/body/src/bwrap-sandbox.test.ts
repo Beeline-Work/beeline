@@ -20,6 +20,7 @@ import { homedir, tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import {
   buildBwrapArgv,
+  credentialMaskPaths,
   detectBwrapSandbox,
   isSandboxPolicy,
   harnessHomeStateDirs,
@@ -66,6 +67,7 @@ describe('sandbox mount plan', () => {
     expect(sandboxMountPlan({ mode: 'readonly', cwd: '/srv/repo' })).toEqual({
       readOnly: [],
       writable: [],
+      masks: [],
     });
   });
 
@@ -299,13 +301,97 @@ describe('bwrap argv construction', () => {
   it('puts the agent argv after `--` so a harness flag is never read by bwrap', () => {
     const { args } = buildBwrapArgv({
       bwrapPath: '/usr/bin/bwrap',
-      plan: { readOnly: [], writable: [], tmpfs: [] },
+      plan: { readOnly: [], writable: [], masks: [] },
       cwd: '/w',
       command: 'pi',
       args: ['--ro-bind', '/etc', '/etc'],
     });
     const separator = args.indexOf('--');
     expect(args.slice(separator + 1)).toEqual(['pi', '--ro-bind', '/etc', '/etc']);
+  });
+});
+
+describe('credential masks — readable is usable, so known stores are absent', () => {
+  it('masks the built-in known credential homes in BOTH modes', () => {
+    for (const mode of ['readonly', 'edit'] as const) {
+      const plan = sandboxMountPlan({
+        mode,
+        cwd: '/srv/repo',
+        maskPaths: [
+          { path: '/home/op/.config/gh', kind: 'dir' },
+          { path: '/home/op/.ssh', kind: 'dir' },
+          { path: '/home/op/.netrc', kind: 'file' },
+        ],
+      });
+      expect(plan.masks.map((mask) => mask.path).sort()).toEqual([
+        '/home/op/.config/gh',
+        '/home/op/.netrc',
+        '/home/op/.ssh',
+      ]);
+      // A masked path must not also be restored read-only or bound writable.
+      expect(plan.readOnly).not.toContain('/home/op/.ssh');
+      expect(plan.writable).not.toContain('/home/op/.ssh');
+    }
+  });
+
+  it('emits dir masks as empty tmpfs and file masks as /dev/null, AFTER the ro-bind', () => {
+    const { args } = buildBwrapArgv({
+      bwrapPath: '/usr/bin/bwrap',
+      plan: {
+        readOnly: [],
+        writable: [],
+        masks: [
+          { path: '/home/op/.config/gh', kind: 'dir' },
+          { path: '/home/op/.netrc', kind: 'file' },
+        ],
+      },
+      cwd: '/srv/repo',
+      command: 'codex-acp',
+    });
+    // dir → empty tmpfs
+    const gh = args.indexOf('/home/op/.config/gh');
+    expect(args[gh - 1]).toBe('--tmpfs');
+    // file → /dev/null bind (--ro-bind /dev/null <path>)
+    const netrc = args.indexOf('/home/op/.netrc');
+    expect(args.slice(netrc - 2, netrc)).toEqual(['--ro-bind', '/dev/null']);
+    // Masks must come after the whole-home ro-bind they override.
+    expect(gh).toBeGreaterThan(0);
+    expect(args[0]).toBe('--ro-bind');
+    expect(args[1]).toBe('/');
+  });
+
+  it('writable harness-state binds are emitted AFTER masks so they win on overlap', () => {
+    const { args } = wrapAgentCommand({
+      bwrapPath: '/usr/bin/bwrap',
+      spec: {
+        mode: 'edit',
+        cwd: '/corners/c1',
+        worktreePath: '/corners/c1',
+        maskPaths: [{ path: '/home/op/.no-mistakes', kind: 'dir' }],
+        mergeGateStateDirs: ['/home/op/.no-mistakes'],
+      },
+      command: 'codex-acp',
+    });
+    // Occurrences of the path: the mask (tmpfs), then the writable bind pair.
+    const maskAt = args.indexOf('/home/op/.no-mistakes');
+    const bindTryAt = args.indexOf('--bind-try');
+    expect(bindTryAt).toBeGreaterThan(maskAt);
+  });
+
+  it('skips configured extras that do not exist, dedupes, and stats file vs dir', () => {
+    const entries = credentialMaskPaths(
+      ['/home/op/.secrets.env', '/home/op/.config/gh'],
+      '/home/op',
+      (path) => {
+        if (path === '/home/op/.secrets.env') return { isDirectory: false };
+        if (path === '/home/op/.config/gh') return { isDirectory: true };
+        return undefined;
+      },
+    );
+    expect(entries).toEqual([
+      { path: '/home/op/.config/gh', kind: 'dir' },
+      { path: '/home/op/.secrets.env', kind: 'file' },
+    ]);
   });
 });
 

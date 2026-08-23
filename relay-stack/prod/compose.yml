@@ -1,0 +1,249 @@
+name: buzz-router-prod
+
+services:
+  auth:
+    image: beeline-auth:production
+    env_file:
+      - /home/lunchbox/buzzy-auth/oidc.env
+      - /home/lunchbox/buzz-router-relay-prod/beeline-github.env
+    environment:
+      NODE_ENV: production
+      PORT: "8789"
+      BUZZY_AUTH_HOST: 0.0.0.0
+      DATABASE_URL: postgres://${POSTGRES_USER:-buzz}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-buzz}
+      BUZZY_AUTH_TENANTS_JSON: >-
+        [{"host":"usebeeline.app","community":"relay.buzzrouter.com","origin":"https://usebeeline.app","roomCommunityIds":["e8299f28-f095-472f-941a-80d1195b9a24","3a47eeff-fdff-4a1e-9eb9-b48cb4ed90ed"]},{"host":"relay.usebeeline.app","community":"relay.buzzrouter.com","origin":"https://relay.usebeeline.app","roomCommunityIds":["e8299f28-f095-472f-941a-80d1195b9a24","3a47eeff-fdff-4a1e-9eb9-b48cb4ed90ed"]},{"host":"relay.buzzrouter.com","community":"relay.buzzrouter.com","origin":"https://relay.buzzrouter.com","roomCommunityIds":["e8299f28-f095-472f-941a-80d1195b9a24","3a47eeff-fdff-4a1e-9eb9-b48cb4ed90ed"]}]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8789/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - buzz-net
+
+  relay:
+    image: ${BUZZ_IMAGE:-ghcr.io/block/buzz:main}
+    env_file:
+      - .env
+    environment:
+      BUZZ_BIND_ADDR: 0.0.0.0:3000
+      BUZZ_HEALTH_PORT: "8080"
+      BUZZ_METRICS_PORT: "9102"
+      DATABASE_URL: postgres://${POSTGRES_USER:-buzz}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-buzz}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
+      BUZZ_S3_ENDPOINT: http://minio:9000
+      BUZZ_S3_ACCESS_KEY: ${BUZZ_S3_ACCESS_KEY:?set BUZZ_S3_ACCESS_KEY}
+      BUZZ_S3_SECRET_KEY: ${BUZZ_S3_SECRET_KEY:?set BUZZ_S3_SECRET_KEY}
+      BUZZ_S3_BUCKET: ${BUZZ_S3_BUCKET:-buzz-media}
+      BUZZ_GIT_REPO_PATH: /data/git
+      BUZZ_AUTO_MIGRATE: ${BUZZ_AUTO_MIGRATE:-false}
+      BUZZ_GIT_CONFORMANCE_PROBE: ${BUZZ_GIT_CONFORMANCE_PROBE:-true}
+      # STOPGAP (added while the daemon poll->WebSocket-push fix is built):
+      # Block's default per-agent limits throttle the always-on daemons, which
+      # HTTP-poll every 1-3s. Raise agent (and human) limits generously. REMOVE
+      # this block once the daemon stops polling (task buzzy-daemon-ws-push).
+      BUZZ_RATE_LIMIT_AGENT_STANDARD_API_CALLS_PER_MIN: ${BUZZ_RATE_LIMIT_AGENT_STANDARD_API_CALLS_PER_MIN:-6000}
+      BUZZ_RATE_LIMIT_AGENT_STANDARD_MESSAGES_PER_MIN: ${BUZZ_RATE_LIMIT_AGENT_STANDARD_MESSAGES_PER_MIN:-1200}
+      BUZZ_RATE_LIMIT_AGENT_ELEVATED_MESSAGES_PER_MIN: ${BUZZ_RATE_LIMIT_AGENT_ELEVATED_MESSAGES_PER_MIN:-1200}
+      BUZZ_RATE_LIMIT_AGENT_PLATFORM_MESSAGES_PER_MIN: ${BUZZ_RATE_LIMIT_AGENT_PLATFORM_MESSAGES_PER_MIN:-1200}
+      BUZZ_RATE_LIMIT_HUMAN_API_CALLS_PER_MIN: ${BUZZ_RATE_LIMIT_HUMAN_API_CALLS_PER_MIN:-6000}
+      BUZZ_RATE_LIMIT_HUMAN_MESSAGES_PER_MIN: ${BUZZ_RATE_LIMIT_HUMAN_MESSAGES_PER_MIN:-1200}
+      BUZZ_RATE_LIMIT_HUMAN_WS_EVENTS_PER_SEC: ${BUZZ_RATE_LIMIT_HUMAN_WS_EVENTS_PER_SEC:-200}
+    ports:
+      - "127.0.0.1:${BUZZ_HTTP_PORT:-3400}:3000"
+    volumes:
+      - buzz-git-data:/data/git
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    # Probe /_readiness over /dev/tcp because the runtime image has bash but no curl/wget/socat.
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -ec 'exec 3<>/dev/tcp/127.0.0.1/8080; printf \"GET /_readiness HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n\" >&3; grep -q \"200 OK\" <&3'",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - buzz-net
+
+  # Android FCM push gateway (#340), containerized exactly as the gate stack
+  # runs it. The image is built by scripts/deploy-relay-host.sh from
+  # apps/push-gateway/Dockerfile and pinned by tag (same shape as auth above);
+  # the service account key and durable state stay in host-local paths that
+  # are deliberately NOT tracked in this repository.
+  push-gateway:
+    image: ${BUZZY_PUSH_IMAGE:-beeline-push-gateway:production}
+    environment:
+      NODE_ENV: production
+      PORT: "8788"
+      BUZZY_PUSH_HOST: 0.0.0.0
+      BUZZY_RELAY_URL: ${BUZZY_PUSH_RELAY_URL:-http://relay:3000}
+      BUZZY_RELAY_HOST: ${BUZZY_RELAY_HOST:-usebeeline.app}
+      BUZZY_RELAY_SUBSCRIPTION_URL: ${BUZZY_PUSH_SUBSCRIPTION_RELAY_URL:-http://relay:3000}
+      BUZZY_PUSH_SA_FILE: /run/secrets/buzzy-fcm-service-account.json
+      BUZZY_PUSH_REGISTRY_FILE: /var/lib/buzzy-push/registrations.json
+      BUZZY_PUSH_DELIVERY_STATE_FILE: /var/lib/buzzy-push/deliveries.json
+    volumes:
+      - ${BUZZY_PUSH_SA_HOST_FILE:-/home/lunchbox/buzzy-push-gateway/secrets/fcm-service-account.json}:/run/secrets/buzzy-fcm-service-account.json:ro
+      - ${BUZZY_PUSH_STATE_DIR:-/home/lunchbox/buzzy-push-gateway/state}:/var/lib/buzzy-push
+    depends_on:
+      relay:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8788/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - buzz-net
+
+  # Fronts the relay for relay.buzzrouter.com: serves the Beeline invite landing
+  # (/join/bzi_*) and the app-association files (/.well-known/*), and proxies all
+  # other HTTP + WebSocket traffic to the relay. Takes over the buzzrouter-tunnel
+  # alias the tunnel targets, so relay.buzzrouter.com now reaches this front.
+  relay-front:
+    image: nginx:1.27-alpine
+    # nginx resolves proxy_pass upstreams at boot, so the front must not start
+    # before the push-gateway container exists on the network (same gate as the
+    # gate stack's relay-front; replaces the old static push-host:host-gateway
+    # extra_host, which never had a listener behind it).
+    depends_on:
+      push-gateway:
+        condition: service_healthy
+      relay:
+        condition: service_healthy
+    volumes:
+      - ./relay-front/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./relay-front/web:/usr/share/nginx/html:ro
+    restart: unless-stopped
+    networks:
+      buzz-net: {}
+      buzzrouter-tunnel:
+        aliases:
+          - buzz-router-relay
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-buzz}
+      POSTGRES_USER: ${POSTGRES_USER:-buzz}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - buzz-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - buzz-net
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD}"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+    volumes:
+      - buzz-redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - buzz-net
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${BUZZ_S3_ACCESS_KEY:?set BUZZ_S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${BUZZ_S3_SECRET_KEY:?set BUZZ_S3_SECRET_KEY}
+    volumes:
+      - buzz-minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - buzz-net
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      BUZZ_S3_ACCESS_KEY: ${BUZZ_S3_ACCESS_KEY:?set BUZZ_S3_ACCESS_KEY}
+      BUZZ_S3_SECRET_KEY: ${BUZZ_S3_SECRET_KEY:?set BUZZ_S3_SECRET_KEY}
+      BUZZ_S3_BUCKET: ${BUZZ_S3_BUCKET:-buzz-media}
+    entrypoint: >
+      /bin/sh -euc '
+        mc alias set local http://minio:9000 "$${BUZZ_S3_ACCESS_KEY}" "$${BUZZ_S3_SECRET_KEY}"
+        mc mb --ignore-existing "local/$${BUZZ_S3_BUCKET}"
+        mc anonymous set none "local/$${BUZZ_S3_BUCKET}"
+      '
+    restart: "no"
+    networks:
+      - buzz-net
+
+volumes:
+  buzz-postgres-data:
+    labels:
+      com.buzz.volume: postgres
+  buzz-redis-data:
+    labels:
+      com.buzz.volume: redis
+  buzz-minio-data:
+    labels:
+      com.buzz.volume: minio
+  buzz-git-data:
+    labels:
+      com.buzz.volume: git
+
+networks:
+  buzz-net:
+    driver: bridge
+    labels:
+      com.buzz.network: production
+  buzzrouter-tunnel:
+    external: true
+    name: buzzrouter_default

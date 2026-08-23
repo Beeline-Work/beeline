@@ -313,6 +313,36 @@ export class GitHubAppClient {
     return (await this.userInstallationIds(accessToken, installationId)).targetFound;
   }
 
+  /**
+   * Follow GitHub's rename/transfer redirect for a repository address. A moved
+   * repository answers GET /repos/{old} with a 301 and describes the NEW
+   * location in the body, so this resolves a stale owner/name to the current
+   * one without any stored state. Undefined when GitHub has no such repository
+   * (or the lookup fails); never throws.
+   */
+  async repositoryByFullName(
+    fullName: string,
+  ): Promise<{ id: number; fullName: string } | undefined> {
+    const [owner, repository] = fullName.split('/');
+    if (!owner || !repository) return undefined;
+    try {
+      const body = await jsonObject(
+        await fetch(
+          `${this.#config.apiBaseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository.replace(/\.git$/i, ''))}`,
+          { headers: githubHeaders(await this.appJwt()), redirect: 'follow' },
+        ),
+        'GitHub repository lookup',
+      );
+      const id = body.id;
+      const currentFullName = body.full_name;
+      if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) return undefined;
+      if (typeof currentFullName !== 'string' || !currentFullName.includes('/')) return undefined;
+      return { id, fullName: currentFullName };
+    } catch {
+      return undefined;
+    }
+  }
+
   async listUserInstallationIds(accessToken: string): Promise<number[]> {
     return (await this.userInstallationIds(accessToken)).installationIds;
   }

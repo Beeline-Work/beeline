@@ -177,6 +177,14 @@ const MIGRATIONS = [
   )`,
   `CREATE INDEX IF NOT EXISTS beeline_github_repositories_name_idx
     ON beeline_github_repositories (community, lower(full_name))`,
+  `CREATE TABLE IF NOT EXISTS beeline_github_repository_aliases (
+    community TEXT NOT NULL,
+    alias_full_name TEXT NOT NULL,
+    full_name TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS beeline_github_repository_aliases_idx
+    ON beeline_github_repository_aliases (community, lower(alias_full_name))`,
   `CREATE TABLE IF NOT EXISTS beeline_github_webhook_deliveries (
     delivery_id TEXT PRIMARY KEY,
     received_at TIMESTAMPTZ NOT NULL
@@ -314,6 +322,20 @@ export interface StoredGitHubRepository {
   fullName: string;
   remote: string;
   defaultBranch: string;
+}
+
+export interface GitHubRepositoryAccess {
+  accessible: boolean;
+  installationId?: number;
+  repositoryId?: number;
+  reason?: 'revoked' | 'not_granted';
+  /** Set when the requested name resolved onto the repository's current location. */
+  resolvedFullName?: string;
+}
+
+interface GitHubRepositoryAccessRow extends GitHubRepositoryAccess {
+  /** The matched repository's current full_name, when a repository row matched. */
+  fullName?: string;
 }
 
 export type BindResult =
@@ -963,46 +985,112 @@ export class AuthStore {
     }));
   }
 
-  async githubRepositoryAccess(
+  /** A stored alias maps a Room binding's pre-transfer owner/repo to its current location. */
+  async githubRepositoryAlias(community: string, alias: string): Promise<string | null> {
+    const result = await this.database.query<QueryResultRow & { full_name: string }>(
+      `SELECT full_name FROM beeline_github_repository_aliases
+       WHERE community = $1 AND lower(alias_full_name) = lower($2)`,
+      [community, alias],
+    );
+    return result.rows[0]?.full_name ?? null;
+  }
+
+  async saveGitHubRepositoryAlias(
     community: string,
-    pubkey: string,
+    alias: string,
     fullName: string,
-  ): Promise<{
-    accessible: boolean;
-    installationId?: number;
-    repositoryId?: number;
-    reason?: 'revoked' | 'not_granted';
-  }> {
+    now: Date,
+  ): Promise<void> {
+    if (alias.toLowerCase() === fullName.toLowerCase()) return;
+    await this.database.query(
+      `INSERT INTO beeline_github_repository_aliases
+        (community, alias_full_name, full_name, updated_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (community, lower(alias_full_name)) DO UPDATE SET
+         full_name = EXCLUDED.full_name, updated_at = EXCLUDED.updated_at`,
+      [community, alias, fullName, now],
+    );
+  }
+
+  /** The repository id a (possibly stale) full_name was last listed under, active or not. */
+  private async storedGitHubRepositoryIdForName(
+    community: string,
+    fullName: string,
+  ): Promise<number | undefined> {
+    const result = await this.database.query<QueryResultRow & { repository_id: string | number }>(
+      `SELECT repository_id FROM beeline_github_repositories
+       WHERE community = $1 AND lower(full_name) = lower($2)
+       ORDER BY updated_at DESC LIMIT 1`,
+      [community, fullName],
+    );
+    const row = result.rows[0];
+    if (!row) return undefined;
+    const repositoryId = Number(row.repository_id);
+    return Number.isSafeInteger(repositoryId) && repositoryId > 0 ? repositoryId : undefined;
+  }
+
+  /** One installation-joined repository lookup; `condition`/`values` select the repository. */
+  private async gitHubRepositoryAccessRow(
+    condition: string,
+    values: unknown[],
+  ): Promise<GitHubRepositoryAccessRow | null> {
     const result = await this.database.query<
       QueryResultRow & {
         installation_id: string | number;
         repository_id: string | number | null;
         status: string;
         active: boolean;
+        full_name: string | null;
       }
     >(
-      `SELECT i.installation_id, r.repository_id, i.status, COALESCE(r.active, FALSE) AS active
+      `SELECT i.installation_id, r.repository_id, i.status, COALESCE(r.active, FALSE) AS active, r.full_name
        FROM beeline_github_installations i
        LEFT JOIN beeline_github_repositories r
          ON r.community = i.community AND r.installation_id = i.installation_id
-        AND lower(r.full_name) = lower($3)
-       WHERE i.community = $1 AND i.pubkey = $2
-         AND lower(split_part($3, '/', 1)) = lower(i.account_login)
+       WHERE i.community = $1 AND i.pubkey = $2 ${condition}
        ORDER BY (i.status = 'active' AND COALESCE(r.active, FALSE)) DESC
        LIMIT 1`,
-      [community, pubkey, fullName],
+      values,
     );
     const row = result.rows[0];
-    if (!row) return { accessible: false, reason: 'not_granted' };
+    if (!row) return null;
     const installationId = Number(row.installation_id);
     const repositoryId = Number(row.repository_id);
-    return row.status === 'active' && row.active
-      ? { accessible: true, installationId, repositoryId }
-      : {
-          accessible: false,
-          installationId,
-          reason: row.status === 'active' ? 'not_granted' : 'revoked',
-        };
+    const fullName = typeof row.full_name === 'string' ? row.full_name : undefined;
+    if (row.status === 'active' && row.active) {
+      return { accessible: true, installationId, repositoryId, fullName };
+    }
+    return {
+      accessible: false,
+      installationId,
+      reason: row.status === 'active' ? 'not_granted' : 'revoked',
+    };
+  }
+
+  async githubRepositoryAccess(
+    community: string,
+    pubkey: string,
+    fullName: string,
+  ): Promise<GitHubRepositoryAccess> {
+    const exact = await this.gitHubRepositoryAccessRow(
+      `AND lower(r.full_name) = lower($3)
+       AND lower(split_part($3, '/', 1)) = lower(i.account_login)`,
+      [community, pubkey, fullName],
+    );
+    if (exact?.accessible || exact?.reason === 'revoked') return exact;
+    // A transferred or renamed repository keeps its immutable GitHub id, and
+    // the installation snapshot deactivates stale full_name rows instead of
+    // deleting them — so a Room binding that predates a transfer still
+    // resolves onto the repository's current name without re-binding.
+    const priorId = await this.storedGitHubRepositoryIdForName(community, fullName);
+    if (priorId !== undefined) {
+      const healed = await this.gitHubRepositoryAccessRow(
+        `AND r.repository_id = $3::bigint`,
+        [community, pubkey, priorId],
+      );
+      if (healed?.accessible) return { ...healed, resolvedFullName: healed.fullName };
+    }
+    return exact ?? { accessible: false, reason: 'not_granted' };
   }
 
   async claimGitHubWebhookDelivery(deliveryId: string, now: Date): Promise<boolean> {

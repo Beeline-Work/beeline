@@ -209,4 +209,51 @@ describe('NotificationMetadataResolver', () => {
     ).resolves.toMatchObject({ persistentWorkspaceRoom: false });
     expect(query).toHaveBeenCalledTimes(2);
   });
+
+  it('classifies a self-referencing Workspace group create as a persistent Workspace room', async () => {
+    // Live production shape (2026-08-23): "Tubing Crew" / "Personal" are NIP-29
+    // Workspace groups whose kind:9007 create carries `community` equal to its
+    // own channel id. The old classification returned persistent=false, which
+    // suppressed messages posted directly to those top-level Workspace rooms.
+    const selfCreate = unsignedEvent(9007, [
+      ['h', COMMUNITY_ID],
+      ['name', 'Tubing Crew'],
+      ['community', COMMUNITY_ID],
+    ]);
+    const selfMetadata = unsignedEvent(39000, [
+      ['d', COMMUNITY_ID],
+      ['name', 'Tubing Crew'],
+      ['community', COMMUNITY_ID],
+    ]);
+    const query = vi.fn(async () => [selfMetadata, selfCreate]);
+
+    await expect(
+      new NotificationMetadataResolver().resolve(unsignedEvent(9, [['h', COMMUNITY_ID]]), {
+        query,
+        disconnect: () => undefined,
+      }),
+    ).resolves.toMatchObject({
+      roomName: 'Tubing Crew',
+      workspaceName: 'Tubing Crew',
+      persistentWorkspaceRoom: true,
+    });
+    // Two loads only — Room + sender. The Workspace IS the Room here, so the
+    // third Workspace round-trip the linked-Room path needs never happens.
+    expect(query).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a nameless self-referencing group non-persistent', async () => {
+    const selfCreate = unsignedEvent(9007, [
+      ['h', COMMUNITY_ID],
+      ['community', COMMUNITY_ID],
+    ]);
+    const reader: RelayEventReader = {
+      query: async () => [selfCreate],
+      disconnect: () => undefined,
+    };
+
+    await expect(
+      new NotificationMetadataResolver().resolve(unsignedEvent(9, [['h', COMMUNITY_ID]]), reader),
+    ).resolves.toMatchObject({ persistentWorkspaceRoom: false });
+  });
 });

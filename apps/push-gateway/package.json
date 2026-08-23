@@ -10,6 +10,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
+    "audit:suppression": "tsx scripts/audit-suppression.ts",
     "verify:live": "tsx deploy/verify-live.ts"
   },
   "dependencies": {

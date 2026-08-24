@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "sourceCommit": "35287950438938bb7fcf0c48a5b99b7a93bbad8b",
-  "version": "0.0.111",
+  "sourceCommit": "eb9a83a8552d589cd8881742eebc217fb47bceda",
+  "version": "0.0.114",
   "bundles": {
     "linux-x64": {
       "file": "beeline-linux-x64.tar.gz",
-      "sha256": "dcadc4fa85e18cfa98f021ab47d127e74dd534073c721c7f3f3de4e06e50f8bf",
-      "bytes": 14369540,
+      "sha256": "7570ded9f6adcffa5b5fecb0e7846d0acd14e7704fd854f9838195dbe558153c",
+      "bytes": 14369552,
       "node": ">=20.11.0",
-      "commit": "35287950438938bb7fcf0c48a5b99b7a93bbad8b",
-      "version": "0.0.111",
+      "commit": "eb9a83a8552d589cd8881742eebc217fb47bceda",
+      "version": "0.0.114",
       "verified": true
     }
   }

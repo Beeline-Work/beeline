@@ -783,13 +783,31 @@ export class BuzzRigTransport implements RigTransport {
     return client.getAgentModelConfig(communityId, agentPubkey);
   }
 
-  /** The slash commands/skills an agent's harness advertises, if published. */
+  /**
+   * The slash commands/skills an agent's harness advertises, if published.
+   *
+   * Command records are keyed by Workspace root, never by Room id or relay
+   * tenant. Resolve that immutable Room linkage here so screen selection/cache
+   * state cannot silently query a different `d` key. Older corners may lack
+   * the linkage on their own create event, so their already-resolved parent
+   * Workspace remains a compatibility fallback.
+   */
   async agentCommandsRead(
-    communityId: string,
+    channelId: string,
     agentPubkey: string,
+    fallbackWorkspaceRootId?: string,
   ): Promise<AgentCommandList | null> {
     const client = await this.getClient();
-    return client.getAgentCommands(communityId, agentPubkey);
+    let roomWorkspaceRootId: string | null;
+    try {
+      roomWorkspaceRootId = await client.getChannelCommunityId(channelId);
+    } catch (error) {
+      if (!fallbackWorkspaceRootId) throw error;
+      roomWorkspaceRootId = null;
+    }
+    const workspaceRootId = roomWorkspaceRootId ?? fallbackWorkspaceRootId;
+    if (!workspaceRootId) return null;
+    return client.getAgentCommands(workspaceRootId, agentPubkey);
   }
 
   /** Choose a model/effort for an agent. Applied on that agent's next session (re)activation. */

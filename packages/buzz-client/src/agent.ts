@@ -45,6 +45,7 @@ import {
 
 const DEFAULT_PAIRING_TTL_SECONDS = 10 * 60;
 const PAIRING_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const KIND_NOSTR_PROFILE = 0;
 let lastSoulTimestamp = 0;
 
 function now(): number {
@@ -94,6 +95,29 @@ function soulKey(communityId: string, agentPubkey: string): string {
 function nextSoulTimestamp(): number {
   lastSoulTimestamp = Math.max(now(), lastSoulTimestamp + 1);
   return lastSoulTimestamp;
+}
+
+/**
+ * A Nostr key that has ever self-authored a kind:0 profile is a human key.
+ * Agent records are irreversible security markers, so fail before publishing
+ * one rather than letting a cosmetic profile and an agent identity share the
+ * same signer forever.
+ */
+async function assertAgentKeyHasNoHumanProfile(
+  ctx: ChannelOpsContext,
+  pubkey: string,
+): Promise<void> {
+  const events = await query(ctx, [{ kinds: [KIND_NOSTR_PROFILE], authors: [pubkey], limit: 20 }]);
+  if (
+    events.some(
+      (event) => event.kind === KIND_NOSTR_PROFILE && event.pubkey === pubkey && verifyEvent(event),
+    )
+  ) {
+    throw new Error(
+      `cannot use human identity ${pubkey} as an agent: it already has a kind:0 profile; ` +
+        'run the Members-page pairing command again so Beeline mints a fresh agent keypair',
+    );
+  }
 }
 
 /**
@@ -172,6 +196,7 @@ async function createAgentRecord(
   if (!members.some((member) => member.pubkey === ctx.identity.publicKey)) {
     throw new Error('agent identity must be a community member before registration');
   }
+  await assertAgentKeyHasNoHumanProfile(ctx, ctx.identity.publicKey);
 
   const agentId = options.agentId ?? newUuid();
   // Deliberate naming, not silent masking: an authored name passes through,
@@ -285,6 +310,13 @@ export async function redeemAgentPairingCode(
   const matchingRedemptions = alreadyPaired.filter(
     (event) => tagValue(event, 'pairing') === tokenHash,
   );
+  if (ctx.identity.publicKey === pairing.pubkey) {
+    throw new Error(
+      "cannot pair the installer's human identity as its own agent; " +
+        'run the Members-page pairing command without BUZZ_AGENT_KEY or BUZZ_PRIVATE_KEY so Beeline mints a fresh agent keypair',
+    );
+  }
+  await assertAgentKeyHasNoHumanProfile(ctx, ctx.identity.publicKey);
   const ours = matchingRedemptions
     .map(parseAgent)
     .find((agent) => agent?.pubkey === ctx.identity.publicKey);
@@ -294,6 +326,12 @@ export async function redeemAgentPairingCode(
   }
   if (expiresAt <= now()) throw new Error('agent pairing code has expired');
   const wasMember = members.some((member) => member.pubkey === ctx.identity.publicKey);
+  if (wasMember) {
+    throw new Error(
+      `cannot pair existing human Workspace member ${ctx.identity.publicKey} as an agent; ` +
+        'run the Members-page pairing command again so Beeline mints a fresh agent keypair',
+    );
+  }
   if (!wasMember) {
     await setMemberRole(ctx, communityId, ctx.identity.publicKey, 'member', {
       extraTags: [
@@ -379,6 +417,7 @@ export async function setAgentSoul(
   if (!agents.some((agent) => agent.pubkey === agentPubkey)) {
     throw new Error('agent identity not found in community');
   }
+  await assertAgentKeyHasNoHumanProfile(ctx, agentPubkey);
   const name = input.name.trim().slice(0, 32);
   const soul = input.soul.trim().slice(0, 1_000);
   const avatarSeed = input.avatarSeed.trim().slice(0, 128);
@@ -565,6 +604,7 @@ export async function removeAgent(
   if (!agents.some((agent) => agent.pubkey === agentPubkey)) {
     throw new Error('agent is not linked to this Workspace');
   }
+  await assertAgentKeyHasNoHumanProfile(ctx, agentPubkey);
 
   for (const channelId of await communityChannels(ctx, communityId)) {
     try {
@@ -607,6 +647,7 @@ export async function attachAgentToChannel(
   if (!agents.some((agent) => agent.pubkey === agentPubkey)) {
     throw new Error('agent is not linked to this Workspace');
   }
+  await assertAgentKeyHasNoHumanProfile(ctx, agentPubkey);
   if (await isMember(ctx, channelId, agentPubkey)) {
     return { joined: false, membershipSince: now() };
   }

@@ -8,6 +8,7 @@ const chatSource = readFileSync(
 const ledgerSource = readFileSync(new URL('./Ledger.tsx', import.meta.url), 'utf8');
 const markdownSource = readFileSync(new URL('./MonoMarkdown.tsx', import.meta.url), 'utf8');
 const activitySource = readFileSync(new URL('./ActivityTimeline.tsx', import.meta.url), 'utf8');
+const emptyLedgerSource = readFileSync(new URL('./EmptyLedgerState.tsx', import.meta.url), 'utf8');
 // Enter-room hydration lives here, not inline in the screen: every read is
 // fanned out concurrently so none can be held hostage by another.
 const roomEntrySource = readFileSync(
@@ -36,6 +37,32 @@ function ledgerBranch(): string {
   expect(end, 'ledger branch is not followed by the renderItem dep list').toBeGreaterThan(start);
   return chatSource.slice(start, end);
 }
+
+describe('Empty ledger contract', () => {
+  it('centers the empty state in a non-inverted flex-growing transcript viewport', () => {
+    expect(chatSource).toContain('inverted={invertedMessages.length > 0}');
+    expect(chatSource).toContain('invertedMessages.length === 0 && styles.messageListContentEmpty');
+    expect(styleDefinition(chatSource, 'messageListContentEmpty')).toContain('flexGrow: 1');
+    expect(styleDefinition(chatSource, 'emptyState')).toContain('flexGrow: 1');
+    expect(styleDefinition(chatSource, 'emptyState')).not.toContain('paddingTop');
+  });
+
+  it('uses one operational Room, Corner, and DM state that focuses the composer', () => {
+    expect(chatSource).toContain('<EmptyLedgerState');
+    expect(chatSource).toContain('variant={emptyLedgerVariant}');
+    expect(chatSource).toContain('objective={isCorner ? cornerObjective : undefined}');
+    expect(chatSource).toContain('onPress={focusComposer}');
+    expect(chatSource).toMatch(/const focusComposer = useCallback\([\s\S]{0,120}composerRef\.current\?\.focus/);
+    expect(chatSource).not.toContain('No messages yet');
+
+    expect(emptyLedgerSource).toContain("export type EmptyLedgerVariant = 'room' | 'corner' | 'dm'");
+    expect(emptyLedgerSource).toContain('Start with the work, question, or decision this Room is for.');
+    expect(emptyLedgerSource).toContain('Ready for a steering message');
+    expect(emptyLedgerSource).toContain('Send ${person} the first message.');
+    expect(styleDefinition(emptyLedgerSource, 'title')).toMatch(/fontSize:\s*16/);
+    expect(emptyLedgerSource).not.toMatch(/borderRadius|backgroundColor/);
+  });
+});
 
 describe('One ledger, both surfaces', () => {
   it('renders Rooms and Corners through the same shared primitive', () => {
@@ -498,11 +525,14 @@ describe('Machine noise', () => {
     }
   });
 
-  it('gives a corner the room’s chrome: one composer, one overflow menu', () => {
-    // The corner composer is the room composer. No second placeholder word, no
-    // corner-only tone, no corner-only send glyph.
-    expect(chatSource).toContain('placeholder="Message"');
-    expect(chatSource).not.toMatch(/'Steer'/);
+  it('gives each ledger one outcome-specific composer and one overflow menu', () => {
+    // One shared composer, with surface-specific operational copy rather than
+    // a generic consumer-chat placeholder.
+    expect(chatSource).toContain('placeholder={composerPlaceholder}');
+    expect(chatSource).toContain('`Start this ${ROOM_LABEL}…`');
+    expect(chatSource).toContain('`Steer this ${CORNER_LABEL}…`');
+    expect(chatSource).toContain('`Message ${displayRoomName}…`');
+    expect(chatSource).not.toContain('placeholder="Message"');
     for (const retired of ['cornerComposer', 'cornerInput', 'cornerSendButtonText']) {
       expect(chatSource, `${retired} should be retired`).not.toMatch(
         new RegExp(`\\b${retired}\\b`),

@@ -2,10 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { cornerActionSurface } from '../../buzz/corner-attention';
-import {
-  roomRowPresentation,
-  type RoomRowInput,
-} from '../../buzz/room-list-row';
+import { roomRowPresentation, type RoomRowInput } from '../../buzz/room-list-row';
 import { selectPinnedCorner } from '../../buzz/room-indicators';
 import type { CornerSummary } from '../../buzz/corners';
 import { resolveCornerLifecycle } from '@beeline/buzz-client';
@@ -15,6 +12,7 @@ const channelsSource = sourceFile('../../app/(app)/buzz/channels.tsx');
 const rowSource = sourceFile('../../buzz/room-list-row.ts');
 const indicatorsSource = sourceFile('../../buzz/room-indicators.ts');
 const transportSource = sourceFile('../../sync/transport/buzz-rig-transport.ts');
+const verdictSource = sourceFile('../../sync/transport/corner-state-verdict.ts');
 
 /** Read a repo file by a path relative to THIS test file. */
 function sourceFile(relative: string): string {
@@ -43,10 +41,11 @@ describe('one corner lifecycle oracle', () => {
     //    on oracle-fed CornerSummary), 3. pinned room bar (room-indicators),
     //    4. corner screen card/panel ([channelId].tsx via
     //    resolveCornerLifecycleStatus + corner-attention).
-    expect(transportSource).toMatch(
-      /import \{[\s\S]*?resolveCornerLifecycle[\s\S]*?\} from '@\/buzz\/corners'/,
+    expect(transportSource).toContain(
+      "import { resolveCornerVerdict } from './corner-state-verdict'",
     );
-    expect(rowSource).toMatch(/cornerSuperState[\s\S]*?from '@\/buzz\/corners'/);
+    expect(verdictSource).toMatch(/resolveCornerLifecycle[\s\S]*? from '@\/buzz\/corners'/);
+    expect(rowSource).toMatch(/roomState[\s\S]*?from '@\/buzz\/corners'/);
     expect(indicatorsSource).toMatch(/mergeCornerStatuses[\s\S]*?from '\.\/corners'/);
     expect(chatSource).toMatch(/resolveCornerLifecycleStatus[\s\S]*?from '@\/buzz\/corners'/);
     expect(chatSource).toMatch(/cornerActionSurface[\s\S]*?from '@\/buzz\/corner-attention'/);
@@ -184,24 +183,33 @@ describe('four surfaces agree on one verdict', () => {
 
     const corners = [corner(after)];
     expect(roomRowPresentation({ corners }, new Map()).zone).toBe('working');
-    expect(selectPinnedCorner({ signals: [], lifecycle: corners, lifecycleLoaded: true }))
-      .toMatchObject({ status: 'live' });
+    expect(
+      selectPinnedCorner({ signals: [], lifecycle: corners, lifecycleLoaded: true }),
+    ).toMatchObject({ status: 'live' });
     expect(cornerActionSurface({ status: after, hasMergeTarget: false }).kind).toBe(
       'nothing-ready',
     );
   });
 
-  it('corner glyphs are diamonds on every surface — never identity shapes', () => {
-    // Shapes are identity vocabulary (△○▢); corners are WORK. One family.
+  it('Room and corner state use one three-state circle component with no visible label', () => {
     const facade = repoSource('apps/mobile/sources/buzz/corners.ts');
-    for (const glyph of ['▲', '△', '○', '▢', '□', '✕', '✓']) {
-      expect(facade, `${glyph} is not a corner glyph`).not.toContain(`glyph: '${glyph}'`);
-    }
-    expect(facade).toContain("return { glyph: CORNER_GLYPH_LIVE, label: 'WORKING' }");
+    const monoHull = sourceFile('./MonoHull.tsx');
+    const stateCircleSource = monoHull.slice(
+      monoHull.indexOf('export function StateCircle'),
+      monoHull.indexOf('type HullWaveSignalProps'),
+    );
+    expect(facade).toContain("export type CornerVisualState = 'idle' | 'working' | 'needs-you'");
+    expect(facade).toContain("case 'working':\n      return '◌'");
+    expect(facade).toContain("const CORNER_GLYPH_FILLED = '●'");
+    expect(facade).toContain("const CORNER_GLYPH_HOLLOW = '○'");
+    expect(stateCircleSource).toContain('function StateCircle(');
+    expect(stateCircleSource).toContain('accessibilityLabel={state}');
+    expect(stateCircleSource).not.toMatch(/<Text[^>]*>\{state\}<\/Text>/);
+    expect(stateCircleSource).not.toMatch(/[◆◇]/);
     // Expansion rows and the standalone list render THE shared component.
-    expect(channelsSource).toContain('<CornerGlyph status={corner.status}');
+    expect(channelsSource).toContain('<CornerGlyph');
     const listSource = sourceFile('../../app/(app)/buzz/corners/[roomId].tsx');
-    expect(listSource).toContain('<CornerGlyph status={item.status}');
+    expect(listSource).toContain('<CornerGlyph');
     // No buzz screen draws a triangle as a corner's own glyph; identity marks
     // are the ONLY legitimate triangle source (identity-mark.ts/IdentityMark).
     for (const text of [channelsSource, chatSource, rowSource, indicatorsSource, listSource]) {

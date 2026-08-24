@@ -49,7 +49,9 @@ vi.mock('expo-web-browser', () => ({
 }));
 vi.mock('expo-linking', () => ({ createURL: (path: string) => `beeline://${path}` }));
 vi.mock('@react-navigation/native', () => ({ useFocusEffect: () => undefined }));
-vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) }));
+vi.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, bottom: 0 }),
+}));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   DEFAULT_RELAY_URL: 'https://relay.test',
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
@@ -92,7 +94,11 @@ vi.mock('@/sync/transport', () => ({
               id: 'create-room-1',
               kind: 9007,
               created_at: 1_000,
-              tags: [['h', 'room-1'], ['community', 'shared-1'], ['name', 'Ledger rewrite']],
+              tags: [
+                ['h', 'room-1'],
+                ['community', 'shared-1'],
+                ['name', 'Ledger rewrite'],
+              ],
             },
           ];
         return [];
@@ -185,7 +191,7 @@ vi.mock('react-native', async () => {
           props.renderItem({ item, index }),
         ),
       ),
-      (props.data ?? []).length === 0 ? props.ListEmptyComponent ?? null : null,
+      (props.data ?? []).length === 0 ? (props.ListEmptyComponent ?? null) : null,
       props.ListFooterComponent ?? null,
     ]);
   const SectionList = (props: any) => {
@@ -207,7 +213,7 @@ vi.mock('react-native', async () => {
     return ReactModule.createElement('SectionList', props, [
       props.ListHeaderComponent ?? null,
       ...rows,
-      rows.length === 0 ? props.ListEmptyComponent ?? null : null,
+      rows.length === 0 ? (props.ListEmptyComponent ?? null) : null,
       props.ListFooterComponent ?? null,
     ]);
   };
@@ -225,8 +231,9 @@ vi.mock('react-native', async () => {
   };
 });
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-  true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { channelListCacheKey, useBuzzLocalCache } = await import('@/buzz/local-cache');
 const { default: BuzzChannels } = await import('./channels');
@@ -348,10 +355,10 @@ describe('room-list corner dropdown', () => {
     expect(navigation.push).not.toHaveBeenCalled();
   });
 
-  it('a Room whose corners are all terminal shows no corner affordance at all', async () => {
+  it('a Room whose corners are all immutably terminal shows no corner affordance at all', async () => {
     cornerFixtures['room-1'] = [
       corner('corner-c', 'landed work', 'merged'),
-      corner('corner-d', 'dead end', 'failed'),
+      corner('corner-d', 'closed work', 'archived'),
     ];
     seedWorkspace();
     const tree = await render();

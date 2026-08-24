@@ -340,7 +340,7 @@ describe('deleted Rooms stay deleted locally', () => {
     const tree = await renderAndWaitForRefresh();
 
     // Archived-but-not-removed Rooms remain directly visible in the uniform
-    // two-pile deck — this fix hides only explicit local removals.
+    // unified Room feed — this fix hides only explicit local removals.
     expect(findAllByTestId(tree, 'finished-rooms-toggle')).toHaveLength(0);
     expect(findAllByTestId(tree, `room-${DELETED}`).length).toBeGreaterThan(0);
   });

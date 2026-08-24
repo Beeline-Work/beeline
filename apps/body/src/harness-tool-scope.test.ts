@@ -76,7 +76,7 @@ async function capturedSessionNew(basename: string): Promise<Record<string, unkn
 
 describe('harnessToolScope', () => {
   it('classifies each verified harness by whether the daemon can confine its tool surface', () => {
-    expect(harnessToolScope('/usr/local/bin/claude-agent-acp').enforcement).toBe('allowlisted');
+    expect(harnessToolScope('/usr/local/bin/claude-agent-acp').enforcement).toBe('config-isolated');
     expect(harnessToolScope('buzz-agent').enforcement).toBe('allowlisted');
     expect(harnessToolScope('codex-acp').enforcement).toBe('config-isolated');
     expect(harnessToolScope('/home/op/.grok/bin/grok').enforcement).toBe('config-isolated');
@@ -90,11 +90,17 @@ describe('harnessToolScope', () => {
 });
 
 describe('sessionToolScopeMeta', () => {
-  it('pins a claude session to the mounted servers and kills claude.ai connectors', () => {
+  it('loads only isolated user MCP and kills claude.ai connectors', () => {
+    // Owner decision 2026-08-23: agents get every skill + MCP on the host, so
+    // `strictMcpConfig` (ignore all config-file MCP) is deliberately NOT sent;
+    // user-only settings plus the connector kill switch ride `_meta` now.
     const meta = sessionToolScopeMeta('claude-agent-acp') as {
-      claudeCode: { options: { strictMcpConfig: boolean; settings: string } };
+      claudeCode: {
+        options: { strictMcpConfig?: boolean; settingSources: string[]; settings: string };
+      };
     };
-    expect(meta.claudeCode.options.strictMcpConfig).toBe(true);
+    expect(meta.claudeCode.options.strictMcpConfig).toBeUndefined();
+    expect(meta.claudeCode.options.settingSources).toEqual(['user']);
     // The adapter forwards `settings` to the CLI's `--settings`, which takes a
     // JSON string; an object would stringify to "[object Object]".
     expect(typeof meta.claudeCode.options.settings).toBe('string');
@@ -106,11 +112,11 @@ describe('sessionToolScopeMeta', () => {
     const first = sessionToolScopeMeta('claude-agent-acp') as {
       claudeCode: { options: Record<string, unknown> };
     };
-    first.claudeCode.options.strictMcpConfig = false;
+    first.claudeCode.options.settings = '{}';
     const second = sessionToolScopeMeta('claude-agent-acp') as {
       claudeCode: { options: Record<string, unknown> };
     };
-    expect(second.claudeCode.options.strictMcpConfig).toBe(true);
+    expect(second.claudeCode.options.settings).not.toBe('{}');
   });
 
   it('has nothing to send for a harness with no session-level allowlist', () => {
@@ -130,10 +136,13 @@ describe('harnessReadsMetaSystemPrompt', () => {
 });
 
 describe('toolScopeWarning', () => {
-  it('stays silent for a harness the session request can confine', () => {
+  it('warns for a claude Room without its own harness home, like codex', () => {
+    // Claude's tool surface is scoped by the isolated CLAUDE_CONFIG_DIR since
+    // strictMcpConfig was dropped, so the warning applies to it too.
     expect(
       toolScopeWarning('claude-agent-acp', { isolatedHarnessHome: false }),
-    ).toBeUndefined();
+    ).toMatch(/CLAUDE_CONFIG_DIR|BUZZY_BODY_ROOM_HOME=1/);
+    expect(toolScopeWarning('claude-agent-acp', { isolatedHarnessHome: true })).toBeTruthy();
     expect(toolScopeWarning('buzz-agent', { isolatedHarnessHome: false })).toBeUndefined();
   });
 
@@ -169,12 +178,19 @@ describe('every session/new the daemon sends', () => {
       mcpServers: Array<{ name: string }>;
       systemPrompt?: string;
       _meta?: {
-        claudeCode?: { options?: { strictMcpConfig?: boolean; settings?: string } };
+        claudeCode?: {
+          options?: {
+            strictMcpConfig?: boolean;
+            settingSources?: string[];
+            settings?: string;
+          };
+        };
         systemPrompt?: { append?: string };
       };
     };
     expect(params.mcpServers.map((server) => server.name)).toEqual(['buzz-readonly-mcp']);
-    expect(params._meta?.claudeCode?.options?.strictMcpConfig).toBe(true);
+    expect(params._meta?.claudeCode?.options?.strictMcpConfig).toBeUndefined();
+    expect(params._meta?.claudeCode?.options?.settingSources).toEqual(['user']);
     expect(JSON.parse(params._meta?.claudeCode?.options?.settings ?? '{}')).toEqual(
       CLAUDE_TOOL_SCOPE_SETTINGS,
     );
@@ -202,11 +218,14 @@ describe('every session/new the daemon sends', () => {
     }
     const params = JSON.parse(await readFile(capture, 'utf8')) as {
       _meta?: {
-        claudeCode?: { options?: { strictMcpConfig?: boolean } };
+        claudeCode?: {
+          options?: { strictMcpConfig?: boolean; settingSources?: string[] };
+        };
         systemPrompt?: { append?: string };
       };
     };
-    expect(params._meta?.claudeCode?.options?.strictMcpConfig).toBe(true);
+    expect(params._meta?.claudeCode?.options?.strictMcpConfig).toBeUndefined();
+    expect(params._meta?.claudeCode?.options?.settingSources).toEqual(['user']);
     expect(params._meta?.systemPrompt?.append).toBe('Beeline room boundary.');
   });
 

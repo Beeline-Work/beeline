@@ -176,6 +176,7 @@ import {
 import type { RelaySocketLease, SharedRelaySocket } from './relay-socket.js';
 import {
   appendPersonaSessionInstructions,
+  prepareNativePersonaInstructions,
   personaTurnPrefixForHarness,
 } from './persona-instructions.js';
 import {
@@ -1963,8 +1964,6 @@ export class Body {
   private runningAgentTasks = new Map<string, Promise<void>>();
   private scheduler: SessionScheduler;
   private ownsScheduler: boolean;
-  /** Memoized per-room harness env; prepared on this Room's first activation. */
-  private roomAgentEnv?: Promise<Record<string, string>>;
   private durableState: DurableBodyState;
   private agentRelay: RelayClient;
   private mergeWorkerRelay?: RelayClient;
@@ -2226,16 +2225,17 @@ export class Body {
   /**
    * Env for this room-instance's ACP children. When the Room has its own agent
    * home, the harness state dirs point inside it (credentials stay shared, and
-   * `HOME` is never overridden) — see `agent-home.ts`. Prepared once per Body.
+   * `HOME` is never overridden) — see `agent-home.ts`. Preparation runs for
+   * every child activation: the env paths are stable, while copied MCP config
+   * must reflect operator edits on the next session start.
    */
   private sessionAgentEnv(): Promise<Record<string, string>> {
     const root = this.config.agentHomeRoot;
     if (!root) return Promise.resolve(this.config.agentEnv);
-    this.roomAgentEnv ??= prepareRoomAgentHome({ root }).then((overlay) => ({
+    return prepareRoomAgentHome({ root }).then((overlay) => ({
       ...this.config.agentEnv,
       ...overlay,
     }));
-    return this.roomAgentEnv;
   }
 
   /**
@@ -2620,14 +2620,19 @@ export class Body {
               (agent) => agent.pubkey === this.agentIdentity.publicKey,
             )?.soulProfile
           : undefined;
-        // A harness that drops `session/new`'s `systemPrompt` never sees the
-        // persona appended below — measured, not assumed: codex-acp and
-        // pi-acp have no reference to the field at all. For those, re-send
-        // the persona at the top of every turn prompt instead; message
-        // content is the one channel no adapter can ignore.
+        // Prefer the harness's native global instructions file. It is loaded
+        // once when the child starts and stays stable for prompt caching,
+        // unlike #407's compatibility prefix on every turn. A failed write or
+        // a harness with no native contract automatically keeps that fallback.
+        const nativePersonaPrepared = await prepareNativePersonaInstructions({
+          agentHomeRoot: this.config.agentHomeRoot,
+          agentCommand: this.config.agentCommand ?? this.config.agentBinary,
+          profile,
+        });
         session.personaTurnPrefix = personaTurnPrefixForHarness(
           profile,
           this.config.agentCommand ?? this.config.agentBinary,
+          nativePersonaPrepared,
         );
         await client.start();
         const transcript = await this.durableState.conversation(input.channelId);
@@ -2645,7 +2650,7 @@ export class Body {
           ? cornerToolchainNotice(input.worktreePath)
           : undefined;
         const systemPrompt = [
-          appendPersonaSessionInstructions(input.systemPrompt, profile),
+          appendPersonaSessionInstructions(input.systemPrompt, profile, nativePersonaPrepared),
           agentPrivateStateInstructions(input.agentPrivateState),
           agentMemoryInstructions(input.agentMemory),
           ...(toolchainNotice ? [`Toolchain notice: ${toolchainNotice}`] : []),

@@ -228,7 +228,7 @@ describe('what the Room agent and the corner are told', () => {
   it('names the corner after the release, never after the corner-open imperative', () => {
     expect(releaseCornerIntent({ work, version: '1.2.0' })).toBe('release 1.2.0');
     expect(taskSlugForCornerIntent(releaseCornerIntent({ work, version: '1.2.0' }))).toBe(
-      'release-1-2-0',
+      'release-version-1-2-0',
     );
     expect(taskSlugForCornerIntent(releaseCornerIntent({ work }))).toBe('release-from-main');
     expect(releaseCornerPrompt({ work, version: '1.2.0' })).toBe('cut release 1.2.0 from main');

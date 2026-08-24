@@ -46,7 +46,9 @@ describe('a corner opened by a bare imperative still knows what it is for', () =
 
   it('confirms the trigger message really does name nothing', () => {
     expect(taskDescriptionFromCornerRequest('@beebee open corner')).toBe('');
-    expect(cornerNameForIntent('@beebee open corner', '1f6e289d-d4d3')).toBe('corner-1f6e289d');
+    expect(cornerNameForIntent('@beebee open corner', '1f6e289d-d4d3')).toBe(
+      'Implement Corner Work',
+    );
   });
 
   it('recovers the objective from the person’s own most recent substantive words', () => {
@@ -105,8 +107,8 @@ describe('a corner opened by a bare imperative still knows what it is for', () =
     // raw trigger — otherwise a recovered objective still leaves a corner
     // called `corner-<parent>` on a branch called `feature/<uuid>`.
     expect(body).toContain('cornerObjectiveFromConversation(conversation)');
-    expect(body).toContain('generated ? slugifyCornerTask(generated.title)');
-    expect(body).toContain('const cornerName = generated?.title ??');
+    expect(body).toContain('const fallbackTitle = cornerTitleFromTask');
+    expect(body).toContain('const cornerName = generated?.title ?? fallbackTitle');
     expect(body).toContain('taskSlug\n      ? `feature/${taskSlug}-');
   });
 

@@ -48,6 +48,7 @@ import {
   CORNER_TURN_SUMMARY_INSTRUCTION,
   CORNER_TURN_SUMMARY_MAX_CHARS,
   cornerNameForIntent,
+  slugifyCornerTask,
   createAgentSubchannel,
   cornerOpenTaskPrompt,
   taskDescriptionFromCornerRequest,
@@ -5328,56 +5329,56 @@ describe('first-class assistant messages', () => {
 });
 
 describe('corner display names', () => {
-  it('turns the human request into a compact Slack-style corner name', () => {
+  it('turns the human request into a three-word verb-first corner name', () => {
     expect(cornerNameForIntent('Fix OAuth callback + retry state', 'room-id')).toBe(
-      'fix-oauth-callback-retry-state',
+      'Fix OAuth Callback',
     );
   });
 
-  it('uses a corner fallback without exposing the subchannel noun', () => {
-    expect(cornerNameForIntent('  ', '12345678-abcd')).toBe('corner-12345678');
+  it('uses a grammatical fallback when no task is available', () => {
+    expect(cornerNameForIntent('  ', '12345678-abcd')).toBe('Implement Corner Work');
   });
 
   it('derives the name from the actual task, not the "open a corner" verb that opened it', () => {
     expect(cornerNameForIntent('open a corner and add color to code blocks', 'room-id')).toBe(
-      'add-color-to-code-blocks',
+      'Add Color Code',
     );
     expect(cornerNameForIntent('open the corner and add color to code blocks', 'room-id')).toBe(
-      'add-color-to-code-blocks',
+      'Add Color Code',
     );
     expect(cornerNameForIntent('please open a new corner to fix the flaky test', 'room-id')).toBe(
-      'fix-the-flaky-test',
+      'Fix The Flaky',
     );
   });
 
   it('strips a trailing "...in a new corner" mention just as well as a leading one', () => {
     expect(
       cornerNameForIntent('start working on syntax highlighting in a new corner', 'room-id'),
-    ).toBe('syntax-highlighting');
+    ).toBe('Implement Syntax Highlighting');
   });
 
-  it('falls back to the collision-safe short suffix when the request is only the imperative itself', () => {
-    expect(cornerNameForIntent('open a corner', 'room-id')).toBe('corner-room-id');
-    expect(cornerNameForIntent('open up a new corner', 'room-id')).toBe('corner-room-id');
+  it('uses the grammatical fallback when the request is only the imperative itself', () => {
+    expect(cornerNameForIntent('open a corner', 'room-id')).toBe('Implement Corner Work');
+    expect(cornerNameForIntent('open up a new corner', 'room-id')).toBe('Implement Corner Work');
   });
 
   it('leaves a message with no corner-open imperative untouched (the agent-originated write-request flow)', () => {
     expect(cornerNameForIntent('add color to code blocks', 'room-id')).toBe(
-      'add-color-to-code-blocks',
+      'Add Color Code',
     );
   });
 
   it('names the task even when the request opens with an @mention or conversational scaffolding', () => {
     const cases: [string, string][] = [
       // The dogfooded regression: the mention plus the imperative ate the name.
-      ['@lena open a corner and add a haiku to README.md', 'add-a-haiku-to-readme-md'],
-      ['@lena go fix the login bug', 'fix-the-login-bug'],
-      ['@lena, please open a corner and fix the flaky test', 'fix-the-flaky-test'],
-      ['@lena make a corner for the sidebar redesign', 'the-sidebar-redesign'],
-      ['@lena spin up a corner and refactor the parser', 'refactor-the-parser'],
-      ['hey @lena, can you open a new corner to update the changelog', 'update-the-changelog'],
-      ["@lena let's add dark mode to settings", 'add-dark-mode-to-settings'],
-      ['@lena start working on syntax highlighting in a new corner', 'syntax-highlighting'],
+      ['@lena open a corner and add a haiku to README.md', 'Add Haiku README.md'],
+      ['@lena go fix the login bug', 'Fix The Login'],
+      ['@lena, please open a corner and fix the flaky test', 'Fix The Flaky'],
+      ['@lena make a corner for the sidebar redesign', 'Implement The Sidebar'],
+      ['@lena spin up a corner and refactor the parser', 'Refactor The Parser'],
+      ['hey @lena, can you open a new corner to update the changelog', 'Update The Changelog'],
+      ["@lena let's add dark mode to settings", 'Add Dark Mode'],
+      ['@lena start working on syntax highlighting in a new corner', 'Implement Syntax Highlighting'],
     ];
     for (const [request, slug] of cases) {
       expect([request, cornerNameForIntent(request, 'room-id')]).toEqual([request, slug]);
@@ -5385,19 +5386,18 @@ describe('corner display names', () => {
   });
 
   it('falls back to the generic corner name when the request names no work at all', () => {
-    expect(cornerNameForIntent('@lena go', 'room-id')).toBe('corner-room-id');
-    expect(cornerNameForIntent('@lena open a corner', 'room-id')).toBe('corner-room-id');
-    expect(cornerNameForIntent('@lena ok do it', 'room-id')).toBe('corner-room-id');
+    expect(cornerNameForIntent('@lena go', 'room-id')).toBe('Implement Corner Work');
+    expect(cornerNameForIntent('@lena open a corner', 'room-id')).toBe('Implement Corner Work');
+    expect(cornerNameForIntent('@lena ok do it', 'room-id')).toBe('Implement Corner Work');
   });
 
   it('taskSlugForCornerIntent is the same task-descriptive basis openSubchannel uses for both the corner name and the feature branch', () => {
-    // cornerNameForIntent(intent, parentId) === taskSlugForCornerIntent(intent)
-    // whenever a real task slug exists — the corner-id fallback only kicks in
-    // when the slug is empty, which is exactly what `openSubchannel` needs to
-    // decide whether to fold the slug into the git branch name.
+    // The display name and branch slug share one formatted semantic stem.
     const intent = 'open a corner and add color to code blocks';
-    expect(taskSlugForCornerIntent(intent)).toBe('add-color-to-code-blocks');
-    expect(cornerNameForIntent(intent, 'room-id')).toBe(taskSlugForCornerIntent(intent));
+    expect(taskSlugForCornerIntent(intent)).toBe('add-color-code');
+    expect(slugifyCornerTask(cornerNameForIntent(intent, 'room-id'))).toBe(
+      taskSlugForCornerIntent(intent),
+    );
     expect(taskSlugForCornerIntent('open a corner')).toBe('');
   });
 

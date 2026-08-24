@@ -41,10 +41,7 @@ const inFlightCornerRevalidations = new Map<string, Promise<void>>();
  */
 const COLD_BACKFILL_LIMIT = 200;
 
-function isNewerRoomMessage(
-  candidate: RoomMessageSummary,
-  cached?: ChannelCacheEntry,
-): boolean {
+function isNewerRoomMessage(candidate: RoomMessageSummary, cached?: ChannelCacheEntry): boolean {
   const cachedTimestamp = cached?.latestMessageAt;
   if (cachedTimestamp === undefined) return true;
   if (candidate.timestamp !== cachedTimestamp) return candidate.timestamp > cachedTimestamp;
@@ -70,6 +67,20 @@ export function sessionEventCursor(event: SessionEvent): number | undefined {
   const payload = event.payload as { createdAt?: unknown; created_at?: unknown };
   if (typeof payload.createdAt === 'number') return payload.createdAt;
   return typeof payload.created_at === 'number' ? payload.created_at : undefined;
+}
+
+function isLandedRoomEvent(event: SessionEvent): boolean {
+  if (event.type !== 'raw' || !event.payload || typeof event.payload !== 'object') return false;
+  const tags = (event.payload as { tags?: unknown }).tags;
+  if (!Array.isArray(tags)) return false;
+  const has = (name: string, value: string) =>
+    tags.some((tag) => Array.isArray(tag) && tag[0] === name && tag[1] === value);
+  return (
+    has('delivery', 'landed') ||
+    has('t', 'landed') ||
+    has('t', 'land-summary') ||
+    has('t', 'merge-summary')
+  );
 }
 
 function projectEvents(events: SessionEvent[], viewerPubkey: string, isNew: boolean) {
@@ -138,7 +149,9 @@ async function performMessageRevalidation(
   // in the Room. Keep requesting a bounded full snapshot until at least one
   // message has actually been observed.
   const warm =
-    (cached?.messages?.length ?? 0) > 0 && cached?.cursor !== undefined && cached.backfilled === true;
+    (cached?.messages?.length ?? 0) > 0 &&
+    cached?.cursor !== undefined &&
+    cached.backfilled === true;
   const fetchStartedAt = Math.floor(Date.now() / 1000);
   const events = await transport.sessionEventsBackfill(
     channelId,
@@ -280,6 +293,12 @@ export function cacheLiveSessionEvents(
       ...(projected.mergeTarget ? { mergeTarget: projected.mergeTarget } : {}),
       ...(projected.clearMergeTarget ? { mergeTarget: null } : {}),
     });
+    // Derived Room updates are quiet. Only landed work is allowed to move the
+    // Room in the index, and doing so never changes latestMessageAt (the unread
+    // authority) or invents preview copy.
+    if (eventCursor && isLandedRoomEvent(event)) {
+      useBuzzLocalCache.getState().bumpChannelRecency(viewerPubkey, channelId, eventCursor);
+    }
   }
   return projections;
 }

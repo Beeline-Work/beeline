@@ -84,8 +84,7 @@ describe('Buzz local cache', () => {
 
     expect(mmkvWrites).toHaveBeenCalledTimes(1);
     expect(
-      JSON.parse(mmkvValues.get('buzz-local-cache-v2') ?? '{}').channels[`${viewer}:room`]
-        .roomName,
+      JSON.parse(mmkvValues.get('buzz-local-cache-v2') ?? '{}').channels[`${viewer}:room`].roomName,
     ).toBe('Final update');
   });
 
@@ -265,9 +264,9 @@ describe('Buzz local cache', () => {
     // A confirmed absence genuinely clears it.
     expect(mergedRepoName('old/name', { kind: 'none' })).toBeUndefined();
     // "Config exists but no admin authorizes it" is NOT an absence — keep.
-    expect(
-      mergedRepoName('old/name', { kind: 'unverified', reason: 'no admin author' }),
-    ).toBe('old/name');
+    expect(mergedRepoName('old/name', { kind: 'unverified', reason: 'no admin author' })).toBe(
+      'old/name',
+    );
     // A failed/thrown read is not evidence either — keep.
     expect(mergedRepoName('old/name', undefined)).toBe('old/name');
     // And nothing is invented where nothing was known before.
@@ -485,13 +484,18 @@ describe('Buzz local cache', () => {
     ).toMatchObject({ latestMessage: 'live', updatedAt: 12 });
   });
 
-  it('keeps a busy corner\'s opening narration on a cold open, past the old 50-event limit', async () => {
+  it("keeps a busy corner's opening narration on a cold open, past the old 50-event limit", async () => {
     // A relay's `limit` returns the N most recent matching events — there is
     // no way to ask for "the first N" directly. Simulate that faithfully: a
     // channel whose total kind:9 traffic (61 events: activity/status noise
     // interleaved with narration) exceeds the OLD 50-event cold-fetch cap but
     // not the current 200-event one.
-    const opening = controlEvent('opening-narration', 1, [['t', 'agent-message']], 'Starting work.');
+    const opening = controlEvent(
+      'opening-narration',
+      1,
+      [['t', 'agent-message']],
+      'Starting work.',
+    );
     const noise = Array.from({ length: 60 }, (_, index) => event(`noise-${index}`, index + 2));
     const all = [opening, ...noise];
     const sessionEventsBackfill = vi.fn((_channelId: string, opts: { limit?: number }) =>
@@ -511,14 +515,12 @@ describe('Buzz local cache', () => {
       backfilled: true,
       messages: [message('open-status', 10)],
     });
-    const sessionEventsBackfill = vi
-      .fn()
-      .mockResolvedValue([
-        controlEvent('archived-status', 11, [
-          ['t', 'body-control'],
-          ['status', 'archived'],
-        ]),
-      ]);
+    const sessionEventsBackfill = vi.fn().mockResolvedValue([
+      controlEvent('archived-status', 11, [
+        ['t', 'body-control'],
+        ['status', 'archived'],
+      ]),
+    ]);
 
     const result = await revalidateCachedMessages(
       { sessionEventsBackfill } as never,
@@ -547,15 +549,13 @@ describe('Buzz local cache', () => {
         },
       ],
     });
-    const sessionEventsBackfill = vi
-      .fn()
-      .mockResolvedValue([
-        controlEvent('archived-status', 11, [
-          ['t', 'body-control'],
-          ['subchannel', 'corner-1'],
-          ['status', 'archived'],
-        ]),
-      ]);
+    const sessionEventsBackfill = vi.fn().mockResolvedValue([
+      controlEvent('archived-status', 11, [
+        ['t', 'body-control'],
+        ['subchannel', 'corner-1'],
+        ['status', 'archived'],
+      ]),
+    ]);
 
     await revalidateCachedMessages({ sessionEventsBackfill } as never, viewer, 'room');
 
@@ -700,7 +700,9 @@ describe('Buzz local cache', () => {
 
     expect(
       useBuzzLocalCache.getState().channelLists[`${viewer}:workspace`]?.channels[0]?.corners,
-    ).toEqual([{ id: 'corner-1', name: 'implement-this', openerPubkey: 'agent', status: 'archived' }]);
+    ).toEqual([
+      { id: 'corner-1', name: 'implement-this', openerPubkey: 'agent', status: 'archived' },
+    ]);
   });
 
   it('refreshes the Room-list lifecycle when a live signal announces a newly opened corner', async () => {
@@ -789,8 +791,9 @@ describe('Buzz local cache', () => {
       latestMessageAt: 12,
       latestMessageId: 'fresh preview',
     });
-    expect(useBuzzLocalCache.getState().channelLists[`${viewer}:workspace`]?.channels[0])
-      .toMatchObject({ latestMessage: 'fresh preview', updatedAt: 12 });
+    expect(
+      useBuzzLocalCache.getState().channelLists[`${viewer}:workspace`]?.channels[0],
+    ).toMatchObject({ latestMessage: 'fresh preview', updatedAt: 12 });
   });
 
   it('does a full backfill without dropping a live event that created the cache first', async () => {
@@ -808,6 +811,63 @@ describe('Buzz local cache', () => {
     expect(
       useBuzzLocalCache.getState().channels[channelCacheKey(viewer, 'room')]?.latestMessage,
     ).toBe('live');
+  });
+
+  it('moves a merged Room by recency without changing its unread message timestamp', () => {
+    const store = useBuzzLocalCache.getState();
+    store.setChannelList({
+      viewerPubkey: viewer,
+      communityId: 'workspace',
+      channels: [
+        { id: 'other', active: true, title: 'Other', updatedAt: 15 },
+        {
+          id: 'room',
+          active: true,
+          title: 'Room',
+          latestMessage: 'ordinary conversation',
+          latestMessageAt: 10,
+          updatedAt: 10,
+        },
+      ],
+      directMessages: [],
+      workspaceMembers: [],
+      communities: [],
+      personalWorkspaceId: null,
+      viewerIsAgent: false,
+      canEditWorkspaceAvatar: false,
+      updatedAt: Date.now(),
+      lastAccessedAt: Date.now(),
+    });
+    store.patchChannel(viewer, 'room', {
+      latestMessage: 'ordinary conversation',
+      latestMessageAt: 10,
+    });
+
+    cacheLiveSessionEvent(
+      viewer,
+      'room',
+      controlEvent(
+        'landed',
+        20,
+        [
+          ['t', 'land-summary'],
+          ['subchannel', 'corner'],
+          ['tip', 'a'.repeat(40)],
+        ],
+        'Landed: the approved work.',
+      ),
+    );
+
+    const list = useBuzzLocalCache.getState().channelLists[`${viewer}:workspace`]?.channels;
+    expect(list?.map((room) => room.id)).toEqual(['room', 'other']);
+    expect(list?.[0]).toMatchObject({
+      latestMessage: 'ordinary conversation',
+      latestMessageAt: 10,
+      updatedAt: 20,
+    });
+    expect(
+      useBuzzLocalCache.getState().channels[channelCacheKey(viewer, 'room')]?.latestMessageAt,
+    ).toBe(10);
   });
 
   it('retries an empty initial snapshot with a full history read', async () => {
@@ -859,9 +919,7 @@ describe('Buzz local cache', () => {
             title: 'Room',
             latestMessage: 'settled preview',
             updatedAt: 12,
-            corners: [
-              { id: 'corner-1', name: 'work', openerPubkey: 'agent', status: 'live' },
-            ],
+            corners: [{ id: 'corner-1', name: 'work', openerPubkey: 'agent', status: 'live' }],
           },
         ],
         directMessages: [],
@@ -966,9 +1024,7 @@ describe('Buzz local cache', () => {
         updatedAt: now,
         lastAccessedAt: now,
       });
-      useBuzzLocalCache
-        .getState()
-        .replaceMessages(viewer, 'room-b', [message('m1', 5)], 5);
+      useBuzzLocalCache.getState().replaceMessages(viewer, 'room-b', [message('m1', 5)], 5);
     };
 
     it('drops the row from every list of this viewer and the transcript cache', () => {

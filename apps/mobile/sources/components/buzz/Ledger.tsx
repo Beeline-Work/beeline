@@ -144,9 +144,7 @@ function TypewriterMarkdown({
       !reducedMotion && (revealId === undefined || !hasMessageRevealed(revealId));
   }
   const animate = animateRef.current;
-  const [visibleCharacters, setVisibleCharacters] = useState(() =>
-    animate ? 0 : markdown.length,
-  );
+  const [visibleCharacters, setVisibleCharacters] = useState(() => (animate ? 0 : markdown.length));
 
   // Mark after commit, not during render: a render React discards must not
   // spend the message's one type-out. Reduced motion shows everything at once,
@@ -286,16 +284,12 @@ export function LedgerEntry({
   typewriter = false,
   mentionHandles,
 }: Omit<LedgerBodyProps, 'marginalia'> & { luminous?: boolean }) {
-  const [leadText, remainingText] = bodyText && !continued && luminous
-    ? splitLeadSentence(bodyText)
-    : ['', bodyText ?? ''];
+  const [leadText, remainingText] =
+    bodyText && !continued && luminous ? splitLeadSentence(bodyText) : ['', bodyText ?? ''];
   const bodyTextStyle = luminous ? styles.ledgerTextLuminous : styles.ledgerText;
   return (
     <View
-      style={[
-        styles.entry,
-        continued ? styles.entryContinued : styles.entryOpens,
-      ]}
+      style={[styles.entry, continued ? styles.entryContinued : styles.entryOpens]}
       testID={`chat-message-${itemId}`}
     >
       {byline ? <Byline byline={byline} /> : null}
@@ -370,6 +364,39 @@ export function LedgerSteer({
         />
       ) : null}
       {attachments}
+    </View>
+  );
+}
+
+/**
+ * One derived Room-state notice. It is metadata, not a speaker turn: no
+ * avatar, byline, rule, fill, or card. The optional landed-work digest is the
+ * sole content-tier line and reuses relay copy rather than generating prose.
+ */
+export function LedgerRoomUpdate({
+  id,
+  line,
+  stamp,
+  digest,
+}: {
+  id: string;
+  line: string;
+  stamp: string;
+  digest?: string;
+}) {
+  return (
+    <View style={styles.roomUpdate} testID={`room-update-${id}`}>
+      <Text numberOfLines={1} style={styles.roomUpdateLine} testID={`room-update-line-${id}`}>
+        {line}
+      </Text>
+      <Text numberOfLines={1} style={styles.roomUpdateStamp} testID={`room-update-stamp-${id}`}>
+        {stamp}
+      </Text>
+      {digest ? (
+        <Text numberOfLines={2} style={styles.roomUpdateDigest} testID={`room-update-digest-${id}`}>
+          {digest}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -493,6 +520,40 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.ledgerBright,
     fontSize: theme.buzz.proseSize,
     lineHeight: theme.buzz.proseLineHeight,
+  },
+  roomUpdate: {
+    position: 'relative',
+    width: '100%',
+    minWidth: 0,
+    paddingVertical: 5,
+    paddingRight: LEDGER_MARGINALIA_WIDTH + 8,
+    marginBottom: 12,
+  },
+  roomUpdateLine: {
+    fontFamily: theme.buzz.proseRegular,
+    fontStyle: 'italic',
+    color: theme.buzz.ledgerQuiet,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  roomUpdateStamp: {
+    ...Typography.mono(),
+    position: 'absolute',
+    top: 7,
+    right: 0,
+    width: LEDGER_MARGINALIA_WIDTH,
+    color: theme.buzz.ledgerGhost,
+    fontSize: 9,
+    lineHeight: 12,
+    textAlign: 'right',
+  },
+  roomUpdateDigest: {
+    fontFamily: theme.buzz.proseRegular,
+    marginTop: 4,
+    marginLeft: 18,
+    color: theme.buzz.ledgerBody,
+    fontSize: 13,
+    lineHeight: 18,
   },
   marginalia: {
     position: 'absolute',

@@ -964,6 +964,98 @@ describe('Room→repo transport', () => {
   });
 });
 
+describe('Room update structural transport', () => {
+  const identity = {
+    publicKey: 'a'.repeat(64),
+    secretKey: new Uint8Array(32).fill(1),
+    name: 'operator',
+  } as Identity;
+
+  function structuralEvent(id: string, kind: number, createdAt: number, tags: string[][]) {
+    return {
+      id,
+      kind,
+      created_at: createdAt,
+      tags,
+      content: '',
+      pubkey: identity.publicKey,
+      sig: 'e'.repeat(128),
+    };
+  }
+
+  it('backfills Room structure and exact per-corner state keys without publishing', async () => {
+    const roomCreate = structuralEvent('room-create', 9007, 1, [['h', 'room']]);
+    const member = structuralEvent('member', 9000, 2, [
+      ['h', 'room'],
+      ['p', 'b'],
+    ]);
+    const cornerCreate = structuralEvent('corner-create', 9007, 3, [
+      ['h', 'corner'],
+      ['parent', 'room'],
+    ]);
+    const cornerState = structuralEvent('corner-state', 30078, 4, [
+      ['h', 'room'],
+      ['d', 'buzz-corner-state:corner'],
+      ['t', 'buzz-corner-state'],
+      ['state', 'working'],
+    ]);
+    const query = vi.fn(async (filters: Array<Record<string, unknown>>) => {
+      const filter = filters[0]!;
+      const kinds = filter.kinds as number[];
+      if (kinds.includes(9000)) return [member];
+      if (kinds[0] === 9007 && (filter['#h'] as string[])?.includes('corner')) {
+        return [cornerCreate];
+      }
+      if (kinds[0] === 9007) return [roomCreate];
+      if ((filter['#d'] as string[])?.includes('buzz-corner-state:corner')) {
+        return [cornerState];
+      }
+      return [];
+    });
+    const client = { listSubchannels: vi.fn(async () => ['corner']), query };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(transport.roomUpdateEventsBackfill('room')).resolves.toEqual([
+      roomCreate,
+      member,
+      cornerCreate,
+      cornerState,
+    ]);
+    expect(query).toHaveBeenCalledWith([
+      expect.objectContaining({ kinds: [30078], '#d': ['buzz-corner-state:corner'] }),
+    ]);
+  });
+
+  it('subscribes replaceable records by d and new corners by parent', async () => {
+    const stopRoom = vi.fn();
+    const stopRaw = vi.fn();
+    const subscribe = vi.fn(() => stopRaw);
+    const client = {
+      listSubchannels: vi.fn(async () => ['corner']),
+      sessionEventsSubscribe: vi.fn(async () => stopRoom),
+      connect: vi.fn(async () => undefined),
+      socket: { subscribe },
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    const stop = await transport.roomUpdateEventsSubscribeReady('room', vi.fn());
+
+    expect(subscribe).toHaveBeenCalledWith(
+      [{ kinds: [30078], '#d': ['buzz-corner-state:corner'] }],
+      expect.any(Function),
+    );
+    expect(subscribe).toHaveBeenCalledWith(
+      [{ kinds: [9007], '#parent': ['room'] }],
+      expect.any(Function),
+    );
+    stop();
+    expect(stopRoom).toHaveBeenCalledOnce();
+    expect(stopRaw).toHaveBeenCalledTimes(3);
+  });
+});
+
 describe('Buzz change review metadata', () => {
   const base = 'b'.repeat(40);
   const tip = 'c'.repeat(40);

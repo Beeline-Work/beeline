@@ -863,6 +863,63 @@ describe('Buzz local cache', () => {
     ).toBe('live');
   });
 
+  it('moves a merged Room by recency without changing its unread message timestamp', () => {
+    const store = useBuzzLocalCache.getState();
+    store.setChannelList({
+      viewerPubkey: viewer,
+      communityId: 'workspace',
+      channels: [
+        { id: 'other', active: true, title: 'Other', updatedAt: 15 },
+        {
+          id: 'room',
+          active: true,
+          title: 'Room',
+          latestMessage: 'ordinary conversation',
+          latestMessageAt: 10,
+          updatedAt: 10,
+        },
+      ],
+      directMessages: [],
+      workspaceMembers: [],
+      communities: [],
+      personalWorkspaceId: null,
+      viewerIsAgent: false,
+      canEditWorkspaceAvatar: false,
+      updatedAt: Date.now(),
+      lastAccessedAt: Date.now(),
+    });
+    store.patchChannel(viewer, 'room', {
+      latestMessage: 'ordinary conversation',
+      latestMessageAt: 10,
+    });
+
+    cacheLiveSessionEvent(
+      viewer,
+      'room',
+      controlEvent(
+        'landed',
+        20,
+        [
+          ['t', 'land-summary'],
+          ['subchannel', 'corner'],
+          ['tip', 'a'.repeat(40)],
+        ],
+        'Landed: the approved work.',
+      ),
+    );
+
+    const list = useBuzzLocalCache.getState().channelLists[`${viewer}:workspace`]?.channels;
+    expect(list?.map((room) => room.id)).toEqual(['room', 'other']);
+    expect(list?.[0]).toMatchObject({
+      latestMessage: 'ordinary conversation',
+      latestMessageAt: 10,
+      updatedAt: 20,
+    });
+    expect(
+      useBuzzLocalCache.getState().channels[channelCacheKey(viewer, 'room')]?.latestMessageAt,
+    ).toBe(10);
+  });
+
   it('retries an empty initial snapshot with a full history read', async () => {
     const sessionEventsBackfill = vi
       .fn()

@@ -24,6 +24,12 @@ const permissionInfo = vi.hoisted(() => ({
 
 vi.mock('expo-router', () => ({ router: navigation }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
+vi.mock('expo-crypto', () => ({ getRandomBytes: (n: number) => new Uint8Array(n) }));
+vi.mock('expo-linking', () => ({
+  createURL: (path: string) => `beeline://${path}`,
+  addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+}));
+vi.mock('expo-web-browser', () => ({ openAuthSessionAsync: vi.fn() }));
 vi.mock('expo-haptics', () => ({
   notificationAsync: vi.fn(async () => undefined),
   NotificationFeedbackType: { Success: 'SUCCESS', Warning: 'WARNING', Error: 'ERROR' },
@@ -43,9 +49,13 @@ vi.mock('react-native-svg', async () => {
   return { Svg: host('Svg'), Path: host('Path'), Rect: host('Rect') };
 });
 vi.mock('@beeline/buzz-client', () => ({
+  adoptGitHubHandle: vi.fn(),
+  buildOidcBindEvent: vi.fn(),
   claimNip05Handle: vi.fn(),
+  finishOidcBind: vi.fn(),
   fallbackPersonName: (pubkey: string) => `Person ${pubkey.slice(0, 4)}`,
   lookupRecovery: vi.fn(async () => []),
+  lookupManagedIdentity: vi.fn(async () => null),
   Nip05ClaimError: class extends Error {
     code: string;
     constructor(code: string, message: string) {
@@ -57,6 +67,7 @@ vi.mock('@beeline/buzz-client', () => ({
   normalizePersonHandle: (value: string) => value.trim().toLowerCase() || null,
   normalizePersonName: (value: string) => value.trim() || null,
   personHandle: (name: string) => name.toLowerCase(),
+  startGitHubBind: vi.fn(),
 }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
@@ -77,6 +88,7 @@ vi.mock('@/buzz/person-name', () => ({
 vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({ relayUrl: 'https://relay.test', pushGatewayUrl: 'https://push.test' }),
 }));
+vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/constants/Typography', () => ({
   Typography: {
     default: () => ({}),

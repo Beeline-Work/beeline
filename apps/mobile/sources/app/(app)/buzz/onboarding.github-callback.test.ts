@@ -32,6 +32,11 @@ const sdk = vi.hoisted(() => ({
   lookupRecovery: vi.fn(
     async () => [] as { provider: string; subject: string; pubkey: string }[],
   ),
+  lookupManagedIdentity: vi.fn(async () => null),
+}));
+const profileClient = vi.hoisted(() => ({
+  getGlobalPersonProfile: vi.fn(async () => null),
+  setGlobalPersonProfile: vi.fn(async (profile: unknown) => profile),
 }));
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
@@ -54,6 +59,7 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
     getAuthCapabilities: sdk.getCapabilities,
     listGitHubRepositories: sdk.listRepositories,
     lookupRecovery: sdk.lookupRecovery,
+    lookupManagedIdentity: sdk.lookupManagedIdentity,
     startGitHubInstallation: sdk.startInstallation,
   };
 });
@@ -92,17 +98,18 @@ vi.mock('@/buzz/person-name', () => ({
     name: 'Ada',
     communityId: 'workspace-1',
   })),
-  savePreferredPersonName: vi.fn(),
+  savePreferredPersonName: vi.fn(async () => undefined),
 }));
 vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({ relayUrl: 'https://relay.test' }),
 }));
+vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/push/buzz-push-registration', () => ({
   registerBuzzPushNotifications: vi.fn(async () => undefined),
 }));
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
-    ensureClient = vi.fn(async () => ({}));
+    ensureClient = vi.fn(async () => profileClient);
   },
 }));
 vi.mock('react-native-safe-area-context', () => ({
@@ -208,6 +215,9 @@ describe('GitHub callback delivery into onboarding', () => {
     sdk.getCapabilities.mockResolvedValue({ github: true, oidc: true });
     sdk.listRepositories.mockResolvedValue({ installed: true, installations: [], repositories: [] });
     sdk.lookupRecovery.mockResolvedValue([]);
+    sdk.lookupManagedIdentity.mockResolvedValue(null);
+    profileClient.getGlobalPersonProfile.mockResolvedValue(null);
+    profileClient.setGlobalPersonProfile.mockClear();
   });
 
   it('renders GitHub on the first frame without waiting for auth capabilities', () => {
@@ -295,12 +305,22 @@ describe('GitHub callback delivery into onboarding', () => {
         pubkey: identity.publicKey,
       },
     ]);
+    sdk.lookupManagedIdentity.mockResolvedValue({
+      handle: 'octocat',
+      nip05: 'octocat@usebeeline.app',
+      displayName: 'The Octocat',
+      source: 'github',
+      githubRenameAvailable: false,
+    });
 
     const tree = await render();
 
+    expect(sdk.lookupManagedIdentity).toHaveBeenCalledWith('https://relay.test', identity);
+    await vi.waitFor(() =>
+      expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels'),
+    );
     expect(identityStorage.save).toHaveBeenCalledWith(identity);
     expect(identityStorage.clearPending).toHaveBeenCalledTimes(1);
-    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
     expect(browser.open).not.toHaveBeenCalled();
     expect(sdk.finish).not.toHaveBeenCalled();
     expect(noticeText(tree)).not.toContain('IDENTITY_CONFLICT');
@@ -316,6 +336,37 @@ describe('GitHub callback delivery into onboarding', () => {
     expect(identityStorage.save).toHaveBeenCalledTimes(1);
     expect(sdk.listRepositories).not.toHaveBeenCalled();
     expect(sdk.startInstallation).not.toHaveBeenCalled();
+    expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
+  });
+
+  it('lands a GitHub login with its auto-provisioned handle and NIP-05 without asking', async () => {
+    sdk.finish.mockResolvedValueOnce({
+      linked: true,
+      idempotent: false,
+      pubkey: '2'.repeat(64),
+      identity: {
+        handle: 'octocat',
+        displayName: 'The Octocat',
+        nip05: 'octocat@usebeeline.app',
+        source: 'github',
+        githubLogin: 'octocat',
+        githubRenameAvailable: false,
+      },
+    });
+    await persistGitHubSignInState(STATE);
+    linking.initialUrl = callbackUrl();
+
+    const tree = await render();
+
+    expect(profileClient.setGlobalPersonProfile).toHaveBeenCalledWith({
+      name: 'The Octocat',
+      handle: 'octocat',
+      avatar: undefined,
+      nip05: 'octocat@usebeeline.app',
+    });
+    expect(
+      tree.root.findAll((node: any) => node.props?.testID === 'onboarding-handle-ceremony'),
+    ).toHaveLength(0);
     expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
   });
 

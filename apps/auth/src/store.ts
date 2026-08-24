@@ -84,6 +84,8 @@ const MIGRATIONS = [
     recovery_eligible BOOLEAN NOT NULL DEFAULT FALSE
   )`,
   `ALTER TABLE beeline_bind_tickets ADD COLUMN IF NOT EXISTS recovery_eligible BOOLEAN NOT NULL DEFAULT FALSE`,
+  `ALTER TABLE beeline_bind_tickets ADD COLUMN IF NOT EXISTS provider_login TEXT`,
+  `ALTER TABLE beeline_bind_tickets ADD COLUMN IF NOT EXISTS provider_display_name TEXT`,
   `CREATE TABLE IF NOT EXISTS beeline_identity_links (
     community TEXT NOT NULL,
     issuer TEXT NOT NULL,
@@ -124,6 +126,32 @@ const MIGRATIONS = [
   `CREATE INDEX IF NOT EXISTS beeline_bind_tickets_expiry_idx ON beeline_bind_tickets (expires_at)`,
   `CREATE INDEX IF NOT EXISTS beeline_nip98_replays_expiry_idx ON beeline_nip98_replays (expires_at)`,
   `CREATE INDEX IF NOT EXISTS beeline_nip05_names_pubkey_idx ON beeline_nip05_names (pubkey)`,
+  `CREATE TABLE IF NOT EXISTS beeline_identity_handles (
+    community TEXT NOT NULL,
+    pubkey CHAR(64) NOT NULL,
+    handle TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    source TEXT NOT NULL CHECK (source IN ('key', 'github')),
+    github_subject TEXT,
+    github_login TEXT,
+    github_rename_available BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (community, pubkey),
+    CHECK (pubkey ~ '^[0-9a-f]{64}$')
+  )`,
+  `CREATE INDEX IF NOT EXISTS beeline_identity_handles_handle_idx
+    ON beeline_identity_handles (community, handle)`,
+  `CREATE TABLE IF NOT EXISTS beeline_github_handle_reservations (
+    community TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    handle TEXT NOT NULL,
+    pubkey CHAR(64) NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (community, subject),
+    UNIQUE (community, handle),
+    CHECK (pubkey ~ '^[0-9a-f]{64}$')
+  )`,
   `CREATE TABLE IF NOT EXISTS beeline_github_install_flows (
     state_hash CHAR(64) PRIMARY KEY,
     community TEXT NOT NULL,
@@ -297,6 +325,8 @@ interface TicketRow extends QueryResultRow {
   consumed_at: unknown | null;
   bound_pubkey: string | null;
   recovery_eligible: boolean;
+  provider_login: string | null;
+  provider_display_name: string | null;
 }
 
 export interface BindTicket {
@@ -310,7 +340,22 @@ export interface BindTicket {
   attemptCount: number;
   consumedAt: Date | null;
   boundPubkey: string | null;
+  providerLogin?: string | null;
+  providerDisplayName?: string | null;
 }
+
+export interface ManagedIdentity {
+  handle: string;
+  displayName: string;
+  nip05: string;
+  source: 'key' | 'github';
+  githubLogin?: string;
+  githubRenameAvailable: boolean;
+}
+
+export type ClaimManagedHandleResult =
+  | { status: 'claimed' | 'idempotent'; identity: ManagedIdentity }
+  | { status: 'taken' | 'already_assigned' };
 
 export interface IdentityLink {
   community: string;
@@ -428,6 +473,27 @@ function ticketFromRow(row: TicketRow): BindTicket {
     attemptCount: row.attempt_count,
     consumedAt: row.consumed_at === null ? null : asDate(row.consumed_at),
     boundPubkey: row.bound_pubkey,
+    providerLogin: row.provider_login,
+    providerDisplayName: row.provider_display_name,
+  };
+}
+
+interface ManagedIdentityRow extends QueryResultRow {
+  handle: string;
+  display_name: string;
+  source: 'key' | 'github';
+  github_login: string | null;
+  github_rename_available: boolean;
+}
+
+function managedIdentityFromRow(row: ManagedIdentityRow): ManagedIdentity {
+  return {
+    handle: row.handle,
+    displayName: row.display_name,
+    nip05: `${row.handle}@usebeeline.app`,
+    source: row.source,
+    ...(row.github_login ? { githubLogin: row.github_login } : {}),
+    githubRenameAvailable: row.github_rename_available,
   };
 }
 
@@ -507,8 +573,9 @@ export class AuthStore {
     ]);
     await this.database.query(
       `INSERT INTO beeline_bind_tickets
-        (ticket_hash, challenge, community, issuer, audience, subject, created_at, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        (ticket_hash, challenge, community, issuer, audience, subject, created_at, expires_at,
+         provider_login, provider_display_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [
         ticketHash,
         ticket.challenge,
@@ -518,13 +585,15 @@ export class AuthStore {
         ticket.subject,
         ticket.createdAt,
         ticket.expiresAt,
+        ticket.providerLogin ?? null,
+        ticket.providerDisplayName ?? null,
       ],
     );
   }
 
   async findTicket(ticketHash: string): Promise<BindTicket | null> {
     const result = await this.database.query<TicketRow>(
-      `SELECT challenge, community, issuer, audience, subject, created_at, expires_at, attempt_count, consumed_at, bound_pubkey, recovery_eligible
+      `SELECT challenge, community, issuer, audience, subject, created_at, expires_at, attempt_count, consumed_at, bound_pubkey, recovery_eligible, provider_login, provider_display_name
        FROM beeline_bind_tickets WHERE ticket_hash = $1`,
       [ticketHash],
     );
@@ -546,7 +615,7 @@ export class AuthStore {
   async consumeTicketAndLink(ticketHash: string, pubkey: string, now: Date): Promise<BindResult> {
     return this.database.transaction(async (transaction) => {
       const selected = await transaction.query<TicketRow>(
-        `SELECT challenge, community, issuer, audience, subject, created_at, expires_at, attempt_count, consumed_at, bound_pubkey, recovery_eligible
+        `SELECT challenge, community, issuer, audience, subject, created_at, expires_at, attempt_count, consumed_at, bound_pubkey, recovery_eligible, provider_login, provider_display_name
          FROM beeline_bind_tickets WHERE ticket_hash = $1 FOR UPDATE`,
         [ticketHash],
       );
@@ -617,7 +686,7 @@ export class AuthStore {
   ): Promise<RecoverBindResult> {
     return this.database.transaction(async (transaction) => {
       const selected = await transaction.query<TicketRow>(
-        `SELECT challenge, community, issuer, audience, subject, created_at, expires_at, attempt_count, consumed_at, bound_pubkey, recovery_eligible
+        `SELECT challenge, community, issuer, audience, subject, created_at, expires_at, attempt_count, consumed_at, bound_pubkey, recovery_eligible, provider_login, provider_display_name
          FROM beeline_bind_tickets WHERE ticket_hash = $1 FOR UPDATE`,
         [ticketHash],
       );
@@ -1530,25 +1599,196 @@ export class AuthStore {
     return result.rowCount === 1;
   }
 
-  /** First-come-first-served claim: inserts, or reports the existing owner on conflict. */
+  /**
+   * Assign the one canonical hosted handle for a key-only identity. GitHub
+   * reservations win, so a key ceremony can never squat a known linked login.
+   */
   async claimNip05Name(
+    community: string,
     name: string,
     pubkey: string,
     now: Date,
-  ): Promise<'claimed' | 'idempotent' | 'taken'> {
-    const inserted = await this.database.query<QueryResultRow>(
-      `INSERT INTO beeline_nip05_names (name, pubkey, created_at)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (name) DO NOTHING
-       RETURNING name`,
-      [name, pubkey, now],
+  ): Promise<ClaimManagedHandleResult> {
+    return this.database.transaction(async (transaction) => {
+      const assigned = await transaction.query<ManagedIdentityRow>(
+        `SELECT handle, display_name, source, github_login, github_rename_available
+         FROM beeline_identity_handles
+         WHERE community = $1 AND pubkey = $2
+         FOR UPDATE`,
+        [community, pubkey],
+      );
+      if (assigned.rows[0]) {
+        return assigned.rows[0].handle === name
+          ? { status: 'idempotent', identity: managedIdentityFromRow(assigned.rows[0]) }
+          : { status: 'already_assigned' };
+      }
+
+      const reservation = await transaction.query<QueryResultRow & { pubkey: string }>(
+        `SELECT pubkey FROM beeline_github_handle_reservations
+         WHERE community = $1 AND handle = $2`,
+        [community, name],
+      );
+      if (reservation.rows[0] && reservation.rows[0].pubkey !== pubkey) {
+        return { status: 'taken' };
+      }
+
+      const inserted = await transaction.query<QueryResultRow>(
+        `INSERT INTO beeline_nip05_names (name, pubkey, created_at)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (name) DO NOTHING
+         RETURNING name`,
+        [name, pubkey, now],
+      );
+      if (inserted.rowCount !== 1) {
+        const existing = await transaction.query<QueryResultRow & { pubkey: string }>(
+          `SELECT pubkey FROM beeline_nip05_names WHERE name = $1`,
+          [name],
+        );
+        if (existing.rows[0]?.pubkey !== pubkey) return { status: 'taken' };
+      }
+
+      const identity = await transaction.query<ManagedIdentityRow>(
+        `INSERT INTO beeline_identity_handles
+          (community, pubkey, handle, display_name, source, created_at, updated_at)
+         VALUES ($1, $2, $3, $3, 'key', $4, $4)
+         RETURNING handle, display_name, source, github_login, github_rename_available`,
+        [community, pubkey, name, now],
+      );
+      return {
+        status: inserted.rowCount === 1 ? 'claimed' : 'idempotent',
+        identity: managedIdentityFromRow(identity.rows[0]!),
+      };
+    });
+  }
+
+  /** Reconcile a verified GitHub login onto the already-bound device key. */
+  async provisionGitHubIdentity(
+    community: string,
+    subject: string,
+    pubkey: string,
+    login: string,
+    displayName: string,
+    now: Date,
+  ): Promise<ManagedIdentity> {
+    return this.database.transaction(async (transaction) => {
+      // GitHub confirms the login's current owner. Drop any stale reservation
+      // left by a different subject that previously held the same login.
+      await transaction.query(
+        `DELETE FROM beeline_github_handle_reservations
+         WHERE community = $1 AND handle = $3 AND subject <> $2`,
+        [community, subject, login],
+      );
+      await transaction.query(
+        `INSERT INTO beeline_github_handle_reservations
+          (community, subject, handle, pubkey, updated_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (community, subject) DO UPDATE SET
+           handle = EXCLUDED.handle,
+           pubkey = EXCLUDED.pubkey,
+           updated_at = EXCLUDED.updated_at`,
+        [community, subject, login, pubkey, now],
+      );
+      // A GitHub login is authoritative for its hosted NIP-05 name. This also
+      // reconciles the rare case where a key-only claim predated our first
+      // verified sighting of that GitHub account.
+      await transaction.query(
+        `INSERT INTO beeline_nip05_names (name, pubkey, created_at)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (name) DO UPDATE SET pubkey = EXCLUDED.pubkey`,
+        [login, pubkey, now],
+      );
+      // The hosted namespace is global. If this GitHub login was claimed by a
+      // key before its owner first linked, revoke that stale managed identity;
+      // its next authenticated lookup resumes the handle ceremony.
+      await transaction.query(
+        `DELETE FROM beeline_identity_handles
+         WHERE handle = $1 AND pubkey <> $2`,
+        [login, pubkey],
+      );
+
+      const existing = await transaction.query<ManagedIdentityRow>(
+        `SELECT handle, display_name, source, github_login, github_rename_available
+         FROM beeline_identity_handles
+         WHERE community = $1 AND pubkey = $2
+         FOR UPDATE`,
+        [community, pubkey],
+      );
+      let result: SqlResult<ManagedIdentityRow>;
+      if (existing.rows[0]) {
+        result = await transaction.query<ManagedIdentityRow>(
+          `UPDATE beeline_identity_handles SET
+             github_subject = $3,
+             github_login = $4,
+             github_rename_available = (handle <> $4),
+             display_name = CASE WHEN source = 'github' THEN $5 ELSE display_name END,
+             updated_at = $6
+           WHERE community = $1 AND pubkey = $2
+           RETURNING handle, display_name, source, github_login, github_rename_available`,
+          [community, pubkey, subject, login, displayName, now],
+        );
+      } else {
+        result = await transaction.query<ManagedIdentityRow>(
+          `INSERT INTO beeline_identity_handles
+            (community, pubkey, handle, display_name, source, github_subject, github_login,
+             github_rename_available, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, 'github', $5, $3, FALSE, $6, $6)
+           RETURNING handle, display_name, source, github_login, github_rename_available`,
+          [community, pubkey, login, displayName, subject, now],
+        );
+      }
+      return managedIdentityFromRow(result.rows[0]!);
+    });
+  }
+
+  async managedIdentity(community: string, pubkey: string): Promise<ManagedIdentity | null> {
+    const result = await this.database.query<ManagedIdentityRow>(
+      `SELECT handle, display_name, source, github_login, github_rename_available
+       FROM beeline_identity_handles
+       WHERE community = $1 AND pubkey = $2`,
+      [community, pubkey],
     );
-    if (inserted.rowCount === 1) return 'claimed';
-    const existing = await this.database.query<QueryResultRow & { pubkey: string }>(
-      `SELECT pubkey FROM beeline_nip05_names WHERE name = $1`,
-      [name],
-    );
-    return existing.rows[0]?.pubkey === pubkey ? 'idempotent' : 'taken';
+    return result.rows[0] ? managedIdentityFromRow(result.rows[0]) : null;
+  }
+
+  /** Consume the single GitHub-handle rename offered after an in-place link. */
+  async adoptGitHubHandle(
+    community: string,
+    pubkey: string,
+    now: Date,
+  ): Promise<{ status: 'renamed'; identity: ManagedIdentity } | { status: 'unavailable' }> {
+    return this.database.transaction(async (transaction) => {
+      const selected = await transaction.query<ManagedIdentityRow>(
+        `SELECT handle, display_name, source, github_login, github_rename_available
+         FROM beeline_identity_handles
+         WHERE community = $1 AND pubkey = $2
+           AND github_login IS NOT NULL
+           AND github_rename_available = TRUE
+         FOR UPDATE`,
+        [community, pubkey],
+      );
+      const current = selected.rows[0];
+      if (!current?.github_login) return { status: 'unavailable' };
+
+      await transaction.query(
+        `DELETE FROM beeline_nip05_names
+         WHERE name = $1 AND pubkey = $2`,
+        [current.handle, pubkey],
+      );
+      const updated = await transaction.query<ManagedIdentityRow>(
+        `UPDATE beeline_identity_handles SET
+           handle = github_login,
+           source = 'github',
+           display_name = CASE WHEN display_name = handle THEN github_login ELSE display_name END,
+           github_rename_available = FALSE,
+           updated_at = $3
+         WHERE community = $1 AND pubkey = $2
+         RETURNING handle, display_name, source, github_login, github_rename_available`,
+        [community, pubkey, now],
+      );
+      return updated.rows[0]
+        ? { status: 'renamed', identity: managedIdentityFromRow(updated.rows[0]) }
+        : { status: 'unavailable' };
+    });
   }
 
   async resolveNip05Name(name: string): Promise<string | null> {

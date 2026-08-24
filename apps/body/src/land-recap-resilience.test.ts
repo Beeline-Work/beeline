@@ -316,7 +316,7 @@ describe('a landed corner is recapped even when the relay or the session misbeha
     }
   });
 
-  it('recaps on a bounded budget when the corner session never answers', async () => {
+  it('recaps without waiting on a corner session that never answers', async () => {
     const agent = newIdentity('land-recap-wedged');
     const { root, repoPath, cornerPath, tip } = localOnlyCorner();
     const published = capturePublishes();
@@ -328,28 +328,21 @@ describe('a landed corner is recapped even when the relay or the session misbeha
       Reflect.set(body, 'archiveSubchannel', async () => undefined);
       // The archive that follows a land takes the ACP session with it. A
       // request left in flight against a stopped backend simply never answers.
-      Reflect.set(body, 'promptAgent', () => new Promise(() => {}));
+      const promptAgent = vi.fn(() => new Promise(() => {}));
+      Reflect.set(body, 'promptAgent', promptAgent);
 
-      vi.useFakeTimers();
-      let tickFinished = false;
-      void Reflect.get(body, 'publishMergeReady')
-        .call(body, info)
-        .then(() => Reflect.get(body, 'pollDirectRemoteApprovals').call(body))
-        .then(() => {
-          tickFinished = true;
-        });
-      // Far past any budget a recap turn could reasonably claim, and well past
-      // the whole maintenance tick it is running inside.
-      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      await Reflect.get(body, 'publishMergeReady').call(body, info);
+      await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
 
-      expect(tickFinished).toBe(true);
+      // Recap composition is deterministic host work. In particular, it must
+      // not wait on the corner session that landing is about to archive.
+      expect(promptAgent).not.toHaveBeenCalled();
       const summaries = landSummaries(published);
       expect(summaries).toHaveLength(1);
       // The deterministic recap, not silence.
       expect(summaries[0]!.content).toContain('title the haiku section three seasons');
       expect(summaries[0]!.content).toContain(`Landed on master at ${tip.slice(0, 12)}.`);
     } finally {
-      vi.useRealTimers();
       rmSync(root, { recursive: true, force: true });
     }
   });

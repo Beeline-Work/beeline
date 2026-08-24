@@ -183,6 +183,12 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="settings/language"
+                options={{
+                    headerTitle: t('settingsLanguage.title'),
+                }}
+            />
+            <Stack.Screen
                 name="changelog"
                 options={{
                     headerShown: false,

@@ -21,6 +21,7 @@ import {
 } from '@/utils/userMessageBubbleColor';
 import * as React from 'react';
 import { AnimatedCollapsible } from '@/components/AnimatedOverlay';
+import { SettingsNavigationRow } from '@/components/buzz/SettingsNavigationRow';
 
 const appThemes = {
     obsidian: obsidianTheme,
@@ -254,11 +255,17 @@ export default function AppearanceSettingsScreen() {
             </ItemGroup>
 
             {/* Language Settings */}
-            <ItemGroup title={t('settingsLanguage.title')} footer={t('settingsLanguage.description')}>
-                <Item
-                    title={t('settingsLanguage.currentLanguage')}
-                    detail={getLanguageDisplayText()}
+            <ItemGroup
+                title={t('settingsLanguage.title')}
+                footer={t('settingsLanguage.description')}
+                containerStyle={stylesheet.navigationGroup}
+            >
+                <SettingsNavigationRow
+                    glyph="Aa"
+                    label={t('settingsLanguage.currentLanguage')}
+                    supportingCopy={getLanguageDisplayText()}
                     onPress={() => router.push('/settings/language')}
+                    testID="language-settings-link"
                 />
             </ItemGroup>
 
@@ -417,6 +424,9 @@ export default function AppearanceSettingsScreen() {
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
+    navigationGroup: {
+        borderTopWidth: 0,
+    },
     dropdownValue: {
         flexDirection: 'row',
         alignItems: 'center',

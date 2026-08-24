@@ -8,12 +8,12 @@
  *
  * With no room ids, the owner-visible kind:9 traffic from the last 14 days
  * names the candidate rooms. Each line shows the resolved NotificationContext,
- * whether a chat-shaped event is notifiable, and whether the suppression gates
- * would block it — exactly what handleRelayEvent would decide.
+ * whether the quiet default policy qualifies a chat-shaped event, and whether
+ * the suppression gates would block it — exactly what handleRelayEvent decides.
  */
 import { readFile } from 'node:fs/promises';
 import { queryEvents } from '@beeline/buzz-client';
-import { isNotifiableEvent, isSuppressedFixtureNotification } from '../src/mapping.js';
+import { isSuppressedFixtureNotification, mapEventToNotification } from '../src/mapping.js';
 import { NotificationMetadataResolver } from '../src/metadata.js';
 
 const relayHttp = {
@@ -72,11 +72,11 @@ async function main(): Promise<void> {
     } as const;
     try {
       const context = await new NotificationMetadataResolver().resolve(probe, reader);
-      const notifiable = isNotifiableEvent(probe);
-      const suppressed = notifiable ? isSuppressedFixtureNotification(probe, context) : null;
+      const plan = mapEventToNotification(probe, context);
+      const suppressed = plan ? isSuppressedFixtureNotification(probe, context) : null;
       const verdict =
-        !notifiable || suppressed === null
-          ? 'not-notifiable-kind'
+        !plan || suppressed === null
+          ? 'fatigue-policy-ambient'
           : suppressed
             ? 'SUPPRESSED'
             : 'would-notify';

@@ -37,8 +37,9 @@ function nextCommandsTimestamp(): number {
   return lastCommandsTimestamp;
 }
 
-function commandsKey(communityId: string, agentPubkey: string): string {
-  return `${communityId}:${agentPubkey}`;
+/** Canonical replaceable-record key shared by command publishers and readers. */
+export function agentCommandsKey(workspaceRootId: string, agentPubkey: string): string {
+  return `${workspaceRootId}:${agentPubkey}`;
 }
 
 /** Bounds keeping one replaceable event well under relay size limits. */
@@ -103,7 +104,7 @@ export function parseAgentCommands(event: NostrEvent): AgentCommandList | null {
   const communityId = tagValue(event, 'h');
   const agentPubkey = tagValue(event, 'p');
   if (!communityId || tagValue(event, TAG_COMMUNITY) !== communityId || !agentPubkey) return null;
-  if (tagValue(event, 'd') !== commandsKey(communityId, agentPubkey)) return null;
+  if (tagValue(event, 'd') !== agentCommandsKey(communityId, agentPubkey)) return null;
   if (event.pubkey !== agentPubkey) return null; // self-authored only
   try {
     const content = JSON.parse(event.content) as Record<string, unknown>;
@@ -137,7 +138,7 @@ export async function publishAgentCommands(
       created_at: nextCommandsTimestamp(),
       kind: KIND_AGENT_COMMANDS,
       tags: [
-        ['d', commandsKey(communityId, agentPubkey)],
+        ['d', agentCommandsKey(communityId, agentPubkey)],
         ['h', communityId],
         ['p', agentPubkey],
         ['t', TAG_AGENT_COMMANDS],
@@ -158,7 +159,11 @@ export async function getAgentCommands(
   agentPubkey: string,
 ): Promise<AgentCommandList | null> {
   const events = await query(ctx, [
-    { kinds: [KIND_AGENT_COMMANDS], '#d': [commandsKey(communityId, agentPubkey)], limit: 5 },
+    {
+      kinds: [KIND_AGENT_COMMANDS],
+      '#d': [agentCommandsKey(communityId, agentPubkey)],
+      limit: 5,
+    },
   ]);
   let latest: AgentCommandList | null = null;
   for (const event of events) {

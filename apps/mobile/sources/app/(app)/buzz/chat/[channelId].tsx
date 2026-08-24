@@ -98,6 +98,7 @@ import {
   sectionRoomParticipants,
   sectionRoomRoster,
   selectedMentionAgentPubkey,
+  selectedMentionPubkeys,
 } from '@/buzz/room-participants';
 import {
   resolveAgentDisplayIdentity,
@@ -221,6 +222,7 @@ import {
   APPROVAL_ACK_TIMEOUT_MS,
   approvalTimeoutMessage,
   nextApprovalState,
+  type ApprovalUiState,
 } from '@/buzz/approval-state';
 
 type RoomMemberOption = {
@@ -459,6 +461,7 @@ export default function BuzzChat() {
   // typing so an async roster refresh cannot turn a selected agent into an
   // unaddressed plain Room message.
   const selectedAgentMentionsRef = useRef(new Map<string, string>());
+  const selectedMentionsRef = useRef(new Map<string, string>());
   // When each agent was last told about, so a standing offline condition is
   const sendInFlightRef = useRef(false);
 
@@ -471,8 +474,8 @@ export default function BuzzChat() {
   const [dismissedMentionKey, setDismissedMentionKey] = useState<string | null>(null);
   const [highlightedSlashVerbIndex, setHighlightedSlashVerbIndex] = useState(0);
   const [dismissedSlashText, setDismissedSlashText] = useState<string | null>(null);
-  /** Per-agent published command lists (null = read resolved absent/unreadable). */
-  const [agentCommandsByPubkey, setAgentCommandsByPubkey] = useState<
+  /** Per-Room+agent command lists (null = read resolved and no record exists). */
+  const [agentCommandsByScope, setAgentCommandsByScope] = useState<
     Record<string, AgentCommandList | null>
   >({});
   const [sending, setSending] = useState(false);
@@ -484,27 +487,27 @@ export default function BuzzChat() {
     initialChannelCache?.mergeTarget ?? null,
   );
   /** Branch/PR preview deployment for the merge-ready tip, when one exists.
-   *  Never part of `mergeTarget` — that object is the exact signed approval
-   *  binding and must not grow a cosmetic field. */
+   *  Never part of `mergeTarget` — that object contains only signed approval
+   *  binding fields and must not grow a cosmetic field. */
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   // Why the corner has nothing ready, when it has an answer — the review
   // panel otherwise shows the same generic placeholder whether the corner
   // hasn't finished yet or explicitly declined to surface a review.
   const [mergeNotReadyReason, setMergeNotReadyReason] = useState<string | null>(null);
-  // 'delivering' means the approval publish itself was accepted by the relay
-  // — landing/confirming is still in progress or retrying, never "done".
+  // Local relay acceptance and daemon landing are separate visible states;
+  // neither is terminal until a durable landed event names the resulting tip.
   // 'failed' means a durable publish on the landing path (push, land, or
   // merge-gate attempt) failed or could not be confirmed. Whether anything is
   // still happening after that is NOT inferable here — the daemon says so on
   // the failure event itself, and `deliveryRetry` below carries its answer.
-  const [approvalState, setApprovalState] = useState<
-    'none' | 'sending' | 'delivering' | 'failed' | 'merged'
-  >('none');
+  const [approvalState, setApprovalState] = useState<ApprovalUiState>('none');
   // The daemon confirmed it CONSUMED the signed approval (`decision=accepted`
   // ack) and is landing it. This is what lets DELIVERING resolve on evidence:
   // before this existed, a missed archive event or silent daemon left the
   // spinner up forever. Cleared whenever the panel reopens for a new review.
   const [approvalAcked, setApprovalAcked] = useState(false);
+  const [approvalNeedsReapprove, setApprovalNeedsReapprove] = useState(false);
+  const [landedApprovalTip, setLandedApprovalTip] = useState<string | null>(null);
   // The daemon's own posture after a failed land. This screen used to hard-code
   // "RETRYING AUTOMATICALLY", which is false for a land the daemon has stopped
   // re-attempting (a moved target being rebased, or one it has given up on) —
@@ -917,20 +920,24 @@ export default function BuzzChat() {
     );
     return match?.pubkey ?? null;
   }, [mentionSlash, mentionableAgents]);
+  const mentionAgentCommandScope = mentionSlashAgentPubkey
+    ? `${decodedId}:${mentionSlashAgentPubkey}`
+    : null;
   const mentionAgentCommands = useMemo(() => {
-    if (!mentionSlash || !mentionSlashAgentPubkey) return [];
-    const published = agentCommandsByPubkey[mentionSlashAgentPubkey];
+    if (!mentionSlash || !mentionAgentCommandScope) return [];
+    const published = agentCommandsByScope[mentionAgentCommandScope];
     return (published?.commands ?? []).filter((command) =>
       matchesAgentCommand(command, mentionSlash.query),
     );
-  }, [agentCommandsByPubkey, mentionSlash, mentionSlashAgentPubkey]);
+  }, [agentCommandsByScope, mentionAgentCommandScope, mentionSlash]);
   // True only once the read RESOLVED (absent or empty list): an in-flight or
   // failed read is unknown, never "does not advertise".
   const mentionAgentLacksCommands = Boolean(
     mentionSlash &&
     mentionSlashAgentPubkey &&
-    agentCommandsByPubkey[mentionSlashAgentPubkey] !== undefined &&
-    (agentCommandsByPubkey[mentionSlashAgentPubkey]?.commands.length ?? 0) === 0,
+    mentionAgentCommandScope &&
+    agentCommandsByScope[mentionAgentCommandScope] !== undefined &&
+    (agentCommandsByScope[mentionAgentCommandScope]?.commands.length ?? 0) === 0,
   );
   const pendingCornerRequest = useMemo(() => {
     for (let index = combinedMessages.length - 1; index >= 0; index -= 1) {
@@ -998,29 +1005,35 @@ export default function BuzzChat() {
   }, [currentSlashQuery, mentionSlash?.query, paletteItemCount]);
   // Load the addressed agent's published command list on demand — the palette
   // renders ONLY from this published record, never a hardcoded inventory. A
-  // failed read resolves null ("unknown", rendered as lacks-commands), never
-  // blocks typing.
+  // failed read stays unknown and never blocks typing.
   useEffect(() => {
     const pubkey = mentionSlashAgentPubkey;
-    if (!pubkey || !transport || !activeCommunityId) return;
-    if (agentCommandsByPubkey[pubkey] !== undefined) return;
+    const scope = mentionAgentCommandScope;
+    if (!pubkey || !scope || !transport) return;
+    if (agentCommandsByScope[scope] !== undefined) return;
     let cancelled = false;
     transport
-      .agentCommandsRead(activeCommunityId, pubkey)
+      .agentCommandsRead(decodedId, pubkey, activeCommunityId ?? undefined)
       .then((list) => {
         if (!cancelled) {
-          setAgentCommandsByPubkey((current) => ({ ...current, [pubkey]: list }));
+          setAgentCommandsByScope((current) => ({ ...current, [scope]: list }));
         }
       })
       .catch(() => {
-        if (!cancelled) {
-          setAgentCommandsByPubkey((current) => ({ ...current, [pubkey]: null }));
-        }
+        // A transport failure is not evidence that no record exists. Keep the
+        // scope unresolved so the palette never makes a false absence claim.
       });
     return () => {
       cancelled = true;
     };
-  }, [activeCommunityId, agentCommandsByPubkey, mentionSlashAgentPubkey, transport]);
+  }, [
+    activeCommunityId,
+    agentCommandsByScope,
+    decodedId,
+    mentionAgentCommandScope,
+    mentionSlashAgentPubkey,
+    transport,
+  ]);
   // `null` means "show a skeleton": the channel kind or its name is still
   // resolving and no honest word exists yet. A corner never renders the Room
   // label as a stand-in for its own slug.
@@ -1576,6 +1589,7 @@ export default function BuzzChat() {
             if (projected.deliveryFailed) {
               setApprovalState((current) => (current === 'merged' ? current : 'failed'));
               setDeliveryRetry(projected.deliveryRetry);
+              setApprovalError(projected.deliveryFailureReason ?? 'The daemon could not land this change.');
             }
             // The daemon's receipt for THIS signed approval: accepted (it is
             // landing the approved tip — stop claiming "delivering", which no
@@ -1583,9 +1597,20 @@ export default function BuzzChat() {
             if (projected.approvalAck?.decision === 'accepted') {
               setApprovalAcked(true);
               setApprovalError(null);
+              setApprovalNeedsReapprove(false);
             } else if (projected.approvalAck?.decision === 'rejected') {
               setApprovalAcked(false);
               setDeliveryRetry(undefined);
+              setApprovalNeedsReapprove(true);
+              setApprovalError(
+                projected.message?.text ??
+                  'The change moved after your approval (new commits). Review the update and re-approve.',
+              );
+            }
+            if (projected.deliveryLanded) {
+              setLandedApprovalTip(projected.landedTip ?? mergeTargetTipRef.current);
+              setApprovalError(null);
+              setApprovalNeedsReapprove(false);
             }
             applyAgentPresence(projected.agentPresence);
           }
@@ -1967,6 +1992,7 @@ export default function BuzzChat() {
         text,
         selectedAgentMentionsRef.current,
       );
+      const mentionedPubkeys = selectedMentionPubkeys(text, selectedMentionsRef.current);
       const mentionedAgent = replyTarget?.isAgent
         ? replyTarget.authorPubkey
         : parentChannelId
@@ -1981,10 +2007,16 @@ export default function BuzzChat() {
             replyTarget.messageId,
             mentionedAgent,
             attachments,
+            mentionedPubkeys,
           )
         : await transport.messageSubmitWithEventId(
             { sessionId: decodedId, text, attachments },
-            mentionedAgent ? { mentionAgent: mentionedAgent } : undefined,
+            mentionedAgent || mentionedPubkeys.length
+              ? {
+                  ...(mentionedAgent ? { mentionAgent: mentionedAgent } : {}),
+                  ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
+                }
+              : undefined,
           );
       useBuzzLocalCache
         .getState()
@@ -2081,6 +2113,7 @@ export default function BuzzChat() {
       if (participant.kind === 'agent') {
         selectedAgentMentionsRef.current.set(participant.handle, participant.pubkey);
       }
+      selectedMentionsRef.current.set(participant.handle, participant.pubkey);
       const nextSelection = { start: inserted.cursor, end: inserted.cursor };
       const completedMention = activeMentionAtCursor(inserted.text, inserted.cursor);
       inputTextRef.current = inserted.text;
@@ -2749,9 +2782,9 @@ export default function BuzzChat() {
   // reconnecting daemon will honor it — the message says exactly that, so an
   // approval can never hang silently again (the 2026-08-23 live defect).
   useEffect(() => {
-    if (approvalState !== 'delivering' || approvalAcked) return;
+    if (approvalState !== 'sent' || approvalAcked) return;
     const timer = setTimeout(() => {
-      setApprovalState((current) => (current === 'delivering' ? 'failed' : current));
+      setApprovalState((current) => (current === 'sent' ? 'timeout' : current));
       setApprovalError(approvalTimeoutMessage());
     }, APPROVAL_ACK_TIMEOUT_MS);
     return () => clearTimeout(timer);
@@ -2766,7 +2799,7 @@ export default function BuzzChat() {
       if (!result.success)
         throw new Error(result.message ?? 'Approval was not accepted by the relay');
       setApprovalAcked(false);
-      setApprovalState('delivering');
+      setApprovalState('sent');
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
       console.warn('Approval failed:', err);
@@ -3635,20 +3668,27 @@ export default function BuzzChat() {
                         <PixelLoader compact />
                         <Text style={styles.approvalStateText}>SENDING APPROVAL</Text>
                       </View>
-                    ) : approvalState === 'delivering' ? (
-                      // Approval accepted by the relay — landing/confirming
-                      // is still in progress. Must never read the same as
-                      // MERGED: that word describes only a durably confirmed
-                      // outcome (the archiveChannel projection below). Once
-                      // the daemon's ack arrives the claim narrows to what
-                      // someone actually took custody of; before that, the
-                      // ack timeout below resolves the state honestly.
-                      <View style={styles.approvalPending} testID="approve-corner-delivering">
+                    ) : approvalState === 'sent' ? (
+                      <View style={styles.approvalSent} testID="approve-corner-sent">
+                        <Text style={styles.approvalSentText}>APPROVAL SENT ✓</Text>
+                        <Text style={styles.approvalStateText}>WAITING FOR THE AGENT TO PICK IT UP</Text>
+                      </View>
+                    ) : approvalState === 'landing' ? (
+                      <View style={styles.approvalPending} testID="approve-corner-landing">
+                        <PixelLoader compact />
+                        <Text style={styles.approvalStateText}>APPROVAL RECEIVED — LANDING…</Text>
+                      </View>
+                    ) : approvalState === 'realigning' ? (
+                      <View style={styles.approvalPending} testID="approve-corner-realigned">
                         <PixelLoader compact />
                         <Text style={styles.approvalStateText}>
-                          {approvalAcked
-                            ? '✓ APPROVAL RECEIVED · LANDING…'
-                            : '✓ APPROVAL SENT · DELIVERING…'}
+                          REALIGNED — LANDING WITH YOUR EXISTING APPROVAL…
+                        </Text>
+                      </View>
+                    ) : approvalState === 'timeout' ? (
+                      <View style={styles.approvalSent} testID="approve-corner-timeout">
+                        <Text style={styles.approvalStateText}>
+                          THE AGENT HASN’T PICKED IT UP YET · OFFLINE?
                         </Text>
                       </View>
                     ) : approvalState === 'failed' ? (
@@ -3665,15 +3705,27 @@ export default function BuzzChat() {
                                 ? '⚠ COULDN’T LAND · WAITING ON YOU'
                                 : '⚠ DELIVERY FAILED · SEE THE CORNER FOR DETAILS'}
                         </Text>
+                        {approvalNeedsReapprove ? (
+                          <TouchableOpacity
+                            accessibilityRole="button"
+                            onPress={handleApprove}
+                            style={styles.approveButton}
+                            testID="reapprove-corner"
+                          >
+                            <Text style={styles.approveButtonText}>RE-APPROVE UPDATED CHANGE</Text>
+                          </TouchableOpacity>
+                        ) : null}
                       </View>
                     ) : (
                       <View style={styles.approvalSent}>
-                        <Text style={styles.approvalSentText}>✓ MERGED</Text>
+                        <Text style={styles.approvalSentText} testID="approve-corner-landed">
+                          LANDED AT {(landedApprovalTip ?? mergeTarget?.tip ?? '').slice(0, 12)} ✓
+                        </Text>
                       </View>
                     )}
                     {approvalError ? (
                       <Text style={styles.approvalStateText} testID="approve-corner-error">
-                        APPROVAL FAILED · {approvalError}
+                        {approvalError}
                       </Text>
                     ) : null}
                   </HullSurface>

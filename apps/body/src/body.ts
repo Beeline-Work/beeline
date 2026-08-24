@@ -72,6 +72,7 @@ import {
   serializeRepoLanding,
   type Identity,
   type RelayClient,
+  type RelayReader,
 } from '@beeline/gate';
 import {
   createBuzzClient,
@@ -125,9 +126,12 @@ import {
   type CornerMachineReason,
   type CornerMachineState,
   type CornerStateRecord,
+  DEFAULT_RELAY_BASE_URL,
+  isProductionRelayHost,
 } from '@beeline/buzz-client';
 import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { performBrokeredPush } from './push-broker.js';
+import { reviewPatchId } from './review-content.js';
 import { CornerStatePublisher } from './corner-state.js';
 import { isArchivedChannelError } from './archived-channel.js';
 import type { BodyConfig, SessionMode } from './config.js';
@@ -749,20 +753,34 @@ export interface SubchannelInfo {
   /** When this corner was opened, in ms — used to spot a repeated open-a-corner. */
   openedAt?: number;
   /** Exact target advertised to the human merge gate once work is pushed. */
-  mergeTarget?: { repo: string; branch: string; tip: string };
+  mergeTarget?: { repo: string; branch: string; tip: string; patchId?: string };
   /** Latest agent-authored completion summary. */
   mergeSummary?: string;
   /** Exact reason from the latest rejected merge-readiness check. Cleared only
    *  after a real review target is published. */
   lastMergeNotReadyReason?: string;
-  /** Exact signed human approval that authorizes landing and archive cleanup. */
-  humanMergeApproval?: { id: string; reviewer: string; tip: string };
+  /** Signed human approval, verified against this tip by SHA or patch identity. */
+  humanMergeApproval?: {
+    id: string;
+    reviewer: string;
+    /** Current tip this approval was content-verified to authorize. */
+    tip: string;
+    /** Tip on the signed card. Differs from `tip` after a pure rebase. */
+    approvedTip?: string;
+    patchId?: string;
+    realigned?: boolean;
+  };
   /** Approval event ids this corner has already answered with an
    *  `buzz-merge-approval-ack` rejection (stale tip), so the honest reply is
    *  sent once instead of once per maintenance tick. */
   rejectedApprovalIds?: Set<string>;
-  /** Approval event id whose acceptance was confirmed published. Kept so a
-   *  re-found approval on a later poll does not republish the ack. */
+  /** Latest approval-read outage already surfaced for this review tip. The
+   *  poll keeps retrying, but the transcript gets one durable reason card
+   *  instead of one identical card per maintenance tick. */
+  lastApprovalReadFailure?: { tip: string; reason: string };
+  /** Approval id + current target tip whose acceptance was confirmed
+   *  published. A pure rebase keeps the approval id but must publish a second,
+   *  explicit realignment receipt for the rewritten target. */
   ackedApprovalId?: string;
   /**
    * What the human was actually shown for review, captured when merge-ready
@@ -1166,6 +1184,7 @@ function approvalAckTags(
     ['repo', target.repo],
     ['branch', target.branch],
     ['tip', target.tip],
+    ...(target.patchId ? [['patch-id', target.patchId]] : []),
     ['agent', agentPubkey],
   ];
 }
@@ -1233,12 +1252,12 @@ interface PendingReleaseProposal extends ReleaseCornerBrief {
   expiresAt: number;
 }
 /**
- * Truthful retry posture for a corner-scoped delivery failure. `auto` is the
- * only value that may claim the daemon keeps retrying on its own; `blocked`
- * means nothing further happens until a human says something. Never guess — a
- * missing tag means "unknown", which a client must render without any retry claim.
+ * Truthful retry posture for a corner-scoped delivery failure. `auto` retries
+ * the same operation, `realigning` runs the target-sync turn, and `blocked`
+ * means nothing further happens until a human says something. Never guess: a
+ * missing tag means "unknown", which a client renders without a retry claim.
  */
-export type DeliveryRetryPosture = 'auto' | 'blocked';
+export type DeliveryRetryPosture = 'auto' | 'realigning' | 'blocked';
 
 /**
  * Maintenance ticks a refused land recap may hold a landed corner's archive
@@ -6249,13 +6268,9 @@ export class Body {
     this.runningAgentTasks.set(info.subchannelId, task);
   }
 
-  /**
-   * Best-effort `repo`/`branch`/`tip` tags for a corner-scoped failure
-   * message — `apps/push-gateway/src/mapping.ts`'s `isNotifiableEvent`
-   * requires all three on a `body-control` event to make it push-notifiable.
+  /** Best-effort `repo`/`branch`/`tip` context for a corner-scoped failure.
    * Falls back to whatever subset is actually known rather than fabricating
-   * a value; never throws.
-   */
+   * a value; never throws. */
   private deliveryFailureTags(info: SubchannelInfo): string[][] {
     if (!info.boundRepo) return [];
     const tags: string[][] = [
@@ -6426,6 +6441,7 @@ export class Body {
       repo: this.repoId(boundRepo),
       branch: boundRepo.targetBranch ?? 'refs/heads/main',
       tip,
+      patchId: undefined as string | undefined,
     };
     const currentTarget = await this.currentReviewTargetTip(info, target.branch);
     const targetIsAncestor = Boolean(
@@ -6442,6 +6458,7 @@ export class Body {
       ? currentTarget.tip!
       : resolveReviewBaseTip(info.worktreePath, target.branch);
     const files = listChangeReviewFiles(info.worktreePath, base, tip);
+    target.patchId = reviewPatchId(info.worktreePath, base, tip);
     const status = git(info.worktreePath, [
       'status',
       '--porcelain=v1',
@@ -6453,7 +6470,7 @@ export class Body {
       status,
       info.session.agentPrivateState,
     );
-    if (targetSyncReason || dirtyEntries.length > 0 || files.length === 0) {
+    if (targetSyncReason || dirtyEntries.length > 0 || files.length === 0 || !target.patchId) {
       // Never advertise HEAD as reviewable when the agent's actual work is
       // uncommitted, or when it made no committed change. An older ready tip
       // must be withdrawn too, otherwise a human could approve stale work.
@@ -6476,6 +6493,8 @@ export class Body {
             ]
               .filter(Boolean)
               .join('\n')
+          : files.length > 0 && !target.patchId
+            ? 'The reviewed-content identity could not be computed. The review card was not published, so no approval can be misapplied.'
           : withdrawnTarget
             ? `The previously published merge target ${withdrawnTarget.tip} is stale and has been withdrawn because the current tip has no remaining diff against ${target.branch}.`
             : commitCount === 0
@@ -6596,6 +6615,7 @@ export class Body {
             ['r', tip],
             ['base', base],
             ['tip', tip],
+            ['patch-id', target.patchId!],
             ['chunk', String(index)],
             ['chunks', String(chunks.length)],
             ...(file.isBinary ? [['binary', 'true']] : []),
@@ -6619,6 +6639,7 @@ export class Body {
           ['r', tip],
           ['base', base],
           ['tip', tip],
+          ['patch-id', target.patchId],
           ['chunk', String(index)],
         ],
       );
@@ -6657,6 +6678,7 @@ export class Body {
             ['branch', target.branch],
             ['feature', info.featureBranch],
             ['tip', target.tip],
+            ['patch-id', target.patchId!],
             ['agent', this.agentIdentity.publicKey],
             ...(previewUrl ? [['preview', previewUrl]] : []),
           ],
@@ -6710,11 +6732,17 @@ export class Body {
     // State machine: an approvable change is waiting on a person.
     this.setCornerState(info, 'waiting-on-human', 'review');
     await this.postParentCornerStatus(info, 'ready', 'Work is ready for review.');
+    // A target-sync turn may have rewritten only commit metadata. Re-read the
+    // durable signed approvals immediately instead of waiting for the next
+    // maintenance tick: matching patch identity publishes the visible
+    // realigned/landing receipt now; changed content publishes re-approve now.
+    if (info.humanMergeApproval) await this.findHumanMergeApproval(info);
     return true;
   }
 
   /**
-   * Find an exact-tip approval from a device-held human admin, never an agent.
+   * Find a tip- or content-matching approval from a device-held human admin,
+   * never an agent.
    *
    * Every verifiable approval addressed to this corner gets a response, not
    * just the one that matches the current review target: an approval naming
@@ -6734,10 +6762,14 @@ export class Body {
    * set up. The registered-agent refusal is re-checked fail-closed first:
    * succession only ever moves authority between human-held keys.
    */
-  private async isBindingOwnerSuccessor(pubkey: string, info: SubchannelInfo): Promise<boolean> {
+  private async isBindingOwnerSuccessor(
+    pubkey: string,
+    info: SubchannelInfo,
+    relay: RelayReader = this.agentRelay,
+  ): Promise<boolean> {
     if (!info.boundRepo || !this.resolveBindingOwnerKey) return false;
     try {
-      const agentSigner = await isRegisteredAgentIdentity(pubkey, this.agentRelay);
+      const agentSigner = await isRegisteredAgentIdentity(pubkey, relay);
       if (agentSigner) return false;
     } catch {
       return false; // cannot prove the signer is human → fail closed
@@ -6751,6 +6783,59 @@ export class Body {
     }
   }
 
+  /**
+   * Read approvals through the same live Room socket that already proves this
+   * daemon can read the Room. Stored runtimes from the relay-domain move may
+   * still carry a stale HTTP Host tenant: that path returns a non-retryable
+   * 404 even while the Room's WS feed and default relay publications work.
+   *
+   * The configured HTTP reader remains the first backstop for standalone
+   * Body/tests. The shipped default relay reader is the final bounded fallback
+   * and is intentionally created only after the configured read fails.
+   */
+  private async queryMergeApprovals(
+    info: SubchannelInfo,
+    filters: Record<string, unknown>[],
+  ): Promise<{ approvals: NostrEvent[]; relay: RelayReader }> {
+    const attempts: Array<{ relay: RelayReader; query: () => Promise<NostrEvent[]> }> = [];
+    const parentId = info.session.parentChannelId;
+    const roomClient = parentId ? this.roomSockets.get(parentId) : undefined;
+    if (roomClient?.socket?.connected) {
+      const relay: RelayReader = {
+        queryEvents: async (nextFilters) => [...(await roomClient.query(nextFilters))],
+      };
+      attempts.push({ relay, query: async () => await relay.queryEvents(filters) });
+    }
+    attempts.push({
+      relay: this.agentRelay,
+      query: async () => [...(await this.agentRelay.queryEvents(filters))],
+    });
+
+    const configuredOrigin = this.config.relayBaseUrl.replace(/\/$/, '');
+    const configuredHost = this.config.relayHost.toLowerCase();
+    const defaultOrigin = DEFAULT_RELAY_BASE_URL;
+    if (
+      configuredOrigin !== defaultOrigin ||
+      !isProductionRelayHost(configuredHost)
+    ) {
+      const relay = createRelayClient(this.agentIdentity);
+      attempts.push({
+        relay,
+        query: async () => [...(await relay.queryEvents(filters))],
+      });
+    }
+
+    const errors: string[] = [];
+    for (const attempt of attempts) {
+      try {
+        return { approvals: await attempt.query(), relay: attempt.relay };
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+    throw new Error(errors.at(-1) ?? 'approval query failed without a reason');
+  }
+
   private async findHumanMergeApproval(
     info: SubchannelInfo,
   ): Promise<SubchannelInfo['humanMergeApproval']> {
@@ -6759,19 +6844,59 @@ export class Body {
     info.humanMergeApproval = undefined;
 
     let approvals: NostrEvent[];
+    let approvalRelay: RelayReader;
     try {
-      approvals = await this.agentRelay.queryEvents([
+      ({ approvals, relay: approvalRelay } = await this.queryMergeApprovals(info, [
         {
           kinds: [9],
           '#h': [info.subchannelId],
           '#t': [APPROVAL_MARKER],
           limit: 100,
         },
-      ]);
+      ]));
     } catch (error) {
+      const reason = (error instanceof Error ? error.message : String(error))
+        .replace(/^queryEvents failed:\s*/i, '')
+        .trim();
       console.error('[body] human merge approval lookup failed closed:', error);
+      if (
+        info.lastApprovalReadFailure?.tip !== target.tip ||
+        info.lastApprovalReadFailure.reason !== reason
+      ) {
+        // This is an automatic retry, not a question for the owner. Compose
+        // with the durable three-state model as working so the deck never
+        // falsely golds a corner whose daemon is recovering on its own.
+        this.setCornerState(info, 'working');
+        const surfaced = await publishCritical(
+          () =>
+            postControlMessage(
+              info.subchannelId,
+              this.agentIdentity,
+              `Cannot read approvals: ${reason}. The signed approval remains standing; Beeline will honor it automatically as soon as the relay read recovers.`,
+              [
+                ...RECOVERABLE_CORNER_FAILURE_TAGS,
+                ['delivery', 'approval-read-failed'],
+                ['retry', 'auto' satisfies DeliveryRetryPosture],
+                ['repo', target.repo],
+                ['branch', target.branch],
+                ['tip', target.tip],
+                ...(target.patchId ? [['patch-id', target.patchId]] : []),
+              ],
+            ),
+          {
+            label: `approval-read failure for corner ${info.subchannelId}`,
+            onGiveUp: (publishError) =>
+              console.error(
+                '[body] approval-read failure card could not be published; will retry:',
+                publishError,
+              ),
+          },
+        );
+        if (surfaced) info.lastApprovalReadFailure = { tip: target.tip, reason };
+      }
       return undefined;
     }
+    info.lastApprovalReadFailure = undefined;
     // Oldest first so a stale-tip reply goes out before (or alongside) the
     // acceptance for a newer, matching approval from the same reviewer.
     approvals.sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
@@ -6780,34 +6905,52 @@ export class Body {
       if (!verifyEvent(approval)) continue;
       if (approval.pubkey === this.agentIdentity.publicKey) continue;
       if (!verifyApproval(approval, approval.pubkey, target)) {
-        await this.rejectStaleTipApproval(info, target, approval, rejectedIds);
+        await this.rejectStaleTipApproval(info, target, approval, rejectedIds, approvalRelay);
         continue;
       }
       const authority = await authorizeReviewer({
         pubkey: approval.pubkey,
-        relay: this.agentRelay,
+        relay: approvalRelay,
         channelId: info.subchannelId,
         custody: 'device',
       });
       if (!authority.authorized) {
-        const viaSuccession = await this.isBindingOwnerSuccessor(approval.pubkey, info);
+        const viaSuccession = await this.isBindingOwnerSuccessor(
+          approval.pubkey,
+          info,
+          approvalRelay,
+        );
         if (!viaSuccession) continue;
       }
+      const approvedTip = tagValue(approval, 'tip') ?? target.tip;
+      const approvedPatchId = tagValue(approval, 'patch-id');
+      const realigned = approvedTip !== target.tip;
       info.humanMergeApproval = {
         id: approval.id,
         reviewer: approval.pubkey,
         tip: target.tip,
+        approvedTip,
+        ...(approvedPatchId ? { patchId: approvedPatchId } : {}),
+        ...(realigned ? { realigned: true } : {}),
       };
-      if (info.ackedApprovalId !== approval.id) {
+      // Approval custody moves the corner out of waiting-on-human even when
+      // the detailed receipt needs a relay retry: landing is daemon work now.
+      this.setCornerState(info, 'working');
+      const ackKey = `${approval.id}:${target.tip}`;
+      if (info.ackedApprovalId !== ackKey) {
         const acked = await publishCritical(
           () =>
             postControlMessage(
               info.subchannelId,
               this.agentIdentity,
-              `Approval received — landing ${target.branch.replace(/^refs\/heads\//, '')} at ${target.tip.slice(0, 12)}…`,
+              realigned
+                ? `Realigned with ${target.branch.replace(/^refs\/heads\//, '')} — landing ${target.tip.slice(0, 12)} with your existing approval…`
+                : `Approval received — landing ${target.branch.replace(/^refs\/heads\//, '')} at ${target.tip.slice(0, 12)}…`,
               [
                 ...approvalAckTags(this.agentIdentity.publicKey, approval, target),
                 ['decision', 'accepted'],
+                ['state', realigned ? 'realigned' : 'landing'],
+                ...(realigned ? [['approved-tip', approvedTip]] : []),
               ],
             ),
           {
@@ -6827,7 +6970,7 @@ export class Body {
         if (acked) {
           // Mark only once confirmed published so a refused ack retries on a
           // later tick instead of being silently dropped.
-          info.ackedApprovalId = approval.id;
+          info.ackedApprovalId = ackKey;
         }
       }
       return info.humanMergeApproval;
@@ -6842,6 +6985,7 @@ export class Body {
     target: NonNullable<SubchannelInfo['mergeTarget']>,
     approval: NostrEvent,
     rejectedIds: Set<string>,
+    approvalRelay: RelayReader,
   ): Promise<void> {
     if (rejectedIds.has(approval.id)) return;
     const tags = Object.fromEntries(approval.tags.filter((tag) => tag.length >= 2));
@@ -6851,27 +6995,39 @@ export class Body {
     if (!tags['tip'] || tags['tip'] === target.tip) return;
     const authority = await authorizeReviewer({
       pubkey: approval.pubkey,
-      relay: this.agentRelay,
+      relay: approvalRelay,
       channelId: info.subchannelId,
       custody: 'device',
     });
     if (!authority.authorized) {
-      const viaSuccession = await this.isBindingOwnerSuccessor(approval.pubkey, info);
+      const viaSuccession = await this.isBindingOwnerSuccessor(
+        approval.pubkey,
+        info,
+        approvalRelay,
+      );
       if (!viaSuccession) return;
     }
     const branch = target.branch.replace(/^refs\/heads\//, '');
+    const approvedPatchId = String(tags['patch-id'] ?? '');
+    const contentChanged = Boolean(
+      approvedPatchId && target.patchId && approvedPatchId !== target.patchId,
+    );
     const published = await publishCritical(
       () =>
         postControlMessage(
           info.subchannelId,
           this.agentIdentity,
-          `That approval named an older ${branch} tip (${String(tags['tip']).slice(0, 12)}), ` +
-            `and ${branch} has moved on to ${target.tip.slice(0, 12)} — it cannot be used as signed. ` +
-            'Nothing landed from it. Re-approve the current review card and it will land right away.',
+          contentChanged
+            ? 'The change moved after your approval (new commits). Review the update and re-approve.'
+            : `That legacy approval named an older ${branch} tip (${String(tags['tip']).slice(0, 12)}), ` +
+                `and ${branch} has moved on to ${target.tip.slice(0, 12)}. Review the update and re-approve.`,
           [
             ...approvalAckTags(this.agentIdentity.publicKey, approval, target),
             ['decision', 'rejected'],
+            ['state', contentChanged ? 'content-changed' : 'tip-moved'],
             ['rejected-tip', String(tags['tip'])],
+            ...(approvedPatchId ? [['approved-patch-id', approvedPatchId]] : []),
+            ...(target.patchId ? [['patch-id', target.patchId]] : []),
             ...RECOVERABLE_CORNER_FAILURE_TAGS,
             ['retry', 'blocked' satisfies DeliveryRetryPosture],
           ],
@@ -6886,6 +7042,7 @@ export class Body {
       },
     );
     if (published) rejectedIds.add(approval.id);
+    if (published) this.noteCornerFailure(info);
   }
 
   /**
@@ -6952,9 +7109,9 @@ export class Body {
     //
     // This is THE protected-ref brokered push: the approval was verified by
     // `findHumanMergeApproval` (signature, human-admin authority, and this
-    // exact repo+branch+tip binding) before we got here, and the broker
-    // re-checks that same binding against the refspec before performing the
-    // push with the daemon's credentials.
+    // repo+branch plus exact-tip or independently computed content binding)
+    // before we got here. The broker receives the resulting current tip and
+    // re-checks it against the refspec before using daemon credentials.
     const land = await performBrokeredPush({
       remote,
       refspecs: [`${target.tip}:${target.branch}`],
@@ -7034,9 +7191,9 @@ export class Body {
   }
 
   /**
-   * Land non-relay work only after an exact signed human-admin approval. The
-   * agent completion path may push its feature ref, but can never advance the
-   * target ref by itself.
+   * Land non-relay work only after a signed human-admin approval verified for
+   * the current tip (directly or by stable patch identity). The agent completion
+   * path may push its feature ref, but can never advance the target ref itself.
    *
    * Covers both non-relay shapes: a direct git remote (push the approved tip)
    * and a local-only repository with no remote at all (advance the branch in
@@ -7211,10 +7368,10 @@ export class Body {
   }
 
   /**
-   * A moved target invalidates the exact-tip approval, but synchronizing the
-   * feature branch is standing merge preparation rather than a new product
-   * decision. Resume the corner automatically; the rewritten tip still gets a
-   * fresh review target and therefore requires a fresh signed merge approval.
+   * A moved target starts standing merge preparation. The signed approval is
+   * retained while the corner realigns: a pure rebase keeps its patch identity
+   * and lands without another tap; a content change spends it and publishes an
+   * explicit re-approve state when the new review target appears.
    */
   private async blockMovedTarget(
     info: SubchannelInfo,
@@ -7228,21 +7385,28 @@ export class Body {
       ['feature', info.featureBranch],
       ['tip', target.tip],
     ];
-    // Stop the poll re-refusing this same approval every tick. A new
-    // merge-ready publish is what restores a landable target.
+    // Stop the land poll re-attempting the old tip. Keep humanMergeApproval:
+    // it is the standing grant whose content identity is checked again after
+    // the target-sync turn publishes the rewritten review.
     info.mergeTarget = undefined;
-    info.humanMergeApproval = undefined;
     info.lastLandFailure = undefined;
+    this.setCornerState(info, 'working');
     await postControlMessage(
       info.subchannelId,
       this.agentIdentity,
-      `Couldn't land this change on ${branch} — ${branch} moved on since you approved it. ` +
-        `Nothing was lost: the work is committed on ${info.featureBranch}. ` +
-        `The approval you already gave no longer applies. Beeline is bringing the feature branch up to date automatically; a fresh review target will be published when it passes checks.`,
+      `${branch} moved after approval. Beeline is realigning ${info.featureBranch} now. ` +
+        'Your approval remains standing: if the reviewed content is unchanged, it will land automatically; if the content changes, Beeline will explain why and ask you to re-approve.',
       [
-        ...RECOVERABLE_CORNER_FAILURE_TAGS,
-        ['retry', 'auto' satisfies DeliveryRetryPosture],
+        ['t', APPROVAL_ACK_TAG],
+        ['status', 'working'],
+        ['display-status', 'working'],
+        ['delivery', 'realigning'],
+        ['state', 'realigning'],
+        ['approval', approvalId],
+        ['decision', 'accepted'],
+        ['retry', 'realigning' satisfies DeliveryRetryPosture],
         ...failureTags,
+        ...(target.patchId ? [['patch-id', target.patchId]] : []),
       ],
     );
     await this.postParentCornerStatus(
@@ -7529,8 +7693,8 @@ export class Body {
    *   - clean, behind corners are rebased onto the new target automatically;
    *   - conflicted / dirty corners ANNOUNCE that plainly instead of silently
    *     diverging;
-   *   - corners with a live review target are left strictly alone — rebasing
-   *     would rewrite the exact tip a human's signed approval binds to.
+   *   - corners with a live review target are left alone here — their own land
+   *     poll performs the content-identity check and drives visible realignment.
    *
    * Exactly-once per (repository, landed tip), so the recap path calling
    * this from both the land poll and the completion poll stays harmless.
@@ -7554,9 +7718,9 @@ export class Body {
     for (const other of this.subchannels.values()) {
       if (other.archived) continue;
       if (!other.boundRepo || this.repoId(other.boundRepo) !== repoKey) continue;
-      // A live review target IS an exact-tip approval waiting to land —
-      // rebasing it would invalidate the signed binding and strand the
-      // approval. The corner keeps its base until its human decides.
+      // A live review target owns its own approval/realignment state machine.
+      // Let its land poll detect the moved target and preserve or spend the
+      // approval based on the newly computed content identity.
       if (other.mergeTarget || other.humanMergeApproval) {
         console.log(
           `[body] realign skipped for corner ${other.subchannelId}: a review target is outstanding`,

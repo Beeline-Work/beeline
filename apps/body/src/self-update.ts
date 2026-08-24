@@ -905,8 +905,6 @@ export interface SelfUpdateManagerOptions {
   confirmWindowMs?: number;
   /** Busy gate: true when no agent work is running anywhere in this daemon. */
   isIdle?: () => boolean;
-  /** Room-visible notice publisher (best-effort). */
-  notify?: (text: string) => Promise<void> | void;
   /** Called when the manager has swapped and wants the process restarted. */
   requestRestart?: () => void;
   /**
@@ -946,7 +944,6 @@ export class SelfUpdateManager {
     >
   > & { watchRuntimeDirs: string[]; env: NodeJS.ProcessEnv; now: () => number };
   private readonly isIdle: () => boolean;
-  private readonly notifyFn: (text: string) => Promise<void> | void;
   private readonly requestRestartCb: (() => void) | undefined;
   private readonly restartHandover: boolean;
   private readonly fetchImpl: typeof fetch;
@@ -967,7 +964,7 @@ export class SelfUpdateManager {
   restartPending = false;
   private unconfirmedReleaseId: string | undefined;
   private attachedSupervisor:
-    { isWorkspaceIdle(): boolean; broadcastDaemonNotice(text: string): Promise<void> } | undefined;
+    { isWorkspaceIdle(): boolean } | undefined;
 
   constructor(options: SelfUpdateManagerOptions) {
     const env = options.env ?? process.env;
@@ -993,7 +990,6 @@ export class SelfUpdateManager {
     };
     this.unconfirmedReleaseId = options.pendingUnconfirmedReleaseId;
     this.isIdle = options.isIdle ?? (() => true);
-    this.notifyFn = options.notify ?? (async () => undefined);
     this.requestRestartCb = options.requestRestart;
     this.restartHandover = options.restartHandover !== false;
     this.fetchImpl = options.fetchImpl ?? fetch;
@@ -1002,9 +998,7 @@ export class SelfUpdateManager {
 
   /** Wire the current daemon core instance (recreated each run loop). */
   attachSupervisor(
-    supervisor:
-      | { isWorkspaceIdle(): boolean; broadcastDaemonNotice(text: string): Promise<void> }
-      | undefined,
+    supervisor: { isWorkspaceIdle(): boolean } | undefined,
   ): void {
     this.attachedSupervisor = supervisor;
   }
@@ -1080,14 +1074,6 @@ export class SelfUpdateManager {
     return launchRuntimeDaemon(configPath, { entrypoint, foreground });
   }
 
-  async notifyRooms(text: string): Promise<void> {
-    try {
-      await this.notifyFn(text);
-    } catch {
-      // notices are best-effort by contract
-    }
-  }
-
   private busy(): boolean {
     if (this.attachedSupervisor) return !this.attachedSupervisor.isWorkspaceIdle();
     return !this.isIdle();
@@ -1155,9 +1141,6 @@ export class SelfUpdateManager {
     this.log(
       `[body] self-update RESTART: release ${loaded} (${describeIdentity(this.loadedIdentity)}) -> ` +
         `${current} (${describeIdentity(toIdentity)}); ${why}; handing over once drained`,
-    );
-    await this.notifyRooms(
-      `Beeline updated ${describeIdentity(this.loadedIdentity)} -> ${describeIdentity(toIdentity)}; the daemon is restarting now.`,
     );
     this.requestRestartCb?.();
     return true;
@@ -1341,7 +1324,6 @@ export class SelfUpdateManager {
     this.unconfirmedReleaseId = releaseId;
     this.restartPending = true;
     this.log(`[body] self-update: ${message}`);
-    await this.notifyRooms(message);
     this.requestRestartCb?.();
   }
 

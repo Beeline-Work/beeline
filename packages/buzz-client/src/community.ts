@@ -530,7 +530,13 @@ export async function listCommunities(
     .sort((a, b) => a.createdAt - b.createdAt);
 }
 
-/** List channels whose kind:9007 create event points at `communityId`. */
+/**
+ * List live channels whose kind:9007 create event points at `communityId`.
+ *
+ * Archived Rooms retain their create event by contract.  A 9007 match is
+ * therefore only a discovery candidate; the current 39000 archive projection
+ * decides whether it is still enumerable.
+ */
 export async function communityChannels(
   ctx: ChannelOpsContext,
   communityId: string,
@@ -542,7 +548,11 @@ export async function communityChannels(
     const channelId = tagValue(event, 'h') ?? tagValue(event, 'd');
     if (channelId) ids.add(channelId);
   }
-  return [...ids];
+  const candidates = [...ids];
+  const metadata = await Promise.all(
+    candidates.map(async (channelId) => getChannelMetadata(ctx, channelId)),
+  );
+  return candidates.filter((_channelId, index) => metadata[index]?.archived !== true);
 }
 
 async function communityChannelCreates(

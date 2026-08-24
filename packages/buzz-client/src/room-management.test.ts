@@ -164,6 +164,23 @@ describe('role-aware Room membership management', () => {
     ).toBe(true);
   });
 
+  it('hides an archived Room from membership and 9007-based enumeration', async () => {
+    const communityId = '22222222-2222-4222-8222-222222222222';
+    installRelay({ communityId });
+    const ownerClient = client(owner);
+
+    await ownerClient.archiveRoom(roomId);
+
+    // Archive retains the Room's immutable create for auditability.
+    await expect(
+      ownerClient.query([{ kinds: [KIND_CREATE_GROUP], '#h': [roomId], limit: 20 }]),
+    ).resolves.toHaveLength(1);
+    // Neither membership-backed deck discovery nor Workspace 9007 discovery
+    // may turn that retained history back into a visible Room.
+    await expect(ownerClient.listMyChannels()).resolves.toEqual([]);
+    await expect(ownerClient.communityChannels(communityId)).resolves.toEqual([]);
+  });
+
   it('deletes the Room by retracting every list enumeration source', async () => {
     const relay = installRelay();
     const ownerClient = client(owner);

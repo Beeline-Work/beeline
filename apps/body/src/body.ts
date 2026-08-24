@@ -31,6 +31,7 @@ import {
   projectActivity,
   buildAgentMessage,
   postAgentMessage,
+  postAgentActivityBatch,
   startAgentPresence,
   postAgentTurnStatus,
   postAgentStallNotice,
@@ -239,9 +240,12 @@ import {
 import { fetchAgentModelCatalog } from './model-catalog.js';
 import {
   assertCornerWorktreeIsolated,
+  cornerPoolCandidateRoots,
   cornerWorktreePath,
   cornersPoolRoot,
   legacyCornerWorktreePath,
+  legacySiblingCornerWorktreePath,
+  migrateCornerWorktreePath,
 } from './corner-isolation.js';
 import {
   CORNER_RESUME_MAX_TURNS,
@@ -785,6 +789,10 @@ export interface SubchannelInfo {
    *  published. Later work keeps the approval id but publishes a fresh landing
    *  receipt naming the current tip. */
   ackedApprovalId?: string;
+  /** Approval id + target tip whose transcript activity receipt was published. */
+  ackedApprovalActivityId?: string;
+  /** Process-local suppression for byte-identical landing activity receipts. */
+  landingStageReceipts?: Map<string, string>;
   /**
    * What the human was actually shown for review, captured when merge-ready
    * was published. The corner's worktree can no longer derive this once the
@@ -1285,7 +1293,7 @@ function errorText(error: unknown): string {
  * `merge-base --is-ancestor` check fails.
  */
 export function isMovedTargetLandFailure(reason: string): boolean {
-  return /non-fast-forward|\[rejected\]|fetch first|not a fast[- ]forward|cannot lock ref|update_ref failed|has moved on since/i.test(
+  return /non-fast-forward|\[rejected\]|fetch first|not (?:a |possible to )?fast[- ]forward|cannot lock ref|update_ref failed|has moved on since|ff merge failed/i.test(
     reason,
   );
 }
@@ -2081,6 +2089,13 @@ export class Body {
   private readonly pendingCiWatches = new Set<Promise<void>>();
   /** (repoId:tip) lands this process has already realigned corners for. */
   private readonly realignedLandKeys = new Set<string>();
+  /** One coalesced approval pass per Room. A pushed approval arriving while a
+   * pass is already reading relay state requests one immediate second pass,
+   * closing the read-before-event race without allowing overlapping lands. */
+  private readonly approvalLandingPasses = new Map<
+    string,
+    { rerun: boolean; pushedApprovals: Map<string, NostrEvent>; task: Promise<void> }
+  >();
   /** Per-Room last-scan timestamp for the foreign merge-land watch. */
   private readonly foreignLandScanAt = new Map<string, number>();
   /** Newest foreign land event cursor already examined, per Room. */
@@ -3604,17 +3619,36 @@ export class Body {
             continue;
           }
         }
-        // Prefer the current isolated (top-level) location, but a corner opened
-        // before this change lives at the legacy buried `.worktrees/<id>` path;
-        // restore it there rather than orphaning in-flight work across upgrade.
+        // Prefer the current PATH-safe isolated location. A corner in the old
+        // unsafe sibling pool is moved when this replacement session starts
+        // (never under a live session); if Git cannot move it, the compatibility
+        // path remains usable. The older buried `.worktrees/<id>` layout is
+        // still the final restore fallback.
         const isolatedWorktreePath = this.cornerWorktreePath(cornerRepo, subchannelId);
+        const unsafeSiblingWorktreePath = legacySiblingCornerWorktreePath({
+          ...(this.config.cornersRoot ? { cornersRoot: this.config.cornersRoot } : {}),
+          workspaceRoot: this.config.workspaceRoot,
+          ...(cornerRepo.localPath ? { sourceCheckout: cornerRepo.localPath } : {}),
+          ...(cornerRepo.repositoryKey ? { repositoryKey: cornerRepo.repositoryKey } : {}),
+          subchannelId,
+        });
         const legacyWorktreePath = legacyCornerWorktreePath(
           this.config.workspaceRoot,
           subchannelId,
         );
-        let worktreePath = existsSync(isolatedWorktreePath)
-          ? isolatedWorktreePath
-          : legacyWorktreePath;
+        let worktreePath = isolatedWorktreePath;
+        if (!existsSync(worktreePath) && unsafeSiblingWorktreePath) {
+          worktreePath = existsSync(unsafeSiblingWorktreePath)
+            ? await this.migrateLegacyCornerWorktree(
+                cornerRepo,
+                unsafeSiblingWorktreePath,
+                isolatedWorktreePath,
+              )
+            : isolatedWorktreePath;
+        }
+        if (!existsSync(worktreePath) && existsSync(legacyWorktreePath)) {
+          worktreePath = legacyWorktreePath;
+        }
         if (!existsSync(worktreePath)) {
           // A missing worktree is not the same as missing work: the corner's
           // commits live on its feature branch, and a worktree is a checkout
@@ -6791,6 +6825,59 @@ export class Body {
   }
 
   /**
+   * Durable one-line landing progress in the ordinary transcript activity
+   * stream. Each stage gets a stable id so a live in-progress line and its
+   * terminal receipt collapse exactly like an ACP tool call.
+   */
+  private async postLandingStage(
+    info: SubchannelInfo,
+    stage: 'approval-received' | 'realigning' | 'running-gate' | 'pushing' | 'landed' | 'failed',
+    options: { title: string; status?: 'in_progress' | 'completed' | 'failed'; output?: string },
+  ): Promise<boolean> {
+    const approvalId = info.humanMergeApproval?.id ?? info.mergeTarget?.tip ?? 'pending';
+    const tip = info.mergeTarget?.tip;
+    const receiptKey = `${approvalId}:${tip ?? 'unknown'}:${stage}`;
+    const receiptValue = `${options.status ?? 'completed'}:${options.title}:${options.output ?? ''}`;
+    info.landingStageReceipts ??= new Map();
+    if (info.landingStageReceipts.get(receiptKey) === receiptValue) return true;
+    const published = await publishCritical(
+      () =>
+        postAgentActivityBatch(
+          info.subchannelId,
+          this.agentIdentity,
+          {
+            sessionId: `landing:${approvalId}`,
+            channelId: info.subchannelId,
+            events: [
+              {
+                sessionUpdate: 'tool_activity',
+                toolCallId: `landing:${approvalId}:${stage}`,
+                kind: 'execute',
+                title: options.title,
+                status: options.status ?? 'completed',
+                ...(options.output ? { output: options.output } : {}),
+              },
+            ],
+          },
+          [['approval', approvalId], ['delivery-stage', stage], ...(tip ? [['tip', tip]] : [])],
+        ),
+      {
+        label: `${stage} activity for corner ${info.subchannelId}`,
+        onGiveUp: (error) =>
+          console.error(`[body] ${stage} activity refused for ${info.subchannelId}:`, error),
+      },
+    );
+    if (published) info.landingStageReceipts.set(receiptKey, receiptValue);
+    return published;
+  }
+
+  private landingStageIsInProgress(info: SubchannelInfo, stage: 'realigning' | 'pushing'): boolean {
+    return [...(info.landingStageReceipts ?? new Map()).entries()].some(
+      ([key, value]) => key.endsWith(`:${stage}`) && value.startsWith('in_progress:'),
+    );
+  }
+
+  /**
    * Read approvals through the same live Room socket that already proves this
    * daemon can read the Room. Stored runtimes from the relay-domain move may
    * still carry a stale HTTP Host tenant: that path returns a non-retryable
@@ -6842,6 +6929,7 @@ export class Body {
 
   private async findHumanMergeApproval(
     info: SubchannelInfo,
+    pushedApprovals: readonly NostrEvent[] = [],
   ): Promise<SubchannelInfo['humanMergeApproval']> {
     const target = info.mergeTarget;
     if (!target) return undefined;
@@ -6901,6 +6989,18 @@ export class Body {
       return undefined;
     }
     info.lastApprovalReadFailure = undefined;
+    // The live event is already a signed relay fact. Include it in this pass
+    // instead of waiting for the relay's query projection to catch up; the
+    // same signature, corner/target binding and human-admin checks below still
+    // apply, using the relay reader that proved authority.
+    for (const approval of pushedApprovals) {
+      if (
+        !approvals.some((candidate) => candidate.id === approval.id) &&
+        approval.tags.some((tag) => tag[0] === 'h' && tag[1] === info.subchannelId)
+      ) {
+        approvals.push(approval);
+      }
+    }
     // Oldest first: the first still-authoritative approval is the standing
     // grant for this corner's one merge.
     approvals.sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
@@ -6978,6 +7078,12 @@ export class Body {
           info.ackedApprovalId = ackKey;
         }
       }
+      if (info.ackedApprovalActivityId !== ackKey) {
+        const published = await this.postLandingStage(info, 'approval-received', {
+          title: 'Approval received',
+        });
+        if (published) info.ackedApprovalActivityId = ackKey;
+      }
       return info.humanMergeApproval;
     }
     return undefined;
@@ -7050,6 +7156,7 @@ export class Body {
     // corner + repo + target branch binding)
     // before we got here. The broker receives the resulting current tip and
     // re-checks it against the refspec before using daemon credentials.
+    await this.postLandingStage(info, 'pushing', { title: 'Pushing', status: 'in_progress' });
     const land = await performBrokeredPush({
       remote,
       refspecs: [`${target.tip}:${target.branch}`],
@@ -7095,6 +7202,7 @@ export class Body {
   private async landInLocalCheckout(
     localPath: string,
     target: NonNullable<SubchannelInfo['mergeTarget']>,
+    info?: SubchannelInfo,
   ): Promise<LandOutcome> {
     const branch = target.branch.replace(/^refs\/heads\//, '');
     const ref = `refs/heads/${branch}`;
@@ -7122,6 +7230,9 @@ export class Body {
     }
 
     const checkedOut = (await git(localPath, ['symbolic-ref', '--quiet', 'HEAD'])).stdout.trim();
+    if (info) {
+      await this.postLandingStage(info, 'pushing', { title: 'Pushing', status: 'in_progress' });
+    }
     const land =
       checkedOut === ref
         ? await git(localPath, ['merge', '--ff-only', target.tip])
@@ -7140,42 +7251,56 @@ export class Body {
    * entirely on `!remote`, so an approved local corner never landed and its
    * approval event was left to be forwarded to the agent as chat.
    */
-  private async pollDirectRemoteApprovals(): Promise<number> {
+  private async pollDirectRemoteApprovals(
+    pushedApprovals: readonly NostrEvent[] = [],
+  ): Promise<number> {
     let landed = 0;
     for (const info of this.subchannels.values()) {
       let boundRepo = info.boundRepo;
       let remote = boundRepo?.remoteName;
-      const target = info.mergeTarget;
+      let target = info.mergeTarget;
       // Relay-origin repos land through the merge gate, never here.
       if (info.archived || !boundRepo || boundRepo.ownerHex || !target) continue;
       if (!remote && !boundRepo.localPath) continue;
-      if (!(await this.findHumanMergeApproval(info))) continue;
+      if (!(await this.findHumanMergeApproval(info, pushedApprovals))) continue;
 
-      const landing = await serializeRepoLanding(this.repoId(boundRepo), async () => {
-        let currentRepo = boundRepo!;
-        let currentRemote = remote;
-        if (this.refreshRepositoryTruth) {
-          currentRepo = await this.refreshRepositoryTruth(currentRepo, 'land');
-          info.boundRepo = currentRepo;
-          currentRemote = currentRepo.remoteName;
-        }
-        const outcome = currentRemote
-          ? await this.landOnDirectRemote(info, currentRemote, target)
-          : await this.landInLocalCheckout(currentRepo.localPath!, target);
-        return { boundRepo: currentRepo, remote: currentRemote, outcome };
-      });
+      await this.postLandingStage(info, 'running-gate', { title: 'Running gate' });
+      const attemptLanding = async (currentTarget: NonNullable<SubchannelInfo['mergeTarget']>) =>
+        await serializeRepoLanding(this.repoId(boundRepo!), async () => {
+          let currentRepo = boundRepo!;
+          let currentRemote = remote;
+          if (this.refreshRepositoryTruth) {
+            currentRepo = await this.refreshRepositoryTruth(currentRepo, 'land');
+            info.boundRepo = currentRepo;
+            currentRemote = currentRepo.remoteName;
+          }
+          const outcome = currentRemote
+            ? await this.landOnDirectRemote(info, currentRemote, currentTarget)
+            : await this.landInLocalCheckout(currentRepo.localPath!, currentTarget, info);
+          return { boundRepo: currentRepo, remote: currentRemote, outcome };
+        });
+      let landing = await attemptLanding(target);
       boundRepo = landing.boundRepo;
       remote = landing.remote;
-      const { outcome } = landing;
+      let { outcome } = landing;
       if (outcome.kind === 'skip') continue;
       if (outcome.kind === 'failed') {
-        // A target that moved on is the one land failure an agent can fix.
-        // Hand it back to the corner's own session to rebase rather than
-        // leaving the human with a dead-ended corner and no next step.
+        // A clean target move is deterministic daemon work. Rebase, publish
+        // the rewritten feature tip, and retry this same approved land now;
+        // a suspended harness never enters this path.
         if (isMovedTargetLandFailure(outcome.reason)) {
-          await this.blockMovedTarget(info, target);
-          continue;
+          if (!(await this.realignMovedTargetForLanding(info, target))) continue;
+          target = info.mergeTarget;
+          if (!target || !(await this.findHumanMergeApproval(info, pushedApprovals))) continue;
+          await this.postLandingStage(info, 'running-gate', { title: 'Running gate' });
+          landing = await attemptLanding(target);
+          boundRepo = landing.boundRepo;
+          remote = landing.remote;
+          outcome = landing.outcome;
+          if (outcome.kind === 'skip') continue;
         }
+      }
+      if (outcome.kind === 'failed') {
         // Say it once. The loop keeps retrying either way; restating an
         // unchanged refusal every tick is what turned these corners into
         // hundreds of identical cards.
@@ -7187,6 +7312,12 @@ export class Body {
         // State machine: delivery of an APPROVED, PUBLISHED change failed — an
         // actionable artifact stands, so this waits on a person.
         this.noteCornerFailure(info);
+        const failureStage = this.landingStageIsInProgress(info, 'pushing') ? 'pushing' : 'failed';
+        await this.postLandingStage(info, failureStage, {
+          title: failureStage === 'pushing' ? 'Pushing' : 'Landing failed',
+          status: 'failed',
+          output: humanized,
+        });
         await postControlMessage(
           info.subchannelId,
           this.agentIdentity,
@@ -7241,6 +7372,12 @@ export class Body {
         }
       }
       info.landedTip = target.tip;
+      if (this.landingStageIsInProgress(info, 'pushing')) {
+        await this.postLandingStage(info, 'pushing', { title: 'Pushing', status: 'completed' });
+      }
+      await this.postLandingStage(info, 'landed', {
+        title: `Landed at ${target.tip.slice(0, 12)}`,
+      });
       if (this.syncPairingCheckout) {
         await this.syncPairingCheckout(boundRepo, target.tip).catch((error) =>
           console.error(`[body] pairing-checkout sync failed for ${info.subchannelId}:`, error),
@@ -7307,69 +7444,75 @@ export class Body {
   }
 
   /**
-   * A moved target starts standing merge preparation. The signed approval is
-   * retained while the corner realigns. Rebase commits and any other ongoing
-   * corner work remain covered until this corner's one merge lands.
+   * Realign an approved clean corner without waking its harness. A pure rebase
+   * is deterministic git work: the daemon rebases, republishes the rewritten
+   * feature tip, and lets the same landing pass continue under the standing
+   * approval. Dirty/conflicting work is left untouched and surfaced as the
+   * concrete failure instead of waiting behind a suspended ACP session.
    */
-  private async blockMovedTarget(
+  private async realignMovedTargetForLanding(
     info: SubchannelInfo,
     target: NonNullable<SubchannelInfo['mergeTarget']>,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const branch = target.branch.replace(/^refs\/heads\//, '');
     const approvalId = info.humanMergeApproval?.id ?? target.tip;
-    const failureTags: string[][] = [
-      ['repo', target.repo],
-      ['branch', target.branch],
-      ['feature', info.featureBranch],
-      ['tip', target.tip],
-    ];
-    // Stop the land poll re-attempting the old tip. Keep humanMergeApproval:
-    // it is the standing corner grant reused after the target-sync turn
-    // publishes the rewritten review.
-    info.mergeTarget = undefined;
-    info.lastLandFailure = undefined;
     this.setCornerState(info, 'working');
+    await this.postLandingStage(info, 'realigning', {
+      title: 'Realigning',
+      status: 'in_progress',
+    });
+    const result = await realignWorktreeOntoTarget(info.worktreePath, {
+      ...(info.boundRepo?.remoteName ? { remoteName: info.boundRepo.remoteName } : {}),
+      targetBranch: target.branch,
+    });
+    if (result.status === 'rebased' || result.status === 'up-to-date') {
+      await this.postLandingStage(info, 'realigning', {
+        title: 'Realigning',
+        status: 'completed',
+        ...(result.detail ? { output: `Rebased at ${result.detail.slice(0, 12)}` } : {}),
+      });
+      // Force `publishMergeReady` to replace the stale review coordinates even
+      // when another daemon already performed the same pure realignment.
+      info.mergeTarget = undefined;
+      info.lastLandFailure = undefined;
+      if (await this.publishMergeReady(info)) return true;
+    }
+
+    const reason =
+      result.status === 'rebased' || result.status === 'up-to-date'
+        ? (info.lastMergeNotReadyReason ?? `could not republish the realigned ${branch} change`)
+        : (realignAnnouncement(result, info.featureBranch, target.branch) ??
+          result.detail ??
+          `could not realign with ${branch}`);
+    const humanized = summarizeGitFailure(reason);
+    info.lastLandFailure = { tip: target.tip, reason: humanized };
+    this.noteCornerFailure(info);
+    await this.postLandingStage(info, 'realigning', {
+      title: 'Realigning',
+      status: 'failed',
+      output: humanized,
+    });
     await postControlMessage(
       info.subchannelId,
       this.agentIdentity,
-      `${branch} moved after approval. Beeline is realigning ${info.featureBranch} now. ` +
-        'Your approval remains standing for this corner, including ongoing work, until it lands.',
+      `Couldn't realign the approved change with ${branch}: ${humanized}`,
       [
-        ['t', APPROVAL_ACK_TAG],
-        ['status', 'working'],
-        ['display-status', 'working'],
-        ['delivery', 'realigning'],
-        ['state', 'realigning'],
+        ...RECOVERABLE_CORNER_FAILURE_TAGS,
+        ['retry', 'blocked' satisfies DeliveryRetryPosture],
+        ['repo', target.repo],
+        ['branch', target.branch],
+        ['feature', info.featureBranch],
+        ['tip', target.tip],
         ['approval', approvalId],
-        ['decision', 'accepted'],
-        ['retry', 'realigning' satisfies DeliveryRetryPosture],
-        ...failureTags,
-        ...(target.patchId ? [['patch-id', target.patchId]] : []),
       ],
     );
     await this.postParentCornerStatus(
       info,
-      'working',
-      `${branch} moved; bringing the corner up to date automatically.`,
+      'needs-attention',
+      'Approved delivery needs attention. Open corner for details.',
       [['tip', target.tip]],
     );
-    if (!this.runningAgentTasks.has(info.subchannelId)) {
-      this.startAgentTask(
-        info,
-        `Bring this corner up to date with ${branch}.`,
-        [
-          `The approved merge target moved to a newer ${branch} tip after review.`,
-          CORNER_TARGET_SYNC_INSTRUCTION,
-          `Synchronize ${info.featureBranch} with ${target.branch}, preserve the intended corner changes, resolve conflicts, run relevant checks, and commit the updated feature branch.`,
-          'Do not land it yourself. Beeline will publish a new review target for the rewritten tip.',
-        ].join('\n'),
-        {
-          requestId: approvalId,
-          originalRequestId: info.request?.eventId ?? approvalId,
-          cause: 'target-sync',
-        },
-      );
-    }
+    return false;
   }
 
   /**
@@ -8037,6 +8180,209 @@ export class Body {
     this.githubEventWatchers.set(channelId, watcher);
   }
 
+  /** Run relay-origin gate attempts and project their daemon-owned stages. */
+  private async pollMergeGateApprovals(
+    mergeGate: DurableMergeGate,
+    allowImmediateRealign = true,
+    pushedApprovals: readonly NostrEvent[] = [],
+  ): Promise<void> {
+    for (const info of this.subchannels.values()) {
+      if (info.archived || !info.boundRepo?.ownerHex || !info.mergeTarget) continue;
+      if (!(await this.findHumanMergeApproval(info, pushedApprovals))) continue;
+      await this.postLandingStage(info, 'running-gate', { title: 'Running gate' });
+    }
+
+    const attempts = await mergeGate.poll(pushedApprovals, {
+      onAttemptStart: async (attempt) => {
+        const info = this.subchannels.get(attempt.candidate.subchannelId);
+        if (info && !info.archived) {
+          await this.postLandingStage(info, 'pushing', {
+            title: 'Pushing',
+            status: 'in_progress',
+          });
+        }
+      },
+    });
+    let realigned = false;
+    for (const attempt of attempts) {
+      console.log(
+        `[gate] ${attempt.outcome.merged ? 'LANDED' : attempt.outcome.reason} ` +
+          `${attempt.candidate.featureBranch} approval=${attempt.approvalId}`,
+      );
+      const info = this.subchannels.get(attempt.candidate.subchannelId);
+      if (attempt.outcome.merged) {
+        if (info && !info.archived && info.mergeTarget) {
+          info.landedTip = info.mergeTarget.tip;
+          if (this.landingStageIsInProgress(info, 'pushing')) {
+            await this.postLandingStage(info, 'pushing', {
+              title: 'Pushing',
+              status: 'completed',
+            });
+          }
+          await this.postLandingStage(info, 'landed', {
+            title: `Landed at ${info.mergeTarget.tip.slice(0, 12)}`,
+          });
+          if (this.refreshRepositoryTruth && info.boundRepo) {
+            try {
+              info.boundRepo = await this.refreshRepositoryTruth(info.boundRepo, 'land');
+            } catch (error) {
+              console.error(
+                `[body] post-gate repository refresh failed for ${info.subchannelId}:`,
+                error,
+              );
+            }
+          }
+          if (this.syncPairingCheckout && info.boundRepo) {
+            await this.syncPairingCheckout(info.boundRepo, info.mergeTarget.tip).catch((error) =>
+              console.error(`[body] pairing-checkout sync failed for ${info.subchannelId}:`, error),
+            );
+          }
+        }
+        continue;
+      }
+      if (!info || info.archived) continue;
+      const target = info.mergeTarget;
+      if (
+        allowImmediateRealign &&
+        target &&
+        isMovedTargetLandFailure(attempt.outcome.reason) &&
+        (await this.realignMovedTargetForLanding(info, target))
+      ) {
+        realigned = true;
+        continue;
+      }
+
+      this.noteCornerFailure(info);
+      const humanized = summarizeGitFailure(attempt.outcome.reason);
+      const failureStage = this.landingStageIsInProgress(info, 'pushing') ? 'pushing' : 'failed';
+      await this.postLandingStage(info, failureStage, {
+        title: failureStage === 'pushing' ? 'Pushing' : 'Landing failed',
+        status: 'failed',
+        output: humanized,
+      });
+      const failureTags: string[][] = [...RECOVERABLE_CORNER_FAILURE_TAGS];
+      if (target) {
+        failureTags.push(['repo', target.repo], ['branch', target.branch], ['tip', target.tip]);
+      }
+      await postControlMessage(
+        attempt.candidate.subchannelId,
+        this.agentIdentity,
+        `Merge approval could not be landed yet: ${humanized}`,
+        failureTags,
+      ).catch((error) =>
+        console.error(
+          `[body] failed to publish merge-gate failure for ${attempt.candidate.subchannelId}:`,
+          error,
+        ),
+      );
+      await this.postParentCornerStatus(
+        info,
+        'needs-attention',
+        'Delivery failed. Open corner for details.',
+        target ? [['tip', target.tip]] : [],
+      ).catch((error) =>
+        console.error(
+          `[body] failed to publish parent status for merge-gate failure ${attempt.candidate.subchannelId}:`,
+          error,
+        ),
+      );
+    }
+
+    // A pure rebase publishes a new candidate synchronously. Give the gate one
+    // immediate second look under the same standing approval, never a timer.
+    if (realigned) await this.pollMergeGateApprovals(mergeGate, false, pushedApprovals);
+  }
+
+  /**
+   * One approval pass per Room, shared by WS wakes and the maintenance
+   * backstop. A wake during an in-flight read schedules one immediate rerun so
+   * the approval cannot fall into the read-before-delivery gap.
+   */
+  private async runApprovalLandingPass(
+    channelId: string,
+    mergeGate?: DurableMergeGate,
+    pushedApproval?: NostrEvent,
+  ): Promise<void> {
+    const existing = this.approvalLandingPasses.get(channelId);
+    if (existing) {
+      if (pushedApproval) existing.pushedApprovals.set(pushedApproval.id, pushedApproval);
+      existing.rerun = true;
+      return await existing.task;
+    }
+    const state = {
+      rerun: false,
+      pushedApprovals: new Map<string, NostrEvent>(),
+      task: Promise.resolve(),
+    };
+    if (pushedApproval) state.pushedApprovals.set(pushedApproval.id, pushedApproval);
+    const task = (async () => {
+      do {
+        state.rerun = false;
+        const pushedApprovals = [...state.pushedApprovals.values()];
+        state.pushedApprovals.clear();
+        await this.pollDirectRemoteApprovals(pushedApprovals);
+        if (mergeGate) {
+          await this.pollMergeGateApprovals(mergeGate, true, pushedApprovals);
+          await this.pollMergeCompletions();
+        }
+      } while ((state.rerun || state.pushedApprovals.size > 0) && !this.disposed);
+    })().finally(() => {
+      if (this.approvalLandingPasses.get(channelId) === state) {
+        this.approvalLandingPasses.delete(channelId);
+      }
+    });
+    state.task = task;
+    this.approvalLandingPasses.set(channelId, state);
+    await task;
+  }
+
+  /** Add live approval-only REQs for every open corner in this Room. */
+  private async syncCornerApprovalSubscriptions(
+    channelId: string,
+    client: ReturnType<typeof createBuzzClient>,
+    mergeGate: DurableMergeGate | undefined,
+    subscriptions: Map<string, () => void>,
+  ): Promise<void> {
+    for (const [cornerId, unsubscribe] of subscriptions) {
+      const info = this.subchannels.get(cornerId);
+      if (!info || info.archived || info.session.parentChannelId !== channelId) {
+        unsubscribe();
+        subscriptions.delete(cornerId);
+      }
+    }
+    for (const info of this.subchannels.values()) {
+      if (
+        info.archived ||
+        info.session.parentChannelId !== channelId ||
+        subscriptions.has(info.subchannelId)
+      ) {
+        continue;
+      }
+      const unsubscribe = await client.sessionEventsSubscribe(
+        info.subchannelId,
+        (sessionEvent) => {
+          const approval = sessionEvent.event;
+          if (
+            approval.pubkey === this.agentIdentity.publicKey ||
+            !verifyEvent(approval) ||
+            !approval.tags.some((tag) => tag[0] === 't' && tag[1] === APPROVAL_MARKER)
+          ) {
+            return;
+          }
+          this.onRoomPollSuccess?.(channelId);
+          void this.runApprovalLandingPass(channelId, mergeGate, approval).catch((error) =>
+            console.error(
+              `[body] Room ${channelId} pushed approval ${approval.id} failed; poll fallback remains active:`,
+              error,
+            ),
+          );
+        },
+        { kinds: [9], since: Math.floor(Date.now() / 1_000) },
+      );
+      subscriptions.set(info.subchannelId, unsubscribe);
+    }
+  }
+
   private async runRoomPushLoop(
     channelId: string,
     boundRepo: BoundRepo | undefined,
@@ -8044,6 +8390,7 @@ export class Body {
     presence: ReturnType<typeof startAgentPresence>,
     opts: { pollMs?: number; signal?: AbortSignal },
     maintenance: () => Promise<void>,
+    mergeGate?: DurableMergeGate,
   ): Promise<void> {
     const reconnectBackoff = new RoomPollBackoff(1_000);
     while (!opts.signal?.aborted && !this.disposed) {
@@ -8053,6 +8400,27 @@ export class Body {
       let offClose: (() => void) | undefined;
       let removeAbortListener: (() => void) | undefined;
       let maintenanceTimer: ReturnType<typeof setInterval> | undefined;
+      const cornerApprovalSubscriptions = new Map<string, () => void>();
+      let approvalSubscriptionTail = Promise.resolve();
+      const syncApprovalSubscriptions = () => {
+        approvalSubscriptionTail = approvalSubscriptionTail.then(
+          () =>
+            this.syncCornerApprovalSubscriptions(
+              channelId,
+              client!,
+              mergeGate,
+              cornerApprovalSubscriptions,
+            ),
+          () =>
+            this.syncCornerApprovalSubscriptions(
+              channelId,
+              client!,
+              mergeGate,
+              cornerApprovalSubscriptions,
+            ),
+        );
+        return approvalSubscriptionTail;
+      };
       try {
         // One REQ on the daemon's shared socket, not another authenticated
         // connection on this same agent pubkey.
@@ -8101,6 +8469,7 @@ export class Body {
                   [sessionEvent.event],
                   roomParticipants,
                 );
+                await syncApprovalSubscriptions();
               })
               .catch((error) =>
                 console.error(`[body] Room ${channelId} pushed event failed:`, error),
@@ -8108,6 +8477,7 @@ export class Body {
           },
           { since },
         );
+        await syncApprovalSubscriptions();
         this.onRoomPollSuccess?.(channelId);
         if (reconnectBackoff.recovered()) {
           console.log(`[body] Room ${channelId} WS reconnected`);
@@ -8130,6 +8500,9 @@ export class Body {
         const tickMs = opts.pollMs ?? ROOM_WS_MAINTENANCE_TICK_MS;
         const tick = () => {
           if (client?.socket?.connected) this.onRoomPollSuccess?.(channelId);
+          void syncApprovalSubscriptions().catch((error) =>
+            console.error(`[body] Room ${channelId} approval subscription refresh failed:`, error),
+          );
           void maintenance();
         };
         // Phase-shift each Room's tick. Every Room this daemon serves
@@ -8177,6 +8550,10 @@ export class Body {
         // Drop this Room's REQ first; the shared socket keeps serving its
         // siblings, and only an owned socket is actually closed by release().
         unsubscribe?.();
+        await approvalSubscriptionTail.catch(() => undefined);
+        for (const unsubscribeApproval of cornerApprovalSubscriptions.values()) {
+          unsubscribeApproval();
+        }
         release?.();
         if (this.roomSockets.get(channelId) === client) this.roomSockets.delete(channelId);
       }
@@ -8288,8 +8665,14 @@ export class Body {
       await this.restoreSubchannels(channelId, boundRepo);
       // The Workspace supervisor owns current-role discovery. It aborts this
       // loop when the Room disappears from the agent's member/admin projection.
-      await this.runRoomPushLoop(channelId, boundRepo, 'repository', stopPresence, opts, () =>
-        this.pollRoomMaintenance(channelId, mergeGate, boundRepo),
+      await this.runRoomPushLoop(
+        channelId,
+        boundRepo,
+        'repository',
+        stopPresence,
+        opts,
+        () => this.pollRoomMaintenance(channelId, mergeGate, boundRepo),
+        mergeGate,
       );
     } finally {
       this.presenceGenerations.delete(channelId);
@@ -8896,7 +9279,7 @@ export class Body {
     // report: nothing is broken about the land itself, it just never gets a
     // turn. The land polls are pure git + relay work with their own bounded
     // timeouts, so putting them first costs the member poll nothing.
-    await guarded('direct merge approval poll', () => this.pollDirectRemoteApprovals());
+    await guarded('merge approval pass', () => this.runApprovalLandingPass(channelId, mergeGate));
     await guarded('merge completion poll', () => this.pollMergeCompletions());
     // Local cleanup may inspect many worktrees. Keep it behind the bounded
     // approval path so maintenance cannot delay an already-authorized land.
@@ -8941,89 +9324,6 @@ export class Body {
     // A corner with no live session has no member poll of its own, so this is
     // the only place its human close request is ever consumed.
     await guarded('abandoned corner close watch', () => this.pollAbandonedCornerCloses(channelId));
-    if (mergeGate) {
-      await guarded('merge gate poll', async () => {
-        const attempts = await mergeGate.poll();
-        for (const attempt of attempts) {
-          console.log(
-            `[gate] ${attempt.outcome.merged ? 'LANDED' : attempt.outcome.reason} ` +
-              `${attempt.candidate.featureBranch} approval=${attempt.approvalId}`,
-          );
-          // A refusal/failure here was previously only ever logged, never
-          // published — the corner just sat on "sent" forever with zero
-          // signal, correctly retried but invisible. Mirror the same
-          // corner-level + parent-status publish `pollDirectRemoteApprovals`
-          // already makes for its own failures.
-          const info = this.subchannels.get(attempt.candidate.subchannelId);
-          if (attempt.outcome.merged) {
-            // Record the land against the corner immediately. The completion
-            // poll below re-derives it from the target ref, but a corner whose
-            // `mergeTarget` is withdrawn between the two (see
-            // `SubchannelInfo.landedTip`) would otherwise lose its recap and
-            // its archive despite having genuinely landed.
-            if (info && !info.archived && info.mergeTarget) {
-              info.landedTip = info.mergeTarget.tip;
-              if (this.refreshRepositoryTruth && info.boundRepo) {
-                try {
-                  info.boundRepo = await this.refreshRepositoryTruth(info.boundRepo, 'land');
-                } catch (error) {
-                  // The merge gate already proved the relay land. Cache
-                  // refresh is visibility/sync work and cannot undo it.
-                  console.error(
-                    `[body] post-gate repository refresh failed for ${info.subchannelId}:`,
-                    error,
-                  );
-                }
-              }
-              if (this.syncPairingCheckout && info.boundRepo) {
-                await this.syncPairingCheckout(info.boundRepo, info.mergeTarget.tip).catch(
-                  (error) =>
-                    console.error(
-                      `[body] pairing-checkout sync failed for ${info.subchannelId}:`,
-                      error,
-                    ),
-                );
-              }
-            }
-            continue;
-          }
-          if (!info || info.archived) continue;
-          const target = info.mergeTarget;
-          // State machine: the gate could not land the approval; gated on the
-          // review target still standing (an actionable artifact).
-          this.noteCornerFailure(info);
-          const failureTags: string[][] = [...RECOVERABLE_CORNER_FAILURE_TAGS];
-          if (target) {
-            failureTags.push(['repo', target.repo], ['branch', target.branch], ['tip', target.tip]);
-          }
-          await postControlMessage(
-            attempt.candidate.subchannelId,
-            this.agentIdentity,
-            `Merge approval could not be landed yet: ${summarizeGitFailure(attempt.outcome.reason)}`,
-            failureTags,
-          ).catch((error) =>
-            console.error(
-              `[body] failed to publish merge-gate failure for ${attempt.candidate.subchannelId}:`,
-              error,
-            ),
-          );
-          await this.postParentCornerStatus(
-            info,
-            'needs-attention',
-            'Delivery failed. Open corner for details.',
-            target ? [['tip', target.tip]] : [],
-          ).catch((error) =>
-            console.error(
-              `[body] failed to publish parent status for merge-gate failure ${attempt.candidate.subchannelId}:`,
-              error,
-            ),
-          );
-        }
-      });
-    }
-    // The merge gate above can land a relay-origin corner on this same tick;
-    // give its completion a chance to be recorded without waiting a whole tick.
-    if (mergeGate) await guarded('merge completion poll', () => this.pollMergeCompletions());
   }
 
   /**
@@ -9923,7 +10223,19 @@ export class Body {
   private abandonedCornerWorktreePaths(entry: AbandonedCorner): string[] {
     const paths = new Set<string>();
     if (entry.worktreePath) paths.add(entry.worktreePath);
-    if (entry.boundRepo) paths.add(this.cornerWorktreePath(entry.boundRepo, entry.subchannelId));
+    if (entry.boundRepo) {
+      paths.add(this.cornerWorktreePath(entry.boundRepo, entry.subchannelId));
+      const unsafeSibling = legacySiblingCornerWorktreePath({
+        ...(this.config.cornersRoot ? { cornersRoot: this.config.cornersRoot } : {}),
+        workspaceRoot: this.config.workspaceRoot,
+        ...(entry.boundRepo.localPath ? { sourceCheckout: entry.boundRepo.localPath } : {}),
+        ...(entry.boundRepo.repositoryKey
+          ? { repositoryKey: entry.boundRepo.repositoryKey }
+          : {}),
+        subchannelId: entry.subchannelId,
+      });
+      if (unsafeSibling) paths.add(unsafeSibling);
+    }
     paths.add(legacyCornerWorktreePath(this.config.workspaceRoot, entry.subchannelId));
     return [...paths];
   }
@@ -10339,7 +10651,7 @@ export class Body {
     return {
       protectedPaths: [
         this.config.workspaceRoot,
-        this.cornersPoolRoot(boundRepo),
+        ...this.cornersPoolRoots(boundRepo),
         ...(boundRepo.localPath ? [boundRepo.localPath] : []),
         ...(this.config.agentHomeRoot ? [this.config.agentHomeRoot] : []),
         ...(this.config.agentPrivateRoot ? [this.config.agentPrivateRoot] : []),
@@ -10455,6 +10767,31 @@ export class Body {
     await this.excludeCodegraphFromWorktreeStatus(worktreePath);
     await this.provisionWorktreeToolchain(worktreePath);
     return true;
+  }
+
+  /** Move one pre-fix sibling worktree immediately before its next session. */
+  private async migrateLegacyCornerWorktree(
+    boundRepo: BoundRepo,
+    legacyPath: string,
+    currentPath: string,
+  ): Promise<string> {
+    const repoRoot =
+      boundRepo.localPath ??
+      (boundRepo.ownerHex
+        ? resolve(this.config.workspaceRoot, `.git-${boundRepo.repo}`)
+        : undefined);
+    if (!repoRoot || !existsSync(repoRoot) || existsSync(currentPath)) return legacyPath;
+    try {
+      if (!(await migrateCornerWorktreePath(repoRoot, legacyPath, currentPath))) {
+        console.warn(`[body] corner path migration kept legacy ${legacyPath}`);
+        return legacyPath;
+      }
+    } catch (error) {
+      console.warn(`[body] corner path migration kept legacy ${legacyPath}:`, error);
+      return legacyPath;
+    }
+    console.log(`[body] migrated corner worktree ${legacyPath} -> ${currentPath}`);
+    return currentPath;
   }
 
   private async createWorktree(
@@ -10630,6 +10967,16 @@ export class Body {
       ...(this.config.cornersRoot ? { cornersRoot: this.config.cornersRoot } : {}),
       workspaceRoot: this.config.workspaceRoot,
       ...(boundRepo?.localPath ? { sourceCheckout: boundRepo.localPath } : {}),
+      ...(boundRepo?.repositoryKey ? { repositoryKey: boundRepo.repositoryKey } : {}),
+    });
+  }
+
+  /** Current pool plus the unsafe pre-fix sibling pool while it still exists. */
+  private cornersPoolRoots(boundRepo?: BoundRepo): string[] {
+    return cornerPoolCandidateRoots({
+      ...(this.config.cornersRoot ? { cornersRoot: this.config.cornersRoot } : {}),
+      workspaceRoot: this.config.workspaceRoot,
+      ...(boundRepo?.localPath ? { sourceCheckout: boundRepo.localPath } : {}),
     });
   }
 
@@ -10683,8 +11030,8 @@ export class Body {
     if (now - this.lastWorktreePruneAt < CORNER_WORKTREE_PRUNE_INTERVAL_MS) return;
     this.lastWorktreePruneAt = now;
 
-    const pool = this.cornersPoolRoot(boundRepo);
-    if (!existsSync(pool)) return;
+    const pools = this.cornersPoolRoots(boundRepo).filter((pool) => existsSync(pool));
+    if (pools.length === 0) return;
     // The authority on which worktrees git still tracks: the shared checkout
     // for a paired repo, or the bare git dir for a relay-origin/local corner.
     const worktreeGitDir =
@@ -10702,12 +11049,6 @@ export class Body {
     }
     const live = new Set([...this.subchannels.values()].map((info) => resolve(info.worktreePath)));
 
-    let entries: { name: string; isDirectory(): boolean }[];
-    try {
-      entries = await readdir(pool, { withFileTypes: true });
-    } catch {
-      return;
-    }
     // Resolving "archived?" costs a relay read per directory, so it is only
     // asked for directories the on-disk checks have already cleared — a dirty
     // or unlanded worktree is kept whatever the relay says about its corner.
@@ -10720,41 +11061,52 @@ export class Body {
       'refs/remotes/origin/master',
     ].filter((ref): ref is string => Boolean(ref));
     const pending: { dir: string; subchannelId: string; probe: CornerWorktreeProbe }[] = [];
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      // The dir basename is the subchannel id (see `cornerWorktreePath`).
-      const subchannelId = entry.name;
-      const dir = resolve(pool, subchannelId);
-      const probe = await probeCornerWorktree(dir, await resolveTargetRefs(dir, targetCandidates));
-      const decision = cornerWorktreeSweepDecision({
-        registered: registered.has(dir),
-        live: live.has(dir),
-        tracked: this.subchannels.has(subchannelId) || this.abandonedCorners.has(subchannelId),
-        // Left unasked on purpose. "Is the corner archived?" costs a relay read
-        // and is the LAST question, never an override: a directory only reaches
-        // it once every on-disk guard has already cleared it.
-        probe,
-      });
-      if (decision.action === 'reap') {
-        console.log(`[body] corner worktree sweep reaping ${dir}: ${decision.reason}`);
-        await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    for (const pool of pools) {
+      let entries: { name: string; isDirectory(): boolean }[];
+      try {
+        entries = await readdir(pool, { withFileTypes: true });
+      } catch {
         continue;
       }
-      if (decision.action === 'repair') {
-        // A real worktree git stopped registering is the shape the old sweep
-        // deleted. Re-link it instead, so `restoreSubchannels` can find it.
-        const repair = await git(worktreeGitDir, ['worktree', 'repair', dir]);
-        console.log(
-          `[body] corner worktree sweep repairing ${dir}: ${decision.reason}` +
-            (repair.ok ? '' : ` (repair failed: ${repair.stderr.trim()})`),
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        // The dir basename is the subchannel id (see `cornerWorktreePath`).
+        const subchannelId = entry.name;
+        const dir = resolve(pool, subchannelId);
+        const probe = await probeCornerWorktree(
+          dir,
+          await resolveTargetRefs(dir, targetCandidates),
         );
-        continue;
+        const decision = cornerWorktreeSweepDecision({
+          registered: registered.has(dir),
+          live: live.has(dir),
+          tracked: this.subchannels.has(subchannelId) || this.abandonedCorners.has(subchannelId),
+          // Left unasked on purpose. "Is the corner archived?" costs a relay read
+          // and is the LAST question, never an override: a directory only reaches
+          // it once every on-disk guard has already cleared it.
+          probe,
+        });
+        if (decision.action === 'reap') {
+          console.log(`[body] corner worktree sweep reaping ${dir}: ${decision.reason}`);
+          await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+          continue;
+        }
+        if (decision.action === 'repair') {
+          // A real worktree git stopped registering is the shape the old sweep
+          // deleted. Re-link it instead, so `restoreSubchannels` can find it.
+          const repair = await git(worktreeGitDir, ['worktree', 'repair', dir]);
+          console.log(
+            `[body] corner worktree sweep repairing ${dir}: ${decision.reason}` +
+              (repair.ok ? '' : ` (repair failed: ${repair.stderr.trim()})`),
+          );
+          continue;
+        }
+        if (decision.action === 'ask') {
+          pending.push({ dir, subchannelId, probe });
+          continue;
+        }
+        console.log(`[body] corner worktree sweep keeping ${dir}: ${decision.reason}`);
       }
-      if (decision.action === 'ask') {
-        pending.push({ dir, subchannelId, probe });
-        continue;
-      }
-      console.log(`[body] corner worktree sweep keeping ${dir}: ${decision.reason}`);
     }
     if (pending.length === 0) return;
 
@@ -10840,6 +11192,12 @@ export class Body {
     // is what stops shutdown blocking on it.
     this.ciWatchAbort.abort();
     await Promise.allSettled([...this.pendingCiWatches]);
+    // A pushed approval starts deterministic daemon work outside any harness
+    // turn. Graceful daemon replacement drains that work too, so suspending or
+    // replacing the ACP process can never strand an already-picked-up land.
+    await Promise.allSettled(
+      [...this.approvalLandingPasses.values()].map((landingPass) => landingPass.task),
+    );
     this.releaseProposals.clear();
     // The Room push loops own their own REQ teardown via their `finally`; only
     // a socket this Body opened for itself is closed here. Closing the

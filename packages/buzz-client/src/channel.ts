@@ -761,7 +761,14 @@ export async function waitUntilNotMember(
   );
 }
 
-/** List channels where `pubkey` appears on a 39002 (#p filter). */
+/**
+ * List live channels where `pubkey` appears in a 39001/39002 projection.
+ *
+ * Archive deliberately retains those membership projections, so membership
+ * alone is not a listing authority.  Enumeration must also honor the 39000
+ * archive projection; otherwise pre-delete-era archived Rooms remain visible
+ * in decks even though the relay correctly refuses every further write.
+ */
 export async function listChannelsForPubkey(
   ctx: ChannelOpsContext,
   pubkey: string,
@@ -779,7 +786,10 @@ export async function listChannelsForPubkey(
       out.push({ channelId, event: ev });
     }
   }
-  return out;
+  const metadata = await Promise.all(
+    out.map(async ({ channelId }) => getChannelMetadata(ctx, channelId)),
+  );
+  return out.filter((_channel, index) => metadata[index]?.archived !== true);
 }
 
 /** Read channel metadata (kind:39000). */

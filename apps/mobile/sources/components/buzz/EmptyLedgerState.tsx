@@ -1,6 +1,7 @@
 import React from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { RoomGlyph } from '@/components/buzz/RoomGlyph';
 import { Typography } from '@/constants/Typography';
 
 export type EmptyLedgerVariant = 'room' | 'corner' | 'dm';
@@ -17,7 +18,7 @@ function emptyLedgerCopy(
   variant: EmptyLedgerVariant,
   name?: string,
   objective?: string,
-): { glyph: string; title: string; body: string } {
+): { glyph: string | null; title: string; body: string } {
   if (variant === 'corner') {
     return {
       glyph: '△',
@@ -36,7 +37,7 @@ function emptyLedgerCopy(
     };
   }
   return {
-    glyph: '⌑',
+    glyph: null,
     title: 'Nothing in the log yet',
     body: 'Start with the work, question, or decision this Room is for.',
   };
@@ -66,9 +67,13 @@ export function EmptyLedgerState({
       testID={testID}
     >
       <View style={styles.content}>
-        <Text accessibilityElementsHidden style={styles.glyph}>
-          {copy.glyph}
-        </Text>
+        {copy.glyph ? (
+          <Text accessibilityElementsHidden style={styles.glyph}>
+            {copy.glyph}
+          </Text>
+        ) : (
+          <RoomGlyph size={28} />
+        )}
         <Text style={styles.title}>{copy.title}</Text>
         <Text style={styles.body}>{copy.body}</Text>
       </View>

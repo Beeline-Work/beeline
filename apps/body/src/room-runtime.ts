@@ -10,7 +10,6 @@ import {
 } from '@beeline/buzz-client';
 import { git, gitAuthed, type GitResult, type Identity } from '@beeline/gate';
 import { Body, type BoundRepo } from './body.js';
-import { postAgentMessage } from './activity.js';
 import type { BodyConfig } from './config.js';
 import type { NamedRepositoryTarget } from './repository-target.js';
 import {
@@ -272,8 +271,6 @@ export class RoomRuntimeCoordinator {
   private readonly githubApp: GitHubAppRuntime | undefined;
   private readonly namedRepositoryResolutions = new Map<string, Promise<BoundRepo>>();
   private readonly quarantine: RoomQuarantineStateMachine;
-  /** Rooms whose join failed for a pending owner grant — one "went live" card on success. */
-  private readonly pendingOwnerGrantNotice = new Set<string>();
   /**
    * Rooms the relay has authoritatively reported as ARCHIVED, held inert for
    * this daemon process: never served again, never retried, and never even
@@ -422,26 +419,6 @@ export class RoomRuntimeCoordinator {
       if (typeof room.body.isBusy === 'function' && room.body.isBusy()) return false;
     }
     return true;
-  }
-
-  /**
-   * Publish one daemon-level notice into every Room this daemon currently
-   * serves (best-effort, never throws). The self-update path uses this so an
-   * applied update and a restart are visible to the humans in the Room
-   * through the existing agent-message path — no new event kind, no new
-   * channel.
-   */
-  async broadcastDaemonNotice(text: string): Promise<void> {
-    await Promise.allSettled(
-      [...this.running.entries()].map(([channelId, room]) =>
-        postAgentMessage(channelId, this.agent, text).catch((error) => {
-          if (isArchivedChannelError(error)) {
-            this.noteArchivedRoom(channelId, 'daemon notice was refused: channel is archived');
-          }
-          void room;
-        }),
-      ),
-    );
   }
 
   /**
@@ -780,9 +757,6 @@ export class RoomRuntimeCoordinator {
     const message = error instanceof Error ? error.message : String(error);
     const previous = this.quarantine.get(channelId);
     const next = this.quarantine.noteFailure(channelId, error);
-    if (isOwnerGrantNeededFailure(error)) {
-      this.pendingOwnerGrantNotice.add(channelId);
-    }
     if (previous?.kind === next.kind && previous.reason === message)
       return { announced: false, retryLabel: '' };
     const retryMs = Math.max(0, (next.retryAt ?? this.now()) - this.now());
@@ -909,22 +883,6 @@ export class RoomRuntimeCoordinator {
       recovering: false,
     });
     console.log(`[thin-core] serving Room ${channelId} from ${boundRepo.localPath}`);
-    // The Room was parked waiting for the repository OWNER to grant Beeline
-    // access (shareable install link, typed owner_grant_needed refusal) and
-    // the grant has landed — announce it once, through the ordinary
-    // agent-message path. Best-effort: a failed publish must never undo a
-    // successful join.
-    if (this.pendingOwnerGrantNotice.delete(channelId)) {
-      postAgentMessage(
-        channelId,
-        this.agent,
-        `Beeline access to ${boundRepo.repositoryId ?? boundRepo.repo} is live — this Room's repository link is complete.`,
-      ).catch((error) => {
-        if (isArchivedChannelError(error)) {
-          this.noteArchivedRoom(channelId, 'grant-live notice was refused: channel is archived');
-        }
-      });
-    }
   }
 
   private startConversationRoom(

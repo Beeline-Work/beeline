@@ -13,10 +13,9 @@ type ActivityTimelineProps = {
   active?: boolean;
   items: readonly AgentActivityItem[];
   handle?: string;
+  stamp?: string;
   testID?: string;
 };
-
-const GROUP_THRESHOLD = 3;
 
 function stepGlyph(step: TurnActivityAction): string {
   if (step.kind === 'thought') return '◈';
@@ -67,6 +66,17 @@ function outcomeCopy(outcome: TurnActivityAction['outcome']): string {
   if (outcome === 'failure') return 'failed';
   if (outcome === 'running') return 'running';
   return 'succeeded';
+}
+
+function groupStepLabel(step: TurnActivityAction): string {
+  if (step.kind === 'thought') return 'thought';
+  if (step.weight !== 'observation') return step.title.toLowerCase();
+  const kind = step.toolKind?.toLowerCase();
+  if (kind === 'search' || kind === 'searched') return 'search';
+  if (kind === 'list' || kind === 'listed') return 'list';
+  if (kind === 'fetch' || kind === 'fetched') return 'fetch';
+  if (kind === 'read' || kind === 'reading') return 'read';
+  return step.label;
 }
 
 function LedgerStepRow({
@@ -126,22 +136,26 @@ function LedgerStepRow({
 function StepGroupRow({
   active,
   expanded,
+  handle,
   onPress,
+  stamp,
   steps,
 }: {
   active: boolean;
   expanded: boolean;
+  handle?: string;
   onPress: () => void;
+  stamp?: string;
   steps: readonly TurnActivityAction[];
 }) {
   const failed = steps.filter((step) => step.outcome === 'failure').length;
   const running = active || steps.some((step) => step.outcome === 'running');
-  const duration = durationText(
-    steps.reduce((total, step) => total + (step.durationMs ?? 0), 0) || undefined,
-  );
-  const summary = [`${steps.length} steps`, failed ? `${failed} failed` : undefined, duration]
-    .filter(Boolean)
-    .join(' - ');
+  const labels = steps.map((step) => {
+    const label = groupStepLabel(step);
+    const duration = durationText(step.durationMs);
+    return duration ? `${label} ${duration}` : label;
+  });
+  const summary = [handle?.toUpperCase(), ...new Set(labels)].filter(Boolean).join(' · ');
   return (
     <Pressable
       accessibilityLabel={`${expanded ? 'Collapse' : 'Expand'} ${summary}`}
@@ -169,6 +183,11 @@ function StepGroupRow({
           {failed ? '×' : '✓'}
         </Text>
       )}
+      {stamp ? (
+        <Text numberOfLines={1} style={styles.groupStamp} testID="activity-group-stamp">
+          {stamp}
+        </Text>
+      ) : null}
     </Pressable>
   );
 }
@@ -226,13 +245,14 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
   active = false,
   handle,
   items,
+  stamp,
   testID,
 }: ActivityTimelineProps) {
   const turn = useMemo(() => buildTurnActivity(items), [items]);
   const [expanded, setExpanded] = useState(false);
   const [selected, setSelected] = useState<TurnActivityAction | null>(null);
-  const grouped = turn.steps.length > GROUP_THRESHOLD;
-  const showSteps = !grouped || expanded;
+  const grouped = turn.steps.length > 0;
+  const showSteps = expanded;
 
   if (!turn.narration.length && !turn.steps.length) return null;
 
@@ -259,7 +279,9 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
         <StepGroupRow
           active={active}
           expanded={expanded}
+          handle={handle}
           onPress={() => setExpanded((value) => !value)}
+          stamp={stamp}
           steps={turn.steps}
         />
       ) : null}
@@ -310,7 +332,7 @@ const styles = StyleSheet.create((theme) => {
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: groknight.borderQuiet,
     },
-    groupRow: { paddingLeft: 6 },
+    groupRow: { paddingHorizontal: 0 },
     rowPressed: { backgroundColor: groknight.bgHover },
     stepGlyph: {
       ...Typography.mono(),
@@ -322,8 +344,8 @@ const styles = StyleSheet.create((theme) => {
     },
     chevron: {
       ...Typography.mono(),
-      width: 16,
       flexShrink: 0,
+      marginRight: 8,
       color: groknight.ledgerGhost,
       fontSize: 13,
       lineHeight: 18,
@@ -343,6 +365,15 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.ledgerGhost,
       fontSize: 11,
       lineHeight: 18,
+    },
+    groupStamp: {
+      ...Typography.mono(),
+      flexShrink: 0,
+      marginLeft: 8,
+      color: groknight.ledgerGhost,
+      fontSize: 10,
+      lineHeight: 18,
+      fontVariant: ['tabular-nums'],
     },
     verdict: {
       ...Typography.mono(),

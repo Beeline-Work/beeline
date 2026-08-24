@@ -54,7 +54,9 @@ describe('Buzz composer slash picker integration', () => {
     expect(chatSource).toContain('agentMentionSlashQuery(inputText)');
     // The addressed agent's commands are read from the relay record — the only
     // source — never a hardcoded inventory.
-    expect(chatSource).toContain('agentCommandsRead(activeCommunityId, pubkey)');
+    expect(chatSource).toContain(
+      'agentCommandsRead(decodedId, pubkey, activeCommunityId ?? undefined)',
+    );
     expect(chatSource).not.toMatch(/commands:\s*\[\s*\{\s*name:\s*'/);
     // The picker receives both the agent's list and Beeline's built-ins.
     expect(chatSource).toContain('commands={mentionAgentCommands}');
@@ -73,6 +75,11 @@ describe('Buzz composer slash picker integration', () => {
     expect(pickerSource).toContain('slash-agent-no-commands');
     expect(pickerSource).toContain('DOES NOT ADVERTISE COMMANDS');
     // Unknown is not absent: the quiet state renders only once the read resolved.
-    expect(chatSource).toContain('agentCommandsByPubkey[mentionSlashAgentPubkey] !== undefined');
+    expect(chatSource).toContain('agentCommandsByScope[mentionAgentCommandScope] !== undefined');
+    const readStart = chatSource.indexOf('.agentCommandsRead(decodedId');
+    const readEnd = chatSource.indexOf('\n  }, [', readStart);
+    const readBlock = chatSource.slice(readStart, readEnd);
+    expect(readBlock).toContain('A transport failure is not evidence that no record exists');
+    expect(readBlock.match(/setAgentCommandsByScope/g)).toHaveLength(1);
   });
 });

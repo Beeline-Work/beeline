@@ -474,8 +474,8 @@ export default function BuzzChat() {
   const [dismissedMentionKey, setDismissedMentionKey] = useState<string | null>(null);
   const [highlightedSlashVerbIndex, setHighlightedSlashVerbIndex] = useState(0);
   const [dismissedSlashText, setDismissedSlashText] = useState<string | null>(null);
-  /** Per-agent published command lists (null = read resolved absent/unreadable). */
-  const [agentCommandsByPubkey, setAgentCommandsByPubkey] = useState<
+  /** Per-Room+agent command lists (null = read resolved and no record exists). */
+  const [agentCommandsByScope, setAgentCommandsByScope] = useState<
     Record<string, AgentCommandList | null>
   >({});
   const [sending, setSending] = useState(false);
@@ -920,20 +920,24 @@ export default function BuzzChat() {
     );
     return match?.pubkey ?? null;
   }, [mentionSlash, mentionableAgents]);
+  const mentionAgentCommandScope = mentionSlashAgentPubkey
+    ? `${decodedId}:${mentionSlashAgentPubkey}`
+    : null;
   const mentionAgentCommands = useMemo(() => {
-    if (!mentionSlash || !mentionSlashAgentPubkey) return [];
-    const published = agentCommandsByPubkey[mentionSlashAgentPubkey];
+    if (!mentionSlash || !mentionAgentCommandScope) return [];
+    const published = agentCommandsByScope[mentionAgentCommandScope];
     return (published?.commands ?? []).filter((command) =>
       matchesAgentCommand(command, mentionSlash.query),
     );
-  }, [agentCommandsByPubkey, mentionSlash, mentionSlashAgentPubkey]);
+  }, [agentCommandsByScope, mentionAgentCommandScope, mentionSlash]);
   // True only once the read RESOLVED (absent or empty list): an in-flight or
   // failed read is unknown, never "does not advertise".
   const mentionAgentLacksCommands = Boolean(
     mentionSlash &&
     mentionSlashAgentPubkey &&
-    agentCommandsByPubkey[mentionSlashAgentPubkey] !== undefined &&
-    (agentCommandsByPubkey[mentionSlashAgentPubkey]?.commands.length ?? 0) === 0,
+    mentionAgentCommandScope &&
+    agentCommandsByScope[mentionAgentCommandScope] !== undefined &&
+    (agentCommandsByScope[mentionAgentCommandScope]?.commands.length ?? 0) === 0,
   );
   const pendingCornerRequest = useMemo(() => {
     for (let index = combinedMessages.length - 1; index >= 0; index -= 1) {
@@ -1001,29 +1005,35 @@ export default function BuzzChat() {
   }, [currentSlashQuery, mentionSlash?.query, paletteItemCount]);
   // Load the addressed agent's published command list on demand — the palette
   // renders ONLY from this published record, never a hardcoded inventory. A
-  // failed read resolves null ("unknown", rendered as lacks-commands), never
-  // blocks typing.
+  // failed read stays unknown and never blocks typing.
   useEffect(() => {
     const pubkey = mentionSlashAgentPubkey;
-    if (!pubkey || !transport || !activeCommunityId) return;
-    if (agentCommandsByPubkey[pubkey] !== undefined) return;
+    const scope = mentionAgentCommandScope;
+    if (!pubkey || !scope || !transport) return;
+    if (agentCommandsByScope[scope] !== undefined) return;
     let cancelled = false;
     transport
-      .agentCommandsRead(activeCommunityId, pubkey)
+      .agentCommandsRead(decodedId, pubkey, activeCommunityId ?? undefined)
       .then((list) => {
         if (!cancelled) {
-          setAgentCommandsByPubkey((current) => ({ ...current, [pubkey]: list }));
+          setAgentCommandsByScope((current) => ({ ...current, [scope]: list }));
         }
       })
       .catch(() => {
-        if (!cancelled) {
-          setAgentCommandsByPubkey((current) => ({ ...current, [pubkey]: null }));
-        }
+        // A transport failure is not evidence that no record exists. Keep the
+        // scope unresolved so the palette never makes a false absence claim.
       });
     return () => {
       cancelled = true;
     };
-  }, [activeCommunityId, agentCommandsByPubkey, mentionSlashAgentPubkey, transport]);
+  }, [
+    activeCommunityId,
+    agentCommandsByScope,
+    decodedId,
+    mentionAgentCommandScope,
+    mentionSlashAgentPubkey,
+    transport,
+  ]);
   // `null` means "show a skeleton": the channel kind or its name is still
   // resolving and no honest word exists yet. A corner never renders the Room
   // label as a stand-in for its own slug.
